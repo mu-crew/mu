@@ -187,6 +187,25 @@ Every turn:
   run the merged gate on the host with warm dependencies: 500s × 30 integrations
   is four laptop-hours. Keep platform-sensitive checks and the final release gate
   local; macOS `ps` once exposed a bug Linux could not.
+- **Push only from a green gate.** Script the gate so `git push` is its last
+  line under `set -e`; a chain that printed a failure and pushed anyway put a red
+  commit on main. Check the gate runs what it claims: a randomized test gated on
+  an env var passed with zero cases.
+- **Dispatch from current main.** Reset the worker's worktree to main before each
+  task. Stale bases caused four merges that conflicted or broke tests after
+  passing in the worker.
+- **Accept evidence, not close notes.** Re-run the key measurement from a clean
+  checkout. Close notes have claimed unpushed commits and reported numbers from
+  a half-edited clone.
+- **Freeze only what conflicts.** While one task owns shared files, give idle
+  workers tasks that avoid them; a blanket freeze idled four of five workers for
+  a day.
+- **Fix done before a long run.** Put the completion criterion in the task note
+  first: which checks, how many agreeing runs, what may differ. Without it the
+  target moves with every run.
+- **Split long proofs into independent units**, sharded and in parallel, so a
+  unit that passes stays passed and one flake restarts only its own unit.
+  Workers poll background jobs every few minutes, not hourly.
 - Bucket waves by file cluster, not severity; two agents editing one file
   conflict. Refresh workspaces between waves.
 - Cross-workstream wait/claim uses qualified refs. The owner stays in its own
