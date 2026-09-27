@@ -95,17 +95,17 @@ adds ceremony.
 
 ```bash
 # 1. The CLI.
-npm install -g @martintrojer/mu
+npm install -g @mu-crew/mu
 mu --version
 
 # 2. The skill (teaches your coding agent how to drive mu).
-npx skills add martintrojer/mu          # auto-detects pi / claude-code / codex / etc.
+npx skills add mu-crew/mu          # auto-detects pi / claude-code / codex / etc.
 # Add -g to install globally (~/.<agent>/skills/), -y to skip prompts.
 ```
 
 **Requirements:**
 - Node 22.12–26 (see `.nvmrc`), matching `engines` in `package.json`.
-- A terminal multiplexer: tmux ≥ 3.0, or [herdr](https://github.com/martintrojer/herdr)
+- A terminal multiplexer: tmux ≥ 3.0, or [herdr](https://github.com/herdrdev/herdr)
   (`mu doctor` reports which one is active). Spawn, send, read and
   status detection work on both; the remaining herdr gaps are narrow
   and listed in
@@ -113,7 +113,7 @@ npx skills add martintrojer/mu          # auto-detects pi / claude-code / codex 
 - pi (the agent CLI mu orchestrates)
 - For `--workspace`: jj, sl, or git on PATH (or `--backend none`)
 
-**Optional — [murmur](https://github.com/martintrojer/murmur), for
+**Optional — [murmur](https://github.com/mu-crew/murmur), for
 more than one machine.** Every coding agent on every machine in one
 attention-sorted list. mu deliberately does not track hosts or watch
 other machines; murmur does both, as a separate binary that owns the
@@ -121,7 +121,7 @@ ssh egress.
 
 ```bash
 # on every node that runs agents
-npm install -g @martintrojer/murmur
+npm install -g @mu-crew/murmur
 murmur init          # this node's identity
 murmur link pi       # the agent-side extension that reports state
 
@@ -138,13 +138,13 @@ crashed, since a supervisor consumes anything else. Useful for
 picking a host before spawning a remote worker, and for spotting a
 blocked agent on a machine you are not looking at.
 
-**Update:** `npm install -g @martintrojer/mu@latest` for the CLI;
+**Update:** `npm install -g @mu-crew/mu@latest` for the CLI;
 `npx skills update mu` for the skill.
 
 **Install from source** (hacking on mu itself):
 
 ```bash
-git clone https://github.com/martintrojer/mu
+git clone https://github.com/mu-crew/mu
 cd mu
 npm install -g .                        # `prepare` script auto-builds; `mu` lands on $PATH
 npx skills add ./skills/mu              # local-path source format
@@ -322,3 +322,7 @@ DAG. See [docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md).
 ## License
 
 MIT.
+
+---
+
+Part of [mu-crew](https://github.com/mu-crew). Written mostly by AI coding agents, with a human reviewing what ships, and built for running them.

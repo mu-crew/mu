@@ -403,11 +403,11 @@ Full backup, migration, verification, and swap recipe:
 From npm (the common path):
 
 ```bash
-npm install -g @martintrojer/mu
+npm install -g @mu-crew/mu
 mu --version             # → the current version
 ```
 
-Update later via `npm install -g @martintrojer/mu@latest`.
+Update later via `npm install -g @mu-crew/mu@latest`.
 
 From a local checkout (when hacking on mu itself):
 
@@ -429,8 +429,8 @@ every supported agent (pi, claude-code, codex, opencode, cursor, ...)
 and installs into the right per-agent location:
 
 ```bash
-npx skills add martintrojer/mu          # interactive: pick scope + agents
-npx skills add martintrojer/mu -g -y    # global, no prompts (pi: ~/.pi/agent/skills/mu/)
+npx skills add mu-crew/mu          # interactive: pick scope + agents
+npx skills add mu-crew/mu -g -y    # global, no prompts (pi: ~/.pi/agent/skills/mu/)
 npx skills update mu                    # later, to refresh
 ```
 
@@ -450,7 +450,7 @@ others:
 ```bash
 # From an npm-global install
 mkdir -p ~/.agents/skills
-ln -sf "$(npm root -g)/@martintrojer/mu/skills/mu" ~/.agents/skills/mu
+ln -sf "$(npm root -g)/@mu-crew/mu/skills/mu" ~/.agents/skills/mu
 
 # Or from a checkout
 ln -sf "$PWD/skills/mu" ~/.agents/skills/mu
@@ -2503,7 +2503,7 @@ your platform.
 ## 20. Multiplexer backends (tmux and herdr)
 
 mu drives exactly one multiplexer per invocation. tmux is the
-incumbent; [herdr](https://github.com/martintrojer/herdr) is the second
+incumbent; [herdr](https://github.com/herdrdev/herdr) is the second
 backend, and spawn, send, read and status detection all work on it. The
 remaining gaps are narrow and listed under
 [Known limits on herdr](#known-limits-on-herdr) — the notable one is

@@ -361,7 +361,7 @@ respawn.
 
 ## mu and murmur, and what you lose without it
 
-[murmur](https://github.com/martintrojer/murmur) is optional and
+[murmur](https://github.com/mu-crew/murmur) is optional and
 **strictly additive**. Nothing in mu needs it: the DAG, claim/close/
 wait, workspaces, spawn/send/read, the reaper, `mu state`, this whole
 remote recipe and `git fetch` collection all work with murmur absent.

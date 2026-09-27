@@ -1,6 +1,6 @@
 {
-  "name": "@martintrojer/mu",
-  "version": "1.5.0",
+  "name": "@mu-crew/mu",
+  "version": "1.6.0",
   "description": "A persistent, observable crew of pi agents running in one tmux or herdr session per workstream, coordinated through a built-in task DAG.",
   "publishConfig": {
     "access": "public"
@@ -8,13 +8,13 @@
   "type": "module",
   "license": "MIT",
   "author": "Martin Trojer <martin.trojer@gmail.com>",
-  "homepage": "https://github.com/martintrojer/mu",
+  "homepage": "https://github.com/mu-crew/mu",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/martintrojer/mu.git"
+    "url": "git+https://github.com/mu-crew/mu.git"
   },
   "bugs": {
-    "url": "https://github.com/martintrojer/mu/issues"
+    "url": "https://github.com/mu-crew/mu/issues"
   },
   "keywords": [
     "tmux",
@@ -39,7 +39,7 @@
     }
   },
   "bin": {
-    "mu": "./dist/cli.js"
+    "mu": "dist/cli.js"
   },
   "files": [
     "dist",

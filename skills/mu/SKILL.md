@@ -301,7 +301,7 @@ Status detection is heuristic and can lag behind custom `--command`
 wrappers. It is weakest for a remote worker, where the scrollback is a
 nested tmux rendered over ssh.
 
-**[murmur](https://github.com/martintrojer/murmur), if installed, is
+**[murmur](https://github.com/mu-crew/murmur), if installed, is
 authoritative there** — its extension pushes state from inside the agent
 on the host rather than scraping a pane, and it answers across machines.
 Optional and strictly additive: nothing here needs it, and the seam is
