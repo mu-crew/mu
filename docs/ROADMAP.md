@@ -154,8 +154,8 @@ Listed so we don't pretend they're settled.
 
 ## murmur, and remote agents (noted 2026-08-28, revised 2026-09-02)
 
-[murmur](https://github.com/martintrojer/murmur) is a sibling tool at
-`~/hacking/murmur`, on npm as `@martintrojer/murmur`: every coding
+[murmur](https://github.com/mu-crew/murmur) is a sibling tool at
+`~/hacking/murmur`, on npm as `@mu-crew/murmur`: every coding
 agent on every machine in one attention-sorted list you can jump
 from. It is **built and in daily use** — the original note here
 described it as four design documents, and two of its conclusions

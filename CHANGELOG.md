@@ -8,7 +8,14 @@ breaking changes are called out under "Breaking" in each entry.
 
 ---
 
-## [Unreleased]
+## [1.6.0] — 2026-09-27
+
+### Moved
+
+- **mu is now `@mu-crew/mu`, in the [mu-crew](https://github.com/mu-crew)
+  org.** Install with `npm i -g @mu-crew/mu` and the skill with
+  `npx skills add mu-crew/mu`. `@martintrojer/mu` stops at 1.5.0. The skill's
+  remote-worker guidance now names mule (formerly coop).
 
 ### Changed
 
