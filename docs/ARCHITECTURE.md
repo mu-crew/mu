@@ -323,9 +323,11 @@ share a window with multiple panes.
 
 Claim/identity depends on the agent's name, not the window name:
 every agent pane gets `$MU_AGENT_NAME` in its environment on spawn,
-plus a **pane title** as fallback, regardless of how panes are
-grouped. The canonical tmux protocol is in the comment block at the
-top of `src/mux/tmux.ts`.
+plus a **pane title** as fallback, regardless of how panes are grouped.
+The title carries durable mu context only (agent identity plus owned tasks),
+not sampled runtime status. Mu enables the top border but leaves
+`pane-border-format` to the user's tmux configuration. The canonical tmux
+protocol is in the comment block at the top of `src/mux/tmux.ts`.
 
 ### Why one session per workstream
 
@@ -900,8 +902,8 @@ global namespace by the back door (anti-feature pledge).
 ## State of truth
 
 - **`~/.local/state/mu/mu.db` is canonical.** Everything else is a
-  cache, including tmux pane titles (mu re-pushes them via
-  `composeAgentTitle` after every state change).
+  cache, including tmux pane titles (mu re-pushes their durable agent/task
+  context via `composeAgentTitle` after every relevant state change).
 - **Reads are cheap** via SQLite views (`ready`, `blocked`, `goals`).
 - **Writes go through the typed SDK functions** (`src/agents.ts`,
   `src/tasks.ts`, …) which validate, transact, and reconcile. Op

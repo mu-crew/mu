@@ -342,7 +342,7 @@ describe("agents CRUD", () => {
   });
 });
 
-// ─── composeAgentTitle (mu's interpreted state on the pane border) ───
+// ─── composeAgentTitle (mu's durable context in the pane title) ───
 
 describe("composeAgentTitle", () => {
   let tempDir: string;
@@ -365,28 +365,7 @@ describe("composeAgentTitle", () => {
     expect(composeAgentTitle(db, a)).toBe("worker-a");
   });
 
-  it("renders 'name · emoji' when status is busy / needs_input / etc and no claim", () => {
-    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1", status: "busy" });
-    let a = getAgent(db, "worker-a", "ws");
-    if (!a) throw new Error();
-    expect(composeAgentTitle(db, a)).toBe(`worker-a · ${STATUS_EMOJI.busy}`);
-
-    updateAgentStatus(db, "worker-a", "needs_input", "ws");
-    a = getAgent(db, "worker-a", "ws");
-    if (!a) throw new Error();
-    expect(composeAgentTitle(db, a)).toBe(`worker-a · ${STATUS_EMOJI.needs_input}`);
-
-    updateAgentStatus(db, "worker-a", "free", "ws");
-    a = getAgent(db, "worker-a", "ws");
-    if (!a) throw new Error();
-    expect(composeAgentTitle(db, a)).toBe(`worker-a · ${STATUS_EMOJI.free}`);
-  });
-
-  // Drift guard: pin every STATUS_EMOJI codepoint into composeAgentTitle
-  // so any one-codepoint change (e.g. swapping unreachable's glyph) fails
-  // loud. 'spawning' is intentionally undecorated (see composeAgentTitle
-  // comment) so we assert the bare-name shape for it instead.
-  it("interpolates STATUS_EMOJI for every status (and skips it for 'spawning')", () => {
+  it("renders only the agent name regardless of sampled status when no task is owned", () => {
     for (const status of Object.keys(STATUS_EMOJI) as (keyof typeof STATUS_EMOJI)[]) {
       insertAgent(db, {
         name: `w_${status}`,
@@ -396,9 +375,7 @@ describe("composeAgentTitle", () => {
       });
       const a = getAgent(db, `w_${status}`, "ws");
       if (!a) throw new Error();
-      const expected =
-        status === "spawning" ? `w_${status}` : `w_${status} · ${STATUS_EMOJI[status]}`;
-      expect(composeAgentTitle(db, a), `status=${status}`).toBe(expected);
+      expect(composeAgentTitle(db, a), `status=${status}`).toBe(`w_${status}`);
     }
   });
 
@@ -411,7 +388,7 @@ describe("composeAgentTitle", () => {
     ).run();
     const a = getAgent(db, "worker-a", "ws");
     if (!a) throw new Error();
-    expect(composeAgentTitle(db, a)).toBe(`worker-a · build_x · ${STATUS_EMOJI.busy}`);
+    expect(composeAgentTitle(db, a)).toBe("worker-a · build_x");
   });
 
   it("compresses to '<multi>N tasks' when agent owns multiple tasks", () => {
@@ -425,9 +402,7 @@ describe("composeAgentTitle", () => {
     }
     const a = getAgent(db, "worker-a", "ws");
     if (!a) throw new Error();
-    expect(composeAgentTitle(db, a)).toBe(
-      `worker-a · ${GLYPH.multi}3 tasks · ${STATUS_EMOJI.busy}`,
-    );
+    expect(composeAgentTitle(db, a)).toBe(`worker-a · ${GLYPH.multi}3 tasks`);
   });
 
   it("excludes CLOSED tasks from the count (live work view)", () => {
@@ -443,7 +418,7 @@ describe("composeAgentTitle", () => {
     const a = getAgent(db, "worker-a", "ws");
     if (!a) throw new Error();
     // Only 'live' is OPEN+owned → single-task form, not the multi glyph.
-    expect(composeAgentTitle(db, a)).toBe(`worker-a · live · ${STATUS_EMOJI.busy}`);
+    expect(composeAgentTitle(db, a)).toBe("worker-a · live");
   });
 
   it("truncates titles longer than 64 chars with '…'", () => {
@@ -464,7 +439,7 @@ describe("composeAgentTitle", () => {
     if (!a) throw new Error();
     const title = composeAgentTitle(db, a);
     expect(title.length).toBeLessThanOrEqual(64);
-    expect(title.endsWith(`… · ${STATUS_EMOJI.busy}`)).toBe(true);
+    expect(title.endsWith("…")).toBe(true);
     // Agent name (canonical identity) MUST remain intact at the start
     // so the claim-protocol parser keeps working.
     expect(title.startsWith(longName)).toBe(true);

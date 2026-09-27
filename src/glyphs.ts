@@ -40,12 +40,7 @@
 import type { AgentStatus } from "./detect.js";
 
 /**
- * Agent status → glyph.
- *
- * Also used for tmux pane titles (`composeAgentTitle`), which cannot
- * render ANSI colour, so the glyph must carry the whole signal.
- * `spawning` is included but rarely painted: the title renders before
- * status detection runs and the state is transient.
+ * Agent status → glyph, used by CLI and TUI status surfaces.
  */
 export const AGENT_STATUS_GLYPH: Record<AgentStatus, string> = {
   spawning: "\uf251", // nf-fa-hourglass_start

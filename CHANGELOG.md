@@ -12,6 +12,12 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Changed
 
+- **Pane titles now carry durable mu context, not sampled runtime status.**
+  They retain the agent name and owned task summary, while live activity stays
+  on reconciled state surfaces. Mu also leaves `pane-border-format` untouched so
+  the user's tmux configuration can render a continuously updated observer's
+  status; it still enables and styles borders for mu-managed windows.
+
 - **Every operator-facing `mu task wait` hint now includes `--on-stall exit`.**
   Generated `Next:` output, CLI help examples, the usage guide, and the bundled
   skill no longer leave unattended orchestrators polling after a worker needs

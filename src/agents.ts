@@ -343,23 +343,16 @@ export function shouldOverwriteAgentStatus(current: AgentStatus, detected: Agent
   return true;
 }
 
-// ─── Pane title composition (mu's interpreted state on the border) ───
+// ─── Pane title composition (mu's durable context) ───────────────────
 //
-// The pane border (set by enableMuPaneBorders) renders
-// `[mu] #{pane_title}` as tmux chrome. mu owns the pane title and uses
-// it to carry interpreted state at a glance. The glyphs below are
-// named, not spelled out: they resolve through src/glyphs.ts, and
-// codepoints duplicated into a comment have drifted from production
-// once already.
+// mu owns the pane title as identity plus task context. Runtime status is
+// sampled only when a mu process reconciles, so putting it here leaves a stale
+// glyph after the agent stops. A continuously updated observer may append live
+// status in tmux chrome without competing with mu for the title.
 //
-//   worker-a                                    (no claim, status not
-//                                                 worth surfacing yet)
-//   worker-a · <glyph busy>                     (busy, no claim)
-//   worker-a · build_x · <glyph busy>           (busy, owns one task)
-//   worker-a · build_x · <glyph needs_input>
-//   worker-a · build_x · <glyph needs_permission>
-//   worker-a · <glyph free>                     (free, no claim)
-//   worker-a · <glyph multi>2 tasks · <glyph busy>   (multi-claim case)
+//   worker-a
+//   worker-a · build_x
+//   worker-a · <glyph multi>2 tasks
 //
 // The agent name MUST remain the first ' · '-separated token so the
 // claim protocol's pane-title-as-identity fallback (currentPaneTitle
@@ -415,9 +408,6 @@ export function isPendingPaneId(paneId: string): boolean {
 /** Build the pane title for `agent` based on current DB state.
  *  Pure (no tmux side effect; no DB write). Read-only on the DB. */
 export function composeAgentTitle(db: Db, agent: AgentRow): string {
-  // 'spawning' is the initial state at row insert. Don't decorate —
-  // surfaces as just the agent name until detection runs.
-  const showStatus = agent.status !== "spawning";
   // Scope by the agent's workstream so a same-named worker in another
   // workstream can't pollute this title's task list.
   const tasks = listTasksByOwner(db, agent.workstreamName, agent.name);
@@ -427,13 +417,8 @@ export function composeAgentTitle(db: Db, agent: AgentRow): string {
   } else if (tasks.length > 1) {
     title += ` · ${GLYPH.multi}${tasks.length} tasks`;
   }
-  const statusSuffix = showStatus ? ` · ${agentStatusGlyph(agent.status)}` : "";
-  if (title.length + statusSuffix.length > MAX_TITLE_LEN) {
-    // Trim the task side, preserving both identity at the start and state at
-    // the end. The state is the most glanceable part of the pane border.
-    title = `${title.slice(0, MAX_TITLE_LEN - statusSuffix.length - 1)}…`;
-  }
-  return title + statusSuffix;
+  if (title.length > MAX_TITLE_LEN) title = `${title.slice(0, MAX_TITLE_LEN - 1)}…`;
+  return title;
 }
 
 /** Push a fresh pane title for `agentName`. Best-effort — a missing
