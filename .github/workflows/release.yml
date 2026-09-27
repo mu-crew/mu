@@ -19,12 +19,13 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Check release version
         run: node scripts/check-release-version.mjs "${{ github.ref_name }}"
-      # The full suite needs tmux, jj and sl; it runs locally before tagging
-      # (RELEASING.md). CI gates on what runs anywhere.
+      # Tests are the local gate: even the fast tier drives real tmux panes and
+      # a pi binary, which a runner does not have. Run npm run test before
+      # tagging. CI re-checks what needs no agent environment.
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
-      - run: npm run test:fast
+      - run: npm run build
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
