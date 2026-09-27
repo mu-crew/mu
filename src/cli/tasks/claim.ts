@@ -176,7 +176,7 @@ export async function cmdClaim(
       const workstream = shellQuote(ws);
       nextSteps.push({
         intent: `Poll ${result.ownerName}'s remote commit once this turn`,
-        command: `job=$(coop run --host ${host} --max-secs 30 ${remoteCommand}) && coop wait "$job" >/dev/null && sha=$(coop tail "$job") && { case "$sha" in (*[!0-9a-fA-F]*|'') :;; (*) [ "$(printf %s "$sha" | wc -c)" -eq 40 ] && { [ "$sha" = ${base} ] || mu task close ${task} --evidence "${result.ownerName} committed $sha" -w ${workstream}; };; esac; }`,
+        command: `job=$(mule run --host ${host} --max-secs 30 ${remoteCommand}) && mule wait "$job" >/dev/null && sha=$(mule tail "$job") && { case "$sha" in (*[!0-9a-fA-F]*|'') :;; (*) [ "$(printf %s "$sha" | wc -c)" -eq 40 ] && { [ "$sha" = ${base} ] || mu task close ${task} --evidence "${result.ownerName} committed $sha" -w ${workstream}; };; esac; }`,
       });
     }
   }

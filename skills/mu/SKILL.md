@@ -110,10 +110,10 @@ remote agent, and again before waiting on one; poll once per turn and run
 the claim's one-shot `Next:` command.** These are the other three traps
 that cost real time when learned late:
 - **On a session-capped host, route long commands and silent-failure
-  polls through [coop](https://github.com/martintrojer/coop).** A refused
+  polls through [mule](https://github.com/mu-crew/mule).** A refused
   bare `rev-parse` can return an empty sha that looks like progress;
-  batch all workers in one `--max-secs`-bounded coop job.
-- **`coop` exit 3 is a HANDBACK** — no ssh master, and opening one can
+  batch all workers in one `--max-secs`-bounded mule job.
+- **`mule` exit 3 is a HANDBACK** — no ssh master, and opening one can
   need a human to touch a hardware key. Ask the operator; never retry,
   never run `ssh -MNf` yourself, never fall back to `ssh <host> <cmd>`.
 - **Exit 4 and 6 mean wait again; 5 means never.** Neither says the work
