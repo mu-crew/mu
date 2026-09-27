@@ -732,7 +732,7 @@ describe("enableMuPaneBorders", () => {
     }
   });
 
-  it("enableMuPaneBordersForPane resolves window then sets borders", async () => {
+  it("enableMuPaneBordersForPane resolves window then enables its border", async () => {
     const { executor, calls } = harness((args) => {
       if (args[0] === "display-message") return ok("@99\n");
       return ok();
@@ -741,31 +741,24 @@ describe("enableMuPaneBorders", () => {
     await enableMuPaneBordersForPane("%15");
     expect(calls[0]?.args).toEqual(["display-message", "-t", "%15", "-p", "#{window_id}"]);
     expect(calls[1]?.args).toEqual(["set-option", "-w", "-t", "@99", "pane-border-status", "top"]);
-    expect(calls.length).toBe(6);
+    expect(calls.length).toBe(5);
   });
 
-  it("sets pane-border-status=top + format + heavy lines + active/inactive border styles as window options", async () => {
+  it("enables pane borders without overriding the user's format", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
     await enableMuPaneBorders("@42");
-    expect(calls.length).toBe(5);
+    expect(calls.length).toBe(4);
     // -w is critical: pane-border-status is a WINDOW option in tmux,
     // not a session option. Without -w, set-option on a session
     // target only updates the currently-active window; windows
     // created later inherit from the global default ('off').
     expect(calls[0]?.args).toEqual(["set-option", "-w", "-t", "@42", "pane-border-status", "top"]);
-    expect(calls[1]?.args).toEqual([
-      "set-option",
-      "-w",
-      "-t",
-      "@42",
-      "pane-border-format",
-      " [mu] #{pane_title} ",
-    ]);
+    expect(calls.some((call) => call.args.includes("pane-border-format"))).toBe(false);
     // Heavy box-drawing on bottom + sides so a mu pane is visually
     // distinct from a non-mu tmux window even when not focused.
-    expect(calls[2]?.args).toEqual(["set-option", "-w", "-t", "@42", "pane-border-lines", "heavy"]);
-    expect(calls[3]?.args).toEqual([
+    expect(calls[1]?.args).toEqual(["set-option", "-w", "-t", "@42", "pane-border-lines", "heavy"]);
+    expect(calls[2]?.args).toEqual([
       "set-option",
       "-w",
       "-t",
@@ -773,7 +766,7 @@ describe("enableMuPaneBorders", () => {
       "pane-active-border-style",
       "fg=cyan,bold",
     ]);
-    expect(calls[4]?.args).toEqual([
+    expect(calls[3]?.args).toEqual([
       "set-option",
       "-w",
       "-t",

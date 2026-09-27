@@ -27,7 +27,7 @@ import type { TornDownWorkstream, WorkstreamSummary } from "../workstream.js";
 
 /** Per-status colour for the table view. The glyph itself comes from
  *  agentStatusGlyph in src/glyphs.ts — single source of truth so the
- *  table view and the pane-border / composeAgentTitle never drift
+ *  CLI and TUI status surfaces never drift
  *  (review_code_status_emoji_two_sources caught a 2-of-7 disagreement). */
 const STATUS_COLORS: Record<AgentStatus, (s: string) => string> = {
   spawning: pc.yellow,

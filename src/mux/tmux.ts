@@ -561,8 +561,8 @@ function muBannersDisabled(): boolean {
 }
 
 /**
- * Apply the mu pane border (status=top, format='[mu] #{pane_title}')
- * to EVERY window currently in `session`. Idempotent. Best-effort:
+ * Enable the mu pane border on EVERY window currently in `session`
+ * without overriding the user's pane-border format. Idempotent. Best-effort:
  * windows that have vanished mid-iteration are silently skipped. Used
  * by `mu workstream init` (covers the placeholder `_mu` window plus
  * any windows that already exist, e.g. on re-init of an upgraded
@@ -604,12 +604,13 @@ export async function enableMuPaneBordersForPane(paneId: string): Promise<void> 
 }
 
 /**
- * Enable a one-line top pane border on a specific window/session target,
- * showing `[mu] <pane-title>`. Idempotent (set-option is a write, not
- * a toggle).
+ * Enable a one-line top pane border on a specific window/session target.
+ * The user's inherited `pane-border-format` is left intact; mu owns the
+ * title's durable context, not border presentation. Idempotent
+ * (`set-option` is a write, not a toggle).
  *
- * IMPORTANT: tmux's `pane-border-status` and `pane-border-format` are
- * **window** options, not session options. `set-option -t <session>`
+ * IMPORTANT: tmux's `pane-border-status` is a **window** option, not a
+ * session option. `set-option -t <session>`
  * only updates the active window at call time — windows created later
  * inherit from the GLOBAL value (which is `off` by default and which
  * we deliberately do NOT touch, since changing the global would
@@ -630,7 +631,6 @@ export async function enableMuPaneBordersForPane(paneId: string): Promise<void> 
 export async function enableMuPaneBorders(target: string): Promise<void> {
   if (muBannersDisabled()) return;
   await tmux(["set-option", "-w", "-t", target, "pane-border-status", "top"]);
-  await tmux(["set-option", "-w", "-t", target, "pane-border-format", " [mu] #{pane_title} "]);
   // Bottom + sides: heavy box-drawing lines so a mu-managed pane is
   // visually distinct even when not the active pane (top carries the
   // labeled status text; the rest of the frame carries the visual

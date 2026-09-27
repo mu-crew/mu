@@ -200,7 +200,7 @@ export interface CaptureOptions {
 
 /**
  * Extract the agent-name token from a (possibly composed) pane title.
- * mu's `composeAgentTitle` renders titles as `name · task_id · <glyph>`;
+ * mu's `composeAgentTitle` renders titles as `name · task_id`;
  * the agent name is always the first ' · '-separated token. Adopted
  * panes mu never re-titled have just the name — still parses.
  *
