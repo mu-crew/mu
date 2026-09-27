@@ -1379,6 +1379,9 @@ mu uses the **canonical bracketed-paste protocol** internally:
 5. `tmux send-keys Enter`
 6. confirm the Enter took; re-send it if the text is still sitting
    unsubmitted in the input box
+7. when the text is exactly `/new`, wait for the pane to visibly change and
+   stabilize before returning, so a following send cannot race the delayed
+   session replacement
 
 Special characters (`/`, `?`, `!`, `$`, `&&`, `|`, `*`, …) therefore
 arrive at the agent's CLI **literally**. Naive `tmux send-keys` would
@@ -1391,8 +1394,9 @@ MU_SEND_DELAY_MS=300 mu agent send worker-1 "..."     # faster, less safe
 MU_SEND_DELAY_MS=1000 mu agent send worker-1 "..."    # slow remote
 ```
 
-**Steps 0 and 6 make `exit 0` mean "submitted".** A TUI rendering a
-modal accepts a bracketed paste but *swallows the Enter after it*,
+**Steps 0, 6, and 7 make `exit 0` mean "submitted" and safe for a
+following send.** A TUI rendering a modal accepts a bracketed paste but
+*swallows the Enter after it*,
 leaving the prompt typed-but-unsubmitted. The visible symptom is an
 agent idle at `needs_input` with 0.0% context on work it never
 received. No `sleep` between a clear and a prompt is needed.
