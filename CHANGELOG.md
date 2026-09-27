@@ -19,6 +19,12 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Fixed
 
+- **A send immediately after `/new` no longer races pi's delayed screen transition.**
+  The `/new` send now waits for the pane to visibly change and then stabilize
+  before returning, without matching configuration-dependent pi output. A
+  following `mu agent send` therefore cannot paste into a transition that the
+  old screen had not started rendering yet.
+
 - **The running TUI now marks workstreams torn down by another process.**
   Its launch-time tab set stays stable, while a missing workstream is dimmed
   and struck through on the next fast tick. A single-workstream TUI surfaces

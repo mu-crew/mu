@@ -152,8 +152,9 @@ export interface SendWarning {
   paneId: string;
   /** 'paste-vanished' — pane looked calm, but the text stayed stranded
    *  in the input box. 'busy-at-deadline' — pane never quiesced within
-   *  the budget and the text stayed stranded. */
-  reason: "busy-at-deadline" | "paste-vanished";
+   *  the budget and the text stayed stranded. 'transition-unconfirmed' —
+   *  `/new` was submitted but no completed screen transition was observed. */
+  reason: "busy-at-deadline" | "paste-vanished" | "transition-unconfirmed";
   message: string;
 }
 
