@@ -66,7 +66,7 @@ the only ssh channel**. While it is open, `git fetch`, `git push`,
 
 **Attach to look, then close immediately.** `mu agent close <name>`
 detaches without stopping a detached-tmux agent. Poll with `murmur
-collect` + `murmur status`; use coop for orchestrator commands because
+collect` + `murmur status`; use mule for orchestrator commands because
 its separate ControlPath cannot contend with the attach pane. See
 § When the host limits concurrent sessions for diagnosis and the
 remote-agent setup.
@@ -124,9 +124,9 @@ mu agent send worker-1 -w big '...'
 
 # 5. WAIT — run the claim's one-shot Next: command once per turn
 # Set a deadline; at expiry read the pane, then release or re-dispatch.
-job=$(coop run --host dev --max-secs 30 \
+job=$(mule run --host dev --max-secs 30 \
   'cd ~/ws/worker-1 && git rev-parse HEAD 2>/dev/null || echo unreadable')
-coop wait "$job" >/dev/null && sha=$(coop tail "$job")
+mule wait "$job" >/dev/null && sha=$(mule tail "$job")
 case "$sha" in (*[!0-9a-fA-F]*|'') :;; (*) [ "${#sha}" -eq 40 ] && \
   { [ "$sha" = 24481fe24481fe24481fe24481fe24481fe2448 ] || \
     mu task close t1 -w big --evidence "worker-1 committed $sha"; };; esac
@@ -180,12 +180,12 @@ The task note survives connection loss and context compaction. Keep the
 location as `REMOTE: <host>:<path>` and each baseline as
 `REMOTE_BASE: <agent>:<sha>`. `mu task claim --for <agent>` uses both to
 print a complete one-shot poll-and-close command. For a crew, record one
-baseline per worker and use one bounded coop job for every path:
+baseline per worker and use one bounded mule job for every path:
 
 ```bash
-coop run --max-secs 30 'for d in ~/ws/*/; do printf "%s %s\\n" \
+mule run --max-secs 30 'for d in ~/ws/*/; do printf "%s %s\\n" \
   "$(basename $d)" "$(cd $d && git rev-parse HEAD 2>/dev/null || echo unreadable)"; done'
-coop wait <job>; coop tail <job>
+mule wait <job>; mule tail <job>
 ```
 
 Each line names the worker and sha. Accept only 40 hex characters;
@@ -199,7 +199,7 @@ capped ssh channel running. Set a wall-clock deadline before dispatch.
 At expiry, read the pane, then release or re-dispatch instead of extending
 the wait silently.
 
-On a session-capped host, run the claim's `Next:` command through coop
+On a session-capped host, run the claim's `Next:` command through mule
 between other work. Bare ssh polls can be refused with an empty sha,
 which looks like progress. The command captures the new sha and closes
 the task with that sha as evidence. The commit tells you;
@@ -250,17 +250,17 @@ ssh dev 'cd ~/hacking/<checkout> && git fetch -q origin \
   && git reset -q --hard origin/main && npm run check'
 ```
 
-**On a session-capped host, run that gate through coop instead.** The
+**On a session-capped host, run that gate through mule instead.** The
 last line holds the channel for the whole suite — minutes — which is
 precisely when your other tooling starts failing with a credentials
 error that has nothing to do with credentials:
 
 ```bash
-coop run --cwd ~/hacking/<checkout> --wait \
+mule run --cwd ~/hacking/<checkout> --wait \
   'git fetch -q origin && git reset -q --hard origin/main && npm run check'
 ```
 
-Same work, dispatched detached on coop's own connection, and `--wait`
+Same work, dispatched detached on mule's own connection, and `--wait`
 exits with the suite's own code. See § When the host limits concurrent
 sessions.
 
@@ -478,38 +478,38 @@ the misleading 2FA error. There is no client-side fix — `MaxSessions`
 exists only in `sshd_config`, and the client discovers the cap only by
 being refused.
 
-### Fix: run commands through coop
+### Fix: run commands through mule
 
-[coop](https://github.com/martintrojer/coop) opens a separate ssh
+[mule](https://github.com/mu-crew/mule) opens a separate ssh
 ControlPath and dispatches detached jobs. On a `MaxSessions 1` host,
-five concurrent bare calls produced **1 of 5** successes; coop produced
-**5 of 5**. A multi-minute coop job also left a concurrent plain ssh
+five concurrent bare calls produced **1 of 5** successes; mule produced
+**5 of 5**. A multi-minute mule job also left a concurrent plain ssh
 working.
 
-Route commands by failure mode, not duration. Use coop for long work
+Route commands by failure mode, not duration. Use mule for long work
 and whenever refusal could look like success. Eight concurrent bare
-`rev-parse` polls returned one sha and seven empty results; coop
+`rev-parse` polls returned one sha and seven empty results; mule
 dispatched all eight. Keep worktree setup and `murmur collect` bare
-because they fail loudly. See `coop --help` and the relevant subcommand
+because they fail loudly. See `mule --help` and the relevant subcommand
 help for flags, job control, warnings, and exit codes.
 
-**A coop job must be entirely remote.** The host has no route back to
+**A mule job must be entirely remote.** The host has no route back to
 your laptop, so a local-endpoint `git fetch`, `git push`, or rsync
 cannot run inside the job. Collect from the orchestrator as described
 in § Everything is orchestrator-PULL.
 
-**Use `coop run --tui` for an interactive/full-screen agent when you want
-coop's timeout, runtime, transcript, and cleanup.** Plain `coop run` pipes
+**Use `mule run --tui` for an interactive/full-screen agent when you want
+mule's timeout, runtime, transcript, and cleanup.** Plain `mule run` pipes
 output into the artifact, so attaching finds the pane but no live TUI.
-coop prints the exact murmur jump and `mu agent spawn --command` lines after
+mule prints the exact murmur jump and `mu agent spawn --command` lines after
 TUI dispatch. mu still needs that local attach pane for read/send/wait; closing
-it detaches without stopping the coop job. Use plain detached remote tmux when
-you need none of coop's artifacts or lifecycle controls.
+it detaches without stopping the mule job. Use plain detached remote tmux when
+you need none of mule's artifacts or lifecycle controls.
 
-#### coop exit 3 is a handback
+#### mule exit 3 is a handback
 
 A missing ssh master can require a human to touch a hardware key. Ask
-the operator to run the command coop prints. Do not retry, run
+the operator to run the command mule prints. Do not retry, run
 `ssh -MNf` yourself, or fall back to `ssh <host> <command>`; each avoids
 the required handback or recreates the capped-channel failure.
 
@@ -517,7 +517,7 @@ the required handback or recreates the capped-channel failure.
 
 Exit 4 and 6 mean poll again because the job may still complete. Exit 5
 means no result will arrive. None means the work itself failed. Read the
-full table in `coop --help`.
+full table in `mule --help`.
 
 ### Fix: detached remote tmux (for the agent itself)
 
@@ -546,7 +546,7 @@ Two consequences, both counterintuitive:
 - **An attached pane blocks concurrent ssh just as much as a direct
   one.** Nesting does not make the host concurrent; it makes detaching
   cheap and non-destructive. You must close the pane BEFORE fetching —
-  or use coop, which is on its own channel and does not care.
+  or use mule, which is on its own channel and does not care.
 - **`mu agent close` detaches, it does not stop the agent** — the
   inverse of local semantics, and the whole point. To actually stop
   one: `ssh dev 'tmux kill-session -t mu-worker-1'`. Skip that and you

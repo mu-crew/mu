@@ -154,7 +154,7 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
     expect(exitCode).toBeNull();
     const out = JSON.parse(stdout) as { nextSteps: { intent: string; command: string }[] };
     const step = out.nextSteps.find((candidate) => candidate.intent.includes("remote commit"));
-    expect(step?.command).toContain("coop run --host 'dev' --max-secs 30");
+    expect(step?.command).toContain("mule run --host 'dev' --max-secs 30");
     expect(step?.command).toContain("cd ~/ws/worker-1 && git rev-parse HEAD");
     expect(step?.command).toContain("*[!0-9a-fA-F]*");
     expect(step?.command).toContain('wc -c)" -eq 40');
