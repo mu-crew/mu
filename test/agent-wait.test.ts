@@ -84,7 +84,17 @@ describe("waitForAgents", () => {
     expect(res.agents[0]?.wasBusy).toBe(false);
   });
 
-  it("fires on busy → needs_permission (any non-busy state, not just idle)", async () => {
+  it("does not fire on busy → unknown", async () => {
+    const res = await waitForAgents(db, [{ workstreamName: ws, name: "worker-1" }], {
+      pollMs: 1,
+      timeoutMs: 10,
+      readStatus: scripted({ "worker-1": ["busy", "unknown"] }),
+    });
+    expect(res.timedOut).toBe(true);
+    expect(res.agents[0]?.fired).toBe(false);
+  });
+
+  it("fires on busy → needs_permission (any known non-busy state)", async () => {
     const res = await waitForAgents(db, [{ workstreamName: ws, name: "worker-1" }], {
       pollMs: 1,
       readStatus: scripted({ "worker-1": ["busy", "needs_permission"] }),

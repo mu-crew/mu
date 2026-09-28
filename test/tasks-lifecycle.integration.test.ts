@@ -52,8 +52,8 @@ describe("claimTask", () => {
     addTask(db, { localId: "auth", workstream: "test", title: "Auth", impact: 80, effortDays: 2 });
     // tasks.owner is now a real FK to agents(name); the test agents must
     // exist before they can claim.
-    insertAgent(db, { name: "alice", workstream: "test", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "bob", workstream: "test", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "test", paneId: "%1" });
+    insertAgent(db, { name: "bob", workstream: "test", paneId: "%2" });
   });
 
   it("claims with explicit agentName", async () => {
@@ -360,7 +360,6 @@ describe("claimTask", () => {
       name: "cross",
       workstream: "other",
       paneId: "%99",
-      status: "busy",
     });
     // 'cross' lives in 'other'; this claim targets workstream 'test'.
     await expect(
@@ -399,7 +398,7 @@ describe("setTaskStatus / closeTask / openTask", () => {
     });
     // FK: tasks.owner → agents(name); the worker-1 claim test below needs
     // the agent row to exist.
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
   });
 
   it("closeTask flips OPEN → CLOSED and reports the change", () => {
@@ -468,7 +467,7 @@ describe("releaseTask", () => {
       impact: 50,
       effortDays: 1,
     });
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
   });
 
   it("clears owner on a claimed task; auto-flips IN_PROGRESS → OPEN", async () => {
@@ -633,7 +632,7 @@ describe("evidence on lifecycle verbs", () => {
   });
 
   it("releaseTask --evidence records a RELEASE note (and survives --reopen)", () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     db.prepare(
       `UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = 'worker-1'),
               status='IN_PROGRESS' WHERE local_id='design'`,
@@ -649,7 +648,7 @@ describe("evidence on lifecycle verbs", () => {
   });
 
   it("claimTask --evidence records a CLAIM note and stamps ops.actor", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     db.prepare("DELETE FROM ops").run();
     await claimTask(db, "design", {
       agentName: "worker-1",

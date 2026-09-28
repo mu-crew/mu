@@ -72,7 +72,6 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
     expect(a.name).toBe("alice");
     expect(a.workstreamName).toBe(workstream);
     expect(a.paneId).toMatch(/^%\d+$/);
-    expect(a.status).toBe("spawning");
 
     const view = await listLiveAgents(db, { workstream });
     expect(view.agents.map((x) => x.name)).toEqual(["alice"]);
@@ -168,17 +167,12 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
     });
 
     let view = await listLiveAgents(db, { workstream });
-    await pollUntil(
-      async () => {
-        view = await listLiveAgents(db, { workstream });
-        return view.agents.length === 1 && view.agents[0]?.status === "needs_input";
-      },
-      { description: "sh pane status detected as needs_input" },
-    );
+    await pollUntil(async () => {
+      view = await listLiveAgents(db, { workstream });
+      return view.agents.length === 1;
+    });
     expect(view.agents).toHaveLength(1);
     // pi-only detector returns needs_input for sh (no patterns match).
-    expect(view.agents[0]?.status).toBe("needs_input");
-    expect(view.report.statusChanges).toBeGreaterThanOrEqual(0);
   });
 
   // ── The MVP step-5 acceptance test ───────────────────────────────────
@@ -219,16 +213,12 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
           view.agents
             .map((a) => a.name)
             .sort()
-            .join(",") === "alice,bob,carol" &&
-          view.agents.every((agent) => agent.status === "needs_input")
+            .join(",") === "alice,bob,carol"
         );
       },
       { description: "all sh pane statuses detected as needs_input" },
     );
     expect(view.agents.map((a) => a.name).sort()).toEqual(["alice", "bob", "carol"]);
-    for (const agent of view.agents) {
-      expect(agent.status).toBe("needs_input");
-    }
     expect(view.orphans).toEqual([]);
 
     // 4. State survives a DB process restart.

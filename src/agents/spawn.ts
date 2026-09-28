@@ -458,7 +458,6 @@ async function prestageWorkspace(db: Db, opts: SpawnAgentOptions, cli: string): 
     workstream: opts.workstream,
     cli,
     paneId: pendingPaneIdFor(opts.name),
-    status: "spawning",
     role: opts.role,
     tab: opts.tab ?? null,
   });
@@ -497,7 +496,6 @@ function finalizeAgentRow(
       workstream: opts.workstream,
       cli,
       paneId,
-      status: "spawning",
       role: opts.role,
       tab: opts.tab ?? null,
     });

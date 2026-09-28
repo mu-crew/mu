@@ -10,7 +10,7 @@ import {
   STALE_CLAIM_THRESHOLD_MS,
 } from "../src/cli/tui/cards/inprogress.js";
 import { ageMs, formatSinceClaim } from "../src/cli/tui/format-helpers.js";
-import { agentStatusGlyph } from "../src/glyphs.js";
+import { agentStateGlyph } from "../src/glyphs.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
 import type { TaskRow } from "../src/tasks.js";
 import { expectTextAbsent, expectTextOnce, renderCardToText } from "./_card-render.js";
@@ -21,7 +21,7 @@ const EMPTY_SNAPSHOT: WorkstreamSnapshot = {
   view: {
     agents: [],
     orphans: [],
-    report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+    report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
   },
   tracks: [],
   ready: [],
@@ -125,7 +125,7 @@ describe("InProgressCard pure helpers", () => {
   it("GLYPH: every IN_PROGRESS row gets the shared busy glyph", () => {
     // Pinned to the shared vocabulary rather than a literal codepoint,
     // so re-pointing a glyph in src/glyphs.ts is a one-line change.
-    expect(GLYPH).toBe(agentStatusGlyph("busy"));
+    expect(GLYPH).toBe(agentStateGlyph("busy"));
     expect(typeof GLYPH).toBe("string");
     expect(GLYPH.length).toBeGreaterThan(0);
     expect(GLYPH.length).toBeLessThanOrEqual(4);

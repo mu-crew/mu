@@ -53,7 +53,7 @@ afterEach(() => {
 
 function seedAgent(workstream: string, name = "worker-1"): void {
   ensureWorkstream(db, workstream);
-  insertAgent(db, { name, workstream, paneId: "%15", status: "free" });
+  insertAgent(db, { name, workstream, paneId: "%15" });
 }
 
 describe("best-effort call sites degrade when no mux is reachable", () => {

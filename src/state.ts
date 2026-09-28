@@ -6,7 +6,8 @@
 // helpers — no rendering. See design_sdk_seam in workstream `tui` for
 // the rationale (`mu task notes design_sdk_seam -w tui`).
 
-import { type AgentRow, type AgentStatus, type LiveAgentsView, listLiveAgents } from "./agents.js";
+import type { RuntimeState } from "./agent-state.js";
+import { type LiveAgent, type LiveAgentsView, listLiveAgents } from "./agents.js";
 import type { Db } from "./db.js";
 import { type DoctorSummary, loadDoctorSummary } from "./doctor-summary.js";
 import { GLYPH } from "./glyphs.js";
@@ -280,7 +281,7 @@ function emptyLiveAgentsView(): LiveAgentsView {
   return {
     agents: [],
     orphans: [],
-    report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "full" },
+    report: { prunedGhosts: 0, orphans: [], mode: "full" },
   };
 }
 
@@ -357,13 +358,13 @@ function byRoiDesc(a: TaskRow, b: TaskRow): number {
 
 // ─── Agent helpers ─────────────────────────────────────────────────
 
-/** Histogram of agents by status. Pure derivation (no colour render). */
-export function agentStatusHistogram(
-  agents: readonly AgentRow[],
-): ReadonlyMap<AgentStatus, number> {
-  const out = new Map<AgentStatus, number>();
+/** Histogram of agents by runtime state. Pure derivation (no colour render). */
+export function agentStateHistogram(
+  agents: readonly LiveAgent[],
+): ReadonlyMap<RuntimeState, number> {
+  const out = new Map<RuntimeState, number>();
   for (const a of agents) {
-    out.set(a.status, (out.get(a.status) ?? 0) + 1);
+    out.set(a.state, (out.get(a.state) ?? 0) + 1);
   }
   return out;
 }

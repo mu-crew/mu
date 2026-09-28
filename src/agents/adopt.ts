@@ -115,7 +115,7 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
   }
 
   // Step 4: resolved name. Default to the pane's current title —
-  // unwrapping a possibly-composed mu title ('name · <STATUS_EMOJI> · task')
+  // unwrapping a possibly-composed mu title ('name · task')
   // back to just the name token. Re-adoption of a pane that mu previously
   // owned must work; without parseAgentNameFromTitle the ' · <glyph>'
   // suffix would fail isValidAgentName.
@@ -162,7 +162,6 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
     name: resolvedName,
     workstream: opts.workstream,
     paneId: opts.paneId,
-    status: "free",
     cli: opts.cli,
     role: opts.role,
   });

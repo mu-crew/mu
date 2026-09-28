@@ -40,7 +40,7 @@ describe("root-position -w + optsWithGlobals subcommands (finding_optswithglobal
       impact: 50,
       effortDays: 1,
     });
-    insertAgent(db, { name: "worker-1", workstream: "wsa", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "wsa", paneId: "%1" });
     await claimTask(db, "t1", { agentName: "worker-1", workstream: "wsa" });
   });
 

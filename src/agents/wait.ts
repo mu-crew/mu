@@ -19,8 +19,8 @@
 // without this SDK module importing tmux, --any/--all, and a timeout.
 // The CLI wrapper maps the result to task-wait-symmetric exit codes.
 
+import type { RuntimeState } from "../agent-state.js";
 import type { Db } from "../db.js";
-import type { AgentStatus } from "../detect.js";
 import { AgentNotFoundError } from "./errors.js";
 
 // ─── Test seam: poll-sleep (mirrors waitForTasks / tmux setSleepForTests)
@@ -46,8 +46,8 @@ export interface AgentWaitRef {
 /** Snapshot of one watched agent at a poll tick. Supplied by the
  *  caller's `readStatus` hook so this SDK stays free of tmux imports. */
 export interface AgentStatusSnapshot {
-  /** Current detected status, or null when the pane is gone (dead). */
-  status: AgentStatus | null;
+  /** Current runtime state, or null when the pane is gone (dead). */
+  status: RuntimeState | null;
 }
 
 export interface AgentWaitOptions {
@@ -58,10 +58,9 @@ export interface AgentWaitOptions {
   timeoutMs?: number;
   /** Poll interval. Default 1000ms; overridable for tests. */
   pollMs?: number;
-  /** Per-agent live-status reader, called once per agent per tick.
-   *  The CLI implements this with capturePane + detectPiStatus; kept
-   *  as a hook so this module never imports tmux/detect wiring beyond
-   *  the AgentStatus type. Returning `status: null` means the pane is
+  /** Per-agent runtime-state reader, called once per agent per tick.
+   *  Kept as a hook so this module does not own source resolution.
+   *  Returning `status: null` means the pane is
    *  gone — the agent is treated as DEAD (see AgentWaitAgentState). */
   readStatus: (ref: AgentWaitRef) => Promise<AgentStatusSnapshot>;
 }
@@ -69,8 +68,8 @@ export interface AgentWaitOptions {
 export interface AgentWaitAgentState {
   workstreamName: string;
   name: string;
-  /** Status at exit time (null = pane gone / dead). */
-  status: AgentStatus | null;
+  /** State at exit time (null = pane gone / dead). */
+  status: RuntimeState | null;
   /** True once we observed this agent `busy` at any tick. */
   wasBusy: boolean;
   /** True when the agent fired: was busy, then moved to a non-busy
@@ -153,8 +152,8 @@ export async function waitForAgents(
       st.status = snap.status;
       if (snap.status === "busy") {
         st.wasBusy = true;
-      } else if (st.wasBusy) {
-        // busy → any other state = fired.
+      } else if (snap.status !== "unknown" && st.wasBusy) {
+        // Unknown is absence of a reading, not evidence that work ended.
         st.fired = true;
       }
     }

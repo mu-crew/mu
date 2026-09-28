@@ -199,8 +199,8 @@ describe("listTasksByOwner", () => {
     addTask(db, { localId: "a", workstream: "auth", title: "A", impact: 50, effortDays: 1 });
     addTask(db, { localId: "b", workstream: "auth", title: "B", impact: 50, effortDays: 1 });
     addTask(db, { localId: "c", workstream: "billing", title: "C", impact: 50, effortDays: 1 });
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "worker-2", workstream: "billing", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "worker-2", workstream: "billing", paneId: "%2" });
     await claimTask(db, "a", { agentName: "worker-1", workstream: "auth" });
     // Construct the cross-workstream owner state directly. The verb
     // path (claimTask --for) correctly rejects cross-workstream owner
@@ -234,7 +234,7 @@ describe("listTasksByOwner", () => {
 
   it("returns empty for an agent with no claims (or unknown agent)", () => {
     expect(listTasksByOwner(db, "auth", "ghost")).toEqual([]);
-    insertAgent(db, { name: "idle", workstream: "auth", paneId: "%1", status: "free" });
+    insertAgent(db, { name: "idle", workstream: "auth", paneId: "%1" });
     expect(listTasksByOwner(db, "auth", "idle")).toEqual([]);
   });
 
@@ -244,7 +244,7 @@ describe("listTasksByOwner", () => {
     // verb's purpose ("what is X currently working on?").
     addTask(db, { localId: "live", workstream: "auth", title: "Live", impact: 50, effortDays: 1 });
     addTask(db, { localId: "done", workstream: "auth", title: "Done", impact: 50, effortDays: 1 });
-    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1" });
     await claimTask(db, "live", { agentName: "w1", workstream: "auth" });
     await claimTask(db, "done", { agentName: "w1", workstream: "auth" });
     closeTask(db, "done", { workstream: "auth" }); // closeTask preserves owner intentionally

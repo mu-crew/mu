@@ -2,8 +2,8 @@
 //
 // Three steps, in order:
 //
-//   1. Prune ghost rows whose pane no longer exists in tmux.
-//   2. Detect status from pane scrollback for surviving agents.
+//   1. Prune ghost rows whose pane no longer exists in the mux.
+//   2. Refresh pane titles for surviving agents.
 //   3. Surface orphan panes that look like agents but have no DB row.
 //      Do NOT auto-adopt — `mu agent list` shows orphans under a separate
 //      section and the user runs `mu agent adopt` to formally claim.
@@ -14,7 +14,6 @@
 
 import * as agentSdk from "./agents.js";
 import type { Db } from "./db.js";
-import { detectPiStatus } from "./detect.js";
 import { activeMux, type MuxPane } from "./mux.js";
 
 /**
@@ -67,9 +66,6 @@ export interface ReconcileReport {
    *  this is the count of rows that WOULD have been pruned; in `full`
    *  mode it's the count actually deleted. */
   prunedGhosts: number;
-  /** Number of agents whose status was changed by scrollback detection.
-   *  Always 0 in `report-only` mode (status detection is skipped). */
-  statusChanges: number;
   /** Panes in the workstream's tmux session that look like agents but
    *  aren't in the registry. NOT auto-adopted. */
   orphans: MuxPane[];
@@ -124,7 +120,6 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
   const paneById = new Map(muxPanes.map((p) => [p.paneId, p]));
 
   let prunedGhosts = 0;
-  let statusChanges = 0;
   const orphans: MuxPane[] = [];
 
   // 1. Prune ghosts (DB row references a pane that no longer exists).
@@ -147,36 +142,10 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
     }
   }
 
-  // 2. Detect status from scrollback for survivors. capturePane uses the
-  //    last 100 lines, which is the same window the detector operates on.
-  //
-  //    `report-only` skips this entirely — status detection writes to
-  //    the DB (updateAgentStatus + refreshAgentTitle), and the
-  //    report-only contract is "no mutation".
-  //
-  //    Full mode iterates real-pane survivors only. Mid-spawn
-  //    placeholders have no usable scrollback yet and were split out in
-  //    step 1, so no sentinel-aware branch belongs here.
+  // 2. Refresh durable pane titles in mutating mode. Runtime state is
+  //    resolved separately and is never written to the registry.
   if (mode === "full") {
     for (const agent of survivors) {
-      const scrollback = await mux.capturePane(agent.paneId, { lines: 100 });
-      const detected = detectPiStatus(scrollback);
-      if (
-        agentSdk.shouldOverwriteAgentStatus(agent.status, detected) &&
-        detected !== agent.status
-      ) {
-        agentSdk.updateAgentStatus(db, agent.name, detected, agent.workstreamName);
-        statusChanges++;
-      }
-      // ALWAYS refresh the pane title (even when status didn't change),
-      // so that:
-      //   1. Inner CLIs that self-set their pane title (pi, pi-meta, vim,
-      //      tmux's default 'host - dir') get overwritten with mu's
-      //      composed title.
-      //   2. Task-ownership changes that happen between reconciles
-      //      (claim / release / close) re-propagate even if the status
-      //      detector didn't flip.
-      // Best-effort: a tmux failure here never blocks the reconcile report.
       await agentSdk.refreshAgentTitle(db, agent.name, agent.workstreamName);
     }
   }
@@ -192,5 +161,5 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
     if (looksLikeAgentPane(pane)) orphans.push(pane);
   }
 
-  return { prunedGhosts, statusChanges, orphans, mode };
+  return { prunedGhosts, orphans, mode };
 }

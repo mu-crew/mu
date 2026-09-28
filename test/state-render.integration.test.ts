@@ -424,7 +424,7 @@ describe("the op formatter", () => {
         }),
       );
 
-      insertAgent(db, { name: "worker-1", workstream: "events", paneId: "%15", status: "busy" });
+      insertAgent(db, { name: "worker-1", workstream: "events", paneId: "%15" });
       await captureNewEvents(() =>
         createWorkspace(db, {
           agent: "worker-1",
@@ -497,7 +497,6 @@ describe("the op formatter", () => {
         name: "idle-1",
         workstream: "events",
         paneId: "%16",
-        status: "needs_input",
       });
       await claimTask(db, "stalled", {
         agentName: "idle-1",
@@ -537,7 +536,6 @@ describe("the op formatter", () => {
         "agent close",
         "agent kick",
         "agent spawn",
-        "agent stalled",
         "workspace create",
         "workspace free",
         "workspace refresh",

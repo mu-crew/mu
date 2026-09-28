@@ -4,8 +4,7 @@
 // test/tmux.integration.test.ts.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { STATUS_EMOJI } from "../src/agents.js";
-import { GLYPH } from "../src/glyphs.js";
+import { AGENT_STATE_GLYPH, GLYPH } from "../src/glyphs.js";
 import {
   assertValidPaneId,
   capturePane,
@@ -975,25 +974,29 @@ describe("parseAgentNameFromTitle", () => {
   it("returns the first ' · '-separated token (composed titles)", () => {
     // Use the shared glyph constants production emits, so this test breaks
     // loud if title composition and parsing drift apart.
-    expect(parseAgentNameFromTitle(`worker-a · ${STATUS_EMOJI.needs_input}`)).toBe("worker-a");
-    expect(parseAgentNameFromTitle(`worker-a · ${STATUS_EMOJI.busy} · build_x`)).toBe("worker-a");
-    expect(parseAgentNameFromTitle(`worker-a · ${STATUS_EMOJI.busy} · ${GLYPH.multi}3 tasks`)).toBe(
+    expect(parseAgentNameFromTitle(`worker-a · ${AGENT_STATE_GLYPH.needs_input}`)).toBe("worker-a");
+    expect(parseAgentNameFromTitle(`worker-a · ${AGENT_STATE_GLYPH.busy} · build_x`)).toBe(
       "worker-a",
     );
+    expect(
+      parseAgentNameFromTitle(`worker-a · ${AGENT_STATE_GLYPH.busy} · ${GLYPH.multi}3 tasks`),
+    ).toBe("worker-a");
   });
 
   it("trims whitespace around the name token", () => {
     expect(parseAgentNameFromTitle("  worker-a  ")).toBe("worker-a");
-    expect(parseAgentNameFromTitle(`  worker-a · ${STATUS_EMOJI.needs_input}  `)).toBe("worker-a");
+    expect(parseAgentNameFromTitle(`  worker-a · ${AGENT_STATE_GLYPH.needs_input}  `)).toBe(
+      "worker-a",
+    );
   });
 
-  // Drift guard: every STATUS_EMOJI codepoint must round-trip through
+  // Drift guard: every AGENT_STATE_GLYPH codepoint must round-trip through
   // parseAgentNameFromTitle. The earlier `needs_input + busy` cases
   // pinned 2 of 7 glyphs; this loop pins all 7 so a one-codepoint
-  // change to STATUS_EMOJI[unreachable] (or any other entry) fails
+  // change to AGENT_STATE_GLYPH[unreachable] (or any other entry) fails
   // loud instead of silently degrading state-card / pane-title output.
-  it("recovers the agent name for every STATUS_EMOJI entry", () => {
-    for (const [status, glyph] of Object.entries(STATUS_EMOJI)) {
+  it("recovers the agent name for every AGENT_STATE_GLYPH entry", () => {
+    for (const [status, glyph] of Object.entries(AGENT_STATE_GLYPH)) {
       expect(parseAgentNameFromTitle(`worker-a · ${glyph}`), `status=${status}`).toBe("worker-a");
       expect(
         parseAgentNameFromTitle(`worker-a · ${glyph} · build_x`),

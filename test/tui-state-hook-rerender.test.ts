@@ -75,7 +75,7 @@ function makeSnap(overrides: Partial<WorkstreamSnapshot> = {}): WorkstreamSnapsh
     view: {
       agents: [],
       orphans: [],
-      report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
     },
     tracks: [],
     ready: [],
@@ -101,13 +101,15 @@ describe("snapshotKey — visible-affecting field projection", () => {
     expect(snapshotKeyString(makeSnap()).length).toBeGreaterThan(0);
   });
 
-  it("differs when an agent's status changes", () => {
+  it("differs when an agent's state changes", () => {
     const agent = {
       name: "w1",
       workstreamName: "ws",
       cli: "pi",
       paneId: "%1",
-      status: "busy" as const,
+      state: "busy" as const,
+      source: "murmur" as const,
+      since: null,
       role: "writer",
       tab: null,
       createdAt: "2026-01-01T00:00:00Z",
@@ -117,14 +119,14 @@ describe("snapshotKey — visible-affecting field projection", () => {
       view: {
         agents: [agent],
         orphans: [],
-        report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+        report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
       },
     });
     const b = makeSnap({
       view: {
-        agents: [{ ...agent, status: "needs_input" }],
+        agents: [{ ...agent, state: "needs_input" }],
         orphans: [],
-        report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+        report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
       },
     });
     expect(snapshotKeyString(a)).not.toBe(snapshotKeyString(b));
@@ -242,14 +244,14 @@ describe("snapshotKey — visible-affecting field projection", () => {
       view: {
         agents: [],
         orphans: [],
-        report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+        report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
       },
     });
     const b = makeSnap({
       view: {
         agents: [],
         orphans: [],
-        report: { prunedGhosts: 5, statusChanges: 3, orphans: [], mode: "report-only" },
+        report: { prunedGhosts: 5, orphans: [], mode: "report-only" },
       },
     });
     expect(snapshotKeyString(a)).toBe(snapshotKeyString(b));
@@ -351,7 +353,7 @@ function makeLoaders(fastSequence: WorkstreamSnapshot[]): {
     view: {
       agents: [],
       orphans: [],
-      report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
     },
     workspaces: [],
     recentCommits: [],

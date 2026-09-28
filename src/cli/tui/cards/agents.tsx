@@ -16,12 +16,12 @@
 import { Text } from "ink";
 import type { ReactElement } from "react";
 import {
-  agentStatusHistogram,
+  agentStateHistogram,
   summarizeOwnedTasks,
   type WorkstreamSnapshot,
 } from "../../../state.js";
 import { IDLE_GLYPH } from "../../format.js";
-import { agentStatusGlyph } from "../agent-display.js";
+import { agentStateGlyph } from "../agent-display.js";
 import {
   type ColumnSpec,
   contentWidthFromCols,
@@ -63,7 +63,7 @@ export function AgentsCard({ snapshot, rowBudget, cols }: AgentsCardProps): Reac
   }
 
   const agents = snapshot.view.agents;
-  const histogram = agentStatusHistogram(agents);
+  const histogram = agentStateHistogram(agents);
   const histLabel = formatHistogram(histogram);
 
   if (agents.length === 0) {
@@ -88,7 +88,7 @@ export function AgentsCard({ snapshot, rowBudget, cols }: AgentsCardProps): Reac
     const owned = snapshot.inProgress.filter((t) => t.ownerName === a.name);
     const taskBit = summarizeOwnedTasks(owned).bit;
     const idle = a.idle ? `${IDLE_GLYPH} idle` : "";
-    return [agentStatusGlyph(a.status), a.name, taskBit, idle];
+    return [agentStateGlyph(a.state), a.name, taskBit, idle];
   });
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);
 

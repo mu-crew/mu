@@ -11,8 +11,6 @@ import {
   getAgentByPane,
   insertAgent,
   listAgents,
-  STATUS_EMOJI,
-  updateAgentStatus,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { GLYPH } from "../src/glyphs.js";
@@ -40,13 +38,11 @@ describe("agents CRUD", () => {
       name: "alice",
       workstream: "auth",
       paneId: "%15",
-      status: "spawning",
     });
     expect(row).toMatchObject({
       name: "alice",
       workstreamName: "auth",
       paneId: "%15",
-      status: "spawning",
       cli: "pi", // default
       role: "full-access", // default
       tab: null,
@@ -60,7 +56,6 @@ describe("agents CRUD", () => {
       name: "revv",
       workstream: "review",
       paneId: "%20",
-      status: "busy",
       cli: "claude",
       role: "read-only",
       tab: "Review",
@@ -71,21 +66,17 @@ describe("agents CRUD", () => {
   });
 
   it("insertAgent rejects duplicate name within the SAME workstream (v5 per-ws UNIQUE)", () => {
-    insertAgent(db, { name: "alice", workstream: "a", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "a", paneId: "%1" });
     // v5: agents.name is per-workstream unique. Same name in DIFFERENT
     // workstreams is now legal (cross-workstream namespace was the v4
     // foot-gun this whole schema migration was about). The duplicate
     // case the schema still rejects is (workstream_id, name).
-    expect(() =>
-      insertAgent(db, { name: "alice", workstream: "a", paneId: "%2", status: "busy" }),
-    ).toThrow();
+    expect(() => insertAgent(db, { name: "alice", workstream: "a", paneId: "%2" })).toThrow();
   });
 
   it("insertAgent ALLOWS the same name in a different workstream (v5)", () => {
-    insertAgent(db, { name: "alice", workstream: "a", paneId: "%1", status: "busy" });
-    expect(() =>
-      insertAgent(db, { name: "alice", workstream: "b", paneId: "%2", status: "busy" }),
-    ).not.toThrow();
+    insertAgent(db, { name: "alice", workstream: "a", paneId: "%1" });
+    expect(() => insertAgent(db, { name: "alice", workstream: "b", paneId: "%2" })).not.toThrow();
   });
 
   // ─── getAgent ───────────────────────────────────────────────────────
@@ -99,14 +90,12 @@ describe("agents CRUD", () => {
       name: "alice",
       workstream: "auth",
       paneId: "%15",
-      status: "needs_input",
       tab: "Backend",
     });
     expect(getAgent(db, "alice", "auth")).toMatchObject({
       name: "alice",
       workstreamName: "auth",
       paneId: "%15",
-      status: "needs_input",
       tab: "Backend",
     });
   });
@@ -114,17 +103,17 @@ describe("agents CRUD", () => {
   // ─── listAgents ─────────────────────────────────────────────────────
 
   it("listAgents (no filter) returns all agents ordered by workstream then name", () => {
-    insertAgent(db, { name: "bob", workstream: "auth", paneId: "%2", status: "busy" });
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "carol", workstream: "billing", paneId: "%3", status: "busy" });
+    insertAgent(db, { name: "bob", workstream: "auth", paneId: "%2" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "carol", workstream: "billing", paneId: "%3" });
     const rows = listAgents(db);
     expect(rows.map((r) => r.name)).toEqual(["alice", "bob", "carol"]);
   });
 
   it("listAgents (with workstream filter) returns only that workstream", () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "bob", workstream: "auth", paneId: "%2", status: "busy" });
-    insertAgent(db, { name: "carol", workstream: "billing", paneId: "%3", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "bob", workstream: "auth", paneId: "%2" });
+    insertAgent(db, { name: "carol", workstream: "billing", paneId: "%3" });
     const rows = listAgents(db, { workstream: "auth" });
     expect(rows.map((r) => r.name)).toEqual(["alice", "bob"]);
   });
@@ -133,54 +122,12 @@ describe("agents CRUD", () => {
     expect(listAgents(db)).toEqual([]);
   });
 
-  // ─── updateAgentStatus ──────────────────────────────────────────────
-
-  it("updateAgentStatus changes status and bumps updated_at", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1", status: "spawning" });
-    const before = getAgent(db, "alice", "auth");
-    if (!before) throw new Error("setup failed");
-    // Sleep 5ms so updated_at can differ.
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(updateAgentStatus(db, "alice", "busy", "auth")).toBe(true);
-    const after = getAgent(db, "alice", "auth");
-    expect(after?.status).toBe("busy");
-    expect(after?.updatedAt).not.toBe(before.updatedAt);
-    // created_at must NOT change.
-    expect(after?.createdAt).toBe(before.createdAt);
-  });
-
-  it("updateAgentStatus returns false when no row matches", () => {
-    expect(updateAgentStatus(db, "ghost", "busy", "auth")).toBe(false);
-  });
-
-  it("updateAgentStatus rejects an unknown status via the schema CHECK", () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1", status: "busy" });
-    // The schema CHECK enforces the AgentStatus enum at the SQLite layer.
-    // Catches `mu sql` typos that bypass the TS type system.
-    expect(() => updateAgentStatus(db, "alice", "bogus" as never, "auth")).toThrow(
-      /CHECK constraint failed/,
-    );
-    expect(getAgent(db, "alice", "auth")?.status).toBe("busy");
-  });
-
-  it("insertAgent rejects an unknown status via the schema CHECK", () => {
-    expect(() =>
-      insertAgent(db, {
-        name: "alice",
-        workstream: "auth",
-        paneId: "%1",
-        status: "bogus" as never,
-      }),
-    ).toThrow(/CHECK constraint failed/);
-  });
-
   it("insertAgent rejects an unknown role via the schema CHECK", () => {
     expect(() =>
       insertAgent(db, {
         name: "alice",
         workstream: "auth",
         paneId: "%1",
-        status: "busy",
         role: "superadmin",
       }),
     ).toThrow(/CHECK constraint failed/);
@@ -189,7 +136,7 @@ describe("agents CRUD", () => {
   // ─── deleteAgent ────────────────────────────────────────────────────
 
   it("deleteAgent removes the row and returns true", () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1" });
     expect(deleteAgent(db, "alice", "auth")).toBe(true);
     expect(getAgent(db, "alice", "auth")).toBeUndefined();
   });
@@ -199,8 +146,8 @@ describe("agents CRUD", () => {
   });
 
   it("deleteAgent does not affect other workstreams", () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "carol", workstream: "billing", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "carol", workstream: "billing", paneId: "%2" });
     deleteAgent(db, "alice", "auth");
     expect(listAgents(db).map((r) => r.name)).toEqual(["carol"]);
   });
@@ -208,7 +155,7 @@ describe("agents CRUD", () => {
   // ─── getAgentByPane ───────────────────────────────────────
 
   it("getAgentByPane returns the agent owning a given pane id", () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%7", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%7" });
     expect(getAgentByPane(db, "%7")?.name).toBe("alice");
   });
 
@@ -221,7 +168,6 @@ describe("agents CRUD", () => {
       name: "alice",
       workstream: "auth",
       paneId: "%7",
-      status: "busy",
       cli: "claude",
       role: "read-only",
       tab: "Review",
@@ -232,7 +178,7 @@ describe("agents CRUD", () => {
   // ─── deleteAgent reaper ──────────────────────────────────────
 
   it("deleteAgent reaps stuck IN_PROGRESS tasks back to OPEN", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     addTask(db, {
       localId: "design",
       workstream: "auth",
@@ -252,7 +198,7 @@ describe("agents CRUD", () => {
   });
 
   it("deleteAgent reaper appends a [reaper] task_note explaining the revert", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     addTask(db, {
       localId: "design",
       workstream: "auth",
@@ -271,7 +217,7 @@ describe("agents CRUD", () => {
   });
 
   it("deleteAgent reaper emits a `task reap` event in agent_logs", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     addTask(db, {
       localId: "design",
       workstream: "auth",
@@ -296,8 +242,8 @@ describe("agents CRUD", () => {
   });
 
   it("deleteAgent does NOT reap tasks the agent didn't own", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%2" });
     addTask(db, {
       localId: "a",
       workstream: "auth",
@@ -323,7 +269,7 @@ describe("agents CRUD", () => {
   });
 
   it("deleteAgent does NOT reap CLOSED tasks (only IN_PROGRESS)", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     addTask(db, {
       localId: "done",
       workstream: "auth",
@@ -359,28 +305,14 @@ describe("composeAgentTitle", () => {
   });
 
   it("renders just the agent name when status is 'spawning' (initial state)", () => {
-    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1", status: "spawning" });
+    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1" });
     const a = getAgent(db, "worker-a", "ws");
     if (!a) throw new Error("agent missing");
     expect(composeAgentTitle(db, a)).toBe("worker-a");
   });
 
-  it("renders only the agent name regardless of sampled status when no task is owned", () => {
-    for (const status of Object.keys(STATUS_EMOJI) as (keyof typeof STATUS_EMOJI)[]) {
-      insertAgent(db, {
-        name: `w_${status}`,
-        workstream: "ws",
-        paneId: `%${status}`,
-        status,
-      });
-      const a = getAgent(db, `w_${status}`, "ws");
-      if (!a) throw new Error();
-      expect(composeAgentTitle(db, a), `status=${status}`).toBe(`w_${status}`);
-    }
-  });
-
   it("appends task id when agent owns one task", () => {
-    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1" });
     addTask(db, { localId: "build_x", workstream: "ws", title: "X", impact: 50, effortDays: 1 });
     db.prepare(
       `UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = 'worker-a')
@@ -392,7 +324,7 @@ describe("composeAgentTitle", () => {
   });
 
   it("compresses to '<multi>N tasks' when agent owns multiple tasks", () => {
-    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1" });
     for (const id of ["t_a", "t_b", "t_c"]) {
       addTask(db, { localId: id, workstream: "ws", title: id, impact: 50, effortDays: 1 });
       db.prepare(
@@ -406,7 +338,7 @@ describe("composeAgentTitle", () => {
   });
 
   it("excludes CLOSED tasks from the count (live work view)", () => {
-    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1" });
     for (const id of ["live", "shipped"]) {
       addTask(db, { localId: id, workstream: "ws", title: id, impact: 50, effortDays: 1 });
       db.prepare(
@@ -423,7 +355,7 @@ describe("composeAgentTitle", () => {
 
   it("truncates titles longer than 64 chars with '…'", () => {
     const longName = "agent_with_a_very_long_name_that_pushes_us_over";
-    insertAgent(db, { name: longName, workstream: "ws", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: longName, workstream: "ws", paneId: "%1" });
     addTask(db, {
       localId: "task_with_an_unusually_long_id_too",
       workstream: "ws",

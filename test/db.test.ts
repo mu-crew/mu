@@ -518,7 +518,6 @@ describe("openDb", () => {
       workstream: "auth",
       cli: "pi",
       pane_id: "%15",
-      status: "spawning",
     });
     db.close();
   });

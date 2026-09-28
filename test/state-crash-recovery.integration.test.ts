@@ -37,8 +37,8 @@ afterEach(() => {
 
 describe("mu state --json crash recovery", () => {
   it("reaps ghost agents when tmux list-panes reports no server running", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%2" });
     addTask(db, {
       localId: "design",
       workstream: "auth",

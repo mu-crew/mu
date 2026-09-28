@@ -187,7 +187,7 @@ describe("kickAgent (unit)", () => {
     tempDir = mkdtempSync(join(tmpdir(), "mu-kick-"));
     db = openDb({ path: join(tempDir, "mu.db") });
     ensureWorkstream(db, ws);
-    insertAgent(db, { name: "worker-1", workstream: ws, paneId: "%15", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: ws, paneId: "%15" });
   });
 
   afterEach(() => {
@@ -365,7 +365,7 @@ describeIfTmux("kickAgent integration (real tmux + real ps + real kill)", () => 
       windowName: "main",
       command: `bash -c 'exec sleep ${sleepArg}'`,
     });
-    insertAgent(db, { name: "worker-1", workstream: ws, paneId, status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: ws, paneId });
 
     // Wait for the pane AND for `sleep` to actually be the foreground
     // process. paneExists alone is not enough — tmux creates the pane
@@ -409,7 +409,7 @@ describeIfTmux("kickAgent integration (real tmux + real ps + real kill)", () => 
       windowName: "main",
       command: "bash --norc --noprofile",
     });
-    insertAgent(db, { name: "worker-1", workstream: ws, paneId, status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: ws, paneId });
     await pollUntil(() => paneExists(paneId), {
       description: "idle bash pane exists before kick refusal",
     });

@@ -1,9 +1,10 @@
-import { type AgentRow, agentStatusGlyph } from "../../agents.js";
+import type { LiveAgent } from "../../agents.js";
+import { agentStateGlyph } from "../../glyphs.js";
 import type { WorkstreamSnapshot } from "../../state.js";
 
-type AgentDisplayRow = Pick<AgentRow, "name" | "status">;
+type AgentDisplayRow = Pick<LiveAgent, "name" | "state">;
 
-export { agentStatusGlyph };
+export { agentStateGlyph };
 
 /** Return a stable lookup of live agent rows keyed by agent name. */
 export function agentByName(
@@ -15,7 +16,7 @@ export function agentByName(
 
 /** Render a known live agent row with its status glyph. */
 export function formatKnownAgentDisplayName(agent: AgentDisplayRow): string {
-  return `${agentStatusGlyph(agent.status)} ${agent.name}`;
+  return `${agentStateGlyph(agent.state)} ${agent.name}`;
 }
 
 /**

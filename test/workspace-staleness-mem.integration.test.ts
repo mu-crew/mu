@@ -38,7 +38,7 @@ beforeEach(() => {
   dbDir = mkdtempSync(join(tmpdir(), "mu-ws-db-"));
   db = openDb({ path: join(dbDir, "mu.db") });
   ensureWorkstream(db, "auth");
-  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
 
   projectRoot = mkdtempSync(join(tmpdir(), "mu-ws-project-"));
   writeFileSync(join(projectRoot, "README"), "hello\n");
@@ -57,7 +57,7 @@ afterEach(() => {
 
 describe("decorateWithStaleness", () => {
   it("populates commitsBehindMain on every row (null for none-backend)", async () => {
-    insertAgent(db, { name: "w2", workstream: "auth", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "w2", workstream: "auth", paneId: "%2" });
     await createWorkspace(db, {
       agent: "worker-1",
       workstream: "auth",

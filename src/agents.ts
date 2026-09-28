@@ -5,17 +5,16 @@
 //
 //   - Types & raw-row mapping (RawAgentRow / rowFromDb)
 //   - CRUD primitives        (insertAgent, getAgent, listAgents,
-//                              updateAgentStatus, deleteAgent)
+//                              deleteAgent)
 //   - Verbs                  (spawnAgent, sendToAgent, readAgent,
 //                              closeAgent, listLiveAgents)
 //
-// The verbs compose the CRUD primitives with src/tmux.ts and
-// src/reconcile.ts. They are deliberately thin — each one is essentially
-// "look up the agent, do the tmux thing, update the registry."
+// The verbs compose the CRUD primitives with the mux and reconciliation
+// layers. They are deliberately thin.
 
+import { agentKey, type RuntimeState, readAgentStates, type StateSource } from "./agent-state.js";
 import { type Db, resolveWorkstreamId, tryResolveWorkstreamId } from "./db.js";
-import type { AgentStatus } from "./detect.js";
-import { AGENT_STATUS_GLYPH, agentStatusGlyph, GLYPH } from "./glyphs.js";
+import { GLYPH } from "./glyphs.js";
 import { emitEvent } from "./logs.js";
 import { withOpContext } from "./op-context.js";
 import { type ReconcileMode, type ReconcileReport, reconcile } from "./reconcile.js";
@@ -82,15 +81,12 @@ import { freeWorkspace, getWorkspaceForAgent, isWorkspaceClean } from "./workspa
 // see the closeAgent docstring.)
 import { ensureWorkstream } from "./workstream.js";
 
-export type { AgentStatus };
-
 export interface AgentRow {
   name: string;
   /** Foreign-name reference to the owning workstream. */
   workstreamName: string;
   cli: string;
   paneId: string;
-  status: AgentStatus;
   role: string;
   /** Window name; null when the agent has its own window named after itself. */
   tab: string | null;
@@ -98,20 +94,14 @@ export interface AgentRow {
   createdAt: string;
   /** ISO 8601 timestamp. */
   updatedAt: string;
-  /**
-   * Derived 'idle but assigned' flag (idle_assigned_agent_detection).
-   * Set ONLY by `listLiveAgents` (and the helper `computeAgentIdle`);
-   * never stored in the DB. Predicate:
-   *   status === 'needs_input'
-   *   AND owns ≥1 IN_PROGRESS task in this workstream
-   *   AND (now - updated_at) >= MU_IDLE_THRESHOLD_MS (default 300_000ms)
-   *
-   * Surfaces the third lifecycle state (alive but assigned, no recent
-   * progress) to `mu state` renders + `mu state --json`. Omitted (i.e.
-   * absent — NOT `false`) when the predicate doesn't fire, so JSON
-   * consumers can do a simple `if (agent.idle)` check and the field
-   * stays out of the way for callers that don't care.
-   */
+}
+
+export interface LiveAgent extends AgentRow {
+  state: RuntimeState;
+  source: StateSource;
+  /** ISO 8601 time when the source entered this state. */
+  since: string | null;
+  reason?: string;
   idle?: boolean;
 }
 
@@ -137,13 +127,13 @@ export function idleThresholdMs(): number {
  * read on (agents, tasks); no side effects. Exported so `listLiveAgents`,
  * the renderers, and tests can share one source of truth.
  */
-export function computeAgentIdle(db: Db, agent: AgentRow, now: number = Date.now()): boolean {
-  if (agent.status !== "needs_input") return false;
+export function computeAgentIdle(db: Db, agent: LiveAgent, now: number = Date.now()): boolean {
+  if (agent.state !== "needs_input" || agent.since === null) return false;
   const threshold = idleThresholdMs();
   if (threshold <= 0) return false;
-  const updated = Date.parse(agent.updatedAt);
-  if (!Number.isFinite(updated)) return false;
-  if (now - updated < threshold) return false;
+  const since = Date.parse(agent.since);
+  if (!Number.isFinite(since)) return false;
+  if (now - since < threshold) return false;
   const wsId = tryResolveWorkstreamId(db, agent.workstreamName);
   if (wsId === null) return false;
   const row = db
@@ -161,7 +151,6 @@ export interface InsertAgentInput {
   name: string;
   workstream: string;
   paneId: string;
-  status: AgentStatus;
   /** Defaults to "pi" via schema DEFAULT. */
   cli?: string;
   /** Defaults to "full-access" via schema DEFAULT. */
@@ -175,7 +164,6 @@ interface RawAgentRow {
   workstream: string;
   cli: string;
   pane_id: string;
-  status: string;
   role: string;
   tab: string | null;
   created_at: string;
@@ -190,7 +178,6 @@ const SELECT_AGENT_COLS = `
   ws.name AS workstream,
   a.cli AS cli,
   a.pane_id AS pane_id,
-  a.status AS status,
   a.role AS role,
   a.tab AS tab,
   a.created_at AS created_at,
@@ -205,7 +192,6 @@ function rowFromDb(row: RawAgentRow): AgentRow {
     workstreamName: row.workstream,
     cli: row.cli,
     paneId: row.pane_id,
-    status: row.status as AgentStatus,
     role: row.role,
     tab: row.tab,
     createdAt: row.created_at,
@@ -233,14 +219,13 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, created_at, updated_at)
-     VALUES (@name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, @status,
+     VALUES (@name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
              COALESCE(@role, 'full-access'), @tab, @now, @now)`,
   ).run({
     name: input.name,
     workstreamId,
     cli: input.cli ?? null,
     paneId: input.paneId,
-    status: input.status,
     role: input.role ?? null,
     tab: input.tab ?? null,
     now,
@@ -299,50 +284,6 @@ export function listAgents(db: Db, opts: { workstream?: string } = {}): AgentRow
   return rows.map(rowFromDb);
 }
 
-/**
- * Update an agent's status. Returns true if a row was matched.
- * Also bumps updated_at. Workstream is required (v5: agents.name is
- * per-workstream unique).
- */
-export function updateAgentStatus(
-  db: Db,
-  name: string,
-  status: AgentStatus,
-  workstream: string,
-): boolean {
-  const wsId = tryResolveWorkstreamId(db, workstream);
-  if (wsId === null) return false;
-  const result = db
-    .prepare("UPDATE agents SET status = ?, updated_at = ? WHERE name = ? AND workstream_id = ?")
-    .run(status, new Date().toISOString(), name, wsId);
-  return result.changes > 0;
-}
-
-/**
- * Decide whether a scrollback-detected status should overwrite the
- * persisted one.
- *
- * `free` is sticky until the agent shows real activity:
- *   - free + needs_input  → stay free   (user explicitly marked it free;
- *                                        idle prompt isn't activity)
- *   - free + busy         → flip to busy
- *   - free + needs_permission → flip   (a permission prompt IS activity)
- *
- * Every other persisted status is auto-derived; overwrite freely. This
- * lets `spawning → busy/needs_input/needs_permission` happen on the
- * first reconcile after spawn.
- *
- * Lives on the agent (not on reconcile) because it's a property of the
- * agent's status field — both the periodic-reconcile loop and the
- * inline single-agent reconcile in `mu agent show` share this policy.
- */
-export function shouldOverwriteAgentStatus(current: AgentStatus, detected: AgentStatus): boolean {
-  if (current === "free") {
-    return detected === "busy" || detected === "needs_permission";
-  }
-  return true;
-}
-
 // ─── Pane title composition (mu's durable context) ───────────────────
 //
 // mu owns the pane title as identity plus task context. Runtime status is
@@ -358,15 +299,6 @@ export function shouldOverwriteAgentStatus(current: AgentStatus, detected: Agent
 // claim protocol's pane-title-as-identity fallback (currentPaneTitle
 // in src/tmux.ts) keeps working. Adopted panes that haven't been
 // re-titled by mu just have the name (one token) — still parses.
-
-/** Back-compat alias for the agent status glyph map, which now lives
- *  with every other state glyph in src/glyphs.ts. New code should
- *  import AGENT_STATUS_GLYPH (or the agentStatusGlyph helper) from
- *  there; this name is kept because it is part of the SDK surface via
- *  src/index.ts. */
-export const STATUS_EMOJI = AGENT_STATUS_GLYPH;
-
-export { agentStatusGlyph };
 
 /** Maximum total length for a composed pane title. tmux truncates
  *  silently in some chrome positions; we truncate the task id
@@ -714,7 +646,7 @@ export interface ListLiveAgentsOptions {
 
 export interface LiveAgentsView {
   /** All registered agents in the workstream, post-reconcile. */
-  agents: AgentRow[];
+  agents: LiveAgent[];
   /** Panes in the tmux session that look like agents but aren't registered. */
   orphans: MuxPane[];
   /** Diagnostic numbers from the reconcile pass; useful for `mu doctor`. */
@@ -735,13 +667,24 @@ export async function listLiveAgents(db: Db, opts: ListLiveAgentsOptions): Promi
     ...(opts.mode !== undefined ? { mode: opts.mode } : {}),
   });
   const baseAgents = listAgents(db, { workstream: opts.workstream });
-  // Enrich with the derived `idle` flag (idle_assigned_agent_detection).
-  // One COUNT per agent — cheap; the agents table in any one workstream
-  // is small (typical wave: <10 rows). We add the field only when
-  // idle=true, so non-idle rows JSON-serialize without the noise.
+  const readings = await readAgentStates(baseAgents);
   const now = Date.now();
-  const agents: AgentRow[] = baseAgents.map((a) =>
-    computeAgentIdle(db, a, now) ? { ...a, idle: true } : a,
-  );
+  const agents: LiveAgent[] = baseAgents.map((agent) => {
+    const reading = readings.get(agentKey(agent)) ?? {
+      state: "unknown" as const,
+      source: "none" as const,
+      since: null,
+      alive: true,
+      reason: "state unavailable",
+    };
+    const live: LiveAgent = {
+      ...agent,
+      state: reading.state,
+      source: reading.source,
+      since: reading.since === null ? null : new Date(reading.since).toISOString(),
+      ...(reading.reason !== undefined ? { reason: reading.reason } : {}),
+    };
+    return computeAgentIdle(db, live, now) ? { ...live, idle: true } : live;
+  });
   return { agents, orphans: report.orphans, report };
 }

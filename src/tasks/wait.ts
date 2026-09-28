@@ -25,6 +25,7 @@
 //
 // Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
+import { agentKey, readAgentStates, type StateReading } from "../agent-state.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { StallDetectedDuringWaitError, TaskNotFoundError } from "./errors.js";
@@ -268,50 +269,43 @@ export async function waitForTasks(
   const stuckWarned = new Set<string>();
   const refKey = (ref: TaskWaitRef): string => `${ref.workstreamName}/${ref.name}`;
 
-  /**
-   * Age of the attention-needed condition for one task, or null when
-   * it does not apply: IN_PROGRESS in the DB, owned by a registered
-   * agent whose status is `needs_input` and whose `updated_at` is
-   * older than `stuckAfterMs`. We query agents directly (not via
-   * getAgent) to avoid an import cycle (src/agents.ts already imports
-   * from src/tasks.ts).
-   *
-   * Returns the AGE rather than a boolean so the warning can report
-   * how long the worker has actually been waiting. The old message
-   * quoted `stuckAfterMs` instead, which reads as the worker having
-   * been idle for exactly the threshold — at `--stuck-after 1` it
-   * said "1000ms" about a worker that had been waiting five minutes.
-   */
+  const ownerAgents = () => {
+    const seen = new Set<string>();
+    return refs.flatMap((ref) => {
+      const task = getTask(db, ref.name, ref.workstreamName);
+      if (task?.ownerName === null || task?.ownerName === undefined) return [];
+      const key = `${ref.workstreamName}/${task.ownerName}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      const row = db
+        .prepare(
+          `SELECT a.name, ws.name AS workstreamName, a.pane_id AS paneId
+             FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id
+            WHERE a.name = ? AND ws.name = ?`,
+        )
+        .get(task.ownerName, ref.workstreamName) as
+        | { name: string; workstreamName: string; paneId: string }
+        | undefined;
+      return row === undefined ? [] : [row];
+    });
+  };
+
   const stuckAgeMs = (
     status: TaskStatus,
     owner: string | null,
     workstream: string,
+    readings: ReadonlyMap<string, StateReading>,
   ): number | null => {
-    if (stuckAfterMs <= 0) return null;
-    if (status !== "IN_PROGRESS" || !owner) return null;
-    // owner is the operator-facing agent name; agents.name is
-    // per-workstream unique in v5. Scope the lookup by workstream so
-    // a same-named worker elsewhere doesn't spuriously mark this task
-    // stuck.
-    const row = db
-      .prepare(
-        `SELECT a.status AS status, a.updated_at AS updated_at
-           FROM agents a
-           JOIN workstreams ws ON ws.id = a.workstream_id
-          WHERE a.name = ? AND ws.name = ?`,
-      )
-      .get(owner, workstream) as { status: string; updated_at: string } | undefined;
-    // The explicit `!row` guard narrows `row` for the `row.updated_at` below;
-    // `row?.status !== ...` reads the same but leaves `row` possibly-undefined,
-    // so the next line stops compiling under strict.
-    // biome-ignore lint/complexity/useOptionalChain: narrowing, see above
-    if (!row || row.status !== "needs_input") return null;
-    const ageMs = Date.now() - new Date(row.updated_at).getTime();
+    if (stuckAfterMs <= 0 || status !== "IN_PROGRESS" || owner === null) return null;
+    const reading = readings.get(agentKey({ name: owner, workstreamName: workstream }));
+    if (reading?.state !== "needs_input" || reading.since === null) return null;
+    const ageMs = Date.now() - reading.since;
     return ageMs >= stuckAfterMs ? ageMs : null;
   };
 
   /** Read current state of all tasks; returns the result shape. */
-  const snapshot = (): TaskWaitResult => {
+  const snapshot = async (): Promise<TaskWaitResult> => {
+    const readings = await readAgentStates(ownerAgents());
     const refStates: TaskWaitTaskState[] = refs.map((ref) => {
       const row = getTask(db, ref.name, ref.workstreamName);
       // Defensive: if a task was deleted mid-wait, treat as 'never
@@ -320,7 +314,7 @@ export async function waitForTasks(
       // state change.)
       const status = (row?.status ?? "OPEN") as TaskStatus;
       const owner = row?.ownerName ?? null;
-      const ageMs = stuckAgeMs(status, owner, ref.workstreamName);
+      const ageMs = stuckAgeMs(status, owner, ref.workstreamName, readings);
       const stuck = ageMs !== null;
       const key = refKey(ref);
       if (ageMs !== null && !stuckWarned.has(key)) {
@@ -406,7 +400,7 @@ export async function waitForTasks(
   // even on the immediate-exit path — a dead-pane worker that died
   // BEFORE the operator typed `mu task wait` should still fail fast.
   if (opts.beforePoll) await opts.beforePoll();
-  let snap = snapshot();
+  let snap = await snapshot();
   if (isDone(snap)) return snap;
 
   // Poll loop.
@@ -431,7 +425,7 @@ export async function waitForTasks(
     }
     pollCount += 1;
     if (opts.beforePoll) await opts.beforePoll();
-    snap = snapshot();
+    snap = await snapshot();
     if (isDone(snap)) return snap;
   }
 }

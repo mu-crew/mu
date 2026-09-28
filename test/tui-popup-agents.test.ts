@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { render } from "ink";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AgentRow, insertAgent } from "../src/agents.js";
+import { insertAgent, type LiveAgent } from "../src/agents.js";
 import { AgentsPopup } from "../src/cli/tui/popups/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
@@ -64,32 +64,40 @@ function fixtureDb(): Db {
   return db;
 }
 
-function seedAgents(db: Db): AgentRow[] {
+function seedAgents(db: Db): LiveAgent[] {
   return [
-    insertAgent(db, {
-      name: "worker_1",
-      workstream: "demo",
-      paneId: "%101",
-      status: "free",
-      role: "full-access",
-    }),
-    insertAgent(db, {
-      name: "worker_2",
-      workstream: "demo",
-      paneId: "%102",
-      status: "busy",
-      role: "read-only",
-    }),
+    {
+      ...insertAgent(db, {
+        name: "worker_1",
+        workstream: "demo",
+        paneId: "%101",
+        role: "full-access",
+      }),
+      state: "busy",
+      source: "murmur",
+      since: null,
+    },
+    {
+      ...insertAgent(db, {
+        name: "worker_2",
+        workstream: "demo",
+        paneId: "%102",
+        role: "read-only",
+      }),
+      state: "needs_input",
+      source: "murmur",
+      since: null,
+    },
   ];
 }
 
-function snapshotFor(agents: AgentRow[]): WorkstreamSnapshot {
+function snapshotFor(agents: LiveAgent[]): WorkstreamSnapshot {
   return {
     workstreamName: "demo",
     view: {
       agents,
       orphans: [],
-      report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
     },
     tracks: [],
     ready: [],
@@ -152,7 +160,7 @@ describe("AgentsPopup behaviour (mount + simulateInput)", () => {
 
     expect(text).toContain("worker_1");
     expect(text).toContain("worker_2");
-    expect(text).toContain("free");
+    expect(text).toContain("needs_input");
     expect(text).toContain("busy");
     // Title carries the (selected/total) cursor counter.
     expect(text).toMatch(/Agents · popup \(1\/2\)/);

@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type AgentStatus, getAgent, insertAgent, listAgents } from "../src/agents.js";
+import { getAgent, insertAgent, listAgents } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { listLogs } from "../src/logs.js";
 import { reconcile } from "../src/reconcile.js";
@@ -73,7 +73,6 @@ const fail = (stderr: string, exitCode = 1): TmuxExecResult => ({
 // Realistic scrollback fixtures matching the patterns in detect.ts.
 const BUSY_SCROLLBACK = "...\nWorking... (Esc to interrupt)";
 const IDLE_SCROLLBACK = "...\n> ";
-const PERMISSION_SCROLLBACK = "...\n(Esc to cancel, Enter to submit)";
 
 // ─── Setup / teardown ──────────────────────────────────────────────────
 
@@ -101,7 +100,6 @@ describe("reconcile — empty cases", () => {
     const report = await reconcile(db, { workstream: "auth" });
     expect(report).toEqual({
       prunedGhosts: 0,
-      statusChanges: 0,
       orphans: [],
       mode: "full",
     });
@@ -126,7 +124,7 @@ describe("reconcile — empty cases", () => {
 
 describe("reconcile — pruning ghost rows", () => {
   it("DB row with missing pane → pruned", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%99", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%99" });
     const { executor } = mockTmux([]); // no panes
     setTmuxExecutor(executor);
     const report = await reconcile(db, { workstream: "auth" });
@@ -135,7 +133,7 @@ describe("reconcile — pruning ghost rows", () => {
   });
 
   it("full mode prunes a normal pane id missing from tmux", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%99", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%99" });
     const { executor } = mockTmux([]);
     setTmuxExecutor(executor);
 
@@ -151,7 +149,6 @@ describe("reconcile — pruning ghost rows", () => {
       name: "alice",
       workstream: "auth",
       paneId: "%pending-alice",
-      status: "spawning",
     });
     const { executor, calls } = mockTmux([]);
     setTmuxExecutor(executor);
@@ -165,7 +162,7 @@ describe("reconcile — pruning ghost rows", () => {
   });
 
   it("DB row with matching pane → NOT pruned", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
     const { executor } = mockTmux([
       { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
     ]);
@@ -176,9 +173,9 @@ describe("reconcile — pruning ghost rows", () => {
   });
 
   it("multiple ghosts pruned at once; survivors kept", async () => {
-    insertAgent(db, { name: "alive", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "dead1", workstream: "auth", paneId: "%99", status: "busy" });
-    insertAgent(db, { name: "dead2", workstream: "auth", paneId: "%100", status: "busy" });
+    insertAgent(db, { name: "alive", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "dead1", workstream: "auth", paneId: "%99" });
+    insertAgent(db, { name: "dead2", workstream: "auth", paneId: "%100" });
     const { executor } = mockTmux([
       { windowId: "@1", paneId: "%1", title: "alive", command: "pi", scrollback: IDLE_SCROLLBACK },
     ]);
@@ -189,12 +186,11 @@ describe("reconcile — pruning ghost rows", () => {
   });
 
   it("workstream isolation: ghost in one workstream doesn't touch another", async () => {
-    insertAgent(db, { name: "auth-bob", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "auth-bob", workstream: "auth", paneId: "%1" });
     insertAgent(db, {
       name: "billing-carol",
       workstream: "billing",
       paneId: "%99",
-      status: "busy",
     });
     // Reconciling 'auth' should only consider 'auth' agents.
     const { executor } = mockTmux([]);
@@ -206,109 +202,7 @@ describe("reconcile — pruning ghost rows", () => {
   });
 });
 
-// ─── Step 2: detect status from scrollback ─────────────────────────────
-
-describe("reconcile — status detection", () => {
-  it("spawning → busy when loading animation visible", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "spawning" });
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
-    ]);
-    setTmuxExecutor(executor);
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.statusChanges).toBe(1);
-    expect(getAgent(db, "alice", "auth")?.status).toBe("busy");
-  });
-
-  it("spawning → needs_input when prompt visible", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "spawning" });
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: IDLE_SCROLLBACK },
-    ]);
-    setTmuxExecutor(executor);
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.statusChanges).toBe(1);
-    expect(getAgent(db, "alice", "auth")?.status).toBe("needs_input");
-  });
-
-  it("busy → needs_permission when permission prompt appears", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "busy" });
-    const { executor } = mockTmux([
-      {
-        windowId: "@1",
-        paneId: "%15",
-        title: "alice",
-        command: "pi",
-        scrollback: PERMISSION_SCROLLBACK,
-      },
-    ]);
-    setTmuxExecutor(executor);
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.statusChanges).toBe(1);
-    expect(getAgent(db, "alice", "auth")?.status).toBe("needs_permission");
-  });
-
-  it("status unchanged when detected matches current → 0 statusChanges", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "busy" });
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
-    ]);
-    setTmuxExecutor(executor);
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.statusChanges).toBe(0);
-    expect(getAgent(db, "alice", "auth")?.status).toBe("busy");
-  });
-
-  it("free + idle scrollback → free stays (sticky)", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "free" });
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: IDLE_SCROLLBACK },
-    ]);
-    setTmuxExecutor(executor);
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.statusChanges).toBe(0);
-    expect(getAgent(db, "alice", "auth")?.status).toBe("free");
-  });
-
-  it("free + busy scrollback → flips to busy (real activity wins)", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "free" });
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
-    ]);
-    setTmuxExecutor(executor);
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.statusChanges).toBe(1);
-    expect(getAgent(db, "alice", "auth")?.status).toBe("busy");
-  });
-
-  it("free + permission prompt → flips to needs_permission", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "free" });
-    const { executor } = mockTmux([
-      {
-        windowId: "@1",
-        paneId: "%15",
-        title: "alice",
-        command: "pi",
-        scrollback: PERMISSION_SCROLLBACK,
-      },
-    ]);
-    setTmuxExecutor(executor);
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.statusChanges).toBe(1);
-    expect(getAgent(db, "alice", "auth")?.status).toBe("needs_permission");
-  });
-
-  it("ghost row is pruned BEFORE its status would be detected (no error)", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%99", status: "busy" });
-    const { executor, calls } = mockTmux([]); // empty tmux
-    setTmuxExecutor(executor);
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.prunedGhosts).toBe(1);
-    expect(report.statusChanges).toBe(0);
-    // capture-pane should not have been called for the missing pane.
-    expect(calls.some((c) => c[0] === "capture-pane")).toBe(false);
-  });
-});
+// Runtime state is resolved outside reconciliation.
 
 // ─── Step 3: surface orphans ───────────────────────────────────────────
 
@@ -353,7 +247,7 @@ describe("reconcile — orphan surfacing", () => {
   });
 
   it("registered pi pane → NOT surfaced (it's already an agent)", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
     const { executor } = mockTmux([
       { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
     ]);
@@ -363,7 +257,7 @@ describe("reconcile — orphan surfacing", () => {
   });
 
   it("registered + orphan + bash mixed: only orphan agent panes surface", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
     const { executor } = mockTmux([
       { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
       { windowId: "@2", paneId: "%42", title: "stranger", command: "pi", scrollback: "" },
@@ -381,9 +275,9 @@ describe("reconcile — combined scenarios", () => {
   it("full mixed scenario: prune + detect + orphan in one pass", async () => {
     // Three registered agents, two of which still exist; statuses change;
     // plus one orphan pane.
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1", status: "spawning" });
-    insertAgent(db, { name: "bob", workstream: "auth", paneId: "%2", status: "busy" });
-    insertAgent(db, { name: "carol", workstream: "auth", paneId: "%999", status: "busy" }); // ghost
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "bob", workstream: "auth", paneId: "%2" });
+    insertAgent(db, { name: "carol", workstream: "auth", paneId: "%999" }); // ghost
 
     const { executor } = mockTmux([
       // alice: was spawning, scrollback shows busy → flip
@@ -407,18 +301,15 @@ describe("reconcile — combined scenarios", () => {
 
     expect(report).toMatchObject({
       prunedGhosts: 1,
-      statusChanges: 2,
     });
     expect(report.orphans.map((o) => o.paneId)).toEqual(["%50"]);
 
     // DB state matches the report.
-    expect(getAgent(db, "alice", "auth")?.status).toBe("busy");
-    expect(getAgent(db, "bob", "auth")?.status).toBe("needs_input");
     expect(getAgent(db, "carol", "auth")).toBeUndefined();
   });
 
   it("repeated reconcile is idempotent when nothing has changed", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
     const { executor } = mockTmux([
       { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
     ]);
@@ -428,56 +319,8 @@ describe("reconcile — combined scenarios", () => {
     const second = await reconcile(db, { workstream: "auth" });
 
     // First pass detects nothing (status already busy, matches BUSY_SCROLLBACK).
-    expect(first).toEqual({ prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "full" });
-    expect(second).toEqual({ prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "full" });
-  });
-
-  it("status update bumps updated_at", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "spawning" });
-    const before = getAgent(db, "alice", "auth")?.updatedAt;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
-    ]);
-    setTmuxExecutor(executor);
-    await reconcile(db, { workstream: "auth" });
-    const after = getAgent(db, "alice", "auth")?.updatedAt;
-    expect(after).not.toBe(before);
-  });
-
-  it("does not modify rows in unrelated workstreams during status detection", async () => {
-    insertAgent(db, { name: "auth-alice", workstream: "auth", paneId: "%1", status: "spawning" });
-    insertAgent(db, {
-      name: "billing-bob",
-      workstream: "billing",
-      paneId: "%2",
-      status: "spawning",
-    });
-
-    const { executor } = mockTmux([
-      // Both panes exist in tmux, but reconcile is called for 'auth' only.
-      {
-        windowId: "@1",
-        paneId: "%1",
-        title: "auth-alice",
-        command: "pi",
-        scrollback: BUSY_SCROLLBACK,
-      },
-      {
-        windowId: "@2",
-        paneId: "%2",
-        title: "billing-bob",
-        command: "pi",
-        scrollback: BUSY_SCROLLBACK,
-      },
-    ]);
-    setTmuxExecutor(executor);
-
-    await reconcile(db, { workstream: "auth" });
-
-    expect(getAgent(db, "auth-alice", "auth")?.status).toBe("busy");
-    // billing-bob was NOT touched.
-    expect(getAgent(db, "billing-bob", "billing")?.status).toBe("spawning");
+    expect(first).toEqual({ prunedGhosts: 0, orphans: [], mode: "full" });
+    expect(second).toEqual({ prunedGhosts: 0, orphans: [], mode: "full" });
   });
 });
 
@@ -485,7 +328,7 @@ describe("reconcile — combined scenarios", () => {
 
 describe("reconcile — mode: 'report-only' does not mutate (snap_undo_reconcile_destroys_recovered_agents)", () => {
   it("counts ghosts but does NOT delete the agent row", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%99", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%99" });
     // Empty tmux: alice's pane %99 is gone.
     const { executor } = mockTmux([]);
     setTmuxExecutor(executor);
@@ -499,7 +342,7 @@ describe("reconcile — mode: 'report-only' does not mutate (snap_undo_reconcile
   });
 
   it("a follow-up mode:'full' pass still prunes (mode is opt-in per call)", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%99", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%99" });
     const { executor } = mockTmux([]);
     setTmuxExecutor(executor);
 
@@ -514,28 +357,11 @@ describe("reconcile — mode: 'report-only' does not mutate (snap_undo_reconcile
     expect(getAgent(db, "alice", "auth")).toBeUndefined();
   });
 
-  it("skips status detection entirely (statusChanges is always 0)", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "spawning" });
-    // Pane is alive AND its scrollback would normally flip alice
-    // spawning → busy. report-only must suppress that write.
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
-    ]);
-    setTmuxExecutor(executor);
-
-    const report = await reconcile(db, { workstream: "auth", mode: "report-only" });
-    expect(report.mode).toBe("report-only");
-    expect(report.statusChanges).toBe(0);
-    // Status unchanged (no write).
-    expect(getAgent(db, "alice", "auth")?.status).toBe("spawning");
-  });
-
   it("skips placeholder pane ids during report-only prune", async () => {
     insertAgent(db, {
       name: "alice",
       workstream: "auth",
       paneId: "%pending-alice",
-      status: "spawning",
     });
     const { executor, calls } = mockTmux([]);
     setTmuxExecutor(executor);
@@ -569,7 +395,7 @@ describe("reconcile — mode: 'report-only' does not mutate (snap_undo_reconcile
     //   4. post-restore reconcile sees pane is dead
     //   5. WITHOUT report-only: prunes the agents row + cascades vcs_workspaces away
     //   6. WITH    report-only: counts the would-be-prune; row stays
-    insertAgent(db, { name: "dog-1", workstream: "auth", paneId: "%2919", status: "needs_input" });
+    insertAgent(db, { name: "dog-1", workstream: "auth", paneId: "%2919" });
     // Pane is gone in tmux (the destroy killed it).
     const { executor } = mockTmux([]);
     setTmuxExecutor(executor);
@@ -587,43 +413,10 @@ describe("reconcile — mode: 'report-only' does not mutate (snap_undo_reconcile
   });
 });
 
-describe("reconcile — full mode refreshes status and protects placeholders", () => {
-  it("updates status from scrollback", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "spawning" });
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
-    ]);
-    setTmuxExecutor(executor);
-
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.mode).toBe("full");
-    expect(report.statusChanges).toBe(1);
-    expect(getAgent(db, "alice", "auth")?.status).toBe("busy");
-  });
-
-  it("skips status detection on placeholder agents whose pane id starts with %pending-", async () => {
-    insertAgent(db, {
-      name: "alice",
-      workstream: "auth",
-      paneId: "%pending-alice",
-      status: "spawning",
-    });
-    const { executor, calls } = mockTmux([]);
-    setTmuxExecutor(executor);
-
-    const report = await reconcile(db, { workstream: "auth" });
-    expect(report.mode).toBe("full");
-    expect(getAgent(db, "alice", "auth")?.status).toBe("spawning");
-    expect(report.statusChanges).toBe(0);
-    expect(report.prunedGhosts).toBe(0);
-    expect(calls.some((c) => c[0] === "capture-pane" && c.includes("%pending-alice"))).toBe(false);
-  });
-});
-
 describe("reconcile — wholesale tmux crash recovery", () => {
   it("deletes all lost agents and reaps their IN_PROGRESS tasks", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%2" });
     addTask(db, {
       localId: "design",
       workstream: "auth",
@@ -668,28 +461,5 @@ describe("reconcile — wholesale tmux crash recovery", () => {
       "auth/design",
       "auth/impl",
     ]);
-  });
-});
-
-describe("reconcile — status sanity", () => {
-  it("does not introduce statuses outside the AgentStatus union", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15", status: "spawning" });
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
-    ]);
-    setTmuxExecutor(executor);
-    await reconcile(db, { workstream: "auth" });
-    const status = getAgent(db, "alice", "auth")?.status;
-    const valid: AgentStatus[] = [
-      "spawning",
-      "busy",
-      "needs_input",
-      "needs_permission",
-      "free",
-      "unreachable",
-      "terminated",
-    ];
-    expect(status).toBeDefined();
-    expect(valid).toContain(status);
   });
 });

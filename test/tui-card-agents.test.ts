@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentRow } from "../src/agents.js";
+import type { LiveAgent } from "../src/agents.js";
 import { IDLE_GLYPH } from "../src/cli/format.js";
 import { AgentsCard } from "../src/cli/tui/cards/agents.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
@@ -11,7 +11,7 @@ const EMPTY_SNAPSHOT: WorkstreamSnapshot = {
   view: {
     agents: [],
     orphans: [],
-    report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+    report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
   },
   tracks: [],
   ready: [],
@@ -27,13 +27,15 @@ const EMPTY_SNAPSHOT: WorkstreamSnapshot = {
   doctor: null,
 };
 
-function agent(over: Partial<AgentRow> = {}): AgentRow {
+function agent(over: Partial<LiveAgent> = {}): LiveAgent {
   return {
     name: "worker-1",
     workstreamName: "demo",
     cli: "pi",
     paneId: "%1",
-    status: "busy",
+    state: "busy",
+    source: "murmur",
+    since: null,
     role: "full-access",
     tab: null,
     createdAt: "2026-05-11T00:00:00Z",
@@ -76,8 +78,8 @@ describe("AgentsCard", () => {
       view: {
         ...EMPTY_SNAPSHOT.view,
         agents: [
-          agent({ name: "worker-1", status: "busy", idle: true }),
-          agent({ name: "reviewer-1", paneId: "%2", status: "needs_input" }),
+          agent({ name: "worker-1", idle: true }),
+          agent({ name: "reviewer-1", paneId: "%2", state: "needs_input" }),
         ],
       },
       inProgress: [

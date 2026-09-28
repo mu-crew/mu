@@ -7,13 +7,13 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgentRow } from "../src/agents.js";
+import type { LiveAgent } from "../src/agents.js";
 import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { GLYPH } from "../src/glyphs.js";
 import { renderOp } from "../src/log-render.js";
 import {
-  agentStatusHistogram,
+  agentStateHistogram,
   loadWorkstreamSnapshot,
   loadWorkstreamSnapshotFast,
   loadWorkstreamSnapshotSlow,
@@ -75,13 +75,15 @@ function git(repo: string, ...args: string[]): string {
   return execFileSync("git", ["-C", repo, ...args], { env, encoding: "utf8" }).trim();
 }
 
-function agent(over: Partial<AgentRow> = {}): AgentRow {
+function agent(over: Partial<LiveAgent> = {}): LiveAgent {
   return {
     name: "worker-1",
     workstreamName: "ws",
     cli: "pi",
     paneId: "%1",
-    status: "busy",
+    state: "busy",
+    source: "murmur",
+    since: null,
     role: "full-access",
     tab: null,
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -130,19 +132,19 @@ describe("roiBucket", () => {
   });
 });
 
-describe("agentStatusHistogram", () => {
+describe("agentStateHistogram", () => {
   it("returns empty map for no agents", () => {
-    const h = agentStatusHistogram([]);
+    const h = agentStateHistogram([]);
     expect(h.size).toBe(0);
   });
 
   it("counts per status", () => {
-    const agents: AgentRow[] = [
-      agent({ name: "a", status: "busy" }),
-      agent({ name: "b", status: "busy" }),
-      agent({ name: "c", status: "needs_input" }),
+    const agents: LiveAgent[] = [
+      agent({ name: "a" }),
+      agent({ name: "b" }),
+      agent({ name: "c", state: "needs_input" }),
     ];
-    const h = agentStatusHistogram(agents);
+    const h = agentStateHistogram(agents);
     expect(h.get("busy")).toBe(2);
     expect(h.get("needs_input")).toBe(1);
     expect(h.size).toBe(2);
@@ -196,7 +198,7 @@ describe("loadWorkstreamSnapshot", () => {
       view: {
         agents: [],
         orphans: [],
-        report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+        report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
       },
       tracks: [],
       ready: [],
@@ -235,7 +237,6 @@ describe("loadWorkstreamSnapshot", () => {
         name: "worker-1",
         workstream: "demo",
         paneId: "%1",
-        status: "needs_input",
       });
       addTask(db, {
         localId: "ready",
@@ -271,9 +272,7 @@ describe("loadWorkstreamSnapshot", () => {
       expect(fast.doctor).toBeNull();
 
       const slow = await loadWorkstreamSnapshotSlow(db, "demo", { withDoctor: true }, fast);
-      expect(slow.view.agents).toEqual([
-        expect.objectContaining({ name: "worker-1", status: "busy" }),
-      ]);
+      expect(slow.view.agents).toEqual([expect.objectContaining({ name: "worker-1" })]);
       expect(slow.view.orphans).toEqual([]);
       expect(slow.workspaces).toEqual([]);
       expect(slow.recentCommits).toEqual([]);

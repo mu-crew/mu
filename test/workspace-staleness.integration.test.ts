@@ -71,7 +71,6 @@ beforeEach(() => {
     name: "worker-1",
     workstream: "auth",
     paneId: "%pending-worker-1",
-    status: "busy",
   });
   db.close();
 });

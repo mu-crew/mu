@@ -34,7 +34,7 @@ describe("deleteAgent reaper transactional rollback", () => {
   });
 
   it("rolls back the entire sequence if addNote throws mid-loop", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     addTask(db, {
       localId: "design",
       workstream: "auth",
@@ -114,7 +114,7 @@ describe("deleteAgent reaper transactional rollback", () => {
   });
 
   it("commits the whole sequence on the happy path (control)", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     addTask(db, {
       localId: "design",
       workstream: "auth",

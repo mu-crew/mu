@@ -28,7 +28,7 @@ import {
   TaskNotFoundError,
   waitForTasks,
 } from "../src/tasks.js";
-import { resetTmuxExecutor } from "../src/tmux.js";
+import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 
 // ─── Setup / teardown ──────────────────────────────────────────────────
 
@@ -277,7 +277,6 @@ describe("waitForTasks", () => {
       name: "worker-stuck",
       workstream: "test",
       paneId: "%99",
-      status: "needs_input",
     });
     db.prepare(
       `UPDATE tasks SET status = 'IN_PROGRESS',
@@ -285,10 +284,12 @@ describe("waitForTasks", () => {
               updated_at = ?
         WHERE local_id = ?`,
     ).run("worker-stuck", new Date().toISOString(), "a");
-    db.prepare("UPDATE agents SET status = 'needs_input', updated_at = ? WHERE name = ?").run(
-      new Date(Date.now() - 10 * 60_000).toISOString(),
-      "worker-stuck",
-    );
+    const since = Date.now() - 10 * 60_000;
+    setTmuxExecutor(async (args) => ({
+      stdout: args[0] === "list-panes" && args[1] === "-a" ? `%99\tidle\t${since}` : "",
+      stderr: "",
+      exitCode: 0,
+    }));
 
     const warnings: string[] = [];
     const restoreWarn = setWaitStuckWarnForTests((msg) => {
@@ -366,7 +367,6 @@ describe("waitForTasks", () => {
       name: "worker-onstall",
       workstream: "test",
       paneId: "%101",
-      status: "needs_input",
     });
     db.prepare(
       `UPDATE tasks SET status = 'IN_PROGRESS',
@@ -374,10 +374,12 @@ describe("waitForTasks", () => {
               updated_at = ?
         WHERE local_id = ?`,
     ).run("worker-onstall", new Date().toISOString(), "a");
-    db.prepare("UPDATE agents SET status = 'needs_input', updated_at = ? WHERE name = ?").run(
-      new Date(Date.now() - 10 * 60_000).toISOString(),
-      "worker-onstall",
-    );
+    const since = Date.now() - 10 * 60_000;
+    setTmuxExecutor(async (args) => ({
+      stdout: args[0] === "list-panes" && args[1] === "-a" ? `%101\tidle\t${since}` : "",
+      stderr: "",
+      exitCode: 0,
+    }));
 
     const warnings: string[] = [];
     const restoreWarn = setWaitStuckWarnForTests((msg) => {
@@ -411,17 +413,18 @@ describe("waitForTasks", () => {
       name: "w-fields",
       workstream: "test",
       paneId: "%102",
-      status: "needs_input",
     });
     db.prepare(
       `UPDATE tasks SET status = 'IN_PROGRESS',
               owner_id = (SELECT id FROM agents WHERE name = ?)
         WHERE local_id = ?`,
     ).run("w-fields", "a");
-    db.prepare("UPDATE agents SET status = 'needs_input', updated_at = ? WHERE name = ?").run(
-      new Date(Date.now() - 600_000).toISOString(),
-      "w-fields",
-    );
+    const since = Date.now() - 600_000;
+    setTmuxExecutor(async (args) => ({
+      stdout: args[0] === "list-panes" && args[1] === "-a" ? `%102\tidle\t${since}` : "",
+      stderr: "",
+      exitCode: 0,
+    }));
     const restoreWarn = setWaitStuckWarnForTests(() => {});
     const restoreSleep = setWaitSleepForTests(async () => {});
     try {
@@ -464,7 +467,6 @@ describe("waitForTasks", () => {
       name: "w-precedence",
       workstream: "test",
       paneId: "%103",
-      status: "needs_input",
     });
     db.prepare(
       `UPDATE tasks SET status = 'IN_PROGRESS',
@@ -503,7 +505,6 @@ describe("waitForTasks", () => {
       name: "worker-stuck2",
       workstream: "test",
       paneId: "%100",
-      status: "needs_input",
     });
     db.prepare(
       `UPDATE tasks SET status = 'IN_PROGRESS',

@@ -50,7 +50,7 @@
 import type { ReactElement } from "react";
 import type { WorkstreamSnapshot } from "../../../state.js";
 import { inkColorForStatus } from "../../format.js";
-import { agentByName, agentStatusGlyph, formatAgentRefDisplayName } from "../agent-display.js";
+import { agentByName, agentStateGlyph, formatAgentRefDisplayName } from "../agent-display.js";
 import {
   type ColumnSpec,
   contentWidthFromCols,
@@ -73,7 +73,7 @@ export interface InProgressCardProps {
 export const cardConfig = CARD_CONFIGS[6];
 
 /** Glyph for every IN_PROGRESS task. Mirrors the busy agent status glyph. */
-export const GLYPH = agentStatusGlyph("busy");
+export const GLYPH = agentStateGlyph("busy");
 
 /** ≥5min since the last lifecycle flip → "stale claim". Matches the
  *  default value of MU_IDLE_THRESHOLD_MS (300_000ms / 5min) used by

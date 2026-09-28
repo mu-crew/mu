@@ -17,7 +17,6 @@ import {
   insertAgent,
   isValidAgentName,
   listAgents,
-  spawnAgent,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
@@ -83,99 +82,6 @@ describe("isValidAgentName", () => {
 // miss needs_input for minutes. The fix re-runs detectPiStatus on
 // the scrollback the handler already captures.
 
-describe("cmdAgentShow fresh-status reconciliation", () => {
-  it("updates agents.status from the freshly captured scrollback", async () => {
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(executor);
-    const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
-    const pane = state.panes.get(agent.paneId);
-    if (!pane) throw new Error("setup: pane missing after spawn");
-
-    // Force the persisted status to a stale value (not what the
-    // scrollback says).
-    db.prepare("UPDATE agents SET status = 'free' WHERE name = ?").run("worker-1");
-    expect(getAgent(db, "worker-1", "auth")?.status).toBe("free");
-
-    // Now plant a busy-shaped scrollback. detectPiStatus recognises
-    // "esc to interrupt" as the active-work marker.
-    pane.scrollback = "Working on the refactor... (Esc to interrupt)";
-
-    // Drive the CLI: `mu agent show worker-1 --json`. cmdAgentShow
-    // should re-detect from the captured scrollback and flip
-    // agents.status to busy.
-    const { buildProgram } = await import("../src/cli.js");
-    const originalLog = console.log;
-    let stdout = "";
-    // biome-ignore lint/suspicious/noExplicitAny: shim signature matches what we need
-    console.log = (...args: any[]) => {
-      stdout += `${args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")}\n`;
-    };
-    const originalDb = process.env.MU_DB_PATH;
-    process.env.MU_DB_PATH = join(tempDir, "mu.db");
-    try {
-      const program = buildProgram();
-      program.exitOverride();
-      await program.parseAsync(["node", "mu", "agent", "show", "worker-1", "-w", "auth", "--json"]);
-    } finally {
-      console.log = originalLog;
-      if (originalDb === undefined) {
-        const key = "MU_DB_PATH";
-        delete process.env[key];
-      } else {
-        process.env.MU_DB_PATH = originalDb;
-      }
-    }
-
-    // The persisted row should now be 'busy' (status was reconciled).
-    expect(getAgent(db, "worker-1", "auth")?.status).toBe("busy");
-
-    // The JSON payload should also reflect 'busy' (the displayed-row
-    // refresh path).
-    const parsed = JSON.parse(stdout.trim()) as { agent: { status: string } };
-    expect(parsed.agent.status).toBe("busy");
-  });
-
-  it("keeps 'free' sticky against an idle prompt (mirrors reconcile)", async () => {
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(executor);
-    const agent = await spawnAgent(db, { name: "worker-2", workstream: "auth" });
-    const pane = state.panes.get(agent.paneId);
-    if (!pane) throw new Error("setup: pane missing after spawn");
-
-    db.prepare("UPDATE agents SET status = 'free' WHERE name = ?").run("worker-2");
-
-    // "❯ " alone is detected as needs_input (idle prompt). 'free' is
-    // sticky against needs_input — user-marked-free shouldn't bounce
-    // back to busy on a quiet prompt.
-    pane.scrollback = "❯ ";
-
-    const { buildProgram } = await import("../src/cli.js");
-    const originalLog = console.log;
-    // biome-ignore lint/suspicious/noExplicitAny: shim
-    console.log = (..._args: any[]) => {};
-    const originalDb = process.env.MU_DB_PATH;
-    process.env.MU_DB_PATH = join(tempDir, "mu.db");
-    try {
-      const program = buildProgram();
-      program.exitOverride();
-      await program.parseAsync(["node", "mu", "agent", "show", "worker-2", "-w", "auth", "--json"]);
-    } finally {
-      console.log = originalLog;
-      if (originalDb === undefined) {
-        const key = "MU_DB_PATH";
-        delete process.env[key];
-      } else {
-        process.env.MU_DB_PATH = originalDb;
-      }
-    }
-
-    // Status should still be 'free' — shouldOverwrite kept it sticky.
-    expect(getAgent(db, "worker-2", "auth")?.status).toBe("free");
-  });
-});
-
-// ─── adoptAgent ────────────────────────────────────────────────────────
-
 describe("adoptAgent (register an existing tmux pane as a managed agent)", () => {
   // Seed an orphan pane: pretend a session exists with one pane that
   // wasn't created via spawn. mu agent adopt then registers it.
@@ -212,7 +118,6 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     expect(result.agent.name).toBe("worker-2");
     expect(result.agent.paneId).toBe(paneId);
     expect(result.agent.workstreamName).toBe("auth");
-    expect(result.agent.status).toBe("free");
     expect(getAgent(db, "worker-2", "auth")).toMatchObject({ name: "worker-2", paneId });
     // No select-pane -T call (no retitle).
     expect(calls.find((c) => c[0] === "select-pane")).toBeUndefined();
@@ -262,7 +167,6 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
       name: "worker-2",
       workstream: "auth",
       paneId: "%50",
-      status: "free",
     });
     const { paneId } = seedOrphanPane({ sessionName: "mu-auth", title: "worker-2" });
     await expect(adoptAgent(db, { paneId, workstream: "auth" })).rejects.toBeInstanceOf(

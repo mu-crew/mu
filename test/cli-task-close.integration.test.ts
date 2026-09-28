@@ -67,7 +67,7 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
   async function seedDb(opts: { withWorkspace: boolean }): Promise<WorkspaceRow | undefined> {
     const db = openDb({ path: dbPath });
     ensureWorkstream(db, "test");
-    insertAgent(db, { name: "worker-1", workstream: "test", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "test", paneId: "%1" });
     addTask(db, {
       localId: "dirty_human",
       workstream: "test",

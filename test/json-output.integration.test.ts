@@ -29,7 +29,6 @@ describe("--json output on read verbs", () => {
       name: "worker-1",
       workstream: "auth",
       paneId: "%42",
-      status: "busy",
     });
     addTask(db, { localId: "a", workstream: "auth", title: "A", impact: 80, effortDays: 2 });
     addTask(db, {
@@ -344,7 +343,7 @@ describe("--json output on read verbs", () => {
 
     expect(parsed.workstreamName).toBe("auth");
     expect(parsed.agents).toEqual([
-      expect.objectContaining({ name: "worker-1", status: "needs_input", workstreamName: "auth" }),
+      expect.objectContaining({ name: "worker-1", workstreamName: "auth" }),
     ]);
     expect(parsed.orphans).toEqual([]);
     expect(parsed.ready).toEqual(
@@ -401,7 +400,6 @@ describe("--json output on read verbs", () => {
       expect.objectContaining({
         name: "worker-1",
         paneId: "%42",
-        status: "needs_input",
         workstreamName: "auth",
       }),
     ]);
