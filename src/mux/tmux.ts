@@ -25,8 +25,8 @@
 // that modal after its Enter has returned. See `awaitPaneQuiescence`.
 
 import { execa } from "execa";
-import { detectPiStatus } from "../detect.js";
 import type { NextStep } from "../output.js";
+import { paneLooksBusy } from "./input-timing.js";
 import {
   type AttachTarget,
   type CaptureOptions,
@@ -814,9 +814,8 @@ export function hasWorkMarker(scrollback: string): boolean {
  *
  * Because the blocker is a model call, no fixed sleep can be correct —
  * `sleep 2` is a coin flip, not a fix. The signal already existed: pi's
- * spinner is a Braille glyph and `detectPiStatus` calls Braille busy,
- * so this reuses the detector rather than adding a second readiness
- * mechanism, matching `awaitSpawnReadiness` in src/agents/spawn.ts.
+ * spinner is a Braille glyph, so the private input-timing helper can wait
+ * for it to clear before sending.
  *
  * `needs_permission` counts as ready: a pane sitting on a confirm
  * dialog is waiting for a keystroke, and refusing to send would break
@@ -841,7 +840,7 @@ export async function awaitPaneQuiescence(paneId: string, budgetMs: number): Pro
   let calm = 0;
   for (;;) {
     const scrollback = await capturePane(paneId, { lines: 50 }).catch(() => undefined);
-    const busy = scrollback === undefined || detectPiStatus(scrollback) === "busy";
+    const busy = scrollback === undefined || paneLooksBusy(scrollback);
     // Busy BECAUSE the agent is working a turn: not a re-init modal.
     // Send now and let the TUI queue it behind the current turn.
     if (busy && scrollback !== undefined && hasWorkMarker(scrollback)) return true;
@@ -928,7 +927,7 @@ async function isTextStranded(paneId: string, probe: string): Promise<boolean> {
     if (i > 0) await currentSleep(SUBMIT_VERIFY_INTERVAL_MS);
     const capture = await capturePane(paneId, { lines: 50 }).catch(() => undefined);
     if (capture === undefined) return false;
-    if (detectPiStatus(capture) === "busy") return false;
+    if (paneLooksBusy(capture)) return false;
     let count = 0;
     let idx = capture.indexOf(probe);
     while (idx !== -1 && count < 2) {

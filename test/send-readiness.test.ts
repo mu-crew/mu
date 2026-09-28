@@ -16,12 +16,12 @@
 // test/tmux-send-readiness.integration.test.ts.
 
 import { describe, expect, it } from "vitest";
-import { detectPiStatus } from "../src/detect.js";
+import { paneLooksBusy } from "../src/mux/input-timing.js";
 import { defaultSendReadinessMs, hasWorkMarker } from "../src/tmux.js";
 import { withEnv } from "./_env.js";
 
 // Captured verbatim from a real pi pane during the ~1.5s post-/new
-// window. The spinner makes the detector say busy; there is NO work
+// window. The spinner makes input unsafe; there is NO work
 // marker, which is exactly what makes it a modal rather than a turn.
 const NAMING_MODAL = [
   "loop.ts, modelbridge.ts, name-session.ts, watch.ts",
@@ -61,19 +61,19 @@ describe("send readiness: modal vs working classification", () => {
   // back (modal treated as working → paste into the modal) or every send
   // into a busy agent pays the full 15s budget.
   it("the post-/new naming modal is busy but has NO work marker", () => {
-    expect(detectPiStatus(NAMING_MODAL)).toBe("busy");
+    expect(paneLooksBusy(NAMING_MODAL)).toBe(true);
     expect(hasWorkMarker(NAMING_MODAL)).toBe(false);
   });
 
   it("a working pane is busy AND has a work marker", () => {
-    expect(detectPiStatus(WORKING)).toBe("busy");
+    expect(paneLooksBusy(WORKING)).toBe(true);
     expect(hasWorkMarker(WORKING)).toBe(true);
-    expect(detectPiStatus(WORKING_INTERRUPT)).toBe("busy");
+    expect(paneLooksBusy(WORKING_INTERRUPT)).toBe(true);
     expect(hasWorkMarker(WORKING_INTERRUPT)).toBe(true);
   });
 
   it("an idle pane is neither busy nor working", () => {
-    expect(detectPiStatus(IDLE)).toBe("needs_input");
+    expect(paneLooksBusy(IDLE)).toBe(false);
     expect(hasWorkMarker(IDLE)).toBe(false);
   });
 

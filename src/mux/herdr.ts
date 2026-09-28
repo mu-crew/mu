@@ -57,7 +57,6 @@
 // See `MuxBackend.startAgentInPane` for how spawn.ts branches on it.
 
 import { execa } from "execa";
-import type { DetectedStatus } from "../detect.js";
 import type { NextStep } from "../output.js";
 import { sleep } from "./tmux.js";
 import {
@@ -68,6 +67,7 @@ import {
   MuxError,
   type MuxHealth,
   type MuxPane,
+  type MuxPaneStatus,
   type MuxSession,
   type MuxWindow,
   type NewSessionOptions,
@@ -139,9 +139,8 @@ export class HerdrSyntaxError extends Error {
  *
  * A REFUSAL, not a fallback. herdr's `pane run <command>` would happily
  * start the binary, but herdr would then never classify that pane, and
- * on this backend herdr's classification IS mu's status source
- * (`paneStatus()` bypasses src/detect.ts entirely). A pane mu can start
- * but never observe is the same family of failure as a pane mu records
+ * on this backend herdr's report is mu's runtime state source. A pane
+ * mu can start but never observe is the same family of failure as a pane mu records
  * with nothing running in it: it looks fine and lies forever.
  *
  * Not a `MuxError`: the substrate is healthy and answered precisely.
@@ -1149,7 +1148,7 @@ export async function capturePane(paneId: string, opts: CaptureOptions = {}): Pr
  * the user's done badge — which is the point, and why nothing in this
  * file calls a focus or seen-marking verb.
  */
-export function mapAgentStatus(agentStatus: string): DetectedStatus {
+export function mapAgentStatus(agentStatus: string): MuxPaneStatus {
   switch (agentStatus) {
     case "working":
       return "busy";
@@ -1166,14 +1165,10 @@ export function mapAgentStatus(agentStatus: string): DetectedStatus {
  * The pane's status as HERDR classifies it, or undefined when the pane
  * is gone (or reports no state at all).
  *
- * This is why `src/detect.ts` — the scrollback-scraping PI STATUS
- * DETECTOR — is bypassed on this backend. herdr watches the terminal
- * continuously across every agent kind it knows; mu guessing from a
- * 100-line tail would be strictly worse information, and would
- * misclassify every non-pi CLI. See docs/ARCHITECTURE.md § "Status
- * detection is backend-dependent".
+ * herdr watches the terminal continuously across every agent kind it
+ * knows; mu takes that report rather than reading pane text.
  */
-export async function paneStatus(paneId: string): Promise<DetectedStatus | undefined> {
+export async function paneStatus(paneId: string): Promise<MuxPaneStatus | undefined> {
   if (!isValidPaneId(paneId)) return undefined;
   const result = await herdrTolerating(
     ["pane", "get", paneId],

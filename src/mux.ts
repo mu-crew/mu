@@ -32,6 +32,7 @@ export {
   MuxError,
   type MuxHealth,
   type MuxPane,
+  type MuxPaneStatus,
   type MuxSession,
   type MuxWindow,
   muxByName,
