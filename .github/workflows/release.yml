@@ -11,12 +11,16 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # id-token: npm trusted publishing. No npm token is stored anywhere; npmjs.com
+    # trusts this repo's release.yml for @mu-crew/mu.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
-          registry-url: https://registry.npmjs.org
       - name: Check release version
         run: node scripts/check-release-version.mjs "${{ github.ref_name }}"
       # Tests are the local gate: even the fast tier drives real tmux panes and
@@ -26,7 +30,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build
+      # Trusted publishing (OIDC) needs npm 11.5.1+; older npm fails with a
+      # misleading 404.
+      - run: npm install -g npm@^11.5.1
       - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
