@@ -38,6 +38,9 @@ For the full copy-paste flow, see [Quick start](#quick-start).
 
 ## What mu is
 
+mu excels at organising large pieces of work and keeping your agents
+on track.
+
 - **Parallelism that doesn't trip over itself.** Per-agent VCS
   workspaces plus a task DAG with deterministic parallel-track
   detection keep agents off each other's toes.
@@ -76,6 +79,17 @@ For the full copy-paste flow, see [Quick start](#quick-start).
 ---
 
 ## When mu earns its overhead
+
+mu pays off when the work is bigger than one agent's context: many
+steps, dependencies between them, several agents, or a job that runs
+for days. The DAG holds the plan, so no single agent has to. Each
+agent claims one ready task, works in its own workspace, writes notes
+on the task as it goes (findings, decisions, dead ends), and closes
+it with evidence. Every claim, note and close is appended to the
+audit log. If an agent drifts, stalls, or loses its pane, the plan,
+the notes, and the history of who did what are still there. You, or
+the next agent, pick up where it stopped instead of explaining
+everything again.
 
 **Use mu for** — multi-phase investigations; tasks worth gating with
 review; parallel audit or implementation/reviewer splits with isolated
