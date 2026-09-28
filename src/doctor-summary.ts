@@ -34,6 +34,9 @@
 // "all healthy" line so the operator's eye learns to read the
 // presence of rows as "something needs attention."
 
+import { accessSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
+import { delimiter, dirname, join, parse } from "node:path";
+import { murmurAvailable, UNKNOWN_REASON } from "./agent-state.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "./db.js";
 import { checkCheapDriftInvariant } from "./drift.js";
 import { checkFleetHazards } from "./fleet-hazards.js";
@@ -70,7 +73,11 @@ export interface DoctorSummary {
  * snapshot-derived checks (ghosts / orphans / workspace-orphans) are
  * skipped in that case.
  */
-export function loadDoctorSummary(db: Db, snapshot: WorkstreamSnapshot | null): DoctorSummary {
+export function loadDoctorSummary(
+  db: Db,
+  snapshot: WorkstreamSnapshot | null,
+  agentStateSource: "murmur" | "herdr" = "murmur",
+): DoctorSummary {
   const checks: DoctorCheck[] = [];
 
   // ─ schema (table presence) ──────────────────────────────────────
@@ -213,6 +220,8 @@ export function loadDoctorSummary(db: Db, snapshot: WorkstreamSnapshot | null): 
     }
   }
 
+  checks.push(murmurDoctorCheck(agentStateSource));
+
   // ─ Mixed-fleet hazards + the SHALLOW drift invariant.
   //
   // Both obey this file's cheapness rules: the fleet checks are two path
@@ -246,6 +255,87 @@ export function loadDoctorSummary(db: Db, snapshot: WorkstreamSnapshot | null): 
   );
 
   return { checks, problemCount: countProblems(checks) };
+}
+
+function resolveExecutable(name: string): string | null {
+  for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    const candidate = join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return realpathSync(candidate);
+    } catch {
+      // Keep scanning PATH.
+    }
+  }
+  return null;
+}
+
+function murmurVersion(executable: string): string | null {
+  let dir = dirname(executable);
+  const root = parse(dir).root;
+  while (dir !== root) {
+    const packagePath = join(dir, "package.json");
+    if (existsSync(packagePath)) {
+      try {
+        const pkg: unknown = JSON.parse(readFileSync(packagePath, "utf8"));
+        if (
+          typeof pkg === "object" &&
+          pkg !== null &&
+          "name" in pkg &&
+          pkg.name === "@mu-crew/murmur" &&
+          "version" in pkg &&
+          typeof pkg.version === "string"
+        ) {
+          return pkg.version;
+        }
+      } catch {
+        // An unrelated or unreadable package.json does not end the walk.
+      }
+    }
+    dir = dirname(dir);
+  }
+  return null;
+}
+
+function olderThanMurmurOne(version: string): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  return match !== null && Number(match[1]) < 1;
+}
+
+function murmurDoctorCheck(agentStateSource: "murmur" | "herdr"): DoctorCheck {
+  if (agentStateSource === "herdr") {
+    return { name: "murmur", status: "ok", detail: "agent state from herdr" };
+  }
+
+  const executable = resolveExecutable("murmur");
+  if (executable === null) {
+    return {
+      name: "murmur",
+      status: "warn",
+      detail: `${UNKNOWN_REASON.murmurMissing}: agent state shows unknown`,
+    };
+  }
+  if (!murmurAvailable()) {
+    return {
+      name: "murmur",
+      status: "warn",
+      detail: `${UNKNOWN_REASON.extensionMissing}: run murmur link pi`,
+    };
+  }
+
+  const version = murmurVersion(executable);
+  if (version !== null && olderThanMurmurOne(version)) {
+    return {
+      name: "murmur",
+      status: "warn",
+      detail: `murmur ${version} is older than 1.0.0; @murmur_pane_since missing, idle/stall timing unknown`,
+    };
+  }
+  return {
+    name: "murmur",
+    status: "ok",
+    detail: version === null ? "agent state from murmur" : `agent state from murmur ${version}`,
+  };
 }
 
 /** Count of warn + fail rows. Pure; exported for unit tests. */
@@ -308,6 +398,8 @@ export function loadDoctorChecks(
  */
 export function yankCommandForCheck(check: Pick<DoctorCheck, "name" | "status">): string {
   switch (check.name) {
+    case "murmur":
+      return "murmur link pi";
     case "agents":
       // Diagnostic/reaping read: `mu state` and `mu agent list` both
       // reconcile missing panes. Prefer the canonical state card; the
@@ -358,6 +450,11 @@ export function yankCommandForCheck(check: Pick<DoctorCheck, "name" | "status">)
  */
 export function remediationParagraph(check: DoctorCheck): readonly string[] {
   switch (check.name) {
+    case "murmur":
+      return [
+        "Install murmur with `npm i -g @mu-crew/murmur`, then run",
+        "`murmur init` and `murmur link pi`. Restart running pi sessions.",
+      ];
     case "agents":
       return [
         "A 'ghost pane' is a registered agent whose tmux pane is gone.",

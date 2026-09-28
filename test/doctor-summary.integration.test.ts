@@ -3,7 +3,7 @@
 // slot-9 Doctor card; it slices the textual `mu doctor` checks into
 // a per-tick-cheap structured shape.
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -47,14 +47,41 @@ describe("loadDoctorSummary", () => {
   let tempDir: string;
   let dbPath: string;
   let db: Db;
+  let murmurRoot: string;
+  let originalPath: string | undefined;
+  let originalPiDir: string | undefined;
 
   beforeEach(() => {
+    originalPath = process.env.PATH;
+    originalPiDir = process.env.PI_CODING_AGENT_DIR;
     tempDir = mkdtempSync(join(tmpdir(), "mu-doctor-summary-"));
     dbPath = join(tempDir, "mu.db");
     db = openDb({ path: dbPath });
+
+    murmurRoot = join(tempDir, "murmur");
+    const murmurBin = join(murmurRoot, "bin");
+    mkdirSync(murmurBin, { recursive: true });
+    writeFileSync(
+      join(murmurRoot, "package.json"),
+      JSON.stringify({ name: "@mu-crew/murmur", version: "1.0.0" }),
+    );
+    writeFileSync(join(murmurBin, "murmur"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(murmurBin, "murmur"), 0o755);
+    process.env.PATH = murmurBin;
+
+    const piDir = join(tempDir, "pi");
+    mkdirSync(join(piDir, "extensions"), { recursive: true });
+    writeFileSync(join(piDir, "extensions", "murmur.ts"), "");
+    process.env.PI_CODING_AGENT_DIR = piDir;
   });
 
   afterEach(() => {
+    const pathKey = "PATH";
+    const piDirKey = "PI_CODING_AGENT_DIR";
+    if (originalPath === undefined) delete process.env[pathKey];
+    else process.env.PATH = originalPath;
+    if (originalPiDir === undefined) delete process.env[piDirKey];
+    else process.env.PI_CODING_AGENT_DIR = originalPiDir;
     try {
       db.close();
     } catch {
@@ -85,6 +112,66 @@ describe("loadDoctorSummary", () => {
     );
     expect(s.checks.every((c) => c.status === "ok")).toBe(true);
     expect(s.problemCount).toBe(0);
+  });
+
+  it("warns when murmur is not installed", () => {
+    process.env.PATH = join(tempDir, "empty-bin");
+
+    const murmur = loadDoctorSummary(db, null).checks.find((check) => check.name === "murmur");
+
+    expect(murmur).toEqual({
+      name: "murmur",
+      status: "warn",
+      detail: "murmur not installed: agent state shows unknown",
+    });
+  });
+
+  it("warns when the murmur pi extension is not linked", () => {
+    rmSync(join(process.env.PI_CODING_AGENT_DIR ?? "", "extensions", "murmur.ts"));
+
+    const murmur = loadDoctorSummary(db, null).checks.find((check) => check.name === "murmur");
+
+    expect(murmur).toEqual({
+      name: "murmur",
+      status: "warn",
+      detail: "murmur pi extension not linked: run murmur link pi",
+    });
+  });
+
+  it("reports the installed murmur version", () => {
+    const murmur = loadDoctorSummary(db, null).checks.find((check) => check.name === "murmur");
+
+    expect(murmur).toEqual({
+      name: "murmur",
+      status: "ok",
+      detail: "agent state from murmur 1.0.0",
+    });
+  });
+
+  it("warns when murmur predates pane-state timing", () => {
+    writeFileSync(
+      join(murmurRoot, "package.json"),
+      JSON.stringify({ name: "@mu-crew/murmur", version: "0.6.1" }),
+    );
+
+    const murmur = loadDoctorSummary(db, null).checks.find((check) => check.name === "murmur");
+
+    expect(murmur).toEqual({
+      name: "murmur",
+      status: "warn",
+      detail:
+        "murmur 0.6.1 is older than 1.0.0; @murmur_pane_since missing, idle/stall timing unknown",
+    });
+  });
+
+  it("uses herdr as the agent-state source without checking murmur", () => {
+    process.env.PATH = join(tempDir, "empty-bin");
+
+    const murmur = loadDoctorSummary(db, null, "herdr").checks.find(
+      (check) => check.name === "murmur",
+    );
+
+    expect(murmur).toEqual({ name: "murmur", status: "ok", detail: "agent state from herdr" });
   });
 
   it("each fresh-DB check carries a non-empty detail string", () => {
@@ -170,7 +257,8 @@ describe("loadDoctorSummary", () => {
 // review_tui_doctor_remediation_lives_in_popup. Tests moved
 // alongside.
 describe("yankCommandForCheck", () => {
-  it("maps each known check name to a SELECT-shape verb", () => {
+  it("maps each known check name to a useful verb", () => {
+    expect(yankCommandForCheck({ name: "murmur", status: "warn" })).toBe("murmur link pi");
     expect(yankCommandForCheck({ name: "agents", status: "warn" })).toBe("mu state");
     expect(yankCommandForCheck({ name: "panes", status: "warn" })).toBe("mu agent adopt");
     expect(yankCommandForCheck({ name: "workspaces", status: "warn" })).toBe(
@@ -198,6 +286,7 @@ describe("remediationParagraph", () => {
 
   it("returns a non-empty paragraph for every known check name", () => {
     for (const name of [
+      "murmur",
       "agents",
       "panes",
       "workspaces",

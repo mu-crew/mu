@@ -11,6 +11,7 @@ import type { Db } from "./db.js";
 import { type DoctorSummary, loadDoctorSummary } from "./doctor-summary.js";
 import { GLYPH } from "./glyphs.js";
 import { type LogRow, listLogs } from "./logs.js";
+import { activeMux } from "./mux.js";
 import {
   listBlocked,
   listInProgress,
@@ -231,9 +232,11 @@ export async function loadWorkstreamSnapshotSlow(
     doctor: null,
   };
   if (opts.withDoctor === true) {
+    const mux = await activeMux();
     slow.doctor = loadDoctorSummary(
       db,
       mergeSnapshotFastSlow(baseSnapshot ?? minimalSnapshot(workstream), slow),
+      mux.paneStatus === undefined ? "murmur" : "herdr",
     );
   }
   return slow;
