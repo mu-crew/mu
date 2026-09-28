@@ -302,7 +302,8 @@ function olderThanMurmurOne(version: string): boolean {
   return match !== null && Number(match[1]) < 1;
 }
 
-function murmurDoctorCheck(agentStateSource: "murmur" | "herdr"): DoctorCheck {
+/** The agent-state source row. Shared by the TUI card and `mu doctor`. */
+export function murmurDoctorCheck(agentStateSource: "murmur" | "herdr"): DoctorCheck {
   if (agentStateSource === "herdr") {
     return { name: "murmur", status: "ok", detail: "agent state from herdr" };
   }

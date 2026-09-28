@@ -16,6 +16,7 @@ import { listLiveAgents } from "../agents.js";
 import { emitJson, resolveWorkstream } from "../cli.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "../db.js";
 import { checkDiskRecon, formatBytes, measureWorkspaceUsage } from "../disk-recon.js";
+import { type DoctorCheck, murmurDoctorCheck } from "../doctor-summary.js";
 import {
   ABANDONED_IDLE_DAYS,
   checkDormantWorkstreams,
@@ -45,6 +46,11 @@ const pad = (s: string): string => s.padEnd(LABEL_WIDTH);
  * Never throws: doctor's whole job is reporting a broken substrate,
  * so `NoMultiplexerError` here is a finding, not a failure.
  */
+/** Where agent state comes from: herdr on herdr, murmur otherwise. */
+function agentStateCheck(health: MuxHealth | undefined): DoctorCheck {
+  return murmurDoctorCheck(health?.name === "herdr" ? "herdr" : "murmur");
+}
+
 async function muxHealth(): Promise<MuxHealth | undefined> {
   try {
     return await (await activeMux()).healthCheck();
@@ -101,6 +107,11 @@ export async function cmdDoctor(
   }
   console.log(
     `  ${pad("$MU_SESSION")}: ${process.env.MU_SESSION ? pc.green(process.env.MU_SESSION) : pc.dim("not set")}`,
+  );
+  const stateCheck = agentStateCheck(health);
+  const stateColour = stateCheck.status === "ok" ? pc.green : pc.yellow;
+  console.log(
+    `  ${pad("agent state")}: ${stateColour(stateCheck.status === "ok" ? "ok" : "WARN")} ${pc.dim(stateCheck.detail)}`,
   );
 
   // ─ DB + schema
@@ -350,6 +361,7 @@ export async function cmdDoctorJson(
     tmux: { ok: health?.ok ?? false, version: health?.version ?? null },
     ...Object.fromEntries(health?.env.map((f) => [f.name.replace(/^\$/, ""), f.value]) ?? []),
     MU_SESSION: process.env.MU_SESSION ?? null,
+    agentState: agentStateCheck(health),
   };
 
   // db / schema
