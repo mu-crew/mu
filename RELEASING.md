@@ -20,3 +20,7 @@ publishing: owner `mu-crew`, repository `mu`, workflow `release.yml`).
    ```
 
 The workflow refuses a tag that does not match `package.json`.
+
+The workflow also creates the GitHub release for the tag, with the matching
+CHANGELOG section as its notes. It fails if that section is missing, so add
+the CHANGELOG entry before tagging.

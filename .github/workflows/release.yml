@@ -14,7 +14,7 @@ jobs:
     # id-token: npm trusted publishing. No npm token is stored anywhere; npmjs.com
     # trusts this repo's release.yml for @mu-crew/mu.
     permissions:
-      contents: read
+      contents: write # the GitHub release
       id-token: write
     steps:
       - uses: actions/checkout@v5
@@ -35,3 +35,10 @@ jobs:
       - run: npm install -g npm@^11.5.1
       - name: Publish
         run: npm publish --access public
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 scripts/changelog-section.py CHANGELOG.md "$version" > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "mu $version" --notes-file notes.md --verify-tag
