@@ -73,6 +73,9 @@ Out:
   terminal, not about agent state, and murmur cannot see either. They keep a
   private helper for spinner and work-marker text. It is used only by
   `send`, returns no status, and is not exported.
+- `detectSpawnStartupError` in `src/agents/spawn.ts`. It scans a new pane
+  for provider and auth errors (a dud spawn), which is a spawn failure, not
+  agent state. It stays for the same reason as the `send` checks.
 - Dropping the `agents.status` column. mu has no migration path: v10 is both
   the minimum and the current schema. The drop waits for the first change
   that needs a v11 anyway, and ROADMAP records it.
