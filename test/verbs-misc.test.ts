@@ -79,7 +79,7 @@ describe("isValidAgentName", () => {
 // last-persisted status, not the current one, because the handler
 // read agents.status from the DB row and never re-detected. With
 // custom --command wrappers in particular, the orchestrator could
-// miss needs_input for minutes. The fix re-runs detectPiStatus on
+// miss needs_input for minutes. The fix re-reads runtime state on
 // the scrollback the handler already captures.
 
 describe("adoptAgent (register an existing tmux pane as a managed agent)", () => {

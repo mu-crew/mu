@@ -188,6 +188,7 @@ export {
   type MuxBackendName,
   MuxError,
   type MuxPane,
+  type MuxPaneStatus,
   type MuxSession,
   type MuxWindow,
   muxByName,
