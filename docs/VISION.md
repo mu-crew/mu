@@ -137,19 +137,11 @@ lives behind `MuxBackend` in `src/mux/`. Two implementations, not an
 anticipatory abstraction: a third earns its way in on its own
 friction evidence.
 
-### 6. Pi-first, and what the mux knows
+### 6. Pi-first, with reported agent state
 
-Mu's own status detection (`busy` / `needs_input` / `needs_permission`)
-is pi-only, plus a Braille-spinner fallback that catches most TUI
-wrappers. `--cli <name>` accepts other strings, but on the tmux
-backend no other CLI ships with a detector, so an unrecognized pane
-tends to read `needs_input`.
-
-A mux that classifies panes itself changes this. The herdr backend
-reports agent state natively across the agent kinds it knows, so on
-that backend mu takes the mux's word and skips scrollback scraping
-entirely. Detection is a property of the **mux backend**, not a fixed
-property of mu.
+mu does not infer agent state from pane text. The herdr backend reports
+state through the mux. On tmux, murmur's pi extension reports state from
+inside the agent process; without murmur, state is `unknown` with a reason.
 
 `--cli` and `MU_<UPPER_CLI>_COMMAND` stay useful for swapping the pi
 binary: set `MU_PI_COMMAND=<name>` once and every spawn picks it up.
@@ -244,9 +236,9 @@ mu does not own:
 - **Tool routing decisions.** Pi (and any other CLI you spawn) owns
   tool allowlists, MCP servers, extensions. Mu doesn't proxy or
   inspect them.
-- **Output interpretation.** Mu reads pane contents to detect
-  `busy / needs_input / idle / done` (a 4-state classification).
-  It does not parse model output for facts, claims, or tool calls.
+- **Output interpretation.** Mu does not parse pane contents for agent
+  state, facts, claims, or tool calls. murmur or herdr reports runtime
+  agent state.
   The `--evidence` payload is whatever the agent says it is; mu
   records it without interpretation.
 
@@ -344,12 +336,10 @@ orchestrator stays in charge.
    `~/.local/state/mu/mu.db`. Cross-machine state moves as
    append-only JSONL segments in a shared folder; you own transport.
 
-3. **Pi-first.** mu's own status detection targets pi. `--cli pi` is
-   the meaningful default; `--cli` accepts other strings as a key for
-   the `MU_<UPPER_CLI>_COMMAND` env var resolver. On tmux no other CLI
-   has a detector; on a backend that classifies panes itself (herdr),
-   mu defers to it. Either way we optimize for
-   false-negative-then-poll over false-positive-then-act.
+3. **Pi-first.** `--cli pi` is the meaningful default; `--cli` accepts
+   other strings as a key for the `MU_<UPPER_CLI>_COMMAND` env var
+   resolver. Agent state comes from murmur on tmux and herdr on herdr;
+   absence is `unknown` rather than an inferred value.
 
 4. **Send is delivered, not acknowledged.** `mu agent send` gets the
    text into the pane and warns loudly when it cannot confirm

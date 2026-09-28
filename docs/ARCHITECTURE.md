@@ -31,8 +31,8 @@ programmatic SDK are thin facades over the same core modules.
 │  │ mux/     │  │ schema   │  │ jj       │  │  capture        │  │
 │  │ tmux     │  │ queries  │  │ sapling  │  │  apply/sync     │  │
 │  │ herdr    │  │ tracks   │  │ git      │  │  doctor         │  │
-│  │ detect   │  │ claim    │  │ none     │  │                 │  │
-│  │ state    │  │          │  │          │  │                 │  │
+│  │ state    │  │ claim    │  │ none     │  │                 │  │
+│  │ sources  │  │          │  │          │  │                 │  │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────────┬────────┘  │
 └───────┼─────────────┼─────────────┼─────────────────┼───────────┘
         ▼             ▼             ▼                 ▼
@@ -291,17 +291,16 @@ That difference is expressed as a **capability**, not a name check:
 | --- | --- | --- |
 | `NewWindowOptions.command` etc. | carries the command | **refused** if non-empty |
 | `startAgentInPane()` | not implemented | implemented |
-| liveness / readiness wait | mu polls scrollback | the mux blocks until ready |
+| liveness / readiness wait | mu checks pane life, startup errors, then murmur readiness when available | the mux blocks until ready |
 
 `spawnAgent` branches on `mux.startAgentInPane !== undefined`. When it
-is absent (tmux) the command rides along on the creation verb and the
-path is exactly what it always was. When present, mu creates the pane
-bare, then calls `startAgentInPane` — and **skips**
-`awaitSpawnLiveness` / `awaitSpawnReadiness`, because such a backend
-returns only once it has itself detected the agent and judged it ready
-for input, which is strictly stronger than what scrollback polling can
-prove. `MU_SPAWN_LIVENESS_MS` / `MU_SPAWN_READINESS_MS` are therefore
-tmux-tier knobs.
+is absent (tmux), the command rides along on the creation verb. The
+liveness check verifies that the pane survived and scans for startup
+errors; when murmur is available, readiness also waits for the pane's
+`@murmur_pane_state`. Without murmur, readiness is skipped and the first
+send uses its input-timing checks. When `startAgentInPane` is present,
+mu creates the pane bare, calls it, and skips the tmux checks because
+the backend returns only after the agent is ready.
 
 The creation verbs **refuse** a non-empty command on a backend that
 cannot honour it rather than dropping it silently: a dropped command
@@ -579,15 +578,12 @@ surrogate INTEGER ids once and then stay on ids. See
 
 ## Reconciliation
 
-`mu agent list` always reconciles the registry against tmux reality before
-returning. Three steps, in order:
+`mu agent list` always reconciles the registry against mux reality before
+returning. Two steps, in order:
 
 1. **Prune ghosts.** For each `agents` row, if its `pane_id` no longer
-   exists in tmux, delete the row.
-2. **Detect status from scrollback.** For each surviving agent, capture
-   the pane and run the per-CLI detector. Update `agents.status` if
-   the detected value differs from the stored one.
-3. **Surface orphans.** For each tmux pane in the workstream's session
+   exists in the mux, delete the row.
+2. **Surface orphans.** For each pane in the workstream's mux session
    that has no matching `agents` row but whose pane title looks like
    an agent name, add it to the orphans list. **Do not auto-adopt** —
    `mu agent list` shows orphans under a separate "(orphans)" section and
@@ -596,19 +592,21 @@ returning. Three steps, in order:
 `src/reconcile.ts` is the only implementation. Key properties:
 
 - **Reality wins**: the mux is the source of truth for what panes
-  exist. The DB records what we last *observed*. Reconciliation closes
-  the gap on every `mu agent list`.
-- **Status detection is backend-dependent**, expressed as the optional
-  `MuxBackend.paneStatus?()`. A backend that omits it (tmux) means "ask
-  the detector": `src/detect.ts` scrapes scrollback (`busy` /
-  `needs_input` / `needs_permission` via a known pi marker, with a
-  Braille-spinner fallback for other CLIs). A backend that implements it
-  (herdr) classifies panes natively across every agent kind it
-  recognises, and mu takes its word — `src/detect.ts` is bypassed
-  entirely on that backend. herdr's `working` → `busy`, `blocked` →
-  `needs_permission`, `idle` / `done` / `unknown` → `needs_input`.
-  `unknown` must never become `free`: herdr documents that it does not
-  prove completion, and no detector of either kind may mint `free`.
+  exist. Reconciliation closes the gap on every `mu agent list`.
+- **Agent state is reported, not scraped or persisted.** `src/agent-state.ts`
+  reads herdr's `paneStatus()` on herdr. On tmux, one `list-panes -a`
+  reads `@murmur_pane_state` and `@murmur_pane_since` for every local
+  agent. Only agents without a local option use `murmur status --json`;
+  that result is cached for 10 seconds. See murmur's
+  [stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHITECTURE.md#contract).
+- **Mapping:** murmur `working` → `busy`, `blocked` →
+  `needs_permission`, and `idle` / `done` / `crashed` → `needs_input`.
+  herdr supplies mu's runtime states directly.
+- **Absence is `unknown`.** Readings carry reasons such as `murmur not
+  installed`, `murmur pi extension not linked`, `murmur has no row`,
+  `ambiguous: N hosts`, `remote snapshot stale`, and `pane gone`.
+- **`agents.status` is deprecated.** Inserts write `spawning` to satisfy
+  the v10 schema. No code updates or reads the column as runtime state.
 - **No silent adoption**: orphans are reported, never claimed.
 - **`mu doctor` calls the same routine** and reports counts.
 
@@ -645,10 +643,10 @@ separately below.
 | `src/disk-recon.ts`   | **Disk↔DB reconciliation** — the only module that reads the STATE DIR and compares it to the DB, in both directions: a `vcs_workspaces` row whose path is gone (`ws-rows`), a dir with no row (`ws-dirs`, reusing `listAllOrphanWorkspaces`), plus residue nothing references (`ws-empty` / `db-copies` / `exports` / `locks`). Emits `FleetHazard` so doctor's renderer, `--json` and the TUI card need no new shape. Default tier is `readdir` + `stat` at depth 2 (~1ms); `measureWorkspaceUsage` recurses for bytes and is `--disk` only, because its cost scales with the checkouts. **Report-only by construction** — every finding carries its cleanup command and the module runs none of them. |
 | `src/op-context.ts`   | The **op context** seam: `withOpContext(db, {intent, actor, group}, fn)` labels every op in a scope, restored in a `finally`. Nested scopes inherit the group, which puts a cascade under one `mu undo`. `withCaptureSuppressed` is the echo guard. |
 | `src/mux.ts`          | **Mux backend hub** — re-exports `src/mux/*`, same shape as `src/vcs.ts`. The public `MuxBackend` surface every call site imports. |
-| `src/mux/*.ts`        | **Multiplexer backends**: `types.ts` (the `MuxBackend` interface + `MuxError` / `PaneNotFoundError`), `detect.ts` (`MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH` ladder + test seam), `tmux.ts`, `herdr.ts`. The backend owns topology, the send protocol, capture, **pane id** validation (tmux `%15` vs herdr `w1:p1`), the identity fallback, and optionally native pane status (`paneStatus?()`) and agent start (`startAgentInPane?()`) — so no global pane-id regex and no per-call-site branching. The send protocol is where the two diverge most: tmux needs a six-step paste/Enter dance to survive a modal swallowing the Enter, while herdr's `agent prompt --wait` is one atomic call. |
+| `src/mux/*.ts`        | **Multiplexer backends**: `types.ts` (the `MuxBackend` interface + `MuxError` / `PaneNotFoundError`), `detect.ts` (`MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH` ladder + test seam), `tmux.ts`, `herdr.ts`, and `input-timing.ts`. The backend owns topology, capture, **pane id** validation (tmux `%15` vs herdr `w1:p1`), identity fallback, and optional native agent state (`paneStatus?()`) and agent start (`startAgentInPane?()`). `input-timing.ts` reads pane text only to decide when tmux input can be submitted; it does not report agent state. |
 | `src/tmux.ts`         | Re-export of the tmux backend, kept for genuinely tmux-only concerns: the `MU_TMUX_SOCKET` test seam and the shared `sleep` / `setSleepForTests` poll seam. Everything else imports `src/mux.ts` and goes through `activeMux()`. |
-| `src/detect.ts`       | Pi status detector (`busy` / `needs_input` / `needs_permission`) + Braille-spinner fallback. Used when the mux cannot classify panes itself — i.e. always on tmux, never on herdr. |
-| `src/reconcile.ts`    | Ghost prune + status detect + orphan surface; "reality wins"                              |
+| `src/agent-state.ts`  | Runtime agent-state resolver. Reads herdr's native state or murmur's local pane options and remote JSON; maps source states, returns `unknown` with a reason, and caches remote murmur reads for 10 seconds. |
+| `src/reconcile.ts`    | Ghost prune + orphan surface; "reality wins"                              |
 | `src/agents.ts`       | Hub: CRUD + send / read / list / close + liveness + reaper. Re-exports `src/agents/*`; pane-title composition (`composeAgentTitle`) lives here. |
 | `src/agents/*.ts`     | Agent-lifecycle internals: `spawn.ts` (spawn, CLI resolution, liveness wait *or* backend `startAgentInPane`, pane create-or-reuse, rollback), `spawn-lock.ts` (per-session lock around topology+finalize), `wait.ts`, `adopt.ts`, `kick.ts` (signal a wedged pane's pgid), `errors.ts`. |
 | `src/dag.ts`          | Shared DAG read/render helpers: `loadFullDag` plus pure `renderForest` / `renderTaskTree`, reused by `mu task tree` and the TUI DAG popup. |
@@ -660,7 +658,7 @@ separately below.
 | `src/log-render.ts`   | **The ONE op → prose formatter.** `renderOp` maps an intent (+ key + payload fields) to `{verb, subject, detail}`; plus `renderOpLine`, `opSubject`, `parseOpKey`. Pure and colour-free, so CLI and TUI share one phrasing. |
 | `src/vcs/*.ts`        | One backend per file (`git.ts`, `jj.ts`, `sl.ts`, `none.ts`) plus `types.ts` (the `VcsBackend` interface), `helpers.ts`, and `index.ts` (detection precedence `jj` → `sl` → `git` → none; `backendByName`). |
 | `src/workspace/*.ts`  | Per-agent VCS workspaces, a registry on top of `vcs.ts`: `core.ts` (row shapes, paths, errors), `crud.ts`, `decorate.ts` (staleness + dirty), `orphans.ts`. |
-| `src/glyphs.ts`       | **The ONE glyph vocabulary.** `AGENT_STATUS_GLYPH` + `agentStatusGlyph()` for agent status, the `GLYPH` record for every other state symbol (blocked, dirty, stale, ok/warn/fail, filter toggles), and `superscriptDigit` for TUI card-header keys. All classic Nerd Font `nf-fa-*` — single-codepoint and one cell wide, so `cli-table3` columns line up. Keyed by MEANING, so re-pointing a symbol is a one-line edit. `busy` matches murmur's dash `running`: same panes, same symbol. |
+| `src/glyphs.ts`       | **The ONE glyph vocabulary.** `AGENT_STATE_GLYPH` + `agentStateGlyph()` for runtime agent state, the `GLYPH` record for every other state symbol (blocked, dirty, stale, ok/warn/fail, filter toggles), and `superscriptDigit` for TUI card-header keys. All classic Nerd Font `nf-fa-*` — single-codepoint and one cell wide, so `cli-table3` columns line up. |
 | `src/output.ts`       | NextStep type + `printNextSteps` + `errorNextSteps` plumbing for self-documenting output |
 | `src/shell-quote.ts`  | `shellQuote` — POSIX single-quoting for tokens interpolated into copy-pasteable next-step hints. |
 | `src/state.ts`        | SDK seam for `mu state`: `loadWorkstreamSnapshotFast` (pure SQL, TUI 1s tick), `loadWorkstreamSnapshotSlow` (subprocesses), `mergeSnapshotFastSlow`, `loadWorkstreamSnapshot`. Also parses exact `REMOTE:` task-note inventory and `REMOTE_BASE:` dispatch metadata. Opt-in: `withDirty`, `withDoctor`, `withRecentCommits`, `withAllTasks`. |
@@ -670,7 +668,7 @@ separately below.
 | `src/cli/tui/*.tsx`   | The interactive ink TUI, lazy-imported by `src/cli/state.ts`. **The only place ink/react are imported** — a ROADMAP pledge. Per-file roles: [§ TUI architecture](#tui-architecture). |
 | `src/cli/tasks/*.ts`  | Sub-cluster of the `mu task` namespace: `queries.ts` (list/next/owned-by + `mu me tasks` / `mu me next`), `lifecycle.ts` (close/open), `edit.ts`, `edges.ts` (+ delete cascade preview), `claim.ts`, `tree.ts`, `wire.ts` (Commander glue). |
 | `src/index.ts`        | SDK entrypoint (re-exports)                                                               |
-| `skills/mu/SKILL.md`  | Bundled skill teaching the LLM the model + verb list + jq pipelines                       |
+| `skills/mu/SKILL.md`  | Bundled skill teaching the LLM the orchestration model and operational traps; `mu --help` owns the verb reference. |
 
 ### What the rows above leave out
 
@@ -756,9 +754,8 @@ DB must never sit in `MU_SYNC_DIR`:
    better-sqlite3's `db.transaction(fn)()` wrapper.
 4. **Executes the operation** — agent ops shell out to tmux (and to
    jj/sl/git for workspaces); task ops are pure SQL.
-5. **Reconciles with reality** — for read-paths that need accuracy
-   (`mu agent list`, state views), queries tmux for live pane
-   state and updates the DB (ghost prune + status detect).
+5. **Reconciles with reality** — read paths prune ghosts and surface
+   orphans; runtime agent state is read from murmur or herdr without a DB write.
 6. **Records ops** — automatically, per [§ The ops log](#the-ops-log-read-this-first);
    machine-local changes go through `emitEvent`. `mu log --tail`
    subscribers see the new ops on the next 1-second poll.
@@ -773,7 +770,6 @@ The extension points. A new impl of each is small.
 | Seam                | Add a new impl by...                                                                                                          |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `VcsBackend`        | Implementing `detect / createWorkspace / freeWorkspace / isClean / commitsBehind / rebaseTo / commitsSinceBase / recentCommits / showCommit` (~80–150 LOC; jj/sl/git/none are working examples)        |
-| Per-CLI `Detector`  | Adding patterns to `detectPiStatus` (vanilla pi `to interrupt)`; pi-meta + every TUI wrapper covered by Braille spinner glyph fallback `[\u2800-\u28FF]`)                  |
 | New typed verb      | An SDK function in the relevant `src/*.ts`; a `cmd<Verb>` in the matching `src/cli/<namespace>.ts`; one commander block in `buildProgram()`, wrapped in `handle()` and routed through `printNextSteps` |
 | New schema migration| Bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror the shape in `CURRENT_SCHEMA`. Keep startup migration-free; extend the retained fresh-target sidecar only when an old released schema needs a bridge. Recipe: [scripts/README.md](../scripts/README.md) |
 | New syncable field  | Add the column to a portable table, extend the capture trigger's changed-column comparison, confirm the apply path writes it. The UPDATE trigger MUST emit only changed columns — a full-row payload silently regresses field merge to row-level LWW |
