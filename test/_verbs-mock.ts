@@ -140,6 +140,12 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       return ok();
     }
 
+    if (verb === "list-panes" && args[1] === "-a") {
+      return ok(
+        [...state.panes.values()].map((pane) => `${pane.paneId}\tworking\t1000`).join("\n"),
+      );
+    }
+
     if (verb === "list-panes" && args[1] === "-s") {
       const tFlag = args.indexOf("-t");
       const session = tFlag >= 0 ? args[tFlag + 1] : "";

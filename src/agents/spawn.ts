@@ -10,6 +10,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { agentKey, murmurAvailable, readAgentStates } from "../agent-state.js";
 import {
   type AgentRow,
   deleteAgent,
@@ -20,7 +21,6 @@ import {
   refreshAgentTitle,
 } from "../agents.js";
 import type { Db } from "../db.js";
-import { detectPiStatus } from "../detect.js";
 import { emitEvent } from "../logs.js";
 import { activeMux, type MuxBackend } from "../mux.js";
 import { isJsonMode, type NextStep } from "../output.js";
@@ -395,7 +395,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Agent
     // so a pane that never became an agent never keeps its agent row.
     const startAgent = (await activeMux()).startAgentInPane;
     if (startAgent === undefined) {
-      await awaitSpawnLiveness(paneId, opts.name);
+      await awaitSpawnLiveness(paneId, opts.name, opts.workstream);
     } else {
       // `startAgentInPane` returns only once the MUX has detected the
       // agent in that pane and considers it ready for input — strictly
@@ -671,7 +671,11 @@ export function detectSpawnStartupError(scrollback: string): string | undefined 
   return undefined;
 }
 
-async function awaitSpawnLiveness(paneId: string, agentName: string): Promise<void> {
+async function awaitSpawnLiveness(
+  paneId: string,
+  agentName: string,
+  workstreamName: string,
+): Promise<void> {
   const ms = defaultSpawnLivenessMs();
   if (ms === 0) return;
   await sleep(ms);
@@ -694,19 +698,17 @@ async function awaitSpawnLiveness(paneId: string, agentName: string): Promise<vo
       throw new AgentSpawnStartupError(agentName, paneId, matchedLine, scrollback);
     }
   }
-  // Readiness poll: wait until the CLI inside the pane reaches a
-  // detectable state (needs_input / needs_permission / busy). This
-  // prevents orchestrators from sending commands to agents that
-  // haven't finished loading yet. Controlled by MU_SPAWN_READINESS_MS
-  // (default 10s; 0 disables).
-  await awaitSpawnReadiness(paneId, agentName);
+  // Readiness poll: when murmur is installed, wait until its extension
+  // claims the pane. Without murmur, the liveness check is enough and
+  // the first send handles input timing. Controlled by
+  // MU_SPAWN_READINESS_MS (default 10s; 0 disables).
+  await awaitSpawnReadiness(paneId, agentName, workstreamName);
 }
 
 /**
  * Default readiness budget in milliseconds. After the liveness check
- * passes, poll the pane's scrollback until the CLI reaches a detected
- * state (needs_input, needs_permission, or busy). 0 disables the
- * poll. Override via env var `MU_SPAWN_READINESS_MS`.
+ * passes, poll until murmur claims the pane. 0 disables the poll.
+ * Override via env var `MU_SPAWN_READINESS_MS`.
  *
  * The default is 10 000 ms (10 s) — generous enough for pi's typical
  * 2–5 s cold-start while not blocking forever if the CLI is unusually
@@ -726,39 +728,32 @@ export function defaultSpawnReadinessMs(): number {
 const READINESS_POLL_INTERVAL_MS = 250;
 
 /**
- * Poll the pane until the pi status detector recognises it as having
- * reached a stable state (needs_input, needs_permission, or busy).
- * Returns silently when the pane becomes ready or the budget expires
- * (timeout is NOT an error — the agent may just be slow to start).
+ * Poll until murmur claims the pane. Returns silently when the claim
+ * appears or the budget expires (timeout is not an error). Without a
+ * working murmur installation, the liveness check above is sufficient.
  *
  * If the pane disappears mid-poll, throws AgentDiedOnSpawnError.
  */
-async function awaitSpawnReadiness(paneId: string, agentName: string): Promise<void> {
+async function awaitSpawnReadiness(
+  paneId: string,
+  agentName: string,
+  workstreamName: string,
+): Promise<void> {
   const budgetMs = defaultSpawnReadinessMs();
-  if (budgetMs === 0) return;
+  if (budgetMs === 0 || !murmurAvailable()) return;
 
   const mux = await activeMux();
   const deadline = Date.now() + budgetMs;
+  const agent = { name: agentName, workstreamName, paneId };
   while (Date.now() < deadline) {
-    const scrollback = await mux.capturePane(paneId, { lines: 50 }).catch(() => undefined);
     if (!(await mux.paneExists(paneId))) {
+      const scrollback = await mux.capturePane(paneId, { lines: 50 }).catch(() => undefined);
       throw new AgentDiedOnSpawnError(agentName, paneId, scrollback);
     }
-    if (scrollback !== undefined) {
-      const status = detectPiStatus(scrollback);
-      // needs_input means the CLI has finished loading and is
-      // waiting for a prompt — the most common "ready" state.
-      // busy/needs_permission also count as ready (the CLI is
-      // running and has rendered recognisable output).
-      if (status === "needs_input" || status === "busy" || status === "needs_permission") {
-        return;
-      }
-    }
+    const reading = (await readAgentStates([agent])).get(agentKey(agent));
+    if (reading?.source === "murmur") return;
     await sleep(Math.min(READINESS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
   }
-  // Budget exhausted — not an error, just a slow start. The agent
-  // row is already committed; reconcile will pick up the status on
-  // the next tick.
 }
 
 /**
