@@ -107,7 +107,6 @@ function registerWorkspace(db: Db, workspace: WorkspaceRow): void {
     name: workspace.agentName,
     workstream: workspace.workstreamName,
     paneId: `%${workspace.agentName}`,
-    status: "needs_input",
   });
   const wsId = resolveWorkstreamId(db, workspace.workstreamName);
   const agent = db
@@ -168,7 +167,7 @@ function snapshot(over: Partial<WorkstreamSnapshot> = {}): WorkstreamSnapshot {
     view: {
       agents: [],
       orphans: [],
-      report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
     },
     tracks: [],
     ready: [],

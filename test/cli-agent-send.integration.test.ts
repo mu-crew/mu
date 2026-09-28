@@ -33,7 +33,7 @@ beforeEach(() => {
   dbPath = join(tempDir, "mu.db");
   db = openDb({ path: dbPath });
   ensureWorkstream(db, "auth");
-  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
   const seen: string[][] = [];
   calls = seen;
   setSleepForTests(async () => {});

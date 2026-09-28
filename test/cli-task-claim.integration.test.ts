@@ -48,7 +48,7 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
     // Task lives in wsa; worker lives in wsb. The dispatch crosses
     // the boundary.
     addTask(db, { localId: "foo", workstream: "wsa", title: "Foo", impact: 50, effortDays: 1 });
-    insertAgent(db, { name: "worker-1", workstream: "wsb", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "wsb", paneId: "%1" });
   });
 
   afterEach(() => {
@@ -120,7 +120,7 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
 
   it("bare --for to an agent in the SAME workstream still works (regression guard)", async () => {
     // Add a worker-2 in wsa; bare --for resolves there.
-    insertAgent(db, { name: "worker-2", workstream: "wsa", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "worker-2", workstream: "wsa", paneId: "%2" });
     const { exitCode, stderr, error } = await runCli(
       ["task", "claim", "foo", "-w", "wsa", "--for", "worker-2", "--json"],
       dbPath,

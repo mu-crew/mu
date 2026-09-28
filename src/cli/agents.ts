@@ -10,6 +10,7 @@
 // gone; the three cmd functions (`cmdMe`, `cmdMyTasks`, `cmdMyNext`)
 // stayed (with `cmdMe` formerly `cmdWhoami`).
 
+import { agentKey, readAgentStates } from "../agent-state.js";
 import {
   type AdoptAgentOptions,
   type AdoptAgentResult,
@@ -26,9 +27,7 @@ import {
   resolveCliCommand,
   resolveCliCommandWithSource,
   sendToAgent,
-  shouldOverwriteAgentStatus,
   spawnAgent,
-  updateAgentStatus,
   waitForAgents,
 } from "../agents.js";
 import {
@@ -44,7 +43,6 @@ import {
   UsageError,
 } from "../cli.js";
 import type { Db } from "../db.js";
-import { detectPiStatus } from "../detect.js";
 import { activeMux, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps } from "../output.js";
 import { listTasksByOwner } from "../tasks.js";
@@ -304,31 +302,24 @@ export async function cmdAgentShow(
     scrollback = "";
   }
 
-  // Fresh-status reconciliation. The persisted `agents.status` is
-  // whatever the last reconcile pass wrote (typically via
-  // `mu agent list` or `mu state`). For `mu agent show <name>` the
-  // operator's expectation is "give me the *current* picture," so we
-  // re-run the detector against the scrollback we just captured and
-  // update the row if status changed. Same shouldOverwrite rules as
-  // listLiveAgents (free is sticky until real activity, etc).
-  // Real bug found in real use: status was reading stale, especially
-  // bad with custom --command wrappers where the orchestrator never noticed needs_input.
-  let displayed = agent;
-  if (scrollback.trim() !== "") {
-    const detected = detectPiStatus(scrollback);
-    if (detected !== agent.status && shouldOverwriteAgentStatus(agent.status, detected)) {
-      updateAgentStatus(db, agent.name, detected, agent.workstreamName);
-      const refreshed = getAgent(db, name, agent.workstreamName);
-      if (refreshed) displayed = refreshed;
-    }
-  }
+  const reading = (await readAgentStates([agent])).get(agentKey(agent));
+  const displayed = {
+    ...agent,
+    state: reading?.state ?? ("unknown" as const),
+    source: reading?.source ?? ("none" as const),
+    since:
+      reading?.since === null || reading?.since === undefined
+        ? null
+        : new Date(reading.since).toISOString(),
+    ...(reading?.reason !== undefined ? { reason: reading.reason } : {}),
+  };
 
   if (opts.json) {
     emitJson({ agent: displayed, scrollback, scrollbackLines: lines });
     return;
   }
 
-  console.log(pc.bold(`${displayed.name}  ${statusIcon(displayed.status)} ${displayed.status}`));
+  console.log(pc.bold(`${displayed.name}  ${statusIcon(displayed.state)} ${displayed.state}`));
   console.log(`  workstream : ${agent.workstreamName}`);
   console.log(`  cli        : ${agent.cli}`);
   console.log(`  pane       : ${pc.dim(agent.paneId)}`);
@@ -353,16 +344,27 @@ export async function cmdMe(
   opts: { json?: boolean; includeClosed?: boolean } = {},
 ): Promise<void> {
   const self = resolveSelf(db);
+  const reading = (await readAgentStates([self])).get(agentKey(self));
+  const displayed = {
+    ...self,
+    state: reading?.state ?? ("unknown" as const),
+    source: reading?.source ?? ("none" as const),
+    since:
+      reading?.since === null || reading?.since === undefined
+        ? null
+        : new Date(reading.since).toISOString(),
+    ...(reading?.reason !== undefined ? { reason: reading.reason } : {}),
+  };
   const owned = listTasksByOwner(db, self.workstreamName, self.name, {
     includeClosed: opts.includeClosed ?? false,
   });
 
   if (opts.json) {
-    emitJson({ agent: self, ownedTasks: owned });
+    emitJson({ agent: displayed, ownedTasks: owned });
     return;
   }
 
-  console.log(pc.bold(`${self.name}  ${statusIcon(self.status)} ${self.status}`));
+  console.log(pc.bold(`${self.name}  ${statusIcon(displayed.state)} ${displayed.state}`));
   console.log(`  workstream : ${self.workstreamName}`);
   console.log(`  cli        : ${self.cli}`);
   console.log(`  pane       : ${pc.dim(self.paneId)}`);
@@ -583,22 +585,15 @@ export async function cmdAgentWait(
     }),
   );
 
-  // Live-status reader: capture the pane + run the detector, mirroring
-  // cmdShow. A capture failure (pane gone) reports null = dead.
-  const captureLines = opts.lines ?? 100;
   const readStatus = async (ref: {
     name: string;
     workstreamName: string;
-  }): Promise<{ status: ReturnType<typeof detectPiStatus> | null }> => {
+  }): Promise<{ status: "busy" | "needs_input" | "needs_permission" | "unknown" | null }> => {
     const agent = getAgent(db, ref.name, ref.workstreamName);
     if (!agent) return { status: null };
-    let scrollback: string;
-    try {
-      scrollback = await (await activeMux()).capturePane(agent.paneId, { lines: captureLines });
-    } catch {
-      return { status: null };
-    }
-    return { status: detectPiStatus(scrollback) };
+    const reading = (await readAgentStates([agent])).get(agentKey(agent));
+    if (reading?.alive === false) return { status: null };
+    return { status: reading?.state ?? "unknown" };
   };
 
   const timeoutMs = (opts.timeout ?? 600) * 1000;

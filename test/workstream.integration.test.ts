@@ -111,8 +111,8 @@ afterEach(() => {
 
 /** Seed: 2 agents, 3 tasks (with one edge), 2 notes — all in `auth`. */
 function seedAuth(): void {
-  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
-  insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%2", status: "needs_input" });
+  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
+  insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%2" });
   addTask(db, {
     localId: "design",
     workstream: "auth",
@@ -153,7 +153,7 @@ describe("ensureWorkstream", () => {
   });
 
   it("is auto-called by insertAgent (so spawn-without-init still works)", () => {
-    insertAgent(db, { name: "worker-1", workstream: "fresh", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "fresh", paneId: "%1" });
     const rows = db.prepare("SELECT name FROM workstreams").all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual(["fresh"]);
   });
@@ -199,7 +199,7 @@ describe("FK SET NULL: closing an agent clears tasks.owner automatically", () =>
       impact: 50,
       effortDays: 1,
     });
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     // v5: tasks.owner_id is the INTEGER FK; resolve worker-1 to its id.
     db.prepare(
       `UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = 'worker-1')
@@ -305,7 +305,6 @@ describe("listWorkstreams", () => {
       name: "billing-1",
       workstream: "billing", // DB only, no tmux session
       paneId: "%9",
-      status: "busy",
     });
 
     const list = await listWorkstreams(db);
@@ -372,7 +371,7 @@ describe("teardownWorkstream", () => {
     state.sessions.add("mu-billing");
     setTmuxExecutor(mockTmux(state).executor);
     seedAuth();
-    insertAgent(db, { name: "billing-1", workstream: "billing", paneId: "%9", status: "busy" });
+    insertAgent(db, { name: "billing-1", workstream: "billing", paneId: "%9" });
     addTask(db, {
       localId: "invoice",
       workstream: "billing",
@@ -517,8 +516,8 @@ describe("teardownWorkstream", () => {
   it("splits freedWorkspaces (real removal) from alreadyGoneWorkspaces (no-op on disk)", async () => {
     setTmuxExecutor(mockTmux(state).executor);
     ensureWorkstream(db, "split");
-    insertAgent(db, { name: "alive", workstream: "split", paneId: "%101", status: "free" });
-    insertAgent(db, { name: "ghost", workstream: "split", paneId: "%102", status: "free" });
+    insertAgent(db, { name: "alive", workstream: "split", paneId: "%101" });
+    insertAgent(db, { name: "ghost", workstream: "split", paneId: "%102" });
 
     const presentPath = join(tmpDir, "ws-present");
     const missingPath = join(tmpDir, "ws-missing"); // never created on disk
@@ -566,7 +565,7 @@ describe("teardownWorkstream", () => {
   it("records a backend throw as a failedWorkspaces entry and still completes the destroy", async () => {
     setTmuxExecutor(mockTmux(state).executor);
     ensureWorkstream(db, "fail");
-    insertAgent(db, { name: "stuck", workstream: "fail", paneId: "%201", status: "free" });
+    insertAgent(db, { name: "stuck", workstream: "fail", paneId: "%201" });
 
     // Real-world analogue: `git worktree remove` refuses because of
     // uncommitted changes, or `jj workspace forget` fails on a
@@ -626,8 +625,8 @@ describe("teardownWorkstream", () => {
   it("partitions mixed success/failure correctly (one freed, one failed)", async () => {
     setTmuxExecutor(mockTmux(state).executor);
     ensureWorkstream(db, "mixed");
-    insertAgent(db, { name: "good", workstream: "mixed", paneId: "%301", status: "free" });
-    insertAgent(db, { name: "bad", workstream: "mixed", paneId: "%302", status: "free" });
+    insertAgent(db, { name: "good", workstream: "mixed", paneId: "%301" });
+    insertAgent(db, { name: "bad", workstream: "mixed", paneId: "%302" });
 
     // Both rows reference the same registered backend name; the
     // injected resolver returns a per-agent backend that either

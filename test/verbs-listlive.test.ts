@@ -95,7 +95,7 @@ describe("listLiveAgents", () => {
   });
 
   it("prunes ghost rows during the listing", async () => {
-    insertAgent(db, { name: "ghost", workstream: "auth", paneId: "%999", status: "busy" });
+    insertAgent(db, { name: "ghost", workstream: "auth", paneId: "%999" });
     const { executor } = mockTmux(state);
     setTmuxExecutor(executor);
 
@@ -107,7 +107,7 @@ describe("listLiveAgents", () => {
 
   describe("mode propagation", () => {
     it("mode: 'report-only' does NOT prune ghost rows", async () => {
-      insertAgent(db, { name: "ghost", workstream: "auth", paneId: "%999", status: "busy" });
+      insertAgent(db, { name: "ghost", workstream: "auth", paneId: "%999" });
       const { executor } = mockTmux(state);
       setTmuxExecutor(executor);
 
@@ -118,7 +118,7 @@ describe("listLiveAgents", () => {
     });
 
     it("mode: 'full' (default) keeps the documented mutating behaviour for `mu agent list`", async () => {
-      insertAgent(db, { name: "ghost", workstream: "auth", paneId: "%999", status: "busy" });
+      insertAgent(db, { name: "ghost", workstream: "auth", paneId: "%999" });
       const { executor } = mockTmux(state);
       setTmuxExecutor(executor);
 

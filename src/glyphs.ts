@@ -37,27 +37,17 @@
 // the `—` empty-cell dash, `…` truncation, box-drawing borders. Those
 // are text, not vocabulary, and stay at their call sites.
 
-import type { AgentStatus } from "./detect.js";
+import type { RuntimeState } from "./agent-state.js";
 
-/**
- * Agent status → glyph, used by CLI and TUI status surfaces.
- */
-export const AGENT_STATUS_GLYPH: Record<AgentStatus, string> = {
-  spawning: "\uf251", // nf-fa-hourglass_start
-  busy: "\uf04b", // nf-fa-play          — murmur's dash `running`
-  needs_input: "\uf186", // nf-fa-moon_o        — murmur's dash `idle`
+export const AGENT_STATE_GLYPH: Record<RuntimeState, string> = {
+  busy: "\uf04b", // nf-fa-play
+  needs_input: "\uf186", // nf-fa-moon_o
   needs_permission: "\uf023", // nf-fa-lock
-  free: "\uf058", // nf-fa-check_circle
-  unreachable: "\uf059", // nf-fa-question_circle
-  terminated: "\uf057", // nf-fa-times_circle
+  unknown: "\uf059", // nf-fa-question_circle
 };
 
-/**
- * Single rendering helper for agent status glyphs. Keep callers off
- * AGENT_STATUS_GLYPH indexing so the fallback policy stays in one place.
- */
-export function agentStatusGlyph(status: AgentStatus): string {
-  return AGENT_STATUS_GLYPH[status] ?? GLYPH.unknown;
+export function agentStateGlyph(state: RuntimeState): string {
+  return AGENT_STATE_GLYPH[state] ?? GLYPH.unknown;
 }
 
 /**

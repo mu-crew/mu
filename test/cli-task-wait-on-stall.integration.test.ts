@@ -68,6 +68,11 @@ describe("mu task wait --on-stall warn|exit", () => {
     // empties for everything else; tests don't exercise other tmux
     // paths.
     const executor: TmuxExecutor = async (args) => {
+      if (args[0] === "list-panes" && args[1] === "-a") {
+        const since = Date.now() - 10 * 60_000;
+        const lines = [...liveAgentPaneIds].map((paneId) => `${paneId}\tidle\t${since}`).join("\n");
+        return { stdout: lines, stderr: "", exitCode: 0 };
+      }
       // list-panes for `mu-<ws>`: synthesize one row per live pane id.
       if (args[0] === "list-panes") {
         const lines = [...liveAgentPaneIds].map((paneId) => `@1\t${paneId}\tagent\tsh`).join("\n");
@@ -115,7 +120,6 @@ describe("mu task wait --on-stall warn|exit", () => {
       name: agentName,
       workstream,
       paneId,
-      status: "needs_input",
     });
     addTask(db, { localId: taskName, workstream, title: "T", impact: 50, effortDays: 1 });
     db.prepare(
@@ -124,12 +128,6 @@ describe("mu task wait --on-stall warn|exit", () => {
               updated_at = ?
         WHERE local_id = ?`,
     ).run(agentName, new Date().toISOString(), taskName);
-    // Back-date the agent's updated_at AFTER the claim so the
-    // staleness check fires immediately on tick 0.
-    db.prepare("UPDATE agents SET status = 'needs_input', updated_at = ? WHERE name = ?").run(
-      new Date(Date.now() - 10 * 60_000).toISOString(),
-      agentName,
-    );
   }
 
   it("--on-stall exit: stall → exit 7; stderr names task + agent + needs_input", async () => {

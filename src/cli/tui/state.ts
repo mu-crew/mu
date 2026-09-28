@@ -438,7 +438,7 @@ export function slowerTick(current: number): number {
 //     them today (the TUI shows orphans only on the static
 //     `mu state` card). If a future card reads them, add it here.
 //   - We DO NOT include reconcile report counters (prunedGhosts,
-//     statusChanges) — they are diagnostic, not rendered.
+//     prune counts) — they are diagnostic, not rendered.
 
 /**
  * Pure projection of the visible-affecting fields of a snapshot.
@@ -450,7 +450,7 @@ export function slowerTick(current: number): number {
 export function snapshotKey(s: WorkstreamSnapshot): unknown {
   return {
     workstreamName: s.workstreamName,
-    agents: s.view.agents.map((a) => [a.name, a.status, a.role, a.idle === true ? 1 : 0]),
+    agents: s.view.agents.map((a) => [a.name, a.state, a.role, a.idle === true ? 1 : 0]),
     orphanPaneIds: s.view.orphans.map((o) => o.paneId).sort(),
     tracks: s.tracks.map((t) => ({
       roots: t.roots.map((r) => r.name),

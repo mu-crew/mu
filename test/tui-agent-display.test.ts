@@ -1,20 +1,22 @@
 import { describe, expect, it } from "vitest";
-import type { AgentRow } from "../src/agents.js";
+import type { LiveAgent } from "../src/agents.js";
 import {
   agentByName,
-  agentStatusGlyph,
+  agentStateGlyph,
   formatAgentRefDisplayName,
   formatKnownAgentDisplayName,
 } from "../src/cli/tui/agent-display.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
 
-function agent(over: Partial<AgentRow> = {}): AgentRow {
+function agent(over: Partial<LiveAgent> = {}): LiveAgent {
   return {
     name: "worker-1",
     workstreamName: "demo",
     cli: "pi",
     paneId: "%1",
-    status: "busy",
+    state: "busy",
+    source: "murmur",
+    since: null,
     role: "full-access",
     tab: null,
     createdAt: "2026-05-11T00:00:00Z",
@@ -23,13 +25,13 @@ function agent(over: Partial<AgentRow> = {}): AgentRow {
   };
 }
 
-function snapshotWithAgents(agents: AgentRow[]): WorkstreamSnapshot {
+function snapshotWithAgents(agents: LiveAgent[]): WorkstreamSnapshot {
   return {
     workstreamName: "demo",
     view: {
       agents,
       orphans: [],
-      report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
     },
     tracks: [],
     ready: [],
@@ -48,18 +50,18 @@ function snapshotWithAgents(agents: AgentRow[]): WorkstreamSnapshot {
 
 describe("agent display helpers", () => {
   it("formats known agent rows with the status glyph", () => {
-    const a = agent({ name: "worker-1", status: "busy" });
+    const a = agent({ name: "worker-1" });
 
-    expect(formatKnownAgentDisplayName(a)).toBe(`${agentStatusGlyph("busy")} worker-1`);
+    expect(formatKnownAgentDisplayName(a)).toBe(`${agentStateGlyph("busy")} worker-1`);
   });
 
   it("formats agent references with a glyph when the live agent is known", () => {
     const lookup = agentByName(
-      snapshotWithAgents([agent({ name: "reviewer-1", status: "needs_input" })]),
+      snapshotWithAgents([agent({ name: "reviewer-1", state: "needs_input" })]),
     );
 
     expect(formatAgentRefDisplayName("reviewer-1", lookup)).toBe(
-      `${agentStatusGlyph("needs_input")} reviewer-1`,
+      `${agentStateGlyph("needs_input")} reviewer-1`,
     );
   });
 

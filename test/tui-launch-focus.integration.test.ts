@@ -55,7 +55,7 @@ function registerWorkspace(
   backend: "git" | "none" = "none",
 ): void {
   mkdirSync(workspacePath, { recursive: true });
-  insertAgent(db, { name: agent, workstream, paneId: `%${workstream}-${agent}`, status: "busy" });
+  insertAgent(db, { name: agent, workstream, paneId: `%${workstream}-${agent}` });
   const ws = db.prepare("SELECT id FROM workstreams WHERE name = ?").get(workstream) as
     | { id: number }
     | undefined;

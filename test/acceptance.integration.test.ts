@@ -233,18 +233,11 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
     // status — freshly spawned panes start in `spawning` and only
     // transition once tmux scrollback is captured. Fixed sleeps here
     // were the canonical CI-flake source per AGENTS.md § Tests.
-    await pollUntil(
-      async () => {
-        const v = await listLiveAgents(db, { workstream });
-        return v.agents.length === 3 && v.agents.every((a) => a.status === "needs_input");
-      },
-      { description: "all 3 agents detected as needs_input" },
-    );
+    await pollUntil(async () => (await listLiveAgents(db, { workstream })).agents.length === 3, {
+      description: "all 3 agents listed",
+    });
     const view1 = await listLiveAgents(db, { workstream });
     expect(view1.agents).toHaveLength(3);
-    for (const agent of view1.agents) {
-      expect(agent.status).toBe("needs_input"); // sh panes show no busy/permission patterns
-    }
 
     // ── Recovery: bob's pane dies externally ──────────────────────────
     await killPane(bob.paneId);
@@ -286,7 +279,6 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
       name: "ghost",
       workstream,
       paneId: "%999999",
-      status: "busy",
     });
     const view4 = await listLiveAgents(db, { workstream });
     expect(view4.report.prunedGhosts).toBe(1);

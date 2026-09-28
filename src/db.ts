@@ -609,7 +609,7 @@ CREATE TABLE IF NOT EXISTS agents (
   name          TEXT NOT NULL,                  -- per-workstream unique
   cli           TEXT NOT NULL DEFAULT 'pi',
   pane_id       TEXT NOT NULL,
-  status        TEXT NOT NULL,
+  status        TEXT NOT NULL,                    -- DEPRECATED (2.0): always 'spawning'; runtime state lives in murmur. Drop at the first v11 migration.
   role          TEXT NOT NULL DEFAULT 'full-access',
   tab           TEXT,
   created_at    TEXT NOT NULL,

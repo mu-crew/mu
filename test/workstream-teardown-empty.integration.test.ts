@@ -125,7 +125,6 @@ function seed(state: MockState): void {
     name: "worker-1",
     workstream: "with-agent",
     paneId: "%99",
-    status: "free",
   });
   // empty-a has a live tmux session; empty-b doesn't.
   state.sessions.add("mu-empty-a");

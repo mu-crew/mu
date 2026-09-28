@@ -24,7 +24,6 @@ import {
   getAgent,
   insertAgent,
   refreshAgentTitle,
-  updateAgentStatus,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import {
@@ -61,8 +60,8 @@ beforeEach(() => {
   // Same agent name in both. Use distinct pane ids so the registry
   // INSERT doesn't trip a UNIQUE on pane_id (none exists today, but
   // belt-and-braces).
-  insertAgent(db, { name: "worker-1", workstream: "wsa", paneId: "%A1", status: "free" });
-  insertAgent(db, { name: "worker-1", workstream: "wsb", paneId: "%B1", status: "free" });
+  insertAgent(db, { name: "worker-1", workstream: "wsa", paneId: "%A1" });
+  insertAgent(db, { name: "worker-1", workstream: "wsb", paneId: "%B1" });
   // Same task local_id in both workstreams. Distinct titles so we can
   // tell them apart on lookup.
   addTask(db, {
@@ -234,12 +233,6 @@ describe("v5 name-clash regression: edit verbs scope correctly", () => {
 });
 
 describe("v5 name-clash regression: agent verbs scope correctly", () => {
-  it("updateAgentStatus({ workstream }) only mutates the right row", () => {
-    updateAgentStatus(db, "worker-1", "busy", "wsa");
-    expect(getAgent(db, "worker-1", "wsa")?.status).toBe("busy");
-    expect(getAgent(db, "worker-1", "wsb")?.status).toBe("free");
-  });
-
   it("deleteAgent({ workstream }) only deletes the right row", () => {
     deleteAgent(db, "worker-1", "wsa");
     expect(getAgent(db, "worker-1", "wsa")).toBeUndefined();

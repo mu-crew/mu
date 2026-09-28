@@ -138,7 +138,7 @@ function snapshotFor(db: Db): WorkstreamSnapshot {
     view: {
       agents: [],
       orphans: [],
-      report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
     },
     tracks: [],
     ready: [],
@@ -198,13 +198,11 @@ async function renderFilteredRecent(query: string): Promise<string> {
     name: "needle2_owner",
     workstream: "demo",
     paneId: "%201",
-    status: "free",
   });
   insertAgent(db, {
     name: "other_owner",
     workstream: "demo",
     paneId: "%202",
-    status: "free",
   });
   seedRecentClosedForFilter(db);
   const snap = snapshotFor(db);

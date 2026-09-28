@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
-import type { AgentRow } from "../src/agents.js";
+import type { LiveAgent } from "../src/agents.js";
 import { AgentsCard } from "../src/cli/tui/cards/agents.js";
 import { BlockedCard } from "../src/cli/tui/cards/blocked.js";
 import { CommitsCard } from "../src/cli/tui/cards/commits.js";
@@ -22,7 +22,7 @@ const EMPTY_SNAPSHOT: WorkstreamSnapshot = {
   view: {
     agents: [],
     orphans: [],
-    report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+    report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
   },
   tracks: [],
   ready: [],
@@ -104,13 +104,15 @@ function numberTokens(text: string): string[] {
   return text.match(/\d+/g) ?? [];
 }
 
-function agent(over: Partial<AgentRow> = {}): AgentRow {
+function agent(over: Partial<LiveAgent> = {}): LiveAgent {
   return {
     name: "worker-1",
     workstreamName: "demo",
     cli: "pi",
     paneId: "%1",
-    status: "busy",
+    state: "busy",
+    source: "murmur",
+    since: null,
     role: "full-access",
     tab: null,
     createdAt: "2026-05-11T00:00:00Z",

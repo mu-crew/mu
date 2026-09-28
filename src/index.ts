@@ -4,6 +4,15 @@
 // through the same exports here so there is exactly one canonical surface.
 
 export {
+  agentKey,
+  murmurAvailable,
+  type RuntimeState,
+  readAgentStates,
+  type StateReading,
+  type StateSource,
+  UNKNOWN_REASON,
+} from "./agent-state.js";
+export {
   type AdoptAgentOptions,
   type AdoptAgentResult,
   AgentDiedOnSpawnError,
@@ -14,7 +23,6 @@ export {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   adoptAgent,
-  agentStatusGlyph,
   type CloseAgentOptions,
   type CloseAgentResult,
   type CommandResolutionResult,
@@ -38,6 +46,7 @@ export {
   type KickSignal,
   kickAgent,
   type ListLiveAgentsOptions,
+  type LiveAgent,
   type LiveAgentsView,
   listAgents,
   listLiveAgents,
@@ -50,12 +59,10 @@ export {
   resolveCliCommand,
   resolveCliCommandWithSource,
   type SpawnAgentOptions,
-  STATUS_EMOJI,
   sendToAgent,
   setCommandResolverForTests,
   setKickProcessExecutor,
   spawnAgent,
-  updateAgentStatus,
   WorkspacePreservedError,
 } from "./agents.js";
 export {
@@ -98,12 +105,6 @@ export {
   type SyncedEntity,
 } from "./db.js";
 export {
-  type AgentStatus,
-  type DetectedStatus,
-  detectPiStatus,
-  extractTail,
-} from "./detect.js";
-export {
   countProblems,
   type DoctorCheck,
   type DoctorStatus,
@@ -144,7 +145,7 @@ export {
   isPathInside,
   probeFilesystem,
 } from "./fleet-hazards.js";
-export { AGENT_STATUS_GLYPH, GLYPH } from "./glyphs.js";
+export { AGENT_STATE_GLYPH, agentStateGlyph, GLYPH } from "./glyphs.js";
 export {
   compareHlc,
   formatHlc,
@@ -241,7 +242,7 @@ export {
   verifyAgainstManifest,
 } from "./segments.js";
 export {
-  agentStatusHistogram,
+  agentStateHistogram,
   type LoadWorkstreamSnapshotOptions,
   loadWorkstreamSnapshot,
   loadWorkstreamSnapshotFast,

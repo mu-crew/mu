@@ -51,7 +51,7 @@ beforeEach(() => {
   dbDir = mkdtempSync(join(tmpdir(), "mu-ws-db-"));
   db = openDb({ path: join(dbDir, "mu.db") });
   ensureWorkstream(db, "auth");
-  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
 
   projectRoot = mkdtempSync(join(tmpdir(), "mu-ws-project-"));
   writeFileSync(join(projectRoot, "README"), "hello\n");
@@ -143,11 +143,11 @@ describe("workspace SDK (with noneBackend)", () => {
     // for the pre-stage so getWorkspaceForAgent(worker-2) returns
     // undefined (i.e. we don't trip the WorkspaceExistsError early-out).
     const futurePath = workspacePath("auth", "worker-2");
-    insertAgent(db, { name: "squatter", workstream: "auth", paneId: "%99", status: "busy" });
+    insertAgent(db, { name: "squatter", workstream: "auth", paneId: "%99" });
     // v5 requires a real agent row before vcs_workspaces.agent_id can
     // be set. Insert worker-2 too so the test's stress is on the path
     // UNIQUE constraint, not the FK / NOT NULL on agent_id.
-    insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%100", status: "busy" });
+    insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%100" });
     const wsId = (
       db.prepare("SELECT id FROM workstreams WHERE name = 'auth'").get() as { id: number }
     ).id;
@@ -213,7 +213,7 @@ describe("workspace SDK (with noneBackend)", () => {
 
   it("listWorkspaces filters by workstream", async () => {
     ensureWorkstream(db, "billing");
-    insertAgent(db, { name: "biller", workstream: "billing", paneId: "%9", status: "busy" });
+    insertAgent(db, { name: "biller", workstream: "billing", paneId: "%9" });
     await createWorkspace(db, {
       agent: "worker-1",
       workstream: "auth",
@@ -503,7 +503,7 @@ describe("closeAgent + workspace integration", () => {
   });
 
   it("closeAgent succeeds normally when the agent had no workspace", async () => {
-    insertAgent(db, { name: "plain-1", workstream: "auth", paneId: "%9", status: "busy" });
+    insertAgent(db, { name: "plain-1", workstream: "auth", paneId: "%9" });
     const { closeAgent } = await import("../src/agents.js");
     const r = await closeAgent(db, "plain-1", { workstream: "auth" });
     expect(r.workspaceFreed).toBe(false);
@@ -666,7 +666,7 @@ describe("listWorkspaceOrphans", () => {
   });
 
   it("returns [] when every dir on disk has a DB row", async () => {
-    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1" });
     await createWorkspace(db, {
       agent: "w1",
       workstream: "auth",
@@ -679,7 +679,7 @@ describe("listWorkspaceOrphans", () => {
   it("flags a dir on disk that has no DB row", async () => {
     // Create a real workspace, then DELETE the row to leave the dir
     // orphaned (the bug_workspace_orphan_not_in_state shape).
-    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1" });
     const ws = await createWorkspace(db, {
       agent: "w1",
       workstream: "auth",
@@ -697,8 +697,8 @@ describe("listWorkspaceOrphans", () => {
   });
 
   it("only flags dirs missing rows, not dirs that have rows", async () => {
-    insertAgent(db, { name: "live", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "orphaned", workstream: "auth", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "live", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "orphaned", workstream: "auth", paneId: "%2" });
     await createWorkspace(db, {
       agent: "live",
       workstream: "auth",
@@ -773,8 +773,8 @@ describe("listAllOrphanWorkspaces", () => {
     // workspace; plus a fully-stranded workstream `ghost` with one
     // orphan dir.
     ensureWorkstream(db, "auth");
-    insertAgent(db, { name: "live", workstream: "auth", paneId: "%1", status: "busy" });
-    insertAgent(db, { name: "orphaned", workstream: "auth", paneId: "%2", status: "busy" });
+    insertAgent(db, { name: "live", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "orphaned", workstream: "auth", paneId: "%2" });
     await createWorkspace(db, {
       agent: "live",
       workstream: "auth",
@@ -845,7 +845,7 @@ describe("`mu workspace orphans` CLI", () => {
 
   it("--all aggregates orphans across multiple workstreams (incl. destroyed)", async () => {
     ensureWorkstream(db, "auth");
-    insertAgent(db, { name: "orphaned", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "orphaned", workstream: "auth", paneId: "%1" });
     await createWorkspace(db, {
       agent: "orphaned",
       workstream: "auth",

@@ -178,7 +178,6 @@ describe("mu task notes — filters", () => {
         name: "worker-1",
         workstream: "test",
         paneId: "%999",
-        status: "busy",
       });
       await claimTask(db, "tnotes", { workstream: "test", agentName: "worker-1" });
       await sleep(5);

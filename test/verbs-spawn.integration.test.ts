@@ -87,7 +87,6 @@ describe("spawnAgent", () => {
     expect(state.sessions.has("mu-auth")).toBe(true);
     expect(agent.name).toBe("alice");
     expect(agent.workstreamName).toBe("auth");
-    expect(agent.status).toBe("spawning");
     // First call should be has-session, then new-session.
     expect(calls[0]?.[0]).toBe("has-session");
     expect(calls[1]?.[0]).toBe("new-session");
@@ -140,7 +139,6 @@ describe("spawnAgent", () => {
     expect(agent.paneId).toMatch(/^%\d+$/);
     const fromDb = getAgent(db, "alice", "auth");
     expect(fromDb?.paneId).toBe(agent.paneId);
-    expect(fromDb?.status).toBe("spawning");
   });
 
   // Verify identity env vars (MU_MANAGED_AGENT / MU_AGENT_NAME /
@@ -261,7 +259,7 @@ describe("spawnAgent", () => {
   });
 
   it("rejects duplicate agent name BEFORE calling tmux", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1", status: "busy" });
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1" });
     const { executor, calls } = mockTmux(state);
     setTmuxExecutor(executor);
     await expect(spawnAgent(db, { name: "alice", workstream: "auth" })).rejects.toBeInstanceOf(
@@ -453,8 +451,7 @@ describe("spawn liveness check", () => {
   it("healthy spawn passes through (pane survives the liveness window)", async () => {
     const { executor } = mockTmux(state);
     setTmuxExecutor(executor);
-    const agent = await spawnAgent(db, { name: "alice", workstream: "auth" });
-    expect(agent.status).toBe("spawning");
+    await spawnAgent(db, { name: "alice", workstream: "auth" });
     expect(getAgent(db, "alice", "auth")).toBeDefined();
   });
 });

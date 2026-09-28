@@ -24,7 +24,7 @@ const EMPTY_SNAPSHOT: WorkstreamSnapshot = {
   view: {
     agents: [],
     orphans: [],
-    report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+    report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
   },
   tracks: [],
   ready: [],

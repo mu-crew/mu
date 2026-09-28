@@ -72,7 +72,7 @@ async function runFullSession(): Promise<void> {
   addNote(db, "t1", "a note", { workstream: "demo" });
   addBlockEdge(db, "demo", "t1", "t2");
   removeBlockEdge(db, "demo", "t1", "t2");
-  insertAgent(db, { name: "worker-1", workstream: "demo", paneId: "%1", status: "free" });
+  insertAgent(db, { name: "worker-1", workstream: "demo", paneId: "%1" });
   await claimTask(db, "t1", { workstream: "demo", agentName: "worker-1" });
   releaseTask(db, "t1", { workstream: "demo" });
   closeTask(db, "t1", { workstream: "demo" });

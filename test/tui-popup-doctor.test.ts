@@ -66,7 +66,7 @@ function snapshot(over: Partial<WorkstreamSnapshot> = {}): WorkstreamSnapshot {
     view: {
       agents: [],
       orphans: [],
-      report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
     },
     tracks: [],
     ready: [],
@@ -188,7 +188,7 @@ describe("DoctorPopup: behaviour", () => {
       view: {
         agents: [],
         orphans: [{ paneId: "%99", title: "lost", command: "pi" }],
-        report: { prunedGhosts: 2, statusChanges: 0, orphans: [], mode: "report-only" },
+        report: { prunedGhosts: 2, orphans: [], mode: "report-only" },
       },
       workspaceOrphans: [{ agentName: "worker-1", workstreamName: "demo", path: "/tmp/orphan" }],
     });
@@ -228,7 +228,7 @@ describe("DoctorPopup: behaviour", () => {
       view: {
         agents: [],
         orphans: [],
-        report: { prunedGhosts: 2, statusChanges: 0, orphans: [], mode: "report-only" },
+        report: { prunedGhosts: 2, orphans: [], mode: "report-only" },
       },
     });
     const r = await renderDoctorPopup(db, snap);

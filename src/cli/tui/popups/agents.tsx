@@ -19,10 +19,10 @@
 
 import { Box, Text, useInput } from "ink";
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
-import { type AgentRow, readAgent } from "../../../agents.js";
+import { type LiveAgent, readAgent } from "../../../agents.js";
 import type { Db } from "../../../db.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
-import { agentStatusGlyph } from "../agent-display.js";
+import { agentStateGlyph } from "../agent-display.js";
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { ListRow } from "../list-row.js";
@@ -99,14 +99,14 @@ export function AgentsPopup({
   const agents = applyFilter(
     sourceAgents,
     flt.query,
-    (a) => `${a.name} ${a.status} ${a.cli} ${a.role}`,
+    (a) => `${a.name} ${a.state} ${a.cli} ${a.role}`,
   );
   const safeCursor = agents.length === 0 ? 0 : Math.min(cursor, agents.length - 1);
   const focused = agents[safeCursor];
   // Defensive: capture focused agent identity at Enter so the drill
   // stays pinned to the agent the user visually selected even if the
   // list shifts underneath us.
-  const [drilledAgent, setDrilledAgent] = useState<AgentRow | null>(null);
+  const [drilledAgent, setDrilledAgent] = useState<LiveAgent | null>(null);
   const drillAgent = mode === "drill" ? (drilledAgent ?? focused) : focused;
   const lastFocusedAgentName = useRef<string | null>(null);
   // Load scrollback when entering drill mode (or when the focused
@@ -281,7 +281,7 @@ export function AgentsPopup({
   }
 
   const { start, visible } = centredVisibleSlice(agents, safeCursor, viewport);
-  const rows = visible.map((a) => [agentStatusGlyph(a.status), a.name, a.status, a.role]);
+  const rows = visible.map((a) => [agentStateGlyph(a.state), a.name, a.state, a.role]);
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);
 
   return (

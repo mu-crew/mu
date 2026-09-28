@@ -12,7 +12,7 @@ function fastSnapshot(label: string): WorkstreamSnapshot {
     view: {
       agents: [],
       orphans: [],
-      report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
     },
     tracks: [],
     ready: [
@@ -59,7 +59,9 @@ function slowFields(label: string): WorkstreamSnapshotSlowFields {
           workstreamName: "ws",
           cli: "pi",
           paneId: "%1",
-          status: "busy",
+          state: "busy",
+          source: "murmur",
+          since: null,
           role: "full-access",
           tab: null,
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -67,7 +69,7 @@ function slowFields(label: string): WorkstreamSnapshotSlowFields {
         },
       ],
       orphans: [],
-      report: { prunedGhosts: 0, statusChanges: 0, orphans: [], mode: "report-only" },
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
     },
     workspaces: [
       {

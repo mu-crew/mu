@@ -123,7 +123,7 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
   });
 
   async function seedWorker(agent: string, paneId: string, task: string): Promise<WorkspaceRow> {
-    insertAgent(db, { name: agent, workstream: "test", paneId, status: "busy" });
+    insertAgent(db, { name: agent, workstream: "test", paneId });
     const workspace = await createWorkspace(db, {
       agent,
       workstream: "test",

@@ -12,8 +12,9 @@
 // renderer. cli.ts re-exports every symbol for back-compat with the
 // existing import surface (tests + cli/* importers).
 
-import type { AgentRow, AgentStatus } from "../agents.js";
-import { agentStatusGlyph, GLYPH } from "../glyphs.js";
+import { type RuntimeState, UNKNOWN_REASON } from "../agent-state.js";
+import type { LiveAgent } from "../agents.js";
+import { agentStateGlyph, GLYPH } from "../glyphs.js";
 import { parseOpKey, renderOp } from "../log-render.js";
 import type { LogRow } from "../logs.js";
 import { muTable, pc } from "../output.js";
@@ -26,21 +27,18 @@ import type { TornDownWorkstream, WorkstreamSummary } from "../workstream.js";
 // ─── Status colours / icons ────────────────────────────────────────────
 
 /** Per-status colour for the table view. The glyph itself comes from
- *  agentStatusGlyph in src/glyphs.ts — single source of truth so the
+ *  agentStateGlyph in src/glyphs.ts — single source of truth so the
  *  CLI and TUI status surfaces never drift
  *  (review_code_status_emoji_two_sources caught a 2-of-7 disagreement). */
-const STATUS_COLORS: Record<AgentStatus, (s: string) => string> = {
-  spawning: pc.yellow,
+const STATUS_COLORS: Record<RuntimeState, (s: string) => string> = {
   busy: pc.cyan,
   needs_input: pc.dim,
   needs_permission: pc.magenta,
-  free: pc.green,
-  unreachable: pc.red,
-  terminated: pc.dim,
+  unknown: pc.dim,
 };
 
-export function statusIcon(status: AgentStatus): string {
-  return STATUS_COLORS[status](agentStatusGlyph(status));
+export function statusIcon(state: RuntimeState): string {
+  return STATUS_COLORS[state](agentStateGlyph(state));
 }
 
 /**
@@ -145,7 +143,7 @@ export function relTimeAgo(ms: number): string {
 
 // ─── Table renderers ──────────────────────────────────────────────────
 
-export function formatAgentsTable(agents: readonly AgentRow[]): string {
+export function formatAgentsTable(agents: readonly LiveAgent[]): string {
   if (agents.length === 0) return pc.dim("  (no agents)");
   // Cap the variable-width columns so a long tmux window name (or a
   // future free-text role) can't push the table past the terminal.
@@ -156,7 +154,7 @@ export function formatAgentsTable(agents: readonly AgentRow[]): string {
       pc.bold(""),
       pc.bold("name"),
       pc.bold("cli"),
-      pc.bold("status"),
+      pc.bold("state"),
       pc.bold("window"),
       pc.bold("role"),
     ],
@@ -170,19 +168,26 @@ export function formatAgentsTable(agents: readonly AgentRow[]): string {
     // stays the truth ('needs_input'); GLYPH.warn is the supplement.
     const idle = a.idle === true;
     const glyphCell = idle
-      ? `${pc.yellow(IDLE_GLYPH)} ${statusIcon(a.status)}`
-      : statusIcon(a.status);
+      ? `${pc.yellow(IDLE_GLYPH)} ${statusIcon(a.state)}`
+      : statusIcon(a.state);
     const nameCell = idle ? pc.yellow(a.name) : a.name;
     table.push([
       glyphCell,
       nameCell,
       a.cli,
-      a.status,
+      a.state === "unknown" && a.reason !== undefined ? `${a.state}: ${a.reason}` : a.state,
       a.tab ?? a.name,
       a.role === "read-only" ? pc.yellow("read-only") : "",
     ]);
   }
-  return table.toString();
+  const needsMurmur = agents.some(
+    (a) =>
+      a.state === "unknown" &&
+      (a.reason === UNKNOWN_REASON.murmurMissing || a.reason === UNKNOWN_REASON.extensionMissing),
+  );
+  return needsMurmur
+    ? `${table.toString()}\n${pc.dim("agent state needs murmur (see mu doctor)")}`
+    : table.toString();
 }
 
 export function formatReadyTable(tasks: readonly TaskRow[]): string {

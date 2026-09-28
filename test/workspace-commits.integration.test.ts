@@ -47,7 +47,7 @@ beforeEach(() => {
   dbDir = mkdtempSync(join(tmpdir(), "mu-commits-db-"));
   db = openDb({ path: join(dbDir, "mu.db") });
   ensureWorkstream(db, "auth");
-  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", status: "busy" });
+  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
   projectRoot = mkdtempSync(join(tmpdir(), "mu-commits-project-"));
   writeFileSync(join(projectRoot, "README"), "hello\n");
 });
