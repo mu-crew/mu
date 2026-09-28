@@ -25,7 +25,7 @@
 //
 // Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
-import { agentKey, readAgentStates, type StateReading } from "../agent-state.js";
+import type { StateReading } from "../agent-state.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { StallDetectedDuringWaitError, TaskNotFoundError } from "./errors.js";
@@ -164,6 +164,12 @@ export interface TaskWaitOptions {
    *  needs_input might BE the success path. See
    *  task_wait_stall_action_flag. */
   onStall?: "warn" | "exit";
+  /** Read an owner's current runtime state for attention detection.
+   *  Without this hook, SDK waits never infer a stall from stored data. */
+  readOwnerState?: (owner: {
+    name: string;
+    workstreamName: string;
+  }) => Promise<StateReading | null>;
   /** Optional async hook run BEFORE every snapshot (initial + each
    *  poll iteration). The CLI uses this to reconcile the workstream
    *  each tick (reaper flips IN_PROGRESS → OPEN for dead-pane
@@ -269,35 +275,19 @@ export async function waitForTasks(
   const stuckWarned = new Set<string>();
   const refKey = (ref: TaskWaitRef): string => `${ref.workstreamName}/${ref.name}`;
 
-  const ownerAgents = () => {
-    const seen = new Set<string>();
-    return refs.flatMap((ref) => {
-      const task = getTask(db, ref.name, ref.workstreamName);
-      if (task?.ownerName === null || task?.ownerName === undefined) return [];
-      const key = `${ref.workstreamName}/${task.ownerName}`;
-      if (seen.has(key)) return [];
-      seen.add(key);
-      const row = db
-        .prepare(
-          `SELECT a.name, ws.name AS workstreamName, a.pane_id AS paneId
-             FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id
-            WHERE a.name = ? AND ws.name = ?`,
-        )
-        .get(task.ownerName, ref.workstreamName) as
-        | { name: string; workstreamName: string; paneId: string }
-        | undefined;
-      return row === undefined ? [] : [row];
-    });
-  };
-
-  const stuckAgeMs = (
+  const stuckAgeMs = async (
     status: TaskStatus,
     owner: string | null,
-    workstream: string,
-    readings: ReadonlyMap<string, StateReading>,
-  ): number | null => {
-    if (stuckAfterMs <= 0 || status !== "IN_PROGRESS" || owner === null) return null;
-    const reading = readings.get(agentKey({ name: owner, workstreamName: workstream }));
+    workstreamName: string,
+  ): Promise<number | null> => {
+    if (
+      stuckAfterMs <= 0 ||
+      status !== "IN_PROGRESS" ||
+      owner === null ||
+      opts.readOwnerState === undefined
+    )
+      return null;
+    const reading = await opts.readOwnerState({ name: owner, workstreamName });
     if (reading?.state !== "needs_input" || reading.since === null) return null;
     const ageMs = Date.now() - reading.since;
     return ageMs >= stuckAfterMs ? ageMs : null;
@@ -305,8 +295,8 @@ export async function waitForTasks(
 
   /** Read current state of all tasks; returns the result shape. */
   const snapshot = async (): Promise<TaskWaitResult> => {
-    const readings = await readAgentStates(ownerAgents());
-    const refStates: TaskWaitTaskState[] = refs.map((ref) => {
+    const refStates: TaskWaitTaskState[] = [];
+    for (const ref of refs) {
       const row = getTask(db, ref.name, ref.workstreamName);
       // Defensive: if a task was deleted mid-wait, treat as 'never
       // reached'. (Not the same as TaskNotFoundError pre-flight —
@@ -314,7 +304,7 @@ export async function waitForTasks(
       // state change.)
       const status = (row?.status ?? "OPEN") as TaskStatus;
       const owner = row?.ownerName ?? null;
-      const ageMs = stuckAgeMs(status, owner, ref.workstreamName, readings);
+      const ageMs = await stuckAgeMs(status, owner, ref.workstreamName);
       const stuck = ageMs !== null;
       const key = refKey(ref);
       if (ageMs !== null && !stuckWarned.has(key)) {
@@ -374,15 +364,15 @@ export async function waitForTasks(
           throw new StallDetectedDuringWaitError(ref.name, owner, ref.workstreamName, ageSecs);
         }
       }
-      return {
+      refStates.push({
         workstreamName: ref.workstreamName,
         name: ref.name,
         status,
         owner,
         reachedTarget: status === target,
         stuck,
-      };
-    });
+      });
+    }
     return {
       refs: refStates,
       timedOut: false,

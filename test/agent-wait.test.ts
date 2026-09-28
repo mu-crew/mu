@@ -49,8 +49,7 @@ describe("waitForAgents", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  /** Build a readStatus hook from a scripted per-agent status queue.
-   *  Each call shifts the next status; the last value sticks. */
+  /** Build a legacy per-ref hook from a scripted state queue. */
   function scripted(
     scripts: Record<string, (string | null)[]>,
   ): (ref: AgentWaitRef) => Promise<AgentStatusSnapshot> {
@@ -60,6 +59,26 @@ describe("waitForAgents", () => {
       const q = queues[ref.name] ?? [null];
       const next = q.length > 1 ? q.shift() : q[0];
       return { status: (next ?? null) as AgentStatusSnapshot["status"] };
+    };
+  }
+
+  /** Build the preferred batch hook; one call represents one tick. */
+  function scriptedBatch(
+    scripts: Record<string, (string | null)[]>,
+  ): (refs: readonly AgentWaitRef[]) => Promise<Map<string, AgentStatusSnapshot>> {
+    const queues: Record<string, (string | null)[]> = {};
+    for (const [k, v] of Object.entries(scripts)) queues[k] = [...v];
+    return async (refs) => {
+      const snapshots = new Map<string, AgentStatusSnapshot>();
+      for (const ref of refs) {
+        const q = queues[ref.name] ?? [null];
+        const next = q.length > 1 ? q.shift() : q[0];
+        snapshots.set(`${ref.workstreamName}/${ref.name}`, {
+          status: (next ?? null) as AgentStatusSnapshot["status"],
+          ...(next === "unknown" ? { unknownReason: "murmur has no row" } : {}),
+        });
+      }
+      return snapshots;
     };
   }
 
@@ -84,14 +103,25 @@ describe("waitForAgents", () => {
     expect(res.agents[0]?.wasBusy).toBe(false);
   });
 
-  it("does not fire on busy → unknown", async () => {
+  it("preserves busy across unknown and fires on the next known idle state", async () => {
+    const res = await waitForAgents(db, [{ workstreamName: ws, name: "worker-1" }], {
+      pollMs: 1,
+      readStatuses: scriptedBatch({ "worker-1": ["busy", "unknown", "needs_input"] }),
+    });
+    expect(res.timedOut).toBe(false);
+    expect(res.agents[0]?.fired).toBe(true);
+    expect(res.agents[0]?.wasBusy).toBe(true);
+  });
+
+  it("keeps unknown pending and surfaces its reason", async () => {
     const res = await waitForAgents(db, [{ workstreamName: ws, name: "worker-1" }], {
       pollMs: 1,
       timeoutMs: 10,
-      readStatus: scripted({ "worker-1": ["busy", "unknown"] }),
+      readStatuses: scriptedBatch({ "worker-1": ["unknown"] }),
     });
     expect(res.timedOut).toBe(true);
     expect(res.agents[0]?.fired).toBe(false);
+    expect(res.agents[0]?.unknownReason).toBe("murmur has no row");
   });
 
   it("fires on busy → needs_permission (any known non-busy state)", async () => {
@@ -100,6 +130,42 @@ describe("waitForAgents", () => {
       readStatus: scripted({ "worker-1": ["busy", "needs_permission"] }),
     });
     expect(res.agents[0]?.fired).toBe(true);
+  });
+
+  it("reports all-initially-unknown once and keeps waiting", async () => {
+    const reports: string[][] = [];
+    const res = await waitForAgents(db, [{ workstreamName: ws, name: "worker-1" }], {
+      pollMs: 1,
+      timeoutMs: 10,
+      readStatuses: scriptedBatch({ "worker-1": ["unknown"] }),
+      onInitialUnknown: (agents) => reports.push(agents.map((agent) => agent.name)),
+    });
+    expect(res.timedOut).toBe(true);
+    expect(reports).toEqual([["worker-1"]]);
+  });
+
+  it("calls the batch reader once per tick for all pending agents", async () => {
+    const readStatuses = scriptedBatch({
+      "worker-1": ["busy", "needs_input"],
+      "worker-2": ["busy", "needs_input"],
+    });
+    let calls = 0;
+    const res = await waitForAgents(
+      db,
+      [
+        { workstreamName: ws, name: "worker-1" },
+        { workstreamName: ws, name: "worker-2" },
+      ],
+      {
+        pollMs: 1,
+        readStatuses: async (refs) => {
+          calls += 1;
+          return readStatuses(refs);
+        },
+      },
+    );
+    expect(res.timedOut).toBe(false);
+    expect(calls).toBe(2);
   });
 
   it("--all waits for every agent to fire", async () => {

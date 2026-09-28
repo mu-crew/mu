@@ -585,22 +585,54 @@ export async function cmdAgentWait(
     }),
   );
 
-  const readStatus = async (ref: {
-    name: string;
-    workstreamName: string;
-  }): Promise<{ status: "busy" | "needs_input" | "needs_permission" | "unknown" | null }> => {
-    const agent = getAgent(db, ref.name, ref.workstreamName);
-    if (!agent) return { status: null };
-    const reading = (await readAgentStates([agent])).get(agentKey(agent));
-    if (reading?.alive === false) return { status: null };
-    return { status: reading?.state ?? "unknown" };
+  const readStatuses = async (
+    pending: readonly { name: string; workstreamName: string }[],
+  ): Promise<
+    Map<
+      string,
+      {
+        status: "busy" | "needs_input" | "needs_permission" | "unknown" | null;
+        unknownReason?: string;
+      }
+    >
+  > => {
+    const agents = pending.flatMap((ref) => {
+      const agent = getAgent(db, ref.name, ref.workstreamName);
+      return agent === undefined ? [] : [agent];
+    });
+    const readings = await readAgentStates(agents);
+    const snapshots = new Map<
+      string,
+      {
+        status: "busy" | "needs_input" | "needs_permission" | "unknown" | null;
+        unknownReason?: string;
+      }
+    >();
+    for (const ref of pending) {
+      const agent = getAgent(db, ref.name, ref.workstreamName);
+      const reading = agent === undefined ? undefined : readings.get(agentKey(agent));
+      snapshots.set(agentKey(ref), {
+        status: reading?.alive === false ? null : (reading?.state ?? "unknown"),
+        ...(reading?.reason !== undefined ? { unknownReason: reading.reason } : {}),
+      });
+    }
+    return snapshots;
   };
 
   const timeoutMs = (opts.timeout ?? 600) * 1000;
   const result = await waitForAgents(db, refs, {
     any: wantAny,
     timeoutMs,
-    readStatus,
+    readStatuses,
+    onInitialUnknown: (agents) => {
+      const names = agents.map((agent) => `${agent.workstreamName}/${agent.name}`).join(", ");
+      const reasons = [...new Set(agents.map((agent) => agent.unknownReason ?? "no reason"))].join(
+        ", ",
+      );
+      process.stderr.write(
+        `mu agent wait: state unknown for ${names} (${reasons}); waiting until --timeout\n`,
+      );
+    },
   });
 
   const dead = result.agents.filter((a) => a.dead);
