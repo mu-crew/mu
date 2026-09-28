@@ -240,6 +240,7 @@ environment
   $TMUX            : set
   $TMUX_PANE       : %21
   $MU_SESSION      : auth
+  agent state      : ok agent state from murmur 1.0.0
 
 db
   path             : /tmp/mu-play.db
@@ -469,11 +470,11 @@ alias mu="node $PWD/dist/cli.js"
 See [README.md § Install](../README.md#install) for the full set of
 install patterns.
 
-mu requires a terminal multiplexer. tmux ≥ 3.0 is the complete
-backend and what the rest of this guide assumes; herdr is supported
-for topology but not yet for spawn/send/read (see
-[§ 20](#20-multiplexer-backends-tmux-and-herdr)). Make sure you're
-inside a session before proceeding:
+mu requires a terminal multiplexer. tmux ≥ 3.0 is the backend the rest
+of this guide assumes; herdr also supports spawn, send, and read (see
+[§ 20](#20-multiplexer-backends-tmux-and-herdr)). On tmux, install
+murmur for runtime agent state. Make sure you're inside a session before
+proceeding:
 
 ```bash
 tmux       # if you're not already in one
@@ -1042,7 +1043,7 @@ convention):
 | Slot | Card          | Toggle | Popup     | Content                                              |
 | ---- | ------------- | ------ | --------- | ---------------------------------------------------- |
 | 0    | Commits       | `0`    | `Shift+0` | Recent project-root commits (git / jj / sl)          |
-| 1    | Agents        | `1`    | `Shift+1` | Active agents + status + cli + role                  |
+| 1    | Agents        | `1`    | `Shift+1` | Active agents + runtime state + cli + role           |
 | 2    | Tracks        | `2`    | `Shift+2` | Parallel tracks (union-find clusters)                |
 | 3    | Ready (Tasks) | `3`    | `Shift+3` | Ready-to-claim tasks (no open blockers)              |
 | 4    | Activity log  | `4`    | `Shift+4` | Recent ops rendered as prose                         |
@@ -1226,7 +1227,7 @@ and recoverable from any shell.
 
 ## 6. Spawn a crew
 
-For a demo with live status detection, spawn pi agents:
+For a demo with live agent state, install and link murmur, then spawn pi agents:
 
 ```bash
 mu agent spawn worker-1 --workstream auth-refactor          # default --cli is pi
@@ -1250,7 +1251,7 @@ What just happened:
    session
 3. mu set the pane title to `worker-1` via `tmux select-pane -T worker-1`
    — **this is the claim protocol identity**
-4. mu inserted a row in `agents` with `pane_id=%15`, `status=spawning`
+4. mu inserted a row in `agents` with `pane_id=%15`; the deprecated `status` column remains `spawning`
 
 If the DB insert fails after the pane was created, mu kills the pane
 to avoid leaking. If the same name was already taken, mu rejects
@@ -1703,7 +1704,7 @@ mu sql "SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY t
 ### `mu agent wait`: the task-less counterpart to `mu task wait`
 
 Scratch helpers usually own no task, so `mu task wait` has nothing to
-watch. `mu agent wait` blocks on the agent's runtime status: an agent
+watch. `mu agent wait` blocks on the agent's runtime state: an agent
 **fires** when it goes **busy → any other state**. It must be observed
 busy first, so an already-idle agent does NOT fire instantly — you're
 waiting for *this* work to finish. Replaces `sleep` polling loops.
@@ -1719,8 +1720,8 @@ Mirrors `mu task wait`'s shape: `--any`/`--first` fire on the first
 agent (default: all must finish); `--first` prints the firing agent's
 ref; `--json` carries `nextSteps`; refs may be qualified
 `<workstream>/<name>`. Exit codes: `0` met, `5` timeout, `6` a watched
-agent's pane died. Status detection is pi-only (a non-pi pane always
-reads `needs_input`, so it never goes busy and the wait times out).
+agent's pane died. On tmux, murmur supplies the state. `unknown` never
+fires the wait; run `mu doctor` for the missing-source reason.
 
 **Don't reach for this verb to catch a worker that asked a question.**
 It fires on `busy → needs_input`, so it does detect the case — but it
@@ -1843,9 +1844,10 @@ For unattended waits, always pass `--on-stall exit`; otherwise the default
 warning leaves the wait polling. Two orthogonal flags govern the behaviour:
 
 * `--stuck-after <seconds>` — the **trigger**. An IN_PROGRESS task
-  whose owner has been in `needs_input` for `>= N` seconds is marked
-  as needing attention. Default `300` (5 min); pass `0` to disable
-  detection entirely (no warn AND no exit).
+  whose owner has been in `needs_input` for `>= N` seconds according
+  to the state source is marked as needing attention. `unknown` never
+  counts. Default `300` (5 min); pass `0` to disable detection entirely
+  (no warn AND no exit).
 * `--on-stall <action>` — the **action** when the trigger fires.
   Two values:
   * `warn` (default) — yellow attention warning to stderr (deduped per
@@ -1954,14 +1956,11 @@ You killed it from another tmux client, or its CLI crashed:
 mu agent list             # worker-1's row prunes itself (ghost detected)
 ```
 
-Reconciliation runs on every `mu agent list` / `mu`. Three steps:
+Reconciliation runs on every `mu agent list` / `mu`. Two steps:
 
 1. **Prune ghost rows** — DB row whose `pane_id` no longer exists in
-   tmux gets deleted
-2. **Detect status from scrollback** — for survivors, capture the
-   pane and re-derive status (busy / needs_input / needs_permission /
-   spawning) per the pi-status detector
-3. **Surface orphan panes** — panes in the workstream's session whose
+   the mux gets deleted
+2. **Surface orphan panes** — panes in the workstream's session whose
    `pane.command` looks like an agent CLI but that aren't in the
    registry. **Not** auto-adopted; mu lists them under "Orphan panes"
    with the `mu agent adopt <pane-id>` hint
@@ -2449,7 +2448,7 @@ rm -f /tmp/mu-demo.db
    set on spawn. Two agents cannot claim the same task.
 
 Everything else (`mu sql`, send/read, the bracketed-paste protocol,
-ghost reconciliation) is plumbing in service of those three.
+agent-state sources, ghost reconciliation) is plumbing in service of those three.
 
 ---
 
@@ -2461,7 +2460,6 @@ in real use:
 
 | Want                                          | Workaround                                                              | Status        |
 | --------------------------------------------- | ----------------------------------------------------------------------- | ------------- |
-| Multi-CLI status detection (per-CLI prompts)  | Braille spinner fallback covers pi/pi-meta + every TUI wrapper using standard spinner glyphs. Per-CLI permission-prompt patterns are pi-only. | partially shipped |
 | Pi extension (typed tools, HUD, wakeups)      | `mu state --tui` (interactive) covers the dashboard use-case; plain `mu state` (static) is the `watch` / `tmux display-popup` / `status-right` substrate. Other extension tools deferred. | partially shipped |
 | Markdown agent-definition discovery           | Spawn accepts `--cli` and `--command` directly; no template registry    | dropped       |
 <!-- doc-cli-drift:skip-start -->
@@ -2504,7 +2502,8 @@ your platform.
 
 mu drives exactly one multiplexer per invocation. tmux is the
 incumbent; [herdr](https://github.com/herdrdev/herdr) is the second
-backend, and spawn, send, read and status detection all work on it. The
+backend. Spawn, send, and read work on both; agent state comes from herdr
+on herdr and from murmur on tmux. The
 remaining gaps are narrow and listed under
 [Known limits on herdr](#known-limits-on-herdr) — the notable one is
 that `mu agent kick` is Linux-only there.
@@ -2554,7 +2553,7 @@ The backend is resolved once per process and cached.
 | Attach hint | `tmux a -t mu-<ws>` | `herdr session attach mu-<ws>` |
 | Pane borders | 4-side border showing agent name + status glyph | no-op — herdr owns its pane chrome; mu-managed panes carry the label instead |
 | Layout | `select-layout` | no-op — herdr splits are explicit, geometry is yours |
-| Status detection | scrollback scraping (`src/detect.ts`) | herdr classifies panes natively via `paneStatus()`; the scraper is bypassed |
+| Agent state | murmur pane options for local agents; `murmur status --json` for remote agents | herdr reports state via `paneStatus()` |
 | Focus | mu creates detached | `--no-focus` on every mutating call, always. `detached: false` still gets you a detached workspace; run `herdr workspace focus` yourself. |
 | Isolation seam | `MU_TMUX_SOCKET` (`-L <name>`) | `MU_HERDR_SESSION` (`--session <name>`, its own socket) |
 | `mu agent send` / `read` | six-step paste/Enter protocol | one atomic `agent prompt --wait` |

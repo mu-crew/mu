@@ -46,16 +46,14 @@ defined here, fix the doc. If you need a new term, add it here first.
 | **owner**             | The **worker** name in `tasks.owner`. Set by claim. NULL when the task is unowned OR was claimed via `--self` (anonymous, attributed via `ops.actor` instead). Owners are **machine-local** — they reference `agents`, so ownership never syncs. | "claimer", "assignee"                              |
 | **anonymous claim**   | A claim made via `--self` where the **actor** isn't a registered **worker**. `tasks.owner` stays NULL; the actor is recorded in `ops.actor` for the auto-emitted `task.claim` op. The orchestrator-doing-direct-work pattern. | "self-claim" (in code; "anonymous claim" in prose), "unowned claim" |
 | **release**           | Verb: clear `tasks.owner`                                                | "unclaim", "unassign"                              |
-| **free**              | Verb: mark an agent's `status = 'free'` (idle, available)                | "park", "idle" (verb)                              |
-| **status**            | Persisted enum on `agents` (busy/needs_input/free/...)                   | "state" (use only "lifecycle state")               |
-| **lifecycle state**   | A position in the agent state machine                                    | "state" alone, "phase"                             |
+| **agent state**       | Runtime state reported by the **state source**: `busy`, `needs_input`, `needs_permission`, or `unknown`. It is not persisted in mu. | "agent status", "lifecycle state" |
 | **role**              | `full-access` or `read-only` capability flag                             | "permission" (avoid), "tier"                       |
 | **persistent**        | Agent that stays alive across tasks                                      | "long-lived" (only in prose)                       |
 | **one-shot**          | Agent that exists for a single task and then terminates                  | "ephemeral", "transient"                           |
 | **workspace**         | A VCS-isolated checkout (jj workspace / sl worktree / git worktree / cp). **In mu, "workspace" is always the VCS sense** — never the mux sense. herdr calls its session-level container a "workspace" too; in mu docs and code that is a **mux session**. | "branch" (it has one but isn't one), "checkout" (only for `none` backend), the herdr sense |
 | **ghost**             | An `agents` row whose `pane_id` no longer exists in the **mux**. Pruned by **reconcile**, which runs in `mu agent list` and `mu doctor`. | "dead agent" (a dead agent may still have a pane), "stale row" |
 | **reaper**            | The part of reconcile that releases a **ghost**'s tasks: `IN_PROGRESS → OPEN`, owner cleared. Makes `mu task wait` exit 6. | "garbage collector", "janitor" |
-| **needs attention**   | The condition `mu task wait --stuck-after` detects: an IN_PROGRESS task whose **owner** has sat in `needs_input` for >= N seconds. Deliberately cause-NEUTRAL — the predicate cannot distinguish a worker that finished without closing, one waiting on an answer, or one at an approval prompt, and those need opposite responses. So every surface names the observation and points at `mu agent read <owner>`. A worker asking a question is desirable behaviour, so never phrase this as worker negligence. Formerly `agent_close_discipline_gap`, which presumed the first cause; now `agent_attention_required`. | "stuck" / "stalled" (the `stuck` JSON field and exit-7 `STALL_DETECTED` keep their names for compatibility), "close discipline", "negligent worker" |
+| **needs attention**   | The condition `mu task wait --stuck-after` detects: an IN_PROGRESS task whose **owner** has been in `needs_input` for at least N seconds according to murmur's `since`. `unknown` never counts. The predicate cannot distinguish a worker that finished without closing, one waiting on an answer, or one at an approval prompt, so every surface points at `mu agent read <owner>`. | "stuck" / "stalled" (the `stuck` JSON field and exit-7 `STALL_DETECTED` keep their names for compatibility), "close discipline", "negligent worker" |
 | **workspace orphan**  | A directory under `<state-dir>/workspaces/<workstream>/` with no row in `vcs_workspaces`. Blocks subsequent `--workspace` spawns. Surfaced by `mu workspace orphans -w X`, `mu state -w X`, and `mu doctor`'s `ws-dirs` row. | "stray dir", "leftover workspace"                  |
 | **stranded** | A **workspace orphan** whose parent *workstream* row is also gone. Reported separately because no workstream-scoped verb can reach it — `mu workspace orphans --all` and `mu doctor` are the only surfaces. | "double orphan", "abandoned" |
 | **missing workspace dir** | The INVERSE of a **workspace orphan**: a `vcs_workspaces` row whose `path` is not on disk (usually a hand-run `rm -rf` where `mu workspace free` was wanted). More dangerous than an orphan, because every read surface reports the row as a healthy workspace and the next send fails inside the VCS backend rather than at the row that lied. `mu doctor`'s `ws-rows` row. | "broken workspace", "dangling row" |
@@ -64,7 +62,7 @@ defined here, fix the doc. If you need a new term, add it here first.
 | **stale workspace**   | A workspace whose `parent_ref` is N commits behind the project's default branch HEAD (per the workspace's local refs cache). Rendered as a color-coded `behind` column (green ≤2, yellow 3–9, red ≥10) in `mu workspace list` and `mu state`; ≥10 triggers a one-line warn in `mu state`, `mu task claim --for`, and `mu agent send` (or refusal on the two dispatch verbs with `--strict-staleness`). Pure observation — mu never auto-fetches. | "out of date", "drifting"                          |
 | **refresh**           | `mu workspace refresh <agent>` — rebase the agent's workspace onto a fresh base (default = backend's tracked main; `--from <ref>` overrides) WITHOUT touching the agent or pane. Refuses on dirty WC; surfaces conflicts as exit 5 with a resolve-in-place hint. The `none` backend errors (no VCS to rebase). | "recycle", "reset" (overloaded)                     |
 | **backend**           | Implementation of `MuxBackend` or `VcsBackend`. Always qualify which (**mux backend** / **VCS backend**) when both are in scope. | "driver", "provider"                               |
-| **detector**          | Per-CLI pattern matcher for busy/permission/ready, used when the **mux backend** cannot report status itself. On tmux that is always (`detectPiStatus` in `src/detect.ts`, covering vanilla pi + any TUI wrapper using Braille spinner glyphs); on herdr the mux classifies panes natively across its known agent kinds, so the detector is bypassed. The seam is the optional `MuxBackend.paneStatus?()`: absent means "ask the detector". herdr's states map `working` → `busy`, `blocked` → `needs_permission`, and `idle` / `done` / `unknown` → `needs_input` — `unknown` never becomes `free`, since herdr documents that it does not prove completion, and no detector of either kind may mint `free`. Other CLIs spawned via `--cli <other>` may misclassify on tmux; trust scrollback over the emoji. | "matcher", "parser"                                |
+| **state source**      | The system that reports **agent state**: herdr's `paneStatus()` on herdr, or murmur on tmux. mu reads local murmur pane options in one tmux call and uses `murmur status --json` only for remote workers. No source yields `unknown` with a reason. | "scraper" |
 | **op**                | The atomic unit of change: one row in the `ops` table, written by a trigger inside the same transaction as the mutation it records. Carries `(hlc, machine_id, group_id, actor, intent, entity, key, op, payload)`. A **semantic partial update** — the payload holds only the columns that actually changed, which is what makes per-field merge free. | "event", "delta", "change" (all overloaded)         |
 | **ops log**           | The `ops` table: the single append-only record of every change, and the substrate **sync**, **undo**, and history are all queries or replays over. Canonical and ACID because it lives in `mu.db` alongside the tables it records. | "event log", "journal", "WAL" (reserved by SQLite)  |
 | **intent**            | The semantic label on an **op** (`task.close`, `task.reparent`, `agent.spawn`). Set once per public SDK function via **op context**, not per mutation. `mu log` renders prose from it through one formatter. | "verb" (overloaded by CLI verbs), "action"          |
@@ -165,36 +163,25 @@ window.
 
 ---
 
-## Status, lifecycle, and the verbs that touch them
+## State, lifecycle, and the verbs that touch them
 
-### Agent status enum (persisted in `agents.status`)
+### Agent state
 
-Glyphs are named, not spelled out: the codepoints live in
-`src/glyphs.ts` (`AGENT_STATUS_GLYPH`) and a table that duplicates
-them has drifted from production once already.
+Agent state is runtime data and is not persisted. The codepoints live in
+`src/glyphs.ts` (`AGENT_STATE_GLYPH`).
 
-| Value             | Glyph slot            | Meaning                                        |
-| ----------------- | --------------------- | ---------------------------------------------- |
-| `spawning`        | nf-fa-hourglass_start | Pane created, agent process booting            |
-| `busy`            | nf-fa-play            | Actively working (detector saw busy marker)    |
-| `needs_input`     | nf-fa-moon_o          | Idle prompt visible, waiting for input         |
-| `needs_permission`| nf-fa-lock            | Permission prompt visible (e.g., "Allow once") |
-| `free`            | nf-fa-check_circle    | Available; retained for persisted/runtime status compatibility |
-| `managed`         | —                     | Under external orchestration; mu observes only |
-| `unreachable`     | nf-fa-question_circle | Transport down, status uncertain               |
-| `terminated`      | nf-fa-times_circle    | Process gone, awaiting reaping                 |
+| Value | Glyph slot | Meaning |
+| --- | --- | --- |
+| `busy` | nf-fa-play | Actively working |
+| `needs_input` | nf-fa-moon_o | Waiting for input |
+| `needs_permission` | nf-fa-lock | Waiting for a human answer |
+| `unknown` | nf-fa-question_circle | No state source or no usable reading; the reason accompanies the state |
 
-All of them are classic Nerd Font `nf-fa-*` (Font Awesome 4)
-codepoints, single-codepoint and one cell wide, so `cli-table3`
-columns line up. `busy` is deliberately the same glyph murmur's dash
-paints for a `running` pane — they drive the same panes, so one symbol
-means one thing on both surfaces. Non-agent state glyphs (blocked,
-dirty, stale, ok/warn/fail, filter toggles) come from the `GLYPH`
-record in the same file.
-
-**Source of truth:** the substrate — the **mux backend**, plus the
-**detector** when that backend cannot classify panes itself. The DB is
-a cache; `mu agent list` reconciles on every call.
+The state source is herdr on the herdr backend and murmur on the tmux
+backend. mu maps murmur `working` to `busy`, `blocked` to
+`needs_permission`, and `idle`, `done`, and `crashed` to `needs_input`.
+The retained `agents.status` column is deprecated and always contains
+`spawning`; no runtime read uses it.
 
 ### Agent lifecycle verbs
 

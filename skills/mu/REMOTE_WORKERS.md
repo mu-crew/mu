@@ -10,7 +10,8 @@ the traps below it are the part that costs time.
 **If you read one thing:** on a session-capped host, never leave an
 attach pane open — it holds the only ssh channel and silently breaks
 `git fetch`, `murmur collect` and every other ssh. Attach to look, then
-`mu agent close`. See § Never leave an attach pane open.
+`mu agent close`. See § Never leave an attach pane open. This guidance
+concerns interactive attachment, not mu's automatic agent-state reads.
 
 ---
 
@@ -19,8 +20,8 @@ attach pane open — it holds the only ssh channel and silently breaks
 **The pane is local, the process is remote.** `mu agent spawn
 --command 'ssh <host> -t "..."'` starts an ordinary tmux pane whose
 foreground process happens to be ssh. Everything mu does is
-pane-shaped, so `mu agent send`, `mu agent read`, status detection and
-the reaper all work unchanged, across the network, with no mu changes.
+pane-shaped, so `mu agent send`, `mu agent read`, and the reaper work
+unchanged across the network. murmur reports the remote process's agent state.
 
 **One orchestrator DB; panes may be remote.** All state stays on your
 machine. Do not run a second mu on the host to "coordinate": ownership
@@ -65,8 +66,8 @@ the only ssh channel**. While it is open, `git fetch`, `git push`,
 `Permission denied (keyboard-interactive)` error.
 
 **Attach to look, then close immediately.** `mu agent close <name>`
-detaches without stopping a detached-tmux agent. Poll with `murmur
-collect` + `murmur status`; use mule for orchestrator commands because
+detaches without stopping a detached-tmux agent. mu reads agent state
+through murmur automatically; use mule for orchestrator commands because
 its separate ControlPath cannot contend with the attach pane. See
 § When the host limits concurrent sessions for diagnosis and the
 remote-agent setup.
@@ -140,39 +141,30 @@ Local and remote agents mix freely in one workstream. The DAG, tracks,
 — task status is a row in YOUR database, written by you, so a wait on
 it is exact.
 
-**Agent STATUS is different, and this is the one place "nothing
-changes" is false.** `busy` / `needs_input` / `idle` come from reading
-the local pane's scrollback, which for a remote worker is a nested tmux
-rendered over ssh. What you get is redraw lag and quiet periods that
-look like idleness, so anything derived from status is unreliable here:
+**Agent state comes from murmur.** Its extension runs inside pi on the
+host and reports state without reading the nested tmux screen. mu reads
+murmur's remote rows and caches them for 10 seconds. Remote rows can lag
+by murmur's collect floor (30 seconds ± 10 seconds) plus that cache;
+their `since` value is the row's `updated_at`, so idle and stall age is
+approximate.
 
 | waiting on | remote? |
 | --- | --- |
 | `mu task wait` (task status) | exact — a DB poll, once something closes the task |
 | the reaper | fires, but see below |
-| stall detection | unreliable |
-| `mu agent wait --first` | same, it is status-based |
+| stall detection | exact state from murmur; approximate age |
+| `mu agent wait --first` | exact state from murmur |
 
-Measured both directions in one session: a stall fired at 300s against
-a worker that was visibly mid-turn, and `mu agent list` showed
-`needs_input` for another that was working. Give remote waits a generous
-`--timeout`; see `mu task wait --help` for stall controls.
+Without murmur, remote agent state is `unknown`. `mu agent wait` does not
+fire on `unknown`, and `unknown` never counts as a task stall. Run
+`mu doctor` for the missing-source reason.
 
-The reaper is right for a DIRECT spawn — the connection dying really
+The reaper is right for a direct spawn — the connection dying really
 does kill that agent — and wrong for a detached-tmux one, where the
 agent outlives the ssh but mu reaps the task anyway. See § A dropped
 connection reaps the task but NOT the commit.
 
-**If you need trustworthy remote status, ask murmur, not mu.** Its
-extension runs inside pi ON THE HOST and pushes state, so nothing is
-scraped and no ssh hop distorts it:
-
-```bash
-murmur collect && murmur status --json   # activity is host-reported
-```
-
-That is the division worth remembering: mu owns the work, murmur owns
-what the agent is doing.
+The division is: mu owns the work; murmur reports what the agent is doing.
 
 ### On step 2 — the note is load-bearing
 
@@ -361,17 +353,18 @@ respawn.
 
 ## mu and murmur, and what you lose without it
 
-[murmur](https://github.com/mu-crew/murmur) is optional and
-**strictly additive**. Nothing in mu needs it: the DAG, claim/close/
-wait, workspaces, spawn/send/read, the reaper, `mu state`, this whole
-remote recipe and `git fetch` collection all work with murmur absent.
-What you lose is the *view* — cross-machine agent state, the tmux
-status pills, `prefix+a`, the attachment hint, and `murmur peer list`
-for host reachability. Guard on it (`if it is installed`) rather than
-assuming it.
+[murmur](https://github.com/mu-crew/murmur) provides agent state for
+mu's tmux backend. Without it, mu reports agent state as `unknown`.
+The DAG, claims, task completion waits, workspaces, spawn, send, read,
+the reaper, this remote recipe, and `git fetch` collection still work.
+Agent-state consumers such as `mu agent wait`, idle flags, and task-stall
+detection wait rather than treating `unknown` as completion or a stall.
 
-The division: **mu owns the work, murmur owns what an agent is doing.**
-murmur never places work.
+murmur also provides the tmux status pills, `prefix+a`, attachment hints,
+and `murmur peer list` for host reachability. The division is: **mu owns
+the work; murmur reports what an agent is doing.** murmur never places
+work. Its interfaces used by mu are in murmur's
+[stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHITECTURE.md#contract).
 
 | question | ask |
 | --- | --- |

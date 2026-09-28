@@ -106,18 +106,18 @@ npx skills add mu-crew/mu          # auto-detects pi / claude-code / codex / etc
 **Requirements:**
 - Node 22.12–26 (see `.nvmrc`), matching `engines` in `package.json`.
 - A terminal multiplexer: tmux ≥ 3.0, or [herdr](https://github.com/herdrdev/herdr)
-  (`mu doctor` reports which one is active). Spawn, send, read and
-  status detection work on both; the remaining herdr gaps are narrow
-  and listed in
+  (`mu doctor` reports which one is active). Spawn, send, and read work
+  on both. Agent state comes from herdr on herdr and from murmur on tmux;
+  the remaining herdr gaps are listed in
   [docs/USAGE_GUIDE.md § 20](docs/USAGE_GUIDE.md#20-multiplexer-backends-tmux-and-herdr).
 - pi (the agent CLI mu orchestrates)
 - For `--workspace`: jj, sl, or git on PATH (or `--backend none`)
 
-**Optional — [murmur](https://github.com/mu-crew/murmur), for
-more than one machine.** Every coding agent on every machine in one
-attention-sorted list. mu deliberately does not track hosts or watch
-other machines; murmur does both, as a separate binary that owns the
-ssh egress.
+**Agent state on tmux — [murmur](https://github.com/mu-crew/murmur).**
+mu owns the work; murmur reports what each agent is doing. Without murmur,
+agent state shows `unknown`; tasks, claims, `mu task wait`, workspaces,
+spawn, and send work the same. murmur also provides one attention-sorted
+list across machines and owns the ssh egress.
 
 ```bash
 # on every node that runs agents
@@ -130,13 +130,9 @@ murmur peer add dev  # an ssh target; identity is discovered
 murmur peer list     # which hosts are reachable, and when last seen
 ```
 
-Nothing to configure on mu's side: mu already exports
-`MU_MANAGED_AGENT` / `MU_AGENT_NAME` / `MU_WORKSTREAM`
-into every pane it spawns, so murmur marks those agents
-`orchestrated` — "crew" — and hides them unless they are blocked or
-crashed, since a supervisor consumes anything else. Useful for
-picking a host before spawning a remote worker, and for spotting a
-blocked agent on a machine you are not looking at.
+mu exports `MU_MANAGED_AGENT`, `MU_AGENT_NAME`, and `MU_WORKSTREAM`
+into every pane it spawns. murmur uses them to identify crew agents.
+See murmur's [stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHITECTURE.md#contract).
 
 **Update:** `npm install -g @mu-crew/mu@latest` for the CLI;
 `npx skills update mu` for the skill.

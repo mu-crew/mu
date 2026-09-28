@@ -32,8 +32,8 @@ both. `--json` exists on every verb:
 - **agent** — named worker in a pane (you may be one).
 - **mux** — the multiplexer mu drives: tmux, or herdr. One per
   invocation. `mu doctor` names the active one; `MU_MUX` forces it.
-  Spawn, send, read, and status detection work on both; `mu agent
-  kick` is herdr's remaining gap (Linux-only there).
+  Spawn, send, and read work on both. Agent state comes from murmur
+  on tmux and from herdr on herdr; `mu agent kick` is Linux-only on herdr.
 - **task** — DAG node with mandatory `impact` (1–100) and
   `effort_days`. Status: `OPEN`, `IN_PROGRESS`, `CLOSED`
   (satisfies `--blocked-by`). Record postponed/wont-do rationale as
@@ -98,8 +98,9 @@ that a refusal with `--strict-staleness`.
 ### Remote agents
 
 Agents can run on another machine: the PANE is local, the PROCESS is
-remote (`--command 'ssh <host> -t "..."'`), so `send`, `read`, status
-detection and the reaper all keep working unchanged. **One orchestrator
+remote (`--command 'ssh <host> -t "..."'`), so `send`, `read`, and the
+reaper keep working unchanged. murmur reports the remote agent's state.
+**One orchestrator
 DB; panes may be remote** — never run a second mu on the host, since
 `tasks.owner_id` is an FK into the machine-local `agents` table and a
 remote mu could not claim your tasks anyway. You create the remote
@@ -158,7 +159,7 @@ Every turn:
    `mu task claim <id> -w <ws> --for <agent> --evidence "..."`.
    If no task exists, `mu task add` first; include initial context with
    `--note 'REPRO: ...\nSCOPE: ...'` when the title alone is not
-   enough. Agent status is noisy; task ownership is durable and
+   enough. Agent state is runtime observation; task ownership is durable and
    waitable.
 4. Send terse instructions: task id, files/notes to read, workspace
    path, validation command, scope guards, task note contract.
@@ -210,8 +211,8 @@ Every turn:
   conflict. Refresh workspaces between waves.
 - Cross-workstream wait/claim uses qualified refs. The owner stays in its own
   workstream; only task ownership crosses.
-- For an idle worker, inspect scrollback, then send a retry or release its task.
-  `MU_IDLE_THRESHOLD_MS` defaults to 5m.
+- For an idle worker, read the pane to learn why it stopped, then answer,
+  retry, or release its task. `MU_IDLE_THRESHOLD_MS` defaults to 5m.
 - `mu agent kick` targets a wedged foreground subprocess. It refuses to signal
   the wrapping CLI; close the agent if that is what must stop.
 - Use `mu agent send`, not raw mux input: mu preserves literal text and confirms
@@ -291,24 +292,18 @@ Convention: `pi_mini` / `pi` / `pi_big`. Use mini for probing,
 modest for build/edit/refactor, big for design/review/incidents.
 Discover model strings with `pi --list-models [fuzzy-search]`.
 
-## Reaper and status limits
+## Reaper and agent state
 
 If an agent pane dies, or `mu agent close` kills it mid-task, owned
 IN_PROGRESS tasks revert to OPEN with a `[reaper]` note and `task
 reap` op. No manual release after crashes.
 
-Status detection is heuristic and can lag behind custom `--command`
-wrappers. It is weakest for a remote worker, where the scrollback is a
-nested tmux rendered over ssh.
-
-**[murmur](https://github.com/mu-crew/murmur), if installed, is
-authoritative there** — its extension pushes state from inside the agent
-on the host rather than scraping a pane, and it answers across machines.
-Optional and strictly additive: nothing here needs it, and the seam is
-the env vars `mu agent spawn` already injects (`MU_MANAGED_AGENT`,
-`MU_AGENT_NAME`, `MU_WORKSTREAM`), which murmur reads to mark a pane as
-crew. **mu owns the work; murmur owns what an agent is doing.** See
-[REMOTE_WORKERS.md](REMOTE_WORKERS.md) § mu and murmur.
+Agent state comes from [murmur](https://github.com/mu-crew/murmur) on
+tmux and from herdr on herdr. `unknown` means no state source; run
+`mu doctor` for the reason. mu needs murmur only for agent state:
+tasks, claims, workspaces, spawn, send, read, and task completion waits
+work without it. **mu owns the work; murmur reports what an agent is
+doing.** See [REMOTE_WORKERS.md](REMOTE_WORKERS.md) § mu and murmur.
 
 For high-stakes decisions:
 
@@ -359,7 +354,7 @@ Sending to a BUSY agent is not delayed — that input queues normally.
 
 ## Guardrails
 
-Task ownership outranks scraped status. Coordinate through task notes and the
+Task ownership outranks runtime agent state. Coordinate through task notes and the
 activity log. Keep edges within one workstream, role-name agents, and reserve
 the `mu_` task-id prefix. Give workers bounded paths and commands; use `mu
 agent kick` if a subprocess wedges.
