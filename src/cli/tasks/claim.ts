@@ -10,8 +10,9 @@
 // Extracted from src/cli/tasks.ts as part of the wire-out follow-up
 // to refactor_split_large_src_files.
 
+import { agentKey, readAgentStates, type StateReading } from "../../agent-state.js";
 import { AgentNotFoundError } from "../../agents/errors.js";
-import { refreshAgentTitle } from "../../agents.js";
+import { getAgent, refreshAgentTitle } from "../../agents.js";
 import {
   assertTaskInWorkstream,
   CliExitError,
@@ -373,10 +374,16 @@ export async function cmdTaskWait(
     timeoutMs: number;
     stuckAfterMs: number;
     onStall?: "warn" | "exit";
+    readOwnerState?: (owner: {
+      name: string;
+      workstreamName: string;
+    }) => Promise<StateReading | null>;
     beforePoll?: () => Promise<void>;
   } = { timeoutMs, stuckAfterMs };
   if (statusOpt !== undefined) sdkOpts.status = statusOpt;
   if (wantAny) sdkOpts.any = true;
+  let ownerReadings = new Map<string, StateReading>();
+  sdkOpts.readOwnerState = async (owner) => ownerReadings.get(agentKey(owner)) ?? null;
 
   // task_wait_reconcile_dead_panes (extended for cross-workstream by
   // task_wait_cross_workstream): per-poll reconcile + reaper-flip
@@ -430,6 +437,13 @@ export async function cmdTaskWait(
         // observed.
       }
     }
+    const owners = refs.flatMap((ref) => {
+      const owner = getTask(db, ref.name, ref.workstreamName)?.ownerName;
+      if (owner === null || owner === undefined) return [];
+      const agent = getAgent(db, owner, ref.workstreamName);
+      return agent === undefined ? [] : [agent];
+    });
+    ownerReadings = await readAgentStates(owners);
     if (!reaperExitEnabled) return;
     for (const ref of refs) {
       const key = qualifiedId(ref);

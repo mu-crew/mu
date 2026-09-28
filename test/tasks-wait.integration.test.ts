@@ -28,7 +28,7 @@ import {
   TaskNotFoundError,
   waitForTasks,
 } from "../src/tasks.js";
-import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
+import { resetTmuxExecutor } from "../src/tmux.js";
 
 // ─── Setup / teardown ──────────────────────────────────────────────────
 
@@ -285,11 +285,12 @@ describe("waitForTasks", () => {
         WHERE local_id = ?`,
     ).run("worker-stuck", new Date().toISOString(), "a");
     const since = Date.now() - 10 * 60_000;
-    setTmuxExecutor(async (args) => ({
-      stdout: args[0] === "list-panes" && args[1] === "-a" ? `%99\tidle\t${since}` : "",
-      stderr: "",
-      exitCode: 0,
-    }));
+    const readOwnerState = async () => ({
+      state: "needs_input" as const,
+      source: "murmur" as const,
+      since,
+      alive: true,
+    });
 
     const warnings: string[] = [];
     const restoreWarn = setWaitStuckWarnForTests((msg) => {
@@ -306,6 +307,7 @@ describe("waitForTasks", () => {
         timeoutMs: 80,
         stuckAfterMs: 1000, // 1s; agent is 10min stale so always stuck
         workstream: "test",
+        readOwnerState,
       });
       expect(r.timedOut).toBe(true);
       // 'a' is stuck; 'b' is just OPEN with no owner (not stuck).
@@ -346,6 +348,7 @@ describe("waitForTasks", () => {
         timeoutMs: 80,
         stuckAfterMs: 1000,
         workstream: "test",
+        readOwnerState,
       });
       expect(r2.timedOut).toBe(true);
       const stalledEvents2 = listLogs(db, { workstream: "test", kind: "agent" }).filter((r) =>
@@ -375,11 +378,12 @@ describe("waitForTasks", () => {
         WHERE local_id = ?`,
     ).run("worker-onstall", new Date().toISOString(), "a");
     const since = Date.now() - 10 * 60_000;
-    setTmuxExecutor(async (args) => ({
-      stdout: args[0] === "list-panes" && args[1] === "-a" ? `%101\tidle\t${since}` : "",
-      stderr: "",
-      exitCode: 0,
-    }));
+    const readOwnerState = async () => ({
+      state: "needs_input" as const,
+      source: "murmur" as const,
+      since,
+      alive: true,
+    });
 
     const warnings: string[] = [];
     const restoreWarn = setWaitStuckWarnForTests((msg) => {
@@ -394,6 +398,7 @@ describe("waitForTasks", () => {
           stuckAfterMs: 1000,
           onStall: "exit",
           workstream: "test",
+          readOwnerState,
         }),
       ).rejects.toBeInstanceOf(StallDetectedDuringWaitError);
       // Same emit + persist path: warning was still written, event row persisted.
@@ -420,11 +425,12 @@ describe("waitForTasks", () => {
         WHERE local_id = ?`,
     ).run("w-fields", "a");
     const since = Date.now() - 600_000;
-    setTmuxExecutor(async (args) => ({
-      stdout: args[0] === "list-panes" && args[1] === "-a" ? `%102\tidle\t${since}` : "",
-      stderr: "",
-      exitCode: 0,
-    }));
+    const readOwnerState = async () => ({
+      state: "needs_input" as const,
+      source: "murmur" as const,
+      since,
+      alive: true,
+    });
     const restoreWarn = setWaitStuckWarnForTests(() => {});
     const restoreSleep = setWaitSleepForTests(async () => {});
     try {
@@ -434,6 +440,7 @@ describe("waitForTasks", () => {
         stuckAfterMs: 2000,
         onStall: "exit",
         workstream: "test",
+        readOwnerState,
       }).catch((e) => e);
       expect(err).toBeInstanceOf(StallDetectedDuringWaitError);
       const e = err as StallDetectedDuringWaitError;
@@ -451,6 +458,32 @@ describe("waitForTasks", () => {
       expect(steps.some((s) => s.command.includes("mu task release a --reopen"))).toBe(true);
     } finally {
       setWaitStuckWarnForTests(restoreWarn);
+      setWaitSleepForTests(restoreSleep);
+    }
+  });
+
+  it("does not mark unknown or busy owner state as stuck", async () => {
+    insertAgent(db, { name: "w-known", workstream: "test", paneId: "%104" });
+    db.prepare(
+      `UPDATE tasks SET status = 'IN_PROGRESS',
+              owner_id = (SELECT id FROM agents WHERE name = ?)
+        WHERE local_id = ?`,
+    ).run("w-known", "a");
+    const restoreSleep = setWaitSleepForTests(async (ms) => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    });
+    try {
+      for (const state of ["unknown", "busy"] as const) {
+        const result = await waitForTasks(db, ["a"], {
+          timeoutMs: 10,
+          pollMs: 5,
+          stuckAfterMs: 1,
+          workstream: "test",
+          readOwnerState: async () => ({ state, source: "none", since: 0, alive: true }),
+        });
+        expect(result.refs[0]?.stuck).toBe(false);
+      }
+    } finally {
       setWaitSleepForTests(restoreSleep);
     }
   });

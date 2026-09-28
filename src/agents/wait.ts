@@ -44,10 +44,12 @@ export interface AgentWaitRef {
 }
 
 /** Snapshot of one watched agent at a poll tick. Supplied by the
- *  caller's `readStatus` hook so this SDK stays free of tmux imports. */
+ *  caller's state-reader hook so this SDK stays free of mux imports. */
 export interface AgentStatusSnapshot {
   /** Current runtime state, or null when the pane is gone (dead). */
   status: RuntimeState | null;
+  /** Why the state is unknown, when the source supplied a reason. */
+  unknownReason?: string;
 }
 
 export interface AgentWaitOptions {
@@ -58,11 +60,15 @@ export interface AgentWaitOptions {
   timeoutMs?: number;
   /** Poll interval. Default 1000ms; overridable for tests. */
   pollMs?: number;
-  /** Per-agent runtime-state reader, called once per agent per tick.
-   *  Kept as a hook so this module does not own source resolution.
-   *  Returning `status: null` means the pane is
-   *  gone — the agent is treated as DEAD (see AgentWaitAgentState). */
-  readStatus: (ref: AgentWaitRef) => Promise<AgentStatusSnapshot>;
+  /** Preferred batch reader, called once per tick. Map keys are
+   *  `<workstream>/<name>`. */
+  readStatuses?: (
+    refs: readonly AgentWaitRef[],
+  ) => Promise<ReadonlyMap<string, AgentStatusSnapshot>>;
+  /** Legacy per-agent reader. Used only when `readStatuses` is absent. */
+  readStatus?: (ref: AgentWaitRef) => Promise<AgentStatusSnapshot>;
+  /** Called once when every watched agent is unknown on the first tick. */
+  onInitialUnknown?: (agents: readonly AgentWaitAgentState[]) => void;
 }
 
 export interface AgentWaitAgentState {
@@ -75,9 +81,11 @@ export interface AgentWaitAgentState {
   /** True when the agent fired: was busy, then moved to a non-busy
    *  live status. */
   fired: boolean;
-  /** True when the agent's pane vanished mid-wait (capture returned
-   *  null). Surfaced separately so the CLI can exit non-zero rather
-   *  than treating a crash as a clean finish. */
+  /** Why the current state is unknown, when supplied by its source. */
+  unknownReason?: string;
+  /** True when the agent's pane vanished mid-wait. Surfaced separately
+   *  so the CLI can exit non-zero rather than treating a crash as a
+   *  clean finish. */
   dead: boolean;
 }
 
@@ -136,20 +144,36 @@ export async function waitForAgents(
     return any ? done.length > 0 : done.length === state.length;
   };
 
-  // One detection pass over all not-yet-settled agents.
+  const refKey = (ref: AgentWaitRef): string => `${ref.workstreamName}/${ref.name}`;
+
+  // One state read over all not-yet-settled agents.
   const tick = async (): Promise<void> => {
+    const pending = input.filter((_, i) => {
+      const st = state[i];
+      return st !== undefined && !st.fired && !st.dead;
+    });
+    const snapshots = opts.readStatuses ? await opts.readStatuses(pending) : undefined;
+    if (snapshots === undefined && opts.readStatus === undefined) {
+      throw new Error("waitForAgents: readStatuses or readStatus is required");
+    }
     for (let i = 0; i < input.length; i++) {
       const st = state[i];
       const ref = input[i];
       if (st === undefined || ref === undefined) continue;
       if (st.fired || st.dead) continue;
-      const snap = await opts.readStatus(ref);
+      const snap = snapshots?.get(refKey(ref)) ?? (await opts.readStatus?.(ref));
+      if (snap === undefined) {
+        st.status = "unknown";
+        st.unknownReason = "state reader returned no row";
+        continue;
+      }
       if (snap.status === null) {
         st.dead = true;
         st.status = null;
         continue;
       }
       st.status = snap.status;
+      st.unknownReason = snap.status === "unknown" ? snap.unknownReason : undefined;
       if (snap.status === "busy") {
         st.wasBusy = true;
       } else if (snap.status !== "unknown" && st.wasBusy) {
@@ -162,6 +186,7 @@ export async function waitForAgents(
   // Initial pass — seeds wasBusy for agents already busy; an agent that
   // is already idle here just sits pending (it must go busy first).
   await tick();
+  if (state.every((agent) => agent.status === "unknown")) opts.onInitialUnknown?.(state);
   if (conditionMet()) return { agents: state, timedOut: false };
 
   while (true) {
