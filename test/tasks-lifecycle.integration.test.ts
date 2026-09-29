@@ -132,7 +132,7 @@ describe("claimTask", () => {
   });
 
   it("does NOT flip status when CLOSED", async () => {
-    db.prepare("UPDATE tasks SET status='CLOSED' WHERE local_id='auth'").run();
+    db.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='auth'").run();
     const result = await claimTask(db, "auth", { agentName: "alice", workstream: "test" });
     expect(result.status).toBe("CLOSED");
   });
@@ -635,7 +635,7 @@ describe("evidence on lifecycle verbs", () => {
     insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     db.prepare(
       `UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = 'worker-1'),
-              status='IN_PROGRESS' WHERE local_id='design'`,
+              status = 'IN_PROGRESS', substate = 'active' WHERE local_id='design'`,
     ).run();
     releaseTask(db, "design", {
       reopen: true,

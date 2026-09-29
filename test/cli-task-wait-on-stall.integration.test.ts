@@ -123,7 +123,7 @@ describe("mu task wait --on-stall warn|exit", () => {
     });
     addTask(db, { localId: taskName, workstream, title: "T", impact: 50, effortDays: 1 });
     db.prepare(
-      `UPDATE tasks SET status = 'IN_PROGRESS',
+      `UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active',
               owner_id = (SELECT id FROM agents WHERE name = ?),
               updated_at = ?
         WHERE local_id = ?`,

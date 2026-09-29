@@ -21,7 +21,7 @@ import { withOpContext } from "../op-context.js";
 import { ClaimerNotRegisteredError, TaskAlreadyOwnedError, TaskNotFoundError } from "./errors.js";
 import { type EvidenceOption, recordEvidenceNote } from "./lifecycle.js";
 import { getTask } from "./queries.js";
-import type { TaskStatus } from "./status.js";
+import { DEFAULT_SUBSTATE, type TaskStatus } from "./status.js";
 
 export interface ReleaseResult {
   /** The previous owner (null if the task was already unowned). */
@@ -96,10 +96,16 @@ function releaseTaskImpl(db: Db, localId: string, opts: ReleaseTaskOptions): Rel
   // rollback is inverse ops over the ops log (`mu undo`).
 
   db.prepare(
-    `UPDATE tasks SET owner_id = NULL, status = ?, updated_at = ?
+    `UPDATE tasks SET owner_id = NULL, status = ?, substate = ?, updated_at = ?
       WHERE local_id = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
-  ).run(newStatus, new Date().toISOString(), localId, before.workstreamName);
+  ).run(
+    newStatus,
+    statusChanges ? DEFAULT_SUBSTATE[newStatus] : before.substate,
+    new Date().toISOString(),
+    localId,
+    before.workstreamName,
+  );
   // No emitEvent: the UPDATE fired the capture trigger
   // (intent='task.release'), whose payload names owner_id and status —
   // the same facts the prose spelled out. Evidence goes to a note,
@@ -289,6 +295,9 @@ async function claimTaskImpl(
           `UPDATE tasks
             SET owner_id = ?,
                 status = CASE WHEN status = 'OPEN' THEN 'IN_PROGRESS' ELSE status END,
+                -- SQLite evaluates every SET expression against the OLD
+                -- row, so this CASE still sees the pre-claim status.
+                substate = CASE WHEN status = 'OPEN' THEN 'active' ELSE substate END,
                 updated_at = ?
           WHERE local_id = ?
             AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)
@@ -410,6 +419,7 @@ async function claimSelf(db: Db, localId: string, opts: ClaimTaskOptions): Promi
         .prepare(
           `UPDATE tasks
             SET status = CASE WHEN status = 'OPEN' THEN 'IN_PROGRESS' ELSE status END,
+                substate = CASE WHEN status = 'OPEN' THEN 'active' ELSE substate END,
                 updated_at = ?
           WHERE local_id = ?
             AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)

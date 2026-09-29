@@ -1,17 +1,17 @@
 // mu — TaskStatus enum + helpers.
 //
 // Single source of truth for "what statuses and substates can a task
-// have". The schema (db.ts) has a CHECK clause that mirrors
-// TASK_STATUSES; if you add a status, update both places. The schema
-// seeds task_substates from TASK_SUBSTATE_ROWS; add a substate here
-// only.
+// have". The schema (db.ts) seeds the task_substates lookup table from
+// TASK_SUBSTATE_ROWS, and a composite FK from tasks (status, substate)
+// into it is the only guard on both columns. Add a status or substate
+// here only.
 //
 // Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
 export type TaskStatus = "OPEN" | "IN_PROGRESS" | "CLOSED";
 
-/** Every legal task status, in canonical order (matches the schema
- *  CHECK clause). Exported so CLI surfaces (`--status` validators,
+/** Every legal task status, in canonical order (matches the seeded
+ *  task_substates rows). Exported so CLI surfaces (`--status` validators,
  *  --help text, error messages) name them all in one place; missing
  *  one used to silently lie about the supported set. */
 export const TASK_STATUSES: readonly TaskStatus[] = ["OPEN", "IN_PROGRESS", "CLOSED"];
@@ -21,7 +21,7 @@ export function isTaskStatus(s: string): s is TaskStatus {
 }
 
 /** Lifecycle values v10 removed. History and v9 peers still carry
- *  them, and the schema CHECK clause rejects them, so any path that
+ *  them, and the task_substates FK rejects them, so any path that
  *  REPLAYS a stored status has to fold them onto a live one. */
 const RETIRED_STATUSES: ReadonlySet<string> = new Set(["REJECTED", "DEFERRED"]);
 
@@ -37,7 +37,7 @@ const RETIRED_STATUSES: ReadonlySet<string> = new Set(["REJECTED", "DEFERRED"]);
  * apply path (`applyTaskPut`, for peer ops and rebuilds) and the undo
  * path (`restoreRow`, for reverting an old teardown). Both used to be
  * responsible for knowing the retired set; undo did not, so undoing a
- * pre-v10 `workstream teardown` died on the CHECK constraint.
+ * pre-v10 `workstream teardown` died on the v10 CHECK constraint.
  */
 export function normalizeTaskStatus(value: string): string {
   return RETIRED_STATUSES.has(value) ? "OPEN" : value;

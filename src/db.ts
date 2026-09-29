@@ -3,15 +3,23 @@
 // Opens ~/.mu/mu.db (or MU_DB_PATH override), enables WAL + foreign keys,
 // applies the schema idempotently, and exposes the live Database handle.
 //
-// Schema (v10 — three-state task lifecycle on the v9 ops-log substrate):
+// Schema (v11 — task substates on the v10 three-state lifecycle):
 //   - 6 entity tables: workstreams, agents, tasks, task_edges,
 //                      task_notes, vcs_workspaces
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
 //   - 1 sync table:    sync_peers (per-peer watermarks)
 //   - 2 meta tables:   schema_version, machine_identity
+//   - 1 lookup table:  task_substates (legal (status, substate) pairs,
+//                                      seeded from code on every open)
 //   - 3 views:         ready, blocked, goals
-//   => EXPECTED_TABLES is exactly 10 entries.
+//   => EXPECTED_TABLES is exactly 11 entries.
+//
+// v11 adds tasks.substate, which qualifies status (OPEN/parked,
+// CLOSED/wontfix, ...). A composite FK (status, substate) ->
+// task_substates, DEFERRABLE INITIALLY DEFERRED, is the only guard on
+// the pair: it is checked at COMMIT, so apply's one-field-at-a-time
+// UPDATEs pass as long as the pair is valid when the transaction ends.
 //
 // v9 is a BREAKING, migration-free redesign. It DROPS v8's four
 // separate change-recording mechanisms — `agent_logs`, `snapshots`,
@@ -30,8 +38,10 @@
 // machines.
 //
 // IMPORTANT: MIN_ACCEPTED_SCHEMA_VERSION === CURRENT_SCHEMA_VERSION
-// === 10. There is no in-place forward-bump ladder: every pre-v10 DB
-// is rejected at openDb time with SchemaTooOldError (exit 4).
+// === 11. There is no in-place forward-bump ladder: every pre-v11 DB
+// is rejected at openDb time with SchemaTooOldError (exit 4), and a DB
+// newer than this build with SchemaTooNewError (exit 4). Migration
+// lives only in scripts/migrate.ts.
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -40,6 +50,7 @@ import { dirname, join, resolve } from "node:path";
 import Database, { type Database as DatabaseType } from "better-sqlite3";
 import { installCapture } from "./capture.js";
 import type { HasNextSteps, NextStep } from "./output.js";
+import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
 
 export type Db = DatabaseType;
 
@@ -100,11 +111,22 @@ export function openDb(options: OpenDbOptions = {}): Db {
     // 'database is locked' and roll back their agent. WAL handles
     // concurrent readers; busy_timeout handles concurrent writers.
     db.pragma("busy_timeout = 5000");
-    // Detect schema version BEFORE applySchema so a real v<10 DB is not
-    // silently stamped as v10 by the CREATE-IF-NOT-EXISTS in applySchema.
+    // Detect schema version BEFORE applySchema so a real v<11 DB is not
+    // silently stamped as v11 by the CREATE-IF-NOT-EXISTS in applySchema.
     const detectedVersion = detectExistingSchemaVersion(db);
+    if (detectedVersion !== null && detectedVersion > CURRENT_SCHEMA_VERSION) {
+      // A newer mu wrote this DB. Its writes would fail here in
+      // confusing ways (unknown columns, constraints this build does not
+      // know), so refuse before applySchema touches anything.
+      try {
+        db.close();
+      } catch {
+        // best effort
+      }
+      throw new SchemaTooNewError(detectedVersion, CURRENT_SCHEMA_VERSION);
+    }
     if (detectedVersion !== null && detectedVersion < MIN_ACCEPTED_SCHEMA_VERSION) {
-      // Loud-fail: refuse to touch a pre-v10 DB. There is no in-place
+      // Loud-fail: refuse to touch a pre-v11 DB. There is no in-place
       // migration to run, so leave the old file untouched and tell the
       // operator how to preserve it (see SchemaTooOldError.errorNextSteps).
       try {
@@ -278,7 +300,7 @@ export class SchemaTooOldError extends Error implements HasNextSteps {
         command: `mv "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}" "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}.old"`,
       },
       {
-        intent: `Migrate the preserved DB into a fresh v${this.requiredVersion} file`,
+        intent: `Migrate the old DB into a fresh v${this.requiredVersion} DB`,
         command: `npx tsx scripts/migrate.ts "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}.old" --out /tmp/mu-v${this.requiredVersion}.db`,
       },
       {
@@ -286,6 +308,23 @@ export class SchemaTooOldError extends Error implements HasNextSteps {
         command: `MU_DB_PATH=/tmp/mu-v${this.requiredVersion}.db mu doctor --deep`,
       },
     ];
+  }
+}
+
+/**
+ * Thrown by openDb when the on-disk DB was written by a NEWER mu.
+ * The DB is left untouched. Maps to exit code 4 (conflict).
+ */
+export class SchemaTooNewError extends Error implements HasNextSteps {
+  override readonly name = "SchemaTooNewError";
+  constructor(
+    public readonly detectedVersion: number,
+    public readonly supportedVersion: number,
+  ) {
+    super(`DB is v${detectedVersion}; this mu understands up to v${supportedVersion}. Upgrade mu.`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [{ intent: "Check which mu is on PATH", command: "which mu && mu --version" }];
   }
 }
 
@@ -338,13 +377,13 @@ function seedMachineIdentity(db: Db): void {
  * views are dropped and recreated so the latest definition always wins.
  *
  * For fresh DBs this writes the current schema shape and stamps
- * schema_version = CURRENT_SCHEMA_VERSION. For existing v10 DBs this is
+ * schema_version = CURRENT_SCHEMA_VERSION. For existing v11 DBs this is
  * a no-op for the table CREATEs (IF NOT EXISTS) but DOES recreate the
- * views. Pre-v10 DBs never reach this function — openDb's loud-fail
+ * views. Pre-v11 DBs never reach this function — openDb's loud-fail
  * hook rejects them with SchemaTooOldError first.
  *
  * There is no in-place bump ladder. MIN_ACCEPTED === CURRENT, so the
- * only two shapes that reach here are "brand new" and "already v10";
+ * only two shapes that reach here are "brand new" and "already v11";
  * any older-DB fix-up code would be dead by construction.
  */
 function applySchema(db: Db): void {
@@ -360,6 +399,15 @@ function applySchema(db: Db): void {
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec(CURRENT_SCHEMA);
+    // Seed the legal (status, substate) pairs from code. INSERT OR
+    // IGNORE keeps it idempotent; the table is machine-local and never
+    // synced, so every machine derives it from the same constant.
+    const seed = db.prepare(
+      "INSERT OR IGNORE INTO task_substates (status, substate, is_default) VALUES (?, ?, ?)",
+    );
+    for (const [status, substate, isDefault] of TASK_SUBSTATE_ROWS) {
+      seed.run(status, substate, isDefault);
+    }
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -371,26 +419,26 @@ function applySchema(db: Db): void {
     if (!/already exists/i.test(msg)) throw err;
   }
   // Stamp the version on a fresh DB. INSERT OR IGNORE so we don't
-  // overwrite the version on an existing v10 DB.
+  // overwrite the version on an existing v11 DB.
   db.prepare("INSERT OR IGNORE INTO schema_version (id, version) VALUES (1, ?)").run(
     CURRENT_SCHEMA_VERSION,
   );
 }
 
-/** The schema version a fresh DB starts at. v10 drops the REJECTED
- *  and DEFERRED task statuses (three-state lifecycle: OPEN,
- *  IN_PROGRESS, CLOSED). See CHANGELOG.md. */
-export const CURRENT_SCHEMA_VERSION = 10;
+/** The schema version a fresh DB starts at. v11 adds tasks.substate
+ *  and the task_substates lookup table on top of v10's three-state
+ *  lifecycle (OPEN, IN_PROGRESS, CLOSED). See CHANGELOG.md. */
+export const CURRENT_SCHEMA_VERSION = 11;
 
 /** The lowest schema version `openDb` will accept. Equal to
- *  CURRENT_SCHEMA_VERSION: mu ships no migration, so every pre-v10 DB
+ *  CURRENT_SCHEMA_VERSION: openDb runs no migration, so every pre-v11 DB
  *  throws `SchemaTooOldError` (exit 4) and is left untouched on disk. */
-const MIN_ACCEPTED_SCHEMA_VERSION = 10;
+const MIN_ACCEPTED_SCHEMA_VERSION = 11;
 
 /** Tables a healthy DB must contain. Single source of truth so
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
- *  CURRENT_SCHEMA_VERSION bump. Sorted; exactly 10 entries in v10. */
+ *  CURRENT_SCHEMA_VERSION bump. Sorted; exactly 11 entries in v11. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agents",
   "machine_identity",
@@ -399,6 +447,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "sync_peers",
   "task_edges",
   "task_notes",
+  "task_substates",
   "tasks",
   "vcs_workspaces",
   "workstreams",
@@ -466,6 +515,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    machine_identity IS the per-machine identity.
  *    schema_version   local bookkeeping.
  *    sync_peers       local bookkeeping (per-peer watermarks).
+ *    task_substates   seeded identically on every machine from
+ *                     TASK_SUBSTATE_ROWS; code, not data.
  *    ops              see below — the carrier, not cargo.
  *
  *  `ops` is listed here deliberately rather than omitted. It is not
@@ -486,6 +537,7 @@ export const MACHINE_LOCAL_TABLES = [
   "ops",
   "schema_version",
   "sync_peers",
+  "task_substates",
   "vcs_workspaces",
 ] as const;
 
@@ -509,6 +561,7 @@ CREATE VIEW ready AS
   SELECT t.*
     FROM tasks t
    WHERE t.status = 'OPEN'
+     AND t.substate <> 'parked'
      AND NOT EXISTS (
        SELECT 1
          FROM task_edges e
@@ -535,7 +588,8 @@ CREATE VIEW blocked AS
 
 // A goal is an active endpoint of the DAG — a task with no dependents
 // that we're still working toward. CLOSED is excluded: a finished
-// leaf is not an active goal.
+// leaf is not an active goal. Parked tasks STAY goals: tracks are
+// built from goals, and a parked track is still a track.
 export const GOALS_VIEW_SQL = `
 DROP VIEW IF EXISTS goals;
 CREATE VIEW goals AS
@@ -547,7 +601,7 @@ CREATE VIEW goals AS
      );
 `;
 
-// ─── v10 SCHEMA ───────────────────────────────────────────────────────
+// ─── v11 SCHEMA ───────────────────────────────────────────────────────
 //
 // Per docs/ARCHITECTURE.md § Surrogate-PK + SDK-boundary discipline.
 // Every entity table has:
@@ -625,6 +679,19 @@ CREATE TABLE IF NOT EXISTS agents (
 CREATE INDEX IF NOT EXISTS idx_agents_workstream ON agents (workstream_id);
 CREATE INDEX IF NOT EXISTS idx_agents_status ON agents (status);
 
+-- task_substates: the legal (status, substate) pairs. Seeded from
+-- TASK_SUBSTATE_ROWS (src/tasks/status.ts) by applySchema; exactly one
+-- default per status.
+CREATE TABLE IF NOT EXISTS task_substates (
+  status     TEXT NOT NULL,
+  substate   TEXT NOT NULL,
+  is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+  PRIMARY KEY (status, substate)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_substates_one_default
+  ON task_substates (status) WHERE is_default = 1;
+
 -- tasks: per-workstream unique on local_id (TRULY local now —
 -- different workstreams may reuse the same local_id).
 CREATE TABLE IF NOT EXISTS tasks (
@@ -634,6 +701,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   title         TEXT NOT NULL,
   status        TEXT NOT NULL DEFAULT 'OPEN',
   -- OPEN | IN_PROGRESS | CLOSED — see VOCABULARY.md.
+  substate      TEXT NOT NULL,
+  -- Qualifies status. No DEFAULT on purpose: a writer that forgets it
+  -- must fail loudly rather than silently pick one.
   impact        INTEGER NOT NULL,
   effort_days   REAL NOT NULL,
   owner_id      INTEGER REFERENCES agents (id) ON DELETE SET NULL,
@@ -642,7 +712,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   UNIQUE (workstream_id, local_id),
   CHECK (impact BETWEEN 1 AND 100),
   CHECK (effort_days > 0),
-  CHECK (status IN ('OPEN', 'IN_PROGRESS', 'CLOSED'))
+  FOREIGN KEY (status, substate) REFERENCES task_substates (status, substate)
+    DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_workstream ON tasks (workstream_id);

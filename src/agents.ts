@@ -424,10 +424,9 @@ export function deleteAgent(db: Db, name: string, workstream: string): boolean {
       if (result.changes === 0) return false;
 
       for (const t of stuck) {
-        db.prepare("UPDATE tasks SET status = 'OPEN', updated_at = ? WHERE id = ?").run(
-          new Date().toISOString(),
-          t.taskId,
-        );
+        db.prepare(
+          "UPDATE tasks SET status = 'OPEN', substate = 'todo', updated_at = ? WHERE id = ?",
+        ).run(new Date().toISOString(), t.taskId);
         addNote(
           db,
           t.localId,

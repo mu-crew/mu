@@ -81,6 +81,7 @@ const SELECT_VIEW_COLS = `
   ws.name AS workstream,
   v.title AS title,
   v.status AS status,
+  v.substate AS substate,
   v.impact AS impact,
   v.effort_days AS effort_days,
   ag.name AS owner,

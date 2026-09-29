@@ -236,8 +236,8 @@ describe("FK SET NULL: closing an agent clears tasks.owner automatically", () =>
     expect(() =>
       db
         .prepare(
-          `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days, owner_id, created_at, updated_at)
-           VALUES (?, 'x', 'X', 'OPEN', 50, 1, 999999, datetime('now'), datetime('now'))`,
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, owner_id, created_at, updated_at)
+           VALUES (?, 'x', 'X', 'OPEN', 'todo', 50, 1, 999999, datetime('now'), datetime('now'))`,
         )
         .run(wsId),
     ).toThrow(/FOREIGN KEY constraint failed/);

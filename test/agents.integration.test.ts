@@ -278,7 +278,9 @@ describe("agents CRUD", () => {
       effortDays: 1,
     });
     await claimTask(db, "done", { agentName: "worker-1", workstream: "auth" });
-    db.prepare("UPDATE tasks SET status = 'CLOSED' WHERE local_id = 'done'").run();
+    db.prepare(
+      "UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id = 'done'",
+    ).run();
 
     deleteAgent(db, "worker-1", "auth");
 
@@ -346,7 +348,9 @@ describe("composeAgentTitle", () => {
           WHERE local_id = ?`,
       ).run(id);
     }
-    db.prepare("UPDATE tasks SET status='CLOSED' WHERE local_id='shipped'").run();
+    db.prepare(
+      "UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='shipped'",
+    ).run();
     const a = getAgent(db, "worker-a", "ws");
     if (!a) throw new Error();
     // Only 'live' is OPEN+owned → single-task form, not the multi glyph.

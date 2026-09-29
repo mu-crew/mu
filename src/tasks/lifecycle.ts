@@ -15,7 +15,7 @@ import { getTaskEdgesWithStatus } from "./edges.js";
 import { addNote } from "./edit.js";
 import { TaskNotFoundError } from "./errors.js";
 import { getTask } from "./queries.js";
-import type { TaskStatus } from "./status.js";
+import { DEFAULT_SUBSTATE, type TaskStatus } from "./status.js";
 
 export interface SetStatusResult {
   /** Status before the call. */
@@ -102,17 +102,20 @@ function setTaskStatusImpl(
 ): SetStatusResult {
   const before = getTask(db, localId, opts.workstream);
   if (!before) throw new TaskNotFoundError(localId);
-  if (before.status === status) {
+  // ts_4 adds non-default substates to close; until then a status set
+  // always lands on that status's default substate.
+  const substate = DEFAULT_SUBSTATE[status];
+  if (before.status === status && before.substate === substate) {
     return { previousStatus: before.status, status, changed: false };
   }
   // v5: tasks.local_id is per-workstream unique. Scope to the row's
   // workstream so the UPDATE doesn't accidentally touch a same-named
   // task in another workstream.
   db.prepare(
-    `UPDATE tasks SET status = ?, updated_at = ?
+    `UPDATE tasks SET status = ?, substate = ?, updated_at = ?
       WHERE local_id = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
-  ).run(status, new Date().toISOString(), localId, before.workstreamName);
+  ).run(status, substate, new Date().toISOString(), localId, before.workstreamName);
   // No emitEvent: the UPDATE fired the capture trigger, whose intent is
   // the specific verb (task.close / task.open, or task.set-<status> for
   // a bare status set) and whose payload names the new status. Evidence,

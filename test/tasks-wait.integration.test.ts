@@ -279,7 +279,7 @@ describe("waitForTasks", () => {
       paneId: "%99",
     });
     db.prepare(
-      `UPDATE tasks SET status = 'IN_PROGRESS',
+      `UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active',
               owner_id = (SELECT id FROM agents WHERE name = ?),
               updated_at = ?
         WHERE local_id = ?`,
@@ -372,7 +372,7 @@ describe("waitForTasks", () => {
       paneId: "%101",
     });
     db.prepare(
-      `UPDATE tasks SET status = 'IN_PROGRESS',
+      `UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active',
               owner_id = (SELECT id FROM agents WHERE name = ?),
               updated_at = ?
         WHERE local_id = ?`,
@@ -420,7 +420,7 @@ describe("waitForTasks", () => {
       paneId: "%102",
     });
     db.prepare(
-      `UPDATE tasks SET status = 'IN_PROGRESS',
+      `UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active',
               owner_id = (SELECT id FROM agents WHERE name = ?)
         WHERE local_id = ?`,
     ).run("w-fields", "a");
@@ -465,7 +465,7 @@ describe("waitForTasks", () => {
   it("does not mark unknown or busy owner state as stuck", async () => {
     insertAgent(db, { name: "w-known", workstream: "test", paneId: "%104" });
     db.prepare(
-      `UPDATE tasks SET status = 'IN_PROGRESS',
+      `UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active',
               owner_id = (SELECT id FROM agents WHERE name = ?)
         WHERE local_id = ?`,
     ).run("w-known", "a");
@@ -502,7 +502,7 @@ describe("waitForTasks", () => {
       paneId: "%103",
     });
     db.prepare(
-      `UPDATE tasks SET status = 'IN_PROGRESS',
+      `UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active',
               owner_id = (SELECT id FROM agents WHERE name = ?)
         WHERE local_id = ?`,
     ).run("w-precedence", "a");
@@ -540,7 +540,7 @@ describe("waitForTasks", () => {
       paneId: "%100",
     });
     db.prepare(
-      `UPDATE tasks SET status = 'IN_PROGRESS',
+      `UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active',
               owner_id = (SELECT id FROM agents WHERE name = ?),
               updated_at = ?
         WHERE local_id = ?`,

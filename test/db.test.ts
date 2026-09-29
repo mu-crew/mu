@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { classifyError } from "../src/cli/handle.js";
 import { type Db, defaultDbPath, openDb, SchemaTooOldError } from "../src/db.js";
 import { TaskNotFoundError } from "../src/tasks/errors.js";
+import { DEFAULT_SUBSTATE, type TaskStatus } from "../src/tasks/status.js";
 import { addBlockEdge, addTask } from "../src/tasks.js";
 
 describe("openDb", () => {
@@ -31,7 +32,7 @@ describe("openDb", () => {
     // No throw = parent dirs created.
   });
 
-  it("applies exactly the 10 v10 tables (three-state lifecycle; REJECTED/DEFERRED removed)", () => {
+  it("applies exactly the 11 v11 tables (task_substates lookup added)", () => {
     const db = openDb({ path: dbPath });
     const tables = (
       db
@@ -48,26 +49,27 @@ describe("openDb", () => {
       "sync_peers",
       "task_edges",
       "task_notes",
+      "task_substates",
       "tasks",
       "vcs_workspaces",
       "workstreams",
     ]);
-    expect(tables).toHaveLength(10);
+    expect(tables).toHaveLength(11);
     expect([...tables].sort()).toEqual(tables);
-    // schema_version stamped to current (v10).
+    // schema_version stamped to current (v11).
     const v = (
       db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as { version: number }
     ).version;
-    expect(v).toBe(10);
+    expect(v).toBe(11);
     db.close();
   });
 
-  it("a fresh DB stamps version 10 and seeds machine_identity", () => {
+  it("a fresh DB stamps version 11 and seeds machine_identity", () => {
     const db = openDb({ path: dbPath });
     const v = (
       db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as { version: number }
     ).version;
-    expect(v).toBe(10);
+    expect(v).toBe(11);
     const ids = db.prepare("SELECT machine_id FROM machine_identity").all() as {
       machine_id: string;
     }[];
@@ -198,14 +200,14 @@ describe("openDb", () => {
     db.close();
   });
 
-  it("refuses a v9 DB with SchemaTooOldError (mu ships no migration)", () => {
+  it("refuses a v10 DB with SchemaTooOldError (openDb runs no migration)", () => {
     // The version gate runs before schema application, so a minimal
-    // version-stamped fixture proves the breaking v9 → v10 boundary.
+    // version-stamped fixture proves the breaking v10 → v11 boundary.
     {
       const raw = new Database(dbPath);
       raw.exec(
         `CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
-         INSERT INTO schema_version (id, version) VALUES (1, 9);`,
+         INSERT INTO schema_version (id, version) VALUES (1, 10);`,
       );
       raw.close();
     }
@@ -218,11 +220,11 @@ describe("openDb", () => {
     }
     expect(thrown).toBeInstanceOf(SchemaTooOldError);
     if (!(thrown instanceof SchemaTooOldError)) throw new Error("expected SchemaTooOldError");
-    expect(thrown.detectedVersion).toBe(9);
-    expect(thrown.requiredVersion).toBe(10);
+    expect(thrown.detectedVersion).toBe(10);
+    expect(thrown.requiredVersion).toBe(11);
     // Typed-error → exit-code map: 4 (conflict).
     expect(classifyError(thrown)).toEqual({ label: "conflict", exitCode: 4 });
-    // The v9 DB is left untouched — no v10 tables were created under it.
+    // The v10 DB is left untouched — no v11 tables were created under it.
     const raw2 = new Database(dbPath);
     const names = (
       raw2.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]
@@ -243,19 +245,24 @@ describe("openDb", () => {
     expect(() => openDb({ path: dbPath })).toThrow(SchemaTooOldError);
   });
 
-  it("tasks CHECK accepts only OPEN, IN_PROGRESS, and CLOSED", () => {
+  it("tasks FK accepts only OPEN, IN_PROGRESS, and CLOSED", () => {
     const db = openDb({ path: dbPath });
     db.prepare("INSERT INTO workstreams (name, created_at) VALUES ('ws', '2026-01-01')").run();
     const insert = db.prepare(
       `INSERT INTO tasks
-         (workstream_id, local_id, title, status, impact, effort_days, created_at, updated_at)
-       VALUES ((SELECT id FROM workstreams WHERE name = 'ws'), ?, ?, ?, 50, 1, '2026-01-01', '2026-01-01')`,
+         (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
+       VALUES ((SELECT id FROM workstreams WHERE name = 'ws'), ?, ?, ?, ?, 50, 1, '2026-01-01', '2026-01-01')`,
     );
-    for (const status of ["OPEN", "IN_PROGRESS", "CLOSED"]) {
-      expect(() => insert.run(status.toLowerCase(), status, status)).not.toThrow();
+    const defaults = { OPEN: "todo", IN_PROGRESS: "active", CLOSED: "done" } as const;
+    for (const [status, substate] of Object.entries(defaults)) {
+      expect(() => insert.run(status.toLowerCase(), status, status, substate)).not.toThrow();
     }
+    // The retired v9 statuses have no row in task_substates, whatever
+    // substate is paired with them.
     for (const status of ["REJECTED", "DEFERRED"]) {
-      expect(() => insert.run(status.toLowerCase(), status, status)).toThrow(/CHECK constraint/i);
+      expect(() => insert.run(status.toLowerCase(), status, status, "todo")).toThrow(
+        /FOREIGN KEY/i,
+      );
     }
     db.close();
   });
@@ -304,6 +311,7 @@ describe("openDb", () => {
       "sync_peers",
       "task_edges",
       "task_notes",
+      "task_substates",
       "tasks",
       "vcs_workspaces",
       "workstreams",
@@ -350,7 +358,7 @@ describe("openDb", () => {
     insertTask(db, { id: "a", title: "A", impact: 50, effortDays: 1 });
     insertTask(db, { id: "b", title: "B", impact: 50, effortDays: 1 });
     insertEdge(db, "a", "b");
-    db.prepare("UPDATE tasks SET status='CLOSED' WHERE local_id='a'").run();
+    db.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='a'").run();
     void taskIdByLocalId; // silence "unused" warning when this test path doesn't hit it
     const ready = (
       db.prepare("SELECT local_id FROM ready ORDER BY local_id").all() as {
@@ -421,11 +429,11 @@ describe("openDb", () => {
     expect(() =>
       db
         .prepare(
-          `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days, created_at, updated_at)
-         VALUES (?, 'x', 'X', 'BOGUS', 50, 1, datetime('now'), datetime('now'))`,
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
+         VALUES (?, 'x', 'X', 'BOGUS', 'todo', 50, 1, datetime('now'), datetime('now'))`,
         )
         .run(wsId),
-    ).toThrow();
+    ).toThrow(/FOREIGN KEY/);
     db.close();
   });
 
@@ -613,12 +621,13 @@ function insertTask(db: Db, input: InsertTaskInput): void {
     }
   ).id;
   db.prepare(
-    `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days, created_at, updated_at)
-     VALUES (?, @id, @title, @status, @impact, @effort_days, datetime('now'), datetime('now'))`,
+    `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
+     VALUES (?, @id, @title, @status, @substate, @impact, @effort_days, datetime('now'), datetime('now'))`,
   ).run(wsId, {
     id: input.id,
     title: input.title,
     status: input.status ?? "OPEN",
+    substate: DEFAULT_SUBSTATE[(input.status ?? "OPEN") as TaskStatus] ?? "todo",
     impact: input.impact,
     effort_days: input.effortDays,
   });

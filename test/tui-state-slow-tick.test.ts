@@ -21,6 +21,7 @@ function fastSnapshot(label: string): WorkstreamSnapshot {
         workstreamName: "ws",
         title: `Ready ${label}`,
         status: "OPEN",
+        substate: "todo",
         impact: 50,
         effortDays: 1,
         ownerName: null,

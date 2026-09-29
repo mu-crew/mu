@@ -187,8 +187,8 @@ describe("loadFullDag status filter", () => {
       .get(new Date().toISOString()) as { id: number };
     const insertTask = db.prepare(
       `INSERT INTO tasks
-         (workstream_id, local_id, title, status, impact, effort_days, created_at, updated_at)
-       VALUES (?, ?, ?, 'OPEN', 50, 1, ?, ?)`,
+         (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
+       VALUES (?, ?, ?, 'OPEN', 'todo', 50, 1, ?, ?)`,
     );
     const taskIds: number[] = [];
     db.transaction(() => {

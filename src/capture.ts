@@ -307,6 +307,7 @@ const CAPTURED_COLUMNS = {
     "local_id",
     "title",
     "status",
+    "substate",
     "impact",
     "effort_days",
     "owner_id",

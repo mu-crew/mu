@@ -241,7 +241,7 @@ describe("op capture (triggers)", () => {
       }
     });
 
-    it("task.close carries {status} (+updated_at), not the whole row", () => {
+    it("task.close carries {status, substate} (+updated_at), not the whole row", () => {
       ensureWorkstream(db, "demo");
       seedTask();
       clearOps();
@@ -252,7 +252,9 @@ describe("op capture (triggers)", () => {
       if (!row) throw new Error("unreachable");
       const payload = payloadOf(row);
       expect(payload.status).toBe("CLOSED");
-      expect(Object.keys(payload).sort().join(",")).toMatch(/^status(,updated_at)?$/);
+      // The pair travels in ONE op: status and substate share an HLC.
+      expect(payload.substate).toBe("done");
+      expect(Object.keys(payload).sort().join(",")).toMatch(/^status,substate(,updated_at)?$/);
       expect(payload).not.toHaveProperty("impact");
       expect(payload).not.toHaveProperty("title");
     });
@@ -330,20 +332,25 @@ describe("op capture (triggers)", () => {
           impact: 50,
           effortDays: 1,
         });
+        // One transaction, like the real apply path: the per-column
+        // UPDATEs pass through a transient (CLOSED, todo) pair that the
+        // deferred (status, substate) FK only tolerates until COMMIT.
         withCaptureSuppressed(target, () => {
-          for (const row of opRows) {
-            const payload = JSON.parse(row.payload) as Record<string, unknown>;
-            for (const [col, value] of Object.entries(payload)) {
-              if (col === "updated_at" || col === "created_at" || col === "local_id") continue;
-              // Field-level LWW: the column is set only if this op's
-              // HLC is the newest one seen for THAT column. Applying in
-              // HLC order makes "newest wins" automatic, which is the
-              // whole point — no version vectors needed.
-              target
-                .prepare(`UPDATE tasks SET ${col} = ? WHERE local_id = 't1'`)
-                .run(value as string | number | null);
+          target.transaction(() => {
+            for (const row of opRows) {
+              const payload = JSON.parse(row.payload) as Record<string, unknown>;
+              for (const [col, value] of Object.entries(payload)) {
+                if (col === "updated_at" || col === "created_at" || col === "local_id") continue;
+                // Field-level LWW: the column is set only if this op's
+                // HLC is the newest one seen for THAT column. Applying in
+                // HLC order makes "newest wins" automatic, which is the
+                // whole point — no version vectors needed.
+                target
+                  .prepare(`UPDATE tasks SET ${col} = ? WHERE local_id = 't1'`)
+                  .run(value as string | number | null);
+              }
             }
-          }
+          })();
         });
         const row = target
           .prepare("SELECT title, impact, status FROM tasks WHERE local_id='t1'")

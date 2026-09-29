@@ -84,7 +84,7 @@ import { LEGACY_LOG_ONLY_SQL_EXCLUSION } from "./legacy-ops.js";
 import { groupIdFromPrefix } from "./logs.js";
 import { withOpContext } from "./op-context.js";
 import type { HasNextSteps, NextStep } from "./output.js";
-import { normalizeTaskStatus } from "./tasks/status.js";
+import { DEFAULT_SUBSTATE, isTaskStatus, normalizeTaskStatus } from "./tasks/status.js";
 
 /** One op as stored, with the provenance we need to invert it. */
 interface GroupOpRow {
@@ -894,15 +894,22 @@ function restoreRow(db: Db, inverse: InverseOp, table: string): boolean {
         // only deleted the task.
         const wsId = ensureWorkstream(db, parsed.workstream);
         const now = new Date().toISOString();
+        const status = String(inverse.fields.status ?? "OPEN");
+        // Keep the pair valid for the deferred FK. The correct legacy
+        // mapping (REJECTED -> CLOSED/wontfix, ...) lands in ts_3.
+        const substate = String(
+          inverse.fields.substate ?? (isTaskStatus(status) ? DEFAULT_SUBSTATE[status] : "todo"),
+        );
         db.prepare(
-          `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days,
-                              owner_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact,
+                              effort_days, owner_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
         ).run(
           wsId,
           parsed.localId,
           String(inverse.fields.title ?? parsed.localId),
-          String(inverse.fields.status ?? "OPEN"),
+          status,
+          substate,
           Number(inverse.fields.impact ?? 50),
           Number(inverse.fields.effort_days ?? 1),
           String(inverse.fields.created_at ?? now),

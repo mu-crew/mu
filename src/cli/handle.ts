@@ -37,7 +37,13 @@ import {
   AgentSpawnStartupError,
   WorkspacePreservedError,
 } from "../agents.js";
-import { type Db, openDb, SchemaTooOldError, WorkstreamNotFoundError } from "../db.js";
+import {
+  type Db,
+  openDb,
+  SchemaTooNewError,
+  SchemaTooOldError,
+  WorkstreamNotFoundError,
+} from "../db.js";
 import { DriftDetectedError } from "../drift.js";
 import { GroupIdAmbiguousError } from "../logs.js";
 import {
@@ -270,6 +276,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof WorkspaceDirtyError ||
     err instanceof ClaimerNotRegisteredError ||
     err instanceof SchemaTooOldError ||
+    err instanceof SchemaTooNewError ||
     err instanceof TaskIdInvalidError ||
     err instanceof WorkstreamExistsError ||
     // Rebuild refuses to overwrite an existing target or to write onto

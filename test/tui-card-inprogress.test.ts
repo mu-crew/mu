@@ -43,6 +43,7 @@ function task(over: Partial<TaskRow> = {}): TaskRow {
     workstreamName: "demo",
     title: "Design X",
     status: "IN_PROGRESS",
+    substate: "active",
     impact: 50,
     effortDays: 1,
     ownerName: "worker-1",

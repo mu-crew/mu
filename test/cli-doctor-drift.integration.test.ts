@@ -83,9 +83,9 @@ describe("mu doctor — drift + fleet checks", () => {
     await seed();
     const now = new Date().toISOString();
     plant(
-      `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days,
+      `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days,
                           created_at, updated_at)
-       VALUES ((SELECT id FROM workstreams WHERE name = 'demo'), 'ghost', 'G', 'OPEN', 50, 1,
+       VALUES ((SELECT id FROM workstreams WHERE name = 'demo'), 'ghost', 'G', 'OPEN', 'todo', 50, 1,
                '${now}', '${now}')`,
     );
 

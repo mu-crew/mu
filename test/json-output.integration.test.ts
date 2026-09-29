@@ -158,7 +158,7 @@ describe("--json output on read verbs", () => {
     // Close 'a' so 'b' becomes ready; close 'b' so 'c' becomes ready;
     // close 'c' so nothing is ready.
     const db2 = openDb({ path: dbPath });
-    db2.prepare("UPDATE tasks SET status = 'CLOSED'").run();
+    db2.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done'").run();
     db2.close();
     const { stdout } = await runCli(["task", "next", "-w", "auth", "-n", "0", "--json"], dbPath);
     expect(JSON.parse(stdout.trim())).toEqual({ items: [], count: 0 });
@@ -591,8 +591,10 @@ describe("task list --status", () => {
     // Mark 'a' as CLOSED and 'b' as IN_PROGRESS so all three statuses
     // are represented.
     const db2 = openDb({ path: dbPath });
-    db2.prepare("UPDATE tasks SET status='CLOSED' WHERE local_id='a'").run();
-    db2.prepare("UPDATE tasks SET status='IN_PROGRESS' WHERE local_id='b'").run();
+    db2.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='a'").run();
+    db2
+      .prepare("UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active' WHERE local_id='b'")
+      .run();
     db2.close();
 
     const { stdout } = await runCli(

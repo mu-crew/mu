@@ -148,6 +148,7 @@ function freshSnapshot(workstreamName: string): WorkstreamSnapshot {
         workstreamName,
         title: "ready task one",
         status: "OPEN",
+        substate: "todo",
         impact: 50,
         effortDays: 1,
         ownerName: null,
