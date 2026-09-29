@@ -79,12 +79,13 @@
 // DEPENDENCY ORDER (workstream -> task -> note/edge), not merely in
 // reverse emission order. See ENTITY_RESTORE_ORDER.
 
+import { repairTaskPair } from "./apply.js";
 import { type Db, resolveWorkstreamId } from "./db.js";
 import { LEGACY_LOG_ONLY_SQL_EXCLUSION } from "./legacy-ops.js";
 import { groupIdFromPrefix } from "./logs.js";
 import { withOpContext } from "./op-context.js";
 import type { HasNextSteps, NextStep } from "./output.js";
-import { DEFAULT_SUBSTATE, isTaskStatus, normalizeTaskStatus } from "./tasks/status.js";
+import { mapLegacyStatus, resolvePair } from "./tasks/status.js";
 
 /** One op as stored, with the provenance we need to invert it. */
 interface GroupOpRow {
@@ -536,12 +537,16 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
         continue;
       }
       // History predating v10 carries retired lifecycle values that the
-      // schema CHECK clause now rejects, so a restore has to fold them
-      // onto a live status exactly as the apply path does. Without this,
+      // task_substates FK rejects, so a restore maps them onto the pair
+      // they now mean, exactly as the apply path does. Without this,
       // undoing a pre-v10 `workstream teardown` aborted the whole
       // transaction on the first DEFERRED task.
       const status = fields.status;
-      if (typeof status === "string") fields.status = normalizeTaskStatus(status);
+      const legacy = typeof status === "string" ? mapLegacyStatus(status) : null;
+      if (legacy) {
+        fields.status = legacy.status;
+        fields.substate = legacy.substate;
+      }
       const conflicts = laterRowWriters(db, row.entity, row.key, row.hlc, groupId).map((w) => ({
         field: "<row>",
         groupId: w.groupId,
@@ -894,12 +899,15 @@ function restoreRow(db: Db, inverse: InverseOp, table: string): boolean {
         // only deleted the task.
         const wsId = ensureWorkstream(db, parsed.workstream);
         const now = new Date().toISOString();
-        const status = String(inverse.fields.status ?? "OPEN");
-        // Keep the pair valid for the deferred FK. The correct legacy
-        // mapping (REJECTED -> CLOSED/wontfix, ...) lands in ts_3.
-        const substate = String(
-          inverse.fields.substate ?? (isTaskStatus(status) ? DEFAULT_SUBSTATE[status] : "todo"),
-        );
+        // Insert a legal pair: the FK checks it at commit, and an
+        // unknown status or substate must not abort the whole undo.
+        const pair = resolvePair(
+          String(inverse.fields.status ?? "OPEN"),
+          inverse.fields.substate,
+        ) ?? {
+          status: "OPEN",
+          substate: "todo",
+        };
         db.prepare(
           `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact,
                               effort_days, owner_id, created_at, updated_at)
@@ -908,8 +916,8 @@ function restoreRow(db: Db, inverse: InverseOp, table: string): boolean {
           wsId,
           parsed.localId,
           String(inverse.fields.title ?? parsed.localId),
-          status,
-          substate,
+          pair.status,
+          pair.substate,
           Number(inverse.fields.impact ?? 50),
           Number(inverse.fields.effort_days ?? 1),
           String(inverse.fields.created_at ?? now),
@@ -917,7 +925,10 @@ function restoreRow(db: Db, inverse: InverseOp, table: string): boolean {
         );
         return true;
       }
-      return updateFields(db, "tasks", "id", id, inverse.fields);
+      // A partial restore (e.g. status only, from history that predates
+      // substates) can leave an illegal pair; repair it before commit.
+      const updated = updateFields(db, "tasks", "id", id, inverse.fields);
+      return repairTaskPair(db, id) || updated;
     }
     case "note": {
       const parsed = parseNoteKey(inverse.key);

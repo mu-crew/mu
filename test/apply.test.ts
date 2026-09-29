@@ -155,27 +155,27 @@ describe("applyOp", () => {
     addTask(db, { workstream: ws, localId, title: `title ${localId}`, impact: 50, effortDays: 1 });
   };
 
-  it.each(["REJECTED", "DEFERRED"])(
-    "projects legacy %s task ops as OPEN without rewriting history",
-    (legacyStatus) => {
-      const op = makeOp({
-        hlc: peerHlc(1000),
-        entity: "task",
-        key: "demo/legacy",
-        payload: { title: "Legacy task", status: legacyStatus, impact: 40, effort_days: 1 },
-      });
+  it.each([
+    ["REJECTED", "CLOSED"],
+    ["DEFERRED", "OPEN"],
+  ])("projects legacy %s task ops as %s without rewriting history", (legacyStatus, projected) => {
+    const op = makeOp({
+      hlc: peerHlc(1000),
+      entity: "task",
+      key: "demo/legacy",
+      payload: { title: "Legacy task", status: legacyStatus, impact: 40, effort_days: 1 },
+    });
 
-      expect(() => applyIncomingOp(db, op)).not.toThrow();
-      expect(task("demo/legacy")?.status).toBe("OPEN");
-      expect(
-        (
-          db
-            .prepare("SELECT payload FROM ops WHERE machine_id = ? AND hlc = ?")
-            .get(op.machineId, op.hlc) as { payload: string }
-        ).payload,
-      ).toBe(op.payload);
-    },
-  );
+    expect(() => applyIncomingOp(db, op)).not.toThrow();
+    expect(task("demo/legacy")?.status).toBe(projected);
+    expect(
+      (
+        db
+          .prepare("SELECT payload FROM ops WHERE machine_id = ? AND hlc = ?")
+          .get(op.machineId, op.hlc) as { payload: string }
+      ).payload,
+    ).toBe(op.payload);
+  });
 
   // ─── REQUIRED: field-level convergence ───────────────────────────────
 
@@ -272,7 +272,8 @@ describe("applyOp", () => {
           machineId: PEER_B,
         }),
       );
-      expect(mixed.appliedFields).toEqual(["status"]);
+      // substate follows status: a status-only op writes its default.
+      expect(mixed.appliedFields).toEqual(["status", "substate"]);
       expect(task("demo/t1")).toMatchObject({ impact: 99, status: "CLOSED" });
     });
 
@@ -665,7 +666,7 @@ describe("applyOp", () => {
           payload: { owner_id: 4242, status: "IN_PROGRESS" },
         }),
       );
-      expect(r.appliedFields).toEqual(["status"]);
+      expect(r.appliedFields).toEqual(["status", "substate"]);
       expect(task("demo/t1")).toMatchObject({ status: "IN_PROGRESS", owner_id: null });
     });
 
@@ -694,7 +695,7 @@ describe("applyOp", () => {
           payload: { status: "CLOSED", some_future_column: "whatever" },
         }),
       );
-      expect(r.appliedFields).toEqual(["status"]);
+      expect(r.appliedFields).toEqual(["status", "substate"]);
     });
   });
 
