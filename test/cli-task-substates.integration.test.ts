@@ -137,6 +137,45 @@ describe("mu task substates CLI", () => {
     expect(plain(r.stdout)).toMatch(/status +: OPEN\/parked/);
   });
 
+  it("empty next names the parked count and how to list them", async () => {
+    for (const t of ["a", "b", "d"]) await cli("close", t);
+    await cli("park", "c", "--why", "later");
+    await cli("park", "e", "--why", "later");
+    const r = await cli("next");
+    expect(r.exitCode).toBeNull();
+    const out = plain(r.stdout);
+    expect(out).toContain("(no ready tasks; 2 parked)");
+    expect(out).toContain("mu task list --substate parked -w test");
+  });
+
+  it("empty next without parked tasks stays bare", async () => {
+    for (const t of ["a", "b", "c", "d", "e"]) await cli("close", t);
+    const out = plain((await cli("next")).stdout);
+    expect(out).toContain("(no ready tasks)");
+    expect(out).not.toContain("parked");
+  });
+
+  it("show on a parked task suggests unpark; a non-done close suggests open", async () => {
+    await cli("park", "c", "--why", "later");
+    expect(plain((await cli("show", "c")).stdout)).toContain("mu task unpark c -w test");
+    await cli("close", "a", "--as", "wontfix", "--why", "no");
+    expect(plain((await cli("show", "a")).stdout)).toContain("mu task open a -w test");
+  });
+
+  it("wait prints the pair and skips cherry-pick for a non-done close", async () => {
+    await cli("close", "a", "--as", "duplicate", "--why", "see e");
+    const r = await cli("wait", "a", "--first");
+    expect(r.exitCode).toBeNull();
+    const out = plain(r.stdout);
+    expect(out).toContain("a (CLOSED/duplicate)");
+    expect(out).not.toContain("cherry-pick");
+    expect(out).toContain("mu task notes a -w test");
+    const j = JSON.parse((await cli("wait", "a", "--first", "--json")).stdout) as {
+      firing: { substate: string };
+    };
+    expect(j.firing.substate).toBe("duplicate");
+  });
+
   it("list renders CLOSED/wontfix and bare OPEN", async () => {
     await cli("close", "a", "--as", "wontfix", "--why", "nope");
     const r = await cli("list");

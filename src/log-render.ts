@@ -23,6 +23,7 @@
 // (ROADMAP: no second render layer).
 
 import type { LocalIntent } from "./logs.js";
+import { formatPair, resolvePair } from "./tasks/status.js";
 
 /** Every intent mu writes: the local ones (`emitEvent`, for changes no
  *  trigger can see) plus the capture-trigger ones (set via
@@ -34,6 +35,8 @@ export type CaptureIntent =
   | "task.delete"
   | "task.close"
   | "task.open"
+  | "task.park"
+  | "task.unpark"
   | "task.reject"
   | "task.defer"
   | "task.claim"
@@ -161,6 +164,8 @@ const VERBS: Record<KnownIntent, string> = {
   "task.delete": "task delete",
   "task.close": "task close",
   "task.open": "task open",
+  "task.park": "task park",
+  "task.unpark": "task unpark",
   "task.reject": "task reject",
   "task.defer": "task defer",
   "task.claim": "task claim",
@@ -298,7 +303,17 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
     case "task.reject":
     case "task.defer": {
       const status = str(bag, "status");
-      return { verb: VERBS[intent], subject, detail: status === undefined ? "" : `→ ${status}` };
+      return {
+        verb: VERBS[intent],
+        subject,
+        detail: status === undefined ? "" : `→ ${pairText(bag, status)}`,
+      };
+    }
+    case "task.park":
+    case "task.unpark": {
+      // Both stay OPEN, so the payload carries only the substate.
+      const detail = str(bag, "substate") === undefined ? "" : `→ ${pairText(bag, "OPEN")}`;
+      return { verb: VERBS[intent], subject, detail };
     }
     case "task.claim": {
       // The payload cannot name the actor on the `--self` path (owner_id
@@ -369,6 +384,12 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
 
 /** Collapse a multi-line string to one line, truncated. Note contents
  *  are free text and can be paragraphs; a log line is a line. */
+/** "CLOSED/wontfix", or bare "CLOSED" for a default substate. */
+function pairText(bag: Record<string, unknown>, status: string): string {
+  const pair = resolvePair(status, str(bag, "substate"));
+  return pair === null ? status : formatPair(pair);
+}
+
 function oneLine(text: string, max = 60): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
