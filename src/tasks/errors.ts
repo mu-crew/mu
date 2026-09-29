@@ -5,7 +5,9 @@
 //   not found  → 3   (TaskNotFoundError)
 //   conflict   → 4   (TaskExistsError, TaskNotInWorkstreamError,
 //                     TaskAlreadyOwnedError, ClaimerNotRegisteredError,
-//                     CrossWorkstreamEdgeError, TaskIdInvalidError)
+//                     CrossWorkstreamEdgeError, TaskIdInvalidError,
+//                     SubstateReasonRequiredError, TaskParkStateError,
+//                     TaskParkedError, InvalidSubstateError)
 //   cycle      → 4   (CycleError — also a conflict)
 //
 // Each error implements HasNextSteps so the CLI can render a per-error
@@ -16,6 +18,7 @@
 import type { HasNextSteps, NextStep } from "../output.js";
 import { WORKSPACE_STALE_THRESHOLD, type WorkspaceStaleness } from "../workspace.js";
 import { sanitiseTaskId } from "./id.js";
+import { TASK_SUBSTATES, type TaskStatus, type TaskSubstate } from "./status.js";
 
 export class TaskNotFoundError extends Error implements HasNextSteps {
   override readonly name = "TaskNotFoundError";
@@ -381,5 +384,112 @@ export class CrossWorkstreamEdgeError extends Error implements HasNextSteps {
         command: `mu task add <new-id> -w ${this.dependentWorkstream} --title "<copy of ${this.blocker}>" --impact <n> --effort-days <n>`,
       },
     ];
+  }
+}
+
+/**
+ * Thrown by `closeTask` (non-`done` `--as`) and `parkTask` when no
+ * non-empty `--why` was given. The reason is stored as a note, so a
+ * classification with no rationale is refused before any write.
+ */
+export class SubstateReasonRequiredError extends Error implements HasNextSteps {
+  override readonly name = "SubstateReasonRequiredError";
+  constructor(
+    public readonly verb: "close" | "park",
+    public readonly substate: TaskSubstate,
+    public readonly taskId: string,
+  ) {
+    super(
+      verb === "close"
+        ? `closing ${taskId} as ${substate} needs a reason (--why "...")`
+        : `parking ${taskId} needs a reason (--why "...")`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    const cmd =
+      this.verb === "close"
+        ? `mu task close ${this.taskId} --as ${this.substate} --why "<reason>"`
+        : `mu task park ${this.taskId} --why "<reason>"`;
+    return [{ intent: "Retry with a reason", command: cmd }];
+  }
+}
+
+/**
+ * Thrown by `parkTask` on an IN_PROGRESS or CLOSED task. Park is one
+ * transition (OPEN/todo → OPEN/parked); the owner releases, or the task
+ * is reopened, first.
+ */
+export class TaskParkStateError extends Error implements HasNextSteps {
+  override readonly name = "TaskParkStateError";
+  constructor(
+    public readonly taskId: string,
+    public readonly status: "IN_PROGRESS" | "CLOSED",
+    public readonly workstream: string,
+  ) {
+    super(
+      status === "IN_PROGRESS"
+        ? `cannot park ${taskId}: it is IN_PROGRESS (release it first)`
+        : `cannot park ${taskId}: it is CLOSED (open it first)`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    const ws = this.workstream;
+    const first: NextStep =
+      this.status === "IN_PROGRESS"
+        ? { intent: "Release the claim first", command: `mu task release ${this.taskId} -w ${ws}` }
+        : { intent: "Reopen the task first", command: `mu task open ${this.taskId} -w ${ws}` };
+    return [
+      first,
+      {
+        intent: "Then park it",
+        command: `mu task park ${this.taskId} --why "<reason>" -w ${ws}`,
+      },
+    ];
+  }
+}
+
+/**
+ * Thrown by `claimTask` on an OPEN/parked task without `force`. Parked
+ * means "keep out of the scheduler"; claiming it anyway is explicit.
+ */
+export class TaskParkedError extends Error implements HasNextSteps {
+  override readonly name = "TaskParkedError";
+  constructor(
+    public readonly taskId: string,
+    public readonly workstream: string,
+  ) {
+    super(`task ${taskId} is parked (OPEN/parked); unpark it or claim with --force`);
+  }
+  errorNextSteps(): NextStep[] {
+    const ws = this.workstream;
+    return [
+      { intent: "Unpark it, then claim", command: `mu task unpark ${this.taskId} -w ${ws}` },
+      { intent: "Claim it anyway", command: `mu task claim ${this.taskId} --force -w ${ws}` },
+    ];
+  }
+}
+
+/**
+ * Thrown when a verb is asked for a (status, substate) pair that the
+ * task_substates table does not allow, e.g. `close --as parked`.
+ * Caught here rather than by the deferred FK, which would fail only at
+ * commit with an opaque constraint message.
+ */
+export class InvalidSubstateError extends Error implements HasNextSteps {
+  override readonly name = "InvalidSubstateError";
+  constructor(
+    public readonly status: TaskStatus,
+    public readonly substate: string,
+  ) {
+    super(
+      `invalid substate for ${status}: ${JSON.stringify(substate)} (expected one of: ${TASK_SUBSTATES[status].join(", ")})`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return TASK_SUBSTATES[this.status].map((s) => ({
+      intent: `Use ${this.status}/${s}`,
+      command:
+        this.status === "CLOSED" ? `mu task close <id> --as ${s}` : `mu task list --substate ${s}`,
+    }));
   }
 }

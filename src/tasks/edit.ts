@@ -144,11 +144,15 @@ export interface AddNoteOptions {
 
 export function addNote(db: Db, taskLocalId: string, content: string, opts: AddNoteOptions) {
   return withOpContext(db, { intent: "task.note", actor: opts.author, group: "new" }, () =>
-    addNoteImpl(db, taskLocalId, content, opts),
+    insertNote(db, taskLocalId, content, opts),
   );
 }
 
-function addNoteImpl(db: Db, taskLocalId: string, content: string, opts: AddNoteOptions) {
+/** addNote without its own op context: the note joins the CALLER's
+ *  group and intent. For verbs whose note is part of one action (the
+ *  `--why` of `close --as` / `park`), so `mu undo` reverts both together.
+ *  Internal — not re-exported from src/tasks.ts. */
+export function insertNote(db: Db, taskLocalId: string, content: string, opts: AddNoteOptions) {
   const task = getTask(db, taskLocalId, opts.workstream);
   if (!task) {
     throw new TaskNotFoundError(taskLocalId);

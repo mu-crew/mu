@@ -77,14 +77,18 @@ import {
   ClaimerNotRegisteredError,
   CrossWorkstreamEdgeError,
   CycleError,
+  InvalidSubstateError,
   ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
+  SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
   TaskNotFoundError,
   TaskNotInWorkstreamError,
+  TaskParkedError,
+  TaskParkStateError,
 } from "../tasks.js";
 import { NothingToUndoError, UndoGroupNotFoundError, UndoSupersededError } from "../undo.js";
 import { WorkspaceConflictError, WorkspaceDirtyError, WorkspaceVcsRequiredError } from "../vcs.js";
@@ -263,6 +267,12 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentExistsError ||
     err instanceof TaskExistsError ||
     err instanceof TaskAlreadyOwnedError ||
+    // Substate refusals (ts_4): a missing --why, a park from the wrong
+    // phase, a claim on a parked task, a pair outside TASK_SUBSTATES.
+    err instanceof SubstateReasonRequiredError ||
+    err instanceof TaskParkStateError ||
+    err instanceof TaskParkedError ||
+    err instanceof InvalidSubstateError ||
     err instanceof TaskClaimStaleWorkspaceError ||
     err instanceof TaskNotInWorkstreamError ||
     err instanceof AgentNotInWorkstreamError ||

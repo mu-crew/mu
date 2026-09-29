@@ -40,14 +40,18 @@ import {
   ClaimerNotRegisteredError,
   CrossWorkstreamEdgeError,
   CycleError,
+  InvalidSubstateError,
   ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
+  SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
   TaskNotFoundError,
   TaskNotInWorkstreamError,
+  TaskParkedError,
+  TaskParkStateError,
 } from "../src/tasks.js";
 import { PaneNotFoundError, TmuxError } from "../src/tmux.js";
 import {
@@ -103,6 +107,31 @@ const cases: NextStepsCase[] = [
     error: new TaskAlreadyOwnedError("foo", "alice"),
     label: "TaskAlreadyOwnedError",
     expectedTokens: ["foo", "alice"],
+  },
+  {
+    error: new SubstateReasonRequiredError("park", "parked", "foo"),
+    label: "SubstateReasonRequiredError",
+    expectedTokens: ["mu task park foo", "--why"],
+  },
+  {
+    error: new TaskParkStateError("foo", "IN_PROGRESS", "ws"),
+    label: "TaskParkStateError (IN_PROGRESS)",
+    expectedTokens: ["mu task release foo -w ws"],
+  },
+  {
+    error: new TaskParkStateError("foo", "CLOSED", "ws"),
+    label: "TaskParkStateError (CLOSED)",
+    expectedTokens: ["mu task open foo -w ws"],
+  },
+  {
+    error: new TaskParkedError("foo", "ws"),
+    label: "TaskParkedError",
+    expectedTokens: ["mu task unpark foo -w ws", "--force"],
+  },
+  {
+    error: new InvalidSubstateError("CLOSED", "parked"),
+    label: "InvalidSubstateError",
+    expectedTokens: ["--as wontfix"],
   },
   {
     error: new ClaimerNotRegisteredError("pi-mu", "%6441"),
