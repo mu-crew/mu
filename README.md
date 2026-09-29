@@ -108,9 +108,10 @@ adds ceremony.
 ## Install
 
 ```bash
-# 1. The CLI.
-npm install -g @mu-crew/mu
+# 1. The CLI, and murmur for agent state on tmux (see below).
+npm install -g @mu-crew/mu @mu-crew/murmur
 mu --version
+murmur init && murmur link pi
 
 # 2. The skill (teaches your coding agent how to drive mu).
 npx skills add mu-crew/mu          # auto-detects pi / claude-code / codex / etc.
@@ -127,11 +128,14 @@ npx skills add mu-crew/mu          # auto-detects pi / claude-code / codex / etc
 - pi (the agent CLI mu orchestrates)
 - For `--workspace`: jj, sl, or git on PATH (or `--backend none`)
 
-**Agent state on tmux — [murmur](https://github.com/mu-crew/murmur).**
-mu owns the work; murmur reports what each agent is doing. Without murmur,
-agent state shows `unknown`; tasks, claims, `mu task wait`, workspaces,
-spawn, and send work the same. murmur also provides one attention-sorted
-list across machines and owns the ssh egress.
+**Agent state on tmux needs [murmur](https://github.com/mu-crew/murmur),
+even on one machine.** mu owns the work; murmur reports what each agent is
+doing. mu does not read panes itself, so without murmur every agent's state
+is `unknown`, and everything built on state goes quiet: `mu agent wait`
+never fires, `mu task wait --stuck-after` / `--on-stall exit` never detects
+a worker waiting on you, and spawn skips its readiness check. Tasks, claims,
+`mu task wait` on status, workspaces, spawn and send still work. murmur also
+provides one attention-sorted list across machines and owns the ssh egress.
 
 ```bash
 # on every node that runs agents
