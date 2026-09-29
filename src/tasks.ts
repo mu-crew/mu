@@ -108,10 +108,19 @@ export {
   listTasksByOwnerCrossWorkstream,
 } from "./tasks/queries.js";
 export {
+  DEFAULT_SUBSTATE,
+  formatPair,
   isTaskStatus,
+  isValidPair,
+  mapLegacyStatus,
+  resolvePair,
   TASK_STATUS_LIST,
   TASK_STATUSES,
+  TASK_SUBSTATE_ROWS,
+  TASK_SUBSTATES,
+  type TaskPair,
   type TaskStatus,
+  type TaskSubstate,
 } from "./tasks/status.js";
 export {
   getWaitPollCount,
