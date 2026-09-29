@@ -111,8 +111,38 @@ it mu is just an agent runner.
   `ROI = impact / effort` drives prioritization.
 - **One edge type**: `blocks`. `A → B` means A must close before B can
   start. Multiple edge types create ambiguity that defeats the purpose.
-- **Status lifecycle**: `OPEN → IN_PROGRESS → CLOSED`. Postponed or
-  won't-do rationale belongs in notes; `CLOSED` alone satisfies blockers.
+- **Status lifecycle**: `OPEN → IN_PROGRESS → CLOSED`. Status alone
+  decides edge satisfaction: any `CLOSED` task satisfies its blockers.
+- **Substate** qualifies status and never touches edges:
+  `OPEN/todo|parked`, `IN_PROGRESS/active`,
+  `CLOSED/done|wontfix|duplicate|superseded`. Rule: **store intent,
+  derive graph facts** — ready and blocked stay derived from edges.
+  `OPEN/parked` is excluded from `ready` but stays in `goals`.
+
+#### Substate integrity: deferred FK + apply-time pair repair
+
+The legal pairs live in the `task_substates` lookup table, seeded from
+code on every open (machine-local, never synced). `tasks` has a
+composite FK `(status, substate) → task_substates`,
+`DEFERRABLE INITIALLY DEFERRED`, which is the only guard on the pair.
+It is checked at COMMIT, so apply's one-field-at-a-time UPDATEs pass as
+long as the pair is legal when the transaction ends. That is why
+`applyOp` wraps each task put in `db.transaction` (and undo already runs
+in one): in autocommit the first per-field UPDATE would fail the FK.
+
+Every lifecycle write sets `status` and `substate` in one UPDATE, so
+one op carries both under one HLC. A pair can still split across ops:
+a status-only op from a v10 peer, an unknown substate from a newer
+peer, or a concurrent close and park on two machines. Before commit,
+`repairTaskPair` (`src/apply.ts`) sets the substate to the one implied
+by the newest op in the LOG that writes a substate, resolved against
+the row's current status, and falls back to the status default when
+that pair is illegal. Substate is therefore NOT per-field LWW.
+Reading the log instead of the row makes the result a pure function of
+the op set plus the row's status, so every peer converges on the same
+row whatever the arrival order. For the same reason the repair records
+**no op**: each peer computes the identical repair from the identical
+log. Recording one would only add a second writer racing the first.
 - **Notes** are append-only per task; survive across LLM sessions and
   agent restarts. The fix for context loss at the *task* level rather
   than the agent level.
@@ -121,7 +151,7 @@ it mu is just an agent runner.
 
 | View      | Returns                                                                |
 | --------- | ---------------------------------------------------------------------- |
-| `ready`   | OPEN tasks with no unresolved blockers — work that can start *now*     |
+| `ready`   | `OPEN/todo` tasks with no unresolved blockers — work that can start *now* |
 | `blocked` | OPEN tasks waiting on something                                        |
 | `goals`   | Tasks with no dependents — graph endpoints                             |
 
@@ -406,7 +436,7 @@ src/cli/tui/
 ├── tab-strip-layout.ts         # pure window-around-active layout helper
 ├── help.tsx                    # ?/F1 keymap overlay (scrollable on short panes)
 ├── use-popup-filter.tsx        # shared '/' substring filter hook + applyFilter + FilterPrompt
-├── use-status-filter.tsx       # task-status toggles (o/i/c) for task-list popups
+├── use-status-filter.tsx       # status toggles (o/i/c) + substate toggles (p/w) for task-list popups
 ├── use-notes-drill.ts          # shared notes-drill memo (5 task popups consume it)
 ├── use-popup-action-queue.ts   # consume mouse PopupAction queue once per render
 ├── cards/                      # 10 dashboard glance cards (one slot each)
@@ -606,7 +636,7 @@ returning. Two steps, in order:
   installed`, `murmur pi extension not linked`, `murmur has no row`,
   `ambiguous: N hosts`, `remote snapshot stale`, and `pane gone`.
 - **`agents.status` is deprecated.** Inserts write `spawning` to satisfy
-  the v10 schema. No code updates or reads the column as runtime state.
+  the schema. No code updates or reads the column as runtime state.
 - **No silent adoption**: orphans are reported, never claimed.
 - **`mu doctor` calls the same routine** and reports counts.
 
@@ -625,7 +655,7 @@ separately below.
 
 | Module                | Responsibility                                                                            |
 | --------------------- | ----------------------------------------------------------------------------------------- |
-| `src/db.ts`           | Connection (better-sqlite3, WAL), **schema v10** (10 tables + 3 views), `resolveWorkstreamId`. Installs capture on every writable open. Owns `SYNCED_ENTITIES` / `MACHINE_LOCAL_ENTITIES` / `PORTABLE_TABLES` / `MACHINE_LOCAL_TABLES`. Refuses a pre-v10 DB (exit 4). |
+| `src/db.ts`           | Connection (better-sqlite3, WAL), **schema v11** (11 tables incl. the `task_substates` lookup + 3 views), `resolveWorkstreamId`. Installs capture on every writable open. Owns `SYNCED_ENTITIES` / `MACHINE_LOCAL_ENTITIES` / `PORTABLE_TABLES` / `MACHINE_LOCAL_TABLES`. Refuses a pre-v11 DB (`SchemaTooOldError`) or a newer one (`SchemaTooNewError`), both exit 4. |
 | `src/hlc.ts`          | The **HLC** (VOCABULARY § HLC), serialized as sortable TEXT `<wall_ms:15>.<counter:6>.<machine_id>`. `nextHlc` / `receiveHlc` / `compareHlc` / `parseHlc` / `formatHlc`. Clock state lives in `machine_identity`. |
 | `src/capture.ts`      | **Op capture**: builds the triggers that record every write to a portable table as an op in the same transaction. |
 | `src/apply.ts`        | **The apply path** — capture's counterpart: given one op, local or from a peer, make the tables reflect it. Also owns `reprojectDeferredOps` ([§ ambient sync hook](#the-ambient-sync-hook)). |

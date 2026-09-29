@@ -35,9 +35,9 @@ both. `--json` exists on every verb:
   Spawn, send, and read work on both. Agent state comes from murmur
   on tmux and from herdr on herdr; `mu agent kick` is Linux-only on herdr.
 - **task** — DAG node with mandatory `impact` (1–100) and
-  `effort_days`. Status: `OPEN`, `IN_PROGRESS`, `CLOSED`
-  (satisfies `--blocked-by`). Record postponed/wont-do rationale as
-  task notes; close the task to satisfy blockers.
+  `effort_days`. Shown as status/substate: `OPEN/todo|parked`,
+  `IN_PROGRESS/active`, `CLOSED/done|wontfix|duplicate|superseded`.
+  Any `CLOSED/*` satisfies `--blocked-by`.
 - **claim / release** — atomic take/clear of `tasks.owner`.
 - **note** — append-only task context; survives sessions.
 - **track** — independent DAG subtree; don't spawn more agents than
@@ -232,6 +232,10 @@ Every turn:
   5 timeout, 6 pane died.
 - **`task close --if-ready`** no-ops until every blocker is CLOSED; bare
   `task release` reopens IN_PROGRESS.
+- **`task close --as wontfix --why ...`** unblocks dependents (listed in
+  the output). To keep dependents waiting, `task park --why` instead: parked
+  leaves `next`, and `claim` refuses it without `--force`. Park refuses
+  IN_PROGRESS — `task release` first.
 - **For waits use `task wait`, not `log --tail`.** `--kind` is the operator's
   log-ledger channel; `--intent` is what mu recorded.
 - **`mu undo`** bare lists undoable actions with group ids; `<group>` previews;

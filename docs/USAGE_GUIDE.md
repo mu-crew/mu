@@ -8,7 +8,7 @@ A practical, copy-pasteable tour of mu. Terms are canonical — see
 > **Status:** 1.0 (pre-release). Typed verbs span 7 namespaces
 > (`workstream`, `agent`, `task`, `workspace`, `log`, `me`, `db`) plus
 > bare top-level verbs (`state`, `doctor`, `sql`, `undo`, `sync`,
-> `rebuild`). Every verb accepts `--json`. Schema v10. See
+> `rebuild`). Every verb accepts `--json`. Schema v11. See
 > [CHANGELOG.md](../CHANGELOG.md).
 
 **In a hurry? Start at [§ 0. Common scenarios](#0-common-scenarios).**
@@ -386,11 +386,12 @@ table/key/field is the reproduction. See
 
 ### 0.6 Upgrading an older DB
 
-`mu` refuses to open a pre-v10 DB (`SchemaTooOldError`, exit 4) and
-leaves the file alone. The retained `scripts/migrate.ts` sidecar
-auto-detects v7, v8, or v9 and writes a fresh v10 DB. It never migrates
-in place. Legacy `REJECTED` / `DEFERRED` tasks become `OPEN` with a
-migration note while their original op payloads remain unchanged.
+`mu` refuses to open a pre-v11 DB (`SchemaTooOldError`, exit 4) or a DB
+newer than it understands (`SchemaTooNewError`, exit 4) and leaves the
+file alone. The retained `scripts/migrate.ts` sidecar auto-detects v7,
+v8, v9, or v10 and writes a fresh v11 DB. It never migrates in place.
+Legacy `REJECTED` tasks become `CLOSED/wontfix` and `DEFERRED` tasks
+become `OPEN/parked`; their original op payloads remain unchanged.
 Pre-1.0 archives restore as live workstreams under their original
 `source_workstream` names unless you pass `--drop-archives`.
 
@@ -1208,6 +1209,7 @@ for the newly active workstream.
 | filter    | `Esc`                        | cancel (clear query)                                           |
 | filter    | `Enter`                      | commit (keep filter, return to nav)                            |
 | task popup| `o` / `i` / `c`              | toggle OPEN / IN_PROGRESS / CLOSED                              |
+| task popup| `p` / `w`                    | toggle OPEN/parked / closed-not-done (DAG + All-tasks)         |
 | All-tasks | `b`                          | blocked filter cycle (all → only → hide)                      |
 | All-tasks | `s`                          | cycle sort key (roi → recency → age → id)                       |
 | git-show  | `t`                          | launch `tuicr -r <sha>` (alt-screen handoff)                   |
@@ -1616,12 +1618,29 @@ enforce these — they're for the agents reading them.
 ## 12. Close out a task
 
 ```bash
-mu task close design                # OPEN/IN_PROGRESS → CLOSED
+mu task close design                # OPEN/IN_PROGRESS → CLOSED/done
 mu task close umbrella --if-ready   # close ONLY if every blocker
                                     # is CLOSED; else no-op + list
                                     # the still-blocking ids
+mu task close spike --as wontfix --why "superseded by the v2 design"
 mu task open design                 # CLOSED → OPEN (e.g. closed by mistake)
+mu task park polish --why "after the release"   # OPEN → OPEN/parked
+mu task unpark polish               # OPEN/parked → OPEN/todo
 ```
+
+Every task carries a **substate** next to its status, rendered as a pair.
+`OPEN` is `todo` or `parked`; `IN_PROGRESS` is `active`; `CLOSED` is
+`done`, `wontfix`, `duplicate`, or `superseded`. `--as` picks the closed
+substate. Anything but `done` requires `--why`, stored as a note in the
+same transaction. Any `CLOSED/*` satisfies a blocker, so a non-`done`
+close prints the dependents it unblocked.
+
+To keep dependents waiting, park the task instead of closing it. A
+parked task leaves `mu task next` and the ready set, and `mu task claim`
+refuses it without `--force`. It stays in goals, and a track whose non-closed
+tasks are all parked is marked `(parked)`. Park refuses `IN_PROGRESS`
+(release first) and `CLOSED` (open first). Filter with
+`mu task list --substate parked`.
 
 Both are idempotent (closing an already-CLOSED task prints a no-op and
 exits 0). Owner is left intact — use `mu task release <id>` to clear
@@ -2366,26 +2385,29 @@ winner, and the newer HLC takes it.
 
 ---
 
-## 15.7 Upgrading a v7, v8, or v9 DB
+## 15.7 Upgrading a v7, v8, v9, or v10 DB
 
-`mu` refuses to write a pre-v10 DB and leaves it untouched. Use the
+`mu` refuses to write a pre-v11 DB and leaves it untouched. Use the
 single retained sidecar against a backup:
 
 ```bash
 DB=${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}
 BACKUP="$HOME/mu-old-backup-$(date +%Y%m%d-%H%M%S).db"
 sqlite3 "$DB" ".backup '$BACKUP'"
-npx tsx scripts/migrate.ts "$BACKUP" --out "${DB}.v10"
-MU_DB_PATH="${DB}.v10" mu doctor --deep
-mv "$DB" "${DB}.old-kept" && mv "${DB}.v10" "$DB"
+npx tsx scripts/migrate.ts "$BACKUP" --out "${DB}.v11"
+MU_DB_PATH="${DB}.v11" mu doctor --deep
+mv "$DB" "${DB}.old-kept" && mv "${DB}.v11" "$DB"
 mu doctor
 ```
 
-The script auto-detects v7, v8, or v9, opens it read-only, compares its
-SHA-256 before and after, and never overwrites a target unless `--force`
-is explicit. v9 history is retained unchanged; legacy statuses normalize
-only while projecting into v10, with one durable migration note per
-currently affected task. Valid v9 agents, workspaces, owners, peer
+The script auto-detects v7, v8, v9, or v10, opens it read-only, compares
+its SHA-256 before and after, and never overwrites a target unless
+`--force` is explicit. v9/v10 history is retained unchanged; legacy
+statuses map onto substates (`REJECTED` → `CLOSED/wontfix`, `DEFERRED` →
+`OPEN/parked`) while projecting into v11, and no migration notes are
+written. Where an undo or a note hid the legacy status, the script
+records a `migrate.substate` op; `--recover <db>` reruns that recovery
+on an already-migrated DB. Valid v9 agents, workspaces, owners, peer
 watermarks, and machine identity carry across, but pane ids and absolute
 workspace paths cannot be proven live until `mu doctor` reconciles them.
 The v7/v8 path keeps the older conservative omissions for agents and
