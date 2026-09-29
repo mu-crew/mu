@@ -220,7 +220,7 @@ export function checkCheapDriftInvariant(db: Db): CheapDriftReport {
  */
 const COMPARED: Record<string, readonly string[]> = {
   workstreams: ["created_at"],
-  tasks: ["title", "status", "impact", "effort_days", "created_at", "updated_at"],
+  tasks: ["title", "status", "substate", "impact", "effort_days", "created_at", "updated_at"],
   task_notes: ["author", "content", "created_at"],
   task_edges: ["created_at"],
 };
@@ -231,7 +231,7 @@ const SNAPSHOT_SQL: Record<string, string> = {
   workstreams: `SELECT w.name AS key, w.created_at
                   FROM workstreams w`,
   tasks: `SELECT w.name || '/' || t.local_id AS key,
-                 t.title, t.status, t.impact, t.effort_days, t.created_at, t.updated_at
+                 t.title, t.status, t.substate, t.impact, t.effort_days, t.created_at, t.updated_at
             FROM tasks t JOIN workstreams w ON w.id = t.workstream_id`,
   // Notes are a GROW-ONLY SET whose local surrogate id is not portable,
   // so identity for diffing is (task, author, content) — exactly the

@@ -2,12 +2,12 @@
 
 Retained migration sidecars. Nothing here is wired into the `mu` binary or imported by production code. Run these scripts manually against a preserved source DB.
 
-## `migrate.ts` — v7, v8, or v9 to v10
+## `migrate.ts` — v7, v8, v9, or v10 to v11
 
-`openDb` does not migrate existing databases in place. `scripts/migrate.ts` detects a v7, v8, or v9 source and writes a fresh v10 target:
+`openDb` does not migrate existing databases in place. `scripts/migrate.ts` detects a v7, v8, v9, or v10 source and writes a fresh v11 target:
 
 ```bash
-npx tsx scripts/migrate.ts <source.db> --out <fresh-v10.db>
+npx tsx scripts/migrate.ts <source.db> --out <fresh-v11.db>
 ```
 
 The source is opened read-only. The script refuses source and target paths that identify the same file, refuses an existing target unless `--force` is explicit, and prints the source SHA-256 before and after.
@@ -19,7 +19,7 @@ Stop every `mu` process before copying or swapping the DB.
 ```bash
 DB=${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}
 BACKUP="$HOME/mu-old-backup-$(date +%Y%m%d-%H%M%S).db"
-TARGET="${DB}.v10"
+TARGET="${DB}.v11"
 
 # 1. Preserve the source, including any committed WAL pages.
 # Keep this backup indefinitely.
@@ -48,21 +48,52 @@ If verification fails, do not swap. The original DB and backup remain unchanged.
 
 | Flag | Effect |
 | --- | --- |
-| `--out <path>` | Target path. Default: source path with a `.v10.db` suffix. |
+| `--out <path>` | Target path. Default: source path with a `.v11.db` suffix. |
 | `--force` | Remove an existing target before writing. Off by default. |
 | `--drop-logs` | v7/v8 only: omit legacy `agent_logs`. |
 | `--drop-archives` | v7/v8 only: skip restoring pre-1.0 `archived_*` rows. |
+| `--recover <db>` | Recover legacy substates **in place** on an existing v11 DB. Takes only `-w`. |
+| `-w <workstream>` | `--recover` only: limit recovery to one workstream. |
 
-### v9 → v10 behavior
+### Legacy statuses become substates
 
-The complete v9 ops log is copied byte-for-byte at the op-field level. During projection, legacy task status values are normalized without rewriting history:
+v9 had `REJECTED` and `DEFERRED` statuses. v10 folded both to `OPEN` and wrote a `MIGRATION: previous status was …` note. v11 maps them onto (status, substate) pairs:
 
-- `REJECTED` projects as `OPEN` and gains `MIGRATION: previous status was REJECTED`.
-- `DEFERRED` projects as `OPEN` and gains `MIGRATION: previous status was DEFERRED`.
+- `REJECTED` becomes `CLOSED/wontfix`.
+- `DEFERRED` becomes `OPEN/parked`.
 
-The normalization is in the shared apply path. Old peer segments, `mu sync --from`, and `mu rebuild` therefore project legacy status ops as `OPEN` instead of violating the v10 task constraint. The original legacy payload remains in `ops` as evidence.
+The mapping is in the shared apply path, so old peer segments, `mu sync --from`, and `mu rebuild` produce the same pairs. The original payload stays in `ops`. The script no longer writes `MIGRATION:` notes; the substate carries the fact.
 
-Carried from v9:
+### v10 → v11 behavior
+
+The complete v10 ops log is replayed through the v11 apply path, which maps every task whose newest status op is a legacy status. Agents, workspaces and ownership are carried as for v9.
+
+The replay alone misses a task whose legacy status is hidden behind a later write that is not a decision. The script then runs legacy substate recovery over every `OPEN/todo` task:
+
+1. Find the last status writer: the newest task `put` with a `status`, ignoring intents `undo` and `migrate.substate`. An undo restore replays an older value; it is not a new decision.
+2. If that status is `REJECTED` or `DEFERRED`, recover the mapped pair (source `ops`).
+3. Otherwise, if the task has a `MIGRATION: previous status was …` note, and the last status writer is a `migrate.*` `OPEN` put or is older than the note, recover the pair the note names (source `note`).
+4. Otherwise skip the task. A later real decision wins.
+
+Each recovery is one captured `UPDATE` of `status`, `substate` and `updated_at` under intent `migrate.substate`, in one group. The op syncs, survives `mu rebuild`, and `mu doctor --deep` reports no drift. A task that already has a `migrate.substate` op is skipped, so recovery is idempotent.
+
+The report lists every changed task as `workstream  task  from -> to  (source)`, where source `replay` means the apply path derived the pair. A final list names the dependents that became ready because a blocker recovered to `CLOSED/wontfix`.
+
+### `--recover`: after `mu undo` restores a workstream
+
+`mu undo` on a pre-v11 `workstream teardown` restores tasks from history, and an undo restore is not a decision, so those tasks come back `OPEN/todo`. Run recovery on the live DB after the undo:
+
+```bash
+npx tsx scripts/migrate.ts --recover "${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}" [-w <workstream>]
+```
+
+This is the only mode that edits a DB in place. It refuses anything but a v11 DB.
+
+### v9 → v11 behavior
+
+The complete v9 ops log is copied byte-for-byte at the op-field level, then one `migrate.v9-projection` group re-asserts the v9 live rows so a stale tombstone cannot erase current work. Legacy statuses in that projection map onto pairs as above.
+
+Carried from v9 (and v10):
 
 - workstreams, tasks, edges, notes, and the complete ops history;
 - `machine_identity`, including the persisted HLC clock;
@@ -73,7 +104,7 @@ Carried from v9:
 
 Machine-local rows are structurally valid but cannot be proven operational during migration. A pane id may no longer name a live pane, and an absolute workspace path may no longer exist or belong to the recorded VCS backend. Run `mu doctor` after the swap; reconciliation decides pane reality. Keep the source DB as the audit copy.
 
-### v7 / v8 → v10 behavior
+### v7 / v8 → v11 behavior
 
 Live rows are imported the same way on both versions: synthesize ops for workstreams, tasks, edges, and notes, then use the normal apply path. Optional `agent_logs` become log-only `event` ops. v7 may lack `machine_identity` / `workstream_sync`; those absences are fine.
 
@@ -88,7 +119,7 @@ Not carried from v7/v8 live tables:
 | snapshots | The table no longer exists; retain the files separately. |
 | workstream sync state | Replaced by per-machine `sync_peers`. |
 
-The v7/v8 path may merge byte-identical notes because v10 note identity is `(task, author, content)`. The report names the count.
+The v7/v8 path may merge byte-identical notes because v11 note identity is `(task, author, content)`. The report names the count.
 
 ### Why this script is retained
 
