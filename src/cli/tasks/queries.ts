@@ -20,6 +20,7 @@ import {
   formatTaskListTable,
   parseSortOption,
   parseStatusesOption,
+  parseSubstatesOption,
   relTimeBasisForSort,
   resolveSelf,
   resolveWorkstream,
@@ -75,7 +76,13 @@ export async function cmdMyNext(db: Db, opts: { lines?: number; json?: boolean }
 
 export async function cmdTaskList(
   db: Db,
-  opts: { workstream?: string; json?: boolean; status?: string[]; sort?: string },
+  opts: {
+    workstream?: string;
+    json?: boolean;
+    status?: string[];
+    substate?: string[];
+    sort?: string;
+  },
 ): Promise<void> {
   const workstream = await resolveWorkstream(opts.workstream);
   const listOpts: Parameters<typeof listTasks>[2] = {};
@@ -86,6 +93,8 @@ export async function cmdTaskList(
   if (statuses !== undefined) {
     listOpts.status = statuses;
   }
+  const substates = parseSubstatesOption(opts.substate);
+  if (substates !== undefined) listOpts.substate = substates;
   // Default sort for `mu task list` is `id` (preserves prior
   // behaviour: SQL ORDER BY local_id). The other read verbs default
   // to `roi` because their primary use is "what should I do next".
@@ -110,7 +119,14 @@ export async function cmdTaskList(
 // historical "what should I do right now?" shape.
 export async function cmdTaskNext(
   db: Db,
-  opts: { workstream?: string; lines?: number; json?: boolean; sort?: string; status?: string[] },
+  opts: {
+    workstream?: string;
+    lines?: number;
+    json?: boolean;
+    sort?: string;
+    status?: string[];
+    substate?: string[];
+  },
 ): Promise<void> {
   const workstream = await resolveWorkstream(opts.workstream);
   const k = opts.lines ?? 1;
@@ -120,6 +136,8 @@ export async function cmdTaskNext(
   if (statuses !== undefined) {
     readyOpts.status = statuses;
   }
+  const substates = parseSubstatesOption(opts.substate);
+  if (substates !== undefined) readyOpts.substate = substates;
   const sorted = sortTasks(listReady(db, workstream, readyOpts), sortKey);
   const tasks = k === 0 ? sorted : sorted.slice(0, k);
   if (opts.json) {

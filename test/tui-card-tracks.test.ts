@@ -47,6 +47,7 @@ function track(rootNames: readonly string[], over: Partial<Track> = {}): Track {
     roots: rootNames.map(task),
     taskIds: new Set(rootNames),
     readyCount: 1,
+    parked: false,
     ...over,
   };
 }

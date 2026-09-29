@@ -223,20 +223,20 @@ describe("snapshotKey — visible-affecting field projection", () => {
 
   it("differs when a track's readyCount changes", () => {
     const a = makeSnap({
-      tracks: [{ roots: [], taskIds: new Set(["a", "b"]), readyCount: 1 }],
+      tracks: [{ roots: [], taskIds: new Set(["a", "b"]), readyCount: 1, parked: false }],
     });
     const b = makeSnap({
-      tracks: [{ roots: [], taskIds: new Set(["a", "b"]), readyCount: 2 }],
+      tracks: [{ roots: [], taskIds: new Set(["a", "b"]), readyCount: 2, parked: false }],
     });
     expect(snapshotKeyString(a)).not.toBe(snapshotKeyString(b));
   });
 
   it("equal regardless of Set iteration order in tracks.taskIds", () => {
     const a = makeSnap({
-      tracks: [{ roots: [], taskIds: new Set(["a", "b", "c"]), readyCount: 0 }],
+      tracks: [{ roots: [], taskIds: new Set(["a", "b", "c"]), readyCount: 0, parked: false }],
     });
     const b = makeSnap({
-      tracks: [{ roots: [], taskIds: new Set(["c", "a", "b"]), readyCount: 0 }],
+      tracks: [{ roots: [], taskIds: new Set(["c", "a", "b"]), readyCount: 0, parked: false }],
     });
     expect(snapshotKeyString(a)).toBe(snapshotKeyString(b));
   });

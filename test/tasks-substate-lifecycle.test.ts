@@ -167,12 +167,17 @@ describe("parkTask / unparkTask", () => {
     expect(readyNames()).not.toContain("a");
     expect(listGoals(db, WS).map((t) => t.name)).toContain("a");
     expect(noteContents("a")).toContain("PARKED: later");
+    // Count ops that carry the substate. The PARKED note's touch of
+    // updated_at can land a second payload-only op in the same group
+    // when the clock ticks between writes, so a bare count is timing-dependent.
     const n = db
       .prepare(
-        "SELECT count(*) AS n FROM ops WHERE entity = 'task' AND key = ? AND intent = 'task.park'",
+        `SELECT count(*) AS n, count(DISTINCT group_id) AS g FROM ops
+          WHERE entity = 'task' AND key = ? AND intent = 'task.park'
+            AND json_extract(payload, '$.substate') = 'parked'`,
       )
-      .get(`${WS}/a`) as { n: number };
-    expect(n.n).toBe(1);
+      .get(`${WS}/a`) as { n: number; g: number };
+    expect(n).toEqual({ n: 1, g: 1 });
   });
 
   it("is idempotent on OPEN/parked (no second note)", () => {

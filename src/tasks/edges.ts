@@ -5,7 +5,7 @@ import { withOpContext } from "../op-context.js";
 import { lookupTaskAnyWorkstream, taskIdFor, touchTask } from "./core.js";
 import { CrossWorkstreamEdgeError, CycleError, TaskNotFoundError } from "./errors.js";
 import { getTask } from "./queries.js";
-import type { TaskStatus } from "./status.js";
+import type { TaskStatus, TaskSubstate } from "./status.js";
 
 export interface TaskEdges {
   /** Tasks that must close before this one can start (blockers). */
@@ -44,6 +44,7 @@ function sameNumberSet(left: readonly number[], right: readonly number[]): boole
 export interface TaskEdgeWithStatus {
   name: string;
   status: TaskStatus;
+  substate: TaskSubstate;
 }
 
 export interface TaskEdgesWithStatus {
@@ -102,14 +103,14 @@ export function getTaskEdgesWithStatus(
   if (taskId === null) return { blockers: [], dependents: [] };
   const blockers = db
     .prepare(
-      `SELECT t.local_id AS name, t.status AS status FROM task_edges e
+      `SELECT t.local_id AS name, t.status AS status, t.substate AS substate FROM task_edges e
          JOIN tasks t ON t.id = e.from_task_id
         WHERE e.to_task_id = ? ORDER BY t.local_id`,
     )
     .all(taskId) as TaskEdgeWithStatus[];
   const dependents = db
     .prepare(
-      `SELECT t.local_id AS name, t.status AS status FROM task_edges e
+      `SELECT t.local_id AS name, t.status AS status, t.substate AS substate FROM task_edges e
          JOIN tasks t ON t.id = e.to_task_id
         WHERE e.from_task_id = ? ORDER BY t.local_id`,
     )

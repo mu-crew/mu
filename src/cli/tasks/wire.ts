@@ -19,6 +19,7 @@ import {
   TASK_SORT_KEYS,
   WORKSTREAM_OPT,
 } from "../../cli.js";
+import { TASK_SUBSTATES } from "../../tasks/status.js";
 import { TASK_STATUS_LIST } from "../../tasks.js";
 import { cmdClaim, cmdTaskRelease, cmdTaskWait } from "./claim.js";
 import { cmdTaskBlock, cmdTaskDelete, cmdTaskReparent, cmdTaskUnblock } from "./edges.js";
@@ -30,7 +31,7 @@ import {
   cmdTaskUpdate,
   resolveNoteText,
 } from "./edit.js";
-import { cmdTaskClose, cmdTaskOpen } from "./lifecycle.js";
+import { cmdTaskClose, cmdTaskOpen, cmdTaskPark, cmdTaskUnpark } from "./lifecycle.js";
 import { cmdTaskList, cmdTaskNext, cmdTaskOwnedBy } from "./queries.js";
 import { cmdTaskTree } from "./tree.js";
 
@@ -74,6 +75,7 @@ export function wireTaskCommands(program: Command): void {
   // an extra `updated`/`created` column with relative timestamps so
   // the user sees the dimension they sorted by.
   const SORT_OPT_DESC = `sort key (${TASK_SORT_KEYS.join(" | ")})`;
+  const SUBSTATE_OPT_DESC = `filter by substate (${[...new Set(Object.values(TASK_SUBSTATES).flat())].join(" | ")}; repeat or comma-separate)`;
 
   task
     .command("list")
@@ -83,6 +85,7 @@ export function wireTaskCommands(program: Command): void {
       "--status <status...>",
       `filter by lifecycle status (${TASK_STATUS_LIST}; case-insensitive; repeat or comma-separate; or both)`,
     )
+    .option("--substate <substate...>", SUBSTATE_OPT_DESC)
     .option("--sort <key>", `${SORT_OPT_DESC} (default id)`)
     .option(...JSON_OPT)
     .action(function () {
@@ -90,6 +93,7 @@ export function wireTaskCommands(program: Command): void {
         workstream?: string;
         json?: boolean;
         status?: string[];
+        substate?: string[];
         sort?: string;
       };
       return handle((db) => cmdTaskList(db, opts), this as Command)();
@@ -111,6 +115,7 @@ export function wireTaskCommands(program: Command): void {
       "--status <status...>",
       `filter by lifecycle status (${TASK_STATUS_LIST}; case-insensitive; repeat or comma-separate; or both)`,
     )
+    .option("--substate <substate...>", SUBSTATE_OPT_DESC)
     .option(...JSON_OPT)
     .action(function () {
       const opts = (this as Command).opts() as {
@@ -119,6 +124,7 @@ export function wireTaskCommands(program: Command): void {
         json?: boolean;
         sort?: string;
         status?: string[];
+        substate?: string[];
       };
       return handle((db) => cmdTaskNext(db, opts), this as Command)();
     });
@@ -263,8 +269,13 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("close <id>")
     .description(
-      "Mark a task CLOSED (idempotent). --if-ready no-ops unless every blocker is CLOSED — the umbrella-on-wave-done pattern.",
+      "Mark a task CLOSED (idempotent). --as records why it closed (not every close is done work); any CLOSED substate satisfies blockers. --if-ready no-ops unless every blocker is CLOSED — the umbrella-on-wave-done pattern.",
     )
+    .option(
+      "--as <substate>",
+      `closing substate (${TASK_SUBSTATES.CLOSED.join(" | ")}; default done)`,
+    )
+    .option("--why <text>", "reason, stored as a note; required unless --as done")
     .option(
       "--if-ready",
       "only close when every blocker is CLOSED; otherwise no-op + list the still-blocking ids",
@@ -275,6 +286,8 @@ export function wireTaskCommands(program: Command): void {
     .action(function (id: string) {
       const opts = (this as Command).opts() as {
         evidence?: string;
+        as?: string;
+        why?: string;
         ifReady?: boolean;
         workstream?: string;
         json?: boolean;
@@ -295,6 +308,40 @@ export function wireTaskCommands(program: Command): void {
         json?: boolean;
       };
       return handle((db) => cmdTaskOpen(db, id, opts), this as Command)();
+    });
+
+  task
+    .command("park <id>")
+    .description(
+      "Park an OPEN task (OPEN/parked): it leaves `next` and `claim` refuses it without --force. Dependents stay blocked. Idempotent.",
+    )
+    .requiredOption("--why <text>", "why it is parked; stored as a note")
+    .option(...WORKSTREAM_OPT)
+    .option(...EVIDENCE_OPT)
+    .option(...JSON_OPT)
+    .action(function (id: string) {
+      const opts = (this as Command).opts() as {
+        why: string;
+        evidence?: string;
+        workstream?: string;
+        json?: boolean;
+      };
+      return handle((db) => cmdTaskPark(db, id, opts), this as Command)();
+    });
+
+  task
+    .command("unpark <id>")
+    .description("Return a parked task to OPEN (back in `next`). No-op on any other state.")
+    .option(...WORKSTREAM_OPT)
+    .option(...EVIDENCE_OPT)
+    .option(...JSON_OPT)
+    .action(function (id: string) {
+      const opts = (this as Command).opts() as {
+        evidence?: string;
+        workstream?: string;
+        json?: boolean;
+      };
+      return handle((db) => cmdTaskUnpark(db, id, opts), this as Command)();
     });
 
   task
@@ -337,6 +384,7 @@ export function wireTaskCommands(program: Command): void {
       "--actor <name>",
       "override the actor name used for the log (only valid with --self; defaults to pane title or $USER)",
     )
+    .option("--force", "claim even when the task is parked (OPEN/parked)")
     .option(
       "--strict-staleness",
       "refuse --for dispatch when the target agent's workspace is stale (default: warn and proceed)",
@@ -353,6 +401,7 @@ export function wireTaskCommands(program: Command): void {
         workstream?: string;
         json?: boolean;
         strictStaleness?: boolean;
+        force?: boolean;
       };
       return handle((db) => cmdClaim(db, taskId, opts), this as Command)();
     });

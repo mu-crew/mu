@@ -1,6 +1,6 @@
 // mu — `mu task` lifecycle verbs (status transitions).
 //
-// close / open. Each delegates to the SDK; changes are captured as ops
+// close / open / park / unpark. Each delegates to the SDK; changes are captured as ops
 // and optionally reported as evidence notes.
 //
 // Extracted from src/cli/tasks.ts as part of refactor_split_large_src_files.
@@ -14,27 +14,45 @@ import {
 } from "../../cli.js";
 import type { Db } from "../../db.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
-import { closeTask, getTask, openTask, resolveActorIdentity } from "../../tasks.js";
+import { formatPair, type TaskPair } from "../../tasks/status.js";
+import {
+  type CloseSubstate,
+  closeTask,
+  getTask,
+  openTask,
+  parkTask,
+  resolveActorIdentity,
+  unparkTask,
+} from "../../tasks.js";
 import { backendByName } from "../../vcs.js";
 import { getWorkspaceForAgent } from "../../workspace.js";
 
 export async function cmdTaskClose(
   db: Db,
   rawId: string,
-  opts: { evidence?: string; ifReady?: boolean; workstream?: string; json?: boolean } = {},
+  opts: {
+    evidence?: string;
+    ifReady?: boolean;
+    as?: string;
+    why?: string;
+    workstream?: string;
+    json?: boolean;
+  } = {},
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   const actor = await resolveActorIdentity();
-  const sdkOpts: {
-    evidence?: string;
-    ifReady?: boolean;
-    workstream: string;
-    author?: string;
-  } = { workstream: ws };
+  const sdkOpts: Parameters<typeof closeTask>[2] = { workstream: ws };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   if (opts.ifReady) sdkOpts.ifReady = true;
+  // closeTask validates the substate (InvalidSubstateError) and the
+  // required --why (SubstateReasonRequiredError) before any write; the
+  // cast only narrows the type, the SDK owns the check.
+  if (opts.as !== undefined) sdkOpts.as = opts.as.toLowerCase() as CloseSubstate;
+  if (opts.why !== undefined) sdkOpts.why = opts.why;
+  // The reason note is attributed like the evidence note.
+  if (opts.why !== undefined && opts.why !== "") sdkOpts.author = actor;
   // mufeedback task_close_evidence_does_not_append_the: closeTask
   // auto-inserts a `CLOSE: <evidence>` note when --evidence is
   // non-empty. Resolve the actor identity once per close so the note is
@@ -80,9 +98,17 @@ export async function cmdTaskClose(
     return;
   }
   if (r.changed && taskRow?.ownerName) await refreshAgentTitle(db, taskRow.ownerName, ws);
+  const pickNext: NextStep = {
+    intent: r.unblocked.length > 0 ? "Pick up an unblocked task" : "Pick the next ready task",
+    command: `mu task next -w ${ws}`,
+  };
+  const reopen: NextStep = {
+    intent: "Reopen if needed",
+    command: `mu task open ${localId} -w ${ws}`,
+  };
+  // A non-done close that released dependents leads with them.
   const nextSteps: NextStep[] = [
-    { intent: "Reopen if needed", command: `mu task open ${localId} -w ${ws}` },
-    { intent: "Pick the next ready task", command: `mu task next -w ${ws}` },
+    ...(r.unblocked.length > 0 ? [pickNext, reopen] : [reopen, pickNext]),
     { intent: "See full state", command: `mu state -w ${ws}` },
   ];
   if (r.changed && r.status === "CLOSED") {
@@ -98,9 +124,21 @@ export async function cmdTaskClose(
     return;
   }
   const ev = opts.evidence ? pc.dim(`  evidence: ${opts.evidence}`) : "";
-  console.log(`Closed ${pc.bold(localId)} ${pc.dim(`(${r.previousStatus} → ${r.status})`)}`);
+  console.log(`Closed ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
   if (ev) console.log(ev);
+  if (r.unblocked.length > 0) console.log(`Unblocked: ${r.unblocked.join(", ")}`);
   printNextSteps(nextSteps);
+}
+
+/** "OPEN → CLOSED/wontfix": the pair transition a lifecycle verb made. */
+function transition(r: {
+  previousStatus: TaskPair["status"];
+  previousSubstate: TaskPair["substate"];
+  status: TaskPair["status"];
+  substate: TaskPair["substate"];
+}): string {
+  const from = formatPair({ status: r.previousStatus, substate: r.previousSubstate });
+  return `${from} → ${formatPair({ status: r.status, substate: r.substate })}`;
 }
 
 async function maybeAppendDirtyWorkspaceCommitHint(
@@ -159,7 +197,69 @@ export async function cmdTaskOpen(
     return;
   }
   const ev = opts.evidence ? pc.dim(`  evidence: ${opts.evidence}`) : "";
-  console.log(`Reopened ${pc.bold(localId)} ${pc.dim(`(${r.previousStatus} → ${r.status})`)}`);
+  console.log(`Reopened ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
   if (ev) console.log(ev);
+  printNextSteps(nextSteps);
+}
+
+export async function cmdTaskPark(
+  db: Db,
+  rawId: string,
+  opts: { why: string; evidence?: string; workstream?: string; json?: boolean },
+): Promise<void> {
+  const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
+  assertTaskInWorkstream(db, localId, opts.workstream);
+  const ws = await resolveWorkstream(opts.workstream);
+  const sdkOpts: Parameters<typeof parkTask>[2] = {
+    workstream: ws,
+    why: opts.why,
+    author: await resolveActorIdentity(),
+  };
+  if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
+  const r = parkTask(db, localId, sdkOpts);
+  const nextSteps: NextStep[] = [
+    { intent: "Unpark it later", command: `mu task unpark ${localId} -w ${ws}` },
+    { intent: "List parked tasks", command: `mu task list --substate parked -w ${ws}` },
+  ];
+  if (opts.json) {
+    emitJson({ taskName: localId, ...r, nextSteps });
+    return;
+  }
+  if (!r.changed) {
+    console.log(pc.dim(`${localId} already OPEN/parked (no-op)`));
+  } else {
+    console.log(`Parked ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
+  }
+  printNextSteps(nextSteps);
+}
+
+export async function cmdTaskUnpark(
+  db: Db,
+  rawId: string,
+  opts: { evidence?: string; workstream?: string; json?: boolean } = {},
+): Promise<void> {
+  const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
+  assertTaskInWorkstream(db, localId, opts.workstream);
+  const ws = await resolveWorkstream(opts.workstream);
+  const sdkOpts: Parameters<typeof unparkTask>[2] = { workstream: ws };
+  if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
+  const r = unparkTask(db, localId, sdkOpts);
+  const nextSteps: NextStep[] = [
+    {
+      intent: "Claim it",
+      command: `mu task claim ${localId} -w ${ws}  (--self / --for <worker>)`,
+    },
+    { intent: "Pick the next ready task", command: `mu task next -w ${ws}` },
+  ];
+  if (opts.json) {
+    emitJson({ taskName: localId, ...r, nextSteps });
+    return;
+  }
+  if (!r.changed) {
+    const pair = formatPair({ status: r.status, substate: r.substate });
+    console.log(pc.dim(`${localId} is ${pair}, not parked (no-op)`));
+  } else {
+    console.log(`Unparked ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
+  }
   printNextSteps(nextSteps);
 }

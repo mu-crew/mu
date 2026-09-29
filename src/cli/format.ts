@@ -18,7 +18,7 @@ import { agentStateGlyph, GLYPH } from "../glyphs.js";
 import { parseOpKey, renderOp } from "../log-render.js";
 import type { LogRow } from "../logs.js";
 import { muTable, pc } from "../output.js";
-import type { TaskStatus } from "../tasks/status.js";
+import { formatPair, type TaskPair, type TaskStatus } from "../tasks/status.js";
 import type { TaskRow } from "../tasks.js";
 import type { Track } from "../tracks.js";
 import type { WorkspaceRow } from "../workspace.js";
@@ -49,6 +49,24 @@ export function statusIcon(state: RuntimeState): string {
  */
 export const IDLE_GLYPH = GLYPH.warn;
 
+/** Colour a task's (status, substate) pair, rendered by formatPair:
+ *  bare "OPEN" for a default substate, "CLOSED/wontfix" otherwise.
+ *  OPEN cyan, IN_PROGRESS yellow, CLOSED/done green, any other CLOSED
+ *  red (not done), OPEN/parked dim (out of the ready set). */
+export function colorPair(pair: TaskPair): string {
+  const text = formatPair(pair);
+  switch (pair.status) {
+    case "OPEN":
+      return pair.substate === "parked" ? pc.dim(text) : pc.cyan(text);
+    case "IN_PROGRESS":
+      return pc.yellow(text);
+    case "CLOSED":
+      return pair.substate === "done" ? pc.green(text) : pc.red(text);
+  }
+}
+
+/** Colour a bare status. Only for callers with no substate in hand
+ *  (e.g. the TUI status-filter toggles); task rows use colorPair. */
 export function colorStatus(status: TaskRow["status"]): string {
   switch (status) {
     case "OPEN":
@@ -248,8 +266,9 @@ export function formatTracks(tracks: readonly Track[]): string {
   tracks.forEach((track, i) => {
     const rootNames = track.roots.map((r) => r.name).join(", ");
     const verb = track.roots.length > 1 ? "merged" : "track";
+    const parked = track.parked ? ` ${pc.dim("(parked)")}` : "";
     lines.push(
-      `  Track ${i + 1}: ${pc.bold(rootNames)} ${pc.dim(`(${track.taskIds.size} tasks, ${track.readyCount} ready, ${verb})`)}`,
+      `  Track ${i + 1}: ${pc.bold(rootNames)} ${pc.dim(`(${track.taskIds.size} tasks, ${track.readyCount} ready, ${verb})`)}${parked}`,
     );
   });
   return lines.join("\n");
@@ -461,7 +480,7 @@ export function formatTaskListTable(
       ? [
           t.name,
           t.workstreamName,
-          colorStatus(t.status),
+          colorPair(t),
           title,
           String(t.impact),
           String(t.effortDays),
@@ -470,7 +489,7 @@ export function formatTaskListTable(
         ]
       : [
           t.name,
-          colorStatus(t.status),
+          colorPair(t),
           title,
           String(t.impact),
           String(t.effortDays),

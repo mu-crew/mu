@@ -44,6 +44,7 @@ import { wireWorkspaceCommands } from "./cli/workspace.js";
 import { wireWorkstreamCommands } from "./cli/workstream.js";
 import { type Db, WorkstreamNotFoundError } from "./db.js";
 import { isTaskSortKey, TASK_SORT_KEYS, type TaskSortKey } from "./tasks/sort.js";
+import { TASK_SUBSTATES, type TaskSubstate } from "./tasks/status.js";
 import {
   isTaskStatus,
   TASK_STATUS_LIST,
@@ -60,6 +61,7 @@ import { listWorkstreams, resolveMuxSessionWorkstreamName } from "./workstream.j
 // them through `cli.ts` for ergonomic single-import lines.
 
 export {
+  colorPair,
   colorStatus,
   formatAgentsTable,
   formatReadyTable,
@@ -289,6 +291,32 @@ export function parseStatusesOption(
     out.push(status);
   }
   return out;
+}
+
+/** Every substate across all statuses, in canonical order. */
+const ALL_SUBSTATES: readonly TaskSubstate[] = [...new Set(Object.values(TASK_SUBSTATES).flat())];
+
+/** `--substate <s...>` parser: same repeat/comma shape as
+ *  parseStatusesOption, validated against every status's substates
+ *  (case-insensitive, deduped). undefined = no filter. */
+export function parseSubstatesOption(
+  values: readonly string[] | undefined,
+  flag = "--substate",
+): TaskSubstate[] | undefined {
+  const fragments = parseCsvFlag(values, flag);
+  if (fragments.length === 0) return undefined;
+  const out = new Set<TaskSubstate>();
+  for (const raw of fragments) {
+    const lower = raw.toLowerCase();
+    const match = ALL_SUBSTATES.find((s) => s === lower);
+    if (match === undefined) {
+      throw new UsageError(
+        `${flag} must be one of ${ALL_SUBSTATES.join(" | ")} (got ${JSON.stringify(raw)})`,
+      );
+    }
+    out.add(match);
+  }
+  return [...out];
 }
 
 // ─── Self-resolution (current pane → AgentRow) ─────────────────────────

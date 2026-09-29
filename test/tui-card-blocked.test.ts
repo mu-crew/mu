@@ -207,10 +207,10 @@ describe("BlockedCard pure helpers", () => {
 
   it("stillGating: drops CLOSED blockers; keeps OPEN/IN_PROGRESS", () => {
     const blockers: TaskEdgeWithStatus[] = [
-      { name: "a", status: "CLOSED" },
-      { name: "b", status: "OPEN" },
-      { name: "c", status: "IN_PROGRESS" },
-      { name: "f", status: "CLOSED" },
+      { name: "a", status: "CLOSED", substate: "done" },
+      { name: "b", status: "OPEN", substate: "todo" },
+      { name: "c", status: "IN_PROGRESS", substate: "active" },
+      { name: "f", status: "CLOSED", substate: "done" },
     ];
     const out = stillGating(blockers);
     expect(out.map((b) => b.name)).toEqual(["b", "c"]);
@@ -223,13 +223,13 @@ describe("BlockedCard pure helpers", () => {
   it("pickTopBlocker: returns the most-shared blocker across rows", () => {
     const lists: TaskEdgeWithStatus[][] = [
       [
-        { name: "design_x", status: "OPEN" },
-        { name: "spec_x", status: "OPEN" },
+        { name: "design_x", status: "OPEN", substate: "todo" },
+        { name: "spec_x", status: "OPEN", substate: "todo" },
       ],
-      [{ name: "design_x", status: "OPEN" }],
+      [{ name: "design_x", status: "OPEN", substate: "todo" }],
       [
-        { name: "design_x", status: "IN_PROGRESS" },
-        { name: "review_y", status: "OPEN" },
+        { name: "design_x", status: "IN_PROGRESS", substate: "active" },
+        { name: "review_y", status: "OPEN", substate: "todo" },
       ],
     ];
     expect(pickTopBlocker(lists)).toBe("design_x");
@@ -237,9 +237,9 @@ describe("BlockedCard pure helpers", () => {
 
   it("pickTopBlocker: ties broken alphabetically", () => {
     const lists: TaskEdgeWithStatus[][] = [
-      [{ name: "zeta", status: "OPEN" }],
-      [{ name: "alpha", status: "OPEN" }],
-      [{ name: "mu", status: "OPEN" }],
+      [{ name: "zeta", status: "OPEN", substate: "todo" }],
+      [{ name: "alpha", status: "OPEN", substate: "todo" }],
+      [{ name: "mu", status: "OPEN", substate: "todo" }],
     ];
     expect(pickTopBlocker(lists)).toBe("alpha");
   });
