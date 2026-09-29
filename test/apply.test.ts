@@ -1011,7 +1011,7 @@ describe("applyOp", () => {
       addTask(db, { workstream: "demo", localId: "b", title: "B", impact: 60, effortDays: 2 });
       addBlockEdge(db, "demo", "b", "a");
       addNote(db, "a", "a real note", { workstream: "demo", author: "worker-1" });
-      db.prepare("UPDATE tasks SET status='CLOSED' WHERE local_id='a'").run();
+      db.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='a'").run();
 
       const captured = db
         .prepare(

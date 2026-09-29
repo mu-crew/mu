@@ -266,7 +266,7 @@ describe("claim attribution via ops.actor", () => {
     addTask(db, { localId: "foo", workstream: "auth", title: "F", impact: 80, effortDays: 1 });
     await claimTask(db, "foo", { self: true, actor: "first", workstream: "auth" });
     // Need to release before re-claim (otherwise TaskAlreadyOwnedError).
-    db.prepare("UPDATE tasks SET status='OPEN' WHERE local_id='foo'").run();
+    db.prepare("UPDATE tasks SET status = 'OPEN', substate = 'todo' WHERE local_id='foo'").run();
     await claimTask(db, "foo", { self: true, actor: "second", workstream: "auth" });
     expect(lastClaimActor(db, "auth", "foo")).toBe("second");
   });

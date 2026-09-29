@@ -233,7 +233,7 @@ describe("CLI: qualified entity refs", () => {
     // succeed with a tiny timeout (already CLOSED at wait time).
     const db = openDb({ path: dbPath });
     db.prepare(
-      "UPDATE tasks SET status='CLOSED' WHERE local_id='design' AND workstream_id=(SELECT id FROM workstreams WHERE name='wsb')",
+      "UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='design' AND workstream_id=(SELECT id FROM workstreams WHERE name='wsb')",
     ).run();
     db.close();
     const { exitCode, error } = await runCli(

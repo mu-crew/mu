@@ -90,10 +90,10 @@ describe("drift detection", () => {
       uncaptured(() => {
         const now = new Date().toISOString();
         db.prepare(
-          `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days,
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days,
                               created_at, updated_at)
            VALUES ((SELECT id FROM workstreams WHERE name = 'demo'), 'ghost', 'Ghost',
-                   'OPEN', 50, 1, ?, ?)`,
+                   'OPEN', 'todo', 50, 1, ?, ?)`,
         ).run(now, now);
       });
 
@@ -325,10 +325,10 @@ describe("drift detection", () => {
       uncaptured(() => {
         const now = new Date().toISOString();
         db.prepare(
-          `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days,
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days,
                               created_at, updated_at)
            VALUES ((SELECT id FROM workstreams WHERE name = 'demo'), 'ghost', 'G',
-                   'OPEN', 50, 1, ?, ?)`,
+                   'OPEN', 'todo', 50, 1, ?, ?)`,
         ).run(now, now);
       });
       const report = checkCheapDriftInvariant(db);
@@ -374,8 +374,8 @@ describe("drift detection", () => {
       };
       const insertTask = db.prepare(
         `INSERT INTO tasks
-           (workstream_id, local_id, title, status, impact, effort_days, created_at, updated_at)
-         VALUES (?, ?, ?, 'OPEN', 50, 1, ?, ?)`,
+           (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
+         VALUES (?, ?, ?, 'OPEN', 'todo', 50, 1, ?, ?)`,
       );
       const insertNote = db.prepare(
         "INSERT INTO task_notes (task_id, author, content, created_at) VALUES (?, NULL, ?, ?)",

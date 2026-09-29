@@ -14,6 +14,7 @@ function row(over: {
     workstreamName: "ws",
     title: over.name,
     status: "OPEN",
+    substate: "todo",
     impact: over.impact,
     effortDays: over.effortDays,
     ownerName: null,

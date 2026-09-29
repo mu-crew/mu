@@ -92,7 +92,7 @@ import { type Db, MACHINE_LOCAL_ENTITIES, SYNCED_ENTITIES, type SyncedEntity } f
 import { compareHlc } from "./hlc.js";
 import { LEGACY_LOG_ONLY_SQL_EXCLUSION } from "./legacy-ops.js";
 import { withCaptureSuppressed } from "./op-context.js";
-import { normalizeTaskStatus } from "./tasks/status.js";
+import { DEFAULT_SUBSTATE, isValidPair, normalizeTaskStatus } from "./tasks/status.js";
 
 /** An op as applied. Mirrors the `ops` row shape, minus the local-only
  *  `seq` (meaningless on a peer) and the advisory `created_at`. */
@@ -438,7 +438,7 @@ function applyFieldLww(
  *  may legitimately send fields we do not know yet, and dropping them
  *  is strictly better than refusing the whole op. */
 const APPLIABLE_COLUMNS: Record<"tasks" | "workstreams", readonly string[]> = {
-  tasks: ["title", "status", "impact", "effort_days", "created_at", "updated_at"],
+  tasks: ["title", "status", "substate", "impact", "effort_days", "created_at", "updated_at"],
   workstreams: ["created_at"],
 };
 
@@ -480,9 +480,9 @@ function applyTaskPut(db: Db, op: Op): ApplyResult {
     const wsId = ensureWorkstreamRow(db, workstream);
     const now = new Date().toISOString();
     db.prepare(
-      `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days,
+      `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days,
                           owner_id, created_at, updated_at)
-       VALUES (?, ?, ?, 'OPEN', 50, 1, NULL, ?, ?)`,
+       VALUES (?, ?, ?, 'OPEN', 'todo', 50, 1, NULL, ?, ?)`,
     ).run(wsId, localId, localId, now, now);
     const rowId = taskRowId(db, op.key);
     if (rowId === null) throw new Error(`failed to create task row for ${op.key}`);
@@ -491,13 +491,32 @@ function applyTaskPut(db: Db, op: Op): ApplyResult {
     // still runs so a stale op cannot overwrite a newer one that
     // arrived first and created the row.
     const applied = applyFieldLww(db, op, "tasks", rowId, entries);
+    repairTaskPair(db, rowId);
     return { changed: true, appliedFields: applied };
   }
 
   const applied = applyFieldLww(db, op, "tasks", existing, entries);
+  repairTaskPair(db, existing);
   return applied.length > 0
     ? { changed: true, appliedFields: applied }
     : { changed: false, appliedFields: [], skipped: "older-than-current" };
+}
+
+/** TEMPORARY (ts_2): keep the (status, substate) pair valid after a
+ *  per-field apply, so the deferred FK cannot fail the commit. A
+ *  status-only op (v10 peer, old history) that flips CLOSED -> OPEN
+ *  would otherwise leave substate 'done'. Falls back to the status's
+ *  default substate. ts_3 replaces this with the full pair-resolution
+ *  design. Runs inside applyOp's withCaptureSuppressed. */
+function repairTaskPair(db: Db, rowId: number): void {
+  const row = db.prepare("SELECT status, substate FROM tasks WHERE id = ?").get(rowId) as
+    | { status: string; substate: string }
+    | undefined;
+  if (!row || isValidPair(row.status, row.substate)) return;
+  const status = row.status as keyof typeof DEFAULT_SUBSTATE;
+  const fallback = DEFAULT_SUBSTATE[status];
+  if (fallback === undefined) return;
+  db.prepare("UPDATE tasks SET substate = ? WHERE id = ?").run(fallback, rowId);
 }
 
 function applyWorkstreamPut(db: Db, op: Op): ApplyResult {
@@ -739,7 +758,11 @@ export function applyOp(db: Db, op: Op): ApplyResult {
       case "workstream":
         return applyWorkstreamPut(db, op);
       case "task":
-        return applyTaskPut(db, op);
+        // Own transaction (a savepoint when nested): the per-field
+        // UPDATEs pass through an invalid (status, substate) pair, and
+        // the deferred FK only tolerates that inside a transaction. In
+        // autocommit it would check each UPDATE on its own.
+        return db.transaction(() => applyTaskPut(db, op))();
       case "note":
         return applyNotePut(db, op);
       case "edge":

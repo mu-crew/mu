@@ -21,6 +21,7 @@ import {
   FINISHED_IDLE_DAYS,
   findDormantWorkstreams,
 } from "../src/dormant.js";
+import { DEFAULT_SUBSTATE } from "../src/tasks/status.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -59,10 +60,18 @@ function seed(
     // the id has to carry the status too.
     const localId = `${opts.status.toLowerCase()}-${i}`;
     db.prepare(
-      `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days,
+      `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days,
                           created_at, updated_at)
-       VALUES (?, ?, ?, ?, 50, 1, datetime('now', ?), datetime('now', ?))`,
-    ).run(wsId, localId, `task ${localId}`, opts.status, stamp, stamp);
+       VALUES (?, ?, ?, ?, ?, 50, 1, datetime('now', ?), datetime('now', ?))`,
+    ).run(
+      wsId,
+      localId,
+      `task ${localId}`,
+      opts.status,
+      DEFAULT_SUBSTATE[opts.status],
+      stamp,
+      stamp,
+    );
   }
 }
 

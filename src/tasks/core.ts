@@ -7,7 +7,7 @@
 // through.
 
 import { type Db, tryResolveWorkstreamId } from "../db.js";
-import type { TaskStatus } from "./status.js";
+import type { TaskStatus, TaskSubstate } from "./status.js";
 
 export interface TaskRow {
   /** Per-workstream-unique TEXT name. The operator-facing identifier. */
@@ -16,6 +16,8 @@ export interface TaskRow {
   workstreamName: string;
   title: string;
   status: TaskStatus;
+  /** Qualifies status (e.g. OPEN/parked, CLOSED/wontfix). Never null. */
+  substate: TaskSubstate;
   impact: number;
   effortDays: number;
   /** Foreign-name reference to the owning agent (NULL when unowned). */
@@ -38,6 +40,7 @@ export interface RawTaskRow {
   workstream: string;
   title: string;
   status: string;
+  substate: string;
   impact: number;
   effort_days: number;
   /** Joined from agents.name via owner_id. NULL when unowned. */
@@ -61,6 +64,7 @@ export const SELECT_TASK_COLS = `
   ws.name AS workstream,
   t.title AS title,
   t.status AS status,
+  t.substate AS substate,
   t.impact AS impact,
   t.effort_days AS effort_days,
   ag.name AS owner,
@@ -86,6 +90,7 @@ export function rowFromDb(row: RawTaskRow): TaskRow {
     workstreamName: row.workstream,
     title: row.title,
     status: row.status as TaskStatus,
+    substate: row.substate as TaskSubstate,
     impact: row.impact,
     effortDays: row.effort_days,
     ownerName: row.owner,

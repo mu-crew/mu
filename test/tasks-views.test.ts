@@ -209,7 +209,7 @@ describe("listTasksByOwner", () => {
     // (e.g. operator hand-edits via `mu sql` migrating tasks).
     const setOwner = db.prepare(
       `UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = ? LIMIT 1),
-              status = 'IN_PROGRESS'
+              status = 'IN_PROGRESS', substate = 'active'
         WHERE local_id = ?`,
     );
     setOwner.run("worker-1", "c");

@@ -72,8 +72,8 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
     const now = new Date().toISOString();
     const insertResult = db
       .prepare(
-        `INSERT INTO tasks (workstream_id, local_id, title, status, impact, effort_days, created_at, updated_at)
-         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?)`,
+        `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
+         VALUES (?, ?, ?, 'OPEN', 'todo', ?, ?, ?, ?)`,
       )
       .run(wsId, opts.localId, opts.title, opts.impact, opts.effortDays, now, now);
     const newTaskId = Number(insertResult.lastInsertRowid);

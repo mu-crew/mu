@@ -22,7 +22,12 @@ import {
   WorkspacePreservedError,
 } from "../src/agents.js";
 import { NameAmbiguousError } from "../src/cli.js";
-import { openDb, SchemaTooOldError, WorkstreamNotFoundError } from "../src/db.js";
+import {
+  openDb,
+  SchemaTooNewError,
+  SchemaTooOldError,
+  WorkstreamNotFoundError,
+} from "../src/db.js";
 import {
   HerdrCommandOverrideError,
   HerdrError,
@@ -294,9 +299,14 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["scratch"],
   },
   {
-    error: new SchemaTooOldError(9, 10),
+    error: new SchemaTooOldError(10, 11),
     label: "SchemaTooOldError",
     expectedTokens: ["mu db backup", ".old", "scripts/migrate.ts", "doctor --deep"],
+  },
+  {
+    error: new SchemaTooNewError(12, 11),
+    label: "SchemaTooNewError",
+    expectedTokens: ["mu --version"],
   },
 
   // src/cli/handle.ts

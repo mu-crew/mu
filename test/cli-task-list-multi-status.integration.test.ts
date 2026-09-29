@@ -29,8 +29,12 @@ describe("mu task list --status (multi-value)", () => {
     addTask(db, { localId: "o", workstream: "auth", title: "O", impact: 10, effortDays: 1 });
     addTask(db, { localId: "ip", workstream: "auth", title: "IP", impact: 10, effortDays: 1 });
     addTask(db, { localId: "cl", workstream: "auth", title: "CL", impact: 10, effortDays: 1 });
-    db.prepare("UPDATE tasks SET status='IN_PROGRESS' WHERE local_id='ip'").run();
-    db.prepare("UPDATE tasks SET status='CLOSED'      WHERE local_id='cl'").run();
+    db.prepare(
+      "UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active' WHERE local_id='ip'",
+    ).run();
+    db.prepare(
+      "UPDATE tasks SET status = 'CLOSED', substate = 'done'      WHERE local_id='cl'",
+    ).run();
   });
 
   afterEach(() => {
