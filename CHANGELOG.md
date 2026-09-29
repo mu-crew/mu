@@ -10,6 +10,13 @@ breaking changes are called out under "Breaking" in each entry.
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-09-29
+
+**Upgrading from 2.x:** stop every `mu` process, back up the DB, migrate
+the backup with `scripts/migrate.ts`, verify, then swap. mu 3.0 refuses a
+v10 DB until you do. The full recipe is in
+[scripts/README.md](scripts/README.md).
+
 ### Breaking
 
 - **Schema v11.** Adds the `task_substates` lookup table and a
@@ -47,6 +54,11 @@ breaking changes are called out under "Breaking" in each entry.
   reruns legacy substate recovery in place, e.g. after `mu undo` restores
   a pre-v11 workstream.
 - `mu doctor --deep` compares `substate`.
+- The CLI names the substate where it changes your next step.
+  `mu task wait` prints the pair; for a non-`done` close its Next points at
+  the reason note instead of a cherry-pick, and its JSON gains `substate`.
+  An empty `mu task next` counts parked tasks. `mu task show` suggests
+  `unpark` or `open`. `mu log` renders closes, parks and unparks as pairs.
 
 ### Changed
 
