@@ -342,7 +342,7 @@ export async function cmdTaskShow(
   const roi = task.effortDays > 0 ? (task.impact / task.effortDays).toFixed(1) : "∞";
   console.log(pc.bold(`${task.name}  —  ${task.title}`));
   console.log(`  workstream : ${task.workstreamName}`);
-  console.log(`  status     : ${task.status}`);
+  console.log(`  status     : ${colorPair(task)}`);
   // owner: registered worker name, or '(self: <actor>)' for an anonymous
   // claim, or '(unowned)' for OPEN tasks.
   const ownerLine =

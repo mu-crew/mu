@@ -130,6 +130,13 @@ describe("mu task substates CLI", () => {
     expect(plain(r.stdout)).toContain("OPEN/parked");
   });
 
+  it("show header renders the task's own pair", async () => {
+    await cli("park", "c", "--why", "later");
+    const r = await cli("show", "c");
+    expect(r.exitCode).toBeNull();
+    expect(plain(r.stdout)).toMatch(/status +: OPEN\/parked/);
+  });
+
   it("list renders CLOSED/wontfix and bare OPEN", async () => {
     await cli("close", "a", "--as", "wontfix", "--why", "nope");
     const r = await cli("list");
