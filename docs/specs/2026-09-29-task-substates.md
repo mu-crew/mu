@@ -1,6 +1,6 @@
 # Task substates: classification without stranded dependents
 
-Status: approved 2026-09-29
+Status: implemented 2026-09-29 (approved 2026-09-29; see [Deviations during implementation](#deviations-during-implementation))
 Date: 2026-09-29
 Supersedes the notes-only convention from `9e3c47b` ("tasks: reduce lifecycle to three states").
 
@@ -223,6 +223,16 @@ Recipe:
 7. `scripts/migrate.ts`: v10 → v11 path, `recoverLegacySubstates`, `--recover` mode, report; `scripts/README.md`.
 8. Docs: `VOCABULARY.md` (substate, park, resolution values), `skills/mu/SKILL.md`, `CHANGELOG.md` (Breaking: v11; Added: substates).
 9. Operator step: migrate the live DB, then restore workstreams per the recipe.
+
+## Deviations during implementation
+
+Recorded after tasks 1–7 landed. Where this section and the text above disagree, this section describes the code.
+
+1. **Substate is resolved from the log, not by per-field LWW** (task 3). [Sync and ops](#sync-and-ops) step 2–3 described per-field LWW plus a row-only repair. That diverges by arrival order: a repair that reads only the row bakes the fallback into it, and a later status change keeps the fallback on one peer and the real substate on another. `repairTaskPair(db, rowId, pending?)` in `src/apply.ts` instead takes the substate from the newest op in the log that writes one (an explicit substate, a legacy status implying its mapped pair, or a status-only op implying the status default), then resolves it against the row's current status. The result is a pure function of the op set, so every peer converges and the repair records no op. `applyOp` wraps each task put in `db.transaction` so the deferred FK sees a complete pair. `normalizeTaskStatus` and `RETIRED_STATUSES` are deleted.
+2. **A second `updated_at`-only task op may share the group** (tasks 4, 5). `close --why` and `park` insert a note, and the note's parent touch writes a separate task op carrying only `updated_at` when the millisecond clock ticks between the two writes. It sits in the same group, so undo and log rendering are unaffected. Tests count ops that carry `status` or `substate`, not all task ops.
+3. **Ready empty-state text is shorter** (task 6): `(no ready tasks) N parked · the rest are blocked or closed`, truncated at the card edge. The longer text in [TUI](#tui) wrapped over the card's border. The Recent card shows the pair (`CLOSED/wontfix`) rather than "closed (wontfix)". `inkColorForStatus` is removed in favour of `inkColorForPair`; `loadFullDag` gained an `include` predicate so the root module does not import the TUI filter.
+4. **Migration and drift** (task 7). `src/drift.ts` compares `substate`, so `mu doctor --deep` sees substate drift. The v7/v8/v9 paths no longer write `MIGRATION:` notes. The migration report lists a third source, `replay`, for pairs the apply path derived during replay, alongside `ops` and `note` for captured `migrate.substate` recoveries. Recovery candidates are `OPEN/todo` tasks only, and a task that already has a `migrate.substate` op is skipped, which makes `--recover` idempotent. The v10 path turned out to need captured recovery only for the undo-hidden and note-only cases; replay already maps the rest.
+5. **`SchemaTooNewError`** (task 2). `openDb` refuses a DB whose `schema_version` is newer than `CURRENT_SCHEMA_VERSION` (exit 4), before `applySchema`. Without it, a v10 binary would open a v11 DB and fail at commit on its first write. `tasks.substate` has no `DEFAULT`, so an old INSERT fails loudly rather than silently choosing a substate.
 
 ## Appendix A: foreign key verification
 

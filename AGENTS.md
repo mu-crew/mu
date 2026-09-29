@@ -58,7 +58,7 @@ mu/
 ├── src/                   # all source (root files: SDK + shared infra; one
 │                          # level of subdirs OK for cohesive clusters — see
 │                          # `src/cli/`, `src/agents/`, `src/tasks/`, `src/mux/`)
-│   ├── db.ts              # SQLite schema + openDb (single CREATE-IF-NOT-EXISTS block; v10)
+│   ├── db.ts              # SQLite schema + openDb (single CREATE-IF-NOT-EXISTS block; v11)
 │   │                      # also owns SYNCED_ENTITIES / PORTABLE_TABLES / MACHINE_LOCAL_TABLES
 │   ├── mux.ts             # multiplexer backend hub (re-exports src/mux/*)
 │   ├── mux/               # cohesive cluster: one file per multiplexer
@@ -448,11 +448,12 @@ proves itself.
 
 ### "Update the schema"
 
-1. Current schema version is **v10** (`CURRENT_SCHEMA_VERSION` in
-   `src/db.ts`): 10 tables + 3 views. The schema is the
+1. Current schema version is **v11** (`CURRENT_SCHEMA_VERSION` in
+   `src/db.ts`): 11 tables + 3 views. The schema is the
    `applySchema(db)` block — idempotent CREATE-IF-NOT-EXISTS plus
-   targeted `DROP TABLE IF EXISTS`. `openDb` REFUSES any pre-v10 DB
-   with `SchemaTooOldError` (exit 4); there is no in-process
+   targeted `DROP TABLE IF EXISTS`. `openDb` REFUSES any pre-v11 DB
+   with `SchemaTooOldError` and any newer one with `SchemaTooNewError`
+   (both exit 4); there is no in-process
    migration ladder.
 2. Bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror the new
    shape in `CURRENT_SCHEMA`. Prefer script-free bumps: additive

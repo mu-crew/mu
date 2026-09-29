@@ -8,6 +8,55 @@ breaking changes are called out under "Breaking" in each entry.
 
 ---
 
+## [Unreleased]
+
+### Breaking
+
+- **Schema v11.** Adds the `task_substates` lookup table and a
+  `tasks.substate` column (never null). The `tasks.status` CHECK is gone;
+  a composite FK `(status, substate) → task_substates`,
+  `DEFERRABLE INITIALLY DEFERRED`, is now the only guard on the pair.
+  mu refuses a v10 DB (`SchemaTooOldError`, exit 4). Upgrade a backup with
+  `npx tsx scripts/migrate.ts <backup> --out <db>.v11`, then check it with
+  `mu doctor --deep` (see [scripts/README.md](scripts/README.md)).
+- mu refuses a DB newer than it understands (`SchemaTooNewError`, exit 4)
+  instead of writing to it and failing at commit.
+- Task JSON gains `substate`; task edges in `mu task show --json` are
+  `{ name, status, substate }`.
+
+### Added
+
+- **Task substates.** Each task shows as a status/substate pair:
+  `OPEN/todo|parked`, `IN_PROGRESS/active`,
+  `CLOSED/done|wontfix|duplicate|superseded`. Status alone still decides
+  edge satisfaction.
+- `mu task close --as <substate> --why <text>`. `--why` is required unless
+  `--as done` and is stored as a note. Any closed substate unblocks
+  dependents, and a close prints the dependents it unblocked.
+- `mu task park <id> --why <text>` / `mu task unpark <id>`. A parked task
+  leaves `ready` and `mu task next` but stays in `goals`; park refuses
+  `IN_PROGRESS` (release first) and `CLOSED` (open first).
+- `mu task claim --force` claims a parked task; without it, claim refuses.
+- `--substate` filter on `mu task list` and `mu task next`.
+- Tracks whose non-closed tasks are all parked are marked `(parked)`.
+- TUI: tasks render as pairs, with parked in grey and non-`done` closes in
+  red. `p` / `w` in the DAG and All-tasks popups toggle parked and
+  closed-not-done rows. The Ready card counts parked tasks when nothing is
+  ready, and blockers that are parked read `(parked)`.
+- `scripts/migrate.ts` accepts v10 sources and writes v11. `--recover <db>`
+  reruns legacy substate recovery in place, e.g. after `mu undo` restores
+  a pre-v11 workstream.
+- `mu doctor --deep` compares `substate`.
+
+### Changed
+
+- Legacy `REJECTED` / `DEFERRED` history now projects as `CLOSED/wontfix`
+  and `OPEN/parked` on every path (apply, rebuild, undo, migrate), instead of
+  folding onto `OPEN`. The ops payloads are unchanged.
+- `scripts/migrate.ts` no longer writes `MIGRATION:` notes.
+- SDK: `normalizeTaskStatus` is removed; use `mapLegacyStatus` /
+  `resolvePair`.
+
 ## [2.0.0] — 2026-09-28
 
 ### Changed
