@@ -509,7 +509,7 @@ describe("scripts/migrate.ts", () => {
     const db = new Database(target, { readonly: true });
     try {
       expect(db.prepare("SELECT local_id, status, owner_id FROM tasks ORDER BY id").all()).toEqual([
-        { local_id: "rejected", status: "OPEN", owner_id: 1 },
+        { local_id: "rejected", status: "CLOSED", owner_id: 1 },
         { local_id: "deferred", status: "OPEN", owner_id: null },
       ]);
       expect(
@@ -584,7 +584,8 @@ describe("scripts/migrate.ts", () => {
         {
           key: "demo/alpha",
           title: "Alpha task",
-          status: "OPEN",
+          // Seeded REJECTED: the shared legacy mapping makes it CLOSED/wontfix.
+          status: "CLOSED",
           impact: 80,
           effort: 1.5,
           created_at: T(3),

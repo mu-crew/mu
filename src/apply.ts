@@ -92,7 +92,7 @@ import { type Db, MACHINE_LOCAL_ENTITIES, SYNCED_ENTITIES, type SyncedEntity } f
 import { compareHlc } from "./hlc.js";
 import { LEGACY_LOG_ONLY_SQL_EXCLUSION } from "./legacy-ops.js";
 import { withCaptureSuppressed } from "./op-context.js";
-import { DEFAULT_SUBSTATE, isValidPair, normalizeTaskStatus } from "./tasks/status.js";
+import { DEFAULT_SUBSTATE, isTaskStatus, mapLegacyStatus, resolvePair } from "./tasks/status.js";
 
 /** An op as applied. Mirrors the `ops` row shape, minus the local-only
  *  `seq` (meaningless on a peer) and the advisory `created_at`. */
@@ -452,14 +452,26 @@ function filterAppliable(
 
 function applyTaskPut(db: Db, op: Op): ApplyResult {
   const { workstream, localId } = parseTaskKey(op.key);
-  // v9 peers and retained history may still carry removed lifecycle
-  // values. Normalize only the decoded projection: callers record the
-  // original payload unchanged, preserving the historical evidence.
-  const entries = filterAppliable("tasks", decodePayload(op.payload)).map(([field, value]) =>
-    field === "status" && typeof value === "string"
-      ? ([field, normalizeTaskStatus(value)] as const)
-      : ([field, value] as const),
-  );
+  // Decode the pair out of the payload. `substate` is not applied by
+  // per-field LWW: repairTaskPair derives it from the log (see there),
+  // with this op passed in because the caller may not have recorded it
+  // yet. A legacy status (v9 peers, retained history) maps onto a pair;
+  // only the decoded projection changes, the payload is recorded as-is.
+  // A status this build does not know is dropped like an unknown field.
+  const entries: PayloadEntry[] = [];
+  for (const entry of filterAppliable("tasks", decodePayload(op.payload))) {
+    const [field, value] = entry;
+    if (field === "substate") continue;
+    if (field === "status") {
+      if (typeof value !== "string") continue;
+      const legacy = mapLegacyStatus(value);
+      if (legacy) entries.push(["status", legacy.status]);
+      else if (isTaskStatus(value)) entries.push(entry);
+      continue;
+    }
+    entries.push(entry);
+  }
+  const pending = { hlc: op.hlc, substate: carriedSubstate(JSON.parse(op.payload)) };
 
   const existing = taskRowId(db, op.key);
   if (existing === null) {
@@ -491,32 +503,102 @@ function applyTaskPut(db: Db, op: Op): ApplyResult {
     // still runs so a stale op cannot overwrite a newer one that
     // arrived first and created the row.
     const applied = applyFieldLww(db, op, "tasks", rowId, entries);
-    repairTaskPair(db, rowId);
+    if (repairTaskPair(db, rowId, pending)) applied.push("substate");
     return { changed: true, appliedFields: applied };
   }
 
   const applied = applyFieldLww(db, op, "tasks", existing, entries);
-  repairTaskPair(db, existing);
+  if (repairTaskPair(db, existing, pending)) applied.push("substate");
   return applied.length > 0
     ? { changed: true, appliedFields: applied }
     : { changed: false, appliedFields: [], skipped: "older-than-current" };
 }
 
-/** TEMPORARY (ts_2): keep the (status, substate) pair valid after a
- *  per-field apply, so the deferred FK cannot fail the commit. A
- *  status-only op (v10 peer, old history) that flips CLOSED -> OPEN
- *  would otherwise leave substate 'done'. Falls back to the status's
- *  default substate. ts_3 replaces this with the full pair-resolution
- *  design. Runs inside applyOp's withCaptureSuppressed. */
-function repairTaskPair(db: Db, rowId: number): void {
-  const row = db.prepare("SELECT status, substate FROM tasks WHERE id = ?").get(rowId) as
-    | { status: string; substate: string }
-    | undefined;
-  if (!row || isValidPair(row.status, row.substate)) return;
-  const status = row.status as keyof typeof DEFAULT_SUBSTATE;
-  const fallback = DEFAULT_SUBSTATE[status];
-  if (fallback === undefined) return;
-  db.prepare("UPDATE tasks SET substate = ? WHERE id = ?").run(fallback, rowId);
+/** The substate an op payload writes, or null if it writes none.
+ *
+ *  - A legacy status writes the substate it maps to, overriding any
+ *    substate beside it (mirrors resolvePair).
+ *  - A known status with no substate writes the status's default.
+ *    Capture records only changed columns, and the substate sets of the
+ *    statuses are disjoint, so a v11 status change always carries its
+ *    substate. A status-only op therefore comes from a v10 peer or
+ *    pre-v11 history, where every status had exactly its default.
+ *  - Otherwise the explicit substate, or null. */
+function carriedSubstate(payload: unknown): string | null {
+  if (payload === null || typeof payload !== "object") return null;
+  const { status, substate } = payload as Record<string, unknown>;
+  if (typeof status === "string") {
+    const legacy = mapLegacyStatus(status);
+    if (legacy) return legacy.substate;
+    if (typeof substate !== "string" && isTaskStatus(status)) return DEFAULT_SUBSTATE[status];
+  }
+  return typeof substate === "string" ? substate : null;
+}
+
+/**
+ * Set a task's substate to the one its op log implies, and keep the
+ * (status, substate) pair legal for the deferred FK. Returns true iff it
+ * rewrote the row.
+ *
+ * The substate comes from the newest (by HLC) op that writes one — see
+ * carriedSubstate for what counts — resolved against the row's CURRENT
+ * status. An unknown substate (newer peer) or one illegal for the
+ * status (a concurrent close vs park, where status and substate come
+ * from different ops) falls back to DEFAULT_SUBSTATE[status].
+ *
+ * It reads the LOG, not the row, on purpose. A repair that only looked
+ * at the row would bake a fallback into it, and a later op that changes
+ * status back would keep the fallback on one arrival order and the real
+ * substate on another. Reading the log makes the result a pure function
+ * of the set of ops plus the row's status (itself plain LWW), so every
+ * peer that applies the same ops reaches the same row. That is why the
+ * repair records no op: on the apply path it runs inside
+ * withCaptureSuppressed, and every peer computes the same repair on its
+ * own. On the undo path capture is live, and the write is recorded as
+ * part of the undo group.
+ *
+ * `pending` is the op being applied, which the caller may not have
+ * recorded yet (ingest applies before recording).
+ */
+export function repairTaskPair(
+  db: Db,
+  rowId: number,
+  pending?: { hlc: string; substate: string | null },
+): boolean {
+  const row = db
+    .prepare(
+      `SELECT t.status, t.substate, w.name || '/' || t.local_id AS key
+         FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+        WHERE t.id = ?`,
+    )
+    .get(rowId) as { status: string; substate: string; key: string } | undefined;
+  if (!row) return false;
+
+  let winner: { hlc: string; substate: string } | null = null;
+  const writers = db
+    .prepare(
+      `SELECT hlc, payload FROM ops
+        WHERE entity = 'task' AND key = ? AND op = 'put' AND hlc <> ?
+          AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
+          AND (json_type(payload, '$.substate') IS NOT NULL
+               OR json_type(payload, '$.status') IS NOT NULL)
+        ORDER BY hlc DESC`,
+    )
+    .iterate(row.key, pending?.hlc ?? "") as Iterable<{ hlc: string; payload: string }>;
+  for (const w of writers) {
+    const substate = carriedSubstate(JSON.parse(w.payload));
+    if (substate === null) continue;
+    winner = { hlc: w.hlc, substate };
+    break;
+  }
+  if (pending && pending.substate !== null && wins(pending.hlc, winner?.hlc ?? null)) {
+    winner = { hlc: pending.hlc, substate: pending.substate };
+  }
+
+  const target = resolvePair(row.status, winner?.substate ?? row.substate);
+  if (target === null || target.substate === row.substate) return false;
+  db.prepare("UPDATE tasks SET substate = ? WHERE id = ?").run(target.substate, rowId);
+  return true;
 }
 
 function applyWorkstreamPut(db: Db, op: Op): ApplyResult {

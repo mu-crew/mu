@@ -140,7 +140,10 @@ describe("segments", () => {
   // ─── round trip ──────────────────────────────────────────────────────
 
   describe("round trip between two machines", () => {
-    it.each(["REJECTED", "DEFERRED"])("ingests a legacy %s task op as OPEN", (status) => {
+    it.each([
+      ["REJECTED", "CLOSED"],
+      ["DEFERRED", "OPEN"],
+    ])("ingests a legacy %s task op as %s", (status, projected) => {
       const machineId = "legacy-v9-peer";
       const payload = JSON.stringify({
         title: "Legacy task",
@@ -166,7 +169,7 @@ describe("segments", () => {
 
       const result = ingestSegment(b, { machineId, path, conflictCopy: false });
       expect(result.defects).toEqual([]);
-      expect(task(b, "legacy")?.status).toBe("OPEN");
+      expect(task(b, "legacy")?.status).toBe(projected);
       expect(
         (
           b.prepare("SELECT payload FROM ops WHERE machine_id = ?").get(machineId) as {
