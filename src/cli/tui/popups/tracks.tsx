@@ -32,7 +32,9 @@ import { type ReactElement, useEffect, useMemo, useState } from "react";
 import type { Db } from "../../../db.js";
 import { GLYPH } from "../../../glyphs.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
+import { formatPair, type TaskPair } from "../../../tasks/status.js";
 import { listTasks, type TaskRow } from "../../../tasks.js";
+import { inkColorForPair } from "../../format.js";
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { ListRow } from "../list-row.js";
@@ -79,11 +81,13 @@ const TRACK_COLORS = [
   { dimColor: true }, // counts
 ] as const;
 
-const DRILL_COLORS = [
-  { bold: true }, // name
-  { dimColor: true }, // status
-  undefined, // title
-] as const;
+function drillColors(t: TaskPair) {
+  return [
+    { bold: true }, // name
+    { color: inkColorForPair(t) }, // status
+    undefined, // title
+  ];
+}
 
 // Internal sub-state of the drill view. "task-list" = the visible
 // list of tasks for the focused track (where the prop `mode` is
@@ -146,7 +150,7 @@ export function TracksPopup({
   const drillTasks = useMemo<TaskRow[]>(() => {
     if (mode !== "drill" || !focusedTrack) return [];
     const out = listTasks(db, workstream).filter((task) => focusedTrack.taskIds.has(task.name));
-    out.sort((a, b) => statusRank(a.status) - statusRank(b.status) || a.name.localeCompare(b.name));
+    out.sort((a, b) => statusRank(a) - statusRank(b) || a.name.localeCompare(b.name));
     return out;
   }, [mode, focusedTrack, db, workstream]);
 
@@ -300,7 +304,7 @@ export function TracksPopup({
       );
     }
     const { visible } = centredVisibleSlice(drillTasks, drillCursor, viewport);
-    const rows = visible.map((t) => [t.name, t.status, t.title]);
+    const rows = visible.map((t) => [t.name, formatPair(t), t.title]);
     const widths = layoutColumns(rows, DRILL_COLUMN_SPECS, contentWidth);
     return (
       <PopupShell
@@ -317,7 +321,7 @@ export function TracksPopup({
                 key={t.name}
                 cells={padded}
                 contentWidth={contentWidth}
-                colors={DRILL_COLORS}
+                colors={drillColors(t)}
                 selected={sel}
               />
             );
@@ -335,7 +339,7 @@ export function TracksPopup({
     const absoluteIndex = start + i;
     const goalNames = t.roots.map((r) => r.name).join(", ");
     const diamond = t.roots.length > 1 ? GLYPH.merge : " ";
-    const counts = `(${t.taskIds.size} tasks · ${t.readyCount} ready)`;
+    const counts = `(${t.taskIds.size} tasks · ${t.readyCount} ready)${t.parked ? " (parked)" : ""}`;
     return [`Track ${absoluteIndex + 1}`, diamond, goalNames, counts];
   });
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);
@@ -368,15 +372,15 @@ export function TracksPopup({
   );
 }
 
-function statusRank(status: string): number {
-  switch (status) {
+/** Drill-view sort rank: work in flight first, then schedulable,
+ *  then set aside, then finished. */
+export function statusRank(pair: TaskPair): number {
+  switch (pair.status) {
     case "IN_PROGRESS":
       return 0;
     case "OPEN":
-      return 1;
+      return pair.substate === "parked" ? 2 : 1;
     case "CLOSED":
-      return 2;
-    default:
       return 3;
   }
 }

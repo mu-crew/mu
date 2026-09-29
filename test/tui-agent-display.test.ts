@@ -38,6 +38,7 @@ function snapshotWithAgents(agents: LiveAgent[]): WorkstreamSnapshot {
     inProgress: [],
     blocked: [],
     recentClosed: [],
+    parkedCount: 0,
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

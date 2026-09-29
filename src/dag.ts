@@ -34,11 +34,16 @@ export interface RenderTreeOptions {
 export interface LoadFullDagOptions {
   /** Optional visible-status filter. Omitted = every task status. */
   statuses?: ReadonlySet<TaskStatus>;
+  /** Optional row predicate, applied after `statuses` (e.g. the TUI's
+   *  substate toggles). Omitted = keep every row. */
+  include?: (task: TaskRow) => boolean;
 }
 
 export function loadFullDag(db: Db, workstream: string, opts: LoadFullDagOptions = {}): FullDag {
   const tasks = listTasks(db, workstream).filter(
-    (t) => opts.statuses === undefined || opts.statuses.has(t.status),
+    (t) =>
+      (opts.statuses === undefined || opts.statuses.has(t.status)) &&
+      (opts.include === undefined || opts.include(t)),
   );
   const byName = new Map(tasks.map((t) => [t.name, t]));
   const incoming = new Set<string>();

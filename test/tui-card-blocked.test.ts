@@ -31,6 +31,7 @@ const EMPTY_SNAPSHOT: WorkstreamSnapshot = {
   inProgress: [],
   blocked: [],
   recentClosed: [],
+  parkedCount: 0,
   allTasks: [],
   workspaces: [],
   workspaceOrphans: [],
@@ -194,6 +195,20 @@ describe("BlockedCard", () => {
     for (let i = 1; i <= 8; i++) expectTextOnce(text, `blocked_${i}`);
     expectTextAbsent(text, "blocked_9");
     expectTextAbsent(text, "blocked_10");
+  });
+});
+
+describe("BlockedCard parked blockers", () => {
+  it("marks a still-gating blocker that is parked", async () => {
+    const db = fixtureDb();
+    addBlockedFixture(db);
+    const { parkTask } = await import("../src/tasks.js");
+    parkTask(db, "design_x", { workstream: "demo", why: "later" });
+    const blocked = [task({ name: "cherry_x" }), task({ name: "ship_x" })];
+    const text = renderCardToText(
+      BlockedCard({ snapshot: { ...EMPTY_SNAPSHOT, blocked }, db, workstream: "demo" }),
+    );
+    expect(text).toContain("top blocker: design_x (parked)");
   });
 });
 

@@ -32,6 +32,7 @@ function emptySnapshot(over: Partial<WorkstreamSnapshot> = {}): WorkstreamSnapsh
     inProgress: [],
     blocked: [],
     recentClosed: [],
+    parkedCount: 0,
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

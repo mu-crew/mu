@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { inkColorForStatus, relTimeAgo } from "../src/cli/format.js";
+import { inkColorForPair, relTimeAgo } from "../src/cli/format.js";
 import { relTime } from "../src/cli.js";
 import { type Db, openDb } from "../src/db.js";
 import {
@@ -263,11 +263,11 @@ describe("TASK_STATUS_LIST mirrors every TaskStatus", () => {
 
 // ─── status colours ─────────────────────────────────────────────────
 
-describe("inkColorForStatus", () => {
-  it("matches colorStatus's static CLI mapping for every task status", () => {
-    expect(inkColorForStatus("OPEN")).toBe("cyan");
-    expect(inkColorForStatus("IN_PROGRESS")).toBe("yellow");
-    expect(inkColorForStatus("CLOSED")).toBe("green");
+describe("inkColorForPair", () => {
+  it("matches colorPair's CLI mapping for every default pair", () => {
+    expect(inkColorForPair({ status: "OPEN", substate: "todo" })).toBe("cyan");
+    expect(inkColorForPair({ status: "IN_PROGRESS", substate: "active" })).toBe("yellow");
+    expect(inkColorForPair({ status: "CLOSED", substate: "done" })).toBe("green");
   });
 });
 

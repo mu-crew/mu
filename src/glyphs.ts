@@ -73,6 +73,8 @@ export const GLYPH = {
   stale: "\uf017", // nf-fa-clock_o
   /** Task is blocked by an incoming edge. */
   blocked: "\uf0c1", // nf-fa-link (chain)
+  /** Task is parked (OPEN/parked): open, but set aside on purpose. */
+  parked: "\uf04c", // nf-fa-pause
   /** Track whose roots merged (diamond dependency). */
   merge: "\uf074", // nf-fa-random
   /** Agent owns more than one task (pane-title multi-count slot). */

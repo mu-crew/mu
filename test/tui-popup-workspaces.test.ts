@@ -174,6 +174,7 @@ function snapshot(over: Partial<WorkstreamSnapshot> = {}): WorkstreamSnapshot {
     inProgress: [],
     blocked: [],
     recentClosed: [],
+    parkedCount: 0,
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

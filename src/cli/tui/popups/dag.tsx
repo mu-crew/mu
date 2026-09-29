@@ -11,11 +11,16 @@ import { loadFullDag, renderForest } from "../../../dag.js";
 import type { Db } from "../../../db.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
 import type { TaskStatus } from "../../../tasks/status.js";
-import { colorStatus } from "../../format.js";
+import { colorPair } from "../../format.js";
 import { contentWidthFromCols, truncateCell } from "../columns.js";
 import { dispatchPopupKeyFromInk } from "../keys.js";
 import { PopupShell } from "../popup-shell.js";
-import { StatusFilterStrip, useStatusFilter } from "../use-status-filter.js";
+import {
+  type FilterState,
+  passesFilter,
+  StatusFilterStrip,
+  useStatusFilter,
+} from "../use-status-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { DrillScrollView, useDrillKeymap } from "./drill.js";
 import { usePopupViewport } from "./viewport.js";
@@ -46,12 +51,13 @@ export function DagPopup({
 }: PopupProps): ReactElement {
   const viewport = usePopupViewport();
   const statusFilter = useStatusFilter();
+  const { statuses, showParked, showNotDone } = statusFilter;
   const { cols } = useTerminalSize();
   const contentWidth = contentWidthFromCols(cols);
   const { body, roots } = useMemo<DagBody>(() => {
     void fastTickNonce;
-    return buildDagBody(db, workstream, statusFilter.statuses, contentWidth);
-  }, [db, workstream, statusFilter.statuses, contentWidth, fastTickNonce]);
+    return buildDagBody(db, workstream, { statuses, showParked, showNotDone }, contentWidth);
+  }, [db, workstream, statuses, showParked, showNotDone, contentWidth, fastTickNonce]);
   const [focusedRoot, setFocusedRoot] = useState<string | null>(() => roots[0] ?? null);
   const lineToRootRef = useRef<readonly string[]>([]);
   const rootsRef = useRef<readonly string[]>([]);
@@ -86,7 +92,11 @@ export function DagPopup({
     return (
       <PopupShell title={`DAG · ${workstream}`}>
         <Box flexDirection="column" flexGrow={1}>
-          <StatusFilterStrip statuses={statusFilter.statuses} />
+          <StatusFilterStrip
+            statuses={statuses}
+            showParked={showParked}
+            showNotDone={showNotDone}
+          />
           <Text dimColor>(no tasks)</Text>
         </Box>
       </PopupShell>
@@ -96,7 +106,7 @@ export function DagPopup({
   return (
     <PopupShell title={`DAG · ${workstream}`} hint="y yanks `mu task tree <root-id>`">
       <Box flexDirection="column" flexGrow={1}>
-        <StatusFilterStrip statuses={statusFilter.statuses} />
+        <StatusFilterStrip statuses={statuses} showParked={showParked} showNotDone={showNotDone} />
         <DrillScrollView
           title="task DAG forest"
           body={body}
@@ -118,11 +128,14 @@ export function dagYankCommand(taskId: string, workstream: string): string {
 export function buildDagBody(
   db: Db,
   workstream: string,
-  statuses: ReadonlySet<TaskStatus>,
+  filter: ReadonlySet<TaskStatus> | FilterState,
   contentWidth: number = contentWidthFromCols(80),
 ): DagBody {
-  const dag = loadFullDag(db, workstream, { statuses });
-  const body = renderForest(dag.roots, dag.edges, (task) => colorStatus(task.status), dag.tasks, {
+  // A bare status set means "no substate toggles" (both slices shown).
+  const f: FilterState =
+    "statuses" in filter ? filter : { statuses: filter, showParked: true, showNotDone: true };
+  const dag = loadFullDag(db, workstream, { include: (t) => passesFilter(t, f) });
+  const body = renderForest(dag.roots, dag.edges, (task) => colorPair(task), dag.tasks, {
     includeTitle: false,
   });
   return {

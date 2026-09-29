@@ -28,9 +28,10 @@
 
 import { type ReactElement, useMemo } from "react";
 import { roiBucket, type WorkstreamSnapshot } from "../../../state.js";
+import { formatPair } from "../../../tasks/status.js";
 import { getTaskEdgesWithStatus } from "../../../tasks.js";
-import { inkColorForStatus } from "../../format.js";
-import { GLYPH, stillGating } from "../cards/blocked.js";
+import { inkColorForPair } from "../../format.js";
+import { blockerLabel, GLYPH, stillGating } from "../cards/blocked.js";
 import type { ColumnSpec } from "../columns.js";
 import { colorForBucket, formatRoi } from "../format-helpers.js";
 import {
@@ -62,10 +63,7 @@ export function BlockedPopup(props: PopupProps): ReactElement {
     const m = new Map<string, string[]>();
     for (const t of sourceTasks) {
       const gating = stillGating(getTaskEdgesWithStatus(db, t.name, workstream).blockers);
-      m.set(
-        t.name,
-        gating.map((b) => b.name),
-      );
+      m.set(t.name, gating.map(blockerLabel));
     }
     return m;
   }, [sourceTasks, db, workstream]);
@@ -92,7 +90,7 @@ export function BlockedPopup(props: PopupProps): ReactElement {
             cells: [
               GLYPH,
               t.name,
-              t.status,
+              formatPair(t),
               String(blockers.length),
               top,
               formatRoi(t.impact, t.effortDays),
@@ -101,7 +99,7 @@ export function BlockedPopup(props: PopupProps): ReactElement {
             colors: [
               { dimColor: true }, // glyph
               { bold: true }, // name
-              { color: inkColorForStatus(t.status) }, // status
+              { color: inkColorForPair(t) }, // status
               { color: "yellow" }, // nblock
               { dimColor: true }, // top
               { color: colorForBucket(bucket) }, // roi

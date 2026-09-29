@@ -11,6 +11,11 @@ describe("Tasks popup yank matrix", () => {
       expected: "mu task claim task_open_unowned -w tui-impl",
     },
     {
+      label: "OPEN/parked → unpark",
+      task: { name: "x", status: "OPEN", substate: "parked", ownerName: null },
+      expected: "mu task unpark x -w tui-impl",
+    },
+    {
       label: "OPEN owned → release",
       task: { name: "task_open_owned", status: "OPEN", ownerName: "worker-1" },
       expected: "mu task release task_open_owned -w tui-impl",

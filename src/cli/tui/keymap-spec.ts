@@ -91,7 +91,7 @@ const POPUP_FILTER_HINTS: readonly StatusHintEntry[] = [
 const DAG_HINTS: readonly StatusHintEntry[] = [
   label("drill", "magenta"),
   hint("j/k", "scroll", ["j", "k"]),
-  hint("o/i/c", "filter", ["o", "i", "c"]),
+  hint("o/i/c/p/w", "filter", ["o", "i", "c", "p", "w"]),
   hint("y", "yank", ["y"]),
   hint("?", "help", ["?"]),
   hint("Esc", "back", ["Esc"]),
@@ -100,7 +100,7 @@ const DAG_HINTS: readonly StatusHintEntry[] = [
 const ALL_TASKS_HINTS: readonly StatusHintEntry[] = [
   label("drill", "magenta"),
   hint("j/k", "nav", ["j", "k"]),
-  hint("o/i/c", "filter", ["o", "i", "c"]),
+  hint("o/i/c/p/w", "filter", ["o", "i", "c", "p", "w"]),
   hint("s", "sort", ["s"]),
   hint("/", "search", ["/"]),
   hint("Enter", "drill", ["Enter"]),
@@ -198,7 +198,11 @@ export const HELP_PANES: readonly HelpPaneSpec[] = [
   {
     title: "keys · DAG / all-tasks",
     rows: [
-      row("o/i/c", "toggle OPEN / IN_PROGRESS / CLOSED status filters", ["o", "i", "c"]),
+      row(
+        "o/i/c/p/w",
+        "toggle OPEN / IN_PROGRESS / CLOSED status filters; p parked; w closed-not-done",
+        ["o", "i", "c", "p", "w"],
+      ),
       row("b", "all-tasks blocked filter cycle (all → only → hide)", ["b"]),
       row("s", "all-tasks sort cycle (roi → recency → age → id)", ["s"]),
       row("/", "all-tasks row search", ["/"]),
