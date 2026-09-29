@@ -155,7 +155,7 @@ describe("mu task show — blockers/dependents grouped by status", () => {
     expect(plain).toMatch(/no longer {2}: closed_dep \[CLOSED\]/);
   });
 
-  it("--json: blockers/dependents are arrays of {name, status} objects", async () => {
+  it("--json: blockers/dependents are arrays of {name, status, substate} objects", async () => {
     addTask(db, { localId: "b_open", workstream: "wsx", title: "O", impact: 50, effortDays: 1 });
     addTask(db, { localId: "b_done", workstream: "wsx", title: "D", impact: 50, effortDays: 1 });
     addTask(db, {
@@ -186,9 +186,9 @@ describe("mu task show — blockers/dependents grouped by status", () => {
       dependents: Array<{ name: string; status: string }>;
     };
     expect(parsed.blockers).toEqual([
-      { name: "b_done", status: "CLOSED" },
-      { name: "b_open", status: "OPEN" },
+      { name: "b_done", status: "CLOSED", substate: "done" },
+      { name: "b_open", status: "OPEN", substate: "todo" },
     ]);
-    expect(parsed.dependents).toEqual([{ name: "downstream", status: "OPEN" }]);
+    expect(parsed.dependents).toEqual([{ name: "downstream", status: "OPEN", substate: "todo" }]);
   });
 });

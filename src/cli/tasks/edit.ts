@@ -19,7 +19,7 @@
 
 import {
   assertTaskInWorkstream,
-  colorStatus,
+  colorPair,
   emitJson,
   emitJsonCollection,
   parseCsvFlag,
@@ -104,16 +104,16 @@ function partitionEdges(edges: readonly TaskEdgeWithStatus[]): {
   return { stillGating, satisfied };
 }
 
-/** Render one edge bucket as a comma-separated `<name> [<STATUS>]`
+/** Render one edge bucket as a comma-separated `<name> [<STATUS[/substate]>]`
  *  list. The status is colour-coded the same way the task table
- *  renders it (src/cli/format.ts colorStatus); satisfied buckets are
+ *  renders it (src/cli/format.ts colorPair); satisfied buckets are
  *  additionally dimmed so they recede visually. An empty bucket
  *  renders as an em-dash (—) to match the prior "no edges" rendering
  *  for back-compat with operator-eyed scripts. */
 function formatEdgeList(edges: readonly TaskEdgeWithStatus[], dim: boolean): string {
   if (edges.length === 0) return pc.dim("—");
   const parts = edges.map((e) => {
-    const piece = `${e.name} [${colorStatus(e.status)}]`;
+    const piece = `${e.name} [${colorPair(e)}]`;
     return dim ? pc.dim(piece) : piece;
   });
   return parts.join(", ");

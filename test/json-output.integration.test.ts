@@ -179,7 +179,7 @@ describe("--json output on read verbs", () => {
     };
     expect(parsed.task.name).toBe("a");
     expect(parsed.blockers).toEqual([]);
-    expect(parsed.dependents).toEqual([{ name: "b", status: "OPEN" }]);
+    expect(parsed.dependents).toEqual([{ name: "b", status: "OPEN", substate: "todo" }]);
     expect(parsed.notes.map((n) => n.content)).toEqual(["FILES: src/auth.ts"]);
   });
 

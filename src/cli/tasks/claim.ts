@@ -94,6 +94,7 @@ export async function cmdClaim(
     workstream?: string;
     json?: boolean;
     strictStaleness?: boolean;
+    force?: boolean;
   },
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
@@ -143,9 +144,11 @@ export async function cmdClaim(
     self?: boolean;
     actor?: string;
     evidence?: string;
+    force?: boolean;
     workstream: string;
   } = { workstream: ws };
   if (forName !== undefined) sdkOpts.agentName = forName;
+  if (opts.force) sdkOpts.force = true;
   if (forWorkstream !== undefined) sdkOpts.agentWorkstream = forWorkstream;
   if (opts.self) sdkOpts.self = true;
   if (opts.actor !== undefined) sdkOpts.actor = opts.actor;

@@ -28,6 +28,9 @@ export interface Track {
   taskIds: ReadonlySet<string>;
   /** Number of READY tasks (per the SQL view) within this track's subgraph. */
   readyCount: number;
+  /** True when every non-CLOSED task in the track is OPEN/parked: the
+   *  track holds work, but none of it is schedulable. */
+  parked: boolean;
 }
 
 /**
@@ -66,17 +69,26 @@ export function getParallelTracks(db: Db, workstream: string): Track[] {
              FROM reach r
              JOIN task_edges e ON e.to_task_id = r.node_id
          )
-       SELECT goal.local_id AS goal_id, node.local_id AS task_id
+       SELECT goal.local_id AS goal_id, node.local_id AS task_id,
+              node.status AS status, node.substate AS substate
          FROM reach r
          JOIN tasks goal ON goal.id = r.goal_id
          JOIN tasks node ON node.id = r.node_id`,
     )
-    .all(workstream) as Array<{ goal_id: string; task_id: string }>;
+    .all(workstream) as Array<{
+    goal_id: string;
+    task_id: string;
+    status: string;
+    substate: string;
+  }>;
 
   const subgraphs = new Map(goals.map((goal) => [goal.name, new Set<string>()]));
   const uf = new UnionFind(goals.map((goal) => goal.name));
   const firstGoalByTask = new Map<string, string>();
+  // Substate of every non-CLOSED task reached, for the per-track `parked` flag.
+  const openSubstate = new Map<string, string>();
   for (const row of reach) {
+    if (row.status !== "CLOSED") openSubstate.set(row.task_id, row.substate);
     subgraphs.get(row.goal_id)?.add(row.task_id);
     const firstGoal = firstGoalByTask.get(row.task_id);
     if (firstGoal === undefined) firstGoalByTask.set(row.task_id, row.goal_id);
@@ -107,8 +119,17 @@ export function getParallelTracks(db: Db, workstream: string): Track[] {
   for (const [root, taskIds] of componentTaskIds) {
     const trackRoots = componentRoots.get(root) ?? [];
     let readyCount = 0;
-    for (const id of taskIds) if (readyIds.has(id)) readyCount++;
-    tracks.push({ roots: trackRoots, taskIds, readyCount });
+    let openCount = 0;
+    let parkedCount = 0;
+    for (const id of taskIds) {
+      if (readyIds.has(id)) readyCount++;
+      const sub = openSubstate.get(id);
+      if (sub === undefined) continue;
+      openCount++;
+      if (sub === "parked") parkedCount++;
+    }
+    const parked = openCount > 0 && parkedCount === openCount;
+    tracks.push({ roots: trackRoots, taskIds, readyCount, parked });
   }
 
   // Stable order: by primary root's localId so output is deterministic.

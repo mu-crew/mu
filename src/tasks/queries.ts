@@ -15,7 +15,7 @@ import {
   type TaskRow,
   taskIdFor,
 } from "./core.js";
-import type { TaskStatus } from "./status.js";
+import type { TaskStatus, TaskSubstate } from "./status.js";
 
 export function getTask(db: Db, localId: string, workstream: string): TaskRow | undefined {
   const wsId = tryResolveWorkstreamId(db, workstream);
@@ -36,6 +36,14 @@ export function getTask(db: Db, localId: string, workstream: string): TaskRow | 
 export interface ListTasksOptions {
   /** Filter to one or more lifecycle statuses. Omitted = all statuses. */
   status?: TaskStatus | readonly TaskStatus[];
+  /** Filter to one or more substates (ANDed with `status`). */
+  substate?: TaskSubstate | readonly TaskSubstate[];
+}
+
+/** Normalise a one-or-many filter option to an array (undefined = no filter). */
+function asList<T extends string>(v: T | readonly T[] | undefined): readonly T[] | undefined {
+  if (v === undefined) return undefined;
+  return typeof v === "string" ? [v] : (v as readonly T[]);
 }
 
 export function listTasks(db: Db, workstream?: string, opts: ListTasksOptions = {}): TaskRow[] {
@@ -57,6 +65,11 @@ export function listTasks(db: Db, workstream?: string, opts: ListTasksOptions = 
   if (statuses !== undefined) {
     where.push(`t.status IN (${statuses.map(() => "?").join(", ")})`);
     params.push(...statuses);
+  }
+  const substates = asList(opts.substate);
+  if (substates !== undefined && substates.length > 0) {
+    where.push(`t.substate IN (${substates.map(() => "?").join(", ")})`);
+    params.push(...substates);
   }
   const sql =
     where.length === 0
@@ -97,6 +110,8 @@ const SELECT_VIEW_COLS = `
  *  shipped on `mu task list` (task_list_multi_status_union). */
 export interface ListReadyOptions {
   status?: TaskStatus | readonly TaskStatus[];
+  /** Substate filter; the `ready` view already excludes OPEN/parked. */
+  substate?: TaskSubstate | readonly TaskSubstate[];
 }
 
 export function listReady(db: Db, workstream: string, opts: ListReadyOptions = {}): TaskRow[] {
@@ -113,6 +128,11 @@ export function listReady(db: Db, workstream: string, opts: ListReadyOptions = {
   if (statuses !== undefined && statuses.length > 0) {
     where.push(`v.status IN (${statuses.map(() => "?").join(", ")})`);
     params.push(...statuses);
+  }
+  const substates = asList(opts.substate);
+  if (substates !== undefined && substates.length > 0) {
+    where.push(`v.substate IN (${substates.map(() => "?").join(", ")})`);
+    params.push(...substates);
   }
   const rows = db
     .prepare(

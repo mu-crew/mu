@@ -10,7 +10,7 @@
 // Extracted from src/cli/tasks.ts as part of the wire-out follow-up
 // to refactor_split_large_src_files.
 
-import { assertTaskInWorkstream, colorStatus, emitJson, resolveEntityRef } from "../../cli.js";
+import { assertTaskInWorkstream, colorPair, emitJson, resolveEntityRef } from "../../cli.js";
 import { renderTaskTree } from "../../dag.js";
 import type { Db } from "../../db.js";
 import { pc } from "../../output.js";
@@ -58,9 +58,7 @@ export async function cmdTaskTree(db: Db, rawId: string, opts: TreeOpts): Promis
   const swapHint = down ? "swap to --no-down for blockers" : "--down for dependents";
   console.log(pc.bold(`Tree of ${rootId}  ${pc.dim(`(${direction} below; ${swapHint})`)}`));
   console.log(
-    renderTaskTree(db, ws, root, down ? "dependents" : "blockers", (task) =>
-      colorStatus(task.status),
-    ),
+    renderTaskTree(db, ws, root, down ? "dependents" : "blockers", (task) => colorPair(task)),
   );
 }
 
