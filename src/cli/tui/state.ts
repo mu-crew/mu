@@ -455,6 +455,7 @@ export function snapshotKey(s: WorkstreamSnapshot): unknown {
     tracks: s.tracks.map((t) => ({
       roots: t.roots.map((r) => r.name),
       readyCount: t.readyCount,
+      parked: t.parked,
       // Set → sorted array; deterministic JSON.
       taskIds: [...t.taskIds].sort(),
     })),
@@ -462,6 +463,7 @@ export function snapshotKey(s: WorkstreamSnapshot): unknown {
     inProgress: s.inProgress.map(taskKey),
     blocked: s.blocked.map(taskKey),
     recentClosed: s.recentClosed.map(taskKey),
+    parkedCount: s.parkedCount,
     allTasks: s.allTasks.map(taskKey),
     commitsBackend: s.commitsBackend ?? null,
     recentCommits: s.recentCommits.map((c) => [c.sha, c.subject, c.author, c.relTime]),
@@ -484,12 +486,13 @@ export function snapshotKeyString(s: WorkstreamSnapshot): string {
 }
 
 // One row of every visible-affecting task field. impact + effortDays
-// drive the ROI bucket / sort; status drives glyph + colour;
+// drive the ROI bucket / sort; status + substate drive glyph + colour;
 // createdAt / updatedAt drive the all-tasks popup's age / recency
 // sorts; ownerName + title are rendered verbatim.
 function taskKey(t: {
   name: string;
   status: string;
+  substate: string;
   impact: number;
   effortDays: number;
   ownerName: string | null;
@@ -500,6 +503,7 @@ function taskKey(t: {
   return [
     t.name,
     t.status,
+    t.substate,
     t.impact,
     t.effortDays,
     t.ownerName ?? "",

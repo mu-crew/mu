@@ -53,7 +53,8 @@
 import type { ReactElement } from "react";
 import { GLYPH as SHARED_GLYPH } from "../../../glyphs.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
-import { inkColorForStatus } from "../../format.js";
+import { formatPair } from "../../../tasks/status.js";
+import { inkColorForPair } from "../../format.js";
 import {
   type ColumnSpec,
   contentWidthFromCols,
@@ -119,7 +120,13 @@ export function RecentCard({ snapshot, rowBudget, cols }: RecentCardProps): Reac
   const shown = recentClosed.slice(0, rowBudget ?? cardConfig.maxRows);
   const more = recentClosed.length - shown.length;
   const bottomLabel = more > 0 ? `+${more} more · Shift+8` : undefined;
-  const rows = shown.map((t, i) => [GLYPH, t.name, t.status, formatWhen(ages[i] ?? null), t.title]);
+  const rows = shown.map((t, i) => [
+    GLYPH,
+    t.name,
+    formatPair(t),
+    formatWhen(ages[i] ?? null),
+    t.title,
+  ]);
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);
 
   return (
@@ -138,7 +145,7 @@ export function RecentCard({ snapshot, rowBudget, cols }: RecentCardProps): Reac
         const colors = [
           { color: "green" }, // glyph
           { bold: true }, // id
-          { color: inkColorForStatus(t.status) }, // status
+          { color: inkColorForPair(t) }, // status
           { dimColor: true }, // when
           { dimColor: true }, // title
         ];

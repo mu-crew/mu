@@ -18,7 +18,7 @@ import { agentStateGlyph, GLYPH } from "../glyphs.js";
 import { parseOpKey, renderOp } from "../log-render.js";
 import type { LogRow } from "../logs.js";
 import { muTable, pc } from "../output.js";
-import { formatPair, type TaskPair, type TaskStatus } from "../tasks/status.js";
+import { formatPair, type TaskPair } from "../tasks/status.js";
 import type { TaskRow } from "../tasks.js";
 import type { Track } from "../tracks.js";
 import type { WorkspaceRow } from "../workspace.js";
@@ -78,19 +78,20 @@ export function colorStatus(status: TaskRow["status"]): string {
   }
 }
 
-/** Ink colour equivalent of colorStatus(). The TUI must not embed
+/** Ink colour equivalent of colorPair(). The TUI must not embed
  * picocolors ANSI strings inside <Text>; rows pass this value to Ink's
  * color prop instead. */
-export type InkColor = "cyan" | "yellow" | "green";
+export type InkColor = "cyan" | "yellow" | "green" | "gray" | "red";
 
-export function inkColorForStatus(status: TaskStatus): InkColor {
-  switch (status) {
+/** Ink colour for a task's pair; same mapping as colorPair(). */
+export function inkColorForPair(pair: TaskPair): InkColor {
+  switch (pair.status) {
     case "OPEN":
-      return "cyan";
+      return pair.substate === "parked" ? "gray" : "cyan";
     case "IN_PROGRESS":
       return "yellow";
     case "CLOSED":
-      return "green";
+      return pair.substate === "done" ? "green" : "red";
   }
 }
 

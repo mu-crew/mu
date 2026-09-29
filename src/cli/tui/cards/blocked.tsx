@@ -64,8 +64,9 @@ import type { ReactElement } from "react";
 import type { Db } from "../../../db.js";
 import { GLYPH as SHARED_GLYPH } from "../../../glyphs.js";
 import { roiBucket, type WorkstreamSnapshot } from "../../../state.js";
+import { formatPair } from "../../../tasks/status.js";
 import { getTaskEdgesWithStatus, type TaskEdgeWithStatus } from "../../../tasks.js";
-import { inkColorForStatus } from "../../format.js";
+import { inkColorForPair } from "../../format.js";
 import {
   type ColumnSpec,
   contentWidthFromCols,
@@ -143,7 +144,8 @@ export function BlockedCard({
     stillGating(getTaskEdgesWithStatus(db, t.name, workstream).blockers),
   );
   const topBlocker = pickTopBlocker(blockerLists);
-  const subtitle = formatSubtitle(blocked.length, topBlocker);
+  const topEdge = blockerLists.flat().find((b) => b.name === topBlocker);
+  const subtitle = formatSubtitle(blocked.length, topEdge ? blockerLabel(topEdge) : topBlocker);
 
   const meta = shown.map((t) => {
     const bucket = roiBucket(t.impact, t.effortDays);
@@ -153,7 +155,7 @@ export function BlockedCard({
   const rows = shown.map((t, i) => [
     GLYPH,
     t.name,
-    t.status,
+    formatPair(t),
     String(blockerLists[i]?.length ?? 0),
     meta[i]?.roiText ?? "",
     t.title,
@@ -177,7 +179,7 @@ export function BlockedCard({
         const colors = [
           { dimColor: true }, // glyph
           { bold: true }, // id
-          { color: inkColorForStatus(t.status) }, // status
+          { color: inkColorForPair(t) }, // status
           { color: "yellow" }, // blocks
           { color: colorForBucket(m.bucket) }, // roi
           { dimColor: true }, // title
@@ -196,6 +198,12 @@ export function BlockedCard({
  *  array; does not mutate. */
 export function stillGating(blockers: ReadonlyArray<TaskEdgeWithStatus>): TaskEdgeWithStatus[] {
   return blockers.filter((b) => b.status !== "CLOSED");
+}
+
+/** A blocker's display name: " (parked)" appended when it is
+ *  OPEN/parked, since a parked blocker will not close on its own. */
+export function blockerLabel(b: TaskEdgeWithStatus): string {
+  return b.status === "OPEN" && b.substate === "parked" ? `${b.name} (parked)` : b.name;
 }
 
 /** Pick the still-gating blocker that appears most often across the

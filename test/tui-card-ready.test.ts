@@ -17,6 +17,7 @@ const EMPTY_SNAPSHOT: WorkstreamSnapshot = {
   inProgress: [],
   blocked: [],
   recentClosed: [],
+  parkedCount: 0,
   allTasks: [],
   workspaces: [],
   workspaceOrphans: [],
@@ -55,6 +56,16 @@ describe("ReadyCard", () => {
     expect(text).toContain(
       "(no ready tasks) every blocker is OPEN/IN_PROGRESS or every task is closed",
     );
+  });
+
+  it("the empty state counts parked tasks", () => {
+    const text = renderCardToText(ReadyCard({ snapshot: { ...EMPTY_SNAPSHOT, parkedCount: 2 } }));
+    expect(text).toContain("(no ready tasks) 2 parked");
+  });
+
+  it("renders a parked-free empty state unchanged", () => {
+    const text = renderCardToText(ReadyCard({ snapshot: { ...EMPTY_SNAPSHOT, parkedCount: 0 } }));
+    expect(text).not.toContain("parked");
   });
 
   it("renders title subtitle plus every task name, status, and ROI label exactly once", () => {

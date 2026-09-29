@@ -19,7 +19,8 @@
 // list, column specs, row mapper/colors, and the yank matrix.
 
 import type { ReactElement } from "react";
-import { inkColorForStatus } from "../../format.js";
+import { formatPair } from "../../../tasks/status.js";
+import { inkColorForPair } from "../../format.js";
 import { agentByName, formatAgentRefDisplayName } from "../agent-display.js";
 import type { ColumnSpec } from "../columns.js";
 import {
@@ -40,17 +41,17 @@ const config: TaskListPopupConfig = {
   label: "Tasks",
   sourceTasks: (snapshot) => [...snapshot.ready, ...snapshot.inProgress],
   columnSpecs: COLUMN_SPECS,
-  filterBlob: (t) => `${t.name} ${t.title} ${t.status} ${t.ownerName ?? ""}`,
+  filterBlob: (t) => `${t.name} ${t.title} ${formatPair(t)} ${t.ownerName ?? ""}`,
   emptyText: "(no open / in-progress tasks)",
   yankCommand: (t, ws) => yankCommandForTask(t, ws),
   dynamicHint: (focused, ws) => yankCommandForTask(focused, ws),
   renderRows: (visible, _start, snapshot): RenderedRow[] => {
     const agentLookup = agentByName(snapshot);
     return visible.map((t) => ({
-      cells: [t.name, t.status, formatAgentRefDisplayName(t.ownerName, agentLookup), t.title],
+      cells: [t.name, formatPair(t), formatAgentRefDisplayName(t.ownerName, agentLookup), t.title],
       colors: [
         { bold: true }, // name
-        { color: inkColorForStatus(t.status) }, // status
+        { color: inkColorForPair(t) }, // status
         { dimColor: true }, // owner
         undefined, // title
       ],
@@ -63,11 +64,12 @@ export function ReadyPopup(props: PopupProps): ReactElement {
 }
 
 export function yankCommandForTask(
-  t: { name: string; status: string; ownerName: string | null },
+  t: { name: string; status: string; substate?: string; ownerName: string | null },
   ws: string,
 ): string | null {
   switch (t.status) {
     case "OPEN":
+      if (t.substate === "parked") return `mu task unpark ${t.name} -w ${ws}`;
       return t.ownerName === null
         ? `mu task claim ${t.name} -w ${ws}`
         : `mu task release ${t.name} -w ${ws}`;

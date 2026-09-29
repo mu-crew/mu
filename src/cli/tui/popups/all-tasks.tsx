@@ -1,7 +1,8 @@
 // All-tasks popup (`t`). Keybind-only; no dashboard card slot.
 //
 // Read-only list/sort complement to the DAG popup: every task in the
-// active workstream, filtered by task status (o/i/c), sorted by
+// active workstream, filtered by task status (o/i/c) and substate
+// slice (p parked, w closed-not-done), sorted by
 // `s` through the same sort keys as `mu task list --sort`, Enter drills
 // into TaskDetailDrill, and `y` yanks `mu task show <id>`.
 
@@ -16,8 +17,9 @@ import {
   TASK_SORT_KEYS,
   type TaskSortKey,
 } from "../../../tasks/sort.js";
+import { formatPair } from "../../../tasks/status.js";
 import { listTasks, type TaskRow } from "../../../tasks.js";
-import { inkColorForStatus } from "../../format.js";
+import { inkColorForPair } from "../../format.js";
 import { agentByName, formatAgentRefDisplayName } from "../agent-display.js";
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { formatRoi } from "../format-helpers.js";
@@ -27,7 +29,7 @@ import { PopupShell } from "../popup-shell.js";
 import { useNotesDrill } from "../use-notes-drill.js";
 import { usePopupActionQueue } from "../use-popup-action-queue.js";
 import { applyFilter, FilterPrompt, usePopupFilter } from "../use-popup-filter.js";
-import { StatusFilterStrip, useStatusFilter } from "../use-status-filter.js";
+import { passesFilter, StatusFilterStrip, useStatusFilter } from "../use-status-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { useDrillKeymap } from "./drill.js";
 import { applyCursor, centredVisibleSlice, isNavAction } from "./scroll.js";
@@ -80,6 +82,10 @@ export function AllTasksPopup({
   const [sortKey, setSortKey] = useState<TaskSortKey>("roi");
   const flt = usePopupFilter({ onEditingChange: onFilterEditingChange });
   const statusFilter = useStatusFilter();
+  const { statuses, showParked, showNotDone } = statusFilter;
+  const filterStrip = (
+    <StatusFilterStrip statuses={statuses} showParked={showParked} showNotDone={showNotDone} />
+  );
 
   const sourceTasks = useMemo(
     () => allTasksFromSnapshotOrDb(snapshot, db, workstream),
@@ -96,15 +102,26 @@ export function AllTasksPopup({
   // visibleTasks under a constant cursor index and resolved the
   // wrong task. mode dep removed.
   const visibleTasks = useMemo(() => {
-    const filteredByStatus = sourceTasks.filter((t) => statusFilter.statuses.has(t.status));
+    const filteredByStatus = sourceTasks.filter((t) =>
+      passesFilter(t, { statuses, showParked, showNotDone }),
+    );
     const filteredByBlocked = applyBlockedFilter(filteredByStatus, blockedNames, blockedFilter);
     const filteredByText = applyFilter(
       filteredByBlocked,
       flt.query,
-      (t) => `${t.name} ${t.title} ${t.status} ${t.ownerName ?? ""}`,
+      (t) => `${t.name} ${t.title} ${formatPair(t)} ${t.ownerName ?? ""}`,
     );
     return sortTasks(filteredByText, sortKey);
-  }, [sourceTasks, statusFilter.statuses, blockedFilter, blockedNames, flt.query, sortKey]);
+  }, [
+    sourceTasks,
+    statuses,
+    showParked,
+    showNotDone,
+    blockedFilter,
+    blockedNames,
+    flt.query,
+    sortKey,
+  ]);
   const safeCursor = visibleTasks.length === 0 ? 0 : Math.min(cursor, visibleTasks.length - 1);
   const focused = visibleTasks[safeCursor];
 
@@ -190,7 +207,7 @@ export function AllTasksPopup({
     return (
       <PopupShell title="All tasks · popup">
         <Box flexDirection="column" flexGrow={1}>
-          <StatusFilterStrip statuses={statusFilter.statuses} />
+          {filterStrip}
           <BlockedFilterStrip mode={blockedFilter} />
           <SortStrip sortKey={sortKey} visible={0} total={0} />
           <Text dimColor>(no tasks)</Text>
@@ -203,7 +220,7 @@ export function AllTasksPopup({
     return (
       <PopupShell title="All tasks · popup">
         <Box flexDirection="column" flexGrow={1}>
-          <StatusFilterStrip statuses={statusFilter.statuses} />
+          {filterStrip}
           <BlockedFilterStrip mode={blockedFilter} />
           <SortStrip sortKey={sortKey} visible={0} total={sourceTasks.length} />
           <Text dimColor>
@@ -240,7 +257,7 @@ export function AllTasksPopup({
   const agentLookup = agentByName(snapshot);
   const rows = windowed.map((t) => [
     t.name,
-    blockedNames.has(t.name) ? `${t.status} ${GLYPH.blocked}` : t.status,
+    statusCell(t, blockedNames.has(t.name)),
     formatAgentRefDisplayName(t.ownerName, agentLookup),
     formatRoi(t.impact, t.effortDays),
     t.title,
@@ -253,7 +270,7 @@ export function AllTasksPopup({
       hint={focused ? allTasksYankCommand(focused.name, workstream) : undefined}
     >
       <Box flexDirection="column" flexGrow={1}>
-        <StatusFilterStrip statuses={statusFilter.statuses} />
+        {filterStrip}
         <BlockedFilterStrip mode={blockedFilter} />
         <SortStrip sortKey={sortKey} visible={visibleTasks.length} total={sourceTasks.length} />
         {windowed.map((t, i) => {
@@ -263,7 +280,7 @@ export function AllTasksPopup({
           const isBlocked = blockedNames.has(t.name);
           const colors = [
             { bold: true }, // id
-            { color: isBlocked ? "yellow" : inkColorForStatus(t.status) }, // status + blocked glyph
+            { color: isBlocked ? "yellow" : inkColorForPair(t) }, // status + blocked glyph
             { dimColor: true }, // owner
             { dimColor: true }, // ROI
             undefined, // title
@@ -282,6 +299,14 @@ export function AllTasksPopup({
       <FilterPrompt state={flt} />
     </PopupShell>
   );
+}
+
+/** Status cell: the pair, prefixed by the parked glyph for a parked
+ *  row and suffixed by the blocked glyph for a blocked one. */
+function statusCell(t: TaskRow, blocked: boolean): string {
+  const pair = formatPair(t);
+  const parked = t.status === "OPEN" && t.substate === "parked" ? `${GLYPH.parked} ` : "";
+  return `${parked}${pair}${blocked ? ` ${GLYPH.blocked}` : ""}`;
 }
 
 export function allTasksFromSnapshotOrDb(

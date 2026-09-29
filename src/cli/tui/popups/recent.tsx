@@ -22,7 +22,8 @@
 // Per ROADMAP pledge: ink/react import limited to src/cli/tui/*.
 
 import type { ReactElement } from "react";
-import { inkColorForStatus } from "../../format.js";
+import { formatPair } from "../../../tasks/status.js";
+import { inkColorForPair } from "../../format.js";
 import { GLYPH } from "../cards/recent.js";
 import type { ColumnSpec } from "../columns.js";
 import { ageMs, formatRoi, formatWhen } from "../format-helpers.js";
@@ -59,7 +60,7 @@ const config: TaskListPopupConfig = {
       cells: [
         GLYPH,
         t.name,
-        t.status,
+        formatPair(t),
         formatWhen(ageMs(t, now)),
         String(t.impact),
         String(t.effortDays),
@@ -69,7 +70,7 @@ const config: TaskListPopupConfig = {
       colors: [
         { color: "green" }, // glyph
         { bold: true }, // id
-        { color: inkColorForStatus(t.status) }, // status
+        { color: inkColorForPair(t) }, // status
         { dimColor: true }, // when
         { dimColor: true }, // impact
         { dimColor: true }, // effort

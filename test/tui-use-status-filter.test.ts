@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  passesFilter,
   STATUS_BY_KEY,
   StatusFilterStrip,
   statusForToggleKey,
+  substateToggleForKey,
   toggleStatusSet,
   useStatusFilter,
 } from "../src/cli/tui/use-status-filter.js";
@@ -91,5 +93,53 @@ describe("StatusFilterStrip", () => {
   it("uses colorStatus for status letters", () => {
     const src = readFileSync("./src/cli/tui/use-status-filter.tsx", "utf-8");
     expect(src).toContain("colorStatus(status)");
+  });
+});
+
+describe("passesFilter (substate toggles)", () => {
+  const all = { statuses: new Set(TASK_STATUSES), showParked: true, showNotDone: true };
+
+  it("everything visible by default", () => {
+    expect(passesFilter({ status: "OPEN", substate: "parked" }, all)).toBe(true);
+    expect(passesFilter({ status: "CLOSED", substate: "wontfix" }, all)).toBe(true);
+  });
+
+  it("showParked=false hides OPEN/parked only", () => {
+    const f = { ...all, showParked: false };
+    expect(passesFilter({ status: "OPEN", substate: "parked" }, f)).toBe(false);
+    expect(passesFilter({ status: "OPEN", substate: "todo" }, f)).toBe(true);
+  });
+
+  it("showNotDone=false hides CLOSED/* except done", () => {
+    const f = { ...all, showNotDone: false };
+    expect(passesFilter({ status: "CLOSED", substate: "wontfix" }, f)).toBe(false);
+    expect(passesFilter({ status: "CLOSED", substate: "superseded" }, f)).toBe(false);
+    expect(passesFilter({ status: "CLOSED", substate: "done" }, f)).toBe(true);
+  });
+
+  it("status toggle still wins", () => {
+    const f = { ...all, statuses: new Set(["OPEN", "IN_PROGRESS"] as const) };
+    expect(passesFilter({ status: "CLOSED", substate: "done" }, f)).toBe(false);
+  });
+
+  it("p and w are the substate toggle keys", () => {
+    expect(substateToggleForKey("p", {})).toBe("parked");
+    expect(substateToggleForKey("W", {})).toBe("notDone");
+    expect(substateToggleForKey("p", { ctrl: true })).toBeUndefined();
+    expect(substateToggleForKey("o", {})).toBeUndefined();
+  });
+
+  it("the strip renders the parked and not-done toggles", () => {
+    const text = stripAnsi(
+      renderToString(
+        StatusFilterStrip({
+          statuses: new Set(TASK_STATUSES),
+          showParked: false,
+          showNotDone: true,
+        }),
+      ),
+    );
+    expect(text).toContain(`[P]arked ${GLYPH.off}`);
+    expect(text).toContain(`[W]ontfix+ ${GLYPH.on}`);
   });
 });

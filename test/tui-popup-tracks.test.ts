@@ -26,10 +26,10 @@ import { join } from "node:path";
 import { render } from "ink";
 import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { TracksPopup } from "../src/cli/tui/popups/tracks.js";
+import { statusRank, TracksPopup } from "../src/cli/tui/popups/tracks.js";
 import { type Db, openDb } from "../src/db.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
-import { addNote, addTask } from "../src/tasks.js";
+import { addNote, addTask, parkTask } from "../src/tasks.js";
 import { getParallelTracks } from "../src/tracks.js";
 import {
   CaptureStream,
@@ -261,6 +261,35 @@ describe("TracksPopup — drill recursion", () => {
     await simulateInput(stdin, "escape");
     expect(modes.at(-1)).toBe("list");
 
+    instance.unmount();
+  });
+});
+
+describe("TracksPopup — substates", () => {
+  it("statusRank: IN_PROGRESS < OPEN/todo < OPEN/parked < CLOSED/*", () => {
+    const order = [
+      statusRank({ status: "IN_PROGRESS", substate: "active" }),
+      statusRank({ status: "OPEN", substate: "todo" }),
+      statusRank({ status: "OPEN", substate: "parked" }),
+      statusRank({ status: "CLOSED", substate: "done" }),
+    ];
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(new Set(order).size).toBe(4);
+    expect(statusRank({ status: "CLOSED", substate: "wontfix" })).toBe(order[3]);
+  });
+
+  it("marks a parked track in the list row", async () => {
+    const db = fixtureDb();
+    addTask(db, { workstream: "demo", localId: "solo", title: "Solo", impact: 50, effortDays: 1 });
+    parkTask(db, "solo", { workstream: "demo", why: "later" });
+    const snapshot = {
+      workstreamName: "demo",
+      tracks: getParallelTracks(db, "demo"),
+    } as WorkstreamSnapshot;
+    const { stdout, instance } = mount({ db, snapshot });
+    await waitForInkOutput(stdout);
+    const frame = latestRenderedFrame(stdout).join("\n");
+    expect(frame).toContain("(parked)");
     instance.unmount();
   });
 });

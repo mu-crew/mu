@@ -14,7 +14,8 @@
 import { Text } from "ink";
 import type { ReactElement } from "react";
 import { roiBucket, type WorkstreamSnapshot } from "../../../state.js";
-import { inkColorForStatus } from "../../format.js";
+import { formatPair } from "../../../tasks/status.js";
+import { inkColorForPair } from "../../format.js";
 import { agentByName, formatAgentRefDisplayName } from "../agent-display.js";
 import {
   type ColumnSpec,
@@ -68,8 +69,12 @@ export function ReadyCard({ snapshot, rowBudget, cols }: ReadyCardProps): ReactE
       rowBudget,
       cols,
       children: (
-        <Text dimColor>
-          (no ready tasks) every blocker is OPEN/IN_PROGRESS or every task is closed
+        // truncate-end: a wrapped second line would spill over the
+        // card's top border and erase its title.
+        <Text dimColor wrap="truncate-end">
+          {snapshot.parkedCount > 0
+            ? `(no ready tasks) ${snapshot.parkedCount} parked · the rest are blocked or closed`
+            : "(no ready tasks) every blocker is OPEN/IN_PROGRESS or every task is closed"}
         </Text>
       ),
     });
@@ -86,7 +91,7 @@ export function ReadyCard({ snapshot, rowBudget, cols }: ReadyCardProps): ReactE
   const agentLookup = agentByName(snapshot);
   const rows = shown.map((t, i) => [
     t.name,
-    t.status,
+    formatPair(t),
     `ROI ${meta[i]?.roiText ?? ""}`,
     t.title,
     formatAgentRefDisplayName(t.ownerName, agentLookup),
@@ -109,7 +114,7 @@ export function ReadyCard({ snapshot, rowBudget, cols }: ReadyCardProps): ReactE
         const padded = renderRow(row, widths, COLUMN_SPECS);
         const colors = [
           { bold: true }, // name
-          { color: inkColorForStatus(t.status) }, // status
+          { color: inkColorForPair(t) }, // status
           { color: colorForBucket(m.bucket) }, // roi
           { dimColor: true }, // title
           { dimColor: true }, // owner

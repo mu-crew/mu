@@ -145,6 +145,7 @@ function snapshotFor(db: Db): WorkstreamSnapshot {
     inProgress: [],
     blocked: [],
     recentClosed: listTasks(db, "demo").filter((t) => t.status === "CLOSED"),
+    parkedCount: 0,
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

@@ -83,7 +83,8 @@ export function TracksCard({ snapshot, rowBudget, cols }: TracksCardProps): Reac
       .join(", ");
     const diamond = t.roots.length > 1 ? GLYPH.merge : " ";
     const taskNoun = t.taskIds.size === 1 ? "task" : "tasks";
-    const counts = `(${t.taskIds.size} ${taskNoun} · ${t.readyCount} ready)`;
+    const parked = t.parked ? " (parked)" : "";
+    const counts = `(${t.taskIds.size} ${taskNoun} · ${t.readyCount} ready)${parked}`;
     return [`Track ${i + 1}`, diamond, goalNames, counts];
   });
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);

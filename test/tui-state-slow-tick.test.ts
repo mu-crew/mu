@@ -32,6 +32,7 @@ function fastSnapshot(label: string): WorkstreamSnapshot {
     inProgress: [],
     blocked: [],
     recentClosed: [],
+    parkedCount: 0,
     allTasks: [],
     workspaces: [
       {

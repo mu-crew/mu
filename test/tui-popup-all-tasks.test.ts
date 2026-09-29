@@ -425,6 +425,47 @@ describe("AllTasksPopup", () => {
     instance.unmount();
   });
 
+  it("renders CLOSED/wontfix and w hides it; p hides parked rows", async () => {
+    const db = fixtureDb();
+    const { closeTask, parkTask } = await import("../src/tasks.js");
+    for (const id of ["keep", "nope", "later"]) {
+      addTask(db, { workstream: "demo", localId: id, title: id, impact: 50, effortDays: 1 });
+    }
+    closeTask(db, "nope", { workstream: "demo", as: "wontfix", why: "x" });
+    parkTask(db, "later", { workstream: "demo", why: "y" });
+    const allTasks = sortTasks(listTasks(db, "demo"), "roi");
+    const stdin = createInkInputStream();
+    const stdout = createInkCaptureStream({ columns: 120, rows: 20 });
+    const instance = render(
+      createElement(AllTasksPopup, {
+        yank: async () => {},
+        onClose: () => {},
+        snapshot: { allTasks, blocked: [] } as unknown as WorkstreamSnapshot,
+        fastTickNonce: 0,
+        mode: "list",
+        onModeChange: () => {},
+        db,
+        workstream: "demo",
+      }),
+      { stdout, stdin, stderr: process.stderr, debug: false, patchConsole: false },
+    );
+    await waitForInkOutput(stdout);
+    let text = latestRenderedFrame(stdout).join("\n");
+    expect(text).toContain("CLOSED/wontfix");
+    expect(text).toContain(`${GLYPH.parked} OPEN/parked`);
+    await simulateInput(stdin, "w");
+    await waitForInkOutput(stdout);
+    text = latestRenderedFrame(stdout).join("\n");
+    expect(text).not.toContain("CLOSED/wontfix");
+    expect(text).toContain("OPEN/parked");
+    await simulateInput(stdin, "p");
+    await waitForInkOutput(stdout);
+    text = latestRenderedFrame(stdout).join("\n");
+    expect(text).not.toContain("OPEN/parked");
+    expect(text).toContain("keep");
+    instance.unmount();
+  });
+
   it("b key cycles through blocked filter modes and filters the list", async () => {
     const db = fixtureDb();
     addTask(db, {

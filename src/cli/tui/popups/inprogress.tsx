@@ -21,7 +21,8 @@
 // Per ROADMAP pledge: ink/react import limited to src/cli/tui/*.
 
 import type { ReactElement } from "react";
-import { inkColorForStatus } from "../../format.js";
+import { formatPair } from "../../../tasks/status.js";
+import { inkColorForPair } from "../../format.js";
 import { agentByName, formatAgentRefDisplayName } from "../agent-display.js";
 import { GLYPH, isStale } from "../cards/inprogress.js";
 import type { ColumnSpec } from "../columns.js";
@@ -62,7 +63,7 @@ const config: TaskListPopupConfig = {
         cells: [
           GLYPH,
           t.name,
-          t.status,
+          formatPair(t),
           formatAgentRefDisplayName(t.ownerName, agentLookup),
           formatSinceClaim(age),
           formatRoi(t.impact, t.effortDays),
@@ -71,7 +72,7 @@ const config: TaskListPopupConfig = {
         colors: [
           { color: "yellow" }, // glyph
           { bold: true }, // id
-          { color: inkColorForStatus(t.status) }, // status
+          { color: inkColorForPair(t) }, // status
           { dimColor: true }, // owner
           stale ? { color: "yellow" } : { dimColor: true }, // since-claim
           { dimColor: true }, // roi

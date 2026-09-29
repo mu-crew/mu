@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { inkColorForStatus } from "../src/cli/format.js";
+import { inkColorForPair } from "../src/cli/format.js";
 import { ReadyCard } from "../src/cli/tui/cards/ready.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
 import type { TaskRow } from "../src/tasks.js";
@@ -18,6 +18,7 @@ const EMPTY_SNAPSHOT: WorkstreamSnapshot = {
   inProgress: [],
   blocked: [],
   recentClosed: [],
+  parkedCount: 0,
   allTasks: [],
   workspaces: [],
   workspaceOrphans: [],
@@ -67,24 +68,28 @@ describe("TUI status column colours", () => {
     ["src/cli/tui/popups/inprogress.tsx", 2],
     ["src/cli/tui/popups/blocked.tsx", 2],
     ["src/cli/tui/popups/recent.tsx", 2],
-  ] as const)("%s derives row colours from inkColorForStatus(status)", (path, statusColumn) => {
+  ] as const)("%s derives row colours from inkColorForPair(t)", (path, statusColumn) => {
     const src = readFileSync(path, "utf-8");
-    expect(src).toContain("inkColorForStatus");
-    expect(src).toContain("{ color: inkColorForStatus(t.status) }, // status");
+    expect(src).toContain("{ color: inkColorForPair(t) }, // status");
     expect(src).not.toContain("{ dimColor: true }, // status");
     expect(statusColumn).toBeGreaterThan(0);
   });
 
-  it("all-tasks popup derives row colours from inkColorForStatus with blocked override", () => {
+  it("all-tasks popup derives row colours from inkColorForPair with blocked override", () => {
     const src = readFileSync("src/cli/tui/popups/all-tasks.tsx", "utf-8");
-    expect(src).toContain("inkColorForStatus");
-    // Blocked tasks get yellow; non-blocked use inkColorForStatus
-    expect(src).toContain('isBlocked ? "yellow" : inkColorForStatus(t.status)');
+    // Blocked tasks get yellow; non-blocked use inkColorForPair
+    expect(src).toContain('isBlocked ? "yellow" : inkColorForPair(t)');
   });
 
-  it("all task statuses have the expected Ink colour", () => {
-    expect(inkColorForStatus("OPEN")).toBe("cyan");
-    expect(inkColorForStatus("IN_PROGRESS")).toBe("yellow");
-    expect(inkColorForStatus("CLOSED")).toBe("green");
+  it.each([
+    ["OPEN", "todo", "cyan"],
+    ["OPEN", "parked", "gray"],
+    ["IN_PROGRESS", "active", "yellow"],
+    ["CLOSED", "done", "green"],
+    ["CLOSED", "wontfix", "red"],
+    ["CLOSED", "duplicate", "red"],
+    ["CLOSED", "superseded", "red"],
+  ] as const)("inkColorForPair(%s/%s) is %s", (status, substate, color) => {
+    expect(inkColorForPair({ status, substate })).toBe(color);
   });
 });

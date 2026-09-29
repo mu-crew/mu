@@ -103,6 +103,7 @@ function snapshotWithReady(ready: TaskRow[]): WorkstreamSnapshot {
     inProgress: [],
     blocked: [],
     recentClosed: [],
+    parkedCount: 0,
     allTasks: ready,
     workspaces: [],
     workspaceOrphans: [],

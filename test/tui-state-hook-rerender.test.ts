@@ -150,6 +150,34 @@ describe("snapshotKey — visible-affecting field projection", () => {
     expect(snapshotKeyString(a)).not.toBe(snapshotKeyString(b));
   });
 
+  it("differs when only a task's substate changes (park/unpark)", () => {
+    const t = {
+      name: "foo",
+      workstreamName: "ws",
+      title: "t",
+      status: "OPEN" as const,
+      substate: "todo" as const,
+      impact: 50,
+      effortDays: 1,
+      ownerName: null,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const a = makeSnap({ allTasks: [t] });
+    const b = makeSnap({ allTasks: [{ ...t, substate: "parked" }] });
+    expect(snapshotKeyString(a)).not.toBe(snapshotKeyString(b));
+  });
+
+  it("differs when parkedCount or a track's parked flag changes", () => {
+    expect(snapshotKeyString(makeSnap({ parkedCount: 0 }))).not.toBe(
+      snapshotKeyString(makeSnap({ parkedCount: 1 })),
+    );
+    const track = { roots: [], taskIds: new Set(["a"]), readyCount: 0, parked: false };
+    expect(snapshotKeyString(makeSnap({ tracks: [track] }))).not.toBe(
+      snapshotKeyString(makeSnap({ tracks: [{ ...track, parked: true }] })),
+    );
+  });
+
   it("differs when a task's updatedAt changes (drives relative time column)", () => {
     const t = {
       name: "foo",
@@ -278,6 +306,7 @@ describe("snapshotKey — visible-affecting field projection", () => {
         "blocked",
         "inProgress",
         "orphanPaneIds",
+        "parkedCount",
         "ready",
         "recent",
         "recentClosed",

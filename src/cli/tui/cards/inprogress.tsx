@@ -49,7 +49,8 @@
 
 import type { ReactElement } from "react";
 import type { WorkstreamSnapshot } from "../../../state.js";
-import { inkColorForStatus } from "../../format.js";
+import { formatPair } from "../../../tasks/status.js";
+import { inkColorForPair } from "../../format.js";
 import { agentByName, agentStateGlyph, formatAgentRefDisplayName } from "../agent-display.js";
 import {
   type ColumnSpec,
@@ -128,7 +129,7 @@ export function InProgressCard({ snapshot, rowBudget, cols }: InProgressCardProp
   const rows = shown.map((t, i) => [
     GLYPH,
     t.name,
-    t.status,
+    formatPair(t),
     formatAgentRefDisplayName(t.ownerName, agentLookup),
     formatSinceClaim(ages[i] ?? null),
     t.title,
@@ -153,7 +154,7 @@ export function InProgressCard({ snapshot, rowBudget, cols }: InProgressCardProp
         const colors = [
           { color: "yellow" }, // glyph
           { bold: true }, // id
-          { color: inkColorForStatus(t.status) }, // status
+          { color: inkColorForPair(t) }, // status
           { dimColor: true }, // owner
           stale ? { color: "yellow" } : { dimColor: true }, // since
           { dimColor: true }, // title

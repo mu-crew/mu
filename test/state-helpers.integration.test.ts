@@ -205,6 +205,7 @@ describe("loadWorkstreamSnapshot", () => {
       inProgress: [],
       blocked: [],
       recentClosed: [],
+      parkedCount: 0,
       allTasks: [],
       workspaces: [],
       workspaceOrphans: [],
