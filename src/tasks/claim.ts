@@ -18,7 +18,12 @@
 import type { Db } from "../db.js";
 import { activeMux } from "../mux.js";
 import { withOpContext } from "../op-context.js";
-import { ClaimerNotRegisteredError, TaskAlreadyOwnedError, TaskNotFoundError } from "./errors.js";
+import {
+  ClaimerNotRegisteredError,
+  TaskAlreadyOwnedError,
+  TaskNotFoundError,
+  TaskParkedError,
+} from "./errors.js";
 import { type EvidenceOption, recordEvidenceNote } from "./lifecycle.js";
 import { getTask } from "./queries.js";
 import { DEFAULT_SUBSTATE, type TaskStatus } from "./status.js";
@@ -183,6 +188,12 @@ export interface ClaimTaskOptions extends EvidenceOption {
    * title (e.g. "deploy-bot" rather than "pi-mu").
    */
   actor?: string;
+  /**
+   * Claim an OPEN/parked task anyway. Without it, a parked task throws
+   * TaskParkedError before any write: parking means "keep out of the
+   * scheduler", so overriding it must be explicit.
+   */
+  force?: boolean;
 }
 
 export interface ClaimResult {
@@ -288,6 +299,7 @@ async function claimTaskImpl(
       // (workstream, local_id) pair for the rest of the transaction.
       const before = getTask(db, localId, opts.workstream);
       if (!before) throw new TaskNotFoundError(localId);
+      assertNotParked(before, opts);
 
       const now = new Date().toISOString();
       const result = db
@@ -328,6 +340,18 @@ async function claimTaskImpl(
       };
     })(),
   );
+}
+
+/** The parked-claim guard shared by the worker and --self paths. The
+ *  UPDATE's `status = 'OPEN'` CASE already maps parked → active, so a
+ *  forced claim needs nothing else. */
+function assertNotParked(
+  task: { name: string; status: TaskStatus; substate: string; workstreamName: string },
+  opts: ClaimTaskOptions,
+): void {
+  if (task.status === "OPEN" && task.substate === "parked" && opts.force !== true) {
+    throw new TaskParkedError(task.name, task.workstreamName);
+  }
 }
 
 /**
@@ -410,6 +434,7 @@ async function claimSelf(db: Db, localId: string, opts: ClaimTaskOptions): Promi
       // elsewhere can't be self-claimed by accident.
       const before = getTask(db, localId, opts.workstream);
       if (!before) throw new TaskNotFoundError(localId);
+      assertNotParked(before, opts);
 
       // Anonymous claim: owner stays NULL, status flips OPEN -> IN_PROGRESS.
       // Gate on `owner_id IS NULL` so an in-flight worker claim can't be

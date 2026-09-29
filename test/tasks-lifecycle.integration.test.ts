@@ -403,7 +403,14 @@ describe("setTaskStatus / closeTask / openTask", () => {
 
   it("closeTask flips OPEN → CLOSED and reports the change", () => {
     const r = closeTask(db, "design", { workstream: "auth" });
-    expect(r).toEqual({ previousStatus: "OPEN", status: "CLOSED", changed: true });
+    expect(r).toEqual({
+      previousStatus: "OPEN",
+      status: "CLOSED",
+      previousSubstate: "todo",
+      substate: "done",
+      changed: true,
+      unblocked: [],
+    });
     expect(getTask(db, "design", "auth")?.status).toBe("CLOSED");
   });
 
@@ -417,7 +424,13 @@ describe("setTaskStatus / closeTask / openTask", () => {
   it("openTask flips CLOSED → OPEN and is idempotent on already-OPEN", () => {
     closeTask(db, "design", { workstream: "auth" });
     const r1 = openTask(db, "design", { workstream: "auth" });
-    expect(r1).toEqual({ previousStatus: "CLOSED", status: "OPEN", changed: true });
+    expect(r1).toEqual({
+      previousStatus: "CLOSED",
+      status: "OPEN",
+      previousSubstate: "done",
+      substate: "todo",
+      changed: true,
+    });
     const r2 = openTask(db, "design", { workstream: "auth" });
     expect(r2.changed).toBe(false);
   });
@@ -431,7 +444,13 @@ describe("setTaskStatus / closeTask / openTask", () => {
 
   it("setTaskStatus accepts arbitrary status", () => {
     const r = setTaskStatus(db, "design", "IN_PROGRESS", { workstream: "auth" });
-    expect(r).toEqual({ previousStatus: "OPEN", status: "IN_PROGRESS", changed: true });
+    expect(r).toEqual({
+      previousStatus: "OPEN",
+      status: "IN_PROGRESS",
+      previousSubstate: "todo",
+      substate: "active",
+      changed: true,
+    });
     expect(getTask(db, "design", "auth")?.status).toBe("IN_PROGRESS");
   });
 

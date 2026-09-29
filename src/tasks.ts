@@ -63,14 +63,18 @@ export {
   ClaimerNotRegisteredError,
   CrossWorkstreamEdgeError,
   CycleError,
+  InvalidSubstateError,
   ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
+  SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
   TaskNotFoundError,
   TaskNotInWorkstreamError,
+  TaskParkedError,
+  TaskParkStateError,
 } from "./tasks/errors.js";
 export {
   type IdFromTitleResult,
@@ -84,13 +88,19 @@ export {
 } from "./tasks/id.js";
 export {
   type CloseSkippedResult,
+  type CloseSubstate,
   type CloseTaskOptions,
+  type CloseTaskResult,
   closeTask,
   type EvidenceOption,
   evidenceSuffix,
   openTask,
+  type ParkTaskOptions,
+  parkTask,
+  type SetStatusOptions,
   type SetStatusResult,
   setTaskStatus,
+  unparkTask,
 } from "./tasks/lifecycle.js";
 export {
   getTask,

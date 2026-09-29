@@ -28,14 +28,18 @@ import {
   ClaimerNotRegisteredError,
   CrossWorkstreamEdgeError,
   CycleError,
+  InvalidSubstateError,
   ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
+  SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
   TaskNotFoundError,
   TaskNotInWorkstreamError,
+  TaskParkedError,
+  TaskParkStateError,
 } from "../src/tasks.js";
 import { PaneNotFoundError, TmuxError } from "../src/tmux.js";
 import {
@@ -95,6 +99,10 @@ describe("classifyError exit-code map", () => {
     [new SchemaTooOldError(4, 5), 4, "conflict"],
     [new TaskIdInvalidError("Bad ID"), 4, "conflict"],
     [new WorkstreamExistsError("existing-ws"), 4, "conflict"],
+    [new SubstateReasonRequiredError("close", "wontfix", "foo"), 4, "conflict"],
+    [new TaskParkStateError("foo", "IN_PROGRESS", "ws"), 4, "conflict"],
+    [new TaskParkedError("foo", "ws"), 4, "conflict"],
+    [new InvalidSubstateError("CLOSED", "parked"), 4, "conflict"],
 
     // switch branches 12-14: spawn failures
     [
