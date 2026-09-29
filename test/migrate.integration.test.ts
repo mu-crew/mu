@@ -28,7 +28,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runImporter, UsageError } from "../scripts/migrate.js";
+import { recoverLegacySubstates, runImporter, UsageError } from "../scripts/migrate.js";
+import { openDb } from "../src/db.js";
+import { checkDrift } from "../src/drift.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCli } from "./_runCli.js";
 
@@ -133,6 +135,149 @@ CREATE TABLE task_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER N
 CREATE TABLE ops (seq INTEGER PRIMARY KEY AUTOINCREMENT, hlc TEXT NOT NULL, machine_id TEXT NOT NULL, group_id TEXT NOT NULL, actor TEXT, intent TEXT, entity TEXT NOT NULL, key TEXT NOT NULL, op TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(machine_id, hlc));
 CREATE TABLE sync_peers (machine_id TEXT PRIMARY KEY, last_applied_seq INTEGER NOT NULL DEFAULT 0, last_seen_at TEXT);
 CREATE TABLE vcs_workspaces (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER NOT NULL UNIQUE REFERENCES agents(id) ON DELETE CASCADE, workstream_id INTEGER NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE, backend TEXT NOT NULL, path TEXT NOT NULL UNIQUE, parent_ref TEXT, created_at TEXT NOT NULL);
+`;
+
+/** The released v10 schema (mu 2.0.0, `git show 74bac54:src/db.ts`),
+ *  comments stripped. Inlined for the same reason as V9_SCHEMA: src/db.ts
+ *  only knows v11. */
+const V10_SCHEMA = `
+CREATE TABLE IF NOT EXISTS schema_version (
+  id      INTEGER PRIMARY KEY CHECK (id = 1),
+  version INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS machine_identity (
+  id           INTEGER PRIMARY KEY CHECK (id = 1),
+  machine_id   TEXT NOT NULL,
+  hostname     TEXT,
+  created_at   TEXT NOT NULL,
+  last_wall    INTEGER NOT NULL DEFAULT 0,
+  last_counter INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS workstreams (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT UNIQUE NOT NULL,
+  created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agents (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  workstream_id INTEGER NOT NULL REFERENCES workstreams (id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  cli           TEXT NOT NULL DEFAULT 'pi',
+  pane_id       TEXT NOT NULL,
+  status        TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'full-access',
+  tab           TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  UNIQUE (workstream_id, name),
+  CHECK (status IN (
+    'spawning', 'busy', 'needs_input', 'needs_permission',
+    'free', 'unreachable', 'terminated'
+  )),
+  CHECK (role IN ('full-access', 'read-only'))
+);
+CREATE INDEX IF NOT EXISTS idx_agents_workstream ON agents (workstream_id);
+CREATE INDEX IF NOT EXISTS idx_agents_status ON agents (status);
+CREATE TABLE IF NOT EXISTS tasks (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  workstream_id INTEGER NOT NULL REFERENCES workstreams (id) ON DELETE CASCADE,
+  local_id      TEXT NOT NULL,
+  title         TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'OPEN',
+  impact        INTEGER NOT NULL,
+  effort_days   REAL NOT NULL,
+  owner_id      INTEGER REFERENCES agents (id) ON DELETE SET NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  UNIQUE (workstream_id, local_id),
+  CHECK (impact BETWEEN 1 AND 100),
+  CHECK (effort_days > 0),
+  CHECK (status IN ('OPEN', 'IN_PROGRESS', 'CLOSED'))
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_workstream ON tasks (workstream_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);
+CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks (owner_id);
+CREATE TABLE IF NOT EXISTS task_edges (
+  from_task_id INTEGER NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+  to_task_id   INTEGER NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+  created_at   TEXT NOT NULL,
+  PRIMARY KEY (from_task_id, to_task_id),
+  CHECK (from_task_id <> to_task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_edges_to ON task_edges (to_task_id);
+CREATE TABLE IF NOT EXISTS task_notes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id    INTEGER NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+  author     TEXT,
+  content    TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes (task_id);
+CREATE TABLE IF NOT EXISTS ops (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  hlc        TEXT NOT NULL,
+  machine_id TEXT NOT NULL,
+  group_id   TEXT NOT NULL,
+  actor      TEXT,
+  intent     TEXT,
+  entity     TEXT NOT NULL,
+  key        TEXT NOT NULL,
+  op         TEXT NOT NULL CHECK (op IN ('put','del')),
+  payload    TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (machine_id, hlc)
+);
+CREATE INDEX IF NOT EXISTS idx_ops_hlc ON ops (hlc);
+CREATE INDEX IF NOT EXISTS idx_ops_entity_key ON ops (entity, key);
+CREATE INDEX IF NOT EXISTS idx_ops_group ON ops (group_id);
+CREATE TABLE IF NOT EXISTS sync_peers (
+  machine_id       TEXT PRIMARY KEY,
+  last_applied_seq INTEGER NOT NULL DEFAULT 0,
+  last_seen_at     TEXT
+);
+CREATE TABLE IF NOT EXISTS vcs_workspaces (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id      INTEGER NOT NULL UNIQUE REFERENCES agents (id) ON DELETE CASCADE,
+  workstream_id INTEGER NOT NULL REFERENCES workstreams (id) ON DELETE CASCADE,
+  backend       TEXT NOT NULL CHECK (backend IN ('jj', 'sl', 'git', 'none')),
+  path          TEXT NOT NULL UNIQUE,
+  parent_ref    TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vcs_workspaces_workstream ON vcs_workspaces (workstream_id);
+DROP VIEW IF EXISTS ready;
+CREATE VIEW ready AS
+  SELECT t.*
+    FROM tasks t
+   WHERE t.status = 'OPEN'
+     AND NOT EXISTS (
+       SELECT 1
+         FROM task_edges e
+         JOIN tasks      b ON e.from_task_id = b.id
+        WHERE e.to_task_id = t.id
+          AND b.status <> 'CLOSED'
+     );
+DROP VIEW IF EXISTS blocked;
+CREATE VIEW blocked AS
+  SELECT t.*
+    FROM tasks t
+   WHERE t.status = 'OPEN'
+     AND EXISTS (
+       SELECT 1
+         FROM task_edges e
+         JOIN tasks      b ON e.from_task_id = b.id
+        WHERE e.to_task_id = t.id
+          AND b.status <> 'CLOSED'
+     );
+DROP VIEW IF EXISTS goals;
+CREATE VIEW goals AS
+  SELECT t.*
+    FROM tasks t
+   WHERE t.status <> 'CLOSED'
+     AND NOT EXISTS (
+       SELECT 1 FROM task_edges WHERE from_task_id = t.id
+     );
+
 `;
 
 const T = (minutes: number): string => new Date(Date.UTC(2026, 0, 1, 0, minutes)).toISOString();
@@ -452,6 +597,116 @@ function makeV9Db(path: string): Fixture {
   return { path, sha: sha256(path) };
 }
 
+/** HLC for a v10 fixture op minted at T(minutes). */
+const H = (minutes: number, counter = 0): string =>
+  `${String(Date.parse(T(minutes))).padStart(16, "0")}.${String(counter).padStart(6, "0")}.v10-machine`;
+
+/** A v10 DB shaped like a real one: legacy REJECTED/DEFERRED statuses
+ *  survive only in the ops log, and the projected rows hold OPEN, which
+ *  is what v10's apply path folded them to.
+ *
+ *    demo/d  legacy DEFERRED op, nothing newer
+ *    demo/r  legacy REJECTED op; demo/b is blocked by it
+ *    demo/o  legacy DEFERRED, then a later task.open  -> a decision
+ *    demo/n  no legacy op; migrate.* OPEN put + MIGRATION: note
+ *    demo/u  legacy DEFERRED, deleted, then restored by a v10 undo (OPEN)
+ *    gone/t  legacy DEFERRED, deleted + undone (OPEN), then torn down
+ *            with its workstream under group 'g-teardown' */
+function makeV10Db(path: string): Fixture {
+  const db = new Database(path);
+  db.pragma("foreign_keys = ON");
+  db.exec(V10_SCHEMA);
+  db.prepare("INSERT INTO schema_version VALUES (1, 10)").run();
+  db.prepare("INSERT INTO machine_identity VALUES (1, 'v10-machine', 'box', ?, 0, 0)").run(T(0));
+
+  const op = db.prepare(
+    `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
+     VALUES (@hlc, 'v10-machine', @group, 'worker-1', @intent, @entity, @key, @op, @payload, @created)`,
+  );
+  let n = 0;
+  let seq = 0;
+  const put = (
+    minute: number,
+    intent: string,
+    entity: string,
+    key: string,
+    payload: Record<string, unknown>,
+    group = `g${++n}`,
+  ): void => {
+    op.run({
+      hlc: H(minute, ++seq),
+      group,
+      intent,
+      entity,
+      key,
+      op: "put",
+      payload: JSON.stringify(payload),
+      created: T(minute),
+    });
+  };
+  const del = (minute: number, intent: string, entity: string, key: string, group = `g${++n}`) => {
+    op.run({
+      hlc: H(minute, ++seq),
+      group,
+      intent,
+      entity,
+      key,
+      op: "del",
+      payload: "{}",
+      created: T(minute),
+    });
+  };
+  const task = (localId: string, status: string, minute: number) => ({
+    local_id: localId,
+    title: `Task ${localId}`,
+    status,
+    impact: 50,
+    effort_days: 1,
+    created_at: T(minute),
+    updated_at: T(minute),
+  });
+
+  put(0, "workstream.init", "workstream", "demo", { name: "demo", created_at: T(0) });
+  put(0, "workstream.init", "workstream", "gone", { name: "gone", created_at: T(0) });
+  put(1, "migrate.v9-projection", "task", "demo/d", task("d", "DEFERRED", 1));
+  put(1, "migrate.v9-projection", "task", "demo/r", task("r", "REJECTED", 1));
+  put(1, "task.add", "task", "demo/b", task("b", "OPEN", 1));
+  put(2, "task.block", "edge", "demo/r->demo/b", { created_at: T(2) });
+  put(1, "migrate.v9-projection", "task", "demo/o", task("o", "DEFERRED", 1));
+  put(5, "task.open", "task", "demo/o", { status: "OPEN", updated_at: T(5) });
+  put(1, "migrate.v9-projection", "task", "demo/n", task("n", "OPEN", 1));
+  put(2, "migrate.status", "note", "demo/n#migration-deferred", {
+    author: "migration",
+    content: "MIGRATION: previous status was DEFERRED",
+    created_at: T(2),
+  });
+  put(1, "migrate.v9-projection", "task", "demo/u", task("u", "DEFERRED", 1));
+  del(3, "task.delete", "task", "demo/u");
+  put(4, "undo", "task", "demo/u", task("u", "OPEN", 1));
+  put(1, "migrate.v9-projection", "task", "gone/t", task("t", "DEFERRED", 1));
+  del(3, "task.delete", "task", "gone/t");
+  put(4, "undo", "task", "gone/t", task("t", "OPEN", 1));
+  del(6, "workstream.teardown", "task", "gone/t", "g-teardown");
+  del(6, "workstream.teardown", "workstream", "gone", "g-teardown");
+
+  // The v10 projection: every legacy status folded to OPEN; gone/ absent.
+  db.prepare("INSERT INTO workstreams VALUES (1, 'demo', ?)").run(T(0));
+  const row = db.prepare("INSERT INTO tasks VALUES (?, 1, ?, ?, 'OPEN', 50, 1, NULL, ?, ?)");
+  const ids: Record<string, number> = {};
+  for (const [i, id] of ["d", "r", "b", "o", "n", "u"].entries()) {
+    ids[id] = i + 1;
+    row.run(i + 1, id, `Task ${id}`, T(1), id === "o" ? T(5) : T(1));
+  }
+  db.prepare("INSERT INTO task_edges VALUES (?, ?, ?)").run(ids.r, ids.b, T(2));
+  db.prepare("INSERT INTO task_notes VALUES (1, ?, 'migration', ?, ?)").run(
+    ids.n,
+    "MIGRATION: previous status was DEFERRED",
+    T(2),
+  );
+  db.close();
+  return { path, sha: sha256(path) };
+}
+
 function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
@@ -493,7 +748,7 @@ describe("scripts/migrate.ts", () => {
 
   it("migrates v9 history, legacy statuses, relationships, and valid machine-local rows", async () => {
     const v9 = makeV9Db(join(dir, "v9.db"));
-    const target = join(dir, "v10.db");
+    const target = join(dir, "v11.db");
     const run = runScript([v9.path, "--out", target]);
     expect(run.exitCode).toBe(0);
     expect(sha256(v9.path)).toBe(v9.sha);
@@ -508,9 +763,11 @@ describe("scripts/migrate.ts", () => {
 
     const db = new Database(target, { readonly: true });
     try {
-      expect(db.prepare("SELECT local_id, status, owner_id FROM tasks ORDER BY id").all()).toEqual([
-        { local_id: "rejected", status: "CLOSED", owner_id: 1 },
-        { local_id: "deferred", status: "OPEN", owner_id: null },
+      expect(
+        db.prepare("SELECT local_id, status, substate, owner_id FROM tasks ORDER BY id").all(),
+      ).toEqual([
+        { local_id: "rejected", status: "CLOSED", substate: "wontfix", owner_id: 1 },
+        { local_id: "deferred", status: "OPEN", substate: "parked", owner_id: null },
       ]);
       expect(
         db
@@ -519,11 +776,15 @@ describe("scripts/migrate.ts", () => {
              JOIN tasks t ON t.id = n.task_id ORDER BY t.local_id, n.content`,
           )
           .all(),
-      ).toEqual([
-        { local_id: "deferred", content: "MIGRATION: previous status was DEFERRED" },
-        { local_id: "rejected", content: "MIGRATION: previous status was REJECTED" },
-        { local_id: "rejected", content: "existing note" },
-      ]);
+      ).toEqual([{ local_id: "rejected", content: "existing note" }]);
+      // The substate carries the legacy fact; no MIGRATION: note is minted.
+      expect(
+        (
+          db.prepare("SELECT COUNT(*) AS n FROM ops WHERE intent = 'migrate.status'").get() as {
+            n: number;
+          }
+        ).n,
+      ).toBe(0);
       expect((db.prepare("SELECT COUNT(*) AS n FROM task_edges").get() as { n: number }).n).toBe(1);
       expect(db.prepare("SELECT name, pane_id FROM agents").all()).toEqual([
         { name: "worker-1", pane_id: "%17" },
@@ -637,11 +898,6 @@ describe("scripts/migrate.ts", () => {
         { author: "worker-1", content: "first note", created_at: T(7) },
         { author: null, content: "anonymous note", created_at: T(8) },
         { author: "worker-1", content: "dup", created_at: T(9) },
-        {
-          author: "migration",
-          content: "MIGRATION: previous status was REJECTED",
-          created_at: T(20),
-        },
       ]);
 
       // Machine-local tables stay EMPTY. Resurrecting them would produce
@@ -668,7 +924,6 @@ describe("scripts/migrate.ts", () => {
         .all();
       // Synthetic imports never pretend to be live edits.
       expect(intents).toEqual([
-        { intent: "migrate.status", n: 1 },
         // 2 ws + 3 tasks + 1 edge + 4 notes
         { intent: "migrate.v8", n: 10 },
         { intent: "migrate.v8-log", n: 2 },
@@ -725,7 +980,7 @@ describe("scripts/migrate.ts", () => {
     expect(parsed.drift?.rowsCompared).toEqual({
       workstreams: 2,
       tasks: 3,
-      task_notes: 4,
+      task_notes: 3,
       task_edges: 1,
     });
   });
@@ -823,14 +1078,14 @@ describe("scripts/migrate.ts", () => {
       ).toBe("oldws");
       const task = db
         .prepare(
-          `SELECT t.title AS title, t.status AS status
+          `SELECT t.title AS title, t.status AS status, t.substate AS substate
              FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
             WHERE w.name = 'oldws' AND t.local_id = 'archived_alpha'`,
         )
-        .get() as { title: string; status: string };
-      // DEFERRED projects as OPEN; migration note records the original.
+        .get() as { title: string; status: string; substate: string };
+      // DEFERRED maps onto OPEN/parked; no MIGRATION note is written.
       expect(task.title).toBe("Archived alpha");
-      expect(task.status).toBe("OPEN");
+      expect(task).toMatchObject({ status: "OPEN", substate: "parked" });
       expect(
         (
           db
@@ -842,7 +1097,7 @@ describe("scripts/migrate.ts", () => {
             )
             .get() as { n: number }
         ).n,
-      ).toBe(1);
+      ).toBe(0);
       expect(
         (
           db.prepare("SELECT COUNT(*) AS n FROM ops WHERE intent = 'migrate.archive'").get() as {
@@ -944,6 +1199,119 @@ describe("scripts/migrate.ts", () => {
     db.close();
     const wrongVersion = runScript([unsupported, "--out", join(dir, "nope.db")]);
     expect(wrongVersion.exitCode).toBe(2);
-    expect(wrongVersion.stderr).toContain("only understands v7, v8 and v9");
+    expect(wrongVersion.stderr).toContain("only understands v7, v8, v9 and v10");
+  });
+
+  describe("v10 → v11 with legacy substate recovery", () => {
+    let v10: Fixture;
+    let target: string;
+    let run: Run;
+
+    const pairs = (path: string): Record<string, string> => {
+      const db = new Database(path, { readonly: true });
+      try {
+        const rows = db
+          .prepare(
+            `SELECT w.name || '/' || t.local_id AS key, t.status || '/' || t.substate AS pair
+               FROM tasks t JOIN workstreams w ON w.id = t.workstream_id`,
+          )
+          .all() as { key: string; pair: string }[];
+        return Object.fromEntries(rows.map((r) => [r.key, r.pair]));
+      } finally {
+        db.close();
+      }
+    };
+    const recoveryOps = (path: string): string[] => {
+      const db = new Database(path, { readonly: true });
+      try {
+        return (
+          db
+            .prepare("SELECT key FROM ops WHERE intent = 'migrate.substate' ORDER BY key")
+            .all() as { key: string }[]
+        ).map((r) => r.key);
+      } finally {
+        db.close();
+      }
+    };
+
+    beforeEach(() => {
+      v10 = makeV10Db(join(dir, "v10.db"));
+      target = join(dir, "v10-out.db");
+      run = runScript([v10.path, "--out", target]);
+    });
+
+    it("maps legacy ops, keeps later decisions, and recovers past undo and notes", () => {
+      expect(run.stderr).toBe("");
+      expect(run.exitCode).toBe(0);
+      expect(pairs(target)).toEqual({
+        "demo/d": "OPEN/parked", // legacy op is the newest writer: the replay maps it
+        "demo/r": "CLOSED/wontfix",
+        "demo/b": "OPEN/todo",
+        "demo/o": "OPEN/todo", // a later task.open is a decision and wins
+        "demo/n": "OPEN/parked", // recovered from the MIGRATION: note
+        "demo/u": "OPEN/parked", // the undo restore is not a decision
+      });
+      // Captured recovery ops only where the replay could not derive it.
+      expect(recoveryOps(target)).toEqual(["demo/n", "demo/u"]);
+      expect(run.stdout).toMatch(/demo\s+d\s+OPEN -> OPEN\/parked\s+\(replay\)/);
+      expect(run.stdout).toMatch(/demo\s+r\s+OPEN -> CLOSED\/wontfix\s+\(replay\)/);
+      expect(run.stdout).toMatch(/demo\s+n\s+OPEN -> OPEN\/parked\s+\(note\)/);
+      expect(run.stdout).toMatch(/demo\s+u\s+OPEN -> OPEN\/parked\s+\(ops\)/);
+      expect(run.stdout).toMatch(/unblocked by wontfix recovery:\n\s+demo\/b/);
+    });
+
+    it("leaves the source byte-identical and the target drift-free", async () => {
+      expect(sha256(v10.path)).toBe(v10.sha);
+      expect(run.stdout).toContain("source unchanged YES");
+      const db = openDb({ path: target });
+      try {
+        const report = checkDrift(db);
+        expect(report.records).toEqual([]);
+        expect(report.clean).toBe(true);
+      } finally {
+        db.close();
+      }
+    });
+
+    it("--recover restores a legacy pair after an undo-restore, then finds nothing", async () => {
+      const undo = await runCli(["undo", "g-teardown", "--yes"], target);
+      expect(undo.exitCode).toBeNull();
+      expect(pairs(target)["gone/t"]).toBe("OPEN/todo");
+
+      const first = runScript(["--recover", target]);
+      expect(first.exitCode).toBe(0);
+      expect(first.stdout).toMatch(/gone\s+t\s+OPEN -> OPEN\/parked\s+\(ops\)/);
+      expect(pairs(target)["gone/t"]).toBe("OPEN/parked");
+
+      const second = runScript(["--recover", target]);
+      expect(second.exitCode).toBe(0);
+      expect(second.stdout).toContain("LEGACY SUBSTATE RECOVERY  0 task(s)");
+
+      const db = openDb({ path: target });
+      try {
+        expect(checkDrift(db).clean).toBe(true);
+      } finally {
+        db.close();
+      }
+    });
+
+    it("--recover refuses a non-v11 DB and -w scopes it", () => {
+      const refused = runScript(["--recover", v10.path]);
+      expect(refused.exitCode).toBe(2);
+      expect(refused.stderr).toContain("needs a v11 DB");
+      expect(sha256(v10.path)).toBe(v10.sha);
+      const scoped = runScript(["--recover", target, "-w", "nope"]);
+      expect(scoped.exitCode).toBe(0);
+      expect(scoped.stdout).toContain("0 task(s)");
+    });
+
+    it("recoverLegacySubstates is idempotent on the migrated target", () => {
+      const db = openDb({ path: target });
+      try {
+        expect(recoverLegacySubstates(db)).toEqual([]);
+      } finally {
+        db.close();
+      }
+    });
   });
 });

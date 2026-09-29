@@ -85,6 +85,23 @@ describe("drift detection", () => {
       expect(record.expected).toBe("60"); // the log is canonical
     });
 
+    it("names the substate field when only the pair's substate drifted", () => {
+      seed();
+      uncaptured(() => {
+        // OPEN/parked is a valid pair, so the composite FK accepts it.
+        db.prepare("UPDATE tasks SET substate = 'parked' WHERE local_id = 'a'").run();
+      });
+
+      const report = checkDrift(db);
+      expect(report.totalDrift).toBe(1);
+      const record = report.records[0];
+      if (!record) throw new Error("expected a drift record");
+      expect(record.key).toBe("demo/a");
+      expect(record.field).toBe("substate");
+      expect(record.live).toBe("parked");
+      expect(record.expected).toBe("todo");
+    });
+
     it("detects an uncaptured INSERT as a row the log cannot explain", () => {
       seed();
       uncaptured(() => {
