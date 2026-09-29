@@ -386,6 +386,16 @@ export async function cmdTaskShow(
   } else {
     for (const n of notes) printNote(n);
   }
+  // Only the non-default substates get a hint: they are the ones whose
+  // way out is not obvious from the status alone.
+  const ref = `${task.name} -w ${task.workstreamName}`;
+  if (task.substate === "parked") {
+    console.log("");
+    printNextSteps([{ intent: "Return it to next", command: `mu task unpark ${ref}` }]);
+  } else if (task.status === "CLOSED" && task.substate !== "done") {
+    console.log("");
+    printNextSteps([{ intent: "Reopen it", command: `mu task open ${ref}` }]);
+  }
 }
 
 export async function cmdTaskNotes(

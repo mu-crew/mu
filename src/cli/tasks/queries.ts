@@ -29,7 +29,7 @@ import {
   withRoiAll,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
-import { pc } from "../../output.js";
+import { pc, printNextSteps } from "../../output.js";
 import {
   listReady,
   listTasks,
@@ -145,7 +145,18 @@ export async function cmdTaskNext(
     return;
   }
   if (tasks.length === 0) {
-    console.log(pc.dim("(no ready tasks)"));
+    const parked = listTasks(db, workstream, { substate: "parked" }).length;
+    if (parked === 0) {
+      console.log(pc.dim("(no ready tasks)"));
+      return;
+    }
+    console.log(pc.dim(`(no ready tasks; ${parked} parked)`));
+    printNextSteps([
+      {
+        intent: "List parked tasks",
+        command: `mu task list --substate parked -w ${workstream}`,
+      },
+    ]);
     return;
   }
   const tableOpts: Parameters<typeof formatTaskListTable>[1] = {};

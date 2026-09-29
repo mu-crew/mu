@@ -107,6 +107,26 @@ describe("renderOp prose", () => {
     expect(r?.detail).toBe("→ CLOSED");
   });
 
+  it("task.close shows a non-default substate; the default stays bare", () => {
+    const wontfix = renderOp(
+      op({ intent: "task.close", payload: '{"status":"CLOSED","substate":"wontfix"}' }),
+    );
+    expect(wontfix?.detail).toBe("→ CLOSED/wontfix");
+    const done = renderOp(
+      op({ intent: "task.close", payload: '{"status":"CLOSED","substate":"done"}' }),
+    );
+    expect(done?.detail).toBe("→ CLOSED");
+  });
+
+  it("task.park / task.unpark read as substate transitions", () => {
+    expect(renderOpLine(op({ intent: "task.park", payload: '{"substate":"parked"}' }))).toBe(
+      "task park t1 → OPEN/parked",
+    );
+    expect(renderOpLine(op({ intent: "task.unpark", payload: '{"substate":"todo"}' }))).toBe(
+      "task unpark t1 → OPEN",
+    );
+  });
+
   it("task.claim attributes via ops.actor, since the payload cannot on --self", () => {
     // The --self path leaves owner_id NULL by design, so the payload has
     // no owner to name; ops.actor is the only record.

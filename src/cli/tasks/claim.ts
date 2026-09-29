@@ -31,6 +31,7 @@ import { shellQuote } from "../../shell-quote.js";
 import { findRemoteDispatch } from "../../state.js";
 import {
   claimTask,
+  formatPair,
   getTask,
   ReaperDetectedDuringWaitError,
   releaseTask,
@@ -223,6 +224,11 @@ export async function cmdClaim(
  *  --json output, and stuck-task hints. */
 function qualifiedId(ref: { workstreamName: string; name: string }): string {
   return `${ref.workstreamName}/${ref.name}`;
+}
+
+/** A CLOSED ref whose substate says the work was not done. */
+function isUndelivered(ref: TaskWaitTaskState): boolean {
+  return ref.status === "CLOSED" && ref.substate !== "done";
 }
 
 function cherryPickCommandForCommits(commits: readonly CommitSummary[]): string | null {
@@ -501,7 +507,14 @@ export async function cmdTaskWait(
   //   - --all success: list closed refs, suggest verify.
   //   - timeout / partial: list unmet refs, suggest mu task show.
   const nextSteps: NextStep[] = [];
-  if (!result.timedOut && firingRef !== null) {
+  if (!result.timedOut && firingRef !== null && isUndelivered(firingRef)) {
+    // wontfix / duplicate / superseded: nothing to cherry-pick. The
+    // reason note says what happened instead.
+    nextSteps.push({
+      intent: `Read why ${firingRef.name} closed ${formatPair(firingRef)} (no deliverable)`,
+      command: `mu task notes ${firingRef.name} -w ${firingRef.workstreamName}`,
+    });
+  } else if (!result.timedOut && firingRef !== null) {
     const owner = firingRef.owner;
     if (owner !== null) {
       // Best-effort workspace lookup: prefer an inspectable,
@@ -580,6 +593,7 @@ export async function cmdTaskWait(
             name: firingRef.name,
             qualifiedId: qualifiedId(firingRef),
             status: firingRef.status,
+            substate: firingRef.substate,
             owner: firingRef.owner,
           };
     const timedOutArray = result.timedOut
@@ -620,7 +634,7 @@ export async function cmdTaskWait(
     // Single-ws (workstreamSet.size === 1) keeps today's bare-name
     // output to avoid noise.
     const label = workstreamSet.size > 1 ? qualifiedId(t) : t.name;
-    console.log(`  ${marker} ${pc.bold(label)} ${pc.dim(`(${t.status})`)}`);
+    console.log(`  ${marker} ${pc.bold(label)} ${pc.dim(`(${formatPair(t)})`)}`);
   }
   printNextSteps(nextSteps);
   if (result.timedOut) throw new CliExitError(5);

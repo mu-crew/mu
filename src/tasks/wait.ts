@@ -30,7 +30,7 @@ import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { StallDetectedDuringWaitError, TaskNotFoundError } from "./errors.js";
 import { getTask } from "./queries.js";
-import type { TaskStatus } from "./status.js";
+import { DEFAULT_SUBSTATE, type TaskStatus, type TaskSubstate } from "./status.js";
 
 // ─── Test seams: poll-sleep + poll counter + stuck-warn writer ─────────
 //
@@ -193,6 +193,8 @@ export interface TaskWaitTaskState {
   name: string;
   /** Current status (at the moment we exit). */
   status: TaskStatus;
+  /** Current substate. A CLOSED ref that is not `done` has no deliverable. */
+  substate: TaskSubstate;
   /** Owner at exit time (NULL when unowned, after release, or after
    *  the reaper flipped IN_PROGRESS → OPEN due to a dead pane). */
   owner: string | null;
@@ -303,6 +305,7 @@ export async function waitForTasks(
       // deletion mid-wait shouldn't crash the wait; it's a legitimate
       // state change.)
       const status = (row?.status ?? "OPEN") as TaskStatus;
+      const substate = row?.substate ?? DEFAULT_SUBSTATE[status];
       const owner = row?.ownerName ?? null;
       const ageMs = await stuckAgeMs(status, owner, ref.workstreamName);
       const stuck = ageMs !== null;
@@ -368,6 +371,7 @@ export async function waitForTasks(
         workstreamName: ref.workstreamName,
         name: ref.name,
         status,
+        substate,
         owner,
         reachedTarget: status === target,
         stuck,
