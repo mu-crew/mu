@@ -174,6 +174,7 @@ Every turn:
 6. `mu task wait ... --first --on-stall exit --json`.
 7. Cherry-pick the closed worker's **new** commit(s), verify the MERGE
    (see below), return control. Do not barrier or loop in shell.
+   Only `CLOSED/done` ships; other closes: read the reason note.
 8. Repeat from `mu state`.
 
 ## Dispatch rules that prevent real failures
@@ -336,7 +337,8 @@ mu task note <id> "FILES: ...\nDECISION: ...\nVERIFIED: ..."
 mu task close <id> --evidence "tests pass: ..."  # LAST action
 ```
 
-Skipping close makes the orchestrator's wait hang.
+Skipping close makes the orchestrator's wait hang. Won't do it:
+`close --as wontfix --why "..."`.
 
 ## Follow-on prompts
 
