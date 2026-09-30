@@ -112,6 +112,7 @@ describe("passesFilter (substate toggles)", () => {
 
   it("showNotDone=false hides CLOSED/* except done", () => {
     const f = { ...all, showNotDone: false };
+    expect(passesFilter({ status: "CLOSED", substate: "rejected" }, f)).toBe(false);
     expect(passesFilter({ status: "CLOSED", substate: "wontfix" }, f)).toBe(false);
     expect(passesFilter({ status: "CLOSED", substate: "superseded" }, f)).toBe(false);
     expect(passesFilter({ status: "CLOSED", substate: "done" }, f)).toBe(true);
@@ -140,6 +141,6 @@ describe("passesFilter (substate toggles)", () => {
       ),
     );
     expect(text).toContain(`[P]arked ${GLYPH.off}`);
-    expect(text).toContain(`[W]ontfix+ ${GLYPH.on}`);
+    expect(text).toContain(`[W]on't do ${GLYPH.on}`);
   });
 });

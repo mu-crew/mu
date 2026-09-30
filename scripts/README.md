@@ -2,9 +2,9 @@
 
 Retained migration sidecars. Nothing here is wired into the `mu` binary or imported by production code. Run these scripts manually against a preserved source DB.
 
-## `migrate.ts` — v7, v8, v9, or v10 to v11
+## `migrate.ts` — v7 to v11, and v11 to v11
 
-`openDb` does not migrate existing databases in place. `scripts/migrate.ts` detects a v7, v8, v9, or v10 source and writes a fresh v11 target:
+`openDb` does not migrate existing databases in place. `scripts/migrate.ts` detects a v7, v8, v9, v10, or v11 source and writes a fresh v11 target:
 
 ```bash
 npx tsx scripts/migrate.ts <source.db> --out <fresh-v11.db>
@@ -59,7 +59,7 @@ If verification fails, do not swap. The original DB and backup remain unchanged.
 
 v9 had `REJECTED` and `DEFERRED` statuses. v10 folded both to `OPEN` and wrote a `MIGRATION: previous status was …` note. v11 maps them onto (status, substate) pairs:
 
-- `REJECTED` becomes `CLOSED/wontfix`.
+- `REJECTED` becomes `CLOSED/rejected`. (mu 3.0.0 mapped it to `CLOSED/wontfix`; see *v11 → v11* below.)
 - `DEFERRED` becomes `OPEN/parked`.
 
 The mapping is in the shared apply path, so old peer segments, `mu sync --from`, and `mu rebuild` produce the same pairs. The original payload stays in `ops`. The script no longer writes `MIGRATION:` notes; the substate carries the fact.
@@ -77,7 +77,7 @@ The replay alone misses a task whose legacy status is hidden behind a later writ
 
 Each recovery is one captured `UPDATE` of `status`, `substate` and `updated_at` under intent `migrate.substate`, in one group. The op syncs, survives `mu rebuild`, and `mu doctor --deep` reports no drift. A task that already has a `migrate.substate` op is skipped, so recovery is idempotent.
 
-The report lists every changed task as `workstream  task  from -> to  (source)`, where source `replay` means the apply path derived the pair. A final list names the dependents that became ready because a blocker recovered to `CLOSED/wontfix`.
+The report lists every changed task as `workstream  task  from -> to  (source)`, where source `replay` means the apply path derived the pair. A final list names the dependents that became ready because a blocker recovered to a closed pair.
 
 ### `--recover`: after `mu undo` restores a workstream
 
@@ -88,6 +88,17 @@ npx tsx scripts/migrate.ts --recover "${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}
 ```
 
 This is the only mode that edits a DB in place. It refuses anything but a v11 DB.
+
+### v11 → v11: `wontfix` becomes `rejected`
+
+mu 3.0.0 mapped legacy `REJECTED` to `CLOSED/wontfix`; 3.1.0 maps it to `CLOSED/rejected`. A rebuild or a migration re-derives the new pair from the ops log, so migrating a v11 source (`npx tsx scripts/migrate.ts <v11.db> --out <new.db>`) fixes every such task. The same pass is part of recovery, so `--recover` fixes a live DB in place.
+
+A `CLOSED/wontfix` task is re-mapped to `CLOSED/rejected` only when both hold:
+
+1. The newest op that wrote `wontfix` was an `undo` or `migrate.*` op, not a decision. A deliberate `mu task close --as wontfix` stays.
+2. The task's history has a legacy `REJECTED` status op.
+
+A `CLOSED` to `CLOSED` re-map unblocks nothing, so the report lists no dependents for it.
 
 ### v9 → v11 behavior
 

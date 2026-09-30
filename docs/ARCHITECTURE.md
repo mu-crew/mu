@@ -115,7 +115,7 @@ it mu is just an agent runner.
   decides edge satisfaction: any `CLOSED` task satisfies its blockers.
 - **Substate** qualifies status and never touches edges:
   `OPEN/todo|parked`, `IN_PROGRESS/active`,
-  `CLOSED/done|wontfix|duplicate|superseded`. Rule: **store intent,
+  `CLOSED/done|rejected|wontfix|duplicate|superseded`. Rule: **store intent,
   derive graph facts** — ready and blocked stay derived from edges.
   `OPEN/parked` is excluded from `ready` but stays in `goals`.
 

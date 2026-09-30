@@ -21,7 +21,13 @@ import {
   TaskParkStateError,
 } from "./errors.js";
 import { getTask } from "./queries.js";
-import { DEFAULT_SUBSTATE, isValidPair, type TaskStatus, type TaskSubstate } from "./status.js";
+import {
+  DEFAULT_SUBSTATE,
+  isValidPair,
+  type TASK_SUBSTATES,
+  type TaskStatus,
+  type TaskSubstate,
+} from "./status.js";
 
 export interface SetStatusResult {
   /** Status before the call. */
@@ -37,7 +43,7 @@ export interface SetStatusResult {
 }
 
 /** The substates a task can be closed as (`mu task close --as`). */
-export type CloseSubstate = Extract<TaskSubstate, "done" | "wontfix" | "duplicate" | "superseded">;
+export type CloseSubstate = (typeof TASK_SUBSTATES)["CLOSED"][number];
 
 /**
  * Optional evidence string carried on lifecycle verbs (close / open /

@@ -389,8 +389,8 @@ table/key/field is the reproduction. See
 `mu` refuses to open a pre-v11 DB (`SchemaTooOldError`, exit 4) or a DB
 newer than it understands (`SchemaTooNewError`, exit 4) and leaves the
 file alone. The retained `scripts/migrate.ts` sidecar auto-detects v7,
-v8, v9, or v10 and writes a fresh v11 DB. It never migrates in place.
-Legacy `REJECTED` tasks become `CLOSED/wontfix` and `DEFERRED` tasks
+v8, v9, v10, or v11 and writes a fresh v11 DB. It never migrates in place.
+Legacy `REJECTED` tasks become `CLOSED/rejected` and `DEFERRED` tasks
 become `OPEN/parked`; their original op payloads remain unchanged.
 Pre-1.0 archives restore as live workstreams under their original
 `source_workstream` names unless you pass `--drop-archives`.
@@ -1630,8 +1630,9 @@ mu task unpark polish               # OPEN/parked → OPEN/todo
 
 Every task carries a **substate** next to its status, rendered as a pair.
 `OPEN` is `todo` or `parked`; `IN_PROGRESS` is `active`; `CLOSED` is
-`done`, `wontfix`, `duplicate`, or `superseded`. `--as` picks the closed
-substate. Anything but `done` requires `--why`, stored as a note in the
+`done`, `rejected`, `wontfix`, `duplicate`, or `superseded`. `--as` picks
+the closed substate: `rejected` when the proposal itself was declined,
+`wontfix` when it is valid but not worth doing. Anything but `done` requires `--why`, stored as a note in the
 same transaction. Any `CLOSED/*` satisfies a blocker, so a non-`done`
 close prints the dependents it unblocked.
 
@@ -2400,10 +2401,10 @@ mv "$DB" "${DB}.old-kept" && mv "${DB}.v11" "$DB"
 mu doctor
 ```
 
-The script auto-detects v7, v8, v9, or v10, opens it read-only, compares
+The script auto-detects v7, v8, v9, v10, or v11, opens it read-only, compares
 its SHA-256 before and after, and never overwrites a target unless
 `--force` is explicit. v9/v10 history is retained unchanged; legacy
-statuses map onto substates (`REJECTED` → `CLOSED/wontfix`, `DEFERRED` →
+statuses map onto substates (`REJECTED` → `CLOSED/rejected`, `DEFERRED` →
 `OPEN/parked`) while projecting into v11, and no migration notes are
 written. Where an undo or a note hid the legacy status, the script
 records a `migrate.substate` op; `--recover <db>` reruns that recovery

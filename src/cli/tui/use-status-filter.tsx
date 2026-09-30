@@ -45,7 +45,7 @@ export function statusForToggleKey(input: string, key: KeyFlags): TaskStatus | u
 }
 
 /** The two substate slices with their own toggle: `p` OPEN/parked,
- *  `w` CLOSED rows whose substate is not done (wontfix and friends). */
+ *  `w` CLOSED rows whose substate is not done (rejected, wontfix, ...). */
 export type SubstateToggle = "parked" | "notDone";
 
 const SUBSTATE_BY_KEY: Readonly<Record<string, SubstateToggle>> = { p: "parked", w: "notDone" };
@@ -111,7 +111,8 @@ const SUBSTATE_LABELS: ReadonlyArray<{
   color: "gray" | "red";
 }> = [
   { id: "parked", key: "P", rest: "arked", color: "gray" },
-  { id: "notDone", key: "W", rest: "ontfix+", color: "red" },
+  // Covers every non-done close (rejected, wontfix, duplicate, superseded).
+  { id: "notDone", key: "W", rest: "on't do", color: "red" },
 ];
 
 export function StatusFilterStrip({
