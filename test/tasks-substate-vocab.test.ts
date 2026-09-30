@@ -19,7 +19,7 @@ describe("substate vocabulary", () => {
       .map(([s]) => s)
       .sort();
     expect(defaults).toEqual(["CLOSED", "IN_PROGRESS", "OPEN"]);
-    expect(TASK_SUBSTATE_ROWS).toHaveLength(7);
+    expect(TASK_SUBSTATE_ROWS).toHaveLength(8);
   });
   it("isValidPair", () => {
     expect(isValidPair("OPEN", "parked")).toBe(true);
@@ -27,7 +27,7 @@ describe("substate vocabulary", () => {
     expect(isValidPair("OPEN", "bogus")).toBe(false);
   });
   it("mapLegacyStatus", () => {
-    expect(mapLegacyStatus("REJECTED")).toEqual({ status: "CLOSED", substate: "wontfix" });
+    expect(mapLegacyStatus("REJECTED")).toEqual({ status: "CLOSED", substate: "rejected" });
     expect(mapLegacyStatus("DEFERRED")).toEqual({ status: "OPEN", substate: "parked" });
     expect(mapLegacyStatus("OPEN")).toBeNull();
   });

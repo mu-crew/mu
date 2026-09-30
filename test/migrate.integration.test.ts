@@ -31,6 +31,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { recoverLegacySubstates, runImporter, UsageError } from "../scripts/migrate.js";
 import { openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
+import { withOpContext } from "../src/op-context.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCli } from "./_runCli.js";
 
@@ -766,7 +767,7 @@ describe("scripts/migrate.ts", () => {
       expect(
         db.prepare("SELECT local_id, status, substate, owner_id FROM tasks ORDER BY id").all(),
       ).toEqual([
-        { local_id: "rejected", status: "CLOSED", substate: "wontfix", owner_id: 1 },
+        { local_id: "rejected", status: "CLOSED", substate: "rejected", owner_id: 1 },
         { local_id: "deferred", status: "OPEN", substate: "parked", owner_id: null },
       ]);
       expect(
@@ -845,7 +846,7 @@ describe("scripts/migrate.ts", () => {
         {
           key: "demo/alpha",
           title: "Alpha task",
-          // Seeded REJECTED: the shared legacy mapping makes it CLOSED/wontfix.
+          // Seeded REJECTED: the shared legacy mapping makes it CLOSED/rejected.
           status: "CLOSED",
           impact: 80,
           effort: 1.5,
@@ -1199,7 +1200,7 @@ describe("scripts/migrate.ts", () => {
     db.close();
     const wrongVersion = runScript([unsupported, "--out", join(dir, "nope.db")]);
     expect(wrongVersion.exitCode).toBe(2);
-    expect(wrongVersion.stderr).toContain("only understands v7, v8, v9 and v10");
+    expect(wrongVersion.stderr).toContain("only understands v7, v8, v9, v10 and v11");
   });
 
   describe("v10 → v11 with legacy substate recovery", () => {
@@ -1245,7 +1246,7 @@ describe("scripts/migrate.ts", () => {
       expect(run.exitCode).toBe(0);
       expect(pairs(target)).toEqual({
         "demo/d": "OPEN/parked", // legacy op is the newest writer: the replay maps it
-        "demo/r": "CLOSED/wontfix",
+        "demo/r": "CLOSED/rejected",
         "demo/b": "OPEN/todo",
         "demo/o": "OPEN/todo", // a later task.open is a decision and wins
         "demo/n": "OPEN/parked", // recovered from the MIGRATION: note
@@ -1254,10 +1255,10 @@ describe("scripts/migrate.ts", () => {
       // Captured recovery ops only where the replay could not derive it.
       expect(recoveryOps(target)).toEqual(["demo/n", "demo/u"]);
       expect(run.stdout).toMatch(/demo\s+d\s+OPEN -> OPEN\/parked\s+\(replay\)/);
-      expect(run.stdout).toMatch(/demo\s+r\s+OPEN -> CLOSED\/wontfix\s+\(replay\)/);
+      expect(run.stdout).toMatch(/demo\s+r\s+OPEN -> CLOSED\/rejected\s+\(replay\)/);
       expect(run.stdout).toMatch(/demo\s+n\s+OPEN -> OPEN\/parked\s+\(note\)/);
       expect(run.stdout).toMatch(/demo\s+u\s+OPEN -> OPEN\/parked\s+\(ops\)/);
-      expect(run.stdout).toMatch(/unblocked by wontfix recovery:\n\s+demo\/b/);
+      expect(run.stdout).toMatch(/unblocked by recovery:\n\s+demo\/b/);
     });
 
     it("leaves the source byte-identical and the target drift-free", async () => {
@@ -1303,6 +1304,47 @@ describe("scripts/migrate.ts", () => {
       const scoped = runScript(["--recover", target, "-w", "nope"]);
       expect(scoped.exitCode).toBe(0);
       expect(scoped.stdout).toContain("0 task(s)");
+    });
+
+    it("v11 -> v11: re-maps a legacy REJECTED projected as wontfix, keeps a chosen wontfix", async () => {
+      // A mu 3.0.0 DB: legacy REJECTED ops projected as CLOSED/wontfix
+      // (the old mapping), next to a deliberate `close --as wontfix`.
+      // Simulate the 3.0.0 projection by writing the old pair directly.
+      const v11 = join(dir, "v11.db");
+      runScript([v10.path, "--out", v11]);
+      const db = openDb({ path: v11 });
+      try {
+        const set = db.prepare(
+          `UPDATE tasks SET substate = 'wontfix'
+            WHERE local_id = 'r' AND workstream_id = (SELECT id FROM workstreams WHERE name = 'demo')`,
+        );
+        withOpContext(db, { intent: "undo", group: "g-v300-undo" }, () => set.run());
+        const { closeTask } = await import("../src/tasks.js");
+        closeTask(db, "b", { workstream: "demo", as: "wontfix", why: "chosen" });
+      } finally {
+        db.close();
+      }
+      expect(pairs(v11)["demo/r"]).toBe("CLOSED/wontfix");
+
+      // --recover in place re-maps only the legacy one.
+      const copy = join(dir, "v11-copy.db");
+      runScript([v11, "--out", copy]);
+      const rec = runScript(["--recover", v11]);
+      expect(rec.exitCode).toBe(0);
+      expect(rec.stdout).toMatch(/demo\s+r\s+CLOSED\/wontfix -> CLOSED\/rejected\s+\(ops\)/);
+      expect(pairs(v11)["demo/r"]).toBe("CLOSED/rejected");
+      expect(pairs(v11)["demo/b"]).toBe("CLOSED/wontfix");
+      expect(runScript(["--recover", v11]).stdout).toContain("0 task(s)");
+
+      // Migrating a v11 source writes a fresh v11 with the same result.
+      expect(pairs(copy)["demo/r"]).toBe("CLOSED/rejected");
+      expect(pairs(copy)["demo/b"]).toBe("CLOSED/wontfix");
+      const after = openDb({ path: copy });
+      try {
+        expect(checkDrift(after).clean).toBe(true);
+      } finally {
+        after.close();
+      }
     });
 
     it("recoverLegacySubstates is idempotent on the migrated target", () => {

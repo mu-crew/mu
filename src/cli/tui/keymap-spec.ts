@@ -200,7 +200,7 @@ export const HELP_PANES: readonly HelpPaneSpec[] = [
     rows: [
       row(
         "o/i/c/p/w",
-        "toggle OPEN / IN_PROGRESS / CLOSED status filters; p parked; w closed-not-done",
+        "toggle OPEN / IN_PROGRESS / CLOSED status filters; p parked; w won't do (closed, not done)",
         ["o", "i", "c", "p", "w"],
       ),
       row("b", "all-tasks blocked filter cycle (all → only → hide)", ["b"]),

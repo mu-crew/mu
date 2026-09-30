@@ -86,6 +86,7 @@ describe("TUI status column colours", () => {
     ["OPEN", "parked", "gray"],
     ["IN_PROGRESS", "active", "yellow"],
     ["CLOSED", "done", "green"],
+    ["CLOSED", "rejected", "red"],
     ["CLOSED", "wontfix", "red"],
     ["CLOSED", "duplicate", "red"],
     ["CLOSED", "superseded", "red"],

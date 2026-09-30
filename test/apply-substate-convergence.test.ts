@@ -76,9 +76,9 @@ describe("apply: substates", () => {
     expect(storedPayload(op)).toContain('"DEFERRED"');
   });
 
-  it("maps a legacy REJECTED put onto CLOSED/wontfix", () => {
+  it("maps a legacy REJECTED put onto CLOSED/rejected", () => {
     applyIncomingOp(db, put(1000, { title: "T", status: "REJECTED" }));
-    expect(pair()).toEqual({ status: "CLOSED", substate: "wontfix" });
+    expect(pair()).toEqual({ status: "CLOSED", substate: "rejected" });
   });
 
   it("repairs a newer status-only put from a v10 peer to the default substate", () => {

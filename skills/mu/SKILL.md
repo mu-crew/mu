@@ -36,7 +36,7 @@ both. `--json` exists on every verb:
   on tmux and from herdr on herdr; `mu agent kick` is Linux-only on herdr.
 - **task** — DAG node with mandatory `impact` (1–100) and
   `effort_days`. Shown as status/substate: `OPEN/todo|parked`,
-  `IN_PROGRESS/active`, `CLOSED/done|wontfix|duplicate|superseded`.
+  `IN_PROGRESS/active`, `CLOSED/done|rejected|wontfix|duplicate|superseded`.
   Any `CLOSED/*` satisfies `--blocked-by`.
 - **claim / release** — atomic take/clear of `tasks.owner`.
 - **note** — append-only task context; survives sessions.
@@ -233,7 +233,7 @@ Every turn:
   5 timeout, 6 pane died.
 - **`task close --if-ready`** no-ops until every blocker is CLOSED; bare
   `task release` reopens IN_PROGRESS.
-- **`task close --as wontfix --why ...`** unblocks dependents (listed in
+- **`task close --as rejected|wontfix --why ...`** (declined | valid, not worth it) unblocks dependents (listed in
   the output). To keep dependents waiting, `task park --why` instead: parked
   leaves `next`, and `claim` refuses it without `--force`. Park refuses
   IN_PROGRESS — `task release` first.

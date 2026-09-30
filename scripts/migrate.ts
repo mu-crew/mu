@@ -1,5 +1,5 @@
 #!/usr/bin/env -S npx tsx
-// scripts/migrate.ts — retained v7/v8/v9/v10 → v11 migration sidecar.
+// scripts/migrate.ts — retained v7..v11 → v11 migration sidecar.
 //
 // mu 1.0 is a CLEAN BREAK: `openDb` refuses every pre-v11 DB with
 // `SchemaTooOldError` (exit 4), there is no in-process migration ladder,
@@ -56,23 +56,23 @@
 // renders the import as an import, and `mu undo <group>` addresses it
 // as one thing.
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { applyOp, type Op } from "../src/apply.js";
 import { type Db, openDb } from "../src/db.js";
 import { nextHlc } from "../src/hlc.js";
-import { LEGACY_LOG_ONLY_SQL_EXCLUSION } from "../src/legacy-ops.js";
-import { withCaptureSuppressed, withOpContext } from "../src/op-context.js";
+import { withCaptureSuppressed } from "../src/op-context.js";
 import { rebuildInto } from "../src/rebuild.js";
 import {
-  formatPair,
-  mapLegacyStatus,
-  type TaskPair,
-  type TaskStatus,
-  type TaskSubstate,
-} from "../src/tasks/status.js";
+  type RecoveryRow,
+  recoverLegacySubstates,
+  replayChanges,
+  reportRecovery,
+} from "./migrate-recovery.js";
+
+export { recoverLegacySubstates };
 
 // ─── what the import carries, and what it cannot ──────────────────────
 
@@ -119,7 +119,7 @@ const USAGE = `usage: npx tsx scripts/migrate.ts <old.db> [--out <new.db>] [--fo
                                       [--drop-logs] [--drop-archives]
        npx tsx scripts/migrate.ts --recover <v11.db> [-w <workstream>]
 
-  <old.db>          a v7, v8, v9, or v10 source DB. Opened READ-ONLY; never modified.
+  <old.db>          a v7, v8, v9, v10 or v11 source DB. Opened READ-ONLY; never modified.
   --out <new.db>    target path (default: <old.db> with '.v11.db' suffix).
   --recover         recover legacy REJECTED/DEFERRED substates IN PLACE on a v11 DB
                     (run after 'mu undo' restores a tombstoned pre-v11 workstream).
@@ -916,217 +916,6 @@ function carryMachineLocal(src: Db, target: Db): MachineLocalCarry {
   return { agents: agentsCopied, workspaces: workspacesCopied };
 }
 
-// ─── legacy substate recovery ─────────────────────────────────────────
-
-/** Intent of every recovery write. Excluded from the "last status
- *  writer" search, and its presence on a key makes recovery a no-op. */
-const RECOVERY_INTENT = "migrate.substate";
-/** Intents that replay an older value rather than make a decision. */
-const NON_DECISION_INTENTS = ["undo", RECOVERY_INTENT] as const;
-const MIGRATION_NOTE = /^MIGRATION: previous status was (REJECTED|DEFERRED)$/;
-
-export interface RecoveryRow {
-  workstream: string;
-  localId: string;
-  /** formatPair of the pair before recovery. */
-  from: string;
-  /** formatPair of the recovered pair. */
-  to: string;
-  /** "ops": a legacy status op; "note": a MIGRATION: note;
-   *  "replay": the v11 apply path derived it (migration report only). */
-  source: "ops" | "note" | "replay";
-  /** Direct dependents now in the ready view (wontfix recoveries only). */
-  unblocked: string[];
-}
-
-/**
- * Recover a retired REJECTED / DEFERRED status that the current pair
- * hides behind a non-decision write, as ONE captured op per task.
- *
- * v10 folded both statuses to OPEN. The v11 apply path maps a legacy
- * status op onto its pair, so a task whose newest status writer IS the
- * legacy op needs nothing here. What remains are tasks at OPEN/todo whose
- * newest status write is an `undo` restore (replays an older value) or a
- * migrate.* OPEN put with a MIGRATION: note beside it. For those:
- *
- *   a. last status writer = newest task put carrying $.status, excluding
- *      intents 'undo' and 'migrate.substate';
- *   b. its status is legacy -> the mapped pair, source "ops";
- *   c. else a MIGRATION: note, and the writer is a migrate.* OPEN put or
- *      older than the note -> the pair the note names, source "note";
- *   d. else skip: a later real decision wins.
- *
- * Each recovery is one UPDATE of status + substate + updated_at under
- * intent 'migrate.substate', captured so it syncs and survives rebuild,
- * and repairTaskPair later sees it as the newest substate writer.
- * Idempotent: a key that already has a migrate.substate op is skipped.
- */
-export function recoverLegacySubstates(db: Db, workstream?: string): RecoveryRow[] {
-  const candidates = db
-    .prepare(
-      `SELECT t.id, w.name AS workstream, t.local_id
-         FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
-        WHERE t.status = 'OPEN' AND t.substate = 'todo'
-          AND (@ws IS NULL OR w.name = @ws)
-        ORDER BY w.name, t.local_id`,
-    )
-    .all({ ws: workstream ?? null }) as Array<{ id: number; workstream: string; local_id: string }>;
-
-  const recovered = db.prepare(
-    `SELECT 1 AS x FROM ops WHERE entity = 'task' AND key = ? AND intent = '${RECOVERY_INTENT}' LIMIT 1`,
-  );
-  const lastWriter = db.prepare(
-    `SELECT hlc, intent, json_extract(payload, '$.status') AS status FROM ops
-      WHERE entity = 'task' AND key = ? AND op = 'put'
-        AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
-        AND (intent IS NULL OR intent NOT IN (${NON_DECISION_INTENTS.map((i) => `'${i}'`).join(", ")}))
-        AND json_type(payload, '$.status') IS NOT NULL
-      ORDER BY hlc DESC LIMIT 1`,
-  );
-  const migrationNotes = db.prepare(
-    `SELECT hlc, json_extract(payload, '$.content') AS content FROM ops
-      WHERE entity = 'note' AND op = 'put'
-        AND substr(key, 1, length(@prefix)) = @prefix
-        AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
-        AND json_extract(payload, '$.content') LIKE 'MIGRATION: previous status was %'
-      ORDER BY hlc DESC`,
-  );
-
-  const plan: Array<{ id: number; row: RecoveryRow; pair: TaskPair }> = [];
-  for (const task of candidates) {
-    const key = `${task.workstream}/${task.local_id}`;
-    if (recovered.get(key) !== undefined) continue;
-    const writer = lastWriter.get(key) as
-      | { hlc: string; intent: string | null; status: unknown }
-      | undefined;
-    let pair: TaskPair | null = null;
-    let source: RecoveryRow["source"] = "ops";
-    if (writer && typeof writer.status === "string") pair = mapLegacyStatus(writer.status);
-    if (pair === null) {
-      const note = (
-        migrationNotes.all({ prefix: `${key}#` }) as Array<{ hlc: string; content: unknown }>
-      ).find((n) => typeof n.content === "string" && MIGRATION_NOTE.test(n.content));
-      const match = typeof note?.content === "string" ? MIGRATION_NOTE.exec(note.content) : null;
-      const noteWins =
-        note !== undefined &&
-        (writer === undefined ||
-          (writer.intent?.startsWith("migrate.") === true && writer.status === "OPEN") ||
-          writer.hlc < note.hlc);
-      if (match?.[1] && noteWins) {
-        pair = mapLegacyStatus(match[1]);
-        source = "note";
-      }
-    }
-    if (pair === null) continue;
-    plan.push({
-      id: task.id,
-      pair,
-      row: {
-        workstream: task.workstream,
-        localId: task.local_id,
-        from: formatPair({ status: "OPEN", substate: "todo" }),
-        to: formatPair(pair),
-        source,
-        unblocked: [],
-      },
-    });
-  }
-  if (plan.length === 0) return [];
-
-  const group = `migrate-substate-${randomUUID()}`;
-  const update = db.prepare(
-    "UPDATE tasks SET status = ?, substate = ?, updated_at = ? WHERE id = ?",
-  );
-  const run = db.transaction(() => {
-    withOpContext(db, { intent: RECOVERY_INTENT, actor: "migration", group }, () => {
-      const now = new Date().toISOString();
-      for (const p of plan) update.run(p.pair.status, p.pair.substate, now, p.id);
-    });
-    for (const p of plan) {
-      if (p.pair.status === "CLOSED") p.row.unblocked = readyDependents(db, p.id);
-    }
-  });
-  run();
-  return plan.map((p) => p.row);
-}
-
-/** Direct dependents of `taskId` that sit in the ready view. */
-function readyDependents(db: Db, taskId: number): string[] {
-  return (
-    db
-      .prepare(
-        `SELECT w.name || '/' || r.local_id AS key
-           FROM task_edges e
-           JOIN ready r ON r.id = e.to_task_id
-           JOIN workstreams w ON w.id = r.workstream_id
-          WHERE e.from_task_id = ?
-          ORDER BY key`,
-      )
-      .all(taskId) as { key: string }[]
-  ).map((r) => r.key);
-}
-
-/** Tasks whose v11 pair differs from the v10 source projection — the
- *  recoveries the replay itself made (legacy op as newest writer). */
-function replayChanges(src: Db, target: Db): RecoveryRow[] {
-  const before = new Map(
-    (
-      src
-        .prepare(
-          `SELECT w.name || '/' || t.local_id AS key, t.status
-             FROM tasks t JOIN workstreams w ON w.id = t.workstream_id`,
-        )
-        .all() as { key: string; status: string }[]
-    ).map((r) => [r.key, r.status]),
-  );
-  const rows: RecoveryRow[] = [];
-  const after = target
-    .prepare(
-      `SELECT t.id, w.name AS workstream, t.local_id, t.status, t.substate
-         FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
-        ORDER BY w.name, t.local_id`,
-    )
-    .all() as Array<{
-    id: number;
-    workstream: string;
-    local_id: string;
-    status: TaskStatus;
-    substate: TaskSubstate;
-  }>;
-  for (const t of after) {
-    const was = before.get(`${t.workstream}/${t.local_id}`);
-    if (was === undefined) continue;
-    const to = formatPair({ status: t.status, substate: t.substate });
-    if (to === was) continue;
-    rows.push({
-      workstream: t.workstream,
-      localId: t.local_id,
-      from: was,
-      to,
-      source: "replay",
-      unblocked: t.status === "CLOSED" ? readyDependents(target, t.id) : [],
-    });
-  }
-  return rows;
-}
-
-function reportRecovery(rows: readonly RecoveryRow[], say: (text: string) => void): void {
-  say(`LEGACY SUBSTATE RECOVERY  ${rows.length} task(s)`);
-  if (rows.length > 0) {
-    say(
-      table([
-        ["  workstream", "task", "from -> to  (source)"],
-        ...rows.map(
-          (r) => [`  ${r.workstream}`, r.localId, `${r.from} -> ${r.to}  (${r.source})`] as const,
-        ),
-      ]),
-    );
-  }
-  const unblocked = rows.flatMap((r) => r.unblocked);
-  say("unblocked by wontfix recovery:");
-  say(unblocked.length > 0 ? unblocked.map((k) => `  ${k}`).join("\n") : "  (none)");
-}
-
 // ─── v9 / v10 migration ───────────────────────────────────────────────
 
 interface OpsLogMigrationResult extends MachineLocalCarry {
@@ -1175,7 +964,9 @@ function migrateV9(src: Db, targetPath: string): OpsLogMigrationResult {
   });
 }
 
-function migrateV10(src: Db, targetPath: string): OpsLogMigrationResult {
+/** v10 or v11 source: replay the log through the current mapping, then
+ *  recover what the replay cannot see. */
+function migrateOpsLogWithRecovery(src: Db, targetPath: string): OpsLogMigrationResult {
   return migrateOpsLog(src, targetPath, (target) => [
     ...replayChanges(src, target),
     ...recoverLegacySubstates(target),
@@ -1240,23 +1031,22 @@ export function runImporter(argv: readonly string[], say: (text: string) => void
         | { v: number }
         | undefined
     )?.v;
-    if (version === 11) {
+    if (version !== 7 && version !== 8 && version !== 9 && version !== 10 && version !== 11) {
       usage(
-        "source schema is already v11; nothing to migrate (use --recover <db> for legacy substate recovery)",
+        `source schema is v${version ?? "?"}; this importer only understands v7, v8, v9, v10 and v11`,
       );
     }
-    if (version !== 7 && version !== 8 && version !== 9 && version !== 10) {
-      usage(
-        `source schema is v${version ?? "?"}; this importer only understands v7, v8, v9 and v10`,
-      );
-    }
-    if (version === 9 || version === 10) {
+    if (version === 9 || version === 10 || version === 11) {
       if (args.dropLogs || args.dropArchives) {
         usage("--drop-logs and --drop-archives apply only to v7/v8 sources");
       }
       let result: OpsLogMigrationResult;
       try {
-        result = version === 9 ? migrateV9(src, args.out) : migrateV10(src, args.out);
+        // v11 -> v11 is a rebuild through the current mapping plus
+        // recovery: the same steps as v10 (e.g. mu 3.0.0 REJECTED ->
+        // wontfix becomes rejected).
+        result =
+          version === 9 ? migrateV9(src, args.out) : migrateOpsLogWithRecovery(src, args.out);
       } catch (err) {
         removeDbFiles(args.out);
         throw err;
@@ -1274,9 +1064,9 @@ export function runImporter(argv: readonly string[], say: (text: string) => void
       say(
         `  source unchanged ${sourceDigestBefore === sourceDigestAfter ? "YES" : "NO — THIS IS A BUG"}  (sha256 ${sourceDigestAfter.slice(0, 12)}…)`,
       );
-      if (version === 10) {
+      if (version !== 9) {
         say("");
-        reportRecovery(result.recovery, say);
+        reportRecovery(result.recovery, say, table);
       }
       say("");
       say("NEXT");
@@ -1446,7 +1236,7 @@ function runRecover(
   const db = openDb({ path });
   try {
     say(`mu legacy substate recovery  ${path}${workstream ? `  (-w ${workstream})` : ""}`);
-    reportRecovery(recoverLegacySubstates(db, workstream), say);
+    reportRecovery(recoverLegacySubstates(db, workstream), say, table);
     return 0;
   } finally {
     db.close();

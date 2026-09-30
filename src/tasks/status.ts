@@ -28,11 +28,12 @@ export const TASK_STATUS_LIST = TASK_STATUSES.join(" | ");
 
 /** Legal substates per status. `substate` qualifies `status` and never
  *  touches edge semantics: only `status === "CLOSED"` satisfies a
- *  `blocks` edge. */
+ *  `blocks` edge. Closed: `rejected` = the proposal was declined;
+ *  `wontfix` = valid, but not worth doing. */
 export const TASK_SUBSTATES = {
   OPEN: ["todo", "parked"],
   IN_PROGRESS: ["active"],
-  CLOSED: ["done", "wontfix", "duplicate", "superseded"],
+  CLOSED: ["done", "rejected", "wontfix", "duplicate", "superseded"],
 } as const satisfies Record<TaskStatus, readonly string[]>;
 
 export type TaskSubstate = (typeof TASK_SUBSTATES)[TaskStatus][number];
@@ -63,11 +64,11 @@ export function isValidPair(status: string, substate: string): boolean {
 
 /** Retired v9 statuses and the pair each one now means. */
 const LEGACY_STATUS_PAIRS: Readonly<Record<string, TaskPair>> = {
-  REJECTED: { status: "CLOSED", substate: "wontfix" },
+  REJECTED: { status: "CLOSED", substate: "rejected" },
   DEFERRED: { status: "OPEN", substate: "parked" },
 };
 
-/** REJECTED -> {CLOSED, wontfix}; DEFERRED -> {OPEN, parked}; else null. */
+/** REJECTED -> {CLOSED, rejected}; DEFERRED -> {OPEN, parked}; else null. */
 export function mapLegacyStatus(value: string): TaskPair | null {
   const pair = LEGACY_STATUS_PAIRS[value];
   return pair ? { ...pair } : null;

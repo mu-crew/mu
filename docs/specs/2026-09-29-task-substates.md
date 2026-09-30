@@ -57,7 +57,7 @@ Consequences:
 | D8 | Apply resolves the pair before writing: a status-only op, or an unknown substate from a newer peer, falls back to the status default. The original payload stays in `ops`. | The foreign key fails the whole commit. Version skew must not break sync; the foreign key is there to catch our own bugs. |
 | D9 | Non-`done` close and `park` require `--why`, stored as an ordinary note in the same transaction. | Keeps the rationale, the one good part of the notes-only convention. |
 | D10 | Start with `parked` as the only non-default `OPEN` substate. No `--until`. | YAGNI. mu has no daemon to run the automatic un-park. Adding `triage` later is one seeded row. |
-| D11 | One shared legacy mapping: `REJECTED → CLOSED/wontfix`, `DEFERRED → OPEN/parked`. | Replaces `normalizeTaskStatus` (currently folds both onto `OPEN`). Apply, rebuild, undo and migration all use it, so recovery happens on every path. |
+| D11 | One shared legacy mapping: `REJECTED → CLOSED/rejected` (3.1.0; 3.0.0 used `wontfix`), `DEFERRED → OPEN/parked`. | Replaces `normalizeTaskStatus` (currently folds both onto `OPEN`). Apply, rebuild, undo and migration all use it, so recovery happens on every path. |
 | D12 | Migrate v10 → v11 through `scripts/migrate.ts`, not in `openDb`. | Keeps the "production never migrates in place" rule. SQLite cannot add a foreign key to an existing table, so a new target is required anyway. |
 
 ## Schema (v11)

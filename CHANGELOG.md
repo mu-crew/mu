@@ -10,6 +10,29 @@ breaking changes are called out under "Breaking" in each entry.
 
 ## [Unreleased]
 
+### Added
+
+- **`CLOSED/rejected`** closed substate: the proposal was declined.
+  `wontfix` now means only "valid, but not worth doing".
+  `mu task close --as rejected --why "..."`. The TUI `w` filter
+  (now labelled "won't do") covers it with the other non-`done` closes.
+- `scripts/migrate.ts` accepts a v11 source and writes a fresh v11 DB
+  re-derived from the ops log.
+
+### Changed
+
+- Legacy `REJECTED` history now maps to `CLOSED/rejected`, not
+  `CLOSED/wontfix`, on every path (apply, rebuild, undo, migrate). The
+  old status meant "declined", which `wontfix` blurred.
+- Legacy substate recovery (migration and `--recover`) re-maps a
+  `CLOSED/wontfix` task to `CLOSED/rejected` when the `wontfix` came
+  from an `undo` or migration write and the task's history holds a
+  legacy `REJECTED` op. A deliberate `close --as wontfix` is kept.
+  Upgrading from 3.0.0: run `npx tsx scripts/migrate.ts --recover <db>`
+  once, or migrate a copy.
+- A 3.0.0 peer applies an incoming `rejected` as `CLOSED/done` until it
+  upgrades.
+
 ## [3.0.0] — 2026-09-29
 
 **Upgrading from 2.x:** stop every `mu` process, back up the DB, migrate
