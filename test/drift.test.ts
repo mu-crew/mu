@@ -136,6 +136,35 @@ describe("drift detection", () => {
       expect(record.presence).toBe("missing-in-live");
     });
 
+    it("detects a missing REPEAT of a note's text", () => {
+      // The shape a peer used to end up in: two notes with the same author
+      // and text, one of them absent. Keyed on text alone, the survivor
+      // stood in for both and drift reported nothing.
+      seed();
+      addNote(db, "a", "[reaper] owner gone", { workstream: "demo", author: "reaper" });
+      const firstAt = (
+        db.prepare("SELECT MAX(created_at) AS t FROM task_notes").get() as {
+          t: string;
+        }
+      ).t;
+      while (new Date().toISOString() === firstAt) {
+        // spin past the millisecond, as two reaps never share one
+      }
+      addNote(db, "a", "[reaper] owner gone", { workstream: "demo", author: "reaper" });
+      expect(checkDrift(db).clean).toBe(true);
+
+      uncaptured(() => {
+        db.prepare("DELETE FROM task_notes WHERE content = ? AND created_at > ?").run(
+          "[reaper] owner gone",
+          firstAt,
+        );
+      });
+      const report = checkDrift(db);
+      expect(report.clean).toBe(false);
+      const record = report.records.find((r) => r.table === "task_notes");
+      expect(record?.presence).toBe("missing-in-live");
+    });
+
     it("detects drift in every portable table", () => {
       seed();
       uncaptured(() => {
@@ -158,7 +187,7 @@ describe("drift detection", () => {
       const report = checkDrift(db);
       expect(report.clean).toBe(false);
       // Notes are a GROW-ONLY SET whose diff identity is
-      // (task, author, content) — see src/drift.ts § SNAPSHOT_SQL — because
+      // (task, author, content, created_at) — see src/drift.ts § SNAPSHOT_SQL — because
       // their surrogate id is not portable. So nulling the AUTHOR changes
       // the row's identity, and the honest report is a pair: the log's row
       // is missing from live, and live has a row the log cannot explain.

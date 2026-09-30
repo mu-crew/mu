@@ -8,8 +8,9 @@
 //
 // THE MERGE RULES (docs/VOCABULARY.md; v2-merge-rules)
 // ---------------------------------------------------
-//   note / message      GROW-ONLY SET. Insert-if-absent by origin
-//                       identity. Never updated, so never in conflict.
+//   note / message      GROW-ONLY SET. Insert-if-absent by content
+//                       identity (task, author, content, created_at).
+//                       Never updated, so never in conflict.
 //   task / workstream   PER-FIELD LWW by HLC. Not row-level.
 //   edge                LWW-ELEMENT-SET: add/remove, each carrying an
 //                       HLC, so a remove and a re-add order correctly.
@@ -634,15 +635,21 @@ function applyWorkstreamPut(db: Db, op: Op): ApplyResult {
  *  (`demo/a#12`), which identifies it on its origin machine, but a peer
  *  cannot map that onto a local row without storing a mapping table.
  *
- *  So identity is `(task, author, content)`. Notes are immutable
- *  append-only prose, which makes this sound: if a note with the same
- *  author and text already hangs off the same task, applying again is
- *  genuinely a no-op. The honest cost is that two INDEPENDENTLY authored
- *  notes with byte-identical author and text on one task converge to a
- *  single row. For a grow-only set of immutable human notes that is a
- *  reasonable dedupe rather than data loss, and it is the price of not
- *  carrying an origin-id mapping table purely to distinguish two
- *  indistinguishable strings. */
+ *  So identity is `(task, author, content, created_at)`. Notes are
+ *  immutable, and every copy of one carries the created_at its origin
+ *  stamped, so applying a note that is already here is a no-op.
+ *
+ *  `created_at` is in the identity because text alone is not unique.
+ *  Machine-written notes repeat: the reaper writes the same "previous
+ *  owner gone" line each time it reaps a task, and dispatch writes
+ *  "CLAIM: dispatch" on every claim. Keyed on text alone, a repeat
+ *  collapsed into the first copy on every peer while the origin kept
+ *  both, so note counts drifted apart one repeat at a time (a real
+ *  fleet: 6359 vs 6360). Two notes identical to the millisecond still
+ *  converge to one row, which is a dedupe rather than a loss.
+ *
+ *  Undo, migrations and reprojection re-emit a note with the created_at
+ *  it already had, so they still land on the existing row. */
 function applyNotePut(db: Db, op: Op): ApplyResult {
   const { taskKey } = parseNoteKey(op.key);
   const taskId = taskRowId(db, taskKey);
@@ -657,19 +664,27 @@ function applyNotePut(db: Db, op: Op): ApplyResult {
   const entries = decodePayload(op.payload);
   const author = entries.find(([f]) => f === "author")?.[1] ?? null;
   const content = entries.find(([f]) => f === "content")?.[1] ?? "";
-  const createdAt = entries.find(([f]) => f === "created_at")?.[1] ?? new Date().toISOString();
+  const stamped = entries.find(([f]) => f === "created_at")?.[1];
+  const createdAt = stamped ?? new Date().toISOString();
   const authorText = author === null ? null : String(author);
 
+  // A put without created_at (capture always writes one) is matched on
+  // text alone: stamping it with "now" and then matching on that would
+  // make every re-delivery look new.
   const already = db
     .prepare(
       `SELECT 1 AS present FROM task_notes
         WHERE task_id = @taskId AND content = @content
           AND COALESCE(author, '') = COALESCE(@author, '')
+          AND (@stamped IS NULL OR created_at = @stamped)
         LIMIT 1`,
     )
-    .get({ taskId, content: String(content), author: authorText }) as
-    | { present: number }
-    | undefined;
+    .get({
+      taskId,
+      content: String(content),
+      author: authorText,
+      stamped: stamped === undefined || stamped === null ? null : String(stamped),
+    }) as { present: number } | undefined;
   if (already) return { changed: false, appliedFields: [], skipped: "already-present" };
 
   // A note deleted by a NEWER tombstone must not be re-inserted by a
@@ -760,16 +775,22 @@ function applyDel(db: Db, op: Op): ApplyResult {
       const entries = decodePayload(src.payload);
       const content = entries.find(([f]) => f === "content")?.[1] ?? "";
       const author = entries.find(([f]) => f === "author")?.[1] ?? null;
+      const createdAt = entries.find(([f]) => f === "created_at")?.[1] ?? null;
+      // created_at narrows the delete to this note, not every repeat of
+      // its text. A put without one (never written by capture) falls
+      // back to text alone.
       const r = db
         .prepare(
           `DELETE FROM task_notes
             WHERE task_id = @taskId AND content = @content
-              AND COALESCE(author, '') = COALESCE(@author, '')`,
+              AND COALESCE(author, '') = COALESCE(@author, '')
+              AND (@createdAt IS NULL OR created_at = @createdAt)`,
         )
         .run({
           taskId,
           content: String(content),
           author: author === null ? null : String(author),
+          createdAt: createdAt === null ? null : String(createdAt),
         });
       return {
         changed: r.changes > 0,
@@ -942,7 +963,8 @@ export function reprojectDeferredOps(db: Db): number {
                              WHERE n.task_id = t.id
                                AND n.content = COALESCE(json_extract(o.payload, '$.content'), '')
                                AND COALESCE(n.author, '')
-                                   = COALESCE(json_extract(o.payload, '$.author'), ''))
+                                   = COALESCE(json_extract(o.payload, '$.author'), '')
+                               AND n.created_at = json_extract(o.payload, '$.created_at'))
             AND NOT EXISTS (SELECT 1 FROM ops d
                              WHERE d.entity = 'note' AND d.key = o.key
                                AND d.op = 'del' AND d.hlc > o.hlc)`,

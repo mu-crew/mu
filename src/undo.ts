@@ -512,8 +512,8 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
       // puts for the same TASK instead of the same key.
       //
       // Ordinal position cannot be used to pair them: notes are a
-      // grow-only SET keyed on (task, content), so identical prose
-      // collapses to one row. Observed 5 puts against 3 dels for one
+      // grow-only SET, and before 3.1.1 it was keyed on (task, content),
+      // so identical prose collapsed to one row. Observed 5 puts against 3 dels for one
       // task, the surplus being repeated '[reaper]' notes — the Nth put
       // is therefore not the Nth del. So this restores the DISTINCT
       // contents the log holds for the task and lets the set semantics
@@ -840,21 +840,36 @@ function deleteRow(db: Db, inverse: InverseOp): boolean {
       if (parsed === null) return false;
       const taskId = taskIdForKey(db, parsed.taskKey);
       if (taskId === null) return false;
-      // Notes have no natural identity beyond their content, so delete by
-      // the content the log says this note had.
-      const content = db
+      // A note's identity is (task, author, content, created_at), as in
+      // applyNotePut, so delete exactly the note the log says this was,
+      // not every repeat of its text.
+      const note = db
         .prepare(
-          `SELECT json_extract(payload, '$.content') AS content FROM ops
+          `SELECT json_extract(payload, '$.content') AS content,
+                  json_extract(payload, '$.author') AS author,
+                  json_extract(payload, '$.created_at') AS created_at FROM ops
             WHERE entity = 'note' AND key = ? AND op = 'put'
               AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
             ORDER BY hlc DESC LIMIT 1`,
         )
-        .get(inverse.key) as { content: string | null } | undefined;
-      if (content?.content === undefined || content.content === null) return false;
+        .get(inverse.key) as
+        | { content: string | null; author: string | null; created_at: string | null }
+        | undefined;
+      if (note?.content === undefined || note.content === null) return false;
       return (
         db
-          .prepare("DELETE FROM task_notes WHERE task_id = ? AND content = ?")
-          .run(taskId, content.content).changes > 0
+          .prepare(
+            `DELETE FROM task_notes
+              WHERE task_id = @taskId AND content = @content
+                AND COALESCE(author, '') = COALESCE(@author, '')
+                AND (@createdAt IS NULL OR created_at = @createdAt)`,
+          )
+          .run({
+            taskId,
+            content: note.content,
+            author: note.author,
+            createdAt: note.created_at,
+          }).changes > 0
       );
     }
     case "edge": {
@@ -937,9 +952,23 @@ function restoreRow(db: Db, inverse: InverseOp, table: string): boolean {
       if (taskId === null) return false;
       const content = inverse.fields.content;
       if (content === undefined || content === null) return false;
+      const author = inverse.fields.author;
+      const createdAt = inverse.fields.created_at;
+      // Same identity as applyNotePut, so restoring one of two repeats of
+      // a text does not find the other and stop.
       const exists = db
-        .prepare("SELECT id FROM task_notes WHERE task_id = ? AND content = ?")
-        .get(taskId, String(content)) as { id: number } | undefined;
+        .prepare(
+          `SELECT id FROM task_notes
+            WHERE task_id = @taskId AND content = @content
+              AND COALESCE(author, '') = COALESCE(@author, '')
+              AND (@createdAt IS NULL OR created_at = @createdAt)`,
+        )
+        .get({
+          taskId,
+          content: String(content),
+          author: author === undefined || author === null ? null : String(author),
+          createdAt: createdAt === undefined || createdAt === null ? null : String(createdAt),
+        }) as { id: number } | undefined;
       if (exists) return false; // grow-only: already there
       db.prepare(
         "INSERT INTO task_notes (task_id, author, content, created_at) VALUES (?, ?, ?, ?)",

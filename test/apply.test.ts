@@ -495,6 +495,30 @@ describe("applyOp", () => {
       expect(noteCount()).toBe(after);
     });
 
+    it("the same text written at two different times is two notes", () => {
+      // Observed on a real fleet: the reaper wrote "[reaper] previous owner
+      // integrator gone ..." on 2026-09-28 and again, byte-identical, on
+      // 2026-09-30. The origin had two rows; the peer kept one, so its note
+      // count drifted by one per repeat.
+      seedLocalTask("t1");
+      const at = (wall: number, key: string, createdAt: string) =>
+        makeOp({
+          hlc: peerHlc(wall),
+          entity: "note",
+          key,
+          payload: { author: "reaper", content: "[reaper] owner gone", created_at: createdAt },
+        });
+      const first = ingest(at(1000, "demo/t1#9229", "2026-09-28T09:59:58.970Z"));
+      const again = ingest(at(2000, "demo/t1#10532", "2026-09-30T10:41:40.855Z"));
+      expect(first.changed).toBe(true);
+      expect(again.changed).toBe(true);
+      expect(noteCount()).toBe(2);
+      // Re-delivering either one is still a no-op.
+      const replay = ingest(at(2000, "demo/t1#10532", "2026-09-30T10:41:40.855Z"));
+      expect(replay).toMatchObject({ changed: false, skipped: "already-present" });
+      expect(noteCount()).toBe(2);
+    });
+
     it("never updates: a later op with different content ADDS rather than overwrites", () => {
       seedLocalTask("t1");
       ingest(noteOp(1000, "first"));

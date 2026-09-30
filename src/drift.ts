@@ -234,8 +234,8 @@ const SNAPSHOT_SQL: Record<string, string> = {
                  t.title, t.status, t.substate, t.impact, t.effort_days, t.created_at, t.updated_at
             FROM tasks t JOIN workstreams w ON w.id = t.workstream_id`,
   // Notes are a GROW-ONLY SET whose local surrogate id is not portable,
-  // so identity for diffing is (task, author, content) — exactly the
-  // identity applyNotePut uses for its insert-if-absent check. Using the
+  // so identity for diffing is (task, author, content, created_at) —
+  // exactly the identity applyNotePut uses for its insert-if-absent check. Using the
   // '#<id>' key here would report drift on every note that replayed to a
   // different rowid, which is normal and not drift.
   //
@@ -244,7 +244,8 @@ const SNAPSHOT_SQL: Record<string, string> = {
   // distinct notes cannot collide into one composite key. A literal NUL
   // would be the textbook choice but SQLite truncates TEXT at NUL.
   task_notes: `SELECT w.name || '/' || t.local_id || char(31) ||
-                      COALESCE(n.author, '') || char(31) || n.content AS key,
+                      COALESCE(n.author, '') || char(31) || n.content || char(31) ||
+                      n.created_at AS key,
                       n.author, n.content, n.created_at
                  FROM task_notes n
                  JOIN tasks t ON t.id = n.task_id
