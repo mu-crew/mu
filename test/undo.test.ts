@@ -291,6 +291,49 @@ describe("undo", () => {
     });
   });
 
+  // ─── repeated note text ──────────────────────────────────────────────
+
+  describe("a note whose text repeats an earlier note", () => {
+    // The reaper and dispatch write the same line on every reap/claim, so
+    // one task routinely holds several notes with identical author and
+    // text. They differ only in created_at.
+    const notes = () =>
+      (
+        db.prepare("SELECT created_at FROM task_notes ORDER BY created_at").all() as {
+          created_at: string;
+        }[]
+      ).map((r) => r.created_at);
+
+    const repeat = (): string[] => {
+      seed();
+      addNote(db, "a", "[reaper] owner gone", { workstream: "demo", author: "reaper" });
+      const first = notes();
+      // A distinct created_at, as two reaps are never in the same ms.
+      while (new Date().toISOString() === first[0]) {
+        // spin past the millisecond
+      }
+      addNote(db, "a", "[reaper] owner gone", { workstream: "demo", author: "reaper" });
+      const both = notes();
+      expect(both).toHaveLength(2);
+      return both;
+    };
+
+    it("undoing the repeat removes only the repeat", () => {
+      const [first] = repeat();
+      undoGroup(db, groupFor("task.note"));
+      expect(notes()).toEqual([first]);
+      expectNoDrift();
+    });
+
+    it("undoing the delete of a task restores both repeats", () => {
+      const both = repeat();
+      deleteTask(db, "a", "demo");
+      undoGroup(db, groupFor("task.delete"));
+      expect(notes()).toEqual(both);
+      expectNoDrift();
+    });
+  });
+
   // ─── undo is itself an op, and itself undoable ────────────────────────
 
   describe("undo is an ordinary op", () => {

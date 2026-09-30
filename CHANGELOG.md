@@ -10,6 +10,23 @@ breaking changes are called out under "Breaking" in each entry.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Notes with repeated text now sync.** A note's identity was
+  `(task, author, content)`, so a note whose text repeated an earlier
+  one on the same task was taken for that one and not applied. The
+  reaper and dispatch write the same line on every reap and claim, so
+  each repeat went missing on every peer while the origin kept it, and
+  note counts drifted apart (a real fleet: 6359 vs 6360). Identity is
+  now `(task, author, content, created_at)` on every path: apply,
+  reprojection, undo and `mu doctor --deep`. A note re-emitted by undo,
+  migration or reprojection keeps its `created_at`, so it still lands
+  on its existing row.
+
+  Repairs itself: the ops were always recorded, so the first `mu`
+  invocation after upgrading reprojects the missing notes. Undo of one
+  repeat now removes only that repeat, not every note with its text.
+
 ## [3.1.0] — 2026-09-30
 
 ### Added

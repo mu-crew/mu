@@ -367,8 +367,9 @@ function makeV8Db(path: string, opts: { archives?: boolean } = {}): Fixture {
   );
   note.run(1, "worker-1", "first note", T(7));
   note.run(1, null, "anonymous note", T(8));
-  // Byte-identical duplicate: v8 allowed it, v9's grow-only note
-  // identity (task, author, content) collapses it to one row.
+  // Same author and text, written at different times: two notes, as
+  // they were in the source. (Before 3.1.1 the grow-only identity was
+  // (task, author, content) and collapsed them to one row.)
   note.run(2, "worker-1", "dup", T(9));
   note.run(2, "worker-1", "dup", T(10));
 
@@ -891,7 +892,7 @@ describe("scripts/migrate.ts", () => {
         .all();
       expect(edges).toEqual([{ key: "demo/alpha->demo/beta", created_at: T(6) }]);
 
-      // 4 source notes, 1 duplicate pair collapsed by grow-only identity.
+      // All 4 source notes, including the repeated text.
       const notes = db
         .prepare("SELECT author, content, created_at FROM task_notes ORDER BY created_at")
         .all();
@@ -899,6 +900,7 @@ describe("scripts/migrate.ts", () => {
         { author: "worker-1", content: "first note", created_at: T(7) },
         { author: null, content: "anonymous note", created_at: T(8) },
         { author: "worker-1", content: "dup", created_at: T(9) },
+        { author: "worker-1", content: "dup", created_at: T(10) },
       ]);
 
       // Machine-local tables stay EMPTY. Resurrecting them would produce
@@ -981,7 +983,7 @@ describe("scripts/migrate.ts", () => {
     expect(parsed.drift?.rowsCompared).toEqual({
       workstreams: 2,
       tasks: 3,
-      task_notes: 3,
+      task_notes: 4,
       task_edges: 1,
     });
   });
