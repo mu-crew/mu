@@ -10,6 +10,8 @@ breaking changes are called out under "Breaking" in each entry.
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-09-30
+
 ### Added
 
 - **`CLOSED/rejected`** closed substate: the proposal was declined.
