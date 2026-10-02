@@ -67,9 +67,9 @@ on track.
   and the activity log, never agent-to-agent messaging.
 - **Not a verifier.** `task close --evidence "tests pass"` records
   the claim; mu doesn't run the tests.
-- **Not a replacement for [pi-subagents](https://github.com/nicobailon/pi-subagents).**
-  Mu agents are driveable panes; pi-subagents is for one-shot
-  focused delegation. See [vs `pi-subagents`](#vs-pi-subagents).
+- **No hidden subagents.** One-shot delegation runs in a visible pane
+  you can attach to, steer and keep talking to. See
+  [vs hidden subagents](#vs-hidden-subagents).
 - **Not a hosted service.** Local-first SQLite.
 - **DB-undoable, not substrate-undoable.** Every change is captured as ops
   under one group, so `mu undo <group> --yes` reverses exactly that
@@ -99,9 +99,12 @@ case: one helper or background watcher you still want to drive and
 observe.
 
 **Don't use mu for** — tiny direct edits; quick local inspection;
-one-shot focused delegation where you only need a returned answer
-(use `pi-subagents`); single-context work where durable coordination
-adds ceremony.
+single-context work where durable coordination adds ceremony.
+
+For one-shot delegation where you only need an answer back, use a
+**delegate**: the `mu_delegate` tool, or `mu agent spawn -w scratch` +
+`send` + `wait --json` from a shell. Installing mu gives you
+`mu_delegate`; it ships in the extension `mu link pi` installs.
 
 ---
 
@@ -294,21 +297,29 @@ covers the traps, including the one where your own agent blocks your
 
 ---
 
-## vs `pi-subagents`
+## vs hidden subagents
 
-|                          | [`pi-subagents`](https://github.com/nicobailon/pi-subagents) | `mu` |
-| ------------------------ | -------------------------------------------------------- | ---- |
-| Best for                 | "Send this focused task to a specialist, return a result" | "Keep a driveable agent/persistent crew in a multiplexer" |
-| Lifetime                 | one-shot per task                                        | from off-the-cuff `scratch` helper to long-lived crew |
-| Substrate                | `pi` subprocess + result files                           | tmux/herdr panes running pi sessions |
-| Built-in task graph      | no                                                       | yes: parallel-tracks union-find with diamond-merge |
-| Drivable from outside pi | no (extension-only)                                      | yes (`mu` is a real CLI) |
+Most agent tools delegate to a hidden subagent: a child process or
+in-process loop that pi-subagents, pi's example subagent extension,
+and the Claude Code and Codex task tools run out of sight. You get its
+result and lose the rest. A mu **delegate** is an ordinary agent in a
+pane.
 
-The two play well together. Use `pi-subagents` when you want one
-focused answer back. Use mu's reserved `scratch` workstream when you
-want a low-ceremony helper you can keep talking to. For coordinated
-multi-agent work, graduate from `scratch` to a named workstream + task
-DAG. See [docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md).
+|                       | Hidden subagent                         | mu delegate |
+| --------------------- | --------------------------------------- | ----------- |
+| Visibility            | none while it runs                      | a pane; attach and watch live |
+| Steer mid-run         | no                                      | yes: `mu agent send`; stop with `mu agent abort` |
+| Keep talking after it answers | no                              | yes, with `keep: true` |
+| Transcript            | collapses into a result                 | a normal pi session log |
+| Agent types           | usually built in                        | none; the brief is ad-hoc text |
+| If the work grows     | re-brief a new agent                    | same task DAG and workspaces as any agent |
+| Cost                  | light                                   | one pane and one pi process each |
+
+The cost row is the trade-off. For many tiny calls a hidden subagent is
+lighter. mu bets that for agent work, seeing and steering the agent is
+worth a pane. For coordinated multi-agent work, graduate from
+`scratch` to a named workstream + task DAG. See
+[docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md).
 
 ---
 

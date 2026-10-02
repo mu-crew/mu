@@ -183,6 +183,19 @@ breaking changes are called out under "Breaking" in each entry.
   between still fires. Exit codes are unchanged (0 met, 5 timeout, 6 the
   socket stopped answering). SDK: `waitForAgents` gains a `watch` hook.
 
+### Changed
+
+- **mu no longer points one-shot work at pi-subagents.** README, VISION,
+  USAGE_GUIDE and the skill used to say "use pi-subagents for a one-shot
+  answer"; the skill description sent models to a tool that may not be
+  installed. One-shot work now goes to a **delegate** (`mu_delegate`, or
+  `mu agent spawn -w scratch` + `send` + `wait --json`): an ordinary
+  agent in a visible pane you can attach to, steer, abort, or keep
+  talking to, unlike a **hidden subagent**. README's "vs pi-subagents"
+  section is now "vs hidden subagents", including the cost: one pane and
+  one pi process per delegate. VISION records that delegation is CLI and
+  the tool's callback is presentation.
+
 ### Fixed
 
 - **A nested pi no longer steals or deletes an agent's control

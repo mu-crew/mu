@@ -1,6 +1,6 @@
 ---
 name: mu
-description: Manage AI agents in terminal-multiplexer panes (tmux or herdr) — from a single off-the-cuff helper to a persistent crew coordinated through a built-in task graph. Use when the user asks to "create/spin up a subagent to X", "run X in the background", "do this in parallel", "use one subagent per X to do Y", "kick off a helper to watch/investigate/draft X", or to spawn, send work to, observe, or coordinate one or many agents — especially work you'll keep talking to, long-lived agents, background tasks, or anything that benefits from a dependency graph and parallel-track detection. For zero-ceremony single helpers use the reserved `scratch` workstream; for one-shot "fire and get a result back" prefer pi-subagents.
+description: Manage AI agents in terminal-multiplexer panes (tmux or herdr) — from a single off-the-cuff helper to a persistent crew coordinated through a built-in task graph. Use when the user asks to "create/spin up a subagent to X", "run X in the background", "do this in parallel", "use one subagent per X to do Y", "kick off a helper to watch/investigate/draft X", or to spawn, send work to, observe, or coordinate one or many agents — especially work you'll keep talking to, long-lived or background agents, or anything needing a dependency graph. For zero-ceremony helpers use the reserved `scratch` workstream; for one-shot "fire and get a result back" use the `mu_delegate` tool — its pane stays attachable.
 ---
 
 # mu — Multi-agent orchestration
@@ -48,26 +48,27 @@ both. `--json` exists on every verb:
 ## When to use mu
 
 Use mu for persistent helpers, parallel work, dependencies, gated review, or
-work that must survive context compaction. Use `pi-subagents` for one focused
-answer and no follow-up; stay in one context for tiny edits or inspection.
+work that must survive context compaction. Stay in one context for tiny edits
+or inspection.
 
 ### Off-the-cuff helpers (`scratch`)
 
-Use the reserved `scratch` workstream for a helper you will keep driving but
-that needs no task DAG. It auto-creates on spawn.
+The reserved `scratch` workstream holds helpers that need no task DAG; it
+auto-creates on spawn. `mu_delegate` (installed by `mu link pi`) is its tool
+form for one answer back; the CLI form is spawn + send + `mu agent wait --json`
+(`lastText`).
 
-- For task-less work, `mu agent wait <name> --first` waits for busy → idle;
-  exit 0 means met, 5 timeout, 6 pane died.
+- `mu agent wait <name> --first` waits for busy → idle; exit 0 met, 5
+  timeout, 6 pane died.
 - For a watcher, persist last-seen state in a log ledger: write `mu log -w
   scratch --kind pr-state 'pr=1234 sha=abc ci=red'`, then read `mu log -w
-  scratch --kind pr-state -n 1 --json`. Act only on change; chat context is not
-  durable.
-- Use one agent per independent unit and `--workspace` for any helper that may
-  edit, build, or test the shared repo.
+  scratch --kind pr-state -n 1 --json`. Act only on change.
+- One agent per independent unit; `--workspace` for any helper that may edit,
+  build, or test the shared repo.
 
-A helper stuck at `needs_input` immediately after spawn likely hit pi's project
-trust prompt. Add `--approve` to the existing `MU_<CLI>_COMMAND`; use
-`--command` only to replace that configured command deliberately.
+A helper stuck at `needs_input` right after spawn likely hit pi's project trust
+prompt: add `--approve` to `MU_<CLI>_COMMAND` rather than overriding it with
+`--command`.
 
 Move off `scratch` when work gains dependencies or review gates.
 
