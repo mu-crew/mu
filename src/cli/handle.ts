@@ -46,6 +46,7 @@ import {
   WorkstreamNotFoundError,
 } from "../db.js";
 import { DriftDetectedError } from "../drift.js";
+import { LinkConflictError } from "../link.js";
 import { GroupIdAmbiguousError } from "../logs.js";
 import {
   HerdrCommandOverrideError,
@@ -296,7 +297,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RebuildTargetIsSourceError ||
     // An abbreviated group id matching several groups: the operator must
     // disambiguate. Guessing would be catastrophic for `mu undo`.
-    err instanceof GroupIdAmbiguousError
+    err instanceof GroupIdAmbiguousError ||
+    err instanceof LinkConflictError
   ) {
     return { label: "conflict", exitCode: 4 };
   }

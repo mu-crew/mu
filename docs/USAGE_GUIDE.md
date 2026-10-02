@@ -422,7 +422,26 @@ To update the source-installed copy: pull from upstream, then
 `npm install -g .` from inside the checkout. The `prepare` script
 rebuilds before linking the new dist/.
 
-### Install the bundled skill
+### Link pi (`mu link pi`)
+
+For pi agents, one verb installs both pieces mu needs:
+
+```bash
+mu link pi            # extension shim + skill symlink; then restart pi (or /reload)
+mu link pi --copy     # inline the extension instead (pinned; relink after upgrades)
+```
+
+- `~/.pi/agent/extensions/mu.ts` — a one-line shim that re-exports the
+  installed `dist/extension/mu-pi.js`, so `npm install -g` upgrades the
+  extension with no relink.
+- `~/.agents/skills/mu` — a symlink to the package's `skills/mu`.
+
+mu refuses to replace a real directory at the skill path (exit 4), and
+replaces a symlink pointing elsewhere (e.g. a dev checkout) only with
+`--force`. `--extension-only` / `--skill-only` install one piece.
+`MU_PI_HOME` overrides the home directory both paths are rooted at.
+
+### Install the bundled skill (other agents)
 
 Mu ships a skill at `skills/mu/SKILL.md` that teaches the LLM running
 inside an agent pane how to use mu. The canonical install path is the

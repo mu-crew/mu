@@ -159,6 +159,15 @@ export {
   receiveHlc,
 } from "./hlc.js";
 export {
+  inspectLinks,
+  LinkConflictError,
+  type LinkState,
+  type LinkStatus,
+  linkPi,
+  linkSkill,
+  MU_SHIM_MARKER,
+} from "./link.js";
+export {
   type CaptureIntent,
   KNOWN_INTENTS,
   KNOWN_VERBS,
