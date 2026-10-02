@@ -1007,7 +1007,7 @@ is Linux-only on herdr (herdr reports a shell pid, not a tty, so
 cannot have scrolled-off rows recovered by `--lines`, `herdr pane list`
 carries no foreground-command field, and `MU_<UPPER_CLI>_COMMAND` has
 no herdr equivalent because herdr resolves the agent binary itself.
-See [docs/USAGE_GUIDE.md § 20](../../docs/USAGE_GUIDE.md#20-multiplexer-backends-tmux-and-herdr)
+See [docs/USAGE_GUIDE.md § 20](../guide/backends.md)
 for the full difference table.
 
 Verified end to end on herdr 0.8.0, not just in tests: `mu agent spawn
@@ -4735,7 +4735,7 @@ from the v0.3 dogfood feedback wave.
 - **All 10 foreign keys gain `ON UPDATE CASCADE`** (v1 → v2,
   pre-v5). Renaming a workstream / task / agent name now leaves
   no dangling children. Recovery recipes in
-  [USAGE_GUIDE § 14](../../docs/USAGE_GUIDE.md#you-typod-a-workstream-name-and-want-to-rename-it).
+  [USAGE_GUIDE § 14](../guide/recovery.md#rename-a-workstream).
 
 ## [0.1.0] — Initial release
 

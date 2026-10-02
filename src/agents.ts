@@ -521,7 +521,7 @@ function deleteAgentRow(db: Db, name: string, workstream: string): boolean {
 // ────────────────────────────────────────────────────────────────────────
 
 /** Allowed agent name shape: lowercase alpha first, then alnum/underscore/
- *  hyphen. Mirrors VOCABULARY.md §"Naming conventions". */
+ *  hyphen. Mirrors docs/reference/naming.md. */
 const AGENT_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 
 export function isValidAgentName(name: string): boolean {

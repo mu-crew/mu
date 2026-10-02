@@ -57,9 +57,8 @@ herdr, and murmur for other CLIs on tmux:
 each spawned pi. Send, `--fresh`, wait, abort and state for pi agents
 go through it, exactly, with no screen reading and no fallback to
 pasting. Remote agents use an ssh socket forward printed by
-`mu agent remote-env`. The tmux bracketed-paste path serves non-pi
-CLIs, slash commands and `--via mux`:
-[architecture/control-socket.md](architecture/control-socket.md).
+`mu agent remote-env`. The tmux bracketed-paste path serves the
+[cases listed there](architecture/control-socket.md#no-silent-fallback).
 
 **Sync.** With `MU_SYNC_DIR` set, every `mu` invocation ingests peer
 JSONL segments before the verb and flushes its own ops after it,

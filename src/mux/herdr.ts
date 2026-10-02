@@ -8,7 +8,7 @@
 //
 // herdr's own "session" is SERVER-level (one socket per named session),
 // so it is NOT the workstream unit. The locked mapping (see
-// docs/ARCHITECTURE.md § "Mux session topology") is:
+// docs/architecture/mux.md § "One mux session per workstream") is:
 //
 //   mu workstream  = herdr WORKSPACE, labelled `mu-<name>`
 //   mu window      = herdr TAB

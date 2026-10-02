@@ -35,8 +35,8 @@ milliseconds; `0` disables a wait unless noted.
 
 ## Send and state (tmux path)
 
-These apply to non-pi agents and to `--via mux` only. pi agents use the
-control socket.
+These apply to the tmux paste path only. For when that path runs, see
+[No silent fallback](../architecture/control-socket.md#no-silent-fallback).
 
 | Name | Effect | Default |
 | --- | --- | --- |

@@ -9,8 +9,8 @@
 // backend-specific — topology, the send protocol, capture, pane-id
 // validation, identity fallback — lives behind `MuxBackend`.
 //
-// See docs/VOCABULARY.md § "mux backend" and docs/ARCHITECTURE.md
-// § "Mux session topology".
+// See docs/VOCABULARY.md § "mux backend" and docs/architecture/mux.md
+// § "One mux session per workstream".
 
 export {
   type AttachTarget,

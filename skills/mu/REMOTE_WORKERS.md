@@ -79,8 +79,7 @@ row per agent):
 
 A dead ssh leaves the socket file, which probes `refused`, never a
 stale `ok`. Non-pi agents get state from murmur, lagging 30 s ± 10 s
-plus a 10 s cache. Without murmur it is `unknown`, and `mu agent wait`
-and stall detection never fire.
+plus a 10 s cache.
 
 ### Step 5: poll once per turn
 

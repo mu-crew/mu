@@ -29,7 +29,7 @@
 // ops log, watermark).
 //
 // The surrogate-INTEGER-PK discipline introduced in v5 is unchanged:
-// per docs/ARCHITECTURE.md § Surrogate-PK + SDK-boundary discipline,
+// per docs/architecture/sdk.md § Surrogate-PK and SDK-boundary discipline,
 // every entity table has an INTEGER PK; FKs reference INTEGER ids;
 // the operator-facing TEXT name is per-scope unique via
 // UNIQUE (<scope_id>, <name>). `ops` is the deliberate exception: it
@@ -188,7 +188,7 @@ function refuseUserDbDuringTests(path: string): void {
 
 // ─── Resolve helpers (operator-facing name -> surrogate id) ───────────
 //
-// docs/ARCHITECTURE.md § Surrogate-PK + SDK-boundary discipline:
+// docs/architecture/sdk.md § Surrogate-PK and SDK-boundary discipline:
 //
 //   PUBLIC SDK functions take operator-facing names (workstream + local
 //   id + agent name). Internal helpers take surrogate ids. Resolution
@@ -603,7 +603,7 @@ CREATE VIEW goals AS
 
 // ─── v11 SCHEMA ───────────────────────────────────────────────────────
 //
-// Per docs/ARCHITECTURE.md § Surrogate-PK + SDK-boundary discipline.
+// Per docs/architecture/sdk.md § Surrogate-PK and SDK-boundary discipline.
 // Every entity table has:
 //   - INTEGER PRIMARY KEY AUTOINCREMENT (surrogate identity)
 //   - <scope>_id INTEGER NOT NULL REFERENCES <parent>(id) ON DELETE CASCADE

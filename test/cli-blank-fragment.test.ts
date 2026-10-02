@@ -1,5 +1,5 @@
 // bug_whitespace_status_fragment — end-to-end exit-code guard for the
-// empty-vs-blank rule (docs/VOCABULARY.md § Empty vs blank flag
+// empty-vs-blank rule (docs/reference/naming.md § Empty and blank list
 // fragments).
 //
 // The unit tests in test/cli-shared.test.ts pin parseCsvFlag itself and

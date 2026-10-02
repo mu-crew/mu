@@ -35,9 +35,8 @@ mu picks the backend from the first rule that matches:
 | Pane borders, layout | set by mu | left to herdr |
 | Test isolation | `MU_TMUX_SOCKET` | `MU_HERDR_SESSION` |
 
-On tmux, non-pi agents need [murmur](https://github.com/mu-crew/murmur)
-for runtime state. Without it their state is `unknown`. pi agents do
-not need murmur on either backend.
+Where each agent's state comes from, per backend:
+[architecture/mux.md § Agent state](../architecture/mux.md#agent-state).
 
 ## Know herdr's limits
 

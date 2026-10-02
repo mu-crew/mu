@@ -20,8 +20,7 @@ that both paths start from.
   dev checkout. mu never replaces a real directory there (exit 4).
 - `--extension-only` and `--skill-only` install one part.
 
-For agents other than pi, install the skill with the skills CLI:
-`npx skills add mu-crew/mu`.
+For agents other than pi, see [README § Install](../../README.md#install).
 
 ## Reload running pi agents
 

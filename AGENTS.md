@@ -5,7 +5,7 @@ panes, coordinated through a task DAG.
 
 ## Read these first
 
-1. `docs/guide/README.md` — what mu does for a user.
+1. [docs/guide/README.md](docs/guide/README.md) — what mu does for a user.
 2. [CHANGELOG.md](CHANGELOG.md) — the upcoming version's entry is the
    source of truth for verbs, schema, and env vars.
 3. [docs/VISION.md](docs/VISION.md) — design pillars you must not violate.
@@ -13,9 +13,9 @@ panes, coordinated through a task DAG.
    criteria. Read [Anti-feature pledges](docs/ROADMAP.md#anti-feature-pledges)
    before you add a dependency, an abstraction, or a surface.
 5. [docs/VOCABULARY.md](docs/VOCABULARY.md) — canonical terms for code,
-   docs, and error messages. `docs/reference/` holds env vars and naming.
+   docs, and error messages. [docs/reference/](docs/reference/) holds env vars and naming.
 6. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the module map (what
-   lives where in `src/`), plus deep dives under `docs/architecture/`.
+   lives where in `src/`), plus deep dives under [docs/architecture/](docs/architecture/).
 
 ## Build, test, lint
 
@@ -104,7 +104,7 @@ TS 7.0 lacks. Revisit at TS 7.1.
 2. Wire it in `src/cli.ts` with commander inside `handle(...)`. For
    `--workstream`, read `this.optsWithGlobals()`; the top-level option
    otherwise swallows it.
-3. Document it in `docs/guide/`, the VOCABULARY operations line if
+3. Document it in the matching `docs/guide/` how-to, VOCABULARY if
    it adds a term, and CHANGELOG. Remove any `mu sql` workaround it
    replaces. Touch `skills/mu/SKILL.md` only for a gotcha `--help`
    cannot state.
