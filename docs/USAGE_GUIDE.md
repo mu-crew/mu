@@ -2058,8 +2058,14 @@ Reconciliation runs on every `mu agent list` / `mu`. Two steps:
 ```bash
 eval "$(mu agent remote-env worker-1 --shell)"   # sets MU_SSH_ARGS, MU_REMOTE_ENV
 mu agent spawn worker-1 --command \
-  "ssh $MU_SSH_ARGS dev -t 'cd ~/ws/worker-1 && $MU_REMOTE_ENV pi'"
+  "ssh $MU_SSH_ARGS dev -t 'cd ~/ws/worker-1 && $MU_REMOTE_ENV \$SHELL -ilc \"pi --approve\"'"
 ```
+
+`$SHELL -ilc` runs pi in an interactive login shell, so the remote
+`~/.zshrc` / `~/.bashrc` (PATH, provider env) loads; ssh's own
+non-interactive shell skips it. `MU_SSH_ARGS` also forces a direct
+connection (`-o ControlMaster=no -o ControlPath=none`): a multiplexed
+ssh never binds the local end of the forward.
 
 `MU_SSH_ARGS` forwards the remote pi's control socket to the local path
 mu always connects to, so send, state, `mu agent wait` and

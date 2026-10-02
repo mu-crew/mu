@@ -469,7 +469,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // so a pane that never became an agent never keeps its agent row.
     const startAgent = (await activeMux()).startAgentInPane;
     if (startAgent === undefined) {
-      await awaitSpawnLiveness(paneId, opts.name, opts.workstream);
+      await awaitSpawnLiveness(paneId, opts.name, opts.workstream, command);
     } else {
       // `startAgentInPane` returns only once the MUX has detected the
       // agent in that pane and considers it ready for input — strictly
@@ -754,6 +754,7 @@ async function awaitSpawnLiveness(
   paneId: string,
   agentName: string,
   workstreamName: string,
+  command: string,
 ): Promise<void> {
   const ms = defaultSpawnLivenessMs();
   if (ms === 0) return;
@@ -764,7 +765,7 @@ async function awaitSpawnLiveness(
   const mux = await activeMux();
   const scrollback = await mux.capturePane(paneId, { lines: 50 }).catch(() => undefined);
   if (!(await mux.paneExists(paneId))) {
-    throw new AgentDiedOnSpawnError(agentName, paneId, scrollback);
+    throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command);
   }
   // Pane is alive — but "alive" doesn't mean "working". Scan the tail of
   // the capture for known provider/auth startup errors
@@ -781,7 +782,7 @@ async function awaitSpawnLiveness(
   // claims the pane. Without murmur, the liveness check is enough and
   // the first send handles input timing. Controlled by
   // MU_SPAWN_READINESS_MS (default 10s; 0 disables).
-  await awaitSpawnReadiness(paneId, agentName, workstreamName);
+  await awaitSpawnReadiness(paneId, agentName, workstreamName, command);
 }
 
 /**
@@ -817,6 +818,7 @@ async function awaitSpawnReadiness(
   paneId: string,
   agentName: string,
   workstreamName: string,
+  command: string,
 ): Promise<void> {
   const budgetMs = defaultSpawnReadinessMs();
   if (budgetMs === 0 || !murmurAvailable()) return;
@@ -827,7 +829,7 @@ async function awaitSpawnReadiness(
   while (Date.now() < deadline) {
     if (!(await mux.paneExists(paneId))) {
       const scrollback = await mux.capturePane(paneId, { lines: 50 }).catch(() => undefined);
-      throw new AgentDiedOnSpawnError(agentName, paneId, scrollback);
+      throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command);
     }
     const reading = (await readAgentStates([agent])).get(agentKey(agent));
     if (reading?.source === "murmur") return;

@@ -183,18 +183,44 @@ export class AgentNotInWorkstreamError extends Error implements HasNextSteps {
  */
 export class AgentDiedOnSpawnError extends Error implements HasNextSteps {
   override readonly name = "AgentDiedOnSpawnError";
+  /** The spawned command is an ssh hop: remote causes, not wrapper locks. */
+  readonly remote: boolean;
   constructor(
     public readonly agentName: string,
     public readonly paneId: string,
     public readonly scrollback: string | undefined,
+    /** The command the pane ran; an `ssh ...` command gets remote hints. */
+    public readonly command?: string,
   ) {
     const tail = scrollback?.trim();
     const detail = tail ? `\n\n--- pane scrollback ---\n${tail}\n--- end scrollback ---` : "";
+    const remote = /^\s*ssh\s/.test(command ?? "");
+    const cause = remote
+      ? 'The command is an ssh hop, so the likely causes are remote: the remote binary is missing, or its env (PATH, provider keys) is absent because ssh runs a non-interactive shell that skips ~/.zshrc / ~/.bashrc (wrap it: $SHELL -ilc "pi --approve"); or sshd refused the socket forward (ExitOnForwardFailure=yes kills the connection; check AllowStreamLocalForwarding).'
+      : "Most common cause: the spawned CLI exited immediately (e.g. a wrapper CLI blocking on its instance lock; set MU_<UPPER_CLI>_COMMAND to a non-blocking variant to bypass).";
     super(
-      `agent ${agentName} died within ${defaultSpawnLivenessMs()}ms of spawn (pane ${paneId}). Most common cause: the spawned CLI exited immediately (e.g. a wrapper CLI blocking on its instance lock; set MU_<UPPER_CLI>_COMMAND to a non-blocking variant to bypass).${detail}`,
+      `agent ${agentName} died within ${defaultSpawnLivenessMs()}ms of spawn (pane ${paneId}). ${cause}${detail}`,
     );
+    this.remote = remote;
   }
   errorNextSteps(): NextStep[] {
+    if (this.remote) {
+      return [
+        {
+          intent: "See the ssh pieces and the interactive-login-shell recipe",
+          command: "mu agent remote-env --help",
+        },
+        {
+          intent: "Check the remote binary resolves in a login shell",
+          command: "ssh <host> '$SHELL -ilc \"command -v pi\"'",
+        },
+        {
+          intent: "Keep the pane open to read the remote error (one-off)",
+          command: "export MU_SPAWN_LIVENESS_MS=0",
+        },
+        { intent: "Run health check", command: "mu doctor" },
+      ];
+    }
     return [
       {
         intent: "Inspect the dead pane's scrollback for the underlying error",

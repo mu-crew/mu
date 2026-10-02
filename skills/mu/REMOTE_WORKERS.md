@@ -118,8 +118,9 @@ REMOTE_BASE: worker-1:$(ssh dev 'cd ~/ws/worker-1 && git rev-parse HEAD')"
 # 3. SPAWN — env goes INSIDE the command (tmux -e stops at the hop);
 #    remote-env prints it plus the control-socket forward (runs nothing)
 eval "$(mu agent remote-env worker-1 -w big --shell)"  # MU_SSH_ARGS, MU_REMOTE_ENV
+#    $SHELL -ilc: ssh's non-interactive shell skips ~/.zshrc (PATH, provider env)
 mu agent spawn worker-1 -w big --command \
-  "ssh $MU_SSH_ARGS dev -t 'cd ~/ws/worker-1 && $MU_REMOTE_ENV pi --approve'"
+  "ssh $MU_SSH_ARGS dev -t 'cd ~/ws/worker-1 && $MU_REMOTE_ENV \$SHELL -ilc \"pi --approve\"'"
 
 # 4. CLAIM + SEND — identical to a local agent
 mu task claim t1 -w big --for worker-1 --evidence 'remote on dev'
@@ -151,6 +152,10 @@ agent. Two prerequisites:
 
 - The host has the extension: run `mu link pi` there (or copy
   `dist/extension/mu-pi.js` into its pi extensions dir).
+- The ssh is a direct connection. `$MU_SSH_ARGS` carries
+  `-o ControlMaster=no -o ControlPath=none`: with `ControlMaster auto`
+  in `~/.ssh/config` the pane's ssh joins an existing master and the
+  `-L` unix forward never binds locally (spawn reports `ctl missing`).
 - sshd allows the forward. `ExitOnForwardFailure=yes` makes a refused
   forward kill the pane at spawn, loudly; check
   `AllowStreamLocalForwarding` in the host's `sshd_config`.
