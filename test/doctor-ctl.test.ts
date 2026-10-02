@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentRow } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
-import { encode, LineDecoder } from "../src/ctl/protocol.js";
+import { CTL_OPS, encode, LineDecoder } from "../src/ctl/protocol.js";
 import {
   ctlExtensionDoctorCheck,
   ctlSocketsDoctorCheck,
@@ -174,7 +174,7 @@ function agent(name: string, cli = "pi"): AgentRow {
  */
 async function serveV1(
   name: string,
-  hello: Record<string, unknown> = { ops: ["hello", "status"] },
+  hello: Record<string, unknown> = { ops: [...CTL_OPS] },
 ): Promise<void> {
   const path = ctlSocketPath("ws", name);
   mkdirSync(dirname(path), { recursive: true });
@@ -216,8 +216,8 @@ describe("ctl row", () => {
   });
 
   it("flags an extension built from an older mu than the installed one", async () => {
-    await serveV1("w1", { ops: ["hello"], extVersion: "3.0.9" });
-    await serveV1("w2", { ops: ["hello"], extVersion: "3.1.0" });
+    await serveV1("w1", { ops: [...CTL_OPS], extVersion: "3.0.9" });
+    await serveV1("w2", { ops: [...CTL_OPS], extVersion: "3.1.0" });
     const r = await ctlSocketsDoctorCheck([agent("w1"), agent("w2")], {
       installedVersion: "3.1.0",
     });
@@ -238,6 +238,20 @@ describe("ctl row", () => {
       status: "warn",
       detail: "ws/w1: extension (unknown) older than installed 3.1.0",
     });
+  });
+
+  it("flags a same-version extension missing ops (loaded before an op landed)", async () => {
+    await serveV1("w1", {
+      ops: ["hello", "status", "send", "wait", "abort"],
+      extVersion: "3.1.0",
+    });
+    const r = await ctlSocketsDoctorCheck([agent("w1")], { installedVersion: "3.1.0" });
+    expect(r.check).toEqual({
+      name: "ctl",
+      status: "warn",
+      detail: "ws/w1: extension lacks ops: fresh",
+    });
+    expect(r.agents[0]).toMatchObject({ probe: "ok", outdated: true, missingOps: ["fresh"] });
   });
 
   it("skips non-pi agents (same rule as spawn's handshake)", async () => {
