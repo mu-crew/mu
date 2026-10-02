@@ -1,365 +1,115 @@
 # mu
 
-**A small, opinionated control plane for a crew of AI coding agents
-working in parallel.** Tmux panes, a typed task DAG, isolated VCS
-workspaces per agent, an audit log — and a dashboard for seeing what
-the crew is doing right now.
+**A small control plane for a crew of AI coding agents working in
+parallel.** Agents run in multiplexer panes you can attach to. Work is a
+task DAG in SQLite. Each agent gets its own VCS workspace.
 
 ![mu dashboard](docs/img/tui-dashboard.png)
 
-*`mu` (no args) — read-only dashboard: agents, tracks, ready /
-in-progress / blocked tasks, log tail, workspaces, doctor.*
+*Bare `mu` opens a read-only dashboard: agents, tracks, ready,
+in-progress, and blocked tasks, the log tail, workspaces, and doctor.*
 
-The core loop is: plan work as a DAG, spawn a small crew, and watch
-handoffs happen in tmux:
+- **Parallel work that does not collide.** Per-agent workspaces (jj
+  workspaces, sl shares, or git worktrees) and a task DAG with
+  `blocks` edges keep agents out of each other's way.
+- **State that outlives a pane.** One SQLite DB holds agents, tasks,
+  owners, notes, and workspaces. An append-only ops log records every
+  change, so `mu undo <group>` reverses one action and `mu rebuild`
+  replays the whole history.
+- **Exact control of pi agents.** mu's pi extension serves a control
+  socket inside each agent, so send, state, wait, and abort are exact,
+  locally and over ssh. The pane stays pi's normal TUI.
 
-```bash
-mu workstream init auth-refactor
-mu task add --title "Design auth" --impact 80 --effort-days 2
-mu task add --title "Build auth"  --impact 80 --effort-days 5 --blocked-by design_auth
-
-mu agent spawn worker-1 --workspace
-mu agent send worker-1 --fresh 'Pick up the next ready task and design the auth module.'
-mu                         # dashboard
-```
-
-Need one quick helper without the DAG? `mu agent spawn scout-1 -w
-scratch` gives you a low-ceremony agent you can still send/read/wait
-on.
-
-Nothing here is a black box. Agents are multiplexer panes you can
-attach to yourself, tasks live in a SQLite DAG, and workspaces are real
-jj workspaces / sl shares / git worktrees on disk. **mu persists state
-and coordinates handoffs; the model still decides what to do.**
-
-For the full copy-paste flow, see [Quick start](#quick-start).
-
----
-
-## What mu is
-
-mu excels at organising large pieces of work and keeping your agents
-on track.
-
-- **Parallelism that doesn't trip over itself.** Per-agent VCS
-  workspaces plus a task DAG with deterministic parallel-track
-  detection keep agents off each other's toes.
-- **A durable coordination layer.** One SQLite registry records
-  agents, tasks, ownership, notes and workspaces. A single
-  append-only **ops log** records every change ever made to them, so
-  panes can die and humans can come back later.
-- **Exact control of pi agents, in pi's own TUI.** mu's pi extension
-  serves a per-agent control socket inside each agent's interactive
-  pi, so send, state, wait and abort are exact — locally and on
-  remote hosts over the agent's own ssh. No screen scraping; the pane
-  stays pi's normal TUI, and you can attach and type into it.
-- **Stay out of the model's way.** Mu coordinates handoffs; it does
-  not choose models, providers, or thinking effort. `--cli <key>`
-  uppercases to `$MU_<KEY>_COMMAND`, so your shell rc owns the agent
-  command.
-- **Scriptable without scraping text.** Every read path that matters has
-  `--json`, and every state change goes through a typed CLI verb; the
-  dashboard is for humans, not the API.
-- **A low-ceremony escape hatch.** The reserved `scratch` workstream
-  is there when you want one driveable helper without committing to a
-  full task graph.
-
-## What mu is NOT
-
-- **Not a build tool.** mu doesn't compile, test, or deploy
-  anything.
-- **Not a chat protocol.** Agents communicate via the work graph
-  and the activity log, never agent-to-agent messaging.
-- **Not a verifier.** `task close --evidence "tests pass"` records
-  the claim; mu doesn't run the tests.
-- **No hidden subagents.** One-shot delegation runs in a visible pane
-  you can attach to, steer and keep talking to. See
-  [vs hidden subagents](#vs-hidden-subagents).
-- **Not a hosted service.** Local-first SQLite.
-- **DB-undoable, not substrate-undoable.** Every change is captured as ops
-  under one group, so `mu undo <group> --yes` reverses exactly that
-  one action — not your other workstreams. Killed panes and freed
-  workspace dirs are NOT replayed; they aren't portable state.
-
----
-
-## When mu earns its overhead
-
-mu pays off when the work is bigger than one agent's context: many
-steps, dependencies between them, several agents, or a job that runs
-for days. The DAG holds the plan, so no single agent has to. Each
-agent claims one ready task, works in its own workspace, writes notes
-on the task as it goes (findings, decisions, dead ends), and closes
-it with evidence. Every claim, note and close is appended to the
-audit log. If an agent drifts, stalls, or loses its pane, the plan,
-the notes, and the history of who did what are still there. You, or
-the next agent, pick up where it stopped instead of explaining
-everything again.
-
-**Use mu for** — multi-phase investigations; tasks worth gating with
-review; parallel audit or implementation/reviewer splits with isolated
-workspaces; anything where "what was decided and why" needs to outlive
-a single agent's scrollback. Use `scratch` for the lighter adjacent
-case: one helper or background watcher you still want to drive and
-observe.
-
-**Don't use mu for** — tiny direct edits; quick local inspection;
-single-context work where durable coordination adds ceremony.
-
-For one-shot delegation where you only need an answer back, use a
-**delegate**: the `mu_delegate` tool, or `mu agent spawn -w scratch` +
-`send` + `wait --json` from a shell. Installing mu gives you
-`mu_delegate`; it ships in the extension `mu link pi` installs.
-
----
+mu persists state and coordinates handoffs. It does not choose models,
+run your tests, or pass messages between agents. Every read path has
+`--json`, and every change goes through a typed CLI verb.
 
 ## Install
 
 ```bash
 npm i -g @mu-crew/mu
-mu link pi            # pi extension (exact send/state/wait/abort) + the mu skill
+mu link pi       # pi extension (control socket, mu_delegate) + the mu skill
 mu doctor
 ```
 
-For pi, `mu link pi` replaces `npx skills add`. To drive mu from
-another coding agent (claude-code, codex, ...), install the skill
-instead:
+To drive mu from another agent CLI (claude-code, codex), install the
+skill with `npx skills add mu-crew/mu` instead of `mu link pi`.
 
-```bash
-npx skills add mu-crew/mu          # auto-detects the agent; -g global, -y no prompts
-```
+You need:
 
-**Requirements:**
-- Node 22.12–26 (see `.nvmrc`), matching `engines` in `package.json`.
-- A terminal multiplexer: tmux ≥ 3.0, or [herdr](https://github.com/herdrdev/herdr)
-  (`mu doctor` reports which one is active). Spawn, send, and read work
-  on both. The remaining herdr gaps are listed in
-  [docs/USAGE_GUIDE.md § 20](docs/USAGE_GUIDE.md#20-multiplexer-backends-tmux-and-herdr).
-- pi (the agent CLI mu orchestrates)
-- For `--workspace`: jj, sl, or git on PATH (or `--backend none`)
+- Node 22.12–26 (see `.nvmrc`).
+- tmux ≥ 3.0 or [herdr](https://github.com/herdrdev/herdr). `mu doctor`
+  reports which one is active.
+- pi, or another agent CLI.
+- jj, sl, or git on `PATH` for `--workspace`.
 
-**murmur is optional for pi agents.** mu reads a pi agent's state from
-its control socket. Non-pi CLIs (claude-code, codex) on tmux get state from
-[murmur](https://github.com/mu-crew/murmur); without it their state is
+[murmur](https://github.com/mu-crew/murmur) is optional for pi agents.
+Non-pi agents on tmux need it for state: without it their state is
 `unknown`, so `mu agent wait` and stall detection never fire for them.
-On herdr, herdr reports it. murmur also gives you one attention-sorted
-"who needs me" list across machines, tmux badges, and jump-to-pane.
+On herdr, herdr reports state.
 
-```bash
-# on every node that runs agents
-npm install -g @mu-crew/murmur
-murmur init          # this node's identity
-murmur link pi       # the agent-side extension that reports state
-
-# then, on whichever machine you watch from
-murmur peer add dev  # an ssh target; identity is discovered
-murmur peer list     # which hosts are reachable, and when last seen
-```
-
-mu exports `MU_MANAGED_AGENT`, `MU_AGENT_NAME`, `MU_WORKSTREAM` and
-`MU_CTL_SOCK` into every pane it spawns. murmur uses the first three to
-identify crew agents; mu's extension serves the control socket at the last.
-See murmur's [stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHITECTURE.md#contract).
-
-**Update:** `npm install -g @mu-crew/mu@latest`. The `mu link pi` shim and
-skill symlink follow the installed package; restart running pi agents (or
-`/reload`) to load the new extension. With `npx skills`: `npx skills update mu`.
-
-**Install from source** (hacking on mu itself):
-
-```bash
-git clone https://github.com/mu-crew/mu
-cd mu
-npm install -g .                        # `prepare` script auto-builds; `mu` lands on $PATH
-mu link pi                              # links this checkout's extension + skill
-```
-
-More install patterns (alias-to-dist for fastest dev iteration) in
-[docs/USAGE_GUIDE.md § 1 Setup](docs/USAGE_GUIDE.md#1-setup).
-
----
-
-## TUI dashboard
-
-Bare `mu` in a TTY launches the read-only dashboard across all
-workstreams; `mu state --tui -w <workstream>` is the explicit
-single/multi-workstream form. Non-TTY callers and scripts keep the
-static/help path, and `mu state --json` is the API.
-
-The dashboard has ten cards: Commits, Agents, Tracks, Ready, Activity
-log, Workspaces, In-progress, Blocked, Recent, and Doctor. Drill into
-any numbered card fullscreen with `Shift+0`-`Shift+9`; `g` opens the
-full DAG and `t` opens the all-tasks list. `?` shows the complete
-keymap. Keyboard and mouse both work: navigate with keys, double-click
-cards or rows to drill, and scroll popup bodies with the mouse wheel.
-
-The TUI is read-only by design. `y` yanks the canonical `mu` command
-for the focused row to your clipboard; you run it in a shell, so every
-mutation still goes through a short-lived typed CLI invocation. The
-one exception is user-driven: `t` inside a commit/show drill suspends
-mu's alt-screen and hands off to `tuicr -r <sha>`, then restores the
-dashboard when tuicr exits.
-
----
+To update, run `npm i -g @mu-crew/mu@latest`, then restart or `/reload`
+running pi agents to load the new extension. To hack on mu, clone the
+repo and run `npm install -g . && mu link pi`.
 
 ## Quick start
 
-```bash
-# Make sure you're inside a multiplexer. tmux is the common path;
-# herdr works too (mu picks whichever it detects).
-tmux
-
-# Initialize the workstream (creates mux session mu-auth-refactor)
-mu workstream init auth-refactor
-
-# Plan the work as a DAG. IDs auto-derive from titles.
-mu task add --title "Design auth module" --impact 80 --effort-days 2
-mu task add --title "Build auth"         --impact 80 --effort-days 5 --blocked-by design_auth_module
-mu task add --title "Review auth"        --impact 60 --effort-days 1 --blocked-by build_auth
-
-# Spawn a crew with isolated workspaces.
-mu agent spawn worker-1   --workspace
-mu agent spawn reviewer-1 --workspace --role read-only
-
-# Human home base: interactive read-only TUI across every workstream
-# (same dashboard is explicit with: mu state --tui -w auth-refactor).
-mu
-
-# Agent/script API: static state stays explicit and JSON-friendly.
-mu state -w auth-refactor --json
-
-# Inside an agent's pane, the agent claims and closes tasks
-# without ever knowing its own name (mu reads $TMUX_PANE).
-mu task claim design_auth_module
-mu task note  design_auth_module "DECISION: JWT, 24h expiry, refresh via cookie"
-mu task close design_auth_module --evidence "design doc reviewed by reviewer-1"
-
-# Subscribe to events instead of polling.
-mu log --tail
-
-# Cleanup. Dry-run without --yes; writes tombstone ops rather than
-# erasing history, so `mu undo <group> --yes` still reverses it.
-mu workstream teardown --yes
-```
-
-Worked end-to-end scenarios (first 5 minutes, the dispatch loop,
-laptop ↔ devserver, undo, drift):
-[USAGE_GUIDE § 0. Common scenarios](docs/USAGE_GUIDE.md#0-common-scenarios).
-Full tour: [docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md).
-
----
-
-## Portability and handoff
-
-State lives in one SQLite DB, and every change to it is captured as an
-op in an append-only log — so it travels, and it merges.
-
-### Multi-machine sync
-
-Each machine keeps its own DB. They exchange append-only JSONL
-segments through any folder something else keeps in step (Syncthing,
-rsync, a USB stick — mu never runs the transport). Setup is one env
-var on each machine; there is no peer list, no daemon, no import step,
-and concurrent edits on two machines converge.
+Run this inside tmux or herdr:
 
 ```bash
-export MU_SYNC_DIR=$HOME/Sync/mu   # same folder on every machine
-mu task add auth_fix -w app -t "Fix the auth redirect" -i 80 -e 2
-#   → the next `mu` command on the other machine already sees it
-mu sync                            # peer status, if you want to check
+mu workstream init auth
+mu task add design_auth --title "Design auth" --impact 80 --effort-days 2
+mu task add build_auth  --title "Build auth"  --impact 80 --effort-days 5 --blocked-by design_auth
+mu agent spawn worker-1 --workspace
+mu task claim design_auth --for worker-1
+mu agent send worker-1 --fresh 'Do task design_auth. Close it with evidence.'
+mu task wait design_auth --first --on-stall exit   # exit 7 = worker needs you
+mu                                                  # dashboard
+mu workstream teardown --yes                        # without --yes: dry run
 ```
 
-**Never put `MU_DB_PATH` inside `MU_SYNC_DIR`** — a live WAL database
-is three mutually-consistent files and a file-syncer will corrupt it.
-`mu doctor` fails on it. Full walkthrough:
-[USAGE_GUIDE § Multi-machine sync](docs/USAGE_GUIDE.md#156-multi-machine-sync).
+For one helper without a DAG, spawn into the reserved `scratch`
+workstream: `mu agent spawn scout-1 -w scratch`. For a one-shot answer,
+use the `mu_delegate` tool.
 
-For disaster recovery, `mu rebuild <file>` replays the whole ops log
-into a fresh DB and prints the swap command; `mu undo <group>` reverts
-one past action by emitting inverse ops.
+## mu delegates vs hidden subagents
 
-For a safety copy before anything destructive, `mu db backup <file>`
-writes a `VACUUM INTO` copy of the whole DB. To read the graph out for
-review or grep, every verb takes `--json`.
-
-### Remote workers
-
-An agent can run on another machine with no mu changes and no remote
-backend: the pane is local, the process is remote.
-
-```bash
-ssh dev 'git -C ~/repo worktree add ~/ws/worker-1'
-eval "$(mu agent remote-env worker-1 -w big --shell)"  # socket forward + env; runs nothing
-mu agent spawn worker-1 -w big --command \
-  "ssh $MU_SSH_ARGS dev -t 'cd ~/ws/worker-1 && $MU_REMOTE_ENV \$SHELL -ilc \"pi --approve\"'"
-# ... claim, send and abort exactly as for a local agent, then collect:
-git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
-```
-
-The ssh forwards the remote pi's control socket to the local path mu
-derives, so send, state and wait are exact without murmur. The host
-needs `mu link pi`.
-
-Local and remote agents mix freely in one workstream. You create the
-remote workspace yourself (`--workspace` is local-only) and mu keeps
-no record of it, so read
-[skills/mu/REMOTE_WORKERS.md](skills/mu/REMOTE_WORKERS.md) first — it
-covers the traps, including the one where your own agent blocks your
-`git fetch` behind a misleading `Permission denied`.
-
----
-
-## vs hidden subagents
-
-Most agent tools delegate to a hidden subagent: a child process or
-in-process loop that pi-subagents, pi's example subagent extension,
-and the Claude Code and Codex task tools run out of sight. You get its
-result and lose the rest. A mu **delegate** is an ordinary agent in a
+Claude Code, Codex, and pi-subagents delegate to a hidden child process
+and return only its result. A mu delegate is an ordinary agent in a
 pane.
 
-|                       | Hidden subagent                         | mu delegate |
-| --------------------- | --------------------------------------- | ----------- |
-| Visibility            | none while it runs                      | a pane; attach and watch live |
-| Steer mid-run         | no                                      | yes: `mu agent send`; stop with `mu agent abort` |
-| Keep talking after it answers | no                              | yes, with `keep: true` |
-| Transcript            | collapses into a result                 | a normal pi session log |
-| Agent types           | usually built in                        | none; the brief is ad-hoc text |
-| If the work grows     | re-brief a new agent                    | same task DAG and workspaces as any agent |
-| Cost                  | light                                   | one pane and one pi process each |
+|                         | Hidden subagent          | mu delegate |
+| ----------------------- | ------------------------ | ----------- |
+| Visibility              | none while it runs       | a pane; attach and watch |
+| Steer mid-run           | no                       | `mu agent send`; stop with `mu agent abort` |
+| Keep talking after it answers | no                 | yes, with `keep: true` |
+| Transcript              | collapses into a result  | a normal pi session log |
+| If the work grows       | re-brief a new agent     | same task DAG and workspaces |
+| Cost                    | light                    | one pane and one pi process |
 
-The cost row is the trade-off. For many tiny calls a hidden subagent is
-lighter. mu bets that for agent work, seeing and steering the agent is
-worth a pane. For coordinated multi-agent work, graduate from
-`scratch` to a named workstream + task DAG. See
-[docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md).
-
----
+For many tiny calls, a hidden subagent is lighter. mu bets that seeing
+and steering agent work is worth a pane.
 
 ## Documentation
 
-- **[docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md)** — practical tour
-  of every verb. **Start here.**
-- **[skills/mu/SKILL.md](skills/mu/SKILL.md)** — what an LLM
-  running inside an agent pane sees: the in-pane working loop,
-  subscribe-vs-poll pattern.
-- **[skills/mu/REMOTE_WORKERS.md](skills/mu/REMOTE_WORKERS.md)** —
-  running agents on another machine over ssh: the recipe, and the
-  traps that cost real debugging time.
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module map,
-  reconciliation algorithm, schema seam (surrogate INTEGER PKs +
-  the SDK boundary discipline).
-- **[docs/VOCABULARY.md](docs/VOCABULARY.md)** — canonical terms;
-  source of truth for every word in code, docs, error messages.
-- **[docs/VISION.md](docs/VISION.md)** — the load-bearing pillars
-  + the prior-runtime retrospective.
-- **[docs/ROADMAP.md](docs/ROADMAP.md)** — what's next + the
-  anti-feature pledges + explicitly-rejected ideas.
-- **[CHANGELOG.md](CHANGELOG.md)** — release notes.
+- [Getting started](docs/guide/getting-started.md): the first
+  workstream, end to end. Start here.
+- [User guide](docs/guide/README.md): how-tos for dispatch, remote
+  workers, sync, recovery, and the dashboard.
+- [skills/mu/SKILL.md](skills/mu/SKILL.md): what an orchestrating
+  agent reads. [REMOTE_WORKERS.md](skills/mu/REMOTE_WORKERS.md) covers
+  agents on other machines.
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+  [docs/architecture/](docs/architecture/): the module map and deep
+  dives.
+- [VISION.md](docs/VISION.md): the design pillars.
+  [ROADMAP.md](docs/ROADMAP.md): what is next and what is rejected.
+- [VOCABULARY.md](docs/VOCABULARY.md): canonical terms.
+- [CHANGELOG.md](CHANGELOG.md): release notes.
+
+`mu <verb> --help` is the reference for every flag.
 
 ## License
 
-MIT.
-
----
-
-Part of [mu-crew](https://github.com/mu-crew). Written mostly by AI coding agents, with a human reviewing what ships, and built for running them.
+MIT. Part of [mu-crew](https://github.com/mu-crew). Written mostly by AI
+coding agents, with a human reviewing what ships.
