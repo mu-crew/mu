@@ -69,6 +69,15 @@ export {
   speaksMuCtl,
 } from "./agents/spawn.js";
 export {
+  agentCtlSocket,
+  chooseTransport,
+  expectsCtl,
+  type SendResult,
+  sendViaTransport,
+  type Transport,
+  type TransportSendOptions,
+} from "./agents/transport.js";
+export {
   type AgentStatusSnapshot,
   type AgentWaitAgentState,
   type AgentWaitOptions,
@@ -79,7 +88,13 @@ export {
 } from "./agents/wait.js";
 
 import { AgentNotFoundError, WorkspacePreservedError } from "./agents/errors.js";
-import { activeMux, type CaptureOptions, type MuxPane, type SendOptions } from "./mux.js";
+import {
+  agentCtlSocket,
+  type SendResult,
+  sendViaTransport,
+  type TransportSendOptions,
+} from "./agents/transport.js";
+import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
 import { freeWorkspace, getWorkspaceForAgent, isWorkspaceClean } from "./workspace.js";
 // (freeWorkspace is used by the spawn rollback paths below, not by closeAgent.
 // Closing an agent is intentionally a separate concern from freeing its workspace;
@@ -464,19 +479,20 @@ export function isValidAgentName(name: string): boolean {
 }
 
 /**
- * Send a single line of text to an agent's pane and submit it. Uses the
- * canonical bracketed-paste protocol from src/tmux.ts.
+ * Send text to an agent and submit it. A pi agent gets it through its
+ * control socket (AgentCtlUnreachableError when that does not answer —
+ * never a silent paste); a non-pi CLI, a slash command, or `via: "mux"`
+ * goes through the mux paste path. See src/agents/transport.ts.
  */
 export async function sendToAgent(
   db: Db,
   name: string,
   text: string,
-  opts: SendOptions & { workstream: string },
-): Promise<void> {
+  opts: TransportSendOptions & { workstream: string },
+): Promise<SendResult> {
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) throw new AgentNotFoundError(name);
-  // Load-bearing: a send that cannot reach a pane is a failed send.
-  await (await activeMux()).sendToPane(agent.paneId, text, opts);
+  return sendViaTransport(agent, text, { socket: agentCtlSocket(db, agent), ...opts });
 }
 
 /**

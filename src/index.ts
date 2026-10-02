@@ -34,6 +34,7 @@ export {
   defaultSpawnLivenessMs,
   deleteAgent,
   envVarNameForCli,
+  expectsCtl,
   foregroundPgid,
   getAgent,
   getAgentByPane,
@@ -59,11 +60,14 @@ export {
   resetKickProcessExecutor,
   resolveCliCommand,
   resolveCliCommandWithSource,
+  type SendResult,
   type SpawnAgentOptions,
   sendToAgent,
+  sendViaTransport,
   setCommandResolverForTests,
   setKickProcessExecutor,
   spawnAgent,
+  type Transport,
   WorkspacePreservedError,
 } from "./agents.js";
 export {

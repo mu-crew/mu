@@ -29,6 +29,7 @@ import {
   resolveCliCommandWithSource,
   sendToAgent,
   spawnAgent,
+  type Transport,
   waitForAgents,
 } from "../agents.js";
 import {
@@ -184,12 +185,24 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
   printNextSteps(nextSteps);
 }
 
+function parseVia(raw: string | undefined): Transport | undefined {
+  if (raw === undefined || raw === "ctl" || raw === "mux") return raw;
+  throw new UsageError(`--via must be ctl or mux (got ${JSON.stringify(raw)})`);
+}
+
 export async function cmdSend(
   db: Db,
   rawName: string,
   text: string,
-  opts: { workstream?: string; json?: boolean; strictStaleness?: boolean } = {},
+  opts: {
+    workstream?: string;
+    json?: boolean;
+    strictStaleness?: boolean;
+    steer?: boolean;
+    via?: string;
+  } = {},
 ): Promise<void> {
+  const via = parseVia(opts.via);
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
@@ -200,8 +213,10 @@ export async function cmdSend(
   // rather than letting it print raw, so it lands in the JSON payload
   // too. `exit 0` must not be able to mean "silently dropped".
   let undelivered: SendWarning | undefined;
-  await sendToAgent(db, name, text, {
+  const sent = await sendToAgent(db, name, text, {
     workstream: ws,
+    ...(opts.steer ? { mode: "steer" as const } : {}),
+    ...(via !== undefined ? { via } : {}),
     onUndelivered: (w) => {
       undelivered = w;
     },
@@ -223,6 +238,8 @@ export async function cmdSend(
     emitJson({
       agentName: name,
       sentBytes: text.length,
+      transport: sent.transport,
+      ...(sent.state !== undefined ? { state: sent.state } : {}),
       delivered: undelivered === undefined,
       ...(undelivered !== undefined
         ? { undelivered: { reason: undelivered.reason, message: undelivered.message } }
@@ -235,7 +252,8 @@ export async function cmdSend(
   if (undelivered !== undefined) {
     console.error(pc.yellow(`warning: ${undelivered.message}`));
   } else {
-    console.log(pc.dim(`sent ${text.length} bytes to ${name}`));
+    const how = sent.transport === "ctl" ? `via ctl, pi ${sent.state ?? "?"}` : "via mux paste";
+    console.log(pc.dim(`sent ${text.length} bytes to ${name} (${how})`));
   }
   printNextSteps(nextSteps);
 }
@@ -484,11 +502,27 @@ export async function cmdAdopt(db: Db, paneOrTitle: string, opts: AdoptCliOpts):
     .then((mux) => mux.enableMuPaneBordersForPane(paneId))
     .catch(() => {});
 
-  const nextSteps: NextStep[] = [
+  const nextSteps: NextStep[] = [];
+  // An adopted pi pane was started without MU_CTL_SOCK, so sends to it
+  // fail loud. Say how to fix that before anything else.
+  const ctlDown = result.ctl === "missing" || result.ctl === "refused";
+  if (ctlDown) {
+    nextSteps.push(
+      {
+        intent: "Restart pi in that pane with the control socket",
+        command: `MU_CTL_SOCK=${result.ctlSocket} pi`,
+      },
+      {
+        intent: "Or paste into the pane explicitly",
+        command: `mu agent send ${result.agent.name} "..." --via mux -w ${ws}`,
+      },
+    );
+  }
+  nextSteps.push(
     { intent: "Send work", command: `mu agent send ${result.agent.name} "..." -w ${ws}` },
     { intent: "Read pane", command: `mu agent read ${result.agent.name} -w ${ws}` },
     { intent: "Verify in agent list", command: `mu agent list -w ${ws}` },
-  ];
+  );
 
   if (opts.json) {
     emitJson({
@@ -497,9 +531,18 @@ export async function cmdAdopt(db: Db, paneOrTitle: string, opts: AdoptCliOpts):
       agent: result.agent,
       previousTitle: result.previousTitle,
       paneTitleSetTo: result.paneTitleSetTo,
+      ctl: result.ctl,
+      ctlSocket: result.ctlSocket,
       nextSteps,
     });
     return;
+  }
+  if (ctlDown) {
+    console.error(
+      pc.yellow(
+        `warning: adopted pi agent ${result.agent.name} has no control socket (ctl: ${result.ctl}) at ${result.ctlSocket}; \`mu agent send\` will fail until pi runs with MU_CTL_SOCK set (or use --via mux)`,
+      ),
+    );
   }
 
   if (result.alreadyAdopted) {
@@ -773,11 +816,15 @@ export function wireAgentCommands(program: Command): void {
 
   agent
     .command("send <name> <text>")
-    .description("Send text to an agent's pane (atomic on herdr; bracketed-paste on tmux)")
+    .description(
+      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback). Non-pi CLIs and text starting with '/' (slash commands such as /new): pasted into the pane (atomic on herdr; bracketed-paste on tmux)",
+    )
     .option(
       "--strict-staleness",
       "refuse send when the target agent's workspace is stale (default: warn and proceed)",
     )
+    .option("--steer", "if pi is busy, interrupt the current run (default: queue as a follow-up)")
+    .option("--via <transport>", "force the transport: ctl or mux (mux = paste into the pane)")
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string, text: string) {
@@ -785,6 +832,8 @@ export function wireAgentCommands(program: Command): void {
         workstream?: string;
         json?: boolean;
         strictStaleness?: boolean;
+        steer?: boolean;
+        via?: string;
       };
       return handle((db) => cmdSend(db, name, text, opts), this as Command)();
     });

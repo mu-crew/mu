@@ -189,6 +189,36 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     );
   });
 
+  it("(case 7) mu agent adopt of a pi pane without a control socket warns with the fix", async () => {
+    const { executor } = mockTmux(state);
+    setTmuxExecutor(executor);
+    const { runCli } = await import("./_runCli.js");
+    const { paneId } = seedOrphanPane({ sessionName: "mu-auth", title: "worker-2" });
+    const dbPath = join(tempDir, "mu.db");
+    const json = await runCli(["agent", "adopt", paneId, "-w", "auth", "--json"], dbPath);
+    expect(json.exitCode).toBeNull();
+    const out = JSON.parse(json.stdout) as {
+      ctl: string;
+      ctlSocket: string;
+      nextSteps: { command: string }[];
+    };
+    expect(out.ctl).toBe("missing");
+    expect(out.nextSteps[0]?.command).toBe(`MU_CTL_SOCK=${out.ctlSocket} pi`);
+    expect(out.nextSteps.some((s) => s.command.includes("--via mux"))).toBe(true);
+
+    const human = await runCli(["agent", "adopt", paneId, "-w", "auth"], dbPath);
+    expect(human.stderr).toContain("warning: adopted pi agent worker-2 has no control socket");
+  });
+
+  it("(case 8) adopting a non-pi pane skips the control-socket probe", async () => {
+    const { executor } = mockTmux(state);
+    setTmuxExecutor(executor);
+    const { adoptAgent } = await import("../src/agents.js");
+    const { paneId } = seedOrphanPane({ sessionName: "mu-auth", title: "worker-2" });
+    const result = await adoptAgent(db, { paneId, workstream: "auth", cli: "claude" });
+    expect(result.ctl).toBe("skipped");
+  });
+
   it("(case 6) adopt twice with same input -> alreadyAdopted=true (idempotent)", async () => {
     const { calls, executor } = mockTmux(state);
     setTmuxExecutor(executor);

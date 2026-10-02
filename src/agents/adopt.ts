@@ -21,10 +21,16 @@ import {
   insertAgent,
   isValidAgentName,
 } from "../agents.js";
+import { ctlProbe } from "../ctl/client.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { activeMux, type MuxPane, PaneNotFoundError, parseAgentNameFromTitle } from "../mux.js";
 import { AgentExistsError, AgentNotInWorkstreamError } from "./errors.js";
+import type { SpawnCtl } from "./spawn.js";
+import { agentCtlSocket, expectsCtl } from "./transport.js";
+
+/** Budget for adopt's one-shot control-socket probe. */
+const ADOPT_CTL_PROBE_MS = 1000;
 
 export interface AdoptAgentOptions {
   /** tmux pane id (e.g. '%15'). Must already exist on the tmux server. */
@@ -54,6 +60,21 @@ export interface AdoptAgentResult {
   /** The title the pane was set to (== agent.name post-adopt). Equal to
    *  previousTitle when no retitle happened. */
   paneTitleSetTo: string;
+  /** One probe of the derived control socket; "skipped" for non-pi CLIs.
+   *  An adopted pi pane usually lacks MU_CTL_SOCK, so this is "missing". */
+  ctl: SpawnCtl;
+  ctlSocket: string;
+}
+
+async function probeAdopted(
+  db: Db,
+  agent: AgentRow,
+): Promise<Pick<AdoptAgentResult, "ctl" | "ctlSocket">> {
+  const ctlSocket = agentCtlSocket(db, agent);
+  if (!expectsCtl(agent)) return { ctl: "skipped", ctlSocket };
+  const probe = await ctlProbe(ctlSocket, ADOPT_CTL_PROBE_MS);
+  const ctl = probe.kind === "ok" ? "ok" : probe.kind === "missing" ? "missing" : "refused";
+  return { ctl, ctlSocket };
 }
 
 /**
@@ -143,6 +164,7 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
         alreadyAdopted: true,
         previousTitle,
         paneTitleSetTo: resolvedName,
+        ...(await probeAdopted(db, existingByPane)),
       };
     }
     throw new AgentExistsError(existingByPane.name);
@@ -181,5 +203,6 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
     alreadyAdopted: false,
     previousTitle,
     paneTitleSetTo: resolvedName,
+    ...(await probeAdopted(db, inserted)),
   };
 }
