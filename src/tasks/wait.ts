@@ -276,6 +276,9 @@ export async function waitForTasks(
   // filled with the same yellow line every second; one nudge is enough.
   const stuckWarned = new Set<string>();
   const refKey = (ref: TaskWaitRef): string => `${ref.workstreamName}/${ref.name}`;
+  // Owners whose control socket is broken: first-seen time + reason.
+  const ctlBrokenSince = new Map<string, number>();
+  const stuckLabel = new Map<string, string>();
 
   const stuckAgeMs = async (
     status: TaskStatus,
@@ -290,6 +293,19 @@ export async function waitForTasks(
     )
       return null;
     const reading = await opts.readOwnerState({ name: owner, workstreamName });
+    const ownerKey = `${workstreamName}/${owner}`;
+    // A pi owner whose control socket does not answer (pane still
+    // alive) needs attention too: nothing will report it settling.
+    // Its age runs from when this wait first saw the socket broken.
+    if (reading?.alive === true && (reading.ctl === "missing" || reading.ctl === "refused")) {
+      const firstSeen = ctlBrokenSince.get(ownerKey) ?? Date.now();
+      ctlBrokenSince.set(ownerKey, firstSeen);
+      stuckLabel.set(ownerKey, reading.reason ?? `ctl ${reading.ctl}`);
+      const ageMs = Date.now() - firstSeen;
+      return ageMs >= stuckAfterMs ? ageMs : null;
+    }
+    ctlBrokenSince.delete(ownerKey);
+    stuckLabel.delete(ownerKey);
     if (reading?.state !== "needs_input" || reading.since === null) return null;
     const ageMs = Date.now() - reading.since;
     return ageMs >= stuckAfterMs ? ageMs : null;
@@ -333,9 +349,10 @@ export async function waitForTasks(
         // Prefixed `mu task wait:` so log greppers can target it, and
         // cross-ws waits carry the qualified `<ws>/<name>`.
         const ownerBit = owner ?? "<none>";
+        const stateBit = stuckLabel.get(`${ref.workstreamName}/${ownerBit}`) ?? "needs_input";
         currentStuckWarn(
           `\x1b[33mmu task wait: ${key} needs attention — owner=${ownerBit} has been in ` +
-            `needs_input for ${formatStallAge(ageMs)}. It may have finished without closing, ` +
+            `${stateBit} for ${formatStallAge(ageMs)}. It may have finished without closing, ` +
             `be waiting on an answer, or be sitting at a prompt.\x1b[0m\n` +
             `  mu agent read ${ownerBit} -w ${ref.workstreamName} --lines 60\n`,
         );
