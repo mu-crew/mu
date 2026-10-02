@@ -10,6 +10,42 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- `mu_delegate` refuses a `cwd` that is not a directory. tmux and herdr
+  silently start such a pane in `$HOME`.
+- `mu_delegate_cancel` whose abort fails no longer drops the answer and
+  leaves the footer count stuck: the delegate stays tracked, and an
+  answer that landed meanwhile is delivered.
+- A failure while delivering a delegate's answer is posted as a
+  follow-up instead of an unhandled rejection.
+- A failed send closes the delegate's idle pane and says so. Cancelling
+  the tool call during spawn closes the new pane.
+
+### Changed
+
+- `mu_delegate` starts the delegate in the caller's working directory
+  (new `cwd` parameter to override). Before, a scratch pane inherited
+  the start dir of whichever spawn first created the `mu-scratch`
+  session.
+- `mu_delegate` shows the number of running delegates in pi's footer
+  ("2 delegates running"), the same way `/goal` and `/loop` show their
+  state. The entry clears when the last answer arrives or is cancelled.
+- `mu_delegate` takes a `timeout` (seconds, default 3600) for how long
+  to wait for the answer.
+- With `workspace: true`, the tool result and the follow-up name the
+  checkout path, so the caller knows where the edits are.
+- `mu_delegate` takes a `label` that names the delegate
+  (`label: "review"` → `delegate-review`), and the follow-up says how
+  long it ran ("finished after 3m 05s").
+- The `timeout` doc and the "still running" follow-up say the answer
+  will not arrive later; the description says to end the turn when the
+  next step needs the answer.
+- The tool description leads with "Subagent", so models reach for
+  `mu_delegate` when a task calls for a subagent. Parameter docs say
+  what `workspace`, `cli` and `brief` do, and that `brief` rules are
+  not enforced.
+
 ## [3.2.0] — 2026-10-02
 
 **pi agents are driven through a control socket.** `mu link pi`

@@ -16,7 +16,7 @@
  * that one serves a pi mu spawned; this one runs in a pi that is not.
  */
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,7 +33,11 @@ export interface MuDelegateApi {
 /** The slice of pi's ExtensionContext the delegate side uses. */
 export interface DelegateCtx {
   hasUI?: boolean;
-  ui?: { notify(message: string, type?: "info" | "warning" | "error"): void };
+  cwd?: string;
+  ui?: {
+    notify(message: string, type?: "info" | "warning" | "error"): void;
+    setStatus?(key: string, text: string | undefined): void;
+  };
 }
 
 type ToolResult = { content: { type: "text"; text: string }[]; details: unknown };
@@ -44,7 +48,13 @@ export interface DelegateTool {
   description: string;
   promptSnippet?: string;
   parameters: object;
-  execute(id: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>;
+  execute(
+    id: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+    onUpdate?: unknown,
+    ctx?: DelegateCtx,
+  ): Promise<ToolResult>;
 }
 
 export type MuResult = { code: number; stdout: string; stderr: string };
@@ -55,7 +65,14 @@ export const DELEGATE_TOOL = "mu_delegate";
 export const DELEGATE_CANCEL_TOOL = "mu_delegate_cancel";
 export const DELEGATE_MESSAGE_TYPE = "mu-delegate";
 export const DELEGATE_WORKSTREAM = "scratch";
-/** `mu agent wait --timeout` for a delegate, in seconds. */
+/** The footer status key (`ctx.ui.setStatus`), like goal / watchloop. */
+export const DELEGATE_STATUS_KEY = "mu-delegate";
+
+/** Footer text for `n` running delegates; undefined clears the entry. */
+export function delegateStatus(n: number): string | undefined {
+  return n > 0 ? `${n} delegate${n === 1 ? "" : "s"} running` : undefined;
+}
+/** Default `mu agent wait --timeout` for a delegate, in seconds. */
 export const DELEGATE_TIMEOUT_S = 3600;
 const W = DELEGATE_WORKSTREAM;
 
@@ -65,6 +82,14 @@ export function delegateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.MU_DELEGATE === "0") return false;
   if (env.MU_MUX || env.HERDR_ENV === "1" || env.TMUX || env.TMUX_PANE) return true;
   return onPath("tmux", env) || onPath("herdr", env);
+}
+
+function isDir(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {
@@ -101,50 +126,113 @@ export type WaitAgent = { outcome?: string; lastText?: string };
 /** What happened to the pane after delivery, for the message. */
 export type PaneFate = { closed: true } | { closed: false; why: string };
 
+/** Extras for the follow-up message; all optional. */
+export type MessageExtras = {
+  /** `mu agent read -n 50` for the outcomes without text. */
+  tail?: string;
+  attach?: string;
+  timeoutS?: number;
+  workspace?: string;
+  /** How long the delegate ran, in ms. */
+  elapsedMs?: number;
+};
+
+/** `42s`, `3m 05s`, `1h 02m`. */
+export function formatElapsed(ms: number): string {
+  const t = Math.max(0, Math.round(ms / 1000));
+  if (t < 60) return `${t}s`;
+  const m = Math.floor(t / 60);
+  if (m < 60) return `${m}m ${String(t % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
 /**
  * The follow-up message for one finished wait. Pure: the CLI already
  * classified the outcome (`mu agent wait --json` → `outcome`); this only
- * words it. `tail` is `mu agent read -n 50` for the outcomes without text.
+ * words it.
  */
 export function delegateMessage(
   name: string,
   agent: WaitAgent | undefined,
   pane: PaneFate,
-  tail?: string,
-  attach?: string,
+  x: MessageExtras = {},
 ): string {
+  const timeoutS = x.timeoutS ?? DELEGATE_TIMEOUT_S;
   const who = `Delegate ${W}/${name}`;
+  const took = x.elapsedMs !== undefined ? ` after ${formatElapsed(x.elapsedMs)}` : "";
   const fate = pane.closed ? "Pane closed." : `Pane kept (${pane.why}).`;
   const look = [
-    attach ? `Attach: ${attach}` : undefined,
+    x.attach ? `Attach: ${x.attach}` : undefined,
     `Read: mu agent read ${name} -n 50 -w ${W}`,
-  ].filter((x) => x !== undefined);
-  const tailBlock = tail?.trim() ? `\n\nPane tail:\n${tail.trimEnd()}` : "";
+  ].filter((v) => v !== undefined);
+  const tailBlock = x.tail?.trim() ? `\n\nPane tail:\n${x.tail.trimEnd()}` : "";
+  const ws = x.workspace ? ` Workspace: ${x.workspace}` : "";
   switch (agent?.outcome) {
     case "done":
-      return `${who} finished. ${fate}\n\n${agent.lastText ?? ""}`;
+      return `${who} finished${took}. ${fate}${ws}\n\n${agent.lastText ?? ""}`;
     case "empty":
-      return `${who} finished without a text answer. ${fate}${tailBlock}`;
+      return `${who} finished${took} without a text answer. ${fate}${ws}${tailBlock}`;
     case "died":
-      return `${who} died before answering. ${fate}${tailBlock}`;
+      return `${who} died${took} before answering. ${fate}${ws}${tailBlock}`;
     case "timeout":
     case "pending":
       return [
-        `${who} is still running after ${DELEGATE_TIMEOUT_S}s; stopped waiting. ${fate}`,
+        `${who} is still running after ${timeoutS}s; stopped waiting, so its answer will not arrive here. ${fate}${ws}`,
         ...look,
         `Wait again: mu agent wait ${name} -w ${W} --json`,
       ].join("\n");
     default:
-      return `${who}: mu agent wait gave no result. ${fate}${tailBlock}`;
+      return `${who}: mu agent wait gave no result. ${fate}${ws}${tailBlock}`;
   }
 }
 
-type Inflight = { abort: AbortController; cancelled: boolean };
+/** A label → agent-name stem: lowercase, [a-z0-9-], ≤ 20 chars. */
+export function labelStem(label: unknown): string | undefined {
+  if (typeof label !== "string") return undefined;
+  const stem = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 20)
+    .replace(/-+$/, "");
+  return stem || undefined;
+}
+
+/**
+ * One delegate this pi waits on. `cancelling` is set while a cancel's abort
+ * is in flight: the abort itself settles the run, so a wait resolving then
+ * is parked in `parked` instead of delivered, and delivered after all if
+ * the abort fails.
+ */
+type Inflight = {
+  abort: AbortController;
+  cancelling: boolean;
+  parked?: () => Promise<void>;
+};
 
 export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunner()): void {
   if (!delegateEnabled()) return;
   const inflight = new Map<string, Inflight>();
   const reserved = new Set<string>();
+  // The ctx of the latest tool call: answers settle outside any call, so
+  // the footer is refreshed through the last ctx pi handed us.
+  let ui: DelegateCtx["ui"];
+  const showStatus = () => {
+    try {
+      ui?.setStatus?.(DELEGATE_STATUS_KEY, delegateStatus(inflight.size));
+    } catch {
+      // stale ctx after a session switch: the footer is decoration
+    }
+  };
+  const track = (ctx: DelegateCtx | undefined) => {
+    if (ctx?.hasUI !== false && ctx?.ui) ui = ctx.ui;
+  };
+  /** Drop a delegate from the in-flight set and refresh the footer. */
+  const forget = (name: string) => {
+    inflight.delete(name);
+    reserved.delete(name);
+    showStatus();
+  };
 
   const mu = run;
   const json = (r: MuResult): Record<string, unknown> | undefined => {
@@ -158,7 +246,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   const failure = (what: string, r: MuResult) =>
     new Error(`${what} failed (exit ${r.code}): ${(r.stderr || r.stdout).trim()}`);
 
-  async function pickName(): Promise<string> {
+  async function pickName(stem?: string): Promise<string> {
     const r = await mu(["agent", "list", "-w", W, "--json"]);
     const agents = json(r)?.agents;
     const taken = new Set(
@@ -167,7 +255,13 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         : [],
     );
     for (let n = 1; ; n++) {
-      const name = `delegate-${n}`;
+      // A label names the delegate (delegate-review, then delegate-review-2);
+      // without one it is numbered.
+      const name = stem
+        ? n === 1
+          ? `delegate-${stem}`
+          : `delegate-${stem}-${n}`
+        : `delegate-${n}`;
       if (!taken.has(name) && !reserved.has(name)) {
         reserved.add(name); // sync after the await: parallel calls get distinct names
         return name;
@@ -177,15 +271,29 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
 
   async function spawn(
     params: Record<string, unknown>,
-  ): Promise<{ name: string; attach?: string }> {
+    cwd: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ name: string; attach?: string; workspace?: string }> {
+    const stem = labelStem(params.label);
     for (let attempt = 0; ; attempt++) {
-      const name = await pickName();
+      signal?.throwIfAborted();
+      const name = await pickName(stem);
       const args = ["agent", "spawn", name, "-w", W, "--json"];
       if (params.workspace === true) args.push("--workspace");
+      else if (cwd) args.push("--cwd", cwd);
       if (typeof params.cli === "string" && params.cli) args.push("--cli", params.cli);
       const r = await mu(args);
+      if (signal?.aborted && r.code === 0) {
+        // The user cancelled while the pane came up: take it down again.
+        reserved.delete(name);
+        await mu(["agent", "close", name, "-w", W]);
+        signal.throwIfAborted();
+      }
       // Another mu took the name between list and spawn: pick again.
-      if (r.code !== 0 && /already exists/.test(r.stderr) && attempt < 3) continue;
+      if (r.code !== 0 && /already exists/.test(r.stderr) && attempt < 3) {
+        reserved.delete(name);
+        continue;
+      }
       if (r.code !== 0) {
         reserved.delete(name);
         throw failure("mu agent spawn", r);
@@ -201,11 +309,16 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       const attach = steps
         .map((s: unknown) => s as { intent?: unknown; command?: unknown })
         .find((s) => s.intent === "Attach the pane")?.command;
-      return { name, ...(typeof attach === "string" ? { attach } : {}) };
+      const wsPath = (out.workspace as { path?: unknown } | null | undefined)?.path;
+      return {
+        name,
+        ...(typeof attach === "string" ? { attach } : {}),
+        ...(typeof wsPath === "string" ? { workspace: wsPath } : {}),
+      };
     }
   }
 
-  async function deliver(name: string, wait: MuResult, keep: boolean, attach?: string) {
+  async function deliver(name: string, wait: MuResult, keep: boolean, extras: MessageExtras) {
     const agent = (json(wait)?.agents as WaitAgent[] | undefined)?.[0];
     const outcome = agent?.outcome;
     const tail =
@@ -226,7 +339,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     await pi.sendMessage(
       {
         customType: DELEGATE_MESSAGE_TYPE,
-        content: delegateMessage(name, agent, pane, tail, attach),
+        content: delegateMessage(name, agent, pane, { ...extras, ...(tail ? { tail } : {}) }),
         display: true,
         details: { name, workstream: W, outcome: outcome ?? null, closed: pane.closed },
       },
@@ -237,24 +350,41 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   pi.registerTool({
     name: DELEGATE_TOOL,
     label: "mu delegate",
-    description: `Hand one self-contained task to a fresh pi agent in its own mux pane (mu's ${W} workstream) and keep working. Returns at once; the delegate's final answer arrives later as a follow-up message, so do not wait or poll for it. Use it for independent side work (research, a review, a draft, an investigation) you would otherwise do serially. The delegate starts with no context: put everything it needs in task. Several calls run in parallel. The pane is closed after a clean finish unless keep is true; the user can attach to it meanwhile.`,
+    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation; call it several times to fan out in parallel. The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open.`,
     promptSnippet:
-      "Delegate a self-contained task to a background pi agent; its answer arrives later",
+      "Subagent: delegate a self-contained task to a background pi agent; its answer arrives later as a follow-up",
     parameters: {
       type: "object",
       properties: {
         task: { type: "string", description: "The complete task, with all context it needs" },
+        label: {
+          type: "string",
+          description:
+            "Short label naming the delegate, e.g. 'review' → delegate-review. Use one per subtask when fanning out.",
+        },
         brief: {
           type: "string",
-          description: "Optional persona or ground rules, sent before the task",
+          description:
+            "Optional standing role or rules, sent before the task, e.g. 'You are a reviewer; read only.' The rules are instructions, not enforced. The job itself goes in task.",
+        },
+        cwd: {
+          type: "string",
+          description:
+            "Working directory for the delegate (default: yours; ignored with workspace)",
+        },
+        timeout: {
+          type: "number",
+          description: `Seconds to wait for the answer (default ${DELEGATE_TIMEOUT_S}). On timeout you get a "still running" follow-up instead of the answer, and the answer will not arrive later; the subagent keeps running in its pane.`,
         },
         workspace: {
           type: "boolean",
-          description: "Give it its own VCS workspace (for tasks that edit files)",
+          description:
+            "For tasks that edit files: its own VCS checkout (jj workspace / git worktree / sl share) branched from the current commit. The result and follow-up name the path; changes stay there until you merge them.",
         },
         cli: {
           type: "string",
-          description: "Agent CLI key; resolves $MU_<CLI>_COMMAND (default pi)",
+          description:
+            "Agent CLI key (default pi). Name a configured key such as 'pi_fast' to run a cheaper model.",
         },
         keep: {
           type: "boolean",
@@ -264,41 +394,92 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       required: ["task"],
       additionalProperties: false,
     },
-    async execute(_id, params) {
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      track(ctx);
       const task = typeof params.task === "string" ? params.task.trim() : "";
       if (!task) throw new Error("mu_delegate needs a non-empty task");
       const brief = typeof params.brief === "string" ? params.brief.trim() : "";
       const keep = params.keep === true;
-      const { name, attach } = await spawn(params);
-      const entry: Inflight = { abort: new AbortController(), cancelled: false };
+      const t = params.timeout;
+      const timeoutS =
+        typeof t === "number" && Number.isFinite(t) && t > 0 ? Math.ceil(t) : DELEGATE_TIMEOUT_S;
+      // Without --cwd the pane inherits the mux session's start dir (wherever
+      // the FIRST scratch spawn ran), and a missing dir silently becomes
+      // $HOME: pin it to the caller's and check it exists.
+      let cwd: string | undefined;
+      if (params.workspace !== true) {
+        cwd =
+          typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
+        if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
+      }
+      const { name, attach, workspace } = await spawn(params, cwd, signal);
+      const entry: Inflight = { abort: new AbortController(), cancelling: false };
       inflight.set(name, entry);
+      showStatus();
+      const started = Date.now();
       // Start the wait alongside the send: it takes its baseline run count
       // at startup and resolves on the first settle past it. A model turn
       // outlasts a mu process start by orders of magnitude.
       const waiting = mu(
-        ["agent", "wait", name, "-w", W, "--json", "--timeout", String(DELEGATE_TIMEOUT_S)],
+        ["agent", "wait", name, "-w", W, "--json", "--timeout", String(timeoutS)],
         entry.abort.signal,
       );
       const sent = await mu(["agent", "send", name, brief ? `${brief}\n\n${task}` : task, "-w", W]);
       if (sent.code !== 0) {
         entry.abort.abort();
-        inflight.delete(name);
-        throw failure(`mu agent send to ${W}/${name}`, sent);
+        forget(name);
+        // Nothing reached it: the pane is just an idle pi. Take it down.
+        const c = await mu(["agent", "close", name, "-w", W]);
+        const pane =
+          c.code === 0
+            ? "Pane closed."
+            : `Pane kept; close it with: mu agent close ${name} -w ${W}`;
+        throw new Error(`${failure(`mu agent send to ${W}/${name}`, sent).message}. ${pane}`);
       }
+      const settle = async (r: MuResult) => {
+        forget(name);
+        try {
+          await deliver(name, r, keep, {
+            timeoutS,
+            elapsedMs: Date.now() - started,
+            ...(attach ? { attach } : {}),
+            ...(workspace ? { workspace } : {}),
+          });
+        } catch (e) {
+          // A throw here would be an unhandled rejection and a lost answer.
+          await Promise.resolve(
+            pi.sendMessage(
+              {
+                customType: DELEGATE_MESSAGE_TYPE,
+                content: `Delegate ${W}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${W}`,
+                display: true,
+                details: { name, workstream: W, outcome: null, closed: false },
+              },
+              { deliverAs: "followUp", triggerTurn: true },
+            ),
+          ).catch(() => {});
+        }
+      };
       void waiting.then(async (r) => {
-        if (inflight.get(name) !== entry || entry.cancelled) return;
-        inflight.delete(name);
-        reserved.delete(name);
-        await deliver(name, r, keep, attach);
+        if (inflight.get(name) !== entry) return; // cancelled or shut down
+        if (entry.cancelling) entry.parked = () => settle(r);
+        else await settle(r);
       });
       const lines = [
         `Delegated to ${W}/${name}. Its answer arrives as a follow-up message when it finishes; do not wait or poll.`,
+        workspace ? `Workspace: ${workspace}` : undefined,
         attach ? `Attach: ${attach}` : undefined,
         `Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${name}" }`,
       ].filter((x) => x !== undefined);
       return {
         content: [{ type: "text", text: lines.join("\n") }],
-        details: { name, workstream: W, attach: attach ?? null, keep },
+        details: {
+          name,
+          workstream: W,
+          attach: attach ?? null,
+          workspace: workspace ?? null,
+          keep,
+        },
       };
     },
   });
@@ -316,19 +497,27 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       required: ["name"],
       additionalProperties: false,
     },
-    async execute(_id, params) {
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      track(ctx);
       const name = typeof params.name === "string" ? params.name : "";
       if (!name) throw new Error("mu_delegate_cancel needs a name");
       const entry = inflight.get(name);
-      if (entry) entry.cancelled = true;
+      if (entry) entry.cancelling = true;
       const ab = await mu(["agent", "abort", name, "-w", W]);
       if (ab.code !== 0) {
-        if (entry) entry.cancelled = false;
+        // Not cancelled after all: keep waiting, or deliver what settled meanwhile.
+        if (entry) {
+          entry.cancelling = false;
+          const parked = entry.parked;
+          entry.parked = undefined;
+          if (parked) void parked();
+        }
         throw failure(`mu agent abort ${W}/${name}`, ab);
       }
-      entry?.abort.abort();
-      inflight.delete(name);
-      reserved.delete(name);
+      if (entry) {
+        entry.abort.abort();
+        forget(name);
+      }
       let text = `Aborted ${W}/${name}.`;
       if (params.keep === true) text += " Pane kept.";
       else {
@@ -350,6 +539,8 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     const names = [...inflight.keys()];
     for (const e of inflight.values()) e.abort.abort();
     inflight.clear();
+    showStatus();
+    ui = undefined;
     const msg = `${names.length} delegate${names.length === 1 ? "" : "s"} still running: ${names.join(", ")}. Their answers will not come back here; use mu agent wait <name> -w ${W} --json.`;
     if (ctx?.hasUI && ctx.ui) ctx.ui.notify(msg, "warning");
     else process.stderr.write(`mu: ${msg}\n`);
