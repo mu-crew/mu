@@ -4,8 +4,10 @@
 // goes through `tmux(args)`, which wraps execa and produces structured
 // `TmuxError`s carrying args + stderr.
 //
-// The send protocol is the bracketed-paste sequence (canonical
-// implementation lives in `sendToPane` below):
+// The send protocol is the bracketed-paste sequence for NON-pi agents
+// (claude-code, codex, adopted panes) and an explicit `--via mux`. pi
+// agents never reach it: they use the control socket
+// (src/agents/transport.ts). Canonical implementation in `sendToPane`:
 //   0. await pane quiescence (MU_SEND_READINESS_MS, default 15s)
 //   1. copy-mode -q   (silent if not in copy mode)
 //   2. set-buffer     (load text into a uniquely named buffer)
@@ -13,16 +15,15 @@
 //   4. delay (MU_SEND_DELAY_MS, default 500)
 //   5. send-keys Enter
 //   6. confirm the Enter took; re-send it, then warn loudly if not
-//   7. after /new, wait for the replacement screen to become stable
 //
 // Naive `tmux send-keys "<text>"` is broken: characters like /, ?, f get
 // interpreted by the agent's TUI (Claude, Codex, less, vim) or by tmux's
 // copy mode if the user has scrolled up. Use `sendToPane()`.
 //
-// Steps 0, 6, and 7 exist because of dogfood_send_after_new_dropped: a
-// TUI rendering a modal SWALLOWS the Enter, stranding the pasted text in
-// the input box while `mu agent send` reported exit 0. `/new` also starts
-// that modal after its Enter has returned. See `awaitPaneQuiescence`.
+// Steps 0 and 6 exist because of dogfood_send_after_new_dropped: a TUI
+// rendering a modal SWALLOWS the Enter, stranding the pasted text in the
+// input box while `mu agent send` reported exit 0. See
+// `awaitPaneQuiescence`.
 
 import { execa } from "execa";
 import type { NextStep } from "../output.js";
@@ -858,35 +859,6 @@ export async function awaitPaneQuiescence(paneId: string, budgetMs: number): Pro
   }
 }
 
-/** `/new` returns before pi starts replacing the current screen. Wait
- *  for any visible transition and then a stable frame; the rendered text
- *  varies with pi configuration and is deliberately not interpreted. */
-async function awaitNewSession(
-  paneId: string,
-  baseline: string,
-  budgetMs: number,
-): Promise<boolean> {
-  if (budgetMs <= 0) return true;
-  const deadline = Date.now() + budgetMs;
-  let previous = baseline;
-  let stable = 0;
-  for (;;) {
-    const scrollback = await capturePane(paneId, { lines: 50 }).catch(() => undefined);
-    if (scrollback !== undefined && scrollback !== baseline) {
-      if (scrollback === previous) {
-        stable++;
-        if (stable >= QUIESCENCE_CONFIRMATIONS) return true;
-      } else {
-        stable = 0;
-      }
-      previous = scrollback;
-    }
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) return false;
-    await currentSleep(Math.min(SEND_READINESS_POLL_MS, remaining));
-  }
-}
-
 /**
  * Longest prefix of `text` that is safe to look for in a pane capture.
  * The TUI soft-wraps its input box, so only the first line survives
@@ -957,7 +929,6 @@ function defaultUndeliveredWarning(warning: SendWarning): void {
  *   4. wait MU_SEND_DELAY_MS (default 500) so the agent ingests the text
  *   5. send Enter as a real key event
  *   6. confirm the Enter took; re-send it if the text is stranded
- *   7. after `/new`, wait for the replacement screen to become stable
  *
  * DELIVERY CONTRACT (dogfood_send_after_new_dropped): exit 0 must not
  * be able to mean "silently dropped". After Enter, the pane is checked
@@ -986,10 +957,6 @@ export async function sendToPane(
   //    swallows the Enter, stranding the paste in the input box.
   const readinessMs = opts.readinessMs ?? defaultSendReadinessMs();
   const quiesced = await awaitPaneQuiescence(paneId, readinessMs);
-  const newSessionBaseline =
-    readinessMs > 0 && text.trim() === "/new"
-      ? await capturePane(paneId, { lines: 50 }).catch(() => undefined)
-      : undefined;
 
   // 1. Exit copy mode silently. -q suppresses errors when not in copy mode.
   const copyResult = await currentExecutor(["copy-mode", "-q", "-t", paneId]);
@@ -1027,22 +994,6 @@ export async function sendToPane(
   // 6. Confirm the Enter took. readinessMs: 0 opts out of the whole
   //    wrapper (bare 4-command protocol; unit tests mock captures away).
   if (readinessMs <= 0) return;
-
-  // `/new` itself is asynchronous: Enter is accepted before pi starts
-  // replacing the session UI. Do not return while a following invocation
-  // could still read the old idle frame and paste into the coming modal.
-  if (
-    newSessionBaseline !== undefined &&
-    !(await awaitNewSession(paneId, newSessionBaseline, readinessMs))
-  ) {
-    const warn = opts.onUndelivered ?? defaultUndeliveredWarning;
-    warn({
-      paneId,
-      reason: "transition-unconfirmed",
-      message: `send to ${paneId} submitted /new, but the new session did not become ready within ${readinessMs}ms. Wait for the pane to settle before sending more work.`,
-    });
-    return;
-  }
 
   const probe = pasteProbe(text);
   if (probe.length === 0) return; // nothing observable to verify

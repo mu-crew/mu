@@ -1,3 +1,5 @@
+// tmux paste path for non-pi agents; pi agents use the control socket.
+//
 // Private pane-text checks used by tmux's send protocol. These answer whether
 // input can be delivered, not what state an agent is in.
 

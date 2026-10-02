@@ -768,14 +768,13 @@ describe("spawn branches on the CAPABILITY, not the backend name", () => {
     expect(tmuxBackend.startAgentInPane).toBeUndefined();
   });
 
-  it("MU_SPAWN_LIVENESS_MS / MU_SPAWN_READINESS_MS are not consulted on herdr", async () => {
+  it("MU_SPAWN_LIVENESS_MS is not consulted on herdr", async () => {
     // `agent start` returns only once herdr has detected the agent and
-    // considers it ready for input, which subsumes both polls. If mu
+    // considers it ready for input, which subsumes the liveness poll. If mu
     // still ran them it would issue `pane read` round trips — this
     // asserts their ABSENCE, which is the property pin. A generous
     // liveness budget would also make the test hang if it were used.
     process.env.MU_SPAWN_LIVENESS_MS = "60000";
-    process.env.MU_SPAWN_READINESS_MS = "60000";
     const calls = mockHerdr([
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
@@ -786,9 +785,8 @@ describe("spawn branches on the CAPABILITY, not the backend name", () => {
     try {
       await spawnAgent(db, { name: "worker-1", workstream: "spawntest" });
     } finally {
-      for (const key of ["MU_SPAWN_LIVENESS_MS", "MU_SPAWN_READINESS_MS"]) {
-        delete process.env[key];
-      }
+      const key = "MU_SPAWN_LIVENESS_MS";
+      delete process.env[key];
     }
     expect(keys(calls).some((k) => k.startsWith("pane read"))).toBe(false);
   });

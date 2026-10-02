@@ -2,8 +2,10 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+// Spawn does not wait for murmur to claim the pane (the removed
+// MU_SPAWN_READINESS_MS poll): pi agents have the ctl handshake, and
+// nothing downstream of a non-pi spawn needs murmur's first claim.
 import {
-  AgentDiedOnSpawnError,
   resetCommandResolverForTests,
   setCommandResolverForTests,
   spawnAgent,
@@ -17,10 +19,10 @@ const ENV_KEYS = [
   "PATH",
   "PI_CODING_AGENT_DIR",
   "MU_SPAWN_LIVENESS_MS",
-  "MU_SPAWN_READINESS_MS",
+  "MU_SPAWN_CTL_MS",
 ] as const;
 
-describe("spawn readiness from murmur", () => {
+describe("spawn does not poll murmur", () => {
   let tempDir: string;
   let db: Db;
   let mux: MuxHarness | undefined;
@@ -31,7 +33,7 @@ describe("spawn readiness from murmur", () => {
     db = openDb({ path: join(tempDir, "mu.db") });
     originalEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
     process.env.MU_SPAWN_LIVENESS_MS = "1";
-    process.env.MU_SPAWN_READINESS_MS = "10000";
+    process.env.MU_SPAWN_CTL_MS = "0";
     process.env.PI_CODING_AGENT_DIR = join(tempDir, "pi");
     process.env.PATH = join(tempDir, "bin");
     setCommandResolverForTests(async () => ({ ok: true, binary: "pi", resolvedPath: "/pi" }));
@@ -63,67 +65,30 @@ describe("spawn readiness from murmur", () => {
     writeFileSync(join(extensionDir, "murmur.ts"), "");
   }
 
-  function install(
-    readPaneOptions: (poll: number) => string,
-    disappearAtPoll?: number,
-  ): { listCalls: () => number } {
+  function install(): { listCalls: () => number } {
     const state = freshMockState();
     const fake = mockTmux(state);
     let listCalls = 0;
-    let readinessExistsCalls = 0;
     mux = installMux("tmux", async (args) => {
+      // murmur's pane options are read through `list-panes -a`.
       if (args[0] === "list-panes" && args[1] === "-a") {
         listCalls += 1;
-        return { stdout: readPaneOptions(listCalls), stderr: "", exitCode: 0 };
-      }
-      if (args[0] === "display-message" && state.panes.size > 0) {
-        readinessExistsCalls += 1;
-        // The first display-message is the liveness check. Later calls
-        // belong to readiness polling.
-        if (disappearAtPoll !== undefined && readinessExistsCalls - 1 >= disappearAtPoll) {
-          state.panes.clear();
-        }
+        return { stdout: "%1\t\t", stderr: "", exitCode: 0 };
       }
       return await fake.executor(args);
     });
     return { listCalls: () => listCalls };
   }
 
-  it("returns after liveness without polling when murmur is unavailable", async () => {
-    const calls = install(() => "%1\t\t");
+  it.each([false, true])(
+    "returns after liveness without reading murmur (linked: %s)",
+    async (linked) => {
+      if (linked) linkMurmur();
+      const calls = install();
 
-    await spawnAgent(db, { name: "worker-1", workstream: "ready", cli: "pi" });
+      await spawnAgent(db, { name: "worker-1", workstream: "ready", cli: "pi" });
 
-    expect(calls.listCalls()).toBe(0);
-  });
-
-  it("returns when murmur claims the pane on the third poll", async () => {
-    linkMurmur();
-    const calls = install((poll) => (poll === 3 ? "%1\tworking\t1000" : "%1\t\t"));
-
-    await spawnAgent(db, { name: "worker-1", workstream: "ready", cli: "pi" });
-
-    expect(calls.listCalls()).toBe(3);
-  });
-
-  it("returns without throwing when the readiness budget expires", async () => {
-    linkMurmur();
-    process.env.MU_SPAWN_READINESS_MS = "50";
-    resetSleep();
-    const calls = install(() => "%1\t\t");
-
-    await expect(
-      spawnAgent(db, { name: "worker-1", workstream: "ready", cli: "pi" }),
-    ).resolves.toMatchObject({ name: "worker-1" });
-    expect(calls.listCalls()).toBeGreaterThan(0);
-  });
-
-  it("throws when the pane disappears while waiting for murmur", async () => {
-    linkMurmur();
-    install(() => "%1\t\t", 2);
-
-    await expect(
-      spawnAgent(db, { name: "worker-1", workstream: "ready", cli: "pi" }),
-    ).rejects.toBeInstanceOf(AgentDiedOnSpawnError);
-  });
+      expect(calls.listCalls()).toBe(0);
+    },
+  );
 });

@@ -97,15 +97,14 @@ as a capability, not a name check:
 | --- | --- | --- |
 | `NewWindowOptions.command` | carries the command | refused if non-empty |
 | `startAgentInPane()` | absent | implemented |
-| after start | mu checks pane life and startup errors, then murmur readiness for non-pi CLIs | the mux returns once the agent is ready |
+| after start | mu checks pane life and startup errors | the mux returns once the agent is ready |
 
 `spawnAgent` branches on `mux.startAgentInPane !== undefined`.
 
 - **tmux.** After `MU_SPAWN_LIVENESS_MS` (default 1500, `0` skips) mu
   verifies the pane survived and scans its tail for provider or auth
-  startup errors. If murmur is installed, it then polls until murmur
-  claims the pane (`MU_SPAWN_READINESS_MS`, default 10s). Without
-  murmur that poll is skipped.
+  startup errors. mu does not wait for murmur to claim the pane: state
+  reads before the first claim report `unknown`.
 - **herdr.** mu creates a bare pane and calls `startAgentInPane`, which
   subsumes both checks.
 - **pi, either backend.** After the agent starts, mu polls its control
