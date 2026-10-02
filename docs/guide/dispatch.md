@@ -40,6 +40,10 @@ socket. Pick the mode by what the agent is doing:
 - Never send `/new` and then the prompt as two sends to pi. The prompt
   can land during the reset and vanish.
 - A plain send to a busy agent queues as a follow-up.
+- `/new`, `/reload` and `/compact [instructions]` run inside pi through
+  the socket and report pi's answer (for example `Nothing to compact`).
+  They refuse with exit 4 while pi is busy; `--force` overrides. Any
+  other slash command exits 2; add `--via mux` to type it into the pane.
 - If the socket does not answer, the send fails with exit 1 and
   pastes nothing. `--via mux` pastes into the pane on purpose.
 

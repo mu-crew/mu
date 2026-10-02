@@ -189,12 +189,13 @@ describe("mu agent send to a pi agent", () => {
     expect(calls.map((c) => c[0])).toContain("paste-buffer");
   });
 
-  it("sends /new through the mux", async () => {
-    const { exitCode, stdout } = await runCli(
+  it("runs /new over the control socket: fails loud without one, never pastes", async () => {
+    const { exitCode, stderr } = await runCli(
       ["agent", "send", "pi-1", "/new", "-w", "auth", "--json"],
       dbPath,
     );
-    expect(exitCode).toBeNull();
-    expect((JSON.parse(stdout) as { transport: string }).transport).toBe("mux");
+    expect(exitCode).toBe(1);
+    expect((JSON.parse(stderr) as { error: string }).error).toBe("AgentCtlUnreachableError");
+    expect(calls.map((c) => c[0])).not.toContain("paste-buffer");
   });
 });

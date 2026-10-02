@@ -45,6 +45,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **agent state** | `busy`, `needs_input`, `needs_permission`, or `unknown`, from the **state source**. Not persisted; see [Agent state values](#agent-state-values). | "agent status", "lifecycle state" |
 | **state source** | The **control socket** for pi agents; else herdr's `paneStatus()` or, on tmux, murmur. A silent pi socket gives `unknown` (`ctl missing`, `ctl refused`). | "scraper" |
 | **control socket** / **ctl** | The per-agent unix socket (`$MU_CTL_SOCK`) the mu pi extension serves inside pi. **ctl state** is `ok`, `missing`, or `refused`. | "rpc", "daemon" |
+| **session command** | `/new`, `/reload`, or `/compact [instructions]` sent to a pi agent. mu runs it inside pi through the ctl `command` op, never as a paste. Any other slash command to a pi agent is refused; `--via mux` types it into the pane. | "slash paste" |
 | **outdated extension** | A running pi whose loaded extension is older than mu (exit 4 on a missing op). pi's `/reload` fixes it. | |
 | **lastText** | A pi run's final assistant message, returned verbatim by `wait`. mu never interprets it. | "result", "output" (alone) |
 | **ghost** | An `agents` row whose `pane_id` no longer exists. Pruned by **reconcile**. | "dead agent", "stale row" |

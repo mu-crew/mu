@@ -20,8 +20,10 @@ import {
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import {
+  CTL_COMMANDS,
   CTL_OPS,
   CTL_PROTOCOL_VERSION,
+  type CtlCommandName,
   type CtlReply,
   type CtlState,
   encode,
@@ -51,12 +53,24 @@ export interface MuPiCommandContext extends MuPiContext {
   newSession(options?: {
     withSession?: (ctx: MuPiReplacedContext) => Promise<void>;
   }): Promise<{ cancelled: boolean }>;
+  reload(): Promise<void>;
+  compact(options?: {
+    customInstructions?: string;
+    onComplete?: (result: unknown) => void;
+    onError?: (error: Error) => void;
+  }): void;
 }
 
 /** The slice of pi's ExtensionAPI this extension uses. */
 export interface MuPiApi extends MuDelegateApi {
   on(
-    event: "session_start" | "session_shutdown" | "agent_start" | "agent_end" | "agent_settled",
+    event:
+      | "session_start"
+      | "session_shutdown"
+      | "session_before_compact"
+      | "agent_start"
+      | "agent_end"
+      | "agent_settled",
     handler: (event: unknown, ctx: MuPiContext) => unknown,
   ): unknown;
   sendUserMessage(
@@ -76,6 +90,12 @@ export interface MuPiApi extends MuDelegateApi {
 export const FRESH_COMMAND = "mu-fresh";
 /** The extension's own bound on a fresh op that never reaches agent_start. */
 export const FRESH_TIMEOUT_MS = 30_000;
+/** Internal command behind the `command` op, per session command: `mu-new`, ... */
+export function commandName(name: CtlCommandName): string {
+  return `mu-${name}`;
+}
+/** The extension's own bound on a `command` op that never completes. */
+export const COMMAND_TIMEOUT_MS = 30_000;
 /** Cap on `lastText` in a wait reply, in UTF-8 bytes (before the marker). */
 export const LAST_TEXT_MAX_BYTES = 64 * 1024;
 export const LAST_TEXT_TRUNCATED = "[truncated, see pane]";
@@ -134,6 +154,15 @@ type PendingFresh = {
   settle: (r: Reply) => void;
 };
 
+/** A `command` op in flight: the session command and its pending reply. */
+type PendingCommand = {
+  name: CtlCommandName;
+  instructions?: string;
+  /** reload: set by the session_start (reason reload) the reload produced. */
+  reloaded: boolean;
+  settle: (r: Reply) => void;
+};
+
 /**
  * Process-global state, keyed by socket path. pi re-runs this factory
  * for every session (a /new or /mu-fresh replaces the extension runtime),
@@ -157,6 +186,7 @@ type Shared = {
   pi: MuPiApi;
   handle: (req: Record<string, unknown>, conn: Socket) => Promise<Reply>;
   fresh?: PendingFresh;
+  command?: PendingCommand;
 };
 
 const SHARED = Symbol.for("mu.pi.ctl");
@@ -285,6 +315,13 @@ function serveCtl(pi: MuPiApi): void {
     f.settle(r);
   };
 
+  const settleCommand = (r: Reply) => {
+    const c = g.command;
+    if (!c) return;
+    g.command = undefined;
+    c.settle(r);
+  };
+
   pi.on("agent_start", (_e, c) => {
     g.ctx = c;
     g.state = "busy";
@@ -331,10 +368,79 @@ function serveCtl(pi: MuPiApi): void {
     },
   });
 
+  // A compaction we asked for has started: reply now, not after the
+  // summary call. Errors before this point (e.g. "Nothing to compact")
+  // reach the reply through compact's onError.
+  pi.on("session_before_compact", () => {
+    if (g.command?.name === "compact") settleCommand({ v: V, ok: true, ...status() });
+  });
+
+  /** Run the queued session command `name` with pi's command context. */
+  async function runCommand(name: CtlCommandName, ctx: MuPiCommandContext): Promise<void> {
+    const c = g.command;
+    if (c?.name !== name) return; // typed by hand: nothing queued
+    const ok = () => settleCommand({ v: V, ok: true, ...status() });
+    const failWith = (e: unknown) =>
+      settleCommand(fail(e instanceof Error ? e.message : String(e)));
+    try {
+      if (name === "new") {
+        const r = await ctx.newSession();
+        if (r.cancelled) settleCommand(fail("new session was cancelled"));
+        else ok();
+      } else if (name === "reload") {
+        await ctx.reload();
+        // pi's reload returns quietly when it refuses (streaming, compacting).
+        if (c.reloaded) ok();
+        else settleCommand(fail("pi did not reload (busy or compacting)"));
+      } else {
+        ctx.compact({
+          ...(c.instructions !== undefined ? { customInstructions: c.instructions } : {}),
+          onComplete: ok,
+          onError: failWith,
+        });
+      }
+    } catch (e) {
+      failWith(e);
+    }
+  }
+
+  for (const name of CTL_COMMANDS) {
+    pi.registerCommand(commandName(name), {
+      description: `mu internal: /${name} requested over the control socket (mu agent send '/${name}')`,
+      handler: (_args, ctx) => runCommand(name, ctx),
+    });
+  }
+
+  function command(req: Record<string, unknown>): Promise<Reply> | Reply {
+    const name = CTL_COMMANDS.find((n) => n === req.name);
+    if (name === undefined) {
+      return fail(`command must be one of ${CTL_COMMANDS.join(", ")}`);
+    }
+    if (g.fresh || g.command) return fail("a fresh send or command is already in progress");
+    const busy = !(g.ctx?.isIdle() ?? g.state === "idle");
+    if (busy && req.force !== true) return fail("busy");
+    const instructions = str(req, "instructions");
+    return new Promise<Reply>((resolve) => {
+      const timer = setTimeout(() => settleCommand(fail(`/${name} timed out`)), COMMAND_TIMEOUT_MS);
+      g.command = {
+        name,
+        ...(instructions !== undefined ? { instructions } : {}),
+        reloaded: false,
+        settle: (r) => {
+          clearTimeout(timer);
+          resolve(r);
+        },
+      };
+      Promise.resolve(
+        g.pi.sendUserMessage(`/${commandName(name)}`, { expandPromptTemplates: true }),
+      ).catch((e: unknown) => settleCommand(fail(e instanceof Error ? e.message : String(e))));
+    });
+  }
+
   function fresh(req: Record<string, unknown>): Promise<Reply> | Reply {
     const text = str(req, "text");
     if (text === undefined) return fail("fresh needs a string text");
-    if (g.fresh) return fail("a fresh send is already in progress");
+    if (g.fresh || g.command) return fail("a fresh send or command is already in progress");
     const busy = !(g.ctx?.isIdle() ?? g.state === "idle");
     if (busy && req.force !== true) return fail("busy");
     return new Promise<Reply>((resolve) => {
@@ -379,6 +485,8 @@ function serveCtl(pi: MuPiApi): void {
       }
       case "fresh":
         return fresh(req);
+      case "command":
+        return command(req);
       case "wait":
         return wait(num(req, "afterRuns"), num(req, "timeoutMs"), conn);
       case "abort":
@@ -488,8 +596,9 @@ function serveCtl(pi: MuPiApi): void {
     g.ino = inodeOf(sockPath);
   }
 
-  pi.on("session_start", async (_e, c) => {
+  pi.on("session_start", async (e, c) => {
     g.ctx = c;
+    if (reasonOf(e) === "reload" && g.command?.name === "reload") g.command.reloaded = true;
     const s = g.server;
     if (s) {
       // A new/resumed session keeps the same socket, while the path is ours.
@@ -519,6 +628,7 @@ function serveCtl(pi: MuPiApi): void {
     if (!s) return;
     g.waiters.clear();
     settleFresh(fail("pi is shutting down"));
+    settleCommand(fail("pi is shutting down"));
     for (const c of g.conns) c.destroy();
     await new Promise<void>((resolve) => s.close(() => resolve()));
     // Unlink only the file this process bound: another pi may own the path now.

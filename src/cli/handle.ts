@@ -39,6 +39,7 @@ import {
   AgentFreshNeedsCtlError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
+  AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   WorkspacePreservedError,
@@ -242,6 +243,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentAbortNeedsCtlError ||
     // send --fresh on an agent with no control socket: wrong recipe.
     err instanceof AgentFreshNeedsCtlError ||
+    // an unsupported slash command to a pi agent: --via mux is the recipe.
+    err instanceof AgentSlashCommandUnsupportedError ||
     err instanceof WorkstreamNameInvalidError ||
     err instanceof WorkstreamNameReservedError ||
     // The operator asked the ACTIVE backend for something it cannot do:

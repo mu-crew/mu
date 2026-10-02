@@ -53,6 +53,7 @@ export {
   AgentFreshNeedsCtlError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
+  AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   WorkspacePreservedError,
@@ -76,7 +77,6 @@ export {
   checkCommandResolvable,
   defaultSpawnCtlMs,
   defaultSpawnLivenessMs,
-  defaultSpawnReadinessMs,
   envVarNameForCli,
   resetCommandResolverForTests,
   resolveCliCommand,
@@ -90,8 +90,11 @@ export {
 } from "./agents/spawn.js";
 export {
   agentCtlSocket,
+  CTL_SLASH_COMMANDS,
   chooseTransport,
   expectsCtl,
+  isSlashCommand,
+  parseSessionCommand,
   type SendResult,
   sendViaTransport,
   type Transport,
@@ -531,8 +534,9 @@ export function isValidAgentName(name: string): boolean {
 /**
  * Send text to an agent and submit it. A pi agent gets it through its
  * control socket (AgentCtlUnreachableError when that does not answer —
- * never a silent paste); a non-pi CLI, a slash command, or `via: "mux"`
- * goes through the mux paste path. See src/agents/transport.ts.
+ * never a silent paste), `/new` / `/reload` / `/compact` included; a
+ * non-pi CLI or `via: "mux"` goes through the mux paste path. See
+ * src/agents/transport.ts.
  */
 export async function sendToAgent(
   db: Db,
