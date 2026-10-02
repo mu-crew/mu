@@ -50,6 +50,8 @@ export interface AgentStatusSnapshot {
   status: RuntimeState | null;
   /** Why the state is unknown, when the source supplied a reason. */
   unknownReason?: string;
+  /** Final assistant text of the settled run (control-socket watches only). */
+  lastText?: string;
 }
 
 export interface AgentWaitOptions {
@@ -97,6 +99,9 @@ export interface AgentWaitAgentState {
   fired: boolean;
   /** Why the current state is unknown, when supplied by its source. */
   unknownReason?: string;
+  /** Final assistant text of the settled run; set only for control-socket
+   *  (pi) agents, absent for polled ones. */
+  lastText?: string;
   /** True when the agent's pane vanished mid-wait. Surfaced separately
    *  so the CLI can exit non-zero rather than treating a crash as a
    *  clean finish. */
@@ -192,6 +197,7 @@ export async function waitForAgents(
             st.status = snap.status;
             st.wasBusy = true;
             st.fired = true;
+            if (snap.lastText !== undefined) st.lastText = snap.lastText;
           }
           wake();
         },

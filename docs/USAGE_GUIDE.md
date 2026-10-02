@@ -1786,7 +1786,10 @@ ref; `--json` carries `nextSteps`; refs may be qualified
 agent's pane died (for a pi agent: its control socket stopped
 answering). For pi agents the wait is one request to the mu extension,
 answered when pi settles, so it returns immediately rather than on the
-next poll. For other CLIs murmur (tmux) or herdr supplies the state.
+next poll, and `--json` adds each settled pi agent's `lastText`: the
+text of its final assistant message, verbatim (`""` when the run ended
+without text; capped at 64 KiB). For other CLIs murmur (tmux) or herdr
+supplies the state, and `lastText` is absent; read the pane instead.
 `unknown` never fires the wait; run `mu doctor` for the missing-source
 reason.
 

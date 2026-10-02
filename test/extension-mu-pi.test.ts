@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import muPi, {
   FRESH_COMMAND,
+  LAST_TEXT_MAX_BYTES,
+  LAST_TEXT_TRUNCATED,
   type MuPiCommandContext,
   type MuPiContext,
 } from "../extension/mu-pi.js";
@@ -118,6 +120,67 @@ describe("mu pi extension", () => {
     await fake.emit("agent_start");
     await fake.emit("agent_settled");
     expect(await ctlRequest(sock, { op: "wait", afterRuns: 0 })).toMatchObject({ runs: 1 });
+  });
+
+  describe("lastText", () => {
+    const assistant = (...content: unknown[]) => ({ role: "assistant", content });
+    const run = async (messages: unknown[]) => {
+      await fake.emit("agent_start");
+      const p = ctlRequest(sock, { op: "wait", afterRuns: 0 });
+      await new Promise((r) => setTimeout(r, 20));
+      await fake.emit("agent_end", { messages });
+      await fake.emit("agent_settled");
+      return p;
+    };
+
+    it("wait carries the final assistant message's text parts only", async () => {
+      await fake.emit("session_start");
+      const r = await run([
+        { role: "user", content: [{ type: "text", text: "q" }] },
+        assistant({ type: "text", text: "early" }),
+        assistant(
+          { type: "thinking", thinking: "hmm" },
+          { type: "text", text: "ans" },
+          { type: "toolCall", id: "1", name: "bash", arguments: {} },
+          { type: "text", text: "wer" },
+        ),
+      ]);
+      expect(r).toMatchObject({ ok: true, runs: 1, lastText: "answer" });
+      // An already-settled wait returns the same text.
+      expect(await ctlRequest(sock, { op: "wait", afterRuns: 0 })).toMatchObject({
+        lastText: "answer",
+      });
+    });
+
+    it("is empty when the run ended with only tool calls or no agent_end", async () => {
+      await fake.emit("session_start");
+      const r = await run([assistant({ type: "toolCall", id: "1", name: "bash", arguments: {} })]);
+      expect(r).toMatchObject({ ok: true, lastText: "" });
+      await fake.emit("agent_start");
+      const p = ctlRequest(sock, { op: "wait", afterRuns: 1 });
+      await new Promise((r) => setTimeout(r, 20));
+      await fake.emit("agent_settled");
+      expect(await p).toMatchObject({ runs: 2, lastText: "" });
+    });
+
+    it("the last agent_end before the settle wins", async () => {
+      await fake.emit("session_start");
+      await fake.emit("agent_start");
+      await fake.emit("agent_end", { messages: [assistant({ type: "text", text: "first" })] });
+      await fake.emit("agent_end", { messages: [assistant({ type: "text", text: "second" })] });
+      await fake.emit("agent_settled");
+      expect(await ctlRequest(sock, { op: "wait", afterRuns: 0 })).toMatchObject({
+        lastText: "second",
+      });
+    });
+
+    it("caps a runaway answer at 64 KiB with the marker", async () => {
+      await fake.emit("session_start");
+      const r = await run([assistant({ type: "text", text: "x".repeat(70 * 1024) })]);
+      const text = (r as { lastText?: string }).lastText ?? "";
+      expect(text.endsWith(`\n${LAST_TEXT_TRUNCATED}`)).toBe(true);
+      expect(text.length).toBe(LAST_TEXT_MAX_BYTES + 1 + LAST_TEXT_TRUNCATED.length);
+    });
   });
 
   it("wait with timeoutMs replies timeout", async () => {

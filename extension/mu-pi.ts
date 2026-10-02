@@ -40,7 +40,7 @@ export interface MuPiCommandContext extends MuPiContext {
 /** The slice of pi's ExtensionAPI this extension uses. */
 export interface MuPiApi {
   on(
-    event: "session_start" | "session_shutdown" | "agent_start" | "agent_settled",
+    event: "session_start" | "session_shutdown" | "agent_start" | "agent_end" | "agent_settled",
     handler: (event: unknown, ctx: MuPiContext) => unknown,
   ): unknown;
   sendUserMessage(
@@ -60,6 +60,9 @@ export interface MuPiApi {
 export const FRESH_COMMAND = "mu-fresh";
 /** The extension's own bound on a fresh op that never reaches agent_start. */
 export const FRESH_TIMEOUT_MS = 30_000;
+/** Cap on `lastText` in a wait reply, in UTF-8 bytes (before the marker). */
+export const LAST_TEXT_MAX_BYTES = 64 * 1024;
+export const LAST_TEXT_TRUNCATED = "[truncated, see pane]";
 
 type Reply = CtlReply;
 const V = CTL_PROTOCOL_VERSION;
@@ -126,6 +129,10 @@ type Shared = {
   state: CtlState;
   since: number;
   runs: number;
+  /** Final assistant text of the last settled run; served by `wait`. */
+  lastText: string;
+  /** Captured on agent_end, published to `lastText` on agent_settled. */
+  endText?: string;
   ctx?: MuPiContext;
   pi: MuPiApi;
   handle: (req: Record<string, unknown>, conn: Socket) => Promise<Reply>;
@@ -139,6 +146,40 @@ function sharedMap(): SharedMap {
   const g = globalThis as { [SHARED]?: SharedMap };
   g[SHARED] ??= new Map();
   return g[SHARED];
+}
+
+/**
+ * Text of the last assistant message in an agent_end event's `messages`:
+ * its text parts joined, no tool calls or thinking. "" when there is none.
+ */
+export function lastAssistantText(event: unknown): string {
+  const msgs =
+    typeof event === "object" && event !== null
+      ? (event as { messages?: unknown }).messages
+      : undefined;
+  if (!Array.isArray(msgs)) return "";
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m: unknown = msgs[i];
+    if (typeof m !== "object" || m === null) continue;
+    const { role, content } = m as { role?: unknown; content?: unknown };
+    if (role !== "assistant") continue;
+    if (typeof content === "string") return capText(content);
+    if (!Array.isArray(content)) return "";
+    const parts = content.flatMap((c: unknown) => {
+      if (typeof c !== "object" || c === null) return [];
+      const { type, text } = c as { type?: unknown; text?: unknown };
+      return type === "text" && typeof text === "string" ? [text] : [];
+    });
+    return capText(parts.join(""));
+  }
+  return "";
+}
+
+function capText(text: string): string {
+  if (Buffer.byteLength(text, "utf8") <= LAST_TEXT_MAX_BYTES) return text;
+  // Cut on bytes; drop a code point split by the cut.
+  const cut = Buffer.from(text, "utf8").subarray(0, LAST_TEXT_MAX_BYTES).toString("utf8");
+  return `${cut.replace(/\uFFFD$/, "")}\n${LAST_TEXT_TRUNCATED}`;
 }
 
 function reasonOf(event: unknown): string | undefined {
@@ -163,6 +204,7 @@ export default function muPi(pi: MuPiApi): void {
     state: "idle",
     since: Date.now(),
     runs: 0,
+    lastText: "",
     pi,
     handle,
   };
@@ -192,11 +234,19 @@ export default function muPi(pi: MuPiApi): void {
     if (g.fresh?.armed) settleFresh({ v: V, ok: true, ...status() });
   });
 
+  // A settled run can span several low-level runs (retry, follow-up):
+  // the last agent_end before the settle holds the final answer.
+  pi.on("agent_end", (e) => {
+    g.endText = lastAssistantText(e);
+  });
+
   pi.on("agent_settled", (_e, c) => {
     g.ctx = c;
     g.state = "idle";
     g.since = Date.now();
     g.runs++;
+    g.lastText = g.endText ?? "";
+    g.endText = undefined;
     for (const w of [...g.waiters]) w();
   });
 
@@ -282,7 +332,7 @@ export default function muPi(pi: MuPiApi): void {
   /** Resolve once a run past `afterRuns` has settled (any next settle when omitted). */
   function wait(afterRuns: number | undefined, timeoutMs: number | undefined, conn: Socket) {
     if (afterRuns !== undefined && g.runs > afterRuns && g.state === "idle") {
-      return Promise.resolve<Reply>({ v: V, ok: true, ...status() });
+      return Promise.resolve<Reply>({ v: V, ok: true, ...status(), lastText: g.lastText });
     }
     return new Promise<Reply>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -292,7 +342,7 @@ export default function muPi(pi: MuPiApi): void {
         conn.off("close", onClose);
         resolve(r);
       };
-      const waiter = () => done({ v: V, ok: true, ...status() });
+      const waiter = () => done({ v: V, ok: true, ...status(), lastText: g.lastText });
       const onClose = () => done(fail("client closed"));
       g.waiters.add(waiter);
       conn.on("close", onClose);

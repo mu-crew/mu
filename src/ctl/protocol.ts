@@ -24,6 +24,8 @@ export type CtlReply =
         agent?: string;
         workstream?: string;
         piVersion?: string;
+        /** wait only: text of the settled run's final assistant message ("" when none). */
+        lastText?: string;
       })
   | { v: 1; ok: false; error: string };
 
