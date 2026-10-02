@@ -24,6 +24,8 @@ const DOC_FILES = [
   "AGENTS.md",
   "docs/USAGE_GUIDE.md",
   "docs/VOCABULARY.md",
+  "docs/reference/env.md",
+  "docs/reference/naming.md",
   "docs/ARCHITECTURE.md",
   "docs/VISION.md",
   "docs/ROADMAP.md",
