@@ -36,6 +36,7 @@
 
 import { accessSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join, parse } from "node:path";
+import { fileURLToPath } from "node:url";
 import { murmurAvailable, UNKNOWN_REASON } from "./agent-state.js";
 import { type AgentRow, resolveCliCommand, speaksMuCtl } from "./agents.js";
 import { type CtlProbe, ctlProbe } from "./ctl/client.js";
@@ -406,6 +407,50 @@ export interface AgentCtlReport {
   agent: string;
   socket: string;
   probe: CtlProbe["kind"];
+  /** ok probes: the mu version the agent's extension was built from. */
+  extVersion?: string;
+  /** ok probes whose extension is older than the installed mu. */
+  outdated?: boolean;
+}
+
+/**
+ * The installed mu version, from the package.json one directory above
+ * this module (src/ in source mode, dist/ when bundled). Null if unreadable.
+ */
+export function installedMuVersion(): string | null {
+  try {
+    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    const pkg: unknown = JSON.parse(readFileSync(pkgPath, "utf8"));
+    const v =
+      typeof pkg === "object" && pkg !== null ? (pkg as { version?: unknown }).version : null;
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** a < b on the numeric major.minor.patch prefix; false when either is unparsable. */
+export function versionOlder(a: string, b: string): boolean {
+  const pa = /^(\d+)\.(\d+)\.(\d+)/.exec(a);
+  const pb = /^(\d+)\.(\d+)\.(\d+)/.exec(b);
+  if (!pa || !pb) return false;
+  for (let i = 1; i <= 3; i++) {
+    const d = Number(pa[i]) - Number(pb[i]);
+    if (d !== 0) return d < 0;
+  }
+  return false;
+}
+
+/**
+ * Is an ok probe's extension older than the installed mu? An extension
+ * without `ops` in hello predates version reporting, so it is older. One
+ * with ops but no extVersion runs from source (tests, dev): not flagged.
+ */
+function probeOutdated(probe: CtlProbe, installed: string | null): boolean {
+  if (probe.kind !== "ok") return false;
+  if (probe.ops === undefined) return true;
+  if (probe.extVersion === undefined || installed === null) return false;
+  return versionOlder(probe.extVersion, installed);
 }
 
 /**
@@ -416,18 +461,33 @@ export interface AgentCtlReport {
  */
 export async function ctlSocketsDoctorCheck(
   agents: readonly AgentRow[],
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; installedVersion?: string | null } = {},
 ): Promise<{ check: DoctorCheck; agents: AgentCtlReport[] }> {
   const timeoutMs = opts.timeoutMs ?? DOCTOR_CTL_TIMEOUT_MS;
+  const installed =
+    opts.installedVersion !== undefined ? opts.installedVersion : installedMuVersion();
   const piAgents = agents.filter((a) => speaksMuCtl(a.cli, resolveCliCommand(a.cli)));
   const reports = await Promise.all(
     piAgents.map(async (a): Promise<AgentCtlReport> => {
       const socket = ctlSocketPath(a.workstreamName, a.name);
       const probe = await ctlProbe(socket, timeoutMs);
-      return { workstream: a.workstreamName, agent: a.name, socket, probe: probe.kind };
+      return {
+        workstream: a.workstreamName,
+        agent: a.name,
+        socket,
+        probe: probe.kind,
+        ...(probe.kind === "ok" && probe.extVersion !== undefined
+          ? { extVersion: probe.extVersion }
+          : {}),
+        ...(probeOutdated(probe, installed) ? { outdated: true } : {}),
+      };
     }),
   );
-  const bad = reports.filter((r) => r.probe !== "ok");
+  const bad = reports.filter((r) => r.probe !== "ok" || r.outdated);
+  const describe = (r: AgentCtlReport): string =>
+    r.outdated
+      ? `${r.workstream}/${r.agent}: extension ${r.extVersion ?? "(unknown)"} older than installed ${installed ?? "mu"}`
+      : `${r.workstream}/${r.agent}: ${r.probe}`;
   let check: DoctorCheck;
   if (reports.length === 0) check = { name: "ctl", status: "ok", detail: "no pi agents" };
   else if (bad.length === 0) {
@@ -440,7 +500,7 @@ export async function ctlSocketsDoctorCheck(
     check = {
       name: "ctl",
       status: "warn",
-      detail: bad.map((r) => `${r.workstream}/${r.agent}: ${r.probe}`).join(", "),
+      detail: bad.map(describe).join(", "),
     };
   }
   return { check, agents: reports };
@@ -580,7 +640,9 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
         "the mu pi extension. `missing`: no socket (extension not loaded,",
         "or the agent predates `mu link pi`). `refused`: socket present but",
         "not answering. `version`: protocol mismatch; upgrade mu or pi.",
-        "Run `mu link pi`, then respawn the agent.",
+        "Run `mu link pi`, then respawn the agent. `extension X older than",
+        "installed Y`: the agent's pi loaded an older mu build; type /reload",
+        "in its pane (`mu agent send <a> '/reload' --via mux`) or respawn it.",
       ];
     case "agents":
       return [

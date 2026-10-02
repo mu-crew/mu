@@ -3,7 +3,13 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CtlTimeoutError, CtlVersionError, ctlProbe, ctlRequest } from "../src/ctl/client.js";
+import {
+  CtlTimeoutError,
+  CtlUnknownOpError,
+  CtlVersionError,
+  ctlProbe,
+  ctlRequest,
+} from "../src/ctl/client.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 
 let dir: string;
@@ -85,6 +91,25 @@ describe("ctlProbe", () => {
     expect(seen).toEqual(["hello", "status"]);
   });
 
+  it("carries hello's ops and extVersion on an ok probe", async () => {
+    const p = await serve((line, sock) => {
+      const req = JSON.parse(line) as { op: string };
+      sock.end(
+        encode(
+          req.op === "hello"
+            ? { v: 1, ok: true, ops: ["hello", "status"], extVersion: "3.1.0" }
+            : { v: 1, ok: true, ...IDLE },
+        ),
+      );
+    });
+    expect(await ctlProbe(p)).toEqual({
+      kind: "ok",
+      status: IDLE,
+      ops: ["hello", "status"],
+      extVersion: "3.1.0",
+    });
+  });
+
   it("reports version for a reply without v", async () => {
     const p = await serve((_line, sock) => {
       sock.end(encode({ ok: true, ...IDLE }));
@@ -114,6 +139,15 @@ describe("ctlRequest", () => {
   it("returns an ok:false reply as-is", async () => {
     const p = await serve((_l, sock) => sock.end(encode({ v: 1, ok: false, error: "boom" })));
     expect(await ctlRequest(p, { op: "abort" })).toEqual({ v: 1, ok: false, error: "boom" });
+  });
+
+  it("throws CtlUnknownOpError, with the served ops, on an unknown-op refusal", async () => {
+    const p = await serve((_l, sock) =>
+      sock.end(encode({ v: 1, ok: false, error: "unknown op: fresh", ops: ["hello"] })),
+    );
+    const err = await ctlRequest(p, { op: "fresh", text: "x" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CtlUnknownOpError);
+    expect(err).toMatchObject({ op: "fresh", ops: ["hello"] });
   });
 
   it("throws CtlVersionError on an unknown version", async () => {

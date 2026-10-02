@@ -11,12 +11,18 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } 
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import {
+  CTL_OPS,
   CTL_PROTOCOL_VERSION,
   type CtlReply,
   type CtlState,
   encode,
   LineDecoder,
+  UNKNOWN_OP_PREFIX,
 } from "../src/ctl/protocol.js";
+
+/** The mu package version, baked in by tsup's `define`; absent when run from source. */
+declare const __MU_VERSION__: string | undefined;
+const EXT_VERSION = typeof __MU_VERSION__ === "string" ? __MU_VERSION__ : undefined;
 
 /** The slice of pi's ExtensionContext this extension uses. */
 export interface MuPiContext {
@@ -304,6 +310,8 @@ export default function muPi(pi: MuPiApi): void {
           agent: process.env.MU_AGENT_NAME,
           workstream: process.env.MU_WORKSTREAM,
           piVersion,
+          ops: [...CTL_OPS],
+          ...(EXT_VERSION !== undefined ? { extVersion: EXT_VERSION } : {}),
         };
       case "status":
         return { v: V, ok: true, ...status() };
@@ -325,7 +333,7 @@ export default function muPi(pi: MuPiApi): void {
         g.ctx.abort();
         return { v: V, ok: true, state: g.state };
       default:
-        return fail(`unknown op: ${String(req.op)}`);
+        return { ...fail(`${UNKNOWN_OP_PREFIX}${String(req.op)}`), ops: [...CTL_OPS] };
     }
   }
 

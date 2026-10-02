@@ -12,6 +12,24 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Added
 
+- **Extension version skew is reported and recoverable.** A running pi
+  keeps the mu extension it loaded at start, so after a mu upgrade an
+  older worker answered `send --fresh` with "unknown op: fresh" and no
+  next steps. Now:
+  - The control socket's `hello` reply gains `ops` (the ops the
+    extension serves) and `extVersion` (the mu version it was built
+    from); an unknown-op refusal carries `ops` too. Additive, still
+    `v: 1`.
+  - `send --fresh` and `mu agent abort` against an extension that lacks
+    the op raise `AgentExtensionOutdatedError` (exit 4) with two next
+    steps: `mu agent send <name> '/reload' --via mux` (pi's `/reload`
+    re-imports the extension through the `mu link pi` shim and keeps
+    the socket and session) and respawn.
+  - `mu doctor`'s `ctl` row warns `ws/agent: extension X older than
+    installed Y` (an extension whose `hello` has no `ops` predates the
+    field and counts as older). `--json` per-agent reports gain
+    `extVersion` and `outdated`.
+
 - **`mu agent remote-env <name>` prints what a remote pi agent's ssh
   command needs** and runs nothing: `sshArgs`
   (`-o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L

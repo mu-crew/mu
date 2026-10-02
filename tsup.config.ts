@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "tsup";
+
+const { version } = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
 
 export default defineConfig({
   entry: {
@@ -18,4 +21,7 @@ export default defineConfig({
   // dist/cli.js is directly executable (referenced by the bin field in
   // package.json).
   shims: false,
+  // The extension reports the mu version it was built from (hello's
+  // extVersion), so doctor can flag a pi that loaded an older build.
+  define: { __MU_VERSION__: JSON.stringify(version) },
 });

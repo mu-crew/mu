@@ -9,7 +9,8 @@ import muPi, {
   type MuPiCommandContext,
   type MuPiContext,
 } from "../extension/mu-pi.js";
-import { ctlProbe, ctlRequest } from "../src/ctl/client.js";
+import { CtlUnknownOpError, ctlProbe, ctlRequest } from "../src/ctl/client.js";
+import { CTL_OPS } from "../src/ctl/protocol.js";
 
 type Handler = (event: unknown, ctx: MuPiContext) => unknown;
 
@@ -77,6 +78,9 @@ describe("mu pi extension", () => {
     await fake.emit("session_start");
     const hello = await ctlRequest(sock, { op: "hello" });
     expect(hello).toMatchObject({ v: 1, ok: true, agent: "worker-9", workstream: "ws" });
+    // Run from source: ops reported, no build-time extVersion.
+    expect(hello).toMatchObject({ ops: [...CTL_OPS] });
+    expect(hello.ok && hello.extVersion).toBeUndefined();
     const probe = await ctlProbe(sock);
     expect(probe).toMatchObject({ kind: "ok", status: { state: "idle", runs: 0, pending: false } });
     expect(statSync(sock).mode & 0o777).toBe(0o600);
@@ -197,8 +201,9 @@ describe("mu pi extension", () => {
 
   it("rejects an unknown op and bad json without dying", async () => {
     await fake.emit("session_start");
-    const r = await ctlRequest(sock, { op: "nope" } as never);
-    expect(r).toMatchObject({ v: 1, ok: false });
+    const err = await ctlRequest(sock, { op: "nope" } as never).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CtlUnknownOpError);
+    expect(err).toMatchObject({ op: "nope", ops: [...CTL_OPS] });
     expect(await ctlRequest(sock, { op: "status" })).toMatchObject({ ok: true });
   });
 

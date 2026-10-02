@@ -1395,7 +1395,12 @@ mu pi extension calls `pi.sendUserMessage` inside the pane's own pi, so
 nothing is pasted or scraped. When pi is busy the message queues as a
 follow-up; `--steer` interrupts the current run instead. If the socket
 does not answer, the send fails with `AgentCtlUnreachableError` (exit 1)
-and pastes nothing; `--via mux` pastes explicitly. Text starting with
+and pastes nothing; `--via mux` pastes explicitly. A pi started before
+you upgraded mu still runs the old extension: an op it lacks (say
+`--fresh`) fails with `AgentExtensionOutdatedError` (exit 4). Type
+`/reload` in its pane (`mu agent send <name> '/reload' --via mux`) to
+load the new extension and keep the session, or respawn it. `mu doctor`'s
+`ctl` row flags such agents before you hit the error. Text starting with
 `/` (`/new`, `/compact`) is a TUI command that `sendUserMessage` would
 hand to the model as plain text, so it always goes through the mux.
 Non-pi CLIs always go through the mux. `--json` reports `transport:

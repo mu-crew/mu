@@ -6,7 +6,7 @@
 // abort at all: the verb is idempotent.
 
 import { type AgentRow, getAgent } from "../agents.js";
-import { CtlVersionError, ctlRequest } from "../ctl/client.js";
+import { CtlUnknownOpError, CtlVersionError, ctlRequest } from "../ctl/client.js";
 import type { CtlReply, CtlRequest, CtlState } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import {
@@ -15,7 +15,7 @@ import {
   AgentCtlUnreachableError,
   AgentNotFoundError,
 } from "./errors.js";
-import { agentCtlSocket, expectsCtl } from "./transport.js";
+import { agentCtlSocket, expectsCtl, extensionOutdated } from "./transport.js";
 
 export const DEFAULT_ABORT_TIMEOUT_MS = 30_000;
 
@@ -48,6 +48,7 @@ async function request(agent: AgentRow, sock: string, req: CtlRequest): Promise<
     return await ctlRequest(sock, req);
   } catch (e) {
     if (e instanceof CtlVersionError) throw e;
+    if (e instanceof CtlUnknownOpError) throw await extensionOutdated(agent, sock, e);
     throw new AgentCtlUnreachableError(
       agent.name,
       agent.workstreamName,

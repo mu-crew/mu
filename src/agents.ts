@@ -48,6 +48,7 @@ export {
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
+  AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,

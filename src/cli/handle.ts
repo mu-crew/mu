@@ -35,6 +35,7 @@ import {
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
+  AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
@@ -364,6 +365,11 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // already carries the matched line + scrollback;
     // errorNextSteps() carries the remediation recipe.
     return { label: "spawn startup error", exitCode: 1 };
+  }
+  if (err instanceof AgentExtensionOutdatedError) {
+    // The agent runs, but its extension cannot serve this op yet:
+    // a state conflict the operator resolves by /reload or respawn.
+    return { label: "extension outdated", exitCode: 4 };
   }
   if (err instanceof AgentBusyError) {
     // The agent's state collides with the request; abort or --force.

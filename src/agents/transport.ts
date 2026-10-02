@@ -8,12 +8,17 @@
 
 import { dirname } from "node:path";
 import type { AgentRow } from "../agents.js";
-import { CtlVersionError, ctlRequest } from "../ctl/client.js";
+import { CtlUnknownOpError, CtlVersionError, ctlRequest } from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
 import type { CtlState } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { activeMux, type SendOptions } from "../mux.js";
-import { AgentBusyError, AgentCtlUnreachableError, AgentFreshNeedsCtlError } from "./errors.js";
+import {
+  AgentBusyError,
+  AgentCtlUnreachableError,
+  AgentExtensionOutdatedError,
+  AgentFreshNeedsCtlError,
+} from "./errors.js";
 import { resolveCliCommand, speaksMuCtl } from "./spawn.js";
 
 export type Transport = "ctl" | "mux";
@@ -56,6 +61,27 @@ function errCode(e: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
+/**
+ * Map a CtlUnknownOpError to AgentExtensionOutdatedError, asking the
+ * socket's `hello` (best effort) for the extension's build version.
+ * Checked after the refusal rather than before every op: an unknown op
+ * is a no-op in the extension, so the happy path pays no extra trip.
+ */
+export async function extensionOutdated(
+  agent: Pick<AgentRow, "name" | "workstreamName">,
+  sock: string,
+  e: CtlUnknownOpError,
+): Promise<AgentExtensionOutdatedError> {
+  let extVersion: string | undefined;
+  try {
+    const hello = await ctlRequest(sock, { op: "hello" });
+    if (hello.ok) extVersion = hello.extVersion;
+  } catch {
+    // The refusal already proved the socket answers; the version is a nicety.
+  }
+  return new AgentExtensionOutdatedError(agent.name, agent.workstreamName, e.op, extVersion);
+}
+
 export async function sendViaTransport(
   agent: AgentRow,
   text: string,
@@ -83,6 +109,7 @@ export async function sendViaTransport(
     );
   } catch (e) {
     if (e instanceof CtlVersionError) throw e;
+    if (e instanceof CtlUnknownOpError) throw await extensionOutdated(agent, sock, e);
     throw unreachable(errCode(e) === "ENOENT" ? "missing" : "refused");
   }
   if (!reply.ok) {
