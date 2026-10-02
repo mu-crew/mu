@@ -22,7 +22,19 @@ const ROOT = join(import.meta.dirname, "..");
 const DOC_FILES = [
   "README.md",
   "AGENTS.md",
-  "docs/USAGE_GUIDE.md",
+  "docs/guide/README.md",
+  "docs/guide/getting-started.md",
+  "docs/guide/dispatch.md",
+  "docs/guide/stop-a-worker.md",
+  "docs/guide/delegate.md",
+  "docs/guide/remote.md",
+  "docs/guide/recovery.md",
+  "docs/guide/sync.md",
+  "docs/guide/tui.md",
+  "docs/guide/sql.md",
+  "docs/guide/upgrade.md",
+  "docs/guide/backends.md",
+  "docs/guide/cleanup.md",
   "docs/VOCABULARY.md",
   "docs/reference/env.md",
   "docs/reference/naming.md",
@@ -48,7 +60,9 @@ describe("docs name only real CLI surface", () => {
     for (const file of DOC_FILES) {
       total += extractDocCommands(file, readFileSync(join(ROOT, file), "utf8")).length;
     }
-    expect(total).toBeGreaterThan(500);
+    // Floor, not a target: the docs-audit compression (docs/guide/)
+    // dropped the count from ~560; a broken extractor finds ~0.
+    expect(total).toBeGreaterThan(200);
   });
 
   // A guard that cannot fail is theatre. Plant each drift shape the

@@ -614,7 +614,7 @@ export const JSON_OPT = ["--json", "emit machine-readable JSON instead of a tabl
  * contains a blank fragment, so a second pass cannot throw).
  *
  * Convention codified by cli_audit_plurality_uniformity (v0.3). See
- * docs/USAGE_GUIDE.md "CLI conventions".
+ * docs/guide/sql.md "Pass list flags".
  */
 export function parseCsvFlag(
   values: readonly string[] | undefined,

@@ -7,7 +7,7 @@
 //     audit_cleanups_post_schema_v5_wave; `task ready` was merged
 //     into `task next -n 0` in the same wave; `my-tasks` / `my-next`
 //     became `mu me tasks` / `mu me next`. The SQL escape hatches
-//     for the removed verbs live in docs/USAGE_GUIDE.md.)
+//     for the removed verbs live in docs/guide/sql.md.)
 //
 // JSON shape is intentionally NOT touched here (the JSON rename is
 // `output_json_keys_rename_v5`, a separate breaking commit). Tests
