@@ -19,7 +19,7 @@ mu task add --title "Design auth" --impact 80 --effort-days 2
 mu task add --title "Build auth"  --impact 80 --effort-days 5 --blocked-by design_auth
 
 mu agent spawn worker-1 --workspace
-mu agent send worker-1 'Pick up the next ready task and design the auth module.'
+mu agent send worker-1 --fresh 'Pick up the next ready task and design the auth module.'
 mu                         # dashboard
 ```
 
@@ -48,6 +48,11 @@ on track.
   agents, tasks, ownership, notes and workspaces. A single
   append-only **ops log** records every change ever made to them, so
   panes can die and humans can come back later.
+- **Exact control of pi agents, in pi's own TUI.** mu's pi extension
+  serves a per-agent control socket inside each agent's interactive
+  pi, so send, state, wait and abort are exact — locally and on
+  remote hosts over the agent's own ssh. No screen scraping; the pane
+  stays pi's normal TUI, and you can attach and type into it.
 - **Stay out of the model's way.** Mu coordinates handoffs; it does
   not choose models, providers, or thinking effort. `--cli <key>`
   uppercases to `$MU_<KEY>_COMMAND`, so your shell rc owns the agent
@@ -111,34 +116,34 @@ For one-shot delegation where you only need an answer back, use a
 ## Install
 
 ```bash
-# 1. The CLI, and murmur for agent state on tmux (see below).
-npm install -g @mu-crew/mu @mu-crew/murmur
-mu --version
-murmur init && murmur link pi
+npm i -g @mu-crew/mu
+mu link pi            # pi extension (exact send/state/wait/abort) + the mu skill
+mu doctor
+```
 
-# 2. The skill (teaches your coding agent how to drive mu).
-npx skills add mu-crew/mu          # auto-detects pi / claude-code / codex / etc.
-# Add -g to install globally (~/.<agent>/skills/), -y to skip prompts.
+For pi, `mu link pi` replaces `npx skills add`. To drive mu from
+another coding agent (claude-code, codex, ...), install the skill
+instead:
+
+```bash
+npx skills add mu-crew/mu          # auto-detects the agent; -g global, -y no prompts
 ```
 
 **Requirements:**
 - Node 22.12–26 (see `.nvmrc`), matching `engines` in `package.json`.
 - A terminal multiplexer: tmux ≥ 3.0, or [herdr](https://github.com/herdrdev/herdr)
   (`mu doctor` reports which one is active). Spawn, send, and read work
-  on both. Agent state comes from herdr on herdr and from murmur on tmux;
-  the remaining herdr gaps are listed in
+  on both. The remaining herdr gaps are listed in
   [docs/USAGE_GUIDE.md § 20](docs/USAGE_GUIDE.md#20-multiplexer-backends-tmux-and-herdr).
 - pi (the agent CLI mu orchestrates)
 - For `--workspace`: jj, sl, or git on PATH (or `--backend none`)
 
-**Agent state on tmux needs [murmur](https://github.com/mu-crew/murmur),
-even on one machine.** mu owns the work; murmur reports what each agent is
-doing. mu does not read panes itself, so without murmur every agent's state
-is `unknown`, and everything built on state goes quiet: `mu agent wait`
-never fires, `mu task wait --stuck-after` / `--on-stall exit` never detects
-a worker waiting on you, and spawn skips its readiness check. Tasks, claims,
-`mu task wait` on status, workspaces, spawn and send still work. murmur also
-provides one attention-sorted list across machines and owns the ssh egress.
+**murmur is optional for pi agents.** mu reads a pi agent's state from
+its control socket. Non-pi CLIs (claude-code, codex) on tmux get state from
+[murmur](https://github.com/mu-crew/murmur); without it their state is
+`unknown`, so `mu agent wait` and stall detection never fire for them.
+On herdr, herdr reports it. murmur also gives you one attention-sorted
+"who needs me" list across machines, tmux badges, and jump-to-pane.
 
 ```bash
 # on every node that runs agents
@@ -151,12 +156,14 @@ murmur peer add dev  # an ssh target; identity is discovered
 murmur peer list     # which hosts are reachable, and when last seen
 ```
 
-mu exports `MU_MANAGED_AGENT`, `MU_AGENT_NAME`, and `MU_WORKSTREAM`
-into every pane it spawns. murmur uses them to identify crew agents.
+mu exports `MU_MANAGED_AGENT`, `MU_AGENT_NAME`, `MU_WORKSTREAM` and
+`MU_CTL_SOCK` into every pane it spawns. murmur uses the first three to
+identify crew agents; mu's extension serves the control socket at the last.
 See murmur's [stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHITECTURE.md#contract).
 
-**Update:** `npm install -g @mu-crew/mu@latest` for the CLI;
-`npx skills update mu` for the skill.
+**Update:** `npm install -g @mu-crew/mu@latest`. The `mu link pi` shim and
+skill symlink follow the installed package; restart running pi agents (or
+`/reload`) to load the new extension. With `npx skills`: `npx skills update mu`.
 
 **Install from source** (hacking on mu itself):
 
@@ -164,7 +171,7 @@ See murmur's [stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHI
 git clone https://github.com/mu-crew/mu
 cd mu
 npm install -g .                        # `prepare` script auto-builds; `mu` lands on $PATH
-npx skills add ./skills/mu              # local-path source format
+mu link pi                              # links this checkout's extension + skill
 ```
 
 More install patterns (alias-to-dist for fastest dev iteration) in
@@ -282,11 +289,16 @@ backend: the pane is local, the process is remote.
 
 ```bash
 ssh dev 'git -C ~/repo worktree add ~/ws/worker-1'
+eval "$(mu agent remote-env worker-1 -w big --shell)"  # socket forward + env; runs nothing
 mu agent spawn worker-1 -w big --command \
-  'ssh dev -t "cd ~/ws/worker-1 && pi --approve"'
-# ... claim and send exactly as for a local agent, then collect:
+  "ssh $MU_SSH_ARGS dev -t 'cd ~/ws/worker-1 && $MU_REMOTE_ENV \$SHELL -ilc \"pi --approve\"'"
+# ... claim, send and abort exactly as for a local agent, then collect:
 git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
 ```
+
+The ssh forwards the remote pi's control socket to the local path mu
+derives, so send, state and wait are exact without murmur. The host
+needs `mu link pi`.
 
 Local and remote agents mix freely in one workstream. You create the
 remote workspace yourself (`--workspace` is local-only) and mu keeps

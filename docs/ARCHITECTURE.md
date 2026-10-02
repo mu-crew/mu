@@ -624,7 +624,9 @@ returning. Two steps, in order:
 - **Reality wins**: the mux is the source of truth for what panes
   exist. Reconciliation closes the gap on every `mu agent list`.
 - **Agent state is reported, not scraped or persisted.** `src/agent-state.ts`
-  reads herdr's `paneStatus()` on herdr. On tmux, one `list-panes -a`
+  probes a pi agent's control socket ([§ Control socket](#control-socket)),
+  in parallel for all pi agents. For other CLIs it reads herdr's
+  `paneStatus()` on herdr. On tmux, one `list-panes -a`
   reads `@murmur_pane_state` and `@murmur_pane_since` for every local
   agent. Only agents without a local option use `murmur status --json`;
   that result is cached for 10 seconds. See murmur's
@@ -639,6 +641,67 @@ returning. Two steps, in order:
   the schema. No code updates or reads the column as runtime state.
 - **No silent adoption**: orphans are reported, never claimed.
 - **`mu doctor` calls the same routine** and reports counts.
+
+---
+
+## Control socket
+
+mu drives a pi agent through a unix socket served by mu's own pi
+extension inside the agent's interactive pi. The pane stays pi's TUI;
+a human attached to it shares the same session. No `pi --mode rpc`, no
+screen scraping, no daemon: the server lives and dies with the pi
+process.
+
+**Path derivation** (`src/ctl/path.ts`). `ctlSocketPath(ws, agent)` is
+`<state dir>/sock/<ws>/<agent>.sock`, where the state dir is
+`dirname($MU_DB_PATH)` or the default. Past 103 bytes (macOS
+`sun_path`) it becomes `<state dir>/sock/h/<sha1(ws/agent)[:16]>.sock`.
+Nothing is stored: spawn injects the path as `MU_CTL_SOCK`, and every
+later verb derives it again.
+
+**Protocol v1** (`src/ctl/protocol.ts`, imported standalone by the
+extension). JSON lines, one request per connection. Every reply carries
+`v: 1`; the client throws `CtlVersionError` on anything else.
+
+| op | does |
+| --- | --- |
+| `hello` | identity plus `ops` (served ops) and `extVersion` (mu version the extension was built from) |
+| `status` | `state` (`busy` / `idle` / `needs_input`), `since`, `runs`, `pending` |
+| `send` | `pi.sendUserMessage`; when busy, `mode` `steer` or `followUp` (default) |
+| `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` |
+| `abort` | `ctx.abort()` (pi's Esc) |
+| `fresh` | new session + prompt as one operation via the internal `/mu-fresh` command; replies once the new run starts; refused with `busy` unless `force` |
+
+An op the extension does not serve returns `unknown op: <op>` with its
+`ops`; mu raises `AgentExtensionOutdatedError` (exit 4, next steps
+`/reload` via mux or respawn), and `mu doctor` flags an `extVersion`
+older than the installed mu.
+
+**Extension lifecycle** (`extension/mu-pi.ts`). Inert unless
+`MU_CTL_SOCK` is set. pi re-creates extension runtimes per session, so
+the server, run counters and an in-flight `fresh` live in a
+process-global map (`Symbol.for("mu.pi.ctl")`). Session replacement
+(`new` / `resume` / `fork` / `reload`) keeps the socket; quit closes it.
+Binding guards against stealing: if the path already answers (a nested
+`pi -p` inherited `MU_CTL_SOCK`), the extension leaves it alone. It
+listens on a private name and hard-links it into place, records the
+inode, and unlinks the public path only if that inode is still its own.
+On `session_start` a server whose path was deleted or replaced closes
+and rebinds, which is how `/reload` recovers a lost file.
+
+**No silent fallback** (`src/agents/transport.ts`). A pi agent
+(`expectsCtl`) whose socket does not answer is `AgentCtlUnreachableError`
+for send and abort, and `unknown` with reason `ctl missing` /
+`ctl refused` for state. mu never pastes into it or asks murmur instead.
+The mux paste path serves non-pi CLIs, adopted panes without ctl, slash
+commands (`sendUserMessage` does not run them), and explicit `--via mux`.
+
+**Remote agents.** The user's `ssh` command carries
+`-L <local derived path>:<remote path>` plus `MU_CTL_SOCK=<remote path>`
+in the remote env; `mu agent remote-env` prints both and runs nothing.
+mu always connects to the local path, so local and remote share one
+transport. ssh leaves the local socket file behind when it dies; it
+probes `refused`, and close or the reaper deletes it.
 
 ---
 
@@ -662,6 +725,7 @@ separately below.
 | `src/undo.ts` + `src/cli/undo.ts` | **Undo as inverse ops**: inverses for one `group_id`, derived from log provenance, refusing a superseded group (exit 4; `--force` overrides). Bare form lists undoable groups (`-n` widens), a prefix previews, `--yes` applies. |
 | `src/project-root.ts` | `detectProjectRoot` — the launch-cwd ladder bare `mu` uses to guess which workstream to focus. Pure filesystem walk; no DB. |
 | `extension/mu-pi.ts` + `extension/delegate.ts` | **The mu pi extension**, built to `dist/extension/mu-pi.js`. Child side (`serveCtl`): serves `$MU_CTL_SOCK` in a pi mu spawned. Parent side (`registerDelegate`, hidden when `MU_MANAGED_AGENT` is set or `MU_DELEGATE=0`): the `mu_delegate` / `mu_delegate_cancel` tools, which shell out to the `mu` CLI (spawn, send, `wait --json`, read, abort, close) and only format the CLI's `outcome` into a follow-up message. Imports nothing from pi; only the protocol from mu. |
+| `src/ctl/*.ts`        | **Control socket** client side ([§ Control socket](#control-socket)): `path.ts` (`ctlSocketPath`, `remoteCtlSocketPath`, `MU_CTL_SOCK`), `protocol.ts` (v1 request/reply types, `CTL_OPS`, line framing; imports nothing from mu so the extension can load it), `client.ts` (`ctlRequest`, `ctlProbe`, typed version / unknown-op errors). |
 | `src/link.ts` + `src/cli/link.ts` | **Link** — `mu link pi`: `linkPi` writes the extension shim (or `--copy`), `linkSkill` symlinks the skill, `inspectLinks` reports `ok` / `missing` / `stale-copy` / `foreign` / `dangling` for doctor. Filesystem only: the verb runs outside `handle()` (no DB). |
 | `src/rebuild.ts` + `src/cli/rebuild.ts` | **Rebuild** — disaster recovery: `rebuildInto` replays the whole log into a NEW DB file via `applyOp`. The verb renders the report: counts, `--json`, an `mv`-swap `Next:` step, a warning that `agents` / `vcs_workspaces` are not reconstructible. |
 | `src/legacy-ops.ts` | Permanent compatibility classifier for historical log-only intents whose entity looks projectable. Rebuild copies them without projection; segment flush never emits them. |
@@ -680,7 +744,7 @@ separately below.
 | `src/agent-state.ts`  | Runtime agent-state resolver. Reads herdr's native state or murmur's local pane options and remote JSON; maps source states, returns `unknown` with a reason, and caches remote murmur reads for 10 seconds. |
 | `src/reconcile.ts`    | Ghost prune + orphan surface; "reality wins"                              |
 | `src/agents.ts`       | Hub: CRUD + send / read / list / close + liveness + reaper. Re-exports `src/agents/*`; pane-title composition (`composeAgentTitle`) lives here. |
-| `src/agents/*.ts`     | Agent-lifecycle internals: `spawn.ts` (spawn, CLI resolution, liveness wait *or* backend `startAgentInPane`, pane create-or-reuse, rollback), `spawn-lock.ts` (per-session lock around topology+finalize), `wait.ts`, `adopt.ts`, `kick.ts` (signal a wedged pane's pgid), `abort.ts` (stop a pi turn via the control socket), `delegate.ts` (`delegateOutcome`: one wait result → `done` / `empty` / `died` / `timeout` / `pending`, surfaced by `mu agent wait --json`), `errors.ts`. |
+| `src/agents/*.ts`     | Agent-lifecycle internals: `spawn.ts` (spawn, CLI resolution, liveness wait *or* backend `startAgentInPane`, pane create-or-reuse, rollback), `spawn-lock.ts` (per-session lock around topology+finalize), `wait.ts`, `adopt.ts`, `kick.ts` (signal a wedged pane's pgid), `abort.ts` (stop a pi turn via the control socket), `transport.ts` (send routing: ctl for pi agents, mux paste otherwise, no fallback), `delegate.ts` (`delegateOutcome`: one wait result → `done` / `empty` / `died` / `timeout` / `pending`, surfaced by `mu agent wait --json`), `errors.ts`. |
 | `src/dag.ts`          | Shared DAG read/render helpers: `loadFullDag` plus pure `renderForest` / `renderTaskTree`, reused by `mu task tree` and the TUI DAG popup. |
 | `src/tasks/*.ts`      | Task-graph internals: `core.ts` (row shapes, id resolution), `id.ts`, `queries.ts` (reads), `edit.ts` (+ delete cascade preview), `edges.ts` (+ cycle check), `status.ts` (TaskStatus), `sort.ts`, `claim.ts` (atomic CAS), `lifecycle.ts` (close/open), `wait.ts`, `errors.ts`. |
 | `src/tracks.ts`       | Parallel-tracks union-find with diamond merge                                             |

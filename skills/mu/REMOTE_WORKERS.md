@@ -21,7 +21,9 @@ concerns interactive attachment, not mu's automatic agent-state reads.
 --command 'ssh <host> -t "..."'` starts an ordinary tmux pane whose
 foreground process happens to be ssh. Everything mu does is
 pane-shaped, so `mu agent send`, `mu agent read`, and the reaper work
-unchanged across the network. murmur reports the remote process's agent state.
+unchanged across the network. A pi agent's control socket rides the
+same ssh as a `-L` forward, so its state is exact; murmur reports state
+only for non-pi agents.
 
 **One orchestrator DB; panes may be remote.** All state stays on your
 machine. Do not run a second mu on the host to "coordinate": ownership
@@ -29,7 +31,7 @@ is machine-local by construction — `tasks.owner_id` is an FK into the
 `agents` table, which never syncs — so a remote mu could not claim
 tasks in your DAG. Two half-views, no benefit.
 
-**murmur sees the REMOTE pane** — the opposite of the line above. Its
+**murmur, if you use it, sees the REMOTE pane** — the opposite of the line above. Its
 extension runs inside the agent's process, so it claims the pane on the
 HOST; mu's local pane holds an ssh client and reports nothing. Two
 addresses, one worker.
@@ -67,7 +69,7 @@ the only ssh channel**. While it is open, `git fetch`, `git push`,
 
 **Attach to look, then close immediately.** `mu agent close <name>`
 detaches without stopping a detached-tmux agent. mu reads agent state
-through murmur automatically; use mule for orchestrator commands because
+automatically (pi: the forwarded control socket); use mule for orchestrator commands because
 its separate ControlPath cannot contend with the attach pane. See
 § When the host limits concurrent sessions for diagnosis and the
 remote-agent setup.
@@ -124,7 +126,7 @@ mu agent spawn worker-1 -w big --command \
 
 # 4. CLAIM + SEND — identical to a local agent
 mu task claim t1 -w big --for worker-1 --evidence 'remote on dev'
-mu agent send worker-1 -w big '...'
+mu agent send worker-1 -w big --fresh '...'
 
 # 5. WAIT — run the claim's one-shot Next: command once per turn
 # Set a deadline; at expiry read the pane, then release or re-dispatch.
@@ -354,20 +356,23 @@ exists:
 ssh dev 'git -C ~/repo worktree remove ~/ws/worker-1'
 ```
 
-`mu agent kick` signals the local pane's foreground process group —
-that is the ssh client, not the remote agent. Use `mu agent close` and
-respawn.
+To stop a remote pi agent's turn, `mu agent abort <name>`: it goes
+through the forwarded socket. `mu agent kick` signals the local pane's
+foreground process group — that is the ssh client, not the remote
+agent. For an unresponsive one, `mu agent close` and respawn.
 
 ---
 
 ## mu and murmur, and what you lose without it
 
-[murmur](https://github.com/mu-crew/murmur) provides agent state for
-mu's tmux backend. Without it, mu reports agent state as `unknown`.
-The DAG, claims, task completion waits, workspaces, spawn, send, read,
-the reaper, this remote recipe, and `git fetch` collection still work.
-Agent-state consumers such as `mu agent wait`, idle flags, and task-stall
-detection wait rather than treating `unknown` as completion or a stall.
+pi agents, local or remote, need no murmur: mu reads their state from
+the control socket. [murmur](https://github.com/mu-crew/murmur) provides
+agent state for non-pi agents (claude-code, codex) on tmux. Without it
+those report `unknown`; the DAG, claims, task completion waits,
+workspaces, spawn, send, read, the reaper, this remote recipe, and
+`git fetch` collection still work. Agent-state consumers such as
+`mu agent wait`, idle flags, and task-stall detection wait rather than
+treating `unknown` as completion or a stall.
 
 murmur also provides the tmux status pills, `prefix+a`, attachment hints,
 and `murmur peer list` for host reachability. The division is: **mu owns
@@ -380,13 +385,15 @@ work. Its interfaces used by mu are in murmur's
 | what should happen next | mu — the DAG |
 | who owns this task | mu — `claim` / `close` |
 | is the task done | mu — `task wait`, a DB poll |
-| what is this agent doing right now | murmur — pushed from inside pi |
+| what is this pi agent doing right now | mu — the control socket |
+| what is a non-pi agent doing right now | murmur |
 | is anything blocked on me, anywhere | murmur |
 | which host can I reach | murmur — `peer list` |
 
 **The seam is three env vars, and it is load-bearing.** `mu agent
 spawn` injects `MU_MANAGED_AGENT=1`, `MU_AGENT_NAME` and
-`MU_WORKSTREAM`; pi inherits them and murmur's extension reads them.
+`MU_WORKSTREAM` (plus `MU_CTL_SOCK` for mu's own extension); pi
+inherits them and murmur's extension reads them.
 That one mechanism gives you:
 
 1. `driver=orchestrated`, so crew stays out of the human's status bar
@@ -395,7 +402,7 @@ That one mechanism gives you:
 3. the attachment back-reference for a remote worker
 
 For a remote worker they go **inside** the ssh command (tmux `-e` stops
-at the hop). Miss them and the agent reports `driver=human`: it appears
+at the hop); `$MU_REMOTE_ENV` from `mu agent remote-env` carries them. Miss them and the agent reports `driver=human`: it appears
 in your own counts as if it were yours.
 
 ## Picking a host
@@ -528,20 +535,24 @@ Run the agent in its own tmux session on the host, and attach to
 the session can be released.
 
 ```bash
+eval "$(mu agent remote-env worker-1 -w big --shell)"  # MU_SSH_ARGS, MU_REMOTE_ENV
 # Agent runs DETACHED on the host; the ssh returns immediately
-ssh dev 'tmux new-session -d -s mu-worker-1 -c ~/ws/worker-1 \
-  "MU_MANAGED_AGENT=1 MU_AGENT_NAME=worker-1 MU_WORKSTREAM=big pi --approve"'
+ssh dev "tmux new-session -d -s mu-worker-1 -c ~/ws/worker-1 \
+  '$MU_REMOTE_ENV \$SHELL -ilc \"pi --approve\"'"
 
-# Attach a local pane to it; claim/send are then normal
-mu agent spawn worker-1 -w big --command 'ssh dev -t "tmux attach -t mu-worker-1"'
+# Attach a local pane to it (forwarding the socket); claim/send are then normal
+mu agent spawn worker-1 -w big --command "ssh $MU_SSH_ARGS dev -t 'tmux attach -t mu-worker-1'"
 
 # COLLECT: detach FIRST to free the session, then fetch
 mu agent close worker-1 -w big
 git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
 
-# Reattach — same session, LLM context intact
-mu agent spawn worker-1 -w big --command 'ssh dev -t "tmux attach -t mu-worker-1"'
+# Reattach — same session, LLM context intact (same --command as above)
+mu agent spawn worker-1 -w big --command "ssh $MU_SSH_ARGS dev -t 'tmux attach -t mu-worker-1'"
 ```
+
+The pi keeps serving its socket at the remote path while detached; each
+attach re-creates the local end of the forward.
 
 Two consequences, both counterintuitive:
 
