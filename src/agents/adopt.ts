@@ -26,7 +26,7 @@ import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { activeMux, type MuxPane, PaneNotFoundError, parseAgentNameFromTitle } from "../mux.js";
 import { AgentExistsError, AgentNotInWorkstreamError } from "./errors.js";
-import type { SpawnCtl } from "./spawn.js";
+import { probeToSpawnCtl, type SpawnCtl } from "./spawn.js";
 import { agentCtlSocket, expectsCtl } from "./transport.js";
 
 /** Budget for adopt's one-shot control-socket probe. */
@@ -73,8 +73,7 @@ async function probeAdopted(
   const ctlSocket = agentCtlSocket(db, agent);
   if (!expectsCtl(agent, ctlSocket)) return { ctl: "skipped", ctlSocket };
   const probe = await ctlProbe(ctlSocket, ADOPT_CTL_PROBE_MS);
-  const ctl = probe.kind === "ok" ? "ok" : probe.kind === "missing" ? "missing" : "refused";
-  return { ctl, ctlSocket };
+  return { ctl: probeToSpawnCtl(probe.kind), ctlSocket };
 }
 
 /**

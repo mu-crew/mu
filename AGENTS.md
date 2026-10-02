@@ -55,9 +55,12 @@ mu/
 │   ├── VISION.md          # design pillars
 │   ├── VOCABULARY.md      # canonical terms (single source of truth)
 │   └── ARCHITECTURE.md    # module layout, TUI architecture, key seams
+├── extension/             # the mu pi extension (built to dist/extension/mu-pi.js)
+│   ├── mu-pi.ts           # serves $MU_CTL_SOCK inside a spawned pi (control socket server)
+│   └── delegate.ts        # parent-side mu_delegate / mu_delegate_cancel tools (shell out to mu)
 ├── src/                   # all source (root files: SDK + shared infra; one
 │                          # level of subdirs OK for cohesive clusters — see
-│                          # `src/cli/`, `src/agents/`, `src/tasks/`, `src/mux/`)
+│                          # `src/cli/`, `src/agents/`, `src/tasks/`, `src/mux/`, `src/ctl/`)
 │   ├── db.ts              # SQLite schema + openDb (single CREATE-IF-NOT-EXISTS block; v11)
 │   │                      # also owns SYNCED_ENTITIES / PORTABLE_TABLES / MACHINE_LOCAL_TABLES
 │   ├── mux.ts             # multiplexer backend hub (re-exports src/mux/*)
@@ -78,6 +81,9 @@ mu/
 │   │   ├── kick.ts        # reaper events + cleanup of dead agent rows
 │   │   ├── adopt.ts       # adoptAgent: register an existing pane as a managed agent
 │   │   ├── wait.ts        # waitForAgents: block on task-less agents finishing (busy → any other state)
+│   │   ├── transport.ts   # send routing: ctl for pi agents, mux paste otherwise, no fallback; expectsCtl
+│   │   ├── abort.ts       # abortAgent: stop a pi turn through the control socket
+│   │   ├── delegate.ts    # delegateOutcome: one wait result → done / empty / died / timeout / pending
 │   │   └── errors.ts      # typed agent error classes (AgentNotFoundError, AgentDiedOnSpawnError, …)
 │   ├── tasks.ts           # task SDK hub (re-exports src/tasks/*)
 │   ├── tasks/             # cohesive cluster of task-graph internals
@@ -105,6 +111,8 @@ mu/
 │   ├── sync.ts            # peer status + the ambient flush/ingest hook + --from reader + --repair
 │   ├── fleet-hazards.ts   # mixed-fleet doctor checks (DB inside MU_SYNC_DIR, network mount, case collisions)
 │   ├── file-lock.ts       # generic cross-process advisory lock via atomic fs.mkdir
+│   ├── ctl/               # control socket client: path.ts (ctlSocketPath), protocol.ts (v1, CTL_OPS), client.ts (ctlRequest / ctlProbe)
+│   ├── link.ts            # mu link pi: extension shim + skill symlink + inspectLinks for doctor
 │   ├── logs.ts            # typed READER over `ops` + appendLog / emitEvent (the one write path triggers can't cover)
 │   ├── log-render.ts      # the ONE op → prose formatter (renderOp); shared by CLI + TUI
 │   ├── vcs.ts             # VcsBackend hub (re-exports src/vcs/*: jj/sl/git/none impls)
@@ -122,6 +130,8 @@ mu/
 │   │   ├── workstream.ts  # workstream init / list / destroy
 │   │   ├── agents.ts      # agent spawn / send / read / list / show / close / kick / wait / adopt
 │   │   ├── agents-remote.ts # agent remote-env (prints ssh forward + env; runs nothing)
+│   │   ├── dispatch-hints.ts # dispatch-time Next: hints for pi agents (--fresh / --steer / abort)
+│   │   ├── link.ts        # mu link pi (filesystem only; runs outside handle())
 │   │   ├── tasks.ts       # `mu task` hub (re-exports wireTaskCommands / cmdMyNext / cmdMyTasks / unescapeNoteText)
 │   │   ├── tasks/         # sub-cluster of the `mu task` namespace
 │   │   │   ├── queries.ts    # list / next / owned-by + cmdMyTasks / cmdMyNext (back `mu me tasks` / `mu me next`)

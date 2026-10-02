@@ -12,6 +12,7 @@
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
+import { dirname } from "node:path";
 import { listAgents, listLiveAgents } from "../agents.js";
 import { emitJson, resolveWorkstream } from "../cli.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "../db.js";
@@ -127,7 +128,10 @@ export async function cmdDoctor(
   printCheck("agent state", agentStateCheck(health, muExt));
   printCheck("mu ext", muExt);
   printCheck("mu skill", skillDoctorCheck());
-  printCheck("ctl", (await ctlSocketsDoctorCheck(listAgents(db))).check);
+  printCheck(
+    "ctl",
+    (await ctlSocketsDoctorCheck(listAgents(db), { stateDir: dirname(db.name) })).check,
+  );
 
   // ─ DB + schema
   console.log(pc.bold("\ndb"));
@@ -369,7 +373,7 @@ export async function cmdDoctorJson(
   // environment
   const health = await muxHealth();
   const muExt = ctlExtensionDoctorCheck();
-  const ctlSockets = await ctlSocketsDoctorCheck(listAgents(db));
+  const ctlSockets = await ctlSocketsDoctorCheck(listAgents(db), { stateDir: dirname(db.name) });
   const env = {
     // `mux` is the backend-agnostic key. `tmux` is kept as an alias for
     // back-compat with scripts that grew around the pre-MuxBackend

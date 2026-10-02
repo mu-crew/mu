@@ -9,9 +9,9 @@
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentRow } from "../agents.js";
-import { CtlUnknownOpError, CtlVersionError, ctlRequest } from "../ctl/client.js";
+import { CtlUnknownOpError, CtlVersionError, ctlRequest, errCode } from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
-import type { CtlState } from "../ctl/protocol.js";
+import type { CtlReply, CtlRequest, CtlState } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { activeMux, type SendOptions } from "../mux.js";
 import {
@@ -31,7 +31,7 @@ export type TransportSendOptions = SendOptions & {
   mode?: "steer" | "followUp";
   /** Force a transport instead of choosing by agent and text. */
   via?: Transport;
-  /** Control socket path. Default: derived from the agent's identity. */
+  /** Control socket path. Default: agentCtlSocket(db, agent). */
   socket?: string;
   /** Start a new pi session and send the text into it, as one ctl op. */
   fresh?: boolean;
@@ -69,11 +69,6 @@ export function chooseTransport(agent: AgentRow, text: string, sock?: string): T
   return expectsCtl(agent, sock) ? "ctl" : "mux";
 }
 
-function errCode(e: unknown): string | undefined {
-  const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
-  return typeof code === "string" ? code : undefined;
-}
-
 /**
  * Map a CtlUnknownOpError to AgentExtensionOutdatedError, asking the
  * socket's `hello` (best effort) for the extension's build version.
@@ -95,12 +90,38 @@ export async function extensionOutdated(
   return new AgentExtensionOutdatedError(agent.name, agent.workstreamName, e.op, extVersion);
 }
 
+/**
+ * One ctl request to `agent`, with the failure mapping every ctl verb
+ * shares: a version mismatch rethrows, an unknown op becomes
+ * AgentExtensionOutdatedError, anything else AgentCtlUnreachableError
+ * (missing on ENOENT, else refused).
+ */
+export async function ctlRequestFor(
+  agent: Pick<AgentRow, "name" | "workstreamName">,
+  sock: string,
+  req: CtlRequest,
+): Promise<CtlReply> {
+  try {
+    return await ctlRequest(sock, req);
+  } catch (e) {
+    if (e instanceof CtlVersionError) throw e;
+    if (e instanceof CtlUnknownOpError) throw await extensionOutdated(agent, sock, e);
+    throw new AgentCtlUnreachableError(
+      agent.name,
+      agent.workstreamName,
+      sock,
+      errCode(e) === "ENOENT" ? "missing" : "refused",
+    );
+  }
+}
+
 export async function sendViaTransport(
   agent: AgentRow,
   text: string,
-  opts: TransportSendOptions = {},
+  // Required: only the caller knows the DB whose directory roots the socket.
+  opts: TransportSendOptions & { socket: string },
 ): Promise<SendResult> {
-  const sock = opts.socket ?? ctlSocketPath(agent.workstreamName, agent.name);
+  const sock = opts.socket;
   if (opts.fresh && (opts.via === "mux" || !expectsCtl(agent, sock))) {
     throw new AgentFreshNeedsCtlError(agent.name, agent.workstreamName, agent.cli);
   }
@@ -110,21 +131,13 @@ export async function sendViaTransport(
     await (await activeMux()).sendToPane(agent.paneId, text, opts);
     return { transport };
   }
-  const unreachable = (kind: "missing" | "refused") =>
-    new AgentCtlUnreachableError(agent.name, agent.workstreamName, sock, kind);
-  let reply: Awaited<ReturnType<typeof ctlRequest>>;
-  try {
-    reply = await ctlRequest(
-      sock,
-      opts.fresh
-        ? { op: "fresh", text, ...(opts.force ? { force: true } : {}) }
-        : { op: "send", text, mode: opts.mode ?? "followUp" },
-    );
-  } catch (e) {
-    if (e instanceof CtlVersionError) throw e;
-    if (e instanceof CtlUnknownOpError) throw await extensionOutdated(agent, sock, e);
-    throw unreachable(errCode(e) === "ENOENT" ? "missing" : "refused");
-  }
+  const reply = await ctlRequestFor(
+    agent,
+    sock,
+    opts.fresh
+      ? { op: "fresh", text, ...(opts.force ? { force: true } : {}) }
+      : { op: "send", text, mode: opts.mode ?? "followUp" },
+  );
   if (!reply.ok) {
     if (opts.fresh && reply.error === "busy") {
       throw new AgentBusyError(agent.name, agent.workstreamName);

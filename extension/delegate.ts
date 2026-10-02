@@ -192,6 +192,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       }
       const out = json(r) ?? {};
       if (out.ctl !== "ok") {
+        reserved.delete(name);
         throw new Error(
           `${W}/${name} spawned but its control socket is ${String(out.ctl)}, so its answer cannot come back. Pane kept; close it with: mu agent close ${name} -w ${W}`,
         );

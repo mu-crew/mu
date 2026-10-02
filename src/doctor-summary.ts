@@ -38,7 +38,7 @@ import { accessSync, constants, existsSync, readFileSync, realpathSync } from "n
 import { delimiter, dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { murmurAvailable, UNKNOWN_REASON } from "./agent-state.js";
-import { type AgentRow, resolveCliCommand, speaksMuCtl } from "./agents.js";
+import { type AgentRow, expectsCtl } from "./agents.js";
 import { type CtlProbe, ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import { CTL_OPS } from "./ctl/protocol.js";
@@ -472,21 +472,24 @@ function probeMissingOps(probe: CtlProbe): string[] {
 
 /**
  * The "ctl" row: probe the control socket of every agent that runs pi
- * (per `speaksMuCtl`, the rule spawn's handshake uses). Probes run in
+ * (per `expectsCtl`, the rule send, state and abort use). `stateDir`
+ * roots the derived socket path like spawn's (the DB's directory); it
+ * defaults to ctlSocketPath's env-derived base. Probes run in
  * parallel, each bounded by `timeoutMs`. Async, so `mu doctor` only:
  * the TUI's per-tick summary stays synchronous and socket-free.
  */
 export async function ctlSocketsDoctorCheck(
   agents: readonly AgentRow[],
-  opts: { timeoutMs?: number; installedVersion?: string | null } = {},
+  opts: { timeoutMs?: number; installedVersion?: string | null; stateDir?: string } = {},
 ): Promise<{ check: DoctorCheck; agents: AgentCtlReport[] }> {
   const timeoutMs = opts.timeoutMs ?? DOCTOR_CTL_TIMEOUT_MS;
   const installed =
     opts.installedVersion !== undefined ? opts.installedVersion : installedMuVersion();
-  const piAgents = agents.filter((a) => speaksMuCtl(a.cli, resolveCliCommand(a.cli)));
+  const piAgents = agents
+    .map((a) => ({ a, socket: ctlSocketPath(a.workstreamName, a.name, opts.stateDir) }))
+    .filter(({ a, socket }) => expectsCtl(a, socket));
   const reports = await Promise.all(
-    piAgents.map(async (a): Promise<AgentCtlReport> => {
-      const socket = ctlSocketPath(a.workstreamName, a.name);
+    piAgents.map(async ({ a, socket }): Promise<AgentCtlReport> => {
       const probe = await ctlProbe(socket, timeoutMs);
       const older = probeOutdated(probe, installed);
       const missingOps = probeMissingOps(probe);

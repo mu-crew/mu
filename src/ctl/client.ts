@@ -129,7 +129,8 @@ export function ctlRequest(
   });
 }
 
-function errCode(e: unknown): string | undefined {
+/** A Node system error's `code` (ENOENT, ECONNREFUSED, ...), if any. */
+export function errCode(e: unknown): string | undefined {
   const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
   return typeof code === "string" ? code : undefined;
 }
