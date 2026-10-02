@@ -97,6 +97,26 @@ describe("expectsCtl", () => {
     expect(expectsCtl(seed("worker-2", "pi-meta"))).toBe(true);
     expect(expectsCtl(seed("worker-3", "claude"))).toBe(false);
   });
+
+  // Review finding pictl_fix_clikey: `--cli helper --command "pi-meta ..."`
+  // spawns pi (handshake ok) but the cli key alone says "helper". The
+  // agent's own socket answering is the proof, so it stays a ctl agent.
+  it("a custom cli key whose derived socket exists is a ctl agent", async () => {
+    const agent = seed("rv1-alias", "helper");
+    expect(expectsCtl(agent, sockFor("rv1-alias"))).toBe(false);
+    await serveExtension(sockFor("rv1-alias"));
+    expect(expectsCtl(agent, sockFor("rv1-alias"))).toBe(true);
+  });
+
+  it("send to a custom-key pi agent goes through its socket, not a paste", async () => {
+    seed("rv1-alias", "helper");
+    await serveExtension(sockFor("rv1-alias"));
+    const res = await sendToAgent(db, "rv1-alias", "hi", { workstream: "auth" });
+    expect(res.transport).toBe("ctl");
+    expect(pasted()).toBe(false);
+    const fresh = await sendToAgent(db, "rv1-alias", "task", { workstream: "auth", fresh: true });
+    expect(fresh.transport).toBe("ctl");
+  });
 });
 
 describe("sendViaTransport", () => {

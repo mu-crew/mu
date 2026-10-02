@@ -6,6 +6,7 @@
 // the mux paste path. No silent fallback: a pi agent whose socket does
 // not answer is an AgentCtlUnreachableError, never a paste.
 
+import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentRow } from "../agents.js";
 import { CtlUnknownOpError, CtlVersionError, ctlRequest } from "../ctl/client.js";
@@ -43,17 +44,29 @@ export function agentCtlSocket(db: Db, agent: AgentRow): string {
   return ctlSocketPath(agent.workstreamName, agent.name, dirname(db.name));
 }
 
-/** True when the agent runs pi, so sends go through its control socket. */
-export function expectsCtl(agent: Pick<AgentRow, "cli">): boolean {
-  return speaksMuCtl(agent.cli, resolveCliCommand(agent.cli));
+/**
+ * True when the agent runs pi, so sends go through its control socket.
+ * The cli key decides when it names pi (or MU_<KEY>_COMMAND here runs
+ * pi). Otherwise the agent's own socket file decides: spawn removes any
+ * stale file before the pane starts, so a file at the derived path was
+ * bound by this agent's extension (or its ssh forward). That covers
+ * `--cli helper --command "pi-meta ..."`, whose command is not stored,
+ * without a schema change. `sock` defaults to the derived path; pass
+ * agentCtlSocket(db, agent) when a DB is at hand.
+ */
+export function expectsCtl(
+  agent: Pick<AgentRow, "cli" | "name" | "workstreamName">,
+  sock: string = ctlSocketPath(agent.workstreamName, agent.name),
+): boolean {
+  return speaksMuCtl(agent.cli, resolveCliCommand(agent.cli)) || existsSync(sock);
 }
 
 /** The transport a send of `text` to `agent` uses when not forced. */
-export function chooseTransport(agent: AgentRow, text: string): Transport {
+export function chooseTransport(agent: AgentRow, text: string, sock?: string): Transport {
   // Slash commands (/new, /compact, ...) are TUI input: the extension's
   // sendUserMessage would send them to the model as plain text.
   if (text.startsWith("/")) return "mux";
-  return expectsCtl(agent) ? "ctl" : "mux";
+  return expectsCtl(agent, sock) ? "ctl" : "mux";
 }
 
 function errCode(e: unknown): string | undefined {
@@ -87,16 +100,16 @@ export async function sendViaTransport(
   text: string,
   opts: TransportSendOptions = {},
 ): Promise<SendResult> {
-  if (opts.fresh && (opts.via === "mux" || !expectsCtl(agent))) {
+  const sock = opts.socket ?? ctlSocketPath(agent.workstreamName, agent.name);
+  if (opts.fresh && (opts.via === "mux" || !expectsCtl(agent, sock))) {
     throw new AgentFreshNeedsCtlError(agent.name, agent.workstreamName, agent.cli);
   }
-  const transport = opts.fresh ? "ctl" : (opts.via ?? chooseTransport(agent, text));
+  const transport = opts.fresh ? "ctl" : (opts.via ?? chooseTransport(agent, text, sock));
   if (transport === "mux") {
     // Load-bearing: a send that cannot reach a pane is a failed send.
     await (await activeMux()).sendToPane(agent.paneId, text, opts);
     return { transport };
   }
-  const sock = opts.socket ?? ctlSocketPath(agent.workstreamName, agent.name);
   const unreachable = (kind: "missing" | "refused") =>
     new AgentCtlUnreachableError(agent.name, agent.workstreamName, sock, kind);
   let reply: Awaited<ReturnType<typeof ctlRequest>>;

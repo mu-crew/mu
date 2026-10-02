@@ -71,7 +71,7 @@ async function probeAdopted(
   agent: AgentRow,
 ): Promise<Pick<AdoptAgentResult, "ctl" | "ctlSocket">> {
   const ctlSocket = agentCtlSocket(db, agent);
-  if (!expectsCtl(agent)) return { ctl: "skipped", ctlSocket };
+  if (!expectsCtl(agent, ctlSocket)) return { ctl: "skipped", ctlSocket };
   const probe = await ctlProbe(ctlSocket, ADOPT_CTL_PROBE_MS);
   const ctl = probe.kind === "ok" ? "ok" : probe.kind === "missing" ? "missing" : "refused";
   return { ctl, ctlSocket };

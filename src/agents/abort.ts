@@ -65,8 +65,8 @@ export async function abortAgent(
 ): Promise<AbortResult> {
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) throw new AgentNotFoundError(name, opts.workstream);
-  if (!expectsCtl(agent)) throw new AgentAbortNeedsCtlError(name, opts.workstream, agent.cli);
   const sock = opts.socket ?? agentCtlSocket(db, agent);
+  if (!expectsCtl(agent, sock)) throw new AgentAbortNeedsCtlError(name, opts.workstream, agent.cli);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS;
   const started = Date.now();
   const base = { agent: name, workstream: opts.workstream };
