@@ -28,6 +28,7 @@ export {
 // Re-export the cluster modules so external callers continue to
 // `import { AgentNotFoundError, spawnAgent, ... } from "./agents.js"`.
 export {
+  AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
   AgentNotFoundError,
@@ -53,6 +54,7 @@ export {
   type CommandResolutionResult,
   type CommandResolver,
   checkCommandResolvable,
+  defaultSpawnCtlMs,
   defaultSpawnLivenessMs,
   defaultSpawnReadinessMs,
   envVarNameForCli,
@@ -60,8 +62,11 @@ export {
   resolveCliCommand,
   resolveCliCommandWithSource,
   type SpawnAgentOptions,
+  type SpawnCtl,
+  type SpawnedAgent,
   setCommandResolverForTests,
   spawnAgent,
+  speaksMuCtl,
 } from "./agents/spawn.js";
 export {
   type AgentStatusSnapshot,

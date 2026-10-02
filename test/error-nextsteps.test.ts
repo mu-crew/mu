@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
   AgentNotFoundError,
@@ -201,6 +202,11 @@ const cases: NextStepsCase[] = [
     ),
     label: "AgentSpawnStartupError",
     expectedTokens: ["alice"],
+  },
+  {
+    error: new AgentCtlUnreachableError("alice", "auth", "/s/sock/auth/alice.sock", "missing"),
+    label: "AgentCtlUnreachableError",
+    expectedTokens: ["mu link pi", "/s/sock/auth/alice.sock"],
   },
   {
     error: new WorkspacePreservedError("alice", "/path/to/ws"),

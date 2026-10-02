@@ -15,6 +15,7 @@ export {
 export {
   type AdoptAgentOptions,
   type AdoptAgentResult,
+  AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
   AgentNotFoundError,

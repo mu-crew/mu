@@ -9,6 +9,9 @@
 // Extracted from src/agents.ts as part of refactor_split_large_src_files.
 
 import { execFile } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
+import { basename, dirname } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { agentKey, murmurAvailable, readAgentStates } from "../agent-state.js";
 import {
@@ -20,6 +23,8 @@ import {
   pendingPaneIdFor,
   refreshAgentTitle,
 } from "../agents.js";
+import { ctlProbe } from "../ctl/client.js";
+import { CTL_SOCK_ENV, ctlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { activeMux, type MuxBackend } from "../mux.js";
@@ -241,6 +246,60 @@ export interface SpawnAgentOptions {
   /** Project root the workspace branches from (only meaningful with
    *  `workspace: true`). Defaults to `process.cwd()`. */
   workspaceProjectRoot?: string;
+  /** Run the control-socket handshake for pi agents (default true).
+   *  `false` skips it and reports `ctl: "skipped"`. */
+  ctl?: boolean;
+}
+
+/** Outcome of the spawn-time control-socket handshake. */
+export type SpawnCtl = "ok" | "missing" | "refused" | "skipped";
+
+/** What spawnAgent returns: the registered row plus the handshake outcome. */
+export type SpawnedAgent = AgentRow & { ctl: SpawnCtl; ctlSocket: string };
+
+/**
+ * True when the agent runs pi, so the mu pi extension should answer on
+ * its control socket: `cli` is "pi", or the command's argv0 basename is
+ * `pi` / `pi-meta`.
+ */
+export function speaksMuCtl(cli: string, command: string): boolean {
+  if (cli === "pi") return true;
+  const argv0 = basename(parseFirstToken(command));
+  return argv0 === "pi" || argv0 === "pi-meta";
+}
+
+/**
+ * Handshake budget in ms after the agent is live. 0 disables. Override
+ * via `MU_SPAWN_CTL_MS`.
+ */
+export function defaultSpawnCtlMs(): number {
+  const raw = process.env.MU_SPAWN_CTL_MS;
+  if (raw === undefined) return 30_000;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0) return 30_000;
+  return parsed;
+}
+
+const CTL_POLL_INTERVAL_MS = 250;
+
+/**
+ * Poll the control socket until the extension answers or the budget
+ * runs out. Returns the last probe outcome; never throws. Uses real
+ * timers, not the `sleep` seam: tests stub that to a no-op, which
+ * would turn this into a busy loop.
+ */
+async function awaitCtlHandshake(sock: string): Promise<Exclude<SpawnCtl, "skipped">> {
+  const budgetMs = defaultSpawnCtlMs();
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    const probe = await ctlProbe(sock, Math.max(1, Math.min(remaining, CTL_POLL_INTERVAL_MS * 4)));
+    if (probe.kind === "ok") return "ok";
+    const last = probe.kind === "missing" ? "missing" : "refused";
+    const left = deadline - Date.now();
+    if (left <= 0) return last;
+    await delay(Math.min(CTL_POLL_INTERVAL_MS, left));
+  }
 }
 
 /**
@@ -259,7 +318,7 @@ export interface SpawnAgentOptions {
  * Failure between any of (3)–(6) calls rollbackSpawn() to undo the
  * pane + row + workspace. The caller-visible error is preserved.
  */
-export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<AgentRow> {
+export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<SpawnedAgent> {
   if (!isValidAgentName(opts.name)) {
     throw new TypeError(
       `invalid agent name: ${JSON.stringify(opts.name)} (expected /^[a-z][a-z0-9_-]{0,31}$/)`,
@@ -317,10 +376,25 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Agent
   // These are NOT exposed via SpawnAgentOptions — mu identity is not
   // user-tunable. Adding more keys here means every spawned pane sees
   // them automatically.
+  //
+  // MU_CTL_SOCK goes to every CLI (harmless for non-pi). Its directory
+  // must exist before the pane starts: for a remote agent, ssh's
+  // `-L <local>:<remote>` binds the LOCAL path and does not mkdir. A
+  // socket file left by a previous agent of this name is removed, since
+  // ssh refuses to bind over it; no live agent owns it (the uniqueness
+  // check above passed).
+  //
+  // The base is the DB's directory: in production that is exactly
+  // ctlSocketPath's own default (MU_DB_PATH dir or the state dir), and
+  // a test DB in a temp dir keeps its sockets there too.
+  const ctlSocket = ctlSocketPath(opts.workstream, opts.name, dirname(db.name));
+  mkdirSync(dirname(ctlSocket), { recursive: true });
+  rmSync(ctlSocket, { force: true });
   const paneEnv: Record<string, string> = {
     MU_MANAGED_AGENT: "1",
     MU_AGENT_NAME: opts.name,
     MU_WORKSTREAM: opts.workstream,
+    [CTL_SOCK_ENV]: ctlSocket,
   };
 
   const hasWorkspace = workspacePathStr !== undefined;
@@ -410,6 +484,13 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Agent
     if (hasWorkspace) attachOrphanCleanupHint(err, opts.name, opts.workstream);
     throw err;
   }
+  // Control-socket handshake. Outside the rollback: a timeout means
+  // only control is missing; the pane and pi are fine. The caller
+  // reports it (see AgentCtlUnreachableError).
+  const ctl: SpawnCtl =
+    opts.ctl === false || !speaksMuCtl(cli, command) || defaultSpawnCtlMs() === 0
+      ? "skipped"
+      : await awaitCtlHandshake(ctlSocket);
   // `agents` is machine-local (it holds pane_id), so no capture trigger
   // covers it and this emit is the ONLY record. Typed intent so it
   // renders through the same formatter as captured ops.
@@ -430,7 +511,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Agent
   // so the hint trails the spawn's own stdout output and so a partial
   // failure (rolled back above) never emits it.
   maybeWarnNonConventionalAgentName(opts.name);
-  return agent;
+  return { ...agent, ctl, ctlSocket };
 }
 
 /**

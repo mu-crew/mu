@@ -10,6 +10,19 @@ breaking changes are called out under "Breaking" in each entry.
 
 ## [Unreleased]
 
+### Added
+
+- **Spawn injects `MU_CTL_SOCK` and handshakes with the mu pi
+  extension.** Every spawned pane gets `MU_CTL_SOCK=<derived path>`;
+  its directory is created before the pane starts (an ssh `-L` forward
+  binds the local path and does not mkdir). For a pi agent, spawn then
+  polls the socket for up to `MU_SPAWN_CTL_MS` (default 30s). The
+  outcome is in the spawn output and in `--json` as `ctl:
+  "ok"|"missing"|"refused"|"skipped"` plus `ctlSocket`. No answer is
+  not a rollback: the agent is usable by hand, so spawn exits 0 with a
+  stderr warning pointing at `mu doctor` and `mu link pi`. `--no-ctl`
+  skips the handshake.
+
 ### Fixed
 
 - **Notes with repeated text now sync.** A note's identity was
