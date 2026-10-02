@@ -858,9 +858,15 @@ Next:
 
 **When to use which:** `mu workstream init <name>` the moment
 coordination *is* the work — multiple agents, dependencies, gated
-review. `scratch` for a single driveable helper.
-[`pi-subagents`](https://github.com/nicobailon/pi-subagents) when you
-only need a one-shot result back.
+review. `scratch` for a single driveable helper. A **delegate** when
+you only need a one-shot answer back: the `mu_delegate` tool (shipped
+in the extension `mu link pi` installs) spawns a scratch agent, sends
+the task, returns at once, and delivers the answer as a follow-up
+message. From a shell it is `mu agent spawn -w scratch` + `send` +
+`mu agent wait --json` (see [`mu agent wait`](#mu-agent-wait-the-task-less-counterpart-to-mu-task-wait)).
+Unlike a hidden subagent, the delegate's pane stays attachable: watch
+it, steer it, abort it, or pass `keep: true` and keep talking to it.
+Each delegate costs one pane and one pi process.
 
 ### The log ledger: durable watcher dedupe + memory
 
@@ -2593,7 +2599,7 @@ to `mu sql`, twice in one session". File it in [ROADMAP.md](ROADMAP.md).
 
 | Doc                                          | What's in it                                            |
 | -------------------------------------------- | ------------------------------------------------------- |
-| [README.md](../README.md)                    | Project overview, install, comparison vs `pi-subagents` |
+| [README.md](../README.md)                    | Project overview, install, comparison vs hidden subagents |
 | [CHANGELOG.md](../CHANGELOG.md)              | Release notes                                           |
 | [ROADMAP.md](ROADMAP.md)                     | What's next, with promotion criteria + rejected ideas   |
 | [VOCABULARY.md](VOCABULARY.md)               | Canonical terms — source of truth for every word        |

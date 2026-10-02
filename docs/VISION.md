@@ -34,9 +34,9 @@ tasks.
 
 Existing tools force a choice:
 
-- **Pi-subagents** is great for one-shot focused delegation but the
-  children it spawns are short-lived, pi-only, and not driveable from
-  outside their parent pi session.
+- **Hidden subagents** (pi-subagents, the Claude Code and Codex task
+  tools) delegate one-shot work to a child you cannot see, steer, or
+  keep talking to; its transcript collapses into a result.
 - **Tmux-orchestration tools** spawn agents in panes but leave
   coordination to chat transcripts or filesystem conventions.
 - **Task trackers** (GitHub Issues, Linear, even tg) model the work but
@@ -64,6 +64,11 @@ mu state                # full picture as a JSON state card
 The pi extension is a UX skin. Everything mu does must work from a
 shell with no pi anywhere. A feature that requires the extension
 doesn't ship.
+
+Delegation is CLI: `mu agent spawn -w scratch` + `mu agent send` +
+`mu agent wait --json`. The `mu_delegate` tool adds only the callback
+that puts the answer into the parent conversation, and that is
+presentation.
 
 ### 2. One DB is canonical
 
@@ -307,9 +312,12 @@ orchestrator stays in charge.
   It runs agents that do those things.
 - **Not a chat protocol.** Agents communicate through the work graph
   (notes, claim, status) and the **ops log** read through `mu log`.
-- **Not a replacement for pi-subagents.** Different problem (persistent
-  crew vs one-shot focused delegation). Install both; they share the
-  agent-frontmatter format.
+- **Not a hidden-subagent runner.** A one-shot **delegate** is an
+  ordinary agent in a visible pane: attach, steer, abort, or keep
+  talking to it. The cost is one pane and one pi process per delegate;
+  a hidden subagent is lighter for many tiny calls. mu bets that
+  visibility and steering are worth that for agent work. No agent
+  types: the brief is ad-hoc text.
 - **Not a hosted service.** Local-first SQLite. Zero ops, no accounts.
   Your machine is the deployment.
 - **Not a verifier.** The verbs trust the caller. `task close
@@ -348,9 +356,10 @@ orchestrator stays in charge.
    `mu log --tail` for confirmation. This is by design — the
    alternative requires a protocol every CLI would have to speak.
 
-5. **Recursion is opt-in.** Default `maxSubagentDepth: 0`. Children
-   get the `mu` binary on PATH but the bundled skill says "you are
-   not the orchestrator."
+5. **Recursion is opt-in.** The `mu_delegate` tool is hidden in
+   agents mu spawned (`MU_MANAGED_AGENT`), so a delegate cannot spawn
+   delegates through it. Agents get the `mu` binary on PATH, but the
+   bundled skill says "you are not the orchestrator."
 
 6. **Subscriptions are polling-based.** `mu log --tail` polls
    SQLite once per second. SQLite handles the concurrency; latency
