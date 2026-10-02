@@ -449,6 +449,40 @@ export class AgentFreshNeedsCtlError extends Error implements HasNextSteps {
   }
 }
 
+/**
+ * The agent's pi serves the control socket with an extension it loaded
+ * before mu learned `op` (e.g. `fresh`): running pi processes keep the
+ * extension code they started with. pi's `/reload` re-imports the
+ * extension through the `mu link pi` shim and keeps the socket; a
+ * respawn always works.
+ */
+export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
+  override readonly name = "AgentExtensionOutdatedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly op: string,
+    public readonly extVersion?: string,
+  ) {
+    super(
+      `agent ${agentName}'s mu pi extension (${extVersion ?? "version unknown"}) predates op ${op}: its pi loaded an older mu build; reload or respawn it`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    const w = `-w ${this.workstream}`;
+    return [
+      {
+        intent: "Reload pi's extensions in the pane (keeps the session and context)",
+        command: `mu agent send ${this.agentName} '/reload' --via mux ${w}`,
+      },
+      {
+        intent: "Or respawn the agent (loses its context)",
+        command: `mu agent close ${this.agentName} ${w} && mu agent spawn ${this.agentName} ${w} ...`,
+      },
+    ];
+  }
+}
+
 /** `send --fresh` refused: pi is mid-turn, and a fresh session would abandon it. */
 export class AgentBusyError extends Error implements HasNextSteps {
   override readonly name = "AgentBusyError";

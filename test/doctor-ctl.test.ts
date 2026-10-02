@@ -152,16 +152,30 @@ function agent(name: string, cli = "pi"): AgentRow {
   };
 }
 
-/** Serve a v1 control socket at the agent's derived path. */
-async function serveV1(name: string): Promise<void> {
+/**
+ * Serve a v1 control socket at the agent's derived path. `hello` is the
+ * extra hello fields; the default is a current extension run from source
+ * (ops, no extVersion). `hello: {}` is an extension that predates ops.
+ */
+async function serveV1(
+  name: string,
+  hello: Record<string, unknown> = { ops: ["hello", "status"] },
+): Promise<void> {
   const path = ctlSocketPath("ws", name);
   mkdirSync(dirname(path), { recursive: true });
   const server = createServer((sock) => {
     const dec = new LineDecoder();
     sock.setEncoding("utf8");
     sock.on("data", (chunk: string) => {
-      for (const _line of dec.push(chunk)) {
-        sock.write(encode({ v: 1, ok: true, state: "idle", since: 1, runs: 0, pending: false }));
+      for (const line of dec.push(chunk)) {
+        const { op } = JSON.parse(line) as { op: string };
+        sock.write(
+          encode(
+            op === "hello"
+              ? { v: 1, ok: true, ...hello }
+              : { v: 1, ok: true, state: "idle", since: 1, runs: 0, pending: false },
+          ),
+        );
       }
     });
     sock.on("error", () => {});
@@ -184,6 +198,31 @@ describe("ctl row", () => {
     await serveV1("w1");
     const r = await ctlSocketsDoctorCheck([agent("w1"), agent("w2")]);
     expect(r.check).toEqual({ name: "ctl", status: "warn", detail: "ws/w2: missing" });
+  });
+
+  it("flags an extension built from an older mu than the installed one", async () => {
+    await serveV1("w1", { ops: ["hello"], extVersion: "3.0.9" });
+    await serveV1("w2", { ops: ["hello"], extVersion: "3.1.0" });
+    const r = await ctlSocketsDoctorCheck([agent("w1"), agent("w2")], {
+      installedVersion: "3.1.0",
+    });
+    expect(r.check).toEqual({
+      name: "ctl",
+      status: "warn",
+      detail: "ws/w1: extension 3.0.9 older than installed 3.1.0",
+    });
+    expect(r.agents[0]).toMatchObject({ probe: "ok", extVersion: "3.0.9", outdated: true });
+    expect(r.agents[1]).toMatchObject({ probe: "ok", extVersion: "3.1.0" });
+    expect(r.agents[1]?.outdated).toBeUndefined();
+  });
+
+  it("flags an extension whose hello predates ops (the --fresh incident)", async () => {
+    await serveV1("w1", {});
+    const r = await ctlSocketsDoctorCheck([agent("w1")], { installedVersion: "3.1.0" });
+    expect(r.check).toMatchObject({
+      status: "warn",
+      detail: "ws/w1: extension (unknown) older than installed 3.1.0",
+    });
   });
 
   it("skips non-pi agents (same rule as spawn's handshake)", async () => {

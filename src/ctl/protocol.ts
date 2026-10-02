@@ -17,6 +17,20 @@ export type CtlRequest =
   /** New session + prompt as one operation. Refused with error "busy" unless force. */
   | { op: "fresh"; text: string; force?: boolean };
 
+/**
+ * Every op this protocol defines. The extension reports the ops it serves
+ * in its `hello` reply (and in an unknown-op error), so mu can tell an
+ * extension loaded by an older pi process from a broken one.
+ */
+export const CTL_OPS = [
+  "hello",
+  "status",
+  "send",
+  "wait",
+  "abort",
+  "fresh",
+] as const satisfies readonly CtlRequest["op"][];
+
 export type CtlStatus = { state: CtlState; since: number; runs: number; pending: boolean };
 
 export type CtlReply =
@@ -24,10 +38,17 @@ export type CtlReply =
         agent?: string;
         workstream?: string;
         piVersion?: string;
+        /** hello only: the ops this extension serves. Absent: predates reporting. */
+        ops?: string[];
+        /** hello only: the mu package version the extension was built from. */
+        extVersion?: string;
         /** wait only: text of the settled run's final assistant message ("" when none). */
         lastText?: string;
       })
-  | { v: 1; ok: false; error: string };
+  | { v: 1; ok: false; error: string; ops?: string[] };
+
+/** Error text of a reply to an op the extension does not serve. */
+export const UNKNOWN_OP_PREFIX = "unknown op: ";
 
 /** One frame. JSON.stringify escapes "\n" inside strings, so the frame is one line. */
 export function encode(msg: object): string {

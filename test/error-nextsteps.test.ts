@@ -18,6 +18,7 @@ import {
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
+  AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
@@ -231,6 +232,11 @@ const cases: NextStepsCase[] = [
     error: new AgentBusyError("alice", "auth"),
     label: "AgentBusyError",
     expectedTokens: ["mu agent abort alice", "--fresh --force"],
+  },
+  {
+    error: new AgentExtensionOutdatedError("alice", "auth", "fresh", "3.0.0"),
+    label: "AgentExtensionOutdatedError",
+    expectedTokens: ["'/reload' --via mux", "mu agent close alice", "mu agent spawn alice"],
   },
   {
     error: new WorkspacePreservedError("alice", "/path/to/ws"),

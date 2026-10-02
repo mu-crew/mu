@@ -10,6 +10,7 @@ import {
   type CtlStatus,
   encode,
   LineDecoder,
+  UNKNOWN_OP_PREFIX,
 } from "./protocol.js";
 
 /** Default client timeout for non-`wait` requests. */
@@ -20,7 +21,14 @@ export const CTL_FRESH_TIMEOUT_MS = 60_000;
 export const CTL_WAIT_SLACK_MS = 5000;
 
 export type CtlProbe =
-  | { kind: "ok"; status: CtlStatus }
+  | {
+      kind: "ok";
+      status: CtlStatus;
+      /** From hello: the ops the extension serves. Absent: it predates reporting them. */
+      ops?: string[];
+      /** From hello: the mu version the extension was built from. */
+      extVersion?: string;
+    }
   | { kind: "missing" }
   | { kind: "refused"; error: string }
   | { kind: "version"; got: unknown };
@@ -36,6 +44,21 @@ export class CtlTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`control socket did not reply within ${timeoutMs}ms`);
     this.name = "CtlTimeoutError";
+  }
+}
+
+/**
+ * The extension answered "unknown op": it was loaded before mu learned
+ * `op`. `ops` lists what it serves (absent from extensions that predate
+ * reporting them).
+ */
+export class CtlUnknownOpError extends Error {
+  constructor(
+    readonly op: string,
+    readonly ops?: readonly string[],
+  ) {
+    super(`control socket does not serve op ${op}`);
+    this.name = "CtlUnknownOpError";
   }
 }
 
@@ -56,7 +79,8 @@ function parseReply(line: string): CtlReply {
 
 /**
  * Send one request and resolve with its reply. Rejects with the socket
- * error (its `code` intact), CtlTimeoutError, or CtlVersionError.
+ * error (its `code` intact), CtlTimeoutError, CtlVersionError, or
+ * CtlUnknownOpError (an ok:false "unknown op" reply).
  * Aborting `signal` closes the connection and rejects.
  */
 export function ctlRequest(
@@ -92,7 +116,10 @@ export function ctlRequest(
       const line = dec.push(chunk)[0];
       if (line === undefined) return;
       try {
-        finish(null, parseReply(line));
+        const reply = parseReply(line);
+        if (!reply.ok && reply.error.startsWith(UNKNOWN_OP_PREFIX)) {
+          finish(new CtlUnknownOpError(req.op, reply.ops));
+        } else finish(null, reply);
       } catch (e) {
         finish(e instanceof Error ? e : new Error(String(e)));
       }
@@ -124,7 +151,12 @@ export async function ctlProbe(
     if (state === undefined || since === undefined || runs === undefined || pending === undefined) {
       return { kind: "refused", error: "status reply is missing fields" };
     }
-    return { kind: "ok", status: { state, since, runs, pending } };
+    return {
+      kind: "ok",
+      status: { state, since, runs, pending },
+      ...(hello.ops !== undefined ? { ops: hello.ops } : {}),
+      ...(hello.extVersion !== undefined ? { extVersion: hello.extVersion } : {}),
+    };
   } catch (e) {
     if (e instanceof CtlVersionError) return { kind: "version", got: e.got };
     if (errCode(e) === "ENOENT") return { kind: "missing" };

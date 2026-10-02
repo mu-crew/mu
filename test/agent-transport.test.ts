@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentBusyError,
   AgentCtlUnreachableError,
+  AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
   type AgentRow,
   expectsCtl,
@@ -59,7 +60,11 @@ function sockFor(agent: string): string {
 /** Stand-in for the extension: records requests, answers `reply` (default ok, busy). */
 async function serveExtension(
   path: string,
-  reply: Record<string, unknown> = { v: 1, ok: true, state: "busy" },
+  reply: Record<string, unknown> | ((req: Record<string, unknown>) => Record<string, unknown>) = {
+    v: 1,
+    ok: true,
+    state: "busy",
+  },
 ): Promise<void> {
   mkdirSync(dirname(path), { recursive: true });
   const server = createServer((sock) => {
@@ -67,8 +72,9 @@ async function serveExtension(
     sock.setEncoding("utf8");
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
-        received.push(JSON.parse(line) as Record<string, unknown>);
-        sock.end(encode(reply));
+        const req = JSON.parse(line) as Record<string, unknown>;
+        received.push(req);
+        sock.end(encode(typeof reply === "function" ? reply(req) : reply));
       }
     });
     sock.on("error", () => {});
@@ -212,6 +218,41 @@ describe("send --fresh", () => {
     const cmds = (err as AgentBusyError).errorNextSteps().map((n) => n.command);
     expect(cmds.join("\n")).toContain("mu agent abort worker-1");
     expect(cmds.join("\n")).toContain("--fresh --force");
+  });
+
+  // The incident: a pi started before --fresh merged answers "unknown op".
+  const oldExtension = (req: Record<string, unknown>) =>
+    req.op === "hello"
+      ? { v: 1, ok: true, agent: "worker-1", extVersion: "3.0.0" }
+      : { v: 1, ok: false, error: `unknown op: ${String(req.op)}`, ops: ["hello", "send"] };
+
+  it("an extension without op fresh raises AgentExtensionOutdatedError: /reload or respawn", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), oldExtension);
+    const err = await sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentExtensionOutdatedError);
+    expect(err).toMatchObject({ op: "fresh", extVersion: "3.0.0" });
+    const cmds = (err as AgentExtensionOutdatedError).errorNextSteps().map((n) => n.command);
+    expect(cmds).toEqual([
+      "mu agent send worker-1 '/reload' --via mux -w auth",
+      "mu agent close worker-1 -w auth && mu agent spawn worker-1 -w auth ...",
+    ]);
+    expect(pasted()).toBe(false);
+  });
+
+  it("CLI: the outdated-extension error exits 4 with both next steps in --json", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), oldExtension);
+    const r = await runCli(
+      ["agent", "send", "worker-1", "go", "--fresh", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(r.exitCode).toBe(4);
+    const body = JSON.parse(r.stderr) as { error: string; nextSteps: { command: string }[] };
+    expect(body.error).toBe("AgentExtensionOutdatedError");
+    expect(body.nextSteps.map((n) => n.command).join("\n")).toContain("'/reload' --via mux");
   });
 
   it("refuses non-pi agents and --via mux without pasting", async () => {
