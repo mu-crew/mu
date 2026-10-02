@@ -19,6 +19,7 @@ import {
   readAgent,
   spawnAgent,
 } from "../src/agents.js";
+import { ctlSocketPath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
 import { capturePane, killSession, resetTmuxExecutor } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
@@ -275,6 +276,10 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
     expect(result.agent.paneId).toBe(orphanPaneId);
     expect(result.previousTitle).toBe("worker-2");
     expect(result.paneTitleSetTo).toBe("worker-2");
+    // Adopted with the default cli (pi) but no MU_CTL_SOCK in the pane:
+    // the control socket is missing, which sends report loudly.
+    expect(result.ctl).toBe("missing");
+    expect(result.ctlSocket).toBe(ctlSocketPath(workstream, "worker-2", tempDir));
 
     // Pane title still 'worker-2' (no retitle needed).
     expect(await getPaneTitle(orphanPaneId)).toBe("worker-2");

@@ -54,7 +54,7 @@ describe("sendToAgent", () => {
     // readinessMs: 0 keeps this focused on the core protocol; the
     // readiness/verify wrapper (dogfood_send_after_new_dropped) has its
     // own coverage.
-    await sendToAgent(db, "alice", "hello", { workstream: "auth", readinessMs: 0 });
+    await sendToAgent(db, "alice", "hello", { workstream: "auth", readinessMs: 0, via: "mux" });
     // Should have emitted the 4-step send protocol.
     const verbs = calls.map((c) => c[0]);
     expect(verbs).toEqual(["copy-mode", "set-buffer", "paste-buffer", "send-keys"]);

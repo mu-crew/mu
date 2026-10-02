@@ -165,8 +165,8 @@ describe("verbs — end-to-end", () => {
     const view1 = await listLiveAgents(db, { workstream: "demo" });
     expect(view1.agents.map((a) => a.name).sort()).toEqual(["alice", "bob", "carol"]);
 
-    await sendToAgent(db, "alice", "hello alice", { workstream: "demo" });
-    await sendToAgent(db, "bob", "hello bob", { workstream: "demo" });
+    await sendToAgent(db, "alice", "hello alice", { workstream: "demo", via: "mux" });
+    await sendToAgent(db, "bob", "hello bob", { workstream: "demo", via: "mux" });
 
     await closeAgent(db, "alice", { workstream: "demo" });
     await closeAgent(db, "bob", { workstream: "demo" });

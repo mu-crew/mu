@@ -31,6 +31,17 @@ breaking changes are called out under "Breaking" in each entry.
   not a rollback: the agent is usable by hand, so spawn exits 0 with a
   stderr warning pointing at `mu doctor` and `mu link pi`. `--no-ctl`
   skips the handshake.
+- **`mu agent send` delivers to pi agents through the control
+  socket.** No paste, no scraping: the mu pi extension hands the text
+  to pi (`followUp` when busy; `--steer` interrupts). No silent
+  fallback: if the socket does not answer, the send exits 1 with
+  `AgentCtlUnreachableError` and pastes nothing. `--via mux` forces the
+  paste path; text starting with `/` (`/new`) and non-pi CLIs always
+  use it. `--json` gains `transport: "ctl"|"mux"` and, for ctl, pi's
+  `state`. `mu agent adopt` probes the derived socket for a pi pane and
+  warns with the exact `MU_CTL_SOCK=<path>` to restart pi with; its
+  `--json` gains `ctl` and `ctlSocket`. SDK: `sendToAgent` now returns
+  `SendResult`; `sendViaTransport`, `expectsCtl`.
 - **`mu link pi`** installs mu into pi in one step: the extension as a
   re-export shim at `~/.pi/agent/extensions/mu.ts` (upgrading mu
   upgrades the extension, no relink; `--copy` inlines a pinned copy)

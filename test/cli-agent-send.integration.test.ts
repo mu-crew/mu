@@ -33,7 +33,9 @@ beforeEach(() => {
   dbPath = join(tempDir, "mu.db");
   db = openDb({ path: dbPath });
   ensureWorkstream(db, "auth");
-  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
+  // A non-pi CLI: these tests are about staleness, and a pi agent would
+  // need a control socket (see test/agent-transport.test.ts).
+  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "claude" });
   const seen: string[][] = [];
   calls = seen;
   setSleepForTests(async () => {});
@@ -148,13 +150,51 @@ describe("mu agent send workspace staleness", () => {
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
     expect(stderr).toBe("");
-    const out = JSON.parse(stdout) as { staleness: null };
+    const out = JSON.parse(stdout) as { staleness: null; transport: string };
     expect(out.staleness).toBeNull();
+    expect(out.transport).toBe("mux");
     expect(calls.map((c) => c[0])).toEqual([
       "copy-mode",
       "set-buffer",
       "paste-buffer",
       "send-keys",
     ]);
+  });
+});
+
+describe("mu agent send to a pi agent", () => {
+  beforeEach(() => {
+    insertAgent(db, { name: "pi-1", workstream: "auth", paneId: "%2", cli: "pi" });
+  });
+
+  it("fails loud when the control socket is missing, without pasting", async () => {
+    const { exitCode, stderr } = await runCli(
+      ["agent", "send", "pi-1", "hello", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBe(1);
+    const env = JSON.parse(stderr) as { error: string; nextSteps: { command: string }[] };
+    expect(env.error).toBe("AgentCtlUnreachableError");
+    expect(env.nextSteps.some((s) => s.command === "mu link pi")).toBe(true);
+    expect(calls.filter((c) => c[0] === "paste-buffer")).toEqual([]);
+  });
+
+  it("--via mux pastes explicitly", async () => {
+    const { exitCode, stdout } = await runCli(
+      ["agent", "send", "pi-1", "hello", "--via", "mux", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect((JSON.parse(stdout) as { transport: string }).transport).toBe("mux");
+    expect(calls.map((c) => c[0])).toContain("paste-buffer");
+  });
+
+  it("sends /new through the mux", async () => {
+    const { exitCode, stdout } = await runCli(
+      ["agent", "send", "pi-1", "/new", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect((JSON.parse(stdout) as { transport: string }).transport).toBe("mux");
   });
 });

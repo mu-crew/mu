@@ -1389,7 +1389,21 @@ From any shell with mu on `$PATH`:
 mu agent send worker-1 "echo hello from outside"
 ```
 
-mu uses the **canonical bracketed-paste protocol** internally:
+**Which transport.** A pi agent (`--cli pi`, or a command whose argv0
+is `pi` / `pi-meta`) gets the text through its **control socket**: the
+mu pi extension calls `pi.sendUserMessage` inside the pane's own pi, so
+nothing is pasted or scraped. When pi is busy the message queues as a
+follow-up; `--steer` interrupts the current run instead. If the socket
+does not answer, the send fails with `AgentCtlUnreachableError` (exit 1)
+and pastes nothing; `--via mux` pastes explicitly. Text starting with
+`/` (`/new`, `/compact`) is a TUI command that `sendUserMessage` would
+hand to the model as plain text, so it always goes through the mux.
+Non-pi CLIs always go through the mux. `--json` reports `transport:
+"ctl"|"mux"` (and pi's `state` for ctl). An adopted pi pane was started
+without `MU_CTL_SOCK`; `mu agent adopt` warns and prints the path to
+restart pi with.
+
+For the mux path, mu uses the **canonical bracketed-paste protocol**:
 
 0. wait for the pane to stop being mid-modal (`MU_SEND_READINESS_MS`,
    default 15000; 0 disables)

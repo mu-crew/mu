@@ -81,9 +81,9 @@ describe("best-effort call sites degrade when no mux is reachable", () => {
 describe("load-bearing call sites propagate NoMultiplexerError", () => {
   it("sendToAgent throws — a send that reaches no pane is a failed send", async () => {
     seedAgent("alpha");
-    await expect(sendToAgent(db, "worker-1", "hi", { workstream: "alpha" })).rejects.toBeInstanceOf(
-      NoMultiplexerError,
-    );
+    await expect(
+      sendToAgent(db, "worker-1", "hi", { workstream: "alpha", via: "mux" }),
+    ).rejects.toBeInstanceOf(NoMultiplexerError);
   });
 
   it("readAgent throws — the scrollback IS the verb's output", async () => {
