@@ -43,8 +43,10 @@ and ARCHITECTURE (§ Control socket) are updated to match.
     the socket and session) and respawn.
   - `mu doctor`'s `ctl` row warns `ws/agent: extension X older than
     installed Y` (an extension whose `hello` has no `ops` predates the
-    field and counts as older). `--json` per-agent reports gain
-    `extVersion` and `outdated`.
+    field and counts as older), and `ws/agent: extension lacks ops:
+    fresh` when the versions match but `hello` omits an op mu knows
+    (a pi that loaded the extension before the op landed). `--json`
+    per-agent reports gain `extVersion`, `outdated` and `missingOps`.
 
 - **`mu agent remote-env <name>` prints what a remote pi agent's ssh
   command needs** and runs nothing: `sshArgs`

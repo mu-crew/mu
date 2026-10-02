@@ -41,6 +41,7 @@ import { murmurAvailable, UNKNOWN_REASON } from "./agent-state.js";
 import { type AgentRow, resolveCliCommand, speaksMuCtl } from "./agents.js";
 import { type CtlProbe, ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
+import { CTL_OPS } from "./ctl/protocol.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "./db.js";
 import { checkCheapDriftInvariant } from "./drift.js";
 import { checkFleetHazards } from "./fleet-hazards.js";
@@ -414,8 +415,10 @@ export interface AgentCtlReport {
   probe: CtlProbe["kind"];
   /** ok probes: the mu version the agent's extension was built from. */
   extVersion?: string;
-  /** ok probes whose extension is older than the installed mu. */
+  /** ok probes whose extension is older than the installed mu, or lacks ops. */
   outdated?: boolean;
+  /** ok probes: protocol ops (CTL_OPS) the extension's hello does not list. */
+  missingOps?: string[];
 }
 
 /**
@@ -450,12 +453,21 @@ export function versionOlder(a: string, b: string): boolean {
  * Is an ok probe's extension older than the installed mu? An extension
  * without `ops` in hello predates version reporting, so it is older. One
  * with ops but no extVersion runs from source (tests, dev): not flagged.
+ * Missing ops are checked separately (`probeMissingOps`), because a pi that
+ * loaded the extension before an op landed reports the SAME version.
  */
 function probeOutdated(probe: CtlProbe, installed: string | null): boolean {
   if (probe.kind !== "ok") return false;
   if (probe.ops === undefined) return true;
   if (probe.extVersion === undefined || installed === null) return false;
   return versionOlder(probe.extVersion, installed);
+}
+
+/** CTL_OPS entries an ok probe's hello does not list; [] when it predates ops. */
+function probeMissingOps(probe: CtlProbe): string[] {
+  if (probe.kind !== "ok" || probe.ops === undefined) return [];
+  const served = new Set<string>(probe.ops);
+  return CTL_OPS.filter((op) => !served.has(op));
 }
 
 /**
@@ -476,6 +488,8 @@ export async function ctlSocketsDoctorCheck(
     piAgents.map(async (a): Promise<AgentCtlReport> => {
       const socket = ctlSocketPath(a.workstreamName, a.name);
       const probe = await ctlProbe(socket, timeoutMs);
+      const older = probeOutdated(probe, installed);
+      const missingOps = probeMissingOps(probe);
       return {
         workstream: a.workstreamName,
         agent: a.name,
@@ -484,15 +498,19 @@ export async function ctlSocketsDoctorCheck(
         ...(probe.kind === "ok" && probe.extVersion !== undefined
           ? { extVersion: probe.extVersion }
           : {}),
-        ...(probeOutdated(probe, installed) ? { outdated: true } : {}),
+        ...(older || missingOps.length > 0 ? { outdated: true } : {}),
+        ...(missingOps.length > 0 ? { missingOps } : {}),
       };
     }),
   );
   const bad = reports.filter((r) => r.probe !== "ok" || r.outdated);
-  const describe = (r: AgentCtlReport): string =>
-    r.outdated
-      ? `${r.workstream}/${r.agent}: extension ${r.extVersion ?? "(unknown)"} older than installed ${installed ?? "mu"}`
-      : `${r.workstream}/${r.agent}: ${r.probe}`;
+  const describe = (r: AgentCtlReport): string => {
+    const who = `${r.workstream}/${r.agent}`;
+    if (!r.outdated) return `${who}: ${r.probe}`;
+    if (r.missingOps && !(r.extVersion && installed && versionOlder(r.extVersion, installed)))
+      return `${who}: extension lacks ops: ${r.missingOps.join(", ")}`;
+    return `${who}: extension ${r.extVersion ?? "(unknown)"} older than installed ${installed ?? "mu"}`;
+  };
   let check: DoctorCheck;
   if (reports.length === 0) check = { name: "ctl", status: "ok", detail: "no pi agents" };
   else if (bad.length === 0) {
