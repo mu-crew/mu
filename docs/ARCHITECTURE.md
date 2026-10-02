@@ -1,1090 +1,194 @@
 # Architecture
 
 mu is one SQLite file, a crew of agents in multiplexer panes, a task
-DAG, and one append-only op log everything else is derived from. It is
-layered: callers on top, a shared TypeScript core in the middle,
-SQLite + mux + VCS substrates at the base. The CLI verbs and the
-programmatic SDK are thin facades over the same core modules.
+DAG, and one append-only op log that everything else derives from.
+Callers sit on top, a shared TypeScript core in the middle, and SQLite,
+the multiplexer and the VCS at the base. The CLI verbs and the SDK are
+thin facades over the same core.
 
-- For canonical terms (*workstream*, *agent*, *task DAG*, *track*,
-  *claim*, *free*, *workspace*, *substrate*, ...) see
-  [VOCABULARY.md](VOCABULARY.md). It is the source of truth.
-- For design rationale, rejected alternatives, and what's on the
-  roadmap, see [ROADMAP.md](ROADMAP.md).
-- For principles, see [VISION.md](VISION.md).
+Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
+[VISION.md](VISION.md). Rationale, rejected alternatives and pledges:
+[ROADMAP.md](ROADMAP.md).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Callers                                                        │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌─────────────┐  │
-│  │  Pi      │  │  Bash +  │  │  Pi sub-     │  │ mu log      │  │
-│  │  shell   │  │  jq      │  │  agent       │  │ --tail subs │  │
-│  └────┬─────┘  └────┬─────┘  └──────┬───────┘  └──────┬──────┘  │
-│       │             │               │                 │         │
-└───────┼─────────────┼───────────────┼─────────────────┼─────────┘
-        │  in-proc    │ subprocess    │ subprocess      │ in-proc
-        ▼             ▼               ▼                 ▼
+│  Callers: pi shell · bash + jq · pi sub-agent · mu log --tail   │
+└───────────────┬─────────────────────────────────┬───────────────┘
+                │ subprocess (CLI)                 │ in-proc (SDK)
+                ▼                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  mu core (shared TS modules)                                    │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────────┐  │
-│  │ agents/  │  │  tasks/  │  │   vcs/   │  │  ops log/       │  │
-│  │ mux/     │  │ schema   │  │ jj       │  │  capture        │  │
-│  │ tmux     │  │ queries  │  │ sapling  │  │  apply/sync     │  │
-│  │ herdr    │  │ tracks   │  │ git      │  │  doctor         │  │
-│  │ state    │  │ claim    │  │ none     │  │                 │  │
-│  │ sources  │  │          │  │          │  │                 │  │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────────┬────────┘  │
-└───────┼─────────────┼─────────────┼─────────────────┼───────────┘
-        ▼             ▼             ▼                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Substrates                                                     │
-│  SQLite (~/.local/state/mu/mu.db) · tmux/herdr panes · jj/sl/git│
-└─────────────────────────────────────────────────────────────────┘
+│  agents/ mux/ ctl/ · tasks/ tracks · vcs/ workspace/ · ops log  │
+│  (capture, apply, undo, sync, drift)                            │
+└───────────────┬──────────────────┬──────────────────┬───────────┘
+                ▼                  ▼                  ▼
+   SQLite (~/.local/state/mu/mu.db) · tmux/herdr panes · jj/sl/git
+                   pi agents: control socket per agent
 ```
 
-## The ops log (read this first)
-
-Everything below rests on one append-only table. Read this section
-before the rest of the file.
-
-**Capture is a trigger, not a call site.** Every INSERT / UPDATE /
-DELETE on a portable table (`workstreams`, `tasks`, `task_edges`,
-`task_notes`) is recorded as an **op** by a SQLite trigger, in the
-SAME transaction as the mutation. No SDK function decides to record
-history, so no call site can forget to, and the log cannot drift from
-the data — not even on power loss.
-
-**The log is the record; the tables are the materialized view.**
-Reads hit the tables, as ordinary indexed SQL. This is not
-event-sourcing-on-read: nothing replays the log to answer a query.
-The log is what the tables are *derived from* and what they can be
-rebuilt from.
-
-```
-  mu task close t3
-     │
-     ▼
-  UPDATE tasks SET status=... ──┬──► tables   (what reads see)
-                                └──► ops     (what everything else reads)
-                          one transaction
-```
-
-**Four features are queries or replays over that one log:**
-
-- **history** — `mu log` is a typed reader over `ops`.
-- **undo** — `mu undo <group>` emits the inverse ops for one group.
-- **sync** — a machine appends its own ops to a JSONL segment in a
-  shared folder and applies each peer's from a watermark.
-
-**Ops are semantic partial updates.** An UPDATE op carries only the
-columns that actually changed. That is what makes per-field merge
-free: two machines editing different fields of one task both keep
-their edit, with no extra bookkeeping. A full-row payload would
-silently regress this to row-level last-writer-wins.
-
-**The cost, plainly:** one mechanism means one capture bug breaks
-history, undo and sync at once, silently. That is why
-`mu doctor --deep` rebuilds the log into a temp DB and diffs it
-field-by-field against the live tables, and why the cheap tier
-(every live row has at least one op naming it) runs by default.
-
-Ordering across machines comes from the **HLC** on every op — a
-hybrid logical clock serialized so that bytewise `ORDER BY hlc` is
-causal order. Machine-local tables (`agents`, `vcs_workspaces`) have
-no capture triggers: their contents are pane ids and absolute paths,
-which mean nothing on another machine. Their changes are recorded as
-log-only events via `emitEvent`.
-
-Per-module detail is in [§ Modules](#modules-actual-src-layout).
-
----
-
-## The task DAG
-
-mu's coordination model is a **directed acyclic graph of tasks**. It
-is the central organizing primitive, not a sidecar feature: without
-it mu is just an agent runner.
-
-### Model
-
-- **Tasks** are nodes with mandatory `impact (1-100)` and `effort_days`.
-  `ROI = impact / effort` drives prioritization.
-- **One edge type**: `blocks`. `A → B` means A must close before B can
-  start. Multiple edge types create ambiguity that defeats the purpose.
-- **Status lifecycle**: `OPEN → IN_PROGRESS → CLOSED`. Status alone
-  decides edge satisfaction: any `CLOSED` task satisfies its blockers.
-- **Substate** qualifies status and never touches edges:
-  `OPEN/todo|parked`, `IN_PROGRESS/active`,
-  `CLOSED/done|rejected|wontfix|duplicate|superseded`. Rule: **store intent,
-  derive graph facts** — ready and blocked stay derived from edges.
-  `OPEN/parked` is excluded from `ready` but stays in `goals`.
-
-#### Substate integrity: deferred FK + apply-time pair repair
-
-The legal pairs live in the `task_substates` lookup table, seeded from
-code on every open (machine-local, never synced). `tasks` has a
-composite FK `(status, substate) → task_substates`,
-`DEFERRABLE INITIALLY DEFERRED`, which is the only guard on the pair.
-It is checked at COMMIT, so apply's one-field-at-a-time UPDATEs pass as
-long as the pair is legal when the transaction ends. That is why
-`applyOp` wraps each task put in `db.transaction` (and undo already runs
-in one): in autocommit the first per-field UPDATE would fail the FK.
-
-Every lifecycle write sets `status` and `substate` in one UPDATE, so
-one op carries both under one HLC. A pair can still split across ops:
-a status-only op from a v10 peer, an unknown substate from a newer
-peer, or a concurrent close and park on two machines. Before commit,
-`repairTaskPair` (`src/apply.ts`) sets the substate to the one implied
-by the newest op in the LOG that writes a substate, resolved against
-the row's current status, and falls back to the status default when
-that pair is illegal. Substate is therefore NOT per-field LWW.
-Reading the log instead of the row makes the result a pure function of
-the op set plus the row's status, so every peer converges on the same
-row whatever the arrival order. For the same reason the repair records
-**no op**: each peer computes the identical repair from the identical
-log. Recording one would only add a second writer racing the first.
-- **Notes** are append-only per task; survive across LLM sessions and
-  agent restarts. The fix for context loss at the *task* level rather
-  than the agent level.
-
-### Built-in queries (SQL views)
-
-| View      | Returns                                                                |
-| --------- | ---------------------------------------------------------------------- |
-| `ready`   | `OPEN/todo` tasks with no unresolved blockers — work that can start *now* |
-| `blocked` | OPEN tasks waiting on something                                        |
-| `goals`   | Tasks with no dependents — graph endpoints                             |
-
-Agents and humans both query these views directly via `mu sql`. No
-separate query layer.
-
-### Parallel-track detection
-
-The Tracks section in `mu state` / bare `mu` runs union-find on the
-graph to identify independent subtrees that can be assigned to
-different agents in parallel.
-
-**Diamond patterns get merged automatically.** If two roots share a
-prerequisite, they collapse into one track — preventing two agents
-from colliding on the shared dependency:
-
-```
-  Independent (2 tracks):       Diamond (1 merged track):
-
-    goal_a    goal_b              goal_a   goal_b     ← Spawn 2 agents
-       |         |                   \      /
-    task_a    task_b                  shared          ← Spawn 1 (would
-       |         |                      |               collide otherwise)
-    leaf_a    leaf_b                  leaf
-```
-
-The graph algorithm decides, not the LLM.
-
-### Claim protocol via ambient identity
-
-`mu task claim <task>` resolves who is claiming, then atomically:
-
-1. Sets `tasks.owner = <agent_name>`
-2. Flips `tasks.status = IN_PROGRESS`
-3. Emits a `task.claim` op carrying the resolved `actor`
-
-Identity resolution is a two-rung ladder:
-
-1. **`$MU_AGENT_NAME`** — injected into the pane's environment at
-   spawn. Backend-independent, and more reliable than scraping even on
-   tmux.
-2. **`backend.currentAgentName()`** — the mux backend's fallback. On
-   tmux that is `display-message -p '#{pane_title}'`; on herdr the
-   agent name is registered with the mux and looked up by pane id.
-
-The fallback earns its place because **adopted** panes
-(`mu agent adopt`) predate the env injection and carry only a title.
-Because it lives behind `MuxBackend`, the call site has no idea which
-multiplexer it is running under.
-
-When the tmux fallback runs, it reads pane title, **not** `#W` (window
-name). Window names come from the `tab:` frontmatter and may group
-multiple agents in one window.
-
-Two agents can't claim the same task — atomic CAS in SQLite. The
-agent doesn't have to know its own name.
-
-### Scoped subtree views
-
-`mu task tree <id>` and task queries show the portion of the graph
-reachable from a task. Subtree scoping is a `WHERE` clause, which is
-what makes recursive delegation work: a sub-orchestrator inspects its
-slice without an LLM inferring the scope.
-
----
-
-## Mux session topology
-
-mu organizes agents into **one mux session per workstream**. One mu
-workstream = one mux session = one `session_id` partition in
-`~/.local/state/mu/mu.db`. Multiple workstreams on one machine coexist as
-independent mux sessions, fully isolated.
-
-A **mux session** is a tmux session on the tmux backend and a herdr
-*workspace* on the herdr backend (herdr's own "session" is
-server-level — one socket — and is the wrong granularity). The
-three-level shape is identical either way:
-
-| mu term          | tmux         | herdr             |
-| ---------------- | ------------ | ----------------- |
-| **mux session**  | session      | workspace         |
-| **window**       | window       | tab               |
-| **pane**         | pane (`%15`) | pane (`w1:p1`)    |
-
-The diagram below uses the tmux spelling.
-
-```
-  tmux session: mu-auth-refactor              (one mu workstream)
-  ┌───────────────────────────────────────────────────────────┐
-  │  Window: Backend             Window: Review               │
-  │  ┌──────────┐ ┌──────────┐   ┌────────────────────────┐   │
-  │  │ worker-1 │ │ worker-2 │   │ reviewer-1             │   │
-  │  │ (pi)     │ │ (pi)     │   │ (pi, role=read-only)   │   │
-  │  └──────────┘ └──────────┘   └────────────────────────┘   │
-  │                                                           │
-  │  Window: mu-orchestrator                                  │
-  │  ┌────────────────────────────────────────────────────┐   │
-  │  │  pi (you, with mu extension loaded)                │   │
-  │  └────────────────────────────────────────────────────┘   │
-  └───────────────────────────────────────────────────────────┘
-
-  tmux session: mu-migration-2024q4           (different workstream)
-  ┌───────────────────────────────────────────────────────────┐
-  │  ...different agents, different graph, no overlap         │
-  └───────────────────────────────────────────────────────────┘
-```
-
-### Concretely
-
-- **First `mu agent spawn` creates the tmux session** if you're not already
-  in one. Default name `mu-<auto>`. Override with `mu workstream init <name>` or
-  `MU_SESSION=<name>`.
-- **Subsequent operations** in the same shell (or any child shell with
-  `MU_SESSION_ID` set) target the same session.
-- **`tmux attach -t mu-<workstream>`** → attach to the whole
-  workstream's mux session (herdr: `herdr workspace focus <id>`)
-- **`mu agent list`** is scoped to one workstream — the current one by
-  default; `mu agent list -w <workstream>` for another
-- **`session_id`** is the partition key on the `agents` table
-- **`mu doctor`** warns about cross-session pollution (orphan panes,
-  ghost rows, agents whose mux session no longer exists)
-
-### The `activeMux()` seam
-
-Every call site reaches its multiplexer through
-`(await activeMux()).<method>()`. Nothing outside `src/mux/` names a
-backend, and `MU_MUX` is therefore load-bearing: an unknown value
-fails the invocation rather than quietly running on tmux.
-
-Call sites are classified, and the classification is the seam's real
-content. With a second backend in play, "no reachable multiplexer"
-stops being a broken-box edge case and becomes routine, so each site
-has to have already decided what it means:
-
-| | Behaviour on `NoMultiplexerError` | Examples |
-| --- | --- | --- |
-| **Load-bearing** | propagate; `handle()` maps it to exit 5 | spawn, send, read, kill, adopt, kick, reconcile, session create/destroy |
-| **Best-effort** | `try`/`catch`, degrade | actor identity, pane titles, pane borders, workstream listings, liveness polls, TUI attach |
-
-`resolveWorkerIdentity()` in `src/tasks/claim.ts` is the canonical
-best-effort shape. `reconcile()` is pointedly load-bearing: treating
-an unreachable mux as "zero panes exist" would prune every registered
-agent as a ghost and reap its in-progress tasks.
-
-Three things that look like caller concerns belong to the backend,
-because each would otherwise hardcode a tmux string in a place a herdr
-user can see: `attachHint()` / `attachCommands()` (the printed recipe
-and the TUI's executed argv), `healthCheck()` (version + ambient env
-facts as DATA — `mu doctor` owns rendering), and
-`paneNotFoundNextSteps()` (borrowed by `PaneNotFoundError` from the
-backend that raised it).
-
-`src/tmux.ts` survives as a re-export for genuinely tmux-only
-concerns: the `MU_TMUX_SOCKET` test-isolation seam and the shared
-`sleep` / `setSleepForTests` poll seam.
-
-### The spawn seam: create-and-run vs create-then-start
-
-Backends disagree on something structural: tmux creates a pane **and**
-runs a command in one atomic call, while herdr has no create-and-run
-form at all. Its creation verbs always start a plain shell, and `agent
-start` requires an already-existing pane at its interactive prompt.
-
-That difference is expressed as a **capability**, not a name check:
-
-| | tmux | herdr |
-| --- | --- | --- |
-| `NewWindowOptions.command` etc. | carries the command | **refused** if non-empty |
-| `startAgentInPane()` | not implemented | implemented |
-| liveness / readiness wait | mu checks pane life, startup errors, then murmur readiness when available | the mux blocks until ready |
-
-`spawnAgent` branches on `mux.startAgentInPane !== undefined`. When it
-is absent (tmux), the command rides along on the creation verb. The
-liveness check verifies that the pane survived and scans for startup
-errors; when murmur is available, readiness also waits for the pane's
-`@murmur_pane_state`. Without murmur, readiness is skipped and the first
-send uses its input-timing checks. When `startAgentInPane` is present,
-mu creates the pane bare, calls it, and skips the tmux checks because
-the backend returns only after the agent is ready.
-
-The creation verbs **refuse** a non-empty command on a backend that
-cannot honour it rather than dropping it silently: a dropped command
-leaves an empty shell mu believes hosts an agent, which is the worst
-available failure mode. Both the refusal and every step-2 failure route
-through `rollbackSpawn`, so no path records an agent row for a pane with
-nothing running in it.
-
-Both the pane-creation call and the agent start sit **outside** the
-per-session spawn lock's slow half, so a parallel fan-out still
-parallelises.
-
-### Window vs pane
-
-By default each agent gets its own **window** (a tmux window, a herdr
-tab — what most terminals call a "tab"), named after the agent's
-`tab:` value; default, the agent name. Agents sharing a `tab:` value
-share a window with multiple panes.
-
-Claim/identity depends on the agent's name, not the window name:
-every agent pane gets `$MU_AGENT_NAME` in its environment on spawn,
-plus a **pane title** as fallback, regardless of how panes are grouped.
-The title carries durable mu context only (agent identity plus owned tasks),
-not sampled runtime status. Mu enables the top border but leaves
-`pane-border-format` to the user's tmux configuration. The canonical tmux
-protocol is in the comment block at the top of `src/mux/tmux.ts`.
-
-### Why one session per workstream
-
-- **Visual co-location.** `tmux a -t mu-auth-refactor` shows the whole
-  crew at once.
-- **Isolation.** Kill the tmux session = kill the workstream. No
-  leaked panes.
-- **Detach and reattach freely.** The crew survives a closed laptop.
-- **The claim protocol falls out.** Pane title = agent name =
-  ownership identity, with no configuration.
-- **Multiple workstreams coexist.** `session_id` partitioning keeps
-  the auth-refactor crew out of the migration crew.
-
----
-
-## Dual-audience CLI contract
-
-The top-level `mu` binary serves two audiences without creating a
-second namespace.
-
-- **Human entrypoint:** bare `mu` launches the read-only TUI when
-  `process.stdout.isTTY === true`. It loads every workstream on the
-  machine and chooses the initial active tab with the shared focus
-  ladder (`$MU_SESSION` → tmux session name → cwd inside a workspace
-  → cwd equal to a workspace's VCS-derived project root, with latest
-  activity breaking project-root ties → tab 0). If no
-  workstreams exist, it prints `mu --help` plus the one-paste
-  `Get started: mu workstream init <name>` hint and exits 0.
-- **Agent / script entrypoint:** typed verbs remain the API, with
-  `--json` on reads and structured errors. Bare `mu` on non-TTY
-  stdout (pipes, redirects, CI, most harnessed agent calls) prints
-  help instead of entering Ink. `MU_NO_TUI=1` forces that same path
-  for scripted use inside an otherwise-interactive terminal.
-- **`mu state`** is the static state card; `mu state --tui` is the
-  explicit TUI selector. The split is stdout-is-TTY plus the opt-out
-  env var, not a second command namespace.
-
-The TUI import stays dynamic (`await import("./cli/tui/index.js")`).
-No module outside `src/cli/tui/` may statically import ink/react, or
-the static CLI bundle pulls the TUI graph into help/version/json
-paths.
-
----
-
-## TUI architecture
-
-The TUI is a 10-card live-updating dashboard on `ink`. It is
-**read-only** and lives entirely under `src/cli/tui/` — CLI verbs
-remain the canonical mutation API. The TUI yanks `mu` commands; the
-operator runs them.
-
-### Cluster shape
-
-`src/cli/tui/` is the only place ink/react are imported.
-
-```
-src/cli/tui/
-├── index.ts                    # runTui entrypoint; alt-screen + mouse-mode lifecycle
-├── escapes.ts                  # pure ANSI byte sequences (alt-screen, SGR mouse mode)
-├── app.tsx                     # <App> root: popup state machine, global keymap, tabs
-├── state.ts                    # useDashboardSnapshot poll-loop hook (fast/slow tier split)
-├── keys.ts                     # pure dispatchGlobalKey + dispatchPopupKey + shouldSwallowGlobalKey
-├── keymap-spec.ts              # canonical keymap source-of-truth (drives help overlay + dispatch)
-├── mouse.ts                    # vendored SGR mouse parser + double-click + useMouse hook
-├── yank.ts                    # clipboard probe + write (pbcopy/wl-copy/xclip/xsel/clip.exe + OSC-52)
-├── tuicr.ts                    # `t` shortcut: alt-screen handoff to tuicr -r <sha>
-├── layout.ts                   # responsive multi-column dashboard + per-card row budgets
-├── columns.ts                  # column-aligned row layout with protect/clip clipping
-├── wrap-ansi.ts                # ANSI-aware visual-width line wrapper + SGR close-on-end
-├── format-helpers.ts           # shared TUI formatters (relTime, sinceClaim, ROI)
-├── titled-box.tsx              # rounded border with section-header / bottomLabel inset
-├── popup-shell.tsx             # popup outer chrome (cyan TitledBox)
-├── list-row.tsx                # centralised non-selected row primitive
-├── padded-rows.tsx             # per-card body padder
-├── status-bar.tsx              # bottom status bar (mode + active ws + tick + footer flash)
-├── tab-strip.tsx               # multi-workstream tab switcher (N≥2)
-├── tab-strip-layout.ts         # pure window-around-active layout helper
-├── help.tsx                    # ?/F1 keymap overlay (scrollable on short panes)
-├── use-popup-filter.tsx        # shared '/' substring filter hook + applyFilter + FilterPrompt
-├── use-status-filter.tsx       # status toggles (o/i/c) + substate toggles (p/w) for task-list popups
-├── use-notes-drill.ts          # shared notes-drill memo (5 task popups consume it)
-├── use-popup-action-queue.ts   # consume mouse PopupAction queue once per render
-├── cards/                      # 10 dashboard glance cards (one slot each)
-│   ├── _placeholder.tsx        # shared loading/empty body wrapper
-│   └── {agents,tracks,ready,log,workspaces,inprogress,blocked,recent,commits,doctor}.tsx
-└── popups/                     # fullscreen drill-down popups
-    ├── {agents,tracks,ready,log,workspaces,inprogress,blocked,recent,commits,doctor}.tsx
-    ├── dag.tsx                 # keybind-only on `g`: full task DAG forest
-    ├── all-tasks.tsx           # keybind-only on `t`: sortable / filterable list of every task
-    ├── task-list-popup.tsx     # shared TaskListPopup scaffold (ready/inprogress/recent/blocked config-only)
-    ├── drill.tsx               # DrillScrollView + useDrillKeymap (shared scrollable-text leaf)
-    ├── task-detail.tsx         # TaskDetailDrill (notes timeline; the recursion sink)
-    ├── cursor-row.tsx          # selected-row primitive (delegated to from list-row)
-    ├── scroll.ts               # pure applyCursor / applyScroll / clampScrollTop / isNavAction
-    ├── viewport.ts             # popupViewport + POPUP_CHROME_ROWS + POPUP_VIEWPORT_FLOOR
-    └── show-loader.ts          # subprocess-preserving show loader (avoids blank-flash mid-refetch)
-```
-
-### State machine
-
-`<App>` is the root. It owns:
-
-- **Popup state** — `null` (dashboard) or one of the popup ids.
-  Single-popup invariant; `Esc` / `q` returns to dashboard.
-- **Card visibility** — `Record<CardId, boolean>` toggled by `0`-`9`.
-- **Tick rate** — fast tick interval (1s default; adjustable with
-  `+` / `-` / `=` / `0`).
-- **Active workstream tab** — index into the launch-time workstream
-  set; `Tab` / `Shift-Tab` cycles when N≥2. The fast tick checks that
-  each row still exists. A torn-down workstream keeps its stable tab
-  position and renders dimmed with strikethrough until the same name is
-  recreated. A torn-down single workstream also renders its normally hidden
-  tab so the state remains visible.
-- **Footer flash** — transient status-bar message (yank confirm,
-  tuicr exit, etc.).
-
-Popups own their own local state (cursor, filter query, drill mode,
-local modes like Workspaces' `list` / `commits` / `show`). Popups
-NEVER mutate App-level state — they receive a read-only props bag
-(`snapshot`, `db`, `workstream`, `fastTickNonce`, `slowTickNonce`,
-`yank`, `onClose`, `onModeChange`, `onFilterEditingChange`,
-`onFooter`).
-
-### Polling tiers (fast vs slow)
-
-The poll loop in `state.ts` (`useDashboardSnapshot`) splits work
-into two intervals:
-
-- **Fast tick** (default 1s, adjustable): SQL-only. `loadWorkstreamSnapshotFast`
-  reads tasks, tracks, workspace registry rows, recent events,
-  workspace orphans. Cheap (~p50 <1ms).
-- **Slow tick** (10s, hardcoded `SLOW_TICK_MS`): subprocess-backed.
-  `loadWorkstreamSnapshotSlow` runs tmux liveness, per-workspace
-  dirty status, recent project commits, and the Doctor summary.
-  Expensive (~p50 hundreds of ms).
-
-The last slow result is merged into every fast render via
-`mergeSnapshotFastSlow`, so cards never flicker through a loading
-state. `r` / `F5` triggers both intervals immediately. A tab switch
-clears the slow cache and eager-fetches, so cards are fresh within
-1s. The pure `snapshotKey` / `snapshotKeyString` guard returns the
-SAME `data` reference across no-op ticks so React's diffing
-short-circuits.
-
-### Render geometry
-
-Responsive layout lives in `layout.ts`:
-
-- **Breakpoint-driven columns**: stacked below 120 cols; 2 columns
-  at 120; 3 at 180; 4 at 240. Stream cards (Commits, Activity log)
-  trail; slot 0 (Commits) trails last.
-- **Per-card row budgets**: each visible card gets a `min` /
-  `max` / `chrome` budget; the allocator distributes available
-  rows so a noisy list can't crowd siblings. Overflow surfaces as
-  `+N more · Shift+N` inset into the card's bottom border.
-- **Cull-on-tight-pane**: when even minimum budgets don't fit,
-  cull cards by priority (Doctor → Recent → Workspaces → …) and
-  show `+N cards hidden · resize taller` at the bottom. Outer
-  height clip is the safety net.
-
-Text rendering is ANSI-aware: `wrap-ansi.ts` wraps by visual width
-(`string-width`) and closes open SGR state on both the early-return
-and end-of-loop paths, so coloured fragments without a trailing
-`\x1b[0m` can't bleed into adjacent ink chrome. Drill bodies are
-space-padded to exact box width, or ink's `wrap="truncate"` ANSI
-miscount eats the right-border glyph.
-
-### Read-only invariant + the `tuicr` escape
-
-Every popup row exposes one canonical `mu` command via `y`. `yank.ts`
-probes for a clipboard backend (pbcopy / wl-copy / xclip / xsel /
-clip.exe) and falls back to OSC-52 over stderr if none is found.
-The command goes to the clipboard; the operator runs it.
-
-The one escape is `t` inside any `git show` drill: `tuicr.ts` writes
-`ALT_SCREEN_EXIT` + the mouse-mode disable bytes, exec's
-`tuicr -r <sha>` in the project root / workspace cwd as a foreground
-subprocess, then restores both on exit. A handoff, not an in-process
-mutation.
-
-The read-only pledge is in `docs/ROADMAP.md`'s anti-feature list; a
-TUI gesture that wants to mutate state needs a roadmap entry first.
-
-### Mouse + keyboard
-
-Mouse support is opt-in via SGR mouse mode (`escapes.ts` provides
-the enable/disable bytes). `mouse.ts` parses `ESC[<button;x;y;M/m`
-from stdin, detects double-clicks, and exposes a `useMouse()` hook.
-
-Keyboard dispatch flows through pure helpers in `keys.ts`:
-`dispatchGlobalKey` (dashboard mode), `dispatchPopupKey` (popup
-mode), and `shouldSwallowGlobalKey` (which keys popups consume
-and do not bubble to the global dispatcher). The keymap source-of-
-truth lives in `keymap-spec.ts` so the help overlay and the
-dispatcher can never drift apart.
-
-Double-click on a card emits `{kind: "setCursor", index}` followed
-by `{kind: "drill"}` through `use-popup-action-queue.ts`, which
-consumes one action per render (so the cursor update lands before
-the drill resolves the focused row).
-
-### Drill recursion
-
-List popups drill via `Enter` into entity-specific leaves. The
-central primitive is `popups/drill.tsx`'s `DrillScrollView` (a
-scrollable text leaf shared by Workspaces' git-show, Agents'
-scrollback, the Activity log payload drill, and the Doctor
-remediation drill). Task popups drill into
-`popups/task-detail.tsx`'s `TaskDetailDrill` (the notes timeline);
-the Tracks popup chains track → task list → TaskDetailDrill via
-the same leaf.
-
-`useDrillKeymap` owns the scroll state, takes an optional `resetKey`
-(identity change resets scroll; a tick-driven body refresh preserves
-it) and an optional `onScrollChange` (the DAG popup's focused-root
-tracking), and shares ANSI-aware wrapped body metadata so the
-scroll-clamp math and the painter can't desync.
-
-Subprocess-backed drills (Workspaces git-show, Agents scrollback,
-Commits show) use `popups/show-loader.ts`, which preserves the prior
-body during a refetch — no blank flash on the slow tick.
-
-### Test seam
-
-See `test/README.md`. The seam is `test/_ink-render.ts`'s
-`createInkInputStream` + `createInkCaptureStream` + `simulateInput` +
-`latestRenderedFrame`: mount a popup or `<App>` into a CaptureStream,
-drive keystrokes, assert against the visible frame and spy callbacks.
-Source-greps are for narrow structural guards only (App ↔ keys ↔
-layout wiring; slot ↔ keymap glue), never behaviour.
-
----
-
-## CLI / SDK surface
-
-Every user-visible operation is a typed SDK function plus a thin
-Commander wrapper. `src/cli.ts` and the verb-namespace files under
-`src/cli/` are the canonical verb surface — no generated registry, no
-DSL, no separate operation schema. Programmatic callers import the
-same SDK functions from `src/index.ts`; agents and scripts compose
-CLI verbs with `--json`.
-
-The boundary rule: external surfaces accept operator-facing names
-(workstream, task id, agent name); internal helpers resolve those to
-surrogate INTEGER ids once and then stay on ids. See
-[§ Surrogate-PK + SDK-boundary discipline](#surrogate-pk--sdk-boundary-discipline).
-
----
-
-## Reconciliation
-
-`mu agent list` always reconciles the registry against mux reality before
-returning. Two steps, in order:
-
-1. **Prune ghosts.** For each `agents` row, if its `pane_id` no longer
-   exists in the mux, delete the row.
-2. **Surface orphans.** For each pane in the workstream's mux session
-   that has no matching `agents` row but whose pane title looks like
-   an agent name, add it to the orphans list. **Do not auto-adopt** —
-   `mu agent list` shows orphans under a separate "(orphans)" section and
-   the user runs `mu agent adopt %15 [--name X]` to claim them.
-
-`src/reconcile.ts` is the only implementation. Key properties:
-
-- **Reality wins**: the mux is the source of truth for what panes
-  exist. Reconciliation closes the gap on every `mu agent list`.
-- **Agent state is reported, not scraped or persisted.** `src/agent-state.ts`
-  probes a pi agent's control socket ([§ Control socket](#control-socket)),
-  in parallel for all pi agents. For other CLIs it reads herdr's
-  `paneStatus()` on herdr. On tmux, one `list-panes -a`
-  reads `@murmur_pane_state` and `@murmur_pane_since` for every local
-  agent. Only agents without a local option use `murmur status --json`;
-  that result is cached for 10 seconds. See murmur's
-  [stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHITECTURE.md#contract).
-- **Mapping:** murmur `working` → `busy`, `blocked` →
-  `needs_permission`, and `idle` / `done` / `crashed` → `needs_input`.
-  herdr supplies mu's runtime states directly.
-- **Absence is `unknown`.** Readings carry reasons such as `murmur not
-  installed`, `murmur pi extension not linked`, `murmur has no row`,
-  `ambiguous: N hosts`, `remote snapshot stale`, and `pane gone`.
-- **`agents.status` is deprecated.** Inserts write `spawning` to satisfy
-  the schema. No code updates or reads the column as runtime state.
-- **No silent adoption**: orphans are reported, never claimed.
-- **`mu doctor` calls the same routine** and reports counts.
-
----
-
-## Control socket
-
-mu drives a pi agent through a unix socket served by mu's own pi
-extension inside the agent's interactive pi. The pane stays pi's TUI;
-a human attached to it shares the same session. No `pi --mode rpc`, no
-screen scraping, no daemon: the server lives and dies with the pi
-process.
-
-**Path derivation** (`src/ctl/path.ts`). `ctlSocketPath(ws, agent)` is
-`<state dir>/sock/<ws>/<agent>.sock`, where the state dir is
-`dirname($MU_DB_PATH)` or the default. Past 103 bytes (macOS
-`sun_path`) it becomes `<state dir>/sock/h/<sha1(ws/agent)[:16]>.sock`.
-Nothing is stored: spawn injects the path as `MU_CTL_SOCK`, and every
-later verb derives it again.
-
-**Protocol v1** (`src/ctl/protocol.ts`, imported standalone by the
-extension). JSON lines, one request per connection. Every reply carries
-`v: 1`; the client throws `CtlVersionError` on anything else.
-
-| op | does |
+## Subsystems
+
+**The ops log.** Every write to a portable table (`workstreams`,
+`tasks`, `task_edges`, `task_notes`) is recorded as an op by a SQLite
+trigger in the same transaction. The tables are the materialized view
+reads hit; the log is the record. History (`mu log`), undo, sync,
+rebuild and drift checks are all queries or replays over it. Ops carry
+only changed columns and an HLC, which makes per-field merge across
+machines free. Read this first:
+[architecture/ops-log.md](architecture/ops-log.md).
+
+**The task DAG.** Tasks are nodes with impact and effort; the one edge
+type is `blocks`. Status decides edge satisfaction, and substate
+qualifies status without touching edges. The `ready`, `blocked` and
+`goals` views, union-find tracks with diamond merge, and an atomic
+claim keyed on `$MU_AGENT_NAME` coordinate the crew:
+[architecture/dag.md](architecture/dag.md).
+
+**Multiplexer and reconciliation.** One workstream is one mux session
+(a tmux session or a herdr workspace). Call sites reach the backend
+only through `activeMux()` and branch on capabilities, never on the
+backend name. `mu agent list` prunes ghost rows and surfaces orphan
+panes against mux reality. Runtime agent state is read on demand, never
+stored: the control socket for pi agents, herdr's native status on
+herdr, and murmur for other CLIs on tmux:
+[architecture/mux.md](architecture/mux.md).
+
+**The control socket.** mu's pi extension serves a unix socket inside
+each spawned pi. Send, `--fresh`, wait, abort and state for pi agents
+go through it, exactly, with no screen reading and no fallback to
+pasting. Remote agents use an ssh socket forward printed by
+`mu agent remote-env`. The tmux bracketed-paste path serves non-pi
+CLIs, slash commands and `--via mux`:
+[architecture/control-socket.md](architecture/control-socket.md).
+
+**Sync.** With `MU_SYNC_DIR` set, every `mu` invocation ingests peer
+JSONL segments before the verb and flushes its own ops after it,
+through `handle()`. There is no daemon and no network code:
+[architecture/sync.md](architecture/sync.md).
+
+**The TUI.** Bare `mu` on a TTY opens a read-only ink dashboard of 10
+cards with drill-down popups. It polls SQL every second and
+subprocesses every 10 seconds, yanks `mu` commands instead of running
+them, and is the only code that imports ink:
+[architecture/tui.md](architecture/tui.md).
+
+**CLI and SDK surface.** Each operation is a typed SDK function plus a
+thin Commander wrapper. Public functions take operator-facing names and
+resolve them to surrogate ids exactly once. Typed errors map to exit
+codes 0-5. The same page covers testing layers and packaging:
+[architecture/sdk.md](architecture/sdk.md).
+
+## Module map
+
+`src/` is flat at the root, with one level of cohesive clusters.
+Cluster files import from neighbours and root modules, never from the
+hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
+`src/vcs.ts` and `src/workspace.ts` are re-export hubs.
+
+### Storage and the ops log
+
+| Module | Responsibility |
 | --- | --- |
-| `hello` | identity plus `ops` (served ops) and `extVersion` (mu version the extension was built from) |
-| `status` | `state` (`busy` / `idle` / `needs_input`), `since`, `runs`, `pending` |
-| `send` | `pi.sendUserMessage`; when busy, `mode` `steer` or `followUp` (default) |
-| `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` |
-| `abort` | `ctx.abort()` (pi's Esc) |
-| `fresh` | new session + prompt as one operation via the internal `/mu-fresh` command; replies once the new run starts; refused with `busy` unless `force` |
+| `src/db.ts` | better-sqlite3 connection (WAL); schema v11 (11 tables, 3 views) in `applySchema`; installs capture; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
+| `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
+| `src/capture.ts` | TEMP triggers recording each portable write as an op |
+| `src/op-context.ts` | `withOpContext` (intent, actor, group); `withCaptureSuppressed` echo guard |
+| `src/apply.ts` | apply one op: per-field LWW, tombstones, substate pair repair, `reprojectDeferredOps` |
+| `src/undo.ts` | inverse ops for one group; refuses a superseded group |
+| `src/rebuild.ts` | replay the whole log into a new DB file |
+| `src/legacy-ops.ts` | classifier for historical log-only intents; rebuild copies them unprojected |
+| `src/drift.ts` | cheap invariant (every row has an op) and `--deep` rebuild-diff |
+| `src/logs.ts` | typed reader over `ops`; `appendLog` and `emitEvent`, the writes triggers cannot cover |
+| `src/log-render.ts` | the one op-to-prose formatter (`renderOp`), shared by CLI and TUI |
 
-An op the extension does not serve returns `unknown op: <op>` with its
-`ops`; mu raises `AgentExtensionOutdatedError` (exit 4, next steps
-`/reload` via mux or respawn), and `mu doctor` flags an `extVersion`
-older than the installed mu.
+### Sync and doctor checks
 
-**Extension lifecycle** (`extension/mu-pi.ts`). Inert unless
-`MU_CTL_SOCK` is set. pi re-creates extension runtimes per session, so
-the server, run counters and an in-flight `fresh` live in a
-process-global map (`Symbol.for("mu.pi.ctl")`). Session replacement
-(`new` / `resume` / `fork` / `reload`) keeps the socket; quit closes it.
-Binding guards against stealing: if the path already answers (a nested
-`pi -p` inherited `MU_CTL_SOCK`), the extension leaves it alone. It
-listens on a private name and hard-links it into place, records the
-inode, and unlinks the public path only if that inode is still its own.
-On `session_start` a server whose path was deleted or replaced closes
-and rebinds, which is how `/reload` recovers a lost file.
+| Module | Responsibility |
+| --- | --- |
+| `src/segments.ts` | JSONL segments: flush own ops, ingest peers from a watermark |
+| `src/sync.ts` | peer status, the ambient hook, `--from`, `--repair` |
+| `src/file-lock.ts` | cross-process advisory lock through atomic `fs.mkdir` |
+| `src/fleet-hazards.ts` | mixed-fleet checks: DB inside `MU_SYNC_DIR`, network mount, case collisions |
+| `src/dormant.ts` | doctor housekeeping: `finished` (all closed, idle 14 days) vs `abandoned` (idle 60 days, open tasks) workstreams; idle derived from `MAX(tasks.updated_at)` |
+| `src/disk-recon.ts` | report-only state-dir vs DB reconciliation (rows without dirs, dirs without rows, residue); `--disk` measures bytes |
+| `src/doctor-summary.ts` | cheap doctor slice for the TUI; ctl, extension and skill checks; remediation text |
 
-**No silent fallback** (`src/agents/transport.ts`). A pi agent
-(`expectsCtl`) whose socket does not answer is `AgentCtlUnreachableError`
-for send and abort, and `unknown` with reason `ctl missing` /
-`ctl refused` for state. mu never pastes into it or asks murmur instead.
-The mux paste path serves non-pi CLIs, adopted panes without ctl, slash
-commands (`sendUserMessage` does not run them), and explicit `--via mux`.
+### Agents, multiplexer and control socket
 
-**Remote agents.** The user's `ssh` command carries
-`-L <local derived path>:<remote path>` plus `MU_CTL_SOCK=<remote path>`
-in the remote env; `mu agent remote-env` prints both and runs nothing.
-mu always connects to the local path, so local and remote share one
-transport. ssh leaves the local socket file behind when it dies; it
-probes `refused`, and close or the reaper deletes it.
+| Module | Responsibility |
+| --- | --- |
+| `src/agents.ts` | CRUD, send, read, list, close, liveness, reaper; `composeAgentTitle` |
+| `src/agents/spawn.ts` | spawn: CLI resolution, pane create or reuse, liveness, readiness, ctl handshake, rollback |
+| `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
+| `src/agents/transport.ts` | send routing: ctl for pi agents, mux paste otherwise, no fallback; `expectsCtl` |
+| `src/agents/abort.ts` | stop a pi turn through the control socket |
+| `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `died` / `timeout` / `pending` |
+| `src/agents/wait.ts` | block until task-less agents leave `busy` |
+| `src/agents/adopt.ts` | register an existing pane as an agent |
+| `src/agents/kick.ts` | `mu agent kick`: signal a wedged pane's foreground process group |
+| `src/agents/errors.ts` | typed agent errors |
+| `src/agent-state.ts` | runtime state from ctl, herdr or murmur; `unknown` with a reason |
+| `src/reconcile.ts` | ghost prune and orphan surfacing |
+| `src/mux/types.ts` | `MuxBackend` interface; `MuxError`, `PaneNotFoundError`, `NoMultiplexerError` |
+| `src/mux/detect.ts` | `MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH` ladder; `activeMux()` |
+| `src/mux/tmux.ts` | tmux backend: the `tmux()` wrapper, bracketed-paste send, pane validation |
+| `src/mux/herdr.ts` | herdr backend: JSON socket API, atomic send, native pane status, `startAgentInPane` |
+| `src/mux/input-timing.ts` | when tmux paste input can be submitted; not a state source |
+| `src/tmux.ts` | tmux-only re-exports: `MU_TMUX_SOCKET` seam, `sleep` / `setSleepForTests` |
+| `src/ctl/path.ts` | `ctlSocketPath`, `remoteCtlSocketPath`, `MU_CTL_SOCK` |
+| `src/ctl/protocol.ts` | protocol v1 types, `CTL_OPS`, line framing; imports nothing from mu |
+| `src/ctl/client.ts` | `ctlRequest`, `ctlProbe`, version and unknown-op errors |
+| `extension/mu-pi.ts` | pi extension, child side: serves `$MU_CTL_SOCK`; built to `dist/extension/mu-pi.js` |
+| `extension/delegate.ts` | pi extension, parent side: `mu_delegate` / `mu_delegate_cancel`, which shell out to `mu` |
+| `src/link.ts` | `mu link pi`: extension shim, skill symlink, `inspectLinks` for doctor |
 
----
+### Tasks, workspaces and workstreams
 
-## Modules (actual src/ layout)
+| Module | Responsibility |
+| --- | --- |
+| `src/tasks/core.ts`, `id.ts` | row shapes, id resolution, qualified ids |
+| `src/tasks/queries.ts`, `sort.ts` | list, next, owned-by; ROI, recency, age and id sorts |
+| `src/tasks/edit.ts`, `edges.ts` | add and edit; block, unblock, reparent, delete with cycle check |
+| `src/tasks/claim.ts` | atomic claim and release; `resolveWorkerIdentity` |
+| `src/tasks/lifecycle.ts`, `status.ts` | close, open and cascade; `TaskStatus` |
+| `src/tasks/wait.ts`, `errors.ts` | `waitForTasks`; typed task errors |
+| `src/tracks.ts` | union-find tracks with diamond merge |
+| `src/dag.ts` | `loadFullDag`, `renderForest`, `renderTaskTree` for `mu task tree` and the DAG popup |
+| `src/workstream.ts` | ensure, list, summarize, destroy |
+| `src/vcs/*.ts` | `VcsBackend` with git, jj, sl and none; detection `jj` → `sl` → `git` → none |
+| `src/workspace/*.ts` | per-agent workspace registry: CRUD, staleness and dirty decoration, orphans |
+| `src/staleness.ts` | `WORKSPACE_STALE_THRESHOLD` and `isWorkspaceStale` |
+| `src/project-root.ts` | `detectProjectRoot` for the TUI launch ladder |
+| `src/state.ts` | `mu state` seam: fast SQL tier, slow subprocess tier, merge; parses `REMOTE:` notes |
 
-Mostly-flat `src/`: root `.ts` modules plus cohesive subclusters
-(`src/agents/`, `src/tasks/`, `src/mux/`, and `src/cli/` wrappers with
-their own `src/cli/tasks/` and `src/cli/tui/` sub-clusters). Cluster
-files import from neighbours and root substrate modules, never from
-the hub they're re-exported through. `src/tasks.ts`, `src/vcs.ts`,
-`src/mux.ts` and `src/workspace.ts` are pure re-export hubs, kept so
-external imports keep working; they hold no logic and are not listed
-separately below.
+### CLI, output and packaging
 
-| Module                | Responsibility                                                                            |
-| --------------------- | ----------------------------------------------------------------------------------------- |
-| `src/db.ts`           | Connection (better-sqlite3, WAL), **schema v11** (11 tables incl. the `task_substates` lookup + 3 views), `resolveWorkstreamId`. Installs capture on every writable open. Owns `SYNCED_ENTITIES` / `MACHINE_LOCAL_ENTITIES` / `PORTABLE_TABLES` / `MACHINE_LOCAL_TABLES`. Refuses a pre-v11 DB (`SchemaTooOldError`) or a newer one (`SchemaTooNewError`), both exit 4. |
-| `src/hlc.ts`          | The **HLC** (VOCABULARY § HLC), serialized as sortable TEXT `<wall_ms:15>.<counter:6>.<machine_id>`. `nextHlc` / `receiveHlc` / `compareHlc` / `parseHlc` / `formatHlc`. Clock state lives in `machine_identity`. |
-| `src/capture.ts`      | **Op capture**: builds the triggers that record every write to a portable table as an op in the same transaction. |
-| `src/apply.ts`        | **The apply path** — capture's counterpart: given one op, local or from a peer, make the tables reflect it. Also owns `reprojectDeferredOps` ([§ ambient sync hook](#the-ambient-sync-hook)). |
-| `src/undo.ts` + `src/cli/undo.ts` | **Undo as inverse ops**: inverses for one `group_id`, derived from log provenance, refusing a superseded group (exit 4; `--force` overrides). Bare form lists undoable groups (`-n` widens), a prefix previews, `--yes` applies. |
-| `src/project-root.ts` | `detectProjectRoot` — the launch-cwd ladder bare `mu` uses to guess which workstream to focus. Pure filesystem walk; no DB. |
-| `extension/mu-pi.ts` + `extension/delegate.ts` | **The mu pi extension**, built to `dist/extension/mu-pi.js`. Child side (`serveCtl`): serves `$MU_CTL_SOCK` in a pi mu spawned. Parent side (`registerDelegate`, hidden when `MU_MANAGED_AGENT` is set or `MU_DELEGATE=0`): the `mu_delegate` / `mu_delegate_cancel` tools, which shell out to the `mu` CLI (spawn, send, `wait --json`, read, abort, close) and only format the CLI's `outcome` into a follow-up message. Imports nothing from pi; only the protocol from mu. |
-| `src/ctl/*.ts`        | **Control socket** client side ([§ Control socket](#control-socket)): `path.ts` (`ctlSocketPath`, `remoteCtlSocketPath`, `MU_CTL_SOCK`), `protocol.ts` (v1 request/reply types, `CTL_OPS`, line framing; imports nothing from mu so the extension can load it), `client.ts` (`ctlRequest`, `ctlProbe`, typed version / unknown-op errors). |
-| `src/link.ts` + `src/cli/link.ts` | **Link** — `mu link pi`: `linkPi` writes the extension shim (or `--copy`), `linkSkill` symlinks the skill, `inspectLinks` reports `ok` / `missing` / `stale-copy` / `foreign` / `dangling` for doctor. Filesystem only: the verb runs outside `handle()` (no DB). |
-| `src/rebuild.ts` + `src/cli/rebuild.ts` | **Rebuild** — disaster recovery: `rebuildInto` replays the whole log into a NEW DB file via `applyOp`. The verb renders the report: counts, `--json`, an `mv`-swap `Next:` step, a warning that `agents` / `vcs_workspaces` are not reconstructible. |
-| `src/legacy-ops.ts` | Permanent compatibility classifier for historical log-only intents whose entity looks projectable. Rebuild copies them without projection; segment flush never emits them. |
-| `src/drift.ts`        | **Drift detection**, two tiers: `checkDrift` (`mu doctor --deep`) rebuilds into a temp DB and diffs field-by-field; `checkCheapDriftInvariant` (the default) asserts every live row has ≥1 op naming its key. Plus `driftRemediation`. |
-| `src/segments.ts`     | **Segments** — the transport. `flushSegment` appends this machine's unflushed ops to `<MU_SYNC_DIR>/<machine_id>.jsonl`; `ingestSegment` reads a peer segment from its watermark into `applyOp`. Peer discovery is implicit: every non-self `*.jsonl`. |
-| `src/sync.ts` + `src/cli/sync.ts` | **The sync seam**: `peerStatuses`, the ambient hook (`ambientIngest` / `ambientFlush` / `ambientSyncPass`), `ingestFromDb`, `repairPeer`. The verb is a peer status report; `--from <path>`, `--repair <peer>` (unique prefix, ambiguity is exit 4). |
-| `src/cli/db.ts`       | `mu db backup <file>` — one scp-able file via `VACUUM INTO`. Never overwrites: it is the pre-migration copy `SchemaTooOldError` tells you to take. |
-| `src/file-lock.ts`    | Cross-process advisory lock via atomic `fs.mkdir`; `src/agents/spawn-lock.ts` wraps it per tmux session. Flush takes it so two local `mu` processes cannot interleave partial lines. Best-effort: a non-contention failure runs the body unlocked. |
-| `src/fleet-hazards.ts`| **Mixed-fleet hazards** — three environment checks in the default doctor: `MU_DB_PATH` inside `MU_SYNC_DIR` (fail), DB on a network mount (warn), two workstream names differing only by case (warn). All no-op when `MU_SYNC_DIR` is unset. |
-| `src/dormant.ts`      | **Dormant workstreams** — the `housekeeping` doctor section: which workstreams are **teardown** candidates. Two buckets with different remediation (`finished` = all closed + idle ≥14d, safe; `abandoned` = idle ≥60d with unclosed tasks, look first), because one merged list would invite sweeping away open work. Emits `FleetHazard` at `ok` severity, so it never makes doctor claim a fault. One indexed `GROUP BY` over `tasks`; idle is DERIVED from `MAX(tasks.updated_at)` rather than a new `workstreams.last_activity` column, which would be a second source of truth that can disagree with the rows it summarises. |
-| `src/disk-recon.ts`   | **Disk↔DB reconciliation** — the only module that reads the STATE DIR and compares it to the DB, in both directions: a `vcs_workspaces` row whose path is gone (`ws-rows`), a dir with no row (`ws-dirs`, reusing `listAllOrphanWorkspaces`), plus residue nothing references (`ws-empty` / `db-copies` / `exports` / `locks`). Emits `FleetHazard` so doctor's renderer, `--json` and the TUI card need no new shape. Default tier is `readdir` + `stat` at depth 2 (~1ms); `measureWorkspaceUsage` recurses for bytes and is `--disk` only, because its cost scales with the checkouts. **Report-only by construction** — every finding carries its cleanup command and the module runs none of them. |
-| `src/op-context.ts`   | The **op context** seam: `withOpContext(db, {intent, actor, group}, fn)` labels every op in a scope, restored in a `finally`. Nested scopes inherit the group, which puts a cascade under one `mu undo`. `withCaptureSuppressed` is the echo guard. |
-| `src/mux.ts`          | **Mux backend hub** — re-exports `src/mux/*`, same shape as `src/vcs.ts`. The public `MuxBackend` surface every call site imports. |
-| `src/mux/*.ts`        | **Multiplexer backends**: `types.ts` (the `MuxBackend` interface + `MuxError` / `PaneNotFoundError`), `detect.ts` (`MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH` ladder + test seam), `tmux.ts`, `herdr.ts`, and `input-timing.ts`. The backend owns topology, capture, **pane id** validation (tmux `%15` vs herdr `w1:p1`), identity fallback, and optional native agent state (`paneStatus?()`) and agent start (`startAgentInPane?()`). `input-timing.ts` reads pane text only to decide when tmux input can be submitted; it does not report agent state. |
-| `src/tmux.ts`         | Re-export of the tmux backend, kept for genuinely tmux-only concerns: the `MU_TMUX_SOCKET` test seam and the shared `sleep` / `setSleepForTests` poll seam. Everything else imports `src/mux.ts` and goes through `activeMux()`. |
-| `src/agent-state.ts`  | Runtime agent-state resolver. Reads herdr's native state or murmur's local pane options and remote JSON; maps source states, returns `unknown` with a reason, and caches remote murmur reads for 10 seconds. |
-| `src/reconcile.ts`    | Ghost prune + orphan surface; "reality wins"                              |
-| `src/agents.ts`       | Hub: CRUD + send / read / list / close + liveness + reaper. Re-exports `src/agents/*`; pane-title composition (`composeAgentTitle`) lives here. |
-| `src/agents/*.ts`     | Agent-lifecycle internals: `spawn.ts` (spawn, CLI resolution, liveness wait *or* backend `startAgentInPane`, pane create-or-reuse, rollback), `spawn-lock.ts` (per-session lock around topology+finalize), `wait.ts`, `adopt.ts`, `kick.ts` (signal a wedged pane's pgid), `abort.ts` (stop a pi turn via the control socket), `transport.ts` (send routing: ctl for pi agents, mux paste otherwise, no fallback), `delegate.ts` (`delegateOutcome`: one wait result → `done` / `empty` / `died` / `timeout` / `pending`, surfaced by `mu agent wait --json`), `errors.ts`. |
-| `src/dag.ts`          | Shared DAG read/render helpers: `loadFullDag` plus pure `renderForest` / `renderTaskTree`, reused by `mu task tree` and the TUI DAG popup. |
-| `src/tasks/*.ts`      | Task-graph internals: `core.ts` (row shapes, id resolution), `id.ts`, `queries.ts` (reads), `edit.ts` (+ delete cascade preview), `edges.ts` (+ cycle check), `status.ts` (TaskStatus), `sort.ts`, `claim.ts` (atomic CAS), `lifecycle.ts` (close/open), `wait.ts`, `errors.ts`. |
-| `src/tracks.ts`       | Parallel-tracks union-find with diamond merge                                             |
-| `src/staleness.ts`    | `WORKSPACE_STALE_THRESHOLD = 10` and the pure `isWorkspaceStale` predicate, shared by static state, the TUI Workspaces card, and dispatch-time checks. |
-| `src/workstream.ts`   | ensureWorkstream / list / summarize / destroy |
-| `src/logs.ts`         | Typed READER over `ops` (`listLogs` / `latestSeq`), plus the write paths triggers cannot cover: `appendLog` (operator prose) and `emitEvent` (changes mutating no portable table — `agent.*`, `workspace.*`), under a typed `LocalIntent`. |
-| `src/log-render.ts`   | **The ONE op → prose formatter.** `renderOp` maps an intent (+ key + payload fields) to `{verb, subject, detail}`; plus `renderOpLine`, `opSubject`, `parseOpKey`. Pure and colour-free, so CLI and TUI share one phrasing. |
-| `src/vcs/*.ts`        | One backend per file (`git.ts`, `jj.ts`, `sl.ts`, `none.ts`) plus `types.ts` (the `VcsBackend` interface), `helpers.ts`, and `index.ts` (detection precedence `jj` → `sl` → `git` → none; `backendByName`). |
-| `src/workspace/*.ts`  | Per-agent VCS workspaces, a registry on top of `vcs.ts`: `core.ts` (row shapes, paths, errors), `crud.ts`, `decorate.ts` (staleness + dirty), `orphans.ts`. |
-| `src/glyphs.ts`       | **The ONE glyph vocabulary.** `AGENT_STATE_GLYPH` + `agentStateGlyph()` for runtime agent state, the `GLYPH` record for every other state symbol (blocked, dirty, stale, ok/warn/fail, filter toggles), and `superscriptDigit` for TUI card-header keys. All classic Nerd Font `nf-fa-*` — single-codepoint and one cell wide, so `cli-table3` columns line up. |
-| `src/output.ts`       | NextStep type + `printNextSteps` + `errorNextSteps` plumbing for self-documenting output |
-| `src/shell-quote.ts`  | `shellQuote` — POSIX single-quoting for tokens interpolated into copy-pasteable next-step hints. |
-| `src/state.ts`        | SDK seam for `mu state`: `loadWorkstreamSnapshotFast` (pure SQL, TUI 1s tick), `loadWorkstreamSnapshotSlow` (subprocesses), `mergeSnapshotFastSlow`, `loadWorkstreamSnapshot`. Also parses exact `REMOTE:` task-note inventory and `REMOTE_BASE:` dispatch metadata. Opt-in: `withDirty`, `withDoctor`, `withRecentCommits`, `withAllTasks`. |
-| `src/doctor-summary.ts` | The dashboard's doctor seam: `loadDoctorSummary` (pragmas and COUNT-shape selects only — cheap enough for the poll loop), `loadDoctorChecks` for the popup, plus `yankCommandForCheck` / `remediationParagraph`. |
-| `src/cli.ts`          | commander entry; `buildProgram()` (re-exports `format`/`handle` symbols for back-compat with existing import sites). |
-| `src/cli/*.ts`        | One file per verb-namespace; thin wrappers over the SDK; `--json` on every read verb. Two non-verb cluster-mates: `format.ts` (table renderers, status colourers) and `handle.ts` (typed-error → exit-code map). |
-| `src/cli/tui/*.tsx`   | The interactive ink TUI, lazy-imported by `src/cli/state.ts`. **The only place ink/react are imported** — a ROADMAP pledge. Per-file roles: [§ TUI architecture](#tui-architecture). |
-| `src/cli/tasks/*.ts`  | Sub-cluster of the `mu task` namespace: `queries.ts` (list/next/owned-by + `mu me tasks` / `mu me next`), `lifecycle.ts` (close/open), `edit.ts`, `edges.ts` (+ delete cascade preview), `claim.ts`, `tree.ts`, `wire.ts` (Commander glue). |
-| `src/index.ts`        | SDK entrypoint (re-exports)                                                               |
-| `skills/mu/SKILL.md`  | Bundled skill teaching the LLM the orchestration model and operational traps; `mu --help` owns the verb reference. |
-
-### What the rows above leave out
-
-- **Capture triggers are TEMP triggers**, reinstalled per connection —
-  SQLite refuses a main-schema trigger referencing the temp `_op_ctx`.
-  Hence two oddities: DELETE keys are captured inline, with the parent
-  stashing its natural key in `_op_dying` first (FK CASCADE fires child
-  triggers after the parent is gone), and the HLC is minted in SQL,
-  because a trigger cannot call into JS.
-- **Merge is per entity**: notes and messages are grow-only sets, tasks
-  and workstreams merge per field by HLC, edges are an LWW-element-set.
-  A tombstone is an ordinary op carrying an HLC, so out-of-order
-  arrival is a comparison and resurrection falls out. Never
-  `json_patch` — RFC 7396 reads a null member as delete-the-key.
-- **Note tombstones are the one SELF-DESCRIBING tombstone.** Every
-  other `del` carries `'{}'`, because its key plus the puts before it
-  describe the row. A note's key embeds its rowid
-  (`<ws>/<task>#<id>`), which is NOT stable — a rebuild or
-  reprojection reassigns it, leaving the puts under the old key and a
-  later `del` under the new one. Undo folds the puts for a key to
-  reconstruct a tombstoned row, so such a note folded to nothing and
-  was silently never restored (drift-641). The `task_notes` delete
-  trigger therefore records `OLD.*`, and `planUndo` falls back to the
-  tombstone's payload when the fold is empty. This is also why
-  `src/drift.ts` matches notes on the task-key PREFIX rather than the
-  exact key.
-- **Undo and restore write through the tables**, so neither can be the
-  write path capture misses. `restore` records then applies under the
-  SAME HLC: `applyOp` excludes an op's own HLC from provenance, so a
-  fresher one makes the row outrank the op and lose every field to an
-  insert default.
-- **Segments are single-writer per file** — a machine appends only to
-  its own, so nothing is contended and any folder-syncer is adequate
-  transport. Regenerable, so no fsync. Four layers stop at the first
-  bad record and advance the watermark only that far: `JSON.parse`
-  (torn write when the line lacks its trailing `,"crc"…}` framing,
-  malformed-shape when it has it — the same failure, but a transfer cut
-  short and a writer bug have different remediations), crc32 per line
-  (bit rot), monotonic HLC (reorder, duplicate, truncation), a
-  `.manifest` sidecar (truncation exactly on a line boundary).
-  `ops.payload` is TEXT that is usually but not always JSON (`mu log
-  "text"` writes prose), so the encoder passes valid JSON through
-  verbatim — the crc covers those exact bytes — and JSON-encodes
-  anything else, unwrapping on ingest. Only `SYNCED_ENTITIES` and only THIS machine's ops
-  are flushed, so pane ids and absolute paths never leave and peers
-  never echo each other's history.
-- **Sync never fails a command**: a truncated segment, a garbage
-  segment, a sync dir that is a file, a vanished directory all warn on
-  stderr and return.
-- **Damage halts; refusal skips.** Stopping at the first bad record is
-  right for DAMAGE, where a gap is indistinguishable from reordering.
-  It is wrong for a well-formed line mu merely declines to project: a
-  refusal lands nothing, so it leaves no hole, and halting made the
-  watermark unrecoverable by any means the CLI offers. One
-  `entity:"marker"` line at position 2533 of a 20,305-line peer segment
-  froze that peer's watermark permanently, and `mu sync --repair` (which
-  only resets the watermark) re-read straight back into the same line.
-  So ingest now distinguishes three cases: damage halts, a KNOWN
-  machine-local entity is a reported defect that is SKIPPED, and an
-  UNRECOGNISED entity applies as a no-op with no defect at all —
-  reader-behind-writer vocabulary is a fact of a mixed fleet, not
-  corruption. `--repair` is only suggested for defects a re-read can
-  clear.
-- **Rebuild is not ingest**: ingest filters to `SYNCED_ENTITIES`, but
-  local recovery replays everything, so log-only entities are copied
-  verbatim or `mu log` comes back empty. `machine_identity` carries
-  across whole — id, hostname, HLC clock — or the rebuilt DB is a
-  different peer minting HLCs below every replayed op. Drift diffs by
-  natural key and excludes `owner_id`: a rebuild always has NULL
-  owners.
-
-Why segments and not Litestream / cr-sqlite / a peer list, and why the
-DB must never sit in `MU_SYNC_DIR`:
-[ROADMAP § Rejected sync substrates](ROADMAP.md#rejected-sync-substrates).
-
-## Data flow
-
-1. **A caller invokes a verb** — the CLI subprocess, or in-proc SDK
-   use.
-2. **CLI handler dispatches to an SDK function** in `src/agents.ts`
-   / `src/tasks.ts` / etc.
-3. **For multi-statement writes, opens a transaction** via
-   better-sqlite3's `db.transaction(fn)()` wrapper.
-4. **Executes the operation** — agent ops shell out to tmux (and to
-   jj/sl/git for workspaces); task ops are pure SQL.
-5. **Reconciles with reality** — read paths prune ghosts and surface
-   orphans; runtime agent state is read from the control socket (pi), murmur or herdr without a DB write.
-6. **Records ops** — automatically, per [§ The ops log](#the-ops-log-read-this-first);
-   machine-local changes go through `emitEvent`. `mu log --tail`
-   subscribers see the new ops on the next 1-second poll.
-7. **Commits or rolls back** — exception propagates after rollback
-   so the caller sees the real error and the typed error class
-   maps to a specific exit code in `handle()`.
+| Module | Responsibility |
+| --- | --- |
+| `src/cli.ts` | Commander wiring (`buildProgram`) |
+| `src/cli/*.ts` | one file per verb namespace, thin wrappers over the SDK; `format.ts` renders tables, `handle.ts` maps errors to exit codes and runs ambient sync |
+| `src/cli/tasks/*.ts` | the `mu task` namespace, including `mu me tasks` / `mu me next` |
+| `src/cli/dispatch-hints.ts` | dispatch-time `Next:` hints for pi agents (`--fresh`, `--steer`, abort) |
+| `src/cli/agents-remote.ts` | `mu agent remote-env`: prints the ssh forward and env, runs nothing |
+| `src/cli/tui-launch-focus.ts` | initial-tab focus ladder for bare `mu` and `mu state --tui` |
+| `src/cli/tui/` | the ink TUI; the only place ink and react are imported |
+| `src/output.ts`, `src/shell-quote.ts` | `printNextSteps` / `errorNextSteps`; POSIX quoting for hints |
+| `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
+| `src/index.ts` | SDK entry point |
+| `skills/mu/` | the skill loaded into an agent's context; `mu --help` owns the verb reference |
+| `scripts/migrate.ts` | retained migration sidecar ([scripts/README.md](../scripts/README.md)) |
+| `scripts/check-doc-links.mjs` | relative-link and anchor checker for every markdown file, run by `test/doc-links.test.ts` |
+| `test/` | vitest suites; `*.integration.test.ts` touch real tmux, herdr or VCS ([sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
 
 ## Key seams
 
-The extension points. A new impl of each is small.
+A new implementation of each is small.
 
-| Seam                | Add a new impl by...                                                                                                          |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `VcsBackend`        | Implementing `detect / createWorkspace / freeWorkspace / isClean / commitsBehind / rebaseTo / commitsSinceBase / recentCommits / showCommit` (~80–150 LOC; jj/sl/git/none are working examples)        |
-| New typed verb      | An SDK function in the relevant `src/*.ts`; a `cmd<Verb>` in the matching `src/cli/<namespace>.ts`; one commander block in `buildProgram()`, wrapped in `handle()` and routed through `printNextSteps` |
-| New schema migration| Bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror the shape in `CURRENT_SCHEMA`. Keep startup migration-free; extend the retained fresh-target sidecar only when an old released schema needs a bridge. Recipe: [scripts/README.md](../scripts/README.md) |
-| New syncable field  | Add the column to a portable table, extend the capture trigger's changed-column comparison, confirm the apply path writes it. The UPDATE trigger MUST emit only changed columns — a full-row payload silently regresses field merge to row-level LWW |
-| Cross-machine sync  | Nothing: every invocation already flushes local ops and ingests each peer segment from its watermark. No daemon, no network code, no membership config |
-
-An importer must synthesize **ops, not rows**: the tables are a
-projection of the log, so a direct INSERT is invisible to sync and
-reported as drift.
-
-## The ambient sync hook
-
-Sync is **ambient, not a daemon**: no watcher, no background process,
-no polling loop outliving a command. It happens because you already
-run `mu` constantly.
-
-**The seam is `handle()`** (`src/cli/handle.ts`), the one place every
-verb passes through, and the only seam that is already async —
-`syncPass` is async (it takes the file lock) while most verb bodies
-are synchronous better-sqlite3 code. One `await` before `fn(db)` and
-one after covers all ~60 verbs; no verb learns that sync exists.
-
-**Order matters**: ingest BEFORE the body, so the verb reads the
-freshest state transport has delivered; flush AFTER, so this
-invocation's ops reach the segment now rather than next invocation.
-Flush also runs on the ERROR path — a verb may have committed ops
-before throwing, and those ops are already canonical, so withholding
-them would make this machine's history depend on the exit code.
-
-Four carve-outs:
-
-| Surface | Behaviour | Why |
-| ------- | --------- | --- |
-| `MU_SYNC_DIR` unset | One `if` on one env var. No promise, no filesystem touch. | The single-machine case must pay nothing. Measured indistinguishable from baseline; ~3ms with one peer. |
-| `mu sql` | Opts out (`handle(..., { ambientSync: false })`). | It is the verb whose result an operator diffs against their own expectation; an ambient ingest changing a row count mid-inspection reads as a mu bug. |
-| `mu sync` | Opts out and runs the pass itself. | Otherwise the report prints 'ingested 0' right after ingesting. |
-| The TUI | On the SLOW tick (10s, `SLOW_TICK_MS`) only, guarded so N tabs run one pass per beat, `quiet: true`. | The fast tick can be wound down to 100ms — 10 passes/second on a shared folder. Quiet because the TUI owns the alternate screen; sync problems surface via the Doctor card. |
-
-### Out-of-order arrival: `reprojectDeferredOps`
-
-An `edge` or `note` put whose task has not been ingested yet skips as
-`absent` — correctly. But ingest advances the watermark past it
-anyway, so without a second pass it never lands: a permanent silent
-divergence, and a coin flip per fleet, since peers are discovered by
-`localeCompare` over random-UUID filenames.
-
-`reprojectDeferredOps` re-queries the log for note/edge puts that are
-resolvable NOW but unprojected. No retry queue — that would be a
-second source of truth, and it would not survive a short-lived mu
-process when the parent often arrives days later. It excludes ops
-whose parent task is gone and keys carrying a newer `del`,
-so a deleted edge is never resurrected and an orphan is not retried
-forever. On a healthy DB it is two indexed queries returning zero
-rows. Called once per ingest pass, never per peer: an edge in one
-segment may name a task in another.
-
-## Surrogate-PK + SDK-boundary discipline
-
-A substrate-wide invariant; every entity table follows it.
-
-**Schema shape — every entity table:**
-
-```
-(
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,   -- surrogate; internal
-  <scope_id>    INTEGER NOT NULL REFERENCES <parent>(id) ON DELETE CASCADE,
-  <name>        TEXT NOT NULL,                        -- operator-facing; mutable
-  -- ... domain attributes
-  UNIQUE (<scope_id>, <name>)                         -- per-scope unique
-)
-```
-
-FKs reference `<child>.<parent>_id` (INTEGER), never the TEXT name.
-The TEXT name is an operator-facing attribute — searchable,
-displayable, cheap to rename. The surrogate id is the identity.
-
-**TEXT-by-design exceptions:** the
-workstream's own `name` (it IS a tmux session name; globally
-unique), `task_notes.author` / `ops.actor` (free-text actor
-labels — `"orchestrator"`, `"user"`, `"system"`), `ops.entity`
-(open enum — future entities need no migration), `agents.cli`
-(adding a new CLI must not require a schema change), and every
-column of `ops` (the ops log is FK-free by design and addresses
-rows by their NATURAL key, so an op outlives the row — and the
-workstream — it records).
-
-**SDK boundary discipline** — same shape as REST: external API
-uses business identifiers, internal layer uses primary keys.
-
-> **Public SDK functions take operator-facing names.**
-> **Internal helpers take surrogate ids.**
-> **Resolution happens at the public-function entry, exactly once.**
-
-```ts
-// PUBLIC: takes operator-facing names
-export function claimTask(
-  db: Db,
-  workstream: string,
-  localId: string,
-  opts?: ClaimOptions,
-): ClaimResult {
-  const wsId = resolveWorkstreamId(db, workstream);
-  const taskId = tryResolveTaskId(db, wsId, localId);
-  if (taskId === null) throw new TaskNotFoundError(localId);
-  const agentId = resolveCurrentAgentId(db, wsId);
-  return claimTaskById(db, taskId, agentId, opts);
-}
-
-// INTERNAL: takes surrogate ids; never re-resolves
-function claimTaskById(db, taskId, agentId, opts): ClaimResult { ... }
-```
-
-Resolving exactly once at the boundary buys three things: no
-double-resolution; no mid-function ambiguity (with surrogate ids in
-hand, internal helpers need no workstream context — the FKs make
-scope implicit); and one place for error mapping
-(`WorkstreamNotFoundError` originates at resolve-time in
-`src/db.ts`; `TaskNotFoundError` / `AgentNotFoundError` are raised by
-SDK callers wrapping the `tryResolve*` null-return, so the typed
-class and its exit-code 3 mapping hold whichever leg missed).
-
-**`--json` output preserves operator-facing names.** Surrogate ids
-never leak into `--json`, error payloads, log lines, or markdown
-exports. Promoting them to the public shape would re-introduce a
-global namespace by the back door (anti-feature pledge).
-
-## State of truth
-
-- **`~/.local/state/mu/mu.db` is canonical.** Everything else is a
-  cache, including tmux pane titles (mu re-pushes their durable agent/task
-  context via `composeAgentTitle` after every relevant state change).
-- **Reads are cheap** via SQLite views (`ready`, `blocked`, `goals`).
-- **Writes go through the typed SDK functions** (`src/agents.ts`,
-  `src/tasks.ts`, …) which validate, transact, and reconcile. Op
-  capture is not their job — the triggers handle it.
-- **Workstream scoping is mandatory at the CLI boundary.** TEXT names
-  (`tasks.local_id`, `agents.name`) are per-workstream unique — the
-  same name may legitimately exist in two workstreams. Every public
-  SDK function taking such a name also takes (or threads) the
-  workstream; internal SQL filters by `(workstream_id, name)`. Test
-  fixtures and `mu sql` read paths may omit it and fall back to
-  first-match-by-name. The schema enforces it structurally
-  (per-workstream UNIQUE on name + INTEGER FKs).
-- **The ops log is the insurance and it IS version history** — see
-  [§ The ops log](#the-ops-log-read-this-first). `mu undo <group>`
-  reverts one action; `mu rebuild <file>` replays the whole log into
-  a fresh DB.
-- **In-memory state is short-lived** — the CLI's per-command
-  connection. Gone on process exit.
-- **Cross-process coordination** is via SQLite WAL — multiple `mu`
-  processes share the file safely.
-
-## Errors
-
-Curated error classes per layer; no try/catch swallowing. CLI exit
-codes:
-
-| Code | Meaning                                                  |
-| ---- | -------------------------------------------------------- |
-| 0    | success                                                  |
-| 1    | generic error                                            |
-| 2    | usage error (commander's default)                        |
-| 3    | not found (no such agent / task / workspace)             |
-| 4    | conflict (name collision, double-claim, dirty tree)      |
-| 5    | substrate unavailable (`tmux` not running, DB locked)    |
-
-Errors carry structured context (operation name, target, attempted
-action) so `mu doctor` can surface them readably.
-
-## Testing layers
-
-| Layer                              | Test approach                                                                  |
-| ---------------------------------- | ------------------------------------------------------------------------------ |
-| `src/db.ts`                        | Real SQLite in temp dir; schema/table-count assertions                          |
-| `src/tasks.ts`                     | Real SQLite in temp dir; pure functions over fixture data                       |
-| `src/tracks.ts`                    | Pure functions; union-find + diamond-merge properties                           |
-| `src/agents.ts`                    | Mocked tmux executor via `setTmuxExecutor()`; reaper integration tests          |
-| `src/logs.ts`                      | Real SQLite; cursor semantics, AUTOINCREMENT durability, ops-outlive-workstream |
-| `src/capture.ts` + `src/op-context.ts` | Real SQLite, no tmux: payloads hold ONLY changed columns (asserted by key COUNT), echo suppression, cascade grouping, FK-CASCADE tombstone keys, the null-intent fail-safe |
-| `src/apply.ts`                     | Real SQLite, INJECTED HLCs, no sleeps: field-level convergence in both orders, same-field LWW determinism, all four put/del orderings, resurrection, grow-only notes, edge add/remove, the set-to-NULL trap, `owner_id` stripping, replay idempotence |
-| `src/rebuild.ts`                   | Round trip asserted row-BY-ROW per portable table (a count-only check passes on a garbage rebuild), plus idempotence, tombstones, byte-identical ops, log-only entities copied, `machine_id` + clock carried. `cli-rebuild.integration` covers the verb |
-| `src/drift.ts` + `src/fleet-hazards.ts` | Drift planted the way a capture bug would (`withCaptureSuppressed` + direct mutation), with equal weight on FALSE positives (cascade delete, resurrection, set-to-NULL, no-op update, claimed task). `classifyFsType` against synthetic magic numbers |
-| `src/dormant.ts` | Task `updated_at` written directly in SQL (the verbs stamp `datetime('now')`, and the age IS the input under test). Weighted toward the BOUNDARY between the two buckets rather than detection: at an age between the thresholds, a closed-out workstream is reported and one with open tasks is not |
-| `src/disk-recon.ts` | Per-test `MU_STATE_DIR` temp dir with the on-disk shape built by hand — the disagreements it detects cannot be produced through the normal verbs, since those keep disk and DB in step. Both directions covered (row without dir, dir without row), plus the live-WAL-triple exclusion and `stranded` marking |
-| `src/segments.ts`                  | TWO temp DBs and one shared dir — the real deployment shape. Round trip; two machines editing different fields both surviving; idempotence; each robustness layer; machine-local ops never reaching a file; Syncthing conflict copies |
-| `src/sync.ts` + `src/cli/sync.ts`  | Fast tier covers decision logic in-process (staleness arithmetic, peer-prefix ambiguity, MU_SYNC_DIR unset, the never-throw contract against four breakages, hook order). `cli-sync.integration` re-checks it THROUGH THE VERB with two DBs and one dir |
-| the whole sync path, as a SESSION  | `sync-session.integration` simulates days of laptop↔devserver work: 8 rounds, two machines, no coordination beyond the folder. Asserts byte-identical portable content, no `--deep` drift, and a quiet round adding exactly zero ops |
-| `src/hlc.ts`                       | Real SQLite + an INJECTED clock (no sleeps): backwards jumps, stalled milliseconds, sort order, durability, concurrent minting |
-| `src/vcs.ts` + `src/workspace.ts`  | `*.integration.test.ts` files use real git in `os.tmpdir()`; jj/sl tests feature-detect (skip if binary missing) |
-| `src/cli.ts` / verb integration    | `*.integration.test.ts` files; real tmux server, unique session per test        |
-| Fast unit/dev-loop tier            | `npm run test:fast`; excludes `*.integration.test.ts` / `*.smoke.test.ts`, uses mocked tmux/VCS and per-test temp DBs |
-| Stress / flake audit               | `npm run test:stress`; repeats the full suite with per-run logs/timeouts, optionally in parallel waves (`MU_TEST_STRESS_MODE=parallel`) |
-| End-to-end                         | `test/acceptance.integration.test.ts` — the canonical 10-task / 3-agent demo   |
-
-Two fixture traps: a convergence fixture must share ONE creation op
-(two independent `task add`s for the same id make the later creation
-legitimately win every field), and an ordering-sensitive test must
-RENAME segments to pin ingest order, since peers are discovered by
-`localeCompare` over random-UUID filenames.
-
-Flake lessons: treat pass-alone/fail-under-load cases as
-concurrency bugs first; use retrying temp-dir cleanup for VCS fixtures
-whose subprocesses keep files alive briefly; drive wait/reaper
-integration tests from poll-loop seams, not fixed timers; wait for
-stable Ink output instead of sleeping.
-
-## Distribution
-
-Single npm package `mu` (see `package.json`):
-
-- `dist/cli.js` — CLI entry, executable (`bin: { mu: ./dist/cli.js }`; shebang preserved by `tsup`)
-- `dist/index.js` + `dist/index.d.ts` — programmatic API + types for SDK callers
-- `skills/mu/SKILL.md` — bundled skill (the only non-`dist` asset shipped)
-
-`tsup` bundles three entries: `index` and `cli` from `src/`, and
-`extension/mu-pi` (the pi extension `mu link pi` points at). No runtime
-build step on the user's machine. pi stays a peer dep — the extension
-types pi's API structurally — and there is no bundled `agents/*.md` or `prompts/*.md`:
-per-role agent guidance lives in the user's project repo.
-
-The dependency list lives in `package.json`; the rule for adding
-new ones is the anti-feature pledge in
-[ROADMAP.md § Anti-feature pledges](ROADMAP.md#anti-feature-pledges).
+| Seam | Add one by |
+| --- | --- |
+| `MuxBackend` | implementing the interface in `src/mux/`; a backend without an equivalent no-ops, and a backend-only feature is an optional method callers test for |
+| `VcsBackend` | implementing `detect`, `createWorkspace`, `freeWorkspace`, `isClean`, `commitsBehind`, `rebaseTo`, `commitsSinceBase`, `recentCommits`, `showCommit` (about 80-150 LOC) |
+| typed verb | an SDK function; a `cmd<Verb>` in `src/cli/<namespace>.ts`; one Commander block in `buildProgram()` wrapped in `handle()` and routed through `printNextSteps` |
+| schema change | bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror `CURRENT_SCHEMA`; startup stays migration-free ([scripts/README.md](../scripts/README.md)) |
+| syncable field | add the column to a portable table, extend the UPDATE trigger's changed-column comparison, confirm apply writes it; a full-row payload regresses merge to row-level LWW |
+| cross-machine sync | nothing: every invocation already flushes and ingests |
