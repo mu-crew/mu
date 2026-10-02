@@ -1395,8 +1395,9 @@ From any shell with mu on `$PATH`:
 mu agent send worker-1 "echo hello from outside"
 ```
 
-**Which transport.** A pi agent (`--cli pi`, or a command whose argv0
-is `pi` / `pi-meta`) gets the text through its **control socket**: the
+**Which transport.** A pi agent (`--cli pi`, a command whose argv0
+is `pi` / `pi-meta`, or any agent whose control socket file exists)
+gets the text through its **control socket**: the
 mu pi extension calls `pi.sendUserMessage` inside the pane's own pi, so
 nothing is pasted or scraped. When pi is busy the message queues as a
 follow-up; `--steer` interrupts the current run instead. If the socket

@@ -230,6 +230,15 @@ and ARCHITECTURE (§ Control socket) are updated to match.
 
 ### Fixed
 
+- **A pi agent spawned under a custom `--cli` key stays a ctl agent.**
+  `mu agent spawn x --cli helper --command "pi-meta ..."` handshook
+  (`ctl: ok`), but later verbs re-derived pi-ness from the cli key and
+  the current env, so send pasted through the mux, `--fresh` and
+  `mu agent abort` refused, and state read murmur. The agent's own
+  socket file now also marks it as a ctl agent (`expectsCtl`): spawn
+  removes a stale file before the pane starts, so a file at the derived
+  path was bound by this agent. No schema change.
+
 - **A nested pi no longer steals or deletes an agent's control
   socket.** A pi started inside an agent's pane (a probe, a `pi -p`
   one-liner) inherits `MU_CTL_SOCK`. The extension used to unlink the

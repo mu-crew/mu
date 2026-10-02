@@ -123,6 +123,14 @@ describe("abortAgent", () => {
     expect(steps).toContain("mu agent kick worker-1 -w auth");
   });
 
+  it("custom cli key running pi (its socket answers): aborts through ctl", async () => {
+    seed("rv1-alias", "helper");
+    await serve("rv1-alias", "busy");
+    const r = await abortAgent(db, "rv1-alias", { workstream: "auth" });
+    expect(ops).toEqual(["status", "abort", "wait"]);
+    expect(r).toMatchObject({ aborted: true, settled: true });
+  });
+
   it("non-pi agent: typed error pointing at kick, nothing sent", async () => {
     seed("worker-1", "claude");
     const err = await abortAgent(db, "worker-1", { workstream: "auth" }).catch((e: unknown) => e);

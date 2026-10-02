@@ -249,7 +249,7 @@ export async function cmdSend(
     agentRow !== undefined &&
     !opts.fresh &&
     !opts.steer &&
-    (via ?? chooseTransport(agentRow, text)) === "ctl";
+    (via ?? chooseTransport(agentRow, text, agentCtlSocket(db, agentRow))) === "ctl";
   const before =
     plainCtl && agentRow !== undefined ? await ctlProbe(agentCtlSocket(db, agentRow)) : undefined;
   const sent = await sendToAgent(db, name, text, {
@@ -775,8 +775,9 @@ export async function cmdAgentWait(
     signal: AbortSignal,
   ): Promise<AgentWatch | undefined> => {
     const agent = getAgent(db, ref.name, ref.workstreamName);
-    if (agent === undefined || !expectsCtl(agent)) return undefined;
+    if (agent === undefined) return undefined;
     const sock = agentCtlSocket(db, agent);
+    if (!expectsCtl(agent, sock)) return undefined;
     const probe = await ctlProbe(sock);
     if (probe.kind !== "ok") return undefined;
     const settled = ctlRequest(sock, { op: "wait", afterRuns: probe.status.runs }, { signal }).then(

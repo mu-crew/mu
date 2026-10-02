@@ -262,7 +262,14 @@ export async function readAgentStates(
   agents: readonly StateAgentRef[],
   opts: { now?: number; stateDir?: string } = {},
 ): Promise<Map<string, StateReading>> {
-  const ctlAgents = agents.filter((a) => a.cli !== undefined && expectsCtl({ cli: a.cli }));
+  const ctlAgents = agents.filter(
+    (a) =>
+      a.cli !== undefined &&
+      expectsCtl(
+        { cli: a.cli, name: a.name, workstreamName: a.workstreamName },
+        ctlSocketPath(a.workstreamName, a.name, opts.stateDir),
+      ),
+  );
   const probes = await Promise.all(
     ctlAgents.map((a) =>
       ctlProbe(ctlSocketPath(a.workstreamName, a.name, opts.stateDir), CTL_STATE_PROBE_MS),
