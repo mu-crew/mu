@@ -1,623 +1,227 @@
 # Repo guide for AI coding agents
 
-You're an AI coding agent working on the `mu` repo, which builds
-**mu** — a CLI that manages a persistent crew of AI agents in
-multiplexer panes (tmux or herdr) coordinated through a built-in
-task DAG.
+This repo builds **mu**: a CLI that runs AI agents in tmux or herdr
+panes, coordinated through a task DAG.
 
-Read the linked docs before you write code. Follow the conventions
-below.
+## Read these first
 
----
+1. `docs/guide/README.md` — what mu does for a user.
+2. [CHANGELOG.md](CHANGELOG.md) — the upcoming version's entry is the
+   source of truth for verbs, schema, and env vars.
+3. [docs/VISION.md](docs/VISION.md) — design pillars you must not violate.
+4. [docs/ROADMAP.md](docs/ROADMAP.md) — what's next and the promotion
+   criteria. Read [Anti-feature pledges](docs/ROADMAP.md#anti-feature-pledges)
+   before you add a dependency, an abstraction, or a surface.
+5. [docs/VOCABULARY.md](docs/VOCABULARY.md) — canonical terms for code,
+   docs, and error messages. `docs/reference/` holds env vars and naming.
+6. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the module map (what
+   lives where in `src/`), plus deep dives under `docs/architecture/`.
 
-## Read these first (in this order)
-
-1. **[docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md)** — what mu does
-   from a user's perspective. ~10 minutes.
-2. **[CHANGELOG.md](CHANGELOG.md)** — the upcoming version's entry.
-   Single source of truth for the verb list, schema, env vars.
-3. **[docs/VISION.md](docs/VISION.md)** — the design principles you
-   must not violate.
-4. **[docs/ROADMAP.md](docs/ROADMAP.md)** — what's next, with
-   promotion criteria. **Read the "Anti-feature pledges" section
-   before adding any new dep, abstraction, or surface.**
-5. **[docs/VOCABULARY.md](docs/VOCABULARY.md)** — canonical terms.
-   **Source of truth for every word** in code, docs, and error
-   messages. If you use a term not defined there, fix the docs first.
-6. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module layout,
-   reconciliation algorithm, TUI architecture, key seams.
-
-Design rationale for rejected and unbuilt features lives in
-[docs/ROADMAP.md](docs/ROADMAP.md) per item, alongside its promotion
-criteria.
-
-> **If you are an orchestrator** — a coding agent driving a crew of
-> pi worker agents on this repo via `mu` — read
-> **[docs/HANDOVER.md](docs/HANDOVER.md)** instead of the order
-> above: onboarding steps, the 8-phase dispatch loop,
-> conflict-resolution playbook, known gotchas, end-of-session
-> checklist. AGENTS.md is for workers and humans editing the repo
-> directly.
-
----
-
-## Repo layout
-
-```
-mu/
-├── README.md              # human-user entry point
-├── AGENTS.md              # this file
-├── CHANGELOG.md           # release notes
-├── docs/                  # everything else
-│   ├── USAGE_GUIDE.md     # user-facing tour (§ 5b is the TUI reference)
-│   ├── HANDOVER.md        # orchestrator goto reset doc (8-phase loop + gotchas)
-│   ├── ROADMAP.md         # what's next; promotion criteria; anti-feature pledges
-│   ├── VISION.md          # design pillars
-│   ├── VOCABULARY.md      # canonical terms (single source of truth)
-│   └── ARCHITECTURE.md    # module layout, TUI architecture, key seams
-├── extension/             # the mu pi extension (built to dist/extension/mu-pi.js)
-│   ├── mu-pi.ts           # serves $MU_CTL_SOCK inside a spawned pi (control socket server)
-│   └── delegate.ts        # parent-side mu_delegate / mu_delegate_cancel tools (shell out to mu)
-├── src/                   # all source (root files: SDK + shared infra; one
-│                          # level of subdirs OK for cohesive clusters — see
-│                          # `src/cli/`, `src/agents/`, `src/tasks/`, `src/mux/`, `src/ctl/`)
-│   ├── db.ts              # SQLite schema + openDb (single CREATE-IF-NOT-EXISTS block; v11)
-│   │                      # also owns SYNCED_ENTITIES / PORTABLE_TABLES / MACHINE_LOCAL_TABLES
-│   ├── mux.ts             # multiplexer backend hub (re-exports src/mux/*)
-│   ├── mux/               # cohesive cluster: one file per multiplexer
-│   │   ├── index.ts       # re-export hub consumed by src/mux.ts
-│   │   ├── types.ts       # MuxBackend interface + MuxError / PaneNotFoundError / NoMultiplexerError
-│   │   ├── detect.ts      # MU_MUX → HERDR_ENV → $TMUX → availability ladder; activeMux()
-│   │   ├── tmux.ts        # tmux impl: wrapper, 6-step send protocol, pane validation
-│   │   └── herdr.ts       # herdr impl: JSON socket API, atomic send, native pane status
-│   ├── tmux.ts            # back-compat re-export of the tmux backend (new code imports mux.js)
-│   ├── detect.ts          # pi status detector + Braille-spinner fallback; used only when
-│   │                      # the backend has no paneStatus() of its own (i.e. tmux)
-│   ├── reconcile.ts       # ghost prune + status detect + orphan surface
-│   ├── agents.ts          # CRUD + send/read/list/close + liveness + reaper hub (re-exports src/agents/*)
-│   ├── agents/            # cohesive cluster of agent-lifecycle internals
-│   │   ├── spawn.ts       # spawnAgent + resolveCliCommand / awaitSpawnLiveness / pane create-or-reuse / prestage / rollback
-│   │   ├── spawn-lock.ts  # cross-process advisory lock around a spawn's topology critical section
-│   │   ├── kick.ts        # reaper events + cleanup of dead agent rows
-│   │   ├── adopt.ts       # adoptAgent: register an existing pane as a managed agent
-│   │   ├── wait.ts        # waitForAgents: block on task-less agents finishing (busy → any other state)
-│   │   ├── transport.ts   # send routing: ctl for pi agents, mux paste otherwise, no fallback; expectsCtl
-│   │   ├── abort.ts       # abortAgent: stop a pi turn through the control socket
-│   │   ├── delegate.ts    # delegateOutcome: one wait result → done / empty / died / timeout / pending
-│   │   └── errors.ts      # typed agent error classes (AgentNotFoundError, AgentDiedOnSpawnError, …)
-│   ├── tasks.ts           # task SDK hub (re-exports src/tasks/*)
-│   ├── tasks/             # cohesive cluster of task-graph internals
-│   │   ├── status.ts      # TaskStatus enum + helpers
-│   │   ├── core.ts        # core SDK funcs reused across cluster files
-│   │   ├── id.ts          # tryResolveTaskId / qualified-id helpers
-│   │   ├── queries.ts     # listTasks / nextTasks / owned-by
-│   │   ├── edit.ts        # addTask / setTaskTitle / etc (no edges)
-│   │   ├── edges.ts       # block / unblock / reparent / delete + dedupe
-│   │   ├── claim.ts       # claim / release + resolveActorIdentity (atomic CAS)
-│   │   ├── lifecycle.ts   # setTaskStatus / closeTask / openTask + cascade
-│   │   ├── wait.ts        # waitForTasks: block until tasks reach a target status
-│   │   ├── sort.ts        # sortTasks (roi / recency / age / id)
-│   │   └── errors.ts      # typed task error classes (TaskAlreadyOwnedError, CycleError, …)
-│   ├── tracks.ts          # parallel-tracks union-find with diamond merge
-│   ├── workstream.ts      # ensureWorkstream / list / summarize / destroy
-│   ├── hlc.ts             # hybrid logical clock: the monotonic ordering key on every op
-│   ├── capture.ts         # SQLite triggers recording every portable mutation as an op, in-transaction
-│   ├── op-context.ts      # withOpContext (intent/actor/group) + withCaptureSuppressed echo guard
-│   ├── apply.ts           # the apply path: per-field LWW merge + tombstones + deferred reprojection
-│   ├── undo.ts            # inverse ops for one group (granular undo; supersede refusal)
-│   ├── rebuild.ts         # replay the whole ops log into a NEW DB file (disaster recovery)
-│   ├── drift.ts           # ops-log-vs-live-tables drift check (cheap default tier + --deep rebuild-diff)
-│   ├── segments.ts        # JSONL segment transport: flush own ops / ingest peers from a watermark
-│   ├── sync.ts            # peer status + the ambient flush/ingest hook + --from reader + --repair
-│   ├── fleet-hazards.ts   # mixed-fleet doctor checks (DB inside MU_SYNC_DIR, network mount, case collisions)
-│   ├── file-lock.ts       # generic cross-process advisory lock via atomic fs.mkdir
-│   ├── ctl/               # control socket client: path.ts (ctlSocketPath), protocol.ts (v1, CTL_OPS), client.ts (ctlRequest / ctlProbe)
-│   ├── link.ts            # mu link pi: extension shim + skill symlink + inspectLinks for doctor
-│   ├── logs.ts            # typed READER over `ops` + appendLog / emitEvent (the one write path triggers can't cover)
-│   ├── log-render.ts      # the ONE op → prose formatter (renderOp); shared by CLI + TUI
-│   ├── vcs.ts             # VcsBackend hub (re-exports src/vcs/*: jj/sl/git/none impls)
-│   ├── workspace.ts       # per-agent VCS workspaces hub (re-exports src/workspace/*)
-│   ├── glyphs.ts          # THE glyph vocabulary: agent status + state glyphs + card digits
-│   ├── shell-quote.ts     # POSIX single-quote helper for copy-pasteable Next: hints
-│   ├── dag.ts             # full-DAG forest builder (loadFullDag for `mu task tree` + DAG popup)
-│   ├── state.ts           # SDK seam for `mu state` (fast SQL tier + slow subprocess tier + merge)
-│   ├── staleness.ts       # WORKSPACE_STALE_THRESHOLD + isStaleWorkspace
-│   ├── project-root.ts    # detectProjectRoot for the TUI launch cwd ladder
-│   ├── doctor-summary.ts  # TUI-friendly slice of `mu doctor` checks + remediation helpers
-│   ├── output.ts          # NextStep type + printNextSteps / errorNextSteps
-│   ├── cli.ts             # commander wiring (buildProgram); re-exports format/handle for back-compat
-│   ├── cli/               # one file per verb-namespace; thin wrappers over the SDK
-│   │   ├── workstream.ts  # workstream init / list / destroy
-│   │   ├── agents.ts      # agent spawn / send / read / list / show / close / kick / wait / adopt
-│   │   ├── agents-remote.ts # agent remote-env (prints ssh forward + env; runs nothing)
-│   │   ├── dispatch-hints.ts # dispatch-time Next: hints for pi agents (--fresh / --steer / abort)
-│   │   ├── link.ts        # mu link pi (filesystem only; runs outside handle())
-│   │   ├── tasks.ts       # `mu task` hub (re-exports wireTaskCommands / cmdMyNext / cmdMyTasks / unescapeNoteText)
-│   │   ├── tasks/         # sub-cluster of the `mu task` namespace
-│   │   │   ├── queries.ts    # list / next / owned-by + cmdMyTasks / cmdMyNext (back `mu me tasks` / `mu me next`)
-│   │   │   ├── lifecycle.ts  # close / open + cascade preview
-│   │   │   ├── edit.ts       # add / show / notes / note / update + helpers
-│   │   │   ├── edges.ts      # block / unblock / reparent / delete
-│   │   │   ├── claim.ts      # claim / release / wait
-│   │   │   ├── tree.ts       # tree rendering
-│   │   │   └── wire.ts       # Commander glue
-│   │   ├── workspace.ts   # workspace list / free / path / orphans / refresh / commits
-│   │   ├── log.ts         # log read / write / tail
-│   │   ├── undo.ts        # mu undo [group] (list / preview / --yes apply)
-│   │   ├── sync.ts        # mu sync (peer status; --from / --repair)
-│   │   ├── rebuild.ts     # mu rebuild <file>
-│   │   ├── state.ts       # `mu state` (canonical state card); --tui dispatches to src/cli/tui/
-│   │   ├── staleness.ts   # shared workspace-staleness CLI helpers + warn formatter
-│   │   ├── tui-launch-focus.ts # initial-tab focus ladder for bare `mu` and `mu state --tui`
-│   │   ├── tui/           # interactive ink-based TUI cluster; ONLY place ink/react are imported
-│   │   │   ├── index.ts            # runTui entrypoint; alt-screen + mouse-mode lifecycle
-│   │   │   ├── escapes.ts          # pure ANSI escape constants (ALT_SCREEN_*, mouse-mode bytes) — no ink imports
-│   │   │   ├── app.tsx             # <App> root (popup state machine + global keymap + footer + tick + tabs)
-│   │   │   ├── state.ts            # poll-loop hook (useDashboardSnapshot; fast/slow tick split)
-│   │   │   ├── keys.ts             # pure dispatchGlobalKey + dispatchPopupKey + shouldSwallowGlobalKey
-│   │   │   ├── keymap-spec.ts      # canonical keymap source-of-truth (drives help overlay + dispatch)
-│   │   │   ├── yank.ts             # clipboard probe + write (pbcopy/wl-copy/xclip/xsel/clip.exe + OSC-52)
-│   │   │   ├── mouse.ts            # vendored SGR mouse layer (parser + double-click + useMouse hook)
-│   │   │   ├── layout.ts           # responsive multi-column dashboard + per-card row budgets
-│   │   │   ├── columns.ts          # column-aligned row layout with protect/clip clipping
-│   │   │   ├── wrap-ansi.ts        # ANSI-aware visual-width line wrapper + SGR close-on-end
-│   │   │   ├── format-helpers.ts   # shared TUI formatters (relTime, sinceClaim, ROI, etc.)
-│   │   │   ├── titled-box.tsx      # rounded border with section header inset into top border + bottomLabel
-│   │   │   ├── popup-shell.tsx     # popup outer chrome (cyan TitledBox)
-│   │   │   ├── list-row.tsx        # centralised non-selected row primitive (width pin + gutter + truncate)
-│   │   │   ├── padded-rows.tsx     # per-card body padder
-│   │   │   ├── help.tsx            # ?/F1 keymap overlay (scrollable on short panes)
-│   │   │   ├── status-bar.tsx      # bottom status bar (mode + active ws + tick + footer flash)
-│   │   │   ├── tab-strip.tsx       # multi-workstream tab switcher (N≥2)
-│   │   │   ├── tab-strip-layout.ts # pure window-around-active layout helper for the tab strip
-│   │   │   ├── tuicr.ts            # `t` shortcut: alt-screen handoff to tuicr -r <sha>
-│   │   │   ├── use-popup-filter.tsx       # shared '/' substring filter hook + applyFilter + FilterPrompt
-│   │   │   ├── use-status-filter.tsx      # task-status toggles for task-list popups (o/i/c)
-│   │   │   ├── use-notes-drill.ts         # shared notes-drill memo (5 task popups consume it)
-│   │   │   ├── use-popup-action-queue.ts  # consume mouse PopupAction queue once per render
-│   │   │   ├── use-terminal-size.ts       # shared reactive terminal-size hook (ink doesn't re-render on resize)
-│   │   │   ├── agent-display.ts           # shared agent-row display helpers for cards/popups
-│   │   │   ├── lazygit.ts                 # `l` in the Commits popup: alt-screen handoff to lazygit
-│   │   │   ├── tmux-attach.ts             # `a` in the Agents popup: alt-screen handoff to the agent's mux pane
-│   │   │   ├── cards/{agents,tracks,ready,log,workspaces,inprogress,blocked,recent,commits,doctor}.tsx + _placeholder.tsx
-│   │   │   └── popups/{agents,tracks,ready,log,workspaces,inprogress,blocked,recent,commits,doctor,dag,all-tasks}.tsx
-│   │   │                          # plus drill.tsx (DrillScrollView), task-detail.tsx (TaskDetailDrill),
-│   │   │                          # cursor-row.tsx, scroll.ts (applyCursor/applyScroll), viewport.ts,
-│   │   │                          # show-loader.ts (shared subprocess-preserving loader)
-│   │   ├── db.ts          # db backup (VACUUM INTO)
-│   │   ├── sql.ts         # sql escape hatch
-│   │   ├── doctor.ts      # doctor diagnostic
-│   │   ├── format.ts      # pure rendering helpers (table renderers, status colourers, truncate/relTime)
-│   │   └── handle.ts      # typed-error → exit-code map + handle() wrapper
-│   └── index.ts           # SDK entrypoint (re-exports)
-├── test/                  # ~200 *.test.ts files / ~2900 tests (`npm run test`); many use real tmux/git/jj/sl
-├── skills/mu/SKILL.md     # what the LLM running inside an agent pane sees
-├── package.json           # bin: { mu: ./dist/cli.js }, type: module
-├── tsconfig.json          # strict + noUncheckedIndexedAccess + verbatimModuleSyntax
-├── tsup.config.ts         # bundles src/ → dist/ (cli + index entries)
-├── biome.json             # lint + format
-└── vitest.config.ts       # tests
-```
-
----
-
-## Working conventions
-
-### Build / test / lint
+## Build, test, lint
 
 ```bash
 npm install
 npm run build            # tsup → dist/
-npm run typecheck        # source + test TypeScript checks
-npm run lint             # biome check src test
-npm run test:fast        # fast unit/dev-loop tier (excludes *.integration.test.ts / *.smoke.test.ts)
-npm run test             # full vitest suite, including integration tests
-npm run test:watch       # vitest in watch mode
-npm run test:watch:fast  # fast-tier watch mode
+npm run typecheck
+npm run lint
+npm run test:fast        # unit tier; safe to run concurrently
+npm run test             # full suite, including integration
+npm run test:stress      # pre-release stability gate
 ```
 
-#### Two TypeScript compilers, on purpose
+`tsc` is TypeScript 7 (fast typecheck). The `typescript` package is
+aliased to 6.x on purpose: `tsup --dts` needs the programmatic API that
+TS 7.0 lacks. Revisit at TS 7.1.
 
-`tsc` is **TypeScript 7** (the Go-native compiler) and `tsc6` is the
-TypeScript 6 JS compiler. `package.json` aliases them:
+## Code style
 
-```json
-"@typescript/native": "npm:typescript@^7.0.2",
-"typescript": "npm:@typescript/typescript6@^6.0.2"
-```
+- Strict TypeScript with `noUncheckedIndexedAccess`, ESM only. Use
+  `unknown` instead of `any`, and early returns instead of `!`.
+- Throw typed error classes (`AgentNotFoundError`, `CycleError`,
+  `MuxError` and its `TmuxError` / `HerdrError` subclasses, …) so
+  `handle()` maps each to an exit code.
+- Auto-fix sort and format with `npx biome check --write src test`.
+  Never add `--unsafe`: it rewrites `delete process.env.X` into
+  `process.env.X = undefined`, which sets the string `"undefined"`.
+  Delete env vars as `const key = "FOO"; delete process.env[key];`.
+- Files cap at 1500 LOC. Refactor at 800.
+- Layout is flat at the `src/` root. One level of subdirectory is
+  allowed for a cohesive cluster: one theme, imports only from the
+  cluster to root files, and a row in the ARCHITECTURE module map.
 
-This looks backwards and is not. TS 7.0 ships **no programmatic
-compiler API** (`ts.createProgram` and friends return undefined; the
-package exports exactly two keys). It is deferred to 7.1. `tsup --dts`
-goes through `rollup-plugin-dts`, which needs that API, so a plain
-`typescript@7` install builds JS fine and then dies with
-`Cannot read properties of undefined (reading 'useCaseSensitiveFileNames')`.
+## Tests
 
-The alias resolves both needs at once: anything that `require`s
-`typescript` as a LIBRARY gets the 6.x JS API, while the `tsc` BINARY
-is the fast Go compiler (typecheck went ~9s → ~0.6s). The two bins do
-not collide, so no shim is needed.
+- Unit tests use real SQLite in a temp dir and a mocked multiplexer.
+  Install mocks with `installMux()` from `test/_mux.ts`: it sets the
+  backend and its executor together and returns one `restore()`.
+- TUI tests render through `test/_ink-render.ts` (see `test/README.md`).
+- The fast tier (`*.test.ts`) stays in-process: mocked tmux and VCS,
+  per-test temp DBs, no real tmux/git/jj/sl, no sleeps over 50ms.
+- Name full-only tests `*.integration.test.ts`. They may use real
+  tmux, herdr, VCS fixtures, or subprocesses. Real-tmux tests skip
+  without `$TMUX`. Set `process.env.MU_SPAWN_LIVENESS_MS = "0"` in
+  `beforeEach` when the spawned process is meant to live long.
+- Integration tests use unique session names
+  (`mu-test-<pid>-<ts>-<rand>`), poll (50ms × 10) instead of sleeping,
+  and wrap `afterEach` cleanup in `try {} catch {}`. Unit tests call
+  `setSleepForTests(async () => {})`.
+- **Never stop the herdr server or kill its process from a test.** It
+  destroys the user's real panes. herdr isolation is only a named
+  session (`MU_HERDR_SESSION`, enforced by `assertHerdrIsolated()`), so
+  close only what you created.
+- `openDb()` refuses the real DB under vitest. Use `MU_DB_PATH` or
+  `{ path }`.
+- `test/_setup.ts` clears inherited `MU_*` vars except
+  `MU_TMUX_SOCKET`. Opt in per test with `withEnv()` from `test/_env.ts`.
+- `test/_global-teardown.ts` kills every `mu-*` tmux session on the
+  default socket that has no workstream in your real DB.
+- Workers run `npm run test` concurrently. A test that fails
+  under load but passes alone is a test-infra concurrency bug (shared
+  `/tmp`, sockets, leaked subprocesses). One that also fails alone is a
+  real bug.
+- `test/acceptance.integration.test.ts` is the end-to-end gate. Keep it
+  green.
 
-Revisit when 7.1 lands its new API and `rollup-plugin-dts` adopts it;
-at that point `typescript` can point at 7.x directly and
-`@typescript/native` disappears.
+## Change rules
 
-Use `npm run test:fast` for the inner dev loop and concurrent worker
-checks; it is the concurrency-safe tier that avoids real tmux/VCS
-subprocess fixtures. The green gates still include `npm run test`
-before any commit. Real-tmux integration tests need `$TMUX` set and
-skip themselves otherwise; CI runs inside tmux.
-
-### Commits
-
-- Conventional but not strict: prefix with the scope when helpful
-  (e.g. `R4 + R9: ...`, `schema: ...`). One logical change per
-  commit.
-- Body explains **what changed and why**, not just what. Reference
-  the [VISION.md](docs/VISION.md) pillar / [ROADMAP.md](docs/ROADMAP.md)
-  item / promotion criterion that motivated the change.
-- Verify typecheck + lint + tests + build clean before committing.
-  Say so in the commit message.
-
-### Code style
-
-- TypeScript, strict mode. `noUncheckedIndexedAccess` is on — don't
-  trust array indices to be defined; use early returns.
-- ESM only (`"type": "module"`). NodeNext module resolution.
-- No `any`. Use `unknown` and narrow.
-- No non-null assertions (`!`). Use early returns or `if (!x) throw`.
-- Errors are typed classes (e.g. `AgentNotFoundError`,
-  `TaskAlreadyOwnedError`, `CycleError`, `MuxError` and its per-backend
-  subclasses `TmuxError` / `HerdrError`,
-  `AgentDiedOnSpawnError`) so the CLI's `handle()` wrapper can map
-  them to specific exit codes.
-- Imports stay sorted (Biome's `organizeImports` enforces this).
-- Run `npx biome check --write src test` to auto-fix sort + format.
-  **Do not** run `--write --unsafe`: it rewrites `delete
-  process.env.X` to `process.env.X = undefined`, which silently
-  produces the literal string `"undefined"`. The env-deletion pattern
-  here is `const key = "FOO"; delete process.env[key];`.
-- Hard cap: 1500 LOC per file. Refactor signal at 800.
-- **Layout: flat at the root; one level of subdirs is allowed when a
-  cluster of files is naturally cohesive** (e.g. `src/cli/` for the
-  thin commander wrappers, one file per verb-namespace). Each subdir
-  cluster needs:
-  (1) a clear theme (every file does the same kind of thing),
-  (2) imports go from cluster-files → root-files (no upward imports),
-  (3) ARCHITECTURE.md's module table has a row covering it.
-
-### Tests
-
-- Unit tests: real SQLite (in-temp-dir), mocked tmux executor via
-  `setTmuxExecutor()`. Fast, deterministic. For anything touching the
-  multiplexer, use `installMux()` from `test/_mux.ts` rather than the
-  raw setters — it installs the backend AND its executor together and
-  hands back one `restore()`, which removes the ordering hazard of
-  stubbing one backend while asserting against another.
-- TUI popup/card behaviour tests should follow `test/README.md`:
-  prefer the `test/_ink-render.ts` CaptureStream seam over
-  `readFileSync` source-greps except for narrow structural guards.
-- Fast tier: `npm run test:fast` runs `test/**/*.test.ts` while
-  excluding `*.integration.test.ts` and `*.smoke.test.ts`. Keep this
-  tier pure/in-process: mocked tmux/VCS, real SQLite only in per-test
-  temp DBs, no real tmux/git/jj/sl subprocess fixtures, no
-  filesystem-heavy export/import/snapshot paths, and no fixed sleeps
-  above 50ms.
-- Integration tests: full-only tests use the `.integration.test.ts`
-  suffix (e.g. `tmux.integration.test.ts`). They may touch real tmux
-  or herdr servers, git/jj/sl fixture repos, subprocess-backed smoke
-  paths, filesystem-heavy export/import/snapshot flows, or
-  intentionally slower in-process CLI flows. Real-tmux tests are
-  skipped when `$TMUX` is unset; real-herdr tests skip unless a
-  running, protocol-compatible server is present. These tests typically opt out of the spawn
-  liveness check via `process.env.MU_SPAWN_LIVENESS_MS = "0"` in
-  `beforeEach`, since the sh subprocesses they spawn are intentionally
-  long-lived.
-- Each test gets its own temp DB and (for integration) a unique
-  tmux session like `mu-test-<pid>-<ts>-<rand>` to avoid colliding
-  with the user's panes or with parallel test runs.
-- **herdr isolation is a guard, not a socket.** tmux gets a private
-  server via `MU_TMUX_SOCKET`, so a stray test is contained
-  structurally. herdr has no equivalent: its only isolation is a named
-  session (`MU_HERDR_SESSION`), so `test/_mux.ts` enforces it at
-  runtime — `assertHerdrIsolated()` refuses to run when the var is
-  unset or names `default`, and the fatal verbs (`server stop`,
-  `server restart`, `server kill`) are refused even inside a correct
-  session, because a stopped server is shared-fate. **Never stop the
-  herdr server or kill its main process from a test.** That destroys
-  the user's real panes and their unsaved work, with no undo. Clean up
-  per-entity (close what you created), never by nuking the server.
-- Dogfood reality: multiple pi worker agents often run `npm run test`
-  concurrently on the same machine from different workspaces. Treat
-  flakes that pass in isolation but fail under load as concurrency
-  bugs first (shared `/tmp` cleanup, tmux socket/session collisions,
-  leaked subprocesses, VCS background file activity). Use
-  `npm run test:stress` for the pre-release/stability gate; it runs
-  the suite repeatedly with a per-run timeout and can simulate
-  parallel full-suite runs via
-  `MU_TEST_STRESS_MODE=parallel MU_TEST_STRESS_PARALLEL=2`.
-- The acceptance test in `test/acceptance.integration.test.ts` is the
-  "everything works" gate. Keep it passing.
-- **DB baseline**: `openDb()` refuses to open the user's REAL
-  default DB (`<HOME or XDG_STATE_HOME>/mu/mu.db`) when
-  `process.env.VITEST` is set or `NODE_ENV === "test"`. Tests
-  MUST use a per-test temp DB — either via MU_DB_PATH (which
-  `test/_runCli.ts` sets automatically) or an explicit `{ path }`
-  argument to `openDb`. A regression that forgets either one
-  fails loudly at the offending openDb() call site instead of
-  silently writing to the dev box's live state. Production never
-  sets VITEST, so the guard is a no-op outside the test runner.
-- **Env baseline**: `test/_setup.ts` (vitest `setupFiles`) clears
-  every `MU_*` env var inherited from the parent shell at the start
-  of each fork, so SDK-level overrides (`MU_PI_COMMAND`,
-  `MU_IDLE_THRESHOLD_MS`, `MU_SEND_DELAY_MS`, …) can't silently
-  change behaviour underneath tests. Allowlist: `MU_TMUX_SOCKET`
-  (set by `_global-teardown.ts` at MODULE LOAD time — BEFORE vitest
-  spawns the worker pool — for Layer-3 isolation; see round-3
-  Part A in the file's header comment for why module-load not
-  setup()). Tests that need a specific value opt IN per-test via
-  `process.env.X = "..."` or `withEnv()` from `test/_env.ts`.
-- **Default-socket sweep philosophy**: `_global-teardown.ts` runs
-  an ALLOWLIST sweep of `mu-*` sessions on the user's default tmux
-  socket at suite setup AND teardown. The allowlist is DB-rooted:
-  (1) `mu-<name>` for every workstream in the user's REAL DB
-  (read-only via better-sqlite3, bypassing the `openDb()` test
-  guard) and (2) `mu-$MU_SESSION` if the orchestrator runs the suite
-  inside a tmux pane. Anything else is, by elimination, test residue
-  and is killed. No session is grandfathered by being present at
-  module load — that defeats the self-healing intent. Cost: an ad-hoc
-  `tmux new-session -t mu-foo` with no DB row gets killed; run
-  `mu workstream init foo` first. Tests can hardcode any workstream
-  name — if they accidentally bypass the private socket, the sweep
-  catches them.
-
-### When you change behaviour, update VOCABULARY first
-
-Vocabulary is canonical. If you introduce a new concept, name, or
-verb, **add it to docs/VOCABULARY.md before the code lands**. If you
-rename something, update VOCABULARY.md in the same commit.
-
-### Deferred features — don't smuggle them in
-
-[docs/ROADMAP.md](docs/ROADMAP.md) lists what's next, by version,
-with **promotion criteria**:
-
-> 1. A real user hits the missing feature in real workflows ≥2
->    times.
-> 2. The current substrate makes the addition straightforward (no
->    major pillar refactor).
-> 3. The addition fits in <300 LOC or has a clear smaller subset.
-
-If you find yourself adding something not on the roadmap and not
-meeting these criteria, **stop**. Add an entry to
-[docs/ROADMAP.md](docs/ROADMAP.md) (or open an issue) and move on.
-
-The "anti-feature pledges" in ROADMAP.md are firm:
-
-- No config file
-- No daemon / background process beyond what the multiplexer +
-  SQLite give us
-- No anticipatory abstractions (no traits with zero implementors)
-- No wrappers around wrappers
-- No codegen / embedded JS engine / workflow DSL
-- No template/discovery system for agent roles (spawn flags + first
-  message ARE the definition)
-- No render layer beyond `cli-table3` + `picocolors`, EXCEPT `ink`
-  confined to `src/cli/tui/`. NO second TUI stack alongside `ink`
-  (no `blessed` / `terminal-kit` etc.); if `ink` ever stops paying
-  off, REPLACE it, don't stack stacks.
-- No plugin runtime, web UI, RPC, chat/docs integrations, memory
-  system, workflow engine
-- Don't bundle pi (it's a peer dep)
-
-### When in doubt: be small
-
-Ship the smallest thing that works, then layer on as real friction
-proves itself.
-
----
+- **VOCABULARY first.** Add or rename a term in
+  [docs/VOCABULARY.md](docs/VOCABULARY.md) before or with the code.
+- **Roadmap gate.** Build only what is on the roadmap or meets all
+  three promotion criteria: a real user hit the gap ≥2 times, the
+  current design makes it straightforward, and it fits in <300 LOC.
+  Otherwise add a ROADMAP entry and move on.
+- **Commits:** one logical change each, scope prefix when useful
+  (`schema: …`). The body says what changed and why, cites the VISION
+  pillar or ROADMAP item, and states that the green gate passed. Add a
+  [CHANGELOG.md](CHANGELOG.md) entry under the upcoming version.
 
 ## Common tasks
 
-### "Add a new CLI verb"
+### Add a CLI verb
 
-1. Find or write the programmatic function in `src/agents.ts`,
-   `src/tasks.ts`, `src/workstream.ts`, etc. Test it with mocked
-   tmux. Return a typed result object (`{ changed: boolean,
-   previousStatus, ... }`) so callers can log lifecycle
-   transitions.
-2. Wire the verb in `src/cli.ts` using `commander`. Use
-   `handle(...)` so typed errors map to exit codes. If the verb
-   takes `--workstream`, use `command.optsWithGlobals()` (via
-   `this`) so the top-level option doesn't swallow it (commander
-   gotcha).
-3. Update [docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md) with the new
-   verb in the right section.
-4. Update [docs/VOCABULARY.md](docs/VOCABULARY.md) operations
-   table.
-5. Update [skills/mu/SKILL.md](skills/mu/SKILL.md) **only if the verb has a
-   gotcha `--help` cannot state.** The skill is not a verb list — see
-   § Skill files are context, not documentation, below.
-6. Update [CHANGELOG.md](CHANGELOG.md) under the upcoming version.
-7. If this verb promotes a `mu sql` workaround, remove the
-   workaround entry from the `docs/USAGE_GUIDE.md` gaps table.
-8. Smoke-test: `MU_SYNC_DIR= MU_DB_PATH=/tmp/mu-smoke.db node
-   dist/cli.js <verb> ...` to verify it works against real tmux. If
-   the verb touches the agent layer, smoke it on herdr too —
-   `MU_MUX=herdr` plus a private `MU_HERDR_SESSION` (never the default
-   session).
+1. Write the SDK function (`src/agents.ts`, `src/tasks.ts`, …) with a
+   typed result (`{ changed, previousStatus, … }`). Test with mocks.
+2. Wire it in `src/cli.ts` with commander inside `handle(...)`. For
+   `--workstream`, read `this.optsWithGlobals()`; the top-level option
+   otherwise swallows it.
+3. Document it in `docs/guide/`, the VOCABULARY operations line if
+   it adds a term, and CHANGELOG. Remove any `mu sql` workaround it
+   replaces. Touch `skills/mu/SKILL.md` only for a gotcha `--help`
+   cannot state.
+4. Smoke-test against real tmux, and on herdr with `MU_MUX=herdr` plus
+   a private `MU_HERDR_SESSION` if it touches agents:
 
-   **Blank `MU_SYNC_DIR` as well as `MU_DB_PATH`.** Overriding the DB
-   alone does not contain a smoke test: sync is ambient, so the first
-   flush stamps the throwaway DB's fresh `machine_id` onto a segment
-   in your REAL sync folder. Nothing prunes it, and absence of a
-   segment is the only way a peer disappears, so `mu sync` then lists
-   a phantom machine forever. Eight of them accumulated in `~/mu`
-   before anyone noticed. `src/segments.ts` now refuses a non-temp
-   sync dir under vitest, but a hand-run `node dist/cli.js` is not
-   under vitest — blank the var yourself.
+   ```bash
+   MU_SYNC_DIR= MU_DB_PATH=/tmp/mu-smoke.db node dist/cli.js <verb> ...
+   ```
 
-### "Update the schema"
+   Blank `MU_SYNC_DIR` too. Otherwise the first flush writes the
+   throwaway DB's `machine_id` into your real sync folder, and `mu sync`
+   lists that phantom peer forever.
 
-1. Current schema version is **v11** (`CURRENT_SCHEMA_VERSION` in
-   `src/db.ts`): 11 tables + 3 views. The schema is the
-   `applySchema(db)` block — idempotent CREATE-IF-NOT-EXISTS plus
-   targeted `DROP TABLE IF EXISTS`. `openDb` REFUSES any pre-v11 DB
-   with `SchemaTooOldError` and any newer one with `SchemaTooNewError`
-   (both exit 4); there is no in-process
-   migration ladder.
-2. Bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror the new
-   shape in `CURRENT_SCHEMA`. Prefer script-free bumps: additive
-   CREATE-TABLE-IF-NOT-EXISTS, or an idempotent `DROP TABLE` block.
-   Reach for a one-shot migration script only when the change can't
-   be expressed that way. **If you add a table, classify it** in
-   `PORTABLE_TABLES` or `MACHINE_LOCAL_TABLES` —
-   `test/entities.test.ts` fails loudly otherwise.
-3. Update tests that exercise the schema (`test/db.test.ts`).
-4. Update [CHANGELOG.md](CHANGELOG.md) under the upcoming version's
-   `### Changed` section.
+### Update the schema
 
-### "Add a new multiplexer operation"
+The schema is v11 (`CURRENT_SCHEMA_VERSION` in `src/db.ts`), applied by
+`applySchema(db)` as idempotent CREATE-IF-NOT-EXISTS. `openDb` refuses
+older DBs (`SchemaTooOldError`) and newer ones (`SchemaTooNewError`),
+both exit 4. There is no migration ladder.
 
-mu drives **two** multiplexers, tmux and herdr, behind the
-`MuxBackend` interface in `src/mux/types.ts`. Call sites resolve one
-with `await activeMux()` and never name a backend.
+1. Bump `CURRENT_SCHEMA_VERSION` and mirror the shape in
+   `CURRENT_SCHEMA`. Prefer additive or idempotent-drop changes. Write
+   a one-shot migration script only when neither works.
+2. Classify every new table in `PORTABLE_TABLES` or
+   `MACHINE_LOCAL_TABLES`. `test/entities.test.ts` fails otherwise.
+3. Update `test/db.test.ts` and CHANGELOG `### Changed`.
 
-1. **Add the method to `MuxBackend`** with a doc comment saying what
-   it means, not how tmux does it.
-2. **Implement it in BOTH** `src/mux/tmux.ts` and `src/mux/herdr.ts`.
-   A backend with no equivalent no-ops (see
-   `enableMuPaneBorders*`, `selectLayout`) — it does not throw.
-3. **If only one backend can do it**, make it an OPTIONAL method
-   (`paneStatus?()`, `startAgentInPane?()`) and have the caller
-   branch on the CAPABILITY being present, never on `mux.name`.
-4. **Decide load-bearing vs best-effort.** Load-bearing calls (spawn,
-   send, kill) let `NoMultiplexerError` propagate to exit 5.
-   Best-effort calls (identity, decoration, orphan surfacing) wrap in
-   try/catch so a missing mux degrades instead of failing the verb —
-   `resolveWorkerIdentity` in `src/tasks/claim.ts` is the shape.
+### Add a multiplexer operation
 
-All tmux invocations go through `src/mux/tmux.ts` `tmux(args)`; all
-herdr invocations through `src/mux/herdr.ts` `herdr(args)`. **No raw
-`execa("tmux", …)` / `execa("herdr", …)` anywhere else.** Each wrapper
-produces a typed error (`TmuxError` / `HerdrError`, both extending
-`MuxError`) and each has an executor seam the tests mock — use
-`installMux()` from `test/_mux.ts` rather than the raw setters.
+Call sites use `await activeMux()` and never name a backend.
 
-For send-style operations the two backends differ sharply, and that
-difference is the point: tmux needs the canonical bracketed-paste
-sequence in `sendToPane` (naive `tmux send-keys "<text>"` is broken —
-`/`, `?`, `f` get eaten by the agent's TUI), while herdr's
-`agent prompt` is one atomic call. Do not port the tmux workaround
-to herdr.
+1. Add the method to `MuxBackend` (`src/mux/types.ts`) with a comment
+   saying what it means.
+2. Implement it in `src/mux/tmux.ts` and `src/mux/herdr.ts`. A backend
+   with no equivalent no-ops instead of throwing.
+3. If only one backend can do it, make it optional and branch on the
+   method's presence, not on `mux.name`.
+4. Let `NoMultiplexerError` propagate (exit 5) for load-bearing calls
+   (spawn, send, kill). Wrap best-effort calls in try/catch, like
+   `resolveWorkerIdentity` in `src/tasks/claim.ts`.
 
-### "Fix a flaky integration test"
+Run tmux only through `tmux(args)` and herdr only through
+`herdr(args)`. pi agents are driven through the control socket, not
+the multiplexer. For non-pi agents and `--via mux`, tmux needs the
+bracketed-paste sequence in `sendToPane`, while herdr's `agent prompt`
+is one atomic call. Keep the tmux workaround out of herdr.
 
-Integration tests against real tmux can be slow because tmux/sh
-processes need time to settle. Use:
+## Known traps
 
-- Unique session names (`mu-test-<pid>-<ts>-<random>`) so parallel
-  runs never collide.
-- Polling loops (50ms × 10 attempts) when waiting for state to
-  propagate, not fixed sleeps.
-- `try { ... } catch {}` cleanup in `afterEach` for tmux session
-  kills and DB closes — a failure mid-test should never block the
-  next.
-- `setSleepForTests(async () => {})` in unit tests so the real
-  `MU_SEND_DELAY_MS` doesn't slow them.
-- `process.env.MU_SPAWN_LIVENESS_MS = "0"` in integration-test
-  `beforeEach` to skip the 1500ms post-spawn check (the unit-test
-  suite covers it).
+- **Silent `node dist/cli.js --help`** with "Detected unsettled
+  top-level await" is an import cycle: a file in `src/cli/tui/`
+  imported `../../../cli.js`. Import from the real source module
+  instead (`rg 'from "\.\./\.\./\.\./cli\.js"' src/cli/tui/`).
+- **ANSI in ink `<Text>`** breaks wrap math. Pre-wrap by visual width
+  with `src/cli/tui/wrap-ansi.ts` and pad lines to the box width.
+- **A key or click lands in the wrong popup**: a stale mouse event was
+  replayed. Consume it once, as `src/cli/tui/use-popup-action-queue.ts`
+  does.
+- **A hint for one popup** goes in its `hint` prop, not the global
+  `POPUP_DRILL_HINTS`.
 
----
+## Orchestrating on this repo
+
+Follow the loop in [skills/mu/SKILL.md](skills/mu/SKILL.md). Repo specifics:
+
+- Each workspace runs `npm install` into its own `node_modules`. Never
+  symlink main's.
+- `mu task wait` may list commits already on main when a worker forked
+  from an old HEAD. Check `git log` in the workspace and cherry-pick
+  only the new shas.
+- CHANGELOG.md conflicts are routine: keep both halves in order.
+  Resolve source conflicts by hand, never with `--ours` or `--theirs`.
+- Fix a worker's bug in a separate commit after the cherry-pick. Do
+  not amend it.
+- Gate the merged tree with the full gate below plus
+  `node dist/cli.js --help`.
+- The installed `mu` may be older than the branch build. Confirm a
+  worker received its brief (`mu agent read <w> -n 3`).
 
 ## Skill files are context, not documentation
 
-`skills/mu/SKILL.md` and `skills/mu/REMOTE_WORKERS.md` are loaded into an
-orchestrator's context window, SKILL.md on every invocation, where every word
-competes with the user's actual work for attention. **Keep them ruthlessly
-terse.**
+`skills/mu/SKILL.md` loads into every orchestrator's context, and
+`skills/mu/REMOTE_WORKERS.md` on demand. Every word competes with the
+user's work. Read the `writing-for-agents` skill before you edit
+either one.
 
-Read the `writing-for-agents` skill before editing either one. Work its levers
-in this order:
+- Leave verb lists, flags, and option tables to `--help`. The skill
+  carries only what `--help` cannot: the gotcha, the reason, the trap.
+- Say each thing once, next to where it applies.
+- SKILL.md holds the trigger and the rule. Detail that only some
+  branches need goes in REMOTE_WORKERS.md.
+- Delete sentences the model obeys by default. State the target
+  behaviour.
 
-- **Cache test.** `mu <verb> --help` is a one-command lookup that cannot go
-  stale. A skill that restates it is a cache that rots. Verb lists, flag
-  enumerations and option tables belong in `--help`; the skill carries only
-  what `--help` cannot say — the gotcha, the reason, the trap.
-- **Single source of truth.** One meaning, one place. Scattered advice does not
-  get assembled by the reader: it gets missed. Prefer a consolidating edit that
-  deletes as much as it adds.
-- **Progressive disclosure.** SKILL.md gets the trigger and the rule.
-  REMOTE_WORKERS.md gets the detail. Anything only some branches need goes
-  behind the pointer, never in the always-loaded file.
-- **No-op hunt.** Delete any sentence the model already obeys by default. The
-  test is behavioural: does it change what an agent does?
-- **Positive instruction.** State the target behaviour. A prohibition drags the
-  banned shape into context and makes it more available, so name an
-  anti-pattern only where a reader needs to recognise their own instinct.
+A commit that grows SKILL.md must say why. "The new verb needed
+documenting" is not a reason.
 
-Measure before and after. An edit that grows SKILL.md needs a reason in the
-commit message, and "the new verb needed documenting" is not one.
+## What not to do
 
-Two failures already paid for this rule. A 910-word section titled "CLI
-overview (only gotchas; use `--help` for full syntax)" was half verb list, and
-a DO/DON'T section was the orchestrator loop written twice — 675 words removed
-with nothing lost. And a warning about wedging a host existed in the file while
-the agent that wedged the host never saw it, because it sat 350 lines from the
-section it applied to. **A skill that sprawls stops being read**, which makes
-sprawl a correctness problem, not a tidiness one.
-
----
-
-## What NOT to do
-
-- **Don't pad the skill files.** They are context, not docs, and
-  `--help` is the verb list. See § Skill files are context, not
-  documentation.
-- **Don't add a config file.** mu is CLI flags + env vars.
-- **Don't add a daemon, watcher, or background process.** Every
-  invocation is short-lived.
-- **Don't add abstractions for hypothetical future flexibility.**
-  Two real impls today, or use a concrete type. (Cautionary tale: a
-  prior internal runtime's `RunContext` trait with zero implementors.)
-- **Don't grow stream wrappers around stream wrappers.**
-  (`TextStream` / `TextState` / `StreamResult`.)
-- **Don't generate JS strings as a "typed protocol."**
-- **Don't put state-snapshot/handle layering on top of SQLite.**
-  SQLite is the canonical state. Read it directly; don't introduce
-  a `MuStateHandle` facade.
-- **Don't add a template/discovery system for agent roles** until
-  pattern promotion criteria are met.
-- **Don't bundle pi.** It's a peer dep, optional.
-- **Don't write to files outside `~/.local/state/mu/` or the
-  project repo** without documenting why.
-- **Don't promote a roadmap item to "shipped"** unless its
-  promotion criteria in [docs/ROADMAP.md](docs/ROADMAP.md) are met.
-
----
+- No config file. mu is CLI flags plus env vars.
+- No daemon, watcher, or background process. Every invocation is
+  short-lived.
+- No abstraction without two real implementations today.
+- No wrappers around wrappers, no JS-string codegen, no facade over
+  SQLite (it is the canonical state; read it directly).
+- No template or discovery system for agent roles.
+- No render layer beyond `cli-table3` + `picocolors`, except `ink`
+  inside `src/cli/tui/`. Never a second TUI stack.
+- Don't bundle pi. It is an optional peer dependency.
+- Write files only under `~/.local/state/mu/` or the repo.
 
 ## When you're done
-
-Before opening a PR or marking a task complete:
 
 ```bash
 npm run typecheck && npm run lint && npm run test:fast && npm run test && npm run build
 ```
 
-The acceptance test (`test/acceptance.integration.test.ts`) must
-pass — it's the "end-to-end works" gate.
-
-Checklist for any non-trivial change:
-
-- [ ] If you added a typed verb, the corresponding `mu sql`
-      workaround row was removed from `docs/USAGE_GUIDE.md`.
-- [ ] If you added vocabulary, `docs/VOCABULARY.md` has the new
-      entry.
-- [ ] If you changed an architectural seam,
-      `docs/ARCHITECTURE.md` is updated.
-- [ ] [CHANGELOG.md](CHANGELOG.md) has an entry under the upcoming
-      version.
-
-That's it. Be small, be typed, follow the conventions, ship clean
-green builds.
+Then check that VOCABULARY, ARCHITECTURE, and CHANGELOG reflect the
+change.
