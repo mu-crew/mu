@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LiveAgent } from "../src/agents.js";
 import { IDLE_GLYPH } from "../src/cli/format.js";
 import { AgentsCard } from "../src/cli/tui/cards/agents.js";
+import { GLYPH } from "../src/glyphs.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
 import type { TaskRow } from "../src/tasks.js";
 import { expectTextOnce, renderCardToText } from "./_card-render.js";
@@ -66,6 +67,22 @@ describe("AgentsCard", () => {
     const text = renderCardToText(AgentsCard({ snapshot: null }));
     expect(text).toContain("Agents");
     expect(text).toContain("loading…");
+  });
+
+  it("flags a pi agent whose control socket does not answer", () => {
+    const snapshot: WorkstreamSnapshot = {
+      ...EMPTY_SNAPSHOT,
+      view: {
+        ...EMPTY_SNAPSHOT.view,
+        agents: [
+          agent({ name: "ok-1", ctl: "ok" }),
+          agent({ name: "gone-1", state: "unknown", ctl: "missing" }),
+        ],
+      },
+    };
+    const text = renderCardToText(AgentsCard({ snapshot }));
+    expect(text.split(GLYPH.fail)).toHaveLength(2);
+    expect(text.indexOf(GLYPH.fail)).toBeGreaterThan(text.indexOf("ok-1"));
   });
 
   it("renders the empty-state hint text", () => {

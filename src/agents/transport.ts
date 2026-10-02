@@ -39,7 +39,7 @@ export function agentCtlSocket(db: Db, agent: AgentRow): string {
 }
 
 /** True when the agent runs pi, so sends go through its control socket. */
-export function expectsCtl(agent: AgentRow): boolean {
+export function expectsCtl(agent: Pick<AgentRow, "cli">): boolean {
   return speaksMuCtl(agent.cli, resolveCliCommand(agent.cli));
 }
 

@@ -57,11 +57,12 @@ function parseReply(line: string): CtlReply {
 /**
  * Send one request and resolve with its reply. Rejects with the socket
  * error (its `code` intact), CtlTimeoutError, or CtlVersionError.
+ * Aborting `signal` closes the connection and rejects.
  */
 export function ctlRequest(
   sock: string,
   req: CtlRequest,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<CtlReply> {
   const timeoutMs = clientTimeout(req, opts?.timeoutMs);
   return new Promise((resolve, reject) => {
@@ -80,6 +81,11 @@ export function ctlRequest(
       timeoutMs === undefined
         ? undefined
         : setTimeout(() => finish(new CtlTimeoutError(timeoutMs)), timeoutMs);
+    const signal = opts?.signal;
+    if (signal?.aborted) finish(new Error("control socket request aborted"));
+    signal?.addEventListener("abort", () => finish(new Error("control socket request aborted")), {
+      once: true,
+    });
     conn.setEncoding("utf8");
     conn.on("connect", () => conn.write(encode(req)));
     conn.on("data", (chunk: string) => {

@@ -10,6 +10,7 @@
 // Extracted from src/cli/tasks.ts as part of the wire-out follow-up
 // to refactor_split_large_src_files.
 
+import { dirname } from "node:path";
 import { agentKey, readAgentStates, type StateReading } from "../../agent-state.js";
 import { AgentNotFoundError } from "../../agents/errors.js";
 import { getAgent, refreshAgentTitle } from "../../agents.js";
@@ -452,7 +453,7 @@ export async function cmdTaskWait(
       const agent = getAgent(db, owner, ref.workstreamName);
       return agent === undefined ? [] : [agent];
     });
-    ownerReadings = await readAgentStates(owners);
+    ownerReadings = await readAgentStates(owners, { stateDir: dirname(db.name) });
     if (!reaperExitEnabled) return;
     for (const ref of refs) {
       const key = qualifiedId(ref);

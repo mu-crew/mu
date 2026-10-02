@@ -32,7 +32,8 @@ afterEach(async () => {
 describe("agent state display", () => {
   it("reports a local murmur state without exposing the stored status", async () => {
     const paneId = (await tmux(["display-message", "-p", "-t", session, "#{pane_id}"])).trim();
-    insertAgent(db, { name: "worker-1", workstream: "state", paneId });
+    // A non-pi CLI: pi agents read state from the control socket instead.
+    insertAgent(db, { name: "worker-1", workstream: "state", paneId, cli: "codex" });
     await tmux(["set-option", "-pt", paneId, "@murmur_pane_state", "working"]);
     await tmux(["set-option", "-pt", paneId, "@murmur_pane_since", "1790000000000"]);
 

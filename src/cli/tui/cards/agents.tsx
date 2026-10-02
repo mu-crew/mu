@@ -15,6 +15,7 @@
 
 import { Text } from "ink";
 import type { ReactElement } from "react";
+import { GLYPH } from "../../../glyphs.js";
 import {
   agentStateHistogram,
   summarizeOwnedTasks,
@@ -88,7 +89,10 @@ export function AgentsCard({ snapshot, rowBudget, cols }: AgentsCardProps): Reac
     const owned = snapshot.inProgress.filter((t) => t.ownerName === a.name);
     const taskBit = summarizeOwnedTasks(owned).bit;
     const idle = a.idle ? `${IDLE_GLYPH} idle` : "";
-    return [agentStateGlyph(a.state), a.name, taskBit, idle];
+    // A pi agent whose control socket does not answer: flag the gap.
+    const ctlBroken = a.ctl === "missing" || a.ctl === "refused";
+    const glyph = ctlBroken ? `${agentStateGlyph(a.state)}${GLYPH.fail}` : agentStateGlyph(a.state);
+    return [glyph, a.name, taskBit, idle];
   });
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);
 
