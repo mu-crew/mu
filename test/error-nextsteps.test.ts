@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  AgentAbortNeedsCtlError,
+  AgentAbortTimeoutError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
@@ -207,6 +209,16 @@ const cases: NextStepsCase[] = [
     error: new AgentCtlUnreachableError("alice", "auth", "/s/sock/auth/alice.sock", "missing"),
     label: "AgentCtlUnreachableError",
     expectedTokens: ["mu link pi", "/s/sock/auth/alice.sock"],
+  },
+  {
+    error: new AgentAbortNeedsCtlError("alice", "auth", "claude"),
+    label: "AgentAbortNeedsCtlError",
+    expectedTokens: ["mu agent kick alice"],
+  },
+  {
+    error: new AgentAbortTimeoutError("alice", "auth", 30000),
+    label: "AgentAbortTimeoutError",
+    expectedTokens: ["mu agent kick alice"],
   },
   {
     error: new WorkspacePreservedError("alice", "/path/to/ws"),

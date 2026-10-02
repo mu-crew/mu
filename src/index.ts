@@ -13,8 +13,12 @@ export {
   UNKNOWN_REASON,
 } from "./agent-state.js";
 export {
+  type AbortAgentOptions,
+  type AbortResult,
   type AdoptAgentOptions,
   type AdoptAgentResult,
+  AgentAbortNeedsCtlError,
+  AgentAbortTimeoutError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
@@ -23,6 +27,7 @@ export {
   type AgentRow,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  abortAgent,
   adoptAgent,
   type CloseAgentOptions,
   type CloseAgentResult,

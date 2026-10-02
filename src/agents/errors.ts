@@ -362,10 +362,63 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
   errorNextSteps(): NextStep[] {
     return [
       { intent: "Check whether the mu pi extension is linked", command: "mu doctor" },
+      {
+        intent: "Stop a runaway tool without the socket",
+        command: `mu agent kick ${this.agentName} -w ${this.workstream}`,
+      },
       { intent: "Link the extension, then re-spawn", command: "mu link pi" },
       {
         intent: "Remote agent: forward the socket in your ssh command",
         command: `ssh -L ${this.socket}:<remote sock> ...   (see mu agent remote-env)`,
+      },
+    ];
+  }
+}
+
+/**
+ * `mu agent abort` on an agent that does not run pi: there is no control
+ * socket to carry the abort, and mu does not silently signal the pane.
+ */
+export class AgentAbortNeedsCtlError extends Error implements HasNextSteps {
+  override readonly name = "AgentAbortNeedsCtlError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly cli: string,
+  ) {
+    super(
+      `agent ${agentName} runs ${cli}, not pi: abort needs the mu pi extension; use mu agent kick`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Signal the pane's foreground process instead",
+        command: `mu agent kick ${this.agentName} -w ${this.workstream}`,
+      },
+    ];
+  }
+}
+
+/** The abort was delivered but pi did not settle within the timeout. */
+export class AgentAbortTimeoutError extends Error implements HasNextSteps {
+  override readonly name = "AgentAbortTimeoutError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`agent ${agentName} was still busy ${timeoutMs}ms after the abort`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Signal the pane's foreground process group",
+        command: `mu agent kick ${this.agentName} -w ${this.workstream}`,
+      },
+      {
+        intent: "Read the pane to see what it is stuck on",
+        command: `mu agent read ${this.agentName} -n 30 -w ${this.workstream}`,
       },
     ];
   }

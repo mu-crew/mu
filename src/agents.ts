@@ -20,14 +20,22 @@ import { withOpContext } from "./op-context.js";
 import { type ReconcileMode, type ReconcileReport, reconcile } from "./reconcile.js";
 import { addNote, listTasksByOwner } from "./tasks.js";
 
+// Re-export the cluster modules so external callers continue to
+// `import { AgentNotFoundError, spawnAgent, ... } from "./agents.js"`.
+export {
+  type AbortAgentOptions,
+  type AbortResult,
+  abortAgent,
+  DEFAULT_ABORT_TIMEOUT_MS,
+} from "./agents/abort.js";
 export {
   type AdoptAgentOptions,
   type AdoptAgentResult,
   adoptAgent,
 } from "./agents/adopt.js";
-// Re-export the cluster modules so external callers continue to
-// `import { AgentNotFoundError, spawnAgent, ... } from "./agents.js"`.
 export {
+  AgentAbortNeedsCtlError,
+  AgentAbortTimeoutError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,

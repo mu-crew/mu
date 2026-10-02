@@ -2024,7 +2024,18 @@ A worker ran `find / -maxdepth 6 ...` (30-60 minutes on a populated
 home directory) or a busy-wait loop. `mu agent send` queues steering
 messages until the tool returns; `tmux send-keys C-c` against the
 pane doesn't propagate (the wrapping pi/claude/codex CLI catches it
-as TUI input). The escape hatch:
+as TUI input). For a pi agent, abort the turn first:
+
+```bash
+mu agent abort worker-1                      # Esc through the control socket; waits for pi to settle
+```
+
+`mu agent abort` kills the running tool (the bash child dies with it)
+and returns once pi settles (exit 5 after `--timeout`, default 30s).
+An idle agent is left alone. A follow-up queued before the abort does
+NOT run: pi puts it back into the pane's editor box, unsent. Re-send
+it if you still want it. Non-pi agents, or a pi whose socket is
+gone, need the signal escape hatch:
 
 ```bash
 mu agent kick worker-1                       # SIGINT (graceful, default)
