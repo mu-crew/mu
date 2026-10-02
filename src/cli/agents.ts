@@ -871,6 +871,7 @@ import {
 // wireSelfCommands needs cmdMyTasks / cmdMyNext which live in cli/tasks.ts
 // (they're task queries scoped to the resolved-self agent). Lateral
 // cluster→cluster import documented as the single intentional edge.
+import { wireRemoteEnvCommand } from "./agents-remote.js";
 import { cmdMyNext, cmdMyTasks } from "./tasks.js";
 
 export function wireAgentCommands(program: Command): void {
@@ -1061,6 +1062,8 @@ export function wireAgentCommands(program: Command): void {
       };
       return handle((db) => cmdAbort(db, name, opts), this as Command)();
     });
+
+  wireRemoteEnvCommand(agent);
 
   // `mu agent wait` — the task-less counterpart to `mu task wait`. Block
   // until agents finish (busy → any other state). For scratch /

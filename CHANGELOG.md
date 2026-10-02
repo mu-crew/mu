@@ -12,6 +12,22 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Added
 
+- **`mu agent remote-env <name>` prints what a remote pi agent's ssh
+  command needs** and runs nothing: `sshArgs`
+  (`-o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L
+  <local>:<remote>`), the identity `env` (including `MU_CTL_SOCK` =
+  the remote path) and a complete example `--command`. `--shell`
+  prints eval-safe `MU_SSH_ARGS=` / `MU_REMOTE_ENV=` lines; `--json`
+  is supported. The remote path defaults to
+  `/tmp/mu-<uid>/<ws>/<name>.sock` (hashed past 103 bytes);
+  `--remote-sock` overrides. The forward makes the remote pi answer at
+  the local derived socket, so send, state, wait and abort work as for
+  a local agent. mu still contains no ssh invocation.
+  `skills/mu/REMOTE_WORKERS.md`'s recipe uses it.
+- **Closing or reaping an agent deletes its local control socket
+  file.** ssh leaves the `-L` socket file behind when the connection
+  dies; it probes as `refused`, never `ok`, and is now removed with the
+  agent row.
 - **`mu agent wait --json` returns a pi agent's final answer as
   `lastText`.** The mu pi extension captures the last assistant
   message's text parts on `agent_end` (no tool calls, no thinking) and

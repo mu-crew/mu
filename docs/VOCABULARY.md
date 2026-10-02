@@ -198,6 +198,7 @@ The retained `agents.status` column is deprecated and always contains
 | `mu agent close alice`      | Terminates alice's pane and removes from registry. Destructive.             |
 | `mu agent send alice --fresh '…'` | New pi session + prompt as one control-socket operation; returns once the prompt's run started. Refused while busy unless `--force` (abandons the turn). pi only. |
 | `mu agent abort alice`      | Stops a pi agent's current turn through its control socket (pi's Esc) and waits for it to settle. No-op when idle. Queued follow-ups return to the pane's editor unsent. Non-pi agents: use kick. |
+| `mu agent remote-env alice` | Prints (never runs) the ssh socket-forward args and identity env for a remote pi agent's `--command`, so its control socket answers at the local derived path. |
 | `mu agent kick alice`       | Signals (default SIGINT) the foreground process group of alice's pane TTY. For wedged tool subprocesses (`find /`, busy-wait); the wrapping CLI itself is untouched. Refuses when the foreground IS the wrapping CLI. |
 | `mu agent wait alice bob --first` | Blocks until an agent finishes (busy → any other state). The task-less counterpart to `mu task wait` for scratch/off-the-cuff helpers that own no task. `--any`/`--first` fire on the first; default all. Exit 0 met, 5 timeout, 6 a watched pane died. |
 | *(none)*              | There is no detach verb. Use tmux detach to leave a workstream attached session without killing panes. |

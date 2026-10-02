@@ -13,11 +13,26 @@ export const CTL_SOCK_ENV = "MU_CTL_SOCK";
 /** macOS sun_path is 104 bytes including the trailing NUL. */
 export const MAX_SOCK_PATH = 103;
 
+/** `<dir>/<ws>/<agent>.sock`, or `<dir>/h/<hash>.sock` past MAX_SOCK_PATH. */
+function sockPathUnder(dir: string, workstream: string, agent: string): string {
+  const readable = join(dir, workstream, `${agent}.sock`);
+  if (Buffer.byteLength(readable) <= MAX_SOCK_PATH) return readable;
+  const h = createHash("sha1").update(`${workstream}/${agent}`).digest("hex").slice(0, 16);
+  return join(dir, "h", `${h}.sock`);
+}
+
 export function ctlSocketPath(workstream: string, agent: string, stateDir?: string): string {
   const dbPath = process.env.MU_DB_PATH;
   const base = stateDir ?? (dbPath ? dirname(dbPath) : defaultStateDir());
-  const readable = join(base, "sock", workstream, `${agent}.sock`);
-  if (Buffer.byteLength(readable) <= MAX_SOCK_PATH) return readable;
-  const h = createHash("sha1").update(`${workstream}/${agent}`).digest("hex").slice(0, 16);
-  return join(base, "sock", "h", `${h}.sock`);
+  return sockPathUnder(join(base, "sock"), workstream, agent);
+}
+
+/**
+ * Default socket path ON THE REMOTE HOST for a remote pi agent:
+ * `/tmp/mu-<uid>/<ws>/<agent>.sock`, shortened by the same rule. `uid`
+ * is the local one (mu cannot know the remote's); the extension creates
+ * the directory, and `mu agent remote-env --remote-sock` overrides it.
+ */
+export function remoteCtlSocketPath(workstream: string, agent: string, uid: number): string {
+  return sockPathUnder(`/tmp/mu-${uid}`, workstream, agent);
 }
