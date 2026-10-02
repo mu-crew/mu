@@ -12,6 +12,15 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Added
 
+- **`mu doctor` checks the mu extension, the mu skill and control
+  sockets.** New environment rows: `mu ext` (shim linked / stale copy /
+  dangling), `mu skill` (linked / foreign / dangling), and `ctl`, which
+  probes every pi agent's control socket in parallel (500ms each) and
+  lists `ws/agent: missing|refused|version` on failure. `--json` carries
+  them as `environment.ctl` (`extension`, `sockets`, per-agent `agents`)
+  and `environment.skill`. With the mu extension linked, a missing
+  murmur is `ok` ("not needed for pi agents"); the TUI doctor card shows
+  `mu ext` and `mu skill` too, but not `ctl` (no socket I/O per tick).
 - **Spawn injects `MU_CTL_SOCK` and handshakes with the mu pi
   extension.** Every spawned pane gets `MU_CTL_SOCK=<derived path>`;
   its directory is created before the pane starts (an ssh `-L` forward

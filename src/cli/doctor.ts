@@ -12,11 +12,17 @@
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
-import { listLiveAgents } from "../agents.js";
+import { listAgents, listLiveAgents } from "../agents.js";
 import { emitJson, resolveWorkstream } from "../cli.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "../db.js";
 import { checkDiskRecon, formatBytes, measureWorkspaceUsage } from "../disk-recon.js";
-import { type DoctorCheck, murmurDoctorCheck } from "../doctor-summary.js";
+import {
+  ctlExtensionDoctorCheck,
+  ctlSocketsDoctorCheck,
+  type DoctorCheck,
+  murmurDoctorCheck,
+  skillDoctorCheck,
+} from "../doctor-summary.js";
 import {
   ABANDONED_IDLE_DAYS,
   checkDormantWorkstreams,
@@ -46,9 +52,18 @@ const pad = (s: string): string => s.padEnd(LABEL_WIDTH);
  * Never throws: doctor's whole job is reporting a broken substrate,
  * so `NoMultiplexerError` here is a finding, not a failure.
  */
-/** Where agent state comes from: herdr on herdr, murmur otherwise. */
-function agentStateCheck(health: MuxHealth | undefined): DoctorCheck {
-  return murmurDoctorCheck(health?.name === "herdr" ? "herdr" : "murmur");
+/** Where agent state comes from: herdr on herdr, murmur otherwise. A
+ *  linked mu extension makes murmur optional for pi agents. */
+function agentStateCheck(health: MuxHealth | undefined, muExt: DoctorCheck): DoctorCheck {
+  return murmurDoctorCheck(health?.name === "herdr" ? "herdr" : "murmur", {
+    muExtOk: muExt.status === "ok",
+  });
+}
+
+function printCheck(label: string, check: DoctorCheck): void {
+  const colour = check.status === "ok" ? pc.green : check.status === "warn" ? pc.yellow : pc.red;
+  const word = check.status === "ok" ? "ok" : check.status.toUpperCase();
+  console.log(`  ${pad(label)}: ${colour(word)} ${pc.dim(check.detail)}`);
 }
 
 async function muxHealth(): Promise<MuxHealth | undefined> {
@@ -108,11 +123,11 @@ export async function cmdDoctor(
   console.log(
     `  ${pad("$MU_SESSION")}: ${process.env.MU_SESSION ? pc.green(process.env.MU_SESSION) : pc.dim("not set")}`,
   );
-  const stateCheck = agentStateCheck(health);
-  const stateColour = stateCheck.status === "ok" ? pc.green : pc.yellow;
-  console.log(
-    `  ${pad("agent state")}: ${stateColour(stateCheck.status === "ok" ? "ok" : "WARN")} ${pc.dim(stateCheck.detail)}`,
-  );
+  const muExt = ctlExtensionDoctorCheck();
+  printCheck("agent state", agentStateCheck(health, muExt));
+  printCheck("mu ext", muExt);
+  printCheck("mu skill", skillDoctorCheck());
+  printCheck("ctl", (await ctlSocketsDoctorCheck(listAgents(db))).check);
 
   // ─ DB + schema
   console.log(pc.bold("\ndb"));
@@ -353,6 +368,8 @@ export async function cmdDoctorJson(
 ): Promise<void> {
   // environment
   const health = await muxHealth();
+  const muExt = ctlExtensionDoctorCheck();
+  const ctlSockets = await ctlSocketsDoctorCheck(listAgents(db));
   const env = {
     // `mux` is the backend-agnostic key. `tmux` is kept as an alias for
     // back-compat with scripts that grew around the pre-MuxBackend
@@ -361,7 +378,9 @@ export async function cmdDoctorJson(
     tmux: { ok: health?.ok ?? false, version: health?.version ?? null },
     ...Object.fromEntries(health?.env.map((f) => [f.name.replace(/^\$/, ""), f.value]) ?? []),
     MU_SESSION: process.env.MU_SESSION ?? null,
-    agentState: agentStateCheck(health),
+    agentState: agentStateCheck(health, muExt),
+    ctl: { extension: muExt, sockets: ctlSockets.check, agents: ctlSockets.agents },
+    skill: skillDoctorCheck(),
   };
 
   // db / schema

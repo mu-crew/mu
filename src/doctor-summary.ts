@@ -37,9 +37,13 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join, parse } from "node:path";
 import { murmurAvailable, UNKNOWN_REASON } from "./agent-state.js";
+import { type AgentRow, resolveCliCommand, speaksMuCtl } from "./agents.js";
+import { type CtlProbe, ctlProbe } from "./ctl/client.js";
+import { ctlSocketPath } from "./ctl/path.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "./db.js";
 import { checkCheapDriftInvariant } from "./drift.js";
 import { checkFleetHazards } from "./fleet-hazards.js";
+import { inspectLinks, type LinkOptions } from "./link.js";
 import type { WorkstreamSnapshot } from "./state.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
@@ -220,7 +224,9 @@ export function loadDoctorSummary(
     }
   }
 
-  checks.push(murmurDoctorCheck(agentStateSource));
+  const muExt = ctlExtensionDoctorCheck();
+  checks.push(murmurDoctorCheck(agentStateSource, { muExtOk: muExt.status === "ok" }));
+  checks.push(muExt, skillDoctorCheck());
 
   // ─ Mixed-fleet hazards + the SHALLOW drift invariant.
   //
@@ -302,13 +308,28 @@ function olderThanMurmurOne(version: string): boolean {
   return match !== null && Number(match[1]) < 1;
 }
 
-/** The agent-state source row. Shared by the TUI card and `mu doctor`. */
-export function murmurDoctorCheck(agentStateSource: "murmur" | "herdr"): DoctorCheck {
+/** Detail of the murmur row when murmur is absent but pi agents are
+ *  covered by the mu extension's control socket. */
+export const MURMUR_NOT_NEEDED_DETAIL =
+  "not needed for pi agents (mu extension); used for other CLIs";
+
+/**
+ * The agent-state source row. Shared by the TUI card and `mu doctor`.
+ * `muExtOk`: the mu pi extension is linked, so pi agents report state
+ * over their control socket and a missing murmur only affects other CLIs.
+ */
+export function murmurDoctorCheck(
+  agentStateSource: "murmur" | "herdr",
+  opts: { muExtOk?: boolean } = {},
+): DoctorCheck {
   if (agentStateSource === "herdr") {
     return { name: "murmur", status: "ok", detail: "agent state from herdr" };
   }
 
   const executable = resolveExecutable("murmur");
+  if (opts.muExtOk === true && (executable === null || !murmurAvailable())) {
+    return { name: "murmur", status: "ok", detail: MURMUR_NOT_NEEDED_DETAIL };
+  }
   if (executable === null) {
     return {
       name: "murmur",
@@ -337,6 +358,92 @@ export function murmurDoctorCheck(agentStateSource: "murmur" | "herdr"): DoctorC
     status: "ok",
     detail: version === null ? "agent state from murmur" : `agent state from murmur ${version}`,
   };
+}
+
+const RELINK = "run mu link pi";
+
+/** The "mu ext" row: is the mu pi extension shim installed and live? */
+export function ctlExtensionDoctorCheck(opts?: LinkOptions): DoctorCheck {
+  const { extension } = inspectLinks(opts);
+  switch (extension.state) {
+    case "ok":
+      // pictl_delegate joins here: "ok (ctl, mu_delegate)", or
+      // "ok (ctl; mu_delegate disabled by MU_DELEGATE=0)".
+      return { name: "mu ext", status: "ok", detail: "(ctl)" };
+    case "stale-copy":
+      return { name: "mu ext", status: "warn", detail: `stale copy: ${RELINK}` };
+    case "dangling":
+      return { name: "mu ext", status: "warn", detail: `dangling: ${RELINK}` };
+    default:
+      return { name: "mu ext", status: "warn", detail: `not linked: ${RELINK}` };
+  }
+}
+
+/** The "mu skill" row: is `~/.agents/skills/mu` this package's skill? */
+export function skillDoctorCheck(opts?: LinkOptions): DoctorCheck {
+  const { skill } = inspectLinks(opts);
+  switch (skill.state) {
+    case "ok":
+      return { name: "mu skill", status: "ok", detail: skill.target ?? skill.path };
+    case "foreign":
+      return {
+        name: "mu skill",
+        status: "warn",
+        detail: `foreign skill at ~/.agents/skills/mu (${skill.target ?? "not a symlink"})`,
+      };
+    case "dangling":
+      return { name: "mu skill", status: "warn", detail: `dangling: ${RELINK}` };
+    default:
+      return { name: "mu skill", status: "warn", detail: `not linked: ${RELINK}` };
+  }
+}
+
+/** Per-agent probe budget for the doctor "ctl" row. */
+export const DOCTOR_CTL_TIMEOUT_MS = 500;
+
+export interface AgentCtlReport {
+  workstream: string;
+  agent: string;
+  socket: string;
+  probe: CtlProbe["kind"];
+}
+
+/**
+ * The "ctl" row: probe the control socket of every agent that runs pi
+ * (per `speaksMuCtl`, the rule spawn's handshake uses). Probes run in
+ * parallel, each bounded by `timeoutMs`. Async, so `mu doctor` only:
+ * the TUI's per-tick summary stays synchronous and socket-free.
+ */
+export async function ctlSocketsDoctorCheck(
+  agents: readonly AgentRow[],
+  opts: { timeoutMs?: number } = {},
+): Promise<{ check: DoctorCheck; agents: AgentCtlReport[] }> {
+  const timeoutMs = opts.timeoutMs ?? DOCTOR_CTL_TIMEOUT_MS;
+  const piAgents = agents.filter((a) => speaksMuCtl(a.cli, resolveCliCommand(a.cli)));
+  const reports = await Promise.all(
+    piAgents.map(async (a): Promise<AgentCtlReport> => {
+      const socket = ctlSocketPath(a.workstreamName, a.name);
+      const probe = await ctlProbe(socket, timeoutMs);
+      return { workstream: a.workstreamName, agent: a.name, socket, probe: probe.kind };
+    }),
+  );
+  const bad = reports.filter((r) => r.probe !== "ok");
+  let check: DoctorCheck;
+  if (reports.length === 0) check = { name: "ctl", status: "ok", detail: "no pi agents" };
+  else if (bad.length === 0) {
+    check = {
+      name: "ctl",
+      status: "ok",
+      detail: `${reports.length}/${reports.length} pi agents reachable`,
+    };
+  } else {
+    check = {
+      name: "ctl",
+      status: "warn",
+      detail: bad.map((r) => `${r.workstream}/${r.agent}: ${r.probe}`).join(", "),
+    };
+  }
+  return { check, agents: reports };
 }
 
 /** Count of warn + fail rows. Pure; exported for unit tests. */
@@ -401,6 +508,11 @@ export function yankCommandForCheck(check: Pick<DoctorCheck, "name" | "status">)
   switch (check.name) {
     case "murmur":
       return "murmur link pi";
+    case "mu ext":
+    case "mu skill":
+      return "mu link pi";
+    case "ctl":
+      return "mu agent list";
     case "agents":
       // Diagnostic/reaping read: `mu state` and `mu agent list` both
       // reconcile missing panes. Prefer the canonical state card; the
@@ -455,6 +567,20 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
       return [
         "Install murmur with `npm i -g @mu-crew/murmur`, then run",
         "`murmur init` and `murmur link pi`. Restart running pi sessions.",
+      ];
+    case "mu ext":
+    case "mu skill":
+      return [
+        "Run `mu link pi` to install the mu pi extension shim and the mu",
+        "skill symlink, then restart running pi sessions so they load it.",
+      ];
+    case "ctl":
+      return [
+        "mu talks to pi agents over a per-agent control socket served by",
+        "the mu pi extension. `missing`: no socket (extension not loaded,",
+        "or the agent predates `mu link pi`). `refused`: socket present but",
+        "not answering. `version`: protocol mismatch; upgrade mu or pi.",
+        "Run `mu link pi`, then respawn the agent.",
       ];
     case "agents":
       return [
