@@ -32,6 +32,7 @@ import {
   NameAmbiguousError,
   UsageError,
 } from "./cli/handle.js";
+import { wireLinkCommand } from "./cli/link.js";
 import { wireLogCommand } from "./cli/log.js";
 import { wireRebuildCommand } from "./cli/rebuild.js";
 import { wireSqlCommand } from "./cli/sql.js";
@@ -807,6 +808,7 @@ export function buildProgram(): Command {
   wireDbCommands(program);
   wireUndoCommand(program);
   wireDoctorCommand(program);
+  wireLinkCommand(program);
   applyAlphabeticalHelpSort(program);
   // audit_cli_validation_uniformity: every node in the command tree
   // must call exitOverride() so commander throws CommanderError

@@ -22,6 +22,14 @@ breaking changes are called out under "Breaking" in each entry.
   not a rollback: the agent is usable by hand, so spawn exits 0 with a
   stderr warning pointing at `mu doctor` and `mu link pi`. `--no-ctl`
   skips the handshake.
+- **`mu link pi`** installs mu into pi in one step: the extension as a
+  re-export shim at `~/.pi/agent/extensions/mu.ts` (upgrading mu
+  upgrades the extension, no relink; `--copy` inlines a pinned copy)
+  and the mu skill as a symlink at `~/.agents/skills/mu`. Refuses to
+  replace a real directory, and a symlink pointing elsewhere needs
+  `--force` (exit 4, `LinkConflictError`). `--extension-only`,
+  `--skill-only`, `--json`; `MU_PI_HOME` overrides the root. SDK:
+  `linkPi`, `linkSkill`, `inspectLinks`.
 
 ### Fixed
 
