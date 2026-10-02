@@ -74,8 +74,23 @@ describe("mu ext / mu skill rows", () => {
   it("are ok after linkPi + linkSkill", () => {
     linkPi();
     linkSkill();
-    expect(ctlExtensionDoctorCheck()).toEqual({ name: "mu ext", status: "ok", detail: "(ctl)" });
+    expect(ctlExtensionDoctorCheck()).toEqual({
+      name: "mu ext",
+      status: "ok",
+      detail: "(ctl, mu_delegate)",
+    });
     expect(skillDoctorCheck()).toMatchObject({ name: "mu skill", status: "ok" });
+  });
+
+  it("mu ext names the MU_DELEGATE=0 kill switch", () => {
+    linkPi();
+    process.env.MU_DELEGATE = "0";
+    try {
+      expect(ctlExtensionDoctorCheck().detail).toBe("(ctl; mu_delegate disabled by MU_DELEGATE=0)");
+    } finally {
+      const key = "MU_DELEGATE";
+      delete process.env[key];
+    }
   });
 
   it("mu ext warns dangling when the shim's target is gone", () => {

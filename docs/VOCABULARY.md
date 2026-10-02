@@ -441,6 +441,7 @@ XDG-Base-Directory-Spec compliant. The state directory resolves as:
 | `MU_SESSION`      | Override active workstream name (when not auto-detectable)   | n/a |
 | `MU_MUX`          | Force the **mux backend**, bypassing **mux detection**. Load-bearing: every verb reaches its multiplexer through `activeMux()`, so an unknown value fails the invocation rather than silently running on tmux. | wins over all detection |
 | `MU_SYNC_DIR`     | Shared folder holding one **segment** per machine. Unset = sync off, zero cost. The WHOLE cluster configuration; there is no peer list. | n/a |
+| `MU_DELEGATE`     | `0` hides the `mu_delegate` tool in the mu pi extension (kill switch for benchmarks or a model it confuses). The `mu doctor` extension row says so. | n/a |
 
 ### Env vars passed to spawned children
 

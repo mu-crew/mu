@@ -24,6 +24,7 @@ import {
   agentCtlSocket,
   chooseTransport,
   closeAgent,
+  delegateOutcome,
   expectsCtl,
   getAgent,
   isKickSignal,
@@ -156,6 +157,20 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
       command: `mu agent close ${name} -w ${workstream}`,
     },
   ];
+  // Best-effort: the pane exists, so a mux is up; the hint is decoration.
+  try {
+    const mux = await activeMux();
+    nextSteps.push({
+      intent: "Attach the pane",
+      command: mux.attachHint({
+        session: `mu-${workstream}`,
+        window: agent.tab ?? name,
+        inside: Boolean(process.env.TMUX),
+      }),
+    });
+  } catch {
+    // no hint
+  }
   if (opts.json) {
     emitJson({
       agent,
@@ -811,7 +826,10 @@ export async function cmdAgentWait(
 
   if (opts.json) {
     emitJson({
-      agents: result.agents,
+      agents: result.agents.map((a) => ({
+        ...a,
+        outcome: delegateOutcome(a, result.timedOut),
+      })),
       timedOut: result.timedOut,
       ...(firing ? { firing: { workstream: firing.workstreamName, name: firing.name } } : {}),
       ...(dead.length > 0 ? { dead: dead.map(qualified) } : {}),

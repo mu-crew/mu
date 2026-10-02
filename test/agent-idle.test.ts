@@ -60,4 +60,16 @@ describe("computeAgentIdle", () => {
     giveTask();
     expect(computeAgentIdle(db, agent, 600_000)).toBe(false);
   });
+
+  it("flags a task-less scratch agent idle past the threshold (leftover delegate)", () => {
+    const row = insertAgent(db, { name: "delegate-1", workstream: "scratch", paneId: "%2" });
+    const agent: LiveAgent = {
+      ...row,
+      state: "needs_input",
+      source: "ctl",
+      since: new Date(0).toISOString(),
+    };
+    expect(computeAgentIdle(db, agent, 600_000)).toBe(true);
+    expect(computeAgentIdle(db, agent, 100_000)).toBe(false);
+  });
 });
