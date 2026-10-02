@@ -1,60 +1,61 @@
 # How to delegate a one-off task
 
-Use this when you want one helper, not a crew with a task graph.
-There are three ways to get one, from least to most ceremony:
-
-| You want | Use |
-| -------- | --- |
-| A one-shot answer delivered back to your pi session | the `mu_delegate` tool |
-| The same, from a shell or script | spawn, send, and `mu agent wait` |
-| A helper you keep talking to | an agent in the `scratch` workstream |
-
 ## Delegate from pi
 
-`mu link pi` installs two tools in every pi session: `mu_delegate`
-and `mu_delegate_cancel`. Ask pi to delegate, or call the tool with a
-`task` that holds all the context the delegate needs.
+`mu link pi` installs the `mu_delegate` and `mu_delegate_cancel` tools
+in every pi session. Ask pi in plain words:
 
-The tool spawns a pi agent in the `scratch` workstream, sends the
-task, and returns at once. When the delegate finishes, its final
-answer arrives in your session as a follow-up message. Several
-delegates run in parallel.
+- "Delegate a review of src/x.ts to a helper."
+- "Have three helpers investigate A, B, and C."
 
-- The pane stays attachable while the delegate works. You can watch
-  it, steer it, or abort it.
-- After a clean finish the pane closes. Pass `keep: true` to keep it
-  and keep talking to the delegate.
-- A pane that died or timed out stays open as evidence.
-- `mu_delegate_cancel` aborts the delegate and closes its pane.
+pi calls `mu_delegate`. It spawns a pi agent in the reserved `scratch`
+workstream and returns at once with the delegate's name and attach
+command. The answer arrives later as a follow-up message; do not poll.
+Delegates called in one turn run in parallel.
 
-Each delegate costs one pane and one pi process.
+| Option | Meaning |
+| ------ | ------- |
+| `task` (required) | All the context. The delegate starts empty. |
+| `brief` | Ad hoc persona or ground rules, sent first. No agent types. |
+| `workspace` | Own VCS workspace, for delegates that edit files. |
+| `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`), e.g. a read-only reviewer. |
+| `keep` | Keep the pane after it finishes, to talk to it again. |
 
-## Delegate from a shell
+- Watch or steer: run the attach command.
+- Stop: `mu_delegate_cancel`, or `mu agent abort <name> -w scratch`.
+- The pane closes after a clean finish; died or timed-out panes stay
+  as evidence.
+- Each delegate costs a pane and a pi process.
+
+`MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
+
+## Delegate without pi
+
+From a script or other shell, run what the tool runs:
 
 ```bash
 mu agent spawn helper-1 -w scratch
-mu agent send helper-1 -w scratch 'Investigate why foo.spec.ts fails. Report the cause.'
+mu agent send helper-1 -w scratch --fresh 'Investigate why foo.spec.ts fails. Report the cause.'
 mu agent wait helper-1 -w scratch --json
 ```
 
-`mu agent wait` fires when the agent goes from busy to any other
-state. An agent that is already idle does not fire, so the wait is
-for this work only. For a pi agent, the `--json` row carries:
+Use `--fresh`: a plain send to a reused agent carries the previous
+task's context.
+
+`mu agent wait` fires when the agent leaves busy (including to
+`needs_input`), never on an already idle agent. For pi, the `--json`
+row carries:
 
 - `outcome`: `done`, `empty`, `died`, `timeout`, or `pending`.
-- `lastText`: the text of the agent's final message, capped at 64 KiB.
+- `lastText`: the final message, capped at 64 KiB.
 
-Exit codes: `0` met, `5` timeout, `6` the agent's pane died. For
-non-pi agents there is no `lastText`. Read the pane with
-`mu agent read helper-1 -w scratch -n 80`.
+Exit codes: `0` met, `5` timeout, `6` pane died. Non-pi agents have no
+`lastText`; read the pane with `mu agent read helper-1 -w scratch -n 80`.
 
-`mu agent wait` also fires on `needs_input`. For task-graph work, use
-`mu task wait` instead. It keys on the task and has `--on-stall`.
+## Keep a helper
 
-## Keep a helper in `scratch`
-
-`scratch` is a reserved workstream for helpers. It is created on the
-first spawn, needs no tasks, and you cannot `init` it.
+Pass `keep: true`, or spawn a named agent in `scratch`. It is created
+on first spawn, needs no tasks, and cannot be `init`ed.
 
 ```bash
 mu agent spawn helper -w scratch
@@ -63,21 +64,20 @@ mu agent read helper -w scratch -n 50
 mu agent close helper -w scratch
 ```
 
-`mu state` and the TUI flag idle scratch agents so they do not pile up.
-
-When the work needs more than one agent, dependencies, or review,
-create a real workstream with `mu workstream init <name>`.
-
-## Remember state across watcher ticks
-
-A watcher loop must remember what it last saw, and its chat context
-does not survive compaction. Write a log entry with your own `--kind`
-on every tick, and read the latest one on the next:
+A watcher's chat context does not survive compaction. Log each tick
+under your own `--kind`; read the latest entry on the next:
 
 ```bash
 mu log -w scratch --kind pr-state 'pr=1234 sha=abc ci=red -> spawned fixer-1'
 mu log -w scratch --kind pr-state -n 1 --json
 ```
 
-Act only when the new observation differs from the last entry.
-`--since <seq>` replays entries that a dead watcher missed.
+Act only on change. `--since <seq>` replays entries a dead watcher
+missed.
+
+## When to stop delegating
+
+Dependencies, several agents, or review need a real workstream: see
+[Getting started](getting-started.md) and
+[How to dispatch work](dispatch.md). There, `mu task wait` keys on the
+task and has `--on-stall`.
