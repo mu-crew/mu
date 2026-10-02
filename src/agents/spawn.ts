@@ -23,7 +23,7 @@ import {
   pendingPaneIdFor,
   refreshAgentTitle,
 } from "../agents.js";
-import { ctlProbe } from "../ctl/client.js";
+import { type CtlProbe, ctlProbe } from "../ctl/client.js";
 import { CTL_SOCK_ENV, ctlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
@@ -254,6 +254,11 @@ export interface SpawnAgentOptions {
 /** Outcome of the spawn-time control-socket handshake. */
 export type SpawnCtl = "ok" | "missing" | "refused" | "skipped";
 
+/** A ctl probe's outcome as spawn and adopt report it. */
+export function probeToSpawnCtl(kind: CtlProbe["kind"]): Exclude<SpawnCtl, "skipped"> {
+  return kind === "ok" ? "ok" : kind === "missing" ? "missing" : "refused";
+}
+
 /** What spawnAgent returns: the registered row plus the handshake outcome. */
 export type SpawnedAgent = AgentRow & { ctl: SpawnCtl; ctlSocket: string };
 
@@ -295,7 +300,7 @@ async function awaitCtlHandshake(sock: string): Promise<Exclude<SpawnCtl, "skipp
     const remaining = deadline - Date.now();
     const probe = await ctlProbe(sock, Math.max(1, Math.min(remaining, CTL_POLL_INTERVAL_MS * 4)));
     if (probe.kind === "ok") return "ok";
-    const last = probe.kind === "missing" ? "missing" : "refused";
+    const last = probeToSpawnCtl(probe.kind);
     const left = deadline - Date.now();
     if (left <= 0) return last;
     await delay(Math.min(CTL_POLL_INTERVAL_MS, left));
@@ -388,7 +393,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // ctlSocketPath's own default (MU_DB_PATH dir or the state dir), and
   // a test DB in a temp dir keeps its sockets there too.
   const ctlSocket = ctlSocketPath(opts.workstream, opts.name, dirname(db.name));
-  mkdirSync(dirname(ctlSocket), { recursive: true });
+  mkdirSync(dirname(ctlSocket), { recursive: true, mode: 0o700 });
   rmSync(ctlSocket, { force: true });
   const paneEnv: Record<string, string> = {
     MU_MANAGED_AGENT: "1",

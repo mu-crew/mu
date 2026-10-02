@@ -542,7 +542,10 @@ export async function sendToAgent(
 ): Promise<SendResult> {
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) throw new AgentNotFoundError(name);
-  return sendViaTransport(agent, text, { socket: agentCtlSocket(db, agent), ...opts });
+  return sendViaTransport(agent, text, {
+    ...opts,
+    socket: opts.socket ?? agentCtlSocket(db, agent),
+  });
 }
 
 /**
