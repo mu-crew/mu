@@ -10,6 +10,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.2.1] — 2026-10-02
+
+**`mu_delegate` fixes.** Delegates start in the caller's working
+directory, pi's footer shows how many are running, and cancel and
+delivery no longer lose answers. Upgrade with `npm i -g
+@mu-crew/mu@3.2.1`, then `/reload` in running pi sessions.
+
+The docs are reorganised: `docs/USAGE_GUIDE.md` is split into a
+tutorial and how-tos under `docs/guide/`, the pre-3.0 changelog moved
+to `docs/history/`, and a link checker covers every markdown file.
+
 ### Fixed
 
 - `mu_delegate` refuses a `cwd` that is not a directory. tmux and herdr
