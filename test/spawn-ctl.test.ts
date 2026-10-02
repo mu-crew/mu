@@ -22,7 +22,7 @@ import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 import { freshMockState, mockTmux } from "./_verbs-mock.js";
 
-const ENV_KEYS = ["MU_SPAWN_CTL_MS", "MU_SPAWN_LIVENESS_MS", "MU_SPAWN_READINESS_MS"] as const;
+const ENV_KEYS = ["MU_SPAWN_CTL_MS", "MU_SPAWN_LIVENESS_MS"] as const;
 
 let dir: string;
 let dbPath: string;
@@ -40,7 +40,6 @@ beforeEach(() => {
   saved = new Map(ENV_KEYS.map((k) => [k, process.env[k]]));
   process.env.MU_SPAWN_CTL_MS = "300";
   process.env.MU_SPAWN_LIVENESS_MS = "0";
-  process.env.MU_SPAWN_READINESS_MS = "0";
   setSleepForTests(async () => {});
   setCommandResolverForTests(async (c) => ({ ok: true, binary: c, resolvedPath: `/bin/${c}` }));
   mux = installMux("tmux", mockTmux(freshMockState()).executor);

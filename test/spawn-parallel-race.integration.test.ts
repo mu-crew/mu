@@ -68,7 +68,6 @@ describeIfReady("parallel spawn race (real cross-process)", () => {
         // Skip the slow liveness/readiness waits: the sh panes are alive
         // and this test is about the topology/DB race, not startup.
         MU_SPAWN_LIVENESS_MS: "0",
-        MU_SPAWN_READINESS_MS: "0",
       },
     }).then(() => undefined);
   }

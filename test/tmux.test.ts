@@ -834,38 +834,6 @@ describe("sendToPane", () => {
     expect(buf1).not.toBe(buf2);
   });
 
-  it("waits for a /new transition before a following send", async () => {
-    const idle = "ready";
-    const transition = "screen replacing";
-    const fresh = "replacement screen";
-    let afterNew = false;
-    let transitionPolls = 0;
-    let pastedDuringTransition = false;
-
-    const { executor } = harness((args) => {
-      if (args[0] === "capture-pane") {
-        if (!afterNew) return ok(idle);
-        transitionPolls++;
-        if (transitionPolls <= 4) return ok(idle);
-        if (transitionPolls === 5) return ok(transition);
-        return ok(fresh);
-      }
-      if (args[0] === "send-keys" && args.at(-1) === "Enter" && !afterNew) {
-        afterNew = true;
-      }
-      if (args[0] === "paste-buffer" && afterNew && transitionPolls <= 5) {
-        pastedDuringTransition = true;
-      }
-      return ok();
-    });
-    setTmuxExecutor(executor);
-
-    await sendToPane("%15", "/new", { delayMs: 0 });
-    await sendToPane("%15", "do the work", { delayMs: 0 });
-
-    expect(pastedDuringTransition).toBe(false);
-  });
-
   it("waits the requested delay between paste and Enter", async () => {
     const { executor } = harness(() => ok());
     setTmuxExecutor(executor);

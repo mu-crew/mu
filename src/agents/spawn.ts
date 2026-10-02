@@ -13,7 +13,6 @@ import { mkdirSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { agentKey, murmurAvailable, readAgentStates } from "../agent-state.js";
 import {
   type AgentRow,
   deleteAgent,
@@ -474,12 +473,12 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // so a pane that never became an agent never keeps its agent row.
     const startAgent = (await activeMux()).startAgentInPane;
     if (startAgent === undefined) {
-      await awaitSpawnLiveness(paneId, opts.name, opts.workstream, command);
+      await awaitSpawnLiveness(paneId, opts.name, command);
     } else {
       // `startAgentInPane` returns only once the MUX has detected the
       // agent in that pane and considers it ready for input — strictly
       // stronger than what awaitSpawnLiveness's scrollback poll can
-      // prove, so MU_SPAWN_LIVENESS_MS / MU_SPAWN_READINESS_MS are
+      // prove, so MU_SPAWN_LIVENESS_MS is
       // subsumed and deliberately not consulted. Branching on the
       // CAPABILITY, never on `mux.name`.
       await startAgent({ paneId, name: opts.name, cli, command, commandSource });
@@ -758,7 +757,6 @@ export function detectSpawnStartupError(scrollback: string): string | undefined 
 async function awaitSpawnLiveness(
   paneId: string,
   agentName: string,
-  workstreamName: string,
   command: string,
 ): Promise<void> {
   const ms = defaultSpawnLivenessMs();
@@ -782,63 +780,6 @@ async function awaitSpawnLiveness(
     if (matchedLine !== undefined) {
       throw new AgentSpawnStartupError(agentName, paneId, matchedLine, scrollback);
     }
-  }
-  // Readiness poll: when murmur is installed, wait until its extension
-  // claims the pane. Without murmur, the liveness check is enough and
-  // the first send handles input timing. Controlled by
-  // MU_SPAWN_READINESS_MS (default 10s; 0 disables).
-  await awaitSpawnReadiness(paneId, agentName, workstreamName, command);
-}
-
-/**
- * Default readiness budget in milliseconds. After the liveness check
- * passes, poll until murmur claims the pane. 0 disables the poll.
- * Override via env var `MU_SPAWN_READINESS_MS`.
- *
- * The default is 10 000 ms (10 s) — generous enough for pi's typical
- * 2–5 s cold-start while not blocking forever if the CLI is unusually
- * slow. Orchestrators that know their agents start faster can lower
- * this; manual spawns where the user will see the pane anyway can
- * set it to 0.
- */
-export function defaultSpawnReadinessMs(): number {
-  const raw = process.env.MU_SPAWN_READINESS_MS;
-  if (raw === undefined) return 10_000;
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isNaN(parsed) || parsed < 0) return 10_000;
-  return parsed;
-}
-
-/** Interval between readiness polls (ms). */
-const READINESS_POLL_INTERVAL_MS = 250;
-
-/**
- * Poll until murmur claims the pane. Returns silently when the claim
- * appears or the budget expires (timeout is not an error). Without a
- * working murmur installation, the liveness check above is sufficient.
- *
- * If the pane disappears mid-poll, throws AgentDiedOnSpawnError.
- */
-async function awaitSpawnReadiness(
-  paneId: string,
-  agentName: string,
-  workstreamName: string,
-  command: string,
-): Promise<void> {
-  const budgetMs = defaultSpawnReadinessMs();
-  if (budgetMs === 0 || !murmurAvailable()) return;
-
-  const mux = await activeMux();
-  const deadline = Date.now() + budgetMs;
-  const agent = { name: agentName, workstreamName, paneId };
-  while (Date.now() < deadline) {
-    if (!(await mux.paneExists(paneId))) {
-      const scrollback = await mux.capturePane(paneId, { lines: 50 }).catch(() => undefined);
-      throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command);
-    }
-    const reading = (await readAgentStates([agent])).get(agentKey(agent));
-    if (reading?.source === "murmur") return;
-    await sleep(Math.min(READINESS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
   }
 }
 

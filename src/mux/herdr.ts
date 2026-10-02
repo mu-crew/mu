@@ -943,9 +943,9 @@ const PANE_READY_MAX_ATTEMPTS = 60;
  * `herdr agent start <name> --kind <cli> --pane <id>` blocks until herdr
  * has DETECTED the expected agent in that terminal and it is
  * interactive-ready (30s default timeout, herdr's own). That subsumes
- * mu's tmux-side `awaitSpawnLiveness` + `awaitSpawnReadiness` scrollback
- * polling completely, which is why `src/agents/spawn.ts` skips both when
- * a backend implements this method. Nothing here re-implements them.
+ * mu's tmux-side `awaitSpawnLiveness` scrollback polling completely,
+ * which is why `src/agents/spawn.ts` skips it when a backend implements
+ * this method. Nothing here re-implements it.
  *
  * Three refusals, all deliberate (see each error class):
  *   - an operator-pinned command      → `HerdrCommandOverrideError`

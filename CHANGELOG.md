@@ -10,6 +10,30 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **pi agents never touch pane scraping.** `mu agent send <pi> '/new'`,
+  `'/reload'` and `'/compact [instructions]'` run inside pi through a
+  new control-socket op, `command`, instead of pasting into the pane.
+  The reply carries pi's own answer, so `/compact` on a short session
+  fails with `Nothing to compact (session too small)` instead of
+  looking delivered. They refuse with exit 4 while pi is busy;
+  `--force` overrides. `--json` adds `command`. A running pi needs
+  `/reload --via mux` once to load the new op.
+- **Breaking:** any other slash command sent to a pi agent exits 2
+  (`AgentSlashCommandUnsupportedError`) instead of being pasted. Add
+  `--via mux` to type it into the pane on purpose.
+
+### Removed
+
+- `MU_SPAWN_READINESS_MS` and the tmux spawn's wait for murmur to claim
+  the new pane. pi agents have the control-socket handshake; nothing
+  after a non-pi spawn needs murmur's first claim (state reads report
+  `unknown` until then).
+- The tmux paste path's `/new` screen-transition wait and its
+  `transition-unconfirmed` send warning. Only pi's `/new` needed it,
+  and pi's `/new` no longer pastes.
+
 ## [3.2.1] — 2026-10-02
 
 **`mu_delegate` fixes.** Delegates start in the caller's working
