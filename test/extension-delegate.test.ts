@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DELEGATE_CANCEL_TOOL,
+  DELEGATE_STATUS_KEY,
   DELEGATE_TOOL,
   type DelegateCtx,
   type DelegateTool,
   delegateEnabled,
   delegateMessage,
+  delegateStatus,
+  formatElapsed,
+  labelStem,
   type MuResult,
   type MuRunner,
   registerDelegate,
@@ -39,13 +43,17 @@ const ok = (stdout: unknown): MuResult => ({
 type Deferred = { resolve: (r: MuResult) => void; signal?: AbortSignal };
 
 /** A fake `mu`: records argv, answers spawn/list/send/read/close, holds waits open. */
-function fakeMu(opts: { ctl?: string } = {}) {
+type Override = (args: readonly string[]) => Promise<MuResult> | undefined;
+
+function fakeMu(opts: { ctl?: string; workspace?: string; on?: Record<string, Override> } = {}) {
   const calls: string[][] = [];
   const waits = new Map<string, Deferred>();
   const run: MuRunner = (args, signal) => {
     calls.push([...args]);
     const [ns, verb, name] = args;
     if (ns !== "agent") return Promise.resolve(ok(""));
+    const o = opts.on?.[verb ?? ""]?.(args);
+    if (o) return o;
     switch (verb) {
       case "list":
         return Promise.resolve(ok({ agents: [{ name: "delegate-1" }] }));
@@ -53,6 +61,7 @@ function fakeMu(opts: { ctl?: string } = {}) {
         return Promise.resolve(
           ok({
             ctl: opts.ctl ?? "ok",
+            workspace: opts.workspace ? { path: opts.workspace } : null,
             nextSteps: [{ intent: "Attach the pane", command: `tmux attach -t mu-scratch` }],
           }),
         );
@@ -146,6 +155,8 @@ describe("mu_delegate", () => {
       "-w",
       "scratch",
       "--json",
+      "--cwd",
+      process.cwd(),
     ]);
     expect(mu.calls.find((c) => c[1] === "send")?.[3]).toBe("You are terse.\n\nfind X");
     expect(p.sendMessage).not.toHaveBeenCalled();
@@ -159,6 +170,39 @@ describe("mu_delegate", () => {
     expect(msg).toMatchObject({ customType: "mu-delegate", display: true });
     expect((msg as { content: string }).content).toContain("X is 42");
     expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
+  });
+
+  it("cwd and timeout reach spawn and wait; the timeout is named in the message", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", cwd: "/tmp", timeout: 90 });
+    const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
+    expect(spawn.slice(spawn.indexOf("--cwd"), spawn.indexOf("--cwd") + 2)).toEqual([
+      "--cwd",
+      "/tmp",
+    ]);
+    const wait = mu.calls.find((c) => c[1] === "wait") ?? [];
+    expect(wait[wait.indexOf("--timeout") + 1]).toBe("90");
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "timeout" }] }));
+    await flush();
+    await flush();
+    expect(sentText(p)).toContain("still running after 90s");
+  });
+
+  it("workspace: true spawns with --workspace (no --cwd) and reports the checkout path", async () => {
+    const mu = fakeMu({ workspace: "/ws/scratch/delegate-2" });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const res = await tool(p).execute("t", { task: "x", workspace: true, cwd: "/ignored" });
+    const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
+    expect(spawn).toContain("--workspace");
+    expect(spawn).not.toContain("--cwd");
+    expect(res.content[0]?.text).toContain("Workspace: /ws/scratch/delegate-2");
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "edited" }] }));
+    await flush();
+    await flush();
+    expect(sentText(p)).toContain("Workspace: /ws/scratch/delegate-2");
   });
 
   it("parallel calls get distinct names", async () => {
@@ -236,16 +280,225 @@ describe("mu_delegate", () => {
   });
 });
 
+describe("errors and corner cases", () => {
+  const deferred = () => {
+    let resolve!: (r: MuResult) => void;
+    const promise = new Promise<MuResult>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  };
+  const fail = (stderr: string): MuResult => ({ code: 1, stdout: "", stderr });
+
+  it("a label names the delegate, numbered when taken", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const [a, b] = await Promise.all([
+      tool(p).execute("a", { task: "x", label: "Code Review" }),
+      tool(p).execute("b", { task: "y", label: "code review" }),
+    ]);
+    expect(a.content[0]?.text).toContain("scratch/delegate-code-review.");
+    expect(b.content[0]?.text).toContain("scratch/delegate-code-review-2.");
+  });
+
+  it("a cwd that is not a directory fails before anything spawns", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("t", { task: "x", cwd: "/nonexistent/xyz" })).rejects.toThrow(
+      /is not a directory/,
+    );
+    expect(mu.calls.some((c) => c[1] === "spawn")).toBe(false);
+  });
+
+  it("defaults cwd to the session's ctx.cwd", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" }, undefined, undefined, { cwd: "/tmp" });
+    const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
+    expect(spawn[spawn.indexOf("--cwd") + 1]).toBe("/tmp");
+  });
+
+  it("a failed send closes the pane, says so, and frees the name", async () => {
+    let sends = 0;
+    const mu = fakeMu({
+      on: { send: () => (sends++ === 0 ? Promise.resolve(fail("boom")) : undefined) },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("t", { task: "x" })).rejects.toThrow(/boom.*Pane closed/);
+    expect(mu.calls.some((c) => c[1] === "close" && c[2] === "delegate-2")).toBe(true);
+    const again = await tool(p).execute("t2", { task: "y" });
+    expect(again.content[0]?.text).toContain("delegate-2");
+  });
+
+  it("an abort signal during spawn takes the new pane down", async () => {
+    const ac = new AbortController();
+    const mu = fakeMu({
+      on: {
+        spawn: () => {
+          ac.abort();
+          return undefined; // the default ok answer
+        },
+      },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("t", { task: "x" }, ac.signal)).rejects.toThrow();
+    expect(mu.calls.some((c) => c[1] === "close" && c[2] === "delegate-2")).toBe(true);
+    expect(mu.calls.some((c) => c[1] === "send")).toBe(false);
+  });
+
+  it("a delivery failure becomes a follow-up, not an unhandled rejection", async () => {
+    const mu = fakeMu({ on: { read: () => Promise.reject(new Error("read exploded")) } });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "died" }] }));
+    await flush();
+    await flush();
+    expect(sentText(p)).toMatch(/delivering its answer failed: read exploded/);
+  });
+
+  it("cancel whose abort fails keeps the delegate tracked and delivers an answer that landed meanwhile", async () => {
+    const ab = deferred();
+    const mu = fakeMu({ on: { abort: () => ab.promise } });
+    const p = fakePi();
+    const setStatus = vi.fn();
+    registerDelegate(p.pi, mu.run);
+    const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus } };
+    await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
+    const cancel = tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "delegate-2" });
+    await flush();
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "late" }] }));
+    await flush();
+    expect(p.sendMessage).not.toHaveBeenCalled(); // parked while the abort is in flight
+    ab.resolve(fail("agent gone"));
+    await expect(cancel).rejects.toThrow(/agent gone/);
+    await flush();
+    await flush();
+    expect(sentText(p)).toContain("late");
+    expect(setStatus.mock.calls.at(-1)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+  });
+
+  it("cancel whose abort fails before any answer keeps waiting (footer stays)", async () => {
+    const mu = fakeMu({ on: { abort: () => Promise.resolve(fail("nope")) } });
+    const p = fakePi();
+    const setStatus = vi.fn();
+    registerDelegate(p.pi, mu.run);
+    const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus } };
+    await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
+    await expect(
+      tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "delegate-2" }),
+    ).rejects.toThrow(/nope/);
+    expect(setStatus.mock.calls.at(-1)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
+    mu.waits
+      .get("delegate-2")
+      ?.resolve(ok({ agents: [{ outcome: "done", lastText: "still here" }] }));
+    await flush();
+    await flush();
+    expect(sentText(p)).toContain("still here");
+  });
+
+  it("a successful cancel drops an answer that its own abort settled", async () => {
+    const ab = deferred();
+    const mu = fakeMu({ on: { abort: () => ab.promise } });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    const cancel = tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "delegate-2" });
+    await flush();
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "empty" }] }));
+    await flush();
+    ab.resolve(ok("{}"));
+    await cancel;
+    await flush();
+    expect(p.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("footer status", () => {
+  const uiCtx = () => {
+    const setStatus = vi.fn();
+    return { setStatus, ctx: { hasUI: true, ui: { notify: vi.fn(), setStatus } } };
+  };
+  const last = (f: ReturnType<typeof vi.fn>) => f.mock.calls.at(-1);
+
+  it("counts running delegates and clears when the last answer arrives", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const { setStatus, ctx } = uiCtx();
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
+    await tool(p).execute("b", { task: "two" }, undefined, undefined, ctx);
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "2 delegates running"]);
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
+    await flush();
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
+    await tool(p, DELEGATE_CANCEL_TOOL).execute(
+      "c",
+      { name: "delegate-3" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+  });
+
+  it("works without a UI ctx (print mode, tests)", async () => {
+    const p = fakePi();
+    registerDelegate(p.pi, fakeMu().run);
+    await expect(tool(p).execute("a", { task: "x" })).resolves.toBeDefined();
+  });
+
+  it("delegateStatus words the count", () => {
+    expect(delegateStatus(0)).toBeUndefined();
+    expect(delegateStatus(1)).toBe("1 delegate running");
+    expect(delegateStatus(3)).toBe("3 delegates running");
+  });
+});
+
 describe("delegateMessage", () => {
   it("words each CLI outcome", () => {
     expect(delegateMessage("d", { outcome: "done", lastText: "A" }, { closed: true })).toBe(
       "Delegate scratch/d finished. Pane closed.\n\nA",
     );
     expect(
-      delegateMessage("d", { outcome: "empty", lastText: "" }, { closed: true }, "tail"),
+      delegateMessage("d", { outcome: "empty", lastText: "" }, { closed: true }, { tail: "tail" }),
     ).toContain("without a text answer");
     const t = delegateMessage("d", { outcome: "timeout" }, { closed: false, why: "evidence" });
     expect(t).toContain("still running");
+    expect(t).toContain("will not arrive here");
     expect(t).toContain("mu agent wait d -w scratch --json");
+  });
+
+  it("names the run time when given", () => {
+    expect(
+      delegateMessage(
+        "d",
+        { outcome: "done", lastText: "A" },
+        { closed: true },
+        { elapsedMs: 185_000 },
+      ),
+    ).toBe("Delegate scratch/d finished after 3m 05s. Pane closed.\n\nA");
+  });
+
+  it("formatElapsed", () => {
+    expect(formatElapsed(42_400)).toBe("42s");
+    expect(formatElapsed(65_000)).toBe("1m 05s");
+    expect(formatElapsed(3_720_000)).toBe("1h 02m");
+  });
+});
+
+describe("labelStem", () => {
+  it("makes a valid agent-name stem or nothing", () => {
+    expect(labelStem("Review PR #12")).toBe("review-pr-12");
+    expect(labelStem("  --  ")).toBeUndefined();
+    expect(labelStem(7)).toBeUndefined();
+    expect(labelStem("a".repeat(40))).toHaveLength(20);
+    expect(labelStem("abcdefghijklmnopqrs-tuv")).toBe("abcdefghijklmnopqrs");
   });
 });

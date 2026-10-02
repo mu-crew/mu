@@ -16,15 +16,19 @@ Delegates called in one turn run in parallel.
 | Option | Meaning |
 | ------ | ------- |
 | `task` (required) | All the context. The delegate starts empty. |
-| `brief` | Ad hoc persona or ground rules, sent first. No agent types. |
-| `workspace` | Own VCS workspace, for delegates that edit files. |
-| `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`), e.g. a read-only reviewer. |
+| `label` | Names the delegate: `review` gives `delegate-review`. |
+| `brief` | Ad hoc persona or ground rules, sent first. Not enforced. |
+| `cwd` | Start directory. Default: the caller's. Must exist. |
+| `timeout` | Seconds to wait for the answer (default 3600). After it, the answer does not come back; the follow-up gives the `mu agent wait` command. |
+| `workspace` | Own VCS checkout, for delegates that edit files. The follow-up names its path. It isolates repository edits only. |
+| `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`), e.g. a cheaper model. |
 | `keep` | Keep the pane after it finishes, to talk to it again. |
 
 - Watch or steer: run the attach command.
 - Stop: `mu_delegate_cancel`, or `mu agent abort <name> -w scratch`.
 - The pane closes after a clean finish; died or timed-out panes stay
   as evidence.
+- pi's footer shows how many delegates this session is waiting on.
 - Each delegate costs a pane and a pi process.
 
 `MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
