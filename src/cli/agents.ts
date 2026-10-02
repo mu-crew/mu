@@ -14,6 +14,7 @@ import { agentKey, readAgentStates } from "../agent-state.js";
 import {
   type AdoptAgentOptions,
   type AdoptAgentResult,
+  AgentCtlUnreachableError,
   AgentNotFoundError,
   adoptAgent,
   closeAgent,
@@ -44,7 +45,7 @@ import {
 } from "../cli.js";
 import type { Db } from "../db.js";
 import { activeMux, type SendWarning } from "../mux.js";
-import { type NextStep, pc, printNextSteps } from "../output.js";
+import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
 import { listTasksByOwner } from "../tasks.js";
 import { detectBackend, type VcsBackendName } from "../vcs.js";
 import { getWorkspaceForAgent } from "../workspace.js";
@@ -61,6 +62,8 @@ interface SpawnOpts {
   workspaceBackend?: VcsBackendName;
   workspaceFrom?: string;
   workspaceProjectRoot?: string;
+  /** commander's `--no-ctl` negation: false skips the ctl handshake. */
+  ctl?: boolean;
   json?: boolean;
 }
 // Preflight: when --workspace is set, resolve+announce the backend
@@ -107,7 +110,16 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
     ...(opts.workspaceProjectRoot !== undefined
       ? { workspaceProjectRoot: opts.workspaceProjectRoot }
       : {}),
+    ...(opts.ctl === false ? { ctl: false } : {}),
   });
+  // A pi agent whose control socket never answered still spawned (the
+  // pane is usable by hand), but say so loudly on stderr: every exact
+  // send / wait on it will fail until the extension answers.
+  if (agent.ctl === "missing" || agent.ctl === "refused") {
+    const warn = new AgentCtlUnreachableError(name, workstream, agent.ctlSocket, agent.ctl);
+    console.error(pc.yellow(`warning: ${warn.message}`));
+    printNextStepsTo(warn.errorNextSteps(), "stderr");
+  }
   const workspace = opts.workspace ? getWorkspaceForAgent(db, name, workstream) : undefined;
   // Resolve the actual command that landed in the pane, so the operator
   // can confirm `--command 'pi-meta --no-solo'` (etc.) took effect.
@@ -144,6 +156,8 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
       // resolution came from $MU_<UPPER_CLI>_COMMAND. Mirrors the
       // human `(via $MU_PI_META_COMMAND)` suffix below.
       ...(envSourced?.resolvedFromEnv ? { resolvedFromEnvVar: envSourced.envVar } : {}),
+      ctl: agent.ctl,
+      ctlSocket: agent.ctlSocket,
       nextSteps,
     });
     return;
@@ -166,6 +180,7 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
     `Spawned ${pc.bold(agent.name)} (${cliDisplay}) in window ${pc.bold(agent.tab ?? agent.name)} of ${pc.bold(`mu-${workstream}`)}, pane ${pc.dim(agent.paneId)}${wsBit}`,
   );
   if (workspace) console.log(pc.dim(`  workspace: ${workspace.path} (${workspace.backend})`));
+  console.log(pc.dim(`  ctl: ${agent.ctl} (${agent.ctlSocket})`));
   printNextSteps(nextSteps);
 }
 
@@ -735,6 +750,7 @@ export function wireAgentCommands(program: Command): void {
       "--workspace-project-root <path>",
       "override the project root the workspace branches from (default: cwd)",
     )
+    .option("--no-ctl", "skip the control-socket handshake with the mu pi extension")
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string) {
@@ -749,6 +765,7 @@ export function wireAgentCommands(program: Command): void {
         workspaceBackend?: VcsBackendName;
         workspaceFrom?: string;
         workspaceProjectRoot?: string;
+        ctl?: boolean;
         json?: boolean;
       };
       return handle((db) => cmdSpawn(db, name, opts), this as Command)();

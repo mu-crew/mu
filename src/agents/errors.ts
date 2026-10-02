@@ -339,3 +339,34 @@ export class WorkspacePreservedError extends Error implements HasNextSteps {
     ];
   }
 }
+
+/**
+ * The agent's pane and pi are up, but nothing answers on its control
+ * socket (`MU_CTL_SOCK`): the mu pi extension is not loaded, or, for a
+ * remote agent, the ssh command lacks the `-L` forward. Spawn does not
+ * throw it — the agent is usable by hand — but prints it as a warning;
+ * verbs that need the socket throw it.
+ */
+export class AgentCtlUnreachableError extends Error implements HasNextSteps {
+  override readonly name = "AgentCtlUnreachableError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly socket: string,
+    public readonly kind: "missing" | "refused",
+  ) {
+    super(
+      `agent ${agentName} has no control socket (ctl: ${kind}) at ${socket}; mu cannot send to or wait on it exactly`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      { intent: "Check whether the mu pi extension is linked", command: "mu doctor" },
+      { intent: "Link the extension, then re-spawn", command: "mu link pi" },
+      {
+        intent: "Remote agent: forward the socket in your ssh command",
+        command: `ssh -L ${this.socket}:<remote sock> ...   (see mu agent remote-env)`,
+      },
+    ];
+  }
+}

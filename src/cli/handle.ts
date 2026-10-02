@@ -29,6 +29,7 @@
 
 import { type Command, CommanderError } from "commander";
 import {
+  AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
   AgentNotFoundError,
@@ -334,6 +335,11 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // matches AgentDiedOnSpawnError / AgentSpawnStartupError below —
     // all three are "the spawn can't produce a working agent".
     return { label: "spawn cli not found", exitCode: 1 };
+  }
+  if (err instanceof AgentCtlUnreachableError) {
+    // The agent runs, but mu cannot control it: same "spawn can't
+    // produce a working agent" lane as the spawn failures around it.
+    return { label: "ctl unreachable", exitCode: 1 };
   }
   if (err instanceof AgentDiedOnSpawnError) {
     // Substrate-level failure (CLI exited at spawn). The message is

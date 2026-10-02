@@ -54,3 +54,8 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
   }
 }
+
+// Baseline: no spawn-time control-socket handshake. No test pane runs
+// the mu pi extension, so the 30s default would stall every pi spawn.
+// test/spawn-ctl.test.ts opts back in with a small budget.
+process.env.MU_SPAWN_CTL_MS = "0";
