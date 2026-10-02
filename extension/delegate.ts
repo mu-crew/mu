@@ -341,7 +341,15 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         customType: DELEGATE_MESSAGE_TYPE,
         content: delegateMessage(name, agent, pane, { ...extras, ...(tail ? { tail } : {}) }),
         display: true,
-        details: { name, workstream: W, outcome: outcome ?? null, closed: pane.closed },
+        details: {
+          name,
+          workstream: W,
+          outcome: outcome ?? null,
+          closed: pane.closed,
+          answer: outcome === "done" ? (agent?.lastText ?? null) : null,
+          elapsedMs: extras.elapsedMs ?? null,
+          workspace: extras.workspace ?? null,
+        },
       },
       { deliverAs: "followUp", triggerTurn: true },
     );
@@ -374,12 +382,13 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         },
         timeout: {
           type: "number",
+          exclusiveMinimum: 0,
           description: `Seconds to wait for the answer (default ${DELEGATE_TIMEOUT_S}). On timeout you get a "still running" follow-up instead of the answer, and the answer will not arrive later; the subagent keeps running in its pane.`,
         },
         workspace: {
           type: "boolean",
           description:
-            "For tasks that edit files: its own VCS checkout (jj workspace / git worktree / sl share) branched from the current commit. The result and follow-up name the path; changes stay there until you merge them.",
+            "For tasks that edit files: its own VCS checkout (jj workspace / git worktree / sl share) branched from the current commit. The result and follow-up name the path; changes stay there until you merge them. This isolates repository edits only: the subagent runs as you, with your files, environment and network.",
         },
         cli: {
           type: "string",
@@ -401,8 +410,11 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       const brief = typeof params.brief === "string" ? params.brief.trim() : "";
       const keep = params.keep === true;
       const t = params.timeout;
-      const timeoutS =
-        typeof t === "number" && Number.isFinite(t) && t > 0 ? Math.ceil(t) : DELEGATE_TIMEOUT_S;
+      if (t !== undefined && !(typeof t === "number" && Number.isFinite(t) && t > 0))
+        throw new Error(
+          `mu_delegate: timeout must be a positive number of seconds (got ${JSON.stringify(t)})`,
+        );
+      const timeoutS = typeof t === "number" ? Math.ceil(t) : DELEGATE_TIMEOUT_S;
       // Without --cwd the pane inherits the mux session's start dir (wherever
       // the FIRST scratch spawn ran), and a missing dir silently becomes
       // $HOME: pin it to the caller's and check it exists.
