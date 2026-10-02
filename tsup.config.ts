@@ -4,6 +4,8 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     cli: "src/cli.ts",
+    // The mu pi extension: pi loads dist/extension/mu-pi.js standalone.
+    "extension/mu-pi": "extension/mu-pi.ts",
   },
   format: ["esm"],
   dts: { entry: { index: "src/index.ts" } }, // .d.ts only for the SDK entry, not the CLI
