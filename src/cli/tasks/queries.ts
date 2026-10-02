@@ -12,7 +12,7 @@
 // `task next -n 0`, which now means "all ready, unlimited"). The
 // underlying SDK helpers `listBlocked` and `listGoals` survive —
 // `mu state` / `mu tracks` consume them. The audit's SQL recipes for
-// the removed verbs live in docs/USAGE_GUIDE.md "What's NOT in mu".
+// the removed verbs live in docs/guide/sql.md "Run common queries".
 
 import {
   byRoiDesc,
