@@ -17,6 +17,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - `mu_delegate_cancel` whose abort fails no longer drops the answer and
   leaves the footer count stuck: the delegate stays tracked, and an
   answer that landed meanwhile is delivered.
+- `mu_delegate` refuses a `timeout` that is not a positive number
+  instead of silently waiting an hour.
 - A failure while delivering a delegate's answer is posted as a
   follow-up instead of an unhandled rejection.
 - A failed send closes the delegate's idle pane and says so. Cancelling
@@ -41,6 +43,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - The `timeout` doc and the "still running" follow-up say the answer
   will not arrive later; the description says to end the turn when the
   next step needs the answer.
+- The follow-up's `details` carry the answer, run time and workspace
+  path, so automation can read them without parsing the text. The
+  `workspace` doc says it isolates repository edits only: the delegate
+  runs as you, with your files, environment and network.
 - The tool description leads with "Subagent", so models reach for
   `mu_delegate` when a task calls for a subagent. Parameter docs say
   what `workspace`, `cli` and `brief` do, and that `brief` rules are

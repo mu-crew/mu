@@ -302,6 +302,30 @@ describe("errors and corner cases", () => {
     expect(b.content[0]?.text).toContain("scratch/delegate-code-review-2.");
   });
 
+  it("an invalid timeout is refused, not silently an hour", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    for (const timeout of [0, -1, Number.NaN, "60"])
+      await expect(tool(p).execute("t", { task: "x", timeout })).rejects.toThrow(
+        /timeout must be a positive number/,
+      );
+    expect(mu.calls.some((c) => c[1] === "spawn")).toBe(false);
+  });
+
+  it("the follow-up details carry the answer and run time for machine readers", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
+    await flush();
+    await flush();
+    const msg = p.sendMessage.mock.calls[0]?.[0] as { details: Record<string, unknown> };
+    expect(msg.details).toMatchObject({ outcome: "done", answer: "42", closed: true });
+    expect(typeof msg.details.elapsedMs).toBe("number");
+  });
+
   it("a cwd that is not a directory fails before anything spawns", async () => {
     const mu = fakeMu();
     const p = fakePi();
