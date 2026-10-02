@@ -179,10 +179,11 @@ describe("mu agent wait on a pi agent", () => {
     expect(res.error).toBeUndefined();
     expect(res.exitCode).toBeNull();
     const payload = JSON.parse(res.stdout) as {
-      agents: Array<{ fired: boolean; lastText?: string }>;
+      agents: Array<{ fired: boolean; lastText?: string; outcome?: string }>;
     };
     expect(payload.agents[0]?.fired).toBe(true);
     expect(payload.agents[0]?.lastText).toBe("ok");
+    expect(payload.agents[0]?.outcome).toBe("done");
     expect(ext.ops.filter((op) => op === "status").length).toBeLessThan(3);
   });
 

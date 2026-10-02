@@ -368,9 +368,14 @@ export function ctlExtensionDoctorCheck(opts?: LinkOptions): DoctorCheck {
   const { extension } = inspectLinks(opts);
   switch (extension.state) {
     case "ok":
-      // pictl_delegate joins here: "ok (ctl, mu_delegate)", or
-      // "ok (ctl; mu_delegate disabled by MU_DELEGATE=0)".
-      return { name: "mu ext", status: "ok", detail: "(ctl)" };
+      return {
+        name: "mu ext",
+        status: "ok",
+        detail:
+          process.env.MU_DELEGATE === "0"
+            ? "(ctl; mu_delegate disabled by MU_DELEGATE=0)"
+            : "(ctl, mu_delegate)",
+      };
     case "stale-copy":
       return { name: "mu ext", status: "warn", detail: `stale copy: ${RELINK}` };
     case "dangling":

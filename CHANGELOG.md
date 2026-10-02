@@ -46,6 +46,31 @@ breaking changes are called out under "Breaking" in each entry.
   file.** ssh leaves the `-L` socket file behind when the connection
   dies; it probes as `refused`, never `ok`, and is now removed with the
   agent row.
+- **`mu_delegate`: async one-shot delegation from any pi.** The mu pi
+  extension registers a `mu_delegate { task, brief?, workspace?, cli?,
+  keep? }` tool in pi sessions mu did not spawn. It spawns a
+  `delegate-N` agent in the `scratch` workstream, sends the task, and
+  returns at once with the name and attach command; the delegate's
+  answer arrives later as a follow-up message (`deliverAs: followUp`,
+  `triggerTurn`), so the main pi keeps working. Several calls run in
+  parallel. After a clean finish the pane is closed unless `keep: true`;
+  died and timed-out panes are kept as evidence. `mu_delegate_cancel
+  { name, keep? }` runs `mu agent abort` and closes the pane. Quitting
+  or reloading pi with delegates in flight names them in a warning.
+  Every step is the CLI (`mu agent spawn -w scratch` / `send` /
+  `wait --json` / `read` / `abort` / `close`); the tool only formats.
+  Hidden in mu-managed agents (`MU_MANAGED_AGENT`), when no mux is in
+  reach, or with `MU_DELEGATE=0`. `mu doctor`'s `mu ext` row reads
+  `ok (ctl, mu_delegate)`.
+- **`mu agent wait --json` reports an `outcome` per agent:** `done`,
+  `empty`, `died`, `timeout` or `pending` (`delegateOutcome` in
+  `src/agents/delegate.ts`).
+- **`mu agent spawn` suggests the attach command** for the new pane
+  (`Next:` hint and `--json` `nextSteps`).
+- **Idle scratch agents are flagged.** A `scratch` agent idle longer
+  than `MU_IDLE_THRESHOLD_MS` gets the idle marker in `mu agent list` /
+  `mu state` without owning a task, so leftover delegate panes stay
+  visible.
 - **`mu agent wait --json` returns a pi agent's final answer as
   `lastText`.** The mu pi extension captures the last assistant
   message's text parts on `agent_end` (no tool calls, no thinking) and

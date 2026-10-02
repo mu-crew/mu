@@ -661,6 +661,7 @@ separately below.
 | `src/apply.ts`        | **The apply path** — capture's counterpart: given one op, local or from a peer, make the tables reflect it. Also owns `reprojectDeferredOps` ([§ ambient sync hook](#the-ambient-sync-hook)). |
 | `src/undo.ts` + `src/cli/undo.ts` | **Undo as inverse ops**: inverses for one `group_id`, derived from log provenance, refusing a superseded group (exit 4; `--force` overrides). Bare form lists undoable groups (`-n` widens), a prefix previews, `--yes` applies. |
 | `src/project-root.ts` | `detectProjectRoot` — the launch-cwd ladder bare `mu` uses to guess which workstream to focus. Pure filesystem walk; no DB. |
+| `extension/mu-pi.ts` + `extension/delegate.ts` | **The mu pi extension**, built to `dist/extension/mu-pi.js`. Child side (`serveCtl`): serves `$MU_CTL_SOCK` in a pi mu spawned. Parent side (`registerDelegate`, hidden when `MU_MANAGED_AGENT` is set or `MU_DELEGATE=0`): the `mu_delegate` / `mu_delegate_cancel` tools, which shell out to the `mu` CLI (spawn, send, `wait --json`, read, abort, close) and only format the CLI's `outcome` into a follow-up message. Imports nothing from pi; only the protocol from mu. |
 | `src/link.ts` + `src/cli/link.ts` | **Link** — `mu link pi`: `linkPi` writes the extension shim (or `--copy`), `linkSkill` symlinks the skill, `inspectLinks` reports `ok` / `missing` / `stale-copy` / `foreign` / `dangling` for doctor. Filesystem only: the verb runs outside `handle()` (no DB). |
 | `src/rebuild.ts` + `src/cli/rebuild.ts` | **Rebuild** — disaster recovery: `rebuildInto` replays the whole log into a NEW DB file via `applyOp`. The verb renders the report: counts, `--json`, an `mv`-swap `Next:` step, a warning that `agents` / `vcs_workspaces` are not reconstructible. |
 | `src/legacy-ops.ts` | Permanent compatibility classifier for historical log-only intents whose entity looks projectable. Rebuild copies them without projection; segment flush never emits them. |
@@ -679,7 +680,7 @@ separately below.
 | `src/agent-state.ts`  | Runtime agent-state resolver. Reads herdr's native state or murmur's local pane options and remote JSON; maps source states, returns `unknown` with a reason, and caches remote murmur reads for 10 seconds. |
 | `src/reconcile.ts`    | Ghost prune + orphan surface; "reality wins"                              |
 | `src/agents.ts`       | Hub: CRUD + send / read / list / close + liveness + reaper. Re-exports `src/agents/*`; pane-title composition (`composeAgentTitle`) lives here. |
-| `src/agents/*.ts`     | Agent-lifecycle internals: `spawn.ts` (spawn, CLI resolution, liveness wait *or* backend `startAgentInPane`, pane create-or-reuse, rollback), `spawn-lock.ts` (per-session lock around topology+finalize), `wait.ts`, `adopt.ts`, `kick.ts` (signal a wedged pane's pgid), `abort.ts` (stop a pi turn via the control socket), `errors.ts`. |
+| `src/agents/*.ts`     | Agent-lifecycle internals: `spawn.ts` (spawn, CLI resolution, liveness wait *or* backend `startAgentInPane`, pane create-or-reuse, rollback), `spawn-lock.ts` (per-session lock around topology+finalize), `wait.ts`, `adopt.ts`, `kick.ts` (signal a wedged pane's pgid), `abort.ts` (stop a pi turn via the control socket), `delegate.ts` (`delegateOutcome`: one wait result → `done` / `empty` / `died` / `timeout` / `pending`, surfaced by `mu agent wait --json`), `errors.ts`. |
 | `src/dag.ts`          | Shared DAG read/render helpers: `loadFullDag` plus pure `renderForest` / `renderTaskTree`, reused by `mu task tree` and the TUI DAG popup. |
 | `src/tasks/*.ts`      | Task-graph internals: `core.ts` (row shapes, id resolution), `id.ts`, `queries.ts` (reads), `edit.ts` (+ delete cascade preview), `edges.ts` (+ cycle check), `status.ts` (TaskStatus), `sort.ts`, `claim.ts` (atomic CAS), `lifecycle.ts` (close/open), `wait.ts`, `errors.ts`. |
 | `src/tracks.ts`       | Parallel-tracks union-find with diamond merge                                             |
@@ -1014,9 +1015,10 @@ Single npm package `mu` (see `package.json`):
 - `dist/index.js` + `dist/index.d.ts` — programmatic API + types for SDK callers
 - `skills/mu/SKILL.md` — bundled skill (the only non-`dist` asset shipped)
 
-`tsup` bundles two entries (`index`, `cli`) from `src/`. No runtime
-build step on the user's machine. There is no pi-extension entry — pi
-is a peer dep — and no bundled `agents/*.md` or `prompts/*.md`:
+`tsup` bundles three entries: `index` and `cli` from `src/`, and
+`extension/mu-pi` (the pi extension `mu link pi` points at). No runtime
+build step on the user's machine. pi stays a peer dep — the extension
+types pi's API structurally — and there is no bundled `agents/*.md` or `prompts/*.md`:
 per-role agent guidance lives in the user's project repo.
 
 The dependency list lives in `package.json`; the rule for adding

@@ -19,13 +19,14 @@ import {
   LineDecoder,
   UNKNOWN_OP_PREFIX,
 } from "../src/ctl/protocol.js";
+import { type DelegateCtx, type MuDelegateApi, registerDelegate } from "./delegate.js";
 
 /** The mu package version, baked in by tsup's `define`; absent when run from source. */
 declare const __MU_VERSION__: string | undefined;
 const EXT_VERSION = typeof __MU_VERSION__ === "string" ? __MU_VERSION__ : undefined;
 
 /** The slice of pi's ExtensionContext this extension uses. */
-export interface MuPiContext {
+export interface MuPiContext extends DelegateCtx {
   isIdle(): boolean;
   hasPendingMessages(): boolean;
   abort(): void;
@@ -44,7 +45,7 @@ export interface MuPiCommandContext extends MuPiContext {
 }
 
 /** The slice of pi's ExtensionAPI this extension uses. */
-export interface MuPiApi {
+export interface MuPiApi extends MuDelegateApi {
   on(
     event: "session_start" | "session_shutdown" | "agent_start" | "agent_end" | "agent_settled",
     handler: (event: unknown, ctx: MuPiContext) => unknown,
@@ -197,6 +198,12 @@ function reasonOf(event: unknown): string | undefined {
 }
 
 export default function muPi(pi: MuPiApi): void {
+  registerDelegate(pi);
+  serveCtl(pi);
+}
+
+/** Child side: serve `$MU_CTL_SOCK` for the mu that spawned this pi. */
+function serveCtl(pi: MuPiApi): void {
   const sock = process.env.MU_CTL_SOCK;
   if (!sock) return;
   const sockPath: string = sock;

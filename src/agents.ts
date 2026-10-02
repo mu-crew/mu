@@ -41,6 +41,7 @@ export {
   type AdoptAgentResult,
   adoptAgent,
 } from "./agents/adopt.js";
+export { type DelegateOutcome, delegateOutcome } from "./agents/delegate.js";
 export {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
@@ -120,7 +121,7 @@ import { freeWorkspace, getWorkspaceForAgent, isWorkspaceClean } from "./workspa
 // (freeWorkspace is used by the spawn rollback paths below, not by closeAgent.
 // Closing an agent is intentionally a separate concern from freeing its workspace;
 // see the closeAgent docstring.)
-import { ensureWorkstream } from "./workstream.js";
+import { ensureWorkstream, isScratchWorkstream } from "./workstream.js";
 
 export interface AgentRow {
   name: string;
@@ -169,6 +170,10 @@ export function idleThresholdMs(): number {
  * Decide whether an agent is in the 'idle but assigned' state. Pure
  * read on (agents, tasks); no side effects. Exported so `listLiveAgents`,
  * the renderers, and tests can share one source of truth.
+ *
+ * Scratch agents own no task, so for them idle past the threshold is
+ * enough: a leftover delegate pane is then flagged in `mu state -w
+ * scratch` / `mu agent list` instead of piling up unseen.
  */
 export function computeAgentIdle(db: Db, agent: LiveAgent, now: number = Date.now()): boolean {
   if (agent.state !== "needs_input" || agent.since === null) return false;
@@ -177,6 +182,7 @@ export function computeAgentIdle(db: Db, agent: LiveAgent, now: number = Date.no
   const since = Date.parse(agent.since);
   if (!Number.isFinite(since)) return false;
   if (now - since < threshold) return false;
+  if (isScratchWorkstream(agent.workstreamName)) return true;
   const wsId = tryResolveWorkstreamId(db, agent.workstreamName);
   if (wsId === null) return false;
   const row = db

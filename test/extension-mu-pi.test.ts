@@ -38,6 +38,8 @@ function fakePi() {
     registerCommand(name: string, c: Command) {
       commands.set(name, c);
     },
+    registerTool: vi.fn(),
+    sendMessage: vi.fn(),
   };
   const emit = async (event: string, extra: Record<string, unknown> = {}) => {
     for (const h of handlers.get(event) ?? []) await h({ type: event, ...extra }, ctx);
@@ -53,6 +55,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mupi-"));
   sock = join(dir, "sub", "a.sock");
   process.env.MU_CTL_SOCK = sock;
+  process.env.MU_MANAGED_AGENT = "1"; // spawn sets both; keeps mu_delegate out of these tests
   process.env.MU_AGENT_NAME = "worker-9";
   process.env.MU_WORKSTREAM = "ws";
   fake = fakePi();
@@ -61,7 +64,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   await fake.emit("session_shutdown");
-  for (const k of ["MU_CTL_SOCK", "MU_AGENT_NAME", "MU_WORKSTREAM"]) delete process.env[k];
+  for (const k of ["MU_CTL_SOCK", "MU_MANAGED_AGENT", "MU_AGENT_NAME", "MU_WORKSTREAM"])
+    delete process.env[k];
   rmSync(dir, { recursive: true, force: true });
 });
 
