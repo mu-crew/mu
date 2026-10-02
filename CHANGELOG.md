@@ -20,6 +20,25 @@ breaking changes are called out under "Breaking" in each entry.
   without text; over 64 KiB is cut with a `[truncated, see pane]`
   marker. Absent for non-pi agents. mu passes the text through
   verbatim and never interprets it.
+- **Next: hints teach `--fresh`, `--steer` and `mu agent abort` at
+  dispatch time.** One helper (`src/cli/dispatch-hints.ts`) decides per
+  agent with `expectsCtl`: a hint that hands a pi agent a NEW task shows
+  `--fresh`, while steering and answering stay a plain send. Non-pi
+  agents keep the old hints. The sites:
+  - `mu task claim --for` now leads with the send that hands the task
+    over.
+  - spawn and adopt (`ctl ok` only) suggest `--fresh`.
+  - `mu task wait` adds "dispatch the next task" after the refresh
+    hint.
+  - A plain send to a busy pi explains the queue and points at
+    `--steer` / `mu agent abort`.
+  - A plain send to an idle pi whose last run settled nudges toward
+    `--fresh`.
+  - kick on a pi agent leads with `mu agent abort`.
+  - The `--on-stall exit` error lists `mu agent abort` for a pi
+    owner.
+
+  All of these also appear in `nextSteps` in `--json` output.
 
 - **`mu agent send <name> --fresh '<prompt>'`: new session + prompt as
   one operation.** For pi agents only. The mu pi extension registers an

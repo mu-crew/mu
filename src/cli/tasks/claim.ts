@@ -43,6 +43,7 @@ import {
 } from "../../tasks.js";
 import { type CommitSummary, WorkspaceVcsRequiredError } from "../../vcs.js";
 import { listCommitsForWorkspace, WorkspaceNotFoundError } from "../../workspace.js";
+import { dispatchHint, nextDispatchHint } from "../dispatch-hints.js";
 import { checkWorkspaceStalenessForDispatch } from "../staleness.js";
 
 export async function cmdTaskRelease(
@@ -170,6 +171,12 @@ export async function cmdClaim(
     await refreshAgentTitle(db, result.ownerName, forWorkstream ?? ws);
   }
   const nextSteps: NextStep[] = [];
+  // claim-before-send: a --for claim is the moment of dispatch, so the
+  // first hint is the send that hands the task over.
+  const owner =
+    result.ownerName === null ? undefined : getAgent(db, result.ownerName, forWorkstream ?? ws);
+  if (owner !== undefined)
+    nextSteps.push(dispatchHint(owner, { task: { id: localId, workstream: ws } }));
   if (result.ownerName !== null) {
     const remote = findRemoteDispatch(db, ws, localId, result.ownerName);
     if (remote !== undefined) {
@@ -534,6 +541,10 @@ export async function cmdTaskWait(
         intent: `Refresh ${owner}'s workspace onto current main for the next dispatch`,
         command: `mu workspace refresh ${owner} -w ${firingRef.workstreamName}`,
       });
+      const ownerRow = getAgent(db, owner, firingRef.workstreamName);
+      const dispatch =
+        ownerRow === undefined ? null : nextDispatchHint(ownerRow, firingRef.workstreamName);
+      if (dispatch !== null) nextSteps.push(dispatch);
     }
   } else if (!result.timedOut && wantFirstShape === false) {
     // --all success path — every ref reached. No single "firing"

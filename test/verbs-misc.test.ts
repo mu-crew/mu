@@ -205,6 +205,8 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     expect(out.ctl).toBe("missing");
     expect(out.nextSteps[0]?.command).toBe(`MU_CTL_SOCK=${out.ctlSocket} pi`);
     expect(out.nextSteps.some((s) => s.command.includes("--via mux"))).toBe(true);
+    // Socket down: the restart / --via mux hints win; no --fresh suggestion.
+    expect(out.nextSteps.some((s) => s.command.includes("--fresh"))).toBe(false);
 
     const human = await runCli(["agent", "adopt", paneId, "-w", "auth"], dbPath);
     expect(human.stderr).toContain("warning: adopted pi agent worker-2 has no control socket");
