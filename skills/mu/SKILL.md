@@ -49,10 +49,9 @@ or inspection.
 
 ### Off-the-cuff helpers (`scratch`)
 
-The reserved `scratch` workstream holds helpers that need no task DAG; it
-auto-creates on spawn. `mu_delegate` (installed by `mu link pi`) is its tool
-form for one answer back; the CLI form is spawn + send + `mu agent wait --json`
-(`lastText`).
+For one-shot work inside pi, call `mu_delegate` (installed by `mu link pi`).
+Outside pi: spawn into the reserved `scratch` workstream (no task DAG,
+auto-created), `send --fresh`, then `mu agent wait --json` (`lastText`).
 
 - `mu agent wait <names...> --first` waits for busy → idle instead of a
   `sleep` loop; exit 0 met, 5 timeout, 6 pane died.

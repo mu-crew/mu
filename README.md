@@ -67,9 +67,9 @@ mu                                                  # dashboard
 mu workstream teardown --yes                        # without --yes: dry run
 ```
 
-For one helper without a DAG, spawn into the reserved `scratch`
-workstream: `mu agent spawn scout-1 -w scratch`. For a one-shot answer,
-use the `mu_delegate` tool.
+For one helper, ask pi to delegate (`mu_delegate` ships with `mu link
+pi`), or spawn into the reserved `scratch` workstream:
+`mu agent spawn scout-1 -w scratch`.
 
 ## mu delegates vs hidden subagents
 
