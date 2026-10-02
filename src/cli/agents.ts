@@ -16,6 +16,7 @@ import {
   type AdoptAgentResult,
   AgentCtlUnreachableError,
   AgentNotFoundError,
+  abortAgent,
   adoptAgent,
   closeAgent,
   getAgent,
@@ -599,6 +600,37 @@ export async function cmdKick(
   printNextSteps(nextSteps);
 }
 
+export async function cmdAbort(
+  db: Db,
+  rawName: string,
+  opts: { workstream?: string; timeout?: number; json?: boolean } = {},
+): Promise<void> {
+  const { name } = await resolveEntityRef(db, rawName, opts, "agent");
+  assertAgentInWorkstream(db, name, opts.workstream);
+  const ws = await resolveWorkstream(opts.workstream);
+  const result = await abortAgent(db, name, {
+    workstream: ws,
+    ...(opts.timeout === undefined ? {} : { timeoutMs: Math.round(opts.timeout * 1000) }),
+  });
+  const nextSteps: NextStep[] = [
+    {
+      intent: "Steer it with the next instruction",
+      command: `mu agent send ${name} '...' -w ${ws}`,
+    },
+    { intent: "Read the pane", command: `mu agent read ${name} -n 30 -w ${ws}` },
+  ];
+  if (opts.json) {
+    emitJson({ ...result, nextSteps });
+    return;
+  }
+  console.log(
+    result.aborted
+      ? `Aborted ${pc.bold(name)} ${pc.dim(`(${result.before} → ${result.after} in ${result.elapsedMs}ms)`)}`
+      : `${pc.bold(name)} was ${result.before}; nothing to abort`,
+  );
+  printNextSteps(nextSteps);
+}
+
 /**
  * `mu agent wait <names...>` — block until agents finish working.
  *
@@ -755,6 +787,7 @@ import {
   normalizeInheritedWorkstream,
   parseLines,
   parseNonNegativeInt,
+  parsePositiveNumber,
   WORKSTREAM_OPT,
 } from "../cli.js";
 // wireSelfCommands needs cmdMyTasks / cmdMyNext which live in cli/tasks.ts
@@ -904,7 +937,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("kick <name>")
     .description(
-      "Signal the foreground process group of an agent's pane TTY (escape hatch for a worker wedged on an unbounded `find` / busy-wait loop). Default --signal SIGINT (graceful, matches Ctrl-C). Refuses when the foreground is the wrapping CLI itself — use `mu agent close` to close the agent.",
+      "Signal the foreground process group of an agent's pane TTY (escape hatch for a worker wedged on an unbounded `find` / busy-wait loop). For a pi agent try `mu agent abort` first: it stops the turn through the control socket. Default --signal SIGINT (graceful, matches Ctrl-C). Refuses when the foreground is the wrapping CLI itself — use `mu agent close` to close the agent.",
     )
     .option(
       "--signal <sig>",
@@ -920,6 +953,28 @@ export function wireAgentCommands(program: Command): void {
         json?: boolean;
       };
       return handle((db) => cmdKick(db, name, opts), this as Command)();
+    });
+
+  // `mu agent abort` — stop a pi agent's turn through its control socket.
+  agent
+    .command("abort <name>")
+    .description(
+      "Stop a pi agent's current turn through its control socket (what Esc does in the pane), then wait until pi settles. Kills the running tool. A follow-up queued before the abort does not run: pi puts it back into the pane's editor unsent. Idle agents are left alone (exit 0). Exit 5 when still busy after --timeout; then use `mu agent kick`. Works for remote agents through the forwarded socket. Non-pi agents have no socket: use `mu agent kick`.",
+    )
+    .option(
+      "--timeout <seconds>",
+      "max seconds to wait for pi to settle (default 30)",
+      parsePositiveNumber,
+    )
+    .option(...WORKSTREAM_OPT)
+    .option(...JSON_OPT)
+    .action(function (name: string) {
+      const opts = (this as Command).opts() as {
+        workstream?: string;
+        timeout?: number;
+        json?: boolean;
+      };
+      return handle((db) => cmdAbort(db, name, opts), this as Command)();
     });
 
   // `mu agent wait` — the task-less counterpart to `mu task wait`. Block

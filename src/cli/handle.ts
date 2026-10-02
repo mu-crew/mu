@@ -29,6 +29,8 @@
 
 import { type Command, CommanderError } from "commander";
 import {
+  AgentAbortNeedsCtlError,
+  AgentAbortTimeoutError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
@@ -233,6 +235,8 @@ export class NameAmbiguousError extends Error {
 export function classifyError(err: unknown): { label: string; exitCode: number } {
   if (
     err instanceof UsageError ||
+    // abort on a non-pi agent: the operator picked the wrong verb (kick).
+    err instanceof AgentAbortNeedsCtlError ||
     err instanceof WorkstreamNameInvalidError ||
     err instanceof WorkstreamNameReservedError ||
     // The operator asked the ACTIVE backend for something it cannot do:
@@ -356,6 +360,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // already carries the matched line + scrollback;
     // errorNextSteps() carries the remediation recipe.
     return { label: "spawn startup error", exitCode: 1 };
+  }
+  if (err instanceof AgentAbortTimeoutError) {
+    // Same lane as the wait verbs' timeout: still busy, try again or kick.
+    return { label: "timeout", exitCode: 5 };
   }
   if (err instanceof NoMultiplexerError) {
     return { label: "no multiplexer", exitCode: 5 };

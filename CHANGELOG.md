@@ -12,6 +12,17 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Added
 
+- **`mu agent abort <name>`: stop a pi agent's turn through its control
+  socket.** Sends `status` → `abort` → `wait`, so it returns once pi
+  settles (`--timeout`, default 30s; exit 5 when still busy, with a
+  `mu agent kick` next step). Idle agents get no abort (exit 0). Live
+  check: a `sleep 300` bash tool dies on abort; a queued follow-up is
+  not run but goes back into the pane's editor unsent; the next send
+  works with context intact. Non-pi agents get a usage error (exit 2)
+  pointing at `mu agent kick`; an unreachable socket is
+  `AgentCtlUnreachableError`. SDK: `abortAgent(db, name, { workstream,
+  timeoutMs? })`.
+
 - **`mu doctor` checks the mu extension, the mu skill and control
   sockets.** New environment rows: `mu ext` (shim linked / stale copy /
   dangling), `mu skill` (linked / foreign / dangling), and `ctl`, which
