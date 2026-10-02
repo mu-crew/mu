@@ -27,7 +27,6 @@ const DOC_FILES = [
   "docs/ARCHITECTURE.md",
   "docs/VISION.md",
   "docs/ROADMAP.md",
-  "docs/HANDOVER.md",
   "skills/mu/SKILL.md",
   "scripts/README.md",
 ];
