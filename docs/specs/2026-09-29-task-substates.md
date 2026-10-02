@@ -1,6 +1,6 @@
 # Task substates: classification without stranded dependents
 
-Status: implemented 2026-09-29 (approved 2026-09-29; see [Deviations during implementation](#deviations-during-implementation))
+Status: shipped in 3.0.0 (schema v11); `CLOSED/rejected` added in 3.1.0. Implemented 2026-09-29 (approved 2026-09-29; see [Deviations during implementation](#deviations-during-implementation))
 Date: 2026-09-29
 Supersedes the notes-only convention from `9e3c47b` ("tasks: reduce lifecycle to three states").
 

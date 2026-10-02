@@ -1,192 +1,111 @@
 # Roadmap
 
-The single forward-looking doc. If a feature isn't here, it isn't
-planned.
-
-Canonical terms: [VOCABULARY.md](VOCABULARY.md). Pillars:
-[VISION.md](VISION.md). Module layout:
-[ARCHITECTURE.md](ARCHITECTURE.md). Shipped history:
-[CHANGELOG.md](../CHANGELOG.md).
-
----
+If a feature is not here, it is not planned. Shipped work is in
+[CHANGELOG.md](../CHANGELOG.md). Pillars are in [VISION.md](VISION.md).
 
 ## Promotion criteria
 
-A roadmap item earns implementation when **all three** are true:
+A roadmap item is built when all three hold:
 
-1. **Proven friction.** A real user hits the missing feature in a
-   real workflow at least twice. Imagined polish doesn't count.
-2. **No pillar refactor.** Fits the current substrate without
-   bending any pillar in [VISION.md](VISION.md).
-3. **Bounded scope.** Fits in <300 LOC or has a clear smaller
-   subset that does.
+1. **Proven friction.** A real user hit the gap in a real workflow at
+   least twice.
+2. **No pillar refactor.** It fits without bending a
+   [VISION](VISION.md) pillar.
+3. **Bounded scope.** It fits in <300 LOC, or a smaller subset does.
 
-**Exceptions.** Data-loss footguns (silent destruction of user
-artifacts) ship on the *first* occurrence. Polish — bug fixes,
-ergonomic tweaks, error-message wording, doc tightening — doesn't
-need promotion at all; just ship clean (typecheck + lint + tests +
-build).
-
----
+Data-loss footguns ship on the first occurrence. Polish (bug fixes,
+ergonomics, error wording, docs) needs no promotion: ship it through the
+green gate.
 
 ## Anti-feature pledges
 
-We will NOT, until each one earns its way back via the criteria
-above:
+mu does not add these unless one earns its way back under the criteria:
 
-- **Config file.** All config is CLI flags or env vars.
-- **Daemon / watcher / background process** beyond what tmux and
-  SQLite give us.
-- **Anticipatory abstractions** with zero current consumer (the
-  cautionary tale: a `RunContext` trait with no implementor).
-- **Wrappers around wrappers** (cautionary tale:
-  `TextStream`/`TextState`/`StreamResult`).
-- **Codegen, embedded JS engine, macros, decorators** beyond
-  TypeScript itself. No workflow DSL.
-- **Template/definition system for agent roles.** Spawn flags +
-  the orchestrator's first message ARE the definition.
-- **Render layers beyond `cli-table3` + `picocolors`**, except
-  `ink` confined to `src/cli/tui/`. No second TUI stack alongside
-  `ink` — if `ink` ever stops paying off, *replace* it; don't
-  stack stacks.
-- **Bundle pi.** It's a peer dep.
-- **Plugin runtime, web UI, RPC, chat/docs integrations, memory
-  system, workflow engine.** Rejected as a class — these are
-  exactly the accumulations a prior internal multi-agent runtime
-  collected, and not inheriting them is the point.
-
----
+- **A config file.** Config is CLI flags and env vars.
+- **A daemon, watcher, or background process** beyond tmux and SQLite.
+- **Abstractions with no current consumer** (the cautionary tale: a
+  `RunContext` trait with no implementor).
+- **Wrappers around wrappers** (`TextStream`/`TextState`/`StreamResult`).
+- **Codegen, an embedded JS engine, macros, or decorators.** No workflow
+  DSL.
+- **Templates or definitions for agent roles.** Spawn flags and the first
+  message are the definition.
+- **Render layers beyond `cli-table3` + `picocolors`**, except `ink` in
+  `src/cli/tui/`. If `ink` stops paying off, replace it. Never run two
+  TUI stacks.
+- **Bundling pi.** It is a peer dependency.
+- **A plugin runtime, web UI, RPC, chat or docs integrations, a memory
+  system, or a workflow engine.** A prior internal runtime collected all
+  of these. Not inheriting them is the point.
 
 ## Rejected sync substrates
 
-Recorded so we don't relitigate them. mu syncs through an ops log in
-SQLite plus append-only JSONL **segments**; every alternative below
-was considered and rejected for the reason given.
+mu syncs through the SQLite ops log plus append-only JSONL segments.
+These alternatives were rejected:
 
 | Substrate | Why not |
 | --------- | ------- |
-| **Litestream** | Daemon; single-writer; one-way to object storage; `restore` is a whole-file clobber. Solves disaster recovery, not laptop↔devserver. No answer for "I added 3 tasks on the devserver while the laptop was offline." |
-| **LiteFS** | FUSE. On macOS that means macFUSE — a kernel extension needing SIP gymnastics on Apple Silicon. Dead on arrival for a mixed-OS fleet. |
-| **rqlite / dqlite / Marmot** | Raft or NATS clusters. A consensus cluster to sync a task graph between two machines that are usually not both awake. Requires daemons (anti-feature pledge). |
-| **cr-sqlite** | Merges rows by primary key, and every mu entity table is `INTEGER PRIMARY KEY AUTOINCREMENT` — laptop's task `id=5` and devserver's *different* task `id=5` merge into one row, column-by-column. Silent data loss. Fixing it means UUID PKs, i.e. tearing out the surrogate-PK substrate. Also: upstream still says WIP, DDL doesn't sync, and it's a native extension needing a darwin/linux × arm/x64 × glibc/musl build matrix. |
-| **RocksDB / LMDB for the op log** | No triggers, so capture becomes a convention every future call site must remember — and a forgotten op is now silent corruption of undo *and* sync. Single-process-exclusive, so it forces a daemon. mu's read side is ~96 prepared statements, ~70 JOINs, 3 views and recursive CTEs — all hand-rolled. Loses `mu sql`. |
-| **SQLite file per peer (instead of JSONL)** | A torn transfer makes the *whole* file unopenable, versus losing one JSONL line. `-wal`/`-shm` sidecars in a synced folder are the canonical way to corrupt a DB. Page churn defeats rsync/Syncthing delta transfer, where append-only files are the best case. |
-| **`MU_SYNC_PEERS` membership list** | A config file with extra steps, and it would have to be kept consistent across every machine — the drift problem it appears to solve. Peers are discovered from segment filenames instead. |
-| **`mu sync --push/--pull <host>` <!-- doc-cli-drift:skip -->** | Would make mu shell out to ssh/scp — its first network egress — dragging in ssh config, jump hosts, ProxyCommand, ports, identity files, interactive prompts, and network-vs-auth error mapping. A remote backend wearing a small hat. mu prints a copy-pasteable rsync line instead. |
+| **Litestream** | Daemon, single writer, one-way to object storage, and `restore` overwrites the whole file. It does disaster recovery, not laptop↔devserver merges. |
+| **LiteFS** | FUSE, which on macOS means a macFUSE kernel extension. |
+| **rqlite / dqlite / Marmot** | A consensus cluster and daemons to sync two machines that are rarely both awake. |
+| **cr-sqlite** | Merges rows by primary key. mu's `INTEGER PRIMARY KEY AUTOINCREMENT` ids collide across machines and merge silently. Also WIP upstream, no DDL sync, and a native build matrix. |
+| **RocksDB / LMDB for the op log** | No triggers, so a forgotten capture silently corrupts undo and sync. Single-process access forces a daemon. Loses SQL views, JOINs, and `mu sql`. |
+| **SQLite file per peer** | A torn transfer makes the whole file unreadable instead of one JSONL line. `-wal`/`-shm` sidecars in a synced folder corrupt DBs. Page churn defeats delta transfer. |
+| **`MU_SYNC_PEERS` list** | A config file that must match on every machine. Peers come from segment filenames instead. |
+| **`mu sync --push/--pull <host>` <!-- doc-cli-drift:skip -->** | mu's first ssh egress, with ssh config, auth, and error mapping. mu prints an rsync line instead. |
 
-The chosen design's net dependency change is **zero**: still just
-`better-sqlite3`.
+The chosen design adds no dependency beyond `better-sqlite3`.
 
----
+## Possible: small additions with an obvious shape
 
-## Possible — small additions with an obvious shape
+These have a design but no proven friction yet.
 
-These have a clear design but haven't yet hit promotion criterion
-1 (friction in ≥2 real workflows). They earn implementation when
-real use surfaces them.
-
-### A third mux backend (zellij, wezterm, kitty)
-
-**Not promoted.** tmux and herdr are two real implementations, which
-is what justifies `MuxBackend` existing at all — the interface was
-extracted to serve a concrete second case, not in anticipation of an
-nth. A third backend needs its own friction evidence under the
-[promotion criteria](#promotion-criteria) like anything else. "The
-abstraction already exists" is not evidence.
-
-### Subscription-based wakeups
-
-`mu log --tail` polls SQLite once per second. SQLite update hooks
-(via better-sqlite3) or `fs.watch` on the WAL would drop latency
-at the cost of more machinery. Promote when someone hits the
-cliff.
-
----
+- **A third mux backend** (zellij, wezterm, kitty). tmux and herdr are
+  the two implementations that justify `MuxBackend`. A third needs its
+  own friction evidence. The existing interface is not evidence.
+- **Subscription-based wakeups.** `mu log --tail` polls once a second.
+  SQLite update hooks or `fs.watch` on the WAL would cut latency for
+  more machinery. Build it when someone hits the limit.
 
 ## Open questions
 
-Listed so we don't pretend they're settled.
+- **Capability tags on operations.** Today the only authorization is
+  "the agent ran the verb". Enforce capabilities when an agent does real
+  damage.
+- **Per-workstream config.** Resisted by the pledges, but "this
+  workstream uses a different pi binary" is a gap env vars solve poorly.
+  Revisit when a second user hits it.
 
-- **Capability tags on operations.** mu's only authorization
-  surface today is "the agent ran the verb." Promote capability
-  enforcement when an agent actually does damage.
-- **Per-workstream config.** Resisted (anti-feature pledge). "This
-  workstream uses one pi binary, that one uses another" is a real
-  gap env vars don't solve cleanly. Revisit when a second user
-  hits it.
+## Next schema change
 
----
+Drop the deprecated `agents.status` column in schema v12. In v11 it
+stays for compatibility and always holds `spawning`.
 
-## murmur and remote agents
+## Explicitly rejected
 
-[murmur](https://github.com/mu-crew/murmur) is a separate binary for
-current agent state across machines. It owns collection and ssh egress;
-mu remains transport-free and owns the task DAG, claims, workspaces, and
-panes.
-
-**Done in 2.0:** mu reads murmur for agent state. See
-[Agent state from murmur](specs/2026-09-28-agent-state-from-murmur.md).
-
----
-
-### Next schema change
-
-Drop the deprecated `agents.status` column at the first v11 migration.
-In 2.0 it remains for schema compatibility and always contains `spawning`.
-
----
-
-## Pi extension and the three rules
-
-If a pi extension lands (typed `mu_*` tools, HUD widget, wakeups)
-bundled in this same npm package, three rules stay non-negotiable:
-
-1. **The DB is canonical.** All state in `<state-dir>/mu.db`.
-   Extension reads/writes through the same modules the CLI uses.
-   No extension-only state.
-2. **Every operation works from the CLI.** No tool registered in
-   the extension has logic that doesn't exist in the CLI.
-3. **The skill teaches the CLI.** Pi sessions without the
-   extension still get a working mu by following
-   [skills/mu/SKILL.md](../skills/mu/SKILL.md).
-
-If those three rules hold, mu stays driveable from a shell forever
-and the extension stays thin.
-
----
-
-## Explicitly rejected (one-liners)
-
-Listed so we don't rediscover them.
-
-- **JS / Lisp DSL** (`mu run` / `mu eval` / `mu repl`) <!-- doc-cli-drift:skip --> — bash +
-  jq + `--json` covers the gap. A workflow DSL is a maintenance
-  liability.
-- **`defineOperation()` registry framework** — no consumer left
-  after the DSL was rejected.
-- **Markdown agent-definition discovery** — spawn flags + first
-  message already are the definition.
-- **mu as a pi extension only (no CLI)** — children couldn't drive
-  mu; humans couldn't debug from a shell.
-- **mu as a library only (no CLI)** — multiple processes would
-  fight over the DB.
-- **Two binaries (`mu-agents` + `mu-tasks`)** — agent ↔ task
-  integration needs one transactional surface.
-- **`TaskSurface` adapter abstraction** — the built-in graph IS
-  the killer feature.
-- **Live cross-machine state sync via a daemon or remote backend** —
-  local-first SQLite. The ops-log sync is ambient but daemon-free
-  (flush/ingest ride on ordinary mu invocations) and transport-free
-  (mu reads and writes files; the user moves them). Rejected
-  storage/replication substrates are in
-  [§ Rejected sync substrates](#rejected-sync-substrates).
-- **Network-opening remote verbs (`mu remote check`, `mu sync --push/--pull`)** <!-- doc-cli-drift:skip --> — mu manages panes and a task graph on one machine; every network hop is an operator-owned command, either passed through `agent spawn --command` for the mux to run or printed as a copy-pasteable next step. Keeping mu's own process ssh-free avoids an ssh config/auth/host/error model. Spawn does not violate this boundary: the mux, not mu, runs the operator's string.
-- **HTTP API on top of SQLite** — write your own RPC if you need
-  one.
-- **A "hosted" mu** — your machine is the deployment.
-- **Anthropomorphic agent names (`alice`, `bob`)** — use
-  role-based names (`worker-1`, `reviewer-1`).
-- **Pane scraping as an agent-state fallback** — absence of a state source is `unknown`, not a guessed state.
-- **Storing runtime agent state in `mu.db`** — the copy goes stale; murmur or herdr owns the current reading.
-- **Reading murmur's `state.db`** — use murmur's stable public contract, not its private schema.
-- **murmur as a hard dependency** — installs that only use the task graph do not need murmur or its native dependencies.
+- **A JS or Lisp DSL** (`mu run`, `mu eval`, `mu repl`) <!-- doc-cli-drift:skip -->. bash, `jq`,
+  and `--json` cover it.
+- **A `defineOperation()` registry.** No consumer after the DSL went.
+- **Markdown agent-definition discovery.** Spawn flags and the first
+  message are the definition.
+- **mu as only a pi extension or only a library.** Children and humans
+  could not drive it from a shell, and processes would fight over the DB.
+- **Two binaries (`mu-agents` + `mu-tasks`).** Agents and tasks need one
+  transactional surface.
+- **A `TaskSurface` adapter.** The built-in graph is the point.
+- **Live sync through a daemon or remote backend.** Sync rides on
+  ordinary mu calls and mu only reads and writes files. See
+  [Rejected sync substrates](#rejected-sync-substrates).
+- **Network-opening verbs (`mu remote check`, `mu sync --push/--pull`)** <!-- doc-cli-drift:skip -->.
+  Every network hop is an operator command. Spawn passes it through
+  `--command` for the mux to run, or mu prints it as a next step. mu's
+  own process stays ssh-free.
+- **An HTTP API over SQLite** or **a hosted mu.**
+- **Personal agent names (`alice`, `bob`).** Use role names
+  (`worker-1`, `reviewer-1`).
+- **Pane scraping as a state fallback.** No state source means `unknown`.
+- **Runtime agent state in `mu.db`.** The copy goes stale. The control
+  socket, herdr, or murmur owns the current reading.
+- **Reading murmur's `state.db`.** Use its public contract.
+- **murmur as a hard dependency.** pi agents and the task graph do not
+  need it.
