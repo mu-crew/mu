@@ -26,11 +26,14 @@
 // reaper-flip in the wait pipeline). The SDK seam reaches the same
 // assertion deterministically.
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
+import { ctlSocketPath } from "../src/ctl/path.js";
+import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { setWaitSleepForTests } from "../src/tasks/wait.js";
 import { addTask } from "../src/tasks.js";
@@ -52,6 +55,25 @@ describe("mu task wait --on-stall warn|exit", () => {
   // exactly the failure mode that breaks integration runs of this
   // test under load from a background watched state card or similar).
   const liveAgentPaneIds = new Set<string>();
+  const servers: Server[] = [];
+
+  /** Stand-in for the mu pi extension: idle since `since`, for any request. */
+  async function serveCtl(agentName: string, since: number): Promise<void> {
+    const path = ctlSocketPath(workstream, agentName, tempDir);
+    mkdirSync(dirname(path), { recursive: true });
+    const server = createServer((sock) => {
+      const dec = new LineDecoder();
+      sock.setEncoding("utf8");
+      sock.on("error", () => {});
+      sock.on("data", (chunk: string) => {
+        for (const _line of dec.push(chunk)) {
+          sock.end(encode({ v: 1, ok: true, state: "idle", since, runs: 1, pending: false }));
+        }
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(path, () => r()));
+  }
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "mu-wait-stall-"));
@@ -94,7 +116,8 @@ describe("mu task wait --on-stall warn|exit", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((srv) => new Promise((r) => srv.close(() => r(null)))));
     if (restoreSleep !== undefined) setWaitSleepForTests(restoreSleep);
     resetTmuxExecutor();
     try {
@@ -113,13 +136,16 @@ describe("mu task wait --on-stall warn|exit", () => {
    *  silently in this no-tmux unit harness. Mirrors the same
    *  pattern in test/tasks.test.ts ("emits exactly one STUCK warning
    *  per stuck task per wait call"). */
-  function setupStalledWorker(agentName: string, taskName: string): void {
+  function setupStalledWorker(agentName: string, taskName: string, cli = "claude"): void {
     const paneId = `%${Math.floor(Math.random() * 1e6)}`;
     liveAgentPaneIds.add(paneId);
+    // Default: a non-pi CLI, so murmur (the tmux mock above) is the
+    // state source. pi agents read the control socket instead.
     insertAgent(db, {
       name: agentName,
       workstream,
       paneId,
+      cli,
     });
     addTask(db, { localId: taskName, workstream, title: "T", impact: 50, effortDays: 1 });
     db.prepare(
@@ -331,6 +357,71 @@ describe("mu task wait --on-stall warn|exit", () => {
     expect(commands).not.toContain(`mu task show stalled_task -w ${workstream}`);
     // …while the ownerless unmet ref keeps it.
     expect(commands).toContain(`mu task show plain_task -w ${workstream}`);
+  });
+
+  it("pi owner: ctl idle with an old since → --on-stall exit 7", async () => {
+    setupStalledWorker("piper", "pi_task", "pi");
+    await serveCtl("piper", Date.now() - 10 * 60_000);
+
+    const { exitCode, stderr } = await runCli(
+      [
+        "task",
+        "wait",
+        "pi_task",
+        "-w",
+        workstream,
+        "--stuck-after",
+        "1",
+        "--on-stall",
+        "exit",
+        "--timeout",
+        "30",
+      ],
+      dbPath,
+    );
+
+    expect(exitCode).toBe(7);
+    expect(stderr).toContain("piper");
+    expect(stderr).toMatch(/needs_input/);
+  });
+
+  it("pi owner with no control socket: needs attention, not a dead pane", async () => {
+    // Live pane, no socket: nothing will report the worker settling, so
+    // the stall predicate fires (age from when the wait first saw it).
+    setupStalledWorker("nosock", "orphan_task", "pi");
+
+    const { exitCode, stderr } = await runCli(
+      [
+        "task",
+        "wait",
+        "orphan_task",
+        "-w",
+        workstream,
+        "--stuck-after",
+        "1",
+        "--on-stall",
+        "exit",
+        "--timeout",
+        "30",
+      ],
+      dbPath,
+    );
+
+    expect(exitCode).toBe(7); // stall, NOT exit 6
+    expect(stderr).toContain("nosock");
+    expect(stderr).toMatch(/needs attention|ctl missing/);
+  });
+
+  it("pi owner with no control socket, --on-stall warn: warns, then times out (exit 5)", async () => {
+    setupStalledWorker("nosock2", "orphan2", "pi");
+
+    const { exitCode, stderr } = await runCli(
+      ["task", "wait", "orphan2", "-w", workstream, "--stuck-after", "1", "--timeout", "3"],
+      dbPath,
+    );
+
+    expect(exitCode).toBe(5);
+    expect(stderr).toMatch(/nosock2 has been in ctl missing/);
   });
 
   it("--on-stall <bad>: usage error", async () => {

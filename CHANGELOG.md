@@ -80,7 +80,10 @@ breaking changes are called out under "Breaking" in each entry.
   list`, `show`, `mu state`, `mu me` and the TUI read a pi agent's state
   from the mu pi extension: `busy`, or `needs_input` once pi settles,
   with the extension's `since` (which `mu task wait --stuck-after` now
-  uses for pi owners). No silent fallback to murmur: a pi agent whose
+  uses for pi owners). A pi owner whose socket does not answer while its
+  pane is alive counts as needing attention for `--stuck-after` /
+  `--on-stall` (warning names `ctl missing`, exit 7 under `--on-stall
+  exit`), aged from when the wait first saw it; it is not a dead pane. No silent fallback to murmur: a pi agent whose
   socket does not answer reads `unknown` with reason `ctl missing` or
   `ctl refused`, and the TUI agent card marks it with the fail glyph.
   JSON gains `source: "ctl"` and `ctl: "ok"|"missing"|"refused"|"n/a"`.
