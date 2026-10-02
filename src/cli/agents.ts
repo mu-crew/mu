@@ -201,9 +201,13 @@ export async function cmdSend(
     strictStaleness?: boolean;
     steer?: boolean;
     via?: string;
+    fresh?: boolean;
+    force?: boolean;
   } = {},
 ): Promise<void> {
   const via = parseVia(opts.via);
+  if (opts.force && !opts.fresh) throw new UsageError("--force only applies with --fresh");
+  if (opts.fresh && opts.steer) throw new UsageError("--fresh and --steer are mutually exclusive");
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
@@ -218,6 +222,8 @@ export async function cmdSend(
     workstream: ws,
     ...(opts.steer ? { mode: "steer" as const } : {}),
     ...(via !== undefined ? { via } : {}),
+    ...(opts.fresh ? { fresh: true } : {}),
+    ...(opts.force ? { force: true } : {}),
     onUndelivered: (w) => {
       undelivered = w;
     },
@@ -240,6 +246,7 @@ export async function cmdSend(
       agentName: name,
       sentBytes: text.length,
       transport: sent.transport,
+      fresh: opts.fresh === true,
       ...(sent.state !== undefined ? { state: sent.state } : {}),
       delivered: undelivered === undefined,
       ...(undelivered !== undefined
@@ -253,7 +260,12 @@ export async function cmdSend(
   if (undelivered !== undefined) {
     console.error(pc.yellow(`warning: ${undelivered.message}`));
   } else {
-    const how = sent.transport === "ctl" ? `via ctl, pi ${sent.state ?? "?"}` : "via mux paste";
+    const how =
+      sent.transport === "mux"
+        ? "via mux paste"
+        : opts.fresh
+          ? "via ctl, fresh session"
+          : `via ctl, pi ${sent.state ?? "?"}`;
     console.log(pc.dim(`sent ${text.length} bytes to ${name} (${how})`));
   }
   printNextSteps(nextSteps);
@@ -850,7 +862,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("send <name> <text>")
     .description(
-      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback). Non-pi CLIs and text starting with '/' (slash commands such as /new): pasted into the pane (atomic on herdr; bracketed-paste on tmux)",
+      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback). Non-pi CLIs and text starting with '/' (slash commands such as /new): pasted into the pane (atomic on herdr; bracketed-paste on tmux). --fresh (pi only): start a new session and send the text into it as one operation; returns once the prompt's run has started, so an immediate next send cannot be lost. Use it instead of sending '/new' then the prompt",
     )
     .option(
       "--strict-staleness",
@@ -858,6 +870,11 @@ export function wireAgentCommands(program: Command): void {
     )
     .option("--steer", "if pi is busy, interrupt the current run (default: queue as a follow-up)")
     .option("--via <transport>", "force the transport: ctl or mux (mux = paste into the pane)")
+    .option(
+      "--fresh",
+      "pi only: new session + this prompt, one operation (refused with exit 4 while pi is busy)",
+    )
+    .option("--force", "with --fresh: abandon a running turn instead of refusing")
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string, text: string) {
@@ -867,6 +884,8 @@ export function wireAgentCommands(program: Command): void {
         strictStaleness?: boolean;
         steer?: boolean;
         via?: string;
+        fresh?: boolean;
+        force?: boolean;
       };
       return handle((db) => cmdSend(db, name, text, opts), this as Command)();
     });

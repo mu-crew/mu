@@ -13,7 +13,7 @@ import { ctlSocketPath } from "../ctl/path.js";
 import type { CtlState } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { activeMux, type SendOptions } from "../mux.js";
-import { AgentCtlUnreachableError } from "./errors.js";
+import { AgentBusyError, AgentCtlUnreachableError, AgentFreshNeedsCtlError } from "./errors.js";
 import { resolveCliCommand, speaksMuCtl } from "./spawn.js";
 
 export type Transport = "ctl" | "mux";
@@ -27,6 +27,10 @@ export type TransportSendOptions = SendOptions & {
   via?: Transport;
   /** Control socket path. Default: derived from the agent's identity. */
   socket?: string;
+  /** Start a new pi session and send the text into it, as one ctl op. */
+  fresh?: boolean;
+  /** With fresh: abandon a running turn instead of refusing. */
+  force?: boolean;
 };
 
 /** The agent's derived control socket, rooted at the DB's directory (as spawn does). */
@@ -57,7 +61,10 @@ export async function sendViaTransport(
   text: string,
   opts: TransportSendOptions = {},
 ): Promise<SendResult> {
-  const transport = opts.via ?? chooseTransport(agent, text);
+  if (opts.fresh && (opts.via === "mux" || !expectsCtl(agent))) {
+    throw new AgentFreshNeedsCtlError(agent.name, agent.workstreamName, agent.cli);
+  }
+  const transport = opts.fresh ? "ctl" : (opts.via ?? chooseTransport(agent, text));
   if (transport === "mux") {
     // Load-bearing: a send that cannot reach a pane is a failed send.
     await (await activeMux()).sendToPane(agent.paneId, text, opts);
@@ -68,11 +75,21 @@ export async function sendViaTransport(
     new AgentCtlUnreachableError(agent.name, agent.workstreamName, sock, kind);
   let reply: Awaited<ReturnType<typeof ctlRequest>>;
   try {
-    reply = await ctlRequest(sock, { op: "send", text, mode: opts.mode ?? "followUp" });
+    reply = await ctlRequest(
+      sock,
+      opts.fresh
+        ? { op: "fresh", text, ...(opts.force ? { force: true } : {}) }
+        : { op: "send", text, mode: opts.mode ?? "followUp" },
+    );
   } catch (e) {
     if (e instanceof CtlVersionError) throw e;
     throw unreachable(errCode(e) === "ENOENT" ? "missing" : "refused");
   }
-  if (!reply.ok) throw new Error(`control socket refused the send: ${reply.error}`);
+  if (!reply.ok) {
+    if (opts.fresh && reply.error === "busy") {
+      throw new AgentBusyError(agent.name, agent.workstreamName);
+    }
+    throw new Error(`control socket refused the send: ${reply.error}`);
+  }
   return reply.state === undefined ? { transport } : { transport, state: reply.state };
 }

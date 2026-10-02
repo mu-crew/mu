@@ -14,9 +14,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
+  AgentBusyError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
+  AgentFreshNeedsCtlError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentSpawnCliNotFoundError,
@@ -219,6 +221,16 @@ const cases: NextStepsCase[] = [
     error: new AgentAbortTimeoutError("alice", "auth", 30000),
     label: "AgentAbortTimeoutError",
     expectedTokens: ["mu agent kick alice"],
+  },
+  {
+    error: new AgentFreshNeedsCtlError("alice", "auth", "claude"),
+    label: "AgentFreshNeedsCtlError",
+    expectedTokens: ["mu agent send alice '/new'"],
+  },
+  {
+    error: new AgentBusyError("alice", "auth"),
+    label: "AgentBusyError",
+    expectedTokens: ["mu agent abort alice", "--fresh --force"],
   },
   {
     error: new WorkspacePreservedError("alice", "/path/to/ws"),

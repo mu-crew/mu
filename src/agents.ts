@@ -36,9 +36,11 @@ export {
 export {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
+  AgentBusyError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
+  AgentFreshNeedsCtlError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentSpawnCliNotFoundError,

@@ -25,6 +25,18 @@ export interface MuPiContext {
   abort(): void;
 }
 
+/** The slice of pi's ReplacedSessionContext: bound to the NEW session. */
+export interface MuPiReplacedContext extends MuPiContext {
+  sendUserMessage(text: string): Promise<void>;
+}
+
+/** The slice of pi's ExtensionCommandContext (command handlers only). */
+export interface MuPiCommandContext extends MuPiContext {
+  newSession(options?: {
+    withSession?: (ctx: MuPiReplacedContext) => Promise<void>;
+  }): Promise<{ cancelled: boolean }>;
+}
+
 /** The slice of pi's ExtensionAPI this extension uses. */
 export interface MuPiApi {
   on(
@@ -33,9 +45,21 @@ export interface MuPiApi {
   ): unknown;
   sendUserMessage(
     text: string,
-    options?: { deliverAs?: "steer" | "followUp" },
+    options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
   ): void | Promise<void>;
+  registerCommand(
+    name: string,
+    options: {
+      description: string;
+      handler: (args: string, ctx: MuPiCommandContext) => Promise<void>;
+    },
+  ): void;
 }
+
+/** Internal command behind the `fresh` op: new session + prompt, inside pi. */
+export const FRESH_COMMAND = "mu-fresh";
+/** The extension's own bound on a fresh op that never reaches agent_start. */
+export const FRESH_TIMEOUT_MS = 30_000;
 
 type Reply = CtlReply;
 const V = CTL_PROTOCOL_VERSION;
@@ -81,40 +105,145 @@ function num(o: Record<string, unknown>, k: string): number | undefined {
   return typeof x === "number" && Number.isFinite(x) ? x : undefined;
 }
 
+/** A `fresh` op in flight: its prompt and the reply it is waiting to send. */
+type PendingFresh = {
+  text: string;
+  /** Set once the new session exists, so its agent_start is the prompt's. */
+  armed: boolean;
+  settle: (r: Reply) => void;
+};
+
+/**
+ * Process-global state, keyed by socket path. pi re-runs this factory
+ * for every session (a /new or /mu-fresh replaces the extension runtime),
+ * so the socket server, the run counters and an in-flight fresh must
+ * outlive any one runtime. Each runtime refreshes `pi` and `handle`.
+ */
+type Shared = {
+  server?: Server;
+  conns: Set<Socket>;
+  waiters: Set<() => void>;
+  state: CtlState;
+  since: number;
+  runs: number;
+  ctx?: MuPiContext;
+  pi: MuPiApi;
+  handle: (req: Record<string, unknown>, conn: Socket) => Promise<Reply>;
+  fresh?: PendingFresh;
+};
+
+const SHARED = Symbol.for("mu.pi.ctl");
+type SharedMap = Map<string, Shared>;
+
+function sharedMap(): SharedMap {
+  const g = globalThis as { [SHARED]?: SharedMap };
+  g[SHARED] ??= new Map();
+  return g[SHARED];
+}
+
+function reasonOf(event: unknown): string | undefined {
+  const r =
+    typeof event === "object" && event !== null
+      ? (event as { reason?: unknown }).reason
+      : undefined;
+  return typeof r === "string" ? r : undefined;
+}
+
 export default function muPi(pi: MuPiApi): void {
   const sock = process.env.MU_CTL_SOCK;
   if (!sock) return;
   const sockPath: string = sock;
-
-  let state: CtlState = "idle";
-  let since = Date.now();
-  let runs = 0;
-  let ctx: MuPiContext | undefined;
-  let server: Server | undefined;
-  const conns = new Set<Socket>();
-  const waiters = new Set<() => void>();
   const piVersion = detectPiVersion();
 
+  const map = sharedMap();
+  const existing = map.get(sockPath);
+  const g: Shared = existing ?? {
+    conns: new Set(),
+    waiters: new Set(),
+    state: "idle",
+    since: Date.now(),
+    runs: 0,
+    pi,
+    handle,
+  };
+  g.pi = pi;
+  g.handle = handle;
+  map.set(sockPath, g);
+
   const status = () => ({
-    state,
-    since,
-    runs,
-    pending: ctx?.hasPendingMessages() ?? false,
+    state: g.state,
+    since: g.since,
+    runs: g.runs,
+    pending: g.ctx?.hasPendingMessages() ?? false,
   });
 
+  const settleFresh = (r: Reply) => {
+    const f = g.fresh;
+    if (!f) return;
+    g.fresh = undefined;
+    f.settle(r);
+  };
+
   pi.on("agent_start", (_e, c) => {
-    ctx = c;
-    state = "busy";
-    since = Date.now();
+    g.ctx = c;
+    g.state = "busy";
+    g.since = Date.now();
+    // The new session's run started: the fresh prompt landed.
+    if (g.fresh?.armed) settleFresh({ v: V, ok: true, ...status() });
   });
 
   pi.on("agent_settled", (_e, c) => {
-    ctx = c;
-    state = "idle";
-    since = Date.now();
-    runs++;
-    for (const w of [...waiters]) w();
+    g.ctx = c;
+    g.state = "idle";
+    g.since = Date.now();
+    g.runs++;
+    for (const w of [...g.waiters]) w();
   });
+
+  pi.registerCommand(FRESH_COMMAND, {
+    description: "mu internal: new session + the prompt mu queued (run by mu agent send --fresh)",
+    handler: async (_args, ctx) => {
+      const f = g.fresh;
+      if (!f) return; // typed by hand: nothing queued
+      try {
+        const r = await ctx.newSession({
+          withSession: async (c) => {
+            g.ctx = c;
+            f.armed = true;
+            await c.sendUserMessage(f.text);
+          },
+        });
+        if (r.cancelled) settleFresh(fail("new session was cancelled"));
+      } catch (e) {
+        settleFresh(fail(e instanceof Error ? e.message : String(e)));
+      }
+      // The run finished without an agent_start we saw: still landed.
+      settleFresh({ v: V, ok: true, ...status() });
+    },
+  });
+
+  function fresh(req: Record<string, unknown>): Promise<Reply> | Reply {
+    const text = str(req, "text");
+    if (text === undefined) return fail("fresh needs a string text");
+    if (g.fresh) return fail("a fresh send is already in progress");
+    const busy = !(g.ctx?.isIdle() ?? g.state === "idle");
+    if (busy && req.force !== true) return fail("busy");
+    return new Promise<Reply>((resolve) => {
+      const timer = setTimeout(() => settleFresh(fail("fresh timed out")), FRESH_TIMEOUT_MS);
+      g.fresh = {
+        text,
+        armed: false,
+        settle: (r) => {
+          clearTimeout(timer);
+          resolve(r);
+        },
+      };
+      // expandPromptTemplates dispatches extension commands, even mid-run.
+      Promise.resolve(
+        g.pi.sendUserMessage(`/${FRESH_COMMAND}`, { expandPromptTemplates: true }),
+      ).catch((e: unknown) => settleFresh(fail(e instanceof Error ? e.message : String(e))));
+    });
+  }
 
   async function handle(req: Record<string, unknown>, conn: Socket): Promise<Reply> {
     switch (req.op) {
@@ -133,16 +262,18 @@ export default function muPi(pi: MuPiApi): void {
         if (text === undefined) return fail("send needs a string text");
         const mode = req.mode === "steer" ? "steer" : "followUp";
         // A message sent while idle starts a run; options are only for a busy pi.
-        if (ctx?.isIdle() ?? state === "idle") await pi.sendUserMessage(text);
-        else await pi.sendUserMessage(text, { deliverAs: mode });
-        return { v: V, ok: true, state };
+        if (g.ctx?.isIdle() ?? g.state === "idle") await g.pi.sendUserMessage(text);
+        else await g.pi.sendUserMessage(text, { deliverAs: mode });
+        return { v: V, ok: true, state: g.state };
       }
+      case "fresh":
+        return fresh(req);
       case "wait":
         return wait(num(req, "afterRuns"), num(req, "timeoutMs"), conn);
       case "abort":
-        if (!ctx) return fail("no pi context yet");
-        ctx.abort();
-        return { v: V, ok: true, state };
+        if (!g.ctx) return fail("no pi context yet");
+        g.ctx.abort();
+        return { v: V, ok: true, state: g.state };
       default:
         return fail(`unknown op: ${String(req.op)}`);
     }
@@ -150,31 +281,32 @@ export default function muPi(pi: MuPiApi): void {
 
   /** Resolve once a run past `afterRuns` has settled (any next settle when omitted). */
   function wait(afterRuns: number | undefined, timeoutMs: number | undefined, conn: Socket) {
-    if (afterRuns !== undefined && runs > afterRuns && state === "idle") {
+    if (afterRuns !== undefined && g.runs > afterRuns && g.state === "idle") {
       return Promise.resolve<Reply>({ v: V, ok: true, ...status() });
     }
     return new Promise<Reply>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const done = (r: Reply) => {
-        waiters.delete(waiter);
+        g.waiters.delete(waiter);
         if (timer) clearTimeout(timer);
         conn.off("close", onClose);
         resolve(r);
       };
       const waiter = () => done({ v: V, ok: true, ...status() });
       const onClose = () => done(fail("client closed"));
-      waiters.add(waiter);
+      g.waiters.add(waiter);
       conn.on("close", onClose);
       if (timeoutMs !== undefined) timer = setTimeout(() => done(fail("timeout")), timeoutMs);
     });
   }
 
+  /** Created once per process; dispatches to the newest runtime's handle. */
   function onConnection(conn: Socket): void {
-    conns.add(conn);
+    g.conns.add(conn);
     conn.setEncoding("utf8");
     const dec = new LineDecoder();
     let seen = false;
-    conn.on("close", () => conns.delete(conn));
+    conn.on("close", () => g.conns.delete(conn));
     conn.on("error", () => {});
     conn.on("data", (chunk: string) => {
       const line = dec.push(chunk)[0];
@@ -191,7 +323,7 @@ export default function muPi(pi: MuPiApi): void {
         conn.end(encode(fail("request must be an object")));
         return;
       }
-      handle(req as Record<string, unknown>, conn).then(
+      g.handle(req as Record<string, unknown>, conn).then(
         (r) => {
           if (!conn.destroyed) conn.end(encode(r));
         },
@@ -203,12 +335,12 @@ export default function muPi(pi: MuPiApi): void {
   }
 
   pi.on("session_start", async (_e, c) => {
-    ctx = c;
-    if (server) return; // a new/resumed session keeps the same socket
+    g.ctx = c;
+    if (g.server) return; // a new/resumed session keeps the same socket
     mkdirSync(dirname(sockPath), { recursive: true, mode: 0o700 });
     rmSync(sockPath, { force: true });
     const s = createServer(onConnection);
-    server = s;
+    g.server = s;
     await new Promise<void>((resolve, reject) => {
       s.once("error", reject);
       s.listen(sockPath, () => {
@@ -219,12 +351,21 @@ export default function muPi(pi: MuPiApi): void {
     chmodSync(sockPath, 0o600);
   });
 
-  pi.on("session_shutdown", async () => {
-    const s = server;
-    server = undefined;
+  pi.on("session_shutdown", async (e) => {
+    // Session replacement (new / resume / fork / reload) keeps the socket
+    // and its connections: an in-flight fresh is answered by the next
+    // runtime. Only quit (or an unknown reason) tears the server down.
+    const reason = reasonOf(e);
+    if (reason === "new" || reason === "resume" || reason === "fork" || reason === "reload") {
+      return;
+    }
+    const s = g.server;
+    g.server = undefined;
+    map.delete(sockPath);
     if (!s) return;
-    waiters.clear();
-    for (const c of conns) c.destroy();
+    g.waiters.clear();
+    settleFresh(fail("pi is shutting down"));
+    for (const c of g.conns) c.destroy();
     await new Promise<void>((resolve) => s.close(() => resolve()));
     rmSync(sockPath, { force: true });
   });

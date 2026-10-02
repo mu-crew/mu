@@ -8,7 +8,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  AgentBusyError,
   AgentCtlUnreachableError,
+  AgentFreshNeedsCtlError,
   type AgentRow,
   expectsCtl,
   insertAgent,
@@ -54,8 +56,11 @@ function sockFor(agent: string): string {
   return ctlSocketPath("auth", agent, dir);
 }
 
-/** Stand-in for the extension: records requests, answers ok with state busy. */
-async function serveExtension(path: string): Promise<void> {
+/** Stand-in for the extension: records requests, answers `reply` (default ok, busy). */
+async function serveExtension(
+  path: string,
+  reply: Record<string, unknown> = { v: 1, ok: true, state: "busy" },
+): Promise<void> {
   mkdirSync(dirname(path), { recursive: true });
   const server = createServer((sock) => {
     const dec = new LineDecoder();
@@ -63,7 +68,7 @@ async function serveExtension(path: string): Promise<void> {
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
         received.push(JSON.parse(line) as Record<string, unknown>);
-        sock.end(encode({ v: 1, ok: true, state: "busy" }));
+        sock.end(encode(reply));
       }
     });
     sock.on("error", () => {});
@@ -177,5 +182,67 @@ describe("mu agent send transport", () => {
     );
     expect(exitCode).not.toBeNull();
     expect(stderr).toContain("--via must be ctl or mux");
+  });
+});
+
+describe("send --fresh", () => {
+  it("sends op fresh over ctl, even for slash-looking text", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"));
+    const res = await sendToAgent(db, "worker-1", "/do-thing", { workstream: "auth", fresh: true });
+    expect(res.transport).toBe("ctl");
+    expect(received).toEqual([{ op: "fresh", text: "/do-thing" }]);
+    expect(pasted()).toBe(false);
+  });
+
+  it("passes force through", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"));
+    await sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true, force: true });
+    expect(received).toEqual([{ op: "fresh", text: "x", force: true }]);
+  });
+
+  it("maps a busy refusal to AgentBusyError with abort / --force next steps", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), { v: 1, ok: false, error: "busy" });
+    const err = await sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentBusyError);
+    const cmds = (err as AgentBusyError).errorNextSteps().map((n) => n.command);
+    expect(cmds.join("\n")).toContain("mu agent abort worker-1");
+    expect(cmds.join("\n")).toContain("--fresh --force");
+  });
+
+  it("refuses non-pi agents and --via mux without pasting", async () => {
+    seed("worker-1", "claude");
+    seed("worker-2");
+    await expect(
+      sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true }),
+    ).rejects.toBeInstanceOf(AgentFreshNeedsCtlError);
+    await expect(
+      sendToAgent(db, "worker-2", "x", { workstream: "auth", fresh: true, via: "mux" }),
+    ).rejects.toBeInstanceOf(AgentFreshNeedsCtlError);
+    expect(pasted()).toBe(false);
+  });
+
+  it("CLI: --fresh --json reports fresh; busy exits 4; --force without --fresh is usage", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"));
+    const ok = await runCli(
+      ["agent", "send", "worker-1", "go", "--fresh", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(ok.exitCode).toBeNull();
+    expect(JSON.parse(ok.stdout)).toMatchObject({ transport: "ctl", fresh: true });
+
+    seed("worker-2");
+    await serveExtension(sockFor("worker-2"), { v: 1, ok: false, error: "busy" });
+    const busy = await runCli(["agent", "send", "worker-2", "go", "--fresh", "-w", "auth"], dbPath);
+    expect(busy.exitCode).toBe(4);
+    expect(busy.stderr).toContain("mu agent abort worker-2");
+
+    const bad = await runCli(["agent", "send", "worker-1", "go", "--force", "-w", "auth"], dbPath);
+    expect(bad.exitCode).toBe(2);
   });
 });

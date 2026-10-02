@@ -31,9 +31,11 @@ import { type Command, CommanderError } from "commander";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
+  AgentBusyError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
+  AgentFreshNeedsCtlError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentSpawnCliNotFoundError,
@@ -237,6 +239,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof UsageError ||
     // abort on a non-pi agent: the operator picked the wrong verb (kick).
     err instanceof AgentAbortNeedsCtlError ||
+    // send --fresh on an agent with no control socket: wrong recipe.
+    err instanceof AgentFreshNeedsCtlError ||
     err instanceof WorkstreamNameInvalidError ||
     err instanceof WorkstreamNameReservedError ||
     // The operator asked the ACTIVE backend for something it cannot do:
@@ -360,6 +364,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // already carries the matched line + scrollback;
     // errorNextSteps() carries the remediation recipe.
     return { label: "spawn startup error", exitCode: 1 };
+  }
+  if (err instanceof AgentBusyError) {
+    // The agent's state collides with the request; abort or --force.
+    return { label: "conflict", exitCode: 4 };
   }
   if (err instanceof AgentAbortTimeoutError) {
     // Same lane as the wait verbs' timeout: still busy, try again or kick.
