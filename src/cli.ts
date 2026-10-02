@@ -590,7 +590,7 @@ export const JSON_OPT = ["--json", "emit machine-readable JSON instead of a tabl
  *
  * Whitespace inside fragments is trimmed. Two kinds of "empty" get
  * DIFFERENT treatment, and the distinction is the whole point (see
- * docs/VOCABULARY.md § Empty vs blank flag fragments):
+ * docs/reference/naming.md § Empty and blank list fragments):
  *
  *   EMPTY  (`""` before trimming) — DROPPED. This is either a
  *          structural comma artifact (`"a,b,"`, `"a,,b"`) or the

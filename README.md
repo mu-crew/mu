@@ -48,9 +48,8 @@ Non-pi agents on tmux need it for state: without it their state is
 `unknown`, so `mu agent wait` and stall detection never fire for them.
 On herdr, herdr reports state.
 
-To update, run `npm i -g @mu-crew/mu@latest`, then restart or `/reload`
-running pi agents to load the new extension. To hack on mu, clone the
-repo and run `npm install -g . && mu link pi`.
+To update or run from a checkout, see
+[How to upgrade mu](docs/guide/upgrade.md).
 
 ## Quick start
 

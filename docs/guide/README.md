@@ -22,4 +22,4 @@ How-to guides:
 - [Clean up](cleanup.md)
 
 For features mu does not have on purpose, see
-[ROADMAP.md § Explicitly rejected](../ROADMAP.md#explicitly-rejected-one-liners).
+[ROADMAP.md § Explicitly rejected](../ROADMAP.md#explicitly-rejected).

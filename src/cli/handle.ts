@@ -7,7 +7,7 @@
 // belongs next to its own helper. cli.ts re-exports `classifyError`
 // and `handle` for back-compat with existing tests + cli/* importers.
 //
-// Exit codes (from VOCABULARY.md / ARCHITECTURE.md):
+// Exit codes (docs/guide/sql.md § Script with --json):
 //   0 = success
 //   1 = generic error
 //   2 = usage error (validation / missing-flag / type / mutex /

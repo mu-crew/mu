@@ -27,7 +27,7 @@ import { listWorkspaces } from "./workspace.js";
 /**
  * Allowed workstream-name shape: lowercase alpha first, then alnum,
  * underscore, or hyphen, up to 32 chars total. Mirrors the agent-name
- * rule in VOCABULARY.md §"Naming conventions".
+ * rule in docs/reference/naming.md.
  *
  * Critically, this rule excludes `.` and `:` — tmux silently rewrites
  * `.` to `_` in session names (because `.` is the window/pane separator

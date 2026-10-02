@@ -2,7 +2,7 @@
 //
 // classifyError maps a typed error class to the (label, exit-code)
 // pair the CLI's emitError() uses. The mapping is the canonical source
-// of truth for VOCABULARY.md's exit-code table:
+// of truth for the exit codes in docs/guide/sql.md § Script with --json:
 //   0 = success          1 = generic            2 = usage
 //   3 = not found        4 = conflict           5 = substrate
 //   6 = reaper           7 = stall

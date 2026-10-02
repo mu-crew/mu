@@ -456,7 +456,7 @@ import { handle, JSON_OPT, WORKSTREAM_OPT } from "../cli.js";
  *
  *  Codifies the CLI's flag-vs-positional rule: the primary entity a
  *  verb acts on is positional; everything else is a flag. See
- *  docs/VOCABULARY.md § Naming conventions. */
+ *  docs/reference/naming.md. */
 export function withPositionalWorkstream<T extends { workstream?: string }>(
   opts: T,
   name: string | undefined,

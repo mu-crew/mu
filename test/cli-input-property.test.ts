@@ -16,7 +16,7 @@ import { TASK_STATUSES } from "../src/tasks.js";
 // Generators deliberately admit blank (whitespace-only) fragments so
 // the throw-on-blank rule stays under test rather than being generated
 // away. `hasBlankFragment` is the shared oracle for "should this input
-// throw?" (docs/VOCABULARY.md § Empty vs blank flag fragments).
+// throw?" (docs/reference/naming.md § Empty and blank list fragments).
 const safeFragment = fc
   .string({ minLength: 0, maxLength: 16 })
   .filter((s) => !s.includes("\u0000"));
