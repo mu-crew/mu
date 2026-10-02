@@ -16,14 +16,14 @@ defined here, fix the doc. If you need a new term, add it here first.
 | **mux backend**       | An implementation of the `MuxBackend` interface (`src/mux/tmux.ts`, `src/mux/herdr.ts`). Owns everything backend-specific: session/window/pane topology, the send protocol, scrollback capture, **pane id** validation, and **actor** identity fallback. Sibling of **VCS backend**; same `src/vcs/` shape. | "driver", "provider", "adapter"                  |
 | **mux session**       | The mux-level container holding one workstream's panes. On tmux it is a **tmux session** named `mu-<workstream>`; on herdr it is a herdr *workspace* labelled `mu-<workstream>`. Use the generic term in cross-backend prose and the specific term when the backend matters. | "mux workspace" (collides with mu's VCS **workspace**), "session" alone |
 | **mux detection**     | The ladder that picks the active **mux backend**: `MU_MUX` override → `HERDR_ENV=1` → `$TMUX` → whichever binary is on `PATH` (tmux wins a tie as the incumbent) → `NoMultiplexerError`. `HERDR_ENV` outranks `$TMUX` because it is the narrower signal: only a herdr-managed pane sets it, and herdr may itself be running inside tmux. | "auto-detect" (vague), "probe"                   |
-| **scratch workstream**| The reserved workstream named `scratch` for off-the-cuff agent use — spin up a helper you'll keep talking to without crew/DAG ceremony. Explicit `-w scratch` (no implicit fallback); auto-created on first spawn; `mu workstream init scratch` is rejected (loud). Agents in it are still **agents**, NOT pi-subagents. Task-less is fine; the DAG stays opt-in. | "throwaway ws", "temp workstream", "subagent" |
+| **scratch workstream**| The reserved workstream named `scratch` for off-the-cuff agent use — spin up a helper you'll keep talking to without crew/DAG ceremony. Explicit `-w scratch` (no implicit fallback); auto-created on first spawn; `mu workstream init scratch` is rejected (loud). Agents in it are still **agents**; a **delegate** is a scratch agent started for one task. Task-less is fine; the DAG stays opt-in. | "throwaway ws", "temp workstream", "subagent" |
 | **tmux session**      | The literal tmux session a workstream lives in — the tmux flavour of a **mux session** | "session" alone (ambiguous)                        |
 | **window**            | The mid-level grouping inside a **mux session** (tmux window / herdr tab); identified by `window_name` | "tab" (except as the frontmatter field name)       |
 | **pane**              | One shell view inside a **window**; identified by **pane id**            | "terminal", "shell"                          |
 | **pane id**           | The mux's stable handle for a **pane**. Shape is backend-specific — tmux `%15`, herdr `w1:p1` — so validation lives on the **mux backend**, never as a global regex. Stable for the pane's lifetime; never reused after close. Distinct from a tmux pane *index* (`0`, `1`, …), which is volatile and must never be stored. | "pane number", "pane index"                       |
 | **pane title**        | The string identifying which **agent** occupies a pane. **Equals the agent's name.** Set via `select-pane -T` on tmux, and via `herdr pane rename` (the pane *label*) on herdr. A fallback for **actor** identity — `$MU_AGENT_NAME` is consulted first. | "pane name"                          |
 | **window name**       | The **window**'s name. **Equals the agent's `tab:` value** (groups one or more agents). | "tab name" (in code; `tab:` only in frontmatter) |
-| **agent**             | A named worker running in a pane; identity = `$MU_AGENT_NAME`, falling back to **pane title**; row in `agents` table | "subagent" (reserved for pi-subagents), "worker" (only the specific role) |
+| **agent**             | A named worker running in a pane; identity = `$MU_AGENT_NAME`, falling back to **pane title**; row in `agents` table | "subagent" (means a hidden child in other tools), "worker" (only the specific role) |
 | **worker**            | An **agent** in its role-as-task-claimer. Synonym for the registered side of identity — a row in `agents`, owns tasks via the FK. | (when ambiguous, prefer **agent**)                 |
 | **remote worker**     | A worker whose process and workspace are on another machine while its pane and orchestrator DB remain local. The durable inventory record is a task-note line in the exact `REMOTE: <host>:<path>` shape; pair it with `REMOTE_BASE: <agent>:<sha>` so `mu task claim --for <agent>` can print the one-shot poll-and-close step. `mu state` lists `REMOTE:` lines and `mu state --json` exposes them as `remoteWorkers`. | "remote agent record", "host registry" |
 | **actor**             | The party that *caused* a state change. May or may not be a registered worker. Recorded in `ops.actor` for every op. The orchestrator running mu from a top-level shell is an actor but not a worker. | "caller", "author" (only on notes)            |
@@ -104,7 +104,10 @@ defined here, fix the doc. If you need a new term, add it here first.
 | **operation**         | A canonical mu verb (e.g. `mu task add`). Each verb is a thin CLI wrapper over a typed function in `src/*.ts` — the SDK and the CLI share one surface. | "command" (overloaded), "action"             |
 | **reconcile**         | Verb: re-derive registry rows from substrate reality (the **mux**). Always runs in `mu agent list` and `mu doctor`. | "sync", "refresh"                              |
 | **adopt**             | Verb (`mu agent adopt`): register an existing pane as a managed **agent**. The inverse of `mu agent list`'s 'orphan' state. Pane must be in the workstream's **mux session**. | "import", "absorb"                       |
-| **pi-subagents**      | A different package by Nico Bailon for in-pi focused delegation. Mu and pi-subagents are complementary, not competing. | conflating with mu                                 |
+| **control socket** / **ctl** | The per-agent unix socket the mu pi extension serves inside a pi agent's own interactive session (`$MU_CTL_SOCK`). mu derives its path from workstream and agent name, so nothing is stored. Carries `send`, `status`, `wait` (resolves on pi's `agent_settled`) and `abort` as JSON lines. The pane stays pi's normal TUI. **ctl state** is whether it answers: `ok`, `missing` or `refused`. | "rpc" (pi's `--mode rpc` replaces the TUI; mu does not use it), "daemon" |
+| **delegate**          | A **scratch workstream** agent started for one task: spawn, send the task, return at once, and hand its answer back when its control-socket `wait` resolves. The `mu_delegate` tool in the mu pi extension does this in one call; the CLI equivalent is `mu agent spawn -w scratch` + `mu agent send` + `mu agent wait --json`. The pane stays visible: attach, steer, abort, or keep talking to it. No agent types; the brief is ad-hoc text. | "subagent", "child agent", "worker" (a worker claims DAG tasks) |
+| **lastText**          | The text of the final assistant message of a pi agent run. The mu pi extension records it on `agent_end` and returns it verbatim in the control-socket `wait` reply; `mu agent wait --json` passes it through. mu never interprets it. | "result", "answer file", "output" (alone) |
+| **hidden subagent**   | A child agent in other tools (pi-subagents, pi's example subagent extension, Claude Code and Codex task tools) that runs out of sight: no pane to attach to, no way to steer it or keep talking to it, and its transcript collapses into a result. Usually comes with built-in agent types. mu's counterpart is the **delegate**. | "subagent" alone in mu prose |
 | **TUI**               | The interactive ink-based dashboard launched by bare `mu` in a TTY or explicitly by `mu state --tui`. Lives in `src/cli/tui/`. Read-only against SQLite (yanks, never executes). | "GUI", "interactive mode"                         |
 | **dashboard**         | The TUI's main screen — the grid of cards above the status bar. | "home screen", "main view"                         |
 | **card**              | A glanceable summary tile on the dashboard, identified by its toggle digit (0-9). Wrapped in a TitledBox. | "panel", "section" (overloaded)                    |
@@ -240,7 +243,7 @@ Don't use them in mu code or docs:
 
 | Avoided word     | Why                                                              | Use instead                                          |
 | ---------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
-| "subagent"       | Pi-subagents owns this term in our ecosystem                     | "agent" (mu's unit) or quote `pi-subagents` explicitly |
+| "subagent"       | In other tools it means a hidden, opaque child agent; mu has none | "agent" (mu's unit), "delegate" (one-task scratch agent), or "hidden subagent" when contrasting |
 | "session"        | Pi has its own "session"; tmux has "session"; herdr has a third (server-level); ambiguous alone | "workstream" (mu's unit), "mux session" (cross-backend), or "tmux session" (literal) |
 | "workspace" (mux sense) | mu already uses "workspace" for a VCS-isolated checkout. herdr's session-level container is also called a workspace, and letting both senses in would make `mu workspace list` ambiguous | "mux session"; say "herdr workspace" only when describing herdr's own CLI |
 | "project"        | Means a `.pi/` project root; conflict with mu's organizational unit | "workstream"                                       |
@@ -375,7 +378,7 @@ reading commands ("alice claims design" sounds like a person;
 task). Role-based names also make `mu agent list` and tmux's window
 list legible at a glance.
 
-The roles align with pi-subagents' role taxonomy:
+Common roles:
 
   `worker`     long-lived implementer; the default
   `reviewer`   reads diffs/code; usually `--role read-only`
@@ -419,9 +422,9 @@ XDG-Base-Directory-Spec compliant. The state directory resolves as:
 - **Never** place `MU_DB_PATH` inside `MU_SYNC_DIR`. Syncing a live
   SQLite file (and its `-wal`/`-shm` sidecars) corrupts it. `mu doctor`
   checks for this.
-- mu does NOT consult any agent-template directory. If pi-subagents
-  is installed, its `~/.pi/agent/agents/` and `.pi/agents/` paths
-  are pi-subagents' concern — not mu's.
+- mu does NOT consult any agent-template directory (such as
+  `~/.pi/agent/agents/` or `.pi/agents/`). Roles are names and
+  briefs, never templates.
 
 ### Env vars (mu state location)
 
@@ -450,8 +453,8 @@ XDG-Base-Directory-Spec compliant. The state directory resolves as:
 | `MU_<UPPER_CLI>_COMMAND`     | Override the executable launched for `--cli <cli>` (e.g. `MU_PI_COMMAND=pi-alt` makes `--cli pi` exec `pi-alt`; hyphens in the cli key become underscores in the env var name, so `--cli pi-meta` reads `MU_PI_META_COMMAND`). Accepts multi-word strings (`MU_PI_COMMAND="pi-alt --some-flag"`); tmux exec's via a shell. Reconcile also treats the resolved binary as agent-worthy when surfacing orphan panes. When this env var supplies the override (and `--command` did not), the spawn-success line surfaces the env-var name (`Spawned worker-1 (pi-meta via $MU_PI_META_COMMAND)`) so stale aliases are visible without `mu agent show`. |
 | `MU_SPAWN_LIVENESS_MS`       | **tmux-tier knob** (herdr's `agent start` blocks until the agent is ready, so there is nothing to poll for). After spawn, wait this many ms then verify the pane is still alive AND scan the tail of its scrollback for known startup-error patterns (provider auth failures — `No API key found for X`, `401 Unauthorized`, … — plus shell-level `command not found` / `No such file or directory` when the spawned binary vanished post-pre-flight). Default 1500. Set to 0 to disable (useful in CI). On detected death the DB row is rolled back and `AgentDiedOnSpawnError` is thrown with the captured scrollback; on a startup-error match (pane alive but parked at an error prompt) the row is rolled back and `AgentSpawnStartupError` is thrown with the matched line + remediation hints. The complementary pre-flight check (PATH lookup of `--cli`'s resolved binary BEFORE any side effect) is not env-tunable; on miss it throws `AgentSpawnCliNotFoundError` with no orphan workspace / pane / row. |
 
-These mirror pi-subagents' `PI_SUBAGENT_*` env vars in spirit but live
-in a separate namespace so the two can coexist in one pi session.
+They use the `MU_` namespace so they never collide with env vars other
+pi extensions set in the same session.
 
 ---
 
