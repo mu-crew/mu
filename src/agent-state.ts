@@ -2,11 +2,17 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { execa } from "execa";
+import { expectsCtl } from "./agents/transport.js";
+import { ctlProbe } from "./ctl/client.js";
+import { ctlSocketPath } from "./ctl/path.js";
+import type { CtlState } from "./ctl/protocol.js";
 import { activeMux } from "./mux/detect.js";
 import { tmux } from "./tmux.js";
 
 export type RuntimeState = "busy" | "needs_input" | "needs_permission" | "unknown";
-export type StateSource = "murmur" | "herdr" | "none";
+export type StateSource = "murmur" | "herdr" | "ctl" | "none";
+/** How a pi agent's control socket answered; "n/a" for non-pi agents. */
+export type CtlLink = "ok" | "missing" | "refused" | "n/a";
 
 export interface StateReading {
   state: RuntimeState;
@@ -14,12 +20,24 @@ export interface StateReading {
   since: number | null;
   alive: boolean;
   reason?: string;
+  /** Set for agents that expect a control socket. */
+  ctl?: Exclude<CtlLink, "n/a">;
 }
 
 export interface StateAgentRef {
   name: string;
   workstreamName: string;
   paneId: string;
+  /** When set and it names pi, the control socket is the state source. */
+  cli?: string;
+}
+
+/** Per-agent budget for the control-socket status read. */
+const CTL_STATE_PROBE_MS = 1000;
+
+/** ctl's idle maps to needs_input, the same as murmur's idle. */
+export function ctlRuntimeState(state: CtlState): RuntimeState {
+  return state === "busy" ? "busy" : "needs_input";
 }
 
 export const UNKNOWN_REASON = {
@@ -29,6 +47,8 @@ export const UNKNOWN_REASON = {
   stale: "remote snapshot stale",
   herdrNone: "herdr reports no state",
   paneGone: "pane gone",
+  ctlMissing: "ctl missing",
+  ctlRefused: "ctl refused",
 } as const;
 
 export type MurmurRunner = () => Promise<string | null>;
@@ -231,9 +251,56 @@ async function readHerdrStates(
   return readings;
 }
 
+/**
+ * Read the runtime state of each agent. Order per agent: control socket
+ * (pi agents) → murmur pane option → murmur remote → herdr. A pi agent
+ * whose socket does not answer reads `unknown` with reason `ctl missing`
+ * or `ctl refused`, never a murmur reading, so the gap stays visible.
+ * `stateDir` roots the derived socket path (spawn uses the DB's directory).
+ */
 export async function readAgentStates(
   agents: readonly StateAgentRef[],
-  opts: { now?: number } = {},
+  opts: { now?: number; stateDir?: string } = {},
+): Promise<Map<string, StateReading>> {
+  const ctlAgents = agents.filter((a) => a.cli !== undefined && expectsCtl({ cli: a.cli }));
+  const probes = await Promise.all(
+    ctlAgents.map((a) =>
+      ctlProbe(ctlSocketPath(a.workstreamName, a.name, opts.stateDir), CTL_STATE_PROBE_MS),
+    ),
+  );
+  const readings = new Map<string, StateReading>();
+  const failed = new Map<string, "missing" | "refused">();
+  ctlAgents.forEach((agent, i) => {
+    const probe = probes[i];
+    if (probe?.kind === "ok") {
+      readings.set(agentKey(agent), {
+        state: ctlRuntimeState(probe.status.state),
+        source: "ctl",
+        since: probe.status.since,
+        alive: true,
+        ctl: "ok",
+      });
+    } else {
+      failed.set(agentKey(agent), probe?.kind === "missing" ? "missing" : "refused");
+    }
+  });
+  const rest = agents.filter((a) => !readings.has(agentKey(a)));
+  if (rest.length === 0) return readings;
+  for (const [key, reading] of await readBaseStates(rest, opts)) {
+    const ctl = failed.get(key);
+    if (ctl === undefined) readings.set(key, reading);
+    else if (!reading.alive) readings.set(key, { ...reading, ctl });
+    else {
+      const reason = ctl === "missing" ? UNKNOWN_REASON.ctlMissing : UNKNOWN_REASON.ctlRefused;
+      readings.set(key, { ...unknown(reason), ctl });
+    }
+  }
+  return readings;
+}
+
+async function readBaseStates(
+  agents: readonly StateAgentRef[],
+  opts: { now?: number },
 ): Promise<Map<string, StateReading>> {
   const readings = new Map<string, StateReading>();
   let mux: Awaited<ReturnType<typeof activeMux>>;

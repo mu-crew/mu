@@ -65,7 +65,7 @@ defined here, fix the doc. If you need a new term, add it here first.
 | **stale workspace**   | A workspace whose `parent_ref` is N commits behind the project's default branch HEAD (per the workspace's local refs cache). Rendered as a color-coded `behind` column (green ≤2, yellow 3–9, red ≥10) in `mu workspace list` and `mu state`; ≥10 triggers a one-line warn in `mu state`, `mu task claim --for`, and `mu agent send` (or refusal on the two dispatch verbs with `--strict-staleness`). Pure observation — mu never auto-fetches. | "out of date", "drifting"                          |
 | **refresh**           | `mu workspace refresh <agent>` — rebase the agent's workspace onto a fresh base (default = backend's tracked main; `--from <ref>` overrides) WITHOUT touching the agent or pane. Refuses on dirty WC; surfaces conflicts as exit 5 with a resolve-in-place hint. The `none` backend errors (no VCS to rebase). | "recycle", "reset" (overloaded)                     |
 | **backend**           | Implementation of `MuxBackend` or `VcsBackend`. Always qualify which (**mux backend** / **VCS backend**) when both are in scope. | "driver", "provider"                               |
-| **state source**      | The system that reports **agent state**: herdr's `paneStatus()` on herdr, or murmur on tmux. mu reads local murmur pane options in one tmux call and uses `murmur status --json` only for remote workers. No source yields `unknown` with a reason. | "scraper" |
+| **state source**      | The system that reports **agent state**: the **control socket** for pi agents; otherwise herdr's `paneStatus()` on herdr, or murmur on tmux. mu reads local murmur pane options in one tmux call and uses `murmur status --json` only for remote workers. No source yields `unknown` with a reason; a pi agent whose socket does not answer is `unknown` (`ctl missing` / `ctl refused`), never a murmur reading. | "scraper" |
 | **op**                | The atomic unit of change: one row in the `ops` table, written by a trigger inside the same transaction as the mutation it records. Carries `(hlc, machine_id, group_id, actor, intent, entity, key, op, payload)`. A **semantic partial update** — the payload holds only the columns that actually changed, which is what makes per-field merge free. | "event", "delta", "change" (all overloaded)         |
 | **ops log**           | The `ops` table: the single append-only record of every change, and the substrate **sync**, **undo**, and history are all queries or replays over. Canonical and ACID because it lives in `mu.db` alongside the tables it records. | "event log", "journal", "WAL" (reserved by SQLite)  |
 | **intent**            | The semantic label on an **op** (`task.close`, `task.reparent`, `agent.spawn`). Set once per public SDK function via **op context**, not per mutation. `mu log` renders prose from it through one formatter. | "verb" (overloaded by CLI verbs), "action"          |
@@ -183,8 +183,9 @@ Agent state is runtime data and is not persisted. The codepoints live in
 | `needs_permission` | nf-fa-lock | Waiting for a human answer |
 | `unknown` | nf-fa-question_circle | No state source or no usable reading; the reason accompanies the state |
 
-The state source is herdr on the herdr backend and murmur on the tmux
-backend. mu maps murmur `working` to `busy`, `blocked` to
+The state source is the control socket for pi agents, else herdr on the
+herdr backend and murmur on the tmux backend. The extension's `busy`
+maps to `busy` and `idle` to `needs_input`. mu maps murmur `working` to `busy`, `blocked` to
 `needs_permission`, and `idle`, `done`, and `crashed` to `needs_input`.
 The retained `agents.status` column is deprecated and always contains
 `spawning`; no runtime read uses it.

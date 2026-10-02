@@ -10,15 +10,20 @@
 // gone; the three cmd functions (`cmdMe`, `cmdMyTasks`, `cmdMyNext`)
 // stayed (with `cmdMe` formerly `cmdWhoami`).
 
-import { agentKey, readAgentStates } from "../agent-state.js";
+import { dirname } from "node:path";
+import { agentKey, ctlRuntimeState, readAgentStates } from "../agent-state.js";
 import {
   type AdoptAgentOptions,
   type AdoptAgentResult,
   AgentCtlUnreachableError,
   AgentNotFoundError,
   abortAgent,
+  type AgentStatusSnapshot,
+  type AgentWatch,
   adoptAgent,
+  agentCtlSocket,
   closeAgent,
+  expectsCtl,
   getAgent,
   isKickSignal,
   type KickSignal,
@@ -45,6 +50,7 @@ import {
   statusIcon,
   UsageError,
 } from "../cli.js";
+import { ctlProbe, ctlRequest } from "../ctl/client.js";
 import type { Db } from "../db.js";
 import { activeMux, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
@@ -348,11 +354,14 @@ export async function cmdAgentShow(
     scrollback = "";
   }
 
-  const reading = (await readAgentStates([agent])).get(agentKey(agent));
+  const reading = (await readAgentStates([agent], { stateDir: dirname(db.name) })).get(
+    agentKey(agent),
+  );
   const displayed = {
     ...agent,
     state: reading?.state ?? ("unknown" as const),
     source: reading?.source ?? ("none" as const),
+    ctl: reading?.ctl ?? ("n/a" as const),
     since:
       reading?.since === null || reading?.since === undefined
         ? null
@@ -390,11 +399,14 @@ export async function cmdMe(
   opts: { json?: boolean; includeClosed?: boolean } = {},
 ): Promise<void> {
   const self = resolveSelf(db);
-  const reading = (await readAgentStates([self])).get(agentKey(self));
+  const reading = (await readAgentStates([self], { stateDir: dirname(db.name) })).get(
+    agentKey(self),
+  );
   const displayed = {
     ...self,
     state: reading?.state ?? ("unknown" as const),
     source: reading?.source ?? ("none" as const),
+    ctl: reading?.ctl ?? ("n/a" as const),
     since:
       reading?.since === null || reading?.since === undefined
         ? null
@@ -702,7 +714,7 @@ export async function cmdAgentWait(
       const agent = getAgent(db, ref.name, ref.workstreamName);
       return agent === undefined ? [] : [agent];
     });
-    const readings = await readAgentStates(agents);
+    const readings = await readAgentStates(agents, { stateDir: dirname(db.name) });
     const snapshots = new Map<
       string,
       {
@@ -721,11 +733,43 @@ export async function cmdAgentWait(
     return snapshots;
   };
 
+  // pi agents: one ctl `wait` per agent, resolved by the extension on
+  // agent_settled. `afterRuns` comes from a status read taken BEFORE the
+  // wait starts: a followUp queued while busy runs in the same pi run.
+  const watch = async (
+    ref: { name: string; workstreamName: string },
+    signal: AbortSignal,
+  ): Promise<AgentWatch | undefined> => {
+    const agent = getAgent(db, ref.name, ref.workstreamName);
+    if (agent === undefined || !expectsCtl(agent)) return undefined;
+    const sock = agentCtlSocket(db, agent);
+    const probe = await ctlProbe(sock);
+    if (probe.kind !== "ok") return undefined;
+    const settled = ctlRequest(sock, { op: "wait", afterRuns: probe.status.runs }, { signal }).then(
+      (reply): AgentStatusSnapshot =>
+        reply.ok && reply.state !== undefined
+          ? { status: ctlRuntimeState(reply.state) }
+          : { status: "unknown", unknownReason: reply.ok ? "ctl wait: no state" : reply.error },
+      // The connection dropped. A socket that still answers (pi's /new
+      // restarts the session) hands back to polling; one that does not
+      // means the pi that served it is gone.
+      async (): Promise<AgentStatusSnapshot> => {
+        if (signal.aborted) return { status: "unknown" };
+        const again = await ctlProbe(sock);
+        return again.kind === "ok"
+          ? { status: "unknown", unknownReason: "ctl wait interrupted" }
+          : { status: null };
+      },
+    );
+    return { initial: { status: ctlRuntimeState(probe.status.state) }, settled };
+  };
+
   const timeoutMs = (opts.timeout ?? 600) * 1000;
   const result = await waitForAgents(db, refs, {
     any: wantAny,
     timeoutMs,
     readStatuses,
+    watch,
     onInitialUnknown: (agents) => {
       const names = agents.map((agent) => `${agent.workstreamName}/${agent.name}`).join(", ");
       const reasons = [...new Set(agents.map((agent) => agent.unknownReason ?? "no reason"))].join(

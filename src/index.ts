@@ -5,6 +5,8 @@
 
 export {
   agentKey,
+  type CtlLink,
+  ctlRuntimeState,
   murmurAvailable,
   type RuntimeState,
   readAgentStates,

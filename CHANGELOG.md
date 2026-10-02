@@ -76,6 +76,22 @@ breaking changes are called out under "Breaking" in each entry.
   `--force` (exit 4, `LinkConflictError`). `--extension-only`,
   `--skill-only`, `--json`; `MU_PI_HOME` overrides the root. SDK:
   `linkPi`, `linkSkill`, `inspectLinks`.
+- **The control socket is the state source for pi agents.** `mu agent
+  list`, `show`, `mu state`, `mu me` and the TUI read a pi agent's state
+  from the mu pi extension: `busy`, or `needs_input` once pi settles,
+  with the extension's `since` (which `mu task wait --stuck-after` now
+  uses for pi owners). No silent fallback to murmur: a pi agent whose
+  socket does not answer reads `unknown` with reason `ctl missing` or
+  `ctl refused`, and the TUI agent card marks it with the fail glyph.
+  JSON gains `source: "ctl"` and `ctl: "ok"|"missing"|"refused"|"n/a"`.
+  Non-pi CLIs keep murmur / herdr. SDK: `StateSource` gains `"ctl"`,
+  `CtlLink`, `ctlRuntimeState`; `readAgentStates` takes `stateDir`.
+- **`mu agent wait` is event-driven for pi agents.** One ctl `wait`
+  request per agent, answered by the extension on `agent_settled`: the
+  wait returns the moment pi settles, with no polling. `afterRuns` comes
+  from a status read before the wait starts, so a run that ends in
+  between still fires. Exit codes are unchanged (0 met, 5 timeout, 6 the
+  socket stopped answering). SDK: `waitForAgents` gains a `watch` hook.
 
 ### Fixed
 

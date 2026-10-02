@@ -786,7 +786,7 @@ DB must never sit in `MU_SYNC_DIR`:
 4. **Executes the operation** — agent ops shell out to tmux (and to
    jj/sl/git for workspaces); task ops are pure SQL.
 5. **Reconciles with reality** — read paths prune ghosts and surface
-   orphans; runtime agent state is read from murmur or herdr without a DB write.
+   orphans; runtime agent state is read from the control socket (pi), murmur or herdr without a DB write.
 6. **Records ops** — automatically, per [§ The ops log](#the-ops-log-read-this-first);
    machine-local changes go through `emitEvent`. `mu log --tail`
    subscribers see the new ops on the next 1-second poll.

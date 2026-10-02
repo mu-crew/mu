@@ -1783,8 +1783,12 @@ Mirrors `mu task wait`'s shape: `--any`/`--first` fire on the first
 agent (default: all must finish); `--first` prints the firing agent's
 ref; `--json` carries `nextSteps`; refs may be qualified
 `<workstream>/<name>`. Exit codes: `0` met, `5` timeout, `6` a watched
-agent's pane died. On tmux, murmur supplies the state. `unknown` never
-fires the wait; run `mu doctor` for the missing-source reason.
+agent's pane died (for a pi agent: its control socket stopped
+answering). For pi agents the wait is one request to the mu extension,
+answered when pi settles, so it returns immediately rather than on the
+next poll. For other CLIs murmur (tmux) or herdr supplies the state.
+`unknown` never fires the wait; run `mu doctor` for the missing-source
+reason.
 
 **Don't reach for this verb to catch a worker that asked a question.**
 It fires on `busy → needs_input`, so it does detect the case — but it
@@ -2630,7 +2634,7 @@ The backend is resolved once per process and cached.
 | Attach hint | `tmux a -t mu-<ws>` | `herdr session attach mu-<ws>` |
 | Pane borders | 4-side border showing agent name + status glyph | no-op — herdr owns its pane chrome; mu-managed panes carry the label instead |
 | Layout | `select-layout` | no-op — herdr splits are explicit, geometry is yours |
-| Agent state | murmur pane options for local agents; `murmur status --json` for remote agents | herdr reports state via `paneStatus()` |
+| Agent state | pi agents: the control socket. Others: murmur pane options for local agents; `murmur status --json` for remote agents | pi agents: the control socket. Others: herdr reports state via `paneStatus()` |
 | Focus | mu creates detached | `--no-focus` on every mutating call, always. `detached: false` still gets you a detached workspace; run `herdr workspace focus` yourself. |
 | Isolation seam | `MU_TMUX_SOCKET` (`-L <name>`) | `MU_HERDR_SESSION` (`--session <name>`, its own socket) |
 | `mu agent send` / `read` | six-step paste/Enter protocol | one atomic `agent prompt --wait` |

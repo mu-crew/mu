@@ -235,4 +235,68 @@ describe("waitForAgents", () => {
       }),
     ).rejects.toThrow(/ghost/);
   });
+
+  describe("watch (event-driven, e.g. the control socket)", () => {
+    const ref = { workstreamName: ws, name: "worker-1" };
+
+    it("fires on the watch's settle without calling the poll reader", async () => {
+      let polls = 0;
+      let settle: (s: AgentStatusSnapshot) => void = () => {};
+      const settled = new Promise<AgentStatusSnapshot>((r) => {
+        settle = r;
+      });
+      const pending = waitForAgents(db, [ref], {
+        timeoutMs: 5_000,
+        readStatuses: async () => {
+          polls += 1;
+          return new Map();
+        },
+        watch: async () => ({ initial: { status: "busy" }, settled }),
+      });
+      settle({ status: "needs_input" });
+      const res = await pending;
+      expect(res.timedOut).toBe(false);
+      expect(res.agents[0]).toMatchObject({ fired: true, status: "needs_input" });
+      expect(polls).toBe(0);
+    });
+
+    it("marks the agent dead when the watch reports null", async () => {
+      const res = await waitForAgents(db, [ref], {
+        timeoutMs: 5_000,
+        readStatuses: async () => new Map(),
+        watch: async () => ({
+          initial: { status: "busy" },
+          settled: Promise.resolve({ status: null }),
+        }),
+      });
+      expect(res.agents[0]?.dead).toBe(true);
+    });
+
+    it("hands back to polling when the watch ends unknown", async () => {
+      const res = await waitForAgents(db, [ref], {
+        pollMs: 1,
+        timeoutMs: 5_000,
+        readStatuses: scriptedBatch({ "worker-1": ["busy", "needs_input"] }),
+        watch: async () => ({
+          initial: { status: "busy" },
+          settled: Promise.resolve({ status: "unknown" }),
+        }),
+      });
+      expect(res.agents[0]?.fired).toBe(true);
+    });
+
+    it("times out and aborts the watch signal", async () => {
+      let signal: AbortSignal | undefined;
+      const res = await waitForAgents(db, [ref], {
+        timeoutMs: 20,
+        readStatuses: async () => new Map(),
+        watch: async (_r, s) => {
+          signal = s;
+          return { initial: { status: "busy" }, settled: new Promise(() => {}) };
+        },
+      });
+      expect(res.timedOut).toBe(true);
+      expect(signal?.aborted).toBe(true);
+    });
+  });
 });

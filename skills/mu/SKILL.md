@@ -303,9 +303,10 @@ If an agent pane dies, or `mu agent close` kills it mid-task, owned
 IN_PROGRESS tasks revert to OPEN with a `[reaper]` note and `task
 reap` op. No manual release after crashes.
 
-Agent state comes from [murmur](https://github.com/mu-crew/murmur) on
-tmux and from herdr on herdr. `unknown` means no state source; run
-`mu doctor` for the reason. mu needs murmur only for agent state:
+pi agents report state through the mu control socket; other CLIs through
+[murmur](https://github.com/mu-crew/murmur) on tmux or herdr on herdr.
+`unknown` means no state source; run `mu doctor` for the reason. mu
+needs murmur only for non-pi agent state:
 tasks, claims, workspaces, spawn, send, read, and task completion waits
 work without it. **mu owns the work; murmur reports what an agent is
 doing.** See [REMOTE_WORKERS.md](REMOTE_WORKERS.md) § mu and murmur.

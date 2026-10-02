@@ -12,7 +12,14 @@
 // The verbs compose the CRUD primitives with the mux and reconciliation
 // layers. They are deliberately thin.
 
-import { agentKey, type RuntimeState, readAgentStates, type StateSource } from "./agent-state.js";
+import { dirname } from "node:path";
+import {
+  agentKey,
+  type CtlLink,
+  type RuntimeState,
+  readAgentStates,
+  type StateSource,
+} from "./agent-state.js";
 import { type Db, resolveWorkstreamId, tryResolveWorkstreamId } from "./db.js";
 import { GLYPH } from "./glyphs.js";
 import { emitEvent } from "./logs.js";
@@ -93,6 +100,7 @@ export {
   type AgentWaitOptions,
   type AgentWaitRef,
   type AgentWaitResult,
+  type AgentWatch,
   setAgentWaitSleepForTests,
   waitForAgents,
 } from "./agents/wait.js";
@@ -129,6 +137,8 @@ export interface AgentRow {
 export interface LiveAgent extends AgentRow {
   state: RuntimeState;
   source: StateSource;
+  /** Control-socket link: ok / missing / refused for pi agents, n/a otherwise. */
+  ctl?: CtlLink;
   /** ISO 8601 time when the source entered this state. */
   since: string | null;
   reason?: string;
@@ -697,7 +707,7 @@ export async function listLiveAgents(db: Db, opts: ListLiveAgentsOptions): Promi
     ...(opts.mode !== undefined ? { mode: opts.mode } : {}),
   });
   const baseAgents = listAgents(db, { workstream: opts.workstream });
-  const readings = await readAgentStates(baseAgents);
+  const readings = await readAgentStates(baseAgents, { stateDir: dirname(db.name) });
   const now = Date.now();
   const agents: LiveAgent[] = baseAgents.map((agent) => {
     const reading = readings.get(agentKey(agent)) ?? {
@@ -711,6 +721,7 @@ export async function listLiveAgents(db: Db, opts: ListLiveAgentsOptions): Promi
       ...agent,
       state: reading.state,
       source: reading.source,
+      ctl: reading.ctl ?? "n/a",
       since: reading.since === null ? null : new Date(reading.since).toISOString(),
       ...(reading.reason !== undefined ? { reason: reading.reason } : {}),
     };
