@@ -551,6 +551,23 @@ describe("error-specific structured-step assertions", () => {
     // Per-spawn (right scope for one-offs) must come first.
     expect(perSpawnIdx).toBeLessThan(globalIdx);
   });
+
+  it("AgentDiedOnSpawnError for an ssh command names remote causes, not wrapper locks", () => {
+    const err = new AgentDiedOnSpawnError(
+      "rw-1",
+      "%7",
+      "zsh:1: command not found: pi",
+      "ssh -o ControlMaster=no host -t 'pi'",
+    );
+    expect(err.message).toContain("remote binary is missing");
+    expect(err.message).toContain("-ilc");
+    expect(err.message).toContain("AllowStreamLocalForwarding");
+    expect(err.message).toContain("command not found: pi");
+    expect(err.message).not.toContain("instance lock");
+    const cmds = err.errorNextSteps().map((s) => s.command);
+    expect(cmds).toContain("mu agent remote-env --help");
+    expect(cmds.join("\n")).not.toContain("pi-meta --no-solo");
+  });
 });
 
 // Regression: nextsteps_audit_task_not_found_workstream_col

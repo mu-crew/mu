@@ -38,6 +38,9 @@ export interface RemoteEnv {
   command: string;
 }
 
+/** ssh options forcing a direct (non-multiplexed) connection. */
+const SSH_DIRECT_OPTS = "-o ControlMaster=no -o ControlPath=none";
+
 /** Characters that survive unquoted inside a single-quoted remote command. */
 const SAFE_WORD = /^[A-Za-z0-9_./:@%+-]+$/;
 
@@ -71,9 +74,18 @@ export function buildRemoteEnv(
       `--remote-sock is ${Buffer.byteLength(remote)} bytes; unix socket paths must stay within ${MAX_SOCK_PATH}`,
     );
   }
-  const sshArgs = `-o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L ${word(`${localSock}:${remote}`)}`;
+  // ControlMaster=no + ControlPath=none: a direct connection per agent.
+  // With `ControlMaster auto` in ~/.ssh/config the pane's ssh becomes a
+  // mux client of an existing master, and the -L unix forward never binds
+  // the local socket (spawn then reports ctl missing). The connection
+  // lives and dies with the pane anyway, so sharing a master buys nothing.
+  const sshArgs = `${SSH_DIRECT_OPTS} -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L ${word(`${localSock}:${remote}`)}`;
   const env = `MU_MANAGED_AGENT=1 MU_AGENT_NAME=${agent} MU_WORKSTREAM=${workstream} ${CTL_SOCK_ENV}=${remote}`;
-  const command = `ssh ${sshArgs} <host> -t "cd <remote-dir> && ${env} pi"`;
+  // `$SHELL -ilc`: ssh's remote command runs in a non-interactive shell
+  // that skips ~/.zshrc / ~/.bashrc, where PATH (mise, nvm) and provider
+  // env usually live; pi then dies at startup. The interactive login
+  // shell loads them. Single quotes keep $SHELL for the REMOTE side.
+  const command = `ssh ${sshArgs} <host> -t 'cd <remote-dir> && ${env} $SHELL -ilc "pi --approve"'`;
   return { agent, workstream, localSock, remoteSock: remote, sshArgs, env, command };
 }
 
@@ -114,7 +126,7 @@ export function wireRemoteEnvCommand(agent: Command): void {
   agent
     .command("remote-env <name>")
     .description(
-      "Print, without running anything, what a remote pi agent's ssh command needs: the socket forward (-o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L <local>:<remote>) and the identity env (MU_MANAGED_AGENT, MU_AGENT_NAME, MU_WORKSTREAM, MU_CTL_SOCK). mu then reaches the remote pi through the local socket exactly like a local one. The host needs the mu extension (`mu link pi` there) and sshd must allow the forward: if spawn reports ctl refused, check AllowStreamLocalForwarding in the host's sshd_config.",
+      "Print, without running anything, what a remote pi agent's ssh command needs: the socket forward (-o ControlMaster=no -o ControlPath=none -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L <local>:<remote>) and the identity env (MU_MANAGED_AGENT, MU_AGENT_NAME, MU_WORKSTREAM, MU_CTL_SOCK). mu then reaches the remote pi through the local socket exactly like a local one. ControlMaster=no / ControlPath=none give each agent a direct connection: a multiplexed ssh (ControlMaster auto in ~/.ssh/config) never binds the local end of the forward. The example command wraps pi in `$SHELL -ilc` because ssh's non-interactive shell skips ~/.zshrc / ~/.bashrc (PATH, provider env); drop the wrapper if your remote env needs no rc file. The host needs the mu extension (`mu link pi` there) and sshd must allow the forward: if spawn reports ctl refused, check AllowStreamLocalForwarding in the host's sshd_config.",
     )
     .option(
       "--remote-sock <path>",

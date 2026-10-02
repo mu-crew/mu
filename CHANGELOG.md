@@ -32,9 +32,18 @@ breaking changes are called out under "Breaking" in each entry.
 
 - **`mu agent remote-env <name>` prints what a remote pi agent's ssh
   command needs** and runs nothing: `sshArgs`
-  (`-o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L
-  <local>:<remote>`), the identity `env` (including `MU_CTL_SOCK` =
-  the remote path) and a complete example `--command`. `--shell`
+  (`-o ControlMaster=no -o ControlPath=none -o StreamLocalBindUnlink=yes
+  -o ExitOnForwardFailure=yes -L <local>:<remote>`), the identity `env`
+  (including `MU_CTL_SOCK` = the remote path) and a complete example
+  `--command`. `ControlMaster=no` / `ControlPath=none` make each agent's
+  ssh a direct connection: with `ControlMaster auto` in `~/.ssh/config`
+  the pane's ssh joined an existing master and the `-L` unix forward
+  never bound locally (found on a live remote run). The example command
+  runs pi via `$SHELL -ilc "pi --approve"` so the remote rc files (PATH,
+  provider env) load; bare ssh runs a non-interactive shell and pi died
+  at startup. A pane whose `ssh ...` command dies on spawn now names
+  remote causes (missing binary or env, refused forward) and points at
+  `mu agent remote-env --help` instead of the `pi-meta --no-solo` hint. `--shell`
   prints eval-safe `MU_SSH_ARGS=` / `MU_REMOTE_ENV=` lines; `--json`
   is supported. The remote path defaults to
   `/tmp/mu-<uid>/<ws>/<name>.sock` (hashed past 103 bytes);

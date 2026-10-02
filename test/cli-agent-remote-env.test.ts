@@ -56,13 +56,19 @@ describe("mu agent remote-env", () => {
     expect(j.localSock).toBe(local);
     expect(j.remoteSock).toBe(remote);
     expect(j.sshArgs).toBe(
-      `-o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L ${local}:${remote}`,
+      `-o ControlMaster=no -o ControlPath=none -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L ${local}:${remote}`,
     );
     expect(j.env).toBe(
       `MU_MANAGED_AGENT=1 MU_AGENT_NAME=worker-1 MU_WORKSTREAM=big MU_CTL_SOCK=${remote}`,
     );
     expect(j.command).toContain(`ssh ${j.sshArgs} <host> -t`);
-    expect(j.command).toContain(`${j.env} pi`);
+    // Interactive login shell so the remote rc files (PATH, provider env) load.
+    expect(j.command).toContain(`${j.env} $SHELL -ilc "pi --approve"`);
+  });
+
+  it("--shell MU_SSH_ARGS forces a direct connection (no ControlMaster mux)", async () => {
+    const r = await runCli(["agent", "remote-env", "worker-1", "-w", "big", "--shell"], dbPath);
+    expect(r.stdout).toMatch(/^MU_SSH_ARGS='-o ControlMaster=no -o ControlPath=none /m);
   });
 
   it("--remote-sock overrides the remote path", async () => {
