@@ -32,8 +32,10 @@ both. `--json` exists on every verb:
 - **agent** — named worker in a pane (you may be one).
 - **mux** — the multiplexer mu drives: tmux, or herdr. One per
   invocation. `mu doctor` names the active one; `MU_MUX` forces it.
-  Spawn, send, and read work on both. Agent state comes from murmur
-  on tmux and from herdr on herdr; `mu agent kick` is Linux-only on herdr.
+  Spawn, send, and read work on both. `mu agent kick` is Linux-only on herdr.
+- **control socket (ctl)** — how mu drives a pi agent: the mu pi
+  extension (`mu link pi`) serves exact send, state, wait and abort
+  inside pi's own TUI. `ctl missing|refused` means it does not answer.
 - **task** — DAG node with mandatory `impact` (1–100) and
   `effort_days`. Shown as status/substate: `OPEN/todo|parked`,
   `IN_PROGRESS/active`, `CLOSED/done|rejected|wontfix|duplicate|superseded`.
@@ -100,8 +102,8 @@ that a refusal with `--strict-staleness`.
 
 Agents can run on another machine: the PANE is local, the PROCESS is
 remote (`--command 'ssh <host> -t "..."'`), so `send`, `read`, and the
-reaper keep working unchanged. murmur reports the remote agent's state.
-**One orchestrator
+reaper keep working unchanged. A pi agent's control socket is forwarded
+over that ssh (`mu agent remote-env`). **One orchestrator
 DB; panes may be remote** — never run a second mu on the host, since
 `tasks.owner_id` is an FK into the machine-local `agents` table and a
 remote mu could not claim your tasks anyway. You create the remote
@@ -109,8 +111,7 @@ workspace yourself (`--workspace` is local-only).
 
 **Read [REMOTE_WORKERS.md](REMOTE_WORKERS.md) before spawning your first
 remote agent, and again before waiting on one; poll once per turn and run
-the claim's one-shot `Next:` command.** These are the other three traps
-that cost real time when learned late:
+the claim's one-shot `Next:` command.** Three more costly traps:
 - **On a session-capped host, route long commands and silent-failure
   polls through [mule](https://github.com/mu-crew/mule).** A refused
   bare `rev-parse` can return an empty sha that looks like progress;
@@ -162,8 +163,11 @@ Every turn:
    `--note 'REPRO: ...\nSCOPE: ...'` when the title alone is not
    enough. Agent state is runtime observation; task ownership is durable and
    waitable.
-4. Send terse instructions: task id, files/notes to read, workspace
-   path, validation command, scope guards, task note contract.
+4. Send each new task with `mu agent send <w> --fresh '...'` (new
+   session + prompt in one step; refuses while busy): task id,
+   files/notes to read, workspace path, validation command, scope
+   guards, task note contract. Follow the `Next:` block; it picks
+   `--fresh` vs `--steer` for you.
 5. End with a loud final-action block:
 
    ```text
@@ -215,11 +219,14 @@ Every turn:
   workstream; only task ownership crosses.
 - For an idle worker, read the pane to learn why it stopped, then answer,
   retry, or release its task. `MU_IDLE_THRESHOLD_MS` defaults to 5m.
-- `mu agent kick` targets a wedged foreground subprocess. It refuses to signal
-  the wrapping CLI; close the agent if that is what must stop.
-- Use `mu agent send`, not raw mux input: mu preserves literal text and confirms
-  submission. Single-quote prompts containing shell expansions, or use a quoted
-  heredoc.
+- **Never chain `/new` and a prompt as two sends to a pi agent:** the prompt
+  can land mid-reset and vanish (it did, twice). `--fresh` does both inside pi.
+- **Stop a worker:** `mu agent abort <w>` first for pi (exact, local or
+  remote, keeps context, waits for idle; exit 5 = still busy; queued
+  follow-ups return to the editor unsent). Then `mu agent kick` (pi
+  unresponsive, or non-pi; local panes only), then `mu agent close`.
+- Use `mu agent send`, not raw mux input. Single-quote prompts containing shell
+  expansions, or use a quoted heredoc.
 
 ## CLI gotchas
 
@@ -304,13 +311,10 @@ If an agent pane dies, or `mu agent close` kills it mid-task, owned
 IN_PROGRESS tasks revert to OPEN with a `[reaper]` note and `task
 reap` op. No manual release after crashes.
 
-pi agents report state through the mu control socket; other CLIs through
+pi agents report state through the control socket; other CLIs through
 [murmur](https://github.com/mu-crew/murmur) on tmux or herdr on herdr.
-`unknown` means no state source; run `mu doctor` for the reason. mu
-needs murmur only for non-pi agent state:
-tasks, claims, workspaces, spawn, send, read, and task completion waits
-work without it. **mu owns the work; murmur reports what an agent is
-doing.** See [REMOTE_WORKERS.md](REMOTE_WORKERS.md) § mu and murmur.
+`unknown` means no state source; `mu doctor` says why. pi agents need
+no murmur. See [REMOTE_WORKERS.md](REMOTE_WORKERS.md) § mu and murmur.
 
 For high-stakes decisions:
 
@@ -344,28 +348,16 @@ Skipping close makes the orchestrator's wait hang. Won't do it:
 
 ## Follow-on prompts
 
-A new `mu agent send` appends to prior LLM context. For unrelated
-work, clear first (`/new` for pi/claude-code; `/clear` for codex):
-
-```bash
-mu agent send worker-1 '/new'
-mu agent send worker-1 'Claim and work on task_x. Read notes first...'
-```
-
-No `sleep` needed. `mu agent send` waits for the pane to finish any
-re-initialisation before pasting, and re-submits if the TUI swallowed
-the Enter. If a send cannot be confirmed it prints a `warning:` to
-stderr naming the pane; exit 0 with no warning means submitted.
-
-Budget is `MU_SEND_READINESS_MS` (default 15000; 0 = fire-and-forget).
-Sending to a BUSY agent is not delayed — that input queues normally.
+A plain `mu agent send` appends to prior context; use it to steer or
+answer. Unrelated work to pi: `mu agent send worker-1 --fresh 'Claim
+task_x...'`. claude-code/codex: send `/new` (codex: `/clear`), then the
+prompt; a send it cannot confirm prints a `warning:` on stderr.
 
 ## Guardrails
 
 Task ownership outranks runtime agent state. Coordinate through task notes and the
 activity log. Keep edges within one workstream, role-name agents, and reserve
-the `mu_` task-id prefix. Give workers bounded paths and commands; use `mu
-agent kick` if a subprocess wedges.
+the `mu_` task-id prefix. Give workers bounded paths and commands.
 
 ## See also
 

@@ -10,6 +10,22 @@ breaking changes are called out under "Breaking" in each entry.
 
 ## [Unreleased]
 
+**pi agents are driven through a control socket.** `mu link pi`
+installs mu's pi extension, which serves a per-agent unix socket
+(`MU_CTL_SOCK`) inside each agent's normal interactive pi. Send, state,
+wait and abort are exact, for local agents and for remote ones over a
+`-L` forward on the agent's own ssh (`mu agent remote-env`). The pane
+stays pi's TUI. murmur is now needed only for non-pi CLIs. Dispatch a
+new task with `mu agent send --fresh` (new session + prompt in one
+operation); stop a turn with `mu agent abort`. A pi agent whose socket
+does not answer is reported as `ctl missing|refused`, never silently
+pasted into. Details: `mu link pi`, spawn handshake, ctl state source,
+event-driven `mu agent wait`, `send --steer` / `--via`, `--fresh`,
+`mu agent abort`, `mu agent remote-env`, `mu_delegate`, doctor ctl
+rows and extension version skew, below. Install is now `npm i -g
+@mu-crew/mu && mu link pi && mu doctor`; README, SKILL, REMOTE_WORKERS
+and ARCHITECTURE (§ Control socket) are updated to match.
+
 ### Added
 
 - **Extension version skew is reported and recoverable.** A running pi
@@ -194,6 +210,13 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Changed
 
+- **murmur is optional for pi agents.** The README install block is
+  `npm i -g @mu-crew/mu`, `mu link pi`, `mu doctor`; `mu link pi`
+  replaces `npx skills add` for pi (other coding agents keep it). The
+  skill sends new tasks with `--fresh` from the orchestrator loop,
+  documents the stop ladder (abort → kick → close), and drops the
+  paste-retry paragraph that no longer applies to pi. SKILL.md shrank
+  (2737 → 2731 words).
 - **mu no longer points one-shot work at pi-subagents.** README, VISION,
   USAGE_GUIDE and the skill used to say "use pi-subagents for a one-shot
   answer"; the skill description sent models to a tool that may not be
