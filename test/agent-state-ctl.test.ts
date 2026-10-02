@@ -63,7 +63,7 @@ afterEach(async () => {
 interface FakeExt {
   ops: string[];
   /** Fire agent_settled: runs++, idle, answer held waits. */
-  settle: () => void;
+  settle: (lastText?: string) => void;
   start: () => void;
   close: () => Promise<void>;
 }
@@ -105,11 +105,12 @@ async function fakeExtension(
       state = "busy";
       since = Date.now();
     },
-    settle: () => {
+    settle: (lastText?: string) => {
       state = "idle";
       since = Date.now();
       runs++;
-      for (const w of waiters.splice(0)) w.sock.end(encode(status()));
+      const reply = lastText === undefined ? status() : { ...status(), lastText };
+      for (const w of waiters.splice(0)) w.sock.end(encode(reply));
     },
     close: async () => {
       for (const c of conns) c.destroy();
@@ -173,12 +174,15 @@ describe("mu agent wait on a pi agent", () => {
       await new Promise((r) => setTimeout(r, 10));
     }
     expect(ext.ops).toContain("wait");
-    ext.settle();
+    ext.settle("ok");
     const res = await pending;
     expect(res.error).toBeUndefined();
     expect(res.exitCode).toBeNull();
-    const payload = JSON.parse(res.stdout) as { agents: Array<{ fired: boolean }> };
+    const payload = JSON.parse(res.stdout) as {
+      agents: Array<{ fired: boolean; lastText?: string }>;
+    };
     expect(payload.agents[0]?.fired).toBe(true);
+    expect(payload.agents[0]?.lastText).toBe("ok");
     expect(ext.ops.filter((op) => op === "status").length).toBeLessThan(3);
   });
 

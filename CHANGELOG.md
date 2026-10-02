@@ -12,6 +12,15 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Added
 
+- **`mu agent wait --json` returns a pi agent's final answer as
+  `lastText`.** The mu pi extension captures the last assistant
+  message's text parts on `agent_end` (no tool calls, no thinking) and
+  publishes them when pi settles; the control-socket `wait` reply
+  carries `lastText` (additive, still `v: 1`). `""` when the run ended
+  without text; over 64 KiB is cut with a `[truncated, see pane]`
+  marker. Absent for non-pi agents. mu passes the text through
+  verbatim and never interprets it.
+
 - **`mu agent send <name> --fresh '<prompt>'`: new session + prompt as
   one operation.** For pi agents only. The mu pi extension registers an
   internal `/mu-fresh` command; the new `fresh` control-socket op

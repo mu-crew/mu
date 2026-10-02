@@ -90,6 +90,8 @@ describe("waitForAgents", () => {
     expect(res.timedOut).toBe(false);
     expect(res.agents[0]?.fired).toBe(true);
     expect(res.agents[0]?.wasBusy).toBe(true);
+    // Polled (non-ctl) agents carry no lastText at all.
+    expect(res.agents[0]).not.toHaveProperty("lastText");
   });
 
   it("does NOT fire for an already-idle agent (must be busy first)", async () => {
@@ -253,10 +255,10 @@ describe("waitForAgents", () => {
         },
         watch: async () => ({ initial: { status: "busy" }, settled }),
       });
-      settle({ status: "needs_input" });
+      settle({ status: "needs_input", lastText: "done" });
       const res = await pending;
       expect(res.timedOut).toBe(false);
-      expect(res.agents[0]).toMatchObject({ fired: true, status: "needs_input" });
+      expect(res.agents[0]).toMatchObject({ fired: true, status: "needs_input", lastText: "done" });
       expect(polls).toBe(0);
     });
 

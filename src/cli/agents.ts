@@ -748,7 +748,10 @@ export async function cmdAgentWait(
     const settled = ctlRequest(sock, { op: "wait", afterRuns: probe.status.runs }, { signal }).then(
       (reply): AgentStatusSnapshot =>
         reply.ok && reply.state !== undefined
-          ? { status: ctlRuntimeState(reply.state) }
+          ? {
+              status: ctlRuntimeState(reply.state),
+              ...(reply.lastText !== undefined ? { lastText: reply.lastText } : {}),
+            }
           : { status: "unknown", unknownReason: reply.ok ? "ctl wait: no state" : reply.error },
       // The connection dropped. A socket that still answers (pi's /new
       // restarts the session) hands back to polling; one that does not
