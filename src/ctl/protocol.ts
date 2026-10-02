@@ -13,7 +13,9 @@ export type CtlRequest =
   | { op: "status" }
   | { op: "send"; text: string; mode?: "steer" | "followUp" }
   | { op: "wait"; afterRuns?: number; timeoutMs?: number }
-  | { op: "abort" };
+  | { op: "abort" }
+  /** New session + prompt as one operation. Refused with error "busy" unless force. */
+  | { op: "fresh"; text: string; force?: boolean };
 
 export type CtlStatus = { state: CtlState; since: number; runs: number; pending: boolean };
 

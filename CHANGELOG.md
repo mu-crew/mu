@@ -12,6 +12,21 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Added
 
+- **`mu agent send <name> --fresh '<prompt>'`: new session + prompt as
+  one operation.** For pi agents only. The mu pi extension registers an
+  internal `/mu-fresh` command; the new `fresh` control-socket op
+  triggers it, and it runs `newSession` and sends the prompt from the
+  new session. The reply comes once that run has started, so there is
+  no window where the prompt lands in the old session or nowhere (the
+  `/new` + prompt race that lost wave-6 dispatches). A busy pi refuses
+  with exit 4 (`AgentBusyError`, next steps `mu agent abort` / `--fresh
+  --force`); `--force` abandons the running turn. Non-pi agents and
+  `--via mux` get a usage error (exit 2). The extension now keeps its
+  socket server, run counters and in-flight fresh in process-global
+  state, so the socket survives session replacement. Live: 20
+  back-to-back `--fresh` sends answered 20/20, each seeing exactly one
+  user message.
+
 - **`mu agent abort <name>`: stop a pi agent's turn through its control
   socket.** Sends `status` → `abort` → `wait`, so it returns once pi
   settles (`--timeout`, default 30s; exit 5 when still busy, with a

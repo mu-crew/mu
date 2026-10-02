@@ -2,14 +2,24 @@ import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import muPi, { type MuPiContext } from "../extension/mu-pi.js";
+import muPi, {
+  FRESH_COMMAND,
+  type MuPiCommandContext,
+  type MuPiContext,
+} from "../extension/mu-pi.js";
 import { ctlProbe, ctlRequest } from "../src/ctl/client.js";
 
 type Handler = (event: unknown, ctx: MuPiContext) => unknown;
 
+type Command = {
+  description: string;
+  handler: (a: string, c: MuPiCommandContext) => Promise<void>;
+};
+
 function fakePi() {
   const handlers = new Map<string, Handler[]>();
-  const sendUserMessage = vi.fn(async () => {});
+  const commands = new Map<string, Command>();
+  const sendUserMessage = vi.fn(async (_t: string, _o?: unknown) => {});
   const ctx = {
     idle: true,
     isIdle: () => ctx.idle,
@@ -22,11 +32,14 @@ function fakePi() {
       return () => {};
     },
     sendUserMessage,
+    registerCommand(name: string, c: Command) {
+      commands.set(name, c);
+    },
   };
-  const emit = async (event: string) => {
-    for (const h of handlers.get(event) ?? []) await h({ type: event }, ctx);
+  const emit = async (event: string, extra: Record<string, unknown> = {}) => {
+    for (const h of handlers.get(event) ?? []) await h({ type: event, ...extra }, ctx);
   };
-  return { pi, ctx, emit, sendUserMessage, handlers };
+  return { pi, ctx, emit, sendUserMessage, handlers, commands };
 }
 
 let dir: string;
@@ -126,11 +139,122 @@ describe("mu pi extension", () => {
     expect(await ctlRequest(sock, { op: "status" })).toMatchObject({ ok: true });
   });
 
+  it("session_shutdown for a new session keeps the socket", async () => {
+    await fake.emit("session_start");
+    await fake.emit("session_shutdown", { reason: "new" });
+    expect(existsSync(sock)).toBe(true);
+  });
+
   it("session_shutdown removes the socket and is idempotent", async () => {
     await fake.emit("session_start");
     expect(existsSync(sock)).toBe(true);
     await fake.emit("session_shutdown");
     expect(existsSync(sock)).toBe(false);
     await fake.emit("session_shutdown");
+  });
+
+  describe("fresh", () => {
+    /**
+     * Wire the fake like pi: sendUserMessage("/mu-fresh") runs the command;
+     * newSession replaces the runtime (shutdown reason new, factory re-run,
+     * session_start) and calls withSession, whose send starts a run.
+     */
+    function wirePi(opts: { startRun?: boolean } = {}) {
+      const prompts: string[] = [];
+      let current = fake;
+      fake.sendUserMessage.mockImplementation(async (text: string) => {
+        if (text !== `/${FRESH_COMMAND}`) return;
+        const cmd = current.commands.get(FRESH_COMMAND);
+        if (!cmd) throw new Error("command not registered");
+        const cctx: MuPiCommandContext = {
+          ...current.ctx,
+          newSession: async (o) => {
+            await current.emit("session_shutdown", { reason: "new" });
+            const next = fakePi();
+            next.sendUserMessage.mockImplementation(
+              fake.sendUserMessage.getMockImplementation() ?? (async () => {}),
+            );
+            muPi(next.pi);
+            current = next;
+            await next.emit("session_start", { reason: "new" });
+            await o?.withSession?.({
+              ...next.ctx,
+              sendUserMessage: async (t: string) => {
+                prompts.push(t);
+                if (opts.startRun !== false) {
+                  next.ctx.idle = false;
+                  await next.emit("agent_start");
+                }
+              },
+            });
+            return { cancelled: false };
+          },
+        };
+        void cmd.handler("", cctx);
+      });
+      return { prompts, now: () => current };
+    }
+
+    afterEach(async () => {
+      // The replaced runtimes share one server; quit tears it down.
+      await fake.emit("session_shutdown", { reason: "quit" });
+    });
+
+    it("registers the internal command and triggers it with expandPromptTemplates", async () => {
+      await fake.emit("session_start");
+      const w = wirePi();
+      expect(fake.commands.has(FRESH_COMMAND)).toBe(true);
+      const r = await ctlRequest(sock, { op: "fresh", text: "hello" });
+      expect(fake.sendUserMessage).toHaveBeenCalledWith(`/${FRESH_COMMAND}`, {
+        expandPromptTemplates: true,
+      });
+      expect(w.prompts).toEqual(["hello"]);
+      // Replied once the NEW session's run started.
+      expect(r).toMatchObject({ v: 1, ok: true, state: "busy" });
+    });
+
+    it("keeps the socket across the session swap and serves the new runtime", async () => {
+      await fake.emit("session_start");
+      const w = wirePi();
+      await ctlRequest(sock, { op: "fresh", text: "a" });
+      expect(existsSync(sock)).toBe(true);
+      await w.now().emit("agent_settled");
+      expect(await ctlRequest(sock, { op: "status" })).toMatchObject({ state: "idle", runs: 1 });
+      w.now().ctx.idle = true;
+      await ctlRequest(sock, { op: "fresh", text: "b" });
+      expect(w.prompts).toEqual(["a", "b"]);
+    });
+
+    it("refuses while busy unless force", async () => {
+      await fake.emit("session_start");
+      const w = wirePi();
+      fake.ctx.idle = false;
+      await fake.emit("agent_start");
+      expect(await ctlRequest(sock, { op: "fresh", text: "x" })).toEqual({
+        v: 1,
+        ok: false,
+        error: "busy",
+      });
+      expect(w.prompts).toEqual([]);
+      expect(await ctlRequest(sock, { op: "fresh", text: "y", force: true })).toMatchObject({
+        ok: true,
+      });
+      expect(w.prompts).toEqual(["y"]);
+    });
+
+    it("replies ok when the send resolves without a run", async () => {
+      await fake.emit("session_start");
+      const w = wirePi({ startRun: false });
+      expect(await ctlRequest(sock, { op: "fresh", text: "z" })).toMatchObject({ ok: true });
+      expect(w.prompts).toEqual(["z"]);
+    });
+
+    it("the command typed by hand with nothing queued is a no-op", async () => {
+      await fake.emit("session_start");
+      const cmd = fake.commands.get(FRESH_COMMAND);
+      const newSession = vi.fn();
+      await cmd?.handler("", { ...fake.ctx, newSession } as MuPiCommandContext);
+      expect(newSession).not.toHaveBeenCalled();
+    });
   });
 });

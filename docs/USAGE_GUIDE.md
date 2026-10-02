@@ -1403,6 +1403,16 @@ Non-pi CLIs always go through the mux. `--json` reports `transport:
 without `MU_CTL_SOCK`; `mu agent adopt` warns and prints the path to
 restart pi with.
 
+**Fresh session + prompt.** For a pi agent, `mu agent send <name>
+--fresh '<prompt>'` starts a new session and sends the prompt into it
+as one operation inside pi (the extension's internal `/mu-fresh`
+command runs `newSession` and sends from the new session). It returns
+once the prompt's run has started, so a send right after it lands in
+the new session. Use it instead of sending `/new` then the prompt. A
+busy pi refuses with exit 4 (`mu agent abort` first, or `--force` to
+abandon the running turn). Non-pi CLIs have no control socket: use the
+two-step `/new` + prompt there and verify the prompt landed.
+
 For the mux path, mu uses the **canonical bracketed-paste protocol**:
 
 0. wait for the pane to stop being mid-modal (`MU_SEND_READINESS_MS`,

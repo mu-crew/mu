@@ -423,3 +423,51 @@ export class AgentAbortTimeoutError extends Error implements HasNextSteps {
     ];
   }
 }
+
+/**
+ * `mu agent send --fresh` on an agent without a control socket (non-pi
+ * CLI, or forced `--via mux`): there is no one-operation new session.
+ */
+export class AgentFreshNeedsCtlError extends Error implements HasNextSteps {
+  override readonly name = "AgentFreshNeedsCtlError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly cli: string,
+  ) {
+    super(
+      `agent ${agentName} runs ${cli} without a control socket: --fresh needs the mu pi extension`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Reset the session through the pane, then send (verify it landed)",
+        command: `mu agent send ${this.agentName} '/new' -w ${this.workstream}`,
+      },
+    ];
+  }
+}
+
+/** `send --fresh` refused: pi is mid-turn, and a fresh session would abandon it. */
+export class AgentBusyError extends Error implements HasNextSteps {
+  override readonly name = "AgentBusyError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+  ) {
+    super(`agent ${agentName} is busy: --fresh would abandon its running turn`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Stop the turn first, then retry",
+        command: `mu agent abort ${this.agentName} -w ${this.workstream}`,
+      },
+      {
+        intent: "Or abandon the turn in one step",
+        command: `mu agent send ${this.agentName} --fresh --force '...' -w ${this.workstream}`,
+      },
+    ];
+  }
+}
