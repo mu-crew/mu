@@ -14,25 +14,19 @@ not in `--help` do not exist.
 
 ## Output + JSON shapes
 
-Default output: textual card on stdout plus a `Next:` block. Read
-both. `--json` exists on every verb:
-- Success: one stdout object.
-- Collection reads (`task list`, `workspace commits`, ...): `{items: T[], count: number}`.
-- Singletons keep named fields.
-- `mu sql --json`: bare array rows.
-- `mu log --tail`: NDJSON (one object per line).
-- Errors: `{error,message,nextSteps,exitCode}` on stderr.
-- Validation errors also include structured `usage`.
-- **`nextSteps` survives in JSON.**
+Default output is a card on stdout plus a `Next:` block. Read both.
+Every verb takes `--json`: one stdout object; collections are
+`{items, count}`; `mu sql --json` is bare rows; `mu log --tail` is
+NDJSON. Errors are `{error,message,nextSteps,exitCode}` on stderr
+(validation errors add `usage`). **`nextSteps` survives in JSON.**
 
 ## Vocabulary
 
-- **workstream** — unit of organization; one **mux session** named
-  `mu-<name>` (a tmux session, or a herdr workspace).
+- **workstream** — one **mux session** `mu-<name>` (tmux session or
+  herdr workspace) and one DB partition.
 - **agent** — named worker in a pane (you may be one).
-- **mux** — the multiplexer mu drives: tmux, or herdr. One per
-  invocation. `mu doctor` names the active one; `MU_MUX` forces it.
-  Spawn, send, and read work on both. `mu agent kick` is Linux-only on herdr.
+- **mux** — tmux or herdr, one per invocation. `mu doctor` names it;
+  `MU_MUX` forces it. `mu agent kick` is Linux-only on herdr.
 - **control socket (ctl)** — how mu drives a pi agent: the mu pi
   extension (`mu link pi`) serves exact send, state, wait and abort
   inside pi's own TUI. `ctl missing|refused` means it does not answer.
@@ -42,8 +36,8 @@ both. `--json` exists on every verb:
   Any `CLOSED/*` satisfies `--blocked-by`.
 - **claim / release** — atomic take/clear of `tasks.owner`.
 - **note** — append-only task context; survives sessions.
-- **track** — independent DAG subtree; don't spawn more agents than
-  ready tracks.
+- **track** — independent DAG subtree; spawn at most one agent per
+  ready track.
 - **workspace** — per-agent VCS copy under
   `<state-dir>/workspaces/<workstream>/<agent>/`.
 
@@ -60,77 +54,63 @@ auto-creates on spawn. `mu_delegate` (installed by `mu link pi`) is its tool
 form for one answer back; the CLI form is spawn + send + `mu agent wait --json`
 (`lastText`).
 
-- `mu agent wait <name> --first` waits for busy → idle; exit 0 met, 5
-  timeout, 6 pane died.
+- `mu agent wait <names...> --first` waits for busy → idle instead of a
+  `sleep` loop; exit 0 met, 5 timeout, 6 pane died.
 - For a watcher, persist last-seen state in a log ledger: write `mu log -w
   scratch --kind pr-state 'pr=1234 sha=abc ci=red'`, then read `mu log -w
   scratch --kind pr-state -n 1 --json`. Act only on change.
 - One agent per independent unit; `--workspace` for any helper that may edit,
   build, or test the shared repo.
 
-A helper stuck at `needs_input` right after spawn likely hit pi's project trust
-prompt: add `--approve` to `MU_<CLI>_COMMAND` rather than overriding it with
-`--command`.
-
-Move off `scratch` when work gains dependencies or review gates.
+A helper stuck at `needs_input` right after spawn likely hit pi's
+project trust prompt: add `--approve` to `MU_<CLI>_COMMAND`. Move off
+`scratch` when work gains dependencies or review gates.
 
 ## Mental model
 
 ### Workstreams, DAGs, tracks
 
-One workstream is one mux session and DB partition. Its task DAG has one edge:
-`mu task block A --by B` means **B blocks A**. Parallel tracks sharing a
-prerequisite collapse, preventing two agents from taking the same dependency.
+The DAG has one edge: `mu task block A --by B` means **B blocks A**.
+Tracks sharing a prerequisite collapse into one, so two agents never
+take the same dependency.
 
 ### Workspaces prevent trampling
 
-If an agent may edit/build/test while another agent is active in the
-same repo, spawn with `--workspace`. Keep the main checkout for
-orchestration: two builds in one checkout corrupt each other.
+If an agent may edit, build, or test while another is active in the same
+repo, spawn with `--workspace`. Two builds in one checkout corrupt each
+other; keep the main checkout for orchestration.
 
-Workspaces auto-detect jj/sl/git; non-VCS uses `cp -a`. They are
-auto-freed on `mu agent close` **iff clean**: no uncommitted changes
-and no commits since fork. Non-clean close fails with
-`WorkspacePreservedError`; then use `mu workspace free <agent>` or
-`mu agent close <agent> --discard-workspace` (lossy).
-
-Between waves, `mu workspace refresh <agent>` rebases onto fresh main without
-killing LLM context. Claim/send warn at ≥10 commits behind; scripts can make
-that a refusal with `--strict-staleness`.
+Workspaces auto-detect jj, sl, or git (else `cp -a`). `mu agent close`
+frees one **only if clean** (no uncommitted changes, no commits since
+fork); otherwise it fails with `WorkspacePreservedError`. Then use
+`mu workspace free <agent>` or `--discard-workspace` (lossy).
+Between waves, `mu workspace refresh <agent>` rebases onto main and
+keeps LLM context. Claim and send warn at ≥10 commits behind
+(`--strict-staleness` refuses).
 
 ### Remote agents
 
-Agents can run on another machine: the PANE is local, the PROCESS is
-remote (`--command 'ssh <host> -t "..."'`), so `send`, `read`, and the
-reaper keep working unchanged. A pi agent's control socket is forwarded
-over that ssh (`mu agent remote-env`). **One orchestrator
-DB; panes may be remote** — never run a second mu on the host, since
-`tasks.owner_id` is an FK into the machine-local `agents` table and a
-remote mu could not claim your tasks anyway. You create the remote
-workspace yourself (`--workspace` is local-only).
+The PANE is local, the PROCESS is remote (`--command 'ssh <host> -t
+"..."'`); `mu agent remote-env` forwards a pi agent's control socket.
+**One orchestrator DB**: never run a second mu on the host. You create
+the remote workspace yourself (`--workspace` is local-only).
 
 **Read [REMOTE_WORKERS.md](REMOTE_WORKERS.md) before spawning your first
-remote agent, and again before waiting on one; poll once per turn and run
-the claim's one-shot `Next:` command.** Three more costly traps:
-- **On a session-capped host, route long commands and silent-failure
-  polls through [mule](https://github.com/mu-crew/mule).** A refused
-  bare `rev-parse` can return an empty sha that looks like progress;
-  batch all workers in one `--max-secs`-bounded mule job.
-- **`mule` exit 3 is a HANDBACK** — no ssh master, and opening one can
-  need a human to touch a hardware key. Ask the operator; never retry,
-  never run `ssh -MNf` yourself, never fall back to `ssh <host> <cmd>`.
-- **Exit 4 and 6 mean wait again; 5 means never.** Neither says the work
-  failed.
+remote agent, and again before waiting on one.** Poll once per turn with
+the claim's one-shot `Next:` command. On a session-capped host, route
+long commands and polls through [mule](https://github.com/mu-crew/mule):
+a refused bare ssh returns an empty sha that looks like progress.
+**`mule` exit 3 is a HANDBACK** to the operator (hardware-key touch):
+never retry or open `ssh -MNf` yourself.
 
 ### Agent names
 
-Use roles: `worker-1`, `worker-2`, `reviewer-1`, `scout-1`,
-`auditor-1`, `planner-1`. Smallest unused suffix. Avoid human names.
+Use roles with the smallest unused suffix: `worker-1`, `reviewer-1`,
+`scout-1`, `auditor-1`, `planner-1`. No human names.
 
 ### Task note contract
 
-End every delegated task with a note containing the applicable
-fields:
+End every delegated task with a note holding the applicable fields:
 
 ```text
 FILES:    paths inspected/changed (line ranges if precise)
@@ -143,12 +123,7 @@ ODDITIES: weird things not acted on
 ```
 
 Then close with grounding:
-
-```bash
-mu task close <id> -w <ws> --evidence "tests pass: cargo test exit 0"
-```
-
-Future agents can reconstruct context via `mu task notes <id>`.
+`mu task close <id> -w <ws> --evidence "tests pass: cargo test exit 0"`.
 
 ## Orchestrator loop
 
@@ -159,10 +134,9 @@ Every turn:
 2. Spawn at most one agent per independent ready track.
 3. **Claim before sending — even one-shot reviewers/scouts.**
    `mu task claim <id> -w <ws> --for <agent> --evidence "..."`.
-   If no task exists, `mu task add` first; include initial context with
-   `--note 'REPRO: ...\nSCOPE: ...'` when the title alone is not
-   enough. Agent state is runtime observation; task ownership is durable and
-   waitable.
+   If no task exists, `mu task add` first (`--note 'REPRO: ...'` when
+   the title is not enough). Ownership is durable and waitable; agent
+   state is not.
 4. Send each new task with `mu agent send <w> --fresh '...'` (new
    session + prompt in one step; refuses while busy): task id,
    files/notes to read, workspace path, validation command, scope
@@ -184,41 +158,31 @@ Every turn:
 
 ## Dispatch rules that prevent real failures
 
-- **Pipeline; don't barrier.** Wait for one task, cherry-pick only its new
-  commits onto main, verify the combined tree, then return control. Waiting on an
-  umbrella task hides partial progress; merging stale branches can restore
-  reverted code.
-- **Verify the merge, not the worker's rerun.** The worker tested against its
-  fork point; only the combination with moved main is new. This found three
-  integration breaks where rerunning worker suites found none. For remote work,
-  run the merged gate on the host with warm dependencies: 500s × 30 integrations
-  is four laptop-hours. Keep platform-sensitive checks and the final release gate
-  local; macOS `ps` once exposed a bug Linux could not.
-- **Push only from a green gate.** Script the gate so `git push` is its last
-  line under `set -e`; a chain that printed a failure and pushed anyway put a red
-  commit on main. Check the gate runs what it claims: a randomized test gated on
-  an env var passed with zero cases.
-- **Dispatch from current main.** Reset the worker's worktree to main before each
-  task. Stale bases caused four merges that conflicted or broke tests after
-  passing in the worker.
-- **Accept evidence, not close notes.** Re-run the key measurement from a clean
-  checkout. Close notes have claimed unpushed commits and reported numbers from
-  a half-edited clone.
-- **Freeze only what conflicts.** While one task owns shared files, give idle
-  workers tasks that avoid them; a blanket freeze idled four of five workers for
-  a day.
-- **Fix done before a long run.** Put the completion criterion in the task note
-  first: which checks, how many agreeing runs, what may differ. Without it the
-  target moves with every run.
-- **Split long proofs into independent units**, sharded and in parallel, so a
-  unit that passes stays passed and one flake restarts only its own unit.
-  Workers poll background jobs every few minutes, not hourly.
+- **Pipeline; don't barrier.** Wait for one task, cherry-pick only its
+  new commits, verify, return control. An umbrella wait hides progress;
+  merging stale branches can restore reverted code.
+- **Verify the merge, not the worker's rerun.** Only the combination
+  with moved main is new; that found three breaks rerunning found none
+  of. Run a remote merge gate on the host (see REMOTE_WORKERS.md).
+- **Push only from a green gate.** Make `git push` the last line under
+  `set -e`. Check the gate runs what it claims: an env-gated randomized
+  test once passed with zero cases.
+- **Dispatch from current main.** Reset the worker's worktree to main
+  before each task.
+- **Accept evidence, not close notes.** Re-run the key measurement from
+  a clean checkout; close notes have claimed unpushed commits.
+- **Freeze only what conflicts.** Give idle workers tasks that avoid
+  shared files; a blanket freeze idled four of five workers for a day.
+- **Fix done before a long run.** Put the completion criterion (checks,
+  agreeing runs, allowed variance) in the task note first.
+- **Split long proofs into independent units**, sharded and parallel,
+  so one flake restarts only its unit.
 - Bucket waves by file cluster, not severity; two agents editing one file
   conflict. Refresh workspaces between waves.
-- Cross-workstream wait/claim uses qualified refs. The owner stays in its own
-  workstream; only task ownership crosses.
-- For an idle worker, read the pane to learn why it stopped, then answer,
-  retry, or release its task. `MU_IDLE_THRESHOLD_MS` defaults to 5m.
+- Cross-workstream wait and claim use qualified refs; only task
+  ownership crosses.
+- For an idle worker, read the pane, then answer, retry, or release its
+  task. `MU_IDLE_THRESHOLD_MS` defaults to 5m.
 - **Never chain `/new` and a prompt as two sends to a pi agent:** the prompt
   can land mid-reset and vanish (it did, twice). `--fresh` does both inside pi.
 - **Stop a worker:** `mu agent abort <w>` first for pi (exact, local or
@@ -230,15 +194,9 @@ Every turn:
 
 ## CLI gotchas
 
-- **`workstream teardown`** is dry-run by default; `--yes` commits. It writes
-  TOMBSTONE ops, so history survives and `mu undo <group> --yes` reverses the
-  deletions — do NOT `mu db backup` first, the log IS the backup.
-  `workstream list --torn-down` replays past teardowns with the group id to
-  undo, newest first, marking ones already recreated.
-- **`agent wait <names...> --first`** blocks until an agent stops working
-  (busy → anything else) — the task-less counterpart to `mu task wait`, for
-  helpers that own no task. Use it instead of a `sleep` loop. Exit 0 met,
-  5 timeout, 6 pane died.
+- **`workstream teardown`** is dry-run without `--yes`. It writes
+  TOMBSTONE ops, so `mu undo <group> --yes` reverses it; the log is the
+  backup. `workstream list --torn-down` lists group ids to undo.
 - **`task close --if-ready`** no-ops until every blocker is CLOSED; bare
   `task release` reopens IN_PROGRESS.
 - **`task close --as rejected|wontfix --why ...`** (declined | valid, not worth it) unblocks dependents (listed in
@@ -247,49 +205,32 @@ Every turn:
   IN_PROGRESS — `task release` first.
 - **For waits use `task wait`, not `log --tail`.** `--kind` is the operator's
   log-ledger channel; `--intent` is what mu recorded.
-- **`mu undo`** bare lists undoable actions with group ids; `<group>` previews;
-  `<group> --yes` applies. It emits INVERSE ops for that one group, so it
-  touches nothing else, and the undo is itself an op — REDO is
-  `mu undo <that group> --yes`. Refuses with exit 4 if a later action changed
-  the same fields (`--force` discards that newer work). Rows only: killed panes
-  and freed workspace dirs do not come back. No snapshots, no `--to`.
-- **`mu rebuild <file>`** writes a NEW DB from the ops log. Agents and
-  workspaces are absent because they have no captured ops; re-spawn after swap.
-- **`mu sql`** alone skips ambient sync, preserving no-surprise mutations.
-- **`mu db backup`** is a convenient copy; real recovery is `mu rebuild`.
-- **Sync (laptop ↔ devserver):** `export MU_SYNC_DIR=$HOME/Sync/mu` on each
-  machine pointing at a shared folder (Syncthing recommended). Every command
-  then flushes your ops and ingests peers' — ambient, no daemon — so a bare
-  `mu task list` on the other box already shows what you added here. Merge is
-  per-FIELD, so two machines editing different fields of one task both keep
-  their edit. `mu sync` bare reports peer status plus a copy-pasteable rsync
-  line; mu never runs ssh/scp/rsync itself. `--from <peer-mu.db>` reads a
-  peer's ops directly; `--repair <peer>` re-reads from zero and is always safe
-  (ingest is idempotent).
-  **NEVER put `MU_DB_PATH` inside `MU_SYNC_DIR`** — it corrupts the DB and
-  `mu doctor` hard-fails. Agent/workspace state and task OWNERSHIP are
-  machine-local and never travel.
-- **`mu doctor`** runs fast checks; `--deep` rebuilds the log into a temp DB and
-  diffs it field-by-field. DRIFT means the log and the tables disagree, which
-  breaks undo and sync at once (exit 5, naming table, key and field). It is a
-  capture bug, not operator error: back up and report it, do NOT reflexively
-  rebuild — if capture missed a mutation, the live rows hold the real work.
-  The `disk` section reconciles state-dir against DB both ways and is
-  **report-only**: `ws-rows` is a row whose directory is gone (nothing else
-  reports it), `ws-dirs` blocks the next `--workspace` spawn, and an orphan dir
-  may hold the only copy of uncommitted work — which is why mu prints the
-  cleanup command and runs none of them. `--disk` adds per-checkout byte usage.
+- **`mu undo`** bare lists groups; `<group>` previews; `<group> --yes`
+  emits inverse ops for that group only (redo = undo the undo). Exit 4
+  if a later action changed the same fields (`--force` discards it).
+  Rows only: killed panes and freed workspace dirs do not come back.
+- **`mu rebuild <file>`** writes a new DB from the ops log, without
+  agents or workspaces; re-spawn after the swap. Recovery is
+  `mu rebuild`, not `mu db backup`.
+- **`mu sql`** skips ambient sync.
+- **Sync:** set `MU_SYNC_DIR` on each machine to a shared folder
+  (Syncthing). Every command flushes and ingests ops, merged per field.
+  mu never runs ssh or rsync; `mu sync` prints the line.
+  `--repair <peer>` is always safe. **Never put `MU_DB_PATH` inside
+  `MU_SYNC_DIR`**: it corrupts the DB. Agents, workspaces, and task
+  ownership never travel.
+- **`mu doctor --deep` DRIFT** (exit 5) is a capture bug: back up and
+  report it. Do not rebuild; the live rows may hold work the log missed.
+  The `disk` section is report-only: an orphan dir may hold the only copy
+  of uncommitted work, so mu prints cleanup commands and runs none.
 
 ## `mu task wait`
 
 Use `--first --on-stall exit`: `--first` populates `.firing`, and
-`--on-stall exit` prevents unattended waits from polling forever when a worker
-needs attention. Exit 6 means a dead pane; exit 7 means the owner sat in
-`needs_input`. Read that pane (`mu agent read <owner>`) before acting: the
-worker may be waiting on an answer from you, not merely forgetting to close.
-Answer it — questions are cheaper than rework. For remote workers, see
-[REMOTE_WORKERS.md](REMOTE_WORKERS.md) before choosing timeout or stall
-handling.
+`--on-stall exit` stops an unattended wait when a worker needs attention.
+Exit 6 is a dead pane; exit 7 is an owner in `needs_input`. Read that
+pane (`mu agent read <owner>`) and answer: the worker may be waiting on
+you. Questions are cheaper than rework.
 
 ## Models and thinking effort
 
@@ -301,38 +242,29 @@ export MU_PI_COMMAND="pi --model sonnet:medium"
 mu agent spawn a --cli pi_big   # uses $MU_PI_BIG_COMMAND
 ```
 
-Convention: `pi_mini` / `pi` / `pi_big`. Use mini for probing,
-modest for build/edit/refactor, big for design/review/incidents.
-Discover model strings with `pi --list-models [fuzzy-search]`.
+Convention: `pi_mini` for probing, `pi` for build and refactor,
+`pi_big` for design, review, and incidents. List models with
+`pi --list-models [search]`.
 
 ## Reaper and agent state
 
-If an agent pane dies, or `mu agent close` kills it mid-task, owned
-IN_PROGRESS tasks revert to OPEN with a `[reaper]` note and `task
-reap` op. No manual release after crashes.
+If an agent pane dies, or `mu agent close` kills it mid-task, its
+IN_PROGRESS tasks revert to OPEN with a `[reaper]` note. No manual
+release after crashes.
 
-pi agents report state through the control socket; other CLIs through
-[murmur](https://github.com/mu-crew/murmur) on tmux or herdr on herdr.
-`unknown` means no state source; `mu doctor` says why. pi agents need
-no murmur. See [REMOTE_WORKERS.md](REMOTE_WORKERS.md) § mu and murmur.
-
-For high-stakes decisions:
-
-```bash
-mu agent read worker-1 -n 100
-mu log -w <ws> --tail
-mu task notes <id>
-```
+pi agents report state through the control socket and need no murmur.
+Other CLIs report through [murmur](https://github.com/mu-crew/murmur) on
+tmux, or herdr on herdr. `unknown` means no state source; `mu doctor`
+says why. Before a high-stakes decision, read the pane
+(`mu agent read worker-1 -n 100`), `mu log -w <ws> --tail`, and
+`mu task notes <id>`.
 
 ## In-pane worker loop
 
-`$MU_AGENT_NAME`, injected at spawn, resolves identity; the pane title
-is the fallback that adopted panes need. Env-first means this loop is
-identical whichever multiplexer you are in — you never need to know.
-
-- Worker pane: spawned/adopted by mu; bare `mu task claim <id>` works.
-- Orchestrator pane: not registered; bare `claim` errors with next
-  steps: `--self`, `--for <worker>`, or `mu agent adopt <pane>`.
+`$MU_AGENT_NAME` (injected at spawn) resolves identity; adopted panes
+fall back to the pane title. In a worker pane, bare `mu task claim <id>`
+works. In the unregistered orchestrator pane it errors; use `--self`,
+`--for <worker>`, or `mu agent adopt <pane>`.
 
 ```bash
 mu me
@@ -355,9 +287,9 @@ prompt; a send it cannot confirm prints a `warning:` on stderr.
 
 ## Guardrails
 
-Task ownership outranks runtime agent state. Coordinate through task notes and the
-activity log. Keep edges within one workstream, role-name agents, and reserve
-the `mu_` task-id prefix. Give workers bounded paths and commands.
+Task ownership outranks agent state. Coordinate through task notes and
+the activity log. Keep edges within one workstream and reserve the `mu_`
+task-id prefix. Give workers bounded paths and commands.
 
 ## See also
 
