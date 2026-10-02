@@ -10,6 +10,8 @@ breaking changes are called out under "Breaking" in each entry.
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-10-02
+
 **pi agents are driven through a control socket.** `mu link pi`
 installs mu's pi extension, which serves a per-agent unix socket
 (`MU_CTL_SOCK`) inside each agent's normal interactive pi. Send, state,
@@ -25,6 +27,19 @@ event-driven `mu agent wait`, `send --steer` / `--via`, `--fresh`,
 rows and extension version skew, below. Install is now `npm i -g
 @mu-crew/mu && mu link pi && mu doctor`; README, SKILL, REMOTE_WORKERS
 and ARCHITECTURE (§ Control socket) are updated to match.
+
+### Upgrade
+
+```sh
+npm i -g @mu-crew/mu@3.2.0
+mu link pi        # installs the extension and the skill
+mu doctor         # mu ext / mu skill / ctl rows should be ok
+```
+
+Then restart running pi agents (or type `/reload` in their panes) so they
+load the extension. Until they do, sends to them fail loudly with
+`ctl missing` instead of being pasted into the pane; `--via mux` forces
+the old path explicitly.
 
 ### Added
 
