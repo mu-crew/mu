@@ -229,19 +229,3 @@ export async function withMuSpawnLivenessMs(
     else process.env[key] = original;
   }
 }
-
-export async function withMuSpawnReadinessMs(
-  value: string | undefined,
-  fn: () => unknown,
-): Promise<void> {
-  const key = "MU_SPAWN_READINESS_MS";
-  const original = process.env[key];
-  if (value === undefined) delete process.env[key];
-  else process.env[key] = value;
-  try {
-    await fn();
-  } finally {
-    if (original === undefined) delete process.env[key];
-    else process.env[key] = original;
-  }
-}

@@ -33,15 +33,23 @@ reply carries `v: 1`; the client (`src/ctl/client.ts`) throws
 | `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` |
 | `abort` | `ctx.abort()` (pi's Esc) |
 | `fresh` | new session plus prompt as one operation, through the internal `/mu-fresh` command; replies once the new run starts; refused with `busy` unless `force` |
+| `command` | `name` `new`, `reload` or `compact` (with optional `instructions`), through the internal `/mu-new`, `/mu-reload`, `/mu-compact` commands, which call `ctx.newSession()`, `ctx.reload()`, `ctx.compact()`. `new` replies once the session is replaced, `reload` after the `session_start` it causes, `compact` when compaction starts or with pi's error (`Nothing to compact ...`). Refused with `busy` unless `force` |
 
-These back `mu agent send` (`--fresh`, `--steer`), `mu agent wait`,
+`pi.sendUserMessage` dispatches only extension commands, not pi's
+built-in `/new`, `/reload`, `/compact`. Each internal command is an
+extension command, triggered with `expandPromptTemplates: true`, and
+its handler gets the command context that can replace or reload the
+session.
+
+These back `mu agent send` (`--fresh`, `--steer`, session commands), `mu agent wait`,
 `mu agent abort`, the agent state reading, and `mu_delegate`.
 
 ## Version skew
 
 An op the extension does not serve returns `unknown op: <op>` with its
 `ops` list. mu raises `AgentExtensionOutdatedError` (exit 4), whose
-next steps are `/reload` through the mux or a respawn. `mu doctor`
+next steps are `/reload` through the mux (an extension that lacks the
+`command` op cannot run it over ctl) or a respawn. `mu doctor`
 probes every pi agent's socket (the `ctl` row) and flags an
 `extVersion` older than the installed mu or a missing op. Its extension
 row reports whether `mu link pi` installed the extension.
@@ -90,8 +98,14 @@ The mux paste path (bracketed paste, `MU_SEND_DELAY_MS`,
 
 - non-pi CLIs;
 - adopted panes without ctl;
-- slash commands, because `sendUserMessage` does not run them;
 - an explicit `--via mux`.
+
+A pi agent's `/new`, `/reload` and `/compact [instructions]` go
+through the `command` op. Any other slash command to a pi agent raises
+`AgentSlashCommandUnsupportedError` (exit 2), whose next step is the
+same text with `--via mux`. Text such as `/tmp/x.log ...` is a plain
+prompt, not a slash command. A pi agent therefore never reaches
+`capturePane` or the paste timing in `src/mux/input-timing.ts`.
 
 ## Remote agents
 

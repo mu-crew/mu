@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import muPi, {
+  commandName,
   FRESH_COMMAND,
   LAST_TEXT_MAX_BYTES,
   LAST_TEXT_TRUNCATED,
@@ -327,6 +328,8 @@ describe("mu pi extension", () => {
         if (!cmd) throw new Error("command not registered");
         const cctx: MuPiCommandContext = {
           ...current.ctx,
+          reload: async () => {},
+          compact: () => {},
           newSession: async (o) => {
             await current.emit("session_shutdown", { reason: "new" });
             const next = fakePi();
@@ -412,8 +415,158 @@ describe("mu pi extension", () => {
       await fake.emit("session_start");
       const cmd = fake.commands.get(FRESH_COMMAND);
       const newSession = vi.fn();
-      await cmd?.handler("", { ...fake.ctx, newSession } as MuPiCommandContext);
+      await cmd?.handler("", { ...fake.ctx, newSession } as unknown as MuPiCommandContext);
       expect(newSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("command", () => {
+    /**
+     * Wire the fake like pi: sendUserMessage("/mu-<name>") runs that
+     * command with a command context whose reload / compact / newSession
+     * behave like pi's (reload re-runs the factory, then session_start
+     * reason reload; compact emits session_before_compact or errors).
+     */
+    function wirePi(opts: { compactError?: string; reloadRefuses?: boolean } = {}) {
+      const calls: string[] = [];
+      let current = fake;
+      const impl = async (text: string) => {
+        const cmd = [...current.commands.entries()].find(([n]) => text === `/${n}`)?.[1];
+        if (!cmd) return;
+        const cctx: MuPiCommandContext = {
+          ...current.ctx,
+          newSession: async () => {
+            calls.push("newSession");
+            await current.emit("session_shutdown", { reason: "new" });
+            const next = fakePi();
+            next.sendUserMessage.mockImplementation(impl);
+            muPi(next.pi);
+            current = next;
+            await next.emit("session_start", { reason: "new" });
+            return { cancelled: false };
+          },
+          reload: async () => {
+            calls.push("reload");
+            if (opts.reloadRefuses) return;
+            await current.emit("session_shutdown", { reason: "reload" });
+            const next = fakePi();
+            next.sendUserMessage.mockImplementation(impl);
+            muPi(next.pi);
+            current = next;
+            await next.emit("session_start", { reason: "reload" });
+          },
+          compact: (o) => {
+            calls.push(`compact:${o?.customInstructions ?? ""}`);
+            void (async () => {
+              if (opts.compactError) {
+                o?.onError?.(new Error(opts.compactError));
+                return;
+              }
+              await current.emit("session_before_compact");
+            })();
+          },
+        };
+        void cmd.handler("", cctx);
+      };
+      fake.sendUserMessage.mockImplementation(impl);
+      return { calls, now: () => current };
+    }
+
+    afterEach(async () => {
+      await fake.emit("session_shutdown", { reason: "quit" });
+    });
+
+    it("registers mu-new / mu-reload / mu-compact and dispatches them with expandPromptTemplates", async () => {
+      await fake.emit("session_start");
+      wirePi();
+      for (const n of ["new", "reload", "compact"] as const) {
+        expect(fake.commands.has(commandName(n))).toBe(true);
+      }
+      await ctlRequest(sock, { op: "command", name: "reload" });
+      expect(fake.sendUserMessage).toHaveBeenCalledWith("/mu-reload", {
+        expandPromptTemplates: true,
+      });
+    });
+
+    it("new: ctx.newSession, replies ok, socket survives", async () => {
+      await fake.emit("session_start");
+      const w = wirePi();
+      expect(await ctlRequest(sock, { op: "command", name: "new" })).toMatchObject({
+        v: 1,
+        ok: true,
+      });
+      expect(w.calls).toEqual(["newSession"]);
+      expect(await ctlRequest(sock, { op: "status" })).toMatchObject({ ok: true });
+    });
+
+    it("reload: ctx.reload, replies after session_start reason reload", async () => {
+      await fake.emit("session_start");
+      const w = wirePi();
+      expect(await ctlRequest(sock, { op: "command", name: "reload" })).toMatchObject({ ok: true });
+      expect(w.calls).toEqual(["reload"]);
+      expect(await ctlRequest(sock, { op: "hello" })).toMatchObject({ ok: true });
+    });
+
+    it("reload that pi refuses quietly replies an error", async () => {
+      await fake.emit("session_start");
+      wirePi({ reloadRefuses: true });
+      expect(await ctlRequest(sock, { op: "command", name: "reload" })).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("did not reload"),
+      });
+    });
+
+    it("compact: passes instructions, replies when compaction starts", async () => {
+      await fake.emit("session_start");
+      const w = wirePi();
+      expect(
+        await ctlRequest(sock, { op: "command", name: "compact", instructions: "keep the API" }),
+      ).toMatchObject({ ok: true });
+      expect(w.calls).toEqual(["compact:keep the API"]);
+    });
+
+    it("compact: pi's error (Nothing to compact) is the reply", async () => {
+      await fake.emit("session_start");
+      wirePi({ compactError: "Nothing to compact (session too small)" });
+      expect(await ctlRequest(sock, { op: "command", name: "compact" })).toEqual({
+        v: 1,
+        ok: false,
+        error: "Nothing to compact (session too small)",
+      });
+    });
+
+    it("refuses while busy unless force", async () => {
+      await fake.emit("session_start");
+      const w = wirePi();
+      fake.ctx.idle = false;
+      await fake.emit("agent_start");
+      expect(await ctlRequest(sock, { op: "command", name: "new" })).toEqual({
+        v: 1,
+        ok: false,
+        error: "busy",
+      });
+      expect(w.calls).toEqual([]);
+      expect(await ctlRequest(sock, { op: "command", name: "new", force: true })).toMatchObject({
+        ok: true,
+      });
+      expect(w.calls).toEqual(["newSession"]);
+    });
+
+    it("rejects an unknown command name", async () => {
+      await fake.emit("session_start");
+      wirePi();
+      expect(await ctlRequest(sock, { op: "command", name: "tree" } as never)).toMatchObject({
+        ok: false,
+        error: "command must be one of new, reload, compact",
+      });
+    });
+
+    it("the command typed by hand with nothing queued is a no-op", async () => {
+      await fake.emit("session_start");
+      const cmd = fake.commands.get(commandName("reload"));
+      const reload = vi.fn();
+      await cmd?.handler("", { ...fake.ctx, reload } as unknown as MuPiCommandContext);
+      expect(reload).not.toHaveBeenCalled();
     });
   });
 });

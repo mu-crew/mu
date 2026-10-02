@@ -15,7 +15,16 @@ export type CtlRequest =
   | { op: "wait"; afterRuns?: number; timeoutMs?: number }
   | { op: "abort" }
   /** New session + prompt as one operation. Refused with error "busy" unless force. */
-  | { op: "fresh"; text: string; force?: boolean };
+  | { op: "fresh"; text: string; force?: boolean }
+  /**
+   * Run one of pi's session commands inside pi (sendUserMessage cannot run
+   * built-in slash commands). Refused with error "busy" unless force.
+   */
+  | { op: "command"; name: CtlCommandName; instructions?: string; force?: boolean };
+
+/** Session commands the `command` op runs: `/new`, `/reload`, `/compact`. */
+export const CTL_COMMANDS = ["new", "reload", "compact"] as const;
+export type CtlCommandName = (typeof CTL_COMMANDS)[number];
 
 /**
  * Every op this protocol defines. The extension reports the ops it serves
@@ -29,6 +38,7 @@ export const CTL_OPS = [
   "wait",
   "abort",
   "fresh",
+  "command",
 ] as const satisfies readonly CtlRequest["op"][];
 
 export type CtlStatus = { state: CtlState; since: number; runs: number; pending: boolean };

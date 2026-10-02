@@ -249,9 +249,13 @@ describe("ctl row", () => {
     expect(r.check).toEqual({
       name: "ctl",
       status: "warn",
-      detail: "ws/w1: extension lacks ops: fresh",
+      detail: "ws/w1: extension lacks ops: fresh, command",
     });
-    expect(r.agents[0]).toMatchObject({ probe: "ok", outdated: true, missingOps: ["fresh"] });
+    expect(r.agents[0]).toMatchObject({
+      probe: "ok",
+      outdated: true,
+      missingOps: ["fresh", "command"],
+    });
   });
 
   it("skips non-pi agents (same rule as spawn's handshake)", async () => {

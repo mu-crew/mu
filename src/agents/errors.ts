@@ -509,24 +509,58 @@ export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
   }
 }
 
-/** `send --fresh` refused: pi is mid-turn, and a fresh session would abandon it. */
+/**
+ * `send --fresh` or a session command (`/new`, `/reload`, `/compact`)
+ * refused: pi is mid-turn, and running it would abandon the turn.
+ */
 export class AgentBusyError extends Error implements HasNextSteps {
   override readonly name = "AgentBusyError";
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
+    /** The session command refused, e.g. "/new". Absent: `--fresh`. */
+    public readonly command?: string,
   ) {
-    super(`agent ${agentName} is busy: --fresh would abandon its running turn`);
+    super(`agent ${agentName} is busy: ${command ?? "--fresh"} would abandon its running turn`);
   }
   errorNextSteps(): NextStep[] {
+    const retry =
+      this.command === undefined
+        ? `mu agent send ${this.agentName} --fresh --force '...' -w ${this.workstream}`
+        : `mu agent send ${this.agentName} '${this.command}' --force -w ${this.workstream}`;
     return [
       {
         intent: "Stop the turn first, then retry",
         command: `mu agent abort ${this.agentName} -w ${this.workstream}`,
       },
+      { intent: "Or abandon the turn in one step", command: retry },
+    ];
+  }
+}
+
+/**
+ * A slash command other than `/new`, `/reload`, `/compact` sent to a pi
+ * agent. The control socket cannot run it (pi.sendUserMessage would
+ * hand it to the model as text), and mu does not silently paste into a
+ * pi pane: `--via mux` is the explicit way to type it there.
+ */
+export class AgentSlashCommandUnsupportedError extends Error implements HasNextSteps {
+  override readonly name = "AgentSlashCommandUnsupportedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly text: string,
+    public readonly supported: readonly string[],
+  ) {
+    super(
+      `agent ${agentName} runs pi: over the control socket mu runs only ${supported.join(", ")}; ${JSON.stringify(text.split("\n")[0])} is not one of them. Pass --via mux to type it into the pane`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
       {
-        intent: "Or abandon the turn in one step",
-        command: `mu agent send ${this.agentName} --fresh --force '...' -w ${this.workstream}`,
+        intent: "Type it into the pane on purpose (tmux paste; unconfirmed)",
+        command: `mu agent send ${this.agentName} '${this.text.split("\n")[0]}' --via mux -w ${this.workstream}`,
       },
     ];
   }

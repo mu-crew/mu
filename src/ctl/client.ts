@@ -15,7 +15,7 @@ import {
 
 /** Default client timeout for non-`wait` requests. */
 export const CTL_DEFAULT_TIMEOUT_MS = 5000;
-/** Client timeout for `fresh`: the new session must start its run. */
+/** Client timeout for `fresh` and `command`: the new session must start its run, or pi reload. */
 export const CTL_FRESH_TIMEOUT_MS = 60_000;
 /** Slack added to a `wait` request's own timeoutMs for the client timeout. */
 export const CTL_WAIT_SLACK_MS = 5000;
@@ -64,7 +64,7 @@ export class CtlUnknownOpError extends Error {
 
 function clientTimeout(req: CtlRequest, override?: number): number | undefined {
   if (override !== undefined) return override;
-  if (req.op === "fresh") return CTL_FRESH_TIMEOUT_MS;
+  if (req.op === "fresh" || req.op === "command") return CTL_FRESH_TIMEOUT_MS;
   if (req.op !== "wait") return CTL_DEFAULT_TIMEOUT_MS;
   // An unbounded wait is held until pi settles.
   return req.timeoutMs === undefined ? undefined : req.timeoutMs + CTL_WAIT_SLACK_MS;

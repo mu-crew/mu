@@ -1,17 +1,25 @@
 // mu — send transport: how `mu agent send` reaches an agent.
 //
 // A pi agent (speaksMuCtl) is reached through its control socket, served
-// by the mu pi extension inside the pane's own pi. Everything else, and
-// slash commands (pi.sendUserMessage does not run them), goes through
-// the mux paste path. No silent fallback: a pi agent whose socket does
-// not answer is an AgentCtlUnreachableError, never a paste.
+// by the mu pi extension inside the pane's own pi. `/new`, `/reload` and
+// `/compact` become the ctl `command` op; any other slash command is
+// refused (pi.sendUserMessage would hand it to the model as text). Only
+// non-pi agents and an explicit `--via mux` reach the mux paste path. No
+// silent fallback: a pi agent whose socket does not answer is an
+// AgentCtlUnreachableError, never a paste.
 
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentRow } from "../agents.js";
 import { CtlUnknownOpError, CtlVersionError, ctlRequest, errCode } from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
-import type { CtlReply, CtlRequest, CtlState } from "../ctl/protocol.js";
+import {
+  CTL_COMMANDS,
+  type CtlCommandName,
+  type CtlReply,
+  type CtlRequest,
+  type CtlState,
+} from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { activeMux, type SendOptions } from "../mux.js";
 import {
@@ -19,12 +27,18 @@ import {
   AgentCtlUnreachableError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentSlashCommandUnsupportedError,
 } from "./errors.js";
 import { resolveCliCommand, speaksMuCtl } from "./spawn.js";
 
 export type Transport = "ctl" | "mux";
 
-export type SendResult = { transport: Transport; state?: CtlState };
+export type SendResult = {
+  transport: Transport;
+  state?: CtlState;
+  /** Set when the text ran as a pi session command over ctl. */
+  command?: CtlCommandName;
+};
 
 export type TransportSendOptions = SendOptions & {
   /** How a busy pi queues the message. Default followUp. ctl only. */
@@ -35,7 +49,7 @@ export type TransportSendOptions = SendOptions & {
   socket?: string;
   /** Start a new pi session and send the text into it, as one ctl op. */
   fresh?: boolean;
-  /** With fresh: abandon a running turn instead of refusing. */
+  /** With fresh or a session command: abandon a running turn instead of refusing. */
   force?: boolean;
 };
 
@@ -61,12 +75,34 @@ export function expectsCtl(
   return speaksMuCtl(agent.cli, resolveCliCommand(agent.cli)) || existsSync(sock);
 }
 
-/** The transport a send of `text` to `agent` uses when not forced. */
-export function chooseTransport(agent: AgentRow, text: string, sock?: string): Transport {
-  // Slash commands (/new, /compact, ...) are TUI input: the extension's
-  // sendUserMessage would send them to the model as plain text.
-  if (text.startsWith("/")) return "mux";
+/** The transport a send to `agent` uses when not forced. */
+export function chooseTransport(agent: AgentRow, sock?: string): Transport {
   return expectsCtl(agent, sock) ? "ctl" : "mux";
+}
+
+/** The slash commands a pi agent runs over ctl, as typed. */
+export const CTL_SLASH_COMMANDS = CTL_COMMANDS.map((n) => `/${n}`);
+
+/**
+ * `text` as a pi session command: `/new`, `/reload`, or `/compact` with
+ * optional instructions. undefined for anything else (a plain prompt, or
+ * another slash command: see isSlashCommand).
+ */
+export function parseSessionCommand(
+  text: string,
+): { name: CtlCommandName; instructions?: string } | undefined {
+  const t = text.trim();
+  if (t === "/new") return { name: "new" };
+  if (t === "/reload") return { name: "reload" };
+  const m = /^\/compact(?:\s+([\s\S]*))?$/.exec(t);
+  if (!m) return undefined;
+  const instructions = m[1]?.trim();
+  return instructions ? { name: "compact", instructions } : { name: "compact" };
+}
+
+/** True when `text` reads as a TUI slash command (`/word ...`), not a path or prose. */
+export function isSlashCommand(text: string): boolean {
+  return /^\/[A-Za-z][\w:-]*(?:\s|$)/.test(text.trimStart());
 }
 
 /**
@@ -125,11 +161,24 @@ export async function sendViaTransport(
   if (opts.fresh && (opts.via === "mux" || !expectsCtl(agent, sock))) {
     throw new AgentFreshNeedsCtlError(agent.name, agent.workstreamName, agent.cli);
   }
-  const transport = opts.fresh ? "ctl" : (opts.via ?? chooseTransport(agent, text, sock));
+  const transport = opts.fresh ? "ctl" : (opts.via ?? chooseTransport(agent, sock));
   if (transport === "mux") {
+    // The paste path: non-pi CLIs, adopted panes, and an explicit --via mux.
     // Load-bearing: a send that cannot reach a pane is a failed send.
     await (await activeMux()).sendToPane(agent.paneId, text, opts);
     return { transport };
+  }
+  if (!opts.fresh) {
+    const cmd = parseSessionCommand(text);
+    if (cmd) return runSessionCommand(agent, sock, cmd, opts.force === true);
+    if (isSlashCommand(text)) {
+      throw new AgentSlashCommandUnsupportedError(
+        agent.name,
+        agent.workstreamName,
+        text,
+        CTL_SLASH_COMMANDS,
+      );
+    }
   }
   const reply = await ctlRequestFor(
     agent,
@@ -145,4 +194,30 @@ export async function sendViaTransport(
     throw new Error(`control socket refused the send: ${reply.error}`);
   }
   return reply.state === undefined ? { transport } : { transport, state: reply.state };
+}
+
+/** `/new`, `/reload` or `/compact` inside pi, through the ctl `command` op. */
+async function runSessionCommand(
+  agent: AgentRow,
+  sock: string,
+  cmd: { name: CtlCommandName; instructions?: string },
+  force: boolean,
+): Promise<SendResult> {
+  const reply = await ctlRequestFor(agent, sock, {
+    op: "command",
+    name: cmd.name,
+    ...(cmd.instructions !== undefined ? { instructions: cmd.instructions } : {}),
+    ...(force ? { force: true } : {}),
+  });
+  if (!reply.ok) {
+    if (reply.error === "busy") {
+      throw new AgentBusyError(agent.name, agent.workstreamName, `/${cmd.name}`);
+    }
+    throw new Error(`pi refused /${cmd.name}: ${reply.error}`);
+  }
+  return {
+    transport: "ctl",
+    command: cmd.name,
+    ...(reply.state !== undefined ? { state: reply.state } : {}),
+  };
 }

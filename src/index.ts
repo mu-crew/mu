@@ -29,6 +29,7 @@ export {
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   type AgentRow,
+  AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   abortAgent,

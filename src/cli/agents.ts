@@ -31,6 +31,7 @@ import {
   type KickSignal,
   kickAgent,
   listLiveAgents,
+  parseSessionCommand,
   readAgent,
   refreshAgentTitle,
   resolveCliCommand,
@@ -229,7 +230,9 @@ export async function cmdSend(
   } = {},
 ): Promise<void> {
   const via = parseVia(opts.via);
-  if (opts.force && !opts.fresh) throw new UsageError("--force only applies with --fresh");
+  if (opts.force && !opts.fresh && parseSessionCommand(text) === undefined) {
+    throw new UsageError("--force only applies with --fresh or a /new, /reload, /compact");
+  }
   if (opts.fresh && opts.steer) throw new UsageError("--fresh and --steer are mutually exclusive");
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
@@ -249,7 +252,8 @@ export async function cmdSend(
     agentRow !== undefined &&
     !opts.fresh &&
     !opts.steer &&
-    (via ?? chooseTransport(agentRow, text, agentCtlSocket(db, agentRow))) === "ctl";
+    parseSessionCommand(text) === undefined &&
+    (via ?? chooseTransport(agentRow, agentCtlSocket(db, agentRow))) === "ctl";
   const before =
     plainCtl && agentRow !== undefined ? await ctlProbe(agentCtlSocket(db, agentRow)) : undefined;
   const sent = await sendToAgent(db, name, text, {
@@ -284,6 +288,7 @@ export async function cmdSend(
       sentBytes: text.length,
       transport: sent.transport,
       fresh: opts.fresh === true,
+      ...(sent.command !== undefined ? { command: sent.command } : {}),
       ...(sent.state !== undefined ? { state: sent.state } : {}),
       delivered: undelivered === undefined,
       ...(undelivered !== undefined
@@ -302,7 +307,9 @@ export async function cmdSend(
         ? "via mux paste"
         : opts.fresh
           ? "via ctl, fresh session"
-          : `via ctl, pi ${sent.state ?? "?"}`;
+          : sent.command !== undefined
+            ? `via ctl, pi ran /${sent.command}`
+            : `via ctl, pi ${sent.state ?? "?"}`;
     console.log(pc.dim(`sent ${text.length} bytes to ${name} (${how})`));
   }
   printNextSteps(nextSteps);
@@ -948,7 +955,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("send <name> <text>")
     .description(
-      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback). Non-pi CLIs and text starting with '/' (slash commands such as /new): pasted into the pane (atomic on herdr; bracketed-paste on tmux). --fresh (pi only): start a new session and send the text into it as one operation; returns once the prompt's run has started, so an immediate next send cannot be lost. Use it instead of sending '/new' then the prompt",
+      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback); '/new', '/reload' and '/compact [instructions]' run inside pi over the socket (refused while busy unless --force), any other slash command is refused (--via mux types it into the pane). Non-pi CLIs: pasted into the pane (atomic on herdr; bracketed-paste on tmux). --fresh (pi only): start a new session and send the text into it as one operation; returns once the prompt's run has started, so an immediate next send cannot be lost. Use it instead of sending '/new' then the prompt",
     )
     .option(
       "--strict-staleness",
@@ -960,7 +967,10 @@ export function wireAgentCommands(program: Command): void {
       "--fresh",
       "pi only: new session + this prompt, one operation (refused with exit 4 while pi is busy)",
     )
-    .option("--force", "with --fresh: abandon a running turn instead of refusing")
+    .option(
+      "--force",
+      "with --fresh or a pi /new, /reload, /compact: abandon a running turn instead of refusing",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string, text: string) {

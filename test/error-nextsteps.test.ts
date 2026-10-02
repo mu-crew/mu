@@ -22,6 +22,7 @@ import {
   AgentFreshNeedsCtlError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
+  AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   NoForegroundProcessError,
@@ -232,6 +233,11 @@ const cases: NextStepsCase[] = [
     error: new AgentBusyError("alice", "auth"),
     label: "AgentBusyError",
     expectedTokens: ["mu agent abort alice", "--fresh --force"],
+  },
+  {
+    error: new AgentSlashCommandUnsupportedError("alice", "auth", "/tree", ["/new"]),
+    label: "AgentSlashCommandUnsupportedError",
+    expectedTokens: ["mu agent send alice '/tree' --via mux"],
   },
   {
     error: new AgentExtensionOutdatedError("alice", "auth", "fresh", "3.0.0"),
