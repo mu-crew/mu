@@ -86,8 +86,9 @@ context:
 mu workspace refresh worker-1 -w auth
 ```
 
-It refuses on a dirty tree. On a conflict it exits 5 with a `cd`
-hint. To throw the workspace away instead, run
+It rebases onto the remote's main (`origin/HEAD`); without a remote,
+pass `--from main`. It refuses on a dirty tree. On a conflict it exits 5
+with a `cd` hint. To throw the workspace away instead, run
 `mu workspace free worker-1 -w auth`.
 
 Claim and send warn when the worker's workspace is 10 or more commits

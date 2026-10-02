@@ -147,6 +147,9 @@ The worker keeps its pi context:
 mu workspace refresh worker-1 -w auth
 ```
 
+The default target is the remote's main branch (`origin/HEAD`). In a
+repository without a remote, name the branch: `--from main`.
+
 ## Check the graph
 
 ```bash
