@@ -185,6 +185,22 @@ breaking changes are called out under "Breaking" in each entry.
 
 ### Fixed
 
+- **A nested pi no longer steals or deletes an agent's control
+  socket.** A pi started inside an agent's pane (a probe, a `pi -p`
+  one-liner) inherits `MU_CTL_SOCK`. The extension used to unlink the
+  path and listen on it, then delete it on quit. The agent's pi kept
+  serving an orphaned inode, mu saw `ctl: missing`, and
+  `mu task wait --on-stall exit` exited 7 on a busy worker. Now the
+  extension:
+  - leaves a socket that answers alone, runs without a server, and
+    logs one line to stderr.
+  - unlinks only the socket file it bound (checked by inode). It binds
+    through a private name plus `link()`, so closing the server never
+    deletes the public path either.
+  - rebinds on `session_start` when its file was deleted or replaced.
+    `/reload` (`mu agent send <name> '/reload' --via mux`) recovers an
+    orphaned socket.
+
 - **Notes with repeated text now sync.** A note's identity was
   `(task, author, content)`, so a note whose text repeated an earlier
   one on the same task was taken for that one and not applied. The

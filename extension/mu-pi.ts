@@ -7,8 +7,17 @@
  * nothing from mu except the protocol, and nothing from pi: the pi API is
  * typed structurally below so pi stays a peer, not a dependency.
  */
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { createServer, type Server, type Socket } from "node:net";
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import {
   CTL_OPS,
@@ -70,6 +79,8 @@ export const FRESH_TIMEOUT_MS = 30_000;
 /** Cap on `lastText` in a wait reply, in UTF-8 bytes (before the marker). */
 export const LAST_TEXT_MAX_BYTES = 64 * 1024;
 export const LAST_TEXT_TRUNCATED = "[truncated, see pane]";
+/** How long session_start waits for another pi to answer on the socket path. */
+export const LIVE_PROBE_MS = 500;
 
 type Reply = CtlReply;
 const V = CTL_PROTOCOL_VERSION;
@@ -131,6 +142,8 @@ type PendingFresh = {
  */
 type Shared = {
   server?: Server;
+  /** Inode of the socket file this process bound; the only file it may unlink. */
+  ino?: number;
   conns: Set<Socket>;
   waiters: Set<() => void>;
   state: CtlState;
@@ -188,6 +201,39 @@ function capText(text: string): string {
   const cut = Buffer.from(text, "utf8").subarray(0, LAST_TEXT_MAX_BYTES).toString("utf8");
   return `${cut.replace(/\uFFFD$/, "")}\n${LAST_TEXT_TRUNCATED}`;
 }
+
+/** Inode at `path`, or undefined when there is no file. */
+function inodeOf(path: string): number | undefined {
+  try {
+    return statSync(path).ino;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether some process is serving `path`. Refused / missing means a stale
+ * file. A connect that neither succeeds nor fails in time counts as live:
+ * never steal a socket on a guess.
+ */
+function socketIsLive(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const c = connect(path);
+    const done = (live: boolean) => {
+      clearTimeout(timer);
+      c.destroy();
+      resolve(live);
+    };
+    const timer = setTimeout(() => done(true), LIVE_PROBE_MS);
+    c.once("connect", () => done(true));
+    c.once("error", (e: NodeJS.ErrnoException) =>
+      done(e.code !== "ENOENT" && e.code !== "ECONNREFUSED"),
+    );
+  });
+}
+
+/** Per-process counter so a rebind never reuses a temp name a closing server owns. */
+let bindSeq = 0;
 
 function reasonOf(event: unknown): string | undefined {
   const r =
@@ -399,21 +445,62 @@ function serveCtl(pi: MuPiApi): void {
     });
   }
 
-  pi.on("session_start", async (_e, c) => {
-    g.ctx = c;
-    if (g.server) return; // a new/resumed session keeps the same socket
+  /**
+   * Bind the socket unless another pi already serves it. A nested pi (a
+   * probe or `pi -p` run inside an agent's pane) inherits MU_CTL_SOCK; it
+   * must leave the agent's socket alone, not unlink and take it.
+   */
+  async function bind(): Promise<void> {
     mkdirSync(dirname(sockPath), { recursive: true, mode: 0o700 });
+    if (await socketIsLive(sockPath)) {
+      process.stderr.write(
+        `mu: control socket ${sockPath} is served by another pi; this pi will not take it\n`,
+      );
+      return;
+    }
     rmSync(sockPath, { force: true });
+    // Listen on a private name, then hard-link it into place. libuv unlinks
+    // the name a server listened on when it closes, so the public path must
+    // never be that name: closing would delete whatever file sits there by
+    // then. link() also fails on an existing path, so a racing pi keeps it.
+    const tmp = join(dirname(sockPath), `.${process.pid.toString(36)}${(++bindSeq).toString(36)}`);
+    rmSync(tmp, { force: true });
     const s = createServer(onConnection);
-    g.server = s;
     await new Promise<void>((resolve, reject) => {
       s.once("error", reject);
-      s.listen(sockPath, () => {
+      s.listen(tmp, () => {
         s.off("error", reject);
         resolve();
       });
     });
-    chmodSync(sockPath, 0o600);
+    chmodSync(tmp, 0o600);
+    try {
+      linkSync(tmp, sockPath);
+    } catch (e) {
+      s.close();
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      process.stderr.write(`mu: control socket ${sockPath} was taken by another pi\n`);
+      return;
+    } finally {
+      rmSync(tmp, { force: true });
+    }
+    g.server = s;
+    g.ino = inodeOf(sockPath);
+  }
+
+  pi.on("session_start", async (_e, c) => {
+    g.ctx = c;
+    const s = g.server;
+    if (s) {
+      // A new/resumed session keeps the same socket, while the path is ours.
+      if (g.ino !== undefined && inodeOf(sockPath) === g.ino) return;
+      // Orphaned: the file was deleted or replaced under a live server.
+      // Stop accepting on the dead inode (open connections finish) and rebind.
+      g.server = undefined;
+      g.ino = undefined;
+      s.close();
+    }
+    await bind();
   });
 
   pi.on("session_shutdown", async (e) => {
@@ -425,13 +512,16 @@ function serveCtl(pi: MuPiApi): void {
       return;
     }
     const s = g.server;
+    const ino = g.ino;
     g.server = undefined;
+    g.ino = undefined;
     map.delete(sockPath);
     if (!s) return;
     g.waiters.clear();
     settleFresh(fail("pi is shutting down"));
     for (const c of g.conns) c.destroy();
     await new Promise<void>((resolve) => s.close(() => resolve()));
-    rmSync(sockPath, { force: true });
+    // Unlink only the file this process bound: another pi may own the path now.
+    if (ino !== undefined && inodeOf(sockPath) === ino) rmSync(sockPath, { force: true });
   });
 }

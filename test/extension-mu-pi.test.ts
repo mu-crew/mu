@@ -1,6 +1,16 @@
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import muPi, {
   FRESH_COMMAND,
@@ -223,6 +233,83 @@ describe("mu pi extension", () => {
     await fake.emit("session_shutdown");
     expect(existsSync(sock)).toBe(false);
     await fake.emit("session_shutdown");
+  });
+
+  describe("socket ownership", () => {
+    const SHARED = Symbol.for("mu.pi.ctl");
+    type G = { [SHARED]?: unknown };
+    /** A second pi process: its own process-global state, same MU_CTL_SOCK. */
+    function otherPi() {
+      const g = globalThis as G;
+      const mine = g[SHARED];
+      g[SHARED] = new Map();
+      const other = fakePi();
+      muPi(other.pi);
+      g[SHARED] = mine;
+      return other;
+    }
+    let stderr: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    });
+    afterEach(() => stderr.mockRestore());
+
+    it("a second pi leaves a live socket alone, and its quit does not delete it", async () => {
+      await fake.emit("session_start");
+      const ino = statSync(sock).ino;
+      const nested = otherPi();
+      await nested.emit("session_start");
+      expect(statSync(sock).ino).toBe(ino);
+      expect(String(stderr.mock.calls.at(-1)?.[0])).toMatch(/served by another pi/);
+      expect(await ctlRequest(sock, { op: "hello" })).toMatchObject({ ok: true });
+      // The nested pi has no server: its agent events never reach the socket.
+      await nested.emit("agent_start");
+      expect(await ctlRequest(sock, { op: "status" })).toMatchObject({ state: "idle" });
+      await nested.emit("session_shutdown", { reason: "quit" });
+      expect(statSync(sock).ino).toBe(ino);
+      expect(await ctlRequest(sock, { op: "hello" })).toMatchObject({ ok: true });
+      // No temp names left behind in the socket dir.
+      expect(readdirSync(dirname(sock))).toEqual(["a.sock"]);
+    });
+
+    it("session_start rebinds a server whose socket file was deleted", async () => {
+      await fake.emit("session_start");
+      await fake.emit("agent_start");
+      rmSync(sock);
+      await fake.emit("session_start", { reason: "reload" });
+      // Same process-global state: the run in flight is still reported.
+      expect(await ctlRequest(sock, { op: "status" })).toMatchObject({ state: "busy" });
+    });
+
+    it("quit leaves a path another pi took over", async () => {
+      await fake.emit("session_start");
+      rmSync(sock);
+      const other = otherPi();
+      await other.emit("session_start");
+      const ino = statSync(sock).ino;
+      await fake.emit("session_shutdown", { reason: "quit" });
+      expect(statSync(sock).ino).toBe(ino);
+      expect(await ctlRequest(sock, { op: "hello" })).toMatchObject({ ok: true });
+      await other.emit("session_shutdown", { reason: "quit" });
+      expect(existsSync(sock)).toBe(false);
+    });
+
+    it("takes over a stale socket file nobody serves", async () => {
+      mkdirSync(dirname(sock), { recursive: true });
+      const dead = createServer();
+      await new Promise<void>((r) => dead.listen(sock, r));
+      // Close without libuv's unlink: keep the file, drop the listener.
+      const ino = statSync(sock).ino;
+      const keep = join(dir, "keep");
+      rmSync(keep, { force: true });
+      linkSync(sock, keep);
+      await new Promise<void>((r) => dead.close(() => r()));
+      renameSync(keep, sock);
+      expect(statSync(sock).ino).toBe(ino);
+      await fake.emit("session_start");
+      expect(statSync(sock).ino).not.toBe(ino);
+      expect(await ctlRequest(sock, { op: "hello" })).toMatchObject({ ok: true });
+    });
   });
 
   describe("fresh", () => {
