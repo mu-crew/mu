@@ -2035,6 +2035,23 @@ Reconciliation runs on every `mu agent list` / `mu`. Two steps:
    registry. **Not** auto-adopted; mu lists them under "Orphan panes"
    with the `mu agent adopt <pane-id>` hint
 
+### A pi worker on another machine
+
+`mu agent remote-env` prints the ssh pieces; mu itself runs no ssh:
+
+```bash
+eval "$(mu agent remote-env worker-1 --shell)"   # sets MU_SSH_ARGS, MU_REMOTE_ENV
+mu agent spawn worker-1 --command \
+  "ssh $MU_SSH_ARGS dev -t 'cd ~/ws/worker-1 && $MU_REMOTE_ENV pi'"
+```
+
+`MU_SSH_ARGS` forwards the remote pi's control socket to the local path
+mu always connects to, so send, state, `mu agent wait` and
+`mu agent abort` behave as for a local agent. The host needs
+`mu link pi`, and its sshd must allow the forward
+(`AllowStreamLocalForwarding`). Full recipe and traps:
+`skills/mu/REMOTE_WORKERS.md`.
+
 ### A worker is wedged on an unbounded tool subprocess
 
 A worker ran `find / -maxdepth 6 ...` (30-60 minutes on a populated

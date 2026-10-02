@@ -121,6 +121,7 @@ mu/
 │   ├── cli/               # one file per verb-namespace; thin wrappers over the SDK
 │   │   ├── workstream.ts  # workstream init / list / destroy
 │   │   ├── agents.ts      # agent spawn / send / read / list / show / close / kick / wait / adopt
+│   │   ├── agents-remote.ts # agent remote-env (prints ssh forward + env; runs nothing)
 │   │   ├── tasks.ts       # `mu task` hub (re-exports wireTaskCommands / cmdMyNext / cmdMyTasks / unescapeNoteText)
 │   │   ├── tasks/         # sub-cluster of the `mu task` namespace
 │   │   │   ├── queries.ts    # list / next / owned-by + cmdMyTasks / cmdMyNext (back `mu me tasks` / `mu me next`)

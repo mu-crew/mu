@@ -115,9 +115,11 @@ ssh dev 'git -C ~/repo worktree add ~/ws/worker-1'
 mu task note t1 -w big "REMOTE: dev:~/ws/worker-1
 REMOTE_BASE: worker-1:$(ssh dev 'cd ~/ws/worker-1 && git rev-parse HEAD')"
 
-# 3. SPAWN — env vars go INSIDE the command (tmux -e stops at the hop)
+# 3. SPAWN — env goes INSIDE the command (tmux -e stops at the hop);
+#    remote-env prints it plus the control-socket forward (runs nothing)
+eval "$(mu agent remote-env worker-1 -w big --shell)"  # MU_SSH_ARGS, MU_REMOTE_ENV
 mu agent spawn worker-1 -w big --command \
-  'ssh dev -t "cd ~/ws/worker-1 && MU_MANAGED_AGENT=1 MU_AGENT_NAME=worker-1 MU_WORKSTREAM=big pi --approve"'
+  "ssh $MU_SSH_ARGS dev -t 'cd ~/ws/worker-1 && $MU_REMOTE_ENV pi --approve'"
 
 # 4. CLAIM + SEND — identical to a local agent
 mu task claim t1 -w big --for worker-1 --evidence 'remote on dev'
@@ -141,30 +143,32 @@ Local and remote agents mix freely in one workstream. The DAG, tracks,
 — task status is a row in YOUR database, written by you, so a wait on
 it is exact.
 
-**Agent state comes from murmur.** Its extension runs inside pi on the
-host and reports state without reading the nested tmux screen. mu reads
-murmur's remote rows and caches them for 10 seconds. Remote rows can lag
-by murmur's collect floor (30 seconds ± 10 seconds) plus that cache;
-their `since` value is the row's `updated_at`, so idle and stall age is
-approximate.
+**Agent state comes from the forwarded control socket** for pi agents.
+`-L <local>:<remote>` in `$MU_SSH_ARGS` makes the remote pi's mu
+extension answer at the local path mu always uses, so send, state,
+`mu agent wait --first` and `mu agent abort` are exact, as for a local
+agent. Two prerequisites:
 
-| waiting on | remote? |
-| --- | --- |
-| `mu task wait` (task status) | exact — a DB poll, once something closes the task |
-| the reaper | fires, but see below |
-| stall detection | exact state from murmur; approximate age |
-| `mu agent wait --first` | exact state from murmur |
+- The host has the extension: run `mu link pi` there (or copy
+  `dist/extension/mu-pi.js` into its pi extensions dir).
+- sshd allows the forward. `ExitOnForwardFailure=yes` makes a refused
+  forward kill the pane at spawn, loudly; check
+  `AllowStreamLocalForwarding` in the host's `sshd_config`.
 
-Without murmur, remote agent state is `unknown`. `mu agent wait` does not
-fire on `unknown`, and `unknown` never counts as a task stall. Run
-`mu doctor` for the missing-source reason.
+Spawn reports `ctl ok` when both hold; `mu doctor` has a ctl row per
+agent. When the ssh dies, ssh leaves the local socket file behind: it
+probes as `refused` (never a stale `ok`), and close or the reaper
+deletes it.
+
+Non-pi remote agents still get state from murmur, which lags by its
+collect floor (30 seconds ± 10 seconds) plus a 10-second cache. Without
+murmur their state is `unknown`, which `mu agent wait` and stall
+detection never fire on.
 
 The reaper is right for a direct spawn — the connection dying really
 does kill that agent — and wrong for a detached-tmux one, where the
 agent outlives the ssh but mu reaps the task anyway. See § A dropped
 connection reaps the task but NOT the commit.
-
-The division is: mu owns the work; murmur reports what the agent is doing.
 
 ### On step 2 — the note is load-bearing
 
