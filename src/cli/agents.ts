@@ -22,6 +22,7 @@ import {
   abortAgent,
   adoptAgent,
   agentCtlSocket,
+  chooseTransport,
   closeAgent,
   expectsCtl,
   getAgent,
@@ -57,6 +58,7 @@ import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.j
 import { listTasksByOwner } from "../tasks.js";
 import { detectBackend, type VcsBackendName } from "../vcs.js";
 import { getWorkspaceForAgent } from "../workspace.js";
+import { abortHint, dispatchHint, plainSendHints } from "./dispatch-hints.js";
 import { checkWorkspaceStalenessForDispatch } from "./staleness.js";
 
 interface SpawnOpts {
@@ -146,7 +148,7 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
   const envSourced =
     opts.command === undefined ? resolveCliCommandWithSource(agent.cli) : undefined;
   const nextSteps: NextStep[] = [
-    { intent: "Send work", command: `mu agent send ${name} "..." -w ${workstream}` },
+    dispatchHint(agent),
     { intent: "Read pane", command: `mu agent read ${name} -w ${workstream}` },
     { intent: "Watch live events", command: `mu log -w ${workstream} --tail` },
     {
@@ -224,6 +226,17 @@ export async function cmdSend(
   // rather than letting it print raw, so it lands in the JSON payload
   // too. `exit 0` must not be able to mean "silently dropped".
   let undelivered: SendWarning | undefined;
+  // A plain ctl send: read pi's status first, so the hints can tell a
+  // queued follow-up (busy) from a new task landing in an old context
+  // (idle after a settled run).
+  const agentRow = getAgent(db, name, ws);
+  const plainCtl =
+    agentRow !== undefined &&
+    !opts.fresh &&
+    !opts.steer &&
+    (via ?? chooseTransport(agentRow, text)) === "ctl";
+  const before =
+    plainCtl && agentRow !== undefined ? await ctlProbe(agentCtlSocket(db, agentRow)) : undefined;
   const sent = await sendToAgent(db, name, text, {
     workstream: ws,
     ...(opts.steer ? { mode: "steer" as const } : {}),
@@ -238,6 +251,9 @@ export async function cmdSend(
     { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
     { intent: "Watch live events", command: `mu log -w ${ws} --tail` },
   ];
+  if (agentRow !== undefined && before?.kind === "ok") {
+    nextSteps.push(...plainSendHints(agentRow, before.status));
+  }
   if (stalenessCheck.warned && stalenessCheck.nextStep !== null) {
     nextSteps.push(stalenessCheck.nextStep);
   }
@@ -544,7 +560,7 @@ export async function cmdAdopt(db: Db, paneOrTitle: string, opts: AdoptCliOpts):
     );
   }
   nextSteps.push(
-    { intent: "Send work", command: `mu agent send ${result.agent.name} "..." -w ${ws}` },
+    dispatchHint(result.agent, { plain: ctlDown }),
     { intent: "Read pane", command: `mu agent read ${result.agent.name} -w ${ws}` },
     { intent: "Verify in agent list", command: `mu agent list -w ${ws}` },
   );
@@ -600,7 +616,10 @@ export async function cmdKick(
   }
   const signal: KickSignal = sigRaw;
   const result = await kickAgent(db, name, { workstream: ws, signal });
+  const agentRow = getAgent(db, name, ws);
+  const abort = agentRow === undefined ? null : abortHint(agentRow);
   const nextSteps: NextStep[] = [
+    ...(abort === null ? [] : [abort]),
     {
       intent: "Read the pane to confirm the tool aborted",
       command: `mu agent read ${name} -n 30 -w ${ws}`,

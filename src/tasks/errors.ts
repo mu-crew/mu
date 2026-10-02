@@ -308,6 +308,8 @@ export class StallDetectedDuringWaitError extends Error implements HasNextSteps 
     public readonly owner: string | null,
     public readonly workstream: string,
     public readonly ageSecs: number,
+    /** The owner runs pi (control socket): `mu agent abort` stops its turn. */
+    public readonly ownerExpectsCtl = false,
   ) {
     const ownerBit = owner !== null ? owner : "<unknown>";
     super(
@@ -335,6 +337,14 @@ export class StallDetectedDuringWaitError extends Error implements HasNextSteps 
         intent: "Answer a question, or poke a worker that stalled mid-step",
         command: `mu agent send ${ownerBit} '<answer-or-retry-instruction>' -w ${ws}`,
       },
+      ...(this.ownerExpectsCtl
+        ? [
+            {
+              intent: "Stuck mid-turn? Stop it through the control socket before kick or close",
+              command: `mu agent abort ${ownerBit} -w ${ws}`,
+            },
+          ]
+        : []),
       {
         intent: "Close the task if the worker finished but skipped it",
         command: `mu task close ${this.taskName} -w ${ws}`,

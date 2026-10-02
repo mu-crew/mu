@@ -279,6 +279,9 @@ export async function waitForTasks(
   // Owners whose control socket is broken: first-seen time + reason.
   const ctlBrokenSince = new Map<string, number>();
   const stuckLabel = new Map<string, string>();
+  // Owners whose reading carried a ctl link: they run pi, so the stall
+  // error can point at `mu agent abort`.
+  const ctlOwners = new Set<string>();
 
   const stuckAgeMs = async (
     status: TaskStatus,
@@ -294,6 +297,7 @@ export async function waitForTasks(
       return null;
     const reading = await opts.readOwnerState({ name: owner, workstreamName });
     const ownerKey = `${workstreamName}/${owner}`;
+    if (reading?.ctl !== undefined) ctlOwners.add(ownerKey);
     // A pi owner whose control socket does not answer (pane still
     // alive) needs attention too: nothing will report it settling.
     // Its age runs from when this wait first saw the socket broken.
@@ -381,7 +385,13 @@ export async function waitForTasks(
         // watched task that's both reaper-flipped AND stale never
         // reaches this branch (status would already be OPEN).
         if (onStall === "exit") {
-          throw new StallDetectedDuringWaitError(ref.name, owner, ref.workstreamName, ageSecs);
+          throw new StallDetectedDuringWaitError(
+            ref.name,
+            owner,
+            ref.workstreamName,
+            ageSecs,
+            ctlOwners.has(`${ref.workstreamName}/${owner ?? ""}`),
+          );
         }
       }
       refStates.push({

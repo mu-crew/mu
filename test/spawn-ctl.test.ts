@@ -165,9 +165,28 @@ describe("mu agent spawn (CLI)", () => {
     const r = await runCli(["agent", "spawn", "worker-1", "-w", "auth", "--json"], dbPath);
     db = openDb({ path: dbPath });
     expect(r.exitCode ?? 0).toBe(0);
-    const out = JSON.parse(r.stdout) as { ctl: string; ctlSocket: string };
+    const out = JSON.parse(r.stdout) as {
+      ctl: string;
+      ctlSocket: string;
+      nextSteps: { command: string }[];
+    };
     expect(out.ctl).toBe("ok");
     expect(out.ctlSocket).toBe(sockFor("worker-1"));
+    expect(out.nextSteps[0]?.command).toBe("mu agent send worker-1 --fresh '...' -w auth");
+  });
+
+  it("a non-pi CLI keeps the plain Send work hint", async () => {
+    db.close();
+    const r = await runCli(
+      ["agent", "spawn", "worker-1", "--cli", "claude", "-w", "auth", "--json"],
+      dbPath,
+    );
+    db = openDb({ path: dbPath });
+    const out = JSON.parse(r.stdout) as { nextSteps: { intent: string; command: string }[] };
+    expect(out.nextSteps[0]).toEqual({
+      intent: "Send work",
+      command: "mu agent send worker-1 '...' -w auth",
+    });
   });
 
   it("exits 0 with a stderr warning naming mu link pi when ctl is missing", async () => {
