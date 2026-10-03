@@ -34,8 +34,9 @@ and check, skip it.
    Phases chain: an audit (refute) feeds a fix sweep (fan-out); a
    tournament picks the design a fan-out then implements.
 4. **Plan the whole phase as tasks** before spawning: every unit,
-   blocked into the umbrella. Rounds of a loop are the one exception:
-   add each when the last closes.
+   blocked into the umbrella, each note written as a
+   [brief](brief.md) ([plan](plan.md) for a spec-driven build). Rounds
+   of a loop are the one exception: add each when the last closes.
 5. **Review every unit that ships.** Each commit-producing task gets a
    review task ([adversarial-review](adversarial-review.md)), on a
    different model where you can. Findings and claims get refuters

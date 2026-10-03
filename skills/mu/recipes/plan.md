@@ -1,0 +1,54 @@
+# Planning a DAG
+
+Use when you turn a spec or a clear set of requirements into tasks.
+The DAG is the plan: each task's note carries its full content, and
+`mu state` is the progress tracker. Write a markdown plan only when the
+human asks for a file.
+
+## Steps
+
+1. **Map the files first.** List what gets created or changed and what
+   each file is responsible for. Task boundaries fall out of this map.
+2. **Size the tasks.** A task is the smallest unit that carries its own
+   verification and is worth a review. Split only where a reviewer
+   could reject one task and accept its neighbour. Fold setup, config,
+   and docs into the task whose deliverable needs them.
+3. **Write the root task.** `task_0` holds the goal, the architecture
+   in two or three sentences, and the global constraints copied
+   verbatim from the spec. Every other task is blocked by it; close it
+   at once. It carries notes, not work.
+4. **Write each task's note** as a [brief](brief.md):
+
+   ```text
+   FILES:      Create/Modify/Test with exact paths (line ranges if known)
+   INTERFACES: Consumes: <exact signatures from earlier tasks>
+               Produces: <exact names and types later tasks use>
+   STEPS:      one action each; code steps carry the code
+   VERIFY:     <exact command and expected result>
+   ```
+
+   The worker sees only its own task. INTERFACES is how it learns the
+   names its neighbours use.
+5. **No placeholders.** "TBD", "add error handling", "similar to
+   task 3", "write tests for the above": each is a missing decision the
+   worker will make alone. Write the actual content; tasks are read out
+   of order.
+6. **Add edges for dependencies only.** `mu task block A --by B` when A
+   consumes what B produces. Plan order is not a dependency: an extra
+   edge serialises tracks that could run in parallel.
+7. **Self-review before dispatch.** Walk each spec requirement and name
+   the task that implements it. Grep the notes for placeholders. Check
+   that names in INTERFACES match across tasks. Then read the graph back
+   with `mu task tree task_0 -w <ws> --down`, or `mu state -w <ws>` for the tracks.
+
+Done when every spec requirement maps to a task, no note holds a
+placeholder, and `mu state` shows the intended parallel tracks.
+
+## Notes
+
+- `impact` comes from what breaks without the task; `effort_days` from
+  its step count. Guess honestly rather than defaulting to 50 and 1.
+- Review gates follow [adversarial-review](adversarial-review.md): a
+  review task blocked by the work.
+- When reality disagrees with the plan, append a note saying so. Do not
+  rewrite earlier notes.

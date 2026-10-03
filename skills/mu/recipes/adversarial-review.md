@@ -35,6 +35,11 @@ session. Its verdict, its evidence, and every rejection stay in the DB.
      `review_x_2` (blocked by `fix_x`). Dispatch `fix_x` to the original
      worker, whose context still holds the work. Repeat from step 4.
      The DAG grows; nothing is rewritten.
+   - The `fix_x` brief tells the author to check each gap before fixing
+     it: reproduce it, then fix it, or answer it with evidence in the
+     note (`GAP 2: not reproducible, <command + output>`). A gap the
+     author disputes goes to the next reviewer as a claim to check,
+     not as settled.
 7. **Cap the rounds.** After two rejections on the same unit, stop the
    loop and decide yourself: split the unit, change the criteria, or
    ask the human. A third round of the same argument rarely converges.

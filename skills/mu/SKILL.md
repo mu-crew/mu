@@ -210,6 +210,8 @@ risky job that needs several of them, start with
 | --- | --- |
 | [ultrathink](recipes/ultrathink.md) | a job is too large or risky for one context; composes the rest |
 | [orchestrator-loop](recipes/orchestrator-loop.md) | you dispatch tasks and merge results |
+| [brief](recipes/brief.md) | you write a task note or prompt a worker will read |
+| [plan](recipes/plan.md) | you turn a spec or requirements into a task DAG |
 | [worker](recipes/worker.md) | a task was claimed for you |
 | [recovery](recipes/recovery.md) | undo, rebuild, teardown, sync setup, `doctor` cleanup |
 | [remote-workers](recipes/remote-workers.md) | an agent runs on another machine |
