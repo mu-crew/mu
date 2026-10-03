@@ -89,6 +89,45 @@ pane.
 For many tiny calls, a hidden subagent is lighter. mu bets that seeing
 and steering agent work is worth a pane.
 
+## Ultrathink, the mu way
+
+Long agent runs fail in two ways: the agent stops at 35 of 50 items and
+calls it done, and it grades its own work generously. The fix is to
+take the plan out of the agent's head, fan the work out to fresh
+agents, and have other agents try to refute each result before it
+counts. Claude Code's ultracode does this with a hidden script. mu does
+it in the open:
+
+- **The plan is the DAG.** Every unit, every review, and every round
+  is a task before an agent spawns. `mu state` shows 35 of 50 done, so
+  nobody can declare victory early.
+- **Reviews are tasks.** A `review_x` task is blocked by `x` and run by
+  a fresh agent, ideally on another model, against criteria written
+  up front. A rejection adds `fix_x` and a second review to the DAG
+  instead of rewriting history.
+- **Every agent is a pane.** Attach to any worker, reviewer, or judge
+  mid-run and steer it.
+- **Nothing lives only in a context window.** Verdicts, evidence, and
+  stop rules are task notes. The run survives compaction, crashes, and
+  a new orchestrator.
+
+Ask your orchestrator to *ultrathink* a job, and it follows
+[skills/mu/recipes/ultrathink.md](skills/mu/recipes/ultrathink.md).
+That recipe composes smaller ones you can also use on their own:
+
+| Recipe | Shape |
+| ------ | ----- |
+| [fan-out](skills/mu/recipes/fan-out.md) | one task per unit, merged as each closes |
+| [adversarial-review](skills/mu/recipes/adversarial-review.md) | a fresh agent tries to reject each unit before it ships |
+| [refute](skills/mu/recipes/refute.md) | finders, then one refuter per finding, then a report |
+| [hypothesis-panel](skills/mu/recipes/hypothesis-panel.md) | independent theories from separate evidence, each attacked |
+| [tournament](skills/mu/recipes/tournament.md) | competing attempts, judged in pairs |
+| [loop-until-done](skills/mu/recipes/loop-until-done.md) | rounds until a stop rule written up front holds |
+| [triage](skills/mu/recipes/triage.md) | quarantined readers classify, a trusted actor acts |
+
+All recipes, including the orchestrator loop and remote workers, are
+in [skills/mu/recipes/](skills/mu/recipes/).
+
 ## Documentation
 
 - [Getting started](docs/guide/getting-started.md): the first
@@ -96,8 +135,9 @@ and steering agent work is worth a pane.
 - [User guide](docs/guide/README.md): how-tos for dispatch, remote
   workers, sync, recovery, and the dashboard.
 - [skills/mu/SKILL.md](skills/mu/SKILL.md): what an orchestrating
-  agent reads. [REMOTE_WORKERS.md](skills/mu/REMOTE_WORKERS.md) covers
-  agents on other machines.
+  agent reads. [skills/mu/recipes/](skills/mu/recipes/) holds the
+  recipes it points to, such as
+  [remote workers](skills/mu/recipes/remote-workers.md).
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) and
   [docs/architecture/](docs/architecture/): the module map and deep
   dives.

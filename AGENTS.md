@@ -169,7 +169,7 @@ is one atomic call. Keep the tmux workaround out of herdr.
 
 ## Orchestrating on this repo
 
-Follow the loop in [skills/mu/SKILL.md](skills/mu/SKILL.md). Repo specifics:
+Follow [skills/mu/recipes/orchestrator-loop.md](skills/mu/recipes/orchestrator-loop.md). Repo specifics:
 
 - Each workspace runs `npm install` into its own `node_modules`. Never
   symlink main's.
@@ -188,7 +188,7 @@ Follow the loop in [skills/mu/SKILL.md](skills/mu/SKILL.md). Repo specifics:
 ## Skill files are context, not documentation
 
 `skills/mu/SKILL.md` loads into every orchestrator's context, and
-`skills/mu/REMOTE_WORKERS.md` on demand. Every word competes with the
+the recipes in `skills/mu/recipes/` on demand. Every word competes with the
 user's work. Read the `writing-for-agents` skill before you edit
 either one.
 
@@ -196,7 +196,11 @@ either one.
   carries only what `--help` cannot: the gotcha, the reason, the trap.
 - Say each thing once, next to where it applies.
 - SKILL.md holds the trigger and the rule. Detail that only some
-  branches need goes in REMOTE_WORKERS.md.
+  branches need goes in a recipe under `skills/mu/recipes/`, with a
+  row in SKILL.md's recipe index. Recipes reference only mu, never
+  skills outside this repo.
+- `docs/guide/` pages stay terse for humans and link to the recipe
+  instead of restating it.
 - Delete sentences the model obeys by default. State the target
   behaviour.
 

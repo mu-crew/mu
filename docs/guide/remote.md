@@ -4,7 +4,7 @@ The pane is local and the pi process is remote. mu runs no ssh
 itself. `mu agent remote-env` prints the ssh pieces, and you put them
 in the spawn command. The full recipe, with recording, collecting,
 and the traps, is in
-[skills/mu/REMOTE_WORKERS.md](../../skills/mu/REMOTE_WORKERS.md).
+[skills/mu/recipes/remote-workers.md](../../skills/mu/recipes/remote-workers.md).
 Read it before your first remote spawn.
 
 ## Prepare the host

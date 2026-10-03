@@ -587,7 +587,7 @@ mu doctor          # agent state : ok agent state from murmur 1.x
 
 ### Documentation
 
-- **[skills/mu/REMOTE_WORKERS.md](../../skills/mu/REMOTE_WORKERS.md)** — running
+- **[skills/mu/REMOTE_WORKERS.md](../../skills/mu/recipes/remote-workers.md) (now `recipes/remote-workers.md`)** — running
   agents on another machine. This already worked with no mu changes (the
   pane is local, the process is remote, so send/read/status/reaper are
   unaffected), but nothing said so and the failure modes are not

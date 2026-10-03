@@ -1,8 +1,10 @@
 # How to dispatch work to a worker
 
 This guide assumes you finished [Getting started](getting-started.md).
-The orchestrator loop and its traps are in
-[skills/mu/SKILL.md](../../skills/mu/SKILL.md).
+The agent-facing loop and its traps are in
+[recipes/orchestrator-loop.md](../../skills/mu/recipes/orchestrator-loop.md). For several workers in
+one repo, see [waves](../../skills/mu/recipes/waves.md); for runs that
+last hours, see [long runs](../../skills/mu/recipes/long-run.md).
 
 ## Claim before you send
 
