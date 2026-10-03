@@ -30,6 +30,9 @@ and check, skip it.
    | a choice between real alternatives | [tournament](tournament.md) |
    | an unknown amount, until a check passes | [loop-until-done](loop-until-done.md) |
    | a backlog of external items | [triage](triage.md) |
+   | a question across many sources | [deep-research](deep-research.md) |
+   | one change to review from every angle | [review-panel](review-panel.md) |
+   | a change against the repo's written rules | [rules-audit](rules-audit.md) |
 
    Phases chain: an audit (refute) feeds a fix sweep (fan-out); a
    tournament picks the design a fan-out then implements.

@@ -12,6 +12,7 @@ import {
   existsSync,
   linkSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -19,6 +20,7 @@ import {
 } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   CTL_COMMANDS,
   CTL_OPS,
@@ -70,7 +72,8 @@ export interface MuPiApi extends MuDelegateApi {
       | "session_before_compact"
       | "agent_start"
       | "agent_end"
-      | "agent_settled",
+      | "agent_settled"
+      | "resources_discover",
     handler: (event: unknown, ctx: MuPiContext) => unknown,
   ): unknown;
   sendUserMessage(
@@ -273,8 +276,38 @@ function reasonOf(event: unknown): string | undefined {
   return typeof r === "string" ? r : undefined;
 }
 
+/** The package's `prompts/` dir: two up from dist/extension/, one up from extension/. */
+export function promptsDir(from: string = import.meta.url): string | undefined {
+  let here: string;
+  try {
+    here = dirname(fileURLToPath(from));
+  } catch {
+    return undefined;
+  }
+  for (const up of ["..", "../.."]) {
+    const d = join(here, up, "prompts");
+    if (existsSync(join(d, "ultrathink.md"))) return d;
+  }
+  return undefined;
+}
+
+/** The recipe slash commands (`/ultrathink`, `/mu-review`, ...): prompt
+ *  templates shipped in the package, so they upgrade with mu. */
+function registerPrompts(pi: MuPiApi): void {
+  pi.on("resources_discover", () => {
+    const d = promptsDir();
+    if (!d) return {};
+    const paths = readdirSync(d)
+      .filter((f) => f.endsWith(".md"))
+      .sort()
+      .map((f) => join(d, f));
+    return { promptPaths: paths };
+  });
+}
+
 export default function muPi(pi: MuPiApi): void {
   registerDelegate(pi);
+  registerPrompts(pi);
   serveCtl(pi);
 }
 

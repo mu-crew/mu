@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
@@ -19,6 +20,7 @@ import muPi, {
   LAST_TEXT_TRUNCATED,
   type MuPiCommandContext,
   type MuPiContext,
+  promptsDir,
 } from "../extension/mu-pi.js";
 import { CtlUnknownOpError, ctlProbe, ctlRequest } from "../src/ctl/client.js";
 import { CTL_OPS } from "../src/ctl/protocol.js";
@@ -81,12 +83,12 @@ afterEach(async () => {
 });
 
 describe("mu pi extension", () => {
-  it("is a no-op when MU_CTL_SOCK is unset", async () => {
+  it("serves no socket when MU_CTL_SOCK is unset (only the recipe prompts)", async () => {
     const key = "MU_CTL_SOCK";
     delete process.env[key];
     const other = fakePi();
     muPi(other.pi);
-    expect(other.handlers.size).toBe(0);
+    expect([...other.handlers.keys()]).toEqual(["resources_discover"]);
   });
 
   it("serves hello and status after session_start, socket mode 0600", async () => {
@@ -568,5 +570,61 @@ describe("mu pi extension", () => {
       await cmd?.handler("", { ...fake.ctx, reload } as unknown as MuPiCommandContext);
       expect(reload).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("recipe prompt templates", () => {
+  it("serves every prompts/*.md through resources_discover", async () => {
+    const h = fake.handlers.get("resources_discover") ?? [];
+    expect(h).toHaveLength(1);
+    const handler = h[0];
+    if (!handler) throw new Error("unreachable");
+    const r = (await handler(
+      { type: "resources_discover", cwd: dir, reason: "startup" },
+      fake.ctx,
+    )) as {
+      promptPaths?: string[];
+    };
+    const names = (r.promptPaths ?? []).map((p) => p.split("/").pop());
+    expect(names).toContain("ultrathink.md");
+    expect(names).toEqual(
+      readdirSync(join(import.meta.dirname, "..", "prompts"))
+        .filter((f) => f.endsWith(".md"))
+        .sort(),
+    );
+  });
+
+  it("finds prompts/ from both the source and the built layout", () => {
+    const root = join(import.meta.dirname, "..");
+    const want = join(root, "prompts");
+    expect(promptsDir(`file://${join(root, "extension", "mu-pi.ts")}`)).toBe(want);
+    expect(promptsDir(`file://${join(root, "dist", "extension", "mu-pi.js")}`)).toBe(want);
+    expect(promptsDir("not-a-url")).toBeUndefined();
+  });
+
+  // pi parses the frontmatter as YAML: an unquoted value containing
+  // ": " is a nested mapping, and pi drops the template (it did).
+  it("every template's frontmatter values are YAML-safe", () => {
+    const root = join(import.meta.dirname, "..");
+    for (const f of readdirSync(join(root, "prompts"))) {
+      const text = readFileSync(join(root, "prompts", f), "utf8");
+      const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1];
+      expect(front, f).toBeDefined();
+      for (const line of (front ?? "").split("\n")) {
+        const value = line.slice(line.indexOf(":") + 1).trim();
+        const quoted = value.startsWith('"') && value.endsWith('"');
+        expect(quoted || !value.includes(": "), `${f}: ${line}`).toBe(true);
+      }
+    }
+  });
+
+  it("every template points at a recipe that exists", () => {
+    const root = join(import.meta.dirname, "..");
+    for (const f of readdirSync(join(root, "prompts"))) {
+      const text = readFileSync(join(root, "prompts", f), "utf8");
+      const m = /recipes\/([a-z-]+\.md)/.exec(text);
+      expect(m, f).not.toBeNull();
+      expect(existsSync(join(root, "skills", "mu", "recipes", m?.[1] ?? "")), f).toBe(true);
+    }
   });
 });
