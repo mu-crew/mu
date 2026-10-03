@@ -10,6 +10,28 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.3.0] — 2026-10-03
+
+**Ultrathink, the mu way.** The mu skill gains a recipe library for
+long, multi-agent runs: fan-out, adversarial review, find-refute-
+synthesize, hypothesis panels, tournaments, loop-until-done, triage,
+deep research, review panels and rules audits, composed by
+`recipes/ultrathink.md`. Every unit, review and round is a task in the
+DAG, so the run stays visible in `mu state` and survives compaction.
+In pi, `/ultrathink <job>` and the `/mu-*` commands start them, and a
+one-shot keep-driving nudge stops orchestrators from ending a turn
+while their workers are still running.
+
+Upgrade with `npm i -g @mu-crew/mu@3.3.0`, then `/reload` in running pi
+sessions (`/reload --via mux` for agents mu spawned before the upgrade).
+
+**Not semver:** one change below breaks a CLI contract in a minor
+release. `mu agent send <pi-agent> '/<cmd>'` for any slash command other
+than `/new`, `/reload` and `/compact` now exits 2 instead of pasting it
+into the pane. Add `--via mux` to keep the old behaviour. It is in 3.3.0
+rather than 4.0.0 because only a script typing arbitrary slash commands
+into a pi agent can notice, and the old paste could silently drop them.
+
 ### Added
 
 - **Keep-driving nudge** in the pi extension. After a session dispatches
