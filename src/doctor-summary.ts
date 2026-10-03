@@ -364,6 +364,17 @@ export function murmurDoctorCheck(
 
 const RELINK = "run mu link pi";
 
+/** The "mu ext" row's feature list; a feature an env var switched off is named with it. */
+export function extFeatures(env: NodeJS.ProcessEnv): string {
+  const features: [string, string][] = [
+    ["mu_delegate", "MU_DELEGATE"],
+    ["nudge", "MU_NUDGE"],
+  ];
+  const on = ["ctl", ...features.filter(([, v]) => env[v] !== "0").map(([f]) => f)];
+  const off = features.filter(([, v]) => env[v] === "0").map(([f, v]) => `${f} disabled by ${v}=0`);
+  return `(${on.join(", ")}${off.length ? `; ${off.join("; ")}` : ""})`;
+}
+
 /** The "mu ext" row: is the mu pi extension shim installed and live? */
 export function ctlExtensionDoctorCheck(opts?: LinkOptions): DoctorCheck {
   const { extension } = inspectLinks(opts);
@@ -372,10 +383,7 @@ export function ctlExtensionDoctorCheck(opts?: LinkOptions): DoctorCheck {
       return {
         name: "mu ext",
         status: "ok",
-        detail:
-          process.env.MU_DELEGATE === "0"
-            ? "(ctl; mu_delegate disabled by MU_DELEGATE=0)"
-            : "(ctl, mu_delegate)",
+        detail: extFeatures(process.env),
       };
     case "stale-copy":
       return { name: "mu ext", status: "warn", detail: `stale copy: ${RELINK}` };

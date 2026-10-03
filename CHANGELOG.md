@@ -12,6 +12,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Keep-driving nudge** in the pi extension. After a session dispatches
+  mu work (`agent send`, `agent spawn`, `task claim --for`), if it ends
+  its turn while that work is still IN_PROGRESS, the extension adds one
+  visible `[mu-keep-driving]` message quoting SKILL.md's rule, with a
+  `mu task wait` line for the running tasks, and continues once. A
+  second stop stands. Each nudge is logged as `mu log --kind nudge`.
+  `MU_NUDGE=0` turns it off; `mu doctor`'s `mu ext` row reports it.
+  Spec: `docs/specs/2026-10-03-keep-driving-nudge.md`.
+
 - **Recipe commands in pi.** The mu extension serves prompt templates
   from the package's `prompts/` through pi's `resources_discover`:
   `/ultrathink <job>`, `/mu-research`, `/mu-review`, `/mu-refute`,

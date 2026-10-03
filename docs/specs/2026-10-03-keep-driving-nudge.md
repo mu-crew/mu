@@ -1,6 +1,6 @@
 # Keep-driving nudge: one prompt when an orchestrator stops early
 
-Status: draft
+Status: shipped (unreleased). Implemented 2026-10-03; see [Deviations](#deviations-during-implementation)
 Date: 2026-10-03
 
 ## Problem
@@ -120,3 +120,23 @@ gate rather than silently sending nothing.
 - Manual: real orchestrator session, dispatch two workers, ask for a
   status summary; confirm one `[mu]` message, the model resumes
   waiting, and `mu log --kind nudge` shows the entry.
+
+## Deviations during implementation
+
+- **Wait hint names tasks.** `mu task wait` takes task ids, so the
+  message lists up to eight `<ws>/<task>` refs and counts the rest,
+  instead of a `-w <ws>` form that does not exist.
+- **Both `mu state --json` shapes.** One `-w` prints a bare card; several
+  print `{ workstreams: [...] }`. The unit tests first mocked only the
+  second; the live run used the first and stayed silent. Both are read
+  and tested now.
+- **`scratch` never arms.** Dispatches into the reserved delegate
+  workstream are `mu_delegate`'s, whose answers return as follow-ups.
+- **The check runs once per prompt even when it fails.** A failing
+  `mu state` does not retry on the next settle.
+
+Live verification: a real pi orchestrator against a throwaway DB
+claimed a task for a worker, ended its turn, received one
+`[mu-keep-driving]` message with `mu task wait nudgeprobe/slow ...`, and
+`mu log --kind nudge` held one entry. With nothing IN_PROGRESS, no
+nudge fired.

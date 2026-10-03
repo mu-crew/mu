@@ -83,12 +83,14 @@ afterEach(async () => {
 });
 
 describe("mu pi extension", () => {
-  it("serves no socket when MU_CTL_SOCK is unset (only the recipe prompts)", async () => {
+  it("serves no socket when MU_CTL_SOCK is unset (only prompts and the nudge)", async () => {
     const key = "MU_CTL_SOCK";
     delete process.env[key];
     const other = fakePi();
     muPi(other.pi);
-    expect([...other.handlers.keys()]).toEqual(["resources_discover"]);
+    expect([...other.handlers.keys()].sort()).toEqual(
+      ["agent_before_settle", "input", "resources_discover", "tool_call"].sort(),
+    );
   });
 
   it("serves hello and status after session_start, socket mode 0600", async () => {
