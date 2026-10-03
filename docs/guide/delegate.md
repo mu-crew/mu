@@ -79,6 +79,24 @@ mu log -w scratch --kind pr-state -n 1 --json
 Act only on change. `--since <seq>` replays entries a dead watcher
 missed.
 
+## Delegates vs hidden subagents
+
+Claude Code, Codex, and pi-subagents delegate to a hidden child process
+and return only its result. A mu delegate is an ordinary agent in a
+pane.
+
+|                         | Hidden subagent          | mu delegate |
+| ----------------------- | ------------------------ | ----------- |
+| Visibility              | none while it runs       | a pane; attach and watch |
+| Steer mid-run           | no                       | `mu agent send`; stop with `mu agent abort` |
+| Keep talking after it answers | no                 | yes, with `keep: true` |
+| Transcript              | collapses into a result  | a normal pi session log |
+| If the work grows       | re-brief a new agent     | same task DAG and workspaces |
+| Cost                    | light                    | one pane and one pi process |
+
+For many tiny calls, a hidden subagent is lighter. mu bets that seeing
+and steering agent work is worth a pane.
+
 ## When to stop delegating
 
 Dependencies, several agents, or review need a real workstream: see
