@@ -189,8 +189,9 @@ Follow [skills/mu/recipes/orchestrator-loop.md](skills/mu/recipes/orchestrator-l
 
 `skills/mu/SKILL.md` loads into every orchestrator's context, and
 the recipes in `skills/mu/recipes/` on demand. Every word competes with the
-user's work. Read the `writing-for-agents` skill before you edit
-either one.
+user's work. The recipes are written for an agent with no context;
+[recipes/brief.md](skills/mu/recipes/brief.md) holds the rules, and
+they apply to the skill files too.
 
 - Leave verb lists, flags, and option tables to `--help`. The skill
   carries only what `--help` cannot: the gotcha, the reason, the trap.

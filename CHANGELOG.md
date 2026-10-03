@@ -24,6 +24,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   task, review every shipped unit, close against the stop rule. Every
   unit, check and round is a DAG task, so the run stays visible in
   `mu state`.
+- **`recipes/brief.md`** (how to write a task note or prompt a worker
+  with no context will read) and **`recipes/plan.md`** (spec to DAG:
+  file map, sizing, `task_0`, INTERFACES, no placeholders, edges only
+  for dependencies).
 
 ### Changed
 

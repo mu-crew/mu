@@ -57,7 +57,12 @@ task. `MU_IDLE_THRESHOLD_MS` defaults to 5m.
   `set -e`. Check the gate runs what it claims: an env-gated randomized
   test once passed with zero cases.
 - **Accept evidence, not close notes.** Re-run the key measurement from
-  a clean checkout; close notes have claimed unpushed commits.
+  a clean checkout; close notes have claimed unpushed commits. A
+  worker's "done" counts only once the diff shows the change.
+- **Ask whether the check could have failed.** A gate that cannot say
+  no is not evidence: a test filtered to zero cases, a script you wrote
+  agreeing with itself, a fixture you tuned on. A nonzero diff is a
+  failure even when the command exited 0.
 - **Dispatch from current main.** Reset the worker's worktree to main
   before each task.
 
