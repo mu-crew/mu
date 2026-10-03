@@ -21,5 +21,10 @@ How-to guides:
 - [Choose a multiplexer backend](backends.md)
 - [Clean up](cleanup.md)
 
+Agent-facing recipes (orchestrator loop, worker loop, recovery, waves,
+long runs, watchers, remote workers) live
+in [skills/mu/recipes/](../../skills/mu/recipes/). The skill's
+[recipe index](../../skills/mu/SKILL.md#recipes) says when to read each.
+
 For features mu does not have on purpose, see
 [ROADMAP.md § Explicitly rejected](../ROADMAP.md#explicitly-rejected).

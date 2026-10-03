@@ -55,9 +55,7 @@ auto-created), `send --fresh`, then `mu agent wait --json` (`lastText`).
 
 - `mu agent wait <names...> --first` waits for busy → idle instead of a
   `sleep` loop; exit 0 met, 5 timeout, 6 pane died.
-- For a watcher, persist last-seen state in a log ledger: write `mu log -w
-  scratch --kind pr-state 'pr=1234 sha=abc ci=red'`, then read `mu log -w
-  scratch --kind pr-state -n 1 --json`. Act only on change.
+- For a watcher (PR, CI, a log), follow [recipes/watcher.md](recipes/watcher.md).
 - One agent per independent unit; `--workspace` for any helper that may edit,
   build, or test the shared repo.
 
@@ -89,16 +87,10 @@ keeps LLM context. Claim and send warn at ≥10 commits behind
 
 ### Remote agents
 
-The PANE is local, the PROCESS is remote (`--command 'ssh <host> -t
-"..."'`); `mu agent remote-env` forwards a pi agent's control socket.
-**One orchestrator DB**: never run a second mu on the host. You create
-the remote workspace yourself (`--workspace` is local-only).
-
-**Read [REMOTE_WORKERS.md](REMOTE_WORKERS.md) before spawning your first
-remote agent, and again before waiting on one.** Poll once per turn with
-the claim's one-shot `Next:` command. On a session-capped host, route
-long commands and polls through [mule](https://github.com/mu-crew/mule):
-a refused bare ssh returns an empty sha that looks like progress.
+The PANE is local, the PROCESS is remote. **One orchestrator DB**: never
+run a second mu on the host. **Read
+[recipes/remote-workers.md](recipes/remote-workers.md) before spawning
+your first remote agent, and again before waiting on one.**
 **`mule` exit 3 is a HANDBACK** to the operator (hardware-key touch):
 never retry or open `ssh -MNf` yourself.
 
@@ -124,78 +116,37 @@ ODDITIES: weird things not acted on
 Then close with grounding:
 `mu task close <id> -w <ws> --evidence "tests pass: cargo test exit 0"`.
 
-## Orchestrator loop
+## Orchestrator rules
 
-Every turn:
+<!-- mu:keep-driving -->
+**While workers run, keep driving.** Your turn ends only when every
+task is closed, or when a decision only a human can make blocks all
+progress (scope, spend, irreversible or external actions, a hardware-key
+handback). A status summary is a log line, not a stopping point: write
+it with `mu log`, then go straight back to `mu task wait`. Ending a
+turn to report progress while workers are busy stalls the whole crew.
+<!-- /mu:keep-driving -->
 
-1. `mu state -w <ws>` — read agents, IN_PROGRESS, ready tasks,
-   parallel tracks.
-2. Spawn at most one agent per independent ready track.
-3. **Claim before sending — even one-shot reviewers/scouts.**
-   `mu task claim <id> -w <ws> --for <agent> --evidence "..."`.
-   If no task exists, `mu task add` first (`--note 'REPRO: ...'` when
-   the title is not enough). Ownership is durable and waitable; agent
-   state is not.
-4. Send each new task with `mu agent send <w> --fresh '...'` (new
-   session + prompt in one step; refuses while busy): task id,
-   files/notes to read, workspace path, validation command, scope
-   guards, task note contract. Follow the `Next:` block; it picks
-   `--fresh` vs `--steer` for you.
-5. End with a loud final-action block:
+Before you dispatch, read [recipes/orchestrator-loop.md](recipes/orchestrator-loop.md):
+the every-turn loop, waiting, merging, and stopping workers. These
+rules hold even when you skip it:
 
-   ```text
-   ⚠️ FINAL ACTION
-   git commit -am '...' THEN
-   mu task close <id> -w <ws> --evidence '...'
-   ```
-
-6. `mu task wait ... --first --on-stall exit --json`.
-7. Cherry-pick the closed worker's **new** commit(s), verify the MERGE
-   (see below), return control. Do not barrier or loop in shell.
-   Only `CLOSED/done` ships; other closes: read the reason note.
-8. Repeat from `mu state`.
-
-## Dispatch rules that prevent real failures
-
-- **Pipeline; don't barrier.** Wait for one task, cherry-pick only its
-  new commits, verify, return control. An umbrella wait hides progress;
-  merging stale branches can restore reverted code.
-- **Verify the merge, not the worker's rerun.** Only the combination
-  with moved main is new; that found three breaks rerunning found none
-  of. Run a remote merge gate on the host (see REMOTE_WORKERS.md).
-- **Push only from a green gate.** Make `git push` the last line under
-  `set -e`. Check the gate runs what it claims: an env-gated randomized
-  test once passed with zero cases.
-- **Dispatch from current main.** Reset the worker's worktree to main
-  before each task.
-- **Accept evidence, not close notes.** Re-run the key measurement from
-  a clean checkout; close notes have claimed unpushed commits.
-- **Freeze only what conflicts.** Give idle workers tasks that avoid
-  shared files; a blanket freeze idled four of five workers for a day.
-- **Fix done before a long run.** Put the completion criterion (checks,
-  agreeing runs, allowed variance) in the task note first.
-- **Split long proofs into independent units**, sharded and parallel,
-  so one flake restarts only its unit.
-- Bucket waves by file cluster, not severity; two agents editing one file
-  conflict. Refresh workspaces between waves.
-- Cross-workstream wait and claim use qualified refs; only task
-  ownership crosses.
-- For an idle worker, read the pane, then answer, retry, or release its
-  task. `MU_IDLE_THRESHOLD_MS` defaults to 5m.
-- **Never chain `/new` and a prompt as two sends to a pi agent:** the prompt
-  can land mid-reset and vanish (it did, twice). `--fresh` does both inside pi.
-- **Stop a worker:** `mu agent abort <w>` first for pi (exact, local or
-  remote, keeps context, waits for idle; exit 5 = still busy; queued
-  follow-ups return to the editor unsent). Then `mu agent kick` (pi
-  unresponsive, or non-pi; local panes only), then `mu agent close`.
-- Use `mu agent send`, not raw mux input. Single-quote prompts containing shell
-  expansions, or use a quoted heredoc.
+- **Claim before sending**, even one-shot reviewers. Ownership is
+  durable and waitable; agent state is not.
+- **Pipeline; don't barrier.** Merge each task as it closes.
+- **Verify the merge, not the worker's rerun.** Only `CLOSED/done` ships.
+- **Push only from a green gate.**
+- **Fix done before a long run**: the completion criterion goes in the
+  task note first.
+- **New work to pi is `mu agent send --fresh`.** Never chain `/new` and
+  a prompt as two sends: the prompt can land mid-reset and vanish.
+- **`mu task wait --first --on-stall exit`**; exit 7 means read the
+  owner's pane and answer it.
+- **Stop a worker gently**: `mu agent abort`, then `kick`, then `close`.
 
 ## CLI gotchas
 
-- **`workstream teardown`** is dry-run without `--yes`. It writes
-  TOMBSTONE ops, so `mu undo <group> --yes` reverses it; the log is the
-  backup. `workstream list --torn-down` lists group ids to undo.
+- **`workstream teardown`** is dry-run without `--yes`.
 - **`task close --if-ready`** no-ops until every blocker is CLOSED; bare
   `task release` reopens IN_PROGRESS.
 - **`task close --as rejected|wontfix --why ...`** (declined | valid, not worth it) unblocks dependents (listed in
@@ -204,32 +155,12 @@ Every turn:
   IN_PROGRESS — `task release` first.
 - **For waits use `task wait`, not `log --tail`.** `--kind` is the operator's
   log-ledger channel; `--intent` is what mu recorded.
-- **`mu undo`** bare lists groups; `<group>` previews; `<group> --yes`
-  emits inverse ops for that group only (redo = undo the undo). Exit 4
-  if a later action changed the same fields (`--force` discards it).
-  Rows only: killed panes and freed workspace dirs do not come back.
-- **`mu rebuild <file>`** writes a new DB from the ops log, without
-  agents or workspaces; re-spawn after the swap. Recovery is
-  `mu rebuild`, not `mu db backup`.
 - **`mu sql`** skips ambient sync.
-- **Sync:** set `MU_SYNC_DIR` on each machine to a shared folder
-  (Syncthing). Every command flushes and ingests ops, merged per field.
-  mu never runs ssh or rsync; `mu sync` prints the line.
-  `--repair <peer>` is always safe. **Never put `MU_DB_PATH` inside
-  `MU_SYNC_DIR`**: it corrupts the DB. Agents, workspaces, and task
-  ownership never travel.
-- **`mu doctor --deep` DRIFT** (exit 5) is a capture bug: back up and
-  report it. Do not rebuild; the live rows may hold work the log missed.
-  The `disk` section is report-only: an orphan dir may hold the only copy
-  of uncommitted work, so mu prints cleanup commands and runs none.
-
-## `mu task wait`
-
-Use `--first --on-stall exit`: `--first` populates `.firing`, and
-`--on-stall exit` stops an unattended wait when a worker needs attention.
-Exit 6 is a dead pane; exit 7 is an owner in `needs_input`. Read that
-pane (`mu agent read <owner>`) and answer: the worker may be waiting on
-you. Questions are cheaper than rework.
+- **Never put `MU_DB_PATH` inside `MU_SYNC_DIR`**: it corrupts the DB.
+- **`mu doctor --deep` DRIFT** (exit 5): back up and report it; do not
+  rebuild.
+- Before undo, rebuild, teardown, sync setup, or acting on `doctor`
+  cleanup output, read [recipes/recovery.md](recipes/recovery.md).
 
 ## Models and thinking effort
 
@@ -258,37 +189,41 @@ says why. Before a high-stakes decision, read the pane
 (`mu agent read worker-1 -n 100`), `mu log -w <ws> --tail`, and
 `mu task notes <id>`.
 
-## In-pane worker loop
+## You are a worker
 
-`$MU_AGENT_NAME` (injected at spawn) resolves identity; adopted panes
-fall back to the pane title. In a worker pane, bare `mu task claim <id>`
-works. In the unregistered orchestrator pane it errors; use `--self`,
-`--for <worker>`, or `mu agent adopt <pane>`.
-
-```bash
-mu me
-mu me next
-mu task show <id>; mu task notes <id>
-mu task claim <id> --evidence "starting; read notes"
-mu task note <id> "FILES: ...\nDECISION: ...\nVERIFIED: ..."
-mu task close <id> --evidence "tests pass: ..."  # LAST action
-```
-
-Skipping close makes the orchestrator's wait hang. Won't do it:
-`close --as wontfix --why "..."`.
-
-## Follow-on prompts
-
-A plain `mu agent send` appends to prior context; use it to steer or
-answer. Unrelated work to pi: `mu agent send worker-1 --fresh 'Claim
-task_x...'`. claude-code/codex: send `/new` (codex: `/clear`), then the
-prompt; a send it cannot confirm prints a `warning:` on stderr.
+If a task was claimed for you, follow [recipes/worker.md](recipes/worker.md).
+Close the task as your last action, or the orchestrator's wait hangs.
 
 ## Guardrails
 
 Task ownership outranks agent state. Coordinate through task notes and
 the activity log. Keep edges within one workstream and reserve the `mu_`
 task-id prefix. Give workers bounded paths and commands.
+
+## Recipes
+
+Read the recipe before starting the shape it names. For a large or
+risky job that needs several of them, start with
+[ultrathink](recipes/ultrathink.md).
+
+| Recipe | Read when |
+| --- | --- |
+| [ultrathink](recipes/ultrathink.md) | a job is too large or risky for one context; composes the rest |
+| [orchestrator-loop](recipes/orchestrator-loop.md) | you dispatch tasks and merge results |
+| [worker](recipes/worker.md) | a task was claimed for you |
+| [recovery](recipes/recovery.md) | undo, rebuild, teardown, sync setup, `doctor` cleanup |
+| [remote-workers](recipes/remote-workers.md) | an agent runs on another machine |
+| [waves](recipes/waves.md) | more than one worker edits the same repo at once |
+| [long-run](recipes/long-run.md) | a task or proof runs for hours, or must survive flakes |
+| [watcher](recipes/watcher.md) | a helper polls a PR, CI, or log for change |
+| [adversarial-review](recipes/adversarial-review.md) | work must be checked by someone other than its author before it counts |
+| [fan-out](recipes/fan-out.md) | the same change or check applies to many units |
+| [refute](recipes/refute.md) | an audit, sweep, or fact-check produces findings |
+| [hypothesis-panel](recipes/hypothesis-panel.md) | a root cause is unknown (flaky test, intermittent bug) |
+| [tournament](recipes/tournament.md) | several answers are possible and the best is a judgement call |
+| [loop-until-done](recipes/loop-until-done.md) | the amount of work is unknown until a check passes |
+| [triage](recipes/triage.md) | a backlog of external items needs classifying and acting on |
+| [codemode-driver](recipes/codemode-driver.md) | a codemode script would dispatch a wave in parallel |
 
 ## See also
 

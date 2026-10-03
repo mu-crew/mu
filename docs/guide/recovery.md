@@ -2,7 +2,9 @@
 
 Start with `mu doctor`. Each row that is not `ok` prints the command
 that fixes it. mu reports and never cleans up for you, because an
-orphan directory can hold the only copy of uncommitted work.
+orphan directory can hold the only copy of uncommitted work. Agents
+read the same rules in
+[recipes/recovery.md](../../skills/mu/recipes/recovery.md).
 
 ```bash
 mu doctor           # exit 0 healthy, 5 on drift

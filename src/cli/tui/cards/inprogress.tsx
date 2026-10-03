@@ -28,7 +28,7 @@
 //   empty     → omitted (no IN_PROGRESS tasks → empty-state body)
 //   populated → "<N>"  or  "<N> · <K> stale"
 //   stale     := time-since-claim ≥ 5min (matches mu's idle threshold
-//                default; see skills/mu/SKILL.md)
+//                default; see skills/mu/recipes/orchestrator-loop.md)
 //
 // TIME-SINCE-CLAIM
 //   The cheapest accurate-enough proxy is TaskRow.updatedAt — task

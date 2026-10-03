@@ -10,7 +10,33 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **`recipes/adversarial-review.md`**: a review is a task blocked by the
+  work, run by a fresh agent (a different model recommended) against
+  criteria written up front. REJECT grows the DAG with `fix_` and
+  `review_..._2` tasks instead of rewriting history.
+- **Workflow recipes** in `skills/mu/recipes/`: `fan-out`, `refute`
+  (find → refute → synthesize), `hypothesis-panel`, `tournament`,
+  `loop-until-done`, `triage`, and `codemode-driver` (a codemode script
+  that dispatches through mu verbs and holds no state). **`ultrathink`**
+  composes them: fix done, scout, pick a shape, plan every unit as a
+  task, review every shipped unit, close against the stop rule. Every
+  unit, check and round is a DAG task, so the run stays visible in
+  `mu state`.
+
 ### Changed
+
+- **Skill recipes.** Branch-only material in the mu skill moves to
+  `skills/mu/recipes/`, loaded on demand through a recipe index in
+  `SKILL.md`. `REMOTE_WORKERS.md` becomes `recipes/remote-workers.md`.
+  New recipes `orchestrator-loop`, `worker`, `recovery`, `waves`,
+  `long-run` and `watcher` take that material out of the core skill,
+  which keeps one-line hard rules and shrinks from 295 to 210 lines.
+  No CLI change.
+- **Orchestrators keep driving.** SKILL.md states that an orchestrator
+  ends its turn only when every task is closed or a human-only decision
+  blocks progress; a status summary is a `mu log` line, not a stop.
 
 - **pi agents never touch pane scraping.** `mu agent send <pi> '/new'`,
   `'/reload'` and `'/compact [instructions]'` run inside pi through a
