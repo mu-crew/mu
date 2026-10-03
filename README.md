@@ -20,9 +20,9 @@ in-progress, and blocked tasks, the log tail, workspaces, and doctor.*
   socket inside each agent, so send, state, wait, and abort are exact,
   locally and over ssh. The pane stays pi's normal TUI.
 
-mu persists state and coordinates handoffs. It does not choose models,
-run your tests, or pass messages between agents. Every read path has
-`--json`, and every change goes through a typed CLI verb.
+mu persists state and coordinates handoffs. Every read path has
+`--json`, and every change goes through a typed CLI verb. See
+[What mu is not](#what-mu-is-not).
 
 ## Install
 
@@ -71,24 +71,6 @@ For one helper, ask pi to delegate (`mu_delegate` ships with `mu link
 pi`), or spawn into the reserved `scratch` workstream:
 `mu agent spawn scout-1 -w scratch`.
 
-## mu delegates vs hidden subagents
-
-Claude Code, Codex, and pi-subagents delegate to a hidden child process
-and return only its result. A mu delegate is an ordinary agent in a
-pane.
-
-|                         | Hidden subagent          | mu delegate |
-| ----------------------- | ------------------------ | ----------- |
-| Visibility              | none while it runs       | a pane; attach and watch |
-| Steer mid-run           | no                       | `mu agent send`; stop with `mu agent abort` |
-| Keep talking after it answers | no                 | yes, with `keep: true` |
-| Transcript              | collapses into a result  | a normal pi session log |
-| If the work grows       | re-brief a new agent     | same task DAG and workspaces |
-| Cost                    | light                    | one pane and one pi process |
-
-For many tiny calls, a hidden subagent is lighter. mu bets that seeing
-and steering agent work is worth a pane.
-
 ## Ultrathink, the mu way
 
 Long agent runs fail in two ways: the agent stops at 35 of 50 items and
@@ -134,6 +116,28 @@ In pi, `mu link pi` adds them as commands: `/ultrathink <job>`,
 
 All recipes, including the orchestrator loop and remote workers, are
 in [skills/mu/recipes/](skills/mu/recipes/).
+
+## What mu is not
+
+- **Not a hidden subagent.** Every agent, including a one-off
+  `mu_delegate` helper, is an ordinary agent in a pane: attach, steer,
+  abort, or keep talking to it. That costs a pane and a pi process per
+  agent; for many tiny calls a hidden subagent is lighter. See
+  [the comparison](docs/guide/delegate.md#delegates-vs-hidden-subagents).
+- **Not a workflow engine.** No DSL, no hidden plan, no script runner.
+  The plan is the task DAG; recipes are instructions an agent follows,
+  and every step is a CLI verb.
+- **Not a model router.** mu does not pick models, thinking levels, or
+  tools. Pass them in the spawn command (`--cli pi_big`).
+- **Not a chat bus.** Agents coordinate through task notes, claims, and
+  the ops log, not messages to each other.
+- **Not a daemon or a service.** No background process, config file, web
+  UI, or RPC. State is one SQLite file; sync rides on ordinary commands.
+- **Not a test runner or a judge.** `--evidence` records what an agent
+  observed; checking it is the orchestrator's job, and the recipes say how.
+
+The full list, with reasons: [VISION § What it is not](docs/VISION.md#what-it-is-not)
+and [ROADMAP § Anti-feature pledges](docs/ROADMAP.md#anti-feature-pledges).
 
 ## Documentation
 
