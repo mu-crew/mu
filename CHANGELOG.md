@@ -12,6 +12,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Recipe commands in pi.** The mu extension serves prompt templates
+  from the package's `prompts/` through pi's `resources_discover`:
+  `/ultrathink <job>`, `/mu-research`, `/mu-review`, `/mu-refute`,
+  `/mu-tournament`, `/mu-rules-audit`. Each loads the matching recipe; they upgrade with
+  mu. Running pi sessions need `/reload` once.
+- **`recipes/deep-research.md`** (searchers by angle, one checker per
+  sourced claim, cited report) and **`recipes/review-panel.md`** (one
+  fresh reviewer per angle on a diff, findings refuted, then fixed or
+  reported), and **`recipes/rules-audit.md`** (check mode: one checker
+  per written rule plus a skeptic; mine mode: cluster repeated review
+  corrections into proposed rules, refuted before a human decides).
+
 - **`recipes/adversarial-review.md`**: a review is a task blocked by the
   work, run by a fresh agent (a different model recommended) against
   criteria written up front. REJECT grows the DAG with `fix_` and

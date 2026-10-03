@@ -124,6 +124,13 @@ That recipe composes smaller ones you can also use on their own:
 | [tournament](skills/mu/recipes/tournament.md) | competing attempts, judged in pairs |
 | [loop-until-done](skills/mu/recipes/loop-until-done.md) | rounds until a stop rule written up front holds |
 | [triage](skills/mu/recipes/triage.md) | quarantined readers classify, a trusted actor acts |
+| [deep-research](skills/mu/recipes/deep-research.md) | searchers by angle, one checker per claim, a cited report |
+| [review-panel](skills/mu/recipes/review-panel.md) | one reviewer per angle on a diff, refuted, then fixed or reported |
+| [rules-audit](skills/mu/recipes/rules-audit.md) | one checker per AGENTS.md rule plus a skeptic; or mine repeated corrections into new rules |
+
+In pi, `mu link pi` adds them as commands: `/ultrathink <job>`,
+`/mu-research <question>`, `/mu-review [target]`, `/mu-refute <scope>`,
+`/mu-tournament <task>`, and `/mu-rules-audit [check <target> | mine]`.
 
 All recipes, including the orchestrator loop and remote workers, are
 in [skills/mu/recipes/](skills/mu/recipes/).

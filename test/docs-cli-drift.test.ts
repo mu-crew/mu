@@ -67,6 +67,9 @@ const DOC_FILES = [
   "skills/mu/recipes/ultrathink.md",
   "skills/mu/recipes/brief.md",
   "skills/mu/recipes/plan.md",
+  "skills/mu/recipes/deep-research.md",
+  "skills/mu/recipes/review-panel.md",
+  "skills/mu/recipes/rules-audit.md",
   "scripts/README.md",
 ];
 

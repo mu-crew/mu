@@ -225,6 +225,9 @@ risky job that needs several of them, start with
 | [tournament](recipes/tournament.md) | several answers are possible and the best is a judgement call |
 | [loop-until-done](recipes/loop-until-done.md) | the amount of work is unknown until a check passes |
 | [triage](recipes/triage.md) | a backlog of external items needs classifying and acting on |
+| [deep-research](recipes/deep-research.md) | a question needs many sources read and cross-checked |
+| [review-panel](recipes/review-panel.md) | one diff or PR needs review from several angles |
+| [rules-audit](recipes/rules-audit.md) | a change must follow AGENTS.md rule by rule, or rules keep being restated |
 | [codemode-driver](recipes/codemode-driver.md) | a codemode script would dispatch a wave in parallel |
 
 ## See also
