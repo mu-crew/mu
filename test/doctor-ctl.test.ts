@@ -77,7 +77,7 @@ describe("mu ext / mu skill rows", () => {
     expect(ctlExtensionDoctorCheck()).toEqual({
       name: "mu ext",
       status: "ok",
-      detail: "(ctl, mu_delegate)",
+      detail: "(ctl, mu_delegate, nudge)",
     });
     expect(skillDoctorCheck()).toMatchObject({ name: "mu skill", status: "ok" });
   });
@@ -86,9 +86,24 @@ describe("mu ext / mu skill rows", () => {
     linkPi();
     process.env.MU_DELEGATE = "0";
     try {
-      expect(ctlExtensionDoctorCheck().detail).toBe("(ctl; mu_delegate disabled by MU_DELEGATE=0)");
+      expect(ctlExtensionDoctorCheck().detail).toBe(
+        "(ctl, nudge; mu_delegate disabled by MU_DELEGATE=0)",
+      );
     } finally {
       const key = "MU_DELEGATE";
+      delete process.env[key];
+    }
+  });
+
+  it("mu ext names the MU_NUDGE=0 kill switch", () => {
+    linkPi();
+    process.env.MU_NUDGE = "0";
+    try {
+      expect(ctlExtensionDoctorCheck().detail).toBe(
+        "(ctl, mu_delegate; nudge disabled by MU_NUDGE=0)",
+      );
+    } finally {
+      const key = "MU_NUDGE";
       delete process.env[key];
     }
   });

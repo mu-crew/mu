@@ -60,7 +60,7 @@ describe("mu doctor — agent state source", () => {
     // biome-ignore lint/suspicious/noControlCharactersInRegex: strip ANSI colour
     const plain = stdout.replace(/\u001b\[[0-9;]*m/g, "");
     expect(plain).toMatch(/agent state\s*: ok not needed for pi agents \(mu extension\)/);
-    expect(plain).toMatch(/mu ext\s*: ok \(ctl, mu_delegate\)/);
+    expect(plain).toMatch(/mu ext\s*: ok \(ctl, mu_delegate, nudge\)/);
     expect(plain).toMatch(/mu skill\s*: ok /);
     expect(plain).toMatch(/ctl\s*: ok no pi agents/);
   });

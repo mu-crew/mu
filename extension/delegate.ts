@@ -97,7 +97,7 @@ function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {
 }
 
 /** The CLI this extension ships with (dist/cli.js next to dist/extension/), else `mu` on PATH. */
-function defaultRunner(): MuRunner {
+export function defaultRunner(): MuRunner {
   let cli: string | undefined;
   try {
     const p = fileURLToPath(new URL("../cli.js", import.meta.url));

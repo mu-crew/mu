@@ -139,6 +139,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/ctl/client.ts` | `ctlRequest`, `ctlProbe`, version and unknown-op errors |
 | `extension/mu-pi.ts` | pi extension, child side: serves `$MU_CTL_SOCK`; built to `dist/extension/mu-pi.js` |
 | `extension/delegate.ts` | pi extension, parent side: `mu_delegate` / `mu_delegate_cancel`, which shell out to `mu` |
+| `extension/nudge.ts` | pi extension: the keep-driving nudge. Arms on a `mu` dispatch, checks `mu state --json` at `agent_before_settle`, injects the SKILL.md rule once per prompt, logs `--kind nudge` |
 | `src/link.ts` | `mu link pi`: extension shim, skill symlink, `inspectLinks` for doctor |
 
 ### Tasks, workspaces and workstreams
