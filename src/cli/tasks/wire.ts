@@ -535,7 +535,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("wait <ids...>")
     .description(
-      "Block until the listed tasks reach --status (default CLOSED). Each <id> may be bare (resolves via -w / $MU_SESSION / tmux) or qualified `<workstream>/<name>` (cross-workstream waits don't need -w). Default: every task must reach the target (--all). --any / --first exit on the first one that does; --first additionally prints the firing ref's qualified id to stdout. For unattended waits, pass --on-stall exit so a worker needing attention terminates the wait with exit 7. Exit 0 = condition met; 5 = timeout; 6 = a watched task was reaper-flipped IN_PROGRESS→OPEN (target=CLOSED only); 7 = a worker needs attention (--on-stall exit).",
+      "Block until the listed tasks reach --status (default CLOSED). Each <id> may be bare (resolves via -w / $MU_SESSION / tmux) or qualified `<workstream>/<name>` (cross-workstream waits don't need -w). Default: every task must reach the target (--all). --any / --first exit on the first one that does; --first additionally prints the firing ref's qualified id to stdout. A worker needing attention terminates the wait with exit 7 (--on-stall exit, the default). Exit 0 = condition met; 5 = timeout; 6 = a watched task was reaper-flipped IN_PROGRESS→OPEN (target=CLOSED only); 7 = a worker needs attention (target=CLOSED, unless --on-stall warn).",
     )
     .option(
       "--status <status>",
@@ -547,17 +547,17 @@ export function wireTaskCommands(program: Command): void {
     )
     .option(
       "--first",
-      "alias for --any that ALSO prints the firing ref's qualified id to stdout and populates `firing` in --json (which --any leaves null). Use to drive a single-shot dispatch loop: `closed=$(mu task wait a b --first --on-stall exit --json | jq -r .firing.qualifiedId)`.",
+      "alias for --any that ALSO prints the firing ref's qualified id to stdout and populates `firing` in --json (which --any leaves null). Use to drive a single-shot dispatch loop: `closed=$(mu task wait a b --first --json | jq -r .firing.qualifiedId)`.",
     )
     .option("--timeout <seconds>", "max seconds to wait (0 = forever, default 600)", parseLines)
     .option(
       "--stuck-after <seconds>",
-      "the TRIGGER: mark an IN_PROGRESS task as needing attention when its owner has been in needs_input for >= N seconds since their last status change (0 = disable, default 300). needs_input has several causes — the worker may have finished without closing, be waiting on an answer, or be sitting at a prompt — so the warning names the observation and points at `mu agent read <owner>`, which is the next move in every case. The default ACTION is `warn` (keep polling); see --on-stall exit to terminate the wait instead.",
+      "the TRIGGER: mark an IN_PROGRESS task as needing attention when its owner has been in needs_input for >= N seconds since their last status change (0 = disable, default 120). needs_input has several causes — the worker may have finished without closing, be waiting on an answer, or be sitting at a prompt — so the warning names the observation and points at `mu agent read <owner>`, which is the next move in every case. The default ACTION is `exit` (exit 7); see --on-stall warn to keep polling instead.",
       parseLines,
     )
     .option(
       "--on-stall <action>",
-      "the ACTION when --stuck-after fires: 'warn' (default; yellow attention warning naming the owner + age, plus a corroborating agent_logs event; wait keeps polling) or 'exit' (same emit + persist, then exit 7 = STALL_DETECTED so an unattended orchestrator can branch on the idle-vs-dead distinction). Suppressed when --status is anything other than CLOSED (mirrors exit-6's carve-out). If exit-6 (dead pane) and exit-7 (stall) would fire in the same poll, exit 6 wins (dead pane is unambiguous; stall is ambiguous).",
+      "the ACTION when --stuck-after fires: 'exit' (default; yellow attention warning naming the owner + age, plus a corroborating agent_logs event, then exit 7 = STALL_DETECTED so an orchestrator can branch on the idle-vs-dead distinction) or 'warn' (same emit + persist; wait keeps polling). Suppressed when --status is anything other than CLOSED (mirrors exit-6's carve-out). If exit-6 (dead pane) and exit-7 (stall) would fire in the same poll, exit 6 wins (dead pane is unambiguous; stall is ambiguous).",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)

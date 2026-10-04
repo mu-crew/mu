@@ -135,6 +135,7 @@ export {
   type TaskSubstate,
 } from "./tasks/status.js";
 export {
+  DEFAULT_STUCK_AFTER_MS,
   getWaitPollCount,
   resetWaitPollCount,
   setWaitSleepForTests,

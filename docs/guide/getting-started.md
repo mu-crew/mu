@@ -126,10 +126,11 @@ The exit code tells you what happened:
 | `0` | the task closed | merge the work |
 | `5` | `--timeout` expired (default 600 s) | wait again |
 | `6` | the worker's pane died and the task went back to `OPEN` | spawn and claim again |
-| `7` | the worker sat in `needs_input` for 5 minutes | `mu agent read worker-1 -w auth`, then answer it |
+| `7` | the worker sat in `needs_input` for 2 minutes | `mu agent read worker-1 -w auth`, then answer it |
 
-Without `--on-stall exit`, a stalled worker only prints a warning and
-the wait keeps running.
+`--on-stall exit` is the default; it is spelled out above so older mu
+versions behave the same. With `--on-stall warn`, a stalled worker only
+prints a warning and the wait keeps running.
 
 ## Merge the commit
 
