@@ -10,6 +10,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.5.0] — 2026-10-04
+
+**Delegates that queue, report, and fail visibly; a slimmer mu.db.**
+`mu_delegate` no longer refuses past its cap: 16 run and up to 64 wait
+in a queue, pi's footer shows each call from the moment it is made
+(`running, starting, queued, failed`), and an API error after pi's own
+retries comes back named, with the pane kept, for the model to decide.
+murmur now holds `done` while a parent's delegates are still out.
+Teardowns stop writing every note twice, and `mu db compact` and
+`mu db forget <workstream...>` reclaim existing history; `mu doctor`
+names the largest workstreams worth forgetting. On one real DB this
+took mu.db from 86 MB to 53 MB.
+
+Upgrade with `npm i -g @mu-crew/mu@3.5.0`, then `/reload` in running pi
+sessions (`/reload --via mux` for agents mu spawned before the
+upgrade). No schema change. `mu db forget` cannot be undone: it backs
+up beside the DB first, and that backup is the only way back.
+
 ### Added
 
 - **`mu_delegate` reports outstanding delegates to murmur.** Each change
