@@ -10,6 +10,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.6.1] — 2026-10-04
+
+**murmur's `error` state is read as waiting, not unknown.** murmur 1.2.0
+marks a pi run whose last turn failed as `error`. mu read that token as an
+unrecognised murmur state; it now maps to `needs_input`, like `done` and
+`crashed`, so an errored worker shows as stopped and waiting on someone.
+
+Upgrade with `npm i -g @mu-crew/mu@3.6.1`. No schema change.
+
 ## [3.6.0] — 2026-10-04
 
 **Stalled workers surface by default; workers are told to close.**
