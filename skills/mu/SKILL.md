@@ -94,6 +94,11 @@ your first remote agent, and again before waiting on one.**
 **`mule` exit 3 is a HANDBACK** to the operator (hardware-key touch):
 never retry or open `ssh -MNf` yourself.
 
+### Workstream names
+
+`<project>-<purpose>` (`hail-auth`), one per effort, torn down when it
+ships. Reviews nobody will track run as `scratch` delegates.
+
 ### Agent names
 
 Use roles with the smallest unused suffix: `worker-1`, `reviewer-1`,
@@ -143,6 +148,10 @@ rules hold even when you skip it:
 - **`mu task wait --first --on-stall exit`**; exit 7 means read the
   owner's pane and answer it.
 - **Stop a worker gently**: `mu agent abort`, then `kick`, then `close`.
+- **Checks are calls, not tasks.** Refuters, claim checkers, judges and
+  skeptics are delegate calls; their verdict lands on the task they
+  judged ([recipes/tasks-or-calls.md](recipes/tasks-or-calls.md)).
+  At most 10 to 20 delegates at once (`MU_DELEGATE_MAX`, default 16).
 - **Findings are tasks.** A reviewer's or auditor's findings become
   `mu task add --triage` tasks blocking the review, decided with
   `mu task accept` or `close --as rejected|duplicate`. A review nobody
@@ -224,6 +233,7 @@ risky job that needs several of them, start with
 | [long-run](recipes/long-run.md) | a task or proof runs for hours, or must survive flakes |
 | [watcher](recipes/watcher.md) | a helper polls a PR, CI, or log for change |
 | [findings](recipes/findings.md) | any review, audit, or check reports problems: where they live, how they are triaged |
+| [tasks-or-calls](recipes/tasks-or-calls.md) | a recipe step spawns an agent: DAG task or delegate call |
 | [adversarial-review](recipes/adversarial-review.md) | work must be checked by someone other than its author before it counts |
 | [fan-out](recipes/fan-out.md) | the same change or check applies to many units |
 | [refute](recipes/refute.md) | an audit, sweep, or fact-check produces findings |

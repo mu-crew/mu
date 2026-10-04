@@ -74,6 +74,14 @@ export function delegateStatus(n: number): string | undefined {
 }
 /** Default `mu agent wait --timeout` for a delegate, in seconds. */
 export const DELEGATE_TIMEOUT_S = 3600;
+/** Default cap on delegates in flight from one pi session. */
+export const DELEGATE_MAX_DEFAULT = 16;
+
+/** `MU_DELEGATE_MAX`: a positive integer, else the default. */
+export function delegateMax(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.MU_DELEGATE_MAX);
+  return Number.isInteger(n) && n > 0 ? n : DELEGATE_MAX_DEFAULT;
+}
 const W = DELEGATE_WORKSTREAM;
 
 /** Registration guards: unmanaged pi, a mux in reach, not switched off. */
@@ -213,6 +221,8 @@ type Inflight = {
 export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunner()): void {
   if (!delegateEnabled()) return;
   const inflight = new Map<string, Inflight>();
+  /** Calls past the cap check whose delegate is not yet in `inflight`. */
+  let starting = 0;
   const reserved = new Set<string>();
   // The ctx of the latest tool call: answers settle outside any call, so
   // the footer is refreshed through the last ctx pi handed us.
@@ -358,7 +368,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   pi.registerTool({
     name: DELEGATE_TOOL,
     label: "mu delegate",
-    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation; call it several times to fan out in parallel. The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open.`,
+    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation; call it several times to fan out in parallel (at most ${delegateMax()} in flight). The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open.`,
     promptSnippet:
       "Subagent: delegate a self-contained task to a background pi agent; its answer arrives later as a follow-up",
     parameters: {
@@ -407,92 +417,117 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       track(ctx);
       const task = typeof params.task === "string" ? params.task.trim() : "";
       if (!task) throw new Error("mu_delegate needs a non-empty task");
-      const brief = typeof params.brief === "string" ? params.brief.trim() : "";
-      const keep = params.keep === true;
-      const t = params.timeout;
-      if (t !== undefined && !(typeof t === "number" && Number.isFinite(t) && t > 0))
+      // Count slots synchronously, before any await: parallel calls in one
+      // turn all run this line before the first spawn returns.
+      const max = delegateMax();
+      if (inflight.size + starting >= max)
         throw new Error(
-          `mu_delegate: timeout must be a positive number of seconds (got ${JSON.stringify(t)})`,
+          `mu_delegate: ${inflight.size + starting} delegates already running (MU_DELEGATE_MAX=${max}). Wait for answers to arrive, then delegate the rest.`,
         );
-      const timeoutS = typeof t === "number" ? Math.ceil(t) : DELEGATE_TIMEOUT_S;
-      // Without --cwd the pane inherits the mux session's start dir (wherever
-      // the FIRST scratch spawn ran), and a missing dir silently becomes
-      // $HOME: pin it to the caller's and check it exists.
-      let cwd: string | undefined;
-      if (params.workspace !== true) {
-        cwd =
-          typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
-        if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
-      }
-      const { name, attach, workspace } = await spawn(params, cwd, signal);
-      const entry: Inflight = { abort: new AbortController(), cancelling: false };
-      inflight.set(name, entry);
-      showStatus();
-      const started = Date.now();
-      // Start the wait alongside the send: it takes its baseline run count
-      // at startup and resolves on the first settle past it. A model turn
-      // outlasts a mu process start by orders of magnitude.
-      const waiting = mu(
-        ["agent", "wait", name, "-w", W, "--json", "--timeout", String(timeoutS)],
-        entry.abort.signal,
-      );
-      const sent = await mu(["agent", "send", name, brief ? `${brief}\n\n${task}` : task, "-w", W]);
-      if (sent.code !== 0) {
-        entry.abort.abort();
-        forget(name);
-        // Nothing reached it: the pane is just an idle pi. Take it down.
-        const c = await mu(["agent", "close", name, "-w", W]);
-        const pane =
-          c.code === 0
-            ? "Pane closed."
-            : `Pane kept; close it with: mu agent close ${name} -w ${W}`;
-        throw new Error(`${failure(`mu agent send to ${W}/${name}`, sent).message}. ${pane}`);
-      }
-      const settle = async (r: MuResult) => {
-        forget(name);
-        try {
-          await deliver(name, r, keep, {
-            timeoutS,
-            elapsedMs: Date.now() - started,
-            ...(attach ? { attach } : {}),
-            ...(workspace ? { workspace } : {}),
-          });
-        } catch (e) {
-          // A throw here would be an unhandled rejection and a lost answer.
-          await Promise.resolve(
-            pi.sendMessage(
-              {
-                customType: DELEGATE_MESSAGE_TYPE,
-                content: `Delegate ${W}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${W}`,
-                display: true,
-                details: { name, workstream: W, outcome: null, closed: false },
-              },
-              { deliverAs: "followUp", triggerTurn: true },
-            ),
-          ).catch(() => {});
+      starting++;
+      let slotHeld = true;
+      const freeSlot = () => {
+        if (slotHeld) starting--;
+        slotHeld = false;
+      };
+      try {
+        const brief = typeof params.brief === "string" ? params.brief.trim() : "";
+        const keep = params.keep === true;
+        const t = params.timeout;
+        if (t !== undefined && !(typeof t === "number" && Number.isFinite(t) && t > 0))
+          throw new Error(
+            `mu_delegate: timeout must be a positive number of seconds (got ${JSON.stringify(t)})`,
+          );
+        const timeoutS = typeof t === "number" ? Math.ceil(t) : DELEGATE_TIMEOUT_S;
+        // Without --cwd the pane inherits the mux session's start dir (wherever
+        // the FIRST scratch spawn ran), and a missing dir silently becomes
+        // $HOME: pin it to the caller's and check it exists.
+        let cwd: string | undefined;
+        if (params.workspace !== true) {
+          cwd =
+            typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
+          if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
         }
-      };
-      void waiting.then(async (r) => {
-        if (inflight.get(name) !== entry) return; // cancelled or shut down
-        if (entry.cancelling) entry.parked = () => settle(r);
-        else await settle(r);
-      });
-      const lines = [
-        `Delegated to ${W}/${name}. Its answer arrives as a follow-up message when it finishes; do not wait or poll.`,
-        workspace ? `Workspace: ${workspace}` : undefined,
-        attach ? `Attach: ${attach}` : undefined,
-        `Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${name}" }`,
-      ].filter((x) => x !== undefined);
-      return {
-        content: [{ type: "text", text: lines.join("\n") }],
-        details: {
+        const { name, attach, workspace } = await spawn(params, cwd, signal);
+        const entry: Inflight = { abort: new AbortController(), cancelling: false };
+        inflight.set(name, entry);
+        freeSlot(); // now counted in inflight
+        showStatus();
+        const started = Date.now();
+        // Start the wait alongside the send: it takes its baseline run count
+        // at startup and resolves on the first settle past it. A model turn
+        // outlasts a mu process start by orders of magnitude.
+        const waiting = mu(
+          ["agent", "wait", name, "-w", W, "--json", "--timeout", String(timeoutS)],
+          entry.abort.signal,
+        );
+        const sent = await mu([
+          "agent",
+          "send",
           name,
-          workstream: W,
-          attach: attach ?? null,
-          workspace: workspace ?? null,
-          keep,
-        },
-      };
+          brief ? `${brief}\n\n${task}` : task,
+          "-w",
+          W,
+        ]);
+        if (sent.code !== 0) {
+          entry.abort.abort();
+          forget(name);
+          // Nothing reached it: the pane is just an idle pi. Take it down.
+          const c = await mu(["agent", "close", name, "-w", W]);
+          const pane =
+            c.code === 0
+              ? "Pane closed."
+              : `Pane kept; close it with: mu agent close ${name} -w ${W}`;
+          throw new Error(`${failure(`mu agent send to ${W}/${name}`, sent).message}. ${pane}`);
+        }
+        const settle = async (r: MuResult) => {
+          forget(name);
+          try {
+            await deliver(name, r, keep, {
+              timeoutS,
+              elapsedMs: Date.now() - started,
+              ...(attach ? { attach } : {}),
+              ...(workspace ? { workspace } : {}),
+            });
+          } catch (e) {
+            // A throw here would be an unhandled rejection and a lost answer.
+            await Promise.resolve(
+              pi.sendMessage(
+                {
+                  customType: DELEGATE_MESSAGE_TYPE,
+                  content: `Delegate ${W}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${W}`,
+                  display: true,
+                  details: { name, workstream: W, outcome: null, closed: false },
+                },
+                { deliverAs: "followUp", triggerTurn: true },
+              ),
+            ).catch(() => {});
+          }
+        };
+        void waiting.then(async (r) => {
+          if (inflight.get(name) !== entry) return; // cancelled or shut down
+          if (entry.cancelling) entry.parked = () => settle(r);
+          else await settle(r);
+        });
+        const lines = [
+          `Delegated to ${W}/${name}. Its answer arrives as a follow-up message when it finishes; do not wait or poll.`,
+          workspace ? `Workspace: ${workspace}` : undefined,
+          attach ? `Attach: ${attach}` : undefined,
+          `Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${name}" }`,
+        ].filter((x) => x !== undefined);
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          details: {
+            name,
+            workstream: W,
+            attach: attach ?? null,
+            workspace: workspace ?? null,
+            keep,
+          },
+        };
+      } finally {
+        freeSlot();
+      }
     },
   });
 

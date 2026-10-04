@@ -25,11 +25,12 @@ rules are findings: [findings](findings.md) says where they live.
    count.
 2. **Pin the target**: the diff, branch, or PR, as in
    [review-panel](review-panel.md) step 1.
-3. **One checker per rule.** The checker gets one rule and the diff,
+3. **One checker per rule**, as a delegate call
+   ([tasks-or-calls](tasks-or-calls.md)). The checker gets one rule and the diff,
    and records each violation as a finding (title `r7: <what>`,
    file:line in the note), or reports `r7: no violations` with what it
    looked at. One rule per checker keeps it from skimming.
-4. **A skeptic pass** over the flags: one fresh agent reads each flagged
+4. **A skeptic pass** over the flags, also a call: one fresh agent reads each flagged
    line and the rule, and drops false positives (the rule does not
    apply here, the code already complies, the rule has a stated
    exception). In workstream mode, a dropped flag is
@@ -57,7 +58,7 @@ is decided.
    corrections from different occasions; a one-off is not a rule.
 3. **One `OPEN/triage` task per candidate rule**, the rule as the
    title and its cluster of corrections in the note.
-4. **Refute each candidate** with a fresh agent: would it have
+4. **Refute each candidate** with a delegate call: would it have
    prevented the real mistakes in its cluster? Does it contradict an
    existing rule? Is it already enforced by a linter or test (then it
    needs no prose)? Dropped candidates close `--as rejected`.

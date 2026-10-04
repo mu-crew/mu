@@ -45,6 +45,24 @@ clears all blockers.
 `mu agent spawn <name> -w scratch`, and `mu workstream init scratch`
 is rejected. The `mu-` prefix is reserved too.
 
+## Workstream names
+
+Name a workstream `<project>-<purpose>`: `hail-auth`, `swayward-v2`,
+`dotfiles-zsh`. The project is the repo or folder; the purpose is the
+effort. Two repos then never share `auth`, and `mu workstream list`
+groups by project. `workstream init` prints a hint for a name with no
+`-`.
+
+- **One workstream per effort.** Tear it down when the effort ships;
+  the ops log keeps the history and `mu undo` restores it. A long-lived
+  catch-all becomes a log nobody reads: `mu state` hints once a
+  workstream passes 300 tasks with fewer than 10% open.
+- **Ultrathink runs** get their own: `<project>-ut-<topic>`.
+- **Delegate-only work** (reviewing someone's PR or a doc) goes in
+  `scratch`, never a new workstream.
+- `mu-` is reserved, so the mu repo's own workstreams use the purpose
+  alone or another prefix.
+
 ## Agent names
 
 Name agents by role with a numeric suffix: `worker-1`, `reviewer-1`,

@@ -40,6 +40,7 @@ function snapshotWithAgents(agents: LiveAgent[]): WorkstreamSnapshot {
     recentClosed: [],
     parkedCount: 0,
     triage: [],
+    taskCount: 0,
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

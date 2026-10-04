@@ -34,6 +34,22 @@ the loop and the reasons behind them.
    Only `CLOSED/done` ships; other closes: read the reason note.
 8. Repeat from `mu state`.
 
+## Concurrency
+
+Write the ceiling on the umbrella before the first wave
+(`CONCURRENCY: delegates 12, workers 4`) so a resumed orchestrator
+keeps it.
+
+- **Delegates** (read-only calls): 10 to 20 at once is reasonable.
+  Token spend and provider rate limits bind first; start near 8 and
+  raise after a clean wave. `mu_delegate` refuses past
+  `MU_DELEGATE_MAX` (default 16).
+- **Workers with workspaces** build and test: about one per CPU core,
+  fewer when each runs the full suite. A remote host has its own
+  session cap ([remote-workers](remote-workers.md)).
+- **Stream, do not batch.** Keep the pool full: dispatch the next unit
+  when one closes, rather than waiting for a whole wave.
+
 ## Waiting
 
 Use `--first --on-stall exit`: `--first` populates `.firing`, and

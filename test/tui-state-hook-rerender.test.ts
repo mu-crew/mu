@@ -83,6 +83,7 @@ function makeSnap(overrides: Partial<WorkstreamSnapshot> = {}): WorkstreamSnapsh
     blocked: [],
     recentClosed: [],
     triage: [],
+    taskCount: 0,
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

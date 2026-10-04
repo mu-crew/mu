@@ -34,6 +34,7 @@ function fastSnapshot(label: string): WorkstreamSnapshot {
     recentClosed: [],
     parkedCount: 0,
     triage: [],
+    taskCount: 0,
     allTasks: [],
     workspaces: [
       {

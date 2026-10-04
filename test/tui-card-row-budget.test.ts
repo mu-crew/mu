@@ -31,6 +31,7 @@ const EMPTY_SNAPSHOT: WorkstreamSnapshot = {
   recentClosed: [],
   parkedCount: 0,
   triage: [],
+  taskCount: 0,
   allTasks: [],
   workspaces: [],
   workspaceOrphans: [],

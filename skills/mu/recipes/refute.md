@@ -22,14 +22,14 @@ fact-check nobody will track, use delegate mode from
    evidence in the note ([findings § Record](findings.md#record)). A
    finder with more than 5 writes `FINDING:` lines in its own note
    instead; the triage step turns them into tasks.
-4. **Refute each finding** before it is accepted. The refuter claims
-   the finding with `--force` (it is in triage), gets the finding and
-   the code, not the finder's reasoning, and tries to prove it false:
-   run it, find the guard, read the caller. It writes its evidence as a
-   note and releases the task, then the triager decides it
-   ([findings § Triage](findings.md#triage)): accept, or close
-   `--as rejected` / `--as duplicate`. For high-severity findings, run
-   three refuters and accept only if most fail to kill it.
+4. **Refute each finding** with a delegate call, not a task
+   ([tasks-or-calls](tasks-or-calls.md)). The refuter gets the finding
+   and the code, not the finder's reasoning, and tries to prove it
+   false: run it, find the guard, read the caller. Its answer ends with
+   `VERDICT: CONFIRMED | REFUTED | UNVERIFIED <evidence>`. You record it
+   on the finding ([findings § Triage](findings.md#triage)): accept, or
+   close `--as rejected --why '<evidence>'`. For high-severity
+   findings, run three refuters and accept only if most fail to kill it.
 5. **Report** from the graph: accepted findings are the result, ranked
    by impact; `mu task list --substate rejected` is what was refuted.
    A synthesis task is needed only when the human wants prose.

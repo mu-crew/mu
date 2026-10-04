@@ -19,7 +19,8 @@ panel's findings will be fixed by agents. Both modes are in
 1. **Pin the target.** Record the exact range on an umbrella task:
    `git diff main...HEAD`, a PR number, or a commit range. Every
    reviewer reads the same range.
-2. **One reviewer per angle.** Pick the angles that apply:
+2. **One reviewer per angle**: a delegate in delegate mode, a task in
+   workstream mode. Pick the angles that apply:
 
    | Angle | Looks for |
    | --- | --- |
@@ -36,9 +37,10 @@ panel's findings will be fixed by agents. Both modes are in
    - delegate: each reviewer ends its answer with `FINDING:` lines;
    - workstream: each finding is an `OPEN/triage` task blocking the
      umbrella ([findings § Record](findings.md#record)).
-4. **Merge and refute.** Merge duplicates across angles, then have a
-   fresh agent try to refute each finding above low severity, as in
-   [refute](refute.md) step 4.
+4. **Merge and refute.** Merge duplicates across angles, then refute
+   each finding above low severity with a delegate call, as in
+   [refute](refute.md) step 4. Refuters are calls in both modes
+   ([tasks-or-calls](tasks-or-calls.md)).
 5. **Act:**
    - delegate mode: post the comments or edit the doc from the merged
      list, citing file:line and evidence;

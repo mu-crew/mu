@@ -8,6 +8,7 @@
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
+import { basename } from "node:path";
 import {
   emitJson,
   emitJsonCollection,
@@ -67,6 +68,11 @@ export async function cmdInit(db: Db, name: string, opts: { json?: boolean } = {
   // here: the cue is a nice-to-have, not load-bearing. Don't fail init.
   await mux.enableMuPaneBordersForSession(sessionName).catch(() => {});
   const created = !sessionAlready || dbCreated;
+  // Naming convention (docs/reference/naming.md): <project>-<purpose>,
+  // so two repos never share `auth` and `workstream list` groups by project.
+  const nameHint = name.includes("-")
+    ? undefined
+    : `name workstreams <project>-<purpose> (e.g. ${projectGuess() ?? "repo"}-${name}); one per effort`;
   const nextSteps: NextStep[] = [
     { intent: "Attach the session", command: mux.attachHint({ session: sessionName }) },
     {
@@ -84,6 +90,7 @@ export async function cmdInit(db: Db, name: string, opts: { json?: boolean } = {
       muxSessionAlreadyExisted: sessionAlready,
       dbRowAlreadyExisted: !dbCreated,
       muWindowRepaired,
+      ...(nameHint && created ? { hint: nameHint } : {}),
       nextSteps,
     });
     return;
@@ -99,7 +106,18 @@ export async function cmdInit(db: Db, name: string, opts: { json?: boolean } = {
     return;
   }
   console.log(`Created workstream ${pc.bold(name)} (mux session ${pc.bold(sessionName)})`);
+  if (nameHint && created) console.log(pc.dim(`hint: ${nameHint}`));
   printNextSteps(nextSteps);
+}
+
+/** The cwd's repo or folder name, lowercased into a workstream-legal slug. */
+function projectGuess(): string | undefined {
+  const base = basename(process.cwd())
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^[^a-z]+/, "")
+    .replace(/-+$/, "");
+  return base === "" ? undefined : base;
 }
 
 export async function cmdWorkstreamList(
@@ -471,11 +489,17 @@ export function withPositionalWorkstream<T extends { workstream?: string }>(
 }
 
 export function wireWorkstreamCommands(program: Command): void {
-  const workstream = program.command("workstream").description("Workstream-level commands");
+  const workstream = program
+    .command("workstream")
+    .description(
+      "Workstream-level commands. Name them <project>-<purpose> (hail-auth), one per effort; tear down when it ships. Reviews nobody will track belong in scratch delegates, not a workstream.",
+    );
 
   workstream
     .command("init <name>")
-    .description("Create the workstream's mux session and register it in the DB")
+    .description(
+      "Create the workstream's mux session and register it in the DB. Name it <project>-<purpose>.",
+    )
     .option(...JSON_OPT)
     .action(function (name: string) {
       const opts = (this as Command).opts() as { json?: boolean };

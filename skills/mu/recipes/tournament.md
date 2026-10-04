@@ -9,17 +9,19 @@ reliable than scoring one.
 
 1. **Write the rubric first**, on the umbrella: what good looks like,
    in a few ranked criteria. Judges apply it; they do not invent one.
-2. **Generate.** N attempt tasks with the same brief and a different
-   approach or model each. Code attempts run in separate workspaces.
-   For ideas (names, plans), one task can generate many candidates as
-   note lines.
+2. **Generate.** N attempts with the same brief and a different
+   approach or model each. Code attempts are tasks, each in its own
+   workspace. Ideas (names, plans) are delegate calls; one call can
+   generate many candidates.
 3. **Filter** (when there are many candidates): one task drops the ones
    that fail a hard rubric criterion and merges duplicates. What is left
    enters the bracket.
-4. **Judge in pairs.** One task per comparison, a fresh agent each, so no
-   judge holds the whole field. The judge sees the two candidates and
-   the rubric and ends with `WINNER: <a|b> <reason>`. Winners meet in the
-   next round; add those tasks as the round closes.
+4. **Judge in pairs.** One delegate call per comparison, a fresh agent
+   each, so no judge holds the whole field
+   ([tasks-or-calls](tasks-or-calls.md)). The judge sees the two
+   candidates and the rubric and ends with `WINNER: <a|b> <reason>`.
+   Record each round's results in the umbrella's note; winners meet in
+   the next round.
 5. **Confirm the winner** with a final check against the rubric, then
    merge it. Free the losing workspaces.
 
