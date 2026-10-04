@@ -606,6 +606,23 @@ export async function teardownWorkstream(
     }
   }
 
+  // The cascade skips deleteAgent, so unlink each agent's control
+  // socket here (ssh -L forwards leave theirs behind). Do it BEFORE the
+  // DELETE: the agent rows are how a retry finds the sockets, so an
+  // interrupted unlink must leave them in place. Then reap
+  // sock/<ws>/ only if empty, never recursively: hashed long paths
+  // share sock/h/ across workstreams, so a workstream named "h" must
+  // not take the others' sockets with it.
+  for (const name of agentNames) unlinkCtlSocket(db, name, opts.workstream);
+  if (!db.memory) {
+    const sockDir = join(dirname(db.name), "sock", opts.workstream);
+    try {
+      if (readdirSync(sockDir).length === 0) rmdirSync(sockDir);
+    } catch {
+      // Missing or non-empty: nothing of ours left to reap.
+    }
+  }
+
   // One DELETE: the FK CASCADE chain (workstreams → agents,
   // workstreams → tasks → task_edges + task_notes, workstreams →
   // agent_logs, workstreams → vcs_workspaces) cleans every row in
@@ -621,20 +638,6 @@ export async function teardownWorkstream(
   withOpContext(db, { intent: "workstream.teardown", group: "new" }, () =>
     db.prepare("DELETE FROM workstreams WHERE name = ?").run(opts.workstream),
   );
-  // The cascade skips deleteAgent, so unlink each agent's control
-  // socket here (ssh -L forwards leave theirs behind). Then reap
-  // sock/<ws>/ only if empty, never recursively: hashed long paths
-  // share sock/h/ across workstreams, so a workstream named "h" must
-  // not take the others' sockets with it.
-  for (const name of agentNames) unlinkCtlSocket(db, name, opts.workstream);
-  if (!db.memory) {
-    const sockDir = join(dirname(db.name), "sock", opts.workstream);
-    try {
-      if (readdirSync(sockDir).length === 0) rmdirSync(sockDir);
-    } catch {
-      // Missing or non-empty: nothing of ours left to reap.
-    }
-  }
   // No emitEvent: the DELETE cascade fired the capture triggers, which
   // wrote tombstone ops (op='del', intent='workstream.teardown') for the
   // workstream AND for every task/edge/note that cascaded with it —

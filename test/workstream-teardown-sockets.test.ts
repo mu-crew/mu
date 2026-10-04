@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
@@ -61,6 +61,31 @@ describe("teardownWorkstream control sockets", () => {
     expect(existsSync(short)).toBe(false);
     expect(existsSync(long)).toBe(false);
     expect(existsSync(join(dir, "sock", "ws"))).toBe(false);
+  });
+
+  it("unlinks sockets before the cascade DELETE, while agent rows still exist", async () => {
+    const short = touchSock("ws", "w1");
+    const long = touchSock("ws", LONG);
+    // Interrupt teardown at the DELETE. Sockets must already be gone:
+    // if the unlink came after the DELETE, an interruption there would
+    // leave files with no agent rows for a retry to find them by.
+    const realPrepare = db.prepare.bind(db);
+    const spy = vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
+      if (sql.startsWith("DELETE FROM workstreams")) throw new Error("interrupted");
+      return realPrepare(sql);
+    });
+
+    await expect(teardownWorkstream(db, { workstream: "ws" })).rejects.toThrow("interrupted");
+    spy.mockRestore();
+
+    expect(existsSync(short)).toBe(false);
+    expect(existsSync(long)).toBe(false);
+    const rows = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM agents a JOIN workstreams w ON w.id = a.workstream_id WHERE w.name = ?",
+      )
+      .get("ws") as { n: number };
+    expect(rows.n).toBe(2);
   });
 
   it('tearing down workstream "h" leaves other workstreams\' hashed sockets in sock/h/', async () => {
