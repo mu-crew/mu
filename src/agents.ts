@@ -152,8 +152,9 @@ export interface LiveAgent extends AgentRow {
   idle?: boolean;
 }
 
-/** Default idle threshold. Matches today's `mu task wait --stuck-after`
- *  default so the two paths agree on what counts as 'stalled'. */
+/** Default idle threshold for the derived `idle` flag (`mu state`, TUI).
+ *  Deliberately looser than `mu task wait --stuck-after` (2 min), which
+ *  acts on the stall rather than just displaying it. */
 const DEFAULT_IDLE_THRESHOLD_MS = 300_000;
 
 /**

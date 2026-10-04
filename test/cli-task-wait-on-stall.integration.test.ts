@@ -273,26 +273,23 @@ describe("mu task wait --on-stall warn|exit", () => {
     expect(stderr).toContain("w1");
   });
 
-  it("--on-stall warn (default): stuck task → warning, polling continues, eventual timeout (exit 5)", async () => {
-    // The default is byte-for-byte identical to today's --stuck-after
-    // behaviour. The test validates that the new --on-stall flag at
-    // its default value doesn't change anything.
+  it("--on-stall exit (default): stuck task → exit 7 without the flag", async () => {
+    // Orchestrators kept forgetting --on-stall exit and polled past a
+    // worker that needed them until --timeout. The flag is now the default.
     setupStalledWorker("dave", "ship");
 
     const { exitCode, stderr } = await runCli(
-      ["task", "wait", "ship", "-w", workstream, "--stuck-after", "1", "--timeout", "1"],
+      ["task", "wait", "ship", "-w", workstream, "--stuck-after", "1", "--timeout", "30"],
       dbPath,
     );
 
-    expect(exitCode).toBe(5); // timed out, NOT exit 7
-    expect(stderr).toMatch(/needs attention/i);
+    expect(exitCode).toBe(7);
     expect(stderr).toContain("ship");
     expect(stderr).toContain("dave");
-    // The remedy line names the owner's pane, not the task row.
     expect(stderr).toContain("mu agent read dave");
   });
 
-  it("--on-stall warn (explicit): same as default warn", async () => {
+  it("--on-stall warn: warns, keeps polling, times out (exit 5)", async () => {
     setupStalledWorker("frank", "deploy");
 
     const { exitCode, stderr } = await runCli(
@@ -337,6 +334,8 @@ describe("mu task wait --on-stall warn|exit", () => {
         workstream,
         "--stuck-after",
         "1",
+        "--on-stall",
+        "warn",
         "--timeout",
         "1",
         "--json",
@@ -416,7 +415,19 @@ describe("mu task wait --on-stall warn|exit", () => {
     setupStalledWorker("nosock2", "orphan2", "pi");
 
     const { exitCode, stderr } = await runCli(
-      ["task", "wait", "orphan2", "-w", workstream, "--stuck-after", "1", "--timeout", "3"],
+      [
+        "task",
+        "wait",
+        "orphan2",
+        "-w",
+        workstream,
+        "--stuck-after",
+        "1",
+        "--on-stall",
+        "warn",
+        "--timeout",
+        "3",
+      ],
       dbPath,
     );
 

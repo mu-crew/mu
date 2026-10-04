@@ -50,6 +50,12 @@ import { DEFAULT_SUBSTATE, type TaskStatus, type TaskSubstate } from "./status.j
 let currentWaitSleep: (ms: number) => Promise<void> = (ms) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 let pollCount = 0;
+
+/** Default `--stuck-after`: how long an IN_PROGRESS task's owner may sit
+ *  in needs_input before the wait reports it. Short because a pi worker
+ *  that settles still owning a task is already nudged once to close it;
+ *  still waiting after that means it needs the orchestrator. */
+export const DEFAULT_STUCK_AFTER_MS = 120_000;
 const defaultStuckWarn: (msg: string) => void = (msg) => {
   process.stderr.write(msg);
 };
@@ -138,7 +144,7 @@ export interface TaskWaitOptions {
   /** Emit a yellow STUCK warning to stderr (once per task per wait call)
    *  when an IN_PROGRESS task's owner has been in `needs_input` for at
    *  least this many milliseconds since the agent row's last update.
-   *  Default 300_000 (5 min). Pass 0 to disable.
+   *  Default `DEFAULT_STUCK_AFTER_MS` (2 min). Pass 0 to disable.
    *
    *  Surfaced by agent_attention_required: a worker sitting in
    *  needs_input leaves wait blocked indefinitely. The cause may be a
@@ -258,7 +264,7 @@ export async function waitForTasks(
   const wantAny = opts.any === true;
   const timeoutMs = opts.timeoutMs ?? 600_000;
   const pollMs = opts.pollMs ?? 1000;
-  const stuckAfterMs = opts.stuckAfterMs ?? 300_000;
+  const stuckAfterMs = opts.stuckAfterMs ?? DEFAULT_STUCK_AFTER_MS;
   const onStall: "warn" | "exit" = opts.onStall ?? "warn";
   const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Number.POSITIVE_INFINITY;
 

@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **`mu task wait` now exits 7 on a stalled worker by default.**
+  `--on-stall exit` is the default; pass `--on-stall warn` for the old
+  keep-polling behaviour. Orchestrators kept forgetting the flag and
+  polled past a worker that needed them until `--timeout`. A script that
+  runs a bare `mu task wait` now gets exit 7 where it used to keep
+  waiting. The
+  `--status OPEN|IN_PROGRESS` carve-out is unchanged, and the SDK's
+  `waitForTasks` still defaults to `warn`.
+- **`--stuck-after` defaults to 120 s, down from 300.** Workers are now
+  reminded to close (below), so one still idle after two minutes needs
+  the orchestrator. `MU_IDLE_THRESHOLD_MS` (the `idle` flag in
+  `mu state` and the TUI) stays at 5 minutes.
+
 ## [3.5.0] — 2026-10-04
 
 **Delegates that queue, report, and fail visibly; a slimmer mu.db.**

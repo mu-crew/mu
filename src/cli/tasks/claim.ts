@@ -32,6 +32,7 @@ import { shellQuote } from "../../shell-quote.js";
 import { findRemoteDispatch } from "../../state.js";
 import {
   claimTask,
+  DEFAULT_STUCK_AFTER_MS,
   formatPair,
   getTask,
   ReaperDetectedDuringWaitError,
@@ -347,8 +348,9 @@ export async function cmdTaskWait(
   }
   // task_wait_stall_action_flag: validate --on-stall up-front so a
   // typo errors loud at the verb boundary instead of being silently
-  // ignored by the SDK. Default 'warn' (today's behaviour).
-  const onStallRaw = opts.onStall ?? "warn";
+  // ignored by the SDK. Default 'exit': an orchestrator that forgets the
+  // flag would otherwise poll past a worker that needs it until --timeout.
+  const onStallRaw = opts.onStall ?? "exit";
   if (onStallRaw !== "warn" && onStallRaw !== "exit") {
     throw new UsageError(`--on-stall: expected 'warn' or 'exit', got '${onStallRaw}'`);
   }
@@ -383,7 +385,8 @@ export async function cmdTaskWait(
   // 0 in the SDK = wait forever; same convention here.
   const timeoutMs = opts.timeout !== undefined ? opts.timeout * 1000 : 600_000;
   // --stuck-after also in seconds; 0 disables. Default mirrors the SDK.
-  const stuckAfterMs = opts.stuckAfter !== undefined ? opts.stuckAfter * 1000 : 300_000;
+  const stuckAfterMs =
+    opts.stuckAfter !== undefined ? opts.stuckAfter * 1000 : DEFAULT_STUCK_AFTER_MS;
 
   const sdkOpts: {
     status?: TaskWaitTaskState["status"];
