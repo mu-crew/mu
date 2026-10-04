@@ -44,7 +44,8 @@ mu agent spawn worker-1 -w big --command \
 mu task claim t1 -w big --for worker-1 --evidence 'remote on dev'
 mu agent send worker-1 -w big --fresh '...'
 
-# 5. WAIT: run the claim's one-shot Next: command once per turn
+# 5. WAIT: pi: mu agent wait worker-1 -w big --json, then the claim's Next: once
+#    non-pi: run the claim's one-shot Next: command once per turn
 
 # 6. COLLECT: fetch straight from the remote worktree
 git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
@@ -72,13 +73,13 @@ retry next turn, not progress.
 
 ### Step 3: the control-socket forward
 
-Spawn reports `ctl ok` when all of these hold (`mu doctor` has a ctl
+Spawn reports `ctl: ok` when all of these hold (`mu doctor` has a ctl
 row per agent):
 
 - The host has the mu extension: run `mu link pi` there.
 - The ssh is direct. `$MU_SSH_ARGS` sets `ControlMaster=no
   ControlPath=none`; a multiplexed ssh never binds the forward and spawn
-  reports `ctl missing`.
+  reports `ctl: missing`.
 - sshd allows the forward. A refused forward kills the pane at spawn
   (`ExitOnForwardFailure=yes`). Check `AllowStreamLocalForwarding`.
 
@@ -87,6 +88,11 @@ stale `ok`. Non-pi agents get state from murmur, lagging 30 s ± 10 s
 plus a 10 s cache.
 
 ### Step 5: poll once per turn
+
+The claim's `Next:` mule poll is mandatory. It proves the commit is on
+the host and closes the task. For a pi worker, first block on
+`mu agent wait <name> --json`: it settles exactly over the forwarded
+socket. Then run `Next:` once instead of on every turn.
 
 - Never `sleep` in a tool call. Aborting the loop can leave remote work
   and a capped channel running.
@@ -123,13 +129,19 @@ the final gate before the push that matters.
 
 ## Traps
 
-### A spawn on an auth prompt looks healthy
+### A non-pi spawn on an auth prompt looks healthy
 
 With the channel busy, the attach ssh stopped at `Enter a passcode:`.
 Spawn succeeded, the agent showed `needs_input`, and the prompt went
-into the passcode field. Confirm a remote agent got the work
-(`mu agent read <name> -n 20`) before trusting it. Send nothing
+into the passcode field. This applies to non-pi CLIs and to
+`--via mux`, which paste into the pane. Confirm such an agent got the
+work (`mu agent read <name> -n 20`) before trusting it. Send nothing
 sensitive to an unconfirmed pane.
+
+A pi agent does not paste. Spawn reports `ctl: ok` only when pi
+answers on the socket; otherwise it warns `ctl: missing` or
+`ctl: refused`, and `mu agent send` fails instead of typing into the
+pane.
 
 ### Use the host's real CLI command
 
