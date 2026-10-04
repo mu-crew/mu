@@ -38,7 +38,7 @@ import {
   syncEnabled,
   transportNextSteps,
 } from "../src/sync.js";
-import { addTask, updateTask } from "../src/tasks/edit.js";
+import { addNote, addTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -187,6 +187,29 @@ describe("sync", () => {
       } finally {
         c.close();
       }
+    });
+
+    it("a slim note tombstone ({}) deletes the note on the peer", async () => {
+      seed(a, "t1");
+      addNote(a, "t1", "to be removed", { workstream: "demo", author: "w" });
+      addNote(a, "t1", "kept", { workstream: "demo", author: "w" });
+      await flushSegment(a, dir);
+      await syncPass(b, dir);
+      const notes = (db: Db) =>
+        (
+          db.prepare("SELECT content FROM task_notes ORDER BY content").all() as {
+            content: string;
+          }[]
+        ).map((r) => r.content);
+      expect(notes(b)).toEqual(["kept", "to be removed"]);
+      a.prepare("DELETE FROM task_notes WHERE content = 'to be removed'").run();
+      const tomb = a
+        .prepare("SELECT payload FROM ops WHERE entity = 'note' AND op = 'del'")
+        .get() as { payload: string };
+      expect(tomb.payload).toBe("{}");
+      await flushSegment(a, dir);
+      await syncPass(b, dir);
+      expect(notes(b)).toEqual(["kept"]);
     });
 
     it("never lists this machine as its own peer", async () => {

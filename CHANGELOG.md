@@ -10,8 +10,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **`mu db compact`** applies that to existing history: blanks redundant
+  note tombstones, then VACUUMs. **`mu db forget <workstream...>`**
+  deletes every op of named torn-down workstreams, **not undoable**; it
+  refuses live or never-torn-down names. Both dry-run without `--yes`,
+  back up beside the DB first (`mu.db.pre-<verb>-<time>`), and run the
+  drift check after. On the same DB, forgetting three old workstreams
+  and compacting took it from 83 MB to 42 MB. `mu doctor` shows a size
+  hint naming the largest forgettable workstreams.
+
 ### Changed
 
+- **Note tombstones are slim.** Deleting a note (a workstream
+  teardown deletes all of them) writes `{}` when the log already holds
+  the note's put, instead of a second copy of the note. Undo and sync
+  read the put. On one real DB this was 8 MB of 86.
 - **`mu_delegate` queues past the cap** instead of refusing. At
   `MU_DELEGATE_MAX` running, further calls return `Queued as queued-N`
   at once and start as slots free, up to one more cap's worth; past

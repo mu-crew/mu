@@ -267,6 +267,17 @@ function fullOldPayload(cols: readonly string[]): string {
   return `json_object(${pairs})`;
 }
 
+/** A note tombstone's payload. The full row only when the log holds no
+ *  put under the same key (a reprojection gave the note a new rowid, so
+ *  undo could not fold it back: drift-641); otherwise `{}`, because
+ *  undo's fold and apply's delete both read the content from that put.
+ *  Without this, every workstream teardown wrote each note a second time. */
+function noteTombstonePayload(keyExpr: string, cols: readonly string[]): string {
+  return `CASE WHEN EXISTS (
+      SELECT 1 FROM ops WHERE entity = 'note' AND key = ${keyExpr} AND op = 'put'
+    ) THEN '{}' ELSE ${fullOldPayload(cols)} END`;
+}
+
 /** `WHEN` clause restricting an UPDATE trigger to real changes. A
  *  no-op UPDATE (SET x = x, or rewriting identical values) produces NO
  *  op at all, which keeps the log free of churn that would otherwise
@@ -439,7 +450,7 @@ END;
 CREATE TEMP TRIGGER IF NOT EXISTS _cap_task_notes_del
 BEFORE DELETE ON task_notes WHEN ${NOT_APPLYING}
 BEGIN
-  ${emitOp("note", "del", `${taskKey("OLD.task_id")} || '#' || OLD.id`, fullOldPayload(noteCols))}
+  ${emitOp("note", "del", `${taskKey("OLD.task_id")} || '#' || OLD.id`, noteTombstonePayload(`${taskKey("OLD.task_id")} || '#' || OLD.id`, noteCols))}
 END;
 
 -- ─── task_edges ─────────────────────────────────────────────────────

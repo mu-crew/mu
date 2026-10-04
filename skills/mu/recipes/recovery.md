@@ -19,6 +19,9 @@ when done in the wrong order.
   mu never runs ssh or rsync; `mu sync` prints the line.
   `--repair <peer>` is always safe. Agents, workspaces, and task
   ownership never travel.
+- **`mu db forget <ws...>`** deletes torn-down workstreams' ops for
+  good (no undo); `mu db compact` only blanks redundant tombstones. Both
+  back up beside the DB first. Forget only what the human named.
 - **`mu doctor --deep` DRIFT** (exit 5) is a capture bug: back up and
   report it. Do not rebuild; the live rows may hold work the log missed.
 - The `doctor` `disk` section is report-only: an orphan dir may hold the
