@@ -10,6 +10,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.7.0] — 2026-10-04
+
+**pi agents drop more pre-ctl workarounds.** `mu agent wait --after-runs`
+gives an exact send→wait baseline, so a fast run no longer hangs the
+wait. pi spawns skip a fixed 1.5 s sleep and roll back when pi dies
+during the handshake. Teardown removes control sockets, the scratch idle
+nudge reads live state, and `Next:` hints and error advice use the
+control socket where it answers exactly.
+
+Upgrade with `npm i -g @mu-crew/mu@3.7.0`, then `/reload` in running pi
+sessions (`/reload --via mux` for agents spawned before 3.3.0). No schema
+change. `mu agent wait --lines` is removed (it had no effect).
+
 ### Changed
 
 - **`mu state -w scratch` nudges only helpers that are actually idle.** The "idle scratch agent(s)" nudge used `agents.updated_at`, which is written only at spawn, so every helper older than 5 min was flagged even while busy. It now uses the live `idle` flag (`needs_input` past `MU_IDLE_THRESHOLD_MS`); a helper whose state is `unknown` is no longer nudged.
