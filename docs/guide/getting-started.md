@@ -132,6 +132,10 @@ The exit code tells you what happened:
 versions behave the same. With `--on-stall warn`, a stalled worker only
 prints a warning and the wait keeps running.
 
+A pi worker that ends its turn while it still owns an `IN_PROGRESS`
+task gets one reminder to close it or say why not, so exit 7 mostly
+means it is blocked or asking something.
+
 ## Merge the commit
 
 Run the cherry-pick command from the `Next:` block, then run your
