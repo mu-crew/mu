@@ -28,6 +28,8 @@ export interface MuDelegateApi {
     options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
   ): void | Promise<void>;
   on(event: "session_shutdown", handler: (event: unknown, ctx: DelegateCtx) => unknown): unknown;
+  /** pi's in-process bus between extensions. */
+  events: { emit(channel: string, data: unknown): void };
 }
 
 /** The slice of pi's ExtensionContext the delegate side uses. */
@@ -67,6 +69,15 @@ export const DELEGATE_MESSAGE_TYPE = "mu-delegate";
 export const DELEGATE_WORKSTREAM = "scratch";
 /** The footer status key (`ctx.ui.setStatus`), like goal / watchloop. */
 export const DELEGATE_STATUS_KEY = "mu-delegate";
+/**
+ * murmur's channel for outstanding background work, as
+ * `{ source, count }`. murmur shows the count on this agent's card,
+ * renders a stopped agent with work out as `waiting`, and holds back
+ * `done` until it is zero: a parent that ended its turn to wait on
+ * delegates has not finished. A string, not an import: neither side
+ * depends on the other, and with no murmur loaded nobody listens.
+ */
+export const PENDING_CHANNEL = "murmur:pending";
 
 /** Footer text for `n` running delegates; undefined clears the entry. */
 /** Footer text: delegates still spawning (the call returned no pane yet)
@@ -262,7 +273,23 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   // The ctx of the latest tool call: answers settle outside any call, so
   // the footer is refreshed through the last ctx pi handed us.
   let ui: DelegateCtx["ui"];
+  let lastPending = 0;
+  /** Running, starting and queued: every delegate whose answer is still
+   *  to come back here. Failed panes have answered, so they do not count. */
+  const reportPending = () => {
+    const count = inflight.size + starting + queue.length;
+    if (count === lastPending) return;
+    lastPending = count;
+    try {
+      pi.events.emit(PENDING_CHANNEL, { source: DELEGATE_TOOL, count });
+    } catch {
+      // a listener's fault must not cost a delegate its answer
+    }
+  };
+  // Every change to the counts already refreshes the footer, so the
+  // report rides along rather than being a second set of call sites.
   const showStatus = () => {
+    reportPending();
     try {
       ui?.setStatus?.(
         DELEGATE_STATUS_KEY,

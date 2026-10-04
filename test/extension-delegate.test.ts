@@ -13,6 +13,7 @@ import {
   labelStem,
   type MuResult,
   type MuRunner,
+  PENDING_CHANNEL,
   registerDelegate,
 } from "../extension/delegate.js";
 import muPi from "../extension/mu-pi.js";
@@ -89,7 +90,9 @@ function fakePi() {
   const tools = new Map<string, DelegateTool>();
   const shutdown: Array<(e: unknown, c: DelegateCtx) => unknown> = [];
   const sendMessage = vi.fn(async (_m: unknown, _o?: unknown) => {});
+  const emitted: { channel: string; data: unknown }[] = [];
   const pi = {
+    events: { emit: (channel: string, data: unknown) => void emitted.push({ channel, data }) },
     registerTool: (t: DelegateTool) => {
       tools.set(t.name, t);
     },
@@ -98,7 +101,7 @@ function fakePi() {
       shutdown.push(h);
     },
   };
-  return { pi, tools, sendMessage, shutdown };
+  return { pi, tools, sendMessage, shutdown, emitted };
 }
 
 function sentText(p: { sendMessage: { mock: { calls: unknown[][] } } }): string {
@@ -645,6 +648,53 @@ describe("errors and corner cases", () => {
     await cancel;
     await flush();
     expect(p.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("murmur pending report", () => {
+  const counts = (p: ReturnType<typeof fakePi>) =>
+    p.emitted
+      .filter((e) => e.channel === PENDING_CHANNEL)
+      .map((e) => (e.data as { source: string; count: number }).count);
+
+  it("reports running + queued delegates, and zero before the last answer is delivered", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("a", { task: "one" });
+    await tool(p).execute("b", { task: "two" }); // queued behind the cap
+    expect(counts(p)).toEqual([1, 2]);
+    expect(p.emitted[0]?.data).toEqual({ source: DELEGATE_TOOL, count: 1 });
+
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
+    await flush();
+    await flush();
+    // The queued one took the freed slot: still one outstanding.
+    expect(counts(p).at(-1)).toBe(1);
+
+    const name = mu.calls.filter((c) => c[1] === "spawn").at(-1)?.[2] ?? "";
+    const before = p.sendMessage.mock.calls.length;
+    let atDelivery: number | undefined;
+    p.sendMessage.mockImplementationOnce(async () => {
+      atDelivery = counts(p).at(-1);
+    });
+    mu.waits.get(name)?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
+    await flush();
+    await flush();
+    expect(p.sendMessage.mock.calls.length).toBe(before + 1);
+    // Zero is out BEFORE the follow-up that re-runs the parent, so the
+    // settle after that run is the one murmur may call done.
+    expect(atDelivery).toBe(0);
+  });
+
+  it("reports zero when a session shutdown drops the watchers", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("a", { task: "one" });
+    for (const h of p.shutdown) h({}, {});
+    expect(counts(p)).toEqual([1, 0]);
   });
 });
 
