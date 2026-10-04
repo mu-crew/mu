@@ -6,6 +6,7 @@ import {
   type DelegateCtx,
   type DelegateTool,
   delegateEnabled,
+  delegateMax,
   delegateMessage,
   delegateStatus,
   formatElapsed,
@@ -16,7 +17,13 @@ import {
 } from "../extension/delegate.js";
 import muPi from "../extension/mu-pi.js";
 
-const ENV_KEYS = ["MU_MANAGED_AGENT", "MU_DELEGATE", "MU_MUX", "MU_CTL_SOCK"] as const;
+const ENV_KEYS = [
+  "MU_MANAGED_AGENT",
+  "MU_DELEGATE",
+  "MU_DELEGATE_MAX",
+  "MU_MUX",
+  "MU_CTL_SOCK",
+] as const;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -215,6 +222,61 @@ describe("mu_delegate", () => {
     ]);
     expect(a.content[0]?.text).toContain("delegate-2");
     expect(b.content[0]?.text).toContain("delegate-3");
+  });
+
+  it("MU_DELEGATE_MAX caps delegates in flight, counting parallel calls in one turn", async () => {
+    process.env.MU_DELEGATE_MAX = "2";
+    try {
+      const mu = fakeMu();
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      // All three start before any spawn resolves, as parallel tool calls do.
+      const results = await Promise.allSettled([
+        tool(p).execute("a", { task: "one" }),
+        tool(p).execute("b", { task: "two" }),
+        tool(p).execute("c", { task: "three" }),
+      ]);
+      expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled", "rejected"]);
+      const err = (results[2] as PromiseRejectedResult).reason as Error;
+      expect(err.message).toContain("MU_DELEGATE_MAX=2");
+      expect(mu.calls.filter((c) => c[1] === "spawn")).toHaveLength(2);
+      // An answer frees a slot.
+      mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
+      await flush();
+      await flush();
+      await expect(tool(p).execute("d", { task: "four" })).resolves.toBeDefined();
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
+  it("a failed spawn frees its slot", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    try {
+      let fail = true;
+      const mu = fakeMu({
+        on: {
+          spawn: () =>
+            fail ? Promise.resolve({ code: 1, stdout: "", stderr: "boom" }) : undefined,
+        },
+      });
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      await expect(tool(p).execute("a", { task: "one" })).rejects.toThrow("boom");
+      fail = false;
+      await expect(tool(p).execute("b", { task: "two" })).resolves.toBeDefined();
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
+  it("delegateMax: default 16; ignores junk", () => {
+    expect(delegateMax({})).toBe(16);
+    expect(delegateMax({ MU_DELEGATE_MAX: "4" })).toBe(4);
+    expect(delegateMax({ MU_DELEGATE_MAX: "0" })).toBe(16);
+    expect(delegateMax({ MU_DELEGATE_MAX: "x" })).toBe(16);
   });
 
   it("keep: true leaves the pane open", async () => {

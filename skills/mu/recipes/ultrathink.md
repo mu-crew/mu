@@ -59,8 +59,13 @@ tree, every shipped unit has a review task that closed `ACCEPT`, and
 
 ## Budget
 
-- Agree a ceiling in step 1: concurrent agents and total agents. Write
-  it on the umbrella.
+- Agree a ceiling in step 1 and write it on the umbrella
+  ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
+- Checks are calls, not tasks ([tasks-or-calls](tasks-or-calls.md)): a
+  50-unit run should add about 50 units, 50 gates and the findings that
+  survive, not a task per refuter and judge.
+- The run gets its own workstream, `<project>-ut-<topic>`, torn down
+  when the umbrella closes.
 - Cheap models scout and find (`pi_mini`); the default builds (`pi`);
   strong models review, refute, judge, and synthesize (`pi_big`).
 - Calibrate on a slice: run the phase on a few units, check the result

@@ -115,6 +115,7 @@ function snapshotFor(slot: keyof WorkstreamSnapshot, tasks: TaskRow[]): Workstre
     recentClosed: [],
     parkedCount: 0,
     triage: [],
+    taskCount: 0,
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

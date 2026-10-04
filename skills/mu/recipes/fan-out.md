@@ -6,7 +6,7 @@ some and calls the job done; one task per unit cannot.
 
 ## Steps
 
-1. **Enumerate first, as its own task.** A scout lists the units and
+1. **Enumerate first.** A scout (a delegate call) lists the units and
    writes them to the umbrella's note, one per line. The list is done
    when it matches a command the scout ran (`rg -l`, a test listing),
    not when it looks complete. Record the command and the count.
@@ -20,17 +20,17 @@ some and calls the job done; one task per unit cannot.
 
    Put the shared brief and acceptance criteria on the umbrella; each
    unit task's note holds only what differs.
-3. **Cap concurrency.** Spawn at most one agent per ready track, and no
-   more than the machine can build and test at once. Tell workers to
-   avoid repo-wide commands so more can run.
+3. **Cap concurrency** ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
+   Spawn at most one agent per ready track. Tell workers to avoid
+   repo-wide commands so more can run.
 4. **Pipeline.** Dispatch, wait `--first`, merge, dispatch the next unit
    to the freed worker with `--fresh`. Units that touch the same files
    go on one track (see [waves](waves.md)).
 5. **Review per unit** when a wrong unit is costly: add a review task
    per unit ([adversarial-review](adversarial-review.md)).
-6. **Synthesize** when the output is a report, not commits: a final
-   task blocked by every unit reads their notes and writes one result.
-   It reads notes, not transcripts.
+6. **Synthesize** when the output is a report, not commits: one
+   delegate call reads the unit notes (not transcripts) and writes one
+   result into the umbrella's note.
 
 Done when `mu task close sweep --if-ready` closes the umbrella: every
 unit is closed, and the closed count matches the step 1 count.

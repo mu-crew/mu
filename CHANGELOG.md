@@ -22,6 +22,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `--json`); `task next`, `task list`, `task show`, `claim` and
   `close --if-ready` point at accept and the triage inbox. No schema
   bump: one seeded substate row, per the substates spec (D10).
+- **`MU_DELEGATE_MAX`** (default 16): `mu_delegate` refuses a new
+  delegate when that many are already running from the session,
+  counting parallel calls in one turn. The tool description states the
+  cap.
+- **Naming hints.** `mu workstream init <name>` prints a hint for a name
+  without a `-`: workstreams are `<project>-<purpose>`, one per effort
+  (`hint` in `--json`). `mu state` hints once a workstream passes 300
+  tasks with fewer than 10% open. `docs/reference/naming.md` documents
+  the convention.
+- **`recipes/tasks-or-calls.md`**: a refuter, claim checker, judge,
+  skeptic, scout or synthesizer is a delegate call whose verdict lands
+  on the task it judged, not a task of its own. `refute`,
+  `review-panel`, `deep-research`, `tournament`, `rules-audit`,
+  `hypothesis-panel`, `fan-out` and `ultrathink` follow it, so one PR
+  review no longer adds a task per check. `orchestrator-loop` gains a
+  Concurrency section (10 to 20 delegates, about one worker per core,
+  ceiling written on the umbrella).
 - **`recipes/findings.md`**: the rule every reviewing recipe follows.
   Findings are triage tasks in a workstream (more than 5 from one
   reviewer: note lines first, then a triage pass creates the tasks), or

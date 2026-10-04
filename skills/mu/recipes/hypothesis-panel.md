@@ -9,20 +9,20 @@ form independent theories; separate agents then try to kill them.
 
 1. **Write the symptom** on the umbrella: what happens, how often, the
    repro command, and what would count as fixed.
-2. **One reader task per evidence source**: logs, the code path,
-   recent commits, data, environment. Each agent sees only its source,
-   so the theories do not anchor on each other. Each records its theory
-   as an `OPEN/triage` task blocking the umbrella:
+2. **One reader per evidence source** (a delegate call): logs, the
+   code path, recent commits, data, environment. Each sees only its
+   source, so the theories do not anchor on each other. Record each
+   theory as an `OPEN/triage` task blocking the umbrella:
 
    ```bash
    mu task add -w <ws> --triage -t "h: <cause>" -i 60 -e 0.5 \
      --note 'PREDICTS: <an observation true if this is the cause, false otherwise>'
    ```
 
-3. **Test each hypothesis** in its own workspace. The tester claims the
-   hypothesis task with `--force`, builds the experiment that would
-   kill it (force the race, revert the commit, feed the data), and
-   records the result: a killed hypothesis closes
+3. **Test each hypothesis.** An experiment that changes code (force the
+   race, revert the commit) needs a workspace: accept the hypothesis and
+   dispatch it as a task. One that only reads (feed the data, grep the
+   logs) is a delegate call. Either way, a killed hypothesis closes
    `--as rejected --why '<evidence>'`; a survivor is accepted.
 4. **If one survives**, add a fix task for it, then a review task
    ([adversarial-review](adversarial-review.md)). The fix is accepted

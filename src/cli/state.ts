@@ -257,6 +257,9 @@ export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
 
 // ─── Render: full mode (default `mu state`) ────────────────────────
 
+/** Past this many tasks, a workstream that is >90% closed gets the one-per-effort hint. */
+const BIG_WORKSTREAM_TASKS = 300;
+
 function renderFullMode(perWs: PerWsData[]): void {
   perWs.forEach((d, i) => {
     if (i > 0) console.log("");
@@ -293,6 +296,16 @@ function renderFullCard(d: PerWsData): void {
         ),
       );
     }
+  }
+  // One workstream per effort: a long-lived catch-all is mostly history.
+  const total = d.taskCount;
+  const open = ready.length + inProgress.length + blocked.length + d.triage.length;
+  if (total >= BIG_WORKSTREAM_TASKS && open * 10 < total) {
+    console.log(
+      pc.dim(
+        `hint: ${total} tasks, ${open} open; start the next effort in a new <project>-<purpose> workstream`,
+      ),
+    );
   }
   console.log("");
   console.log(pc.bold(`Tracks (${tracks.length})`));
