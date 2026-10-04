@@ -302,6 +302,22 @@ export class ReaperDetectedDuringWaitError extends Error implements HasNextSteps
  * pre-dates this; the typed-throw path is the new escape hatch for
  * unattended orchestrators).
  */
+/**
+ * A stalled pi owner's last answer, read exactly: `--after-runs <runs-1>`
+ * returns the last settled run's lastText at once. Empty unless the
+ * owner's socket reported at least one settled run. The pane read stays
+ * next to it: dialogs and crashes show in the pane, not the session.
+ */
+export function stallWaitHint(owner: string, ws: string, runs: number | undefined): NextStep[] {
+  if (runs === undefined || runs < 1) return [];
+  return [
+    {
+      intent: "Read the worker's last answer (its final text, at once)",
+      command: `mu agent wait ${owner} --after-runs ${runs - 1} --json -w ${ws}`,
+    },
+  ];
+}
+
 export class StallDetectedDuringWaitError extends Error implements HasNextSteps {
   override readonly name = "StallDetectedDuringWaitError";
   constructor(
@@ -311,6 +327,8 @@ export class StallDetectedDuringWaitError extends Error implements HasNextSteps 
     public readonly ageSecs: number,
     /** The owner runs pi (control socket): `mu agent abort` stops its turn. */
     public readonly ownerExpectsCtl = false,
+    /** The owner's ctl run count at the stall, when its socket answered. */
+    public readonly ownerRuns?: number,
   ) {
     const ownerBit = owner !== null ? owner : "<unknown>";
     super(
@@ -330,6 +348,7 @@ export class StallDetectedDuringWaitError extends Error implements HasNextSteps 
     const ws = this.workstream;
     const ownerBit = this.owner !== null ? this.owner : "<owner>";
     return [
+      ...stallWaitHint(ownerBit, ws, this.ownerRuns),
       {
         intent: "Read the worker's pane to see what it is waiting on",
         command: `mu agent read ${ownerBit} -w ${ws} --lines 60`,

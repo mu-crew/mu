@@ -54,14 +54,16 @@ keeps it.
 Use `--first --on-stall exit`: `--first` populates `.firing`, and
 `--on-stall exit` stops an unattended wait when a worker needs attention.
 Exit 6: the owner's pane died and the reaper reopened the task; exit 7:
-the owner sat in `needs_input`. Read that
-pane (`mu agent read <owner>`) and answer: the worker may be waiting on
-you.
+the owner sat in `needs_input`. Run the exit's `Next:` and answer: the
+worker may be waiting on you. For a pi owner it leads with
+`mu agent wait <owner> --after-runs <runs-1> --json`, which returns the
+last answer at once. The pane read follows because dialogs and crashes
+show only in the pane.
 
 For an idle worker, read the pane, then answer, retry, or release its
-task. `MU_IDLE_THRESHOLD_MS` defaults to 5m. A remote owner: for pi, `mu agent wait`
-first, then poll once; otherwise poll once per turn
-([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
+task. `MU_IDLE_THRESHOLD_MS` defaults to 5m. A remote owner: for pi,
+`mu agent wait --after-runs` first, then poll once; otherwise poll once
+per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
 
 ## Merging
 

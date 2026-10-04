@@ -332,6 +332,44 @@ describe("mu agent send transport", () => {
     expect(JSON.stringify(body.nextSteps)).toContain("--fresh next time");
   });
 
+  it("a ctl send with runs points at wait --after-runs, not a pane read", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), {
+      v: 1,
+      ok: true,
+      state: "idle",
+      since: 1,
+      runs: 4,
+      pending: false,
+    });
+    const { stdout } = await runCli(
+      ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
+      dbPath,
+    );
+    const cmds = (JSON.parse(stdout) as { nextSteps: Array<{ command: string }> }).nextSteps.map(
+      (s) => s.command,
+    );
+    expect(cmds[0]).toBe("mu agent wait worker-1 --after-runs 4 --json -w auth");
+    expect(cmds.some((c) => c.startsWith("mu agent read"))).toBe(false);
+  });
+
+  it("a mux send and a ctl reply without runs keep the pane-read hint", async () => {
+    seed("shy", "claude");
+    const mux1 = await runCli(["agent", "send", "shy", "hello", "-w", "auth", "--json"], dbPath);
+    expect(JSON.stringify(JSON.parse(mux1.stdout).nextSteps)).toContain(
+      "mu agent read shy -n 50 -w auth",
+    );
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "busy" });
+    const old = await runCli(
+      ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
+      dbPath,
+    );
+    const body = JSON.stringify(JSON.parse(old.stdout).nextSteps);
+    expect(body).toContain("mu agent read worker-1 -n 50 -w auth");
+    expect(body).not.toContain("--after-runs");
+  });
+
   it("an older extension's send reply (no runs) skips the state hints", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "busy" });

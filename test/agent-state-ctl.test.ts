@@ -19,7 +19,8 @@ import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { setMuxForTests, tmuxBackend } from "../src/mux.js";
-import { addTask, claimTask, waitForTasks } from "../src/tasks.js";
+import { StallDetectedDuringWaitError } from "../src/tasks/errors.js";
+import { addTask, claimTask, setWaitStuckWarnForTests, waitForTasks } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { runCli } from "./_runCli.js";
 
@@ -135,6 +136,7 @@ describe("readAgentStates via the control socket", () => {
       alive: true,
       ctl: "ok",
       pending: false,
+      runs: 0,
     });
     ext.settle();
     expect(await read()).toMatchObject({ state: "needs_input", source: "ctl", ctl: "ok" });
@@ -240,6 +242,21 @@ describe("mu agent wait on a pi agent", () => {
     expect(ext.ops).toEqual(["wait"]);
   });
 
+  it("--first with lastText drops the read hint; an empty lastText keeps it", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    ext.settle("the answer");
+    const args = ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--first"];
+    const withText = await runCli([...args, "--timeout", "5", "--json"], dbPath);
+    expect(JSON.parse(withText.stdout).nextSteps).toEqual([]);
+    ext.start();
+    ext.settle("");
+    const empty = await runCli(
+      ["agent", "wait", "pia", "-w", WS, "--after-runs", "1", "--first", "--json"],
+      dbPath,
+    );
+    expect(JSON.stringify(JSON.parse(empty.stdout).nextSteps)).toContain("mu agent read pia -w cs");
+  });
+
   it("--after-runs refuses a non-pi agent (usage, exit 2)", async () => {
     insertAgent(db, { name: "shy", workstream: WS, paneId: "%2", cli: "sh" });
     const res = await runCli(
@@ -330,6 +347,33 @@ describe("mu task wait --stuck-after for a pi owner", () => {
   it("does not flag an idle ctl owner with queued messages", async () => {
     await fakeExtension({ state: "idle", since: Date.now() - 600_000, runs: 1, pending: true });
     expect(await waitOnPia()).toBe(false);
+  });
+
+  it("the reading carries ctl runs; the stall warn and exit 7 lead with wait --after-runs", async () => {
+    await fakeExtension({ state: "idle", since: Date.now() - 600_000, runs: 3 });
+    expect((await read())?.runs).toBe(3);
+    addTask(db, { localId: "t1", workstream: WS, title: "T", impact: 50, effortDays: 1 });
+    await claimTask(db, "t1", { workstream: WS, agentName: "pia" });
+    const owner = getAgent(db, "pia", WS);
+    if (owner === undefined) throw new Error("no agent row");
+    const warns: string[] = [];
+    const restore = setWaitStuckWarnForTests((m) => warns.push(m));
+    try {
+      const err = await waitForTasks(db, [{ workstreamName: WS, name: "t1" }], {
+        timeoutMs: 1,
+        onStall: "exit",
+        readOwnerState: async () =>
+          (await readAgentStates([owner], { stateDir: dir })).get(agentKey(owner)) ?? null,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(StallDetectedDuringWaitError);
+      const cmds = (err as StallDetectedDuringWaitError).errorNextSteps().map((s) => s.command);
+      expect(cmds[0]).toBe("mu agent wait pia --after-runs 2 --json -w cs");
+      expect(cmds[1]).toBe("mu agent read pia -w cs --lines 60");
+      expect(warns.join("")).toContain("mu agent wait pia --after-runs 2 --json -w cs");
+      expect(warns.join("")).toContain("mu agent read pia -w cs --lines 60");
+    } finally {
+      setWaitStuckWarnForTests(restore);
+    }
   });
 
   it("stuckAfterMs 0 disables the ctl threshold too", async () => {

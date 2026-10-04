@@ -119,6 +119,26 @@ describe("dispatchHint", () => {
     );
     expect(without.errorNextSteps().some((s) => s.command.includes("abort"))).toBe(false);
   });
+
+  it("stall error leads with wait --after-runs only for a ctl owner with runs", () => {
+    const ctl = new StallDetectedDuringWaitError("t", "worker-1", "auth", 300, true, 3);
+    expect(
+      ctl
+        .errorNextSteps()
+        .map((s) => s.command)
+        .slice(0, 2),
+    ).toEqual([
+      "mu agent wait worker-1 --after-runs 2 --json -w auth",
+      "mu agent read worker-1 -w auth --lines 60",
+    ]);
+    for (const e of [
+      new StallDetectedDuringWaitError("t", "worker-2", "auth", 300),
+      new StallDetectedDuringWaitError("t", "worker-1", "auth", 300, true, 0),
+    ]) {
+      expect(e.errorNextSteps()[0]?.command).toMatch(/^mu agent read /);
+      expect(e.errorNextSteps().some((s) => s.command.includes("--after-runs"))).toBe(false);
+    }
+  });
 });
 
 describe("mu task claim --for", () => {

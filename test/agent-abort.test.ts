@@ -149,6 +149,15 @@ describe("mu agent abort (CLI)", () => {
     expect(JSON.parse(r.stdout)).toMatchObject({ before: "busy", after: "idle", aborted: true });
   });
 
+  it("an abort that reported idle drops the read-the-pane hint", async () => {
+    seed("worker-1");
+    await serve("worker-1", "busy");
+    const r = await runCli(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
+    const body = JSON.parse(r.stdout) as { after: string; nextSteps: Array<{ command: string }> };
+    expect(body.after).toBe("idle");
+    expect(body.nextSteps.some((s) => s.command.startsWith("mu agent read"))).toBe(false);
+  });
+
   it("exit 5 on timeout", async () => {
     seed("worker-1");
     await serve("worker-1", "busy", false);
