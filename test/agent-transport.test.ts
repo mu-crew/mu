@@ -311,6 +311,41 @@ describe("mu agent send transport", () => {
     expect(received[0]).toMatchObject({ mode: "steer" });
   });
 
+  it("a plain send is one ctl op; its reply status feeds --json runs and the hints", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), {
+      v: 1,
+      ok: true,
+      state: "idle",
+      since: 1,
+      runs: 4,
+      pending: false,
+    });
+    const { stdout, exitCode } = await runCli(
+      ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(received.map((r) => r.op)).toEqual(["send"]);
+    const body = JSON.parse(stdout) as { runs?: number; state?: string; nextSteps: unknown[] };
+    expect(body).toMatchObject({ state: "idle", runs: 4 });
+    expect(JSON.stringify(body.nextSteps)).toContain("--fresh next time");
+  });
+
+  it("an older extension's send reply (no runs) skips the state hints", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "busy" });
+    const { stdout, exitCode } = await runCli(
+      ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(received.map((r) => r.op)).toEqual(["send"]);
+    const body = JSON.parse(stdout) as { runs?: number; nextSteps: unknown[] };
+    expect(body.runs).toBeUndefined();
+    expect(JSON.stringify(body.nextSteps)).not.toContain("--steer");
+  });
+
   it("exits non-zero with next steps when the socket is missing", async () => {
     seed("worker-1");
     const { stderr, exitCode } = await runCli(

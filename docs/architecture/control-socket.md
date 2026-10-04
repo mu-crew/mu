@@ -28,8 +28,8 @@ reply carries `v: 1`; the client (`src/ctl/client.ts`) throws
 | op | does |
 | --- | --- |
 | `hello` | identity plus `ops` (served ops) and `extVersion` (the mu version the extension was built from) |
-| `status` | `state` (`busy` / `idle` / `needs_input`), `since`, `runs`, `pending` |
-| `send` | `pi.sendUserMessage`; when busy, `mode` is `steer` or `followUp` (default) |
+| `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending` |
+| `send` | `pi.sendUserMessage`; when busy, `mode` is `steer` or `followUp` (default). Replies with the `status` fields measured before the dispatch, so `runs` is the baseline for a later `wait` |
 | `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` |
 | `abort` | `ctx.abort()` (pi's Esc) |
 | `fresh` | new session plus prompt as one operation, through the internal `/mu-fresh` command; replies once the new run starts; refused with `busy` unless `force` |

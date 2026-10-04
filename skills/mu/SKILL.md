@@ -69,7 +69,8 @@ or inspection.
 
 For one-shot work inside pi, call `mu_delegate` (installed by `mu link pi`).
 Outside pi: spawn into the reserved `scratch` workstream (no task DAG,
-auto-created), `send --fresh`, then `mu agent wait --json` (`lastText`).
+auto-created), `send --fresh --json`, then `mu agent wait --after-runs <its runs> --json`
+(`lastText`); without `--after-runs` a run that ends first hangs the wait.
 Recipes call either form a **delegate call**.
 
 - `mu agent wait <names...> --first` waits for busy → idle instead of a

@@ -182,6 +182,30 @@ describe("mu_delegate", () => {
     expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
   });
 
+  it("waits after the send with --after-runs from send --json's runs", async () => {
+    const mu = fakeMu({ on: { send: () => Promise.resolve(ok({ transport: "ctl", runs: 0 })) } });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    const send = mu.calls.findIndex((c) => c[1] === "send");
+    const waitAt = mu.calls.findIndex((c) => c[1] === "wait");
+    expect(mu.calls[send]).toContain("--json");
+    expect(waitAt).toBeGreaterThan(send);
+    const wait = mu.calls[waitAt] ?? [];
+    expect(wait[wait.indexOf("--after-runs") + 1]).toBe("0");
+  });
+
+  it("without runs in the send reply (older mu or extension) waits on the CLI's own baseline", async () => {
+    const mu = fakeMu({ on: { send: () => Promise.resolve(ok({ transport: "ctl" })) } });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    const send = mu.calls.findIndex((c) => c[1] === "send");
+    const waitAt = mu.calls.findIndex((c) => c[1] === "wait");
+    expect(waitAt).toBeGreaterThan(send);
+    expect(mu.calls[waitAt]).not.toContain("--after-runs");
+  });
+
   it("cwd and timeout reach spawn and wait; the timeout is named in the message", async () => {
     const mu = fakeMu();
     const p = fakePi();

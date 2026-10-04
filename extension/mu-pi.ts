@@ -546,10 +546,13 @@ function serveCtl(pi: MuPiApi): void {
         const text = str(req, "text");
         if (text === undefined) return fail("send needs a string text");
         const mode = req.mode === "steer" ? "steer" : "followUp";
+        // Measured before dispatch: `runs` is the caller's wait baseline,
+        // and a run this send starts may settle before the reply is read.
+        const before = status();
         // A message sent while idle starts a run; options are only for a busy pi.
         if (g.ctx?.isIdle() ?? g.state === "idle") await g.pi.sendUserMessage(text);
         else await g.pi.sendUserMessage(text, { deliverAs: mode });
-        return { v: V, ok: true, state: g.state };
+        return { v: V, ok: true, ...before };
       }
       case "fresh":
         return fresh(req);

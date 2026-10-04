@@ -77,6 +77,7 @@ async function fakeExtension(
   const pending = initial.pending ?? false;
   const ops: string[] = [];
   const waiters: Array<{ after: number | undefined; sock: Socket }> = [];
+  let lastText: string | undefined;
   const status = () => ({ v: 1, ok: true, state, since, runs, pending });
   mkdirSync(dirname(path), { recursive: true });
   const conns = new Set<Socket>();
@@ -92,7 +93,7 @@ async function fakeExtension(
         ops.push(req.op);
         if (req.op === "wait") {
           if (req.afterRuns !== undefined && runs > req.afterRuns && state === "idle") {
-            sock.end(encode(status()));
+            sock.end(encode(lastText === undefined ? status() : { ...status(), lastText }));
           } else waiters.push({ after: req.afterRuns, sock });
         } else sock.end(encode(status()));
       }
@@ -106,11 +107,12 @@ async function fakeExtension(
       state = "busy";
       since = Date.now();
     },
-    settle: (lastText?: string) => {
+    settle: (text?: string) => {
       state = "idle";
       since = Date.now();
       runs++;
-      const reply = lastText === undefined ? status() : { ...status(), lastText };
+      lastText = text;
+      const reply = text === undefined ? status() : { ...status(), lastText: text };
       for (const w of waiters.splice(0)) w.sock.end(encode(reply));
     },
     close: async () => {
@@ -206,6 +208,58 @@ describe("mu agent wait on a pi agent", () => {
     expect((JSON.parse(res.stdout) as { agents: Array<{ fired: boolean }> }).agents[0]?.fired).toBe(
       true,
     );
+  });
+
+  it("--after-runs catches a run that settled before the wait started", async () => {
+    // send replied runs:2, then the run went 2 → 3 before the wait ran.
+    const ext = await fakeExtension({ state: "idle", since: 1, runs: 3 });
+    const res = await runCli(
+      ["agent", "wait", "pia", "-w", WS, "--after-runs", "2", "--timeout", "2", "--json"],
+      dbPath,
+    );
+    expect(res.exitCode).toBeNull();
+    expect((JSON.parse(res.stdout) as { agents: Array<{ fired: boolean }> }).agents[0]?.fired).toBe(
+      true,
+    );
+    expect(ext.ops).toEqual(["wait"]);
+  });
+
+  it("--after-runs <runs-1> on an idle pi returns the last run's lastText at once", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    ext.settle("the answer"); // runs 1, idle; no waiter held
+    const started = Date.now();
+    const res = await runCli(
+      ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--timeout", "5", "--json"],
+      dbPath,
+    );
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(res.exitCode).toBeNull();
+    const a = (JSON.parse(res.stdout) as { agents: Array<{ fired: boolean; lastText?: string }> })
+      .agents[0];
+    expect(a).toMatchObject({ fired: true, lastText: "the answer" });
+    expect(ext.ops).toEqual(["wait"]);
+  });
+
+  it("--after-runs refuses a non-pi agent (usage, exit 2)", async () => {
+    insertAgent(db, { name: "shy", workstream: WS, paneId: "%2", cli: "sh" });
+    const res = await runCli(
+      ["agent", "wait", "shy", "-w", WS, "--after-runs", "0", "--timeout", "1"],
+      dbPath,
+    );
+    expect(res.stderr).toContain("--after-runs needs a pi agent");
+    expect(res.stderr).toContain("shy");
+    expect(res.exitCode ?? process.exitCode).toBe(2);
+    process.exitCode = undefined;
+  });
+
+  it("--lines is gone", async () => {
+    await fakeExtension({ state: "idle", since: 1, runs: 0 });
+    const res = await runCli(
+      ["agent", "wait", "pia", "-w", WS, "--lines", "5", "--timeout", "1"],
+      dbPath,
+    );
+    expect(res.stderr).toContain("unknown option '--lines'");
+    process.exitCode = undefined;
   });
 
   it("exits 5 on timeout while pi stays busy", async () => {
