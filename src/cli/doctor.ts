@@ -15,6 +15,7 @@
 import { dirname } from "node:path";
 import { listAgents, listLiveAgents } from "../agents.js";
 import { emitJson, resolveWorkstream } from "../cli.js";
+import { planCompact } from "../compact.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "../db.js";
 import { checkDiskRecon, formatBytes, measureWorkspaceUsage } from "../disk-recon.js";
 import {
@@ -41,6 +42,7 @@ import { checkFleetHazards, type FleetHazard } from "../fleet-hazards.js";
 import { activeMux, type MuxHealth } from "../mux.js";
 import { pc } from "../output.js";
 import { summarizeWorkstream } from "../workstream.js";
+import { forgetHint } from "./db.js";
 
 /** Column width for the `label : value` environment block. Wide enough
  *  for the longest label any backend contributes — `$HERDR_WORKSPACE_ID`
@@ -354,11 +356,37 @@ export async function cmdDoctor(
       throw new DriftDetectedError(cheap.totalUnexplained, []);
     }
   }
+  const size = opsSizeHint(db);
+  if (size) {
+    console.log(`  size             : ${pc.yellow("hint")} ${size.line}`);
+    for (const c of size.commands) console.log(pc.dim(`      ${c}`));
+  }
   if (sawHazard) {
     console.log(
       pc.dim("\nSee the fleet / disk sections above: at least one finding needs attention."),
     );
   }
+}
+
+/** The ops-log size hint: torn-down history worth forgetting, largest
+ *  first, and redundant tombstones worth compacting. Undefined when
+ *  neither is worth a line. */
+function opsSizeHint(db: Db): { line: string; commands: string[] } | undefined {
+  const forgettable = forgetHint(db);
+  const tomb = planCompact(db);
+  const parts: string[] = [];
+  const commands: string[] = [];
+  if (forgettable) {
+    parts.push(
+      `${forgettable.total} torn-down workstreams hold ${forgettable.ops} ops (${formatBytes(forgettable.bytes)}); largest: ${forgettable.top.join(", ")}`,
+    );
+    commands.push("see them:    mu workstream list --torn-down", `forget some: mu db forget ${forgettable.top.join(" ")}`);
+  }
+  if (tomb.bytes >= 1024 * 1024) {
+    parts.push(`${tomb.tombstones} redundant note tombstones (${formatBytes(tomb.bytes)})`);
+    commands.push("compact:     mu db compact");
+  }
+  return parts.length === 0 ? undefined : { line: parts.join("; "), commands };
 }
 
 /**
@@ -540,6 +568,7 @@ export async function cmdDoctorJson(
     disk,
     workspaceUsage,
     drift,
+    size: opsSizeHint(db) ?? null,
     remediation: drift.ok === true ? [] : driftRemediation(),
   });
   // Emit the payload FIRST, then fail: a --json consumer needs the

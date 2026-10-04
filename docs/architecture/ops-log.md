@@ -96,13 +96,32 @@ prefix previews, and `--yes` applies.
 - `restore` records and applies under the **same** HLC. `applyOp`
   excludes an op's own HLC from provenance. A fresher HLC would make
   the row outrank the op and lose every field to an insert default.
-- **Note tombstones are self-describing.** Every other `del` carries
-  `'{}'`, because its key plus earlier puts describe the row. A note's
-  key embeds its rowid (`<ws>/<task>#<id>`), and a rebuild or
-  reprojection reassigns rowids. The `task_notes` delete trigger
-  therefore records `OLD.*`, and `planUndo` falls back to the
-  tombstone payload when folding the puts finds nothing. For the same
-  reason `src/drift.ts` matches notes on the task-key prefix.
+- **Note tombstones are self-describing only when they must be.** Every
+  other `del` carries `'{}'`, because its key plus earlier puts describe
+  the row. A note's key embeds its rowid (`<ws>/<task>#<id>`), and a
+  rebuild or reprojection reassigns rowids, so the puts can sit under an
+  old key (drift-641). The `task_notes` delete trigger records `OLD.*`
+  only when no put under the current key is in the log, and `'{}'`
+  otherwise; `planUndo` folds the puts first and falls back to the
+  tombstone payload. For the same reason `src/drift.ts` matches notes on
+  the task-key prefix.
+
+## Rewriting history (local only)
+
+The log is append-only except for two operator verbs in `src/compact.ts`,
+both dry-run by default, both backing up beside the DB and running the
+drift check after:
+
+- **`mu db compact`** blanks note tombstones a put under the same key
+  already explains: the slim form capture writes now, applied to older
+  rows. Undo and sync unaffected.
+- **`mu db forget <workstream...>`** deletes every op of named
+  torn-down workstreams (keys `<ws>` and `<ws>/...`). Their rows are
+  already gone from the tables, so rebuild and drift stay consistent;
+  `mu undo` of those teardowns is gone on purpose.
+
+Neither touches sync segments. A peer is not affected: watermarks only
+read forward, so a peer never re-sends forgotten history.
 
 ## Rebuild
 

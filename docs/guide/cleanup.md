@@ -44,6 +44,25 @@ The list shows one row per teardown, newest first. `← recreated since`
 means the name is in use again, so the undo would change nothing.
 Killed panes and freed workspace directories do not come back.
 
+## Keep mu.db small
+
+Teardown keeps history so `mu undo` works, and that history is most of
+`mu.db`. `mu doctor` names the largest torn-down workstreams once they
+are worth reclaiming.
+
+```bash
+mu db compact                        # dry run: redundant note tombstones
+mu db compact --yes
+mu db forget hail-smoke reltest      # dry run: per workstream, ops and size
+mu db forget hail-smoke reltest --yes
+```
+
+`compact` changes nothing you can see. `forget` deletes those
+workstreams' history for good: `mu undo` can no longer restore them.
+Both write a backup next to the DB first (`mu.db.pre-forget-<time>`),
+which is the only way back, and run the drift check after. Only this
+machine's DB shrinks; sync segments are untouched.
+
 ## Find workstreams you can remove
 
 The `housekeeping` section of `mu doctor` lists two kinds:
