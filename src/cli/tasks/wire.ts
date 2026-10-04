@@ -552,7 +552,7 @@ export function wireTaskCommands(program: Command): void {
     .option("--timeout <seconds>", "max seconds to wait (0 = forever, default 600)", parseLines)
     .option(
       "--stuck-after <seconds>",
-      "the TRIGGER: mark an IN_PROGRESS task as needing attention when its owner has been in needs_input for >= N seconds since their last status change (0 = disable, default 120). needs_input has several causes — the worker may have finished without closing, be waiting on an answer, or be sitting at a prompt — so the warning names the observation and points at `mu agent read <owner>`, which is the next move in every case. The default ACTION is `exit` (exit 7); see --on-stall warn to keep polling instead.",
+      "the TRIGGER: mark an IN_PROGRESS task as needing attention when its owner has been in needs_input for >= N seconds since their last status change (0 = disable; default 120, or 5 for a pi owner read over its control socket, whose idle is exact and comes after the close nudge; an explicit value applies to every owner). needs_input has several causes — the worker may have finished without closing, be waiting on an answer, or be sitting at a prompt — so the warning names the observation and points at `mu agent read <owner>`, which is the next move in every case. The default ACTION is `exit` (exit 7); see --on-stall warn to keep polling instead.",
       parseLines,
     )
     .option(

@@ -384,6 +384,31 @@ describe("mu task wait --on-stall warn|exit", () => {
     expect(stderr).toMatch(/needs_input/);
   });
 
+  it("pi owner: without --stuck-after, ctl idle for 10 s → exit 7 (ctl default is 5 s)", async () => {
+    setupStalledWorker("pip", "pi_quick", "pi");
+    await serveCtl("pip", Date.now() - 10_000);
+
+    const { exitCode, stderr } = await runCli(
+      ["task", "wait", "pi_quick", "-w", workstream, "--timeout", "30"],
+      dbPath,
+    );
+
+    expect(exitCode).toBe(7);
+    expect(stderr).toContain("pip");
+  });
+
+  it("pi owner: an explicit --stuck-after overrides the ctl default", async () => {
+    setupStalledWorker("pat", "pi_slow", "pi");
+    await serveCtl("pat", Date.now() - 10_000);
+
+    const { exitCode } = await runCli(
+      ["task", "wait", "pi_slow", "-w", workstream, "--stuck-after", "60", "--timeout", "1"],
+      dbPath,
+    );
+
+    expect(exitCode).toBe(5); // 10 s idle < 60 s: timeout, not a stall
+  });
+
   it("pi owner with no control socket: needs attention, not a dead pane", async () => {
     // Live pane, no socket: nothing will report the worker settling, so
     // the stall predicate fires (age from when the wait first saw it).

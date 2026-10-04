@@ -114,7 +114,7 @@ mu task wait auth/build auth/docs --first --on-stall exit --json
   commits. If the worker closed without committing, it says so.
 - Exit codes: `0` met, `5` timeout, `6` the owner's pane died,
   `7` the owner sat in `needs_input` for `--stuck-after` seconds
-  (default 120). Exit 7 is the default; `--on-stall warn` keeps
+  (default 120, or 5 for a pi worker read over its control socket). Exit 7 is the default; `--on-stall warn` keeps
   polling instead.
 
 Exit 7 has several causes: the worker finished but did not close, it

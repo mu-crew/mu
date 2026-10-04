@@ -10,6 +10,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **`mu task wait` flags a settled pi worker after 5 s, not 120 s.**
+  For an owner read over its control socket, `--stuck-after` now
+  defaults to 5 s. ctl's idle is exact, and it arrives only after the
+  close nudge has run, so a pi worker that is idle and still owns the
+  task has already declined to close it. Waiting two more minutes adds
+  nothing. An idle owner with queued messages (`pending`) is not
+  flagged. murmur, herdr, and broken-socket owners keep the 120 s
+  default. An explicit `--stuck-after N` applies to every owner. The
+  SDK gains `ctlStuckAfterMs` and `DEFAULT_CTL_STUCK_AFTER_MS`.
+
 ## [3.6.1] — 2026-10-04
 
 **murmur's `error` state is read as waiting, not unknown.** murmur 1.2.0

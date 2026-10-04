@@ -399,7 +399,10 @@ export async function cmdTaskWait(
       workstreamName: string;
     }) => Promise<StateReading | null>;
     beforePoll?: () => Promise<void>;
+    ctlStuckAfterMs?: number;
   } = { timeoutMs, stuckAfterMs };
+  // An explicit --stuck-after applies to every owner, ctl ones included.
+  if (opts.stuckAfter !== undefined) sdkOpts.ctlStuckAfterMs = stuckAfterMs;
   if (statusOpt !== undefined) sdkOpts.status = statusOpt;
   if (wantAny) sdkOpts.any = true;
   let ownerReadings = new Map<string, StateReading>();

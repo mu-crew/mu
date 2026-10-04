@@ -56,6 +56,14 @@ let pollCount = 0;
  *  that settles still owning a task is already nudged once to close it;
  *  still waiting after that means it needs the orchestrator. */
 export const DEFAULT_STUCK_AFTER_MS = 120_000;
+
+/** Default `--stuck-after` for an owner read over its control socket.
+ *  ctl's idle is exact (pi's agent_settled) and arrives only after the
+ *  close nudge's continuation has run (the nudge fires in
+ *  agent_before_settle, before the settle), so an idle owner still
+ *  holding the task has already declined to close it. The grace only
+ *  covers an orchestrator `send` racing the settle. */
+export const DEFAULT_CTL_STUCK_AFTER_MS = 5_000;
 const defaultStuckWarn: (msg: string) => void = (msg) => {
   process.stderr.write(msg);
 };
@@ -154,6 +162,10 @@ export interface TaskWaitOptions {
    *  observation-only (wait keeps polling); `onStall: 'exit'` makes it
    *  terminal. */
   stuckAfterMs?: number;
+  /** `stuckAfterMs` for an owner whose reading came from a working
+   *  control socket (source ctl, ctl ok). Default
+   *  `DEFAULT_CTL_STUCK_AFTER_MS`. `stuckAfterMs: 0` disables both. */
+  ctlStuckAfterMs?: number;
   /** What to do when the `--stuck-after` predicate fires on a watched
    *  task. `'warn'` (default) = today's behaviour: yellow STUCK line
    *  to stderr (deduped per task per wait call) + corroborating
@@ -265,6 +277,7 @@ export async function waitForTasks(
   const timeoutMs = opts.timeoutMs ?? 600_000;
   const pollMs = opts.pollMs ?? 1000;
   const stuckAfterMs = opts.stuckAfterMs ?? DEFAULT_STUCK_AFTER_MS;
+  const ctlStuckAfterMs = opts.ctlStuckAfterMs ?? DEFAULT_CTL_STUCK_AFTER_MS;
   const onStall: "warn" | "exit" = opts.onStall ?? "warn";
   const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Number.POSITIVE_INFINITY;
 
@@ -317,8 +330,10 @@ export async function waitForTasks(
     ctlBrokenSince.delete(ownerKey);
     stuckLabel.delete(ownerKey);
     if (reading?.state !== "needs_input" || reading.since === null) return null;
+    const viaCtl = reading.source === "ctl" && reading.ctl === "ok";
+    if (viaCtl && reading.pending === true) return null;
     const ageMs = Date.now() - reading.since;
-    return ageMs >= stuckAfterMs ? ageMs : null;
+    return ageMs >= (viaCtl ? ctlStuckAfterMs : stuckAfterMs) ? ageMs : null;
   };
 
   /** Read current state of all tasks; returns the result shape. */
