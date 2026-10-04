@@ -58,7 +58,7 @@ describe("mu task wait --on-stall warn|exit", () => {
   const servers: Server[] = [];
 
   /** Stand-in for the mu pi extension: idle since `since`, for any request. */
-  async function serveCtl(agentName: string, since: number): Promise<void> {
+  async function serveCtl(agentName: string, since: number, runs = 1): Promise<void> {
     const path = ctlSocketPath(workstream, agentName, tempDir);
     mkdirSync(dirname(path), { recursive: true });
     const server = createServer((sock) => {
@@ -67,7 +67,7 @@ describe("mu task wait --on-stall warn|exit", () => {
       sock.on("error", () => {});
       sock.on("data", (chunk: string) => {
         for (const _line of dec.push(chunk)) {
-          sock.end(encode({ v: 1, ok: true, state: "idle", since, runs: 1, pending: false }));
+          sock.end(encode({ v: 1, ok: true, state: "idle", since, runs, pending: false }));
         }
       });
     });
@@ -356,6 +356,40 @@ describe("mu task wait --on-stall warn|exit", () => {
     expect(commands).not.toContain(`mu task show stalled_task -w ${workstream}`);
     // …while the ownerless unmet ref keeps it.
     expect(commands).toContain(`mu task show plain_task -w ${workstream}`);
+    // A mux owner has no ctl runs: no exact-answer wait hint.
+    expect(commands.some((c) => c.includes("--after-runs"))).toBe(false);
+  });
+
+  it("--json timeout: a stuck pi owner's nextSteps lead with wait --after-runs runs-1, then the read", async () => {
+    setupStalledWorker("piwarn", "pi_stuck", "pi");
+    await serveCtl("piwarn", Date.now() - 10 * 60_000, 3);
+
+    const { exitCode, stdout } = await runCli(
+      [
+        "task",
+        "wait",
+        "pi_stuck",
+        "-w",
+        workstream,
+        "--stuck-after",
+        "1",
+        "--on-stall",
+        "warn",
+        "--timeout",
+        "1",
+        "--json",
+      ],
+      dbPath,
+    );
+
+    expect(exitCode).toBe(5);
+    const commands = (
+      JSON.parse(stdout) as { nextSteps: Array<{ command: string }> }
+    ).nextSteps.map((s) => s.command);
+    const wait = commands.indexOf(`mu agent wait piwarn --after-runs 2 --json -w ${workstream}`);
+    const read = commands.indexOf(`mu agent read piwarn -w ${workstream} --lines 60`);
+    expect(wait).toBeGreaterThanOrEqual(0);
+    expect(read).toBe(wait + 1);
   });
 
   it("pi owner: ctl idle with an old since → --on-stall exit 7", async () => {

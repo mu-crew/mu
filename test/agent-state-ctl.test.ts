@@ -64,7 +64,7 @@ afterEach(async () => {
 interface FakeExt {
   ops: string[];
   /** Fire agent_settled: runs++, idle, answer held waits. */
-  settle: (lastText?: string) => void;
+  settle: (lastText?: string, lastError?: string) => void;
   start: () => void;
   close: () => Promise<void>;
 }
@@ -79,6 +79,11 @@ async function fakeExtension(
   const ops: string[] = [];
   const waiters: Array<{ after: number | undefined; sock: Socket }> = [];
   let lastText: string | undefined;
+  let lastError: string | undefined;
+  const settled = () => ({
+    ...(lastText === undefined ? {} : { lastText }),
+    ...(lastError === undefined ? {} : { lastError }),
+  });
   const status = () => ({ v: 1, ok: true, state, since, runs, pending });
   mkdirSync(dirname(path), { recursive: true });
   const conns = new Set<Socket>();
@@ -94,7 +99,7 @@ async function fakeExtension(
         ops.push(req.op);
         if (req.op === "wait") {
           if (req.afterRuns !== undefined && runs > req.afterRuns && state === "idle") {
-            sock.end(encode(lastText === undefined ? status() : { ...status(), lastText }));
+            sock.end(encode({ ...status(), ...settled() }));
           } else waiters.push({ after: req.afterRuns, sock });
         } else sock.end(encode(status()));
       }
@@ -108,12 +113,13 @@ async function fakeExtension(
       state = "busy";
       since = Date.now();
     },
-    settle: (text?: string) => {
+    settle: (text?: string, error?: string) => {
       state = "idle";
       since = Date.now();
       runs++;
       lastText = text;
-      const reply = text === undefined ? status() : { ...status(), lastText: text };
+      lastError = error;
+      const reply = { ...status(), ...settled() };
       for (const w of waiters.splice(0)) w.sock.end(encode(reply));
     },
     close: async () => {
@@ -255,6 +261,29 @@ describe("mu agent wait on a pi agent", () => {
       dbPath,
     );
     expect(JSON.stringify(JSON.parse(empty.stdout).nextSteps)).toContain("mu agent read pia -w cs");
+  });
+
+  it("--first keeps the read hint for a run with lastText and a lastError", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    ext.settle("partial", "rate limited");
+    const res = await runCli(
+      ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--first", "--json"],
+      dbPath,
+    );
+    expect(JSON.stringify(JSON.parse(res.stdout).nextSteps)).toContain("mu agent read pia -w cs");
+  });
+
+  it("--first human output prints the read hint only when the run has no lastText", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    ext.settle("the answer");
+    const args = ["agent", "wait", "pia", "-w", WS, "--first"];
+    const withText = await runCli([...args, "--after-runs", "0"], dbPath);
+    expect(withText.stdout).toContain("finished");
+    expect(withText.stdout).not.toContain("mu agent read");
+    ext.start();
+    ext.settle("");
+    const empty = await runCli([...args, "--after-runs", "1"], dbPath);
+    expect(empty.stdout).toContain("mu agent read pia -w cs");
   });
 
   it("--after-runs refuses a non-pi agent (usage, exit 2)", async () => {
