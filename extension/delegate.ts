@@ -513,16 +513,16 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       freeSlot(); // now counted in inflight
       showStatus();
       const started = Date.now();
-      // Start the wait alongside the send: it takes its baseline run count
-      // at startup and resolves on the first settle past it. A model turn
-      // outlasts a mu process start by orders of magnitude.
-      const waiting = mu(
-        ["agent", "wait", name, "-w", W, "--json", "--timeout", String(timeoutS)],
-        entry.abort.signal,
-      );
-      const sent = await mu(["agent", "send", name, brief ? `${brief}\n\n${task}` : task, "-w", W]);
+      const sent = await mu([
+        "agent",
+        "send",
+        name,
+        brief ? `${brief}\n\n${task}` : task,
+        "-w",
+        W,
+        "--json",
+      ]);
       if (sent.code !== 0) {
-        entry.abort.abort();
         forget(name);
         // Nothing reached it: the pane is just an idle pi. Take it down.
         const c = await mu(["agent", "close", name, "-w", W]);
@@ -532,6 +532,25 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
             : `Pane kept; close it with: mu agent close ${name} -w ${W}`;
         throw new Error(`${failure(`mu agent send to ${W}/${name}`, sent).message}. ${pane}`);
       }
+      // The send's `runs` is pi's count before this prompt: waiting past it
+      // catches the run even if it settled before the wait started. An
+      // older mu or extension prints no runs: wait on the CLI's own
+      // baseline, as before.
+      const runs = json(sent)?.runs;
+      const waiting = mu(
+        [
+          "agent",
+          "wait",
+          name,
+          "-w",
+          W,
+          "--json",
+          "--timeout",
+          String(timeoutS),
+          ...(typeof runs === "number" ? ["--after-runs", String(runs)] : []),
+        ],
+        entry.abort.signal,
+      );
       const settle = async (r: MuResult) => {
         forget(name);
         try {

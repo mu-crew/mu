@@ -6,7 +6,7 @@
 
 export const CTL_PROTOCOL_VERSION = 1;
 
-export type CtlState = "busy" | "idle" | "needs_input";
+export type CtlState = "busy" | "idle";
 
 export type CtlRequest =
   | { op: "hello" }

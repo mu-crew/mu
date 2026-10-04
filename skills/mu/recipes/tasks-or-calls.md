@@ -12,9 +12,13 @@ tool (another harness, a script):
 
 ```bash
 mu agent spawn refuter-1 -w scratch
-mu agent send refuter-1 -w scratch --fresh '<brief>'
-mu agent wait refuter-1 -w scratch --json   # answer in lastText
+runs=$(mu agent send refuter-1 -w scratch --fresh '<brief>' --json | jq .runs)
+mu agent wait refuter-1 -w scratch --after-runs "$runs" --json   # answer in lastText
 ```
+
+`--after-runs` takes the run count the send reported, so a run that
+finished before the wait started still counts. A plain wait would sit
+until `--timeout`.
 
 - **It starts empty.** The brief carries everything: the finding or
   claim, file paths, the criteria, and the answer line to end with

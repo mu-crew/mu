@@ -51,15 +51,19 @@ From a script or other shell, run what the tool runs:
 
 ```bash
 mu agent spawn helper-1 -w scratch
-mu agent send helper-1 -w scratch --fresh 'Investigate why foo.spec.ts fails. Report the cause.'
-mu agent wait helper-1 -w scratch --json
+runs=$(mu agent send helper-1 -w scratch --fresh --json 'Investigate why foo.spec.ts fails. Report the cause.' | jq .runs)
+mu agent wait helper-1 -w scratch --after-runs "$runs" --json
 ```
+
+`--after-runs` waits for the first run past the count the send
+reported, so a run that settles before the wait starts still counts.
 
 Use `--fresh`: a plain send to a reused agent carries the previous
 task's context.
 
 `mu agent wait` fires when the agent leaves busy (including to
-`needs_input`), never on an already idle agent. For pi, the `--json`
+`needs_input`), never on an already idle agent unless it finished a run
+past `--after-runs`. For pi, the `--json`
 row carries:
 
 - `outcome`: `done`, `empty`, `error`, `died`, `timeout`, or `pending`.

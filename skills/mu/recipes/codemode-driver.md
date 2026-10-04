@@ -67,8 +67,8 @@ const sh = async (c) => (await tools.bash({ command: c })).output;
 const rows = await Promise.all(findings.map(async (id, i) => {
   const a = `refuter-${i + 1}`;
   await sh(`mu agent spawn ${a} -w scratch`);
-  await sh(`mu agent send ${a} -w scratch --fresh '<brief for ${id}: ... end with VERDICT: ...>'`);
-  const w = JSON.parse(await sh(`mu agent wait ${a} -w scratch --json --timeout 1200`));
+  const { runs } = JSON.parse(await sh(`mu agent send ${a} -w scratch --fresh --json '<brief for ${id}: ... end with VERDICT: ...>'`));
+  const w = JSON.parse(await sh(`mu agent wait ${a} -w scratch --after-runs ${runs} --json --timeout 1200`));
   const text = w.agents?.[0]?.lastText ?? "";
   await sh(`mu agent close ${a} -w scratch`);
   return `${id}\t${(text.match(/VERDICT:.*$/m) ?? ["VERDICT: UNVERIFIED no verdict line"])[0]}`;

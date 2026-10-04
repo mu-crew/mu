@@ -125,6 +125,19 @@ describe("mu pi extension", () => {
     expect(fake.sendUserMessage).toHaveBeenLastCalledWith("c", { deliverAs: "steer" });
   });
 
+  it("send replies with the status measured before dispatch (the wait baseline)", async () => {
+    await fake.emit("session_start");
+    // A run that starts and settles inside the dispatch must not move the baseline.
+    fake.sendUserMessage.mockImplementationOnce(async () => {
+      await fake.emit("agent_start");
+      await fake.emit("agent_settled");
+    });
+    const r = await ctlRequest(sock, { op: "send", text: "a" });
+    expect(r).toMatchObject({ v: 1, ok: true, state: "idle", runs: 0, pending: false });
+    expect(r.ok && typeof r.since).toBe("number");
+    expect(await ctlRequest(sock, { op: "wait", afterRuns: 0 })).toMatchObject({ runs: 1 });
+  });
+
   it("wait {afterRuns:0} stays pending until agent_settled", async () => {
     await fake.emit("session_start");
     await fake.emit("agent_start");

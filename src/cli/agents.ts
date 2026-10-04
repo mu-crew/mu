@@ -22,7 +22,6 @@ import {
   abortAgent,
   adoptAgent,
   agentCtlSocket,
-  chooseTransport,
   closeAgent,
   delegateOutcome,
   expectsCtl,
@@ -244,18 +243,7 @@ export async function cmdSend(
   // rather than letting it print raw, so it lands in the JSON payload
   // too. `exit 0` must not be able to mean "silently dropped".
   let undelivered: SendWarning | undefined;
-  // A plain ctl send: read pi's status first, so the hints can tell a
-  // queued follow-up (busy) from a new task landing in an old context
-  // (idle after a settled run).
   const agentRow = getAgent(db, name, ws);
-  const plainCtl =
-    agentRow !== undefined &&
-    !opts.fresh &&
-    !opts.steer &&
-    parseSessionCommand(text) === undefined &&
-    (via ?? chooseTransport(agentRow, agentCtlSocket(db, agentRow))) === "ctl";
-  const before =
-    plainCtl && agentRow !== undefined ? await ctlProbe(agentCtlSocket(db, agentRow)) : undefined;
   const sent = await sendToAgent(db, name, text, {
     workstream: ws,
     ...(opts.steer ? { mode: "steer" as const } : {}),
@@ -270,8 +258,14 @@ export async function cmdSend(
     { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
     { intent: "Watch live events", command: `mu log -w ${ws} --tail` },
   ];
-  if (agentRow !== undefined && before?.kind === "ok") {
-    nextSteps.push(...plainSendHints(agentRow, before.status));
+  // A plain ctl send: the reply carries pi's status from before the
+  // dispatch, so the hints can tell a queued follow-up (busy) from a new
+  // task landing in an old context (idle after a settled run). An older
+  // extension replies without runs and its state is post-dispatch: no hints.
+  const plainCtl =
+    sent.transport === "ctl" && !opts.fresh && !opts.steer && sent.command === undefined;
+  if (agentRow !== undefined && plainCtl && sent.state !== undefined && sent.runs !== undefined) {
+    nextSteps.push(...plainSendHints(agentRow, { state: sent.state, runs: sent.runs }));
   }
   if (stalenessCheck.warned && stalenessCheck.nextStep !== null) {
     nextSteps.push(stalenessCheck.nextStep);
@@ -290,6 +284,7 @@ export async function cmdSend(
       fresh: opts.fresh === true,
       ...(sent.command !== undefined ? { command: sent.command } : {}),
       ...(sent.state !== undefined ? { state: sent.state } : {}),
+      ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
       delivered: undelivered === undefined,
       ...(undelivered !== undefined
         ? { undelivered: { reason: undelivered.reason, message: undelivered.message } }
@@ -309,7 +304,9 @@ export async function cmdSend(
           ? "via ctl, fresh session"
           : sent.command !== undefined
             ? `via ctl, pi ran /${sent.command}`
-            : `via ctl, pi ${sent.state ?? "?"}`;
+            : sent.runs !== undefined
+              ? `via ctl, pi was ${sent.state ?? "?"}, runs ${sent.runs}`
+              : `via ctl, pi ${sent.state ?? "?"}`;
     console.log(pc.dim(`sent ${text.length} bytes to ${name} (${how})`));
   }
   printNextSteps(nextSteps);
@@ -717,7 +714,7 @@ export async function cmdAgentWait(
     any?: boolean;
     first?: boolean;
     timeout?: number;
-    lines?: number;
+    afterRuns?: number;
     workstream?: string;
     json?: boolean;
   },
@@ -739,6 +736,19 @@ export async function cmdAgentWait(
       return { name, workstreamName };
     }),
   );
+
+  // --after-runs is a ctl run count: refuse an agent that has none
+  // rather than silently polling it with no baseline.
+  if (opts.afterRuns !== undefined) {
+    for (const ref of refs) {
+      const agent = getAgent(db, ref.name, ref.workstreamName);
+      if (agent !== undefined && !expectsCtl(agent, agentCtlSocket(db, agent))) {
+        throw new UsageError(
+          `--after-runs needs a pi agent (control socket); ${ref.workstreamName}/${ref.name} runs ${agent.cli}. Drop --after-runs to wait on its pane state.`,
+        );
+      }
+    }
+  }
 
   const readStatuses = async (
     pending: readonly { name: string; workstreamName: string }[],
@@ -775,8 +785,10 @@ export async function cmdAgentWait(
   };
 
   // pi agents: one ctl `wait` per agent, resolved by the extension on
-  // agent_settled. `afterRuns` comes from a status read taken BEFORE the
-  // wait starts: a followUp queued while busy runs in the same pi run.
+  // agent_settled. `afterRuns` is --after-runs (the `runs` a send
+  // replied with, so a run that settled before this wait still counts),
+  // else a status read taken BEFORE the wait starts: a followUp queued
+  // while busy runs in the same pi run.
   const watch = async (
     ref: { name: string; workstreamName: string },
     signal: AbortSignal,
@@ -785,9 +797,17 @@ export async function cmdAgentWait(
     if (agent === undefined) return undefined;
     const sock = agentCtlSocket(db, agent);
     if (!expectsCtl(agent, sock)) return undefined;
-    const probe = await ctlProbe(sock);
-    if (probe.kind !== "ok") return undefined;
-    const settled = ctlRequest(sock, { op: "wait", afterRuns: probe.status.runs }, { signal }).then(
+    // With --after-runs the run past the baseline is the pending work:
+    // read as busy until the wait settles; no status probe needed.
+    let initial: AgentStatusSnapshot = { status: "busy" };
+    let afterRuns = opts.afterRuns;
+    if (afterRuns === undefined) {
+      const probe = await ctlProbe(sock);
+      if (probe.kind !== "ok") return undefined;
+      afterRuns = probe.status.runs;
+      initial = { status: ctlRuntimeState(probe.status.state) };
+    }
+    const settled = ctlRequest(sock, { op: "wait", afterRuns }, { signal }).then(
       (reply): AgentStatusSnapshot =>
         reply.ok && reply.state !== undefined
           ? {
@@ -807,7 +827,7 @@ export async function cmdAgentWait(
           : { status: null };
       },
     );
-    return { initial: { status: ctlRuntimeState(probe.status.state) }, settled };
+    return { initial, settled };
   };
 
   const timeoutMs = (opts.timeout ?? 600) * 1000;
@@ -1110,7 +1130,11 @@ export function wireAgentCommands(program: Command): void {
       "max seconds to wait (0 = forever, default 600)",
       parseNonNegativeInt,
     )
-    .option("--lines <n>", "scrollback lines to scan per poll (default 100)", parseLines)
+    .option(
+      "--after-runs <n>",
+      "pi agents only: fire on the first run settled past N (the `runs` that `mu agent send --json` printed), even one that settled before this wait started",
+      parseNonNegativeInt,
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (names: string[]) {
@@ -1118,7 +1142,7 @@ export function wireAgentCommands(program: Command): void {
         any?: boolean;
         first?: boolean;
         timeout?: number;
-        lines?: number;
+        afterRuns?: number;
         workstream?: string | string[];
         json?: boolean;
       };

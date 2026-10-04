@@ -36,6 +36,13 @@ export type Transport = "ctl" | "mux";
 export type SendResult = {
   transport: Transport;
   state?: CtlState;
+  /**
+   * ctl only: pi's completed-run count. For a plain send it is measured
+   * before dispatch (the `mu agent wait --after-runs` baseline); for
+   * `--fresh` it is the new session's count once its run started.
+   * Absent from an extension that predates it.
+   */
+  runs?: number;
   /** Set when the text ran as a pi session command over ctl. */
   command?: CtlCommandName;
 };
@@ -193,7 +200,11 @@ export async function sendViaTransport(
     }
     throw new Error(`control socket refused the send: ${reply.error}`);
   }
-  return reply.state === undefined ? { transport } : { transport, state: reply.state };
+  return {
+    transport,
+    ...(reply.state !== undefined ? { state: reply.state } : {}),
+    ...(reply.runs !== undefined ? { runs: reply.runs } : {}),
+  };
 }
 
 /** `/new`, `/reload` or `/compact` inside pi, through the ctl `command` op. */
