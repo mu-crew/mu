@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import {
+  acceptTask,
+  addBlockEdge,
   addTask,
   type CloseTaskOptions,
   claimTask,
@@ -22,6 +24,7 @@ import {
   parkTask,
   releaseTask,
   SubstateReasonRequiredError,
+  TaskInTriageError,
   TaskParkedError,
   TaskParkStateError,
   unparkTask,
@@ -273,5 +276,72 @@ describe("claim on a parked task", () => {
     expect(getTask(db, "a", WS)?.ownerName).toBeNull();
     await claimTask(db, "a", { workstream: WS, agentName: "alice", force: true });
     expect(pair("a")).toBe("IN_PROGRESS/active");
+  });
+});
+
+describe("triage: add --triage, accept, and the claim guard", () => {
+  function addTriage(localId: string, blockedBy?: string[]): void {
+    addTask(db, {
+      localId,
+      workstream: WS,
+      title: localId,
+      impact: 50,
+      effortDays: 1,
+      triage: true,
+      ...(blockedBy ? { blockedBy } : {}),
+    });
+  }
+
+  it("a triage task is OPEN/triage: out of ready, still blocks its dependent", () => {
+    add("review");
+    addTriage("f1");
+    // f1 blocks review: a finding holds the umbrella open until decided.
+    addBlockEdge(db, WS, "review", "f1");
+    expect(pair("f1")).toBe("OPEN/triage");
+    expect(readyNames()).not.toContain("f1");
+    expect(readyNames()).not.toContain("review");
+  });
+
+  it("accept moves it to OPEN/todo, records evidence; a no-op elsewhere", () => {
+    addTriage("f1");
+    add("plain");
+    const r = acceptTask(db, "f1", { workstream: WS, evidence: "reproduced" });
+    expect(r).toMatchObject({ changed: true, previousSubstate: "triage", substate: "todo" });
+    expect(readyNames()).toContain("f1");
+    expect(noteContents("f1")).toContain("ACCEPT: reproduced");
+    expect(acceptTask(db, "f1", { workstream: WS }).changed).toBe(false);
+    expect(acceptTask(db, "plain", { workstream: WS }).changed).toBe(false);
+  });
+
+  it("unpark does not take a task out of triage", () => {
+    addTriage("f1");
+    expect(unparkTask(db, "f1", { workstream: WS }).changed).toBe(false);
+    expect(pair("f1")).toBe("OPEN/triage");
+  });
+
+  it("declining is an ordinary close, and unblocks the dependent", () => {
+    add("review");
+    addTriage("f1");
+    addBlockEdge(db, WS, "review", "f1");
+    closeTask(db, "f1", { workstream: WS, as: "rejected", why: "guard at :40" });
+    expect(pair("f1")).toBe("CLOSED/rejected");
+    expect(readyNames()).toContain("review");
+  });
+
+  it("claim refuses a triage task without force, naming accept first", async () => {
+    addTriage("f1");
+    let err: unknown;
+    try {
+      await claimTask(db, "f1", { workstream: WS, self: true, actor: "me" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TaskInTriageError);
+    const cmds = (err as TaskInTriageError).errorNextSteps().map((x) => x.command);
+    expect(cmds[0]).toContain("mu task accept f1");
+    expect(cmds.some((c) => c.includes("--as rejected"))).toBe(true);
+    expect(pair("f1")).toBe("OPEN/triage");
+    await claimTask(db, "f1", { workstream: WS, self: true, actor: "me", force: true });
+    expect(pair("f1")).toBe("IN_PROGRESS/active");
   });
 });

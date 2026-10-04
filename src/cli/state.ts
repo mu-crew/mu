@@ -147,6 +147,7 @@ function fullJsonShape(d: PerWsData): Record<string, unknown> {
     orphans: d.view.orphans,
     tracks: d.tracks,
     ready: withRoiAll(d.ready),
+    triage: withRoiAll(d.triage),
     inProgress: withRoiAll(d.inProgress),
     blocked: withRoiAll(d.blocked),
     recentClosed: withRoiAll(d.recentClosed),
@@ -300,6 +301,13 @@ function renderFullCard(d: PerWsData): void {
   console.log(pc.bold(`Ready (${ready.length})`));
   console.log(ready.length === 0 ? pc.dim("  (none)") : formatTaskListTable(ready));
   console.log("");
+  if (d.triage.length > 0) {
+    console.log(
+      `${pc.bold(`Triage (${d.triage.length})`)} ${pc.dim(`accept: mu task accept <id> -w ${workstreamName} · decline: mu task close <id> --as rejected|duplicate --why ...`)}`,
+    );
+    console.log(formatTaskListTable(d.triage));
+    console.log("");
+  }
   console.log(pc.bold(`In progress (${inProgress.length})`));
   console.log(inProgress.length === 0 ? pc.dim("  (none)") : formatTaskListTable(inProgress));
   console.log("");

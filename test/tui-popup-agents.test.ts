@@ -105,6 +105,7 @@ function snapshotFor(agents: LiveAgent[]): WorkstreamSnapshot {
     blocked: [],
     recentClosed: [],
     parkedCount: 0,
+    triage: [],
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

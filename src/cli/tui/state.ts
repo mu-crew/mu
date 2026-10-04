@@ -464,6 +464,7 @@ export function snapshotKey(s: WorkstreamSnapshot): unknown {
     blocked: s.blocked.map(taskKey),
     recentClosed: s.recentClosed.map(taskKey),
     parkedCount: s.parkedCount,
+    triage: s.triage.map(taskKey),
     allTasks: s.allTasks.map(taskKey),
     commitsBackend: s.commitsBackend ?? null,
     recentCommits: s.recentCommits.map((c) => [c.sha, c.subject, c.author, c.relTime]),

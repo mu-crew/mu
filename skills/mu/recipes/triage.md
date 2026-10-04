@@ -26,6 +26,10 @@ continuously.
    - noise: record it in the reader's note, no task;
    - needs a human (policy, priority, anything external): add the task
      and park it with `--why`, so it waits visibly for a decision.
+
+   The actor decides, so items land as ordinary tasks. When a reader's
+   output must be checked first, add them with `--triage` and decide
+   them as [findings](findings.md).
 5. **Record what was seen** in a log ledger
    (`mu log --kind triage 'seen=#1234'`) so the next run skips it.
 

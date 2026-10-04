@@ -57,6 +57,9 @@ export interface WorkstreamSnapshot {
   /** OPEN/parked tasks in the workstream. The ready card names them
    *  when nothing is ready, since parked work is otherwise invisible there. */
   parkedCount: number;
+  /** OPEN/triage tasks: proposals (review findings) awaiting accept,
+   *  reject, or duplicate. Out of `ready`, so listed on their own. */
+  triage: TaskRow[];
   /** Populated only when callers explicitly pass `withAllTasks: true`.
    *  The TUI dashboard fast tick leaves this empty and the all-tasks
    *  popup reads its exhaustive list directly from SQLite while open. */
@@ -195,6 +198,7 @@ export async function loadWorkstreamSnapshotFast(
     blocked: listBlocked(db, workstream),
     recentClosed: listRecentClosed(db, workstream),
     parkedCount: listTasks(db, workstream, { status: "OPEN", substate: "parked" }).length,
+    triage: listTasks(db, workstream, { status: "OPEN", substate: "triage" }),
     allTasks: opts.withAllTasks === true ? listTasks(db, workstream) : [],
     workspaces: listWorkspaces(db, workstream),
     workspaceOrphans: listWorkspaceOrphans(db, workstream),
@@ -299,6 +303,7 @@ function minimalSnapshot(workstream: string): WorkstreamSnapshot {
     blocked: [],
     recentClosed: [],
     parkedCount: 0,
+    triage: [],
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

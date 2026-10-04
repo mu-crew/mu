@@ -109,6 +109,18 @@ export async function cmdTaskList(
   const basis = relTimeBasisForSort(sortKey);
   if (basis !== null) tableOpts.relTimeBasis = basis;
   console.log(formatTaskListTable(tasks, tableOpts));
+  // The triage inbox is a to-do list of decisions: say how to make them.
+  const first = tasks.find((t) => t.status === "OPEN" && t.substate === "triage");
+  if (first !== undefined) {
+    printNextSteps([
+      { intent: "Accept as work", command: `mu task accept ${first.name} -w ${workstream}` },
+      {
+        intent: "Decline",
+        command: `mu task close ${first.name} --as rejected|duplicate --why "<reason>" -w ${workstream}`,
+      },
+      { intent: "Read the evidence", command: `mu task notes ${first.name} -w ${workstream}` },
+    ]);
+  }
 }
 
 // ROI = impact / effort_days. Higher first. Tasks with effortDays=0
@@ -146,16 +158,32 @@ export async function cmdTaskNext(
   }
   if (tasks.length === 0) {
     const parked = listTasks(db, workstream, { substate: "parked" }).length;
-    if (parked === 0) {
+    const triage = listTasks(db, workstream, { substate: "triage" }).length;
+    if (parked === 0 && triage === 0) {
       console.log(pc.dim("(no ready tasks)"));
       return;
     }
-    console.log(pc.dim(`(no ready tasks; ${parked} parked)`));
+    const held = [parked > 0 ? `${parked} parked` : "", triage > 0 ? `${triage} in triage` : ""]
+      .filter(Boolean)
+      .join(", ");
+    console.log(pc.dim(`(no ready tasks; ${held})`));
     printNextSteps([
-      {
-        intent: "List parked tasks",
-        command: `mu task list --substate parked -w ${workstream}`,
-      },
+      ...(triage > 0
+        ? [
+            {
+              intent: "Triage findings",
+              command: `mu task list --substate triage -w ${workstream}`,
+            },
+          ]
+        : []),
+      ...(parked > 0
+        ? [
+            {
+              intent: "List parked tasks",
+              command: `mu task list --substate parked -w ${workstream}`,
+            },
+          ]
+        : []),
     ]);
     return;
   }

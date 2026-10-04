@@ -561,7 +561,7 @@ CREATE VIEW ready AS
   SELECT t.*
     FROM tasks t
    WHERE t.status = 'OPEN'
-     AND t.substate <> 'parked'
+     AND t.substate NOT IN ('parked', 'triage')
      AND NOT EXISTS (
        SELECT 1
          FROM task_edges e

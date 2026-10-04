@@ -7,6 +7,12 @@ a claim in a draft holds. This is [refute](refute.md) applied to
 sources. Workers need a web search tool (pi's `brave_search`, or
 `curl` on docs) or the code they research.
 
+**Mode:** delegates by default: the report is the result, and claims
+need no permanent record. Use a workstream for a long run that must
+survive compaction or feeds a tracked decision; then each claim the
+answer rests on is an `OPEN/triage` task, decided like a finding
+([findings](findings.md)).
+
 ## Steps
 
 1. **Write the question and the bar** on an umbrella task: the exact
@@ -24,15 +30,19 @@ sources. Workers need a web search tool (pi's `brave_search`, or
 
    A claim without a source and a quote is not a claim. Searchers can
    run on a cheap model.
-3. **Dedupe claims** in one task: merge the same fact from several
-   sources (keep every source), and flag claims that contradict each
-   other.
-4. **One check task per claim** that the answer depends on. The checker
+3. **Dedupe claims**: merge the same fact from several sources (keep
+   every source), and flag claims that contradict each other. In
+   workstream mode, each surviving claim becomes an `OPEN/triage` task
+   titled with the claim, its sources and quotes in the note.
+4. **One checker per claim** that the answer depends on. The checker
    gets the claim and its sources, not the searcher's reasoning, fetches
    the source itself, and tries to break the claim: is the quote there,
    does it say that, is it current, does another source disagree? It
    ends with `VERDICT: c4 CONFIRMED | REFUTED | UNVERIFIED <evidence>`.
-   For contradicted claims, one checker per side.
+   For contradicted claims, one checker per side. In workstream mode the
+   verdict is the claim task's state: `accept` for confirmed,
+   `close --as rejected` for refuted, an `UNVERIFIED:` note in triage
+   otherwise.
 5. **Synthesize** in a task blocked by every check: answer the question
    from confirmed claims only, each with its source URL. List
    unverified claims separately. Note what the sources disagree on and

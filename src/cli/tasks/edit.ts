@@ -129,6 +129,7 @@ export async function cmdTaskAdd(
     blockedBy?: string[];
     note?: string;
     noteAuthor?: string;
+    triage?: boolean;
     workstream?: string;
     json?: boolean;
   },
@@ -163,6 +164,7 @@ export async function cmdTaskAdd(
       impact: opts.impact,
       effortDays: opts.effortDays,
       ...(hasBlockers ? { blockedBy } : {}),
+      ...(opts.triage === true ? { triage: true } : {}),
     });
     const createdNote =
       opts.note !== undefined
@@ -191,10 +193,12 @@ export async function cmdTaskAdd(
       intent: "Add a blocker",
       command: `mu task block ${task.name} --by <other-id> -w ${workstream}`,
     },
-    {
-      intent: "Claim and start",
-      command: `mu task claim ${task.name} -w ${workstream} --self  (or --for <worker>)`,
-    },
+    opts.triage === true
+      ? { intent: "Accept it as work", command: `mu task accept ${task.name} -w ${workstream}` }
+      : {
+          intent: "Claim and start",
+          command: `mu task claim ${task.name} -w ${workstream} --self  (or --for <worker>)`,
+        },
   ];
   if (opts.json) {
     // JSON callers are scripts: stay machine-readable. The human
@@ -392,6 +396,12 @@ export async function cmdTaskShow(
   if (task.substate === "parked") {
     console.log("");
     printNextSteps([{ intent: "Return it to next", command: `mu task unpark ${ref}` }]);
+  } else if (task.substate === "triage") {
+    console.log("");
+    printNextSteps([
+      { intent: "Accept it as work", command: `mu task accept ${ref}` },
+      { intent: "Decline it", command: `mu task close ${ref} --as rejected --why "<reason>"` },
+    ]);
   } else if (task.status === "CLOSED" && task.substate !== "done") {
     console.log("");
     printNextSteps([{ intent: "Reopen it", command: `mu task open ${ref}` }]);

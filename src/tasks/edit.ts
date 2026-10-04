@@ -30,6 +30,8 @@ export interface AddTaskOptions {
    * edge. The CLI surfaces this as `--blocked-by`; the SDK key matches.
    */
   blockedBy?: string[];
+  /** Start as OPEN/triage (a proposal, e.g. a review finding) instead of OPEN/todo. */
+  triage?: boolean;
 }
 
 /**
@@ -73,9 +75,18 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
     const insertResult = db
       .prepare(
         `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
-         VALUES (?, ?, ?, 'OPEN', 'todo', ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?)`,
       )
-      .run(wsId, opts.localId, opts.title, opts.impact, opts.effortDays, now, now);
+      .run(
+        wsId,
+        opts.localId,
+        opts.title,
+        opts.triage === true ? "triage" : "todo",
+        opts.impact,
+        opts.effortDays,
+        now,
+        now,
+      );
     const newTaskId = Number(insertResult.lastInsertRowid);
 
     if (opts.blockedBy && opts.blockedBy.length > 0) {

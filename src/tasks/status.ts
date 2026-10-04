@@ -28,10 +28,12 @@ export const TASK_STATUS_LIST = TASK_STATUSES.join(" | ");
 
 /** Legal substates per status. `substate` qualifies `status` and never
  *  touches edge semantics: only `status === "CLOSED"` satisfies a
- *  `blocks` edge. Closed: `rejected` = the proposal was declined;
- *  `wontfix` = valid, but not worth doing. */
+ *  `blocks` edge. Open: `parked` = set aside on purpose; `triage` = a
+ *  proposed task (e.g. a review finding) not yet accepted as work. Both
+ *  stay out of `ready` and `claim`. Closed: `rejected` = the proposal
+ *  was declined; `wontfix` = valid, but not worth doing. */
 export const TASK_SUBSTATES = {
-  OPEN: ["todo", "parked"],
+  OPEN: ["todo", "parked", "triage"],
   IN_PROGRESS: ["active"],
   CLOSED: ["done", "rejected", "wontfix", "duplicate", "superseded"],
 } as const satisfies Record<TaskStatus, readonly string[]>;
@@ -85,6 +87,15 @@ export function resolvePair(status: string, substate: unknown): TaskPair | null 
     return { status, substate: substate as TaskSubstate };
   }
   return { status, substate: DEFAULT_SUBSTATE[status] };
+}
+
+/** OPEN substates that keep a task out of `ready`, `next` and `claim`. */
+export const UNSCHEDULED_SUBSTATES: readonly TaskSubstate[] = ["parked", "triage"];
+
+export function isUnscheduled(pair: { status: string; substate: string }): boolean {
+  return (
+    pair.status === "OPEN" && (UNSCHEDULED_SUBSTATES as readonly string[]).includes(pair.substate)
+  );
 }
 
 /** "OPEN" for default pairs, "OPEN/parked" otherwise. Shared by CLI + TUI. */

@@ -63,8 +63,10 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | --- | --- | --- |
 | **task** | A node in the DAG with mandatory `impact` and `effort_days`, a **task status**, and a **substate**. | "issue", "ticket", "item" |
 | **task status** | `OPEN`, `IN_PROGRESS`, or `CLOSED`. Any `CLOSED/*` satisfies a blocker. | "state" |
-| **substate** | What the status means, shown as `STATUS/substate`; never null. `OPEN`: `todo`, `parked`. `IN_PROGRESS`: `active`. `CLOSED`: `done`, `rejected`, `wontfix`, `duplicate`, `superseded`. | "resolution", "reason" |
+| **substate** | What the status means, shown as `STATUS/substate`; never null. `OPEN`: `todo`, `parked`, `triage`. `IN_PROGRESS`: `active`. `CLOSED`: `done`, `rejected`, `wontfix`, `duplicate`, `superseded`. | "resolution", "reason" |
 | **park** / **unpark** | `OPEN/todo` ↔ `OPEN/parked` (park needs `--why`). Parked tasks leave **ready**. | "defer", "snooze" |
+| **triage** / **accept** | `OPEN/triage` is a proposed task, usually a review **finding**, not yet accepted as work: out of **ready**, refused by `claim`, but it blocks its dependents. `mu task add --triage` creates one; `mu task accept` moves it to `OPEN/todo`; declining is `close --as rejected` or `--as duplicate`. | "inbox", "pending" |
+| **finding** | One problem a reviewer, checker, or auditor reports. Recorded as an `OPEN/triage` task (the mu way), or as an answer line when a **delegate** reviews something nobody will track. | "issue", "comment" |
 | **task DAG** / **graph** | The directed acyclic graph of tasks. | "task list", "tree" |
 | **edge** | The single edge type: `A blocks B` means A must close before B starts. | "dependency" (prose only) |
 | **subtree** / **scope** | Tasks reachable from a root via blocks-edges. | "subgraph" |

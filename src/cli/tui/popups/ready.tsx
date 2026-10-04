@@ -70,6 +70,7 @@ export function yankCommandForTask(
   switch (t.status) {
     case "OPEN":
       if (t.substate === "parked") return `mu task unpark ${t.name} -w ${ws}`;
+      if (t.substate === "triage") return `mu task accept ${t.name} -w ${ws}`;
       return t.ownerName === null
         ? `mu task claim ${t.name} -w ${ws}`
         : `mu task release ${t.name} -w ${ws}`;

@@ -8,6 +8,10 @@ against twenty rules skips some; one checker per rule does not.
 Two modes. **Check** asks "does this change follow our rules?".
 **Mine** asks "which rules are we missing?".
 
+Check on someone's PR runs as delegates; check before merging your own
+work, and mine always, run in a workstream. Violations and candidate
+rules are findings: [findings](findings.md) says where they live.
+
 ## Check: a change against the rules
 
 1. **List the rules.** A scout extracts every checkable rule from the
@@ -21,18 +25,19 @@ Two modes. **Check** asks "does this change follow our rules?".
    count.
 2. **Pin the target**: the diff, branch, or PR, as in
    [review-panel](review-panel.md) step 1.
-3. **One checker task per rule.** The checker gets one rule and the
-   diff, and reports each violation with file:line and the rule id, or
-   `r7: no violations` with what it looked at. One rule per checker
-   keeps it from skimming.
+3. **One checker per rule.** The checker gets one rule and the diff,
+   and records each violation as a finding (title `r7: <what>`,
+   file:line in the note), or reports `r7: no violations` with what it
+   looked at. One rule per checker keeps it from skimming.
 4. **A skeptic pass** over the flags: one fresh agent reads each flagged
    line and the rule, and drops false positives (the rule does not
    apply here, the code already complies, the rule has a stated
-   exception). Ending: `VERDICT: <flag> CONFIRMED | DROPPED <reason>`.
+   exception). In workstream mode, a dropped flag is
+   `close --as rejected --why '<reason>'`; a confirmed one is accepted.
 5. **Report or fix** confirmed violations, as in review-panel step 5.
 
 Done when every rule from step 1 has a checker result, and every flag
-has a skeptic verdict.
+is decided.
 
 ## Mine: rules you keep stating but never wrote
 
@@ -50,14 +55,17 @@ has a skeptic verdict.
 2. **Cluster** the corrections in one task: the same lesson in
    different words is one cluster. Keep clusters with at least two
    corrections from different occasions; a one-off is not a rule.
-3. **Refute each candidate rule** with a fresh agent: would it have
+3. **One `OPEN/triage` task per candidate rule**, the rule as the
+   title and its cluster of corrections in the note.
+4. **Refute each candidate** with a fresh agent: would it have
    prevented the real mistakes in its cluster? Does it contradict an
    existing rule? Is it already enforced by a linter or test (then it
-   needs no prose)? Ending: `VERDICT: <rule> KEEP | DROP <reason>`.
-4. **Propose, don't commit.** Write the surviving rules as a diff to
-   the rule file, worded per [brief](brief.md) (positive, specific,
-   with the reason), each citing its cluster. A rule file change is a
-   human decision: park the umbrella with the diff in its note.
+   needs no prose)? Dropped candidates close `--as rejected`.
+5. **Propose, don't commit.** The candidates left in triage are the
+   proposal: write them as a diff to the rule file in the umbrella's
+   note, worded per [brief](brief.md) (positive, specific, with the
+   reason). A rule change is a human decision: the human accepts or
+   rejects each candidate task.
 
 Done when every cluster has a verdict and the proposal lists each kept
 rule with the corrections behind it.
