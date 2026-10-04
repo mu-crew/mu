@@ -191,6 +191,8 @@ export class AgentDiedOnSpawnError extends Error implements HasNextSteps {
     public readonly scrollback: string | undefined,
     /** The command the pane ran; an `ssh ...` command gets remote hints. */
     public readonly command?: string,
+    /** When it died; default `within <MU_SPAWN_LIVENESS_MS>ms of spawn`. */
+    when = `within ${defaultSpawnLivenessMs()}ms of spawn`,
   ) {
     const tail = scrollback?.trim();
     const detail = tail ? `\n\n--- pane scrollback ---\n${tail}\n--- end scrollback ---` : "";
@@ -198,9 +200,7 @@ export class AgentDiedOnSpawnError extends Error implements HasNextSteps {
     const cause = remote
       ? 'The command is an ssh hop, so the likely causes are remote: the remote binary is missing, or its env (PATH, provider keys) is absent because ssh runs a non-interactive shell that skips ~/.zshrc / ~/.bashrc (wrap it: $SHELL -ilc "pi --approve"); or sshd refused the socket forward (ExitOnForwardFailure=yes kills the connection; check AllowStreamLocalForwarding).'
       : "Most common cause: the spawned CLI exited immediately (e.g. a wrapper CLI blocking on its instance lock; set MU_<UPPER_CLI>_COMMAND to a non-blocking variant to bypass).";
-    super(
-      `agent ${agentName} died within ${defaultSpawnLivenessMs()}ms of spawn (pane ${paneId}). ${cause}${detail}`,
-    );
+    super(`agent ${agentName} died ${when} (pane ${paneId}). ${cause}${detail}`);
     this.remote = remote;
   }
   errorNextSteps(): NextStep[] {
@@ -286,9 +286,11 @@ export class AgentSpawnStartupError extends Error implements HasNextSteps {
     /** Full captured scrollback (tail-trimmed already by
      *  awaitSpawnLiveness). Attached to the message for context. */
     public readonly scrollback: string,
+    /** When it was seen; default `within <MU_SPAWN_LIVENESS_MS>ms of spawn`. */
+    when = `within ${defaultSpawnLivenessMs()}ms of spawn`,
   ) {
     super(
-      `agent ${agentName} reported a startup error within ${defaultSpawnLivenessMs()}ms of spawn (pane ${paneId}). The pane is alive but the spawned CLI parked at an error prompt instead of becoming a working agent.\n\nMatched line: ${matchedLine.trim()}\n\n--- pane scrollback ---\n${scrollback.trim()}\n--- end scrollback ---`,
+      `agent ${agentName} reported a startup error ${when} (pane ${paneId}). The pane is alive but the spawned CLI parked at an error prompt instead of becoming a working agent.\n\nMatched line: ${matchedLine.trim()}\n\n--- pane scrollback ---\n${scrollback.trim()}\n--- end scrollback ---`,
     );
   }
   errorNextSteps(): NextStep[] {
