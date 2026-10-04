@@ -30,8 +30,18 @@ Delegates called in one turn run in parallel.
   as evidence.
 - pi's footer shows how many delegates this session is waiting on.
 - Each delegate costs a pane and a pi process. A session runs at most
-  `MU_DELEGATE_MAX` at once (default 16); past that, the tool refuses
-  and the rest wait for answers.
+  `MU_DELEGATE_MAX` at once (default 16). Further calls are queued, up
+  to as many again: the footer reads `16 delegates running, 4 queued`,
+  each starts when a slot frees, and `mu_delegate_cancel queued-N`
+  drops one. A queued call has no pane yet, so quitting pi or `/reload`
+  drops it; pi warns which ones never started.
+- A delegate that stops on an API error (overloaded, connection, auth)
+  keeps its pane. The answer names the error and leaves the choice to
+  the model: re-issue, or record the check as unverified. The footer
+  counts it as `1 failed` until the pane is closed.
+- Answers arrive as follow-up messages when pi would otherwise stop,
+  never mid-turn. To get several at once, set pi's `followUpMode` to
+  `"all"`.
 
 `MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
 
@@ -52,7 +62,9 @@ task's context.
 `needs_input`), never on an already idle agent. For pi, the `--json`
 row carries:
 
-- `outcome`: `done`, `empty`, `died`, `timeout`, or `pending`.
+- `outcome`: `done`, `empty`, `error`, `died`, `timeout`, or `pending`.
+  `error` means the run stopped on an API error after pi's own retries;
+  `lastError` holds the message and the pane is kept.
 - `lastText`: the final message, capped at 64 KiB.
 
 Exit codes: `0` met, `5` timeout, `6` pane died. Non-pi agents have no

@@ -793,6 +793,7 @@ export async function cmdAgentWait(
           ? {
               status: ctlRuntimeState(reply.state),
               ...(reply.lastText !== undefined ? { lastText: reply.lastText } : {}),
+              ...(reply.lastError !== undefined ? { lastError: reply.lastError } : {}),
             }
           : { status: "unknown", unknownReason: reply.ok ? "ctl wait: no state" : reply.error },
       // The connection dropped. A socket that still answers (pi's /new

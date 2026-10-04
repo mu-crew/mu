@@ -24,9 +24,12 @@ mu agent wait refuter-1 -w scratch --json   # answer in lastText
   then the next runs them in series.
 - **It leaves no task.** Its `scratch` pane stays attachable while it
   runs. `mu_delegate` closes it after a clean finish and keeps it on a
-  crash or timeout (`keep: true` always keeps it); the bash form needs
-  `mu agent close <name> -w scratch`. You record its verdict on the task
-  it judged.
+  crash, timeout, or API error (`keep: true` always keeps it); the bash
+  form needs `mu agent close <name> -w scratch`. You record its verdict
+  on the task it judged.
+- **An API error is yours to decide.** Re-issue the call, or record the
+  check as `UNVERIFIED` on its task, then close the kept pane
+  (`mu_delegate_cancel`, or `mu agent close`).
 
 ## The rule
 
@@ -60,8 +63,9 @@ Before a wave, count what it will add: units + gates + expected
 findings. If the count is more than a few hundred for one change, the
 steps that only check things are probably tasks by mistake.
 
-Run calls within the delegate cap (`MU_DELEGATE_MAX`, default 16; see
-[orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
+`mu_delegate` runs 16 at once (`MU_DELEGATE_MAX`) and queues the rest
+up to as many again; see
+[orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency).
 
 Done when every agent a recipe step spawns is either a task in the DAG
 or a delegate call whose verdict is recorded on a task.

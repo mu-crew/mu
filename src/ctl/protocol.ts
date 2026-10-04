@@ -54,6 +54,8 @@ export type CtlReply =
         extVersion?: string;
         /** wait only: text of the settled run's final assistant message ("" when none). */
         lastText?: string;
+        /** wait only: the error that ended the settled run (retries exhausted). */
+        lastError?: string;
       })
   | { v: 1; ok: false; error: string; ops?: string[] };
 

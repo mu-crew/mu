@@ -187,6 +187,9 @@ type Shared = {
   lastText: string;
   /** Captured on agent_end, published to `lastText` on agent_settled. */
   endText?: string;
+  /** Error that ended the last settled run, if any; served by `wait`. */
+  lastError?: string;
+  endError?: string;
   ctx?: MuPiContext;
   pi: MuPiApi;
   handle: (req: Record<string, unknown>, conn: Socket) => Promise<Reply>;
@@ -228,6 +231,31 @@ export function lastAssistantText(event: unknown): string {
     return capText(parts.join(""));
   }
   return "";
+}
+
+/** The final assistant message's error, when the run stopped on one
+ *  (pi's own retries exhausted: overloaded, connection, auth). */
+export function lastAssistantError(event: unknown): string | undefined {
+  const msgs =
+    typeof event === "object" && event !== null
+      ? (event as { messages?: unknown }).messages
+      : undefined;
+  if (!Array.isArray(msgs)) return undefined;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m: unknown = msgs[i];
+    if (typeof m !== "object" || m === null) continue;
+    const { role, stopReason, errorMessage } = m as {
+      role?: unknown;
+      stopReason?: unknown;
+      errorMessage?: unknown;
+    };
+    if (role !== "assistant") continue;
+    if (stopReason !== "error") return undefined;
+    return typeof errorMessage === "string" && errorMessage !== ""
+      ? capText(errorMessage)
+      : "unknown error";
+  }
+  return undefined;
 }
 
 function capText(text: string): string {
@@ -370,6 +398,7 @@ function serveCtl(pi: MuPiApi): void {
   // the last agent_end before the settle holds the final answer.
   pi.on("agent_end", (e) => {
     g.endText = lastAssistantText(e);
+    g.endError = lastAssistantError(e);
   });
 
   pi.on("agent_settled", (_e, c) => {
@@ -379,6 +408,8 @@ function serveCtl(pi: MuPiApi): void {
     g.runs++;
     g.lastText = g.endText ?? "";
     g.endText = undefined;
+    g.lastError = g.endError;
+    g.endError = undefined;
     for (const w of [...g.waiters]) w();
   });
 
@@ -534,10 +565,15 @@ function serveCtl(pi: MuPiApi): void {
     }
   }
 
+  const settledRun = () => ({
+    lastText: g.lastText,
+    ...(g.lastError !== undefined ? { lastError: g.lastError } : {}),
+  });
+
   /** Resolve once a run past `afterRuns` has settled (any next settle when omitted). */
   function wait(afterRuns: number | undefined, timeoutMs: number | undefined, conn: Socket) {
     if (afterRuns !== undefined && g.runs > afterRuns && g.state === "idle") {
-      return Promise.resolve<Reply>({ v: V, ok: true, ...status(), lastText: g.lastText });
+      return Promise.resolve<Reply>({ v: V, ok: true, ...status(), ...settledRun() });
     }
     return new Promise<Reply>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -547,7 +583,7 @@ function serveCtl(pi: MuPiApi): void {
         conn.off("close", onClose);
         resolve(r);
       };
-      const waiter = () => done({ v: V, ok: true, ...status(), lastText: g.lastText });
+      const waiter = () => done({ v: V, ok: true, ...status(), ...settledRun() });
       const onClose = () => done(fail("client closed"));
       g.waiters.add(waiter);
       conn.on("close", onClose);

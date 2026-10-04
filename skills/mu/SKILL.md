@@ -173,8 +173,8 @@ rules hold even when you skip it:
 - **Checks are calls, not tasks.** Refuters, claim checkers, judges and
   skeptics are [delegate calls](recipes/tasks-or-calls.md#delegate-call)
   (`mu_delegate`, or a `scratch` spawn without it), all issued in one
-  turn; their verdict lands on the task they judged. Start near 8 at
-  once; `mu_delegate` refuses past `MU_DELEGATE_MAX` (default 16).
+  turn; their verdict lands on the task they judged. `mu_delegate` runs
+  `MU_DELEGATE_MAX` (default 16) at once and queues the rest.
 - **Findings are tasks.** A reviewer's or auditor's findings become
   `mu task add --triage` tasks blocking the review, decided with
   `mu task accept` or `close --as rejected|duplicate`. A review nobody

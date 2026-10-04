@@ -186,6 +186,23 @@ describe("mu pi extension", () => {
       expect(await p).toMatchObject({ runs: 2, lastText: "" });
     });
 
+    it("wait carries lastError when the run stopped on an API error, and drops it on the next clean run", async () => {
+      await fake.emit("session_start");
+      const r = await run([
+        { role: "assistant", content: [], stopReason: "error", errorMessage: "529 overloaded" },
+      ]);
+      expect(r).toMatchObject({ ok: true, lastText: "", lastError: "529 overloaded" });
+      // A retry that recovered: the last agent_end is clean.
+      await fake.emit("agent_start");
+      const p = ctlRequest(sock, { op: "wait", afterRuns: 1 });
+      await new Promise((r2) => setTimeout(r2, 20));
+      await fake.emit("agent_end", { messages: [assistant({ type: "text", text: "ok" })] });
+      await fake.emit("agent_settled");
+      const clean = await p;
+      expect(clean).toMatchObject({ lastText: "ok" });
+      expect((clean as { lastError?: string }).lastError).toBeUndefined();
+    });
+
     it("the last agent_end before the settle wins", async () => {
       await fake.emit("session_start");
       await fake.emit("agent_start");

@@ -262,6 +262,22 @@ describe("waitForAgents", () => {
       expect(polls).toBe(0);
     });
 
+    it("carries the settled run's lastError through to the result", async () => {
+      const res = await waitForAgents(db, [ref], {
+        timeoutMs: 5_000,
+        readStatuses: async () => new Map(),
+        watch: async () => ({
+          initial: { status: "busy" },
+          settled: Promise.resolve({
+            status: "needs_input",
+            lastText: "",
+            lastError: "Connection error.",
+          }),
+        }),
+      });
+      expect(res.agents[0]).toMatchObject({ fired: true, lastError: "Connection error." });
+    });
+
     it("marks the agent dead when the watch reports null", async () => {
       const res = await waitForAgents(db, [ref], {
         timeoutMs: 5_000,
