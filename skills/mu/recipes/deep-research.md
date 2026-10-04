@@ -15,7 +15,8 @@ answer rests on is an `OPEN/triage` task, decided like a finding
 
 ## Steps
 
-1. **Write the question and the bar** on an umbrella task: the exact
+1. **Write the question and the bar**, into every searcher's brief
+   (delegate mode) or on an umbrella task (workstream mode): the exact
    question, what a good answer contains (a recommendation, a
    comparison table, a yes/no with conditions), and how fresh sources
    must be.
@@ -36,16 +37,18 @@ answer rests on is an `OPEN/triage` task, decided like a finding
    workstream mode, each surviving claim becomes an `OPEN/triage` task
    titled with the claim, its sources and quotes in the note.
 4. **One checker per claim** that the answer depends on, as a
-   [delegate call](tasks-or-calls.md#delegate-call) in both modes ([tasks-or-calls](tasks-or-calls.md)). The checker
+   [delegate call](tasks-or-calls.md#delegate-call) in both modes. The checker
    gets the claim and its sources, not the searcher's reasoning, fetches
    the source itself, and tries to break the claim: is the quote there,
    does it say that, is it current, does another source disagree? It
    ends with `VERDICT: c4 CONFIRMED | REFUTED | UNVERIFIED <evidence>`.
-   For contradicted claims, one checker per side. In workstream mode the
+   For contradicted claims, one checker per side. Batch under the cap
+   ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)). In workstream mode the
    verdict is the claim task's state: `accept` for confirmed,
    `close --as rejected` for refuted, an `UNVERIFIED:` note in triage
    otherwise.
-5. **Synthesize** in a task blocked by every check: answer the question
+5. **Synthesize** once every checker has answered (in workstream mode,
+   when no claim task is left undecided): answer the question
    from confirmed claims only, each with its source URL. List
    unverified claims separately. Note what the sources disagree on and
    which side the evidence favours.

@@ -20,13 +20,13 @@ decided it, and the fix.
 
 ## Delegate mode
 
-1. Run reviewers with `mu_delegate` (outside pi: spawn into `scratch`,
-   `send --fresh`, `mu agent wait --json`). One delegate per angle or
-   slice, all in one turn so they run in parallel.
+1. Run reviewers as [delegate calls](tasks-or-calls.md#delegate-call):
+   one per angle or slice, all in one turn so they run in parallel,
+   under the cap ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
 2. Each delegate ends its answer with one line per finding:
 
    ```text
-   FINDING: high src/api/user.ts:88 PUT handler skips the auth check
+   FINDING: high src/api/user.ts:88 PUT handler skips the auth check EVIDENCE: curl -X PUT ... returned 200
    ```
 
 3. You read the answers, merge duplicates, and act: post the comments,
@@ -48,28 +48,32 @@ undecided:
 ```bash
 mu task add -w <ws> --triage \
   -t "high: PUT /user skips the auth check" -i 70 -e 0.5 \
-  --note 'FINDING: src/api/user.ts:88. EVIDENCE: curl -X PUT ... returned 200 without a token'
+  --note 'FINDING: high src/api/user.ts:88 PUT skips the auth check EVIDENCE: curl -X PUT ... returned 200 without a token'
 mu task block <umbrella> -w <ws> --by <finding-id>
 ```
 
-The title starts with the severity. The note carries file:line and the
-evidence. `OPEN/triage` keeps the finding out of `mu task next`, and
+The title starts with the severity. The note is one `FINDING:` line,
+the same shape everywhere: `FINDING: <severity> <file:line> <what>
+EVIDENCE: <command + output>`. `OPEN/triage` keeps the finding out of `mu task next`, and
 `claim` refuses it, so no worker starts on an undecided finding.
 
-**More than 5 findings from one reviewer:** write them as `FINDING:`
-lines in the reviewer's own task note instead, and close the reviewer
-task. A triage task (step 1 below) creates the tasks after merging
-duplicates across reviewers, so the graph gets one task per real
-problem, not one per report.
+**More than 5 findings from one reviewer:** the reviewer writes them as
+`FINDING:` lines in its own task note instead. Before that reviewer
+task closes, the orchestrator adds `triage_<umbrella>` blocking the
+umbrella; the triage agent ([Triage](#triage) step 1) merges duplicates
+across reviewers and creates one task per real problem.
 
 ### Triage
 
 1. **Who:** a handful of findings, the orchestrator triages itself. Many,
    or several reviewers on one change: a `triage_<umbrella>` task, run
    by a fresh agent, so the orchestrator reads only its result.
-2. **Refute** each finding before accepting it, as in
-   [refute](refute.md): a fresh agent tries to prove it false. Skip this
-   for low-severity style findings.
+2. **Refute** each finding before accepting it with a
+   [delegate call](tasks-or-calls.md#delegate-call): a fresh agent tries
+   to prove it false and ends with
+   `VERDICT: <id> CONFIRMED | REFUTED | UNVERIFIED <evidence>`. Skip this
+   for low-severity style findings. High severity: three refuters,
+   accept only if at least two say CONFIRMED.
 3. **Decide** each one; the decision is the task's state:
 
    | Decision | Command |

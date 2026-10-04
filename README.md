@@ -80,21 +80,27 @@ agents, and have other agents try to refute each result before it
 counts. Claude Code's ultracode does this with a hidden script. mu does
 it in the open:
 
-- **The plan is the DAG.** Every unit, every review, and every round
+- **The plan is the DAG.** Every unit, review gate, finding and round
   is a task before an agent spawns. `mu state` shows 35 of 50 done, so
   nobody can declare victory early.
-- **Reviews are tasks.** A `review_x` task is blocked by `x` and run by
-  a fresh agent, ideally on another model, against criteria written
-  up front. Every gap or finding a reviewer reports is its own task in
-  triage: accepted as work, or closed rejected or duplicate, so the
-  graph holds the whole review. A rejection adds those tasks and a
-  second review instead of rewriting history. Reviews of other
-  people's PRs and docs run as delegates and leave no record.
+- **Findings are tasks.** A reviewer records each problem as a task in
+  triage ([findings](skills/mu/recipes/findings.md)), and it blocks the
+  review until someone accepts it as work or closes it rejected or
+  duplicate. The graph holds the whole review.
+- **Checks are calls.** Refuters, claim checkers and judges are
+  [delegate calls](skills/mu/recipes/tasks-or-calls.md): fresh agents,
+  ideally on another model, whose verdicts land on the task they
+  judged. A 50-unit run adds about 50 units, 50 review gates and the
+  findings that survive, not a task per check.
 - **Every agent is a pane.** Attach to any worker, reviewer, or judge
   mid-run and steer it.
 - **Nothing lives only in a context window.** Verdicts, evidence, and
   stop rules are task notes. The run survives compaction, crashes, and
   a new orchestrator.
+
+Not every review needs a record. Reviewing someone's PR or a doc runs
+as delegates only: findings come back in their answers, and nothing
+lands in the ops log.
 
 Ask your orchestrator to *ultrathink* a job, and it follows
 [skills/mu/recipes/ultrathink.md](skills/mu/recipes/ultrathink.md).
@@ -103,19 +109,20 @@ That recipe composes smaller ones you can also use on their own:
 | Recipe | Shape |
 | ------ | ----- |
 | [fan-out](skills/mu/recipes/fan-out.md) | one task per unit, merged as each closes |
-| [adversarial-review](skills/mu/recipes/adversarial-review.md) | a fresh agent tries to reject each unit before it ships |
-| [refute](skills/mu/recipes/refute.md) | finders, then one refuter per finding, then a report |
+| [adversarial-review](skills/mu/recipes/adversarial-review.md) | a review gate per unit: a fresh agent tries to reject it before it ships |
+| [refute](skills/mu/recipes/refute.md) | finders record findings, one refuter call per finding, report from the graph |
 | [hypothesis-panel](skills/mu/recipes/hypothesis-panel.md) | independent theories from separate evidence, each attacked |
 | [tournament](skills/mu/recipes/tournament.md) | competing attempts, judged in pairs |
 | [loop-until-done](skills/mu/recipes/loop-until-done.md) | rounds until a stop rule written up front holds |
-| [triage](skills/mu/recipes/triage.md) | quarantined readers classify, a trusted actor acts |
+| [backlog-triage](skills/mu/recipes/backlog-triage.md) | quarantined readers classify, a trusted actor acts |
 | [deep-research](skills/mu/recipes/deep-research.md) | searchers by angle, one checker per claim, a cited report |
-| [review-panel](skills/mu/recipes/review-panel.md) | one reviewer per angle on a diff, refuted, then fixed or reported |
+| [review-panel](skills/mu/recipes/review-panel.md) | one reviewer per angle on a diff; delegates by default, tasks when fixes follow |
 | [rules-audit](skills/mu/recipes/rules-audit.md) | one checker per AGENTS.md rule plus a skeptic; or mine repeated corrections into new rules |
 
 In pi, `mu link pi` adds them as commands: `/ultrathink <job>`,
 `/mu-research <question>`, `/mu-review [target]`, `/mu-refute <scope>`,
-`/mu-tournament <task>`, and `/mu-rules-audit [check <target> | mine]`.
+`/mu-tournament <task>`, `/mu-rules-audit [check <target> | mine]`,
+`/mu-debug <symptom>`, `/mu-sweep <change>`, and `/mu-until <stop rule>`.
 
 All recipes, including the orchestrator loop and remote workers, are
 in [skills/mu/recipes/](skills/mu/recipes/).

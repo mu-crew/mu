@@ -224,7 +224,9 @@ mu agent spawn reviewer-1 --cli pi_big
   visible pane: attach, steer, abort, or keep talking to it. It costs one
   pane and one pi process. A hidden subagent is lighter for many tiny
   calls. mu bets that visibility and steering are worth the cost. There
-  are no agent types: the brief is plain text.
+  are no agent types: the brief is plain text. A delegate's answer is
+  not recorded in mu; only what the caller writes back (a note, a state
+  change) is.
 - **DB-undoable, not substrate-undoable.** `mu undo <group> --yes`
   restores rows. It does not revive killed panes or freed workspace
   directories. Reconciliation then reports ghosts and orphans.

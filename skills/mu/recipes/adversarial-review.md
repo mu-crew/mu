@@ -8,7 +8,9 @@ not. Every other review-shaped recipe builds on this one.
 The review is a task in the DAG, not a step inside the worker's
 session. Its verdict, its evidence, and every gap it finds stay in the
 DB: each gap is a finding task ([findings](findings.md)). For a one-off
-check outside any workstream, a delegate reviewer is enough.
+check outside any workstream, one
+[delegate call](tasks-or-calls.md#delegate-call) is enough; to review a
+PR or diff from several angles, use [review-panel](review-panel.md).
 
 ## Steps
 
@@ -30,26 +32,25 @@ check outside any workstream, a delegate reviewer is enough.
    the worker where you can (`--cli pi_big` reviewing `pi`): a second
    model has different blind spots. Give it the worker's workspace path
    and commits read-only by instruction; it edits nothing.
-5. **Send the reviewer brief** (below), claim `review_x` for it, wait.
+5. **Claim `review_x` for the reviewer**, send the brief (below), wait.
 6. **Act on the verdict:**
+   The review's state is the verdict: `CLOSED/done` for ACCEPT,
+   `CLOSED/rejected` for REJECT.
    - `ACCEPT`: cherry-pick `x`'s commits and verify the merge.
-   - `REJECT`: the reviewer already recorded each gap as an
-     `OPEN/triage` task. Add `review_x_2`, blocked by every gap task.
-     Accept the gaps (or close the ones that are wrong `--as rejected`)
-     and dispatch them to the original worker, whose context still
-     holds the work. Repeat from step 4 when the gaps are closed. The
-     DAG grows; nothing is rewritten.
-   - The author checks each gap before fixing it: reproduce it, then
-     fix it and close the gap task, or answer it with evidence
-     (`mu task note <gap> 'not reproducible: <command + output>'`) and
-     release it. A disputed gap stays open for the next reviewer to
-     decide, not settled by the author.
+   - `REJECT`: the reviewer recorded each gap as an `OPEN/triage` task.
+     Add `review_x_2` and block it on every gap
+     (`mu task block review_x_2 --by <gap>`); work downstream of `x`
+     waits on `review_x_2`, not on the rejected review. Decide each gap
+     as a finding ([findings § Triage](findings.md#triage)), then
+     dispatch the accepted gaps to the original worker, whose context
+     still holds the work. Repeat from step 4 when the gaps are closed.
+     The DAG grows; nothing is rewritten.
 7. **Cap the rounds.** After two rejections on the same unit, stop the
    loop and decide yourself: split the unit, change the criteria, or
    ask the human. A third round of the same argument rarely converges.
 
-Done when the latest review task closed with `VERDICT: ACCEPT`, and the
-accepted commits are merged and the merged tree passes the gate.
+Done when the latest review task is `CLOSED/done` (ACCEPT), and the
+accepted commits are merged and the merged tree passes the gate command.
 
 ## Reviewer brief
 
@@ -63,25 +64,25 @@ where it fails the acceptance criteria in `mu task notes <x>`.
 - Report gaps against the criteria: a requirement not met, an edge case
   without a test, a change outside scope, a claim the evidence does not
   support. Not style, not preferences.
-- Record each gap as a finding task blocking review_<x>:
+- Record each gap as a finding, per findings.md § Record:
   mu task add -w <ws> --triage -t "<severity>: <gap>" -i <n> -e <days> \
-    --note '<file:line or command + output>'
-  then: mu task block review_<x> -w <ws> --by <gap-id>
+    --note 'FINDING: <severity> <file:line> <gap> EVIDENCE: <command + output>'
 - If you could not check something (tool failed, no access), say
   UNVERIFIED for it. Unverified is not a pass and not a fail.
 - Do not edit files.
 
-End with a note in the task note contract, plus one line:
-VERDICT: ACCEPT | REJECT
-Then close: mu task close review_<x> --evidence '<verdict + key check>'
+End with a note in the task note contract, then close with the verdict:
+  ACCEPT: mu task close review_<x> --evidence '<key check>'
+  REJECT: mu task close review_<x> --as rejected --why '<gap ids>'
 ```
 
 ## Traps
 
 - **A reviewer that sees the author's reasoning agrees with it.** Send
   the diff and the criteria, not the worker's transcript or close note.
-- **"Looks good" is not a verdict.** Require the `VERDICT:` line and at
-  least one command the reviewer ran. A review with no evidence is a
+- **"Looks good" is not a verdict.** Require a close that matches the
+  verdict (`done` or `--as rejected`) and at least one command the
+  reviewer ran. A review with no evidence is a
   rejected review: re-send it.
 - **Reviewers drift into fixing.** A reviewer that edits the code is now
   an author nobody reviews. The fix belongs to the gap tasks.

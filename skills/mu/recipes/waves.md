@@ -10,10 +10,11 @@ runs in its own `--workspace`; this recipe decides what each one gets.
    the shared files. A blanket freeze idled four of five workers for a
    day.
 3. **Pipeline the merge.** Cherry-pick each task as it closes and
-   verify the merged tree; never wait for the whole wave.
-4. **Refresh between waves.** `mu workspace refresh <agent>` rebases
-   onto main and keeps the agent's context. Dispatch the next wave only
-   from refreshed workspaces.
+   verify the merged tree ([orchestrator-loop § Merging](orchestrator-loop.md#merging));
+   never wait for the whole wave.
+4. **Refresh before each dispatch.** `mu workspace refresh <agent>`
+   rebases onto main and keeps the agent's context; run it before every
+   `--fresh` send, so each unit starts from the latest merge.
 
 Done when every task in the wave is `CLOSED/done`, merged, and the
-merged tree passes the gate.
+merged tree passes the gate command.

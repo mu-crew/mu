@@ -15,14 +15,18 @@ written down first does neither.
    NO-PROGRESS: two rounds in a row reduce the error count by zero
    ```
 
-2. **Each round is a task**, blocked by the previous one:
+2. **Each round is a task** that blocks the umbrella and is blocked by
+   the previous round:
    `round_1`, `round_2`, .... Add the next round only when the current
-   one closes; never pre-create rounds.
+   one closes; never pre-create rounds. Dispatch each per
+   [orchestrator-loop](orchestrator-loop.md); multi-hour loops follow
+   [long-run](long-run.md).
 3. **Each round ends with its measurement** in the note:
    `MEASURE: 14 errors (was 31)`, or `NEW: 0 flaky tests`.
 4. **After each round, check the rule** yourself, from the measurement
    command, not from the worker's note.
-   - Rule met: close the umbrella.
+   - Rule met: `mu task close <umbrella> --if-ready --evidence '<stop
+     command + result>'` (each round blocks the umbrella).
    - No progress: stop the loop and decide. Change the approach, split
      the work, or park the umbrella with
      `mu task park <umbrella> --why '<what is stuck>'` and tell the human.

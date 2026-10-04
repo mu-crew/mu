@@ -14,8 +14,10 @@ rules are findings: [findings](findings.md) says where they live.
 
 ## Check: a change against the rules
 
-1. **List the rules.** A scout extracts every checkable rule from the
-   rule files into the umbrella's note, one per line with its source:
+1. **List the rules.** A scout (a delegate call) extracts every
+   checkable rule from the rule files, one per line with its source,
+   into every checker's brief (delegate mode) or the umbrella's note
+   (workstream mode):
 
    ```text
    RULE: r7 AGENTS.md:52 "Throw typed error classes, not bare Error"
@@ -26,10 +28,11 @@ rules are findings: [findings](findings.md) says where they live.
 2. **Pin the target**: the diff, branch, or PR, as in
    [review-panel](review-panel.md) step 1.
 3. **One checker per rule**, as a [delegate call](tasks-or-calls.md#delegate-call)
-   ([tasks-or-calls](tasks-or-calls.md)). The checker gets one rule and the diff,
-   and records each violation as a finding (title `r7: <what>`,
-   file:line in the note), or reports `r7: no violations` with what it
-   looked at. One rule per checker keeps it from skimming.
+   The checker gets one rule and the diff, and records each violation
+   as a finding ([findings § Record](findings.md#record); title
+   `<severity>: r7 <what>`), or reports `r7: no violations` with what it
+   looked at. One rule per checker keeps it from skimming; batch under
+   the cap ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
 4. **A skeptic pass** over the flags, also a delegate call: one fresh agent reads each flagged
    line and the rule, and drops false positives (the rule does not
    apply here, the code already complies, the rule has a stated
@@ -47,13 +50,14 @@ is decided.
    tasks, and past agent sessions (with a session archive such as
    [museum](https://github.com/mu-crew/museum), search for user turns
    that correct the agent: "no, use", "don't", "we always"). One reader
-   task per source batch writes each correction as one line:
+   (a delegate call) per source batch returns each correction as one
+   line:
 
    ```text
    CORRECTION: k12 <source ref> "use the shared retry helper instead of a hand-rolled loop"
    ```
 
-2. **Cluster** the corrections in one task: the same lesson in
+2. **Cluster** the corrections in one delegate call: the same lesson in
    different words is one cluster. Keep clusters with at least two
    corrections from different occasions; a one-off is not a rule.
 3. **One `OPEN/triage` task per candidate rule**, the rule as the

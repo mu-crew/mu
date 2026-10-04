@@ -1,7 +1,8 @@
 # Remote workers
 
-mu has no remote backend, ssh code, or host registry. This is a recipe
-plus the traps that cost time.
+Use when an agent's process runs on another machine (a devserver, a
+bigger box) while its pane stays local. mu has no remote backend, ssh
+code, or host registry. This is a recipe plus the traps that cost time.
 
 **If you read one thing:** on a session-capped host, an open attach pane
 holds the only ssh channel and silently breaks `git fetch`,
@@ -48,6 +49,10 @@ mu agent send worker-1 -w big --fresh '...'
 # 6. COLLECT: fetch straight from the remote worktree
 git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
 ```
+
+Done when the worker's commits are cherry-picked locally, the merged
+tree passes the gate command (on the host, below), and the pane is
+closed.
 
 ### Step 2: the note is load-bearing
 
