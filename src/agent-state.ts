@@ -22,6 +22,9 @@ export interface StateReading {
   reason?: string;
   /** Set for agents that expect a control socket. */
   ctl?: Exclude<CtlLink, "n/a">;
+  /** ctl only: pi holds queued messages, so an idle reading is about to
+   *  turn busy. */
+  pending?: boolean;
 }
 
 export interface StateAgentRef {
@@ -288,6 +291,7 @@ export async function readAgentStates(
         since: probe.status.since,
         alive: true,
         ctl: "ok",
+        pending: probe.status.pending,
       });
     } else {
       failed.set(agentKey(agent), probe?.kind === "missing" ? "missing" : "refused");

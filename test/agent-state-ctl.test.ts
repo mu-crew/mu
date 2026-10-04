@@ -70,13 +70,14 @@ interface FakeExt {
 
 /** Stand-in for the mu pi extension with the real wait semantics. */
 async function fakeExtension(
-  initial: { state: "busy" | "idle"; since: number; runs: number },
+  initial: { state: "busy" | "idle"; since: number; runs: number; pending?: boolean },
   path = ctlSocketPath(WS, "pia", dir),
 ): Promise<FakeExt> {
   let { state, since, runs } = initial;
+  const pending = initial.pending ?? false;
   const ops: string[] = [];
   const waiters: Array<{ after: number | undefined; sock: Socket }> = [];
-  const status = () => ({ v: 1, ok: true, state, since, runs, pending: false });
+  const status = () => ({ v: 1, ok: true, state, since, runs, pending });
   mkdirSync(dirname(path), { recursive: true });
   const conns = new Set<Socket>();
   const server = createServer((sock) => {
@@ -131,6 +132,7 @@ describe("readAgentStates via the control socket", () => {
       since: 1_790_000_000_000,
       alive: true,
       ctl: "ok",
+      pending: false,
     });
     ext.settle();
     expect(await read()).toMatchObject({ state: "needs_input", source: "ctl", ctl: "ok" });
@@ -242,5 +244,42 @@ describe("mu task wait --stuck-after for a pi owner", () => {
         (await readAgentStates([owner], { stateDir: dir })).get(agentKey(owner)) ?? null,
     });
     expect(res.refs[0]?.stuck).toBe(true);
+  });
+
+  // ctl's idle is exact and lands after the close nudge, so the default
+  // threshold for a ctl owner is seconds, not the 120 s debounce that
+  // screen-scraped murmur/herdr readings need.
+  const waitOnPia = async (opts: { stuckAfterMs?: number; ctlStuckAfterMs?: number } = {}) => {
+    addTask(db, { localId: "t1", workstream: WS, title: "T", impact: 50, effortDays: 1 });
+    await claimTask(db, "t1", { workstream: WS, agentName: "pia" });
+    const owner = getAgent(db, "pia", WS);
+    if (owner === undefined) throw new Error("no agent row");
+    const res = await waitForTasks(db, [{ workstreamName: WS, name: "t1" }], {
+      timeoutMs: 1,
+      ...opts,
+      readOwnerState: async () =>
+        (await readAgentStates([owner], { stateDir: dir })).get(agentKey(owner)) ?? null,
+    });
+    return res.refs[0]?.stuck;
+  };
+
+  it("flags an idle ctl owner after seconds, not the 120 s default", async () => {
+    await fakeExtension({ state: "idle", since: Date.now() - 10_000, runs: 1 });
+    expect(await waitOnPia()).toBe(true);
+  });
+
+  it("does not flag a ctl owner that settled within the grace", async () => {
+    await fakeExtension({ state: "idle", since: Date.now(), runs: 1 });
+    expect(await waitOnPia()).toBe(false);
+  });
+
+  it("does not flag an idle ctl owner with queued messages", async () => {
+    await fakeExtension({ state: "idle", since: Date.now() - 600_000, runs: 1, pending: true });
+    expect(await waitOnPia()).toBe(false);
+  });
+
+  it("stuckAfterMs 0 disables the ctl threshold too", async () => {
+    await fakeExtension({ state: "idle", since: Date.now() - 600_000, runs: 1 });
+    expect(await waitOnPia({ stuckAfterMs: 0 })).toBe(false);
   });
 });
