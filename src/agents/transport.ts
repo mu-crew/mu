@@ -130,7 +130,7 @@ export async function extensionOutdated(
   } catch {
     // The refusal already proved the socket answers; the version is a nicety.
   }
-  return new AgentExtensionOutdatedError(agent.name, agent.workstreamName, e.op, extVersion);
+  return new AgentExtensionOutdatedError(agent.name, agent.workstreamName, e.op, extVersion, e.ops);
 }
 
 /**

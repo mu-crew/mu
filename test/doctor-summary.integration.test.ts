@@ -181,7 +181,7 @@ describe("loadDoctorSummary", () => {
     });
   });
 
-  it("warns when murmur predates pane-state timing", () => {
+  it("warns when murmur predates pane-state timing (non-pi CLIs only: mu ext linked)", () => {
     writeFileSync(
       join(murmurRoot, "package.json"),
       JSON.stringify({ name: "@mu-crew/murmur", version: "0.6.1" }),
@@ -193,7 +193,7 @@ describe("loadDoctorSummary", () => {
       name: "murmur",
       status: "warn",
       detail:
-        "murmur 0.6.1 is older than 1.0.0; @murmur_pane_since missing, idle/stall timing unknown",
+        "murmur 0.6.1 is older than 1.0.0; idle/stall timing unknown for non-pi CLIs (pi agents use ctl)",
     });
   });
 

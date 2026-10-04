@@ -126,6 +126,10 @@ describe("abortAgent", () => {
     expect((err as AgentCtlUnreachableError).kind).toBe("missing");
     const steps = (err as AgentCtlUnreachableError).errorNextSteps().map((s) => s.command);
     expect(steps).toContain("mu agent kick worker-1 -w auth");
+    const intents = (err as AgentCtlUnreachableError).errorNextSteps().map((s) => s.intent);
+    expect(intents.join("\n")).toMatch(/trust prompt/);
+    expect(steps.join("\n")).toMatch(/\/trust/);
+    expect(steps.join("\n")).toMatch(/--approve/);
   });
 
   it("custom cli key running pi (its socket answers): aborts through ctl", async () => {

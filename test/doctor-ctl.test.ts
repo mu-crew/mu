@@ -15,6 +15,7 @@ import {
   ctlSocketsDoctorCheck,
   MURMUR_NOT_NEEDED_DETAIL,
   murmurDoctorCheck,
+  remediationParagraph,
   skillDoctorCheck,
 } from "../src/doctor-summary.js";
 import { linkPi, linkSkill } from "../src/link.js";
@@ -151,6 +152,32 @@ describe("murmur row with the mu extension", () => {
     });
   });
 
+  it("old murmur + mu ext ok: the warning says it affects non-pi CLIs only", () => {
+    const root = join(home, "murmur");
+    const bin = join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "@mu-crew/murmur", version: "0.6.1" }),
+    );
+    writeFileSync(join(bin, "murmur"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(bin, "murmur"), 0o755);
+    process.env.PATH = bin;
+    const piDir = join(home, "pi");
+    mkdirSync(join(piDir, "extensions"), { recursive: true });
+    writeFileSync(join(piDir, "extensions", "murmur.ts"), "");
+    process.env.PI_CODING_AGENT_DIR = piDir;
+    expect(murmurDoctorCheck("murmur", { muExtOk: true })).toEqual({
+      name: "murmur",
+      status: "warn",
+      detail:
+        "murmur 0.6.1 is older than 1.0.0; idle/stall timing unknown for non-pi CLIs (pi agents use ctl)",
+    });
+    expect(murmurDoctorCheck("murmur", { muExtOk: false }).detail).toBe(
+      "murmur 0.6.1 is older than 1.0.0; @murmur_pane_since missing, idle/stall timing unknown",
+    );
+  });
+
   it("murmur installed + its extension linked keeps reporting murmur", () => {
     const bin = join(home, "bin");
     mkdirSync(bin);
@@ -271,6 +298,27 @@ describe("ctl row", () => {
       outdated: true,
       missingOps: ["fresh", "command"],
     });
+  });
+
+  it("ctl row: a lacking-ops extension that serves command reloads over ctl", async () => {
+    await serveV1("w1", {
+      ops: ["hello", "status", "send", "wait", "command"],
+      extVersion: "3.1.0",
+    });
+    await serveV1("w2", { ops: ["hello", "status", "send", "wait"], extVersion: "3.1.0" });
+    const r = await ctlSocketsDoctorCheck([agent("w1"), agent("w2")], {
+      installedVersion: "3.1.0",
+    });
+    expect(r.agents[0]).toMatchObject({ reloadVia: "ctl" });
+    expect(r.agents[1]).toMatchObject({ reloadVia: "mux" });
+  });
+
+  it("ctl remediation: trust prompt for missing, ctl /reload when op command is served", () => {
+    const text = remediationParagraph({ name: "ctl", status: "warn", detail: "" }).join(" ");
+    expect(text).toContain("/trust");
+    expect(text).toContain("--approve");
+    expect(text).toContain("mu agent send <a> '/reload'`");
+    expect(text).toContain("--via mux");
   });
 
   it("skips non-pi agents (same rule as spawn's handshake)", async () => {

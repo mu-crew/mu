@@ -25,15 +25,15 @@ For agents other than pi, see [README § Install](../../README.md#install).
 ## Reload running pi agents
 
 A running pi keeps the extension it loaded at start. After an upgrade,
-type `/reload` in each agent's pane, or respawn the agent. From a
-shell:
+send `/reload` to each agent, or respawn the agent. From a shell:
 
 ```bash
-mu agent send worker-1 -w auth '/reload' --via mux
+mu agent send worker-1 -w auth '/reload'             # extension serves op command
+mu agent send worker-1 -w auth '/reload' --via mux   # older extension
 ```
 
 Until then, the `ctl` row of `mu doctor` warns
-`extension X older than installed Y`. Ops the old extension lacks,
+`extension X older than installed Y` or `extension lacks ops`. Ops the old extension lacks,
 such as `send --fresh`, fail with exit 4.
 
 ## Upgrade from 3.1 or earlier
