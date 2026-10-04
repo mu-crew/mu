@@ -36,7 +36,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   read the put. On one real DB this was 8 MB of 86.
 - **`mu_delegate` queues past the cap** instead of refusing. At
   `MU_DELEGATE_MAX` running, further calls return `Queued as queued-N`
-  at once and start as slots free, up to one more cap's worth; past
+  at once and start as slots free, up to four caps' worth (64 by
+  default); past
   that the tool refuses. A queued call's answer names its handle
   (`delegate-q3 (queued as queued-1) finished`), `mu_delegate_cancel
   queued-N` drops it, and quitting or `/reload` names the calls that

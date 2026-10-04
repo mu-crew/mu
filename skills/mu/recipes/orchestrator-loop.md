@@ -34,7 +34,7 @@ keeps it.
 - **[Delegate calls](tasks-or-calls.md#delegate-call)** (read-only): 10 to 20 at once is reasonable.
   Token spend and provider rate limits bind first; start near 8 and
   raise after a clean wave. `mu_delegate` runs at most
-  `MU_DELEGATE_MAX` (default 16) and queues up to as many again
+  `MU_DELEGATE_MAX` (default 16) and queues up to four times that
   (`queued-N`, started as slots free); past that it refuses.
 - **Answers arrive when you stop**, as pi follow-up messages, never
   mid-turn. pi's `followUpMode: "all"` delivers every waiting answer in

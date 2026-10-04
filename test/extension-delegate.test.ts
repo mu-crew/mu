@@ -264,20 +264,27 @@ describe("mu_delegate", () => {
     }
   });
 
-  it("the queue is bounded at one more cap's worth; past it, refuse", async () => {
-    process.env.MU_DELEGATE_MAX = "1";
+  it("the queue holds four caps' worth; past it, refuse", async () => {
+    process.env.MU_DELEGATE_MAX = "2";
     try {
       const mu = fakeMu();
       const p = fakePi();
       registerDelegate(p.pi, mu.run);
-      const results = await Promise.allSettled([
-        tool(p).execute("a", { task: "one" }),
-        tool(p).execute("b", { task: "two" }),
-        tool(p).execute("c", { task: "three" }),
-      ]);
-      expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled", "rejected"]);
-      const err = (results[2] as PromiseRejectedResult).reason as Error;
-      expect(err.message).toContain("1 queued (MU_DELEGATE_MAX=1)");
+      // 2 running + 8 queued (4 x 2) = 10 accepted; the 11th is refused.
+      const results = await Promise.allSettled(
+        Array.from({ length: 11 }, (_, i) => tool(p).execute(String(i), { task: `t${i}` })),
+      );
+      const statuses = results.map((r) => r.status);
+      expect(statuses.filter((s) => s === "fulfilled")).toHaveLength(10);
+      expect(statuses[10]).toBe("rejected");
+      const queued = results
+        .slice(0, 10)
+        .filter(
+          (r) => r.status === "fulfilled" && (r.value.details as { queued?: boolean }).queued,
+        );
+      expect(queued).toHaveLength(8);
+      const err = (results[10] as PromiseRejectedResult).reason as Error;
+      expect(err.message).toContain("8 queued (MU_DELEGATE_MAX=2)");
       expect(err.message).toContain("issue the rest as answers arrive");
     } finally {
       const k = "MU_DELEGATE_MAX";

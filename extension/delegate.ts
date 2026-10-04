@@ -99,6 +99,10 @@ export function delegateStatus(
 export const DELEGATE_TIMEOUT_S = 3600;
 /** Default cap on delegates in flight from one pi session. */
 export const DELEGATE_MAX_DEFAULT = 16;
+/** The queue holds this many caps' worth of calls waiting for a slot. A
+ *  fan-out (refuters per finding, checkers per claim) issues several
+ *  caps' worth in one turn; past this, the model is refused. */
+export const DELEGATE_QUEUE_FACTOR = 4;
 
 /** `MU_DELEGATE_MAX`: a positive integer, else the default. */
 export function delegateMax(env: NodeJS.ProcessEnv = process.env): number {
@@ -263,7 +267,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   const inflight = new Map<string, Inflight>();
   /** Calls past the cap check whose delegate is not yet in `inflight`. */
   let starting = 0;
-  /** Calls past the cap, FIFO, at most `delegateMax()` long. */
+  /** Calls past the cap, FIFO, at most `DELEGATE_QUEUE_FACTOR * delegateMax()` long. */
   const queue: Queued[] = [];
   let queueSeq = 0;
   /** Delegates that settled on an error, pane kept: counted in the footer
@@ -583,7 +587,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   pi.registerTool({
     name: DELEGATE_TOOL,
     label: "mu delegate",
-    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation; call it several times to fan out in parallel (at most ${delegateMax()} run at once; more are queued and start as slots free). The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open.`,
+    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation; call it several times to fan out in parallel (at most ${delegateMax()} run at once; up to ${DELEGATE_QUEUE_FACTOR * delegateMax()} more are queued and start as slots free). The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open.`,
     promptSnippet:
       "Subagent: delegate a self-contained task to a background pi agent; its answer arrives later as a follow-up",
     parameters: {
@@ -649,8 +653,8 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         starting++;
         return start(params, signal, ctx);
       }
-      // Full: queue up to one more cap's worth; past that, refuse.
-      if (queue.length >= max)
+      // Full: queue up to DELEGATE_QUEUE_FACTOR caps' worth; past that, refuse.
+      if (queue.length >= DELEGATE_QUEUE_FACTOR * max)
         throw new Error(
           `mu_delegate: ${inflight.size + starting} running and ${queue.length} queued (MU_DELEGATE_MAX=${max}). End your turn; issue the rest as answers arrive (each answer resumes you).`,
         );
