@@ -10,6 +10,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **`mu state -w scratch` nudges only helpers that are actually idle.** The "idle scratch agent(s)" nudge used `agents.updated_at`, which is written only at spawn, so every helper older than 5 min was flagged even while busy. It now uses the live `idle` flag (`needs_input` past `MU_IDLE_THRESHOLD_MS`); a helper whose state is `unknown` is no longer nudged.
+- **Docs: remote pi workers.** The remote-workers auth-prompt trap now applies only to non-pi CLIs and `--via mux` (a pi agent behind a prompt reports `ctl: missing`, and send never pastes). getting-started's exit-7 row states the 5 s pi / 120 s threshold.
+- **`mu workstream teardown` removes its agents' control socket files.** Teardown deletes agent rows by cascade and never unlinked their sockets, so ssh `-L` forward sockets and `sock/<ws>/` were left behind. Each agent's socket (including hashed `sock/h/` paths) is now unlinked before the rows go, and `sock/<ws>/` is removed only when empty.
+- **A tmux pi spawn no longer waits a fixed 1.5 s.** The pane is checked on each ctl handshake tick, so a pi that dies during startup rolls back at once with `AgentDiedOnSpawnError` (with its scrollback) instead of leaving a dead agent row after a 30 s ctl timeout. Non-pi CLIs, herdr, and `MU_SPAWN_CTL_MS=0` keep the old liveness check.
+- **`mu agent wait --after-runs <n>`: an exact send→wait baseline for pi.** `mu agent send --json` now reports pi's run count before the send (`runs`), and `mu agent wait --after-runs <n>` waits for the first run past it. A run that finishes before the wait starts no longer hangs to `--timeout`, and `--after-runs <runs-1>` on an idle pi returns the last run's `lastText` at once. `mu_delegate` and the scratch recipes use it. A plain ctl send no longer makes an extra status probe. Removed the dead `mu agent wait --lines` option.
+- **Exact `Next:` hints for pi agents.** `mu agent send` suggests `mu agent wait --after-runs <runs> --json`; `mu agent wait` drops the redundant pane read when it returned `lastText`; a stall (warning or exit 7) leads with `mu agent wait <owner> --after-runs <runs-1> --json` before the pane read; an abort that reported idle drops "Read the pane". Hints for non-pi agents are unchanged.
+- **ctl error advice.** A pi agent at its project trust prompt has no socket yet, so it shows `ctl missing`, not `needs_input`. The ctl-missing error and `mu doctor` now suggest answering `/trust` or respawning with `pi --approve`. An outdated-extension error suggests plain `mu agent send <a> '/reload'` when the extension serves op `command`, and `--via mux` only for older ones; `mu doctor --json` reports `reloadVia` per outdated agent. With the mu extension linked, the old-murmur doctor warning says it affects only non-pi CLIs.
+
 ## [3.6.2] — 2026-10-04
 
 **A settled pi worker stalls a wait in seconds, not two minutes.** For a
