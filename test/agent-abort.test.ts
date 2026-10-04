@@ -44,7 +44,12 @@ afterEach(async () => {
  * Fake extension. `settles` decides whether an abort makes the run settle;
  * a wait with no settle times out after its own timeoutMs like the real one.
  */
-async function serve(agent: string, initial: "busy" | "idle", settles = true): Promise<void> {
+async function serve(
+  agent: string,
+  initial: "busy" | "idle",
+  settles = true,
+  afterAbort: "busy" | "idle" = "idle",
+): Promise<void> {
   let state = initial;
   let runs = 3;
   const path = ctlSocketPath("auth", agent, dir);
@@ -62,11 +67,11 @@ async function serve(agent: string, initial: "busy" | "idle", settles = true): P
         else if (req.op === "abort") {
           sock.end(encode({ v: 1, ok: true, state }));
           if (settles) {
-            state = "idle";
+            state = afterAbort;
             runs++;
           }
         } else if (req.op === "wait") {
-          if (runs > (req.afterRuns ?? runs) && state === "idle") {
+          if (runs > (req.afterRuns ?? runs) && (state === "idle" || afterAbort === "busy")) {
             sock.end(encode({ v: 1, ok: true, ...status }));
           } else {
             setTimeout(
@@ -156,6 +161,15 @@ describe("mu agent abort (CLI)", () => {
     const body = JSON.parse(r.stdout) as { after: string; nextSteps: Array<{ command: string }> };
     expect(body.after).toBe("idle");
     expect(body.nextSteps.some((s) => s.command.startsWith("mu agent read"))).toBe(false);
+  });
+
+  it("an abort that ends busy (a queued run started) keeps the read-the-pane hint", async () => {
+    seed("worker-1");
+    await serve("worker-1", "busy", true, "busy");
+    const r = await runCli(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
+    const body = JSON.parse(r.stdout) as { after: string; nextSteps: Array<{ command: string }> };
+    expect(body.after).toBe("busy");
+    expect(body.nextSteps.map((s) => s.command)).toContain("mu agent read worker-1 -n 30 -w auth");
   });
 
   it("exit 5 on timeout", async () => {

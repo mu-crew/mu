@@ -353,6 +353,32 @@ describe("mu agent send transport", () => {
     expect(cmds.some((c) => c.startsWith("mu agent read"))).toBe(false);
   });
 
+  it("--steer and --fresh ctl replies with runs also point at wait --after-runs", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), {
+      v: 1,
+      ok: true,
+      state: "busy",
+      since: 1,
+      runs: 7,
+      pending: false,
+    });
+    for (const flag of ["--steer", "--fresh"]) {
+      const { stdout } = await runCli(
+        ["agent", "send", "worker-1", "hello", flag, "-w", "auth", "--json"],
+        dbPath,
+      );
+      const cmds = (JSON.parse(stdout) as { nextSteps: Array<{ command: string }> }).nextSteps.map(
+        (s) => s.command,
+      );
+      expect(cmds[0], flag).toBe("mu agent wait worker-1 --after-runs 7 --json -w auth");
+      expect(
+        cmds.some((c) => c.startsWith("mu agent read")),
+        flag,
+      ).toBe(false);
+    }
+  });
+
   it("a mux send and a ctl reply without runs keep the pane-read hint", async () => {
     seed("shy", "claude");
     const mux1 = await runCli(["agent", "send", "shy", "hello", "-w", "auth", "--json"], dbPath);
