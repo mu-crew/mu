@@ -31,7 +31,7 @@ Delegates called in one turn run in parallel.
 - pi's footer shows how many delegates this session is waiting on.
 - Each delegate costs a pane and a pi process. A session runs at most
   `MU_DELEGATE_MAX` at once (default 16). Further calls are queued, up
-  to as many again: the footer reads `16 delegates running, 4 queued`,
+  to four times the cap: the footer reads `16 delegates running, 4 queued`,
   each starts when a slot frees, and `mu_delegate_cancel queued-N`
   drops one. A queued call has no pane yet, so quitting pi or `/reload`
   drops it; pi warns which ones never started.

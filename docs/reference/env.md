@@ -67,7 +67,7 @@ pi agent's `--command`. mu never reads them back.
 | Name | Effect | Default |
 | --- | --- | --- |
 | `MU_DELEGATE` | `0` hides the `mu_delegate` tool. `mu doctor` reports it. | unset: shown |
-| `MU_DELEGATE_MAX` | Most delegates one pi session runs at once. Further calls queue, up to as many again; past that `mu_delegate` refuses. A positive integer. | `16` |
+| `MU_DELEGATE_MAX` | Most delegates one pi session runs at once. Further calls queue, up to four times this; past that `mu_delegate` refuses. A positive integer. | `16` |
 | `MU_NUDGE` | `0` turns off the keep-driving nudge: one reminder when an orchestrator ends a turn with dispatched work still IN_PROGRESS. `mu doctor` reports it. | unset: on |
 | `MU_PI_HOME` | Root under which `mu link pi` writes `.pi/` and `.agents/`. | `$HOME` |
 | `PI_CODING_AGENT_DIR` | Read only. pi's agent dir, checked for a linked murmur extension. | `~/.pi/agent` |
