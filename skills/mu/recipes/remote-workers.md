@@ -44,8 +44,8 @@ mu agent spawn worker-1 -w big --command \
 mu task claim t1 -w big --for worker-1 --evidence 'remote on dev'
 mu agent send worker-1 -w big --fresh '...'
 
-# 5. WAIT: pi: mu agent wait worker-1 -w big --json, then the claim's Next: once
-#    non-pi: run the claim's one-shot Next: command once per turn
+# 5. WAIT: pi: mu agent wait worker-1 -w big --after-runs <send's runs> --json,
+#    then the claim's Next: once. non-pi: run the claim's Next: once per turn
 
 # 6. COLLECT: fetch straight from the remote worktree
 git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
@@ -91,8 +91,13 @@ plus a 10 s cache.
 
 The claim's `Next:` mule poll is mandatory. It proves the commit is on
 the host and closes the task. For a pi worker, first block on
-`mu agent wait <name> --json`: it settles exactly over the forwarded
-socket. Then run `Next:` once instead of on every turn.
+`mu agent wait <name> --after-runs <runs> --json`, with `runs` from
+`mu agent send --json`. It settles exactly over the forwarded socket.
+Without `--after-runs`, a worker that is already idle blocks until
+`--timeout`. If the worker may already be done, pass `<runs-1>`: the
+wait then returns the last answer at once. Then run `Next:` once instead
+of on every turn. On exit 5 (timeout), or on a wait that returns while
+the worker asks a question, run `Next:` anyway.
 
 - Never `sleep` in a tool call. Aborting the loop can leave remote work
   and a capped channel running.

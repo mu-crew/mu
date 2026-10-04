@@ -30,6 +30,7 @@ import { type NextStep, pc, printNextSteps } from "../../output.js";
 import { reconcile } from "../../reconcile.js";
 import { shellQuote } from "../../shell-quote.js";
 import { findRemoteDispatch } from "../../state.js";
+import { stallWaitHint } from "../../tasks/errors.js";
 import {
   claimTask,
   DEFAULT_STUCK_AFTER_MS,
@@ -447,7 +448,7 @@ export async function cmdTaskWait(
   const priorState = new Map<string, { status: string; owner: string | null }>();
   sdkOpts.beforePoll = async () => {
     // Reconcile each unique workstream in the wait set. Each call is
-    // a cheap (~few ms) tmux list-panes + per-survivor capture-pane.
+    // a cheap (~few ms) mux pane listing; it captures no pane text.
     // Full mode prunes dead panes, which fires the reaper that flips
     // tasks back to OPEN.
     for (const wsName of workstreamSet) {
@@ -568,6 +569,10 @@ export async function cmdTaskWait(
     // — a question, a prompt, or a finished-but-unclosed worker — is
     // only visible in the pane. Point at the pane instead.
     if (t.stuck && t.owner !== null) {
+      const runs = ownerReadings.get(
+        agentKey({ name: t.owner, workstreamName: t.workstreamName }),
+      )?.runs;
+      nextSteps.push(...stallWaitHint(t.owner, t.workstreamName, runs));
       nextSteps.push({
         intent: `Read ${t.owner}'s pane — ${qualifiedId(t)} is IN_PROGRESS but its owner needs attention`,
         command: `mu agent read ${t.owner} -w ${t.workstreamName} --lines 60`,

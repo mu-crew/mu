@@ -254,8 +254,15 @@ export async function cmdSend(
       undelivered = w;
     },
   });
+  // A ctl reply with runs gives the exact wait baseline: the wait
+  // returns the run's final text, so no pane read is needed.
   const nextSteps: NextStep[] = [
-    { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
+    sent.transport === "ctl" && sent.runs !== undefined
+      ? {
+          intent: "Wait for the response (returns its final text)",
+          command: `mu agent wait ${name} --after-runs ${sent.runs} --json -w ${ws}`,
+        }
+      : { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
     { intent: "Watch live events", command: `mu log -w ${ws} --tail` },
   ];
   // A plain ctl send: the reply carries pi's status from before the
@@ -674,12 +681,15 @@ export async function cmdAbort(
     workstream: ws,
     ...(opts.timeout === undefined ? {} : { timeoutMs: Math.round(opts.timeout * 1000) }),
   });
+  // An abort that reported idle is the exact after state: no pane read.
   const nextSteps: NextStep[] = [
     {
       intent: "Steer it with the next instruction",
       command: `mu agent send ${name} '...' -w ${ws}`,
     },
-    { intent: "Read the pane", command: `mu agent read ${name} -n 30 -w ${ws}` },
+    ...(result.after === "idle"
+      ? []
+      : [{ intent: "Read the pane", command: `mu agent read ${name} -n 30 -w ${ws}` }]),
   ];
   if (opts.json) {
     emitJson({ ...result, nextSteps });
@@ -852,6 +862,17 @@ export async function cmdAgentWait(
   const firing = wantFirstShape && fired.length > 0 ? fired[0] : null;
   const qualified = (a: { workstreamName: string; name: string }): string =>
     `${a.workstreamName}/${a.name}`;
+  // A pi run that settled with its final text already returned it:
+  // read the pane only when the text is empty or the run errored.
+  const readHint: NextStep[] =
+    firing && (!firing.lastText || firing.lastError !== undefined)
+      ? [
+          {
+            intent: "Read the finished agent",
+            command: `mu agent read ${firing.name} -w ${firing.workstreamName}`,
+          },
+        ]
+      : [];
 
   if (opts.json) {
     emitJson({
@@ -862,14 +883,7 @@ export async function cmdAgentWait(
       timedOut: result.timedOut,
       ...(firing ? { firing: { workstream: firing.workstreamName, name: firing.name } } : {}),
       ...(dead.length > 0 ? { dead: dead.map(qualified) } : {}),
-      nextSteps: firing
-        ? [
-            {
-              intent: "Read the finished agent",
-              command: `mu agent read ${firing.name} -w ${firing.workstreamName}`,
-            },
-          ]
-        : [],
+      nextSteps: readHint,
     });
   } else if (result.timedOut) {
     console.log(
@@ -881,12 +895,7 @@ export async function cmdAgentWait(
     console.log(pc.red(`Agent pane(s) died: ${dead.map(qualified).join(", ")}`));
   } else if (firing) {
     console.log(`${pc.bold(qualified(firing))} finished`);
-    printNextSteps([
-      {
-        intent: "Read the finished agent",
-        command: `mu agent read ${firing.name} -w ${firing.workstreamName}`,
-      },
-    ]);
+    printNextSteps(readHint);
   } else {
     console.log(`All ${result.agents.length} agent(s) finished`);
   }

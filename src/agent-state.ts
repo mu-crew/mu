@@ -25,6 +25,8 @@ export interface StateReading {
   /** ctl only: pi holds queued messages, so an idle reading is about to
    *  turn busy. */
   pending?: boolean;
+  /** ctl only: pi's settled-run count (`mu agent wait --after-runs`). */
+  runs?: number;
 }
 
 export interface StateAgentRef {
@@ -292,6 +294,7 @@ export async function readAgentStates(
         alive: true,
         ctl: "ok",
         pending: probe.status.pending,
+        runs: probe.status.runs,
       });
     } else {
       failed.set(agentKey(agent), probe?.kind === "missing" ? "missing" : "refused");

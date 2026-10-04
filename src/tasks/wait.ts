@@ -28,7 +28,7 @@
 import type { StateReading } from "../agent-state.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
-import { StallDetectedDuringWaitError, TaskNotFoundError } from "./errors.js";
+import { StallDetectedDuringWaitError, stallWaitHint, TaskNotFoundError } from "./errors.js";
 import { getTask } from "./queries.js";
 import { DEFAULT_SUBSTATE, type TaskStatus, type TaskSubstate } from "./status.js";
 
@@ -301,6 +301,8 @@ export async function waitForTasks(
   // Owners whose reading carried a ctl link: they run pi, so the stall
   // error can point at `mu agent abort`.
   const ctlOwners = new Set<string>();
+  // The latest ctl run count per owner, for the stall hints.
+  const ownerRuns = new Map<string, number>();
 
   const stuckAgeMs = async (
     status: TaskStatus,
@@ -317,6 +319,8 @@ export async function waitForTasks(
     const reading = await opts.readOwnerState({ name: owner, workstreamName });
     const ownerKey = `${workstreamName}/${owner}`;
     if (reading?.ctl !== undefined) ctlOwners.add(ownerKey);
+    if (reading?.runs !== undefined) ownerRuns.set(ownerKey, reading.runs);
+    else ownerRuns.delete(ownerKey);
     // A pi owner whose control socket does not answer (pane still
     // alive) needs attention too: nothing will report it settling.
     // Its age runs from when this wait first saw the socket broken.
@@ -364,21 +368,28 @@ export async function waitForTasks(
         // on a design decision. Workers asking questions is DESIRABLE;
         // the tooling must not frame it as negligence.
         //
-        // Second line is the remedy, indented so the pair reads as one
-        // block: `mu agent read` is the next move in all three cases,
-        // because the question (or its absence) is in the pane, not in
-        // the task row.
+        // The indented lines are the remedy: a pi owner's last answer
+        // (wait --after-runs) when its socket reported runs, then
+        // `mu agent read`, the next move in all three cases, because a
+        // question, dialog, or crash is in the pane, not in the task row.
         //
         // Yellow ANSI escape inline (no picocolors import — keeps the
         // SDK module dep-free; the CLI layer already pulls picocolors).
         // Prefixed `mu task wait:` so log greppers can target it, and
         // cross-ws waits carry the qualified `<ws>/<name>`.
+        // A pi owner with a settled run also gets its last answer
+        // exactly (wait --after-runs), ahead of the pane read.
         const ownerBit = owner ?? "<none>";
+        const runs = ownerRuns.get(`${ref.workstreamName}/${ownerBit}`);
         const stateBit = stuckLabel.get(`${ref.workstreamName}/${ownerBit}`) ?? "needs_input";
+        const waitLine = stallWaitHint(ownerBit, ref.workstreamName, runs)
+          .map((s) => `  ${s.command}\n`)
+          .join("");
         currentStuckWarn(
           `\x1b[33mmu task wait: ${key} needs attention — owner=${ownerBit} has been in ` +
             `${stateBit} for ${formatStallAge(ageMs)}. It may have finished without closing, ` +
             `be waiting on an answer, or be sitting at a prompt.\x1b[0m\n` +
+            waitLine +
             `  mu agent read ${ownerBit} -w ${ref.workstreamName} --lines 60\n`,
         );
         // Persist a corroborating kind='event' row so other consumers
@@ -412,6 +423,7 @@ export async function waitForTasks(
             ref.workstreamName,
             ageSecs,
             ctlOwners.has(`${ref.workstreamName}/${owner ?? ""}`),
+            runs,
           );
         }
       }

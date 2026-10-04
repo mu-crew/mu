@@ -118,8 +118,11 @@ mu task wait auth/build auth/docs --first --on-stall exit --json
   polling instead.
 
 Exit 7 has several causes: the worker finished but did not close, it
-asked a question, or it hit a prompt. In each case, run
-`mu agent read <owner>` first.
+asked a question, or it hit a prompt. In each case, run the exit's
+`Next:` first. For a pi owner, it starts with
+`mu agent wait <owner> --after-runs <runs-1> --json`, which prints the
+last answer at once. Then it shows `mu agent read <owner>`, for the
+dialogs and crashes that only the pane shows.
 
 Pipeline the work: merge one task, run your tests on the merged tree,
 then dispatch the next task. Waiting for a whole wave hides partial
