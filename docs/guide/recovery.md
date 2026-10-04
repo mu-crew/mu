@@ -41,22 +41,27 @@ back to pasting.
 
 | State | Means | Fix |
 | ----- | ----- | --- |
-| `ctl missing` | no socket: the extension is not loaded | run `mu link pi`, then respawn the agent |
+| `ctl missing` | no socket: the extension is not loaded, or a new pi waits at its trust prompt | answer the [trust prompt](#a-new-pi-agent-shows-ctl-missing), or run `mu link pi`, then respawn the agent |
 | `ctl refused` | the socket exists but does not answer | respawn the agent; for a remote agent, check the ssh forward |
-| `extension X older than installed Y` | pi loaded an older mu build | type `/reload` in the pane, or respawn |
+| `extension X older than installed Y` or `extension lacks ops` | pi loaded an older mu build | send `/reload`, or respawn |
 
 To send `/reload` without attaching:
 
 ```bash
-mu agent send worker-1 -w auth '/reload' --via mux
+mu agent send worker-1 -w auth '/reload'             # extension serves op command
+mu agent send worker-1 -w auth '/reload' --via mux   # older: type it into the pane
 ```
 
-`/reload` keeps the pi session. A `send --fresh` or `abort` against an
+The error names the right form. `/reload` keeps the pi session. A `send --fresh` or `abort` against an
 outdated extension fails with exit 4 and prints the same two fixes.
 
-## A new pi agent is stuck at `needs_input`
+## A new pi agent shows `ctl missing`
 
-pi asks whether to trust a project folder on first start. Run
+pi asks whether to trust a project folder on first start. It asks
+before it loads extensions, so the agent has no control socket yet:
+mu shows `unknown (ctl missing)` and spawn warns after 30 s. A pi
+launched through a wrapper whose name is not `pi` or `pi-meta` shows
+`needs_input` instead. Run
 `/trust` in the pane once, or spawn with
 `--command 'pi --approve'`. `--approve` trusts every directory,
 including workspace forks, so use it only on your own code.

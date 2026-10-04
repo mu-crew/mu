@@ -227,6 +227,28 @@ describe("pi session commands over ctl", () => {
     expect(pasted()).toBe(false);
   });
 
+  it("an extension that serves op command but not fresh: reload over ctl, no --via mux", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), (req) =>
+      req.op === "hello"
+        ? { v: 1, ok: true, extVersion: "3.2.1" }
+        : {
+            v: 1,
+            ok: false,
+            error: `unknown op: ${String(req.op)}`,
+            ops: ["hello", "send", "command"],
+          },
+    );
+    const err = await sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentExtensionOutdatedError);
+    expect(err).toMatchObject({ op: "fresh", ops: ["hello", "send", "command"] });
+    const cmds = (err as AgentExtensionOutdatedError).errorNextSteps().map((n) => n.command);
+    expect(cmds[0]).toBe("mu agent send worker-1 '/reload' -w auth");
+    expect(pasted()).toBe(false);
+  });
+
   it("refuses any other slash command, naming the supported ones and --via mux", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));

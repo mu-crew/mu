@@ -79,8 +79,9 @@ Recipes call either form a **delegate call**.
 - One agent per independent unit; `--workspace` for any helper that may edit,
   build, or test the shared repo.
 
-A helper stuck at `needs_input` right after spawn likely hit pi's
-project trust prompt: add `--approve` to `MU_<CLI>_COMMAND`. Move off
+A pi helper showing `unknown (ctl missing)` right after spawn (spawn
+warns after 30 s) likely sits at pi's project trust prompt: add
+`--approve` to `MU_<CLI>_COMMAND`. Move off
 `scratch` when work gains dependencies or review gates.
 
 ## Mental model

@@ -352,7 +352,10 @@ export function murmurDoctorCheck(
     return {
       name: "murmur",
       status: "warn",
-      detail: `murmur ${version} is older than 1.0.0; @murmur_pane_since missing, idle/stall timing unknown`,
+      detail:
+        opts.muExtOk === true
+          ? `murmur ${version} is older than 1.0.0; idle/stall timing unknown for non-pi CLIs (pi agents use ctl)`
+          : `murmur ${version} is older than 1.0.0; @murmur_pane_since missing, idle/stall timing unknown`,
     };
   }
   return {
@@ -427,6 +430,9 @@ export interface AgentCtlReport {
   outdated?: boolean;
   /** ok probes: protocol ops (CTL_OPS) the extension's hello does not list. */
   missingOps?: string[];
+  /** Outdated probes: how `/reload` reaches it. "ctl" when the extension
+   *  serves op command, else "mux" (`--via mux`, typed into the pane). */
+  reloadVia?: "ctl" | "mux";
 }
 
 /**
@@ -509,7 +515,12 @@ export async function ctlSocketsDoctorCheck(
         ...(probe.kind === "ok" && probe.extVersion !== undefined
           ? { extVersion: probe.extVersion }
           : {}),
-        ...(older || missingOps.length > 0 ? { outdated: true } : {}),
+        ...(older || missingOps.length > 0
+          ? {
+              outdated: true,
+              reloadVia: probe.kind === "ok" && probe.ops?.includes("command") ? "ctl" : "mux",
+            }
+          : {}),
         ...(missingOps.length > 0 ? { missingOps } : {}),
       };
     }),
@@ -672,11 +683,14 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
       return [
         "mu talks to pi agents over a per-agent control socket served by",
         "the mu pi extension. `missing`: no socket (extension not loaded,",
-        "or the agent predates `mu link pi`). `refused`: socket present but",
-        "not answering. `version`: protocol mismatch; upgrade mu or pi.",
+        "the agent predates `mu link pi`, or a new pi still waits at its",
+        "project trust prompt: answer /trust in the pane, or spawn with",
+        "--command 'pi --approve'). `refused`: socket present but not",
+        "answering. `version`: protocol mismatch; upgrade mu or pi.",
         "Run `mu link pi`, then respawn the agent. `extension X older than",
-        "installed Y`: the agent's pi loaded an older mu build; type /reload",
-        "in its pane (`mu agent send <a> '/reload' --via mux`) or respawn it.",
+        "installed Y` or `lacks ops`: the agent's pi loaded an older mu",
+        "build; reload it with `mu agent send <a> '/reload'` (add",
+        "`--via mux` when the extension lacks op command) or respawn it.",
       ];
     case "agents":
       return [

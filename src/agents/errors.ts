@@ -389,6 +389,10 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
   }
   errorNextSteps(): NextStep[] {
     return [
+      {
+        intent: "Just spawned? pi may sit at its project trust prompt (no socket until answered)",
+        command: `answer /trust in the pane (mu agent read ${this.agentName} -w ${this.workstream}), or spawn with --command 'pi --approve'`,
+      },
       { intent: "Check whether the mu pi extension is linked", command: "mu doctor" },
       {
         intent: "Stop a runaway tool without the socket",
@@ -482,7 +486,8 @@ export class AgentFreshNeedsCtlError extends Error implements HasNextSteps {
  * before mu learned `op` (e.g. `fresh`): running pi processes keep the
  * extension code they started with. pi's `/reload` re-imports the
  * extension through the `mu link pi` shim and keeps the socket; a
- * respawn always works.
+ * respawn always works. An extension that serves op `command` takes
+ * `/reload` over ctl; an older one needs it typed (`--via mux`).
  */
 export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
   override readonly name = "AgentExtensionOutdatedError";
@@ -491,6 +496,8 @@ export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
     public readonly workstream: string,
     public readonly op: string,
     public readonly extVersion?: string,
+    /** Ops the extension serves (from its "unknown op" reply); absent from old extensions. */
+    public readonly ops?: readonly string[],
   ) {
     super(
       `agent ${agentName}'s mu pi extension (${extVersion ?? "version unknown"}) predates op ${op}: its pi loaded an older mu build; reload or respawn it`,
@@ -498,10 +505,13 @@ export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
   }
   errorNextSteps(): NextStep[] {
     const w = `-w ${this.workstream}`;
+    // An extension that serves op command runs /reload over ctl itself;
+    // an older one only reloads when /reload is typed into the pane.
+    const via = this.ops?.includes("command") ? "" : " --via mux";
     return [
       {
-        intent: "Reload pi's extensions in the pane (keeps the session and context)",
-        command: `mu agent send ${this.agentName} '/reload' --via mux ${w}`,
+        intent: "Reload pi's extensions (keeps the session and context)",
+        command: `mu agent send ${this.agentName} '/reload'${via} ${w}`,
       },
       {
         intent: "Or respawn the agent (loses its context)",
