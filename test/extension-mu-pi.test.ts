@@ -53,6 +53,7 @@ function fakePi() {
     },
     registerTool: vi.fn(),
     sendMessage: vi.fn(),
+    events: { emit: vi.fn() },
   };
   const emit = async (event: string, extra: Record<string, unknown> = {}) => {
     for (const h of handlers.get(event) ?? []) await h({ type: event, ...extra }, ctx);

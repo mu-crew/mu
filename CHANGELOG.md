@@ -12,6 +12,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu_delegate` reports outstanding delegates to murmur.** Each change
+  to the running, starting and queued count is emitted on pi's event bus
+  as `murmur:pending`. murmur shows the count on the parent's card,
+  renders a parent that stopped to wait as `waiting`, and holds `done`
+  until the last answer is delivered. With no murmur loaded, nothing is
+  listening and nothing changes.
+
 - **`mu db compact`** applies that to existing history: blanks redundant
   note tombstones, then VACUUMs. **`mu db forget <workstream...>`**
   deletes every op of named torn-down workstreams, **not undoable**; it
