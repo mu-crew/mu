@@ -20,7 +20,6 @@ import {
   insertAgent,
   isValidAgentName,
   pendingPaneIdFor,
-  refreshAgentTitle,
 } from "../agents.js";
 import { type CtlProbe, ctlProbe } from "../ctl/client.js";
 import { CTL_SOCK_ENV, ctlSocketPath } from "../ctl/path.js";
@@ -288,11 +287,15 @@ const CTL_POLL_INTERVAL_MS = 250;
 
 /**
  * Poll the control socket until the extension answers or the budget
- * runs out. Returns the last probe outcome; never throws. Uses real
- * timers, not the `sleep` seam: tests stub that to a no-op, which
- * would turn this into a busy loop.
+ * runs out. Returns the last probe outcome. `onMiss` runs after each
+ * unanswered probe and may throw to abort (the pane died); otherwise
+ * this never throws. Uses real timers, not the `sleep` seam: tests stub
+ * that to a no-op, which would turn this into a busy loop.
  */
-async function awaitCtlHandshake(sock: string): Promise<Exclude<SpawnCtl, "skipped">> {
+async function awaitCtlHandshake(
+  sock: string,
+  onMiss?: () => Promise<void>,
+): Promise<Exclude<SpawnCtl, "skipped">> {
   const budgetMs = defaultSpawnCtlMs();
   const deadline = Date.now() + budgetMs;
   for (;;) {
@@ -300,6 +303,7 @@ async function awaitCtlHandshake(sock: string): Promise<Exclude<SpawnCtl, "skipp
     const probe = await ctlProbe(sock, Math.max(1, Math.min(remaining, CTL_POLL_INTERVAL_MS * 4)));
     if (probe.kind === "ok") return "ok";
     const last = probeToSpawnCtl(probe.kind);
+    if (onMiss) await onMiss();
     const left = deadline - Date.now();
     if (left <= 0) return last;
     await delay(Math.min(CTL_POLL_INTERVAL_MS, left));
@@ -317,7 +321,10 @@ async function awaitCtlHandshake(sock: string): Promise<Exclude<SpawnCtl, "skipp
  *   4. setPaneTitle + enableMuPaneBordersForPane.
  *   5. finalizeAgentRow() — patch placeholder pane_id to real (workspace
  *      path), or insert a fresh agent row (no-workspace path).
- *   6. awaitSpawnLiveness().
+ *   6. Liveness: awaitSpawnLiveness() (fixed sleep, then pane + scan
+ *      check), or for a tmux pi agent the ctl handshake with a pane
+ *      check per tick and the scan at the end. herdr: startAgentInPane.
+ *   7. ctl handshake for herdr pi agents (outside the rollback).
  *
  * Failure between any of (3)–(6) calls rollbackSpawn() to undo the
  * pane + row + workspace. The caller-visible error is preserved.
@@ -418,6 +425,8 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // best-effort regardless).
   let paneId: string | undefined;
   let agent: AgentRow;
+  const wantsCtl = opts.ctl !== false && speaksMuCtl(cli, command) && defaultSpawnCtlMs() !== 0;
+  let ctl: SpawnCtl | undefined;
   try {
     // Cross-process critical section: the tmux topology check-then-act
     // (`sessionExists` → `new-session` / `new-window` / `split-window`)
@@ -471,9 +480,26 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // either would serialise the very fan-out the operator asked for.
     // Either branch throwing routes through the same `rollbackSpawn`,
     // so a pane that never became an agent never keeps its agent row.
+    //
+    // A tmux pi agent skips the fixed sleep: the ctl handshake is the
+    // readiness signal, so the pane check rides on each handshake tick
+    // and the startup-error scan runs once the handshake ends. A
+    // handshake timeout with a live, clean pane is still NOT a
+    // rollback (see below). MU_SPAWN_LIVENESS_MS=0 disables the checks
+    // here too.
     const startAgent = (await activeMux()).startAgentInPane;
     if (startAgent === undefined) {
-      await awaitSpawnLiveness(paneId, opts.name, command);
+      if (wantsCtl) {
+        const pid = paneId;
+        const check = defaultSpawnLivenessMs() !== 0;
+        ctl = await awaitCtlHandshake(
+          ctlSocket,
+          check ? () => assertPaneAlive(pid, opts.name, command) : undefined,
+        );
+        if (check) await checkSpawnHealth(pid, opts.name, command);
+      } else {
+        await awaitSpawnLiveness(paneId, opts.name, command);
+      }
     } else {
       // `startAgentInPane` returns only once the MUX has detected the
       // agent in that pane and considers it ready for input — strictly
@@ -488,13 +514,11 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     if (hasWorkspace) attachOrphanCleanupHint(err, opts.name, opts.workstream);
     throw err;
   }
-  // Control-socket handshake. Outside the rollback: a timeout means
-  // only control is missing; the pane and pi are fine. The caller
-  // reports it (see AgentCtlUnreachableError).
-  const ctl: SpawnCtl =
-    opts.ctl === false || !speaksMuCtl(cli, command) || defaultSpawnCtlMs() === 0
-      ? "skipped"
-      : await awaitCtlHandshake(ctlSocket);
+  // Control-socket handshake when the tmux path above did not run it.
+  // Outside the rollback: a timeout means only control is missing; the
+  // pane and pi are fine. The caller reports it (see
+  // AgentCtlUnreachableError).
+  ctl ??= wantsCtl ? await awaitCtlHandshake(ctlSocket) : "skipped";
   // `agents` is machine-local (it holds pane_id), so no capture trigger
   // covers it and this emit is the ONLY record. Typed intent so it
   // renders through the same formatter as captured ops.
@@ -504,11 +528,6 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     "agent.spawn",
     `agent spawn ${opts.name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${paneId})`,
   );
-  // Initial title push: the agent row is in 'spawning' state at this
-  // point, which composeAgentTitle renders as bare name (no decoration
-  // until the first detect cycle). Reconcile will re-push as soon as
-  // the operator runs any status-reading verb.
-  await refreshAgentTitle(db, opts.name, opts.workstream);
   // Lint-grade stderr nudge when the operator picked a name that
   // doesn't fit the <role>-<n> smallest-unused-suffix convention. The
   // spawn already succeeded; this is advice, not an error. Done LAST
@@ -762,6 +781,23 @@ async function awaitSpawnLiveness(
   const ms = defaultSpawnLivenessMs();
   if (ms === 0) return;
   await sleep(ms);
+  await checkSpawnHealth(paneId, agentName, command);
+}
+
+/** Throw AgentDiedOnSpawnError when the pane is gone; else return. */
+async function assertPaneAlive(paneId: string, agentName: string, command: string): Promise<void> {
+  const mux = await activeMux();
+  if (await mux.paneExists(paneId)) return;
+  const scrollback = await mux.capturePane(paneId, { lines: 50 }).catch(() => undefined);
+  throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command);
+}
+
+/**
+ * One liveness verdict: throw AgentDiedOnSpawnError when the pane is
+ * gone, AgentSpawnStartupError when its scrollback tail shows a known
+ * startup failure.
+ */
+async function checkSpawnHealth(paneId: string, agentName: string, command: string): Promise<void> {
   // Capture-pane first so we have something to attach to the error if the
   // pane is in the process of being torn down (the buffer survives a beat
   // longer than the pane's existence in some tmux builds).

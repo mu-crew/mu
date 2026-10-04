@@ -104,7 +104,10 @@ as a capability, not a name check:
 - **tmux.** After `MU_SPAWN_LIVENESS_MS` (default 1500, `0` skips) mu
   verifies the pane survived and scans its tail for provider or auth
   startup errors. mu does not wait for murmur to claim the pane: state
-  reads before the first claim report `unknown`.
+  reads before the first claim report `unknown`. A pi agent skips the
+  fixed wait: mu checks the pane on every handshake tick (a dead pane
+  rolls back at once) and scans for startup errors when the handshake
+  ends.
 - **herdr.** mu creates a bare pane and calls `startAgentInPane`, which
   subsumes both checks.
 - **pi, either backend.** After the agent starts, mu polls its control
