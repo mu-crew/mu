@@ -12,7 +12,6 @@
 // The verbs compose the CRUD primitives with the mux and reconciliation
 // layers. They are deliberately thin.
 
-import { rmSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   agentKey,
@@ -118,7 +117,7 @@ import {
   sendViaTransport,
   type TransportSendOptions,
 } from "./agents/transport.js";
-import { ctlSocketPath } from "./ctl/path.js";
+import { unlinkCtlSocket } from "./ctl/path.js";
 import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
 import { freeWorkspace, getWorkspaceForAgent, isWorkspaceClean } from "./workspace.js";
 // (freeWorkspace is used by the spawn rollback paths below, not by closeAgent.
@@ -441,21 +440,6 @@ export function deleteAgent(db: Db, name: string, workstream: string): boolean {
   const deleted = deleteAgentRow(db, name, workstream);
   if (deleted) unlinkCtlSocket(db, name, workstream);
   return deleted;
-}
-
-/**
- * Remove the agent's local control socket file. For a remote agent ssh's
- * `-L` forward leaves that file behind when the connection dies; it
- * probes as `refused`, never `ok`, but it is litter. A local pi removes
- * its own on quit. Best-effort: the row is already gone.
- */
-function unlinkCtlSocket(db: Db, name: string, workstream: string): void {
-  if (db.memory) return;
-  try {
-    rmSync(ctlSocketPath(workstream, name, dirname(db.name)), { force: true });
-  } catch {
-    /* best-effort */
-  }
 }
 
 function deleteAgentRow(db: Db, name: string, workstream: string): boolean {
