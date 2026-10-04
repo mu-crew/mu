@@ -152,6 +152,23 @@ describe("mu pi extension", () => {
     expect(await p).toMatchObject({ v: 1, ok: true, state: "idle", runs: 1 });
   });
 
+  it("wait {afterRuns:N} for a future N skips settles at or below N", async () => {
+    await fake.emit("session_start");
+    let settled = false;
+    const p = ctlRequest(sock, { op: "wait", afterRuns: 1 }).then((r) => {
+      settled = true;
+      return r;
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    await fake.emit("agent_start");
+    await fake.emit("agent_settled"); // runs 1: not past N
+    await new Promise((r) => setTimeout(r, 30));
+    expect(settled).toBe(false);
+    await fake.emit("agent_start");
+    await fake.emit("agent_settled"); // runs 2
+    expect(await p).toMatchObject({ v: 1, ok: true, state: "idle", runs: 2 });
+  });
+
   it("wait resolves immediately when a run already settled past afterRuns", async () => {
     await fake.emit("session_start");
     await fake.emit("agent_start");

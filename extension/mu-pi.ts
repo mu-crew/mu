@@ -587,7 +587,11 @@ function serveCtl(pi: MuPiApi): void {
         conn.off("close", onClose);
         resolve(r);
       };
-      const waiter = () => done({ v: V, ok: true, ...status(), ...settledRun() });
+      // A settle at or below `afterRuns` is not the run asked for: keep waiting.
+      const waiter = () => {
+        if (afterRuns !== undefined && g.runs <= afterRuns) return;
+        done({ v: V, ok: true, ...status(), ...settledRun() });
+      };
       const onClose = () => done(fail("client closed"));
       g.waiters.add(waiter);
       conn.on("close", onClose);
