@@ -224,13 +224,49 @@ describe("mu_delegate", () => {
     expect(b.content[0]?.text).toContain("delegate-3");
   });
 
-  it("MU_DELEGATE_MAX caps delegates in flight, counting parallel calls in one turn", async () => {
+  it("past MU_DELEGATE_MAX a call is queued, and starts when a slot frees", async () => {
     process.env.MU_DELEGATE_MAX = "2";
     try {
       const mu = fakeMu();
       const p = fakePi();
       registerDelegate(p.pi, mu.run);
       // All three start before any spawn resolves, as parallel tool calls do.
+      const [a, b, c] = await Promise.all([
+        tool(p).execute("a", { task: "one" }),
+        tool(p).execute("b", { task: "two" }),
+        tool(p).execute("c", { task: "three" }),
+      ]);
+      expect(a.content[0]?.text).toContain("Delegated to");
+      expect(b.content[0]?.text).toContain("Delegated to");
+      expect(c.content[0]?.text).toContain("Queued as queued-1");
+      expect(c.details).toMatchObject({ queued: true, position: 1 });
+      const spawns = () => mu.calls.filter((x) => x[1] === "spawn");
+      expect(spawns()).toHaveLength(2);
+      // An answer frees a slot: the queued call spawns, with the caller's cwd.
+      mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
+      for (let i = 0; i < 5; i++) await flush();
+      expect(spawns()).toHaveLength(3);
+      expect(spawns()[2]).toContain("--cwd");
+      expect(mu.calls.some((x) => x[1] === "send" && x.includes("three"))).toBe(true);
+      // Its answer names the handle the model was given, so a batch of
+      // answers still maps back to the calls.
+      const third = String(spawns()[2]?.[2]);
+      mu.waits.get(third)?.resolve(ok({ agents: [{ outcome: "done", lastText: "z" }] }));
+      for (let i = 0; i < 4; i++) await flush();
+      const texts = p.sendMessage.mock.calls.map((x) => (x[0] as { content: string }).content);
+      expect(texts.some((t) => t.includes(`${third} (queued as queued-1) finished`))).toBe(true);
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
+  it("the queue is bounded at one more cap's worth; past it, refuse", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    try {
+      const mu = fakeMu();
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
       const results = await Promise.allSettled([
         tool(p).execute("a", { task: "one" }),
         tool(p).execute("b", { task: "two" }),
@@ -238,14 +274,74 @@ describe("mu_delegate", () => {
       ]);
       expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled", "rejected"]);
       const err = (results[2] as PromiseRejectedResult).reason as Error;
-      expect(err.message).toContain("MU_DELEGATE_MAX=2");
+      expect(err.message).toContain("1 queued (MU_DELEGATE_MAX=1)");
       expect(err.message).toContain("issue the rest as answers arrive");
-      expect(mu.calls.filter((c) => c[1] === "spawn")).toHaveLength(2);
-      // An answer frees a slot.
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
+  it("mu_delegate_cancel drops a queued call before it starts", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    try {
+      const mu = fakeMu();
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      await tool(p).execute("a", { task: "one" });
+      const q = await tool(p).execute("b", { task: "two" });
+      expect(q.content[0]?.text).toContain("queued-1");
+      const r = await tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "queued-1" });
+      expect(r.content[0]?.text).toContain("never started");
+      expect(mu.calls.some((x) => x[1] === "abort")).toBe(false);
       mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
-      await flush();
-      await flush();
-      await expect(tool(p).execute("d", { task: "four" })).resolves.toBeDefined();
+      for (let i = 0; i < 5; i++) await flush();
+      expect(mu.calls.filter((x) => x[1] === "spawn")).toHaveLength(1);
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
+  it("a queued call that fails to start reports it as a follow-up", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    try {
+      let n = 0;
+      const mu = fakeMu({
+        on: {
+          spawn: () =>
+            ++n === 2 ? Promise.resolve({ code: 1, stdout: "", stderr: "boom" }) : undefined,
+        },
+      });
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      await tool(p).execute("a", { task: "one" });
+      await tool(p).execute("b", { task: "two" });
+      mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
+      for (let i = 0; i < 6; i++) await flush();
+      const texts = p.sendMessage.mock.calls.map((c) => (c[0] as { content: string }).content);
+      expect(
+        texts.some(
+          (t) => t.includes("Queued delegate queued-1 could not start") && t.includes("boom"),
+        ),
+      ).toBe(true);
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
+  it("session_shutdown names queued calls as never started", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    try {
+      const mu = fakeMu();
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      await tool(p).execute("a", { task: "one" });
+      await tool(p).execute("b", { task: "two" });
+      const notify = vi.fn();
+      for (const h of p.shutdown) await h({}, { hasUI: true, ui: { notify } });
+      expect(notify.mock.calls[0]?.[0]).toContain("queued, never started: queued-1");
     } finally {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];
@@ -266,7 +362,8 @@ describe("mu_delegate", () => {
       registerDelegate(p.pi, mu.run);
       await expect(tool(p).execute("a", { task: "one" })).rejects.toThrow("boom");
       fail = false;
-      await expect(tool(p).execute("b", { task: "two" })).resolves.toBeDefined();
+      const b = await tool(p).execute("b", { task: "two" });
+      expect(b.content[0]?.text).toContain("Delegated to"); // a free slot, not queued
     } finally {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];
@@ -304,6 +401,51 @@ describe("mu_delegate", () => {
     const content = sentText(p);
     expect(content).toContain("died");
     expect(content).toContain("last pane lines");
+  });
+
+  it("an API error keeps the pane, names the error, and counts as failed in the footer", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const setStatus = vi.fn();
+    const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus } };
+    await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
+    mu.waits
+      .get("delegate-2")
+      ?.resolve(ok({ agents: [{ outcome: "error", lastError: "529 overloaded" }] }));
+    await flush();
+    await flush();
+    expect(mu.calls.some((c) => c[1] === "close")).toBe(false);
+    expect(mu.calls.some((c) => c[1] === "read")).toBe(false); // the error is the evidence
+    const content = sentText(p);
+    expect(content).toContain("stopped on an API error");
+    expect(content).toContain("529 overloaded");
+    expect(content).toContain("re-issue the call, or record the check as UNVERIFIED");
+    expect(content).toContain("mu agent close delegate-2 -w scratch");
+    expect(setStatus.mock.calls.at(-1)).toEqual([DELEGATE_STATUS_KEY, "1 failed"]);
+  });
+
+  it("a failed delegate leaves the footer once its pane is gone", async () => {
+    let listed: { name: string }[] = [{ name: "delegate-1" }];
+    const mu = fakeMu({
+      on: { list: () => Promise.resolve(ok({ agents: listed })) },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const setStatus = vi.fn();
+    const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus } };
+    await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
+    mu.waits
+      .get("delegate-2")
+      ?.resolve(ok({ agents: [{ outcome: "error", lastError: "Connection error." }] }));
+    await flush();
+    await flush();
+    expect(setStatus.mock.calls.at(-1)?.[1]).toBe("1 failed");
+    // The model closed it from bash; the next call's listing no longer has it.
+    listed = [{ name: "delegate-1" }];
+    await tool(p).execute("u", { task: "y" }, undefined, undefined, ctx);
+    expect(setStatus.mock.calls.some((c) => c[1] === "1 delegate running")).toBe(true);
+    expect(setStatus.mock.calls.at(-1)?.[1]).not.toContain("failed");
   });
 
   it("throws (a normal tool error) when the control socket is not ok", async () => {
@@ -535,16 +677,55 @@ describe("footer status", () => {
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
   });
 
+  it("shows a call as starting the moment it is made, then running once its pane is up", async () => {
+    let releaseSpawn: (r: MuResult) => void = () => {};
+    const mu = fakeMu({
+      on: {
+        spawn: () =>
+          new Promise<MuResult>((res) => {
+            releaseSpawn = res;
+          }),
+      },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const { setStatus, ctx } = uiCtx();
+    const call = tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
+    await flush();
+    // The spawn has not returned: the footer already shows the call.
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 starting"]);
+    releaseSpawn(ok({ ctl: "ok", nextSteps: [] }));
+    await call;
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
+  });
+
+  it("a spawn that fails while starting clears the footer", async () => {
+    const mu = fakeMu({
+      on: { spawn: () => Promise.resolve({ code: 1, stdout: "", stderr: "boom" }) },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const { setStatus, ctx } = uiCtx();
+    await expect(
+      tool(p).execute("a", { task: "one" }, undefined, undefined, ctx),
+    ).rejects.toThrow();
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+  });
+
   it("works without a UI ctx (print mode, tests)", async () => {
     const p = fakePi();
     registerDelegate(p.pi, fakeMu().run);
     await expect(tool(p).execute("a", { task: "x" })).resolves.toBeDefined();
   });
 
-  it("delegateStatus words the count", () => {
+  it("delegateStatus words the counts", () => {
     expect(delegateStatus(0)).toBeUndefined();
     expect(delegateStatus(1)).toBe("1 delegate running");
     expect(delegateStatus(3)).toBe("3 delegates running");
+    expect(delegateStatus(0, 2)).toBe("2 starting");
+    expect(delegateStatus(3, 1)).toBe("3 delegates running, 1 starting");
+    expect(delegateStatus(16, 0, 4)).toBe("16 delegates running, 4 queued");
+    expect(delegateStatus(2, 0, 0, 1)).toBe("2 delegates running, 1 failed");
   });
 });
 

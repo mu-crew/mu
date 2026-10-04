@@ -10,6 +10,30 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **`mu_delegate` queues past the cap** instead of refusing. At
+  `MU_DELEGATE_MAX` running, further calls return `Queued as queued-N`
+  at once and start as slots free, up to one more cap's worth; past
+  that the tool refuses. A queued call's answer names its handle
+  (`delegate-q3 (queued as queued-1) finished`), `mu_delegate_cancel
+  queued-N` drops it, and quitting or `/reload` names the calls that
+  never started.
+- **Delegate API errors are named.** A delegate whose run stops on an
+  API error after pi's own retries (overloaded, connection, auth) now
+  reports outcome `error` with `lastError` in `mu agent wait --json`,
+  instead of `empty`. `mu_delegate` keeps its pane, quotes the error, and
+  tells the model to re-issue or record the check as UNVERIFIED; the
+  footer counts it as `N failed` until the pane is closed. The control
+  socket's `wait` reply carries `lastError` (a running pi needs
+  `/reload` to serve it).
+- **pi footer** shows each call the moment it is made:
+  `2 delegates running, 1 starting, 4 queued, 1 failed`, instead of
+  nothing until the pane was up.
+- `orchestrator-loop § Concurrency` and the delegate guide note that
+  answers arrive only when the agent stops, and that pi's
+  `followUpMode: "all"` batches them into one turn.
+
 ## [3.4.0] — 2026-10-03
 
 **Findings live in the graph.** A review's findings are now tasks in a

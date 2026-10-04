@@ -33,8 +33,14 @@ keeps it.
 
 - **[Delegate calls](tasks-or-calls.md#delegate-call)** (read-only): 10 to 20 at once is reasonable.
   Token spend and provider rate limits bind first; start near 8 and
-  raise after a clean wave. `mu_delegate` refuses past
-  `MU_DELEGATE_MAX` (default 16).
+  raise after a clean wave. `mu_delegate` runs at most
+  `MU_DELEGATE_MAX` (default 16) and queues up to as many again
+  (`queued-N`, started as slots free); past that it refuses.
+- **Answers arrive when you stop**, as pi follow-up messages, never
+  mid-turn. pi's `followUpMode: "all"` delivers every waiting answer in
+  one turn instead of one turn each; each answer names its delegate and
+  ends with its `VERDICT: <id>` line, so a batch still maps back. Record
+  every verdict in the batch before acting on any.
 - **Workers with workspaces** build and test: about one per CPU core,
   fewer when each runs the full suite. A remote host has its own
   session cap ([remote-workers](remote-workers.md)).

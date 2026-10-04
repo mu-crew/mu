@@ -12,18 +12,23 @@ import type { AgentWaitAgentState } from "./wait.js";
  * - `done`: the run settled with a final assistant text (`lastText`).
  * - `empty`: the run settled without one (or the agent has no
  *   control socket to supply it); read the pane instead.
+ * - `error`: the run stopped on an API error after pi's own retries
+ *   (`lastError`); the agent is alive and idle.
  * - `died`: the pane or its control socket went away mid-wait.
  * - `timeout`: still working when the wait gave up; the pane is untouched.
  * - `pending`: not finished, and the wait ended for another reason
  *   (`--any` fired on a sibling).
  */
-export type DelegateOutcome = "done" | "empty" | "died" | "timeout" | "pending";
+export type DelegateOutcome = "done" | "empty" | "error" | "died" | "timeout" | "pending";
 
 export function delegateOutcome(
-  agent: Pick<AgentWaitAgentState, "fired" | "dead" | "lastText">,
+  agent: Pick<AgentWaitAgentState, "fired" | "dead" | "lastText" | "lastError">,
   timedOut: boolean,
 ): DelegateOutcome {
   if (agent.dead) return "died";
-  if (agent.fired) return agent.lastText ? "done" : "empty";
+  if (agent.fired) {
+    if (agent.lastError !== undefined) return "error";
+    return agent.lastText ? "done" : "empty";
+  }
   return timedOut ? "timeout" : "pending";
 }
