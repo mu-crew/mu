@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.6.0] — 2026-10-04
+
+**Stalled workers surface by default; workers are told to close.**
+A bare `mu task wait` now exits 7 when a worker has sat in `needs_input`
+for two minutes (`--on-stall exit` and `--stuck-after 120` are the new
+defaults), so an orchestrator that forgets the flag no longer polls
+until `--timeout`. A mu-spawned pi worker that ends its turn still
+owning an `IN_PROGRESS` task gets one reminder to close it or say why
+not.
+
+Upgrade with `npm i -g @mu-crew/mu@3.6.0`, then `/reload` in running pi
+sessions (`/reload --via mux` for agents mu spawned before the
+upgrade). No schema change. Scripts that run a bare `mu task wait` and
+relied on it polling past a stall need `--on-stall warn`.
+
 ### Changed
 
 - **`mu task wait` now exits 7 on a stalled worker by default.**
