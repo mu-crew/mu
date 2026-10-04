@@ -153,19 +153,26 @@ describe("spawn liveness for ctl agents (tmux)", () => {
   let state: MockState;
 
   /**
-   * Fake tmux whose pane can be killed or given scrollback mid-spawn.
-   * `dieAfterMs`: the pane vanishes that long after it was created.
+   * Fake tmux driven by the spawn's own calls, no timers.
+   * `scrollback`: what the new pane shows from the moment it exists.
+   * `dieOnProbe`: the pane vanishes when spawn first asks whether it
+   * exists, so a capture taken after that answer fails as on real tmux.
    */
-  function installLivePanes(o: { extension?: boolean; dieAfterMs?: number } = {}): void {
+  function installLivePanes(
+    o: { extension?: boolean; scrollback?: string; dieOnProbe?: boolean } = {},
+  ): void {
     mux.restore();
     state = freshMockState();
     const fake = mockTmux(state).executor;
     mux = installMux("tmux", async (args) => {
-      if (args[0] === "new-session" && o.dieAfterMs !== undefined) {
-        setTimeout(() => state.panes.clear(), o.dieAfterMs);
+      if (o.dieOnProbe && args[0] === "display-message" && args.includes("#{pane_id}")) {
+        state.panes.clear();
       }
       const res = await fake(args);
-      if (o.extension && args[0] === "new-session") await serveExtension(sockFor("worker-1"));
+      if (args[0] === "new-session") {
+        for (const pane of state.panes.values()) pane.scrollback = o.scrollback;
+        if (o.extension) await serveExtension(sockFor("worker-1"));
+      }
       return res;
     });
   }
@@ -185,27 +192,53 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     expect(sleeps).not.toContain(1500);
   });
 
-  it("a pane dying during the handshake throws AgentDiedOnSpawnError and rolls back", async () => {
+  it("a pane dying during the handshake throws AgentDiedOnSpawnError with its scrollback and rolls back", async () => {
     process.env.MU_SPAWN_CTL_MS = "5000";
-    installLivePanes({ dieAfterMs: 100 });
+    installLivePanes({ dieOnProbe: true, scrollback: "fatal: instance lock held" });
     const started = Date.now();
-    await expect(spawnAgent(db, { name: "worker-1", workstream: "auth" })).rejects.toBeInstanceOf(
-      AgentDiedOnSpawnError,
-    );
+    const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);
+    expect(err).toBeInstanceOf(AgentDiedOnSpawnError);
+    expect((err as AgentDiedOnSpawnError).scrollback).toBe("fatal: instance lock held");
+    expect((err as Error).message).toContain("fatal: instance lock held");
+    // The ctl path can die anywhere in the handshake budget, not "within 1500ms".
+    expect((err as Error).message).toContain("during the ctl handshake (up to 5000ms");
+    expect((err as Error).message).not.toContain("within 1500ms");
     expect(Date.now() - started).toBeLessThan(2500);
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 
   it("scans for a startup error once the handshake times out, and rolls back", async () => {
-    installLivePanes();
-    const created = spawnAgent(db, { name: "worker-1", workstream: "auth" });
-    // The pane exists once new-session ran; give it pi's parked error.
-    await new Promise((r) => setTimeout(r, 20));
-    for (const pane of state.panes.values()) {
-      pane.scrollback = "Error: No API key found for amazon-bedrock";
-    }
-    await expect(created).rejects.toBeInstanceOf(AgentSpawnStartupError);
+    installLivePanes({ scrollback: "Error: No API key found for amazon-bedrock" });
+    const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);
+    expect(err).toBeInstanceOf(AgentSpawnStartupError);
+    expect((err as Error).message).toContain("during the ctl handshake (up to 300ms");
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+
+  it("scans for a startup error after an ok handshake, and rolls back", async () => {
+    installLivePanes({ extension: true, scrollback: "Error: No API key found for amazon-bedrock" });
+    const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);
+    expect(err).toBeInstanceOf(AgentSpawnStartupError);
+    expect((err as AgentSpawnStartupError).matchedLine).toContain("No API key found");
+    expect((err as Error).message).not.toContain("within 1500ms");
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(state.panes.size).toBe(0);
+  });
+
+  it("MU_SPAWN_LIVENESS_MS=0 skips the pane check and the scan on the ctl path", async () => {
+    process.env.MU_SPAWN_LIVENESS_MS = "0";
+    installLivePanes({
+      dieOnProbe: true,
+      scrollback: "Error: No API key found for amazon-bedrock",
+    });
+    const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(agent.ctl).toBe("missing");
+    expect(sleeps).not.toContain(1500);
+    expect(mux.calls.some((c) => c[0] === "capture-pane")).toBe(false);
+    expect(mux.calls.some((c) => c[0] === "display-message" && c.includes("#{pane_id}"))).toBe(
+      false,
+    );
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
   });
 
   it("a non-ctl spawn still runs the fixed liveness check", async () => {

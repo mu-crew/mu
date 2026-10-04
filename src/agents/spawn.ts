@@ -492,11 +492,23 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       if (wantsCtl) {
         const pid = paneId;
         const check = defaultSpawnLivenessMs() !== 0;
-        ctl = await awaitCtlHandshake(
-          ctlSocket,
-          check ? () => assertPaneAlive(pid, opts.name, command) : undefined,
-        );
-        if (check) await checkSpawnHealth(pid, opts.name, command);
+        const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
+        // Capture every tick and keep the last good buffer: on real tmux
+        // capture-pane fails once the pane is gone, so a capture taken
+        // after the death check would always come back empty.
+        let lastScrollback: string | undefined;
+        const assertPaneAlive = async (): Promise<void> => {
+          const mux = await activeMux();
+          const sb = await mux.capturePane(pid, { lines: 50 }).catch(() => undefined);
+          lastScrollback = sb ?? lastScrollback;
+          if (await mux.paneExists(pid)) return;
+          throw new AgentDiedOnSpawnError(opts.name, pid, lastScrollback, command, when);
+        };
+        ctl = await awaitCtlHandshake(ctlSocket, check ? assertPaneAlive : undefined);
+        // Known gap: pi binds the socket in session_start (init), before
+        // it renders startup diagnostics, so an ok on the first tick can
+        // scan a pane that has not printed its error yet.
+        if (check) await checkSpawnHealth(pid, opts.name, command, when);
       } else {
         await awaitSpawnLiveness(paneId, opts.name, command);
       }
@@ -784,27 +796,25 @@ async function awaitSpawnLiveness(
   await checkSpawnHealth(paneId, agentName, command);
 }
 
-/** Throw AgentDiedOnSpawnError when the pane is gone; else return. */
-async function assertPaneAlive(paneId: string, agentName: string, command: string): Promise<void> {
-  const mux = await activeMux();
-  if (await mux.paneExists(paneId)) return;
-  const scrollback = await mux.capturePane(paneId, { lines: 50 }).catch(() => undefined);
-  throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command);
-}
-
 /**
  * One liveness verdict: throw AgentDiedOnSpawnError when the pane is
  * gone, AgentSpawnStartupError when its scrollback tail shows a known
  * startup failure.
  */
-async function checkSpawnHealth(paneId: string, agentName: string, command: string): Promise<void> {
+async function checkSpawnHealth(
+  paneId: string,
+  agentName: string,
+  command: string,
+  /** When the failure happened, for the error text; default: the liveness window. */
+  when?: string,
+): Promise<void> {
   // Capture-pane first so we have something to attach to the error if the
   // pane is in the process of being torn down (the buffer survives a beat
   // longer than the pane's existence in some tmux builds).
   const mux = await activeMux();
   const scrollback = await mux.capturePane(paneId, { lines: 50 }).catch(() => undefined);
   if (!(await mux.paneExists(paneId))) {
-    throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command);
+    throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command, when);
   }
   // Pane is alive — but "alive" doesn't mean "working". Scan the tail of
   // the capture for known provider/auth startup errors
@@ -814,7 +824,7 @@ async function checkSpawnHealth(paneId: string, agentName: string, command: stri
   if (scrollback !== undefined) {
     const matchedLine = detectSpawnStartupError(scrollback);
     if (matchedLine !== undefined) {
-      throw new AgentSpawnStartupError(agentName, paneId, matchedLine, scrollback);
+      throw new AgentSpawnStartupError(agentName, paneId, matchedLine, scrollback, when);
     }
   }
 }
