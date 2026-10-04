@@ -380,7 +380,10 @@ function opsSizeHint(db: Db): { line: string; commands: string[] } | undefined {
     parts.push(
       `${forgettable.total} torn-down workstreams hold ${forgettable.ops} ops (${formatBytes(forgettable.bytes)}); largest: ${forgettable.top.join(", ")}`,
     );
-    commands.push("see them:    mu workstream list --torn-down", `forget some: mu db forget ${forgettable.top.join(" ")}`);
+    commands.push(
+      "see them:    mu workstream list --torn-down",
+      `forget some: mu db forget ${forgettable.top.join(" ")}`,
+    );
   }
   if (tomb.bytes >= 1024 * 1024) {
     parts.push(`${tomb.tombstones} redundant note tombstones (${formatBytes(tomb.bytes)})`);
