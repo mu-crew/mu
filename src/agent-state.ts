@@ -122,6 +122,7 @@ function mapMurmurState(token: string, since: number | null): StateReading {
       break;
     case "idle":
     case "done":
+    case "error":
     case "crashed":
       state = "needs_input";
       break;
@@ -200,15 +201,16 @@ function remoteReading(agent: StateAgentRef, panes: readonly MurmurPane[]): Stat
         ),
       )
     : new Set<string>();
-  const state: RuntimeState = kinds.has("crashed")
-    ? "needs_input"
-    : kinds.has("blocked")
-      ? "needs_permission"
-      : kinds.has("done")
-        ? "needs_input"
-        : row.activity === "running"
-          ? "busy"
-          : "needs_input";
+  const state: RuntimeState =
+    kinds.has("crashed") || kinds.has("error")
+      ? "needs_input"
+      : kinds.has("blocked")
+        ? "needs_permission"
+        : kinds.has("done")
+          ? "needs_input"
+          : row.activity === "running"
+            ? "busy"
+            : "needs_input";
   return {
     state,
     source: "murmur",

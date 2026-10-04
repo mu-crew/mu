@@ -99,6 +99,7 @@ describe("readAgentStates", () => {
     ["done", "needs_input"],
     ["idle", "needs_input"],
     ["crashed", "needs_input"],
+    ["error", "needs_input"],
   ] as const)("maps local %s to %s", async (token, state) => {
     tmuxOutput(`%1\t${token}\tbad-time`);
 
