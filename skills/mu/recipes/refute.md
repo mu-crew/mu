@@ -22,7 +22,7 @@ fact-check nobody will track, use delegate mode from
    evidence in the note ([findings § Record](findings.md#record)). A
    finder with more than 5 writes `FINDING:` lines in its own note
    instead; the triage step turns them into tasks.
-4. **Refute each finding** with a delegate call, not a task
+4. **Refute each finding** with a [delegate call](tasks-or-calls.md#delegate-call), not a task
    ([tasks-or-calls](tasks-or-calls.md)). The refuter gets the finding
    and the code, not the finder's reasoning, and tries to prove it
    false: run it, find the guard, read the caller. Its answer ends with

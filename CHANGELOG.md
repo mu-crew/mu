@@ -31,7 +31,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (`hint` in `--json`). `mu state` hints once a workstream passes 300
   tasks with fewer than 10% open. `docs/reference/naming.md` documents
   the convention.
-- **`recipes/tasks-or-calls.md`**: a refuter, claim checker, judge,
+- **`recipes/tasks-or-calls.md`** defines a **delegate call** (one
+  `mu_delegate` call, or scratch spawn + `send --fresh` + `wait --json`
+  without the tool; starts empty; fan out in one turn) and every recipe
+  links to it. A refuter, claim checker, judge,
   skeptic, scout or synthesizer is a delegate call whose verdict lands
   on the task it judged, not a task of its own. `refute`,
   `review-panel`, `deep-research`, `tournament`, `rules-audit`,

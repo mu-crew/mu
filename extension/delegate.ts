@@ -422,7 +422,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       const max = delegateMax();
       if (inflight.size + starting >= max)
         throw new Error(
-          `mu_delegate: ${inflight.size + starting} delegates already running (MU_DELEGATE_MAX=${max}). Wait for answers to arrive, then delegate the rest.`,
+          `mu_delegate: ${inflight.size + starting} delegates already running (MU_DELEGATE_MAX=${max}). End your turn; issue the rest as answers arrive (each answer resumes you).`,
         );
       starting++;
       let slotHeld = true;

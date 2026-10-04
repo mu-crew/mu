@@ -239,6 +239,7 @@ describe("mu_delegate", () => {
       expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled", "rejected"]);
       const err = (results[2] as PromiseRejectedResult).reason as Error;
       expect(err.message).toContain("MU_DELEGATE_MAX=2");
+      expect(err.message).toContain("issue the rest as answers arrive");
       expect(mu.calls.filter((c) => c[1] === "spawn")).toHaveLength(2);
       // An answer frees a slot.
       mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
