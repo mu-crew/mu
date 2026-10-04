@@ -38,7 +38,7 @@ panel's findings will be fixed by agents. Both modes are in
    - workstream: each finding is an `OPEN/triage` task blocking the
      umbrella ([findings § Record](findings.md#record)).
 4. **Merge and refute.** Merge duplicates across angles, then refute
-   each finding above low severity with a delegate call, as in
+   each finding above low severity with a [delegate call](tasks-or-calls.md#delegate-call), as in
    [refute](refute.md) step 4. Refuters are calls in both modes
    ([tasks-or-calls](tasks-or-calls.md)).
 5. **Act:**

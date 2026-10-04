@@ -35,8 +35,8 @@ answer rests on is an `OPEN/triage` task, decided like a finding
    every source), and flag claims that contradict each other. In
    workstream mode, each surviving claim becomes an `OPEN/triage` task
    titled with the claim, its sources and quotes in the note.
-4. **One checker per claim** that the answer depends on, as a delegate
-   call in both modes ([tasks-or-calls](tasks-or-calls.md)). The checker
+4. **One checker per claim** that the answer depends on, as a
+   [delegate call](tasks-or-calls.md#delegate-call) in both modes ([tasks-or-calls](tasks-or-calls.md)). The checker
    gets the claim and its sources, not the searcher's reasoning, fetches
    the source itself, and tries to break the claim: is the quote there,
    does it say that, is it current, does another source disagree? It

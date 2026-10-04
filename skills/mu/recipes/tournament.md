@@ -16,7 +16,7 @@ reliable than scoring one.
 3. **Filter** (when there are many candidates): one task drops the ones
    that fail a hard rubric criterion and merges duplicates. What is left
    enters the bracket.
-4. **Judge in pairs.** One delegate call per comparison, a fresh agent
+4. **Judge in pairs.** One [delegate call](tasks-or-calls.md#delegate-call) per comparison, a fresh agent
    each, so no judge holds the whole field
    ([tasks-or-calls](tasks-or-calls.md)). The judge sees the two
    candidates and the rubric and ends with `WINNER: <a|b> <reason>`.

@@ -52,6 +52,7 @@ or inspection.
 For one-shot work inside pi, call `mu_delegate` (installed by `mu link pi`).
 Outside pi: spawn into the reserved `scratch` workstream (no task DAG,
 auto-created), `send --fresh`, then `mu agent wait --json` (`lastText`).
+Recipes call either form a **delegate call**.
 
 - `mu agent wait <names...> --first` waits for busy → idle instead of a
   `sleep` loop; exit 0 met, 5 timeout, 6 pane died.
@@ -149,8 +150,9 @@ rules hold even when you skip it:
   owner's pane and answer it.
 - **Stop a worker gently**: `mu agent abort`, then `kick`, then `close`.
 - **Checks are calls, not tasks.** Refuters, claim checkers, judges and
-  skeptics are delegate calls; their verdict lands on the task they
-  judged ([recipes/tasks-or-calls.md](recipes/tasks-or-calls.md)).
+  skeptics are [delegate calls](recipes/tasks-or-calls.md#delegate-call)
+  (`mu_delegate`, or a `scratch` spawn without it), all issued in one
+  turn; their verdict lands on the task they judged.
   At most 10 to 20 delegates at once (`MU_DELEGATE_MAX`, default 16).
 - **Findings are tasks.** A reviewer's or auditor's findings become
   `mu task add --triage` tasks blocking the review, decided with

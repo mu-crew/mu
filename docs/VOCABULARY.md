@@ -42,6 +42,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **one-shot** | An agent that exists for one task. | "ephemeral", "transient" |
 | **nudge** | The pi extension's one-shot keep-driving reminder: after a dispatch, if the orchestrator ends its turn with work IN_PROGRESS, it injects the SKILL.md rule once and continues. Logged as `--kind nudge`. | "goal", "loop" |
 | **delegate** | A scratch agent started for one task; its answer returns when its control-socket `wait` resolves. The `mu_delegate` tool does it in one call; the pane stays attachable. | "subagent", "child agent" |
+| **delegate call** | Using a delegate for one check (a refuter, judge, claim checker): one `mu_delegate` call, or `mu agent spawn -w scratch` + `send --fresh` + `wait --json` without the tool. Its verdict is recorded on the task it judged; the call itself adds no task. | "subtask" |
 | **hidden subagent** | A child agent in other tools (pi-subagents, Claude Code and Codex task tools) with no pane to attach or steer. mu's counterpart is the **delegate**. | "subagent" (alone) |
 | **agent state** | `busy`, `needs_input`, `needs_permission`, or `unknown`, from the **state source**. Not persisted; see [Agent state values](#agent-state-values). | "agent status", "lifecycle state" |
 | **state source** | The **control socket** for pi agents; else herdr's `paneStatus()` or, on tmux, murmur. A silent pi socket gives `unknown` (`ctl missing`, `ctl refused`). | "scraper" |
