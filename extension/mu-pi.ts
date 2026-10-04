@@ -33,7 +33,7 @@ import {
   UNKNOWN_OP_PREFIX,
 } from "../src/ctl/protocol.js";
 import { type DelegateCtx, type MuDelegateApi, registerDelegate } from "./delegate.js";
-import { type MuNudgeApi, registerNudge } from "./nudge.js";
+import { type MuNudgeApi, registerCloseNudge, registerNudge } from "./nudge.js";
 
 /** The mu package version, baked in by tsup's `define`; absent when run from source. */
 declare const __MU_VERSION__: string | undefined;
@@ -339,6 +339,7 @@ export default function muPi(pi: MuPiApi): void {
   registerDelegate(pi);
   registerPrompts(pi);
   registerNudge(pi);
+  registerCloseNudge(pi);
   serveCtl(pi);
 }
 

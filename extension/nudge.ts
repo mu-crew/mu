@@ -9,6 +9,11 @@
  * Its only read is `mu state --json`, its only write `mu log --kind
  * nudge`; the armed set and fired flag are per-prompt scratch. The rule
  * text lives in skills/mu/SKILL.md between the keep-driving markers.
+ *
+ * Its worker-side twin, the close nudge: a mu-spawned pi worker
+ * ($MU_AGENT_NAME + $MU_WORKSTREAM) that settles while it still owns an
+ * IN_PROGRESS task is told once to close it or say why not. Same
+ * once-per-prompt rule and `MU_NUDGE=0` opt-out.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +21,7 @@ import { defaultRunner, type MuRunner } from "./delegate.js";
 
 export const NUDGE_MESSAGE_TYPE = "mu-keep-driving";
 export const NUDGE_LOG_KIND = "nudge";
+export const CLOSE_NUDGE_MESSAGE_TYPE = "mu-close-task";
 const MARK_START = "<!-- mu:keep-driving -->";
 const MARK_END = "<!-- /mu:keep-driving -->";
 /** Tasks named in the wait hint; the rest are counted, not listed. */
@@ -182,6 +188,89 @@ export function registerNudge(
     return {
       entries: [
         { type: "custom_message", customType: NUDGE_MESSAGE_TYPE, content: text, display: true },
+      ],
+      continue: true,
+    };
+  });
+}
+
+/** The mu-spawned worker this pi runs as, or undefined outside mu. */
+export function workerIdentity(
+  env: NodeJS.ProcessEnv = process.env,
+): { agent: string; workstream: string } | undefined {
+  const agent = env.MU_AGENT_NAME;
+  const workstream = env.MU_WORKSTREAM;
+  if (!agent || !workstream || workstream === "scratch") return undefined;
+  return { agent, workstream };
+}
+
+/** IN_PROGRESS task names owned by `agent`, from `mu task owned-by --json`. */
+async function ownedInProgress(
+  run: MuRunner,
+  agent: string,
+  workstream: string,
+): Promise<string[] | undefined> {
+  const r = await run(["task", "owned-by", agent, "-w", workstream, "--json"]);
+  if (r.code !== 0) return undefined;
+  try {
+    const json = JSON.parse(r.stdout) as { items?: { name?: string; status?: string }[] };
+    return (json.items ?? []).flatMap((t) =>
+      t.status === "IN_PROGRESS" && t.name ? [t.name] : [],
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/** The close-nudge text: name each task and the two ways out. */
+export function closeNudgeText(workstream: string, names: string[]): string {
+  const close = names
+    .map((n) => `mu task close ${n} -w ${workstream} --evidence "<what you verified>"`)
+    .join("\n  ");
+  return [
+    `[mu] You are stopping while you still own ${names.map((n) => `${workstream}/${n}`).join(", ")} (IN_PROGRESS).`,
+    "If the work is done and verified, close it now:",
+    `  ${close}`,
+    "If you are blocked or need an answer, say so in one line and stop; the orchestrator will read your pane.",
+  ].join("\n");
+}
+
+export function registerCloseNudge(
+  pi: MuNudgeApi,
+  run: MuRunner = defaultRunner(),
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (!nudgeEnabled(env)) return;
+  const me = workerIdentity(env);
+  if (me === undefined) return;
+  let fired = false;
+
+  pi.on("input", () => {
+    fired = false;
+  });
+
+  pi.on("agent_before_settle", async (event) => {
+    if (fired) return;
+    if (outcomeOf(event) !== "completed") return;
+    fired = true;
+    const names = await ownedInProgress(run, me.agent, me.workstream);
+    if (names === undefined || names.length === 0) return;
+    await run([
+      "log",
+      "-w",
+      me.workstream,
+      "--kind",
+      NUDGE_LOG_KIND,
+      `close: ${me.agent} settled owning ${names.join(", ")}`,
+    ]);
+    return {
+      entries: [
+        {
+          type: "custom_message",
+          customType: CLOSE_NUDGE_MESSAGE_TYPE,
+          content: closeNudgeText(me.workstream, names),
+          display: true,
+        },
       ],
       continue: true,
     };

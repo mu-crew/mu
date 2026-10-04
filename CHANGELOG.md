@@ -25,6 +25,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the orchestrator. `MU_IDLE_THRESHOLD_MS` (the `idle` flag in
   `mu state` and the TUI) stays at 5 minutes.
 
+### Added
+
+- **Close nudge: a pi worker that stops while owning a task is told to
+  close it.** In a mu-spawned pi (`$MU_AGENT_NAME` + `$MU_WORKSTREAM`,
+  not `scratch`), the extension checks `mu task owned-by` when a turn
+  completes. If the worker still owns an `IN_PROGRESS` task, it injects
+  one `mu-close-task` message naming the task and its `mu task close`
+  command, or asks for a one-line reason if blocked, and continues once.
+  Fires at most once per prompt and logs `mu log --kind nudge`.
+  `MU_NUDGE=0` turns it off, along with the keep-driving nudge.
+
 ## [3.5.0] — 2026-10-04
 
 **Delegates that queue, report, and fail visibly; a slimmer mu.db.**
