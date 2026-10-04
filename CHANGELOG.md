@@ -10,6 +10,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.6.2] — 2026-10-04
+
+**A settled pi worker stalls a wait in seconds, not two minutes.** For a
+pi owner read over its control socket, `mu task wait` now reports a
+stall after 5 s instead of 120 s.
+
+Upgrade with `npm i -g @mu-crew/mu@3.6.2`. No schema change.
+
 ### Changed
 
 - **`mu task wait` flags a settled pi worker after 5 s, not 120 s.**
