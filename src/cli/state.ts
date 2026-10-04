@@ -32,7 +32,7 @@
 // (bug_agent_spawn_workspace_fk_failure). The TUI launches first and
 // performs its own fast/slow polling after Ink renders.
 
-import { idleThresholdMs } from "../agents.js";
+import type { LiveAgent } from "../agents.js";
 import {
   emitJson,
   formatAgentsTable,
@@ -51,11 +51,7 @@ import {
 import { type Db, tryResolveWorkstreamId, WorkstreamNotFoundError } from "../db.js";
 import { GLYPH } from "../glyphs.js";
 import { muTable, pc } from "../output.js";
-import {
-  isLingeringScratchAgent,
-  isWorkspaceStale,
-  WORKSPACE_STALE_THRESHOLD,
-} from "../staleness.js";
+import { isWorkspaceStale, WORKSPACE_STALE_THRESHOLD } from "../staleness.js";
 import {
   listRemoteWorkers,
   loadWorkstreamSnapshot,
@@ -260,6 +256,19 @@ export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
 /** Past this many tasks, a workstream that is >90% closed gets the one-per-effort hint. */
 const BIG_WORKSTREAM_TASKS = 300;
 
+/**
+ * Scratch nudge: task-less helpers that sit idle past the threshold
+ * (`idle` from `computeAgentIdle`) get a close hint so easy spawning
+ * doesn't silently accumulate forgotten panes. Null when none.
+ */
+export function scratchIdleNudge(workstreamName: string, agents: LiveAgent[]): string | null {
+  if (!isScratchWorkstream(workstreamName)) return null;
+  const lingering = agents.filter((a) => a.idle === true);
+  if (lingering.length === 0) return null;
+  const names = lingering.map((a) => a.name).join(", ");
+  return `\u26a0 ${lingering.length} idle scratch agent(s): ${names}. Close when done: mu agent close ${lingering[0]?.name ?? "<name>"} -w scratch`;
+}
+
 function renderFullMode(perWs: PerWsData[]): void {
   perWs.forEach((d, i) => {
     if (i > 0) console.log("");
@@ -282,21 +291,8 @@ function renderFullCard(d: PerWsData): void {
       );
     }
   }
-  // Scratch is special-cased: its agents are task-less by design, so the
-  // regular idle flag never fires. Nudge lingering off-the-cuff helpers
-  // so easy spawning doesn't silently accumulate forgotten panes.
-  if (isScratchWorkstream(workstreamName)) {
-    const threshold = idleThresholdMs();
-    const lingering = view.agents.filter((a) => isLingeringScratchAgent(a.updatedAt, threshold));
-    if (lingering.length > 0) {
-      const names = lingering.map((a) => a.name).join(", ");
-      console.log(
-        pc.yellow(
-          `\u26a0 ${lingering.length} idle scratch agent(s): ${names}. Close when done: mu agent close ${lingering[0]?.name ?? "<name>"} -w scratch`,
-        ),
-      );
-    }
-  }
+  const nudge = scratchIdleNudge(workstreamName, view.agents);
+  if (nudge !== null) console.log(pc.yellow(nudge));
   // One workstream per effort: a long-lived catch-all is mostly history.
   const total = d.taskCount;
   const open = ready.length + inProgress.length + blocked.length + d.triage.length;
