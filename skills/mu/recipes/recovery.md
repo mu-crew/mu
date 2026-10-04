@@ -24,3 +24,5 @@ when done in the wrong order.
 - The `doctor` `disk` section is report-only: an orphan dir may hold the
   only copy of uncommitted work, so mu prints cleanup commands and runs
   none. Read before you run them.
+
+Done when `mu doctor` reports no DRIFT and every cleanup command you ran was read first.

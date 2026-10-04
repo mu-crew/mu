@@ -29,7 +29,9 @@ Delegates called in one turn run in parallel.
 - The pane closes after a clean finish; died or timed-out panes stay
   as evidence.
 - pi's footer shows how many delegates this session is waiting on.
-- Each delegate costs a pane and a pi process.
+- Each delegate costs a pane and a pi process. A session runs at most
+  `MU_DELEGATE_MAX` at once (default 16); past that, the tool refuses
+  and the rest wait for answers.
 
 `MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
 
@@ -99,7 +101,14 @@ and steering agent work is worth a pane.
 
 ## When to stop delegating
 
-Dependencies, several agents, or review need a real workstream: see
+Use delegates when you only need the answer: reviewing someone's PR or
+a doc, a fact-check, a go/no-go. Nothing they find lands in the ops
+log, which is permanent and syncs to every machine.
+
+Move to a workstream when the findings become work agents will fix, or
+the job has dependencies or several stages: see
 [Getting started](getting-started.md) and
 [How to dispatch work](dispatch.md). There, `mu task wait` keys on the
-task and has `--on-stall`.
+task and has `--on-stall`. The agent-facing rules for both are in
+[recipes/findings.md](../../skills/mu/recipes/findings.md) and
+[recipes/tasks-or-calls.md](../../skills/mu/recipes/tasks-or-calls.md).

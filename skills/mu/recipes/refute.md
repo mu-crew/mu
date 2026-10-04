@@ -21,15 +21,17 @@ fact-check nobody will track, use delegate mode from
    umbrella, one per finding, severity first in the title, file:line and
    evidence in the note ([findings § Record](findings.md#record)). A
    finder with more than 5 writes `FINDING:` lines in its own note
-   instead; the triage step turns them into tasks.
-4. **Refute each finding** with a [delegate call](tasks-or-calls.md#delegate-call), not a task
-   ([tasks-or-calls](tasks-or-calls.md)). The refuter gets the finding
-   and the code, not the finder's reasoning, and tries to prove it
-   false: run it, find the guard, read the caller. Its answer ends with
-   `VERDICT: CONFIRMED | REFUTED | UNVERIFIED <evidence>`. You record it
-   on the finding ([findings § Triage](findings.md#triage)): accept, or
-   close `--as rejected --why '<evidence>'`. For high-severity
-   findings, run three refuters and accept only if most fail to kill it.
+   instead, and [findings § Triage](findings.md#triage) turns them into
+   tasks.
+4. **Refute each finding** with a
+   [delegate call](tasks-or-calls.md#delegate-call), not a task. The
+   refuter gets the finding and the code, not the finder's reasoning,
+   and tries to prove it false: run it, find the guard, read the caller.
+   Record its verdict on the finding, and apply the skip and
+   three-refuter rules, as in [findings § Triage](findings.md#triage).
+   Many findings: issue the calls in batches under the cap ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)); to
+   get the verdicts back as one table, see
+   [codemode-driver § Delegate calls](codemode-driver.md#delegate-calls).
 5. **Report** from the graph: accepted findings are the result, ranked
    by impact; `mu task list --substate rejected` is what was refuted.
    A synthesis task is needed only when the human wants prose.

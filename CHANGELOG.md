@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.4.0] — 2026-10-03
+
+**Findings live in the graph.** A review's findings are now tasks in a
+new `OPEN/triage` substate: in the DAG, blocking the review, but out of
+`next` and `claim` until someone runs `mu task accept` or closes them
+rejected or duplicate. Checks around them (refuters, claim checkers,
+judges) are delegate calls whose verdicts land on the finding, so one PR
+review no longer adds a task per check. Reviews nobody will track run as
+`scratch` delegates. `mu_delegate` is capped at 16 in flight
+(`MU_DELEGATE_MAX`), and `mu workstream init` and `mu state` hint at
+`<project>-<purpose>` workstream names, one per effort.
+
+Upgrade with `npm i -g @mu-crew/mu@3.4.0`, then `/reload` in running pi
+sessions. No schema change: existing DBs gain the substate on open.
+
 ### Added
 
 - **`OPEN/triage` substate** for proposed tasks, usually review
@@ -42,6 +57,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   review no longer adds a task per check. `orchestrator-loop` gains a
   Concurrency section (10 to 20 delegates, about one worker per core,
   ceiling written on the umbrella).
+- **Commands** `/mu-debug <symptom>` (hypothesis-panel), `/mu-sweep
+  <change>` (fan-out), and `/mu-until <stop rule>` (loop-until-done).
 - **`recipes/findings.md`**: the rule every reviewing recipe follows.
   Findings are triage tasks in a workstream (more than 5 from one
   reviewer: note lines first, then a triage pass creates the tasks), or
@@ -50,6 +67,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `hypothesis-panel` and `adversarial-review` now record findings,
   claims, violations, hypotheses and gaps as tasks; `review-panel` and
   `deep-research` default to delegates.
+
+### Changed
+
+- **Skill and recipe audit.** `recipes/triage.md` is now
+  `recipes/backlog-triage.md`, so "triage" means only the substate.
+  SKILL.md defines the recipe words (umbrella, unit, gate, wave,
+  finding, verdict, stop rule). A rejected review now closes
+  `--as rejected` instead of `done`, so it no longer unblocks downstream
+  work; follow-up reviews wait on the gap tasks. Finding and verdict
+  lines have one format, owned by `findings.md`. Every recipe has
+  "Use when" and "Done when" lines and links the recipes it hands off
+  to. `codemode-driver` covers delegate calls as well as workers. The
+  README's "Ultrathink, the mu way" and the delegate guide describe
+  when a review is delegates only and when it is tasks.
 
 ## [3.3.0] — 2026-10-03
 

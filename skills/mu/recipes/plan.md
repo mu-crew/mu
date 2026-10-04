@@ -17,9 +17,12 @@ human asks for a file.
    in two or three sentences, and the global constraints copied
    verbatim from the spec. Every other task is blocked by it; close it
    at once. It carries notes, not work.
-4. **Write each task's note** as a [brief](brief.md):
+4. **Write each task's note** as a [brief](brief.md): its Shape, plus
+   INTERFACES and STEPS:
 
    ```text
+   GOAL:       one sentence
+   DONE WHEN:  checkable, exhaustive criterion
    FILES:      Create/Modify/Test with exact paths (line ranges if known)
    INTERFACES: Consumes: <exact signatures from earlier tasks>
                Produces: <exact names and types later tasks use>
@@ -35,14 +38,16 @@ human asks for a file.
    of order.
 6. **Add edges for dependencies only.** `mu task block A --by B` when A
    consumes what B produces. Plan order is not a dependency: an extra
-   edge serialises tracks that could run in parallel.
+   edge serialises tracks that could run in parallel. The exception:
+   tasks that edit the same files share a track ([waves](waves.md)).
 7. **Self-review before dispatch.** Walk each spec requirement and name
    the task that implements it. Grep the notes for placeholders. Check
    that names in INTERFACES match across tasks. Then read the graph back
    with `mu task tree task_0 -w <ws> --down`, or `mu state -w <ws>` for the tracks.
 
 Done when every spec requirement maps to a task, no note holds a
-placeholder, and `mu state` shows the intended parallel tracks.
+placeholder, and `mu state` shows the intended parallel tracks. Then
+dispatch per [orchestrator-loop](orchestrator-loop.md).
 
 ## Notes
 

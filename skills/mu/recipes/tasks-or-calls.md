@@ -22,8 +22,11 @@ mu agent wait refuter-1 -w scratch --json   # answer in lastText
 - **Fan out in one turn.** Issue every call for a step together; in pi
   the answers arrive later as follow-up messages. Calling one, waiting,
   then the next runs them in series.
-- **It leaves nothing in mu** but a `scratch` pane that closes when it
-  finishes. You record its verdict on the task it judged.
+- **It leaves no task.** Its `scratch` pane stays attachable while it
+  runs. `mu_delegate` closes it after a clean finish and keeps it on a
+  crash or timeout (`keep: true` always keeps it); the bash form needs
+  `mu agent close <name> -w scratch`. You record its verdict on the task
+  it judged.
 
 ## The rule
 
@@ -59,3 +62,6 @@ steps that only check things are probably tasks by mistake.
 
 Run calls within the delegate cap (`MU_DELEGATE_MAX`, default 16; see
 [orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
+
+Done when every agent a recipe step spawns is either a task in the DAG
+or a delegate call whose verdict is recorded on a task.

@@ -18,13 +18,17 @@ some and calls the job done; one task per unit cannot.
    mu task block sweep -w <ws> --by sweep_auth_ts
    ```
 
-   Put the shared brief and acceptance criteria on the umbrella; each
-   unit task's note holds only what differs.
+   Put the shared [brief](brief.md) and acceptance criteria on the
+   umbrella; each unit task's note holds only what differs. A sweep that
+   only checks (no commits) makes each unit a delegate call instead
+   ([tasks-or-calls](tasks-or-calls.md)).
 3. **Cap concurrency** ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
    Spawn at most one agent per ready track. Tell workers to avoid
    repo-wide commands so more can run.
-4. **Pipeline.** Dispatch, wait `--first`, merge, dispatch the next unit
-   to the freed worker with `--fresh`. Units that touch the same files
+4. **Pipeline.** Dispatch, wait `--first`, merge
+   ([orchestrator-loop § Merging](orchestrator-loop.md#merging)), dispatch
+   the next unit to the freed worker with `--fresh`. With `codemode`, a
+   [driver](codemode-driver.md) can dispatch each batch. Units that touch the same files
    go on one track (see [waves](waves.md)).
 5. **Review per unit** when a wrong unit is costly: add a review task
    per unit ([adversarial-review](adversarial-review.md)).

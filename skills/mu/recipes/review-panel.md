@@ -16,9 +16,10 @@ panel's findings will be fixed by agents. Both modes are in
 
 ## Steps
 
-1. **Pin the target.** Record the exact range on an umbrella task:
-   `git diff main...HEAD`, a PR number, or a commit range. Every
-   reviewer reads the same range.
+1. **Pin the target**: `git diff main...HEAD`, a PR number, or a commit
+   range. Put it in every reviewer's brief (delegate mode) or on an
+   umbrella task (workstream mode), so every reviewer reads the same
+   range.
 2. **One reviewer per angle**: a delegate in delegate mode, a task in
    workstream mode. Pick the angles that apply:
 
@@ -38,9 +39,9 @@ panel's findings will be fixed by agents. Both modes are in
    - workstream: each finding is an `OPEN/triage` task blocking the
      umbrella ([findings § Record](findings.md#record)).
 4. **Merge and refute.** Merge duplicates across angles, then refute
-   each finding above low severity with a [delegate call](tasks-or-calls.md#delegate-call), as in
-   [refute](refute.md) step 4. Refuters are calls in both modes
-   ([tasks-or-calls](tasks-or-calls.md)).
+   with [delegate calls](tasks-or-calls.md#delegate-call) in both modes,
+   following the skip and three-refuter rules in
+   [findings § Triage](findings.md#triage).
 5. **Act:**
    - delegate mode: post the comments or edit the doc from the merged
      list, citing file:line and evidence;
@@ -53,9 +54,9 @@ triage and the umbrella closes with `--if-ready` (workstream mode).
 
 ## Traps
 
-- **Reviewers padding the list.** Tell them a clean result is a valid
-  result. A panel that always finds ten things is guessing.
+- **Reviewers padding the list.** A panel that always finds ten things
+  is guessing.
 - **Use different models across angles** where you can; one model's
   blind spot repeated five times is still one blind spot.
-- **The panel is not the gate.** Merge verification still runs on the
+- **The panel is not the gate command.** Merge verification still runs on the
   merged tree ([orchestrator-loop](orchestrator-loop.md#merging)).

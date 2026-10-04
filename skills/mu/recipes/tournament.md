@@ -13,15 +13,16 @@ reliable than scoring one.
    approach or model each. Code attempts are tasks, each in its own
    workspace. Ideas (names, plans) are delegate calls; one call can
    generate many candidates.
-3. **Filter** (when there are many candidates): one task drops the ones
-   that fail a hard rubric criterion and merges duplicates. What is left
+3. **Filter** (when there are many candidates): one delegate call drops
+   the ones that fail a hard rubric criterion and merges duplicates. What is left
    enters the bracket.
 4. **Judge in pairs.** One [delegate call](tasks-or-calls.md#delegate-call) per comparison, a fresh agent
    each, so no judge holds the whole field
    ([tasks-or-calls](tasks-or-calls.md)). The judge sees the two
    candidates and the rubric and ends with `WINNER: <a|b> <reason>`.
    Record each round's results in the umbrella's note; winners meet in
-   the next round.
+   the next round. A round wider than the cap runs in batches
+   ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
 5. **Confirm the winner** with a final check against the rubric, then
    merge it. Free the losing workspaces.
 

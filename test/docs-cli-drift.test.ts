@@ -62,7 +62,7 @@ const DOC_FILES = [
   "skills/mu/recipes/hypothesis-panel.md",
   "skills/mu/recipes/tournament.md",
   "skills/mu/recipes/loop-until-done.md",
-  "skills/mu/recipes/triage.md",
+  "skills/mu/recipes/backlog-triage.md",
   "skills/mu/recipes/codemode-driver.md",
   "skills/mu/recipes/ultrathink.md",
   "skills/mu/recipes/brief.md",
