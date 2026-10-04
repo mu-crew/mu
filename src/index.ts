@@ -303,6 +303,7 @@ export {
 export {
   type AddNoteOptions,
   type AddTaskOptions,
+  acceptTask,
   addBlockEdge,
   addNote,
   addTask,
@@ -376,6 +377,7 @@ export {
   type TaskEdgesWithStatus,
   type TaskEdgeWithStatus,
   TaskExistsError,
+  TaskInTriageError,
   type TaskNoteRow,
   TaskNotFoundError,
   TaskNotInWorkstreamError,

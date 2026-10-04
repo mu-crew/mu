@@ -57,7 +57,9 @@ export function colorPair(pair: TaskPair): string {
   const text = formatPair(pair);
   switch (pair.status) {
     case "OPEN":
-      return pair.substate === "parked" ? pc.dim(text) : pc.cyan(text);
+      return pair.substate === "parked" || pair.substate === "triage"
+        ? pc.dim(text)
+        : pc.cyan(text);
     case "IN_PROGRESS":
       return pc.yellow(text);
     case "CLOSED":
@@ -87,7 +89,7 @@ export type InkColor = "cyan" | "yellow" | "green" | "gray" | "red";
 export function inkColorForPair(pair: TaskPair): InkColor {
   switch (pair.status) {
     case "OPEN":
-      return pair.substate === "parked" ? "gray" : "cyan";
+      return pair.substate === "parked" || pair.substate === "triage" ? "gray" : "cyan";
     case "IN_PROGRESS":
       return "yellow";
     case "CLOSED":

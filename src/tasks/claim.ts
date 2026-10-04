@@ -21,6 +21,7 @@ import { withOpContext } from "../op-context.js";
 import {
   ClaimerNotRegisteredError,
   TaskAlreadyOwnedError,
+  TaskInTriageError,
   TaskNotFoundError,
   TaskParkedError,
 } from "./errors.js";
@@ -351,6 +352,9 @@ function assertNotParked(
 ): void {
   if (task.status === "OPEN" && task.substate === "parked" && opts.force !== true) {
     throw new TaskParkedError(task.name, task.workstreamName);
+  }
+  if (task.status === "OPEN" && task.substate === "triage" && opts.force !== true) {
+    throw new TaskInTriageError(task.name, task.workstreamName);
   }
 }
 

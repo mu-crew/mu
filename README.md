@@ -85,8 +85,11 @@ it in the open:
   nobody can declare victory early.
 - **Reviews are tasks.** A `review_x` task is blocked by `x` and run by
   a fresh agent, ideally on another model, against criteria written
-  up front. A rejection adds `fix_x` and a second review to the DAG
-  instead of rewriting history.
+  up front. Every gap or finding a reviewer reports is its own task in
+  triage: accepted as work, or closed rejected or duplicate, so the
+  graph holds the whole review. A rejection adds those tasks and a
+  second review instead of rewriting history. Reviews of other
+  people's PRs and docs run as delegates and leave no record.
 - **Every agent is a pane.** Attach to any worker, reviewer, or judge
   mid-run and steer it.
 - **Nothing lives only in a context window.** Verdicts, evidence, and

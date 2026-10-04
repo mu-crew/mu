@@ -6,7 +6,9 @@ grades its own work generously; a fresh agent told to refute it does
 not. Every other review-shaped recipe builds on this one.
 
 The review is a task in the DAG, not a step inside the worker's
-session. Its verdict, its evidence, and every rejection stay in the DB.
+session. Its verdict, its evidence, and every gap it finds stay in the
+DB: each gap is a finding task ([findings](findings.md)). For a one-off
+check outside any workstream, a delegate reviewer is enough.
 
 ## Steps
 
@@ -31,15 +33,17 @@ session. Its verdict, its evidence, and every rejection stay in the DB.
 5. **Send the reviewer brief** (below), claim `review_x` for it, wait.
 6. **Act on the verdict:**
    - `ACCEPT`: cherry-pick `x`'s commits and verify the merge.
-   - `REJECT`: add `fix_x` (blocked by `review_x`, note = the gaps) and
-     `review_x_2` (blocked by `fix_x`). Dispatch `fix_x` to the original
-     worker, whose context still holds the work. Repeat from step 4.
-     The DAG grows; nothing is rewritten.
-   - The `fix_x` brief tells the author to check each gap before fixing
-     it: reproduce it, then fix it, or answer it with evidence in the
-     note (`GAP 2: not reproducible, <command + output>`). A gap the
-     author disputes goes to the next reviewer as a claim to check,
-     not as settled.
+   - `REJECT`: the reviewer already recorded each gap as an
+     `OPEN/triage` task. Add `review_x_2`, blocked by every gap task.
+     Accept the gaps (or close the ones that are wrong `--as rejected`)
+     and dispatch them to the original worker, whose context still
+     holds the work. Repeat from step 4 when the gaps are closed. The
+     DAG grows; nothing is rewritten.
+   - The author checks each gap before fixing it: reproduce it, then
+     fix it and close the gap task, or answer it with evidence
+     (`mu task note <gap> 'not reproducible: <command + output>'`) and
+     release it. A disputed gap stays open for the next reviewer to
+     decide, not settled by the author.
 7. **Cap the rounds.** After two rejections on the same unit, stop the
    loop and decide yourself: split the unit, change the criteria, or
    ask the human. A third round of the same argument rarely converges.
@@ -59,7 +63,10 @@ where it fails the acceptance criteria in `mu task notes <x>`.
 - Report gaps against the criteria: a requirement not met, an edge case
   without a test, a change outside scope, a claim the evidence does not
   support. Not style, not preferences.
-- Each gap cites a file:line or a command and its output.
+- Record each gap as a finding task blocking review_<x>:
+  mu task add -w <ws> --triage -t "<severity>: <gap>" -i <n> -e <days> \
+    --note '<file:line or command + output>'
+  then: mu task block review_<x> -w <ws> --by <gap-id>
 - If you could not check something (tool failed, no access), say
   UNVERIFIED for it. Unverified is not a pass and not a fail.
 - Do not edit files.
@@ -77,7 +84,7 @@ Then close: mu task close review_<x> --evidence '<verdict + key check>'
   least one command the reviewer ran. A review with no evidence is a
   rejected review: re-send it.
 - **Reviewers drift into fixing.** A reviewer that edits the code is now
-  an author nobody reviews. Keep the fix in `fix_x`.
+  an author nobody reviews. The fix belongs to the gap tasks.
 - **Review is not merge verification.** An accepted unit can still
   break once merged with moved main. Verify the merge as in
   [orchestrator-loop](orchestrator-loop.md#merging).

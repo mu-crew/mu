@@ -42,8 +42,8 @@ and check, skip it.
    of a loop are the one exception: add each when the last closes.
 5. **Review every unit that ships.** Each commit-producing task gets a
    review task ([adversarial-review](adversarial-review.md)), on a
-   different model where you can. Findings and claims get refuters
-   instead.
+   different model where you can. Every finding is a triage task,
+   refuted before it is accepted ([findings](findings.md)).
 6. **Run the loop** ([orchestrator-loop](orchestrator-loop.md)): pipeline
    merges, verify each merge, keep workers busy
    ([waves](waves.md) when they share files). Long runs follow
@@ -54,7 +54,8 @@ and check, skip it.
    `mu task close <umbrella> --if-ready --evidence '...'`.
 
 Done when the umbrella is closed, its stop rule holds on the merged
-tree, and every shipped unit has a review task that closed `ACCEPT`.
+tree, every shipped unit has a review task that closed `ACCEPT`, and
+`mu task list --substate triage` is empty or only `UNVERIFIED`.
 
 ## Budget
 

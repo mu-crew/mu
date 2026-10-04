@@ -31,7 +31,13 @@ import {
   cmdTaskUpdate,
   resolveNoteText,
 } from "./edit.js";
-import { cmdTaskClose, cmdTaskOpen, cmdTaskPark, cmdTaskUnpark } from "./lifecycle.js";
+import {
+  cmdTaskAccept,
+  cmdTaskClose,
+  cmdTaskOpen,
+  cmdTaskPark,
+  cmdTaskUnpark,
+} from "./lifecycle.js";
 import { cmdTaskList, cmdTaskNext, cmdTaskOwnedBy } from "./queries.js";
 import { cmdTaskTree } from "./tree.js";
 
@@ -52,6 +58,10 @@ export function wireTaskCommands(program: Command): void {
     )
     .option("--note <text>", "append an initial note after creating the task")
     .option("--note-author <name>", "author label for --note (default: current actor)")
+    .option(
+      "--triage",
+      "start as OPEN/triage: a proposal (e.g. a review finding) kept out of next/claim until `mu task accept`",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (id: string | undefined) {
@@ -62,6 +72,7 @@ export function wireTaskCommands(program: Command): void {
         blockedBy?: string[];
         note?: string;
         noteAuthor?: string;
+        triage?: boolean;
         workstream?: string;
         json?: boolean;
       };
@@ -330,6 +341,23 @@ export function wireTaskCommands(program: Command): void {
     });
 
   task
+    .command("accept <id>")
+    .description(
+      "Accept an OPEN/triage task (a proposed finding) as work: OPEN/todo, back in `next`. No-op on any other state. Decline with `close --as rejected|duplicate --why`.",
+    )
+    .option(...WORKSTREAM_OPT)
+    .option(...EVIDENCE_OPT)
+    .option(...JSON_OPT)
+    .action(function (id: string) {
+      const opts = (this as Command).opts() as {
+        evidence?: string;
+        workstream?: string;
+        json?: boolean;
+      };
+      return handle((db) => cmdTaskAccept(db, id, opts), this as Command)();
+    });
+
+  task
     .command("unpark <id>")
     .description("Return a parked task to OPEN (back in `next`). No-op on any other state.")
     .option(...WORKSTREAM_OPT)
@@ -384,7 +412,7 @@ export function wireTaskCommands(program: Command): void {
       "--actor <name>",
       "override the actor name used for the log (only valid with --self; defaults to pane title or $USER)",
     )
-    .option("--force", "claim even when the task is parked (OPEN/parked)")
+    .option("--force", "claim even when the task is parked or in triage (OPEN/parked, OPEN/triage)")
     .option(
       "--strict-staleness",
       "refuse --for dispatch when the target agent's workspace is stale (default: warn and proceed)",

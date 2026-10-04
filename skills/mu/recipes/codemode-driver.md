@@ -14,7 +14,7 @@ the plan, the state, and the results live in the DB.
   variables across calls.
 - Every task it dispatches exists in the DAG before the script starts.
   The script adds no tasks the orchestrator has not planned, except the
-  ones a recipe step names (the next round, a `fix_` task).
+  ones a recipe step names (the next round, a finding).
 - `store()` / `load()` hold nothing a re-run needs. The DAG is the
   cursor.
 - The script's source goes into the log before it runs:

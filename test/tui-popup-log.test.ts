@@ -89,6 +89,7 @@ function snapshotWithEvents(events: LogRow[]): WorkstreamSnapshot {
     blocked: [],
     recentClosed: [],
     parkedCount: 0,
+    triage: [],
     allTasks: [],
     workspaces: [],
     workspaceOrphans: [],

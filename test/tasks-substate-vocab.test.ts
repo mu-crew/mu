@@ -19,7 +19,7 @@ describe("substate vocabulary", () => {
       .map(([s]) => s)
       .sort();
     expect(defaults).toEqual(["CLOSED", "IN_PROGRESS", "OPEN"]);
-    expect(TASK_SUBSTATE_ROWS).toHaveLength(8);
+    expect(TASK_SUBSTATE_ROWS).toHaveLength(9);
   });
   it("isValidPair", () => {
     expect(isValidPair("OPEN", "parked")).toBe(true);
@@ -35,7 +35,9 @@ describe("substate vocabulary", () => {
     expect(resolvePair("CLOSED", "wontfix")).toEqual({ status: "CLOSED", substate: "wontfix" });
     expect(resolvePair("CLOSED", undefined)).toEqual({ status: "CLOSED", substate: "done" });
     expect(resolvePair("CLOSED", "parked")).toEqual({ status: "CLOSED", substate: "done" });
-    expect(resolvePair("OPEN", "triage")).toEqual({ status: "OPEN", substate: "todo" });
+    expect(resolvePair("OPEN", "triage")).toEqual({ status: "OPEN", substate: "triage" });
+    // An unknown substate from a newer peer falls back to the default (D8).
+    expect(resolvePair("OPEN", "review")).toEqual({ status: "OPEN", substate: "todo" });
     expect(resolvePair("DEFERRED", "todo")).toEqual({ status: "OPEN", substate: "parked" });
     expect(resolvePair("NOPE", "todo")).toBeNull();
   });

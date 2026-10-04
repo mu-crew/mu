@@ -71,6 +71,7 @@ export {
   TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
+  TaskInTriageError,
   TaskNotFoundError,
   TaskNotInWorkstreamError,
   TaskParkedError,
@@ -87,6 +88,7 @@ export {
   slugifyTitleVerbose,
 } from "./tasks/id.js";
 export {
+  acceptTask,
   type CloseSkippedResult,
   type CloseSubstate,
   type CloseTaskOptions,

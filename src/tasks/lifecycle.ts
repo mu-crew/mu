@@ -382,6 +382,36 @@ export function parkTask(db: Db, localId: string, opts: ParkTaskOptions): SetSta
   );
 }
 
+/**
+ * OPEN/triage → OPEN/todo: accept a proposed task (a review finding) as
+ * real work, back in `ready` / `next`. A no-op (`changed: false`) on any
+ * other pair. Declining is `close --as rejected | duplicate --why`.
+ */
+export function acceptTask(
+  db: Db,
+  localId: string,
+  opts: EvidenceOption & { workstream: string },
+): SetStatusResult {
+  return withOpContext(db, { intent: "task.accept", group: "new" }, () =>
+    db.transaction((): SetStatusResult => {
+      const before = getTask(db, localId, opts.workstream);
+      if (!before) throw new TaskNotFoundError(localId);
+      if (before.status !== "OPEN" || before.substate !== "triage") {
+        return {
+          previousStatus: before.status,
+          status: before.status,
+          previousSubstate: before.substate,
+          substate: before.substate,
+          changed: false,
+        };
+      }
+      const r = setTaskStatus(db, localId, "OPEN", { workstream: opts.workstream });
+      recordEvidenceNote(db, localId, before.workstreamName, "ACCEPT", opts);
+      return r;
+    })(),
+  );
+}
+
 /** OPEN/parked → OPEN/todo. A no-op (`changed: false`) on any other pair. */
 export function unparkTask(
   db: Db,

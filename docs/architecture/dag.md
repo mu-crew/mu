@@ -14,11 +14,11 @@ it mu is only an agent runner. Overview:
 - **Status lifecycle:** `OPEN → IN_PROGRESS → CLOSED`. Status alone
   decides edge satisfaction: any `CLOSED` task satisfies its blockers.
 - **Substate** qualifies status and never touches edges:
-  `OPEN/todo|parked`, `IN_PROGRESS/active`,
+  `OPEN/todo|parked|triage`, `IN_PROGRESS/active`,
   `CLOSED/done|rejected|wontfix|duplicate|superseded`. The rule is
   "store intent, derive graph facts": ready and blocked stay derived
-  from edges. `OPEN/parked` is excluded from `ready` but stays in
-  `goals`.
+  from edges. `OPEN/parked` and `OPEN/triage` are excluded from `ready`
+  but stay in `goals`; `claim` refuses both without `--force`.
 - **Notes** are append-only per task. They survive LLM context loss
   and agent restarts, which fixes context loss at the task level
   rather than the agent level.

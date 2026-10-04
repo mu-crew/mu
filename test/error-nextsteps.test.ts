@@ -55,6 +55,7 @@ import {
   TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
+  TaskInTriageError,
   TaskNotFoundError,
   TaskNotInWorkstreamError,
   TaskParkedError,
@@ -134,6 +135,11 @@ const cases: NextStepsCase[] = [
     error: new TaskParkedError("foo", "ws"),
     label: "TaskParkedError",
     expectedTokens: ["mu task unpark foo -w ws", "--force"],
+  },
+  {
+    error: new TaskInTriageError("foo", "ws"),
+    label: "TaskInTriageError",
+    expectedTokens: ["mu task accept foo -w ws", "--as rejected", "--force"],
   },
   {
     error: new InvalidSubstateError("CLOSED", "parked"),

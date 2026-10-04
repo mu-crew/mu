@@ -93,6 +93,7 @@ import {
   TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
+  TaskInTriageError,
   TaskNotFoundError,
   TaskNotInWorkstreamError,
   TaskParkedError,
@@ -286,6 +287,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SubstateReasonRequiredError ||
     err instanceof TaskParkStateError ||
     err instanceof TaskParkedError ||
+    err instanceof TaskInTriageError ||
     err instanceof InvalidSubstateError ||
     err instanceof TaskClaimStaleWorkspaceError ||
     err instanceof TaskNotInWorkstreamError ||

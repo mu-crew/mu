@@ -10,6 +10,27 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **`OPEN/triage` substate** for proposed tasks, usually review
+  findings. `mu task add --triage` creates one; it stays out of `ready`
+  and `next`, `claim` refuses it without `--force`
+  (`TaskInTriageError`, exit 4), and it still blocks its dependents, so
+  a review cannot close with findings undecided. **`mu task accept <id>`**
+  moves it to `OPEN/todo`; declining is `close --as rejected |
+  duplicate --why`. `mu state` shows a Triage section (and `triage` in
+  `--json`); `task next`, `task list`, `task show`, `claim` and
+  `close --if-ready` point at accept and the triage inbox. No schema
+  bump: one seeded substate row, per the substates spec (D10).
+- **`recipes/findings.md`**: the rule every reviewing recipe follows.
+  Findings are triage tasks in a workstream (more than 5 from one
+  reviewer: note lines first, then a triage pass creates the tasks), or
+  answer lines from delegates when nobody will track them (reviewing a
+  PR or doc). `refute`, `review-panel`, `deep-research`, `rules-audit`,
+  `hypothesis-panel` and `adversarial-review` now record findings,
+  claims, violations, hypotheses and gaps as tasks; `review-panel` and
+  `deep-research` default to delegates.
+
 ## [3.3.0] — 2026-10-03
 
 **Ultrathink, the mu way.** The mu skill gains a recipe library for

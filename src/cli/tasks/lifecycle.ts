@@ -16,6 +16,7 @@ import type { Db } from "../../db.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
 import { formatPair, type TaskPair } from "../../tasks/status.js";
 import {
+  acceptTask,
   type CloseSubstate,
   closeTask,
   getTask,
@@ -71,7 +72,18 @@ export async function cmdTaskClose(
   // --if-ready can return a CloseSkippedResult (no mutation). Branch
   // first so the typed `skipped` field stays in scope below.
   if ("skipped" in r) {
+    // A blocker in triage closes only when someone decides it: waiting on
+    // it would hang, so lead with the triage inbox.
+    const inTriage = r.blockingIds.filter((id) => getTask(db, id, ws)?.substate === "triage");
     const blockingNextSteps: NextStep[] = [
+      ...(inTriage.length > 0
+        ? [
+            {
+              intent: `Triage ${inTriage.length} blocking finding(s) (accept, or close --as rejected|duplicate)`,
+              command: `mu task list --substate triage -w ${ws}`,
+            },
+          ]
+        : []),
       {
         intent: "Watch the remaining blockers (returns when one closes)",
         command: `mu task wait ${r.blockingIds.join(" ")} -w ${ws} --first --any --on-stall exit`,
@@ -229,6 +241,37 @@ export async function cmdTaskPark(
     console.log(pc.dim(`${localId} already OPEN/parked (no-op)`));
   } else {
     console.log(`Parked ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
+  }
+  printNextSteps(nextSteps);
+}
+
+export async function cmdTaskAccept(
+  db: Db,
+  rawId: string,
+  opts: { evidence?: string; workstream?: string; json?: boolean } = {},
+): Promise<void> {
+  const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
+  assertTaskInWorkstream(db, localId, opts.workstream);
+  const ws = await resolveWorkstream(opts.workstream);
+  const sdkOpts: Parameters<typeof acceptTask>[2] = { workstream: ws };
+  if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
+  const r = acceptTask(db, localId, sdkOpts);
+  const nextSteps: NextStep[] = [
+    {
+      intent: "Claim it",
+      command: `mu task claim ${localId} -w ${ws}  (--self / --for <worker>)`,
+    },
+    { intent: "Triage the next one", command: `mu task list --substate triage -w ${ws}` },
+  ];
+  if (opts.json) {
+    emitJson({ taskName: localId, ...r, nextSteps });
+    return;
+  }
+  if (!r.changed) {
+    const pair = formatPair({ status: r.status, substate: r.substate });
+    console.log(pc.dim(`${localId} is ${pair}, not in triage (no-op)`));
+  } else {
+    console.log(`Accepted ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
   }
   printNextSteps(nextSteps);
 }

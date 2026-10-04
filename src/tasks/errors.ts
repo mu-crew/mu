@@ -7,7 +7,8 @@
 //                     TaskAlreadyOwnedError, ClaimerNotRegisteredError,
 //                     CrossWorkstreamEdgeError, TaskIdInvalidError,
 //                     SubstateReasonRequiredError, TaskParkStateError,
-//                     TaskParkedError, InvalidSubstateError)
+//                     TaskParkedError, TaskInTriageError,
+//                     InvalidSubstateError)
 //   cycle      → 4   (CycleError — also a conflict)
 //
 // Each error implements HasNextSteps so the CLI can render a per-error
@@ -454,6 +455,35 @@ export class TaskParkStateError extends Error implements HasNextSteps {
         intent: "Then park it",
         command: `mu task park ${this.taskId} --why "<reason>" -w ${ws}`,
       },
+    ];
+  }
+}
+
+/**
+ * Thrown by `claimTask` on an OPEN/triage task without `force`. A triage
+ * task is a proposal (often a review finding) nobody has accepted as
+ * work yet; accept it, or close it rejected / duplicate.
+ */
+export class TaskInTriageError extends Error implements HasNextSteps {
+  override readonly name = "TaskInTriageError";
+  constructor(
+    public readonly taskId: string,
+    public readonly workstream: string,
+  ) {
+    super(`task ${taskId} is in triage (OPEN/triage); accept it or claim with --force`);
+  }
+  errorNextSteps(): NextStep[] {
+    const ws = this.workstream;
+    return [
+      {
+        intent: "Accept it as work, then claim",
+        command: `mu task accept ${this.taskId} -w ${ws}`,
+      },
+      {
+        intent: "Decline it",
+        command: `mu task close ${this.taskId} --as rejected --why "<reason>" -w ${ws}`,
+      },
+      { intent: "Claim it anyway", command: `mu task claim ${this.taskId} --force -w ${ws}` },
     ];
   }
 }

@@ -31,7 +31,7 @@ NDJSON. Errors are `{error,message,nextSteps,exitCode}` on stderr
   extension (`mu link pi`) serves exact send, state, wait and abort
   inside pi's own TUI. `ctl missing|refused` means it does not answer.
 - **task** — DAG node with mandatory `impact` (1–100) and
-  `effort_days`. Shown as status/substate: `OPEN/todo|parked`,
+  `effort_days`. Shown as status/substate: `OPEN/todo|parked|triage`,
   `IN_PROGRESS/active`, `CLOSED/done|rejected|wontfix|duplicate|superseded`.
   Any `CLOSED/*` satisfies `--blocked-by`.
 - **claim / release** — atomic take/clear of `tasks.owner`.
@@ -143,6 +143,11 @@ rules hold even when you skip it:
 - **`mu task wait --first --on-stall exit`**; exit 7 means read the
   owner's pane and answer it.
 - **Stop a worker gently**: `mu agent abort`, then `kick`, then `close`.
+- **Findings are tasks.** A reviewer's or auditor's findings become
+  `mu task add --triage` tasks blocking the review, decided with
+  `mu task accept` or `close --as rejected|duplicate`. A review nobody
+  will track (someone's PR, a doc) runs as delegates instead. Rules:
+  [recipes/findings.md](recipes/findings.md).
 
 ## CLI gotchas
 
@@ -218,6 +223,7 @@ risky job that needs several of them, start with
 | [waves](recipes/waves.md) | more than one worker edits the same repo at once |
 | [long-run](recipes/long-run.md) | a task or proof runs for hours, or must survive flakes |
 | [watcher](recipes/watcher.md) | a helper polls a PR, CI, or log for change |
+| [findings](recipes/findings.md) | any review, audit, or check reports problems: where they live, how they are triaged |
 | [adversarial-review](recipes/adversarial-review.md) | work must be checked by someone other than its author before it counts |
 | [fan-out](recipes/fan-out.md) | the same change or check applies to many units |
 | [refute](recipes/refute.md) | an audit, sweep, or fact-check produces findings |
