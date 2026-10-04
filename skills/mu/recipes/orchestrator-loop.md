@@ -59,8 +59,9 @@ pane (`mu agent read <owner>`) and answer: the worker may be waiting on
 you.
 
 For an idle worker, read the pane, then answer, retry, or release its
-task. `MU_IDLE_THRESHOLD_MS` defaults to 5m. A remote owner: poll once
-per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
+task. `MU_IDLE_THRESHOLD_MS` defaults to 5m. A remote owner: for pi, `mu agent wait`
+first, then poll once; otherwise poll once per turn
+([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
 
 ## Merging
 
