@@ -15,7 +15,8 @@
 // non-default name) work without env-var gymnastics.
 
 import { existsSync, readdirSync, rmdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, defaultStateDir } from "./db.js";
 import { intentSpellings } from "./legacy-ops.js";
 import { activeMux } from "./mux.js";
@@ -534,6 +535,7 @@ export async function teardownWorkstream(
   const notesBefore = countNotes(db, opts.workstream);
   const edgesBefore = countEdges(db, opts.workstream);
   const workspacesBefore = listWorkspaces(db, opts.workstream);
+  const agentNames = listAgentNames(db, opts.workstream);
 
   // Mux session first: if killSession throws we don't want the DB rows
   // already gone with no way to recover. (killSession is itself
@@ -619,6 +621,20 @@ export async function teardownWorkstream(
   withOpContext(db, { intent: "workstream.teardown", group: "new" }, () =>
     db.prepare("DELETE FROM workstreams WHERE name = ?").run(opts.workstream),
   );
+  // The cascade skips deleteAgent, so unlink each agent's control
+  // socket here (ssh -L forwards leave theirs behind). Then reap
+  // sock/<ws>/ only if empty, never recursively: hashed long paths
+  // share sock/h/ across workstreams, so a workstream named "h" must
+  // not take the others' sockets with it.
+  for (const name of agentNames) unlinkCtlSocket(db, name, opts.workstream);
+  if (!db.memory) {
+    const sockDir = join(dirname(db.name), "sock", opts.workstream);
+    try {
+      if (readdirSync(sockDir).length === 0) rmdirSync(sockDir);
+    } catch {
+      // Missing or non-empty: nothing of ours left to reap.
+    }
+  }
   // No emitEvent: the DELETE cascade fired the capture triggers, which
   // wrote tombstone ops (op='del', intent='workstream.teardown') for the
   // workstream AND for every task/edge/note that cascaded with it —
@@ -638,6 +654,17 @@ export async function teardownWorkstream(
 }
 
 // ─── Counts ────────────────────────────────────────────────────────────
+
+function listAgentNames(db: Db, workstream: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT a.name FROM agents a
+         JOIN workstreams ws ON ws.id = a.workstream_id
+        WHERE ws.name = ?`,
+    )
+    .all(workstream) as { name: string }[];
+  return rows.map((r) => r.name);
+}
 
 function countAgents(db: Db, workstream: string): number {
   const row = db

@@ -4,8 +4,9 @@
  * socket at `$MU_CTL_SOCK`, and mu connects to the same derived path.
  */
 import { createHash } from "node:crypto";
+import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { defaultStateDir } from "../db.js";
+import { type Db, defaultStateDir } from "../db.js";
 
 /** Env var spawn injects so the pi extension knows where to listen. */
 export const CTL_SOCK_ENV = "MU_CTL_SOCK";
@@ -25,6 +26,21 @@ export function ctlSocketPath(workstream: string, agent: string, stateDir?: stri
   const dbPath = process.env.MU_DB_PATH;
   const base = stateDir ?? (dbPath ? dirname(dbPath) : defaultStateDir());
   return sockPathUnder(join(base, "sock"), workstream, agent);
+}
+
+/**
+ * Remove an agent's local control socket file. For a remote agent ssh's
+ * `-L` forward leaves that file behind when the connection dies; it
+ * probes as `refused`, never `ok`, but it is litter. A local pi removes
+ * its own on quit. Best-effort: callers have already deleted the row.
+ */
+export function unlinkCtlSocket(db: Db, name: string, workstream: string): void {
+  if (db.memory) return;
+  try {
+    rmSync(ctlSocketPath(workstream, name, dirname(db.name)), { force: true });
+  } catch {
+    /* best-effort */
+  }
 }
 
 /**
