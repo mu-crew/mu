@@ -80,7 +80,8 @@ Recipes call either form a **delegate call**.
   build, or test the shared repo.
 
 A pi helper showing `unknown (ctl missing)` right after spawn (spawn
-warns after 30 s) likely sits at pi's project trust prompt: add
+warns after 30 s) likely sits at pi's project trust prompt (through a
+wrapper whose argv0 is not `pi`/`pi-meta` it shows `needs_input`): add
 `--approve` to `MU_<CLI>_COMMAND`. Move off
 `scratch` when work gains dependencies or review gates.
 

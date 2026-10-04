@@ -126,10 +126,21 @@ describe("abortAgent", () => {
     expect((err as AgentCtlUnreachableError).kind).toBe("missing");
     const steps = (err as AgentCtlUnreachableError).errorNextSteps().map((s) => s.command);
     expect(steps).toContain("mu agent kick worker-1 -w auth");
-    const intents = (err as AgentCtlUnreachableError).errorNextSteps().map((s) => s.intent);
-    expect(intents.join("\n")).toMatch(/trust prompt/);
-    expect(steps.join("\n")).toMatch(/\/trust/);
-    expect(steps.join("\n")).toMatch(/--approve/);
+    const trust = (err as AgentCtlUnreachableError)
+      .errorNextSteps()
+      .find((s) => /trust prompt/.test(s.intent));
+    // command is literal and runnable; the prose fix lives in intent.
+    expect(trust).toEqual({
+      intent: expect.stringMatching(/\/trust.*--approve/),
+      command: "mu agent read worker-1 -w auth",
+    });
+  });
+
+  it("ctl refused: no trust-prompt step (a pi at its trust prompt has no socket)", () => {
+    const err = new AgentCtlUnreachableError("worker-1", "auth", "/tmp/x.sock", "refused");
+    const steps = err.errorNextSteps();
+    expect(steps.some((s) => /trust/.test(s.intent) || /trust/.test(s.command))).toBe(false);
+    expect(steps.map((s) => s.command)).toContain("mu agent kick worker-1 -w auth");
   });
 
   it("custom cli key running pi (its socket answers): aborts through ctl", async () => {

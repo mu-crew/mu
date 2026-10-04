@@ -388,11 +388,20 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
     );
   }
   errorNextSteps(): NextStep[] {
+    // A pi at its trust prompt has not bound the socket yet, so it reads
+    // "missing"; a "refused" socket exists, so trust is not the cause.
+    const trust: NextStep[] =
+      this.kind === "missing"
+        ? [
+            {
+              intent:
+                "Just spawned? pi may sit at its project trust prompt: answer /trust in the pane, or respawn with --command 'pi --approve'",
+              command: `mu agent read ${this.agentName} -w ${this.workstream}`,
+            },
+          ]
+        : [];
     return [
-      {
-        intent: "Just spawned? pi may sit at its project trust prompt (no socket until answered)",
-        command: `answer /trust in the pane (mu agent read ${this.agentName} -w ${this.workstream}), or spawn with --command 'pi --approve'`,
-      },
+      ...trust,
       { intent: "Check whether the mu pi extension is linked", command: "mu doctor" },
       {
         intent: "Stop a runaway tool without the socket",
