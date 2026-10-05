@@ -23,9 +23,10 @@ jobs:
           node-version-file: .nvmrc
       - name: Check release version
         run: node scripts/check-release-version.mjs "${{ github.ref_name }}"
-      # Tests are the local gate: even the fast tier drives real tmux panes and
-      # a pi binary, which a runner does not have. Run npm run test before
-      # tagging. CI re-checks what needs no agent environment.
+      # Tests are the local gate: the integration tier drives real tmux panes,
+      # and even the fast tier (panes mocked) needs tmux and pi on PATH for mux
+      # detection and spawn's binary check. A runner has neither. Run npm run
+      # test before tagging. CI re-checks what needs no agent environment.
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint

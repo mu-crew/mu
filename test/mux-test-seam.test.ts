@@ -102,6 +102,28 @@ describe("restore() is one teardown for both seams", () => {
     });
   });
 
+  it("nested installs unwind LIFO — inner restore() puts the outer backend and executor back", async () => {
+    harness = installMux("herdr", [["workspace list", WORKSPACE_LIST]]);
+    const inner = installMux("tmux", [["list-sessions", "mu-inner\n"]]);
+    expect((await activeMux()).name).toBe("tmux");
+    inner.restore();
+    expect((await activeMux()).name).toBe("herdr");
+    expect(await listSessions()).toEqual([{ name: "mu-topotest" }]);
+
+    const innerHerdr = installMux("herdr", [["workspace list", '{"result":{"workspaces":[]}}']]);
+    expect(await listSessions()).toEqual([]);
+    innerHerdr.restore();
+    // Same-backend nesting: the outer stub executor is back, not the real one.
+    expect(await listSessions()).toEqual([{ name: "mu-topotest" }]);
+  });
+
+  it("installUnreachableMux restore() puts the outer backend back", async () => {
+    harness = installMux("herdr", [["workspace list", WORKSPACE_LIST]]);
+    const unreachable = installUnreachableMux("tmux", () => new NoMultiplexerError(["tmux"]));
+    unreachable.restore();
+    expect((await activeMux()).name).toBe("herdr");
+  });
+
   it("is idempotent — a double restore cannot clobber the next harness", async () => {
     const h = installMux("herdr", [["workspace list", WORKSPACE_LIST]]);
     h.restore();
