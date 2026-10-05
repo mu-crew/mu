@@ -911,14 +911,19 @@ async function createOrReusePane(opts: {
 
   if (matching) {
     return mux.splitWindow({
-      // tmux splits a WINDOW and accepts the `session:window` form;
+      // tmux splits a WINDOW: target it as `=<session>:<window_id>`.
+      // A bare `<session>:<name>` falls back to tmux's session prefix
+      // match, so if `mu-auth` vanishes between listWindows and here,
+      // `mu-auth:Backend` splits `mu-auth-refactor`'s Backend window.
+      // `=` makes the session exact and the stable window id (from
+      // the listing above) must live in that session, so a vanished
+      // session or window fails instead of landing elsewhere.
       // herdr splits a PANE and has no window-target form at all. Ask
       // the backend for a concrete pane in that window when it needs
-      // one — cheaper than a `target` union type for two backends, and
-      // the tmux string stays exactly as it was.
+      // one — cheaper than a `target` union type for two backends.
       target:
         mux.startAgentInPane === undefined
-          ? `${opts.session}:${opts.windowName}`
+          ? `=${opts.session}:${matching.id}`
           : await firstPaneInWindow(mux, opts.session, matching.id),
       command,
       cwd: opts.cwd,
