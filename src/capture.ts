@@ -523,6 +523,29 @@ END;
 /** The capture trigger DDL. Built once at module load; pure string. */
 export const CAPTURE_TRIGGER_DDL = buildTriggerDdl();
 
+/**
+ * How many `total_changes()` the capture triggers themselves added while
+ * stamping the ops of `groupId`. `mu sql --confirm-rows` subtracts this
+ * from its delta so it can count user rows on the SAME capture-on run it
+ * commits (no probe-then-rerun).
+ *
+ * Mirrors the trigger bodies above: every `emitOp` is exactly 3 changes
+ * (the `_op_clock` UPDATE, the `machine_identity` UPDATE, the ops
+ * INSERT), and every workstream/task tombstone also writes 1
+ * `DYING_STASH` row. Change a trigger body and this must change too;
+ * test/sql-capture.test.ts pins it with cascading deletes.
+ */
+export function captureBookkeepingChanges(db: CaptureDb, groupId: string): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS ops,
+              COALESCE(SUM(op = 'del' AND entity IN ('workstream', 'task')), 0) AS stashed
+         FROM ops WHERE group_id = ?`,
+    )
+    .get(groupId) as { ops: number; stashed: number };
+  return 3 * row.ops + row.stashed;
+}
+
 // ─── Installation ─────────────────────────────────────────────────────
 
 /**
