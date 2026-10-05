@@ -461,8 +461,13 @@ describe("App: popup fits the pane", () => {
     mounted = await mountApp({ workstreams: ["demo"], rows: 20 });
     await simulateInput(mounted.stdin, "#");
     await waitForFrame(mounted.stdout, "Tasks · popup (1/40)");
-    for (const key of ["/", "t", "enter", "G"] as const) await simulateInput(mounted.stdin, key);
-    const text = await waitForFrame(mounted.stdout, "[filter] t");
+    for (const key of ["/", "t", "enter"] as const) await simulateInput(mounted.stdin, key);
+    // Wait for the committed filter frame before G, then for G's frame:
+    // asserting on "[filter] t" alone raced G (cursor still 1/40).
+    await waitForFrame(mounted.stdout, "[filter] t");
+    await simulateInput(mounted.stdin, "G");
+    const text = await waitForFrame(mounted.stdout, "Tasks · popup (40/40)");
+    expect(text).toContain("[filter] t");
     expectPopupFitsPane(text, "Tasks · popup \\(40/40\\)", 20);
     expect(text).toContain("task_39");
   });
