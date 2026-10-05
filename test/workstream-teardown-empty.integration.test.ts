@@ -10,7 +10,9 @@
 //   5. mid-sweep failure (kill-session throws on one ws) → others
 //      still run; failure surfaced in summary.
 //   7. --json shape verified for both dry-run and --yes.
-//   8. tmux-only mu-* sessions (no DB row) are surfaced + torn down.
+//   8. tmux-only mu-* sessions (no DB row) whose panes are all shells
+//      are surfaced + torn down (live-pane guard: workstream-teardown-
+//      empty-live.test.ts).
 //   9. mixed: 1 registered-empty + 1 tmux-only → both torn down.
 //  10. tmux session WITHOUT mu- prefix is NEVER matched.
 
@@ -41,6 +43,9 @@ interface MockState {
    *  unrecognized stderr (i.e. NOT the "can't find session" string
    *  killSession swallows). Used to drive the mid-sweep failure path. */
   killShouldFail: Set<string>;
+  /** Foreground command per session for `list-panes`; default "zsh"
+   *  (an idle shell, so the sweep may take an unregistered session). */
+  paneCommand?: Record<string, string>;
 }
 
 function ok(stdout = ""): TmuxExecResult {
@@ -70,6 +75,11 @@ function mockTmux(state: MockState): TmuxExecutor {
       state.sessions.delete(target);
       state.killed.push(target);
       return ok();
+    }
+    if (verb === "list-panes") {
+      const target = args[args.indexOf("-t") + 1] ?? "";
+      if (!state.sessions.has(target)) return fail(`can't find session: ${target}`);
+      return ok(`@1\t%1\t\t${state.paneCommand?.[target] ?? "zsh"}`);
     }
     if (verb === "list-sessions") {
       if (state.sessions.size === 0) return fail("no server running");

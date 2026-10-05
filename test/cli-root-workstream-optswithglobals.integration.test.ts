@@ -1,6 +1,6 @@
 // Regression tests for finding_optswithglobals_can_pass_root.
 //
-// The ROOT `-w, --workstream <names...>` flag is VARIADIC. Subcommands
+// The ROOT `-w, --workstream <names>` flag collects into an array. Subcommands
 // that call `optsWithGlobals()` (task owned-by, agent wait, agent
 // adopt) inherit it, so a root-position invocation
 // like `mu -w ws task owned-by agent` previously handed them a
@@ -53,10 +53,9 @@ describe("root-position -w + optsWithGlobals subcommands (finding_optswithglobal
     } catch {}
   });
 
-  // The leak triggers whenever the variadic root `-w` stops greedily
-  // consuming subcommand tokens — the `--workstream=name` form (one
-  // value via `=`), `-w name --json ...` (a following flag breaks the
-  // variadic), and `-w name -- ...` all hand the subcommand a string[].
+  // Every root-position form (`-w name`, `--workstream=name`) hands the
+  // subcommand a string[] through optsWithGlobals(); the plain form is
+  // covered in test/cli-root-workstream-forward.test.ts.
   it("task owned-by: root-position --workstream=ws scopes identically to subcommand-position -w", async () => {
     const rootPos = await runCli(
       ["--workstream=wsa", "task", "owned-by", "worker-1", "--json"],

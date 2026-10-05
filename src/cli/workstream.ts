@@ -297,10 +297,13 @@ export async function cmdTeardown(
 // ─── cmdTeardownEmpty ─────────────────────────────────────────────────
 //
 // `mu workstream teardown --empty` sweeps every workstream with no
-// user-meaningful state (zero tasks, agents, vcs_workspaces).
-// One snapshot covers the whole sweep; per-workstream teardown errors
-// are accumulated into a `failed` array so a single bad pane doesn't
-// abort the rest of the cleanup. See workstream_destroy_empty_sweep.
+// user-meaningful state (zero tasks, agents, vcs_workspaces), plus
+// unregistered `mu-*` sessions whose panes all sit at a shell prompt.
+// Each workstream's teardown is its own op group, so each is undone
+// separately (`mu workstream list --torn-down` lists the groups).
+// Per-workstream teardown errors are accumulated into a `failed` array
+// so a single bad pane doesn't abort the rest of the cleanup. See
+// workstream_destroy_empty_sweep.
 
 interface EmptyTeardownResult {
   workstreamName: string;
@@ -319,9 +322,8 @@ interface EmptyDestroyFailure {
 }
 
 /** Read created_at for a registered workstream. Returns the empty
- *  string for mux-only rows that listEmptyWorkstreams won't surface
- *  anyway (the predicate requires a workstreams row), keeping the
- *  signature total. */
+ *  string for the mux-only rows listEmptyWorkstreams also surfaces
+ *  (no workstreams row, so no created_at). */
 function workstreamCreatedAt(db: Db, name: string): string {
   const row = db.prepare("SELECT created_at FROM workstreams WHERE name = ?").get(name) as
     | { created_at: string }
@@ -411,9 +413,10 @@ async function cmdTeardownEmpty(
         alreadyGoneWorkspaces: result.alreadyGoneWorkspaces,
       });
     } catch (err) {
-      // Best-effort sweep: log the failure and keep going. The snapshot
-      // captured above is the recovery anchor for the whole batch, so
-      // even a half-completed sweep is undoable.
+      // Best-effort sweep: log the failure and keep going. Every
+      // workstream torn down before or after this one wrote its own
+      // op group, so a half-completed sweep stays undoable per
+      // workstream.
       failed.push({
         workstreamName: ws.name,
         error: err instanceof Error ? err.message : String(err),
@@ -445,11 +448,12 @@ async function cmdTeardownEmpty(
   }
   console.log("");
   console.log(pc.dim(`Sweep complete: tornDown=${results.length}, failed=${failed.length}.`));
-  if (failed.length === 0) {
+  if (results.length > 0) {
     printNextSteps([
       {
-        intent: "Undo (a snapshot was taken before the sweep; DB only, mux not rolled back)",
-        command: "mu undo --yes",
+        intent:
+          "Undo: one op group per torn-down workstream; restore each with `mu undo <group> --yes` (rows only, not mux sessions)",
+        command: "mu workstream list --torn-down",
       },
     ]);
   }
@@ -528,7 +532,7 @@ export function wireWorkstreamCommands(program: Command): void {
     .option("-y, --yes", "actually tear down (without this flag, prints a dry-run summary)")
     .option(
       "--empty",
-      "sweep every empty workstream (zero tasks, agents, vcs_workspaces); mutually exclusive with -w",
+      "sweep every empty workstream (zero tasks, agents, vcs_workspaces), plus unregistered mu-* sessions whose panes all sit at a shell prompt; mutually exclusive with -w",
     )
     .option(...JSON_OPT)
     .action(function (name: string | undefined) {

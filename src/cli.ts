@@ -568,9 +568,14 @@ export function parseNonNegativeInt(value: string): number {
 // `sql`, `sync`, `rebuild`, `db`, `undo`, `doctor`, plus the bare `mu`
 // TTY-aware default) rather than a count here, which drifts.
 //
-// Every flag is declared on the subcommand that consumes it — there is
-// NO root --workstream that subcommands inherit via optsWithGlobals(),
-// which previously was the source of "flag at the wrong level" bugs.
+// Every flag is declared on the subcommand that consumes it. The one
+// exception is the root `-w`: a preAction hook (forwardRootWorkstream)
+// writes it into the verb's own `-w`, so `mu -w ws <verb>` and
+// `mu --workstream=ws <verb>` scope exactly like `mu <verb> -w ws`.
+// Verbs therefore read `this.opts()` and still see a root `-w`; without
+// the hook, teardown and state silently fell back to $MU_SESSION. The
+// optsWithGlobals() verbs also see the root array and funnel it through
+// normalizeInheritedWorkstream.
 //
 // Bare `mu` takes only the root `-w` / `--json` flags. In a TTY it
 // loads every workstream into the TUI; in non-TTY / --json / MU_NO_TUI
@@ -657,7 +662,7 @@ export function parseCsvFlag(
  * Normalize an `optsWithGlobals()` workstream value into a single name.
  *
  * Subcommands that call `optsWithGlobals()` inherit the ROOT
- * `-w, --workstream <names...>` flag, which is VARIADIC — so a
+ * `-w, --workstream <names>` flag, which COLLECTS into an array — so a
  * root-position invocation like `mu -w foo task owned-by worker-1`
  * yields `["foo"]` (an array), not `"foo"`. The subcommand's own
  * `WORKSTREAM_OPT` is single-value (`<name>`) and yields a string.
@@ -794,11 +799,17 @@ export function buildProgram(): Command {
     // attached to a TTY) opens the interactive TUI across every
     // workstream; non-TTY / MU_NO_TUI / --json keeps the CLI-help path
     // so scripts and agents do not accidentally enter ink.
+    //
+    // NOT variadic (`<names...>`): a variadic root flag swallowed the
+    // verb too, so `mu -w ws task list` parsed as workstreams
+    // ["ws","task","list"] and printed root help with exit 0.
     .option(
-      "-w, --workstream <names...>",
-      "workstream(s) to render (repeat or comma-separate; or both; defaults to $MU_SESSION or current tmux session)",
+      "-w, --workstream <names>",
+      "workstream(s) to render (repeat or comma-separate; or both; defaults to $MU_SESSION or current tmux session). Before a verb, it is that verb's -w",
+      (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
     )
     .option(...JSON_OPT)
+    .hook("preAction", forwardRootWorkstream)
     .action(function () {
       const command = this as Command;
       const opts = command.opts() as { workstream?: string[]; json?: boolean };
@@ -831,6 +842,39 @@ export function buildProgram(): Command {
   // failing subcommand's --help (human) or `usage` JSON (--json).
   applyExitOverride(program);
   return program;
+}
+
+/** preAction hook: hand a root-position `-w` to the verb's own `-w`, so
+ *  `mu -w ws task list` means `mu task list -w ws`. Fails loud (exit 2)
+ *  rather than silently ignoring the flag when the verb takes no `-w`,
+ *  or when `-w` is given on both sides of the verb. */
+function forwardRootWorkstream(root: Command, leaf: Command): void {
+  if (leaf === root) return;
+  const names = root.opts().workstream as string[] | undefined;
+  if (names === undefined) return;
+  const usage = (message: string): never =>
+    leaf.error(message, { exitCode: 2, code: "commander.usage" }) as never;
+  const opt = leaf.options.find((o) => o.attributeName() === "workstream");
+  if (opt === undefined) {
+    usage(`error: \`${leaf.name()}\` takes no -w/--workstream; drop the root -w`);
+    return;
+  }
+  if (leaf.getOptionValue("workstream") !== undefined) {
+    usage("error: -w/--workstream given both before and after the verb; pass it once");
+    return;
+  }
+  if (opt.variadic) {
+    leaf.setOptionValueWithSource("workstream", names, "cli");
+    return;
+  }
+  const parsed = parseCsvFlag(names, "-w/--workstream");
+  if (parsed.length > 1) {
+    usage(
+      `error: -w/--workstream takes a single workstream here (got ${parsed.length}: ${parsed.join(", ")})`,
+    );
+    return;
+  }
+  if (parsed[0] !== undefined) leaf.setOptionValueWithSource("workstream", parsed[0], "cli");
 }
 
 // Recursively set sortSubcommands on every command in the tree. Belt

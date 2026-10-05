@@ -169,7 +169,7 @@ export async function cmdTaskDelete(
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   // Two-phase: bare = dry-run preview; --yes commits. Mirrors
-  // `mu workstream teardown` / `mu snapshot prune`. Surfaced by feedback
+  // `mu workstream teardown` / `mu undo`. Surfaced by feedback
   // ws task fb_task_delete_no_yes
   // (impact=30): the dogfood report typed `mu task delete X --yes`
   // (mirroring workstream teardown) and got 'unknown option --yes'
@@ -178,10 +178,14 @@ export async function cmdTaskDelete(
   const dryRun = opts.yes !== true;
   const r = deleteTask(db, localId, ws, { dryRun });
   const commitNextSteps: NextStep[] = [
-    {
-      intent: "Undo (a snapshot was taken before the delete)",
-      command: "mu undo --yes",
-    },
+    ...(r.group === null
+      ? []
+      : [
+          {
+            intent: "Undo the delete (restores the task, its edges and notes)",
+            command: `mu undo ${r.group.slice(0, 8)} --yes`,
+          },
+        ]),
     {
       intent: "List remaining tasks",
       command: `mu task list -w ${ws}`,
@@ -193,8 +197,8 @@ export async function cmdTaskDelete(
       command: `mu task delete ${localId} -w ${ws} --yes`,
     },
     {
-      intent: "After deleting, undo if you regret it (DB only)",
-      command: "mu undo --yes",
+      intent: "After deleting, find the delete's group to undo it (DB only)",
+      command: "mu undo",
     },
     {
       intent: "Inspect the task + edges before deciding",
@@ -229,7 +233,7 @@ export async function cmdTaskDelete(
     console.log("");
     console.log(pc.dim("(dry-run; rerun with --yes to actually delete)"));
     console.log(
-      pc.dim("A snapshot will be taken before the delete; `mu undo --yes` reverts it (DB only)."),
+      pc.dim("The delete is one op group; `mu undo <group> --yes` reverts it (DB only)."),
     );
     printNextSteps(dryRunNextSteps);
     return;

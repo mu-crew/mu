@@ -484,7 +484,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("delete <id>")
     .description(
-      "Delete a task (cascades edges + notes via FK). Two-phase: bare = dry-run preview; --yes commits. Idempotent on missing. Auto-snapshots before the commit; `mu undo --yes` reverts (DB only).",
+      "Delete a task (cascades edges + notes via FK). Two-phase: bare = dry-run preview; --yes commits. Idempotent on missing. The delete is one op group; `mu undo <group> --yes` reverts it (DB only).",
     )
     .option("-y, --yes", "actually delete (without --yes prints a dry-run preview)")
     .option(...WORKSTREAM_OPT)

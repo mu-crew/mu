@@ -615,10 +615,17 @@ export function emitParseError(err: unknown, failingCommand: Command | undefined
 /** Walk argv tokens against the program tree to find the deepest
  *  matching subcommand. Used by parseAsync's catch to identify which
  *  subcommand commander was processing when it threw. Stops at the
- *  first `-` (option) or unknown token. */
+ *  first `-` (option) or unknown token, except that a root-position
+ *  `-w <names>` is skipped: `mu -w ws task list` is about `task list`. */
 export function findCommandForArgv(root: Command, argv: readonly string[]): Command {
   let cur: Command = root;
-  for (const t of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const t = argv[i] ?? "";
+    if (cur === root && (t === "-w" || t === "--workstream")) {
+      i++;
+      continue;
+    }
+    if (cur === root && t.startsWith("--workstream=")) continue;
     if (t.startsWith("-")) break;
     const next: Command | undefined = cur.commands.find(
       (c) => c.name() === t || (c.aliases().includes(t) ?? false),

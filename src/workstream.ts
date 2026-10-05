@@ -418,12 +418,21 @@ export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
  *      no agent panes; the events are audit, not state.
  *
  *   2. MUX-only: a mux session named `mu-*` with no row in the
- *      `workstreams` table. Catches test litter and remnants of a
- *      partial teardown where the DB row was wiped but the mux
- *      session survived (or sessions created out-of-band via
+ *      `workstreams` table, whose every pane sits at a bare shell
+ *      prompt. Catches test litter and remnants of a partial
+ *      teardown where the DB row was wiped but the mux session
+ *      survived (or sessions created out-of-band via
  *      `tmux new-session -s mu-foo`). The synthetic summary has
  *      `registered=false`, all counts 0, and `muxAlive=true` (it
  *      wouldn't have been surfaced otherwise).
+ *
+ *      The shell-only guard is load-bearing. "No DB row" only means
+ *      THIS DB does not know the session: a run against a throwaway
+ *      `MU_DB_PATH` sees every real workstream as mux-only, and
+ *      sweeping them killed a live crew's agent panes. A pane running
+ *      anything but a shell, a backend that does not report the
+ *      foreground command (herdr), or a pane listing that fails all
+ *      keep the session.
  *
  * The predicate is intentionally narrow on the prefix: only
  * `mu-*` sessions are eligible. Arbitrary mux sessions the
@@ -471,6 +480,7 @@ export async function listEmptyWorkstreams(db: Db): Promise<WorkstreamSummary[]>
     if (!session.name.startsWith("mu-")) continue;
     const name = session.name.slice(RESERVED_WORKSTREAM_PREFIX.length);
     if (dbNames.has(name)) continue;
+    if (!(await sessionHasOnlyShells(session.name))) continue;
     muxOnlyNames.push(name);
   }
   const muxOnly = await Promise.all(
@@ -488,6 +498,27 @@ export async function listEmptyWorkstreams(db: Db): Promise<WorkstreamSummary[]>
   }
   all.sort((a, b) => a.name.localeCompare(b.name));
   return all;
+}
+
+/** Foreground commands that mean "nothing is running in this pane". */
+const SHELL_COMMANDS = new Set(["bash", "zsh", "sh", "fish", "dash", "ksh", "tcsh", "csh"]);
+
+function isShellCommand(command: string): boolean {
+  // Login shells report a leading `-` (`-zsh`); some setups report a path.
+  const base = command.replace(/^-/, "").split("/").pop() ?? "";
+  return SHELL_COMMANDS.has(base);
+}
+
+/** True iff the session has panes and every one is at a shell prompt.
+ *  Conservative on every unknown: a failed listing, or a backend that
+ *  leaves `command` empty, counts as "something is running". */
+async function sessionHasOnlyShells(session: string): Promise<boolean> {
+  try {
+    const panes = await (await activeMux()).listPanesInSession(session);
+    return panes.length > 0 && panes.every((p) => isShellCommand(p.command));
+  } catch {
+    return false;
+  }
 }
 
 export async function summarizeWorkstream(
