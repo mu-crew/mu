@@ -209,8 +209,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   checkout. A live symlink there is refused (exit 4) unless you pass
   `--force`, which replaces the link and not its target.
 - `mu db compact --yes` and `mu db forget --yes` now report the shrunk
-  file size. They checkpoint the WAL after `VACUUM`; before, the
-  printed size was the same before and after.
+  DB size. Before and after are measured as pages × page size, so the
+  shrink shows even when another connection's open read keeps the WAL
+  checkpoint from rewriting the file; mu then says the file shrinks on
+  the next checkpoint, and `--json` carries `checkpointed: false`.
+  Before, the printed size was the same before and after.
 - `mu rebuild <file> --force` deletes an existing `<file>` (and its
   `-wal`/`-shm`) before replaying. It used to replay into it, keeping
   that DB's foreign workstreams and ops.

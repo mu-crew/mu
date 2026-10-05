@@ -4,6 +4,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cmdDbForget } from "../src/cli/db.js";
 import { compact, forget, listForgetCandidates, planCompact, planForget } from "../src/compact.js";
@@ -166,6 +167,35 @@ describe("forget", () => {
       expect(out.after).toBeLessThan(out.before / 2);
     } finally {
       log.mockRestore();
+    }
+  });
+
+  it("cmdDbForget --yes reports the shrunk size even when a reader blocks the checkpoint", async () => {
+    seed(
+      "big",
+      Array.from({ length: 40 }, (_, i) => `${i}${"x".repeat(20_000)}`),
+    );
+    await teardownWorkstream(db, { workstream: "big", muxSession: "mu-absent-for-test" });
+    db.pragma("wal_checkpoint(TRUNCATE)");
+    // Fail the checkpoint fast instead of waiting out openDb's 5s busy_timeout.
+    db.pragma("busy_timeout = 0");
+    const reader = new Database(db.name, { readonly: true });
+    reader.exec("BEGIN");
+    reader.prepare("SELECT count(*) FROM ops").get();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      cmdDbForget(db, ["big"], { yes: true, json: true });
+      const out = JSON.parse(String(log.mock.calls[0]?.[0])) as {
+        before: number;
+        after: number;
+        checkpointed: boolean;
+      };
+      expect(out.checkpointed).toBe(false);
+      expect(out.after).toBeLessThan(out.before / 2);
+    } finally {
+      log.mockRestore();
+      reader.exec("COMMIT");
+      reader.close();
     }
   });
 });
