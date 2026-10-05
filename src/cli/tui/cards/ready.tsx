@@ -16,7 +16,7 @@ import type { ReactElement } from "react";
 import { roiBucket, type WorkstreamSnapshot } from "../../../state.js";
 import { formatPair } from "../../../tasks/status.js";
 import { inkColorForPair } from "../../format.js";
-import { agentByName, formatAgentRefDisplayName } from "../agent-display.js";
+import { agentByName, formatTaskOwnerDisplay } from "../agent-display.js";
 import {
   type ColumnSpec,
   contentWidthFromCols,
@@ -94,7 +94,7 @@ export function ReadyCard({ snapshot, rowBudget, cols }: ReadyCardProps): ReactE
     formatPair(t),
     `ROI ${meta[i]?.roiText ?? ""}`,
     t.title,
-    formatAgentRefDisplayName(t.ownerName, agentLookup),
+    formatTaskOwnerDisplay(t, agentLookup),
   ]);
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);
 

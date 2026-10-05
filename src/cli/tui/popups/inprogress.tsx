@@ -23,7 +23,7 @@
 import type { ReactElement } from "react";
 import { formatPair } from "../../../tasks/status.js";
 import { inkColorForPair } from "../../format.js";
-import { agentByName, formatAgentRefDisplayName } from "../agent-display.js";
+import { agentByName, formatTaskOwnerDisplay } from "../agent-display.js";
 import { GLYPH, isStale } from "../cards/inprogress.js";
 import type { ColumnSpec } from "../columns.js";
 import { ageMs, formatRoi, formatSinceClaim } from "../format-helpers.js";
@@ -64,7 +64,7 @@ const config: TaskListPopupConfig = {
           GLYPH,
           t.name,
           formatPair(t),
-          formatAgentRefDisplayName(t.ownerName, agentLookup),
+          formatTaskOwnerDisplay(t, agentLookup),
           formatSinceClaim(age),
           formatRoi(t.impact, t.effortDays),
           t.title,

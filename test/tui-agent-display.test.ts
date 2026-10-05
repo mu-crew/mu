@@ -5,6 +5,7 @@ import {
   agentStateGlyph,
   formatAgentRefDisplayName,
   formatKnownAgentDisplayName,
+  formatTaskOwnerDisplay,
 } from "../src/cli/tui/agent-display.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
 
@@ -76,6 +77,33 @@ describe("agent display helpers", () => {
 
   it("renders null agent references as an em dash", () => {
     expect(formatAgentRefDisplayName(null, agentByName(null))).toBe("—");
+  });
+
+  it("task owner: CLOSED row with a busy live owner renders the bare name", () => {
+    const lookup = agentByName(snapshotWithAgents([agent({ name: "worker-2" })]));
+    expect(formatTaskOwnerDisplay({ status: "CLOSED", ownerName: "worker-2" }, lookup)).toBe(
+      "worker-2",
+    );
+  });
+
+  it("task owner: OPEN row that kept an owner renders the bare name", () => {
+    const lookup = agentByName(snapshotWithAgents([agent({ name: "worker-2" })]));
+    expect(formatTaskOwnerDisplay({ status: "OPEN", ownerName: "worker-2" }, lookup)).toBe(
+      "worker-2",
+    );
+  });
+
+  it("task owner: IN_PROGRESS row keeps the live glyph", () => {
+    const lookup = agentByName(snapshotWithAgents([agent({ name: "worker-2" })]));
+    expect(formatTaskOwnerDisplay({ status: "IN_PROGRESS", ownerName: "worker-2" }, lookup)).toBe(
+      `${agentStateGlyph("busy")} worker-2`,
+    );
+  });
+
+  it("task owner: null owner renders an em dash", () => {
+    const lookup = agentByName(snapshotWithAgents([agent({ name: "worker-2" })]));
+    expect(formatTaskOwnerDisplay({ status: "CLOSED", ownerName: null }, lookup)).toBe("—");
+    expect(formatTaskOwnerDisplay({ status: "IN_PROGRESS", ownerName: null }, lookup)).toBe("—");
   });
 
   it("agentByName tolerates null and old partial snapshots", () => {

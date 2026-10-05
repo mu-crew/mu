@@ -21,7 +21,7 @@
 import type { ReactElement } from "react";
 import { formatPair } from "../../../tasks/status.js";
 import { inkColorForPair } from "../../format.js";
-import { agentByName, formatAgentRefDisplayName } from "../agent-display.js";
+import { agentByName, formatTaskOwnerDisplay } from "../agent-display.js";
 import type { ColumnSpec } from "../columns.js";
 import {
   type PopupProps,
@@ -48,7 +48,7 @@ const config: TaskListPopupConfig = {
   renderRows: (visible, _start, snapshot): RenderedRow[] => {
     const agentLookup = agentByName(snapshot);
     return visible.map((t) => ({
-      cells: [t.name, formatPair(t), formatAgentRefDisplayName(t.ownerName, agentLookup), t.title],
+      cells: [t.name, formatPair(t), formatTaskOwnerDisplay(t, agentLookup), t.title],
       colors: [
         { bold: true }, // name
         { color: inkColorForPair(t) }, // status
