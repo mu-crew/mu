@@ -1,6 +1,13 @@
 ---
 name: mu
-description: Fresh-context subagents and crews in tmux/herdr panes. Check before you commit: before acting on a claim, root cause, plan, fix or brief, have a `mu_delegate` call refute it. Also for a fresh delegate's second look at your own work or diff; parallel read-only research, investigation or fan-out over files; background helpers (watchers, soak runs, agents you keep talking to); persistent crews with a task graph, review gates and merges. Outside pi, delegate through the reserved `scratch` workstream.
+description: >-
+  Fresh-context subagents and crews in tmux/herdr panes. Check before you
+  commit: before acting on a claim, root cause, plan, fix or brief, have a
+  `mu_delegate` call refute it. Also for a fresh delegate's second look at
+  your own work or diff; parallel read-only research, investigation or fan-out
+  over files; background helpers (watchers, soak runs, agents you keep talking
+  to); persistent crews with a task graph, review gates and merges. Outside
+  pi, delegate through the reserved `scratch` workstream.
 ---
 
 # mu — Multi-agent orchestration

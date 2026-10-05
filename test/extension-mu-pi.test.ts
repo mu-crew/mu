@@ -826,6 +826,24 @@ describe("recipe prompt templates", () => {
     }
   });
 
+  // Same trap for the skill: an unquoted `description:` containing ": "
+  // made pi report "Nested mappings are not allowed" and drop mu (3.8.0).
+  it("the mu skill's frontmatter values are YAML-safe", () => {
+    const root = join(import.meta.dirname, "..");
+    const text = readFileSync(join(root, "skills", "mu", "SKILL.md"), "utf8");
+    const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1];
+    expect(front).toBeDefined();
+    for (const line of (front ?? "").split("\n")) {
+      if (/^\s/.test(line)) continue; // continuation of a block scalar
+      const value = line.slice(line.indexOf(":") + 1).trim();
+      const safe =
+        (value.startsWith('"') && value.endsWith('"')) ||
+        /^[>|][-+]?$/.test(value) ||
+        !value.includes(": ");
+      expect(safe, line).toBe(true);
+    }
+  });
+
   it("every template points at a recipe that exists", () => {
     const root = join(import.meta.dirname, "..");
     for (const f of readdirSync(join(root, "prompts"))) {
