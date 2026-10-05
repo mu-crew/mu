@@ -56,7 +56,10 @@ export function wireTaskCommands(program: Command): void {
       "-b, --blocked-by <ids...>",
       "task ids that block this one (repeat or comma-separate; or both)",
     )
-    .option("--note <text>", "append an initial note after creating the task")
+    .option(
+      "--note <text>",
+      "append an initial note after creating the task; `-` reads it from stdin (prose: --note - <<'EOF')",
+    )
     .option("--note-author <name>", "author label for --note (default: current actor)")
     .option(
       "--triage",
@@ -175,10 +178,13 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("note <id> [text]")
     .description(
-      "Append a note to a task. The note text may be given positionally or via --text (dogfood-note-arg-shape: `mu task add --note` is a flag, so the flag form is what you reach for on the follow-up). Author defaults to $MU_AGENT_NAME (env injected at spawn) > pane title > $USER > 'orchestrator'; pass --author to override. Single-quote the text (or use a quoted heredoc) to defer shell expansion of $VAR / $(...) / `cmd`; double quotes expand them in your shell before mu sees the note.",
+      "Append a note to a task. The note text may be given positionally or via --text (dogfood-note-arg-shape: `mu task add --note` is a flag, so the flag form is what you reach for on the follow-up). Author defaults to $MU_AGENT_NAME (env injected at spawn) > pane title > $USER > 'orchestrator'; pass --author to override. Quoting: single quotes for short text; for prose (an apostrophe ends '...', double quotes expand $VAR and `cmd`) pass `-` and pipe a quoted heredoc: mu task note <id> - <<'EOF'. Stdin text is stored verbatim (no \\n unescaping).",
     )
     .option("--author <name>", "override the auto-detected author label")
-    .option("--text <text>", "the note text (alias for the positional <text> argument)")
+    .option(
+      "--text <text>",
+      "the note text (alias for the positional <text> argument; `-` reads stdin)",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (id: string, text: string | undefined) {

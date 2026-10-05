@@ -49,5 +49,21 @@ git commit -am '<msg>' THEN
 mu task close <id> -w <ws> --evidence '<command + result>'
 ```
 
+## Quoting
+
+Single quotes suit short text with no `'`. Prose (an apostrophe ends
+`'...'`; `"..."` expands `$` and backticks) goes through stdin with a
+quoted heredoc, stored verbatim:
+
+```bash
+mu task note <id> -w <ws> - <<'EOF'
+it's fine: $HOME and `pwd` stay literal
+EOF
+```
+
+`mu task add --note -`, `--text -` and `mu agent send <a> -` read stdin
+the same way. Chain batched adds with `&&`, then `mu task list`, so one
+quoting failure cannot half-apply the batch unseen.
+
 Done when a worker with no other context could finish the task from
 the brief and the notes it points at, and could tell when it is done.
