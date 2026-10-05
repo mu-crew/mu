@@ -33,7 +33,8 @@ socket. Pick the mode by what the agent is doing:
 | Situation | Command |
 | --------- | ------- |
 | New task, any state | `mu agent send worker-1 --fresh '<brief>'` |
-| Busy, and you want to interrupt the current run | `mu agent send worker-1 --steer '<text>'` |
+| Busy, and the current work is wasted (wrong input, changed rule): act now | `mu agent send worker-1 --interrupt '<text>'` |
+| Busy, advice that can wait for the next tool boundary | `mu agent send worker-1 --steer '<text>'` |
 | Answering a question, or adding to the same task | `mu agent send worker-1 '<text>'` |
 
 - `--fresh` starts a new pi session and sends the prompt into it as
@@ -41,7 +42,14 @@ socket. Pick the mode by what the agent is doing:
   `mu agent abort` first, or pass `--force` to drop the running turn.
 - Never send `/new` and then the prompt as two sends to pi. The prompt
   can land during the reset and vanish.
-- A plain send to a busy agent queues as a follow-up.
+- A plain send to a busy agent queues as a follow-up: pi sees it after
+  the run ends. `--steer` lands between tool calls, after the running
+  tool returns; it does not stop a long tool such as a test batch, a
+  wait, or a `sleep`.
+- `--interrupt` aborts the run (kills the running tool), waits for pi
+  to settle, then sends the text as a new run. Queued messages go back
+  to the pane's editor unsent. Exit 5 when pi does not settle within
+  `--timeout` (default 30 s); the text is then not sent.
 - `/new`, `/reload` and `/compact [instructions]` run inside pi through
   the socket and report pi's answer (for example `Nothing to compact`).
   They refuse with exit 4 while pi is busy; `--force` overrides. Any

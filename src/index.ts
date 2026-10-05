@@ -50,6 +50,7 @@ export {
   getAgentByPane,
   type InsertAgentInput,
   insertAgent,
+  interruptAgent,
   isKickSignal,
   isValidAgentName,
   type KickAgentOptions,

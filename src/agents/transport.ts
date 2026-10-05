@@ -43,6 +43,8 @@ export type SendResult = {
    * Absent from an extension that predates it.
    */
   runs?: number;
+  /** ctl only: when pi entered `state` (epoch ms), from the same status. */
+  since?: number;
   /** Set when the text ran as a pi session command over ctl. */
   command?: CtlCommandName;
 };
@@ -147,15 +149,24 @@ export async function ctlRequestFor(
   try {
     return await ctlRequest(sock, req);
   } catch (e) {
-    if (e instanceof CtlVersionError) throw e;
-    if (e instanceof CtlUnknownOpError) throw await extensionOutdated(agent, sock, e);
-    throw new AgentCtlUnreachableError(
-      agent.name,
-      agent.workstreamName,
-      sock,
-      errCode(e) === "ENOENT" ? "missing" : "refused",
-    );
+    throw await ctlFailure(agent, sock, e);
   }
+}
+
+/** The error ctlRequestFor raises for a failed ctl request (see there). */
+export async function ctlFailure(
+  agent: Pick<AgentRow, "name" | "workstreamName">,
+  sock: string,
+  e: unknown,
+): Promise<unknown> {
+  if (e instanceof CtlVersionError) return e;
+  if (e instanceof CtlUnknownOpError) return extensionOutdated(agent, sock, e);
+  return new AgentCtlUnreachableError(
+    agent.name,
+    agent.workstreamName,
+    sock,
+    errCode(e) === "ENOENT" ? "missing" : "refused",
+  );
 }
 
 export async function sendViaTransport(
@@ -204,6 +215,7 @@ export async function sendViaTransport(
     transport,
     ...(reply.state !== undefined ? { state: reply.state } : {}),
     ...(reply.runs !== undefined ? { runs: reply.runs } : {}),
+    ...(reply.since !== undefined ? { since: reply.since } : {}),
   };
 }
 

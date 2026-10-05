@@ -34,6 +34,8 @@ export {
   type AbortResult,
   abortAgent,
   DEFAULT_ABORT_TIMEOUT_MS,
+  type InterruptResult,
+  interruptAgent,
 } from "./agents/abort.js";
 export {
   type AdoptAgentOptions,

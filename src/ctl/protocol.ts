@@ -14,6 +14,12 @@ export type CtlRequest =
   | { op: "send"; text: string; mode?: "steer" | "followUp" }
   | { op: "wait"; afterRuns?: number; timeoutMs?: number }
   | { op: "abort" }
+  /**
+   * Make a busy pi act on `text` now: abort the running turn, wait for
+   * agent_settled (up to timeoutMs), then send `text` as a new run. Idle:
+   * just send. Replies `timeout` and sends nothing when pi does not settle.
+   */
+  | { op: "interrupt"; text: string; timeoutMs?: number }
   /** New session + prompt as one operation. Refused with error "busy" unless force. */
   | { op: "fresh"; text: string; force?: boolean }
   /**
@@ -37,6 +43,7 @@ export const CTL_OPS = [
   "send",
   "wait",
   "abort",
+  "interrupt",
   "fresh",
   "command",
 ] as const satisfies readonly CtlRequest["op"][];
@@ -56,6 +63,8 @@ export type CtlReply =
         lastText?: string;
         /** wait only: the error that ended the settled run (retries exhausted). */
         lastError?: string;
+        /** interrupt only: pi was busy, so the turn was aborted before the send. */
+        wasBusy?: boolean;
       })
   | { v: 1; ok: false; error: string; ops?: string[] };
 

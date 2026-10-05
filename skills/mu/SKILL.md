@@ -173,6 +173,8 @@ rules hold even when you skip it:
 - **`mu task wait --first --on-stall exit`**; exit 7 means read the
   owner's pane and answer it.
 - **Stop a worker gently**: `mu agent abort`, then `kick`, then `close`.
+  To redirect a busy pi now: `send --interrupt` (`--steer` waits for
+  the running tool).
 - **Checks are calls, not tasks.** Refuters, claim checkers, judges and
   skeptics are [delegate calls](recipes/tasks-or-calls.md#delegate-call)
   (`mu_delegate`, or a `scratch` spawn without it), all issued in one

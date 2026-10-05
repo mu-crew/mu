@@ -5,13 +5,14 @@
 // the task starts in a clean session; a hint that steers or answers a
 // RUNNING agent stays a plain send. Non-pi agents keep the plain send.
 // Models act on the Next: block printed at the moment of decision far
-// more reliably than on skill prose, so this is where --fresh, --steer
-// and `mu agent abort` get taught.
+// more reliably than on skill prose, so this is where --fresh,
+// --interrupt and `mu agent abort` get taught.
 
 import { type AgentRow, expectsCtl } from "../agents.js";
 import type { CtlStatus } from "../ctl/protocol.js";
 import type { NextStep } from "../output.js";
 import { shellQuote } from "../shell-quote.js";
+import { relTime } from "./format.js";
 
 export type HintAgent = Pick<AgentRow, "name" | "cli" | "workstreamName">;
 
@@ -53,30 +54,29 @@ export function abortHint(agent: HintAgent): NextStep | null {
 }
 
 /**
- * Hints for a plain (not --steer, not --fresh) ctl send, from the status
- * read just before it. Busy: the text was queued, so say how to
- * interrupt or redirect. Idle after a settled run: the text probably
- * started a new task in an old context, so nudge toward --fresh.
+ * Hints for a plain or --steer ctl send, from the status read just before
+ * it. Busy: the text was queued, so say how long the run has gone and how
+ * to make pi act now. Idle after a settled run (plain only): the text
+ * probably started a new task in an old context, so nudge toward --fresh.
  */
 export function plainSendHints(
   agent: HintAgent,
-  before: Pick<CtlStatus, "state" | "runs">,
+  before: Pick<CtlStatus, "state" | "runs"> & { since?: number },
+  now: number = Date.now(),
+  mode: "followUp" | "steer" = "followUp",
 ): NextStep[] {
   const { name, workstreamName: ws } = agent;
   if (before.state === "busy") {
+    const busy = before.since === undefined ? "busy" : `busy since ${relTime(now - before.since)}`;
+    const lands = mode === "steer" ? "the current tool call" : "the current run ends";
     return [
       {
-        intent:
-          "Queued as a follow-up (runs after the current turn); to interrupt now, use --steer",
-        command: `mu agent send ${name} --steer '...' -w ${ws}`,
-      },
-      {
-        intent: "Redirecting it? Stop the turn first",
-        command: `mu agent abort ${name} -w ${ws}`,
+        intent: `${busy}: sees this after ${lands}; to act now: --interrupt`,
+        command: `mu agent send ${name} --interrupt '...' -w ${ws}`,
       },
     ];
   }
-  if (before.state === "idle" && before.runs > 0) {
+  if (mode === "followUp" && before.state === "idle" && before.runs > 0) {
     return [
       {
         intent: "Starting unrelated work? Use --fresh next time (new session, no stale context)",

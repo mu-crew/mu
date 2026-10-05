@@ -266,6 +266,71 @@ describe("mu pi extension", () => {
     expect(fake.ctx.abort).toHaveBeenCalledOnce();
   });
 
+  describe("interrupt", () => {
+    const assistant = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
+    const order: string[] = [];
+    /** A busy pi whose abort settles the running turn ("old") on the next tick. */
+    async function busyPi(settles = true): Promise<void> {
+      order.length = 0;
+      await fake.emit("session_start");
+      await fake.emit("agent_start");
+      fake.ctx.idle = false;
+      fake.ctx.hasPendingMessages = () => true;
+      fake.ctx.abort.mockImplementation(() => {
+        order.push("abort");
+        if (!settles) return;
+        setTimeout(async () => {
+          fake.ctx.idle = true;
+          fake.ctx.hasPendingMessages = () => false;
+          await fake.emit("agent_end", { messages: [assistant("old")] });
+          order.push("settled");
+          await fake.emit("agent_settled");
+        }, 10);
+      });
+      fake.sendUserMessage.mockImplementation(async (t: string) => {
+        order.push(`send:${t}`);
+        fake.ctx.idle = false;
+        await fake.emit("agent_start");
+      });
+    }
+
+    it("busy: aborts, waits for settle, then sends the text as a new run", async () => {
+      await busyPi();
+      const r = await ctlRequest(sock, { op: "interrupt", text: "stop, do X" });
+      expect(order).toEqual(["abort", "settled", "send:stop, do X"]);
+      // A new run, not a queued follow-up or steer.
+      expect(fake.sendUserMessage).toHaveBeenLastCalledWith("stop, do X");
+      // runs: after the aborted run settled, before the send; pending: before the abort.
+      expect(r).toMatchObject({ ok: true, wasBusy: true, pending: true, runs: 1 });
+    });
+
+    it("the returned runs is the wait baseline for the new run, not the aborted one", async () => {
+      await busyPi();
+      const r = await ctlRequest(sock, { op: "interrupt", text: "go" });
+      const runs = (r as { runs?: number }).runs ?? -1;
+      const p = ctlRequest(sock, { op: "wait", afterRuns: runs });
+      await new Promise((res) => setTimeout(res, 20));
+      await fake.emit("agent_end", { messages: [assistant("new")] });
+      await fake.emit("agent_settled");
+      expect(await p).toMatchObject({ ok: true, lastText: "new" });
+    });
+
+    it("idle: just sends", async () => {
+      await fake.emit("session_start");
+      const r = await ctlRequest(sock, { op: "interrupt", text: "hi" });
+      expect(fake.ctx.abort).not.toHaveBeenCalled();
+      expect(fake.sendUserMessage).toHaveBeenLastCalledWith("hi");
+      expect(r).toMatchObject({ ok: true, wasBusy: false, pending: false, runs: 0 });
+    });
+
+    it("no settle within timeoutMs: replies timeout and sends nothing", async () => {
+      await busyPi(false);
+      const r = await ctlRequest(sock, { op: "interrupt", text: "x", timeoutMs: 50 });
+      expect(r).toEqual({ v: 1, ok: false, error: "timeout" });
+      expect(fake.sendUserMessage).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects an unknown op and bad json without dying", async () => {
     await fake.emit("session_start");
     const err = await ctlRequest(sock, { op: "nope" } as never).catch((e: unknown) => e);
