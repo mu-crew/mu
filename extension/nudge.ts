@@ -138,13 +138,16 @@ type Heredoc = { delim: string; strip: boolean };
  * `&&`, `||`, `;`, `|` and newlines split segments only outside
  * quotes, so a quoted `--evidence 'a | b'` stays one word. A
  * backslash-newline joins lines, and heredoc bodies are skipped: they
- * are data, not commands.
+ * are data, not commands. A `<<<` here-string and a `<<` shift inside
+ * `(( ))` arithmetic do not start a heredoc.
  */
 export function shellSegments(command: string): string[][] {
   const segs: string[][] = [];
   let words: string[] = [];
   let word: string | undefined;
   const heredocs: Heredoc[] = [];
+  /** Open parens inside a `((` arithmetic, where `<<` is a shift. */
+  let arith = 0;
   const endWord = () => {
     if (word !== undefined) words.push(word);
     word = undefined;
@@ -179,7 +182,20 @@ export function shellSegments(command: string): string[][] {
       i++; // line continuation: neither a word nor a segment break
     } else if (c === "\\" && i + 1 < command.length) {
       word = (word ?? "") + command[++i];
-    } else if (c === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
+    } else if (c === "(" && arith === 0 && command[i + 1] === "(") {
+      arith = 2;
+      word = `${word ?? ""}((`;
+      i++;
+    } else if (c === "(" && arith > 0) {
+      arith++;
+      word = (word ?? "") + c;
+    } else if (c === ")" && arith > 0) {
+      arith--;
+      word = (word ?? "") + c;
+    } else if (command.startsWith("<<<", i)) {
+      endWord(); // a here-string: its word is data on the same line
+      i += 2;
+    } else if (c === "<" && command[i + 1] === "<" && arith === 0) {
       // `<<[-] DELIM`: the delimiter may be quoted; its body starts on the next line.
       endWord();
       const m = /^<<(-?)[ \t]*('([^']*)'|"([^"]*)"|[^\s;&|<>()]+)/.exec(command.slice(i));
