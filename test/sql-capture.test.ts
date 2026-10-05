@@ -20,6 +20,7 @@ import { appendLog, LogKindReservedError, listLogs } from "../src/logs.js";
 import { rebuildInto } from "../src/rebuild.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addTask } from "../src/tasks/edit.js";
+import { undoGroup } from "../src/undo.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -101,6 +102,23 @@ describe("mu sql writes share one op context", () => {
     const line = renderOpLine(row);
     expect(line).toBe("sql write a task impact=33");
     expect(line).not.toContain("{");
+  });
+
+  it("mu undo of a script that writes one field twice restores the pre-call value", async () => {
+    // g_fix_ops_capture_undo_same_field: grouping the whole call must
+    // make the whole call undoable, not stop at the intermediate value.
+    const seq = maxSeq();
+    await cmdSql(
+      db,
+      "UPDATE tasks SET impact = 20 WHERE local_id = 'a'; UPDATE tasks SET impact = 30 WHERE local_id = 'a'",
+    );
+    const [first] = opsAfter(seq);
+    if (!first) throw new Error("expected a sql.write op");
+    undoGroup(db, first.group_id);
+    const row = db.prepare("SELECT impact FROM tasks WHERE local_id = 'a'").get() as {
+      impact: number;
+    };
+    expect(row.impact).toBe(10);
   });
 
   it("leaves no context behind for the next mutation", async () => {
