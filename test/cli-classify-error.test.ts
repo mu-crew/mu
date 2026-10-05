@@ -19,6 +19,7 @@ import {
   AgentNotInWorkstreamError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  PaneNotInSessionError,
   WorkspacePreservedError,
 } from "../src/agents.js";
 import { classifyError, NameAmbiguousError, UsageError } from "../src/cli.js";
@@ -87,6 +88,7 @@ describe("classifyError exit-code map", () => {
     ],
     [new TaskNotInWorkstreamError("foo", "wsA", "wsB"), 4, "conflict"],
     [new AgentNotInWorkstreamError("alice", "wsA", "wsB"), 4, "conflict"],
+    [new PaneNotInSessionError("%15", "auth", "mu-auth"), 4, "conflict"],
     [new CycleError("a", "b"), 4, "conflict"],
     [new CrossWorkstreamEdgeError("blocker", "wsA", "dep", "wsB"), 4, "conflict"],
     [new WorkspaceExistsError("alice"), 4, "conflict"],

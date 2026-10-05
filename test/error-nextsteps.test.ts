@@ -26,6 +26,7 @@ import {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   NoForegroundProcessError,
+  PaneNotInSessionError,
   WorkspacePreservedError,
 } from "../src/agents.js";
 import { NameAmbiguousError } from "../src/cli.js";
@@ -199,6 +200,11 @@ const cases: NextStepsCase[] = [
     error: new AgentNotInWorkstreamError("alice", "expected", "actual"),
     label: "AgentNotInWorkstreamError",
     expectedTokens: ["alice", "actual"],
+  },
+  {
+    error: new PaneNotInSessionError("%15", "auth", "mu-auth"),
+    label: "PaneNotInSessionError",
+    expectedTokens: ["%15", "-w auth"],
   },
   {
     error: new AgentDiedOnSpawnError("scout-perf-1", "%42", "panic: died"),
@@ -478,6 +484,17 @@ describe("error-specific structured-step assertions", () => {
     const steps = err.errorNextSteps();
     const useActual = steps.find((s) => s.command.includes("-w wsB"));
     expect(useActual).toBeDefined();
+  });
+
+  it("AgentSpawnStartupError on an exec-failure line drops the provider/API-key hints", () => {
+    const line = "sh: pi-meta: No such file or directory";
+    const exec = new AgentSpawnStartupError("alice", "%15", line, `${line}\n$ `);
+    const commands = exec.errorNextSteps().map((s) => s.command);
+    expect(commands.some((c) => c.includes("ANTHROPIC_API_KEY"))).toBe(false);
+    expect(commands.some((c) => c.includes("pi-meta --no-solo"))).toBe(false);
+    expect(commands).toContain("mu agent read alice -n 100");
+    const auth = new AgentSpawnStartupError("alice", "%15", "No API key found for x", "");
+    expect(auth.errorNextSteps().some((s) => s.command.includes("ANTHROPIC_API_KEY"))).toBe(true);
   });
 
   it("AgentNotInWorkstreamError suggests the actual workstream", () => {

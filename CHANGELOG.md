@@ -17,6 +17,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `MU_DB_PATH`, or is missing, locked, corrupt or on a newer schema. It
   reads every DB path mu resolves and skips the sweep when it cannot
   read one.
+- Two parallel `mu agent spawn` calls with the same name no longer let
+  the loser delete the winner's agent row and orphan its pane. The name
+  check is repeated inside the spawn lock, and the loser exits 4 with
+  `AgentExistsError` instead of a raw `SqliteError`.
+- `mu agent spawn` of a pi agent whose control socket answered no longer
+  rolls back on a `No such file or directory` or `command not found`
+  line in the pane tail. A resumed `--session` shows such lines as old
+  tool output. The scan still catches provider and auth errors, and
+  `AgentSpawnStartupError` no longer suggests API-key fixes for an
+  exec failure.
+- `mu agent adopt` of a pane in another session now throws
+  `PaneNotInSessionError` (exit 4). The old error read "agent pane %15
+  is in workstream a different tmux session" and suggested a command
+  that could not run.
+- `mu agent remote-env --remote-sock` rejects `:` and `%`. ssh `-L`
+  splits on `:` and expands `%` tokens, so the forward broke or pointed
+  at a different socket.
 
 ## [3.8.1] — 2026-10-05
 

@@ -25,7 +25,7 @@ import { ctlProbe } from "../ctl/client.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { activeMux, type MuxPane, PaneNotFoundError, parseAgentNameFromTitle } from "../mux.js";
-import { AgentExistsError, AgentNotInWorkstreamError } from "./errors.js";
+import { AgentExistsError, PaneNotInSessionError } from "./errors.js";
 import { probeToSpawnCtl, type SpawnCtl } from "./spawn.js";
 import { agentCtlSocket, expectsCtl } from "./transport.js";
 
@@ -94,7 +94,7 @@ async function probeAdopted(
  * Validation order (matches the design in note #100):
  *   1. Pane id format     -> assertValidPaneId via paneExists / setPaneTitle
  *   2. Pane exists        -> PaneNotFoundError
- *   3. Pane is in session -> AgentNotInWorkstreamError (cross-session)
+ *   3. Pane is in session -> PaneNotInSessionError (cross-session)
  *   4. Resolved name OK   -> isValidAgentName / Error('agent name invalid')
  *   5. Idempotent check   -> if pane already owned by an agent of this
  *                            name, return alreadyAdopted=true
@@ -122,16 +122,7 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
   const matchingPane = panesInSession.find((p) => p.paneId === opts.paneId);
   if (!matchingPane) {
     // Pane exists (passed step 2) but isn't in the expected session.
-    // Synthesise the cross-session error using the same shape as the
-    // existing AgentNotInWorkstreamError path so the CLI's exit-code
-    // mapping handles it identically. We don't know the actual session
-    // name without another tmux query; the message just says 'a
-    // different session' — actionable enough.
-    throw new AgentNotInWorkstreamError(
-      `pane ${opts.paneId}`,
-      opts.workstream,
-      "a different tmux session",
-    );
+    throw new PaneNotInSessionError(opts.paneId, opts.workstream, expectedSession);
   }
 
   // Step 4: resolved name. Default to the pane's current title —

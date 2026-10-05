@@ -64,6 +64,7 @@ export {
   listAgents,
   listLiveAgents,
   NoForegroundProcessError,
+  PaneNotInSessionError,
   parsePsTtyOutput,
   readAgent,
   refreshAgentTitle,

@@ -44,6 +44,13 @@ const SSH_DIRECT_OPTS = "-o ControlMaster=no -o ControlPath=none";
 /** Characters that survive unquoted inside a single-quoted remote command. */
 const SAFE_WORD = /^[A-Za-z0-9_./:@%+-]+$/;
 
+/**
+ * Characters allowed in --remote-sock. SAFE_WORD minus ':' (the `-L`
+ * field separator) and '%' (ssh percent-expands forward paths, so the
+ * forward would point at a different socket than $MU_CTL_SOCK).
+ */
+const REMOTE_SOCK = /^[A-Za-z0-9_./@+-]+$/;
+
 function word(s: string): string {
   return SAFE_WORD.test(s) ? s : shellQuote(s);
 }
@@ -64,9 +71,9 @@ export function buildRemoteEnv(
   // spawn's handshake and every later verb look.
   const localSock = ctlSocketPath(workstream, agent, dirname(db.name));
   const remote = remoteSock ?? remoteCtlSocketPath(workstream, agent, process.getuid?.() ?? 0);
-  if (!remote.startsWith("/") || !SAFE_WORD.test(remote)) {
+  if (!remote.startsWith("/") || !REMOTE_SOCK.test(remote)) {
     throw new UsageError(
-      `--remote-sock must be an absolute path of [A-Za-z0-9_./:@%+-] characters (got ${JSON.stringify(remote)}): it is spliced unquoted into the remote command`,
+      `--remote-sock must be an absolute path of [A-Za-z0-9_./@+-] characters (got ${JSON.stringify(remote)}): it is spliced unquoted into the remote command, and ssh -L treats ':' as a separator and expands '%' tokens`,
     );
   }
   if (Buffer.byteLength(remote) > MAX_SOCK_PATH) {

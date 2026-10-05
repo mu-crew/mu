@@ -57,6 +57,7 @@ export {
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  PaneNotInSessionError,
   WorkspacePreservedError,
 } from "./agents/errors.js";
 export {
@@ -112,7 +113,7 @@ export {
   waitForAgents,
 } from "./agents/wait.js";
 
-import { AgentNotFoundError, WorkspacePreservedError } from "./agents/errors.js";
+import { AgentExistsError, AgentNotFoundError, WorkspacePreservedError } from "./agents/errors.js";
 import {
   agentCtlSocket,
   recordSend,
@@ -272,19 +273,28 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
   ensureWorkstream(db, input.workstream);
   const workstreamId = resolveWorkstreamId(db, input.workstream);
   const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, created_at, updated_at)
-     VALUES (@name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
-             COALESCE(@role, 'full-access'), @tab, @now, @now)`,
-  ).run({
-    name: input.name,
-    workstreamId,
-    cli: input.cli ?? null,
-    paneId: input.paneId,
-    role: input.role ?? null,
-    tab: input.tab ?? null,
-    now,
-  });
+  try {
+    db.prepare(
+      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, created_at, updated_at)
+       VALUES (@name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
+               COALESCE(@role, 'full-access'), @tab, @now, @now)`,
+    ).run({
+      name: input.name,
+      workstreamId,
+      cli: input.cli ?? null,
+      paneId: input.paneId,
+      role: input.role ?? null,
+      tab: input.tab ?? null,
+      now,
+    });
+  } catch (err) {
+    // UNIQUE (workstream_id, name): a concurrent spawn/adopt took the
+    // name between the caller's existence check and this insert.
+    if ((err as { code?: unknown }).code === "SQLITE_CONSTRAINT_UNIQUE") {
+      throw new AgentExistsError(input.name);
+    }
+    throw err;
+  }
   const row = getAgent(db, input.name, input.workstream);
   if (!row) throw new Error(`agents.insertAgent: row not found after insert: ${input.name}`);
   return row;

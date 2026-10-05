@@ -83,7 +83,14 @@ describe("mu agent remote-env", () => {
   });
 
   it("refuses a relative, unsafe or over-long --remote-sock", async () => {
-    for (const bad of ["rel.sock", "/tmp/a b.sock", "/tmp/$(x).sock", `/${"x".repeat(110)}`]) {
+    for (const bad of [
+      "rel.sock",
+      "/tmp/a b.sock",
+      "/tmp/$(x).sock",
+      "/tmp/a:b.sock",
+      "/tmp/a%db.sock",
+      `/${"x".repeat(110)}`,
+    ]) {
       const r = await runCli(
         ["agent", "remote-env", "worker-1", "-w", "big", "--remote-sock", bad],
         dbPath,

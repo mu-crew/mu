@@ -107,7 +107,9 @@ as a capability, not a name check:
   reads before the first claim report `unknown`. A pi agent skips the
   fixed wait: mu checks the pane on every handshake tick (a dead pane
   rolls back at once) and scans for startup errors when the handshake
-  ends.
+  ends. After an ok handshake the scan skips shell exec-failure lines
+  (`command not found`, `No such file or directory`): pi demonstrably
+  started, and a resumed session can show such lines as old tool output.
 - **herdr.** mu creates a bare pane and calls `startAgentInPane`, which
   subsumes both checks.
 - **pi, either backend.** After the agent starts, mu polls its control

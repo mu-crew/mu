@@ -4,13 +4,16 @@
 // here. The CLI's classifyError() (src/cli.ts) maps them to exit codes:
 //   not found  → 3   (AgentNotFoundError)
 //   conflict   → 4   (AgentExistsError, AgentNotInWorkstreamError,
+//                     PaneNotInSessionError,
 //                     AgentDiedOnSpawnError, AgentSpawnStartupError,
 //                     WorkspacePreservedError)
 //
 // AgentDiedOnSpawnError + AgentSpawnStartupError reach into spawn.ts for
 // defaultSpawnLivenessMs — a single, narrow cross-cluster import that
 // documents itself in the error message ("agent died within Nms of
-// spawn" / "agent reported a startup error within Nms of spawn").
+// spawn" / "agent reported a startup error within Nms of spawn") —
+// and AgentSpawnStartupError for isExecFailureLine, to pick hints that
+// fit the matched line.
 //
 // AgentSpawnCliNotFoundError is the pre-flight cousin of the two
 // post-spawn-detect errors above: thrown BEFORE prestageWorkspace when
@@ -21,7 +24,7 @@
 // Extracted from src/agents.ts as part of refactor_split_large_src_files.
 
 import type { HasNextSteps, NextStep } from "../output.js";
-import { defaultSpawnLivenessMs } from "./spawn.js";
+import { defaultSpawnLivenessMs, isExecFailureLine } from "./spawn.js";
 
 /**
  * Pre-flight failure: the command mu would have spawned in the new
@@ -174,6 +177,37 @@ export class AgentNotInWorkstreamError extends Error implements HasNextSteps {
 }
 
 /**
+ * `mu agent adopt` of a pane that exists but is not in the workstream's
+ * mux session. Distinct from AgentNotInWorkstreamError: the subject is a
+ * pane, not an agent, and its owning session is not known without
+ * another mux query. Maps to exit code 4 (conflict).
+ */
+export class PaneNotInSessionError extends Error implements HasNextSteps {
+  override readonly name = "PaneNotInSessionError";
+  constructor(
+    public readonly paneId: string,
+    public readonly workstream: string,
+    public readonly expectedSession: string,
+  ) {
+    super(
+      `pane ${paneId} is not in session ${expectedSession}; adopt only takes panes from workstream ${workstream}'s own session`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "List the workstream's agents and orphan panes to pick one",
+        command: `mu agent list -w ${this.workstream}`,
+      },
+      {
+        intent: "Or adopt it into the workstream whose session holds the pane",
+        command: `mu agent adopt ${this.paneId} -w <workstream>`,
+      },
+    ];
+  }
+}
+
+/**
  * Thrown when an agent's pane is created and titled successfully but the
  * spawned process exits within the liveness window (default 1500ms;
  * configurable via `MU_SPAWN_LIVENESS_MS`). The most common cause is the
@@ -294,11 +328,29 @@ export class AgentSpawnStartupError extends Error implements HasNextSteps {
     );
   }
   errorNextSteps(): NextStep[] {
+    const inspect: NextStep = {
+      intent: "Inspect the parked pane's scrollback for the full error",
+      command: `mu agent read ${this.agentName} -n 100`,
+    };
+    const disable: NextStep = {
+      intent:
+        "Disable the startup-error scan if you actually wanted that prompt (CI / scripted recovery)",
+      command: "export MU_SPAWN_LIVENESS_MS=0",
+    };
+    if (isExecFailureLine(this.matchedLine.trim())) {
+      // A shell exec failure, not a provider error: the API-key hints
+      // below would point the operator at the wrong problem.
+      return [
+        inspect,
+        {
+          intent: "Check the spawned command resolves in the pane's shell (PATH, typo)",
+          command: `mu agent spawn ${this.agentName} --command "<full path to the CLI>"`,
+        },
+        disable,
+      ];
+    }
     return [
-      {
-        intent: "Inspect the parked pane's scrollback for the full error",
-        command: `mu agent read ${this.agentName} -n 100`,
-      },
+      inspect,
       {
         // Most common today: the operator picked a model whose
         // provider has no credentials in this env. Default Anthropic
@@ -311,11 +363,7 @@ export class AgentSpawnStartupError extends Error implements HasNextSteps {
         command:
           "export ANTHROPIC_API_KEY=...   # or AWS_BEARER_TOKEN_BEDROCK, OPENAI_API_KEY, ...",
       },
-      {
-        intent:
-          "Disable the startup-error scan if you actually wanted that prompt (CI / scripted recovery)",
-        command: "export MU_SPAWN_LIVENESS_MS=0",
-      },
+      disable,
     ];
   }
 }
