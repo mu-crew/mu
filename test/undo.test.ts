@@ -11,11 +11,14 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
+import { withOpContext } from "../src/op-context.js";
+import { claimTask, releaseTask } from "../src/tasks/claim.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
-import { closeTask } from "../src/tasks/lifecycle.js";
+import { closeTask, parkTask } from "../src/tasks/lifecycle.js";
 import {
   listRecentGroups,
   mostRecentGroup,
@@ -83,6 +86,18 @@ describe("undo", () => {
     addTask(db, { workstream: "demo", localId: "b", title: "B", impact: 40, effortDays: 2 });
   };
 
+  const updatedAt = (localId: string): string | undefined =>
+    (
+      db.prepare("SELECT updated_at FROM tasks WHERE local_id = ?").get(localId) as
+        | { updated_at: string }
+        | undefined
+    )?.updated_at;
+
+  const pairOwner = (localId: string) =>
+    db.prepare("SELECT status, substate, owner_id FROM tasks WHERE local_id = ?").get(localId) as
+      | { status: string; substate: string; owner_id: number | null }
+      | undefined;
+
   /** No drift means the tables and the log still agree. */
   const expectNoDrift = (): void => {
     const report = checkDrift(db);
@@ -130,6 +145,32 @@ describe("undo", () => {
       expect(ops).toHaveLength(1);
       const payload = JSON.parse(ops[0]?.payload ?? "{}") as Record<string, unknown>;
       expect(payload).toMatchObject({ impact: 60, title: "A" });
+    });
+
+    it("restores the PRE-GROUP value when the group wrote one field twice", () => {
+      // The second write's prior is the first write's value, inside the
+      // same group. Inverting each write alone and applying them
+      // oldest-first left the intermediate value (f_ops_undo_same_field_twice).
+      seed();
+      withOpContext(db, { intent: "multi", group: "new" }, () => {
+        db.prepare("UPDATE tasks SET impact = 70 WHERE local_id = 'a'").run();
+        db.prepare("UPDATE tasks SET impact = 80 WHERE local_id = 'a'").run();
+      });
+      undoGroup(db, groupFor("multi"));
+      expect(task("a")?.impact).toBe(60);
+      expectNoDrift();
+    });
+
+    it("undoing task.park restores the pre-park updated_at, not the intermediate one", () => {
+      // parkTask writes updated_at twice: the status change, then the
+      // reason note's parent touch.
+      seed();
+      const before = updatedAt("a");
+      parkTask(db, "a", { workstream: "demo", why: "later" });
+      undoGroup(db, groupFor("task.park"));
+      expect(updatedAt("a")).toBe(before);
+      expect(pairOwner("a")).toMatchObject({ status: "OPEN", substate: "todo" });
+      expectNoDrift();
     });
 
     it("undoing a task.add DELETES the row (its creation is the thing undone)", () => {
@@ -480,6 +521,27 @@ describe("undo", () => {
         .flatMap((i) => i.supersededBy)
         .filter((c) => c.field === "impact");
       expect(impactConflicts).toEqual([]);
+      expect(plan.superseded).toBe(false);
+    });
+
+    it("a later write to updated_at alone (a task note) is NOT a supersession", () => {
+      // Every task change writes updated_at, and `mu task note` touches
+      // the parent row's updated_at. That must not block undoing an
+      // impact change (f_ops_undo_updated_at_supersede).
+      seed();
+      updateTask(db, "a", { impact: 90 }, { workstream: "demo" });
+      const target = groupFor("task.update");
+      addNote(db, "a", "hi", { workstream: "demo" });
+      addNote(db, "a", "hi2", { workstream: "demo" });
+      const touched = updatedAt("a");
+
+      const plan = planUndo(db, target);
+      expect(plan.superseded).toBe(false);
+      undoGroup(db, target);
+      expect(task("a")?.impact).toBe(60);
+      // The newer timestamp stays; undo restores only what nothing later wrote.
+      expect(updatedAt("a")).toBe(touched);
+      expectNoDrift();
     });
 
     it("treats a later DELETE as a supersession", () => {
@@ -586,6 +648,60 @@ describe("undo", () => {
       closeTask(db, "x", { workstream: "demo" });
       const group = listRecentGroups(db, 1)[0];
       expect(group?.ops).toBe(1);
+    });
+  });
+
+  // ─── claim / release ─────────────────────────────────────────────────
+
+  describe("undoing a claim or release (f_ops_undo_owner_not_restored)", () => {
+    const agentId = (name: string): number =>
+      (db.prepare("SELECT id FROM agents WHERE name = ?").get(name) as { id: number }).id;
+
+    const seedAgents = (): void => {
+      seed();
+      insertAgent(db, { name: "w1", workstream: "demo", paneId: "%1" });
+      insertAgent(db, { name: "w2", workstream: "demo", paneId: "%2" });
+    };
+
+    it("undoing a claim clears the owner with the pair, so another worker can claim", async () => {
+      seedAgents();
+      await claimTask(db, "a", { agentName: "w1", workstream: "demo" });
+      expect(pairOwner("a")).toEqual({
+        status: "IN_PROGRESS",
+        substate: "active",
+        owner_id: agentId("w1"),
+      });
+
+      undoGroup(db, groupFor("task.claim"));
+      expect(pairOwner("a")).toEqual({ status: "OPEN", substate: "todo", owner_id: null });
+      expectNoDrift();
+      await claimTask(db, "a", { agentName: "w2", workstream: "demo" });
+      expect(pairOwner("a")?.owner_id).toBe(agentId("w2"));
+    });
+
+    it("undoing a release gives the task back to its owner", async () => {
+      seedAgents();
+      await claimTask(db, "a", { agentName: "w1", workstream: "demo" });
+      releaseTask(db, "a", { workstream: "demo" });
+      expect(pairOwner("a")).toEqual({ status: "OPEN", substate: "todo", owner_id: null });
+
+      undoGroup(db, groupFor("task.release"));
+      expect(pairOwner("a")).toEqual({
+        status: "IN_PROGRESS",
+        substate: "active",
+        owner_id: agentId("w1"),
+      });
+      expectNoDrift();
+    });
+
+    it("does not restore an owner whose agent row is gone (FK)", async () => {
+      seedAgents();
+      await claimTask(db, "a", { agentName: "w1", workstream: "demo" });
+      releaseTask(db, "a", { workstream: "demo" });
+      db.prepare("DELETE FROM agents WHERE name = 'w1'").run();
+
+      undoGroup(db, groupFor("task.release"));
+      expect(pairOwner("a")).toEqual({ status: "IN_PROGRESS", substate: "active", owner_id: null });
     });
   });
 

@@ -119,7 +119,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **resurrection** | A put newer than a seen tombstone, which legitimately recreates the row. | "undelete", "revive" |
 | **provenance** | Which HLC last wrote a field, derived from the ops log by query, never stored. | "version vector" |
 | **inverse op** | The op that reverts another; an ordinary op, so undo syncs and is undoable. | "rollback" |
-| **superseded** (group) | A later group wrote the same field, so `mu undo` refuses (exit 4) without `--force`. | "stale" |
+| **superseded** (group) | A later group wrote the same field (other than `updated_at`), so `mu undo` refuses (exit 4) without `--force`. | "stale" |
 | **teardown** | Kill a workstream's mux session and delete its rows. `mu undo` restores rows, not panes or dirs. | "destroy", "nuke", "purge" |
 | **drift** | The ops log and live tables disagree. Always a bug. | "inconsistency", "corruption" |
 | **shallow / deep check** | Drift checks in `mu doctor` and `mu doctor --deep` (full rebuild). | "fsck" |
