@@ -74,8 +74,7 @@ function readSkill(): string | undefined {
 export function dispatchedWorkstreams(command: string): string[] | undefined {
   const found = new Set<string>();
   // One mu invocation per shell segment.
-  for (const seg of command.split(/&&|\|\||;|\n|\|/)) {
-    const words = seg.trim().split(/\s+/);
+  for (const words of shellSegments(command)) {
     const at = words.findIndex((w) => w === "mu" || w.endsWith("/mu"));
     if (at < 0) continue;
     const [noun, verb] = [words[at + 1], words[at + 2]];
@@ -85,12 +84,12 @@ export function dispatchedWorkstreams(command: string): string[] | undefined {
     let ws = "";
     for (let k = at + 3; k < words.length; k++) {
       const w = words[k] ?? "";
-      if (w === "-w" || w === "--workstream") ws = unquote(words[k + 1] ?? "");
-      else if (w.startsWith("--workstream=")) ws = unquote(w.slice("--workstream=".length));
+      if (w === "-w" || w === "--workstream") ws = words[k + 1] ?? "";
+      else if (w.startsWith("--workstream=")) ws = w.slice("--workstream=".length);
     }
     if (ws === "" && isClaimFor) {
       const ref = words[at + 3] ?? "";
-      if (ref.includes("/")) ws = unquote(ref.split("/")[0] ?? "");
+      if (ref.includes("/")) ws = ref.split("/")[0] ?? "";
     }
     if (ws !== "scratch") found.add(ws);
   }
@@ -100,9 +99,44 @@ export function dispatchedWorkstreams(command: string): string[] | undefined {
 /** Claim options that take a value; the task id is the first other positional. */
 const CLAIM_VALUE_OPTS = new Set(["--for", "-f", "-w", "--workstream", "--evidence", "--actor"]);
 
-/** Shell words of one segment; quotes group words and are dropped. */
-function shellWords(seg: string): string[] {
-  return [...seg.matchAll(/'([^']*)'|"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2] ?? m[3] ?? "");
+/**
+ * The words of each shell segment. Quotes group words and are dropped;
+ * `&&`, `||`, `;`, `|` and newlines split segments only outside
+ * quotes, so a quoted `--evidence 'a | b'` stays one word.
+ */
+export function shellSegments(command: string): string[][] {
+  const segs: string[][] = [];
+  let words: string[] = [];
+  let word: string | undefined;
+  const endWord = () => {
+    if (word !== undefined) words.push(word);
+    word = undefined;
+  };
+  const endSeg = () => {
+    endWord();
+    if (words.length > 0) segs.push(words);
+    words = [];
+  };
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i] ?? "";
+    if (c === "'" || c === '"') {
+      const close = command.indexOf(c, i + 1);
+      const end = close < 0 ? command.length : close;
+      word = (word ?? "") + command.slice(i + 1, end);
+      i = end;
+    } else if (c === "\\" && i + 1 < command.length) {
+      word = (word ?? "") + command[++i];
+    } else if (c === ";" || c === "|" || c === "\n" || (c === "&" && command[i + 1] === "&")) {
+      if (c !== ";" && c !== "\n" && command[i + 1] === c) i++;
+      endSeg();
+    } else if (/\s/.test(c)) {
+      endWord();
+    } else {
+      word = (word ?? "") + c;
+    }
+  }
+  endSeg();
+  return segs;
 }
 
 /**
@@ -112,8 +146,7 @@ function shellWords(seg: string): string[] {
  */
 export function dispatchedTasks(command: string): { ws: string; id: string }[] {
   const out: { ws: string; id: string }[] = [];
-  for (const seg of command.split(/&&|\|\||;|\n|\|/)) {
-    const words = shellWords(seg.trim());
+  for (const words of shellSegments(command)) {
     if (words[0] !== "mu" && !words[0]?.endsWith("/mu")) continue;
     if (words[1] !== "task" || words[2] !== "claim") continue;
     let ws = "";
@@ -137,10 +170,6 @@ export function dispatchedTasks(command: string): { ws: string; id: string }[] {
     if (ws !== "scratch") out.push({ ws, id });
   }
   return out;
-}
-
-function unquote(s: string): string {
-  return s.replace(/^['"]|['"]$/g, "");
 }
 
 type Card = { workstreamName?: string; inProgress?: { name?: string }[] };
