@@ -20,17 +20,26 @@ this brief, with `<ws>` filled in:
 ```text
 Read-only drift audit of mu workstream <ws>. Change nothing. Sources:
 mu state -w <ws>; mu task list -w <ws> --json; mu task notes <id> -w <ws>;
-mu log -w <ws> -n 500 --json (intents agent.send, task.claim, task.close);
-git log in the repo and in each owner's workspace. Check:
-1. Unsent notes: an instruction in a note on an IN_PROGRESS task, added
-   after the owner's last agent.send or task.claim op. Did the owner act
-   on it (later commits, notes, pane)? Also flag an agent.send with
-   mode=plain or mode=steer whose state=busy since=<t> is long before
-   the send: it queued behind a long turn and may not have landed.
+mu sql (ops, tasks, task_notes, agents); git log in the repo and in each
+owner's workspace. Never judge by a capped mu log -n window: the claim
+or close you compare against is often older than it.
+1. Unsent notes: notes on IN_PROGRESS tasks, by someone other than the
+   owner, after the owner's last task.claim or agent.send op:
+   mu sql "select t.local_id task, a.name owner, n.created_at, substr(n.content,1,80) note from tasks t join workstreams w on w.id=t.workstream_id join agents a on a.id=t.owner_id join task_notes n on n.task_id=t.id where w.name='<ws>' and t.status='IN_PROGRESS' and coalesce(n.author,'')<>a.name and n.created_at > max(coalesce((select max(o.created_at) from ops o where o.intent='task.claim' and o.key='<ws>/'||t.local_id),''), coalesce((select max(o.created_at) from ops o where o.intent='agent.send' and o.key='<ws>' and o.payload like 'agent send '||a.name||' (%'),'')) order by n.created_at"
+   Quote each task's last claim (seq, time). For each instruction it
+   lists: did the owner act on it (later commits, notes, pane)? Also read
+   mu sql "select seq, created_at, payload from ops where intent='agent.send' and key='<ws>'"
+   and flag mode=plain or mode=steer with state=busy since=<t> long
+   before the send: it queued behind a long turn and may not have landed.
 2. Stale pins: for each build/binary sha or oracle commit named in an
    IN_PROGRESS note, and each merged fix its task's findings depend on:
    git merge-base --is-ancestor <fix> <pinned>. Exit 1 = pin is stale.
-3. Closed-task notes: a note added after its task's task.close op.
+3. Closed-task notes: notes added after the task's last task.close op.
+   Report each of the top 5 by count as its own finding with its count,
+   even when the notes look routine. A late note that reports the
+   closed bug again usually ran on a build without the closing fix:
+   check its sha with git merge-base --is-ancestor <fix> <sha>.
+   mu sql "select t.local_id name, count(*) late from tasks t join workstreams w on w.id=t.workstream_id join task_notes n on n.task_id=t.id where w.name='<ws>' and t.status='CLOSED' and n.created_at > (select max(o.created_at) from ops o where o.intent='task.close' and o.key='<ws>/'||t.local_id) group by t.local_id order by late desc"
 4. Thin decisions: an ACCEPT/REJECTED/CLOSE/SUPERSEDED note under 40
    chars; a refuter tally with no REFUTER or VERDICT note; a review the
    orchestrator closed with no FILES/COMMANDS note and no commit.

@@ -180,7 +180,8 @@ rules hold even when you skip it:
 - **Stop a worker gently**: `mu agent abort`, then `kick`, then `close`.
   To redirect a busy pi now: `send --interrupt` (`--steer` waits for
   the running tool).
-- **Send, don't note, a running worker**: it never sees new notes. The note is the durable copy.
+- **Send, don't note, a running worker**: it never sees new notes. The note is the durable copy
+  ([how to send](recipes/orchestrator-loop.md#sending)).
 - **Refute a brief claiming a cause, fix, threshold or code fact** before dispatch:
   one `record`ed refuter call; rewrite on AMEND. Others get a `REFUTE-EXEMPT: <why>` note.
 - **Checks are calls, not tasks.** Refuters, claim checkers, judges and
