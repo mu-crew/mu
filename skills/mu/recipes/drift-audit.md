@@ -36,12 +36,12 @@ or close you compare against is often older than it.
    git merge-base --is-ancestor <fix> <pinned>. Exit 1 = pin is stale.
 3. Closed-task notes: notes added after the task's last task.close op,
    minus the `CLOSE:` or `<SUBSTATE>:` note the close verb itself writes
-   within milliseconds of that op (a prefixed note 2 s or more later
-   counts). Report each of the top 5 by count as its own finding with its count,
+   as the very next op (seq + 1); any other note counts, whatever its
+   prefix. Report each of the top 5 by count as its own finding with its count,
    even when the notes look routine. A late note that reports the
    closed bug again usually ran on a build without the closing fix:
    check its sha with git merge-base --is-ancestor <fix> <sha>.
-   mu sql "select t.local_id name, count(*) late from tasks t join workstreams w on w.id=t.workstream_id join task_notes n on n.task_id=t.id join (select key, max(created_at) at from ops where intent='task.close' group by key) c on c.key='<ws>/'||t.local_id where w.name='<ws>' and t.status='CLOSED' and n.created_at > c.at and not ((n.content like 'CLOSE: %' or n.content like upper(t.substate)||': %') and julianday(n.created_at) - julianday(c.at) < 2.0/86400) group by t.local_id order by late desc"
+   mu sql "select t.local_id name, count(*) late from tasks t join workstreams w on w.id=t.workstream_id join task_notes n on n.task_id=t.id join (select key, max(seq) seq, max(created_at) at from ops where intent='task.close' and entity='task' group by key) c on c.key='<ws>/'||t.local_id where w.name='<ws>' and t.status='CLOSED' and n.created_at > c.at and not exists (select 1 from ops x where x.seq=c.seq+1 and x.entity='note' and x.key=c.key||'#'||n.id and (n.content like 'CLOSE: %' or n.content like upper(t.substate)||': %')) group by t.local_id order by late desc"
 4. Thin decisions: an ACCEPT/REJECTED/CLOSE/SUPERSEDED note under 40
    chars; a refuter tally with no REFUTER or VERDICT note; a review the
    orchestrator closed with no FILES/COMMANDS note and no commit.
