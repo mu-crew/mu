@@ -151,6 +151,10 @@ describe("registration guards", () => {
     expect(p.tools.size).toBe(0);
   });
 
+  it("delegateEnabled is false under MU_MANAGED_AGENT (agents and the pis nested in them)", () => {
+    expect(delegateEnabled({ MU_MANAGED_AGENT: "1", TMUX: "/tmp/x,1,0" })).toBe(false);
+  });
+
   it("is hidden by the MU_DELEGATE=0 kill switch", () => {
     process.env.MU_DELEGATE = "0";
     expect(delegateEnabled()).toBe(false);

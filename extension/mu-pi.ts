@@ -32,7 +32,13 @@ import {
   LineDecoder,
   UNKNOWN_OP_PREFIX,
 } from "../src/ctl/protocol.js";
-import { type DelegateCtx, type MuDelegateApi, registerDelegate } from "./delegate.js";
+import {
+  type DelegateCtx,
+  defaultRunner,
+  type MuDelegateApi,
+  type MuRunner,
+  registerDelegate,
+} from "./delegate.js";
 import {
   type MuNudgeApi,
   registerCloseNudge,
@@ -181,6 +187,8 @@ type PendingCommand = {
  */
 type Shared = {
   server?: Server;
+  /** Set by bind(): another pi serves the socket, so this pi is not the agent. */
+  nested?: boolean;
   /** Inode of the socket file this process bound; the only file it may unlink. */
   ino?: number;
   conns: Set<Socket>;
@@ -340,19 +348,25 @@ function registerPrompts(pi: MuPiApi): void {
   });
 }
 
-export default function muPi(pi: MuPiApi): void {
-  registerDelegate(pi);
+export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void {
+  registerDelegate(pi, run);
   registerPrompts(pi);
-  registerNudge(pi);
-  registerCloseNudge(pi);
-  registerRefuteNudge(pi);
-  serveCtl(pi);
+  // Identity follows the bind: a pi that finds MU_CTL_SOCK served by
+  // another pi is nested and gets none of the agent's nudges.
+  const nested = serveCtl(pi);
+  registerNudge(pi, run, undefined, nested);
+  registerCloseNudge(pi, run, process.env, nested);
+  registerRefuteNudge(pi, run, nested);
 }
 
-/** Child side: serve `$MU_CTL_SOCK` for the mu that spawned this pi. */
-function serveCtl(pi: MuPiApi): void {
+/**
+ * Child side: serve `$MU_CTL_SOCK` for the mu that spawned this pi.
+ * Returns whether this pi is nested (another pi serves the socket), read
+ * from the process-global state so a reloaded runtime sees the decision.
+ */
+function serveCtl(pi: MuPiApi): () => boolean {
   const sock = process.env.MU_CTL_SOCK;
-  if (!sock) return;
+  if (!sock) return () => false;
   const sockPath: string = sock;
   const piVersion = detectPiVersion();
 
@@ -672,8 +686,9 @@ function serveCtl(pi: MuPiApi): void {
   async function bind(): Promise<void> {
     mkdirSync(dirname(sockPath), { recursive: true, mode: 0o700 });
     if (await socketIsLive(sockPath)) {
+      g.nested = true;
       process.stderr.write(
-        `mu: control socket ${sockPath} is served by another pi; this pi will not take it\n`,
+        `mu: control socket ${sockPath} is served by another pi; nested pi: mu agent features off\n`,
       );
       return;
     }
@@ -698,13 +713,17 @@ function serveCtl(pi: MuPiApi): void {
     } catch (e) {
       s.close();
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      process.stderr.write(`mu: control socket ${sockPath} was taken by another pi\n`);
+      g.nested = true;
+      process.stderr.write(
+        `mu: control socket ${sockPath} was taken by another pi; nested pi: mu agent features off\n`,
+      );
       return;
     } finally {
       rmSync(tmp, { force: true });
     }
     g.server = s;
     g.ino = inodeOf(sockPath);
+    g.nested = false;
   }
 
   pi.on("session_start", async (e, c) => {
@@ -745,4 +764,6 @@ function serveCtl(pi: MuPiApi): void {
     // Unlink only the file this process bound: another pi may own the path now.
     if (ino !== undefined && inodeOf(sockPath) === ino) rmSync(sockPath, { force: true });
   });
+
+  return () => g.nested === true;
 }

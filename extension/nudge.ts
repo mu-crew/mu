@@ -20,6 +20,9 @@
  * ($MU_AGENT_NAME + $MU_WORKSTREAM) that settles while it still owns an
  * IN_PROGRESS task is told once to close it or say why not. Same
  * once-per-prompt rule and `MU_NUDGE=0` opt-out.
+ *
+ * None fire in a nested pi (mu-pi.ts decides at bind); close and refute
+ * also skip a pi with no UI (`pi -p`, json), where nobody can answer.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,12 +37,28 @@ const MARK_END = "<!-- /mu:keep-driving -->";
 /** Tasks named in the wait hint; the rest are counted, not listed. */
 const WAIT_HINT_MAX = 8;
 
+/** The slice of pi's ExtensionContext the nudge reads. */
+export type MuNudgeCtx = { mode?: string; hasUI?: boolean };
+
 /** The slice of pi's ExtensionAPI the nudge uses. */
 export interface MuNudgeApi {
   on(
     event: "tool_call" | "agent_before_settle" | "input",
-    handler: (event: unknown, ctx: unknown) => unknown,
+    handler: (event: unknown, ctx: MuNudgeCtx) => unknown,
   ): unknown;
+}
+
+/**
+ * True while this pi is nested: it inherited a MU_CTL_SOCK another pi
+ * serves (a `pi -p` run inside an agent's pane). Read at settle time,
+ * since the bind decision lands in session_start, after registration.
+ */
+export type NestedCheck = () => boolean;
+const notNested: NestedCheck = () => false;
+
+/** No one can answer a nudge: print or json mode. */
+function noUI(ctx: MuNudgeCtx | undefined): boolean {
+  return ctx?.hasUI === false;
 }
 
 /** `MU_NUDGE=0` turns the nudge off. */
@@ -229,6 +248,7 @@ export function registerNudge(
   pi: MuNudgeApi,
   run: MuRunner = defaultRunner(),
   skillMd: string | undefined = readSkill(),
+  nested: NestedCheck = notNested,
 ): void {
   if (!nudgeEnabled()) return;
   const rule = skillMd === undefined ? undefined : keepDrivingRule(skillMd);
@@ -249,7 +269,7 @@ export function registerNudge(
   });
 
   pi.on("agent_before_settle", async (event) => {
-    if (fired || armed.size === 0) return;
+    if (fired || armed.size === 0 || nested()) return;
     if (outcomeOf(event) !== "completed") return; // Esc or an error: stop
     fired = true; // once per prompt, even if the check below fails
     const refs = await inProgress(run, [...armed]);
@@ -317,6 +337,7 @@ export function registerCloseNudge(
   pi: MuNudgeApi,
   run: MuRunner = defaultRunner(),
   env: NodeJS.ProcessEnv = process.env,
+  nested: NestedCheck = notNested,
 ): void {
   if (!nudgeEnabled(env)) return;
   const me = workerIdentity(env);
@@ -327,8 +348,8 @@ export function registerCloseNudge(
     fired = false;
   });
 
-  pi.on("agent_before_settle", async (event) => {
-    if (fired) return;
+  pi.on("agent_before_settle", async (event, ctx) => {
+    if (fired || nested() || noUI(ctx)) return; // nested: workerIdentity is the parent's
     if (outcomeOf(event) !== "completed") return;
     fired = true;
     const names = await ownedInProgress(run, me.agent, me.workstream);
@@ -375,7 +396,11 @@ export function refuteNudgeText(refs: string[]): string {
   return `[mu] dispatched ${refs.join(", ")} with an unrefuted brief: refute it (delegate, record) or note REFUTE-EXEMPT: <why>`;
 }
 
-export function registerRefuteNudge(pi: MuNudgeApi, run: MuRunner = defaultRunner()): void {
+export function registerRefuteNudge(
+  pi: MuNudgeApi,
+  run: MuRunner = defaultRunner(),
+  nested: NestedCheck = notNested,
+): void {
   if (!nudgeEnabled()) return;
   const armed = new Map<string, { ws: string; id: string }>();
   let fired = false;
@@ -393,8 +418,8 @@ export function registerRefuteNudge(pi: MuNudgeApi, run: MuRunner = defaultRunne
     }
   });
 
-  pi.on("agent_before_settle", async (event) => {
-    if (fired || armed.size === 0) return;
+  pi.on("agent_before_settle", async (event, ctx) => {
+    if (fired || armed.size === 0 || nested() || noUI(ctx)) return;
     if (outcomeOf(event) !== "completed") return;
     fired = true;
     const refs: string[] = [];

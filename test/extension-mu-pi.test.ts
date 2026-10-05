@@ -13,6 +13,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MuRunner } from "../extension/delegate.js";
 import muPi, {
   commandName,
   FRESH_COMMAND,
@@ -357,12 +358,12 @@ describe("mu pi extension", () => {
     const SHARED = Symbol.for("mu.pi.ctl");
     type G = { [SHARED]?: unknown };
     /** A second pi process: its own process-global state, same MU_CTL_SOCK. */
-    function otherPi() {
+    function otherPi(run?: MuRunner) {
       const g = globalThis as G;
       const mine = g[SHARED];
       g[SHARED] = new Map();
       const other = fakePi();
-      muPi(other.pi);
+      muPi(other.pi, run);
       g[SHARED] = mine;
       return other;
     }
@@ -388,6 +389,79 @@ describe("mu pi extension", () => {
       expect(await ctlRequest(sock, { op: "hello" })).toMatchObject({ ok: true });
       // No temp names left behind in the socket dir.
       expect(readdirSync(dirname(sock))).toEqual(["a.sock"]);
+    });
+
+    /** A mu that says the parent agent owns an IN_PROGRESS task and dispatched an unrefuted one. */
+    const busyMu = () =>
+      vi.fn<MuRunner>(async (args) => {
+        const [noun, verb] = args;
+        if (noun === "task" && verb === "owned-by")
+          return {
+            code: 0,
+            stdout: JSON.stringify({ items: [{ name: "t1", status: "IN_PROGRESS" }] }),
+            stderr: "",
+          };
+        if (noun === "task" && verb === "notes")
+          return { code: 0, stdout: JSON.stringify({ items: [] }), stderr: "" };
+        if (noun === "state")
+          return {
+            code: 0,
+            stdout: JSON.stringify({ workstreamName: "ws", inProgress: [{ name: "t1" }] }),
+            stderr: "",
+          };
+        return { code: 0, stdout: "", stderr: "" };
+      });
+    /** Run one prompt: input, a dispatching bash call, then settle; the settle results. */
+    async function prompt(p: ReturnType<typeof fakePi>, ctx: object = p.ctx) {
+      for (const h of p.handlers.get("input") ?? []) await h({ type: "input" }, p.ctx);
+      const call = { toolName: "bash", input: { command: "mu task claim t2 -w ws --for w2" } };
+      for (const h of p.handlers.get("tool_call") ?? []) await h(call, p.ctx);
+      const out: unknown[] = [];
+      for (const h of p.handlers.get("agent_before_settle") ?? [])
+        out.push(
+          await h({ type: "agent_before_settle", outcome: "completed" }, ctx as MuPiContext),
+        );
+      return out.filter((r) => r !== undefined);
+    }
+    const types = (rs: unknown[]) =>
+      rs.flatMap((r) =>
+        (r as { entries: { customType: string }[] }).entries.map((e) => e.customType),
+      );
+
+    it("a nested pi (socket already live) gets no close, refute or keep-driving nudge", async () => {
+      await fake.emit("session_start");
+      const run = busyMu();
+      const nested = otherPi(run);
+      await nested.emit("session_start");
+      expect(await prompt(nested)).toEqual([]);
+      expect(run).not.toHaveBeenCalled();
+      expect(String(stderr.mock.calls.at(-1)?.[0])).toMatch(/nested pi: mu agent features off/);
+    });
+
+    /** Another runtime in THIS process (pi's /reload re-runs the factory). */
+    function samePi(run: MuRunner) {
+      const p = fakePi();
+      muPi(p.pi, run);
+      return p;
+    }
+
+    it("the agent pi (binds the socket) keeps its nudges, also after reload", async () => {
+      const run = busyMu();
+      const agent = samePi(run);
+      await agent.emit("session_start");
+      const all = ["mu-close-task", "mu-keep-driving", "mu-refute-brief"];
+      expect(types(await prompt(agent)).sort()).toEqual(all);
+      await agent.emit("session_shutdown", { reason: "reload" });
+      const reloaded = samePi(run);
+      await reloaded.emit("session_start", { reason: "reload" });
+      expect(types(await prompt(reloaded)).sort()).toEqual(all);
+    });
+
+    it("no UI (pi -p, json): no close or refute nudge, keep-driving stays", async () => {
+      const agent = samePi(busyMu());
+      await agent.emit("session_start");
+      const rs = await prompt(agent, { ...agent.ctx, hasUI: false, mode: "print" });
+      expect(types(rs)).toEqual(["mu-keep-driving"]);
     });
 
     it("session_start rebinds a server whose socket file was deleted", async () => {
