@@ -23,6 +23,7 @@ import { muTable, type NextStep, pc, printNextSteps } from "../output.js";
 import {
   assertWorkstreamInitable,
   ensureWorkstream,
+  ensureWorkstreamSession,
   listEmptyWorkstreams,
   listTornDownWorkstreams,
   listUnregisteredMuxWorkstreams,
@@ -37,30 +38,13 @@ export async function cmdInit(db: Db, name: string, opts: { json?: boolean } = {
   const dbCreated = ensureWorkstream(db, name);
   // Load-bearing: `workstream init` IS session creation.
   const mux = await activeMux();
-  const sessionAlready = await mux.sessionExists(sessionName);
-  let muWindowRepaired = false;
-  if (!sessionAlready) {
-    await mux.newSession(sessionName, { detached: true, windowName: "_mu" });
-  } else {
-    // Session already exists — check whether the placeholder `_mu`
-    // window is still there. Common reason for it being missing:
-    // operator killed it manually after spawning the first agent.
-    // Without it, tmux a -t mu-<ws> lands on the most recent agent's
-    // pane, which surprises the operator who expects an empty
-    // orchestration shell. Recreate idempotently.
-    // (review_bug_workstream_init_does_not_repair_missing_mu_window)
-    const windows = await mux.listWindows(sessionName).catch(() => []);
-    const hasMuWindow = windows.some((w) => w.name === "_mu");
-    if (!hasMuWindow) {
-      await mux.newWindow({
-        session: sessionName,
-        name: "_mu",
-        command: process.env.SHELL ?? "/bin/sh",
-        detached: true,
-      });
-      muWindowRepaired = true;
-    }
-  }
+  // Creates the session with its placeholder `_mu` window, or repairs
+  // a missing `_mu` (the operator killed it after the first spawn;
+  // without it, tmux a -t mu-<ws> lands on an agent's pane instead of
+  // the orchestration shell).
+  // (review_bug_workstream_init_does_not_repair_missing_mu_window)
+  const { created: sessionCreated, muWindowRepaired } = await ensureWorkstreamSession(sessionName);
+  const sessionAlready = !sessionCreated;
   // Always (re)apply the pane-border-status options so re-init or
   // upgrade-from-pre-banner-mu sessions both pick up the cue. tmux
   // set-option is idempotent. enableMuPaneBordersForSession self-checks
@@ -298,7 +282,8 @@ export async function cmdTeardown(
 // ─── cmdTeardownEmpty ─────────────────────────────────────────────────
 //
 // `mu workstream teardown --empty` sweeps every workstream with no
-// user-meaningful state (zero tasks, agents, vcs_workspaces). It never
+// user-meaningful state (zero tasks, agents, vcs_workspaces), except
+// `scratch`, whose idle session is kept alive on purpose. It never
 // sweeps an unregistered `mu-*` session: with no DB row there is no
 // evidence it is idle (see listEmptyWorkstreams); the human output
 // names them so the operator can tear one down explicitly.
@@ -550,13 +535,13 @@ export function wireWorkstreamCommands(program: Command): void {
   workstream
     .command("teardown [name]")
     .description(
-      "Tear down a workstream: kill its mux session and cascade-delete every DB row tagged with its name. Reversible — tombstone ops are written, so `mu undo <group>` restores the rows. The target may be given positionally (matching `workstream init <name>`) or via -w. Pass --yes to actually tear down; otherwise prints a dry-run summary. With --empty, sweeps every empty workstream (zero tasks/agents/workspaces) in one call.",
+      "Tear down a workstream: kill its mux session and cascade-delete every DB row tagged with its name. Reversible — tombstone ops are written, so `mu undo <group>` restores the rows. The target may be given positionally (matching `workstream init <name>`) or via -w. Pass --yes to actually tear down; otherwise prints a dry-run summary. With --empty, sweeps every empty workstream (zero tasks/agents/workspaces) except scratch in one call.",
     )
     .option(...WORKSTREAM_OPT)
     .option("-y, --yes", "actually tear down (without this flag, prints a dry-run summary)")
     .option(
       "--empty",
-      "sweep every empty workstream (zero tasks, agents, vcs_workspaces); never a mu-* session with no workstream row; mutually exclusive with -w",
+      "sweep every empty workstream (zero tasks, agents, vcs_workspaces); never scratch or a mu-* session with no workstream row; mutually exclusive with -w",
     )
     .option(...JSON_OPT)
     .action(function (name: string | undefined) {

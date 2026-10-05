@@ -21,6 +21,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   verb's usage and hints instead of the root `mu` help.
 - `mu task wait --json` no longer adds a `reachedAt` field to `all`. It
   held the emit time, not when each task reached the target.
+- The `scratch` tmux session now outlives its last agent, so the next
+  delegate does not pay for creating it again. The first spawn into
+  `scratch` creates `mu-scratch` with the placeholder `_mu` window that
+  `mu workstream init` creates (and adds it when an existing
+  `mu-scratch` lacks it). `mu workstream teardown --empty` no longer
+  sweeps the idle `scratch` session; `mu workstream teardown scratch
+  --yes` still removes it. On herdr, the `_mu` tab is now labelled, so
+  re-running `mu workstream init` no longer adds a second one.
 - The test suite's default-socket tmux sweep no longer kills your live
   `mu-*` workstream sessions when your DB lives under `MU_STATE_DIR` or
   `MU_DB_PATH`, or is missing, locked, corrupt or on a newer schema. It

@@ -33,6 +33,7 @@ import { isJsonMode, type NextStep } from "../output.js";
 import { sleep } from "../tmux.js";
 import type { VcsBackendName } from "../vcs.js";
 import { createWorkspace, freeWorkspace } from "../workspace.js";
+import { ensureWorkstreamSession, isScratchWorkstream } from "../workstream.js";
 import {
   AgentDiedOnSpawnError,
   AgentExistsError,
@@ -457,6 +458,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       rmSync(ctlSocket, { force: true });
       const pid = await createOrReusePane({
         session,
+        keepSessionAlive: isScratchWorkstream(opts.workstream),
         windowName,
         command,
         cwd: workspacePathStr ?? opts.cwd,
@@ -875,6 +877,9 @@ async function checkSpawnHealth(
 /**
  * Three cases, all returning a stable pane id:
  *   - session doesn't exist          → create session+window+pane in one shot
+ *                                      (with `keepSessionAlive`: create the
+ *                                      session with its placeholder `_mu`
+ *                                      window first, then a window here)
  *   - session exists, no such window → create a new window for this agent
  *   - session and window both exist  → split the window to add a pane
  *
@@ -889,6 +894,10 @@ async function checkSpawnHealth(
  */
 async function createOrReusePane(opts: {
   session: string;
+  /** Ensure the placeholder `_mu` window (creating or repairing it) so
+   *  the session outlives its last agent. Set for `scratch`, which is
+   *  never `workstream init`-ed; other workstreams get `_mu` at init. */
+  keepSessionAlive: boolean;
   windowName: string;
   command: string;
   cwd?: string;
@@ -897,7 +906,8 @@ async function createOrReusePane(opts: {
   // Load-bearing from top to bottom: this IS the pane creation.
   const mux = await activeMux();
   const command = mux.startAgentInPane === undefined ? opts.command : "";
-  if (!(await mux.sessionExists(opts.session))) {
+  if (opts.keepSessionAlive) await ensureWorkstreamSession(opts.session);
+  else if (!(await mux.sessionExists(opts.session))) {
     return mux.newSessionWithPane(opts.session, {
       windowName: opts.windowName,
       command,
