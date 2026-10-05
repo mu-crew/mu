@@ -521,6 +521,20 @@ export function parsePositiveNumber(value: string): number {
   return n;
 }
 
+// Parses a duration in seconds for --timeout / --stuck-after: any
+// non-negative finite number, fractions included. Strict on purpose:
+// parseInt read "0.5" as 0 (wait forever) and "10m" as 10, so a
+// suffix or other trailing text is an error, not a prefix to keep.
+export function parseSeconds(value: string): number {
+  const n = value.trim() === "" ? Number.NaN : Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new InvalidArgumentError(
+      `expected a non-negative number of seconds, got ${JSON.stringify(value)}`,
+    );
+  }
+  return n;
+}
+
 export function parseImpact(value: string): number {
   const n = Number.parseInt(value, 10);
   if (Number.isNaN(n) || n < 1 || n > 100) {

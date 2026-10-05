@@ -472,12 +472,22 @@ export async function cmdTaskWait(
       const status = row?.status ?? "OPEN";
       const owner = row?.ownerName ?? null;
       const prior = priorState.get(key);
-      if (prior !== undefined && prior.status === "IN_PROGRESS" && status === "OPEN") {
-        // Reaper-flip detected on a watched task. The prior owner
-        // is the agent whose pane just got pruned (the FK
-        // CASCADE-SET-NULL on agents.id has already cleared the
-        // current row's owner; we use the snapshot from the
-        // previous tick).
+      // Reaper-flip detected on a watched task: IN_PROGRESS → OPEN AND
+      // the prior owner's agent row is gone. The reaper is the agent
+      // row's delete, so a vanished owner is what tells it apart from
+      // a `mu task release` (owner still registered), a `--self` claim
+      // (no owner to reap) or a deleted task (no row): those are
+      // ordinary state changes, not a dead pane. The FK
+      // CASCADE-SET-NULL has already cleared the current row's owner,
+      // so the owner comes from the previous tick's snapshot.
+      if (
+        row !== undefined &&
+        prior !== undefined &&
+        prior.status === "IN_PROGRESS" &&
+        status === "OPEN" &&
+        prior.owner !== null &&
+        getAgent(db, prior.owner, ref.workstreamName) === undefined
+      ) {
         throw new ReaperDetectedDuringWaitError(ref.name, prior.owner, ref.workstreamName);
       }
       priorState.set(key, { status, owner });

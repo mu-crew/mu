@@ -216,8 +216,9 @@ export interface ListNotesOptions {
    *  an error here — CLI-side validation rejects `--tail 0`. */
   tail?: number;
   /** ISO-8601 cutoff: only notes with `created_at > since` survive.
-   *  Comparison is lexicographic on the ISO string (matches the way
-   *  the rest of the codebase compares ISO timestamps). */
+   *  Any `Date.parse`-able value; it is normalised to `toISOString()`
+   *  form (the stored shape) before the text comparison, so offsets
+   *  and second-precision cutoffs compare as instants. */
   since?: string;
   /** When true and `since` is unset, look up the `created_at` of the
    *  most recent `task claim` event for this task and use it as the
@@ -241,7 +242,16 @@ export function listNotes(
   if (taskId === null) return [];
   // Resolve the cutoff once: explicit `since` wins; otherwise
   // `sinceClaim` resolves via lastClaimEventAt (null → no filter).
+  // created_at is always `toISOString()` (UTC, millis, `Z`) and the
+  // filter compares text, so normalise `since` to that same shape: a
+  // raw `10:07:00Z` sorts after `10:07:00.411Z` ('Z' > '.') and an
+  // offset like `+02:00` compares as local time. An unparseable value
+  // passes through unchanged (the CLI rejects it before here).
   let cutoff: string | undefined = opts.since;
+  if (cutoff !== undefined) {
+    const ms = Date.parse(cutoff);
+    if (!Number.isNaN(ms)) cutoff = new Date(ms).toISOString();
+  }
   if (cutoff === undefined && opts.sinceClaim === true) {
     const at = lastClaimEventAt(db, workstream, taskLocalId);
     if (at !== null) cutoff = at;

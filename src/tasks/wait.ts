@@ -346,9 +346,10 @@ export async function waitForTasks(
     for (const ref of refs) {
       const row = getTask(db, ref.name, ref.workstreamName);
       // Defensive: if a task was deleted mid-wait, treat as 'never
-      // reached'. (Not the same as TaskNotFoundError pre-flight —
+      // reached' for EVERY target, OPEN included (reachedTarget below
+      // requires the row). Not the same as TaskNotFoundError pre-flight:
       // deletion mid-wait shouldn't crash the wait; it's a legitimate
-      // state change.)
+      // state change.
       const status = (row?.status ?? "OPEN") as TaskStatus;
       const substate = row?.substate ?? DEFAULT_SUBSTATE[status];
       const owner = row?.ownerName ?? null;
@@ -433,7 +434,7 @@ export async function waitForTasks(
         status,
         substate,
         owner,
-        reachedTarget: status === target,
+        reachedTarget: row !== undefined && status === target,
         stuck,
       });
     }

@@ -52,6 +52,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **tmux: a missing socket file means "no server".** On a fresh boot, a cleared `/tmp` or a new `TMUX_TMPDIR`, tmux reports "error connecting to … (No such file or directory)". `mu state`, `mu agent list` and teardown now treat it like "no server running" instead of exiting 5.
 - **tmux: `mu agent read -n N` and `mu agent show -n N` print the last N lines.** They printed the visible screen plus N rows above it. Trailing blank rows below the cursor are dropped first, so the result matches herdr's `--lines N`.
 - **tmux: `mu agent send` to a dead pane fails at once** (non-pi agents and `--via mux`). It polled the full readiness budget (`MU_SEND_READINESS_MS`, 15s) before failing with "can't find pane" (or "no current target" when the server has zero sessions). A transient capture failure still waits.
+- `mu task wait --timeout`, `--stuck-after` and `mu agent wait
+  --timeout` take fractional seconds and reject suffixes. Before,
+  `--timeout 0.5` parsed as 0 (wait forever, or stall detection off)
+  and `--timeout 10m` as 10 seconds.
+- `mu task wait --help` no longer names an `--all` flag that does not
+  exist. Waiting for every task is the default.
+- `mu task wait --status OPEN` no longer reports a task deleted
+  mid-wait as reached.
+- `mu task wait` exits 6 only when the owner's agent row is gone (the
+  reaper). A manual `mu task release` or `mu task delete` of a watched
+  task no longer reports a dead pane.
+- `mu agent wait` reports a dead pane and exits 6 even when another
+  watched agent finished. Before, it printed "All N agent(s) finished"
+  and exited 0. `--any` names the agent that finished.
+- `mu task notes --since` compares timestamps as instants. A cutoff
+  without milliseconds or with a UTC offset no longer hides notes.
 
 ## [3.8.1] — 2026-10-05
 

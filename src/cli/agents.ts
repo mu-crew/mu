@@ -978,24 +978,36 @@ export async function cmdAgentWait(
       ...(dead.length > 0 ? { dead: dead.map(qualified) } : {}),
       nextSteps: readHint,
     });
-  } else if (result.timedOut) {
-    console.log(
-      pc.yellow(
-        `Timed out after ${opts.timeout ?? 600}s; ${fired.length}/${result.agents.length} finished`,
-      ),
-    );
-  } else if (dead.length > 0 && fired.length === 0) {
-    console.log(pc.red(`Agent pane(s) died: ${dead.map(qualified).join(", ")}`));
-  } else if (firing) {
-    console.log(`${pc.bold(qualified(firing))} finished`);
-    printNextSteps(readHint);
   } else {
-    console.log(`All ${result.agents.length} agent(s) finished`);
+    // A dead pane is reported whenever one happened, even beside agents
+    // that fired: the wait counts a death as done, so "All N finished"
+    // would hide a crashed worker.
+    if (dead.length > 0) {
+      console.log(pc.red(`Agent pane(s) died: ${dead.map(qualified).join(", ")}`));
+    }
+    if (result.timedOut) {
+      console.log(
+        pc.yellow(
+          `Timed out after ${opts.timeout ?? 600}s; ${fired.length}/${result.agents.length} finished`,
+        ),
+      );
+    } else if (firing) {
+      console.log(`${pc.bold(qualified(firing))} finished`);
+      printNextSteps(readHint);
+    } else if (fired.length === result.agents.length) {
+      console.log(`All ${result.agents.length} agent(s) finished`);
+    } else if (fired.length > 0) {
+      // --any, or --all where the rest died: name who finished.
+      console.log(
+        `${fired.map(qualified).join(", ")} finished (${fired.length}/${result.agents.length})`,
+      );
+    }
   }
 
-  // Exit-code mapping mirrors `mu task wait`: 6 (a watched pane died)
-  // wins over 5 (timeout); a clean met-condition is 0.
-  if (dead.length > 0 && fired.length === 0) {
+  // Exit-code mapping mirrors `mu task wait`: 6 (a watched pane died,
+  // even when others finished) wins over 5 (timeout); a clean
+  // met-condition is 0.
+  if (dead.length > 0) {
     process.exitCode = 6;
   } else if (result.timedOut) {
     process.exitCode = 5;
@@ -1015,6 +1027,7 @@ import {
   parseLines,
   parseNonNegativeInt,
   parsePositiveNumber,
+  parseSeconds,
   WORKSTREAM_OPT,
 } from "../cli.js";
 // wireSelfCommands needs cmdMyTasks / cmdMyNext which live in cli/tasks.ts
@@ -1243,8 +1256,8 @@ export function wireAgentCommands(program: Command): void {
     .option("--first", "alias for --any that also prints the firing agent's ref")
     .option(
       "--timeout <seconds>",
-      "max seconds to wait (0 = forever, default 600)",
-      parseNonNegativeInt,
+      "max seconds to wait, fractions allowed (0 = forever, default 600)",
+      parseSeconds,
     )
     .option(
       "--after-runs <n>",
