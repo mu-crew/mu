@@ -120,6 +120,25 @@ function formatEdgeList(edges: readonly TaskEdgeWithStatus[], dim: boolean): str
   return parts.join(", ");
 }
 
+/** A note whose whole text is empty, whitespace or a bare `-` is almost
+ *  always a mistake (an older mu stored `-` literally when stdin was
+ *  meant; a typo or an empty variable gives ""). It is still stored,
+ *  but loudly: the warning goes to stderr and the --json `warnings`. */
+export function suspiciousNoteWarnings(text: string): string[] {
+  const t = text.trim();
+  if (t === "") return ["note text is empty or whitespace only; stored anyway"];
+  if (t === STDIN_ARG) {
+    return [
+      `note text is a bare "-"; stored anyway. To read stdin, pass - and pipe the text: <<'EOF' ... EOF`,
+    ];
+  }
+  return [];
+}
+
+function emitWarnings(warnings: readonly string[]): void {
+  for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
+}
+
 export async function cmdTaskAdd(
   db: Db,
   localId: string | undefined,
@@ -163,6 +182,8 @@ export async function cmdTaskAdd(
       : opts.note !== undefined
         ? unescapeNoteText(opts.note)
         : undefined;
+  const warnings = noteText !== undefined ? suspiciousNoteWarnings(noteText) : [];
+  emitWarnings(warnings);
   const initialNoteAuthor =
     noteText !== undefined ? (opts.noteAuthor ?? (await resolveActorIdentity())) : undefined;
   const { task, note } = db.transaction(() => {
@@ -233,6 +254,7 @@ export async function cmdTaskAdd(
       ...(note !== null ? { note } : {}),
       nextSteps,
       ...truncationFields,
+      ...(warnings.length > 0 ? { warnings } : {}),
     });
     return;
   }
@@ -302,13 +324,20 @@ export async function cmdTaskNote(
   // notes are correctly attributed to the agent name.
   const author = opts.author ?? (await resolveActorIdentity());
   const text = content === STDIN_ARG ? await readStdinText("note text") : unescapeNoteText(content);
+  const warnings = suspiciousNoteWarnings(text);
+  emitWarnings(warnings);
   const note = addNote(db, localId, text, { author, workstream: ws });
   const nextSteps: NextStep[] = [
     { intent: "Show all notes on this task", command: `mu task notes ${localId} -w ${ws}` },
     { intent: "Show full task state", command: `mu task show ${localId} -w ${ws}` },
   ];
   if (opts.json) {
-    emitJson({ taskName: localId, note, nextSteps });
+    emitJson({
+      taskName: localId,
+      note,
+      nextSteps,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    });
     return;
   }
   console.log(pc.dim(`note appended to ${localId}`));
