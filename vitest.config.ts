@@ -21,7 +21,6 @@ export default defineConfig({
     // tmux integration in CI) erodes the "4-green-before-
     // commit" gate.
     maxWorkers: 1,
-    minWorkers: 1,
     // Layer 2 of bug_test_suite_flake_leaks_isolation: a hook that
     // runs ONCE after the full suite finishes, sweeping any leaked
     // tmux sessions whose names match the integration-fixture

@@ -29,12 +29,10 @@ import {
   type MuxBackend,
   type MuxBackendName,
   muxByName,
-  resetHerdrExecutor,
-  resetMux,
   setHerdrExecutor,
   setMuxForTests,
 } from "../src/mux.js";
-import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
+import { setTmuxExecutor } from "../src/tmux.js";
 
 // ─── Shared executor shape ─────────────────────────────────────────────
 //
@@ -67,7 +65,10 @@ export interface MuxHarness {
   readonly calls: readonly (readonly string[])[];
   /** Args of call `n`, or undefined. Sugar over `calls[n]`. */
   argsOf(n: number): readonly string[] | undefined;
-  /** Restore the previous backend + real executor. Call in afterEach. */
+  /**
+   * Restore the backend and executor that were active before this
+   * install, so nested installs unwind LIFO. Call in afterEach.
+   */
   restore(): void;
 }
 
@@ -122,11 +123,8 @@ export function installMux(
   };
 
   const previousBackend = setMuxForTests(muxByName(backend));
-  if (backend === "herdr") {
-    setHerdrExecutor(executor);
-  } else {
-    setTmuxExecutor(executor);
-  }
+  const previousExecutor =
+    backend === "herdr" ? setHerdrExecutor(executor) : setTmuxExecutor(executor);
 
   let restored = false;
   return {
@@ -137,12 +135,12 @@ export function installMux(
       // restore() must not clobber the NEXT test's harness.
       if (restored) return;
       restored = true;
+      // An outermost install saw `undefined`, so this re-arms detection.
       setMuxForTests(previousBackend);
-      resetMux();
       if (backend === "herdr") {
-        resetHerdrExecutor();
+        setHerdrExecutor(previousExecutor);
       } else {
-        resetTmuxExecutor();
+        setTmuxExecutor(previousExecutor);
       }
     },
   };
@@ -171,7 +169,6 @@ export function installUnreachableMux(
   return {
     restore() {
       setMuxForTests(previousBackend);
-      resetMux();
     },
   };
 }
