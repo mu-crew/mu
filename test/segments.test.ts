@@ -20,6 +20,7 @@ import {
   getWatermark,
   ingestSegment,
   localMachineId,
+  peerWatermarkKey,
   readManifest,
   resetWatermark,
   SEGMENT_FORMAT_VERSION,
@@ -168,6 +169,25 @@ describe("segments", () => {
     expect(task(b, "before")).toBeDefined();
     expect(task(b, "after")).toBeDefined();
     expect(getWatermark(b, localMachineId(a))).toBe(linesOf(path).length);
+  });
+
+  it("ingestSegment accepts the pre-watermarkKey PeerSegment shape (SDK compat)", async () => {
+    // PeerSegment / ingestSegment are exported from src/index.ts. A
+    // caller written before watermarkKey existed must still persist a
+    // watermark keyed by the machine id, not a NULL sync_peers row.
+    seedTask(a, "compat");
+    await flushSegment(a, dir);
+    const machineId = localMachineId(a);
+    const path = segFor(a);
+    const oldShape = { machineId, path, conflictCopy: false };
+    ingestSegment(b, oldShape);
+    ingestSegment(b, oldShape);
+
+    expect(task(b, "compat")).toBeDefined();
+    expect(getWatermark(b, machineId)).toBe(linesOf(path).length);
+    expect(b.prepare("SELECT machine_id FROM sync_peers WHERE machine_id IS NULL").all()).toEqual(
+      [],
+    );
   });
 
   // ─── round trip ──────────────────────────────────────────────────────
@@ -1008,7 +1028,7 @@ describe("segments", () => {
       const copy = peersFor(b).find((p) => p.conflictCopy);
       if (copy === undefined) throw new Error("expected the conflict copy");
       expect(copy.watermarkKey).not.toBe(copy.machineId);
-      expect(getWatermark(b, copy.watermarkKey)).toBe(linesOf(conflict).length);
+      expect(getWatermark(b, peerWatermarkKey(copy))).toBe(linesOf(conflict).length);
     });
 
     it("ignores non-segment files in the sync dir", async () => {
