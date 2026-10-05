@@ -31,7 +31,7 @@ beforeEach(() => {
   dbPath = join(tempDir, "mu.db");
   const db = openDb({ path: dbPath });
   ensureWorkstream(db, WS);
-  for (const id of ["f1", "f2", "fix_x"]) {
+  for (const id of ["f1", "f2", "fix_x", "fix"]) {
     addTask(db, {
       localId: id,
       workstream: WS,
@@ -131,6 +131,37 @@ describe("weak decision warnings", () => {
     expect(r.stderr).not.toContain("warning:");
   });
 
+  it("the threshold is 40 chars: 39 warns, 40 does not", async () => {
+    const c39 = "x".repeat(39);
+    const c40 = "x".repeat(40);
+    expect(
+      (await json(["task", "close", "f1", "--as", "rejected", "--why", c39])).body.warnings?.length,
+    ).toBe(1);
+    expect(
+      (await json(["task", "close", "f2", "--as", "rejected", "--why", c40])).body.warnings,
+    ).toEqual([]);
+  });
+
+  it("a whitespace-padded 39-char reason still warns (length is measured after trim)", async () => {
+    const { body } = await json([
+      "task",
+      "close",
+      "f1",
+      "--as",
+      "wontfix",
+      "--why",
+      `     ${"x".repeat(39)}     `,
+    ]);
+    expect(body.warnings?.[0]).toContain("--why is 39 chars");
+  });
+
+  it("a duplicate naming only a file stem (fix.ts, fix:12) still warns", async () => {
+    const { body } = await json(["task", "close", "f1", "--as", "duplicate", "--why", "fix.ts:3"]);
+    expect(body.warnings?.length).toBe(1);
+    const b = await json(["task", "close", "f2", "--as", "duplicate", "--why", "see fix:12"]);
+    expect(b.body.warnings?.length).toBe(1);
+  });
+
   it("(f) --json carries the warnings and the exit code is unchanged", async () => {
     const r = await json(["task", "close", "f1", "--as", "rejected", "--why", "no"]);
     expect(r.exitCode).toBeNull();
@@ -154,6 +185,32 @@ describe("decision notes stand alone", () => {
     db.close();
     expect(notesOf("f1").map((n) => n.content)).toContain(
       "SUPERSEDED: by fix_x (high: fix_x title)",
+    );
+  });
+
+  it("file names and line refs that share a task id are left as is", async () => {
+    const db = openDb({ path: dbPath });
+    closeTask(db, "f1", {
+      workstream: WS,
+      as: "rejected",
+      why: "the bug is in src/fix.ts:12 and fix.ts line 3, fix:7; fix is wrong",
+    });
+    db.close();
+    expect(notesOf("f1").map((n) => n.content)).toContain(
+      "REJECTED: the bug is in src/fix.ts:12 and fix.ts line 3, fix:7; fix (high: fix title) is wrong",
+    );
+  });
+
+  it("an id already followed by a parenthetical gets one merged parenthetical", async () => {
+    const db = openDb({ path: dbPath });
+    closeTask(db, "f1", {
+      workstream: WS,
+      as: "rejected",
+      why: "2 gaps: f2 (unlink runs after the cascade DELETE), fix_x (no test)",
+    });
+    db.close();
+    expect(notesOf("f1").map((n) => n.content)).toContain(
+      "REJECTED: 2 gaps: f2 (high: f2 title; unlink runs after the cascade DELETE), fix_x (high: fix_x title; no test)",
     );
   });
 
@@ -186,6 +243,16 @@ describe("lifecycle evidence notes carry the actor", () => {
     expect(authorOf("fix_x", "OPEN:")).toBe("orch");
     expect(authorOf("f1", "CLAIM:")).toBe("orch");
     expect(authorOf("f1", "RELEASE:")).toBe("orch");
+  });
+
+  it("a bare worker claim (no --for) attributes the CLAIM note to the claimer", async () => {
+    const db = openDb({ path: dbPath });
+    insertAgent(db, { name: "w2", workstream: WS, paneId: "%2" });
+    db.close();
+    process.env[AGENT_KEY] = "w2";
+    const r = await runCli(["task", "claim", "plain", "-w", WS, "--evidence", "mine"], dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(authorOf("plain", "CLAIM:")).toBe("w2");
   });
 
   it("claim --self evidence is attributed to the actor", async () => {
