@@ -93,8 +93,8 @@ per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
 - claude-code/codex: send `/new` (codex: `/clear`), then the prompt; a
   send it cannot confirm prints a `warning:` on stderr. For pi,
   `--fresh` does both in one step.
-- Use `mu agent send`, not raw mux input. Single-quote prompts
-  containing shell expansions, or use a quoted heredoc.
+- Use `mu agent send`, not raw mux input. Quote prompts per
+  [brief](brief.md#quoting).
 - Cross-workstream wait and claim use qualified refs; only task
   ownership crosses.
 

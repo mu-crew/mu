@@ -45,6 +45,7 @@ import {
   type UpdateTaskOptions,
   updateTask,
 } from "../../tasks.js";
+import { readStdinText, STDIN_ARG } from "../stdin.js";
 
 /**
  * Translate the small set of shell-style escapes (\n, \t, \r, \\)
@@ -154,8 +155,16 @@ export async function cmdTaskAdd(
   const id = derivation.id;
   const blockedBy = parseCsvFlag(opts.blockedBy, "-b/--blocked-by");
   const hasBlockers = blockedBy.length > 0;
+  // `--note -` reads stdin verbatim (no \\n unescaping: a heredoc has
+  // real newlines). Read before the transaction; it is async.
+  const noteText =
+    opts.note === STDIN_ARG
+      ? await readStdinText("--note")
+      : opts.note !== undefined
+        ? unescapeNoteText(opts.note)
+        : undefined;
   const initialNoteAuthor =
-    opts.note !== undefined ? (opts.noteAuthor ?? (await resolveActorIdentity())) : undefined;
+    noteText !== undefined ? (opts.noteAuthor ?? (await resolveActorIdentity())) : undefined;
   const { task, note } = db.transaction(() => {
     const createdTask = addTask(db, {
       localId: id,
@@ -167,8 +176,8 @@ export async function cmdTaskAdd(
       ...(opts.triage === true ? { triage: true } : {}),
     });
     const createdNote =
-      opts.note !== undefined
-        ? addNote(db, createdTask.name, unescapeNoteText(opts.note), {
+      noteText !== undefined
+        ? addNote(db, createdTask.name, noteText, {
             author: initialNoteAuthor,
             workstream,
           })
@@ -292,7 +301,8 @@ export async function cmdTaskNote(
   // wasn't propagating identity. After this fix, mu-spawned workers'
   // notes are correctly attributed to the agent name.
   const author = opts.author ?? (await resolveActorIdentity());
-  const note = addNote(db, localId, unescapeNoteText(content), { author, workstream: ws });
+  const text = content === STDIN_ARG ? await readStdinText("note text") : unescapeNoteText(content);
+  const note = addNote(db, localId, text, { author, workstream: ws });
   const nextSteps: NextStep[] = [
     { intent: "Show all notes on this task", command: `mu task notes ${localId} -w ${ws}` },
     { intent: "Show full task state", command: `mu task show ${localId} -w ${ws}` },

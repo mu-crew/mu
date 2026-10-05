@@ -417,6 +417,29 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   return { label: "error", exitCode: 1 };
 }
 
+/** prose-quoting: on the verbs that carry prose, "too many arguments"
+ *  nearly always means an apostrophe ended a single-quoted string and
+ *  bash split the rest into words. Point at the stdin form. */
+function quotingHint(err: unknown, cmd: Command | undefined): NextStep | undefined {
+  if (!(err instanceof CommanderError) || err.code !== "commander.excessArguments") return;
+  const verb = `${cmd?.parent?.name()} ${cmd?.name()}`;
+  const first = cmd?.args[0] ?? "<id>";
+  const command =
+    verb === "task add"
+      ? "mu task add <id> -t '<title>' -i <n> -e <days> --note - <<'EOF'"
+      : verb === "task note"
+        ? `mu task note ${first} - <<'EOF'`
+        : verb === "agent send"
+          ? `mu agent send ${first === "<id>" ? "<name>" : first} - <<'EOF'`
+          : undefined;
+  if (command === undefined) return;
+  return {
+    intent:
+      "a quote in the text probably ended the string early (an apostrophe inside '...'); pass long text with a quoted heredoc",
+    command,
+  };
+}
+
 /** Render error + nextSteps to stderr and return the resolved exit
  *  code. Returning the exitCode lets `handle` reuse it instead of
  *  re-classifying the same error twice (review_code_classify_error_called_twice).
@@ -440,6 +463,8 @@ function emitError(err: unknown): number {
     err instanceof CommanderError ? classifyCommanderError(err) : classifyError(err);
   const errClass = err instanceof Error ? err.name : "Error";
   const steps: NextStep[] = hasNextSteps(err) ? err.errorNextSteps() : [];
+  const quoting = quotingHint(err, activeCommand);
+  if (quoting) steps.push(quoting);
   // Strip commander's own "error: " prefix — we re-add our own "error: "
   // (red, in the human path) and don't want "error: error: ...".
   const cleanMessage =

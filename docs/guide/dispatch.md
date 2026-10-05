@@ -77,7 +77,9 @@ git commit -am '...' THEN
 mu task close build -w auth --evidence '...'
 ```
 
-Single-quote prompts that contain `$` or backticks. To see only what the worker wrote after the claim, run
+Single-quote short prompts. Pass prose (apostrophes, `$`, backticks) as `-` with a
+quoted heredoc: `mu agent send worker-1 - <<'EOF'`; see
+[brief](../../skills/mu/recipes/brief.md#quoting). To see only what the worker wrote after the claim, run
 `mu task notes build -w auth --since-claim`.
 
 ## Give each worker a workspace

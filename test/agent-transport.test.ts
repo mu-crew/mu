@@ -19,6 +19,7 @@ import {
   sendToAgent,
   sendViaTransport,
 } from "../src/agents.js";
+import { setStdinReaderForTests } from "../src/cli/stdin.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -321,6 +322,20 @@ describe("pi session commands over ctl", () => {
 });
 
 describe("mu agent send transport", () => {
+  it("`-` sends stdin verbatim (prose-quoting)", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"));
+    const brief = "it's the worker's task: $HOME `pwd`";
+    setStdinReaderForTests(async () => `${brief}\n`);
+    try {
+      const r = await runCli(["agent", "send", "worker-1", "-", "-w", "auth", "--fresh"], dbPath);
+      expect(r.exitCode).toBeNull();
+    } finally {
+      setStdinReaderForTests(null);
+    }
+    expect(received).toEqual([{ op: "fresh", text: brief }]);
+  });
+
   it("reports transport ctl in --json", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));

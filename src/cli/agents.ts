@@ -61,6 +61,7 @@ import { detectBackend, type VcsBackendName } from "../vcs.js";
 import { getWorkspaceForAgent } from "../workspace.js";
 import { abortHint, dispatchHint, plainSendHints } from "./dispatch-hints.js";
 import { checkWorkspaceStalenessForDispatch } from "./staleness.js";
+import { readStdinText, STDIN_ARG } from "./stdin.js";
 
 interface SpawnOpts {
   cli?: string;
@@ -217,7 +218,7 @@ function parseVia(raw: string | undefined): Transport | undefined {
 export async function cmdSend(
   db: Db,
   rawName: string,
-  text: string,
+  rawText: string,
   opts: {
     workstream?: string;
     json?: boolean;
@@ -229,6 +230,7 @@ export async function cmdSend(
   } = {},
 ): Promise<void> {
   const via = parseVia(opts.via);
+  const text = rawText === STDIN_ARG ? await readStdinText("send text") : rawText;
   if (opts.force && !opts.fresh && parseSessionCommand(text) === undefined) {
     throw new UsageError("--force only applies with --fresh or a /new, /reload, /compact");
   }
@@ -985,7 +987,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("send <name> <text>")
     .description(
-      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback); '/new', '/reload' and '/compact [instructions]' run inside pi over the socket (refused while busy unless --force), any other slash command is refused (--via mux types it into the pane). Non-pi CLIs: pasted into the pane (atomic on herdr; bracketed-paste on tmux). --fresh (pi only): start a new session and send the text into it as one operation; returns once the prompt's run has started, so an immediate next send cannot be lost. Use it instead of sending '/new' then the prompt",
+      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback); '/new', '/reload' and '/compact [instructions]' run inside pi over the socket (refused while busy unless --force), any other slash command is refused (--via mux types it into the pane). Non-pi CLIs: pasted into the pane (atomic on herdr; bracketed-paste on tmux). --fresh (pi only): start a new session and send the text into it as one operation; returns once the prompt's run has started, so an immediate next send cannot be lost. Use it instead of sending '/new' then the prompt. Text `-` reads stdin: single-quote short text; pipe prose (apostrophes, $, backticks) as a quoted heredoc: mu agent send <name> - <<'EOF'",
     )
     .option(
       "--strict-staleness",
