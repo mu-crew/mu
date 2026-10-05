@@ -171,7 +171,17 @@ export function extractDocCommands(file: string, source: string): DocCommand[] {
  *  every command containing a `<placeholder>` — i.e. almost all of
  *  them, including the `--source` row this guard exists to catch.
  *  Placeholders are the norm in docs; redirection is not. */
-const UNCHECKABLE = /[$`|]|&&|\s[<>]\s|\.\.\.$|\bmu\b.*\bmu\b/;
+const UNCHECKABLE = /[$`|]|&&|\s[<>]\s|\.\.\.$/;
+
+/** A second `mu` in command position means two chained invocations.
+ *  Quoted text is one argument (a brief that names `mu task notes`), and
+ *  `mu` inside a word or path (`/tmp/mu-backup.db`) is no command, so
+ *  neither counts. An earlier `\bmu\b.*\bmu\b` matched both and
+ *  silently skipped those commands. */
+function chainsSecondMu(text: string): boolean {
+  const unquoted = text.replace(/'[^']*'|"[^"]*"/g, "''");
+  return (unquoted.match(/(?:^|[\s;(])mu(?=\s|$)/g) ?? []).length > 1;
+}
 
 interface Resolved {
   cmd: Command;
@@ -213,7 +223,7 @@ function knownFlag(cmd: Command, flag: string): boolean {
 /** Validate one extracted command against the commander tree.
  *  Returns a reason string when it does not parse, else null. */
 export function checkDocCommand(root: Command, cmd: DocCommand): string | null {
-  if (UNCHECKABLE.test(cmd.text)) return null;
+  if (UNCHECKABLE.test(cmd.text) || chainsSecondMu(cmd.text)) return null;
 
   const tokens = tokenize(unwrapOptionalBrackets(cmd.text));
   if (tokens[0] !== "mu") return null;

@@ -121,7 +121,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
 | `src/agents/transport.ts` | send routing: ctl for pi agents, mux paste otherwise, no fallback; `expectsCtl` |
 | `src/agents/abort.ts` | stop a pi turn through the control socket; abort + send (`--interrupt`) |
-| `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `died` / `timeout` / `pending` |
+| `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `error` / `died` / `timeout` / `pending` |
 | `src/agents/wait.ts` | block until task-less agents leave `busy` |
 | `src/agents/adopt.ts` | register an existing pane as an agent |
 | `src/agents/kick.ts` | `mu agent kick`: signal a wedged pane's foreground process group |

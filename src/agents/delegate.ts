@@ -2,8 +2,8 @@
 // delegate (a scratch agent started for one task).
 //
 // The classification lives here, not in the pi extension, so the
-// `mu_delegate` tool has no logic the CLI lacks (ROADMAP § Pi extension
-// and the three rules, rule 2): `mu agent wait --json` reports it per
+// `mu_delegate` tool has no logic the CLI lacks (VISION § 1, The CLI
+// is the product, rule 2): `mu agent wait --json` reports it per
 // agent as `outcome`, and the extension only formats it.
 
 import type { AgentWaitAgentState } from "./wait.js";

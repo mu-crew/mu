@@ -133,6 +133,28 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **Typed `mu task add` input errors exit 2.** An invalid task id now exits 2 (usage, with `--help`), like an invalid workstream name. It used to exit 4. A title with no ASCII letter or digit (for example `日本語`) raises `TaskTitleSlugEmptyError` (exit 2) and says to pass the `<id>` positional. It used to be a generic exit 1.
 - **Auto-derived ids keep a word that ends exactly at the 40-character cap.** That word used to be dropped.
 - **Correct hints.** `mu task tree --down` says "omit --down" (there is no `--no-down`). The "commit" hint on `mu task close` matches the workspace's VCS and includes untracked files (`git add -A && git commit -m`, `jj commit -m`, `sl commit --addremove -m`). Before, it was always `git commit -am`, which refuses when only untracked files are dirty. The dormant-workstream hint lists `OPEN,IN_PROGRESS` tasks to match its unclosed count. The invalid-workstream-name hint no longer suggests a name that fails the same check. The invalid-task-id hint no longer names a nonexistent `--id` flag, and the not-found hint no longer prints the same recipe twice.
+- **README quick start runs as written.** `mu workstream init` does not
+  attach you to `mu-<name>`, so the next verb failed with "workstream
+  required". The quick start now exports `MU_SESSION`.
+- **The migration recipe says it needs a git checkout.** The npm package
+  ships neither `scripts/` nor `src/`; `docs/guide/upgrade.md`,
+  `scripts/README.md`, and the `SchemaTooOldError` next step now say so.
+- **The `drift-audit` recipe's check 3 no longer flags every closed
+  task.** Its query counted the `CLOSE:` / `<SUBSTATE>:` note that
+  `mu task close` writes right after the close op; it now skips them.
+- **Docs match the code.** `mu_` is no reserved task-id prefix (skill
+  guardrail removed). Task ids allow 64 chars and are unique per
+  workstream; `--tab` names are not validated; no
+  `<state-dir>/workstreams/` dir exists (`docs/reference/naming.md`).
+  `docs/reference/env.md` lists `TMUX`, `TMUX_PANE`, `HERDR_PANE_ID` and
+  `HERDR_WORKSPACE_ID`, and says `MU_TMUX_SOCKET` skips `~/.tmux.conf`.
+  The DB partitions by `workstream_id` (no `session_id` column).
+  `workstream destroy` is `workstream teardown`. The delegate outcome
+  list includes `error`. VISION no longer claims the TUI runs no
+  subprocesses.
+- **The doc/CLI drift test checks more commands.** `mu` inside a path
+  or a quoted brief no longer exempts a command, and `drift-audit.md`
+  is checked (a test now fails if a recipe is left out).
 
 ## [3.8.1] — 2026-10-05
 

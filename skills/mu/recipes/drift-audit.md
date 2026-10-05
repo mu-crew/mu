@@ -34,12 +34,13 @@ or close you compare against is often older than it.
 2. Stale pins: for each build/binary sha or oracle commit named in an
    IN_PROGRESS note, and each merged fix its task's findings depend on:
    git merge-base --is-ancestor <fix> <pinned>. Exit 1 = pin is stale.
-3. Closed-task notes: notes added after the task's last task.close op.
-   Report each of the top 5 by count as its own finding with its count,
+3. Closed-task notes: notes added after the task's last task.close op,
+   minus the `CLOSE:` and `<SUBSTATE>:` notes the close verb itself
+   writes just after that op. Report each of the top 5 by count as its own finding with its count,
    even when the notes look routine. A late note that reports the
    closed bug again usually ran on a build without the closing fix:
    check its sha with git merge-base --is-ancestor <fix> <sha>.
-   mu sql "select t.local_id name, count(*) late from tasks t join workstreams w on w.id=t.workstream_id join task_notes n on n.task_id=t.id where w.name='<ws>' and t.status='CLOSED' and n.created_at > (select max(o.created_at) from ops o where o.intent='task.close' and o.key='<ws>/'||t.local_id) group by t.local_id order by late desc"
+   mu sql "select t.local_id name, count(*) late from tasks t join workstreams w on w.id=t.workstream_id join task_notes n on n.task_id=t.id where w.name='<ws>' and t.status='CLOSED' and n.content not like 'CLOSE: %' and n.content not like upper(t.substate)||': %' and n.created_at > (select max(o.created_at) from ops o where o.intent='task.close' and o.key='<ws>/'||t.local_id) group by t.local_id order by late desc"
 4. Thin decisions: an ACCEPT/REJECTED/CLOSE/SUPERSEDED note under 40
    chars; a refuter tally with no REFUTER or VERDICT note; a review the
    orchestrator closed with no FILES/COMMANDS note and no commit.

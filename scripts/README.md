@@ -4,6 +4,8 @@ Retained migration sidecars. Nothing here is wired into the `mu` binary or impor
 
 ## `migrate.ts` — v7 to v11, and v11 to v11
 
+Run from a git checkout of mu: the npm package ships neither `scripts/` nor the `src/` modules the script imports, and `npx tsx` fetches tsx on first use.
+
 `openDb` does not migrate existing databases in place. `scripts/migrate.ts` detects a v7, v8, v9, v10, or v11 source and writes a fresh v11 target:
 
 ```bash

@@ -264,8 +264,8 @@ Close the task as your last action, or the orchestrator's wait hangs.
 ## Guardrails
 
 Task ownership outranks agent state. Coordinate through task notes and
-the activity log. Keep edges within one workstream and reserve the `mu_`
-task-id prefix. Give workers bounded paths and commands.
+the activity log. Keep edges within one workstream. Give workers
+bounded paths and commands.
 
 ## Recipes
 
