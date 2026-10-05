@@ -1,6 +1,6 @@
 ---
 name: mu
-description: Manage AI agents in terminal-multiplexer panes (tmux or herdr) — from a single off-the-cuff helper to a persistent crew coordinated through a built-in task graph. Use when the user asks to "create/spin up a subagent to X", "run X in the background", "do this in parallel", "use one subagent per X to do Y", "kick off a helper to watch/investigate/draft X", or to spawn, send work to, observe, or coordinate one or many agents — especially work you'll keep talking to, long-lived or background agents, or anything needing a dependency graph. For zero-ceremony helpers use the reserved `scratch` workstream; for one-shot "fire and get a result back" use the `mu_delegate` tool — its pane is attachable while it runs.
+description: Fresh-context subagents and crews in tmux/herdr panes. Check before you commit: before acting on a claim, root cause, plan, fix or brief, have a `mu_delegate` call refute it. Also for a fresh delegate's second look at your own work or diff; parallel read-only research, investigation or fan-out over files; background helpers (watchers, soak runs, agents you keep talking to); persistent crews with a task graph, review gates and merges. Outside pi, delegate through the reserved `scratch` workstream.
 ---
 
 # mu — Multi-agent orchestration
@@ -65,7 +65,11 @@ Use mu for persistent helpers, parallel work, dependencies, gated review, or
 work that must survive context compaction. Stay in one context for tiny edits
 or inspection.
 
-### Off-the-cuff helpers (`scratch`)
+### Quick checks and off-the-cuff helpers (`scratch`)
+
+Before you act on a claim, root cause, plan, fix or brief, or to get a second
+look at your own work or diff, make a [delegate call](recipes/tasks-or-calls.md#delegate-call)
+that tries to refute it (briefs: see Orchestrator rules; many claims: [refute](recipes/refute.md)).
 
 For one-shot work inside pi, call `mu_delegate` (installed by `mu link pi`).
 Outside pi: spawn into the reserved `scratch` workstream (no task DAG,
