@@ -268,7 +268,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   "(no intent)" group.
 - `mu sql --confirm-rows` counts the same rows for one statement as for
   a script: rows removed by `ON DELETE CASCADE` are now counted on both
-  paths. `UPDATE ... RETURNING` is accepted as a write.
+  paths. `UPDATE ... RETURNING` is accepted as a write. The SQL runs
+  once: the count comes from the same execution that commits, so a
+  nondeterministic `WHERE` can no longer commit a count other than N.
 - `mu sql` refuses to change a natural-key column (`workstreams.name`,
   `tasks.workstream_id`, `tasks.local_id`, a note's task, an edge's
   endpoints). Such an UPDATE wrote no op, so the ops log, sync, undo,

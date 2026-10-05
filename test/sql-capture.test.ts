@@ -177,6 +177,58 @@ describe("mu sql --confirm-rows", () => {
     expect(row.impact).toBe(72);
   });
 
+  it("counts a workstream delete's whole cascade, capture overhead excluded", async () => {
+    db.exec(
+      "INSERT INTO task_notes (task_id, author, content, created_at) SELECT id, 'u', 'n', 'z' FROM tasks",
+    );
+    // 1 workstream + 3 tasks + 3 notes + 1 edge.
+    await expect(cmdSql(db, "DELETE FROM workstreams", { confirmRows: 7 })).rejects.toThrow(
+      /expected 7 rows, would have affected 8/,
+    );
+    expect(countTasks()).toBe(3);
+    const seq = maxSeq();
+    await cmdSql(db, "DELETE FROM workstreams; SELECT 1", { confirmRows: 8 });
+    expect(countTasks()).toBe(0);
+    expect(opsAfter(seq)).toHaveLength(8);
+  });
+
+  // g_fix_ops_capture_confirm_rows_double_run: the count used to come
+  // from a rolled-back probe and the SQL then ran AGAIN for the commit,
+  // so a nondeterministic WHERE could commit a count nobody confirmed.
+  it.each([
+    ["single statement", ""],
+    ["script", "; SELECT 1"],
+  ])("commits exactly the confirmed count of ONE run (%s)", async (_label, suffix) => {
+    for (let i = 4; i <= 20; i++) {
+      addTask(db, { workstream: "w", localId: `t${i}`, title: "t", impact: 1, effortDays: 1 });
+    }
+    db.exec("UPDATE tasks SET impact = 1");
+    const sum = (): number =>
+      (db.prepare("SELECT SUM(impact) AS n FROM tasks").get() as { n: number }).n;
+    const sql = `UPDATE tasks SET impact = impact + 1 WHERE abs(random()) % 2 = 0${suffix}`;
+    let ok = 0;
+    let refused = 0;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const before = sum();
+      const seq = maxSeq();
+      try {
+        await cmdSql(db, sql, { confirmRows: 10 });
+      } catch (err) {
+        expect(err).toBeInstanceOf(UsageError);
+        expect(sum()).toBe(before);
+        expect(opsAfter(seq)).toEqual([]);
+        refused++;
+        continue;
+      }
+      expect(sum() - before).toBe(10);
+      expect(opsAfter(seq)).toHaveLength(10);
+      ok++;
+    }
+    // C(20,10)/2^20 is ~18%: both outcomes occur in 200 tries.
+    expect(ok).toBeGreaterThan(0);
+    expect(refused).toBeGreaterThan(0);
+  });
+
   it("still refuses a read", async () => {
     await expect(cmdSql(db, "SELECT * FROM tasks", { confirmRows: 1 })).rejects.toThrow(
       /only meaningful on write statements/,

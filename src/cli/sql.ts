@@ -13,9 +13,10 @@
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
+import { captureBookkeepingChanges } from "../capture.js";
 import { emitJson, UsageError } from "../cli.js";
 import type { Db } from "../db.js";
-import { withCaptureSuppressed, withOpContext } from "../op-context.js";
+import { currentOpContext, withOpContext } from "../op-context.js";
 import { muTable, pc } from "../output.js";
 
 export async function cmdSql(
@@ -60,8 +61,7 @@ function runSql(db: Db, query: string, opts: { json?: boolean; confirmRows?: num
     // an opaque blob.
     if (opts.confirmRows !== undefined) {
       const expected = opts.confirmRows;
-      const actual = probeAffectedRows(db, trimmed, expected);
-      runInTransaction(db, () => db.exec(trimmed));
+      const { actual } = runConfirmed(db, expected, () => db.exec(trimmed));
       const n = countTopLevelStatements(trimmed);
       if (opts.json) {
         emitJson({
@@ -101,8 +101,7 @@ function runSql(db: Db, query: string, opts: { json?: boolean; confirmRows?: num
       );
     }
     const expected = opts.confirmRows;
-    const actual = probeAffectedRows(db, trimmed, expected);
-    const result = runInTransaction(db, () => single.run([]));
+    const { result, actual } = runConfirmed(db, expected, () => single.run([]));
     if (opts.json) {
       emitJson({
         changes: result.changes,
@@ -162,48 +161,39 @@ function runSql(db: Db, query: string, opts: { json?: boolean; confirmRows?: num
 }
 
 /**
- * The --confirm-rows probe, shared by the single- and multi-statement
- * paths so the same statement always gets the same count. Runs `sql` in
- * a transaction, measures it, and ALWAYS rolls back; throws a UsageError
- * on a mismatch, otherwise returns the count for the caller to report
- * after it re-runs the SQL for real.
+ * The --confirm-rows run, shared by the single- and multi-statement
+ * paths so the same statement always gets the same count. Runs `exec`
+ * ONCE, with capture ON, inside one transaction; COMMITs only when the
+ * count of THAT execution equals `expected`, else ROLLs BACK and throws
+ * a UsageError. There is no measure-then-rerun: a nondeterministic or
+ * state-dependent statement (`WHERE abs(random()) % 2 = 0`) could pick
+ * different rows on a second run and commit a count nobody confirmed.
  *
  * The count is the total_changes() delta: every row the SQL changes,
  * INCLUDING rows removed by ON DELETE CASCADE (deleting a task also
- * deletes its edges and notes). It used to be cascades-included on the
- * multi path and `stmt.changes` (cascades excluded) on the single path,
- * so the same DELETE counted 1 alone and 2 with a `; SELECT 1` after it.
- * The cascade-inclusive number is the honest blast radius.
+ * deletes its edges and notes). That is the honest blast radius, and it
+ * is the same number whether the statement runs alone or in a script.
  *
- * Capture bookkeeping is NOT counted. A write to a portable table also
- * runs a capture trigger whose body is several statements (the op
- * INSERT plus the HLC clock UPDATEs), all of which total_changes()
- * counts, inflating the number ~5x. So the probe runs with capture
- * suppressed, and the `before` baseline is sampled INSIDE the
- * suppressed scope, after withCaptureSuppressed's own UPDATE on
- * _op_ctx. Suppressing is safe because the probe is always rolled back;
- * the caller re-runs with capture ON, so no uncaptured write commits.
+ * Capture bookkeeping is NOT counted. Each captured row change also runs
+ * a capture trigger whose body is several statements (the op INSERT
+ * plus the HLC clock UPDATEs), all of which total_changes() counts.
+ * captureBookkeepingChanges() derives that overhead from the ops this
+ * call's group wrote, and it is subtracted from the delta.
  */
-function probeAffectedRows(db: Db, sql: string, expected: number): number {
-  db.exec("BEGIN IMMEDIATE");
-  let actual: number;
-  try {
-    actual = withCaptureSuppressed(db, () => {
-      const before = totalChanges(db);
-      db.exec(sql);
-      return totalChanges(db) - before;
-    });
-  } finally {
-    try {
-      db.exec("ROLLBACK");
-    } catch {}
-  }
-  if (actual !== expected) {
-    throw new UsageError(
-      `expected ${expected} rows, would have affected ${actual} (rolled back). Re-run with --confirm-rows ${actual} if intentional.`,
-    );
-  }
-  return actual;
+function runConfirmed<T>(db: Db, expected: number, exec: () => T): { result: T; actual: number } {
+  const groupId = currentOpContext(db).groupId;
+  return runInTransaction(db, () => {
+    const before = totalChanges(db);
+    const result = exec();
+    const delta = totalChanges(db) - before;
+    const actual = groupId === null ? delta : delta - captureBookkeepingChanges(db, groupId);
+    if (actual !== expected) {
+      throw new UsageError(
+        `expected ${expected} rows, would have affected ${actual} (rolled back). Re-run with --confirm-rows ${actual} if intentional.`,
+      );
+    }
+    return { result, actual };
+  });
 }
 
 function totalChanges(db: Db): number {
