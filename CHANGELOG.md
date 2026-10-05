@@ -91,6 +91,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - `mu workspace refresh` on sl now fails when `sl rebase` fails for a
   reason other than a conflict (bad `--from` ref, unresolvable
   `trunk()`). Before, it reported success.
+- `mu workspace refresh` on a workspace already on its base now prints
+  "already at <ref> — nothing to replay" and `--json` returns an empty
+  `replayed`. Before, it listed every commit above the fork point as
+  replayed although the rebase moved nothing.
 - `mu workspace refresh --help` and the conflict hint no longer say a
   git or sl workspace is left mid-rebase to resolve. Those backends
   abort the rebase, so the hint now says to rebase by hand. jj keeps the
