@@ -10,6 +10,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.8.1] — 2026-10-05
+
+**The mu skill loads again.** 3.8.0's skill description contained ": ",
+which YAML reads as a nested mapping, so pi rejected the frontmatter
+("Nested mappings are not allowed in compact mappings") and dropped the
+mu skill. The description is now a folded block scalar with the same
+text, and a test checks SKILL.md frontmatter the way it already checked
+prompt templates.
+
+Upgrade with `npm i -g @mu-crew/mu@3.8.1`, then restart pi or `/reload`.
+No schema change.
+
 ## [3.8.0] — 2026-10-05
 
 **Checks before you commit, and decisions that keep their evidence.**
