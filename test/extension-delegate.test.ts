@@ -997,6 +997,47 @@ describe("record", () => {
     expect(notes(mu)[0]?.at(-1)).toBe("REFUTER r: no verdict (cancelled)");
   });
 
+  it("a done answer that is only whitespace records a no-verdict note (empty)", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    mu.waits
+      .get("delegate-r")
+      ?.resolve(ok({ agents: [{ outcome: "done", lastText: " \n\t\n " }] }));
+    await settle();
+    expect(notes(mu)).toHaveLength(1);
+    expect(notes(mu)[0]?.at(-1)).toBe("REFUTER r: no verdict (empty)");
+  });
+
+  it("cancelling a queued delegate records a no-verdict note on its task", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    try {
+      const mu = fakeMu();
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      await tool(p).execute("a", { task: "one" });
+      await tool(p).execute("b", { task: "two", label: "r", record: { task: "f9" } });
+      const c = await tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "queued-1" });
+      expect(notes(mu)).toEqual([
+        [
+          "task",
+          "note",
+          "f9",
+          "-w",
+          "crew",
+          "--author",
+          "queued-1",
+          "REFUTER r: no verdict (cancelled)",
+        ],
+      ]);
+      expect(c.content[0]?.text).toContain("never started. Recorded on crew/f9 as a note.");
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
   it("an unknown task fails the call before anything spawns", async () => {
     const mu = fakeMu({
       task: {
