@@ -178,7 +178,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("note <id> [text]")
     .description(
-      "Append a note to a task. The note text may be given positionally or via --text (dogfood-note-arg-shape: `mu task add --note` is a flag, so the flag form is what you reach for on the follow-up). Author defaults to $MU_AGENT_NAME (env injected at spawn) > pane title > $USER > 'orchestrator'; pass --author to override. Quoting: single quotes for short text; for prose (an apostrophe ends '...', double quotes expand $VAR and `cmd`) pass `-` and pipe a quoted heredoc: mu task note <id> - <<'EOF'. Stdin text is stored verbatim (no \\n unescaping).",
+      "Append a note to a task. The note text may be given positionally or via --text (dogfood-note-arg-shape: `mu task add --note` is a flag, so the flag form is what you reach for on the follow-up). Author defaults to $MU_AGENT_NAME (env injected at spawn) > pane title > $USER > 'orchestrator'; pass --author to override. Quoting: single quotes for short text; for prose (an apostrophe ends '...', double quotes expand $VAR and `cmd`) pass `-` and pipe a quoted heredoc: mu task note <id> - <<'EOF'. Stdin text is stored verbatim (no \\n unescaping); a bare `-` or empty note warns.",
     )
     .option("--author <name>", "override the auto-detected author label")
     .option(

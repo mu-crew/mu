@@ -196,8 +196,8 @@ rules hold even when you skip it:
 - **For waits use `task wait`, not `log --tail`.** `mu log --kind <k>`
   entries are your own durable state (a ledger); `--intent` filters what
   mu recorded.
-- **Prose in notes or prompts**: an apostrophe ends `'...'`; pipe it via
-  `-` with a quoted heredoc ([brief](recipes/brief.md#quoting)).
+- **Prose in notes, prompts, `--why` or `--evidence`**: an apostrophe
+  ends `'...'`; use a quoted heredoc ([brief](recipes/brief.md#quoting)).
 - **`mu sql`** does not pull synced ops; run any other mu command first.
 - **Never put `MU_DB_PATH` inside `MU_SYNC_DIR`**: it corrupts the DB.
 - Before undo, rebuild, teardown (dry-run without `--yes`), sync setup,

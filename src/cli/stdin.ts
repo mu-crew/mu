@@ -25,7 +25,8 @@ export function setStdinReaderForTests(fn: StdinReader | null): void {
   reader = fn;
 }
 
-/** Read the text verbatim, minus the trailing newline a heredoc adds.
+/** Read the text verbatim, minus all trailing newlines (as bash
+ *  `$(...)` strips them); interior newlines are kept.
  *  Empty input is a UsageError: `-` with nothing piped is a mistake. */
 export async function readStdinText(what: string): Promise<string> {
   const text = (await (reader ?? readProcessStdin)()).replace(/\n+$/, "");

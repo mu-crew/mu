@@ -120,3 +120,69 @@ describe("too-many-arguments quoting hint", () => {
     expect(missing.stderr).not.toMatch(HINT);
   });
 });
+
+describe("--help states the quoting rule", () => {
+  it("task add, task note and agent send name `-` and the quoted heredoc", async () => {
+    const add = await runCli(["task", "add", "--help"], dbPath);
+    expect(add.stdout.replace(/\s+/g, " ")).toContain(
+      "`-` reads it from stdin (prose: --note - <<'EOF')",
+    );
+    const note = await runCli(["task", "note", "--help"], dbPath);
+    const noteHelp = note.stdout.replace(/\s+/g, " ");
+    expect(noteHelp).toContain("an apostrophe ends '...'");
+    expect(noteHelp).toContain("mu task note <id> - <<'EOF'");
+    expect(noteHelp).toContain("`-` reads stdin");
+    expect(noteHelp).toContain("a bare `-` or empty note warns");
+    const send = await runCli(["agent", "send", "--help"], dbPath);
+    const sendHelp = send.stdout.replace(/\s+/g, " ");
+    expect(sendHelp).toContain("Text `-` reads stdin");
+    expect(sendHelp).toContain("mu agent send <name> - <<'EOF'");
+  });
+});
+
+describe("a note that is only `-`, empty or whitespace is loud", () => {
+  // How it happens: an older mu (no stdin form) stored `-` literally, a
+  // variable was empty, or stdin itself held only `-`. The checks run on
+  // the text after the stdin step, i.e. on what would be stored.
+  const BARE_DASH = /warning: note text is a bare "-"/;
+  const EMPTY = /warning: note text is empty or whitespace only/;
+
+  it("task note with empty or whitespace text warns on stderr and in --json", async () => {
+    await runCli(["task", "add", "a", "-t", "A", "-i", "5", "-e", "1", "-w", "ws"], dbPath);
+    const empty = await runCli(["task", "note", "a", "", "-w", "ws"], dbPath);
+    expect(empty.exitCode).toBeNull();
+    expect(empty.stderr).toMatch(EMPTY);
+    const ws = await runCli(["task", "note", "a", "   ", "-w", "ws", "--json"], dbPath);
+    expect((JSON.parse(ws.stdout) as { warnings?: string[] }).warnings?.[0]).toMatch(
+      /empty or whitespace/,
+    );
+    const ok = await runCli(["task", "note", "a", "fine", "-w", "ws", "--json"], dbPath);
+    expect(ok.stderr).not.toMatch(/warning:/);
+    expect(JSON.parse(ok.stdout)).not.toHaveProperty("warnings");
+  });
+
+  it("stdin that is itself just `-` warns instead of storing it silently", async () => {
+    setStdinReaderForTests(async () => "-\n");
+    await runCli(["task", "add", "a", "-t", "A", "-i", "5", "-e", "1", "-w", "ws"], dbPath);
+    const r = await runCli(["task", "note", "a", "-", "-w", "ws", "--json"], dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(r.stderr).toMatch(BARE_DASH);
+    expect((JSON.parse(r.stdout) as { warnings?: string[] }).warnings?.[0]).toMatch(/bare "-"/);
+    expect(await noteContents("a")).toEqual(["-"]);
+  });
+
+  it("task add --note with a bare `-` from stdin or whitespace warns", async () => {
+    setStdinReaderForTests(async () => " - \n");
+    const r = await runCli(
+      ["task", "add", "a", "-t", "A", "-i", "5", "-e", "1", "-w", "ws", "--note", "-", "--json"],
+      dbPath,
+    );
+    expect(r.stderr).toMatch(BARE_DASH);
+    expect((JSON.parse(r.stdout) as { warnings?: string[] }).warnings).toHaveLength(1);
+    const b = await runCli(
+      ["task", "add", "b", "-t", "B", "-i", "5", "-e", "1", "-w", "ws", "--note", " "],
+      dbPath,
+    );
+    expect(b.stderr).toMatch(EMPTY);
+  });
+});

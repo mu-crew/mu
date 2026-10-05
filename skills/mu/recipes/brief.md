@@ -46,7 +46,7 @@ VERIFY: <exact command>
 
 ⚠️ FINAL ACTION
 git commit -am '<msg>' THEN
-mu task close <id> -w <ws> --evidence '<command + result>'
+mu task close <id> -w <ws> --evidence "$v"   # command + result; see Quoting
 ```
 
 ## Quoting
@@ -62,7 +62,18 @@ EOF
 ```
 
 `mu task add --note -`, `--text -` and `mu agent send <a> -` read stdin
-the same way. Chain batched adds with `&&`, then `mu task list`, so one
+the same way. `--why` and `--evidence` have no `-` form: capture the
+heredoc in a variable and double-quote it:
+
+```bash
+v=$(cat <<'EOF'
+it's fine: $HOME stays literal
+EOF
+)
+mu task close <id> -w <ws> --evidence "$v"
+```
+
+Chain batched adds with `&&`, then `mu task list`, so one
 quoting failure cannot half-apply the batch unseen.
 
 Done when a worker with no other context could finish the task from
