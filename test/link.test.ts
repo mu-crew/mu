@@ -100,6 +100,30 @@ describe("mu link pi", () => {
     expect(existsSync(other)).toBe(true);
   });
 
+  it("linkPi never writes through a symlinked mu.ts; --force replaces the link only", () => {
+    const dev = join(home, "dev", "mu.ts");
+    mkdirSync(join(home, "dev"));
+    writeFileSync(dev, "// dev checkout source\n");
+    mkdirSync(join(home, ".pi", "agent", "extensions"), { recursive: true });
+    const path = join(home, ".pi", "agent", "extensions", "mu.ts");
+    symlinkSync(dev, path);
+    expect(() => linkPi({ home })).toThrow(LinkConflictError);
+    expect(readFileSync(dev, "utf8")).toBe("// dev checkout source\n");
+    linkPi({ home, force: true });
+    expect(lstatSync(path).isSymbolicLink()).toBe(false);
+    expect(readFileSync(path, "utf8")).toContain(MU_SHIM_MARKER);
+    expect(readFileSync(dev, "utf8")).toBe("// dev checkout source\n");
+  });
+
+  it("linkPi replaces a dangling mu.ts symlink without force", () => {
+    mkdirSync(join(home, ".pi", "agent", "extensions"), { recursive: true });
+    const path = join(home, ".pi", "agent", "extensions", "mu.ts");
+    symlinkSync(join(home, "gone.ts"), path);
+    linkPi({ home });
+    expect(lstatSync(path).isSymbolicLink()).toBe(false);
+    expect(existsSync(join(home, "gone.ts"))).toBe(false);
+  });
+
   it("inspectLinks: missing/missing on an empty home, ok/ok after both", () => {
     const before = inspectLinks({ home });
     expect(before.extension.state).toBe("missing");

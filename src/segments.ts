@@ -186,7 +186,7 @@ export function localMachineId(db: Db): string {
   const row = db.prepare("SELECT machine_id FROM machine_identity WHERE id = 1").get() as
     | { machine_id: string }
     | undefined;
-  if (row === undefined) throw new Error("machine_identity row missing; not a v9 mu DB");
+  if (row === undefined) throw new Error("machine_identity row missing; not a mu DB");
   return row.machine_id;
 }
 

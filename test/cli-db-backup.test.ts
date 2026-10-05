@@ -1,4 +1,4 @@
-// `mu db backup` — the only survivor of the old `db` namespace.
+// `mu db backup` — the survivor of the old `db` export/import/replay verbs.
 //
 // R17 deleted `mu db export / import / replay` (src/db-sync.ts and
 // friends). Backup survives because the SchemaTooOldError next-steps

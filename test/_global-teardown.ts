@@ -52,7 +52,7 @@
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import Database from "better-sqlite3";
 import { execa } from "execa";
 
@@ -220,7 +220,11 @@ async function killPrivateTmuxServer(): Promise<void> {
  */
 export function userDbPaths(env: NodeJS.ProcessEnv = process.env): readonly string[] {
   const home = env.HOME ?? homedir();
-  const xdg = env.XDG_STATE_HOME ?? join(home, ".local", "state");
+  // Mirrors src/db.ts xdgStateHome: an empty or relative value is ignored.
+  const xdg =
+    env.XDG_STATE_HOME !== undefined && isAbsolute(env.XDG_STATE_HOME)
+      ? env.XDG_STATE_HOME
+      : join(home, ".local", "state");
   const paths = [env.MU_DB_PATH, env.MU_STATE_DIR ? join(env.MU_STATE_DIR, "mu.db") : undefined];
   paths.push(join(xdg, "mu", "mu.db"));
   return [...new Set(paths.filter((p): p is string => p !== undefined && p.length > 0))];

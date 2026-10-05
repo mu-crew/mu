@@ -21,6 +21,12 @@ export function isLegacyLogOnlyIntent(intent: string | null): boolean {
  * interpolated into prepared SQL; every member is a fixed identifier in
  * this file, never operator input.
  */
+export const LEGACY_LOG_ONLY_SQL_EXCLUSION: string = `(intent IS NULL OR intent NOT IN (${[
+  ...LEGACY_LOG_ONLY_INTENTS,
+]
+  .map((i) => `'${i}'`)
+  .join(", ")}))`;
+
 /**
  * Intents renamed after ops carrying the old name were already on
  * disk. Key = current name, value = every historical spelling.
@@ -47,9 +53,3 @@ export function intentSpellings(intent: string): readonly string[] {
   const legacy = LEGACY_INTENT_SYNONYMS.get(intent);
   return legacy === undefined ? [intent] : [intent, ...legacy];
 }
-
-export const LEGACY_LOG_ONLY_SQL_EXCLUSION: string = `(intent IS NULL OR intent NOT IN (${[
-  ...LEGACY_LOG_ONLY_INTENTS,
-]
-  .map((i) => `'${i}'`)
-  .join(", ")}))`;

@@ -1,16 +1,18 @@
-// mu — `mu db backup <file>`: the whole survivor of the old `db` namespace.
+// mu — `mu db backup | compact | forget`: whole-DB file commands.
 //
 // mu once had `mu db export / import / replay` — a whole-DB sync
 // mechanism with manifests, per-workstream drift detection, and
 // divergence sidecars (1500+ LOC). All three are gone: sync is ambient over
-// segments, and disaster recovery is `mu rebuild`. What survives is the
-// one case those verbs were actually used for — "give me one file I can
-// scp" — which SQLite already implements as a single statement.
+// segments, and disaster recovery is `mu rebuild`.
 //
-// So this is deliberately a one-liner over `VACUUM INTO` and NOT an SDK
-// module: there is no policy here to share with another caller. Real DR
-// is segments + `mu rebuild`; a backup file is a convenience copy that
-// starts going stale the moment it is written.
+// `backup` survives for the one case those verbs were actually used for
+// — "give me one file I can scp" — which SQLite already implements as a
+// single `VACUUM INTO`, so it has no SDK module. A backup file is a
+// convenience copy that starts going stale the moment it is written.
+//
+// `compact` and `forget` shrink mu.db. Their policy lives in the SDK
+// (src/compact.ts); this file adds the dry run, the backup beside the
+// DB, the VACUUM, and the drift check after.
 
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -68,6 +70,9 @@ function backupBeside(db: Db, verb: string): string {
 function vacuumAndCheck(db: Db, backup: string): { before: number; after: number } {
   const before = statSync(db.name).size;
   db.exec("VACUUM");
+  // WAL mode: VACUUM's rewritten pages sit in the -wal file until a
+  // checkpoint, so without one the main file reports the old size.
+  db.pragma("wal_checkpoint(TRUNCATE)");
   const after = statSync(db.name).size;
   const report = checkDrift(db);
   if (!report.clean) {

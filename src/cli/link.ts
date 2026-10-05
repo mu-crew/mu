@@ -23,7 +23,10 @@ export function cmdLink(target: string, opts: LinkCmdOptions): void {
   if (opts.extensionOnly === true && opts.skillOnly === true) {
     throw new UsageError("--extension-only and --skill-only are mutually exclusive");
   }
-  const extension = opts.skillOnly === true ? undefined : linkPi({ copy: opts.copy === true });
+  const extension =
+    opts.skillOnly === true
+      ? undefined
+      : linkPi({ copy: opts.copy === true, force: opts.force === true });
   const skill = opts.extensionOnly === true ? undefined : linkSkill({ force: opts.force === true });
 
   const steps: NextStep[] = [{ intent: "Check the install", command: "mu doctor" }];
@@ -64,7 +67,7 @@ export function wireLinkCommand(program: Command): void {
     .description("Install the mu pi extension (shim) and the mu skill; <target> must be 'pi'")
     .option(...JSON_OPT)
     .option("--copy", "inline the extension instead of a shim (pinned; relink after upgrades)")
-    .option("--force", "replace an existing skill symlink that points elsewhere")
+    .option("--force", "replace an existing extension or skill symlink that points elsewhere")
     .option("--extension-only", "install only the pi extension")
     .option("--skill-only", "install only the mu skill symlink")
     .action(function (target: string) {

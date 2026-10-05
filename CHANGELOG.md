@@ -198,6 +198,34 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   also stops `mu --workstream=other workstream teardown --yes` from
   tearing down the `$MU_SESSION` workstream: teardown and `mu state`
   ignored a root `-w` and fell back to the ambient one.
+- `mu log --source system` now lists the ops `mu log` shows as
+  `system` (captured with no actor). It used to print "(no log
+  entries)". `-n/--lines` help now says that with `--since` it keeps
+  the first N entries after the cursor, not the latest N.
+- `mu sync` suggested `mu log --limit 20`, which exits 2. It now
+  suggests `mu log -n 20`.
+- `mu link pi` no longer writes the shim through a symlinked
+  `~/.pi/agent/extensions/mu.ts` into its target, such as a dev
+  checkout. A live symlink there is refused (exit 4) unless you pass
+  `--force`, which replaces the link and not its target.
+- `mu db compact --yes` and `mu db forget --yes` now report the shrunk
+  file size. They checkpoint the WAL after `VACUUM`; before, the
+  printed size was the same before and after.
+- `mu rebuild <file> --force` deletes an existing `<file>` (and its
+  `-wal`/`-shm`) before replaying. It used to replay into it, keeping
+  that DB's foreign workstreams and ops.
+- `mu log` renders `task accept` as `→ OPEN` instead of the raw field
+  name `substate`.
+- `mu task list` sizes the status column by the rendered pair (e.g.
+  `CLOSED/wontfix`), so rows no longer run past the terminal width.
+- The SDK (`src/index.ts`) now exports every typed error the CLI maps
+  to an exit code, including `SchemaTooNewError`,
+  `WorkstreamNotFoundError` and `TaskIdInvalidError`.
+- A DB refused with `SchemaTooOldError` or `SchemaTooNewError` is now
+  really left untouched. mu used to switch it to WAL mode (rewriting
+  the header and creating `-wal`/`-shm`) before checking the version.
+- An empty or relative `XDG_STATE_HOME` is ignored, as the XDG spec
+  says. It used to put the state dir at `./mu` relative to the cwd.
 
 ## [3.8.1] — 2026-10-05
 

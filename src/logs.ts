@@ -23,7 +23,7 @@
 //
 // `group_id` is still a fresh uuid per entry rather than the ambient
 // **op context** group. That is correct for this module's remaining
-// callers, which are log APPENDS (`mu log write`, event breadcrumbs) —
+// callers, which are log APPENDS (`mu log "<text>"`, event breadcrumbs) —
 // each is its own user-visible action, not part of a row-mutation
 // group. Rows written through the capture triggers get the ambient
 // group; these are hand-written log lines, not captured mutations.
@@ -46,7 +46,7 @@ export interface LogRow {
    *  render as "system" rather than the string "null". */
   source: string;
   /** Structured intent ('task.close', 'agent.spawn', ...). Null only for
-   *  operator-authored prose lines (`mu log write` / a `--kind` ledger),
+   *  operator-authored prose lines (`mu log "<text>"` / a `--kind` ledger),
    *  which name no state change. The formatter in src/log-render.ts
    *  renders from this — never from the payload text. */
   intent: string | null;
@@ -369,7 +369,12 @@ export function listLogs(db: Db, opts: ListLogsOptions = {}): LogRow[] {
     conditions.push("l.seq > ?");
     params.push(opts.since);
   }
-  if (opts.source !== undefined) {
+  if (opts.source === "system") {
+    // rowFromDb renders a NULL actor as "system", so the filter must
+    // match what the listing shows.
+    conditions.push("(l.actor = ? OR l.actor IS NULL)");
+    params.push(opts.source);
+  } else if (opts.source !== undefined) {
     conditions.push("l.actor = ?");
     params.push(opts.source);
   }
