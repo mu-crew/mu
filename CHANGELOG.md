@@ -175,6 +175,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the export verb went in 1.1.0, not 1.0.
 - The TUI doctor popup's murmur row matches the card on herdr (`agent
   state from herdr`) instead of warning that murmur is missing.
+- `mu workstream teardown --empty` no longer kills an unregistered
+  `mu-*` session that has something running in it. Only sessions whose
+  panes all sit at a shell prompt are swept; on herdr, which does not
+  report a pane's command, unregistered workspaces are never swept. A
+  run against a throwaway `MU_DB_PATH` had killed a live crew's panes.
+- `mu workstream teardown --empty --yes` and `mu task delete` no longer
+  promise a snapshot or offer `mu undo --yes`, which only lists groups.
+  `task delete --yes` prints `mu undo <group> --yes` for its own group
+  (and `--json` carries `group`); the sweep points at
+  `mu workstream list --torn-down`, one group per workstream.
+- `mu -w <ws> <verb> …` works. The root `-w` was variadic and swallowed
+  the verb, so `mu -w ws task list` printed help and exited 0. It now
+  takes one value per flag and hands it to the verb's own `-w`; a verb
+  without `-w`, or `-w` on both sides, is a usage error (exit 2). This
+  also stops `mu --workstream=other workstream teardown --yes` from
+  tearing down the `$MU_SESSION` workstream: teardown and `mu state`
+  ignored a root `-w` and fell back to the ambient one.
 
 ## [3.8.1] — 2026-10-05
 

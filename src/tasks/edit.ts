@@ -1,7 +1,7 @@
 // mu — task edit/write verbs: add task, add note, update, delete.
 
 import { type Db, resolveWorkstreamId } from "../db.js";
-import { withOpContext } from "../op-context.js";
+import { currentOpContext, withOpContext } from "../op-context.js";
 import { ensureWorkstream } from "../workstream.js";
 import { taskIdFor, touchTask } from "./core.js";
 import { dedupeBlockersById, wouldCreateCycle } from "./edges.js";
@@ -212,13 +212,16 @@ export interface DeleteTaskResult {
    *  found an existing task with zero edges and zero notes
    *  (`present: true, deletedEdges: 0, deletedNotes: 0`). */
   present: boolean;
+  /** The op group the delete wrote, for `mu undo <group> --yes`. Null
+   *  when nothing was deleted (dry-run or missing row). */
+  group: string | null;
 }
 
 export interface DeleteTaskOptions {
   /** When true, return the cascade preview (would-be edge / note
-   *  counts) without mutating and without snapshotting. The CLI uses
-   *  this to power the bare `mu task delete <id>` two-phase pattern
-   *  (mirrors `mu workstream teardown` / `mu snapshot prune`). Surfaced
+   *  counts) without mutating. The CLI uses this to power the bare
+   *  `mu task delete <id>` two-phase pattern (mirrors
+   *  `mu workstream teardown` / `mu undo`). Surfaced
    *  by feedback ws task
    *  fb_task_delete_no_yes (impact=30): a dogfood report typed
    *  `mu task delete X --yes` (mirroring workstream teardown) and got
@@ -236,10 +239,9 @@ export interface DeleteTaskOptions {
  * `changes()` only reports rows directly affected by the DELETE.
  *
  * With `opts.dryRun: true`, returns the would-be counts without
- * touching the DB and without taking a snapshot (no mutation = no
- * snapshot — same reasoning that gates the closeTask snap on the
- * idempotent no-op path). The CLI bare `mu task delete <id>` form
- * uses this; `--yes` calls through with `dryRun: false`.
+ * touching the DB (no mutation, so no op is written). The CLI bare
+ * `mu task delete <id>` form uses this; `--yes` calls through with
+ * `dryRun: false`.
  */
 export function deleteTask(
   db: Db,
@@ -262,11 +264,25 @@ function deleteTaskImpl(
   const before = getTask(db, localId, workstream);
   if (!before) {
     // Idempotent on a missing row regardless of dryRun.
-    return { deleted: false, deletedEdges: 0, deletedNotes: 0, dryRun, present: false };
+    return {
+      deleted: false,
+      deletedEdges: 0,
+      deletedNotes: 0,
+      dryRun,
+      present: false,
+      group: null,
+    };
   }
   const taskId = taskIdFor(db, localId, before.workstreamName);
   if (taskId === null) {
-    return { deleted: false, deletedEdges: 0, deletedNotes: 0, dryRun, present: false };
+    return {
+      deleted: false,
+      deletedEdges: 0,
+      deletedNotes: 0,
+      dryRun,
+      present: false,
+      group: null,
+    };
   }
   const edgesBefore = (
     db
@@ -285,6 +301,7 @@ function deleteTaskImpl(
       deletedNotes: notesBefore,
       dryRun: true,
       present: true,
+      group: null,
     };
   }
   // No pre-mutation snapshot: v9 dropped the `snapshots` table and
@@ -299,6 +316,8 @@ function deleteTaskImpl(
     deletedNotes: notesBefore,
     dryRun: false,
     present: true,
+    // deleteTask opened a fresh group around this call.
+    group: deleted ? currentOpContext(db).groupId : null,
   };
 }
 

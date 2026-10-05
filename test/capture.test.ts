@@ -126,11 +126,13 @@ describe("op capture (triggers)", () => {
       ensureWorkstream(db, "demo");
       seedTask("t1");
       clearOps();
-      deleteTask(db, "t1", "demo");
+      const result = deleteTask(db, "t1", "demo");
       const del = ops("task").filter((r) => r.op === "del");
       expect(del).toHaveLength(1);
       const row = del[0];
       if (!row) throw new Error("unreachable");
+      // The CLI's undo hint names this group (`mu undo <group> --yes`).
+      expect(result.group).toBe(row.group_id);
       expect(row.key).toBe("demo/t1");
       expect(payloadOf(row)).toEqual({});
       expect(row.intent).toBe("task.delete");

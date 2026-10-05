@@ -680,6 +680,7 @@ describe("deleteTask", () => {
       deletedNotes: 0,
       dryRun: false,
       present: false,
+      group: null,
     });
   });
 
@@ -691,6 +692,7 @@ describe("deleteTask", () => {
       deletedNotes: 2,
       dryRun: true,
       present: true,
+      group: null,
     });
     // DB unchanged — b still there, edges still wired, notes intact.
     expect(getTask(db, "b", "auth")).toBeDefined();
@@ -705,6 +707,7 @@ describe("deleteTask", () => {
       deletedNotes: 0,
       dryRun: true,
       present: false,
+      group: null,
     });
   });
 });

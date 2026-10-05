@@ -23,7 +23,8 @@ Teardown kills the tmux session first, then deletes the agents, tasks,
 edges, notes, and workspaces. Running it again is a no-op.
 
 To sweep every workstream that has no tasks, agents, or workspaces,
-including `mu-*` tmux sessions with no DB row:
+including `mu-*` sessions with no DB row whose panes all sit at a shell
+prompt (a session running anything else is never swept):
 
 ```bash
 mu workstream teardown --empty
@@ -40,7 +41,8 @@ mu workstream list --torn-down
 mu undo 7a40e6cc --yes
 ```
 
-The list shows one row per teardown, newest first. `← recreated since`
+The list shows one row per teardown, newest first. A `--empty` sweep
+writes one row per workstream, so undo each one. `← recreated since`
 means the name is in use again, so the undo would change nothing.
 Killed panes and freed workspace directories do not come back.
 
