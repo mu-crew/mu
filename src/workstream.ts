@@ -79,9 +79,47 @@ async function sessionAlive(session: string): Promise<boolean> {
 }
 
 /** True iff `name` is a scratch/ephemeral workstream (special-cased by
- *  the staleness nudge and the TUI ephemeral marker). */
+ *  the staleness nudge, the TUI ephemeral marker, the kept-alive
+ *  session on spawn, and the `teardown --empty` exemption). */
 export function isScratchWorkstream(name: string): boolean {
   return RESERVED_WORKSTREAM_NAMES.has(name);
+}
+
+/** Name of the placeholder shell window every `mu-<ws>` session keeps,
+ *  so the session outlives its last agent pane. */
+export const MU_PLACEHOLDER_WINDOW = "_mu";
+
+/**
+ * Make sure mux session `session` exists and holds the placeholder
+ * `_mu` window: create the session with it when missing, and add the
+ * window when the session exists without it (the operator killed it,
+ * or the session predates it). Load-bearing: mux errors propagate.
+ *
+ * Used by `mu workstream init` and by the first spawn into `scratch`
+ * (never init-ed). Without `_mu`, closing the last agent kills the
+ * last window and tmux destroys the session.
+ */
+export async function ensureWorkstreamSession(
+  session: string,
+): Promise<{ created: boolean; muWindowRepaired: boolean }> {
+  const mux = await activeMux();
+  if (!(await mux.sessionExists(session))) {
+    await mux.newSession(session, { detached: true, windowName: MU_PLACEHOLDER_WINDOW });
+    return { created: true, muWindowRepaired: false };
+  }
+  const windows = await mux.listWindows(session).catch(() => []);
+  if (windows.some((w) => w.name === MU_PLACEHOLDER_WINDOW)) {
+    return { created: false, muWindowRepaired: false };
+  }
+  await mux.newWindow({
+    session,
+    name: MU_PLACEHOLDER_WINDOW,
+    // A backend with no create-and-run form rejects a command and
+    // starts a shell anyway (see createOrReusePane in agents/spawn.ts).
+    command: mux.startAgentInPane === undefined ? (process.env.SHELL ?? "/bin/sh") : "",
+    detached: true,
+  });
+  return { created: false, muWindowRepaired: true };
 }
 
 /**
@@ -425,6 +463,11 @@ export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
  * listUnregisteredMuxWorkstreams for the names the sweep leaves to an
  * explicit `mu workstream teardown <name> --yes`.
  *
+ * The `scratch` workstream is NEVER returned: its idle session is kept
+ * alive on purpose (see ensureWorkstreamSession), so the next delegate
+ * does not pay for creating it. `mu workstream teardown scratch --yes`
+ * still removes it.
+ *
  * Used by `mu workstream teardown --empty` to sweep empty
  * workstreams in one command (instead of the per-name jq incantation
  * over `mu workstream list --json`). Returns one `WorkstreamSummary`
@@ -445,7 +488,11 @@ export async function listEmptyWorkstreams(db: Db): Promise<WorkstreamSummary[]>
         ORDER BY ws.name`,
     )
     .all() as { name: string }[];
-  return Promise.all(registeredRows.map((r) => summarizeWorkstream(db, { workstream: r.name })));
+  return Promise.all(
+    registeredRows
+      .filter((r) => !isScratchWorkstream(r.name))
+      .map((r) => summarizeWorkstream(db, { workstream: r.name })),
+  );
 }
 
 /** Workstream names of live `mu-*` mux sessions with no row in

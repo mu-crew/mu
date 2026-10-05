@@ -15,7 +15,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | Term | Meaning | Don't use |
 | --- | --- | --- |
 | **workstream** | The unit of organization: one **mux session** and one DB partition. | "project", "session" (alone), "context" |
-| **scratch workstream** | The reserved workstream `scratch` for helpers outside any task DAG. Auto-created on first spawn with explicit `-w scratch`; `mu workstream init scratch` is rejected. | "throwaway ws", "temp workstream" |
+| **scratch workstream** | The reserved workstream `scratch` for helpers outside any task DAG. Auto-created on first spawn with explicit `-w scratch`; `mu workstream init scratch` is rejected. Its session keeps a `_mu` window, so it stays open after the last agent closes; `teardown --empty` skips it. | "throwaway ws", "temp workstream" |
 | **multiplexer** / **mux** | The terminal program that owns panes: **tmux** or **herdr**. "mux" in code (`src/mux/`, `MU_MUX`), "multiplexer" in prose; one is active per invocation. | "terminal", "emulator", "backend" (alone) |
 | **mux backend** | An implementation of `MuxBackend` (`src/mux/tmux.ts`, `src/mux/herdr.ts`). Owns everything backend-specific. | "driver", "provider", "adapter" |
 | **mux detection** | Picks the mux backend: `MU_MUX` → `HERDR_ENV=1` → `$TMUX` → binary on `PATH` (tmux wins a tie) → `NoMultiplexerError`. | "auto-detect", "probe" |

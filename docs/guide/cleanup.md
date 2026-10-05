@@ -29,8 +29,9 @@ mu workstream teardown --empty
 mu workstream teardown --empty --yes
 ```
 
-The sweep never takes a `mu-*` session that has no workstream row in
-this DB: it may be a live workstream from another DB. The output names
+The sweep skips `scratch`, whose idle session is kept open on purpose.
+It never takes a `mu-*` session that has no workstream row in this DB:
+it may be a live workstream from another DB. The output names
 such sessions; tear one down by name once you know it is unused.
 
 ## Undo a teardown
