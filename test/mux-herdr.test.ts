@@ -234,10 +234,25 @@ describe("herdr sessions (= workspaces, addressed by label)", () => {
 
   it("newSessionWithPane READS the pane id from the response", async () => {
     // Never predict an id: herdr does not reuse closed ids.
-    mockHerdr([["workspace create", WORKSPACE_CREATED]]);
+    mockHerdr([
+      ["workspace create", WORKSPACE_CREATED],
+      ["tab rename", OK],
+    ]);
     expect(
       await herdrBackend.newSessionWithPane("mu-topotest", { windowName: "x", command: "" }),
     ).toBe("w1:p1");
+  });
+
+  it("labels the implicit first tab with windowName (herdr calls it '1')", async () => {
+    // mu finds tabs by window name: attach, `--tab` reuse, init's `_mu`.
+    const calls = mockHerdr([
+      ["workspace create", WORKSPACE_CREATED],
+      ["tab rename", OK],
+    ]);
+    await herdrBackend.newSessionWithPane("mu-topotest", { windowName: "worker-1", command: "" });
+    expect(calls.argsOf(1)).toEqual(["tab", "rename", "w1:t1", "worker-1"]);
+    await newSession("mu-topotest", { windowName: "_mu" });
+    expect(calls.argsOf(3)).toEqual(["tab", "rename", "w1:t1", "_mu"]);
   });
 
   it("killSession resolves the label to an id, then closes it", async () => {
@@ -692,6 +707,36 @@ describe("herdr attach (focus a workspace or tab, never `session attach <label>`
           { command: "herdr", args: ["--session", "work"] },
         ]);
       });
+    });
+  });
+
+  it("lands on a first-spawn agent's tab after another tab became active", async () => {
+    // Stateful server: the workspace's root tab is created as "1"; a later
+    // agent's tab "worker-2" is the active one. Attaching to worker-1 must
+    // focus ITS tab, not fall back to `workspace focus` (which keeps
+    // worker-2 on screen).
+    const tabs = [{ tab_id: "w1:t1", label: "1", focused: false }];
+    const res = (stdout: string): MuxExecResult => ({ stdout, stderr: "", exitCode: 0 });
+    mockHerdrWith(async (args) => {
+      const key = args.join(" ");
+      if (key.startsWith("workspace create")) return res(WORKSPACE_CREATED);
+      if (key.startsWith("tab rename")) {
+        const tab = tabs.find((t) => t.tab_id === args[2]);
+        if (tab !== undefined) tab.label = args[3] ?? "";
+        return res(OK);
+      }
+      if (key.startsWith("workspace list")) return res(WORKSPACE_LIST);
+      if (key.startsWith("tab list")) {
+        const all = [...tabs, { tab_id: "w1:t2", label: "worker-2", focused: true }];
+        return res(JSON.stringify({ result: { tabs: all, type: "tab_list" } }));
+      }
+      return serverError(`unrouted: ${key}`);
+    });
+    await herdrBackend.newSessionWithPane("mu-topotest", { windowName: "worker-1", command: "" });
+    await withEnv(HERDR_ENV, "1", async () => {
+      expect(
+        await herdrBackend.attachCommands({ session: "mu-topotest", window: "worker-1" }),
+      ).toEqual([{ command: "herdr", args: ["tab", "focus", "w1:t1"] }]);
     });
   });
 

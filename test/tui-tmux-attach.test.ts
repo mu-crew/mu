@@ -31,7 +31,7 @@ describe("runTmuxAttachInteractive", () => {
 
     const r = runTmuxAttachInteractive({
       env,
-      commands: await inside("mu-alpha", "worker-1"),
+      commands: inside("mu-alpha", "worker-1"),
       write: (text) => writes.push(text),
       spawn: (command, args, options) => {
         call = { command, args, options };
@@ -55,7 +55,7 @@ describe("runTmuxAttachInteractive", () => {
 
     const r = runTmuxAttachInteractive({
       env,
-      commands: await outside("mu-alpha", "worker-1"),
+      commands: outside("mu-alpha", "worker-1"),
       write: (text) => writes.push(text),
       spawn: (command, args, options) => {
         calls.push({ command, args, options });
@@ -83,7 +83,7 @@ describe("runTmuxAttachInteractive", () => {
     const env = { TMUX: "/tmp/x" } as NodeJS.ProcessEnv;
     const r = runTmuxAttachInteractive({
       env,
-      commands: await inside("mu-a", "worker-1"),
+      commands: inside("mu-a", "worker-1"),
       write: (text) => writes.push(text),
       spawn: () => ({ status: null, error: enoent() }),
     });
@@ -98,7 +98,7 @@ describe("runTmuxAttachInteractive", () => {
     const env = { TMUX: "/tmp/x" } as NodeJS.ProcessEnv;
     const r = runTmuxAttachInteractive({
       env,
-      commands: await inside("mu-a", "worker-1"),
+      commands: inside("mu-a", "worker-1"),
       write: (text) => writes.push(text),
       spawn: () => ({ status: 1 }),
     });
@@ -131,7 +131,7 @@ describe("runTmuxAttachInteractive", () => {
     const env = { TMUX: "/tmp/x" } as NodeJS.ProcessEnv;
     const r = runTmuxAttachInteractive({
       env,
-      commands: await inside("mu-a", "worker-1"),
+      commands: inside("mu-a", "worker-1"),
       write: (text) => writes.push(text),
       spawn: () => {
         throw new Error("boom");

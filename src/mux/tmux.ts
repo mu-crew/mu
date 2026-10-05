@@ -1139,14 +1139,14 @@ function attachTargetSpec(target: AttachTarget): string {
   return target.window === undefined ? target.session : `${target.session}:${target.window}`;
 }
 
-export async function attachHint(target: AttachTarget): Promise<string> {
+export function attachHint(target: AttachTarget): string {
   const spec = attachTargetSpec(target);
   if (target.inside === true) return `tmux switch-client -t ${spec}`;
   if (target.window === undefined) return `tmux attach -t ${target.session}`;
   return `tmux attach -t ${target.session} && tmux select-window -t ${spec}`;
 }
 
-export async function attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]> {
+export function attachCommands(target: AttachTarget): readonly MuxCommand[] {
   const spec = attachTargetSpec(target);
   if (target.inside === true) {
     return [{ command: "tmux", args: ["switch-client", "-t", spec] }];
@@ -1199,12 +1199,19 @@ export async function healthCheck(): Promise<MuxHealth> {
   };
 }
 
+/** `MuxBackend` with tmux's synchronous attach methods: SDK callers of
+ *  `tmuxBackend.attachHint()` keep getting a string, not a Promise. */
+export interface TmuxBackend extends MuxBackend {
+  attachHint(target: AttachTarget): string;
+  attachCommands(target: AttachTarget): readonly MuxCommand[];
+}
+
 /**
  * The tmux implementation of `MuxBackend`. A frozen record of the
  * module's functions — no state of its own, so swapping backends is a
  * pointer assignment (see ./detect.ts).
  */
-export const tmuxBackend: MuxBackend = Object.freeze({
+export const tmuxBackend: TmuxBackend = Object.freeze({
   name: "tmux" as const,
   available: tmuxAvailable,
 
