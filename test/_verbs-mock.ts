@@ -111,12 +111,28 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
     }
 
     if (verb === "split-window") {
-      // Find which session/window we're targeting via -t <session>:<window>.
+      // Resolve -t <session>:<window> like tmux: `=<session>` is exact; a
+      // bare session that doesn't exist falls back to a unique prefix
+      // match (the cross-workstream hazard). `@N` windows match by id
+      // within that session, anything else by name.
       const tFlag = args.indexOf("-t");
       const target = tFlag >= 0 ? args[tFlag + 1] : "";
       if (!target?.includes(":")) return fail(`bad split target: ${target}`);
-      const [session, windowName] = target.split(":");
-      const win = state.windows.get(session ?? "")?.find((w) => w.name === windowName);
+      const [sessionPart = "", windowPart = ""] = target.split(":");
+      let session: string | undefined;
+      if (sessionPart.startsWith("=")) {
+        const exact = sessionPart.slice(1);
+        session = state.sessions.has(exact) ? exact : undefined;
+      } else if (state.sessions.has(sessionPart)) {
+        session = sessionPart;
+      } else {
+        const prefixed = [...state.sessions].filter((s) => s.startsWith(sessionPart));
+        session = prefixed.length === 1 ? prefixed[0] : undefined;
+      }
+      if (session === undefined) return fail(`can't find session: ${sessionPart}`);
+      const win = state.windows
+        .get(session)
+        ?.find((w) => (windowPart.startsWith("@") ? w.id : w.name) === windowPart);
       if (!win) return fail(`can't find window: ${target}`);
       const paneId = `%${state.nextPaneId++}`;
       state.panes.set(paneId, {
