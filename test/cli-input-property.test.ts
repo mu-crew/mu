@@ -250,11 +250,17 @@ describe("CLI parser properties", () => {
       expect(parsePositiveInt("3")).toBe(3);
     });
 
-    it("documents current permissive prefix parsing for numeric options", () => {
-      expect(parseImpact("10abc")).toBe(10);
-      expect(parseLines("12.9")).toBe(12);
-      expect(parseNonNegativeInt("7days")).toBe(7);
-      expect(parsePositiveNumber("1.5days")).toBe(1.5);
+    it("rejects trailing text, fractions for integers, and non-finite numbers", () => {
+      for (const raw of ["10abc", "5.9", "1e2", "0x10"]) expect(() => parseImpact(raw)).toThrow();
+      for (const raw of ["12.9", "7days", "2x", "1e3", "9007199254740993"]) {
+        expect(() => parseLines(raw)).toThrow();
+        expect(() => parseNonNegativeInt(raw)).toThrow();
+      }
+      for (const raw of ["1.5days", "1x", "1e999", "Infinity"]) {
+        expect(() => parsePositiveNumber(raw)).toThrow();
+      }
+      expect(parsePositiveNumber("1e-1")).toBe(0.1);
+      expect(parseImpact(" 7 ")).toBe(7);
     });
   });
 

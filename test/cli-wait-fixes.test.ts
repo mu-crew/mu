@@ -23,6 +23,7 @@ import {
   addNote,
   addTask,
   claimTask,
+  closeTask,
   deleteTask,
   listNotes,
   releaseTask,
@@ -117,6 +118,20 @@ describe("mu task wait --timeout", () => {
     expect(res.exitCode).toBe(2);
     const stuck = await runCli(["task", "wait", "t1", "-w", WS, "--stuck-after", "1s"], dbPath);
     expect(stuck.exitCode).toBe(2);
+  });
+
+  it("--json does not fabricate a reachedAt stamp on reached refs", async () => {
+    // The wait result records no per-ref time, so a stamp would be
+    // emit time, not when the ref reached the target.
+    addT("t1");
+    closeTask(db, "t1", { workstream: WS });
+    const res = await runCli(["task", "wait", "t1", "-w", WS, "--json", "--timeout", "1"], dbPath);
+    expect(res.error).toBeUndefined();
+    expect(res.exitCode).toBeNull();
+    const out = JSON.parse(res.stdout) as { all: Array<Record<string, unknown>> };
+    expect(out.all).toHaveLength(1);
+    expect(out.all[0]?.qualifiedId).toBe(`${WS}/t1`);
+    expect(out.all[0]).not.toHaveProperty("reachedAt");
   });
 
   it("--help does not advertise a nonexistent --all flag", async () => {

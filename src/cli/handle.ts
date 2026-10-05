@@ -616,19 +616,33 @@ export function emitParseError(err: unknown, failingCommand: Command | undefined
 
 /** Walk argv tokens against the program tree to find the deepest
  *  matching subcommand. Used by parseAsync's catch to identify which
- *  subcommand commander was processing when it threw. Stops at the
- *  first `-` (option) or unknown token, except that a root-position
- *  `-w <names>` is skipped: `mu -w ws task list` is about `task list`. */
+ *  subcommand commander was processing when it threw. Skips options the
+ *  current command declares (and their values) the way commander's
+ *  parseOptions does, so a leading global (`mu --json task list`,
+ *  `mu -w x --json task note …`) still resolves the verb. Stops at an
+ *  unknown option or token. */
 export function findCommandForArgv(root: Command, argv: readonly string[]): Command {
   let cur: Command = root;
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i] ?? "";
-    if (cur === root && (t === "-w" || t === "--workstream")) {
+    if (t === "--") break;
+    if (t.length > 1 && t.startsWith("-")) {
+      // Inline value: `--flag=value`, or `-wvalue` for a short flag.
+      const long = t.startsWith("--");
+      const eq = long ? t.indexOf("=") : -1;
+      const flag = long ? (eq === -1 ? t : t.slice(0, eq)) : t.slice(0, 2);
+      const inline = long ? eq !== -1 : t.length > 2;
+      const opt = cur.options.find((o) => o.short === flag || o.long === flag);
+      if (!opt || (inline && !opt.required)) break;
+      if (inline || !opt.required) continue;
       i++;
+      // A variadic option keeps consuming non-option tokens, as in
+      // commander: `mu -w a b task` binds [a, b, task] to -w.
+      if (opt.variadic) {
+        while (i + 1 < argv.length && !(argv[i + 1] ?? "-").startsWith("-")) i++;
+      }
       continue;
     }
-    if (cur === root && t.startsWith("--workstream=")) continue;
-    if (t.startsWith("-")) break;
     const next: Command | undefined = cur.commands.find(
       (c) => c.name() === t || (c.aliases().includes(t) ?? false),
     );

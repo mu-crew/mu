@@ -12,6 +12,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- Numeric flags reject trailing text and non-finite values instead of
+  keeping a numeric prefix: `-i 5.9abc`, `-e 1e999` (stored as Infinity,
+  serialised as null), `mu log -n 2x`, `--since 1.9` and
+  `mu undo -n 2x` are now usage errors (exit 2).
+- A commander parse error after a leading root option
+  (`mu --json task list --bogus`, `mu -w x task note …`) now shows the
+  verb's usage and hints instead of the root `mu` help.
+- `mu task wait --json` no longer adds a `reachedAt` field to `all`. It
+  held the emit time, not when each task reached the target.
 - The test suite's default-socket tmux sweep no longer kills your live
   `mu-*` workstream sessions when your DB lives under `MU_STATE_DIR` or
   `MU_DB_PATH`, or is missing, locked, corrupt or on a newer schema. It
