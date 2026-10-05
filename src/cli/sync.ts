@@ -90,7 +90,7 @@ function nextSteps(dir: string, peers: readonly PeerStatus[]): NextStep[] {
     });
   }
   if (steps.length === 0) {
-    steps.push({ intent: "See what landed", command: "mu log --limit 20" });
+    steps.push({ intent: "See what landed", command: "mu log -n 20" });
   }
   return steps;
 }
@@ -221,7 +221,7 @@ function emitFrom(
       skippedLocal: result.skippedLocal,
       flushed,
       peers,
-      nextSteps: [{ intent: "See what landed", command: "mu log --limit 20" }],
+      nextSteps: [{ intent: "See what landed", command: "mu log -n 20" }],
     });
     return;
   }
@@ -231,7 +231,7 @@ function emitFrom(
   if (result.skippedLocal > 0) {
     console.log(pc.dim(`  skipped ${result.skippedLocal} machine-local ops (they never travel)`));
   }
-  printNextSteps([{ intent: "See what landed", command: "mu log --limit 20" }]);
+  printNextSteps([{ intent: "See what landed", command: "mu log -n 20" }]);
 }
 
 // ─── commander wiring ────────────────────────────────────────────────

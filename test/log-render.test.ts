@@ -12,6 +12,9 @@
 // is the belt to that suspenders: it walks KNOWN_INTENTS and asserts each
 // produces real prose.
 
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   KNOWN_INTENTS,
@@ -125,6 +128,28 @@ describe("renderOp prose", () => {
     expect(renderOpLine(op({ intent: "task.unpark", payload: '{"substate":"todo"}' }))).toBe(
       "task unpark t1 → OPEN",
     );
+    expect(renderOpLine(op({ intent: "task.accept", payload: '{"substate":"todo"}' }))).toBe(
+      "task accept t1 → OPEN",
+    );
+  });
+
+  it("every intent literal written under src/ is a KNOWN_INTENT", () => {
+    // A new withOpContext/emitEvent intent missing from VERBS falls back
+    // to the unknown-intent renderer (raw field names); catch it here.
+    const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
+    const written = new Set<string>();
+    for (const file of readdirSync(srcDir, { recursive: true, encoding: "utf8" })) {
+      if (!file.endsWith(".ts")) continue;
+      const text = readFileSync(join(srcDir, file), "utf8");
+      for (const m of text.matchAll(/intent: "((?:task|workstream|agent|workspace)\.[a-z-]+)"/g)) {
+        if (m[1] !== undefined) written.add(m[1]);
+      }
+    }
+    expect(written.size).toBeGreaterThan(5);
+    const unknown = [...written].filter(
+      (i) => !(KNOWN_INTENTS as readonly string[]).includes(i) && !i.startsWith("task.set-"),
+    );
+    expect(unknown).toEqual([]);
   });
 
   it("task.claim attributes via ops.actor, since the payload cannot on --self", () => {

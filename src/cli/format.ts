@@ -336,7 +336,7 @@ export function printLogRow(row: LogRow): void {
   const scope = parseOpKey(row.workstreamName).workstream;
   const where = scope === undefined ? pc.dim("—") : scope;
   if (rendered === null) {
-    // No intent: operator prose from `mu log write` or a `--kind`
+    // No intent: operator prose from `mu log "<text>"` or a `--kind`
     // ledger. Show it verbatim — inventing a verb for it would be
     // wrong, it is already exactly what the operator typed.
     console.log(
@@ -450,7 +450,7 @@ export function formatTaskListTable(
     if (opts.withWorkstream) {
       widths.set("workstream", Math.max(widths.get("workstream") ?? 0, t.workstreamName.length));
     }
-    widths.set("status", Math.max(widths.get("status") ?? 0, t.status.length));
+    widths.set("status", Math.max(widths.get("status") ?? 0, formatPair(t).length));
     widths.set("impact", Math.max(widths.get("impact") ?? 0, String(t.impact).length));
     widths.set("effortDays", Math.max(widths.get("effortDays") ?? 0, String(t.effortDays).length));
     const roi = t.effortDays > 0 ? (t.impact / t.effortDays).toFixed(1) : "∞";

@@ -16,8 +16,9 @@ that both paths start from.
 
 - `--copy` copies the extension instead of the shim. You then have to
   relink after every upgrade.
-- `--force` replaces a skill symlink that points elsewhere, such as a
-  dev checkout. mu never replaces a real directory there (exit 4).
+- `--force` replaces an extension or skill symlink that points
+  elsewhere, such as a dev checkout. mu replaces the link, never its
+  target, and never replaces a real skill directory (exit 4).
 - `--extension-only` and `--skill-only` install one part.
 
 For agents other than pi, see [README § Install](../../README.md#install).

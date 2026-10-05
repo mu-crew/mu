@@ -114,7 +114,7 @@ export function wireRebuildCommand(program: Command): void {
       "Replay the ops log into a NEW DB file (disaster recovery); prints the swap command",
     )
     .option(...JSON_OPT)
-    .option("--force", "overwrite <file> if it already exists")
+    .option("--force", "replace <file> if it already exists (deleted first, never merged into)")
     .action(function (file: string) {
       const opts = (this as Command).opts() as RebuildCmdOptions;
       return handle((db) => cmdRebuild(db, file, opts), this as Command)();

@@ -257,6 +257,26 @@ describe("rebuildInto", () => {
       // Op count must not grow: INSERT OR IGNORE on (machine_id, hlc).
       expect(again.opsCopied).toBe(first.opsCopied);
     });
+
+    it("--force over a different mu DB replaces it instead of merging", () => {
+      seedRealisticSource();
+      const path = targetPath();
+      const other = openDb({ path });
+      ensureWorkstream(other, "foreign-ws");
+      other.close();
+
+      const report = rebuildInto(db, { targetPath: path, force: true });
+      const sourceOps = (db.prepare("SELECT COUNT(*) AS n FROM ops").get() as { n: number }).n;
+      expect(report.opsCopied).toBe(sourceOps);
+      withTarget(path, (conn) => {
+        const names = (
+          conn.prepare("SELECT name FROM workstreams").all() as { name: string }[]
+        ).map((r) => r.name);
+        expect(names).not.toContain("foreign-ws");
+        const machines = conn.prepare("SELECT DISTINCT machine_id FROM ops").all();
+        expect(machines).toHaveLength(1);
+      });
+    });
   });
 
   // ─── capture suppression ─────────────────────────────────────────────

@@ -4,7 +4,8 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cmdDbForget } from "../src/cli/db.js";
 import { compact, forget, listForgetCandidates, planCompact, planForget } from "../src/compact.js";
 import { type Db, openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
@@ -149,5 +150,22 @@ describe("forget", () => {
     expect(notesIn("kept")).toEqual(["z"]);
     expect(checkDrift(db).clean).toBe(true);
     expect(listForgetCandidates(db).map((c) => c.name)).toEqual(["gone-too"]);
+  });
+
+  it("cmdDbForget --yes reports the shrunk main file, not the pre-checkpoint size", async () => {
+    seed(
+      "big",
+      Array.from({ length: 40 }, (_, i) => `${i}${"x".repeat(20_000)}`),
+    );
+    await teardownWorkstream(db, { workstream: "big", muxSession: "mu-absent-for-test" });
+    db.pragma("wal_checkpoint(TRUNCATE)");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      cmdDbForget(db, ["big"], { yes: true, json: true });
+      const out = JSON.parse(String(log.mock.calls[0]?.[0])) as { before: number; after: number };
+      expect(out.after).toBeLessThan(out.before / 2);
+    } finally {
+      log.mockRestore();
+    }
   });
 });

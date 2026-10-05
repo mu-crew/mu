@@ -1,7 +1,8 @@
 // mu — DB module.
 //
-// Opens ~/.mu/mu.db (or MU_DB_PATH override), enables WAL + foreign keys,
-// applies the schema idempotently, and exposes the live Database handle.
+// Opens <state-dir>/mu.db (or the MU_DB_PATH override; see defaultDbPath),
+// enables WAL + foreign keys, applies the schema idempotently, and
+// exposes the live Database handle.
 //
 // Schema (v11 — task substates on the v10 three-state lifecycle):
 //   - 6 entity tables: workstreams, agents, tasks, task_edges,
@@ -46,7 +47,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import Database, { type Database as DatabaseType } from "better-sqlite3";
 import { installCapture } from "./capture.js";
 import type { HasNextSteps, NextStep } from "./output.js";
@@ -71,12 +72,19 @@ export interface OpenDbOptions {
 
 /**
  * Resolve the canonical mu state directory:
- *   MU_STATE_DIR > $XDG_STATE_HOME/mu > ~/.local/state/mu
+ *   MU_STATE_DIR > $XDG_STATE_HOME/mu (absolute only) > ~/.local/state/mu
  */
 export function defaultStateDir(): string {
   if (process.env.MU_STATE_DIR) return process.env.MU_STATE_DIR;
-  const stateHome = process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
-  return join(stateHome, "mu");
+  return join(xdgStateHome(homedir()), "mu");
+}
+
+/** `$XDG_STATE_HOME`, or `<home>/.local/state` when it is unset, empty,
+ *  or relative: the XDG spec says such a value must be ignored, and a
+ *  relative one would scatter state across every cwd mu runs in. */
+function xdgStateHome(home: string): string {
+  const xdg = process.env.XDG_STATE_HOME;
+  return xdg !== undefined && isAbsolute(xdg) ? xdg : join(home, ".local", "state");
 }
 
 /**
@@ -101,8 +109,6 @@ export function openDb(options: OpenDbOptions = {}): Db {
   const db = new Database(path, { readonly: options.readonly ?? false });
 
   if (!options.readonly) {
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
     // Wait up to 5s for a competing writer's lock instead of throwing
     // SQLITE_BUSY immediately. Every `mu` invocation is a separate
     // short-lived process and a parallel fan-out (`for n in …; do mu
@@ -117,7 +123,9 @@ export function openDb(options: OpenDbOptions = {}): Db {
     // between, and busy_timeout does not retry that.
     db.pragma("busy_timeout = 5000");
     // Detect schema version BEFORE applySchema so a real v<11 DB is not
-    // silently stamped as v11 by the CREATE-IF-NOT-EXISTS in applySchema.
+    // silently stamped as v11 by the CREATE-IF-NOT-EXISTS in applySchema,
+    // and before `journal_mode = WAL`, which rewrites the file header:
+    // a refused DB must be left byte-for-byte untouched.
     const detectedVersion = detectExistingSchemaVersion(db);
     if (detectedVersion !== null && detectedVersion > CURRENT_SCHEMA_VERSION) {
       // A newer mu wrote this DB. Its writes would fail here in
@@ -141,6 +149,8 @@ export function openDb(options: OpenDbOptions = {}): Db {
       }
       throw new SchemaTooOldError(detectedVersion, MIN_ACCEPTED_SCHEMA_VERSION);
     }
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
     applySchema(db);
     seedMachineIdentity(db);
     // Install the op-capture triggers + the _op_ctx temp tables they
@@ -186,8 +196,7 @@ function refuseUserDbDuringTests(path: string): void {
   const inTest = process.env.VITEST !== undefined || process.env.NODE_ENV === "test";
   if (!inTest) return;
   const home = process.env.HOME ?? homedir();
-  const xdg = process.env.XDG_STATE_HOME ?? join(home, ".local", "state");
-  const realDb = resolve(join(xdg, "mu", "mu.db"));
+  const realDb = resolve(join(xdgStateHome(home), "mu", "mu.db"));
   if (resolve(path) === realDb) {
     throw new Error(
       `openDb refused: tests must NEVER write to the user DB (${realDb}). Set MU_DB_PATH to a per-test temp path (test/_runCli.ts does this automatically) or pass an explicit { path } argument. The leak source is the call site of openDb in this stack frame.`,
@@ -481,7 +490,7 @@ export const EXPECTED_TABLES: readonly string[] = [
  *  and downstream code gets compile-time checking, not raw strings. */
 export const SYNCED_ENTITIES = ["workstream", "task", "edge", "note", "message"] as const;
 
-/** One of the six op entities that sync. Derived from the tuple, so
+/** One of the op entities that sync. Derived from the tuple, so
  *  adding an entity is a one-line change with no type to keep in step. */
 export type SyncedEntity = (typeof SYNCED_ENTITIES)[number];
 

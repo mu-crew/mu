@@ -255,7 +255,7 @@ export function wireLogCommand(program: Command): void {
     )
     .option(
       "-n, --lines <n>",
-      "cap to the latest N entries (default 50, no cap with --since)",
+      "cap to N entries: the latest N (default 50), or with --since the first N after the cursor (no default cap)",
       parseLines,
     )
     .option("--source <name>", "filter by source")

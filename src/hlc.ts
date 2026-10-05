@@ -199,7 +199,7 @@ export function nextHlc(db: Db, now: number = Date.now()): string {
  *
  *     wall = max(local_wall, remote_wall, now)
  *
- * The counter has three explicit cases, by which of the three won:
+ * The counter has four explicit cases, by which of the three won:
  *   - `now` strictly won            -> counter = 0 (fresh millisecond)
  *   - local and remote tie at max   -> counter = max(local_c, remote_c) + 1
  *   - only local is at max          -> counter = local_c + 1

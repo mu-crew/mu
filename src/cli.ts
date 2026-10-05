@@ -590,10 +590,10 @@ export const WORKSTREAM_OPT = [
 ] as const;
 
 // Reusable --json flag for every read verb. Output shape is documented
-// per-verb but follows a consistent pattern: collections → JSON arrays;
-// single entities → JSON objects. Empty results print `[]` (collections)
-// or `null` (single-entity reads with no match — currently none, since
-// every "single" verb errors on miss). Pretty-printing is OFF; one
+// per-verb but follows a consistent pattern: collections → the
+// `{items, count}` envelope (emitJsonCollection), so an empty one prints
+// `{"items":[],"count":0}`; single entities → JSON objects (every
+// "single" verb errors on a miss rather than printing `null`). Pretty-printing is OFF; one
 // document per line so output is grep/jq friendly.
 export const JSON_OPT = ["--json", "emit machine-readable JSON instead of a table"] as const;
 

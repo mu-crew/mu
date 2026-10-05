@@ -1,8 +1,8 @@
 // Tests for src/db.ts — verifies the schema, idempotency, pragmas,
 // view semantics, and FK cascade behaviour.
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -231,6 +231,22 @@ describe("openDb", () => {
     ).map((r) => r.name);
     raw2.close();
     expect(names).toEqual(["schema_version"]);
+  });
+
+  it("leaves a refused v10 DB byte-for-byte untouched (no WAL switch, no -wal/-shm)", () => {
+    {
+      const raw = new Database(dbPath);
+      raw.exec(
+        `CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+         INSERT INTO schema_version (id, version) VALUES (1, 10);`,
+      );
+      raw.close();
+    }
+    const before = readFileSync(dbPath);
+    expect(() => openDb({ path: dbPath })).toThrow(SchemaTooOldError);
+    expect(readFileSync(dbPath).equals(before)).toBe(true);
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+    expect(existsSync(`${dbPath}-shm`)).toBe(false);
   });
 
   it("still rejects ancient (pre-v5) DBs with SchemaTooOldError", () => {
@@ -575,6 +591,18 @@ describe("defaultDbPath", () => {
         withEnv("XDG_STATE_HOME", "/custom/xdg", () => {
           expect(defaultDbPath()).toBe("/custom/xdg/mu/mu.db");
         });
+      });
+    });
+  });
+
+  it("ignores an empty or relative XDG_STATE_HOME (XDG spec), never a cwd-relative path", () => {
+    withEnv("MU_DB_PATH", undefined, () => {
+      withEnv("MU_STATE_DIR", undefined, () => {
+        for (const value of ["", "rel/state"]) {
+          withEnv("XDG_STATE_HOME", value, () => {
+            expect(defaultDbPath()).toBe(join(homedir(), ".local", "state", "mu", "mu.db"));
+          });
+        }
       });
     });
   });

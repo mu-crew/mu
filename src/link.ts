@@ -123,8 +123,10 @@ export default extension;
 
 /** Install the extension shim (or, with `copy`, an inlined copy pinned
  *  to this version). `replacedCopy` is true when an existing file without
- *  the shim marker was overwritten. */
-export function linkPi(opts?: LinkOptions & { copy?: boolean }): {
+ *  the shim marker was overwritten. A symlink at the destination (e.g. to
+ *  a dev checkout) is never written through: a live one needs `force`,
+ *  which replaces the link itself, never its target. */
+export function linkPi(opts?: LinkOptions & { copy?: boolean; force?: boolean }): {
   path: string;
   replacedCopy: boolean;
 } {
@@ -132,6 +134,13 @@ export function linkPi(opts?: LinkOptions & { copy?: boolean }): {
   const entry = extensionEntry();
   if (!existsSync(entry)) {
     throw new Error(`mu pi extension not built: ${entry} is missing (run npm run build)`);
+  }
+  if (lstatOrUndefined(path)?.isSymbolicLink() === true) {
+    const current = resolve(dirname(path), readlinkSync(path));
+    if (existsSync(current) && opts?.force !== true) {
+      throw new LinkConflictError(path, "foreign-symlink", current);
+    }
+    rmSync(path);
   }
   let replacedCopy = false;
   try {

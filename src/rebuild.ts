@@ -59,7 +59,7 @@
 // per-table counts so the CLI can say so explicitly and tell them to
 // re-spawn.
 
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { applyOp, type Op } from "./apply.js";
 import { type Db, openDb, SYNCED_ENTITIES } from "./db.js";
@@ -119,8 +119,9 @@ export interface RebuildReport {
   /** Ops copied into the target's log. Every op, not just synced ones. */
   opsCopied: number;
   /** Ops that projected into a portable table. Always <= opsCopied:
-   *  log-only entities (message / event / broadcast / marker) are
-   *  copied but have no table to land in. */
+   *  log-only entities (message / event / broadcast), machine-local
+   *  agent / workspace ops and legacy log-only intents are copied but
+   *  have no table to land in. */
   opsProjected: number;
   /** Ops that changed a row when applied. Lower than opsProjected
    *  whenever later ops superseded earlier ones — which is normal and
@@ -245,7 +246,7 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
         last_counter: number;
       }
     | undefined;
-  if (!identity) throw new Error("source DB has no machine_identity row; not a v9 mu DB");
+  if (!identity) throw new Error("source DB has no machine_identity row; not a mu DB");
 
   const opRows = source
     .prepare(
@@ -276,6 +277,11 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
     if (row.n > 0) machineLocalLost.push({ table, rows: row.n });
   }
 
+  // `force` replaces the target, never merges into it: replaying over an
+  // existing DB would keep its foreign rows and ops under our identity.
+  if (opts.force === true) {
+    for (const suffix of ["", "-wal", "-shm"]) rmSync(`${targetPath}${suffix}`, { force: true });
+  }
   const target = openDb({ path: targetPath });
   try {
     // Carry the machine identity across BEFORE replaying.

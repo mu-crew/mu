@@ -37,6 +37,7 @@ export type CaptureIntent =
   | "task.open"
   | "task.park"
   | "task.unpark"
+  | "task.accept"
   | "task.reject"
   | "task.defer"
   | "task.claim"
@@ -83,7 +84,7 @@ export interface RenderedOp {
 // ─── payload access ────────────────────────────────────────────────────
 
 /** Parse an op payload into a field bag. Tolerant by design: a payload
- *  that is not JSON (operator prose from `mu log write`) yields an empty
+ *  that is not JSON (operator prose from `mu log "<text>"`) yields an empty
  *  bag rather than throwing, and the caller falls back to showing the
  *  text verbatim. */
 function fields(payload: string): Record<string, unknown> {
@@ -166,6 +167,7 @@ const VERBS: Record<KnownIntent, string> = {
   "task.open": "task open",
   "task.park": "task park",
   "task.unpark": "task unpark",
+  "task.accept": "task accept",
   "task.reject": "task reject",
   "task.defer": "task defer",
   "task.claim": "task claim",
@@ -208,7 +210,7 @@ function isKnownIntent(intent: string): intent is KnownIntent {
  * Render one op as prose.
  *
  * Returns null when the row is not a rendered op at all — operator prose
- * from `mu log write` / a `--kind` ledger, which has no intent and
+ * from `mu log "<text>"` / a `--kind` ledger, which has no intent and
  * should be shown verbatim. Callers print `payload` in that case.
  */
 export function renderOp(row: RenderableOp): RenderedOp | null {
@@ -311,8 +313,9 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
       };
     }
     case "task.park":
-    case "task.unpark": {
-      // Both stay OPEN, so the payload carries only the substate.
+    case "task.unpark":
+    case "task.accept": {
+      // All three stay OPEN, so the payload carries only the substate.
       const detail = str(bag, "substate") === undefined ? "" : `→ ${pairText(bag, "OPEN")}`;
       return { verb: VERBS[intent], subject, detail };
     }
@@ -384,14 +387,14 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
   }
 }
 
-/** Collapse a multi-line string to one line, truncated. Note contents
- *  are free text and can be paragraphs; a log line is a line. */
 /** "CLOSED/wontfix", or bare "CLOSED" for a default substate. */
 function pairText(bag: Record<string, unknown>, status: string): string {
   const pair = resolvePair(status, str(bag, "substate"));
   return pair === null ? status : formatPair(pair);
 }
 
+/** Collapse a multi-line string to one line, truncated. Note contents
+ *  are free text and can be paragraphs; a log line is a line. */
 function oneLine(text: string, max = 60): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
