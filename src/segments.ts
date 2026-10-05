@@ -939,7 +939,7 @@ export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
     }
     setWatermark(db, peer.machineId, watermark);
   });
-  run();
+  run.immediate();
 
   return {
     machineId: peer.machineId,

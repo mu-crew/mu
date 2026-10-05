@@ -318,7 +318,7 @@ export async function cmdSend(
   if (opts.json) {
     emitJson({
       agentName: name,
-      sentBytes: text.length,
+      sentBytes: Buffer.byteLength(text),
       transport: sent.transport,
       fresh: opts.fresh === true,
       ...(sent.command !== undefined ? { command: sent.command } : {}),
@@ -346,7 +346,7 @@ export async function cmdSend(
             : sent.runs !== undefined
               ? `via ctl, pi was ${sent.state ?? "?"}, runs ${sent.runs}`
               : `via ctl, pi ${sent.state ?? "?"}`;
-    console.log(pc.dim(`sent ${text.length} bytes to ${name} (${how})`));
+    console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (${how})`));
   }
   printNextSteps(nextSteps);
 }
@@ -388,7 +388,7 @@ async function cmdSendInterrupt(
   if (opts.json) {
     emitJson({
       agentName: name,
-      sentBytes: text.length,
+      sentBytes: Buffer.byteLength(text),
       transport: "ctl",
       interrupt: true,
       ...r,
@@ -399,9 +399,17 @@ async function cmdSendInterrupt(
   }
   const what = r.wasBusy ? "interrupted a busy run" : "pi was idle";
   const runs = r.runs !== undefined ? `, runs ${r.runs}` : "";
-  console.log(pc.dim(`sent ${text.length} bytes to ${name} (via ctl, ${what}${runs})`));
+  console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (via ctl, ${what}${runs})`));
   if (r.pending) console.log(pc.yellow("queued messages went back to the pane's editor unsent"));
   printNextSteps(nextSteps);
+}
+
+/** Lines in captured scrollback: a final newline ends the last line, it
+ *  does not start an empty one, and empty text has none. `scrollbackLines`
+ *  in `agent read --json` and `agent show --json` both mean this. */
+function countLines(text: string): number {
+  if (text === "") return 0;
+  return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
 export async function cmdRead(
@@ -421,7 +429,7 @@ export async function cmdRead(
       agentName: name,
       lines: opts.lines ?? null,
       scrollback: text,
-      scrollbackLines: text.split("\n").length,
+      scrollbackLines: countLines(text),
     });
     return;
   }
@@ -497,7 +505,7 @@ export async function cmdAgentShow(
   };
 
   if (opts.json) {
-    emitJson({ agent: displayed, scrollback, scrollbackLines: lines });
+    emitJson({ agent: displayed, scrollback, scrollbackLines: countLines(scrollback) });
     return;
   }
 

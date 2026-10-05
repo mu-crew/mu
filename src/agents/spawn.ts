@@ -213,9 +213,9 @@ export async function checkCommandResolvable(command: string): Promise<CommandRe
 export interface SpawnAgentOptions {
   name: string;
   workstream: string;
-  /** Defaults to "pi". 0.1.0 only really supports "pi" but the column
-   *  accepts any string for forward-compat with future multi-CLI support
-   *  (claude/codex). */
+  /** Defaults to "pi". Any CLI is accepted: pi is driven over its control
+   *  socket; others run `MU_<CLI>_COMMAND` (or the cli name) and get
+   *  text by mux paste. */
   cli?: string;
   /** The actual command to run in the pane. Defaults to the cli value. */
   command?: string;

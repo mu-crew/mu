@@ -472,48 +472,50 @@ function deleteAgentRow(db: Db, name: string, workstream: string): boolean {
   // v2-log-verb builds — the same defect as the prose events, in the
   // other direction.
   return withOpContext(db, { intent: "task.reap", actor: "reaper", group: "new" }, () =>
-    db.transaction(() => {
-      // Snapshot the stuck tasks BEFORE the DELETE; the FK CASCADE
-      // (SET NULL on owner_id) makes the post-delete query
-      // indistinguishable from "never owned by this agent."
-      const agentId = agentIdByName(db, name, workstream);
-      if (agentId === null) {
-        // Already gone — idempotent return. (Could happen if reconcile
-        // pruned a ghost concurrently.) The DELETE is a no-op.
-        return false;
-      }
-      const stuck = db
-        .prepare(
-          `SELECT t.id AS taskId, t.local_id AS localId, ws.name AS workstream
+    db
+      .transaction(() => {
+        // Snapshot the stuck tasks BEFORE the DELETE; the FK CASCADE
+        // (SET NULL on owner_id) makes the post-delete query
+        // indistinguishable from "never owned by this agent."
+        const agentId = agentIdByName(db, name, workstream);
+        if (agentId === null) {
+          // Already gone — idempotent return. (Could happen if reconcile
+          // pruned a ghost concurrently.) The DELETE is a no-op.
+          return false;
+        }
+        const stuck = db
+          .prepare(
+            `SELECT t.id AS taskId, t.local_id AS localId, ws.name AS workstream
              FROM tasks t
              JOIN workstreams ws ON ws.id = t.workstream_id
             WHERE t.owner_id = ? AND t.status = 'IN_PROGRESS'`,
-        )
-        .all(agentId) as Array<{ taskId: number; localId: string; workstream: string }>;
+          )
+          .all(agentId) as Array<{ taskId: number; localId: string; workstream: string }>;
 
-      const result = db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
-      if (result.changes === 0) return false;
+        const result = db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
+        if (result.changes === 0) return false;
 
-      for (const t of stuck) {
-        db.prepare(
-          "UPDATE tasks SET status = 'OPEN', substate = 'todo', updated_at = ? WHERE id = ?",
-        ).run(new Date().toISOString(), t.taskId);
-        addNote(
-          db,
-          t.localId,
-          `[reaper] previous owner ${name} gone (agent removed); status reverted IN_PROGRESS → OPEN, owner cleared`,
-          { author: "reaper", workstream: t.workstream },
-        );
-        // No emitEvent: the UPDATE above fired the tasks capture
-        // trigger. Reap is the one site the orchestrator's split did not
-        // predict — it DOES mutate a portable table, so a trigger sees
-        // it, but it ran outside any withOpContext and so produced
-        // intent=NULL typed ops. The fix is the intent above, not a
-        // second prose row. The `[reaper]` task_note is the
-        // human-readable breadcrumb, and it is itself a captured op.
-      }
-      return true;
-    })(),
+        for (const t of stuck) {
+          db.prepare(
+            "UPDATE tasks SET status = 'OPEN', substate = 'todo', updated_at = ? WHERE id = ?",
+          ).run(new Date().toISOString(), t.taskId);
+          addNote(
+            db,
+            t.localId,
+            `[reaper] previous owner ${name} gone (agent removed); status reverted IN_PROGRESS → OPEN, owner cleared`,
+            { author: "reaper", workstream: t.workstream },
+          );
+          // No emitEvent: the UPDATE above fired the tasks capture
+          // trigger. Reap is the one site the orchestrator's split did not
+          // predict — it DOES mutate a portable table, so a trigger sees
+          // it, but it ran outside any withOpContext and so produced
+          // intent=NULL typed ops. The fix is the intent above, not a
+          // second prose row. The `[reaper]` task_note is the
+          // human-readable breadcrumb, and it is itself a captured op.
+        }
+        return true;
+      })
+      .immediate(),
   );
 }
 
@@ -552,7 +554,7 @@ export async function sendToAgent(
     db,
     agent,
     opts.fresh ? "fresh" : opts.mode === "steer" ? "steer" : "plain",
-    text.length,
+    Buffer.byteLength(text),
     {
       transport: sent.transport,
       command: sent.command,

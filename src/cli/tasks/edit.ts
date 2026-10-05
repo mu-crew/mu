@@ -186,25 +186,27 @@ export async function cmdTaskAdd(
   emitWarnings(warnings);
   const initialNoteAuthor =
     noteText !== undefined ? (opts.noteAuthor ?? (await resolveActorIdentity())) : undefined;
-  const { task, note } = db.transaction(() => {
-    const createdTask = addTask(db, {
-      localId: id,
-      workstream,
-      title: opts.title,
-      impact: opts.impact,
-      effortDays: opts.effortDays,
-      ...(hasBlockers ? { blockedBy } : {}),
-      ...(opts.triage === true ? { triage: true } : {}),
-    });
-    const createdNote =
-      noteText !== undefined
-        ? addNote(db, createdTask.name, noteText, {
-            author: initialNoteAuthor,
-            workstream,
-          })
-        : null;
-    return { task: createdTask, note: createdNote };
-  })();
+  const { task, note } = db
+    .transaction(() => {
+      const createdTask = addTask(db, {
+        localId: id,
+        workstream,
+        title: opts.title,
+        impact: opts.impact,
+        effortDays: opts.effortDays,
+        ...(hasBlockers ? { blockedBy } : {}),
+        ...(opts.triage === true ? { triage: true } : {}),
+      });
+      const createdNote =
+        noteText !== undefined
+          ? addNote(db, createdTask.name, noteText, {
+              author: initialNoteAuthor,
+              workstream,
+            })
+          : null;
+      return { task: createdTask, note: createdNote };
+    })
+    .immediate();
   const nextSteps: NextStep[] = [
     { intent: "Show this task", command: `mu task show ${task.name} -w ${workstream}` },
     ...(note === null

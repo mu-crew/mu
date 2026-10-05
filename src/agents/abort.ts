@@ -119,7 +119,7 @@ export async function interruptAgent(
   opts: AbortAgentOptions,
 ): Promise<InterruptResult> {
   const r = await interruptAgentImpl(db, name, text, opts);
-  recordSend(db, { name, workstreamName: opts.workstream }, "interrupt", text.length, {
+  recordSend(db, { name, workstreamName: opts.workstream }, "interrupt", Buffer.byteLength(text), {
     transport: "ctl",
     wasBusy: r.wasBusy,
   });

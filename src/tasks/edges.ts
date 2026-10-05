@@ -220,21 +220,23 @@ function addBlockEdgeImpl(
     throw new CycleError(blocker, blocked);
   }
   const now = new Date().toISOString();
-  const added = db.transaction(() => {
-    const result = db
-      .prepare(
-        "INSERT OR IGNORE INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
-      )
-      .run(blockerId, blockedId, now);
-    if (result.changes > 0) {
-      // Bump the BLOCKED task — its blocker set changed. The blocker
-      // itself is unaffected. Aligned with reparentTask, which also
-      // bumps the FROM_TASK side (the task whose blockers shifted).
-      touchTask(db, blockedId, now);
-      return true;
-    }
-    return false;
-  })();
+  const added = db
+    .transaction(() => {
+      const result = db
+        .prepare(
+          "INSERT OR IGNORE INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
+        )
+        .run(blockerId, blockedId, now);
+      if (result.changes > 0) {
+        // Bump the BLOCKED task — its blocker set changed. The blocker
+        // itself is unaffected. Aligned with reparentTask, which also
+        // bumps the FROM_TASK side (the task whose blockers shifted).
+        touchTask(db, blockedId, now);
+        return true;
+      }
+      return false;
+    })
+    .immediate();
   // No emitEvent: the task_edges INSERT fired the capture trigger
   // (intent='task.block', key='<ws>/<blocker>-><ws>/<blocked>').
   return { added };
@@ -275,17 +277,19 @@ function removeBlockEdgeImpl(
   const blockedId = taskIdFor(db, blocked, blockedRow.workstreamName);
   const blockerId = taskIdFor(db, blocker, blockerRow.workstreamName);
   if (blockedId === null || blockerId === null) return { removed: false };
-  const removed = db.transaction(() => {
-    const result = db
-      .prepare("DELETE FROM task_edges WHERE from_task_id = ? AND to_task_id = ?")
-      .run(blockerId, blockedId);
-    if (result.changes > 0) {
-      // Bump the BLOCKED task — its blocker set just shrank.
-      touchTask(db, blockedId);
-      return true;
-    }
-    return false;
-  })();
+  const removed = db
+    .transaction(() => {
+      const result = db
+        .prepare("DELETE FROM task_edges WHERE from_task_id = ? AND to_task_id = ?")
+        .run(blockerId, blockedId);
+      if (result.changes > 0) {
+        // Bump the BLOCKED task — its blocker set just shrank.
+        touchTask(db, blockedId);
+        return true;
+      }
+      return false;
+    })
+    .immediate();
   if (removed) {
     // No emitEvent: the DELETE fired the capture trigger, writing an
     // edge tombstone with intent='task.unblock'.
@@ -380,19 +384,23 @@ function reparentTaskImpl(
     return { removedEdges: 0, addedEdges: 0 };
   }
 
-  return db.transaction(() => {
-    const removed = db.prepare("DELETE FROM task_edges WHERE to_task_id = ?").run(taskSurrogateId);
-    const insertEdge = db.prepare(
-      "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
-    );
-    const now = new Date().toISOString();
-    for (const blockerId of blockerIds) {
-      insertEdge.run(blockerId, taskSurrogateId, now);
-    }
-    // Bump the reparented task itself — its blocker set just changed.
-    touchTask(db, taskSurrogateId, now);
-    // No emitEvent: every edge DELETE and INSERT in this transaction
-    // fired the capture trigger under intent='task.reparent'.
-    return { removedEdges: removed.changes, addedEdges: blockerIds.length };
-  })();
+  return db
+    .transaction(() => {
+      const removed = db
+        .prepare("DELETE FROM task_edges WHERE to_task_id = ?")
+        .run(taskSurrogateId);
+      const insertEdge = db.prepare(
+        "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
+      );
+      const now = new Date().toISOString();
+      for (const blockerId of blockerIds) {
+        insertEdge.run(blockerId, taskSurrogateId, now);
+      }
+      // Bump the reparented task itself — its blocker set just changed.
+      touchTask(db, taskSurrogateId, now);
+      // No emitEvent: every edge DELETE and INSERT in this transaction
+      // fired the capture trigger under intent='task.reparent'.
+      return { removedEdges: removed.changes, addedEdges: blockerIds.length };
+    })
+    .immediate();
 }

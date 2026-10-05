@@ -58,7 +58,7 @@ export async function cmdSql(
     // atomic confirm-or-rollback wrapper around an opaque blob.
     if (opts.confirmRows !== undefined) {
       const expected = opts.confirmRows;
-      db.exec("BEGIN");
+      db.exec("BEGIN IMMEDIATE");
       let actual: number;
       try {
         // Count the OPERATOR's rows only. Since v2-capture, a write to a
@@ -105,7 +105,7 @@ export async function cmdSql(
       // script with capture ON, inside its own transaction, so the
       // committed writes are captured normally.
       db.exec("ROLLBACK");
-      db.exec("BEGIN");
+      db.exec("BEGIN IMMEDIATE");
       try {
         db.exec(trimmed);
       } catch (e) {
@@ -190,7 +190,7 @@ export async function cmdSql(
   } else {
     if (opts.confirmRows !== undefined) {
       const expected = opts.confirmRows;
-      db.exec("BEGIN");
+      db.exec("BEGIN IMMEDIATE");
       let result: { changes: number; lastInsertRowid: number | bigint };
       try {
         result = single.run([]);

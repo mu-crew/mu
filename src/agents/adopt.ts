@@ -101,11 +101,11 @@ async function probeAdopted(
  *   6. Name not taken     -> AgentExistsError (else)
  *   7. Insert + retitle.
  *
- * Status starts at 'free' — reconcile/detect will update it on the next
- * `mu agent list` based on actual pane content (the pi prompt yields
- * 'free'; an agent mid-thought yields 'busy'; etc.). We don't run
- * detection inline here because the caller may not have $TMUX, and
- * adoption shouldn't depend on a captured-pane probe succeeding.
+ * The row's `status` column is the deprecated constant 'spawning' (see
+ * insertAgent); runtime state is read at display time by
+ * src/agent-state.ts (control socket, murmur, or herdr), never from
+ * pane text. Adoption runs no state probe, so it does not depend on
+ * the agent's control socket or a captured pane answering.
  */
 export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<AdoptAgentResult> {
   // Load-bearing throughout: adopting a pane requires reading a pane.
