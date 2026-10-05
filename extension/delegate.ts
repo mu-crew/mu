@@ -230,6 +230,47 @@ export function delegateMessage(
   }
 }
 
+/** Where a delegate's answer is recorded: a task, resolved by `mu task show`. */
+export type RecordTarget = { workstream: string; task: string };
+
+/** Cap on a recorded note, in chars. */
+export const RECORD_NOTE_MAX = 4000;
+/** Without a VERDICT line, this much of the answer's end is recorded. */
+export const RECORD_FALLBACK_TAIL = 1500;
+
+const VERDICT_LINE = /^[\s>*_`-]*VERDICT:/;
+const EVIDENCE_LINE = /^[\s>*_`-]*EVIDENCE:/;
+
+/**
+ * The note a delegate's answer leaves on the task it judged. Pure. A done
+ * answer keeps its last `VERDICT:` line and every `EVIDENCE:` line after
+ * it (else its tail, marked NO VERDICT LINE); any other outcome records
+ * the gap.
+ */
+export function recordNote(
+  label: string,
+  name: string,
+  outcome: string | undefined,
+  lastText: string | undefined,
+  elapsedMs: number,
+): string {
+  if (outcome !== "done" || !lastText?.trim())
+    return `REFUTER ${label}: no verdict (${outcome === "done" ? "empty" : (outcome ?? "no result")})`;
+  const lines = lastText.trimEnd().split("\n");
+  let at = -1;
+  for (let i = lines.length - 1; i >= 0 && at < 0; i--)
+    if (VERDICT_LINE.test(lines[i] ?? "")) at = i;
+  const body =
+    at >= 0
+      ? [lines[at] ?? "", ...lines.slice(at + 1).filter((l) => EVIDENCE_LINE.test(l))].join("\n")
+      : `NO VERDICT LINE: ${lastText.trimEnd().slice(-RECORD_FALLBACK_TAIL)}`;
+  const note = `REFUTER ${label} (${name}, ${formatElapsed(elapsedMs)}):\n${body}`;
+  const mark = "\n[truncated]";
+  return note.length <= RECORD_NOTE_MAX
+    ? note
+    : note.slice(0, RECORD_NOTE_MAX - mark.length) + mark;
+}
+
 /** A label → agent-name stem: lowercase, [a-z0-9-], ≤ 20 chars. */
 export function labelStem(label: unknown): string | undefined {
   if (typeof label !== "string") return undefined;
@@ -250,6 +291,7 @@ export function labelStem(label: unknown): string | undefined {
  */
 type Inflight = {
   abort: AbortController;
+  record?: { target: RecordTarget; label: string };
   cancelling: boolean;
   parked?: () => Promise<void>;
 };
@@ -260,6 +302,7 @@ type Queued = {
   handle: string;
   params: Record<string, unknown>;
   ctx: DelegateCtx | undefined;
+  record?: RecordTarget;
 };
 
 export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunner()): void {
@@ -321,7 +364,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       const q = queue.shift();
       if (!q) break;
       starting++; // held until start() takes over the slot
-      void start(q.params, undefined, q.ctx, q.handle).then(
+      void start(q.params, undefined, q.ctx, q.handle, q.record).then(
         () => {},
         (e: unknown) => {
           void Promise.resolve(
@@ -429,7 +472,50 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     }
   }
 
-  async function deliver(name: string, wait: MuResult, keep: boolean, extras: MessageExtras) {
+  /** The note label: the caller's label, else the delegate's name. */
+  const recordLabel = (params: Record<string, unknown>, name: string) =>
+    typeof params.label === "string" && params.label.trim() ? params.label.trim() : name;
+
+  /** Check `record` names a real task, before anything spawns. */
+  async function resolveRecord(raw: unknown): Promise<RecordTarget | undefined> {
+    if (raw === undefined) return undefined;
+    const r = raw as { task?: unknown; workstream?: unknown } | null;
+    const task = typeof r?.task === "string" ? r.task.trim() : "";
+    if (!task) throw new Error("mu_delegate: record.task must name a task");
+    const ws = typeof r?.workstream === "string" ? r.workstream.trim() : "";
+    // Without a workstream, mu resolves it as any verb does (<ws>/<task>, $MU_SESSION, tmux).
+    const shown = await mu(["task", "show", task, ...(ws ? ["-w", ws] : []), "--json"]);
+    const out = json(shown);
+    const t = out?.task as { name?: unknown; workstreamName?: unknown } | undefined;
+    if (shown.code !== 0 || typeof t?.name !== "string" || typeof t.workstreamName !== "string") {
+      const why =
+        typeof out?.message === "string" ? out.message : (shown.stderr || shown.stdout).trim();
+      throw new Error(
+        `mu_delegate: record task ${ws ? `${ws}/` : ""}${task} not found (exit ${shown.code}): ${why}. Nothing spawned.`,
+      );
+    }
+    return { workstream: t.workstreamName, task: t.name };
+  }
+
+  /** Write one note on the record task; the follow-up's line about it. */
+  async function writeRecord(rec: RecordTarget, name: string, text: string): Promise<string> {
+    const where = `${rec.workstream}/${rec.task}`;
+    try {
+      const r = await mu(["task", "note", rec.task, "-w", rec.workstream, "--author", name, text]);
+      if (r.code === 0) return `Recorded on ${where} as a note.`;
+      return `Recording on ${where} failed (exit ${r.code}): ${(r.stderr || r.stdout).trim()}. Record it yourself.`;
+    } catch (e) {
+      return `Recording on ${where} failed: ${e instanceof Error ? e.message : String(e)}. Record it yourself.`;
+    }
+  }
+
+  async function deliver(
+    name: string,
+    wait: MuResult,
+    keep: boolean,
+    extras: MessageExtras,
+    record?: { target: RecordTarget; label: string },
+  ) {
     const agent = (json(wait)?.agents as WaitAgent[] | undefined)?.[0];
     const outcome = agent?.outcome;
     const tail =
@@ -451,10 +537,18 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       failed.add(name);
       showStatus();
     }
+    const recorded = record
+      ? await writeRecord(
+          record.target,
+          name,
+          recordNote(record.label, name, outcome, agent?.lastText, extras.elapsedMs ?? 0),
+        )
+      : undefined;
+    const message = delegateMessage(name, agent, pane, { ...extras, ...(tail ? { tail } : {}) });
     await pi.sendMessage(
       {
         customType: DELEGATE_MESSAGE_TYPE,
-        content: delegateMessage(name, agent, pane, { ...extras, ...(tail ? { tail } : {}) }),
+        content: recorded ? `${message}\n\n${recorded}` : message,
         display: true,
         details: {
           name,
@@ -478,6 +572,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     signal: AbortSignal | undefined,
     ctx: DelegateCtx | undefined,
     queuedAs?: string,
+    record?: RecordTarget,
   ): Promise<ToolResult> {
     let slotHeld = true;
     const freeSlot = () => {
@@ -508,7 +603,11 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
       }
       const { name, attach, workspace } = await spawn(params, cwd, signal);
-      const entry: Inflight = { abort: new AbortController(), cancelling: false };
+      const entry: Inflight = {
+        abort: new AbortController(),
+        cancelling: false,
+        ...(record ? { record: { target: record, label: recordLabel(params, name) } } : {}),
+      };
       inflight.set(name, entry);
       freeSlot(); // now counted in inflight
       showStatus();
@@ -562,13 +661,19 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       const settle = async (r: MuResult) => {
         forget(name);
         try {
-          await deliver(name, r, keep, {
-            timeoutS,
-            elapsedMs: Date.now() - started,
-            ...(queuedAs ? { queuedAs } : {}),
-            ...(attach ? { attach } : {}),
-            ...(workspace ? { workspace } : {}),
-          });
+          await deliver(
+            name,
+            r,
+            keep,
+            {
+              timeoutS,
+              elapsedMs: Date.now() - started,
+              ...(queuedAs ? { queuedAs } : {}),
+              ...(attach ? { attach } : {}),
+              ...(workspace ? { workspace } : {}),
+            },
+            entry.record,
+          );
         } catch (e) {
           // A throw here would be an unhandled rejection and a lost answer.
           await Promise.resolve(
@@ -614,7 +719,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   pi.registerTool({
     name: DELEGATE_TOOL,
     label: "mu delegate",
-    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation; call it several times to fan out in parallel (at most ${delegateMax()} run at once; up to ${DELEGATE_QUEUE_FACTOR * delegateMax()} more are queued and start as slots free). The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open.`,
+    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation; call it several times to fan out in parallel (at most ${delegateMax()} run at once; up to ${DELEGATE_QUEUE_FACTOR * delegateMax()} more are queued and start as slots free). The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open. For a refuter or check, set record to write its verdict onto the task it judged.`,
     promptSnippet:
       "Subagent: delegate a self-contained task to a background pi agent; its answer arrives later as a follow-up",
     parameters: {
@@ -655,6 +760,17 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
           type: "boolean",
           description: "Keep the pane after it finishes, to talk to it again",
         },
+        record: {
+          type: "object",
+          description:
+            "When the answer arrives, write its VERDICT/EVIDENCE onto this task as a note (use for refuters and checks); task may be <ws>/<task>.",
+          properties: {
+            task: { type: "string" },
+            workstream: { type: "string" },
+          },
+          required: ["task"],
+          additionalProperties: false,
+        },
       },
       required: ["task"],
       additionalProperties: false,
@@ -673,12 +789,13 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
           typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
         if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
       }
+      const record = await resolveRecord(params.record);
       // Count slots synchronously, before any await: parallel calls in one
       // turn all run this line before the first spawn returns.
       const max = delegateMax();
       if (inflight.size + starting < max) {
         starting++;
-        return start(params, signal, ctx);
+        return start(params, signal, ctx, undefined, record);
       }
       // Full: queue up to DELEGATE_QUEUE_FACTOR caps' worth; past that, refuse.
       if (queue.length >= DELEGATE_QUEUE_FACTOR * max)
@@ -694,6 +811,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
             typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd()),
         },
         ctx,
+        ...(record ? { record } : {}),
       });
       showStatus();
       return {
@@ -727,10 +845,15 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       if (!name) throw new Error("mu_delegate_cancel needs a name");
       const qi = queue.findIndex((q) => q.handle === name);
       if (qi >= 0) {
-        queue.splice(qi, 1);
+        const [q] = queue.splice(qi, 1);
         showStatus();
+        const recorded = q?.record
+          ? ` ${await writeRecord(q.record, name, recordNote(recordLabel(q.params, name), name, "cancelled", undefined, 0))}`
+          : "";
         return {
-          content: [{ type: "text", text: `Dropped ${name} from the queue; it never started.` }],
+          content: [
+            { type: "text", text: `Dropped ${name} from the queue; it never started.${recorded}` },
+          ],
           details: { name, workstream: W },
         };
       }
@@ -753,6 +876,8 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       }
       failed.delete(name);
       let text = `Aborted ${W}/${name}.`;
+      if (entry?.record)
+        text += ` ${await writeRecord(entry.record.target, name, recordNote(entry.record.label, name, "cancelled", undefined, 0))}`;
       if (params.keep === true) text += " Pane kept.";
       else {
         const c = await mu(["agent", "close", name, "-w", W]);
