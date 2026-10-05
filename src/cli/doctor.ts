@@ -38,7 +38,7 @@ import {
   driftRemediation,
   formatDriftRecord,
 } from "../drift.js";
-import { checkFleetHazards, type FleetHazard } from "../fleet-hazards.js";
+import { checkFleetHazards, type FleetHazard, HazardFailError } from "../fleet-hazards.js";
 import { activeMux, type MuxHealth } from "../mux.js";
 import { pc } from "../output.js";
 import { summarizeWorkstream } from "../workstream.js";
@@ -50,11 +50,6 @@ import { forgetHint } from "./db.js";
 const LABEL_WIDTH = 19;
 const pad = (s: string): string => s.padEnd(LABEL_WIDTH);
 
-/**
- * Health of the active mux, or undefined when NO backend resolves.
- * Never throws: doctor's whole job is reporting a broken substrate,
- * so `NoMultiplexerError` here is a finding, not a failure.
- */
 /** Where agent state comes from: herdr on herdr, murmur otherwise. A
  *  linked mu extension makes murmur optional for pi agents. */
 function agentStateCheck(health: MuxHealth | undefined, muExt: DoctorCheck): DoctorCheck {
@@ -69,6 +64,11 @@ function printCheck(label: string, check: DoctorCheck): void {
   console.log(`  ${pad(label)}: ${colour(word)} ${pc.dim(check.detail)}`);
 }
 
+/**
+ * Health of the active mux, or undefined when NO backend resolves.
+ * Never throws: doctor's whole job is reporting a broken substrate,
+ * so `NoMultiplexerError` here is a finding, not a failure.
+ */
 async function muxHealth(): Promise<MuxHealth | undefined> {
   try {
     return await (await activeMux()).healthCheck();
@@ -152,9 +152,10 @@ export async function cmdDoctor(
     } else {
       console.log(`  schema           : ${pc.red("missing")} — ${missing.join(", ")}`);
     }
-    // Schema version: should match CURRENT_SCHEMA_VERSION after openDb
-    // (which runs migrations). Mismatch means either a downgrade
-    // attempt or a bug in the migration runner — either way, surface it.
+    // Schema version: openDb refuses any DB older or newer than
+    // CURRENT_SCHEMA_VERSION (SchemaTooOldError / SchemaTooNewError,
+    // exit 4; there is no migration ladder). A mismatch here means the
+    // row changed after open, e.g. an external SQLite client.
     try {
       const row = db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as
         | { version: number }
@@ -168,7 +169,7 @@ export async function cmdDoctor(
         console.log(`  schema_version   : ${pc.green(String(v))}`);
       } else if (v < CURRENT_SCHEMA_VERSION) {
         console.log(
-          `  schema_version   : ${pc.yellow(String(v))} (code expects ${CURRENT_SCHEMA_VERSION}; openDb should have migrated)`,
+          `  schema_version   : ${pc.yellow(String(v))} (code expects ${CURRENT_SCHEMA_VERSION}; openDb refuses older DBs, so the row changed after open)`,
         );
       } else {
         console.log(
@@ -255,7 +256,8 @@ export async function cmdDoctor(
   // PREVENTABLE — each one is a condition the operator can fix before it
   // costs them data, unlike drift which is a bug report.
   console.log(pc.bold("\nfleet"));
-  let sawHazard = printHazards(checkFleetHazards(db, { dbPath: defaultDbPath() }));
+  const fleet = checkFleetHazards(db, { dbPath: defaultDbPath() });
+  let sawHazard = printHazards(fleet);
 
   // ─ Housekeeping: workstreams that look torn-down-able
   //
@@ -285,7 +287,8 @@ export async function cmdDoctor(
   // + stat (~1ms); recursive byte accounting is --disk, because its cost
   // scales with the checkouts rather than with mu's state.
   console.log(pc.bold("\ndisk"));
-  if (printHazards(checkDiskRecon(db))) sawHazard = true;
+  const disk = checkDiskRecon(db);
+  if (printHazards(disk)) sawHazard = true;
   if (opts.disk === true) {
     const usage = measureWorkspaceUsage(db);
     const total = usage.reduce((n, u) => n + u.bytes, 0);
@@ -366,6 +369,16 @@ export async function cmdDoctor(
       pc.dim("\nSee the fleet / disk sections above: at least one finding needs attention."),
     );
   }
+  // A `fail` row (today: the DB inside MU_SYNC_DIR) is a hard failure,
+  // not a hint, so it exits non-zero like drift. Thrown last so the
+  // whole report is printed first.
+  const failed = failedHazardNames([...fleet, ...disk]);
+  if (failed.length > 0) throw new HazardFailError(failed);
+}
+
+/** Names of the `fail`-severity rows, the ones that make doctor exit 5. */
+function failedHazardNames(hazards: readonly { name: string; severity: string }[]): string[] {
+  return hazards.filter((h) => h.severity === "fail").map((h) => h.name);
 }
 
 /** The ops-log size hint: torn-down history worth forgetting, largest
@@ -577,6 +590,8 @@ export async function cmdDoctorJson(
   // Emit the payload FIRST, then fail: a --json consumer needs the
   // machine-readable report even when the exit code is non-zero.
   if (driftFailure !== null) throw driftFailure;
+  const failed = failedHazardNames([...hazards, ...disk]);
+  if (failed.length > 0) throw new HazardFailError(failed);
 }
 
 // agents/tasks counts come from summarizeWorkstream() (src/workstream.ts) —
@@ -600,9 +615,13 @@ function countLogsByWorkstream(db: Db, workstream: string): number {
     db
       .prepare(
         // ops.key is the natural key ('' = machine-wide), so no join.
-        "SELECT COUNT(*) AS n FROM ops WHERE key = ?",
+        // The workstream's own ops have key = <ws>; its tasks, notes and
+        // edges all start with '<ws>/' (src/capture.ts § Natural keys).
+        // A range, not LIKE: '_' in a workstream name is a LIKE wildcard,
+        // and '0' is the byte after '/'.
+        "SELECT COUNT(*) AS n FROM ops WHERE key = ? OR (key >= ? AND key < ?)",
       )
-      .get(workstream) as { n: number }
+      .get(workstream, `${workstream}/`, `${workstream}0`) as { n: number }
   ).n;
 }
 function countReady(db: Db, workstream: string): number {

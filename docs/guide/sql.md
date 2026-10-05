@@ -20,8 +20,8 @@ mu task list -w auth --json | jq '.count'
 ```
 
 Exit codes: `2` usage error, `3` not found, `4` conflict, `5`
-timeout or a multiplexer, VCS, or drift failure, `6` reaped pane,
-`7` stall.
+timeout, a locked DB, or a multiplexer, VCS, drift, or `mu doctor`
+FAIL-row failure, `6` reaped pane, `7` stall.
 
 ## Read the schema
 

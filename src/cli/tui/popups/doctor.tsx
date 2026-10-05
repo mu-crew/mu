@@ -98,8 +98,11 @@ export function DoctorPopup({
   // SELECTs (see src/doctor-summary.ts) so it's cheap even on the
   // popup's typing-intensive '/' filter loop. Snapshot.doctor (the
   // card's slice) only carries the truncated set, so we re-derive
-  // the full one here.
-  const sourceChecks: readonly DoctorCheck[] = snapshot ? loadDoctorChecks(db, snapshot) : [];
+  // the full one here, with the card's agent-state source (herdr on
+  // herdr) so the murmur row agrees with the card and `mu doctor`.
+  const sourceChecks: readonly DoctorCheck[] = snapshot
+    ? loadDoctorChecks(db, snapshot, snapshot.doctor?.agentStateSource)
+    : [];
 
   // Per spec FILTER block: blob = `${name} ${status} ${detail}`.
   // Per bug_filter_drill_opens_wrong_task: text filter applied

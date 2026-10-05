@@ -154,9 +154,15 @@ export function checkWorkspaceOrphanDirs(db: Db): FleetHazard {
       "",
       "Each one blocks the next `--workspace` spawn for that agent name. mu will",
       "not remove them: they may hold uncommitted work, and a stranded dir is the",
-      "only remaining copy of it. Inspect, then remove by hand:",
+      "only remaining copy of it. Inspect, then remove by hand (git checkouts:",
+      "from the project root, so git also drops its worktree registration):",
       "  mu workspace orphans --all",
-      ...orphans.slice(0, 3).map((o) => `  rm -rf ${o.path}`),
+      ...orphans
+        .slice(0, 3)
+        .map(
+          (o) =>
+            `  (cd <project-root> && git worktree remove --force ${o.path}) || rm -rf ${o.path}`,
+        ),
     ],
   };
 }
@@ -204,11 +210,12 @@ export interface StrayFile {
 /**
  * `mu.db.*` files in the state dir that are not the live WAL triple.
  *
- * Hand-made copies (`mu.db.old`), pre-bump saves (`mu.db.v9-<stamp>`)
- * and their abandoned `-wal` / `-shm` sidecars. Nothing in mu writes or
- * reads them, nothing prunes them, and they are the largest single
- * category of dead bytes in a long-lived state dir — 50MB on the box
- * this check was written against.
+ * Hand-made copies (`mu.db.old`), pre-bump saves (`mu.db.v9-<stamp>`),
+ * the safety backups `mu db compact` / `mu db forget` write beside the
+ * DB (`mu.db.pre-<verb>-<stamp>`, src/cli/db.ts) and abandoned `-wal` /
+ * `-shm` sidecars. Nothing in mu reads them and nothing prunes them, and
+ * they are the largest single category of dead bytes in a long-lived
+ * state dir — 50MB on the box this check was written against.
  *
  * The live triple is excluded by exact name, so a `MU_DB_PATH` pointing
  * elsewhere simply reports the default-path copies it finds, which is
@@ -247,9 +254,11 @@ export function checkStrayDbFiles(): FleetHazard {
       "",
       `Live DB: ${defaultDbPath()}`,
       "",
-      "These are hand-made copies and pre-upgrade saves. No mu code path reads",
-      "them and none prunes them. Real disaster recovery is the ops log, so a",
-      "copy is only ever a convenience:",
+      "These are hand-made copies, pre-upgrade saves, and the backups",
+      "`mu db compact` / `mu db forget` write first (mu.db.pre-<verb>-<time>).",
+      "No mu code path reads them and none prunes them. Keep a pre-forget",
+      "backup until you are sure: it is the only way back from a forget.",
+      "Otherwise disaster recovery is the ops log, so a copy is a convenience:",
       "  mu rebuild <file>        # DR from the ops log, not from a copy",
       "  mu db backup <file>      # a fresh copy, if that is what you wanted",
     ],
@@ -259,7 +268,7 @@ export function checkStrayDbFiles(): FleetHazard {
 /**
  * `<state-dir>/exports/` — residue of a verb that no longer exists.
  *
- * `mu workstream export` and its markdown bucket were deleted in 1.0.
+ * `mu workstream export` and its markdown bucket were deleted in 1.1.0.
  * The directory it wrote to was not, so every export any earlier version
  * ever made is still on disk with no surface in mu that names it. This
  * is the one finding here that is a defect rather than housekeeping:
@@ -278,7 +287,7 @@ export function checkRemovedExportsDir(): FleetHazard {
     remediation: [
       `${root} holds ${entries.length} directory/ies.`,
       "",
-      "`mu workstream export` and its markdown bucket were removed in 1.0; this",
+      "`mu workstream export` and its markdown bucket were removed in 1.1.0; this",
       "is output from a version that still had it. Nothing in mu reads or prunes",
       "it. Keep anything you still want, then:",
       `  rm -rf ${root}`,
@@ -338,9 +347,10 @@ export interface WorkspaceUsage {
   orphan: boolean;
 }
 
-/** Recursive byte sum. Symlinks are counted at link size (`statSync`
- *  without following) so a workspace symlinked into a huge tree does not
- *  report that tree's bytes as mu's. */
+/** Recursive byte sum. Symlinks are skipped (0 bytes, never followed):
+ *  a Dirent for a symlink is neither a file nor a directory, so a
+ *  workspace symlinked into a huge tree does not report that tree's
+ *  bytes as mu's. */
 function walkBytes(path: string): number {
   let total = 0;
   let entries: import("node:fs").Dirent[];

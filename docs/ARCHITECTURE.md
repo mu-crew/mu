@@ -74,7 +74,7 @@ them, and is the only code that imports ink:
 **CLI and SDK surface.** Each operation is a typed SDK function plus a
 thin Commander wrapper. Public functions take operator-facing names and
 resolve them to surrogate ids exactly once. Typed errors map to exit
-codes 0-5. The same page covers testing layers and packaging:
+codes 0-7. The same page covers testing layers and packaging:
 [architecture/sdk.md](architecture/sdk.md).
 
 ## Module map

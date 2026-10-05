@@ -125,7 +125,9 @@ codes:
 | 2 | usage error (Commander's default) |
 | 3 | not found (agent, task, workspace) |
 | 4 | conflict (name collision, double claim, dirty tree, schema too old or new, outdated extension) |
-| 5 | substrate unavailable (no multiplexer, DB locked) |
+| 5 | substrate unavailable or unsafe (no multiplexer, mux or VCS failure, DB locked, ops-log drift, a `mu doctor` FAIL row, timeout) |
+| 6 | `mu task wait`: the reaper reopened a watched task (its pane died) |
+| 7 | `mu task wait`: a watched task stalled (`--on-stall exit`) |
 
 Errors carry structured context (operation, target, attempted action)
 so `mu doctor` can show them readably.

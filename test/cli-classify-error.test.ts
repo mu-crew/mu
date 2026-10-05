@@ -11,6 +11,7 @@
 // src/cli/handle.ts:classifyError(). When a new class is added to that
 // switch, the missing adjacent row should be obvious in review.
 
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import {
   AgentDiedOnSpawnError,
@@ -24,6 +25,7 @@ import {
 } from "../src/agents.js";
 import { classifyError, NameAmbiguousError, UsageError } from "../src/cli.js";
 import { SchemaTooOldError, WorkstreamNotFoundError } from "../src/db.js";
+import { HazardFailError } from "../src/fleet-hazards.js";
 import { MuxError, NoMultiplexerError } from "../src/mux.js";
 import {
   ClaimerNotRegisteredError,
@@ -132,6 +134,14 @@ describe("classifyError exit-code map", () => {
     [new MuxError("no server"), 5, "mux"],
     [new PaneNotFoundError("%999"), 5, "mux"],
     [new NoMultiplexerError(["tmux"]), 5, "no multiplexer"],
+
+    // f_arch_exit5_dblocked: a lock held past busy_timeout is exit 5,
+    // as docs/architecture/sdk.md says, not generic 1.
+    [new Database.SqliteError("database is locked", "SQLITE_BUSY"), 5, "db locked"],
+    [new Database.SqliteError("database table is locked", "SQLITE_LOCKED"), 5, "db locked"],
+    [new Database.SqliteError("UNIQUE constraint failed", "SQLITE_CONSTRAINT_UNIQUE"), 1, "error"],
+    // f_doctor_fail_row_exit0: a doctor FAIL row shares drift's lane.
+    [new HazardFailError(["db-vs-sync"]), 5, "doctor"],
 
     // switch branch 8: VCS conflict during workspace refresh
     [

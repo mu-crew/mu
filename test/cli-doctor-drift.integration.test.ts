@@ -153,7 +153,9 @@ describe("mu doctor — drift + fleet checks", () => {
     const previous = process.env[key];
     process.env[key] = tempDir; // dbPath is inside tempDir
     try {
-      const { stdout } = await runCli(["doctor"], dbPath);
+      const { stdout, exitCode } = await runCli(["doctor"], dbPath);
+      // A FAIL row exits 5 (after the report), like drift.
+      expect(exitCode).toBe(5);
       expect(stdout).toContain("db-vs-sync");
       expect(stdout).toContain("INSIDE MU_SYNC_DIR");
       expect(stdout).toContain("WILL corrupt");

@@ -155,6 +155,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **The doc/CLI drift test checks more commands.** `mu` inside a path
   or a quoted brief no longer exempts a command, and `drift-audit.md`
   is checked (a test now fails if a recipe is left out).
+- `mu doctor` exits 5 when a row FAILs (today: the DB inside
+  `MU_SYNC_DIR`), after printing the report or the `--json` payload.
+  It printed FAIL and exited 0. WARN rows still exit 0.
+- A DB lock held past the 5 s busy timeout (`database is locked`) exits
+  5, as the exit-code table says, instead of 1. The table in
+  `docs/architecture/sdk.md` now lists exits 6 and 7.
+- `mu doctor`'s `ops rows` counts the workstream's task, note and edge
+  ops. It counted only the workstream's own row.
+- Orphan workspace dir advice no longer says `mu workspace free`, which
+  does nothing without a row. The doctor `ws-dirs` row, the TUI doctor
+  drill and `WorkspacePathNotEmptyError` give the `mu workspace orphans`
+  recipe: `git worktree remove --force` from the project root, else
+  `rm -rf`.
+- The doctor `db-copies` row names the `mu.db.pre-compact-*` /
+  `pre-forget-*` backups mu writes, instead of calling them hand-made
+  copies. The `schema` and `schema_version` advice no longer claims
+  `openDb` migrates older DBs (it refuses them). The `exports` row says
+  the export verb went in 1.1.0, not 1.0.
+- The TUI doctor popup's murmur row matches the card on herdr (`agent
+  state from herdr`) instead of warning that murmur is missing.
 
 ## [3.8.1] — 2026-10-05
 

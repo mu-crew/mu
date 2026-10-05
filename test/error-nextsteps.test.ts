@@ -341,7 +341,7 @@ const cases: NextStepsCase[] = [
   {
     error: new WorkspacePathNotEmptyError("alice", "auth", "/path/to/ws"),
     label: "WorkspacePathNotEmptyError",
-    expectedTokens: ["alice", "auth", "/path/to/ws"],
+    expectedTokens: ["auth", "/path/to/ws", "git worktree remove --force", "rm -rf"],
   },
   {
     error: new HomeDirAsProjectRootError("alice", "auth", "/Users/alice"),
