@@ -29,6 +29,21 @@ export interface FleetHazard {
   remediation?: readonly string[];
 }
 
+/**
+ * `mu doctor` found at least one `fail`-severity row. Thrown after the
+ * whole report is printed (or the --json payload emitted) so scripts and
+ * CI see a non-zero exit; maps to exit 5 like drift, because a `fail`
+ * row means the substrate is unsafe, not that a hint is pending.
+ */
+export class HazardFailError extends Error {
+  override readonly name = "HazardFailError";
+  constructor(readonly failedRows: readonly string[]) {
+    super(
+      `doctor: ${failedRows.length} row${failedRows.length === 1 ? "" : "s"} failed (${failedRows.join(", ")}); see the remediation above`,
+    );
+  }
+}
+
 // ─── (a) DB inside the sync dir ───────────────────────────────────────
 
 /**

@@ -69,6 +69,10 @@ export interface DoctorSummary {
   /** Convenience: how many rows are warn or fail. Card subtitle
    *  reads this directly. Pure derivation from `checks`. */
   problemCount: number;
+  /** Where the murmur row read agent state from. The slot-9 popup
+   *  re-derives the full check list and passes this back, so its
+   *  murmur row matches the card's (herdr on herdr). */
+  agentStateSource?: "murmur" | "herdr";
 }
 
 /**
@@ -262,7 +266,7 @@ export function loadDoctorSummary(
         },
   );
 
-  return { checks, problemCount: countProblems(checks) };
+  return { checks, problemCount: countProblems(checks), agentStateSource };
 }
 
 function resolveExecutable(name: string): string | null {
@@ -573,8 +577,9 @@ export function countProblems(checks: readonly DoctorCheck[]): number {
 export function loadDoctorChecks(
   db: Db,
   snapshot: WorkstreamSnapshot | null,
+  agentStateSource: "murmur" | "herdr" = "murmur",
 ): readonly DoctorCheck[] {
-  return loadDoctorSummary(db, snapshot).checks;
+  return loadDoctorSummary(db, snapshot, agentStateSource).checks;
 }
 
 // ─── pure helpers (per-check remediation hints) ────────────────────
@@ -627,8 +632,9 @@ export function yankCommandForCheck(check: Pick<DoctorCheck, "name" | "status">)
       // Orphan tmux panes — the standard adoption recipe.
       return "mu agent adopt";
     case "workspaces":
-      // Diagnostic: list orphan workspace dirs. Operator decides
-      // whether to `mu workspace free` from the list output.
+      // Diagnostic: list orphan workspace dirs with their cleanup
+      // command. An orphan has no row, so `mu workspace free` cannot
+      // remove it; the operator deletes it by hand.
       return "mu workspace orphans";
     case "drift":
       // The full rebuild-and-diff. Read-only: it writes only to a temp
@@ -708,10 +714,13 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
       ];
     case "workspaces":
       return [
-        "An 'orphan workspace dir' is a per-agent VCS workspace under",
-        "the workstream that has no matching mu agent row. Run",
-        "`mu workspace orphans -w <ws>` to list them, then",
-        "`mu workspace free <agent>` to release each one.",
+        "An 'orphan workspace dir' is a per-agent VCS workspace dir under",
+        "the workstream with no vcs_workspaces row, so `mu workspace free`",
+        "cannot remove it. mu never deletes it for you: it may hold the only",
+        "copy of uncommitted work. Run `mu workspace orphans -w <ws>` to list",
+        "them with a cleanup command, inspect each, then remove it by hand",
+        "(`git worktree remove --force <path>` from the project root for a",
+        "git checkout, else `rm -rf <path>`).",
       ];
     case "drift":
       return [
@@ -752,18 +761,20 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
       ];
     case "schema":
       return [
-        "Missing tables typically mean an older mu binary opened the",
-        "DB without running migrations. Rebuild mu (npm run build)",
-        "and re-open; openDb runs the migration block on every",
-        "process start.",
+        "Missing tables mean something dropped them after mu created",
+        "them: every mu process runs CREATE TABLE IF NOT EXISTS for the",
+        "whole schema at open, so re-running any mu command restores an",
+        "empty table. If a table that held data is gone, back up the DB",
+        "and rebuild from the ops log: `mu rebuild <new-file>`.",
       ];
     case "schema_version":
       return [
-        "Schema version mismatch means the DB was opened by a",
-        "different mu binary than the one running now. If `<` the",
-        "expected version, openDb should have migrated — check the",
-        "build. If `>` the expected, you may have a downgrade in",
-        "progress; restore from a snapshot rather than continuing.",
+        "mu opens only a DB at exactly its own schema version: older",
+        "DBs are refused with SchemaTooOldError and newer ones with",
+        "SchemaTooNewError (exit 4), and there is no in-place migration.",
+        "A mismatch seen here means the row changed after open (an",
+        "external SQLite client). If `<` the expected version, migrate a",
+        "copy with scripts/migrate.ts; if `>`, use the newer mu binary.",
       ];
     case "journal_mode":
       return [

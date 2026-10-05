@@ -392,7 +392,8 @@ describe("mu sync (CLI)", () => {
   describe("mu doctor", () => {
     it("FAILS when MU_DB_PATH is inside MU_SYNC_DIR — THE footgun", async () => {
       const inside = join(dir, "mu.db");
-      const { stdout } = await runCli(["doctor"], inside);
+      const { stdout, exitCode } = await runCli(["doctor"], inside);
+      expect(exitCode).toBe(5);
       expect(stdout).toContain("db-vs-sync");
       expect(stdout).toContain("INSIDE MU_SYNC_DIR");
     });

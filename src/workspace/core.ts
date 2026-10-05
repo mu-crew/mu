@@ -130,16 +130,11 @@ export class WorkspacePathNotEmptyError extends Error implements HasNextSteps {
         command: `mu workspace orphans -w ${this.workstream}`,
       },
       {
-        intent: "If the dir is intentional (orphan from older mu), free it via mu first",
-        command: `mu workspace free ${this.agent} -w ${this.workstream}  # also runs backend cleanup if a row remains`,
-      },
-      {
-        intent: "Or delete it manually if the registry has no row",
-        command: `rm -rf ${this.workspacePath}`,
-      },
-      {
-        intent: "For git workspaces specifically: also prune the worktree registration",
-        command: "cd <project-root> && git worktree prune",
+        // No row points at the dir (createWorkspace throws
+        // WorkspaceExistsError first when one does), so `mu workspace
+        // free` has nothing to free. Same recipe as `mu workspace orphans`.
+        intent: "Inspect it, then remove it by hand (git: also drops the worktree registration)",
+        command: `(cd <project-root> && git worktree remove --force ${this.workspacePath}) || rm -rf ${this.workspacePath}`,
       },
     ];
   }

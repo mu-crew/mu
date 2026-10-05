@@ -225,6 +225,23 @@ describe("DoctorPopup: behaviour", () => {
     }
   });
 
+  it("uses the card's agent-state source, so the murmur row reads herdr on herdr", async () => {
+    // f_doctor_popup_murmur_source: the popup re-derived checks with the
+    // default 'murmur' source while the card (src/state.ts) used herdr.
+    const db = fixtureDb();
+    const snap = snapshot({
+      doctor: { checks: [], problemCount: 0, agentStateSource: "herdr" },
+    });
+    const r = await renderDoctorPopup(db, snap);
+    try {
+      await typeFilter(r.stdin, "murmur");
+      const text = await waitForFrame(r.stdout, "[filter] murmur");
+      expect(text).toContain("agent state from herdr");
+    } finally {
+      r.unmount();
+    }
+  });
+
   it("Enter drills into remediation details; y yanks there too; Esc returns to all checks", async () => {
     const db = fixtureDb();
     const snap = snapshot({

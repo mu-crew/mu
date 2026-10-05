@@ -5,7 +5,7 @@
 // between disk and DB — which cannot be produced through the normal
 // verbs, since those keep the two in step.
 
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -106,6 +106,11 @@ describe("disk → DB: dirs with no row", () => {
     expect(check.detail).toContain("2 workspace dir(s)");
     expect(check.detail).toContain("1 stranded");
     expect(check.remediation?.join("\n")).toContain("workstream row also gone");
+    // f_doctor_orphan_rm_rf_git: same recipe as `mu workspace orphans`,
+    // so a git checkout's worktree registration goes too.
+    expect(check.remediation?.join("\n")).toContain(
+      `git worktree remove --force ${wsDir("alpha", "worker-1")}) || rm -rf ${wsDir("alpha", "worker-1")}`,
+    );
   });
 
   it("does not report a dir that has a row", () => {
@@ -149,6 +154,16 @@ describe("stray DB copies", () => {
     expect(check.remediation?.join("\n")).toContain("mu rebuild");
   });
 
+  it("names mu's own pre-compact / pre-forget backups instead of calling them hand-made", () => {
+    // f_doctor_stray_db_backups: `mu db compact|forget` write these.
+    writeFileSync(join(stateDir, "mu.db.pre-forget-2026-01-01T00-00-00-000Z"), "x");
+    const check = checkStrayDbFiles();
+    expect(check.severity).toBe("warn");
+    const text = check.remediation?.join("\n") ?? "";
+    expect(text).toContain("mu db forget");
+    expect(text).toContain("mu.db.pre-<verb>-<time>");
+  });
+
   it("never counts the live WAL triple", () => {
     writeFileSync(join(stateDir, "mu.db-wal"), "x");
     writeFileSync(join(stateDir, "mu.db-shm"), "x");
@@ -168,7 +183,7 @@ describe("removed-verb residue", () => {
     const check = checkRemovedExportsDir();
     expect(check.severity).toBe("warn");
     expect(check.detail).toContain("1 export dir(s)");
-    expect(check.remediation?.join("\n")).toContain("removed in 1.0");
+    expect(check.remediation?.join("\n")).toContain("removed in 1.1.0");
   });
 
   it("is ok with no exports dir at all", () => {
@@ -214,6 +229,24 @@ describe("--disk tier: byte accounting", () => {
     expect(usage[0]?.orphan).toBe(false);
     expect(usage[1]?.agentName).toBe("worker-2");
     expect(usage[1]?.orphan).toBe(true);
+  });
+});
+
+describe("--disk tier: symlinks", () => {
+  it("skips symlinks (0 bytes) instead of following them", () => {
+    // f_doctor_walkbytes_symlink: a link into a big tree is not mu's bytes.
+    const outside = join(stateDir, "outside");
+    mkdirSync(join(outside, "tree"), { recursive: true });
+    writeFileSync(join(outside, "big"), "x".repeat(100_000));
+    writeFileSync(join(outside, "tree", "big"), "x".repeat(100_000));
+    const ws = wsDir("alpha", "worker-1");
+    mkdirSync(ws, { recursive: true });
+    writeFileSync(join(ws, "own"), "x".repeat(100));
+    symlinkSync(join(outside, "big"), join(ws, "file-link"));
+    symlinkSync(join(outside, "tree"), join(ws, "dir-link"));
+    insertWorkspaceRow("alpha", "worker-1", ws);
+
+    expect(measureWorkspaceUsage(db)[0]?.bytes).toBe(100);
   });
 });
 

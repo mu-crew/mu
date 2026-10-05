@@ -17,7 +17,8 @@
 //       `usage` field (--json path). See `audit_cli_validation_uniformity`.
 //   3 = not found (no such agent / task / pane)
 //   4 = conflict (name collision, double-claim, cycle, etc.)
-//   5 = substrate unavailable (tmux not running, DB locked)
+//   5 = substrate unavailable or unsafe (no multiplexer, DB locked,
+//       ops-log drift, a `mu doctor` FAIL row, timeouts)
 //   6 = REAPER_DETECTED — `mu task wait` aborted because the
 //       per-poll reconciler flipped a watched task IN_PROGRESS →
 //       OPEN (the owning pane was dead). Only fires when the wait
@@ -53,6 +54,7 @@ import {
   WorkstreamNotFoundError,
 } from "../db.js";
 import { DriftDetectedError } from "../drift.js";
+import { HazardFailError } from "../fleet-hazards.js";
 import { LinkConflictError } from "../link.js";
 import { GroupIdAmbiguousError } from "../logs.js";
 import {
@@ -351,6 +353,16 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // and not a name collision (4).
     return { label: "drift", exitCode: 5 };
   }
+  if (err instanceof HazardFailError) {
+    // Same lane as drift: a doctor `fail` row (the DB inside
+    // MU_SYNC_DIR) means the substrate is unsafe to keep writing.
+    return { label: "doctor", exitCode: 5 };
+  }
+  if (isSqliteBusy(err)) {
+    // Another process held the write lock past busy_timeout (5s, set in
+    // openDb). The DB is unavailable, not wrong: retry later.
+    return { label: "db locked", exitCode: 5 };
+  }
   if (err instanceof AgentSpawnCliNotFoundError) {
     // Pre-flight failure: --cli's resolved binary isn't on PATH. We
     // refused before any side effect, so this is the cleanest
@@ -422,6 +434,16 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     return { label: "stall", exitCode: 7 };
   }
   return { label: "error", exitCode: 1 };
+}
+
+/** better-sqlite3's SqliteError for a lock it could not get: SQLITE_BUSY
+ *  ('database is locked') and SQLITE_LOCKED, with their extended codes. */
+function isSqliteBusy(err: unknown): boolean {
+  if (!(err instanceof Error) || err.name !== "SqliteError") return false;
+  const code = (err as { code?: unknown }).code;
+  return (
+    typeof code === "string" && (code.startsWith("SQLITE_BUSY") || code.startsWith("SQLITE_LOCKED"))
+  );
 }
 
 /** prose-quoting: on the verbs that carry prose, "too many arguments"
