@@ -245,6 +245,31 @@ gitDescribe("gitBackend.rebaseTo", () => {
     expect(await isWorkspaceClean(row)).toBe(true);
   });
 
+  it("refreshWorkspace keeps parent_ref when the workspace is ahead of the base", async () => {
+    // Local main is ahead of origin/main; the workspace forks from it.
+    for (const m of ["local1", "local2"]) {
+      execFileSync(
+        "git",
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", m],
+        { cwd: consumerProject },
+      );
+    }
+    const created = await createWorkspace(db, {
+      agent: "worker-1",
+      workstream: "auth",
+      projectRoot: consumerProject,
+      backend: "git",
+    });
+    const r = await refreshWorkspace(db, { agent: "worker-1", workstream: "auth" });
+    expect(r.parentRef).toBe(created.parentRef);
+    const row = getWorkspaceForAgent(db, "worker-1", "auth");
+    if (!row) throw new Error("workspace row missing");
+    expect(row.parentRef).toBe(created.parentRef);
+    const listed = await listCommitsForWorkspace(db, "worker-1", { workstream: "auth" });
+    expect(listed.commits).toEqual([]);
+    expect(await isWorkspaceClean(row)).toBe(true);
+  });
+
   it("refuses on dirty WC and lists the dirty files", async () => {
     const wsPath = join(stateRoot, "workspaces", "auth", "worker-1");
     await gitBackend.createWorkspace({ projectRoot: consumerProject, workspacePath: wsPath });

@@ -150,7 +150,7 @@ export const jjBackend: VcsBackend = {
   // doesn't auto-abort on conflicts (they materialise as commits with
   // conflict markers), so the workspace is left in a state the
   // operator can resolve in-place.
-  async rebaseTo(workspacePath, fromRef) {
+  async rebaseTo(workspacePath, fromRef, previousParentRef) {
     if (!existsSync(workspacePath)) {
       throw new Error(`vcs jj: workspace path missing: ${workspacePath}`);
     }
@@ -200,23 +200,26 @@ export const jjBackend: VcsBackend = {
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
-    // After `jj rebase -d <target>` the chain sits on <target>, so its
-    // commit is the new fork point (the row's parent_ref). Omitted when
-    // the revset names zero or several commits.
-    const parentRef = await jjSingleCommitId(workspacePath, target);
     if (conflicts.length > 0) {
-      // jj has no abort: the rebase stays, conflicts and all, so the
-      // caller still records the new fork point.
-      throw new WorkspaceConflictError(
-        workspacePath,
-        target,
-        conflicts,
-        parentRef === undefined ? {} : { parentRef },
-      );
+      // jj has no abort: the rebase stays with the conflicts. The row's
+      // parent_ref is left alone; the operator resolves (or `jj op
+      // undo`es) and re-runs refresh, whose clean no-op rebase records
+      // the base the disk is on.
+      throw new WorkspaceConflictError(workspacePath, target, conflicts, false);
     }
-    return parentRef === undefined
-      ? { fromRef: target, replayed, conflicts: [] }
-      : { fromRef: target, parentRef, replayed, conflicts: [] };
+    // After `jj rebase -d <target>` the chain sits on <target>, so its
+    // commit is the new fork point (the row's parent_ref), unless the
+    // old fork point already descends from it and is still under @
+    // (no-op refresh onto an older base): parent_ref never moves
+    // backward. Omitted when the revset names zero or several commits.
+    const targetId = await jjSingleCommitId(workspacePath, target);
+    if (targetId === undefined) return { fromRef: target, replayed, conflicts: [] };
+    const keepPrevious =
+      previousParentRef !== undefined &&
+      (await jjSingleCommitId(workspacePath, `${previousParentRef} & ${targetId}:: & ::@`)) !==
+        undefined;
+    const parentRef = keepPrevious ? previousParentRef : targetId;
+    return { fromRef: target, parentRef, replayed, conflicts: [] };
   },
 
   // List jj commits in (baseRef..@), oldest-first, minus @ itself when

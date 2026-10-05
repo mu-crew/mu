@@ -13,7 +13,6 @@ import {
   type RebaseResult,
   type VcsBackend,
   type VcsBackendName,
-  WorkspaceConflictError,
 } from "../vcs.js";
 import {
   HomeDirAsProjectRootError,
@@ -279,8 +278,10 @@ export interface RefreshWorkspaceResult extends RebaseResult {
  * backend's default base). The agent / pane are NOT touched — only
  * the on-disk working copy moves. Writes the backend's new fork point
  * to the row's `parent_ref` so staleness, `mu workspace commits` and
- * the close-time clean check measure from the new base. A jj conflict
- * leaves the rebase in place, so its new fork point is written too.
+ * the close-time clean check measure from the new base. Only a
+ * conflict-free rebase writes it: on WorkspaceConflictError the row
+ * keeps the old base, and a refresh after the conflicts are resolved
+ * records the new one.
  */
 export async function refreshWorkspace(
   db: Db,
@@ -289,15 +290,7 @@ export async function refreshWorkspace(
   const row = getWorkspaceForAgent(db, opts.agent, opts.workstream);
   if (!row) throw new WorkspaceNotFoundError(opts.agent);
   const backend = backendByName(row.backend);
-  let result: RebaseResult;
-  try {
-    result = await backend.rebaseTo(row.path, opts.fromRef);
-  } catch (err) {
-    if (err instanceof WorkspaceConflictError && err.parentRef !== undefined) {
-      setWorkspaceParentRef(db, row, err.parentRef);
-    }
-    throw err;
-  }
+  const result = await backend.rebaseTo(row.path, opts.fromRef, row.parentRef || undefined);
   if (result.parentRef !== undefined) setWorkspaceParentRef(db, row, result.parentRef);
   // vcs_workspaces is machine-local, so this event is the only record.
   emitEvent(

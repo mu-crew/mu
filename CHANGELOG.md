@@ -79,7 +79,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   workspace's `parent_ref`. Before, the `behind` count never cleared,
   `mu workspace commits` listed main's commits as the worker's, and
   `mu agent close` refused to free a refreshed workspace that held
-  nothing.
+  nothing. A refresh onto an older base (origin/main behind a workspace
+  forked from local main) keeps the old fork point instead of moving it
+  back. A conflicted refresh leaves it unchanged; refresh again after
+  resolving, as the conflict hint now says.
 - `mu workspace free --commit` on a git workspace no longer loses the
   commits. The worktree's HEAD is detached, so removing it left the
   auto-commit, and any commit the agent made, on no branch for `git gc`
@@ -93,8 +96,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   abort the rebase, so the hint now says to rebase by hand. jj keeps the
   rebase and its conflicts, and the hint says so.
 - The commit view (TUI `show`) clips a commit whose `show` output is
-  over 200,000 characters at the 100,000-character cap. Before, it
-  showed an error and no text.
+  over 200,000 bytes at the 100,000-character cap and marks it
+  truncated. Before, it showed an error and no text. A command that
+  floods stderr shows an error instead of an empty commit.
 
 ## [3.8.1] — 2026-10-05
 
