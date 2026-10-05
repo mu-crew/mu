@@ -13,6 +13,9 @@
 //   - The git backend's conflict path: throws WorkspaceConflictError
 //     carrying the conflicting file paths; the workspace is aborted
 //     back to a clean state.
+//   - refreshWorkspace writes the new fork point to parent_ref, so
+//     commits-behind, the commits list and the clean check measure
+//     from the new base (f_vcs_refresh_parent_ref).
 //   - The jj backend smoke test (skipped without jj on PATH): a no-op
 //     refresh on an unchanged trunk returns an empty replayed list
 //     and does not throw.
@@ -34,7 +37,15 @@ import {
   WorkspaceDirtyError,
   WorkspaceVcsRequiredError,
 } from "../src/vcs.js";
-import { createWorkspace, refreshWorkspace, WorkspaceNotFoundError } from "../src/workspace.js";
+import {
+  createWorkspace,
+  decorateWithStaleness,
+  getWorkspaceForAgent,
+  isWorkspaceClean,
+  listCommitsForWorkspace,
+  refreshWorkspace,
+  WorkspaceNotFoundError,
+} from "../src/workspace.js";
 import { ensureWorkstream } from "../src/workstream.js";
 
 let stateRoot: string;
@@ -203,12 +214,35 @@ gitDescribe("gitBackend.rebaseTo", () => {
     const r = await gitBackend.rebaseTo(wsPath, "origin/main");
     expect(r.replayed).toEqual(["worker-draft"]);
     expect(r.conflicts).toEqual([]);
+    const originMain = execFileSync("git", ["rev-parse", "origin/main"], {
+      cwd: wsPath,
+      encoding: "utf8",
+    }).trim();
+    expect(r.parentRef).toBe(originMain);
     // Sanity: HEAD is past origin/main now (origin/main..HEAD = 1).
     const ahead = execFileSync("git", ["rev-list", "--count", "origin/main..HEAD"], {
       cwd: wsPath,
       encoding: "utf8",
     }).trim();
     expect(ahead).toBe("1");
+  });
+
+  it("refreshWorkspace moves parent_ref to the new base", async () => {
+    await createWorkspace(db, {
+      agent: "worker-1",
+      workstream: "auth",
+      projectRoot: consumerProject,
+      backend: "git",
+    });
+    advanceOrigin(originDir, 3, "p");
+    await refreshWorkspace(db, { agent: "worker-1", workstream: "auth", fromRef: "origin/main" });
+    const row = getWorkspaceForAgent(db, "worker-1", "auth");
+    if (!row) throw new Error("workspace row missing");
+    const [decorated] = await decorateWithStaleness([row]);
+    expect(decorated?.commitsBehindMain).toBe(0);
+    const listed = await listCommitsForWorkspace(db, "worker-1", { workstream: "auth" });
+    expect(listed.commits).toEqual([]);
+    expect(await isWorkspaceClean(row)).toBe(true);
   });
 
   it("refuses on dirty WC and lists the dirty files", async () => {

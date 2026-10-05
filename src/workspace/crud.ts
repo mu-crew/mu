@@ -13,6 +13,7 @@ import {
   type RebaseResult,
   type VcsBackend,
   type VcsBackendName,
+  WorkspaceConflictError,
 } from "../vcs.js";
 import {
   HomeDirAsProjectRootError,
@@ -195,6 +196,9 @@ export interface FreeWorkspaceResult {
   /** The committed ref, when `commit` was true and there was something
    *  to commit. */
   committedRef?: string;
+  /** Branch mu created to keep the workspace's commits reachable after
+   *  removal (git `--commit` on a detached HEAD). */
+  branch?: string;
   /** True iff the on-disk path was actually removed. */
   removed: boolean;
   /** True iff the DB row was actually deleted. */
@@ -240,13 +244,14 @@ export async function freeWorkspace(
     db,
     row.workstreamName,
     "workspace.free",
-    `workspace free ${agent} (backend=${row.backend}, path=${row.path}${result.committedRef ? `, committed=${result.committedRef.slice(0, 12)}` : ""})`,
+    `workspace free ${agent} (backend=${row.backend}, path=${row.path}${result.committedRef ? `, committed=${result.committedRef.slice(0, 12)}` : ""}${result.branch ? `, branch=${result.branch}` : ""})`,
   );
 
   return {
     removed: result.removed,
     rowDeleted: del.changes > 0,
     ...(result.committedRef !== undefined ? { committedRef: result.committedRef } : {}),
+    ...(result.branch !== undefined ? { branch: result.branch } : {}),
   };
 }
 
@@ -272,8 +277,10 @@ export interface RefreshWorkspaceResult extends RebaseResult {
 /**
  * Refresh an agent's workspace by rebasing it onto `fromRef` (or the
  * backend's default base). The agent / pane are NOT touched — only
- * the on-disk working copy moves. Bumps the row's `created_at` proxy
- * via the emit event; the row itself is otherwise unchanged.
+ * the on-disk working copy moves. Writes the backend's new fork point
+ * to the row's `parent_ref` so staleness, `mu workspace commits` and
+ * the close-time clean check measure from the new base. A jj conflict
+ * leaves the rebase in place, so its new fork point is written too.
  */
 export async function refreshWorkspace(
   db: Db,
@@ -282,8 +289,17 @@ export async function refreshWorkspace(
   const row = getWorkspaceForAgent(db, opts.agent, opts.workstream);
   if (!row) throw new WorkspaceNotFoundError(opts.agent);
   const backend = backendByName(row.backend);
-  const result = await backend.rebaseTo(row.path, opts.fromRef);
-  // Rebases a VCS workspace on disk; mutates no portable table.
+  let result: RebaseResult;
+  try {
+    result = await backend.rebaseTo(row.path, opts.fromRef);
+  } catch (err) {
+    if (err instanceof WorkspaceConflictError && err.parentRef !== undefined) {
+      setWorkspaceParentRef(db, row, err.parentRef);
+    }
+    throw err;
+  }
+  if (result.parentRef !== undefined) setWorkspaceParentRef(db, row, result.parentRef);
+  // vcs_workspaces is machine-local, so this event is the only record.
   emitEvent(
     db,
     row.workstreamName,
@@ -291,6 +307,16 @@ export async function refreshWorkspace(
     `workspace refresh ${opts.agent} (backend=${row.backend}, fromRef=${result.fromRef}, replayed=${result.replayed.length})`,
   );
   return { ...result, vcs: row.backend, workspacePath: row.path };
+}
+
+function setWorkspaceParentRef(db: Db, row: WorkspaceRow, parentRef: string): void {
+  const wsId = tryResolveWorkstreamId(db, row.workstreamName);
+  if (wsId === null) return;
+  db.prepare(
+    `UPDATE vcs_workspaces SET parent_ref = ?
+     WHERE agent_id = (SELECT id FROM agents WHERE name = ? AND workstream_id = ?)
+       AND workstream_id = ?`,
+  ).run(parentRef, row.agentName, wsId, wsId);
 }
 
 export interface ListCommitsOptions {

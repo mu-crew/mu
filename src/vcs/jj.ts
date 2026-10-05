@@ -155,13 +155,6 @@ export const jjBackend: VcsBackend = {
       throw new Error(`vcs jj: workspace path missing: ${workspacePath}`);
     }
     const target = fromRef ?? "trunk()";
-    // Snapshot the pre-rebase change_id so we can compute replayed
-    // descriptions afterwards. `@` is the working-copy commit.
-    const preRev = await run(
-      "jj",
-      ["log", "-r", "@", "--no-graph", "--no-pager", "--color", "never", "--template", "change_id"],
-      workspacePath,
-    );
     await run("jj", ["rebase", "-d", target], workspacePath);
     // Replayed = descriptions of commits in (target..@), oldest-first.
     // Template prints `description ++ "\n\x00"` so multi-line descs
@@ -207,12 +200,23 @@ export const jjBackend: VcsBackend = {
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
+    // After `jj rebase -d <target>` the chain sits on <target>, so its
+    // commit is the new fork point (the row's parent_ref). Omitted when
+    // the revset names zero or several commits.
+    const parentRef = await jjSingleCommitId(workspacePath, target);
     if (conflicts.length > 0) {
-      throw new WorkspaceConflictError(workspacePath, target, conflicts);
+      // jj has no abort: the rebase stays, conflicts and all, so the
+      // caller still records the new fork point.
+      throw new WorkspaceConflictError(
+        workspacePath,
+        target,
+        conflicts,
+        parentRef === undefined ? {} : { parentRef },
+      );
     }
-    // Use preRev so future-resolution of @ at call time is irrelevant.
-    void preRev;
-    return { fromRef: target, replayed, conflicts: [] };
+    return parentRef === undefined
+      ? { fromRef: target, replayed, conflicts: [] }
+      : { fromRef: target, parentRef, replayed, conflicts: [] };
   },
 
   // List jj commits in (baseRef..@), oldest-first, minus @ itself when
@@ -322,6 +326,29 @@ async function forgetIfRootMissing(name: string, projectRoot: string): Promise<v
   } catch {
     // best-effort; `workspace add` surfaces any remaining conflict
   }
+}
+
+async function jjSingleCommitId(
+  workspacePath: string,
+  revset: string,
+): Promise<string | undefined> {
+  const out = await run(
+    "jj",
+    [
+      "log",
+      "-r",
+      revset,
+      "--no-graph",
+      "--no-pager",
+      "--color",
+      "never",
+      "--template",
+      'commit_id ++ "\\n"',
+    ],
+    workspacePath,
+  ).catch(() => "");
+  const ids = out.split("\n").filter((l) => l.length > 0);
+  return ids.length === 1 ? ids[0] : undefined;
 }
 
 async function jjCommitId(workspacePath: string): Promise<string> {

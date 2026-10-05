@@ -17,6 +17,13 @@ export interface RebaseResult {
    *  resolveGitMainRef() symbolic ref; for jj/sl it's the literal
    *  `trunk()` revset (or whatever the operator passed via fromRef). */
   fromRef: string;
+  /** Concrete commit id of the workspace's new fork point (the merge
+   *  base of the rebased head and fromRef). The caller writes it to
+   *  `vcs_workspaces.parent_ref` so staleness, `mu workspace commits`
+   *  and the close-time clean check measure from the new base. Omitted
+   *  when the backend cannot resolve a single commit (e.g. a jj revset
+   *  naming several); the caller then keeps the old value. */
+  parentRef?: string;
   /** Commit subjects (or descriptions) that got replayed, oldest-first.
    *  Empty when the workspace was already at fromRef (no-op). */
   replayed: string[];
@@ -123,24 +130,49 @@ export class WorkspaceDirtyError extends Error implements HasNextSteps {
 }
 
 /**
- * Thrown by `rebaseTo` when the rebase produced conflicts the
- * operator must resolve manually. Carries the conflicting paths.
- * Maps to exit code 5.
+ * Thrown by `rebaseTo` when the rebase produced conflicts. Carries the
+ * conflicting paths (git/sl) or commits (jj). Maps to exit code 5.
+ *
+ * git and sl abort the rebase before throwing, so the workspace is back
+ * at its pre-rebase state (`aborted` is true). jj cannot abort: the
+ * rebase is done and the conflicts are committed in place (`aborted` is
+ * false, and `parentRef` carries the new fork point when resolvable).
  */
 export class WorkspaceConflictError extends Error implements HasNextSteps {
   override readonly name = "WorkspaceConflictError";
+  /** True when the backend aborted the rebase and the workspace is unchanged. */
+  public readonly aborted: boolean;
+  /** New fork point of a rebase that stayed in place (jj). */
+  public readonly parentRef?: string;
   constructor(
     public readonly workspacePath: string,
     public readonly fromRef: string,
     public readonly conflicts: readonly string[],
+    rebased?: { parentRef?: string },
   ) {
-    super(`rebase onto ${fromRef} produced ${conflicts.length} conflict(s): ${workspacePath}`);
+    super(
+      `rebase onto ${fromRef} produced ${conflicts.length} conflict(s)${rebased === undefined ? "; rebase aborted, workspace unchanged" : "; conflicts left in place"}: ${workspacePath}`,
+    );
+    this.aborted = rebased === undefined;
+    if (rebased?.parentRef !== undefined) this.parentRef = rebased.parentRef;
   }
   errorNextSteps(): NextStep[] {
+    if (this.aborted) {
+      return [
+        {
+          intent: "The rebase was aborted. Rebase by hand in the workspace and resolve",
+          command: `cd ${this.workspacePath}  # then: git rebase ${this.fromRef}  (sl: sl rebase -d '${this.fromRef}')`,
+        },
+        {
+          intent: "Or DISCARD the workspace entirely (the lossy escape)",
+          command: "mu workspace free <agent>",
+        },
+      ];
+    }
     return [
       {
-        intent: "cd into the workspace and resolve",
-        command: `cd ${this.workspacePath}  # then resolve & commit; or: git rebase --abort / jj abandon / sl rebase --abort`,
+        intent: "Resolve the conflicted commits in place",
+        command: `cd ${this.workspacePath}  # then: jj resolve; or undo the rebase: jj op undo`,
       },
     ];
   }
@@ -180,6 +212,10 @@ export interface FreeWorkspaceResult {
   /** The commit id that captured the pending changes, when `commit` was
    *  true and there was something to commit. Otherwise undefined. */
   committedRef?: string;
+  /** Branch created to keep the workspace's commits reachable after the
+   *  worktree is removed (git with `commit`, when HEAD was on no branch,
+   *  remote or tag). Otherwise undefined. */
+  branch?: string;
   /** True iff the on-disk path was actually removed (vs. already gone). */
   removed: boolean;
 }
@@ -224,15 +260,17 @@ export interface VcsBackend {
    * Backend-specific behaviour:
    *   - git: refuses on dirty WC (WorkspaceDirtyError); fetches first;
    *     `git rebase <ref>`. On conflict, aborts the rebase and throws
-   *     WorkspaceConflictError so the operator resolves manually.
+   *     WorkspaceConflictError (aborted); the workspace is unchanged.
+   *     Any other rebase failure is rethrown.
    *   - jj:  always-snapshotted, so dirty is never an issue. After
    *     `jj rebase -d <ref>` the conflict-set is queried via
    *     `jj log -r 'conflict()'`. Conflicts surface as
    *     WorkspaceConflictError without an abort (jj's conflict markers
    *     persist as commits; the operator resolves in-place).
-   *   - sl:  similar to jj. `sl rebase -d <ref>`; conflicts via
-   *     `sl resolve -l`. On dirty WC sl errors itself; we wrap that
-   *     into WorkspaceDirtyError.
+   *   - sl:  like git. Refuses on dirty WC (WorkspaceDirtyError);
+   *     `sl rebase -d <ref>`; conflicts via `sl resolve --list`, then
+   *     aborts and throws WorkspaceConflictError (aborted). Any other
+   *     rebase failure is rethrown.
    *   - none: throws WorkspaceVcsRequiredError unconditionally.
    *
    * Surfaced by fb_workspace_recycle_verb: dogfood between waves

@@ -75,6 +75,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   and exited 0. `--any` names the agent that finished.
 - `mu task notes --since` compares timestamps as instants. A cutoff
   without milliseconds or with a UTC offset no longer hides notes.
+- `mu workspace refresh` now records the new fork point as the
+  workspace's `parent_ref`. Before, the `behind` count never cleared,
+  `mu workspace commits` listed main's commits as the worker's, and
+  `mu agent close` refused to free a refreshed workspace that held
+  nothing.
+- `mu workspace free --commit` on a git workspace no longer loses the
+  commits. The worktree's HEAD is detached, so removing it left the
+  auto-commit, and any commit the agent made, on no branch for `git gc`
+  to delete. mu now creates the branch `mu/<workstream>/<agent>-<sha>`
+  when no branch, remote or tag already holds HEAD, and prints it.
+- `mu workspace refresh` on sl now fails when `sl rebase` fails for a
+  reason other than a conflict (bad `--from` ref, unresolvable
+  `trunk()`). Before, it reported success.
+- `mu workspace refresh --help` and the conflict hint no longer say a
+  git or sl workspace is left mid-rebase to resolve. Those backends
+  abort the rebase, so the hint now says to rebase by hand. jj keeps the
+  rebase and its conflicts, and the hint says so.
+- The commit view (TUI `show`) clips a commit whose `show` output is
+  over 200,000 characters at the 100,000-character cap. Before, it
+  showed an error and no text.
 
 ## [3.8.1] — 2026-10-05
 

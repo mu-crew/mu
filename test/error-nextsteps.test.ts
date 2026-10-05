@@ -357,7 +357,7 @@ const cases: NextStepsCase[] = [
   {
     error: new WorkspaceConflictError("/path/to/ws", "origin/main", ["src/file.ts"]),
     label: "WorkspaceConflictError",
-    expectedTokens: ["/path/to/ws", "rebase --abort"],
+    expectedTokens: ["/path/to/ws", "git rebase origin/main", "mu workspace free"],
   },
 
   // src/workstream.ts / src/db.ts

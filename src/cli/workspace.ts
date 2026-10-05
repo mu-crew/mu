@@ -74,6 +74,7 @@ export async function cmdWorkspaceFree(
     ? pc.dim(` (auto-committed: ${r.committedRef.slice(0, 12)})`)
     : "";
   console.log(`Freed workspace for ${pc.bold(agent)}${committed}`);
+  if (r.branch) console.log(pc.dim(`  commits kept on branch ${r.branch}`));
 }
 
 export async function cmdWorkspaceRefresh(
@@ -288,7 +289,7 @@ export function wireWorkspaceCommands(program: Command): void {
   workspace
     .command("refresh <agent>")
     .description(
-      "Rebase an agent's workspace onto a fresh base WITHOUT touching the agent or pane. Default base = the backend's tracked main (origin/HEAD for git, trunk() for jj/sl); override with --from <ref>. Refuses on dirty WC (git/sl) with the file list and a Next: hint to commit/stash. On rebase conflict, leaves the workspace in a resolvable state and exits 5 with a `cd` hint. The `none` backend errors (refresh requires a real VCS).",
+      "Rebase an agent's workspace onto a fresh base WITHOUT touching the agent or pane. Default base = the backend's tracked main (origin/HEAD for git, trunk() for jj/sl); override with --from <ref>. Refuses on dirty WC (git/sl) with the file list and a Next: hint to commit/stash. Records the new fork point as the workspace's parent_ref. On rebase conflict exits 5: git and sl abort the rebase and leave the workspace unchanged; jj keeps the rebase with the conflicts committed in place. The `none` backend errors (refresh requires a real VCS).",
     )
     .option("--from <ref>", "override the rebase target (default: backend's tracked main)")
     .option(...WORKSTREAM_OPT)
@@ -305,7 +306,7 @@ export function wireWorkspaceCommands(program: Command): void {
   workspace
     .command("free <agent>")
     .description(
-      "Tear down an agent's workspace. With --commit, attempt to auto-commit pending changes first; without it, pending changes are lost.",
+      "Tear down an agent's workspace. With --commit, attempt to auto-commit pending changes first; without it, pending changes are lost. For git, --commit also creates a branch mu/<workstream>/<agent>-<sha> when the worktree's commits are on no branch, so they survive removal.",
     )
     .option("--commit", "auto-commit pending changes before removing the workspace")
     .option(...WORKSTREAM_OPT)
