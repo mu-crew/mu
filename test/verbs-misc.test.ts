@@ -174,19 +174,27 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     );
   });
 
-  it("(case 5) adopt by pane id from a different tmux session -> AgentNotInWorkstreamError", async () => {
+  it("(case 5) adopt by pane id from a different tmux session -> PaneNotInSessionError", async () => {
     const { executor } = mockTmux(state);
     setTmuxExecutor(executor);
-    const { adoptAgent } = await import("../src/agents.js");
-    const { AgentNotInWorkstreamError } = await import("../src/agents.js");
+    const { adoptAgent, PaneNotInSessionError } = await import("../src/agents.js");
 
     // Pane lives in session 'mu-other', adopt is targeting workstream 'auth'.
     const { paneId } = seedOrphanPane({ sessionName: "mu-other", title: "worker-2" });
     state.sessions.add("mu-auth"); // target session also exists, just empty
     state.windows.set("mu-auth", []);
-    await expect(adoptAgent(db, { paneId, workstream: "auth" })).rejects.toBeInstanceOf(
-      AgentNotInWorkstreamError,
+    const err = await adoptAgent(db, { paneId, workstream: "auth" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PaneNotInSessionError);
+    // The message names the pane and the session it is missing from; no
+    // prose is passed off as a workstream name.
+    expect((err as Error).message).toBe(
+      `pane ${paneId} is not in session mu-auth; adopt only takes panes from workstream auth's own session`,
     );
+    const commands = (err as InstanceType<typeof PaneNotInSessionError>)
+      .errorNextSteps()
+      .map((s) => s.command);
+    expect(commands).toEqual(["mu agent list -w auth", `mu agent adopt ${paneId} -w <workstream>`]);
+    expect(getAgent(db, "worker-2", "auth")).toBeUndefined();
   });
 
   it("(case 7) mu agent adopt of a pi pane without a control socket warns with the fix", async () => {

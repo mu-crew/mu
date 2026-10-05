@@ -7,9 +7,14 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentDiedOnSpawnError, AgentSpawnStartupError } from "../src/agents/errors.js";
+import {
+  AgentDiedOnSpawnError,
+  AgentExistsError,
+  AgentSpawnStartupError,
+} from "../src/agents/errors.js";
 import {
   getAgent,
+  insertAgent,
   resetCommandResolverForTests,
   setCommandResolverForTests,
   spawnAgent,
@@ -225,6 +230,24 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     expect(state.panes.size).toBe(0);
   });
 
+  it("after an ok handshake, exec-failure text in the tail (resumed session output) is not a startup error", async () => {
+    installLivePanes({
+      extension: true,
+      scrollback: "$ grep foo src/doctor.ts\ngrep: src/doctor.ts: No such file or directory\n> ",
+    });
+    const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(agent.ctl).toBe("ok");
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+    expect(state.panes.size).toBe(1);
+  });
+
+  it("without an answering socket, an exec-failure line still rolls back", async () => {
+    installLivePanes({ scrollback: "sh: pi: command not found" });
+    const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);
+    expect(err).toBeInstanceOf(AgentSpawnStartupError);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+
   it("MU_SPAWN_LIVENESS_MS=0 skips the pane check and the scan on the ctl path", async () => {
     process.env.MU_SPAWN_LIVENESS_MS = "0";
     installLivePanes({
@@ -253,6 +276,35 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     process.env.MU_SPAWN_CTL_MS = "0";
     await spawnAgent(db, { name: "worker-2", workstream: "auth" });
     expect(sleeps.filter((ms) => ms === 1500)).toHaveLength(2);
+  });
+});
+
+describe("spawn of a name already taken", () => {
+  it("parallel spawns of one name: the loser gets AgentExistsError and the winner keeps its row and pane", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    const state = freshMockState();
+    mux.restore();
+    mux = installMux("tmux", mockTmux(state).executor);
+    const results = await Promise.allSettled([
+      spawnAgent(db, { name: "worker-1", workstream: "auth" }),
+      spawnAgent(db, { name: "worker-1", workstream: "auth" }),
+    ]);
+    const won = results.filter((r) => r.status === "fulfilled");
+    const lost = results.filter((r) => r.status === "rejected");
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect((lost[0] as PromiseRejectedResult).reason).toBeInstanceOf(AgentExistsError);
+    const winner = (won[0] as PromiseFulfilledResult<{ paneId: string }>).value;
+    expect(getAgent(db, "worker-1", "auth")?.paneId).toBe(winner.paneId);
+    expect([...state.panes.keys()]).toEqual([winner.paneId]);
+  });
+
+  it("insertAgent maps the UNIQUE (workstream, name) violation to AgentExistsError", () => {
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
+    expect(() => insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%2" })).toThrow(
+      AgentExistsError,
+    );
+    expect(getAgent(db, "worker-1", "auth")?.paneId).toBe("%1");
   });
 });
 

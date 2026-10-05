@@ -338,7 +338,10 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // Per-workstream uniqueness check: v5 allows the same agent name in
   // different workstreams. Scope the existence check to the spawn's
   // workstream so two operators spawning 'worker-1' in wsA and wsB
-  // both succeed (bug_v5_name_clash_silent_misroute).
+  // both succeed (bug_v5_name_clash_silent_misroute). A fast path only:
+  // a parallel spawn of the same name can pass it too, so the check is
+  // repeated inside the spawn lock, and insertAgent maps the UNIQUE
+  // violation to AgentExistsError as the last line.
   if (getAgent(db, opts.name, opts.workstream) !== undefined) {
     throw new AgentExistsError(opts.name);
   }
@@ -391,16 +394,15 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // MU_CTL_SOCK goes to every CLI (harmless for non-pi). Its directory
   // must exist before the pane starts: for a remote agent, ssh's
   // `-L <local>:<remote>` binds the LOCAL path and does not mkdir. A
-  // socket file left by a previous agent of this name is removed, since
-  // ssh refuses to bind over it; no live agent owns it (the uniqueness
-  // check above passed).
+  // socket file left by a previous agent of this name is removed inside
+  // the spawn lock below, once this spawn owns the name, since ssh
+  // refuses to bind over it.
   //
   // The base is the DB's directory: in production that is exactly
   // ctlSocketPath's own default (MU_DB_PATH dir or the state dir), and
   // a test DB in a temp dir keeps its sockets there too.
   const ctlSocket = ctlSocketPath(opts.workstream, opts.name, dirname(db.name));
   mkdirSync(dirname(ctlSocket), { recursive: true, mode: 0o700 });
-  rmSync(ctlSocket, { force: true });
   const paneEnv: Record<string, string> = {
     MU_MANAGED_AGENT: "1",
     MU_AGENT_NAME: opts.name,
@@ -425,6 +427,9 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // best-effort regardless).
   let paneId: string | undefined;
   let agent: AgentRow;
+  // Whether the agent row is this spawn's to delete on rollback. A
+  // spawn that lost a same-name race must not delete the winner's row.
+  let ownsRow = hasWorkspace;
   const wantsCtl = opts.ctl !== false && speaksMuCtl(cli, command) && defaultSpawnCtlMs() !== 0;
   let ctl: SpawnCtl | undefined;
   try {
@@ -442,6 +447,14 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // and the lock released, the next spawn can build its own window
     // while this one waits.
     const created = await withSpawnLock(session, async () => {
+      // Re-check under the lock: a parallel spawn of the same name may
+      // have inserted its row since the fast-path check. (With a
+      // workspace, the placeholder row already claimed the name.)
+      if (!hasWorkspace && getAgent(db, opts.name, opts.workstream) !== undefined) {
+        throw new AgentExistsError(opts.name);
+      }
+      // The name is ours: no live agent owns a socket at this path.
+      rmSync(ctlSocket, { force: true });
       const pid = await createOrReusePane({
         session,
         windowName,
@@ -464,6 +477,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       // and is best-effort — the border is decorative.
       await mux.enableMuPaneBordersForPane(pid);
       const row = finalizeAgentRow(db, { opts, cli, paneId: pid, hasWorkspace });
+      ownsRow = true;
       return { pid, row };
     });
     paneId = created.pid;
@@ -508,7 +522,12 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         // Known gap: pi binds the socket in session_start (init), before
         // it renders startup diagnostics, so an ok on the first tick can
         // scan a pane that has not printed its error yet.
-        if (check) await checkSpawnHealth(pid, opts.name, command, when);
+        //
+        // An ok handshake proves the CLI started, so only provider/auth
+        // patterns apply: a shell exec-failure line in the tail is then
+        // transcript text (a resumed `--session` re-renders old tool
+        // output such as `grep: x: No such file or directory`).
+        if (check) await checkSpawnHealth(pid, opts.name, command, when, ctl === "ok");
       } else {
         await awaitSpawnLiveness(paneId, opts.name, command);
       }
@@ -522,7 +541,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       await startAgent({ paneId, name: opts.name, cli, command, commandSource });
     }
   } catch (err) {
-    await rollbackSpawn(db, opts.name, paneId, hasWorkspace, opts.workstream);
+    await rollbackSpawn(db, opts.name, paneId, hasWorkspace, ownsRow, opts.workstream);
     if (hasWorkspace) attachOrphanCleanupHint(err, opts.name, opts.workstream);
     throw err;
   }
@@ -639,12 +658,17 @@ function finalizeAgentRow(
  * `true` when prestageWorkspace succeeded; freeWorkspace is idempotent
  * on a missing workspace so calling it after a same-cycle failure is
  * safe. deleteAgent is also idempotent (no-op on a missing row).
+ *
+ * `ownsRow` is false when the spawn failed before inserting its own row
+ * (e.g. it lost a same-name race); the row then belongs to another
+ * agent and is left alone.
  */
 async function rollbackSpawn(
   db: Db,
   name: string,
   paneId: string | undefined,
   hasWorkspace: boolean,
+  ownsRow: boolean,
   workstream: string,
 ): Promise<void> {
   if (paneId !== undefined) {
@@ -660,7 +684,7 @@ async function rollbackSpawn(
     // (bug_v5_name_clash_silent_misroute).
     await freeWorkspace(db, name, { workstream }).catch(() => {});
   }
-  deleteAgent(db, name, workstream);
+  if (ownsRow) deleteAgent(db, name, workstream);
 }
 
 /**
@@ -722,45 +746,55 @@ export function defaultSpawnLivenessMs(): number {
  * operator then has to re-attempt without the scan (`MU_SPAWN_LIVENESS_MS=0`).
  *
  * Mitigation against scrollback noise from harmless prior-session text:
- * the caller (`awaitSpawnLiveness`) only scans the LAST `STARTUP_ERROR_TAIL_LINES`
- * lines of the capture taken right after the liveness sleep, so matches
- * naturally come from the CLI's first ~1.5s of output (the spawned
- * pane has had no time to scroll older content into view).
+ * `checkSpawnHealth` only scans the LAST `STARTUP_ERROR_TAIL_LINES`
+ * lines of the capture, and after an ok ctl handshake it skips
+ * `EXEC_FAILURE_PATTERN` (a resumed pi session re-renders old tool
+ * output, which often ends in `No such file or directory`).
  */
-const STARTUP_ERROR_PATTERNS: readonly RegExp[] = [
+const AUTH_ERROR_PATTERNS: readonly RegExp[] = [
   /No API key found for [\w-]+/i,
   /Error: invalid API key/i,
   /Authentication failed/i,
   /401 Unauthorized/i,
   /Could not authenticate/i,
-  // fb_agent_spawn_no_validation part B: post-spawn detection of the
-  // "binary not found at exec time" failure mode. The pre-flight check
-  // above catches the common typo BEFORE any side effect, but a few
-  // edge cases still slip through and only surface in the pane:
-  //   - `--command "..."` skips the pre-flight (operator opt-out).
-  //   - PATH inside the spawned shell differs from PATH in mu's
-  //     process (login shell rc files, /etc/paths.d, etc.).
-  //   - Race: binary on PATH at spawn time, gone 1.5s later.
-  //
-  // Anchored to lines that LOOK like a shell error rather than prose
-  // mentioning the marker (review_substrate_startup_err_patterns_too_broad):
-  // require the marker at end-of-line, optionally followed by a single
-  // `: <name>` token (the zsh form: `zsh: command not found: pi-meta`).
-  // This still trips the canonical cases —
-  //   `bash: pi-meta: command not found`
-  //   `zsh: command not found: pi-meta`
-  //   `sh: pi-meta: No such file or directory`
-  // — but rejects banner prose like
-  //   `I noticed earlier you saw 'command not found'`
-  //   `type \`mu\` — command not found? install with …`
-  // that previously triggered a full spawn rollback. The pre-flight
-  // PATH check remains the deterministic safety net for typo'd `--cli`.
-  /^(?:.*: )?(?:command not found|No such file or directory)(?::\s*\S+)?$/i,
 ];
 
 /**
+ * The spawned command failed to exec (fb_agent_spawn_no_validation
+ * part B): post-spawn detection of the
+ * "binary not found at exec time" failure mode. The pre-flight check
+ * above catches the common typo BEFORE any side effect, but a few
+ * edge cases still slip through and only surface in the pane:
+ *   - `--command "..."` skips the pre-flight (operator opt-out).
+ *   - PATH inside the spawned shell differs from PATH in mu's
+ *     process (login shell rc files, /etc/paths.d, etc.).
+ *   - Race: binary on PATH at spawn time, gone 1.5s later.
+ *
+ * Anchored to lines that LOOK like a shell error rather than prose
+ * mentioning the marker (review_substrate_startup_err_patterns_too_broad):
+ * require the marker at end-of-line, optionally followed by a single
+ * `: <name>` token (the zsh form: `zsh: command not found: pi-meta`).
+ * This still trips the canonical cases —
+ *   `bash: pi-meta: command not found`
+ *   `zsh: command not found: pi-meta`
+ *   `sh: pi-meta: No such file or directory`
+ * — but rejects banner prose like
+ *   `I noticed earlier you saw 'command not found'`
+ *   `type \`mu\` — command not found? install with …`
+ * that previously triggered a full spawn rollback. The pre-flight
+ * PATH check remains the deterministic safety net for typo'd `--cli`.
+ */
+const EXEC_FAILURE_PATTERN =
+  /^(?:.*: )?(?:command not found|No such file or directory)(?::\s*\S+)?$/i;
+
+/** True when `line` reads as a shell exec failure, not a provider/auth error. */
+export function isExecFailureLine(line: string): boolean {
+  return EXEC_FAILURE_PATTERN.test(line);
+}
+
+/**
  * Number of trailing lines of the post-liveness scrollback to scan for
- * `STARTUP_ERROR_PATTERNS`. The capture is `lines: 50`; tailing the last
+ * the startup-error patterns. The capture is `lines: 50`; tailing the last
  * 30 keeps the scan focused on the spawned CLI's own startup output
  * (the pane is brand-new, so anything earlier than that is the shell
  * banner / our own command-line, both safe).
@@ -770,15 +804,22 @@ const STARTUP_ERROR_TAIL_LINES = 30;
 /**
  * Scan the tail of a freshly-captured pane buffer for known startup-
  * failure patterns. Returns the matched line on first hit, or undefined
- * if the buffer is clean.
+ * if the buffer is clean. `cliStarted` (the CLI answered the ctl
+ * handshake) drops the exec-failure pattern: the CLI demonstrably ran.
  *
  * Exported for the test suite; not part of the SDK surface.
  */
-export function detectSpawnStartupError(scrollback: string): string | undefined {
+export function detectSpawnStartupError(
+  scrollback: string,
+  cliStarted = false,
+): string | undefined {
+  const patterns = cliStarted
+    ? AUTH_ERROR_PATTERNS
+    : [...AUTH_ERROR_PATTERNS, EXEC_FAILURE_PATTERN];
   const lines = scrollback.split(/\r?\n/);
   const tail = lines.slice(Math.max(0, lines.length - STARTUP_ERROR_TAIL_LINES));
   for (const line of tail) {
-    for (const pattern of STARTUP_ERROR_PATTERNS) {
+    for (const pattern of patterns) {
       if (pattern.test(line)) return line;
     }
   }
@@ -807,6 +848,8 @@ async function checkSpawnHealth(
   command: string,
   /** When the failure happened, for the error text; default: the liveness window. */
   when?: string,
+  /** The CLI answered the ctl handshake; see detectSpawnStartupError. */
+  cliStarted = false,
 ): Promise<void> {
   // Capture-pane first so we have something to attach to the error if the
   // pane is in the process of being torn down (the buffer survives a beat
@@ -822,7 +865,7 @@ async function checkSpawnHealth(
   // an error prompt forever otherwise, and the orchestrator only
   // discovers the dud minutes later when `mu task wait` stalls.
   if (scrollback !== undefined) {
-    const matchedLine = detectSpawnStartupError(scrollback);
+    const matchedLine = detectSpawnStartupError(scrollback, cliStarted);
     if (matchedLine !== undefined) {
       throw new AgentSpawnStartupError(agentName, paneId, matchedLine, scrollback, when);
     }
