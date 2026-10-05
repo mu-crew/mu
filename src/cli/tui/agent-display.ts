@@ -1,6 +1,7 @@
 import type { LiveAgent } from "../../agents.js";
 import { agentStateGlyph } from "../../glyphs.js";
 import type { WorkstreamSnapshot } from "../../state.js";
+import type { TaskRow } from "../../tasks.js";
 
 type AgentDisplayRow = Pick<LiveAgent, "name" | "state">;
 
@@ -37,4 +38,17 @@ export function formatAgentRefDisplayName(
   const agent = agents.get(agentName);
   if (agent === undefined) return agentName;
   return formatKnownAgentDisplayName(agent);
+}
+
+/**
+ * Render a task's owner. The live state glyph means "this agent is
+ * working on this task now", so only IN_PROGRESS rows get it; CLOSED
+ * rows (and OPEN rows that kept an owner) show the bare name.
+ */
+export function formatTaskOwnerDisplay(
+  task: Pick<TaskRow, "status" | "ownerName">,
+  agents: ReadonlyMap<string, AgentDisplayRow>,
+): string {
+  if (task.status !== "IN_PROGRESS") return task.ownerName ?? "—";
+  return formatAgentRefDisplayName(task.ownerName, agents);
 }

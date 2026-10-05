@@ -51,7 +51,7 @@ import type { ReactElement } from "react";
 import type { WorkstreamSnapshot } from "../../../state.js";
 import { formatPair } from "../../../tasks/status.js";
 import { inkColorForPair } from "../../format.js";
-import { agentByName, agentStateGlyph, formatAgentRefDisplayName } from "../agent-display.js";
+import { agentByName, agentStateGlyph, formatTaskOwnerDisplay } from "../agent-display.js";
 import {
   type ColumnSpec,
   contentWidthFromCols,
@@ -130,7 +130,7 @@ export function InProgressCard({ snapshot, rowBudget, cols }: InProgressCardProp
     GLYPH,
     t.name,
     formatPair(t),
-    formatAgentRefDisplayName(t.ownerName, agentLookup),
+    formatTaskOwnerDisplay(t, agentLookup),
     formatSinceClaim(ages[i] ?? null),
     t.title,
   ]);

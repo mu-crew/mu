@@ -20,7 +20,7 @@ import {
 import { formatPair } from "../../../tasks/status.js";
 import { listTasks, type TaskRow } from "../../../tasks.js";
 import { inkColorForPair } from "../../format.js";
-import { agentByName, formatAgentRefDisplayName } from "../agent-display.js";
+import { agentByName, formatTaskOwnerDisplay } from "../agent-display.js";
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { formatRoi } from "../format-helpers.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
@@ -258,7 +258,7 @@ export function AllTasksPopup({
   const rows = windowed.map((t) => [
     t.name,
     statusCell(t, blockedNames.has(t.name)),
-    formatAgentRefDisplayName(t.ownerName, agentLookup),
+    formatTaskOwnerDisplay(t, agentLookup),
     formatRoi(t.impact, t.effortDays),
     t.title,
   ]);

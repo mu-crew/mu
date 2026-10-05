@@ -17,7 +17,7 @@ import {
 } from "../src/cli/tui/popups/all-tasks.js";
 import { applyCursor, centredVisibleSlice } from "../src/cli/tui/popups/scroll.js";
 import { type Db, openDb } from "../src/db.js";
-import { GLYPH } from "../src/glyphs.js";
+import { agentStateGlyph, GLYPH } from "../src/glyphs.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { sortTasks } from "../src/tasks/sort.js";
@@ -535,6 +535,48 @@ describe("AllTasksPopup", () => {
     text = latestRenderedFrame(stdout).join("\n");
     expect(text).toContain("filter: 2 of 2");
 
+    instance.unmount();
+  });
+
+  it("shows the live owner glyph only on IN_PROGRESS rows", async () => {
+    const db = fixtureDb();
+    seedOnePerStatus(db);
+    const allTasks = sortTasks(listTasks(db, "demo"), "roi").map((t) => ({
+      ...t,
+      ownerName: "worker-2",
+    }));
+    const busy = agentStateGlyph("busy");
+    const snapshot = {
+      allTasks,
+      view: {
+        agents: [{ name: "worker-2", state: "busy" }],
+        orphans: [],
+        report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
+      },
+    } as unknown as WorkstreamSnapshot;
+    const stdin = createInkInputStream();
+    const stdout = createInkCaptureStream({ columns: 120, rows: 30 });
+    const instance = render(
+      createElement(AllTasksPopup, {
+        yank: async () => {},
+        onClose: () => {},
+        snapshot,
+        fastTickNonce: 0,
+        mode: "list",
+        onModeChange: () => {},
+        db,
+        workstream: "demo",
+      }),
+      { stdout, stdin, stderr: process.stderr, debug: false, patchConsole: false },
+    );
+    await waitForInkOutput(stdout);
+    const lines = latestRenderedFrame(stdout);
+    const row = (name: string) => lines.find((l) => l.includes(` ${name} `)) ?? "";
+    expect(row("in_progress")).toContain(`${busy} worker-2`);
+    expect(row("closed")).toContain("worker-2");
+    expect(row("closed")).not.toContain(busy);
+    expect(row("open")).toContain("worker-2");
+    expect(row("open")).not.toContain(busy);
     instance.unmount();
   });
 });
