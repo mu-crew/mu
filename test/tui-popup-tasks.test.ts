@@ -26,6 +26,7 @@ import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ReadyPopup } from "../src/cli/tui/popups/ready.js";
 import { type Db, openDb } from "../src/db.js";
+import { agentStateGlyph } from "../src/glyphs.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
 import {
   addNote,
@@ -156,6 +157,39 @@ describe("ReadyPopup — rendered list + yank matrix", () => {
     expect(frame).toContain("IN_PROGRESS");
     // Title shows total + cursor position (1/N at fresh mount).
     expect(frame).toContain("Tasks · popup (1/3)");
+
+    instance.unmount();
+  });
+
+  it("shows the live owner glyph only on the IN_PROGRESS row of a mixed list", async () => {
+    const db = fixtureDb();
+    const seeded = await seed(db);
+    // An OPEN row that kept its owner (reopened) and an IN_PROGRESS
+    // row, both owned by the same busy agent.
+    const ready = seeded.ready.map((t) => ({ ...t, ownerName: "worker-2" }));
+    const inProgress = seeded.inProgress.map((t) => ({ ...t, ownerName: "worker-2" }));
+    const snapshot = {
+      ...seeded.snapshot,
+      ready,
+      inProgress,
+      view: {
+        agents: [{ name: "worker-2", state: "busy" }],
+        orphans: [],
+        report: { prunedGhosts: 0, orphans: [], mode: "report-only" },
+      },
+    } as unknown as WorkstreamSnapshot;
+    const busy = agentStateGlyph("busy");
+
+    const { stdout, instance } = mount({ db, snapshot });
+    await waitForInkOutput(stdout);
+    const lines = latestRenderedFrame(stdout);
+    const row = (name: string) => lines.find((l) => l.includes(` ${name} `)) ?? "";
+
+    expect(row("running_x")).toContain(`${busy} worker-2`);
+    for (const name of ["ready_a", "ready_b"]) {
+      expect(row(name)).toContain("worker-2");
+      expect(row(name)).not.toContain(busy);
+    }
 
     instance.unmount();
   });

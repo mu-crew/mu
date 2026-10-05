@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ReadyCard } from "../src/cli/tui/cards/ready.js";
+import { agentStateGlyph } from "../src/glyphs.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
 import type { TaskRow } from "../src/tasks.js";
 import { expectTextAbsent, expectTextOnce, renderCardToText } from "./_card-render.js";
@@ -92,6 +93,21 @@ describe("ReadyCard", () => {
       expectTextOnce(text, title);
       expectTextOnce(text, roi);
     }
+  });
+
+  it("an OPEN task that kept a busy owner shows the bare owner name, no glyph", () => {
+    const snapshot: WorkstreamSnapshot = {
+      ...EMPTY_SNAPSHOT,
+      view: {
+        ...EMPTY_SNAPSHOT.view,
+        agents: [{ name: "worker-2", state: "busy" }],
+      } as unknown as WorkstreamSnapshot["view"],
+      ready: [task({ name: "reopened_x", title: "Reopened X", ownerName: "worker-2" })],
+    };
+
+    const text = renderCardToText(ReadyCard({ snapshot, cols: 120 }));
+    expectTextOnce(text, "worker-2");
+    expect(text).not.toContain(agentStateGlyph("busy"));
   });
 
   it("colours the status cell per row", () => {
