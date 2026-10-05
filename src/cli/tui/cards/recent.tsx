@@ -1,6 +1,6 @@
-// Recent card — the most-recently CLOSED tasks in the workstream,
-// newest first. Surfaces "what just shipped" so the operator can
-// cherry-pick / verify / cross-reference without bouncing to a
+// Recent card — CLOSED tasks in the workstream, most recently updated
+// first (updated_at, a proxy for close time; see "WHEN" below), so the
+// operator can cherry-pick / verify / cross-reference without bouncing to a
 // separate `mu task list --status CLOSED -w <ws>` shell.
 //
 // Per feat_card_8_recent (workstream `tui-impl`), promoted from the
@@ -24,10 +24,10 @@
 //
 // SUBTITLE
 //   empty       → omitted (no recently-closed tasks → empty body)
-//   populated   → "<N>"  or  "<N> · last <relTime since most recent>"
-//                 — the most-recent close is the most actionable
-//                 anchor: the operator's "did the wave just finish?"
-//                 question.
+//   populated   → "<N>"  or  "<N> · last <relTime since newest row>"
+//                 — the newest updated_at is usually the latest close
+//                 (a later note or edge on a CLOSED task also bumps it),
+//                 the anchor for "did the wave just finish?".
 //
 // DATA
 //   - snapshot.recentClosed is the listRecentClosed slice (CLOSED
@@ -37,9 +37,8 @@
 //     have the card cap at ROW_LIMIT here.
 //
 // "WHEN" COLUMN
-//   The cheapest-accurate proxy for "closed at" is TaskRow.updatedAt
-//   — `closeTask` is the most recent lifecycle flip on a CLOSED row
-//   (re-opens flip back to OPEN). A real `closed_at` column would
+//   The cheapest proxy for "closed at" is TaskRow.updatedAt: closeTask
+//   sets it, but it is not close time. A real `closed_at` column would
 //   need a schema add + agent_logs scan; OUT OF SCOPE per the brief.
 //   If a row is later updated (a note appended, an edge added or
 //   removed), touchTask bumps updatedAt, so the row moves up and its
