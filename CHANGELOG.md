@@ -231,7 +231,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   says. It used to put the state dir at `./mu` relative to the cwd.
 - **A peer now deletes a note whose tombstone key shifted.** When a reprojection gave a note a new rowid, its tombstone carries the full row, but apply only looked for a put under the tombstone's key and skipped it, so rebuilds and peers kept a note the origin had deleted. Apply now reads the tombstone's own payload.
 - **`mu undo` no longer lists or plans a legacy `workstream.export` group.** Its prose payload made the preview crash with a JSON error, or, with no earlier op for the workstream, plan deleting it.
-- **`mu undo -n` rejects a value that is not a positive integer** (exit 2). Before, `-n abc` failed with `datatype mismatch`, `-n 0` claimed the log was empty, and `-n -1` listed every group.
+- **`mu undo -n` rejects a value that is not a positive integer** (exit 2). Before, `-n abc` failed with `datatype mismatch`, `-n 0` claimed the log was empty, `-n -1` listed every group, and `-n 1.5`, `-n 2x` and `-n 1e3` silently used 1, 2 and 1.
 - **`mu undo --yes` on an already-undone group says nothing changed.** It used to print `Undid …` with a redo hint naming a group that recorded no ops; `--json` now reports `undoGroupId: null`. The preview no longer lists deleting a row that is already gone.
 
 ## [3.8.1] — 2026-10-05

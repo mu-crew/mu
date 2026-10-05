@@ -207,14 +207,17 @@ export async function cmdUndo(
   }
 
   const what = result.plan.intents.length > 0 ? result.plan.intents.join(", ") : "(no intent)";
-  console.log(`Undid ${pc.bold(short(result.plan.groupId))} (${what})`);
-  for (const inverse of result.plan.inverses) {
-    console.log(pc.dim(`  ${inverse.summary}`));
-  }
+  const label = `${pc.bold(short(result.plan.groupId))} (${what})`;
   if (result.undoGroupId === null) {
-    console.log(pc.yellow("  nothing changed (already undone, or the group changed nothing)"));
+    console.log(
+      pc.yellow(`${label}: nothing changed (already undone, or the group changed nothing)`),
+    );
     printNextSteps(nextStepsForPlan(result.plan, true, null));
     return;
+  }
+  console.log(`Undid ${label}`);
+  for (const inverse of result.plan.inverses) {
+    console.log(pc.dim(`  ${inverse.summary}`));
   }
   console.log(
     pc.dim(
