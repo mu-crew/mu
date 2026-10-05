@@ -180,6 +180,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   panes all sit at a shell prompt are swept; on herdr, which does not
   report a pane's command, unregistered workspaces are never swept. A
   run against a throwaway `MU_DB_PATH` had killed a live crew's panes.
+- `mu workstream teardown --empty` no longer kills `mu-*` sessions
+  that have no workstream row. With no row there is no evidence the
+  session is idle (a pane running a `bash -c` loop reports `bash`), and
+  a run against a throwaway `MU_DB_PATH` had killed a live crew's panes.
+  The sweep now takes registered empty workstreams only, and names the
+  skipped sessions so you can tear one down by name.
 - `mu workstream teardown --empty --yes` and `mu task delete` no longer
   promise a snapshot or offer `mu undo --yes`, which only lists groups.
   `task delete --yes` prints `mu undo <group> --yes` for its own group

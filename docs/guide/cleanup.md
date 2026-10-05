@@ -22,14 +22,16 @@ mu workstream teardown auth --yes    # kills the session, deletes the rows
 Teardown kills the tmux session first, then deletes the agents, tasks,
 edges, notes, and workspaces. Running it again is a no-op.
 
-To sweep every workstream that has no tasks, agents, or workspaces,
-including `mu-*` sessions with no DB row whose panes all sit at a shell
-prompt (a session running anything else is never swept):
+To sweep every workstream that has no tasks, agents, or workspaces:
 
 ```bash
 mu workstream teardown --empty
 mu workstream teardown --empty --yes
 ```
+
+The sweep never takes a `mu-*` session that has no workstream row in
+this DB: it may be a live workstream from another DB. The output names
+such sessions; tear one down by name once you know it is unused.
 
 ## Undo a teardown
 

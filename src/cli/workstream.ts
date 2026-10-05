@@ -25,6 +25,7 @@ import {
   ensureWorkstream,
   listEmptyWorkstreams,
   listTornDownWorkstreams,
+  listUnregisteredMuxWorkstreams,
   listWorkstreams,
   summarizeWorkstream,
   teardownWorkstream,
@@ -297,8 +298,10 @@ export async function cmdTeardown(
 // ─── cmdTeardownEmpty ─────────────────────────────────────────────────
 //
 // `mu workstream teardown --empty` sweeps every workstream with no
-// user-meaningful state (zero tasks, agents, vcs_workspaces), plus
-// unregistered `mu-*` sessions whose panes all sit at a shell prompt.
+// user-meaningful state (zero tasks, agents, vcs_workspaces). It never
+// sweeps an unregistered `mu-*` session: with no DB row there is no
+// evidence it is idle (see listEmptyWorkstreams); the human output
+// names them so the operator can tear one down explicitly.
 // Each workstream's teardown is its own op group, so each is undone
 // separately (`mu workstream list --torn-down` lists the groups).
 // Per-workstream teardown errors are accumulated into a `failed` array
@@ -321,9 +324,8 @@ interface EmptyDestroyFailure {
   error: string;
 }
 
-/** Read created_at for a registered workstream. Returns the empty
- *  string for the mux-only rows listEmptyWorkstreams also surfaces
- *  (no workstreams row, so no created_at). */
+/** Read created_at for a registered workstream; the empty string when
+ *  the row is gone (keeps the signature total). */
 function workstreamCreatedAt(db: Db, name: string): string {
   const row = db.prepare("SELECT created_at FROM workstreams WHERE name = ?").get(name) as
     | { created_at: string }
@@ -357,6 +359,7 @@ async function cmdTeardownEmpty(
     }
     if (empties.length === 0) {
       console.log(pc.dim("no empty workstreams found"));
+      await printUnregisteredSkipped(db);
       return;
     }
     const table = muTable({
@@ -365,9 +368,8 @@ async function cmdTeardownEmpty(
     });
     for (const ws of empties) {
       const createdAt = workstreamCreatedAt(db, ws.name);
-      // Mux-only entries have no DB row and so no created_at;
-      // render an em-dash placeholder so the column never goes
-      // visually empty (matches the mux column's idiom below).
+      // Em-dash if the row vanished between list and render, so the
+      // column never goes visually empty (matches the mux column).
       const createdCell = createdAt === "" ? pc.dim("\u2014") : pc.dim(createdAt);
       table.push([ws.name, createdCell, ws.muxAlive ? pc.green("alive") : pc.dim("\u2014")]);
     }
@@ -384,6 +386,7 @@ async function cmdTeardownEmpty(
         command: "mu workstream teardown --empty --yes",
       },
     ]);
+    await printUnregisteredSkipped(db);
     return;
   }
 
@@ -394,6 +397,7 @@ async function cmdTeardownEmpty(
       return;
     }
     console.log(pc.dim("no empty workstreams found; nothing to tear down"));
+    await printUnregisteredSkipped(db);
     return;
   }
 
@@ -457,6 +461,26 @@ async function cmdTeardownEmpty(
       },
     ]);
   }
+  await printUnregisteredSkipped(db);
+}
+
+/** Human-output note naming the live `mu-*` sessions this DB has no
+ *  row for: the sweep never takes them, so say how to take one. */
+async function printUnregisteredSkipped(db: Db): Promise<void> {
+  const names = await listUnregisteredMuxWorkstreams(db);
+  if (names.length === 0) return;
+  console.log("");
+  console.log(
+    pc.dim(
+      `Skipped ${names.length} mu-* session${names.length === 1 ? "" : "s"} with no workstream row (--empty never sweeps these; they may be live): ${names.join(", ")}`,
+    ),
+  );
+  printNextSteps([
+    {
+      intent: "Tear one down after checking it is unused",
+      command: `mu workstream teardown ${names[0]} --yes`,
+    },
+  ]);
 }
 
 // ─── commander wiring ────────────────────────────────────────────────
@@ -532,7 +556,7 @@ export function wireWorkstreamCommands(program: Command): void {
     .option("-y, --yes", "actually tear down (without this flag, prints a dry-run summary)")
     .option(
       "--empty",
-      "sweep every empty workstream (zero tasks, agents, vcs_workspaces), plus unregistered mu-* sessions whose panes all sit at a shell prompt; mutually exclusive with -w",
+      "sweep every empty workstream (zero tasks, agents, vcs_workspaces); never a mu-* session with no workstream row; mutually exclusive with -w",
     )
     .option(...JSON_OPT)
     .action(function (name: string | undefined) {
