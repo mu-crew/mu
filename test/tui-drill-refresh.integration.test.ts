@@ -97,6 +97,7 @@ describe("useDrillKeymap refresh semantics", () => {
     );
     await waitForScroll(capture, 15);
 
+    const mark = capture.scrolls.length;
     instance.rerender(
       keymapElement({
         body: numberedLines(20, "after"),
@@ -106,7 +107,11 @@ describe("useDrillKeymap refresh semantics", () => {
         capture,
       }),
     );
-    await waitForLatestScroll(capture, 15);
+    // Wait for the new body to commit and its effects to settle, then
+    // require that no scroll value recorded since was a reset.
+    await waitForSettledBody(stdout, "after line 1");
+    expect(capture.scrolls.slice(mark)).not.toContain(0);
+    expect(capture.scrolls.at(-1)).toBe(15);
 
     instance.unmount();
   });
@@ -137,6 +142,9 @@ describe("useDrillKeymap refresh semantics", () => {
     );
     await waitForScroll(capture, 15);
 
+    // The mount recorded a 0 already, so only values after the
+    // rerender count as evidence of a reset.
+    const mark = capture.scrolls.length;
     instance.rerender(
       keymapElement({
         body: numberedLines(20, "same"),
@@ -146,7 +154,9 @@ describe("useDrillKeymap refresh semantics", () => {
         capture,
       }),
     );
-    await waitForScroll(capture, 0);
+    await waitForScroll(capture, 0, mark);
+    await waitForSettledBody(stdout, "same line 1");
+    expect(capture.scrolls.at(-1)).toBe(0);
 
     instance.unmount();
   });
@@ -177,6 +187,7 @@ describe("useDrillKeymap refresh semantics", () => {
     );
     await waitForScroll(capture, 15);
 
+    const mark = capture.scrolls.length;
     instance.rerender(
       keymapElement({
         body: numberedLines(8, "short"),
@@ -186,7 +197,7 @@ describe("useDrillKeymap refresh semantics", () => {
         capture,
       }),
     );
-    await waitForScroll(capture, 3);
+    await waitForScroll(capture, 3, mark);
 
     instance.unmount();
   });
@@ -240,30 +251,35 @@ function DrillKeymapHarness({
   useEffect(() => {
     if (action !== undefined) drill.dispatch(action);
   }, [action, drill.dispatch]);
-  return createElement(Text, null, `scroll:${drill.scrollTop}`);
+  // The first body line shows which body has committed, so a test can
+  // wait for a rerender to land before judging the scroll values.
+  return createElement(Text, null, `scroll:${drill.scrollTop} body:${body.split("\n")[0] ?? ""}`);
 }
 
 function numberedLines(count: number, label: string): string {
   return Array.from({ length: count }, (_, i) => `${label} line ${i + 1}`).join("\n");
 }
 
-async function waitForScroll(capture: { scrolls: number[] }, expected: number): Promise<void> {
-  const deadline = Date.now() + 1000;
-  while (Date.now() < deadline) {
-    if (capture.scrolls.includes(expected)) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  expect(capture.scrolls).toContain(expected);
-}
-
-async function waitForLatestScroll(
+/** Wait until a scroll value recorded at or after index `from` equals `expected`. */
+async function waitForScroll(
   capture: { scrolls: number[] },
   expected: number,
+  from = 0,
 ): Promise<void> {
   const deadline = Date.now() + 1000;
   while (Date.now() < deadline) {
-    if (capture.scrolls.at(-1) === expected) return;
+    if (capture.scrolls.slice(from).includes(expected)) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  expect(capture.scrolls.at(-1)).toBe(expected);
+  expect(capture.scrolls.slice(from)).toContain(expected);
+}
+
+/** Wait until the harness shows `firstLine` as its body, then until output stops changing. */
+async function waitForSettledBody(stdout: CaptureStream, firstLine: string): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline && !stdout.output.includes(`body:${firstLine}`)) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  expect(stdout.output).toContain(`body:${firstLine}`);
+  await waitForInkOutput(stdout);
 }

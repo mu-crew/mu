@@ -6,7 +6,7 @@
 // `s` through the same sort keys as `mu task list --sort`, Enter drills
 // into TaskDetailDrill, and `y` yanks `mu task show <id>`.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { type ReactElement, useMemo, useState } from "react";
 import type { Db } from "../../../db.js";
 import { GLYPH } from "../../../glyphs.js";
@@ -25,16 +25,17 @@ import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from 
 import { formatRoi } from "../format-helpers.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { ListRow } from "../list-row.js";
+import { usePopupInput } from "../popup-input.js";
 import { PopupShell } from "../popup-shell.js";
 import { useNotesDrill } from "../use-notes-drill.js";
 import { usePopupActionQueue } from "../use-popup-action-queue.js";
-import { applyFilter, FilterPrompt, usePopupFilter } from "../use-popup-filter.js";
+import { applyFilter, FilterPrompt, listViewport, usePopupFilter } from "../use-popup-filter.js";
 import { passesFilter, StatusFilterStrip, useStatusFilter } from "../use-status-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { useDrillKeymap } from "./drill.js";
-import { applyCursor, centredVisibleSlice, isNavAction } from "./scroll.js";
+import { applyCursor, centredVisibleSlice, clickedItem, isNavAction } from "./scroll.js";
 import { TaskDetailDrill } from "./task-detail.js";
-import { usePopupViewport } from "./viewport.js";
+import { POPUP_CHROME_ROWS, usePopupViewport } from "./viewport.js";
 
 export interface PopupProps {
   yank: (command: string) => Promise<void>;
@@ -57,11 +58,12 @@ const COLUMN_SPECS: ReadonlyArray<ColumnSpec> = [
   { kind: "clip", min: 1 }, // title
 ];
 
-// The list view renders two extra in-body chrome rows above the data
-// window: StatusFilterStrip + SortStrip. Account for those through
-// the central viewport hook's chrome override so the popup's top
-// border does not get clipped on shorter panes.
-const ALL_TASKS_CHROME_ROWS = 6;
+// The list view renders three in-body strip rows above the data
+// window: StatusFilterStrip, BlockedFilterStrip, SortStrip. Account
+// for those through the central viewport hook's chrome override so
+// the popup's top border does not get clipped on shorter panes.
+const ALL_TASKS_STRIP_ROWS = 3;
+const ALL_TASKS_CHROME_ROWS = POPUP_CHROME_ROWS + ALL_TASKS_STRIP_ROWS;
 
 export function AllTasksPopup({
   yank,
@@ -81,6 +83,7 @@ export function AllTasksPopup({
   const [cursor, setCursor] = useState(0);
   const [sortKey, setSortKey] = useState<TaskSortKey>("roi");
   const flt = usePopupFilter({ onEditingChange: onFilterEditingChange });
+  const rowsViewport = listViewport(viewport, flt);
   const statusFilter = useStatusFilter();
   const { statuses, showParked, showNotDone } = statusFilter;
   const filterStrip = (
@@ -160,8 +163,8 @@ export function AllTasksPopup({
       drill.dispatch(action);
       return;
     }
-    if (action.kind === "setCursor" || isNavAction(action)) {
-      setCursor((c) => applyCursor(c, action, visibleTasks.length, viewport));
+    if (isNavAction(action)) {
+      setCursor((c) => applyCursor(c, action, visibleTasks.length, rowsViewport));
       return;
     }
     switch (action.kind) {
@@ -177,6 +180,20 @@ export function AllTasksPopup({
           onModeChange("drill");
         }
         return;
+      case "clickRow": {
+        const hit = clickedItem(
+          visibleTasks,
+          safeCursor,
+          rowsViewport,
+          action.row,
+          ALL_TASKS_STRIP_ROWS,
+        );
+        if (!hit) return;
+        setCursor(hit.index);
+        setDrilledTask(hit.item);
+        onModeChange("drill");
+        return;
+      }
       case "yank":
         if (focused) void yank(allTasksYankCommand(focused.name, workstream));
         return;
@@ -188,7 +205,7 @@ export function AllTasksPopup({
 
   usePopupActionQueue(popupActions, dispatchListAction);
 
-  useInput((input, key) => {
+  usePopupInput((input, key) => {
     if (mode !== "drill" && flt.onKey(input, key) === "consumed") return;
     if (mode !== "drill" && statusFilter.onKey(input, key)) return;
     // b toggles blocked filter — intercept before generic popup dispatch
@@ -253,7 +270,7 @@ export function AllTasksPopup({
     );
   }
 
-  const { start, visible: windowed } = centredVisibleSlice(visibleTasks, safeCursor, viewport);
+  const { start, visible: windowed } = centredVisibleSlice(visibleTasks, safeCursor, rowsViewport);
   const agentLookup = agentByName(snapshot);
   const rows = windowed.map((t) => [
     t.name,
@@ -266,7 +283,7 @@ export function AllTasksPopup({
 
   return (
     <PopupShell
-      title={allTasksListTitle(safeCursor, visibleTasks.length, viewport)}
+      title={allTasksListTitle(safeCursor, visibleTasks.length, rowsViewport)}
       hint={focused ? allTasksYankCommand(focused.name, workstream) : undefined}
     >
       <Box flexDirection="column" flexGrow={1}>

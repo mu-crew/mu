@@ -61,6 +61,7 @@ import {
   type RowBudgetMap,
 } from "./layout.js";
 import { type MouseEvent, useMouse } from "./mouse.js";
+import { PopupInputActive } from "./popup-input.js";
 import { AgentsPopup } from "./popups/agents.js";
 import { AllTasksPopup } from "./popups/all-tasks.js";
 import { BlockedPopup } from "./popups/blocked.js";
@@ -72,7 +73,6 @@ import { LogPopup } from "./popups/log.js";
 import { ReadyPopup } from "./popups/ready.js";
 import { RecentPopup } from "./popups/recent.js";
 import { TracksPopup } from "./popups/tracks.js";
-import { POPUP_CHROME_ROWS } from "./popups/viewport.js";
 import { WorkspacesPopup } from "./popups/workspaces.js";
 import {
   type CardVisibility,
@@ -176,11 +176,12 @@ const SUBPROCESS_BACKED_POPUPS: ReadonlySet<PopupRegistryId> = new Set<PopupRegi
 ]);
 
 export const DASHBOARD_MIN_ROWS = 5;
-// Mouse SGR coordinates are 1-based. The first popup data row sits
-// below the top border at y=2. Link the named top offset to the
-// shared popup chrome budget so the double-click path is not a
-// detached magic `event.y - 2` constant.
-export const POPUP_CHROME_TOP = Math.max(0, POPUP_CHROME_ROWS - 1);
+// Mouse SGR coordinates are 1-based. The popup fills the pane from
+// row 1 (its top border, which carries the title), so the first popup
+// body row is y=2. `event.y - POPUP_CHROME_TOP` is the 0-based body
+// row the popup receives in `clickRow`; the popup maps it through its
+// own scroll window and header strips.
+export const POPUP_CHROME_TOP = 2;
 
 export function dashboardAvailableRows(
   rows: number,
@@ -241,9 +242,7 @@ export function replayPendingMouseEvent(
   }
   if (event.kind === "doubleclick") {
     pendingMouseEvent.current = null;
-    const rowIndex = Math.max(0, event.y - POPUP_CHROME_TOP);
-    opts.emitAction({ kind: "setCursor", index: rowIndex });
-    opts.emitAction({ kind: "drill" });
+    opts.emitAction({ kind: "clickRow", row: event.y - POPUP_CHROME_TOP });
     return true;
   }
   pendingMouseEvent.current = null;
@@ -508,7 +507,10 @@ export function App({ db, workstreams, initialActive = 0 }: AppProps): ReactElem
   // per-card flexShrink=1 in TitledBox: that one tells Yoga it MAY
   // shrink cards, this one tells ink to clip if Yoga still didn't
   // (e.g. a card with a hardcoded `height` prop).
-  if (helpOpen) {
+  //
+  // With a popup open, the help overlay is rendered by the popup
+  // branch below instead, so the popup stays mounted underneath.
+  if (helpOpen && popup === null) {
     return (
       <Box flexDirection="column" height={rows} overflow="hidden">
         <Help rows={rows} />
@@ -532,12 +534,25 @@ export function App({ db, workstreams, initialActive = 0 }: AppProps): ReactElem
   // a sibling spacer would steal the space the popup wants. The
   // height={rows} pin is still required to prevent ghost lines
   // when swapping between popup ↔ dashboard ↔ help.
+  //
+  // `?` over a popup hides the popup (display="none") instead of
+  // unmounting it, and turns its keyboard off, so the cursor, filter,
+  // drill pin and drill scroll are still there when help closes.
   if (popup !== null) {
     return (
       <Box flexDirection="column" height={rows} overflow="hidden">
-        {renderPopup(popup)}
+        {helpOpen ? (
+          <Box flexDirection="column" flexGrow={1}>
+            <Help rows={rows} />
+          </Box>
+        ) : null}
+        <Box display={helpOpen ? "none" : "flex"} flexDirection="column" flexGrow={1}>
+          <PopupInputActive.Provider value={!helpOpen}>
+            {renderPopup(popup)}
+          </PopupInputActive.Provider>
+        </Box>
         <StatusBar
-          mode={popupFilterEditing ? "popup-filter" : "popup"}
+          mode={helpOpen ? "help" : popupFilterEditing ? "popup-filter" : "popup"}
           tickMs={tickMs}
           footer={footer}
           cols={cols}

@@ -34,14 +34,10 @@
 //     authoritative full diagnostic; this card is the dashboard
 //     SIGNAL only. See src/doctor-summary.ts for the SDK seam.
 //
-// POPUP / FUTURE OBLIGATIONS (when slot-9 popup ships)
-//   Out of scope NOW. Tracked by feat_more_cards_umbrella. When the
-//   popup lands it MAY consume feat_popup_search_filter (`/`
-//   filtering check names is useful) but NOT
-//   feat_track_drill_chains_to_task_drill (rows aren't tasks). A
-//   reasonable Enter-drill leaf is "show the full doctor card for
-//   this check" or a one-line remediation hint; that's the popup
-//   task's call. Until then, Shift+9 (`(`) stays a reserved noop.
+// POPUP
+//   Shift+9 (`(`) opens popups/doctor.tsx: every check (OK rows
+//   included), `/` filter, and an Enter drill with the remediation
+//   text for the focused check.
 
 import { Text } from "ink";
 import type { ReactElement } from "react";

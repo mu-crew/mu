@@ -13,6 +13,7 @@ import {
   applyScroll,
   centredVisibleSlice,
   clampScrollTop,
+  clickedItem,
   isNavAction,
   type NavAction,
 } from "../src/cli/tui/popups/scroll.js";
@@ -37,7 +38,7 @@ describe("isNavAction", () => {
       "noop",
       "nextMatch",
       "prevMatch",
-      "setCursor",
+      "clickRow",
     ]) {
       expect(isNavAction({ kind })).toBe(false);
     }
@@ -80,11 +81,20 @@ describe("applyCursor", () => {
     expect(applyCursor(20, { kind: "jumpBottom" }, total, viewport)).toBe(49);
   });
 
-  it("setCursor jumps directly to an absolute row and clamps", () => {
-    expect(applyCursor(0, { kind: "setCursor", index: 12 }, total, viewport)).toBe(12);
-    expect(applyCursor(0, { kind: "setCursor", index: -5 }, total, viewport)).toBe(0);
-    expect(applyCursor(0, { kind: "setCursor", index: 999 }, total, viewport)).toBe(49);
-    expect(applyCursor(7, { kind: "setCursor", index: 3 }, 0, viewport)).toBe(0);
+  it("clickedItem maps a body row through the scroll window and header rows", () => {
+    const items = Array.from({ length: 40 }, (_, i) => i);
+    // Cursor 30, viewport 17 → window starts at 30 - 8 = 22.
+    expect(clickedItem(items, 30, 17, 0)).toEqual({ index: 22, item: 22 });
+    expect(clickedItem(items, 30, 17, 16)).toEqual({ index: 38, item: 38 });
+    // Unscrolled window: body row N is item N.
+    expect(clickedItem(items, 0, 17, 3)).toEqual({ index: 3, item: 3 });
+    // Three strip rows above the data: row 3 is the first data row.
+    expect(clickedItem(items, 0, 17, 3, 3)).toEqual({ index: 0, item: 0 });
+    // Clicks on a strip, past the last data row, or on an empty list miss.
+    expect(clickedItem(items, 0, 17, 2, 3)).toBeNull();
+    expect(clickedItem(items, 0, 17, 17)).toBeNull();
+    expect(clickedItem(items.slice(0, 4), 0, 17, 5)).toBeNull();
+    expect(clickedItem([], 0, 17, 0)).toBeNull();
   });
 
   it("pageDown half/full step is floor(viewport / (half ? 2 : 1))", () => {
@@ -107,7 +117,6 @@ describe("applyCursor", () => {
     }
     expect(applyCursor(0, { kind: "pageDown", half: true }, 0, viewport)).toBe(0);
     expect(applyCursor(0, { kind: "pageUp", half: true }, 0, viewport)).toBe(0);
-    expect(applyCursor(0, { kind: "setCursor", index: 10 }, 0, viewport)).toBe(0);
   });
 
   it("a tiny viewport still yields a no-op page step (matches pre-centralisation behaviour)", () => {

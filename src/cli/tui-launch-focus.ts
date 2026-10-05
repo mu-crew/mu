@@ -16,6 +16,7 @@ import { realpathSync } from "node:fs";
 import path from "node:path";
 
 import type { Db } from "../db.js";
+import { workstreamScopeParams, workstreamScopeSql } from "../logs.js";
 import { workspaceProjectRoot } from "../project-root.js";
 import { listWorkspaces } from "../workspace.js";
 import { resolveMuxSessionWorkstreamName } from "../workstream.js";
@@ -34,20 +35,34 @@ function isInsidePath(cwd: string, candidatePath: string): boolean {
   return cwd.startsWith(`${normalizedCandidate}${path.sep}`);
 }
 
-function latestActiveWorkstream(db: Db, candidates: readonly string[]): string | null {
-  if (candidates.length === 0) return null;
-  const placeholders = candidates.map(() => "?").join(", ");
-  const row = db
-    .prepare(
-      // ops.key holds the workstream name verbatim (natural key).
-      `SELECT l.key AS workstreamName
-         FROM ops l
-        WHERE l.key IN (${placeholders})
-        ORDER BY l.created_at DESC, l.seq DESC
-        LIMIT 1`,
-    )
-    .get(...candidates) as { workstreamName: string } | undefined;
-  return row?.workstreamName ?? null;
+/** The candidate workstream with the most recent op. Exported for tests. */
+export function latestActiveWorkstream(db: Db, candidates: readonly string[]): string | null {
+  // ops.key is the natural key: the bare name for workstream-scoped rows
+  // but "<ws>/<local_id>" (and "#<id>" / "-><ref>" suffixes) for tasks,
+  // notes, and edges. Use the same exact-or-prefix scope as `mu log`, or
+  // all task work is invisible to the tie-break.
+  const stmt = db.prepare(
+    `SELECT l.created_at AS createdAt, l.seq AS seq
+       FROM ops l
+      WHERE ${workstreamScopeSql()}
+      ORDER BY l.created_at DESC, l.seq DESC
+      LIMIT 1`,
+  );
+  let best: { name: string; createdAt: string; seq: number } | null = null;
+  for (const name of candidates) {
+    const row = stmt.get(...workstreamScopeParams(name)) as
+      | { createdAt: string; seq: number }
+      | undefined;
+    if (row === undefined) continue;
+    if (
+      best === null ||
+      row.createdAt > best.createdAt ||
+      (row.createdAt === best.createdAt && row.seq > best.seq)
+    ) {
+      best = { name, ...row };
+    }
+  }
+  return best?.name ?? null;
 }
 
 export async function resolveInitialTab(names: readonly string[], db: Db): Promise<number> {

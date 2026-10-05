@@ -239,7 +239,9 @@ export async function loadWorkstreamSnapshotSlow(
   baseSnapshot?: WorkstreamSnapshot,
 ): Promise<WorkstreamSnapshotSlowFields> {
   const view = await listLiveAgents(db, { workstream });
-  let workspaces = listWorkspaces(db, workstream);
+  // commitsBehindMain is a VCS subprocess probe, so it belongs to this
+  // tier; the fast tier's listWorkspaces rows never carry it.
+  let workspaces = await decorateWithStaleness(listWorkspaces(db, workstream));
   if (opts.withDirty === true) workspaces = await decorateWithDirty(workspaces);
   const commits = await loadRecentCommits(opts.withRecentCommits);
   const slow: WorkstreamSnapshotSlowFields = {
@@ -286,12 +288,8 @@ export async function loadWorkstreamSnapshot(
   opts: LoadWorkstreamSnapshotOptions = {},
 ): Promise<WorkstreamSnapshot> {
   const fast = await loadWorkstreamSnapshotFast(db, workstream, opts);
-  const fastWithStaleness: WorkstreamSnapshot = {
-    ...fast,
-    workspaces: await decorateWithStaleness(fast.workspaces),
-  };
-  const slow = await loadWorkstreamSnapshotSlow(db, workstream, opts, fastWithStaleness);
-  return mergeSnapshotFastSlow(fastWithStaleness, slow);
+  const slow = await loadWorkstreamSnapshotSlow(db, workstream, opts, fast);
+  return mergeSnapshotFastSlow(fast, slow);
 }
 
 function emptyLiveAgentsView(): LiveAgentsView {

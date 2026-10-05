@@ -97,7 +97,7 @@ describe("replayPendingMouseEvent", () => {
     expect(pending.current).toBeNull();
   });
 
-  it("emits setCursor then drill for popup double-click and consumes it once", () => {
+  it("emits one clickRow (body row = y - POPUP_CHROME_TOP) and consumes it once", () => {
     const emitted: Array<{ key: string; delayMs: number }> = [];
     const actions: PopupAction[] = [];
     const pending: PendingMouseEventRef = {
@@ -120,10 +120,7 @@ describe("replayPendingMouseEvent", () => {
     expect(firstReplay).toBe(true);
     expect(secondReplay).toBe(false);
     expect(emitted).toEqual([]);
-    expect(actions).toEqual([
-      { kind: "setCursor", index: 6 - POPUP_CHROME_TOP },
-      { kind: "drill" },
-    ]);
+    expect(actions).toEqual([{ kind: "clickRow", row: 6 - POPUP_CHROME_TOP }]);
     expect(pending.current).toBeNull();
   });
 });

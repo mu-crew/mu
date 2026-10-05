@@ -31,7 +31,7 @@
 //
 // Per ROADMAP pledge: ink/react import limited to src/cli/tui/*.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { type ReactElement, useState } from "react";
 import type { Db } from "../../../db.js";
 import {
@@ -45,13 +45,14 @@ import { colorForStatus, glyphFor } from "../cards/doctor.js";
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { ListRow } from "../list-row.js";
+import { usePopupInput } from "../popup-input.js";
 import { PopupShell } from "../popup-shell.js";
 import { usePopupActionQueue } from "../use-popup-action-queue.js";
-import { applyFilter, FilterPrompt, usePopupFilter } from "../use-popup-filter.js";
+import { applyFilter, FilterPrompt, listViewport, usePopupFilter } from "../use-popup-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { DrillScrollView, useDrillKeymap } from "./drill.js";
-import { applyCursor, centredVisibleSlice, isNavAction } from "./scroll.js";
-import { usePopupViewport } from "./viewport.js";
+import { applyCursor, centredVisibleSlice, clickedItem, isNavAction } from "./scroll.js";
+import { POPUP_DRILL_CHROME_ROWS, usePopupViewport } from "./viewport.js";
 
 export interface PopupProps {
   yank: (command: string) => Promise<void>;
@@ -91,6 +92,8 @@ export function DoctorPopup({
   const viewport = usePopupViewport();
   const [cursor, setCursor] = useState(0);
   const flt = usePopupFilter({ onEditingChange: onFilterEditingChange });
+  const rowsViewport = listViewport(viewport, flt);
+  const drillViewport = usePopupViewport(POPUP_DRILL_CHROME_ROWS);
 
   // Source rows: ALL checks (OK + warn + fail), NOT just the non-OK
   // subset Card 9 renders. We refresh on every render — the SDK
@@ -123,7 +126,7 @@ export function DoctorPopup({
   const drillBody = drillCheck ? renderDrillBody(drillCheck) : "";
   const drill = useDrillKeymap({
     body: drillBody,
-    viewport,
+    viewport: drillViewport,
     onClose: () => {
       setDrilledCheck(null);
       onModeChange("list");
@@ -140,8 +143,8 @@ export function DoctorPopup({
       drill.dispatch(action);
       return;
     }
-    if (action.kind === "setCursor" || isNavAction(action)) {
-      setCursor((c) => applyCursor(c, action, checks.length, viewport));
+    if (isNavAction(action)) {
+      setCursor((c) => applyCursor(c, action, checks.length, rowsViewport));
       return;
     }
     switch (action.kind) {
@@ -157,6 +160,14 @@ export function DoctorPopup({
           onModeChange("drill");
         }
         return;
+      case "clickRow": {
+        const hit = clickedItem(checks, safeCursor, rowsViewport, action.row);
+        if (!hit) return;
+        setCursor(hit.index);
+        setDrilledCheck(hit.item);
+        onModeChange("drill");
+        return;
+      }
       case "yank":
         if (!focused) return;
         void yank(yankCommandForCheck(focused));
@@ -166,7 +177,7 @@ export function DoctorPopup({
 
   usePopupActionQueue(popupActions, dispatchListAction);
 
-  useInput((input, key) => {
+  usePopupInput((input, key) => {
     if (mode !== "drill" && flt.onKey(input, key) === "consumed") return;
     dispatchListAction(dispatchPopupKeyFromInk(input, key));
   });
@@ -199,7 +210,7 @@ export function DoctorPopup({
           <DrillScrollView
             title={`${drillCheck.name} · ${drillCheck.status}`}
             body={drillBody}
-            viewport={viewport}
+            viewport={drillViewport}
             scrollTop={drill.scrollTop}
             wrappedBody={drill.wrappedBody}
             emptyText="(no detail)"
@@ -210,7 +221,7 @@ export function DoctorPopup({
     );
   }
 
-  const { start, visible } = centredVisibleSlice(checks, safeCursor, viewport);
+  const { start, visible } = centredVisibleSlice(checks, safeCursor, rowsViewport);
   const rows = visible.map((c) => [glyphFor(c), c.name, c.status, c.detail]);
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);
 

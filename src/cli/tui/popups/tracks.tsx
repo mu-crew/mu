@@ -27,25 +27,27 @@
 // feat_column_aligned_lists clipping policy: track number, merge glyph,
 // counts are PROTECTED; the goal-name list is CLIPPABLE.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import type { Db } from "../../../db.js";
 import { GLYPH } from "../../../glyphs.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
 import { formatPair, type TaskPair } from "../../../tasks/status.js";
 import { listTasks, type TaskRow } from "../../../tasks.js";
+import type { Track } from "../../../tracks.js";
 import { inkColorForPair } from "../../format.js";
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { ListRow } from "../list-row.js";
+import { usePopupInput } from "../popup-input.js";
 import { PopupShell } from "../popup-shell.js";
 import { usePopupActionQueue } from "../use-popup-action-queue.js";
-import { applyFilter, FilterPrompt, usePopupFilter } from "../use-popup-filter.js";
+import { applyFilter, FilterPrompt, listViewport, usePopupFilter } from "../use-popup-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { useDrillKeymap } from "./drill.js";
-import { applyCursor, centredVisibleSlice, isNavAction } from "./scroll.js";
+import { applyCursor, centredVisibleSlice, clickedItem, isNavAction } from "./scroll.js";
 import { renderNotes, TaskDetailDrill } from "./task-detail.js";
-import { usePopupViewport } from "./viewport.js";
+import { POPUP_DRILL_CHROME_ROWS, usePopupViewport } from "./viewport.js";
 
 export interface PopupProps {
   yank: (command: string) => Promise<void>;
@@ -110,10 +112,11 @@ export function TracksPopup({
   const { cols } = useTerminalSize();
   const contentWidth = contentWidthFromCols(cols);
   // Per-render viewport from stdout.rows minus the popup chrome budget;
-  // see popups/viewport.ts. Replaces the prior hardcoded VIEWPORT = 20.
-  // Same `viewport` powers list, drill (task-list), AND task-detail
-  // sub-views — their chrome budgets are all the default 6 rows.
+  // see popups/viewport.ts. `viewport` sizes the track list (minus the
+  // filter prompt) and the task-list drill; the task-detail leaf is a
+  // DrillScrollView, whose title + hint lines need the drill budget.
   const viewport = usePopupViewport();
+  const detailViewport = usePopupViewport(POPUP_DRILL_CHROME_ROWS);
   const [cursor, setCursor] = useState(0);
   const [drillCursor, setDrillCursor] = useState(0);
   const [drillSubMode, setDrillSubMode] = useState<DrillSubMode>("task-list");
@@ -122,16 +125,27 @@ export function TracksPopup({
   // Drill sub-views own their own navigation; widening the filter
   // to the task-list drill is a follow-up.
   const flt = usePopupFilter({ onEditingChange: onFilterEditingChange });
+  const rowsViewport = listViewport(viewport, flt);
   const sourceTracks = snapshot?.tracks ?? [];
-  const tracks =
-    mode === "list"
-      ? applyFilter(sourceTracks, flt.query, (t) => {
-          const head = t.roots[0];
-          return `${head?.name ?? ""} ${head?.title ?? ""}`;
-        })
-      : sourceTracks;
+  // Per bug_filter_drill_opens_wrong_task: the filter applies in every
+  // mode, so the cursor always indexes the list the user sees.
+  const tracks = applyFilter(sourceTracks, flt.query, (t) => {
+    const head = t.roots[0];
+    return `${head?.name ?? ""} ${head?.title ?? ""}`;
+  });
   const safeCursor = tracks.length === 0 ? 0 : Math.min(cursor, tracks.length - 1);
-  const focusedTrack = tracks[safeCursor];
+  const listFocusedTrack = tracks[safeCursor];
+  // Pin the drilled track at Enter, matched by goal ids on refresh
+  // (Track objects are rebuilt every tick), so a reordered or
+  // re-filtered list cannot swap the open drill to another track.
+  const [drilledTrackKey, setDrilledTrackKey] = useState<string | null>(null);
+  const drilledTrack =
+    drilledTrackKey === null
+      ? undefined
+      : sourceTracks.find((t) => trackKey(t) === drilledTrackKey);
+  const focusedTrack = mode === "drill" ? (drilledTrack ?? listFocusedTrack) : listFocusedTrack;
+  // Same numbering as the list rows (position in the filtered list).
+  const trackNumber = focusedTrack === undefined ? 0 : tracks.indexOf(focusedTrack) + 1;
 
   // Reset sub-mode + leaf scroll whenever the popup itself flips
   // out of drill mode (e.g. user pressed Esc in the task-list view
@@ -162,7 +176,7 @@ export function TracksPopup({
   }, [mode, drillSubMode, focusedTask, db, workstream, fastTickNonce]);
   const taskDetailDrill = useDrillKeymap({
     body: notesBody,
-    viewport,
+    viewport: detailViewport,
     onClose: () => setDrillSubMode("task-list"),
     onYank: () => {
       if (!focusedTask || !snapshot) return;
@@ -177,7 +191,7 @@ export function TracksPopup({
       return;
     }
     if (mode === "drill") {
-      if (action.kind === "setCursor" || isNavAction(action)) {
+      if (isNavAction(action)) {
         setDrillCursor((c) => applyCursor(c, action, drillTasks.length, viewport));
         return;
       }
@@ -185,7 +199,15 @@ export function TracksPopup({
         case "close":
           onModeChange("list");
           setDrillCursor(0);
+          setDrilledTrackKey(null);
           return;
+        case "clickRow": {
+          const hit = clickedItem(drillTasks, drillCursor, viewport, action.row);
+          if (!hit) return;
+          setDrillCursor(hit.index);
+          setDrillSubMode("task-detail");
+          return;
+        }
         case "drill": {
           // Chain into the task-detail leaf. This is the recursion
           // step the task asks for: Enter on a Tracks-drill row
@@ -205,8 +227,8 @@ export function TracksPopup({
           return;
       }
     }
-    if (action.kind === "setCursor" || isNavAction(action)) {
-      setCursor((c) => applyCursor(c, action, tracks.length, viewport));
+    if (isNavAction(action)) {
+      setCursor((c) => applyCursor(c, action, tracks.length, rowsViewport));
       return;
     }
     switch (action.kind) {
@@ -217,11 +239,21 @@ export function TracksPopup({
         flt.startEdit();
         return;
       case "drill":
-        if (focusedTrack) {
+        if (listFocusedTrack) {
+          setDrilledTrackKey(trackKey(listFocusedTrack));
           setDrillCursor(0);
           onModeChange("drill");
         }
         return;
+      case "clickRow": {
+        const hit = clickedItem(tracks, safeCursor, rowsViewport, action.row);
+        if (!hit) return;
+        setCursor(hit.index);
+        setDrilledTrackKey(trackKey(hit.item));
+        setDrillCursor(0);
+        onModeChange("drill");
+        return;
+      }
       case "yank": {
         const t = tracks[safeCursor];
         if (!t || !snapshot) return;
@@ -236,7 +268,7 @@ export function TracksPopup({
 
   usePopupActionQueue(popupActions, dispatchListAction);
 
-  useInput((input, key) => {
+  usePopupInput((input, key) => {
     if (mode === "list" && flt.onKey(input, key) === "consumed") return;
     dispatchListAction(dispatchPopupKeyFromInk(input, key));
   });
@@ -270,20 +302,20 @@ export function TracksPopup({
       // task-list once setDrillSubMode runs.
       setDrillSubMode("task-list");
       return (
-        <PopupShell title={`Track ${cursor + 1} · (resyncing)`}>
+        <PopupShell title={`Track ${trackNumber} · (resyncing)`}>
           <Text dimColor>(refocusing…)</Text>
         </PopupShell>
       );
     }
     return (
-      <PopupShell title={`Track ${cursor + 1} · task: ${t.name} (notes)`}>
+      <PopupShell title={`Track ${trackNumber} · task: ${t.name} (notes)`}>
         <Box flexDirection="column" flexGrow={1}>
           <TaskDetailDrill
             task={t}
             db={db}
             workstream={workstream}
             scrollTop={taskDetailDrill.scrollTop}
-            viewport={viewport}
+            viewport={detailViewport}
             tickNonce={fastTickNonce}
             body={notesBody}
             wrappedBody={taskDetailDrill.wrappedBody}
@@ -294,7 +326,7 @@ export function TracksPopup({
   }
 
   if (mode === "drill" && focusedTrack) {
-    const trackLabel = `Track ${cursor + 1}`;
+    const trackLabel = `Track ${trackNumber}`;
     const goalSummary = focusedTrack.roots.map((r) => r.name).join(", ");
     if (drillTasks.length === 0) {
       return (
@@ -309,6 +341,7 @@ export function TracksPopup({
     return (
       <PopupShell
         title={`${trackLabel} · ${goalSummary} (${drillCursor + 1}/${drillTasks.length})`}
+        hint="y yanks `mu task show`"
       >
         <Box flexDirection="column" flexGrow={1}>
           {visible.map((t, i) => {
@@ -327,14 +360,11 @@ export function TracksPopup({
             );
           })}
         </Box>
-        <Box marginTop={1}>
-          <Text dimColor>y yanks `mu task show`</Text>
-        </Box>
       </PopupShell>
     );
   }
 
-  const { start, visible } = centredVisibleSlice(tracks, safeCursor, viewport);
+  const { start, visible } = centredVisibleSlice(tracks, safeCursor, rowsViewport);
   const rows = visible.map((t, i) => {
     const absoluteIndex = start + i;
     const goalNames = t.roots.map((r) => r.name).join(", ");
@@ -370,6 +400,11 @@ export function TracksPopup({
       <FilterPrompt state={flt} />
     </PopupShell>
   );
+}
+
+/** Stable identity for a track across refreshes: its goal ids. */
+function trackKey(t: Track): string {
+  return t.roots.map((r) => r.name).join("\0");
 }
 
 /** Drill-view sort rank: work in flight first, then schedulable,

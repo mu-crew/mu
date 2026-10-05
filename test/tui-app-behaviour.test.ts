@@ -184,9 +184,13 @@ interface Mounted {
 const COLUMNS = 160;
 const ROWS = 50;
 
-async function mountApp(opts: { workstreams: string[]; initialActive?: number }): Promise<Mounted> {
+async function mountApp(opts: {
+  workstreams: string[];
+  initialActive?: number;
+  rows?: number;
+}): Promise<Mounted> {
   const stdin = createInkInputStream();
-  const stdout = createInkCaptureStream({ columns: COLUMNS, rows: ROWS });
+  const stdout = createInkCaptureStream({ columns: COLUMNS, rows: opts.rows ?? ROWS });
   const stderr = createInkCaptureStream({ columns: COLUMNS, rows: ROWS });
   const db = {} as Db; // mocked snapshot loader never touches it.
   const instance = render(
@@ -408,5 +412,109 @@ describe("App: tick rate adjustment", () => {
     // Slow back down with '-'.
     await simulateInput(mounted.stdin, "-");
     await waitForFrame(mounted.stdout, "1.00s");
+  });
+});
+
+// ─── Popup geometry + help round trip ─────────────────────────────
+
+function withManyReady(ws: string, n: number): WorkstreamSnapshot {
+  const snap = freshSnapshot(ws);
+  const template = snap.ready[0];
+  if (template === undefined) throw new Error("fixture has no ready task");
+  snap.ready = Array.from({ length: n }, (_, i) => ({
+    ...template,
+    name: `task_${String(i).padStart(2, "0")}`,
+    title: `t${i}`,
+  }));
+  return snap;
+}
+
+function withLog(ws: string, events: number, payloadLines = 1): WorkstreamSnapshot {
+  const snap = freshSnapshot(ws);
+  snap.recent = Array.from({ length: events }, (_, i) => ({
+    seq: events - i,
+    workstreamName: ws,
+    source: "system",
+    intent: null,
+    group: `g${i}`,
+    payload: Array.from({ length: payloadLines }, (_, l) => `event${events - i} line${l}`).join(
+      "\n",
+    ),
+    createdAt: "2026-05-13T00:00:00.000Z",
+  })) as WorkstreamSnapshot["recent"];
+  return snap;
+}
+
+function expectPopupFitsPane(text: string, title: string, rows: number): void {
+  const lines = text.split("\n");
+  expect(lines.length).toBeLessThanOrEqual(rows);
+  expect(lines[0], `top border overwritten:\n${text}`).toMatch(new RegExp(`^╭─ ${title}`));
+  expect(
+    lines.some((l) => l.startsWith("╰")),
+    `bottom border clipped:\n${text}`,
+  ).toBe(true);
+}
+
+describe("App: popup fits the pane", () => {
+  it("an active filter on a scrolled list keeps both popup borders on screen", async () => {
+    SNAPSHOT_BY_WS.set("demo", withManyReady("demo", 40));
+    mounted = await mountApp({ workstreams: ["demo"], rows: 20 });
+    await simulateInput(mounted.stdin, "#");
+    await waitForFrame(mounted.stdout, "Tasks · popup (1/40)");
+    for (const key of ["/", "t", "enter", "G"] as const) await simulateInput(mounted.stdin, key);
+    const text = await waitForFrame(mounted.stdout, "[filter] t");
+    expectPopupFitsPane(text, "Tasks · popup \\(40/40\\)", 20);
+    expect(text).toContain("task_39");
+  });
+
+  it("a long drill body keeps both popup borders on screen", async () => {
+    SNAPSHOT_BY_WS.set("demo", withLog("demo", 1, 60));
+    mounted = await mountApp({ workstreams: ["demo"], rows: 20 });
+    await simulateInput(mounted.stdin, "$");
+    await waitForFrame(mounted.stdout, "Activity log · popup");
+    await simulateInput(mounted.stdin, "enter");
+    const text = await waitForFrame(mounted.stdout, "event payload");
+    expectPopupFitsPane(text, "Activity log · #1", 20);
+  });
+});
+
+describe("App: help over a popup keeps popup state", () => {
+  it("? ? inside a drill returns to the same drilled row", async () => {
+    SNAPSHOT_BY_WS.set("demo", withLog("demo", 3));
+    mounted = await mountApp({ workstreams: ["demo"] });
+    await simulateInput(mounted.stdin, "$");
+    await waitForFrame(mounted.stdout, "Activity log · popup (1/3)");
+    await simulateInput(mounted.stdin, "j");
+    await waitForFrame(mounted.stdout, "Activity log · popup (2/3)");
+    await simulateInput(mounted.stdin, "enter");
+    await waitForFrame(mounted.stdout, "Activity log · #2");
+
+    await simulateInput(mounted.stdin, "?");
+    const help = await waitForFrame(mounted.stdout, "keys · dashboard");
+    expect(help).not.toContain("Activity log · #2");
+    // Keys go to the overlay, not the hidden popup: j scrolls help
+    // only, so the drill is unchanged afterwards.
+    await simulateInput(mounted.stdin, "j");
+
+    await simulateInput(mounted.stdin, "?");
+    const back = await waitForFrame(mounted.stdout, "Activity log · #");
+    expect(back).toContain("Activity log · #2");
+    expect(back).toContain("event2 line0");
+  });
+
+  it("? ? keeps a committed list filter", async () => {
+    SNAPSHOT_BY_WS.set("demo", withManyReady("demo", 12));
+    mounted = await mountApp({ workstreams: ["demo"] });
+    await simulateInput(mounted.stdin, "#");
+    await waitForFrame(mounted.stdout, "Tasks · popup (1/12)");
+    for (const key of ["/", "1", "1", "enter"] as const) await simulateInput(mounted.stdin, key);
+    await waitForFrame(mounted.stdout, "Tasks · popup (1/1)");
+
+    await simulateInput(mounted.stdin, "?");
+    await waitForFrame(mounted.stdout, "keys · dashboard");
+    await simulateInput(mounted.stdin, "?");
+    const back = await waitForFrame(mounted.stdout, "Tasks · popup");
+    expect(back).toContain("Tasks · popup (1/1)");
+    expect(back).toContain("[filter] 11");
   });
 });

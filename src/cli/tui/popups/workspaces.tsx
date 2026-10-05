@@ -47,7 +47,7 @@
 //
 // Per ROADMAP pledge: ink/react import limited to src/cli/tui/*.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { type ReactElement, useCallback, useEffect, useReducer, useRef, useState } from "react";
 import type { Db } from "../../../db.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
@@ -58,15 +58,16 @@ import { colorForBehind, colorForGlyph, formatBehind, glyphFor } from "../cards/
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { ListRow } from "../list-row.js";
+import { usePopupInput } from "../popup-input.js";
 import { PopupShell } from "../popup-shell.js";
 import { runTuicrInteractive } from "../tuicr.js";
 import { usePopupActionQueue } from "../use-popup-action-queue.js";
-import { applyFilter, FilterPrompt, usePopupFilter } from "../use-popup-filter.js";
+import { applyFilter, FilterPrompt, listViewport, usePopupFilter } from "../use-popup-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { DrillScrollView, useDrillKeymap } from "./drill.js";
-import { applyCursor, centredVisibleSlice, isNavAction } from "./scroll.js";
+import { applyCursor, centredVisibleSlice, clickedItem, isNavAction } from "./scroll.js";
 import { loadShowPreservingBody } from "./show-loader.js";
-import { POPUP_CHROME_ROWS, usePopupViewport } from "./viewport.js";
+import { POPUP_DRILL_CHROME_ROWS, usePopupViewport } from "./viewport.js";
 
 export interface PopupProps {
   yank: (command: string) => Promise<void>;
@@ -160,10 +161,12 @@ function localModeReducer(state: LocalModeState, action: LocalModeAction): Local
   }
 }
 
-// Drill view renders an EXTRA in-body title + dim "(L-T/T)" indicator
-// pair on top of the default popup chrome — subtract one more row
-// (default 3 + 1) for that branch. List view uses the default 3.
-const WORKSPACES_DRILL_CHROME = POPUP_CHROME_ROWS + 1;
+// Both drill views render a title line above and a hint line below
+// their rows (commits list: renderDrillBody; git show: DrillScrollView),
+// so they use the drill chrome budget. List view uses the default.
+const WORKSPACES_DRILL_CHROME = POPUP_DRILL_CHROME_ROWS;
+// The commits drill's title line sits above its first data row.
+const COMMITS_DRILL_HEADER_ROWS = 1;
 
 export function WorkspacesPopup({
   yank,
@@ -230,6 +233,9 @@ export function WorkspacesPopup({
     enabled: !inShow && mode === "drill",
     onEditingChange: onFilterEditingChange,
   });
+
+  const rowsViewport = listViewport(viewport, flt);
+  const commitsViewport = listViewport(drillViewport, drillFlt);
 
   const sourceWorkspaces = snapshot?.workspaces ?? [];
   // Per bug_filter_drill_opens_wrong_task: text filter applied
@@ -352,8 +358,8 @@ export function WorkspacesPopup({
       // (feat_workspaces_drill_git_show), Esc/q backs out to the
       // workspace list. Yank in drill mode yanks `git show <sha>`
       // for the focused commit (cherry-pick target inspection).
-      if (action.kind === "setCursor" || isNavAction(action)) {
-        setDrillCursor((c) => applyCursor(c, action, filteredCommits.length, drillViewport));
+      if (isNavAction(action)) {
+        setDrillCursor((c) => applyCursor(c, action, filteredCommits.length, commitsViewport));
         return;
       }
       switch (action.kind) {
@@ -370,6 +376,19 @@ export function WorkspacesPopup({
           dispatchLocalMode({ kind: "enterShow", sha: c.sha });
           return;
         }
+        case "clickRow": {
+          const hit = clickedItem(
+            filteredCommits,
+            safeDrillCursor,
+            commitsViewport,
+            action.row,
+            COMMITS_DRILL_HEADER_ROWS,
+          );
+          if (!hit || !focused) return;
+          setDrillCursor(hit.index);
+          dispatchLocalMode({ kind: "enterShow", sha: hit.item.sha });
+          return;
+        }
         case "yank": {
           const c = focusedCommit;
           if (!c) return;
@@ -383,8 +402,8 @@ export function WorkspacesPopup({
           return;
       }
     }
-    if (action.kind === "setCursor" || isNavAction(action)) {
-      setCursor((c) => applyCursor(c, action, workspaces.length, viewport));
+    if (isNavAction(action)) {
+      setCursor((c) => applyCursor(c, action, workspaces.length, rowsViewport));
       return;
     }
     switch (action.kind) {
@@ -400,6 +419,14 @@ export function WorkspacesPopup({
           onModeChange("drill");
         }
         return;
+      case "clickRow": {
+        const hit = clickedItem(workspaces, safeCursor, rowsViewport, action.row);
+        if (!hit) return;
+        setCursor(hit.index);
+        dispatchLocalMode({ kind: "enterDrill", workspace: hit.item });
+        onModeChange("drill");
+        return;
+      }
       case "yank": {
         const w = focusedListRow;
         if (!w || !snapshot) return;
@@ -415,7 +442,7 @@ export function WorkspacesPopup({
 
   usePopupActionQueue(popupActions, dispatchListAction);
 
-  useInput((input, key) => {
+  usePopupInput((input, key) => {
     // Filter-mode keystrokes consume printable + Esc/Enter/Bksp.
     // The active filter depends on which view we're rendering.
     // Show-mode is read-only — no filter prompt — so we skip the
@@ -479,7 +506,7 @@ export function WorkspacesPopup({
             drillErr,
             focused,
             contentWidth,
-            drillViewport,
+            commitsViewport,
           )}
         </Box>
         <FilterPrompt state={drillFlt} />
@@ -487,7 +514,7 @@ export function WorkspacesPopup({
     );
   }
 
-  const { start, visible } = centredVisibleSlice(workspaces, safeCursor, viewport);
+  const { start, visible } = centredVisibleSlice(workspaces, safeCursor, rowsViewport);
   const agentLookup = agentByName(snapshot);
   const rows = visible.map((w) => [
     glyphFor(w),

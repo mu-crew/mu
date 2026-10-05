@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { render } from "ink";
-import { createElement, type ReactElement } from "react";
+import { createElement, type ReactElement, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POPUP_CHROME_TOP } from "../src/cli/tui/app.js";
 import type { PopupActionEnvelope } from "../src/cli/tui/keys.js";
@@ -31,23 +31,23 @@ afterEach(() => {
 });
 
 describe("popup double-click actions", () => {
-  it("setCursor focuses y - POPUP_CHROME_TOP before drill runs", async () => {
-    const tasks = Array.from({ length: 6 }, (_, i) =>
+  function seed(n: number): TaskRow[] {
+    return Array.from({ length: n }, (_, i) =>
       addTask(db, {
         workstream: "demo",
-        localId: `task_${i}`,
+        localId: `task_${String(i).padStart(2, "0")}`,
         title: `Task ${i}`,
         impact: 50,
         effortDays: 1,
       }),
     );
-    const rowIndex = 5 - POPUP_CHROME_TOP;
-    const drilled: string[] = [];
-    let popupActions: PopupActionEnvelope[] = [];
+  }
+
+  it("clickRow on an unscrolled list drills the clicked row", async () => {
+    const tasks = seed(6);
     const stdout = createInkCaptureStream({ columns: 120, rows: 24 });
     const stdin = createInkInputStream();
-
-    const instance = render(readyPopupElement({ db, tasks, popupActions, drilled }), {
+    const instance = render(readyPopupElement({ db, tasks, popupActions: [] }), {
       stdout,
       stdin,
       stderr: process.stderr,
@@ -55,39 +55,66 @@ describe("popup double-click actions", () => {
       patchConsole: false,
     });
 
-    popupActions = [{ seq: 1, action: { kind: "setCursor", index: rowIndex } }];
-    instance.rerender(readyPopupElement({ db, tasks, popupActions, drilled }));
-    await waitFor(() => expect(stdout.output).toContain(`Tasks · popup (${rowIndex + 1}/6)`));
+    const popupActions: PopupActionEnvelope[] = [
+      { seq: 1, action: { kind: "clickRow", row: 5 - POPUP_CHROME_TOP } },
+    ];
+    instance.rerender(readyPopupElement({ db, tasks, popupActions }));
+    await waitFor(() => expect(stdout.output).toContain("Tasks · task_03 (notes)"));
+    instance.unmount();
+  });
 
-    popupActions = [...popupActions, { seq: 2, action: { kind: "drill" } }];
-    instance.rerender(readyPopupElement({ db, tasks, popupActions, drilled }));
-    await waitFor(() => expect(drilled).toEqual(["drill"]));
+  it("clickRow maps through the scroll window when the list is scrolled", async () => {
+    // 24 rows → viewport 21. With 40 tasks and the cursor on the last
+    // row the window starts at 40 - 21 = 19, so body row 0 is task_19,
+    // not task_00 (f_tui_dblclick_row_index_ignores_scroll).
+    const tasks = seed(40);
+    const stdout = createInkCaptureStream({ columns: 120, rows: 24 });
+    const stdin = createInkInputStream();
+    const instance = render(readyPopupElement({ db, tasks, popupActions: [] }), {
+      stdout,
+      stdin,
+      stderr: process.stderr,
+      debug: false,
+      patchConsole: false,
+    });
 
-    expect(stdout.output).toContain(`Tasks · popup (${rowIndex + 1}/6)`);
-    expect(stdout.output).toContain("task_3");
+    let popupActions: PopupActionEnvelope[] = [{ seq: 1, action: { kind: "jumpBottom" } }];
+    instance.rerender(readyPopupElement({ db, tasks, popupActions }));
+    await waitFor(() => expect(stdout.output).toContain("Tasks · popup (40/40)"));
+
+    popupActions = [...popupActions, { seq: 2, action: { kind: "clickRow", row: 0 } }];
+    instance.rerender(readyPopupElement({ db, tasks, popupActions }));
+    await waitFor(() => expect(stdout.output).toContain("Tasks · task_19 (notes)"));
+    expect(stdout.output).not.toContain("Tasks · task_00 (notes)");
     instance.unmount();
   });
 });
 
-function readyPopupElement(opts: {
+interface HarnessProps {
   db: Db;
   tasks: TaskRow[];
   popupActions: PopupActionEnvelope[];
-  drilled: string[];
-}): ReactElement {
+}
+
+// Owns `mode` like <App> does, so a clickRow really opens the drill and
+// its title names WHICH row the click resolved to.
+function Harness({ db, tasks, popupActions }: HarnessProps): ReactElement {
+  const [mode, setMode] = useState<"list" | "drill">("list");
   return createElement(ReadyPopup, {
     yank: async () => {},
     onClose: () => {},
-    snapshot: snapshotWithReady(opts.tasks),
+    snapshot: snapshotWithReady(tasks),
     fastTickNonce: 0,
-    mode: "list",
-    onModeChange: (mode: "list" | "drill") => {
-      if (mode === "drill") opts.drilled.push(mode);
-    },
-    db: opts.db,
+    mode,
+    onModeChange: setMode,
+    db,
     workstream: "demo",
-    popupActions: opts.popupActions,
+    popupActions,
   });
+}
+
+function readyPopupElement(opts: HarnessProps): ReactElement {
+  return createElement(Harness, opts);
 }
 
 function snapshotWithReady(ready: TaskRow[]): WorkstreamSnapshot {

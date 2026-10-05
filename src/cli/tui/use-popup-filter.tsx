@@ -49,14 +49,19 @@ export function popupFilterReducer(state: FilterState, action: FilterAction): Fi
       // Re-entering edit mode keeps the existing query (so '/' after
       // Enter pre-fills for refinement). Only flips `editing`.
       return { ...state, editing: true };
-    case "appendChar":
-      // Per spec: ASCII 32..126 only. Caller should pre-filter, but
-      // double-check defensively.
-      if (!isPrintable(action.char)) return state;
-      return { ...state, query: state.query + action.char };
+    case "appendChar": {
+      // Printable text of any length (one keystroke, a paste, or a
+      // non-ASCII glyph). Control characters are stripped; an empty
+      // result is the "consumed, no change" sentinel.
+      const text = printableText(action.char);
+      if (text === "") return state;
+      return { ...state, query: state.query + text };
+    }
     case "backspace":
       if (state.query === "") return state;
-      return { ...state, query: state.query.slice(0, -1) };
+      // Drop one code point, not one UTF-16 unit, so astral glyphs
+      // (emoji, rare CJK) do not leave a lone surrogate behind.
+      return { ...state, query: Array.from(state.query).slice(0, -1).join("") };
     case "commit":
       // Keep query, exit edit mode. Cursor-snap is the popup's job
       // (it owns the cursor state; the filter just narrows the rows).
@@ -69,10 +74,13 @@ export function popupFilterReducer(state: FilterState, action: FilterAction): Fi
   }
 }
 
-function isPrintable(s: string): boolean {
-  if (s.length !== 1) return false;
-  const code = s.charCodeAt(0);
-  return code >= 32 && code <= 126;
+// C0 controls, DEL, and C1 controls. Everything else (including
+// non-ASCII letters) is filter text.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control chars is the point
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+function printableText(s: string): string {
+  return s.replace(CONTROL_CHARS, "");
 }
 
 /**
@@ -116,16 +124,10 @@ export function classifyFilterKey(
     key.pageDown === true ||
     key.f5 === true
   ) {
-    // Consume (silently ignore) so they don't navigate the underlying
-    // list while the user is typing. Returning null here would let
-    // the popup run dispatchPopupKey and treat them as nav keys.
-    // We model this by appending nothing — but the reducer ignores
-    // empty strings, so we use a sentinel "no-op" via cancel? No —
-    // we just return null is wrong. The cleanest fix is to return
-    // an appendChar with empty content, which the reducer drops.
-    // Even cleaner: return a "consumed-noop" by re-asserting state.
-    // We piggy-back on appendChar with "" (reducer rejects via
-    // isPrintable) → state unchanged → caller treats as consumed.
+    // Consume so they don't navigate the underlying list while the
+    // user is typing (returning null would let the popup treat them
+    // as nav keys). appendChar("") is the consumed-no-op sentinel:
+    // the reducer leaves state unchanged.
     return { kind: "appendChar", char: "" };
   }
   // Ctrl-* combos: also consume-and-ignore. Ctrl-C is handled by ink
@@ -133,13 +135,12 @@ export function classifyFilterKey(
   if (key.ctrl === true) {
     return { kind: "appendChar", char: "" };
   }
-  // Printable single character (ASCII 32..126). Multi-codepoint
-  // input (paste) is dropped char-by-char by ink's useInput; we just
-  // append whatever single char arrived.
-  if (isPrintable(input)) return { kind: "appendChar", char: input };
-  // Unknown — consume-and-ignore so the underlying popup doesn't
-  // see e.g. raw escape sequences mid-edit.
-  return { kind: "appendChar", char: "" };
+  // Printable text. ink delivers a paste as ONE multi-character
+  // `input`, and non-ASCII keys (é, 中) as one non-ASCII string, so
+  // append the whole string minus control characters. Anything that
+  // strips to "" (raw escape bytes) is consumed as a no-op so the
+  // underlying popup never sees it mid-edit.
+  return { kind: "appendChar", char: printableText(input) };
 }
 
 /**
@@ -247,6 +248,25 @@ export function applyFilter<T>(
   return out;
 }
 
+/** Body rows `<FilterPrompt>` occupies: its 1-row top margin plus the
+ *  prompt line while visible, 0 while idle. List popups subtract this
+ *  from their row viewport so the prompt never pushes the popup past
+ *  the pane (the App's overflow clip would eat the top border). */
+export const FILTER_PROMPT_ROWS = 2;
+
+export function filterPromptRows(state: Pick<PopupFilter, "query" | "editing">): number {
+  return state.query === "" && !state.editing ? 0 : FILTER_PROMPT_ROWS;
+}
+
+/** Row viewport for a list that renders `<FilterPrompt state={flt} />`
+ *  below it. Never below 1 so the cursor row stays visible. */
+export function listViewport(
+  viewport: number,
+  state: Pick<PopupFilter, "query" | "editing">,
+): number {
+  return Math.max(1, viewport - filterPromptRows(state));
+}
+
 /**
  * Bottom-of-popup prompt. Renders nothing while idle (no query AND
  * not editing); renders `/<query>_` while editing; renders
@@ -256,7 +276,8 @@ export function applyFilter<T>(
  * (anti-feature pledge).
  */
 export function FilterPrompt({ state }: { state: PopupFilter }): ReactElement | null {
-  if (state.query === "" && !state.editing) return null;
+  // Keep in sync with FILTER_PROMPT_ROWS (marginTop + one text row).
+  if (filterPromptRows(state) === 0) return null;
   return (
     <Box marginTop={1}>
       <Text color={state.editing ? "yellow" : "gray"}>

@@ -233,6 +233,28 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **`mu undo` no longer lists or plans a legacy `workstream.export` group.** Its prose payload made the preview crash with a JSON error, or, with no earlier op for the workstream, plan deleting it.
 - **`mu undo -n` rejects a value that is not a positive integer** (exit 2). Before, `-n abc` failed with `datatype mismatch`, `-n 0` claimed the log was empty, `-n -1` listed every group, and `-n 1.5`, `-n 2x` and `-n 1e3` silently used 1, 2 and 1.
 - **`mu undo --yes` on an already-undone group says nothing changed.** It used to print `Undid …` with a redo hint naming a group that recorded no ops; `--json` now reports `undoGroupId: null`. The preview no longer lists deleting a row that is already gone.
+- TUI: an active `/` filter no longer pushes a popup past the pane, and
+  long drill bodies no longer do either. Both used to overwrite the
+  popup's title border and clip its bottom border and hint.
+- TUI: a double-click on a popup row drills the row you clicked. It
+  ignored the scroll position, so a scrolled list opened a row near the
+  top, and All tasks was off by its three strip rows.
+- TUI: Tracks, Commits and Activity log drills stay on the row you
+  opened. A filtered Tracks drill opened the unfiltered list's track,
+  and a new commit or log event switched an open drill to another row.
+- TUI: `?` over a popup keeps its cursor, filter and drill. Closing help
+  used to reopen the popup's first row.
+- TUI: popup hints and the `?` overlay no longer advertise
+  `Shift 0-9 switch`. Only one popup is open at a time.
+- TUI: the Doctor card and the Agents card's control-socket glyph update
+  on the slow tick. Doctor and agent `ctl` changes were dropped until an
+  unrelated field changed.
+- TUI: the Workspaces card and popup show commits behind main again.
+  They always showed `—`.
+- TUI: the `/` filter accepts pasted text and non-ASCII characters. Both
+  were dropped.
+- TUI: launch focus counts task, note and edge activity when it breaks a
+  project-root tie. It counted only agent and workspace rows.
 
 ## [3.8.1] — 2026-10-05
 

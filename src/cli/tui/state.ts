@@ -450,7 +450,14 @@ export function slowerTick(current: number): number {
 export function snapshotKey(s: WorkstreamSnapshot): unknown {
   return {
     workstreamName: s.workstreamName,
-    agents: s.view.agents.map((a) => [a.name, a.state, a.role, a.idle === true ? 1 : 0]),
+    // ctl drives the Agents card's broken-control-socket glyph.
+    agents: s.view.agents.map((a) => [
+      a.name,
+      a.state,
+      a.role,
+      a.idle === true ? 1 : 0,
+      a.ctl ?? "",
+    ]),
     orphanPaneIds: s.view.orphans.map((o) => o.paneId).sort(),
     tracks: s.tracks.map((t) => ({
       roots: t.roots.map((r) => r.name),
@@ -478,6 +485,11 @@ export function snapshotKey(s: WorkstreamSnapshot): unknown {
     // Recent log entries: seq is monotonic, so eq-by-seq is enough
     // for ordered membership; payload bytes drive what shows.
     recent: s.recent.map((l) => [l.seq, l.source, l.kind, l.payload]),
+    // Doctor card renders every check row (name/status/detail) and
+    // the problem count; null means "loading…".
+    doctor: s.doctor
+      ? [s.doctor.problemCount, s.doctor.checks.map((c) => [c.name, c.status, c.detail])]
+      : null,
   };
 }
 

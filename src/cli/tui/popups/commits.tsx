@@ -6,7 +6,7 @@
 // The popup never mutates: `y` yanks the backend-specific show command
 // for the focused commit.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { type ReactElement, useCallback, useEffect, useState } from "react";
 import type { Db } from "../../../db.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
@@ -15,13 +15,14 @@ import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from 
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { runLazygitInteractive } from "../lazygit.js";
 import { ListRow } from "../list-row.js";
+import { usePopupInput } from "../popup-input.js";
 import { PopupShell } from "../popup-shell.js";
 import { runTuicrInteractive } from "../tuicr.js";
 import { usePopupActionQueue } from "../use-popup-action-queue.js";
-import { applyFilter, FilterPrompt, usePopupFilter } from "../use-popup-filter.js";
+import { applyFilter, FilterPrompt, listViewport, usePopupFilter } from "../use-popup-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { DrillScrollView, useDrillKeymap } from "./drill.js";
-import { applyCursor, centredVisibleSlice, isNavAction } from "./scroll.js";
+import { applyCursor, centredVisibleSlice, clickedItem, isNavAction } from "./scroll.js";
 import { loadShowPreservingBody } from "./show-loader.js";
 import { usePopupViewport } from "./viewport.js";
 
@@ -71,6 +72,7 @@ export function CommitsPopup({
     snapshot?.commitsBackend ?? null,
   );
   const flt = usePopupFilter({ onEditingChange: onFilterEditingChange });
+  const rowsViewport = listViewport(viewport, flt);
 
   const sourceCommits = snapshot?.recentCommits ?? [];
   const commits = applyFilter(
@@ -80,8 +82,15 @@ export function CommitsPopup({
   );
   const safeCursor = commits.length === 0 ? 0 : Math.min(cursor, commits.length - 1);
   const focused = commits[safeCursor];
+  // Pin the drilled commit at Enter. Commits are newest-first, so a
+  // new commit on the slow tick shifts every index; following the
+  // cursor would switch the open `git show` to a different commit.
+  const [drilledCommit, setDrilledCommit] = useState<CommitSummary | null>(null);
+  const drillCommit = mode === "drill" ? (drilledCommit ?? focused) : focused;
   const showCommand =
-    focused && backendName !== null ? showCommandForBackend(backendName, focused.sha) : null;
+    drillCommit && backendName !== null
+      ? showCommandForBackend(backendName, drillCommit.sha)
+      : null;
   const projectRoot = process.cwd();
   const showBody = showErr !== null ? `error: ${showErr}` : showText;
 
@@ -117,27 +126,31 @@ export function CommitsPopup({
     }
   }, [mode]);
 
+  const drillSha = drillCommit?.sha;
   useEffect(() => {
     void slowTickNonce;
-    if (mode === "drill" && focused !== undefined) {
-      void loadShow(focused.sha);
+    if (mode === "drill" && drillSha !== undefined) {
+      void loadShow(drillSha);
     }
-  }, [mode, focused, loadShow, slowTickNonce]);
+  }, [mode, drillSha, loadShow, slowTickNonce]);
 
   const drill = useDrillKeymap({
     body: showBody,
     viewport: drillViewport,
-    onClose: () => onModeChange("list"),
+    onClose: () => {
+      setDrilledCommit(null);
+      onModeChange("list");
+    },
     onYank: () => {
       if (showCommand !== null) return yank(showCommand);
     },
     onTuicr: () => {
-      if (!focused) return;
-      const r = runTuicrInteractive({ rev: focused.sha, cwd: projectRoot });
+      if (!drillCommit) return;
+      const r = runTuicrInteractive({ rev: drillCommit.sha, cwd: projectRoot });
       if (!r.ok) onFooter?.(r.error ?? "tuicr failed", false, "error");
-      else onFooter?.(`tuicr -r ${focused.sha}`, true, "info");
+      else onFooter?.(`tuicr -r ${drillCommit.sha}`, true, "info");
     },
-    resetKey: focused?.sha ?? "",
+    resetKey: drillCommit?.sha ?? "",
   });
 
   const dispatchListAction = (action: PopupAction) => {
@@ -145,8 +158,8 @@ export function CommitsPopup({
       drill.dispatch(action);
       return;
     }
-    if (action.kind === "setCursor" || isNavAction(action)) {
-      setCursor((c) => applyCursor(c, action, commits.length, viewport));
+    if (isNavAction(action)) {
+      setCursor((c) => applyCursor(c, action, commits.length, rowsViewport));
       return;
     }
     switch (action.kind) {
@@ -157,8 +170,16 @@ export function CommitsPopup({
         flt.startEdit();
         return;
       case "drill": {
-        const c = commits[safeCursor];
-        if (!c) return;
+        if (!focused) return;
+        setDrilledCommit(focused);
+        onModeChange("drill");
+        return;
+      }
+      case "clickRow": {
+        const hit = clickedItem(commits, safeCursor, rowsViewport, action.row);
+        if (!hit) return;
+        setCursor(hit.index);
+        setDrilledCommit(hit.item);
         onModeChange("drill");
         return;
       }
@@ -180,7 +201,7 @@ export function CommitsPopup({
 
   usePopupActionQueue(popupActions, dispatchListAction);
 
-  useInput((input, key) => {
+  usePopupInput((input, key) => {
     if (mode !== "drill" && flt.onKey(input, key) === "consumed") return;
     dispatchListAction(dispatchPopupKeyFromInk(input, key));
   });
@@ -188,13 +209,13 @@ export function CommitsPopup({
   if (snapshot === null) {
     return <PopupShell title="Commits · loading">{<Text dimColor>loading…</Text>}</PopupShell>;
   }
-  if (mode === "drill" && focused !== undefined) {
-    const short = shortSha(focused.sha);
+  if (mode === "drill" && drillCommit !== undefined) {
+    const short = shortSha(drillCommit.sha);
     return (
       <PopupShell title={`Commits · ${formatBackend(backendName)} · ${short}`}>
         <Box flexDirection="column" flexGrow={1}>
           <DrillScrollView
-            title={`${showCommand ?? "show"} · ${focused.subject}`}
+            title={`${showCommand ?? "show"} · ${drillCommit.subject}`}
             body={showBody}
             viewport={drillViewport}
             scrollTop={drill.scrollTop}
@@ -228,7 +249,7 @@ export function CommitsPopup({
     );
   }
 
-  const { visible } = centredVisibleSlice(commits, safeCursor, viewport);
+  const { visible } = centredVisibleSlice(commits, safeCursor, rowsViewport);
   const rows = visible.map((c) => [shortSha(c.sha), c.relTime, c.author, c.subject]);
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);
 

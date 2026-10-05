@@ -134,6 +134,42 @@ describe("snapshotKey — visible-affecting field projection", () => {
     expect(snapshotKeyString(a)).not.toBe(snapshotKeyString(b));
   });
 
+  it("differs when an agent's ctl link changes (Agents card fail glyph)", () => {
+    const agent = {
+      name: "w1",
+      workstreamName: "ws",
+      cli: "pi",
+      paneId: "%1",
+      state: "busy" as const,
+      source: "murmur" as const,
+      since: null,
+      role: "writer",
+      tab: null,
+      ctl: "ok" as const,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const view = (a: typeof agent | (Omit<typeof agent, "ctl"> & { ctl: "missing" })) => ({
+      agents: [a],
+      orphans: [],
+      report: { prunedGhosts: 0, orphans: [], mode: "report-only" as const },
+    });
+    const a = makeSnap({ view: view(agent) });
+    const b = makeSnap({ view: view({ ...agent, ctl: "missing" }) });
+    expect(snapshotKeyString(a)).not.toBe(snapshotKeyString(b));
+  });
+
+  it("differs when the doctor summary changes (Doctor card)", () => {
+    const healthy = makeSnap({
+      doctor: { checks: [{ name: "ghosts", status: "ok", detail: "none" }], problemCount: 0 },
+    });
+    const failing = makeSnap({
+      doctor: { checks: [{ name: "ghosts", status: "fail", detail: "1 ghost" }], problemCount: 1 },
+    });
+    expect(snapshotKeyString(makeSnap({ doctor: null }))).not.toBe(snapshotKeyString(healthy));
+    expect(snapshotKeyString(healthy)).not.toBe(snapshotKeyString(failing));
+  });
+
   it("differs when a task's title changes", () => {
     const t = {
       name: "foo",
@@ -314,6 +350,7 @@ describe("snapshotKey — visible-affecting field projection", () => {
         "recentClosed",
         "triage",
         "commitsBackend",
+        "doctor",
         "recentCommits",
         "tracks",
         "workspaces",
