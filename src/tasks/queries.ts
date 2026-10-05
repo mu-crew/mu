@@ -29,6 +29,30 @@ export function getTask(db: Db, localId: string, workstream: string): TaskRow | 
 }
 
 /**
+ * The task's owner as (name, workstream), resolved through
+ * `tasks.owner_id`. The owner's workstream can differ from the task's:
+ * `task claim --for <ws>/<agent>` assigns an owner from another
+ * workstream, and `TaskRow.ownerName` alone cannot say which.
+ * Undefined when the task does not exist or has no owner.
+ */
+export function getTaskOwner(
+  db: Db,
+  localId: string,
+  workstream: string,
+): { name: string; workstreamName: string } | undefined {
+  return db
+    .prepare(
+      `SELECT a.name AS name, aws.name AS workstreamName
+         FROM tasks t
+         JOIN workstreams tws ON tws.id = t.workstream_id
+         JOIN agents a ON a.id = t.owner_id
+         JOIN workstreams aws ON aws.id = a.workstream_id
+        WHERE t.local_id = ? AND tws.name = ?`,
+    )
+    .get(localId, workstream) as { name: string; workstreamName: string } | undefined;
+}
+
+/**
  * List tasks. With no `workstream` arg returns every row — used by `mu sql`
  * and by tests; CLI surfaces always pass a workstream so users only see
  * their own.

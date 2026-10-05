@@ -109,6 +109,7 @@ export {
 } from "./tasks/lifecycle.js";
 export {
   getTask,
+  getTaskOwner,
   type ListNotesOptions,
   type ListReadyOptions,
   type ListTasksOptions,

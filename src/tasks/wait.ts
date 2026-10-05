@@ -29,7 +29,7 @@ import type { StateReading } from "../agent-state.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { StallDetectedDuringWaitError, stallWaitHint, TaskNotFoundError } from "./errors.js";
-import { getTask } from "./queries.js";
+import { getTask, getTaskOwner } from "./queries.js";
 import { DEFAULT_SUBSTATE, type TaskStatus, type TaskSubstate } from "./status.js";
 
 // ─── Test seams: poll-sleep + poll counter + stuck-warn writer ─────────
@@ -306,18 +306,17 @@ export async function waitForTasks(
 
   const stuckAgeMs = async (
     status: TaskStatus,
-    owner: string | null,
-    workstreamName: string,
+    owner: { name: string; workstreamName: string } | undefined,
   ): Promise<number | null> => {
     if (
       stuckAfterMs <= 0 ||
       status !== "IN_PROGRESS" ||
-      owner === null ||
+      owner === undefined ||
       opts.readOwnerState === undefined
     )
       return null;
-    const reading = await opts.readOwnerState({ name: owner, workstreamName });
-    const ownerKey = `${workstreamName}/${owner}`;
+    const reading = await opts.readOwnerState(owner);
+    const ownerKey = `${owner.workstreamName}/${owner.name}`;
     if (reading?.ctl !== undefined) ctlOwners.add(ownerKey);
     if (reading?.runs !== undefined) ownerRuns.set(ownerKey, reading.runs);
     else ownerRuns.delete(ownerKey);
@@ -352,8 +351,14 @@ export async function waitForTasks(
       // state change.
       const status = (row?.status ?? "OPEN") as TaskStatus;
       const substate = row?.substate ?? DEFAULT_SUBSTATE[status];
-      const owner = row?.ownerName ?? null;
-      const ageMs = await stuckAgeMs(status, owner, ref.workstreamName);
+      // The owner's own workstream, not the task's: a cross-workstream
+      // owner (`task claim --for <ws>/<agent>`) is read, keyed and
+      // named under the workstream it lives in.
+      const ownerRef =
+        row === undefined ? undefined : getTaskOwner(db, ref.name, ref.workstreamName);
+      const owner = ownerRef?.name ?? row?.ownerName ?? null;
+      const ownerWs = ownerRef?.workstreamName ?? ref.workstreamName;
+      const ageMs = await stuckAgeMs(status, ownerRef);
       const stuck = ageMs !== null;
       const key = refKey(ref);
       if (ageMs !== null && !stuckWarned.has(key)) {
@@ -381,9 +386,9 @@ export async function waitForTasks(
         // A pi owner with a settled run also gets its last answer
         // exactly (wait --after-runs), ahead of the pane read.
         const ownerBit = owner ?? "<none>";
-        const runs = ownerRuns.get(`${ref.workstreamName}/${ownerBit}`);
-        const stateBit = stuckLabel.get(`${ref.workstreamName}/${ownerBit}`) ?? "needs_input";
-        const waitLine = stallWaitHint(ownerBit, ref.workstreamName, runs)
+        const runs = ownerRuns.get(`${ownerWs}/${ownerBit}`);
+        const stateBit = stuckLabel.get(`${ownerWs}/${ownerBit}`) ?? "needs_input";
+        const waitLine = stallWaitHint(ownerBit, ownerWs, runs)
           .map((s) => `  ${s.command}\n`)
           .join("");
         currentStuckWarn(
@@ -391,7 +396,7 @@ export async function waitForTasks(
             `${stateBit} for ${formatStallAge(ageMs)}. It may have finished without closing, ` +
             `be waiting on an answer, or be sitting at a prompt.\x1b[0m\n` +
             waitLine +
-            `  mu agent read ${ownerBit} -w ${ref.workstreamName} --lines 60\n`,
+            `  mu agent read ${ownerBit} -w ${ownerWs} --lines 60\n`,
         );
         // Persist a corroborating kind='event' row so other consumers
         // (mu state, mu log --kind event, dashboards) see the same
@@ -423,8 +428,9 @@ export async function waitForTasks(
             owner,
             ref.workstreamName,
             ageSecs,
-            ctlOwners.has(`${ref.workstreamName}/${owner ?? ""}`),
+            ctlOwners.has(`${ownerWs}/${owner ?? ""}`),
             runs,
+            ownerWs,
           );
         }
       }

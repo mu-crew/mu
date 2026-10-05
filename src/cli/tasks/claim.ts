@@ -36,6 +36,7 @@ import {
   DEFAULT_STUCK_AFTER_MS,
   formatPair,
   getTask,
+  getTaskOwner,
   ReaperDetectedDuringWaitError,
   releaseTask,
   resolveActorIdentity,
@@ -446,28 +447,27 @@ export async function cmdTaskWait(
   // workstream: `task claim --for <ws>/<agent>` assigns an owner from
   // another workstream.
   const ownerOf = (ref: TaskWaitRef): AgentRow | undefined => {
-    const row = db
-      .prepare(
-        `SELECT a.name AS name, aws.name AS ws
-           FROM tasks t
-           JOIN workstreams tws ON tws.id = t.workstream_id
-           JOIN agents a ON a.id = t.owner_id
-           JOIN workstreams aws ON aws.id = a.workstream_id
-          WHERE t.local_id = ? AND tws.name = ?`,
-      )
-      .get(ref.name, ref.workstreamName) as { name: string; ws: string } | undefined;
-    return row === undefined ? undefined : getAgent(db, row.name, row.ws);
+    const owner = getTaskOwner(db, ref.name, ref.workstreamName);
+    return owner === undefined ? undefined : getAgent(db, owner.name, owner.workstreamName);
   };
   const priorState = new Map<
     string,
     { status: string; owner: { name: string; workstream: string } | null }
   >();
   sdkOpts.beforePoll = async () => {
-    // Reconcile each unique workstream in the wait set. Each call is
-    // a cheap (~few ms) mux pane listing; it captures no pane text.
-    // Full mode prunes dead panes, which fires the reaper that flips
-    // tasks back to OPEN.
-    for (const wsName of workstreamSet) {
+    // Reconcile each unique workstream in the wait set, plus the
+    // workstream of each watched task's current owner: a
+    // cross-workstream owner's dead pane is pruned (and its task
+    // reaped) only by a reconcile of the owner's own workstream.
+    // Each call is a cheap (~few ms) mux pane listing; it captures no
+    // pane text. Full mode prunes dead panes, which fires the reaper
+    // that flips tasks back to OPEN.
+    const reconcileSet = new Set(workstreamSet);
+    for (const ref of refs) {
+      const owner = getTaskOwner(db, ref.name, ref.workstreamName);
+      if (owner !== undefined) reconcileSet.add(owner.workstreamName);
+    }
+    for (const wsName of reconcileSet) {
       try {
         await reconcile(db, { workstream: wsName, mode: "full" });
       } catch {
@@ -597,13 +597,15 @@ export async function cmdTaskWait(
     // — a question, a prompt, or a finished-but-unclosed worker — is
     // only visible in the pane. Point at the pane instead.
     if (t.stuck && t.owner !== null) {
-      const runs = ownerReadings.get(
-        agentKey({ name: t.owner, workstreamName: t.workstreamName }),
-      )?.runs;
-      nextSteps.push(...stallWaitHint(t.owner, t.workstreamName, runs));
+      // The owner's own workstream: a `--for <ws>/<agent>` owner lives
+      // outside the task's workstream.
+      const ownerWs =
+        getTaskOwner(db, t.name, t.workstreamName)?.workstreamName ?? t.workstreamName;
+      const runs = ownerReadings.get(agentKey({ name: t.owner, workstreamName: ownerWs }))?.runs;
+      nextSteps.push(...stallWaitHint(t.owner, ownerWs, runs));
       nextSteps.push({
         intent: `Read ${t.owner}'s pane — ${qualifiedId(t)} is IN_PROGRESS but its owner needs attention`,
-        command: `mu agent read ${t.owner} -w ${t.workstreamName} --lines 60`,
+        command: `mu agent read ${t.owner} -w ${ownerWs} --lines 60`,
       });
       continue;
     }

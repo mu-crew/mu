@@ -329,6 +329,9 @@ export class StallDetectedDuringWaitError extends Error implements HasNextSteps 
     public readonly ownerExpectsCtl = false,
     /** The owner's ctl run count at the stall, when its socket answered. */
     public readonly ownerRuns?: number,
+    /** The owner's workstream when it differs from the task's
+     *  (`task claim --for <ws>/<agent>`). Agent commands use it. */
+    public readonly ownerWorkstream: string = workstream,
   ) {
     const ownerBit = owner !== null ? owner : "<unknown>";
     super(
@@ -346,22 +349,23 @@ export class StallDetectedDuringWaitError extends Error implements HasNextSteps 
    */
   errorNextSteps(): NextStep[] {
     const ws = this.workstream;
+    const ownerWs = this.ownerWorkstream;
     const ownerBit = this.owner !== null ? this.owner : "<owner>";
     return [
-      ...stallWaitHint(ownerBit, ws, this.ownerRuns),
+      ...stallWaitHint(ownerBit, ownerWs, this.ownerRuns),
       {
         intent: "Read the worker's pane to see what it is waiting on",
-        command: `mu agent read ${ownerBit} -w ${ws} --lines 60`,
+        command: `mu agent read ${ownerBit} -w ${ownerWs} --lines 60`,
       },
       {
         intent: "Answer a question, or poke a worker that stalled mid-step",
-        command: `mu agent send ${ownerBit} '<answer-or-retry-instruction>' -w ${ws}`,
+        command: `mu agent send ${ownerBit} '<answer-or-retry-instruction>' -w ${ownerWs}`,
       },
       ...(this.ownerExpectsCtl
         ? [
             {
               intent: "Stuck mid-turn? Stop it through the control socket before kick or close",
-              command: `mu agent abort ${ownerBit} -w ${ws}`,
+              command: `mu agent abort ${ownerBit} -w ${ownerWs}`,
             },
           ]
         : []),
