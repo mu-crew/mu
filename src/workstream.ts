@@ -408,45 +408,27 @@ export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
 }
 
 /**
- * Discover every workstream that has no user-meaningful state
- * attached. Two flavours unioned:
+ * Discover every REGISTERED workstream that has no user-meaningful
+ * state attached: a row in `workstreams` with zero tasks, zero
+ * agents, zero vcs_workspaces. Mux session presence and agent_logs
+ * entries do NOT disqualify — the session itself was created at
+ * init time and contains no agent panes; the events are audit, not
+ * state.
  *
- *   1. REGISTERED-empty: a row in `workstreams` with zero tasks,
- *      zero agents, zero vcs_workspaces. Mux
- *      session presence and agent_logs entries do NOT disqualify
- *      — the session itself was created at init time and contains
- *      no agent panes; the events are audit, not state.
+ * Unregistered `mu-*` mux sessions (no `workstreams` row) are NEVER
+ * returned. "No DB row" only means THIS DB does not know the
+ * session: a run against a throwaway `MU_DB_PATH` sees every real
+ * workstream as unregistered, and sweeping them killed a live crew's
+ * agent panes. Nothing the mux reports proves such a session idle
+ * either: `pane_current_command` is `bash` for a `bash -c` script or
+ * loop, and herdr reports no command at all. See
+ * listUnregisteredMuxWorkstreams for the names the sweep leaves to an
+ * explicit `mu workstream teardown <name> --yes`.
  *
- *   2. MUX-only: a mux session named `mu-*` with no row in the
- *      `workstreams` table, whose every pane sits at a bare shell
- *      prompt. Catches test litter and remnants of a partial
- *      teardown where the DB row was wiped but the mux session
- *      survived (or sessions created out-of-band via
- *      `tmux new-session -s mu-foo`). The synthetic summary has
- *      `registered=false`, all counts 0, and `muxAlive=true` (it
- *      wouldn't have been surfaced otherwise).
- *
- *      The shell-only guard is load-bearing. "No DB row" only means
- *      THIS DB does not know the session: a run against a throwaway
- *      `MU_DB_PATH` sees every real workstream as mux-only, and
- *      sweeping them killed a live crew's agent panes. A pane running
- *      anything but a shell, a backend that does not report the
- *      foreground command (herdr), or a pane listing that fails all
- *      keep the session.
- *
- * The predicate is intentionally narrow on the prefix: only
- * `mu-*` sessions are eligible. Arbitrary mux sessions the
- * operator created for unrelated work are NEVER matched — mu only
- * owns its own namespace.
- *
- * Used by `mu workstream teardown --empty` to sweep test-litter
+ * Used by `mu workstream teardown --empty` to sweep empty
  * workstreams in one command (instead of the per-name jq incantation
- * over `mu workstream list --json`).
- *
- * Returns one `WorkstreamSummary` per match, sorted by name (with
- * defensive dedup — a registered-empty and a mux-only of the same
- * name can't both arise from the same call by construction, but
- * belt-and-braces).
+ * over `mu workstream list --json`). Returns one `WorkstreamSummary`
+ * per match, sorted by name.
  */
 export async function listEmptyWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
   const registeredRows = db
@@ -463,62 +445,24 @@ export async function listEmptyWorkstreams(db: Db): Promise<WorkstreamSummary[]>
         ORDER BY ws.name`,
     )
     .all() as { name: string }[];
-  const registeredEmpty = await Promise.all(
-    registeredRows.map((r) => summarizeWorkstream(db, { workstream: r.name })),
-  );
+  return Promise.all(registeredRows.map((r) => summarizeWorkstream(db, { workstream: r.name })));
+}
 
-  // Mux-only mu-* sessions: enumerate every running mux session,
-  // keep the ones with the `mu-` prefix (strip it to get the
-  // would-be workstream name), then subtract names already in the
-  // `workstreams` table. The mirror of listWorkstreams above; see
-  // its comment for the prefix rationale.
+/** Workstream names of live `mu-*` mux sessions with no row in
+ *  `workstreams`, sorted. `teardown --empty` never sweeps these (see
+ *  listEmptyWorkstreams); it lists them so the operator can tear one
+ *  down by name. An unreachable mux yields []. */
+export async function listUnregisteredMuxWorkstreams(db: Db): Promise<string[]> {
   const dbNames = new Set<string>(
     (db.prepare("SELECT name FROM workstreams").all() as { name: string }[]).map((r) => r.name),
   );
-  const muxOnlyNames: string[] = [];
+  const names: string[] = [];
   for (const session of await listMuxSessions()) {
-    if (!session.name.startsWith("mu-")) continue;
+    if (!session.name.startsWith(RESERVED_WORKSTREAM_PREFIX)) continue;
     const name = session.name.slice(RESERVED_WORKSTREAM_PREFIX.length);
-    if (dbNames.has(name)) continue;
-    if (!(await sessionHasOnlyShells(session.name))) continue;
-    muxOnlyNames.push(name);
+    if (!dbNames.has(name)) names.push(name);
   }
-  const muxOnly = await Promise.all(
-    muxOnlyNames.map((name) => summarizeWorkstream(db, { workstream: name })),
-  );
-
-  // Compose + sort + dedup-by-name (defensive; no overlap is possible
-  // by construction since muxOnlyNames excludes every dbName).
-  const seen = new Set<string>();
-  const all: WorkstreamSummary[] = [];
-  for (const ws of [...registeredEmpty, ...muxOnly]) {
-    if (seen.has(ws.name)) continue;
-    seen.add(ws.name);
-    all.push(ws);
-  }
-  all.sort((a, b) => a.name.localeCompare(b.name));
-  return all;
-}
-
-/** Foreground commands that mean "nothing is running in this pane". */
-const SHELL_COMMANDS = new Set(["bash", "zsh", "sh", "fish", "dash", "ksh", "tcsh", "csh"]);
-
-function isShellCommand(command: string): boolean {
-  // Login shells report a leading `-` (`-zsh`); some setups report a path.
-  const base = command.replace(/^-/, "").split("/").pop() ?? "";
-  return SHELL_COMMANDS.has(base);
-}
-
-/** True iff the session has panes and every one is at a shell prompt.
- *  Conservative on every unknown: a failed listing, or a backend that
- *  leaves `command` empty, counts as "something is running". */
-async function sessionHasOnlyShells(session: string): Promise<boolean> {
-  try {
-    const panes = await (await activeMux()).listPanesInSession(session);
-    return panes.length > 0 && panes.every((p) => isShellCommand(p.command));
-  } catch {
-    return false;
-  }
+  return names.sort();
 }
 
 export async function summarizeWorkstream(
