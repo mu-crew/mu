@@ -117,11 +117,14 @@ export const slBackend: VcsBackend = {
   },
 
   // Rebase the active draft chain onto `fromRef` (default = `trunk()`).
-  // Sapling refuses on dirty WC by default — we pre-check and convert
-  // its error into the typed WorkspaceDirtyError. Conflict surface
-  // post-rebase via `sl resolve --list --tool=internal:dumpjson` is
-  // brittle across versions, so we use the textual `sl resolve --list`
-  // output and look for the U-prefixed lines (unresolved).
+  // We pre-check the WC and refuse with the typed WorkspaceDirtyError.
+  // `sl rebase` exits 0 on success (also when there is nothing to
+  // rebase) and 1 on unresolved conflicts. Conflict surface via
+  // `sl resolve --list --tool=internal:dumpjson` is brittle across
+  // versions, so on failure we read the textual `sl resolve --list`
+  // and keep the U-prefixed (unresolved) lines. A failure with no
+  // unresolved files (bad ref, unresolvable trunk()) is rethrown, as
+  // the git impl does.
   async rebaseTo(workspacePath, fromRef) {
     if (!existsSync(workspacePath)) {
       throw new Error(`vcs sl: workspace path missing: ${workspacePath}`);
@@ -131,22 +134,29 @@ export const slBackend: VcsBackend = {
     if (dirtyFiles.length > 0) {
       throw new WorkspaceDirtyError(workspacePath, dirtyFiles);
     }
-    await run(
-      "sl",
-      ["--config", "ui.username=mu <mu@local>", "rebase", "-d", target],
-      workspacePath,
-    ).catch(() => {
-      // Rebase failure is acceptable here — the conflict-listing call
-      // below will tell us what happened. Bare exception loss is OK
-      // since `sl resolve` is the source of truth on conflicts.
-    });
-    const conflicts = await listSlUnresolved(workspacePath);
-    if (conflicts.length > 0) {
-      // Best-effort abort so the workspace returns to a clean state
-      // — mirrors the git impl's never-leave-half-rebased policy.
+    try {
+      await run(
+        "sl",
+        ["--config", "ui.username=mu <mu@local>", "rebase", "-d", target],
+        workspacePath,
+      );
+    } catch (err) {
+      const conflicts = await listSlUnresolved(workspacePath);
+      // Best-effort abort so the workspace returns to its pre-rebase
+      // state, mirroring the git impl's never-leave-half-rebased policy.
       await run("sl", ["rebase", "--abort"], workspacePath).catch(() => {});
-      throw new WorkspaceConflictError(workspacePath, target, conflicts);
+      if (conflicts.length > 0) {
+        throw new WorkspaceConflictError(workspacePath, target, conflicts);
+      }
+      throw err;
     }
+    // After the rebase the draft chain sits on `target`, so `target`'s
+    // node is the new fork point (recorded as the row's parent_ref).
+    const parentRef = await run(
+      "sl",
+      ["log", "-r", `last(${target})`, "--template", "{node}"],
+      workspacePath,
+    ).catch(() => "");
     // Replayed = log of `target..` post-rebase, oldest-first. Single-
     // line subjects via `{desc|firstline}`. Empty when nothing replayed.
     const replayedRaw = await run(
@@ -158,7 +168,9 @@ export const slBackend: VcsBackend = {
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
-    return { fromRef: target, replayed, conflicts: [] };
+    return parentRef.length > 0
+      ? { fromRef: target, parentRef, replayed, conflicts: [] }
+      : { fromRef: target, replayed, conflicts: [] };
   },
 
   // List sl commits in (baseRef..., minus baseRef itself), oldest-

@@ -57,30 +57,48 @@ export async function run(bin: string, args: readonly string[], cwd?: string): P
   }
 }
 
+/**
+ * Run a VCS `show` and cap its text at SHOW_COMMIT_MAX_CHARS. Output
+ * past the exec buffer (2x the cap) kills the child with
+ * ERR_CHILD_PROCESS_STDIO_MAXBUFFER; that error still carries the
+ * stdout read so far, which is more than the cap, so it is clipped
+ * like any other oversized output instead of surfacing as an error.
+ */
 export async function runShow(
   bin: string,
   args: readonly string[],
   cwd?: string,
 ): Promise<ShowCommitResult> {
+  let stdout: string;
   try {
-    const { stdout } = await exec(bin, [...args], {
-      cwd,
-      maxBuffer: SHOW_COMMIT_MAX_CHARS * 2,
-    });
-    if (stdout.length > SHOW_COMMIT_MAX_CHARS) {
+    ({ stdout } = await exec(bin, [...args], { cwd, maxBuffer: SHOW_COMMIT_MAX_CHARS * 2 }));
+  } catch (err) {
+    const partial = maxBufferStdout(err);
+    if (partial === undefined) {
       return {
-        text: `${stdout.slice(0, SHOW_COMMIT_MAX_CHARS)}\n…(truncated at ${SHOW_COMMIT_MAX_CHARS} chars)`,
-        truncated: true,
+        text: "",
+        truncated: false,
+        error: err instanceof Error ? err.message : String(err),
       };
     }
-    return { text: stdout, truncated: false };
-  } catch (err) {
+    stdout = partial;
+  }
+  if (stdout.length > SHOW_COMMIT_MAX_CHARS) {
     return {
-      text: "",
-      truncated: false,
-      error: err instanceof Error ? err.message : String(err),
+      text: `${stdout.slice(0, SHOW_COMMIT_MAX_CHARS)}\n…(truncated at ${SHOW_COMMIT_MAX_CHARS} chars)`,
+      truncated: true,
     };
   }
+  return { text: stdout, truncated: false };
+}
+
+function maxBufferStdout(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const e = err as { code?: unknown; stdout?: unknown };
+  if (e.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || typeof e.stdout !== "string") {
+    return undefined;
+  }
+  return e.stdout;
 }
 
 function relTimeFromIso(iso: string): string {

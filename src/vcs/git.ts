@@ -98,9 +98,9 @@ export const gitBackend: VcsBackend = {
 
   // Rebase the worktree onto `fromRef` (default = origin/HEAD via
   // resolveGitMainRef). Refuses on a dirty WC; returns the replayed
-  // commit subjects oldest-first; on conflict aborts the rebase and
-  // throws WorkspaceConflictError so the operator never inherits a
-  // half-rebased worktree from us.
+  // commit subjects oldest-first and the new fork point (parentRef);
+  // on conflict aborts the rebase and throws WorkspaceConflictError so
+  // the operator never inherits a half-rebased worktree from us.
   //
   // We DO `git fetch` first — otherwise the rebase target would only
   // be as fresh as the local refs cache, and the operator running
@@ -131,9 +131,6 @@ export const gitBackend: VcsBackend = {
       }
       resolvedRef = main;
     }
-    // Capture the pre-rebase HEAD so we can compute `replayed` as the
-    // commits that ended up on top of resolvedRef after the rebase.
-    const preHead = await run("git", ["rev-parse", "HEAD"], workspacePath);
     try {
       await run(
         "git",
@@ -151,21 +148,21 @@ export const gitBackend: VcsBackend = {
       // Non-conflict rebase failure (e.g. unknown ref). Surface it raw.
       throw err;
     }
-    // Replayed commits = the new HEAD..resolvedRef gap, but oldest-first
-    // and limited to what was actually replayed from preHead. We use
-    // `git log --reverse <merge-base>..HEAD` where the merge base is
-    // computed against resolvedRef, since after a successful rebase
-    // HEAD's history above the base IS the replayed set.
-    const mergeBase = await run("git", ["merge-base", "HEAD", resolvedRef], workspacePath).catch(
-      () => preHead,
+    // After a successful `git rebase <ref>`, HEAD descends from <ref>,
+    // so <ref>'s commit IS the new fork point: it becomes the row's
+    // parent_ref, and HEAD's history above it is the replayed set.
+    const parentRef = await run(
+      "git",
+      ["rev-parse", "--verify", `${resolvedRef}^{commit}`],
+      workspacePath,
     );
     const logOut = await run(
       "git",
-      ["log", "--reverse", "--format=%s", `${mergeBase}..HEAD`],
+      ["log", "--reverse", "--format=%s", `${parentRef}..HEAD`],
       workspacePath,
     );
     const replayed = logOut.length === 0 ? [] : logOut.split("\n");
-    return { fromRef: resolvedRef, replayed, conflicts: [] };
+    return { fromRef: resolvedRef, parentRef, replayed, conflicts: [] };
   },
 
   // List commits in (baseRef..HEAD), oldest-first. The format string
@@ -236,6 +233,7 @@ export const gitBackend: VcsBackend = {
       return { removed: false };
     }
     let committedRef: string | undefined;
+    let branch: string | undefined;
     if (opts.commit) {
       // Commit only if there's anything to commit. Reuse the same
       // dirty-file semantics as isClean() and rebaseTo(): `git status
@@ -259,6 +257,12 @@ export const gitBackend: VcsBackend = {
         );
         committedRef = await run("git", ["rev-parse", "HEAD"], opts.workspacePath);
       }
+      // The worktree's HEAD is detached (createWorkspace uses --detach),
+      // so removing the worktree would leave the auto-commit, and any
+      // commit the agent made, reachable from no ref: git gc deletes
+      // them. Pin HEAD with a branch unless a branch, remote or tag
+      // already contains it.
+      branch = await keepGitHeadReachable(opts.workspacePath);
     }
     // Tear down: git worktree remove --force <path> cleans both the
     // on-disk directory AND the git/worktrees/<name>/ admin entry. We
@@ -276,6 +280,7 @@ export const gitBackend: VcsBackend = {
     }
     const result: FreeWorkspaceResult = { removed: true };
     if (committedRef !== undefined) result.committedRef = committedRef;
+    if (branch !== undefined) result.branch = branch;
     return result;
   },
 
@@ -338,6 +343,30 @@ async function listGitUnmergedPaths(workspacePath: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * Create a branch at the worktree's HEAD when no branch, remote-tracking
+ * ref or tag contains it, so the commits survive `git worktree remove`.
+ * The name is `mu/<workstream>/<agent>-<sha12>`, taken from the
+ * workspace path (`<state>/workspaces/<workstream>/<agent>`); the sha
+ * suffix keeps a re-spawned agent's later free from colliding. Returns
+ * the branch name, or undefined when HEAD was already reachable.
+ */
+async function keepGitHeadReachable(workspacePath: string): Promise<string | undefined> {
+  const containing = await run(
+    "git",
+    ["for-each-ref", "--count=1", "--contains", "HEAD", "refs/heads", "refs/remotes", "refs/tags"],
+    workspacePath,
+  );
+  if (containing.length > 0) return undefined;
+  const sha = await run("git", ["rev-parse", "HEAD"], workspacePath);
+  const parts = workspacePath.replace(/\/+$/, "").split("/");
+  const agent = parts.at(-1) ?? "workspace";
+  const workstream = parts.at(-2) ?? "mu";
+  const branch = `mu/${workstream}/${agent}-${sha.slice(0, 12)}`;
+  await run("git", ["branch", branch, sha], workspacePath);
+  return branch;
 }
 
 /**

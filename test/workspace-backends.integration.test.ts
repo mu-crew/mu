@@ -269,6 +269,14 @@ gitDescribe("gitBackend", () => {
     writeFileSync(join(wsPath, "new.txt"), "x");
     const r = await gitBackend.freeWorkspace({ workspacePath: wsPath, commit: true });
     expect(r.committedRef).toMatch(/^[0-9a-f]{40}$/);
+    // The detached worktree is gone; a branch must keep the commit
+    // reachable (f_vcs_git_free_commit_dangling).
+    expect(r.branch).toBe(`mu/auth/worker-1-${r.committedRef?.slice(0, 12)}`);
+    const tip = execFileSync("git", ["rev-parse", `refs/heads/${r.branch}`], {
+      cwd: projectRoot,
+      encoding: "utf8",
+    }).trim();
+    expect(tip).toBe(r.committedRef);
   });
 
   it("freeWorkspace --commit on a clean tree reports no commit", async () => {
@@ -276,6 +284,8 @@ gitDescribe("gitBackend", () => {
     await gitBackend.createWorkspace({ projectRoot, workspacePath: wsPath });
     const r = await gitBackend.freeWorkspace({ workspacePath: wsPath, commit: true });
     expect(r.committedRef).toBeUndefined();
+    // HEAD is main's tip, already on a branch: no extra branch.
+    expect(r.branch).toBeUndefined();
   });
 
   // Regression for mufeedback workspace_free_cleanup_leaves_git: a

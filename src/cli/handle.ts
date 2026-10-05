@@ -395,11 +395,11 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     return { label: "mux", exitCode: 5 };
   }
   if (err instanceof WorkspaceConflictError) {
-    // Rebase produced conflicts — the operator must `cd` and resolve.
-    // Distinct from the typed-conflict-of-state family (exit 4) which
-    // we refused before any side effect; here the side effect happened
-    // and the workspace is half-rebased. Same exit-code lane as
-    // TmuxError (substrate-level: action requires manual recovery).
+    // Rebase produced conflicts. git/sl aborted it (workspace unchanged);
+    // jj kept it with the conflicts committed in place. Either way the
+    // operator must step in by hand. Distinct from the typed-conflict-
+    // of-state family (exit 4), which refuses before running anything.
+    // Same exit-code lane as TmuxError (manual recovery required).
     return { label: "workspace conflict", exitCode: 5 };
   }
   if (err instanceof ReaperDetectedDuringWaitError) {

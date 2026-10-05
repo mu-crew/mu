@@ -55,7 +55,9 @@ freed with it. If the workspace has edits or commits, close refuses
 with exit 4. Then do one of these:
 
 - Run `mu workspace free worker-1 -w auth --commit` to commit pending
-  changes and free the workspace, then close.
+  changes and free the workspace, then close. For git, if the commits
+  are on no branch, mu keeps them on a new branch
+  `mu/<workstream>/<agent>-<sha>`.
 - Run `mu agent close worker-1 -w auth --discard-workspace` to free
   and close in one step. You lose the changes.
 
