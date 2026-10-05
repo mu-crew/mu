@@ -24,14 +24,14 @@ function enoent(): Error {
 }
 
 describe("runTmuxAttachInteractive", () => {
-  it("inside tmux: uses `tmux switch-client -t session:window` and restores the alt screen", () => {
+  it("inside tmux: uses `tmux switch-client -t session:window` and restores the alt screen", async () => {
     const writes: string[] = [];
     let call: SpawnCall | null = null;
     const env = { TMUX: "/tmp/tmux-1000/default,1234,0", PATH: "/test/bin" } as NodeJS.ProcessEnv;
 
     const r = runTmuxAttachInteractive({
       env,
-      commands: inside("mu-alpha", "worker-1"),
+      commands: await inside("mu-alpha", "worker-1"),
       write: (text) => writes.push(text),
       spawn: (command, args, options) => {
         call = { command, args, options };
@@ -48,14 +48,14 @@ describe("runTmuxAttachInteractive", () => {
     expect(writes).toEqual([ALT_SCREEN_EXIT, ALT_SCREEN_ENTER]);
   });
 
-  it("outside tmux: attach-session then select-window", () => {
+  it("outside tmux: attach-session then select-window", async () => {
     const writes: string[] = [];
     const calls: SpawnCall[] = [];
     const env = { PATH: "/test/bin" } as NodeJS.ProcessEnv;
 
     const r = runTmuxAttachInteractive({
       env,
-      commands: outside("mu-alpha", "worker-1"),
+      commands: await outside("mu-alpha", "worker-1"),
       write: (text) => writes.push(text),
       spawn: (command, args, options) => {
         calls.push({ command, args, options });
@@ -78,12 +78,12 @@ describe("runTmuxAttachInteractive", () => {
     expect(writes).toEqual([ALT_SCREEN_EXIT, ALT_SCREEN_ENTER]);
   });
 
-  it("converts ENOENT into an install hint and still restores the alt screen", () => {
+  it("converts ENOENT into an install hint and still restores the alt screen", async () => {
     const writes: string[] = [];
     const env = { TMUX: "/tmp/x" } as NodeJS.ProcessEnv;
     const r = runTmuxAttachInteractive({
       env,
-      commands: inside("mu-a", "worker-1"),
+      commands: await inside("mu-a", "worker-1"),
       write: (text) => writes.push(text),
       spawn: () => ({ status: null, error: enoent() }),
     });
@@ -93,12 +93,12 @@ describe("runTmuxAttachInteractive", () => {
     expect(writes).toEqual([ALT_SCREEN_EXIT, ALT_SCREEN_ENTER]);
   });
 
-  it("inside tmux: reports non-zero switch-client exit codes", () => {
+  it("inside tmux: reports non-zero switch-client exit codes", async () => {
     const writes: string[] = [];
     const env = { TMUX: "/tmp/x" } as NodeJS.ProcessEnv;
     const r = runTmuxAttachInteractive({
       env,
-      commands: inside("mu-a", "worker-1"),
+      commands: await inside("mu-a", "worker-1"),
       write: (text) => writes.push(text),
       spawn: () => ({ status: 1 }),
     });
@@ -126,12 +126,12 @@ describe("runTmuxAttachInteractive", () => {
     expect(writes).toEqual([]);
   });
 
-  it("restores the alt screen when spawn throws", () => {
+  it("restores the alt screen when spawn throws", async () => {
     const writes: string[] = [];
     const env = { TMUX: "/tmp/x" } as NodeJS.ProcessEnv;
     const r = runTmuxAttachInteractive({
       env,
-      commands: inside("mu-a", "worker-1"),
+      commands: await inside("mu-a", "worker-1"),
       write: (text) => writes.push(text),
       spawn: () => {
         throw new Error("boom");

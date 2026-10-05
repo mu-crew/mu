@@ -81,7 +81,7 @@ export async function resolveAttachCommands(
     // mux?"), but the ANSWER is the backend's business — we just report
     // the ambient evidence we have.
     const inside = typeof env.TMUX === "string" && env.TMUX.length > 0;
-    return mux.attachCommands({ session: opts.session, window: opts.window, inside });
+    return await mux.attachCommands({ session: opts.session, window: opts.window, inside });
   } catch {
     return undefined;
   }

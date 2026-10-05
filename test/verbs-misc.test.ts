@@ -253,6 +253,43 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     expect(retitlesAfter.length).toBe(0);
   });
 
+  it("(case 9) on herdr, a `w1:p2` argument is a pane id, not a title to look up", async () => {
+    // cmdAdopt used to treat only '%'-prefixed strings as ids, so a valid
+    // herdr id fell into the title lookup and failed with UsageError.
+    const { installMux } = await import("./_mux.js");
+    const { PANE_GET, PANE_LIST, WORKSPACE_LIST, OK } = await import("./_mux-fixtures.js");
+    const { runCli } = await import("./_runCli.js");
+    const mux = installMux("herdr", [
+      ["workspace list", WORKSPACE_LIST.replace("mu-topotest", "mu-auth")],
+      ["pane get", PANE_GET],
+      ["pane list", PANE_LIST],
+      ["pane rename", OK],
+    ]);
+    try {
+      const out = await runCli(
+        [
+          "agent",
+          "adopt",
+          "w1:p2",
+          "-w",
+          "auth",
+          "--name",
+          "worker-2",
+          "--cli",
+          "claude",
+          "--json",
+        ],
+        join(tempDir, "mu.db"),
+      );
+      expect(out.error).toBeUndefined();
+      expect(out.exitCode).toBeNull();
+      expect(getAgent(db, "worker-2", "auth")?.paneId).toBe("w1:p2");
+      expect(mux.calls.some((c) => c.join(" ") === "pane rename w1:p2 worker-2")).toBe(true);
+    } finally {
+      mux.restore();
+    }
+  });
+
   it("(case 7) adopt by pane id whose title is not a valid agent name and no --name -> error", async () => {
     const { executor } = mockTmux(state);
     setTmuxExecutor(executor);

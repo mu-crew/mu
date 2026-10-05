@@ -1139,14 +1139,14 @@ function attachTargetSpec(target: AttachTarget): string {
   return target.window === undefined ? target.session : `${target.session}:${target.window}`;
 }
 
-export function attachHint(target: AttachTarget): string {
+export async function attachHint(target: AttachTarget): Promise<string> {
   const spec = attachTargetSpec(target);
   if (target.inside === true) return `tmux switch-client -t ${spec}`;
   if (target.window === undefined) return `tmux attach -t ${target.session}`;
   return `tmux attach -t ${target.session} && tmux select-window -t ${spec}`;
 }
 
-export function attachCommands(target: AttachTarget): readonly MuxCommand[] {
+export async function attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]> {
   const spec = attachTargetSpec(target);
   if (target.inside === true) {
     return [{ command: "tmux", args: ["switch-client", "-t", spec] }];

@@ -30,6 +30,8 @@ mu agent adopt %15 -w auth
 mu agent adopt %15 -w auth --name investigator
 ```
 
+On herdr, pass its pane id instead (`mu agent adopt w1:p2 -w auth`).
+
 The pane title becomes the agent name. The pane must be in the
 `mu-<workstream>` session. An adopted pi has no control socket until
 you restart it with the `MU_CTL_SOCK` path that `adopt` prints.

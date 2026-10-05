@@ -27,7 +27,7 @@ mu picks the backend from the first rule that matches:
 | Workstream | session `mu-<ws>` | workspace labelled `mu-<ws>` |
 | Window | window | tab |
 | Pane id | `%15` | `w1:p1` |
-| Attach | `tmux attach -t mu-<ws>` | `herdr session attach mu-<ws>` |
+| Attach | `tmux attach -t mu-<ws>` | `herdr workspace focus <id>`, then `herdr` outside a herdr pane |
 | pi agent state | control socket | control socket |
 | Other agents' state | murmur | herdr |
 | Send to non-pi agents | bracketed paste, then Enter | one atomic `agent prompt` |
@@ -44,8 +44,10 @@ Where each agent's state comes from, per backend:
   `/proc/<pid>/fd/0`, which macOS does not have.
 - `mu agent read --lines` cannot recover rows that scrolled off a pane
   on the alternate screen.
-- `MU_<CLI>_COMMAND` overrides apply on tmux only. herdr picks the
-  agent binary itself.
+- herdr starts the agent binary itself (`herdr agent start --kind
+  <cli>`), so spawn refuses `--command` and `MU_<CLI>_COMMAND` with
+  exit 2 instead of running a different binary. Unset the variable, or
+  spawn with `MU_MUX=tmux`.
 - herdr creates every workspace detached. Run `herdr workspace focus`
   yourself.
 

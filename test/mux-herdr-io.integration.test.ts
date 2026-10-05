@@ -9,8 +9,12 @@
 //   MU_HERDR_SESSION=mu-iotest npm run test -- mux-herdr-io.integration
 //
 // The fast tier excludes this file by suffix.
+//
+// Every real herdr call goes through `herdrTestExec()` (or the backend,
+// which reads the same MU_HERDR_SESSION), and the file asserts
+// isolation up front: MU_HERDR_SESSION=default fails loudly instead of
+// creating a workspace in the user's real server.
 
-import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   capturePane,
@@ -18,19 +22,21 @@ import {
   resetHerdrExecutor,
   sendToPane,
 } from "../src/mux/herdr.js";
+import { assertHerdrIsolated, herdrTestExec } from "./_mux.js";
 
 const SESSION = process.env.MU_HERDR_SESSION;
-/** Refuse the default session outright — a stray create/close there
- *  would land in the user's real panes. */
-const CANDIDATE = SESSION !== undefined && SESSION.length > 0 ? SESSION : undefined;
+/** Unset or empty: the operator did not opt in, so self-skip. Anything
+ *  else must pass `assertHerdrIsolated()`, which refuses "default"
+ *  outright: a stray create/close there would land in the user's real
+ *  panes. */
+const OPTED_IN = SESSION !== undefined && SESSION.length > 0;
+if (OPTED_IN) assertHerdrIsolated();
 
 async function herdrCli(args: readonly string[]): Promise<{ stdout: string; ok: boolean }> {
-  if (CANDIDATE === undefined) return { stdout: "", ok: false };
-  const r = await execa("herdr", ["--session", CANDIDATE, ...args], { reject: false }).catch(
-    () => undefined,
-  );
+  if (!OPTED_IN) return { stdout: "", ok: false };
+  const r = await herdrTestExec(args).catch(() => undefined);
   if (r === undefined) return { stdout: "", ok: false };
-  return { stdout: r.stdout ?? "", ok: r.exitCode === 0 };
+  return { stdout: r.stdout, ok: r.exitCode === 0 };
 }
 
 function readResult(stdout: string): Record<string, unknown> {
@@ -45,7 +51,7 @@ let workspaceId: string | undefined;
 let paneId: string | undefined;
 
 beforeAll(async () => {
-  if (CANDIDATE === undefined) return;
+  if (!OPTED_IN) return;
   const status = await herdrCli(["status"]);
   if (!status.ok) return;
   if (!isHerdrStatusUsable(status.stdout)) return;
@@ -76,8 +82,10 @@ afterAll(async () => {
 }, 20_000);
 
 describe("herdr IO against a real server", () => {
-  it("sendToPane reaches a plain shell pane via the pane-surface fallback", async () => {
-    if (!ready || paneId === undefined) return;
+  // ctx.skip() rather than `return`: an absent server must report as
+  // skipped, not as a green pass that ran nothing.
+  it("sendToPane reaches a plain shell pane via the pane-surface fallback", async (ctx) => {
+    if (!ready || paneId === undefined) return ctx.skip();
     // No recognized agent in a fresh shell pane, so `agent prompt`
     // answers agent_not_found and sendToPane retries via `pane run`.
     await sendToPane(paneId, "echo mu-io-probe-42");
@@ -90,8 +98,8 @@ describe("herdr IO against a real server", () => {
     expect(seen).toContain("mu-io-probe-42");
   }, 20_000);
 
-  it("capturePane returns plain text, not a JSON envelope", async () => {
-    if (!ready || paneId === undefined) return;
+  it("capturePane returns plain text, not a JSON envelope", async (ctx) => {
+    if (!ready || paneId === undefined) return ctx.skip();
     const visible = await capturePane(paneId, { lines: 0 });
     expect(typeof visible).toBe("string");
     expect(() => JSON.parse(visible)).toThrow();

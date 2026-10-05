@@ -97,7 +97,7 @@ export class HerdrError extends MuxError {
      *  the stderr payload parsed as the documented JSON envelope. */
     public readonly code?: string,
   ) {
-    const detail = parseErrorEnvelope(stderr)?.message ?? stderr.trim() ?? stdout.trim();
+    const detail = parseErrorEnvelope(stderr)?.message ?? (stderr.trim() || stdout.trim());
     super(`herdr ${args.join(" ")} failed (exit ${exitCode}): ${detail || "no output"}`);
     this.name = "HerdrError";
   }
@@ -286,12 +286,16 @@ export class HerdrWorkspaceGroupCloseError extends Error {
   }
 }
 
-/** A `MuxBackend` method whose herdr implementation is owned by another
- *  task. Never thrown on any path mu currently drives on herdr. */
+/** A creation verb was handed a command to run. herdr cannot do that
+ *  in one step (see `rejectCommand`), so this is a bug in the caller:
+ *  spawn passes no command on herdr and calls `startAgentInPane`. */
 export class HerdrNotImplementedError extends Error {
   override readonly name = "HerdrNotImplementedError";
-  constructor(method: string, owner: string) {
-    super(`herdr backend: ${method} is not implemented yet (owned by task ${owner})`);
+  constructor(method: string) {
+    super(
+      `herdr backend: ${method} is not supported: herdr creation verbs always start a plain shell; ` +
+        "create the pane without a command, then start the agent with startAgentInPane",
+    );
   }
 }
 
@@ -512,10 +516,12 @@ function readPane(v: unknown): MuxPane | undefined {
     // herdr's optional `label` is what `pane rename` writes and is
     // therefore mu's pane-title equivalent.
     title: asString(v.label) ?? "",
-    // herdr does not report a foreground command on `pane list`; the
-    // authoritative answer costs a `pane process-info` round trip per
-    // pane. Callers that need it use `paneCommand()`.
-    command: "",
+    // herdr reports no foreground command on `pane list` (that costs a
+    // `pane process-info` round trip per pane), but it does report the
+    // agent kind it detected (`pi`, `claude`, `codex`, ...). That is
+    // what `command` is used for: reconcile's orphan recogniser matches
+    // it against the agent CLIs. Empty for a plain shell.
+    command: asString(v.agent) ?? "",
     windowId: asString(v.tab_id),
   };
 }
@@ -603,8 +609,8 @@ export async function newSession(name: string, opts: NewSessionOptions = {}): Pr
  * Create a workspace and return its root pane's id.
  *
  * `opts.command` cannot be honoured here: `workspace create` always
- * starts a plain shell, and running something in it is a `pane run`
- * (the IO surface). Left to `mux-herdr-spawn`.
+ * starts a plain shell. Spawn runs the agent afterwards with
+ * `startAgentInPane` (see `rejectCommand`).
  */
 export async function newSessionWithPane(
   name: string,
@@ -673,7 +679,7 @@ function readTabs(result: Record<string, unknown>): MuxWindow[] {
 
 /**
  * Create a tab in `opts.session`'s workspace and return its root pane id.
- * `opts.command` is `mux-herdr-spawn`'s job (see `rejectCommand`).
+ * `opts.command` is refused (see `rejectCommand`).
  */
 export async function newWindow(opts: NewWindowOptions): Promise<string> {
   rejectCommand("newWindow", opts.command);
@@ -824,10 +830,10 @@ export async function paneTTY(paneId: string): Promise<string> {
     ["pane", "process-info", "--pane", paneId],
     ["pane_not_found", "workspace_not_found"],
   );
-  if (result === undefined) throw new PaneNotFoundError(paneId);
+  if (result === undefined) throw new PaneNotFoundError(paneId, herdrBackend);
   const info = result.process_info;
   const pid = isRecord(info) ? info.shell_pid : undefined;
-  if (typeof pid !== "number") throw new PaneNotFoundError(paneId);
+  if (typeof pid !== "number") throw new PaneNotFoundError(paneId, herdrBackend);
   const { readlink } = await import("node:fs/promises");
   try {
     return await readlink(`/proc/${pid}/fd/0`);
@@ -1145,8 +1151,9 @@ export async function capturePane(paneId: string, opts: CaptureOptions = {}): Pr
  *
  * `done` is herdr's idle-after-UNSEEN-background-work, and CLI reads
  * deliberately do NOT mark a tab seen. mu polling therefore never clears
- * the user's done badge — which is the point, and why nothing in this
- * file calls a focus or seen-marking verb.
+ * the user's done badge — which is the point, and why no read path in
+ * this file calls a focus or seen-marking verb (only the attach steps
+ * the user asks for name one).
  */
 export function mapAgentStatus(agentStatus: string): MuxPaneStatus {
   switch (agentStatus) {
@@ -1219,12 +1226,13 @@ function appendEnvFlags(args: string[], env: Record<string, string> | undefined)
 /**
  * herdr's creation verbs start a plain shell; there is no
  * create-and-run-this form. Running the agent CLI in the new pane is a
- * separate `pane run` / `agent start` step, which is `mux-herdr-spawn`.
- * Refuse loudly rather than silently dropping the command on the floor.
+ * separate `agent start` step (`startAgentInPane`), which spawn calls
+ * after creating the bare pane. Refuse loudly rather than silently
+ * dropping the command on the floor.
  */
 function rejectCommand(method: string, command: string | undefined): void {
   if (command === undefined || command.trim().length === 0) return;
-  throw new HerdrNotImplementedError(`${method} with a command`, "mux-herdr-spawn");
+  throw new HerdrNotImplementedError(`${method} with a command`);
 }
 
 /**
@@ -1308,32 +1316,64 @@ async function herdrAvailable(): Promise<boolean> {
 
 // ─── Attach ─────────────────────────────────────────────────────────────
 //
-// herdr addresses attach targets by opaque id, not by name, so both
-// shapes below resolve the mu session name (= workspace label) to a
-// workspace id first. Resolution is async but `attachHint` /
-// `attachCommands` are sync by contract, so they emit a `workspace
-// focus` against the LABEL-resolved id when one is known and fall back
-// to the session-attach form otherwise. Callers that need the resolved
-// id already awaited `currentSessionName` / `sessionExists`.
+// The mu session name is a workspace LABEL inside one herdr server, so
+// attaching means FOCUSING that workspace (or the agent's tab), and
+// herdr addresses both by opaque id: resolve label → id first.
+// `herdr session attach <name>` is NOT the analogue: it attaches a
+// whole named SERVER, and pointing it at a workspace label starts a
+// new, empty server under that name.
+//
+// `MU_HERDR_SESSION` picks the server mu drives, and the user's shell
+// does not read it, so every emitted line carries the same
+// `--session <name>` prefix as `herdrGlobalFlags()`.
+//
+// Focus moves the server's view; the user only sees it through a
+// client. Inside a herdr pane (`$HERDR_ENV=1`, the signal detect.ts
+// uses) the caller's client already shows it. Outside, a second step
+// opens a client. `target.inside` is tmux's evidence (`$TMUX`) and is
+// ignored here.
 
-/**
- * Copy-pasteable line landing the user on `target`.
- *
- * Unlike tmux there is no "attach vs switch-client" split: a herdr
- * client is already attached to the server, and focusing a workspace
- * works identically from inside and outside a managed pane. `inside`
- * is therefore ignored, which is legitimate — the flag reports ambient
- * evidence and lets each backend decide what it means.
- */
-export function attachHint(target: AttachTarget): string {
+/** The focus argv for `target` in workspace `workspaceId`. Prefers the
+ *  agent's tab (`tab focus` also switches the workspace) and falls back
+ *  to the workspace when no tab carries that label. */
+async function attachFocusArgs(workspaceId: string, target: AttachTarget): Promise<string[]> {
   if (target.window !== undefined) {
-    return `herdr session attach ${target.session} # then focus tab ${target.window}`;
+    const tabs = readTabs(await herdr(["tab", "list", "--workspace", workspaceId]));
+    const tab = tabs.find((t) => t.name === target.window);
+    if (tab !== undefined) return ["tab", "focus", tab.id];
   }
-  return `herdr session attach ${target.session}`;
+  return ["workspace", "focus", workspaceId];
 }
 
-export function attachCommands(target: AttachTarget): readonly MuxCommand[] {
-  return [{ command: "herdr", args: ["session", "attach", target.session] }];
+function insideHerdrClient(): boolean {
+  return process.env.HERDR_ENV === "1";
+}
+
+/**
+ * Copy-pasteable line landing the user on `target`. Never throws: it is
+ * a hint, so an unresolvable label degrades to the manual recipe.
+ */
+export async function attachHint(target: AttachTarget): Promise<string> {
+  const base = ["herdr", ...herdrGlobalFlags()].join(" ");
+  const focus = await resolveWorkspaceId(target.session)
+    .then((id) => (id === undefined ? undefined : attachFocusArgs(id, target)))
+    .catch(() => undefined);
+  if (focus === undefined) {
+    return `${base} workspace list  # then: ${base} workspace focus <id of ${target.session}>`;
+  }
+  const line = `${base} ${focus.join(" ")}`;
+  return insideHerdrClient() ? line : `${line} && ${base}`;
+}
+
+/** The same attach as argv steps. Throws `HerdrError` when no workspace
+ *  carries the label (the TUI shows it in the footer). */
+export async function attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]> {
+  const flags = herdrGlobalFlags();
+  const focus = await attachFocusArgs(await requireWorkspaceId(target.session), target);
+  const steps: MuxCommand[] = [{ command: "herdr", args: [...flags, ...focus] }];
+  // Bare `herdr` launches a client attached to the (named) server.
+  if (!insideHerdrClient()) steps.push({ command: "herdr", args: [...flags] });
+  return steps;
 }
 
 // ─── Diagnostics ────────────────────────────────────────────────────────

@@ -75,7 +75,7 @@ export async function cmdInit(db: Db, name: string, opts: { json?: boolean } = {
     ? undefined
     : `name workstreams <project>-<purpose> (e.g. ${projectGuess() ?? "repo"}-${name}); one per effort`;
   const nextSteps: NextStep[] = [
-    { intent: "Attach the session", command: mux.attachHint({ session: sessionName }) },
+    { intent: "Attach the session", command: await mux.attachHint({ session: sessionName }) },
     {
       intent: "Plan tasks",
       command: `mu task add -w ${name} --title "..." --impact 50 --effort-days 1`,

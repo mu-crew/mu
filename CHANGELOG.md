@@ -286,6 +286,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   and `mu doctor` disagreed with the table. The cross-workstream-edge
   hint no longer prints a "move the blocker" UPDATE, and the recovery
   guide no longer renames a workstream with `mu sql`.
+- **herdr: attach hints land on the workstream.** The `Next:` attach line (`mu workstream init`, `mu agent spawn`) and the TUI's `a` key ran `herdr session attach mu-<ws>`, which starts a new, empty herdr server named after the workspace label. They now focus the agent's tab or the workspace by id (`herdr tab focus w1:t2`), then open a client with `herdr` when run outside a herdr pane, and carry `--session <name>` when `MU_HERDR_SESSION` is set.
+- **herdr: `mu agent adopt w1:p2` adopts by pane id.** Only `%`-prefixed arguments were treated as pane ids, so a herdr id was looked up as a pane title and failed. The orphan hint in `mu agent list` now shows a real orphan's id instead of a hardcoded `%15`.
+- **herdr: orphan panes are surfaced.** herdr panes reported an empty command, so `mu agent list` and `mu doctor` never listed a herdr pane running an agent without a registry row. The pane's command is now the agent kind herdr detected.
+- **herdr: clearer errors.** A herdr failure with empty stderr shows stdout instead of "no output". A vanished pane in `mu agent kick` reads "herdr pane not found" with herdr remediation. A creation verb given a command no longer claims to be "not implemented yet (owned by task mux-herdr-spawn)".
+- **Docs: herdr refuses command overrides.** `docs/guide/backends.md` and `docs/reference/env.md` said `MU_<CLI>_COMMAND` is ignored on herdr; spawn refuses it and `--command` with exit 2.
 
 ## [3.8.1] — 2026-10-05
 
