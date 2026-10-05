@@ -111,6 +111,10 @@ describe("dispatchedTasks", () => {
       "cat <<EOF\nmu task claim x --for w1 -w ws\nEOF\nmu task claim t1 --for w1 -w ws",
       [{ ws: "ws", id: "t1" }],
     ],
+    // A here-string and an arithmetic shift are not heredocs.
+    ["grep x <<< foo\nmu task claim t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
+    ["echo $((1<<2))\nmu task claim t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
+    ["((x = 1 << 2))\nmu task claim t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
   ])("%s", (cmd, want) => {
     expect(dispatchedTasks(cmd)).toEqual(want);
   });
