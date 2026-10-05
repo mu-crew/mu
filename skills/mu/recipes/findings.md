@@ -72,8 +72,10 @@ across reviewers and creates one task per real problem.
    [delegate call](tasks-or-calls.md#delegate-call) that passes
    `record: { task: "<ws>/<id>" }`: a fresh agent tries to prove it
    false, and its VERDICT block lands on the finding as a
-   `REFUTER <label>` note (VERDICT line, 3-6 EVIDENCE lines). Without
-   `mu_delegate`, write that note yourself before deciding
+   `REFUTER <label> (<delegate>, <elapsed>):` note (VERDICT line, 3-6
+   EVIDENCE lines), or `REFUTER <label>: no verdict (<outcome>)` when
+   it times out or dies. Without `mu_delegate`, write that note yourself
+   before deciding
    ([tasks-or-calls § Delegate call](tasks-or-calls.md#delegate-call)).
    Skip this for low-severity style findings. High severity: three
    refuters, accept only if at least two say CONFIRMED.

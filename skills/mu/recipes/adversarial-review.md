@@ -71,23 +71,19 @@ where it fails the acceptance criteria in `mu task notes <x>`.
   UNVERIFIED for it. Unverified is not a pass and not a fail.
 - Do not edit files.
 
-Write the verdict note (FILES/COMMANDS/FINDINGS/VERIFIED), then close;
-long reasons go through a heredoc variable (brief.md § Quoting):
+Write the verdict note (FILES/COMMANDS/FINDINGS/VERIFIED), then close
+(long reasons: a heredoc variable, brief.md § Quoting):
   ACCEPT: mu task close review_<x> --evidence "<key command>: <result>"
   REJECT: mu task close review_<x> --as rejected \
             --why "<n> gaps: <id> (<why it fails, one clause>), ..."
 ```
 
-mu adds each named gap's title to the REJECTED note. Quoting rules:
-[brief § Quoting](brief.md#quoting).
+mu adds each named gap's title to the REJECTED note.
 
-## When the orchestrator closes a review itself
-
-You fixed a finding directly, or accept without a fresh reviewer: write
-the same note as a reviewer (FILES/COMMANDS/FINDINGS/VERIFIED, plus
-COMMIT: the sha and the finding it fixes), then close with `--evidence`
-naming the check. Bad: `one finding fixed by orchestrator; validate 0`
-with no commit, the fix recorded only on the finding.
+**Closing a review yourself** (you fixed a finding, or accept without a
+fresh reviewer): write the reviewer's note plus `COMMIT: <sha> fixes
+<finding>`, and name the check in `--evidence`. Not `one finding fixed
+by orchestrator`.
 
 ## Traps
 

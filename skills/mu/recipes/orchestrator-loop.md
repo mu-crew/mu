@@ -39,8 +39,8 @@ keeps it.
 - **Answers arrive when you stop**, as pi follow-up messages, never
   mid-turn. pi's `followUpMode: "all"` delivers every waiting answer in
   one turn instead of one turn each; each answer names its delegate and
-  ends with its `VERDICT: <id>` line, so a batch still maps back. Record
-  every verdict in the batch before acting on any.
+  ends with its `VERDICT: <id>` block, so a batch still maps back. Read
+  every verdict in the batch before deciding any.
 - **Workers with workspaces** build and test: about one per CPU core,
   fewer when each runs the full suite. A remote host has its own
   session cap ([remote-workers](remote-workers.md)).
