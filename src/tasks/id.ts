@@ -1,7 +1,29 @@
 // mu — task id validation and title slug helpers.
 
 import type { Db } from "../db.js";
+import type { HasNextSteps, NextStep } from "../output.js";
 import { getTask } from "./queries.js";
+
+/** Thrown when a title has no ASCII letter or digit, so no id can be
+ *  derived from it (any non-ASCII script, or pure punctuation). Exit 2
+ *  (usage) with the verb's --help; the fix is the `<id>` positional.
+ *  Lives here, not in errors.ts, because errors.ts imports this file. */
+export class TaskTitleSlugEmptyError extends Error implements HasNextSteps {
+  override readonly name = "TaskTitleSlugEmptyError";
+  constructor(public readonly title: string) {
+    super(
+      `title yields empty slug: ${JSON.stringify(title)} (no ASCII letter or digit to derive an id from)`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Pass the id explicitly as the positional",
+        command: 'mu task add <id> --title "..." --impact <n> --effort-days <n>',
+      },
+    ];
+  }
+}
 
 /** Lowercase alpha first, then alnum / underscore / hyphen, ≤64 chars. */
 const TASK_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -40,7 +62,7 @@ const SLUG_HARD_CAP = 64;
  * when one exists, else hard-truncate). Mirrors `tg`'s `id_from_title`
  * but adds the soft cap.
  *
- * Throws if `title` yields an empty slug after stripping.
+ * Throws `TaskTitleSlugEmptyError` if `title` yields an empty slug.
  */
 export function slugifyTitle(title: string): string {
   return slugifyTitleVerbose(title).slug;
@@ -96,7 +118,7 @@ export function slugifyTitleVerbose(title: string): SlugifyResult {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
   if (stripped.length === 0) {
-    throw new Error(`title yields empty slug: ${JSON.stringify(title)}`);
+    throw new TaskTitleSlugEmptyError(title);
   }
   // Soft cap with word-boundary preference: if the slug exceeds the
   // soft cap, look for the last `_` at-or-before the cap and cut there
@@ -107,9 +129,10 @@ export function slugifyTitleVerbose(title: string): SlugifyResult {
   if (stripped.length <= SLUG_SOFT_CAP) {
     trimmed = stripped;
   } else {
-    const window = stripped.slice(0, SLUG_SOFT_CAP);
-    const lastSep = window.lastIndexOf("_");
-    trimmed = lastSep > 0 ? window.slice(0, lastSep) : window;
+    // lastIndexOf's fromIndex is inclusive, so an `_` AT index
+    // SLUG_SOFT_CAP (a word ending exactly at the cap) is found too.
+    const lastSep = stripped.lastIndexOf("_", SLUG_SOFT_CAP);
+    trimmed = lastSep > 0 ? stripped.slice(0, lastSep) : stripped.slice(0, SLUG_SOFT_CAP);
   }
   // First char must be a letter → prefix `t_` if it isn't. v5 has no
   // global namespace and no reserved prefix; `mu_foo` is a perfectly

@@ -86,6 +86,7 @@ export {
   sanitiseTaskId,
   slugifyTitle,
   slugifyTitleVerbose,
+  TaskTitleSlugEmptyError,
 } from "./tasks/id.js";
 export {
   type AttributedEvidence,

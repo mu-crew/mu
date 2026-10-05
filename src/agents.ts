@@ -718,10 +718,7 @@ export interface ListLiveAgentsOptions {
    * documented mutating behaviour `mu agent list` has always had,
    * now also used by `mu state`).
    *
-   * `mu doctor` and `mu undo` pass `"report-only"`: count drift,
-   * mutate nothing. `mu undo` MUST use this so a post-restore
-   * reconcile doesn't delete the rows the snapshot just restored
-   * (snap_undo_reconcile_destroys_recovered_agents).
+   * `mu doctor` passes `"report-only"`: count drift, mutate nothing.
    *
    * Mid-spawn placeholders (pane id `%pending-<name>`) are protected
    * directly in reconcile's prune loop, independent of mode
@@ -746,9 +743,8 @@ export interface LiveAgentsView {
 /**
  * Return the live, reality-reconciled view of agents in a workstream.
  * `mu state` and `mu agent list` call this with the default `mode: "full"`
- * (mutating); read-only diagnostic / restore paths
- * (`mu doctor`, `mu undo`) call it with `mode: "report-only"` to mutate
- * nothing at all.
+ * (mutating); the read-only diagnostic (`mu doctor`) calls it with
+ * `mode: "report-only"` to mutate nothing at all.
  */
 export async function listLiveAgents(db: Db, opts: ListLiveAgentsOptions): Promise<LiveAgentsView> {
   const report = await reconcile(db, {

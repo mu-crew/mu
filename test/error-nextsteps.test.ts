@@ -61,6 +61,7 @@ import {
   TaskNotInWorkstreamError,
   TaskParkedError,
   TaskParkStateError,
+  TaskTitleSlugEmptyError,
 } from "../src/tasks.js";
 import { PaneNotFoundError, TmuxError } from "../src/tmux.js";
 import {
@@ -101,6 +102,11 @@ const staleWorkspace = {
 const cases: NextStepsCase[] = [
   // src/tasks/errors.ts
   { error: new TaskNotFoundError("foo"), label: "TaskNotFoundError", expectedTokens: ["foo"] },
+  {
+    error: new TaskTitleSlugEmptyError("日本語"),
+    label: "TaskTitleSlugEmptyError",
+    expectedTokens: ["mu task add <id>"],
+  },
   {
     error: new TaskIdInvalidError("Bad ID"),
     label: "TaskIdInvalidError",
@@ -545,6 +551,33 @@ describe("error-specific structured-step assertions", () => {
     const mangleSteps = mangle.errorNextSteps();
     const mangleInit = mangleSteps.find((s) => s.command.startsWith("mu workstream init"));
     expect(mangleInit?.intent).toBe("Try a sanitized name (best guess)");
+  });
+
+  it("WorkstreamNameInvalidError never suggests a name that fails validation", () => {
+    // f_wsstate_name_hint_invalid: the sanitiser used to echo a leading
+    // digit, '/' and spaces back, so the suggestion failed the same check
+    // (and an unquoted space split it into two positionals).
+    const cases: Array<[string, string]> = [
+      ["1foo/bar", "mu workstream init foo_bar"],
+      ["Foo Bar", "mu workstream init foo_bar"],
+      ["roadmap-v0.2", "mu workstream init roadmap-v0_2"],
+      ["123", "mu workstream init <name>"],
+    ];
+    for (const [attempted, expected] of cases) {
+      const init = new WorkstreamNameInvalidError(attempted)
+        .errorNextSteps()
+        .find((s) => s.command.startsWith("mu workstream init"));
+      expect(init?.command).toBe(expected);
+    }
+  });
+
+  it("TaskIdInvalidError and TaskNotFoundError hints name real flags and do not repeat", () => {
+    // f_tasks_error_hints_wrong: `mu task add` has no --id flag (the id is a
+    // positional), and TaskNotFoundError printed one recipe under two intents.
+    const idSteps = new TaskIdInvalidError("Bad ID").errorNextSteps();
+    expect(idSteps.map((s) => s.intent).join(" ")).not.toContain("--id");
+    const nfCommands = new TaskNotFoundError("foo").errorNextSteps().map((s) => s.command);
+    expect(new Set(nfCommands).size).toBe(nfCommands.length);
   });
 
   it("PaneNotFoundError borrows its pane-probe steps from the backend that raised it", () => {

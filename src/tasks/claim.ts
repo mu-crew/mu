@@ -3,8 +3,8 @@
 // claimTask is the heart of mu's coordination protocol: an atomic
 // CAS via a single SQL UPDATE, with two flavours:
 //
-//   "worker claim"  : --for <name> sets owner=<name> (FK to agents.name)
-//   "anonymous claim": --self      keeps owner=NULL but flips status to
+//   "worker claim"  : --for <name> sets owner_id to that agent (FK to agents.id)
+//   "anonymous claim": --self      keeps owner_id=NULL but flips status to
 //                                  IN_PROGRESS and records the actor
 //                                  in agent_logs
 //
@@ -162,7 +162,7 @@ export interface ClaimTaskOptions extends AttributedEvidence {
    */
   agentWorkstream?: string;
   /**
-   * Anonymous claim: write `owner = NULL` instead of resolving an agent
+   * Anonymous claim: write `owner_id = NULL` instead of resolving an agent
    * name and checking the FK. Use when the actor is the orchestrator
    * (or a script, or a human) doing direct work in a workstream they
    * aren't a registered worker in.
@@ -173,9 +173,10 @@ export interface ClaimTaskOptions extends AttributedEvidence {
    *
    * Resolution order for the actor name (used as the log source):
    *   1. `actor` if explicitly passed.
-   *   2. Current pane title (when `$TMUX_PANE` is set).
-   *   3. `$USER`.
-   *   4. The literal string 'unknown'.
+   *   2. `$MU_AGENT_NAME`.
+   *   3. The mux's current agent name (pane title on tmux).
+   *   4. `$USER`.
+   *   5. The literal string 'orchestrator'.
    *
    * Mutually exclusive with `agentName` (the two are alternative
    * answers to "who's the actor for this claim?"). Passing both is a
@@ -215,14 +216,15 @@ export interface ClaimResult {
  * Claim a task. Two modes:
  *
  *   Worker claim (default):
- *     Resolve an agent name from `opts.agentName` or from $TMUX_PANE's
- *     pane title. The name MUST exist in the agents table (FK on
- *     tasks.owner). Sets `owner = <name>`. This is what mu-spawned
+ *     Resolve an agent name from `opts.agentName`, else $MU_AGENT_NAME,
+ *     else the mux's current agent name (pane title on tmux). The name
+ *     MUST exist in the agents table (`tasks.owner_id` is an FK to
+ *     `agents.id`). Sets `owner_id` to that agent. This is what mu-spawned
  *     workers do, and what `mu task claim --for <worker>` does for
  *     orchestrator dispatch.
  *
  *   Anonymous claim (--self):
- *     Skip the name -> agents FK lookup entirely. Sets `owner = NULL`.
+ *     Skip the name -> agents FK lookup entirely. Sets `owner_id = NULL`.
  *     Records the actor in `agent_logs.source` instead. This is the
  *     orchestrator-doing-direct-work path — the actor is logged but
  *     not registered as a worker pane.

@@ -22,17 +22,14 @@ import { activeMux, type MuxPane } from "./mux.js";
  *   "full"        Default for `mu state` and `mu agent list`. Prunes
  *                 ghosts (deleting the registry row, which fires the
  *                 deleteAgent reaper that flips IN_PROGRESS tasks back
- *                 to OPEN with [reaper] notes), runs status detection
- *                 against surviving panes, surfaces orphans.
+ *                 to OPEN with [reaper] notes), refreshes pane titles
+ *                 of surviving agents, surfaces orphans.
  *
  *   "report-only" Pure observation. Counts would-be-pruned ghosts
- *                 without deleting; skips status detection entirely
- *                 (no DB writes, no tmux title writes); surfaces
- *                 orphans (pure read). Used by `mu undo` (the
- *                 post-restore pass MUST NOT delete rows the snapshot
- *                 just restored — see
- *                 snap_undo_reconcile_destroys_recovered_agents) and
- *                 `mu doctor` (read-only diagnostic).
+ *                 without deleting; skips the title refresh (no DB
+ *                 writes, no tmux title writes); surfaces orphans
+ *                 (pure read). Used by `mu doctor` (read-only
+ *                 diagnostic).
  *
  * Mid-spawn placeholders are protected directly in the prune loop, so read
  * paths no longer need a separate mode just to avoid racing spawn's workspace
@@ -127,8 +124,8 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
   //    the would-be-prunes so callers can surface drift, but leaves the
   //    row in place. Mid-spawn placeholder pane ids are protected by
   //    the defensive skip that lets read paths use full mode safely.
-  //    Placeholder rows survive this step, but are split out so status
-  //    detection and orphan exclusion only reason about real tmux panes.
+  //    Placeholder rows survive this step, but are split out so the title
+  //    refresh and orphan exclusion only reason about real tmux panes.
   const survivors: agentSdk.AgentRow[] = [];
   const pendingSurvivors: agentSdk.AgentRow[] = [];
   for (const agent of dbAgents) {

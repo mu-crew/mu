@@ -238,7 +238,7 @@ export function checkDormantWorkstreams(
       "Removes the task rows and notes — the plan, not the code (no checkout",
       "is touched, and `mu undo <group>` puts the rows back). The risk is",
       "losing sight of what was left to do, so read it first:",
-      ...abandoned.slice(0, 3).map((d) => `  mu task list -w ${d.name} --status OPEN`),
+      ...abandoned.slice(0, 3).map((d) => `  mu task list -w ${d.name} --status OPEN,IN_PROGRESS`),
     );
   }
 

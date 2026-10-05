@@ -203,8 +203,11 @@ export function listInProgress(db: Db, workstream: string): TaskRow[] {
   return rows.map(rowFromDb);
 }
 
-/** Most-recently-closed tasks in a workstream, newest first, capped at
- *  `limit` (default 5). Used by `mu state` for its 'recent closed'
+/** CLOSED tasks in a workstream, most recently updated first, capped at
+ *  `limit` (default 5). `updated_at` is a proxy for close time: there is
+ *  no `closed_at` column, and a later note or edge change on a CLOSED
+ *  task bumps `updated_at` (touchTask), moving it up. Used by `mu state`
+ *  for its 'recent closed'
  *  slice; exposed as a named SDK helper so the CLI no longer needs the
  *  raw-row type that was duplicating RawTaskRow
  *  (review_code_raw_task_state_duplicate). */

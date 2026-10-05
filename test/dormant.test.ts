@@ -251,7 +251,7 @@ describe("checkDormantWorkstreams", () => {
     const text = (checkDormantWorkstreams(db).remediation ?? []).join("\n");
     // Finished: a teardown command. Abandoned: a look-first command.
     expect(text).toContain("mu workstream teardown done --yes");
-    expect(text).toContain("mu task list -w dead --status OPEN");
+    expect(text).toContain("mu task list -w dead --status OPEN,IN_PROGRESS");
     // And crucially NOT a teardown for the one holding open work.
     expect(text).not.toContain("teardown dead");
   });

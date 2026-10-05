@@ -10,7 +10,7 @@
 //                         `mu me next`; `task blocked` / `goals` /
 //                         `search` / `ready` were removed in
 //                         audit_cleanups_post_schema_v5_wave)
-//   ./tasks/lifecycle.ts  close / open / reject / defer
+//   ./tasks/lifecycle.ts  close / open / park / accept / unpark
 //   ./tasks/edit.ts       add / show / notes / note / update
 //                         + unescapeNoteText / printNote
 //   ./tasks/edges.ts      block / unblock / reparent / delete

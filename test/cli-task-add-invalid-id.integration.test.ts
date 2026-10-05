@@ -4,7 +4,8 @@
 // previously fell through to the generic exit-1 catch-all because
 // addTask threw a bare `TypeError`. The fix replaces it with a
 // `TaskIdInvalidError implements HasNextSteps` and adds it to the
-// classifyError() exit-code map (exit 4 = validation / conflict).
+// classifyError() exit-code map (exit 2 = usage, like every typed
+// *Invalid* error; the verb's --help is printed too).
 //
 // This test pins the outward contract (exit code + JSON shape +
 // nextSteps); the unit-level coverage of the error class lives in
@@ -54,7 +55,7 @@ describe("mu task add — invalid id ergonomics", () => {
     ];
     const { stderr, exitCode, error } = await runCli(argv, dbPath);
     expect(error).toBeUndefined();
-    expect(exitCode).toBe(4);
+    expect(exitCode).toBe(2);
     // The CLI's emitError() writes one JSON object per error to stderr.
     const lines = stderr.trim().split("\n").filter(Boolean);
     expect(lines.length).toBeGreaterThan(0);
@@ -67,7 +68,7 @@ describe("mu task add — invalid id ergonomics", () => {
       exitCode: number;
     };
     expect(envelope.error).toBe("TaskIdInvalidError");
-    expect(envelope.exitCode).toBe(4);
+    expect(envelope.exitCode).toBe(2);
     expect(envelope.message).toMatch(/invalid task id/);
     expect(envelope.nextSteps.length).toBeGreaterThan(0);
     // First step is the auto-derived path: `mu task add --title "..."`

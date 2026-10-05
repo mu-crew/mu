@@ -107,8 +107,10 @@ export function isValidWorkstreamName(name: string): boolean {
   return true;
 }
 
-/** Thrown by `ensureWorkstream` and `mu workstream init` when the name
- *  doesn't match the rules. */
+/** A workstream name collision. Exported SDK error class mapped to exit
+ *  4 (conflict) by `classifyError`; no mu verb throws it today
+ *  (`ensureWorkstream` is idempotent). Invalid names throw
+ *  `WorkstreamNameInvalidError`. */
 export class WorkstreamExistsError extends Error implements HasNextSteps {
   override readonly name: string = "WorkstreamExistsError";
   constructor(public readonly workstream: string) {
@@ -134,13 +136,18 @@ export class WorkstreamNameInvalidError extends Error implements HasNextSteps {
     super(`invalid workstream name ${JSON.stringify(attempted)}: ${reason}`);
   }
   errorNextSteps(): NextStep[] {
-    // Suggest a sanitized form: strip the mu- prefix; replace dots and
-    // colons with underscores; lowercase.
-    const sanitized = this.attempted
+    // Suggest a sanitized form: lowercase; strip the mu- prefix; map
+    // every char outside [a-z0-9_-] (dots, colons, slashes, spaces) to
+    // '_'; drop leading non-letters; cap at 32. A result that still
+    // fails validation becomes the `<name>` placeholder, so the hint
+    // never suggests a command that fails the same check.
+    const candidate = this.attempted
       .toLowerCase()
       .replace(/^mu-/, "")
-      .replace(/[.:]/g, "_")
+      .replace(/[^a-z0-9_-]/g, "_")
+      .replace(/^[^a-z]+/, "")
       .slice(0, 32);
+    const sanitized = isValidWorkstreamName(candidate) ? candidate : "<name>";
     // Branch the intent label on the failure class. For the mu-prefix
     // case the correction is unambiguous (drop the prefix), so phrase
     // the next-step as a direct action — "Try a … (best guess)" reads
@@ -153,7 +160,7 @@ export class WorkstreamNameInvalidError extends Error implements HasNextSteps {
       ? "Retry without the 'mu-' prefix"
       : "Try a sanitized name (best guess)";
     return [
-      { intent, command: `mu workstream init ${sanitized || "<name>"}` },
+      { intent, command: `mu workstream init ${sanitized}` },
       { intent: "List existing workstreams", command: "mu workstream list" },
     ];
   }
@@ -301,18 +308,6 @@ export interface WorkstreamOptions {
 
 export interface TeardownWorkstreamOptions extends WorkstreamOptions {}
 
-/**
- * Discover every workstream visible on this machine. The union of:
- *   - rows in the `workstreams` table (canonical DB source; populated by
- *     `mu init` and auto-created by insertAgent / addTask)
- *   - mux sessions named `mu-*` (with the prefix stripped) — catches
- *     externally-created sessions (e.g. `tmux new-session -s mu-foo`)
- *     that mu hasn't observed yet
- *
- * Returns one `WorkstreamSummary` per workstream, sorted by name.
- * Useful as a pre-flight before `mu init` ("is this name taken?") and
- * for `mu doctor`-style diagnostics.
- */
 /** One past **teardown**, reconstructed from the ops log. */
 export interface TornDownWorkstream {
   /** The workstream's name. Not unique across the list: a name can be
@@ -382,6 +377,18 @@ export function listTornDownWorkstreams(db: Db): TornDownWorkstream[] {
     });
 }
 
+/**
+ * Discover every workstream visible on this machine. The union of:
+ *   - rows in the `workstreams` table (canonical DB source; populated by
+ *     `mu init` and auto-created by insertAgent / addTask)
+ *   - mux sessions named `mu-*` (with the prefix stripped) — catches
+ *     externally-created sessions (e.g. `tmux new-session -s mu-foo`)
+ *     that mu hasn't observed yet
+ *
+ * Returns one `WorkstreamSummary` per workstream, sorted by name.
+ * Useful as a pre-flight before `mu init` ("is this name taken?") and
+ * for `mu doctor`-style diagnostics.
+ */
 export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
   const dbNames = new Set<string>(
     (db.prepare("SELECT name FROM workstreams").all() as { name: string }[]).map((r) => r.name),

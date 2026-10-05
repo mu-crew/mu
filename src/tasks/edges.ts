@@ -200,10 +200,11 @@ function addBlockEdgeImpl(
   }
   const blockedRow = getTask(db, blocked, workstream);
   if (!blockedRow) throw new TaskNotFoundError(blocked);
-  // Resolve the blocker globally so a cross-workstream blocker surfaces
+  // Resolve the blocker in the dependent's workstream first, then
+  // globally so a cross-workstream blocker surfaces
   // CrossWorkstreamEdgeError (clearer than TaskNotFoundError). Cycle
   // check + same-workstream guard run after.
-  const blockerRow = lookupTaskAnyWorkstream(db, blocker);
+  const blockerRow = lookupTaskAnyWorkstream(db, blocker, blockedRow.workstreamName);
   if (!blockerRow) throw new TaskNotFoundError(blocker);
   if (blockedRow.workstreamName !== blockerRow.workstreamName) {
     throw new CrossWorkstreamEdgeError(
@@ -345,8 +346,8 @@ function reparentTaskImpl(
 
   // Resolve every blocker up-front to its surrogate id; do all
   // existence + same-workstream + cycle checks before any DELETE.
-  // Look up blockers across all workstreams so a blocker that exists in
-  // a DIFFERENT workstream surfaces CrossWorkstreamEdgeError (clearer
+  // Look up blockers in the task's workstream first, then across all
+  // workstreams so a blocker that exists only in a DIFFERENT workstream surfaces CrossWorkstreamEdgeError (clearer
   // than TaskNotFoundError). Duplicate blockers are an ergonomic input
   // accident from repeat/CSV forms, so silently canonicalise by
   // surrogate id while preserving first-seen order.
@@ -355,7 +356,7 @@ function reparentTaskImpl(
     if (blockerLocalId === taskLocalId) {
       throw new CycleError(blockerLocalId, taskLocalId);
     }
-    const blocker = lookupTaskAnyWorkstream(db, blockerLocalId);
+    const blocker = lookupTaskAnyWorkstream(db, blockerLocalId, task.workstreamName);
     if (!blocker) throw new TaskNotFoundError(blockerLocalId);
     if (blocker.workstreamName !== task.workstreamName) {
       throw new CrossWorkstreamEdgeError(

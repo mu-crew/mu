@@ -37,8 +37,8 @@ import { DEFAULT_SUBSTATE, type TaskStatus, type TaskSubstate } from "./status.j
 // Mirror src/tmux.ts's setSleepForTests pattern. Default sleep is a real
 // setTimeout; tests can swap in an instant + counted version to assert
 // poll cadence (the bug fixed alongside this hook silently sleeps a full
-// pollMs past the deadline when pollMs > timeoutMs — see test/tasks.test.ts
-// 'waitForTasks' regression cases).
+// pollMs past the deadline when pollMs > timeoutMs — see
+// test/tasks-wait.integration.test.ts 'clamped sleep' regression case).
 //
 // The stuck-warn writer is the second seam: agent_attention_required
 // (named agent_close_discipline_gap until it was found to presume one

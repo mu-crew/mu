@@ -107,19 +107,25 @@ export function noteFromDb(row: RawTaskNoteRow): TaskNoteRow {
   };
 }
 
-/** Look up a task by local_id across every workstream. Returns the
- *  first match (sorted by workstream name for determinism). Used by
- *  edge verbs (addBlockEdge / reparentTask) to resolve a blocker so a
- *  cross-workstream blocker can surface `CrossWorkstreamEdgeError`
- *  rather than the less-actionable `TaskNotFoundError`. NOT for
- *  operator-facing reads — use `getTask(db, localId, workstream)`
- *  for those. */
-export function lookupTaskAnyWorkstream(db: Db, localId: string): TaskRow | undefined {
+/** Look up a task by local_id across every workstream. Task ids are
+ *  unique per workstream only, so a row in `preferWorkstream` wins;
+ *  otherwise the first match sorted by workstream name (deterministic).
+ *  Used by edge verbs (addBlockEdge / reparentTask) to resolve a
+ *  blocker so a cross-workstream blocker can surface
+ *  `CrossWorkstreamEdgeError` rather than the less-actionable
+ *  `TaskNotFoundError`. NOT for operator-facing reads — use
+ *  `getTask(db, localId, workstream)` for those. */
+export function lookupTaskAnyWorkstream(
+  db: Db,
+  localId: string,
+  preferWorkstream?: string,
+): TaskRow | undefined {
   const row = db
     .prepare(
-      `SELECT ${SELECT_TASK_COLS} ${TASK_FROM_JOIN} WHERE t.local_id = ? ORDER BY ws.name LIMIT 1`,
+      `SELECT ${SELECT_TASK_COLS} ${TASK_FROM_JOIN} WHERE t.local_id = ?
+        ORDER BY (ws.name = ?) DESC, ws.name LIMIT 1`,
     )
-    .get(localId) as RawTaskRow | undefined;
+    .get(localId, preferWorkstream ?? null) as RawTaskRow | undefined;
   return row ? rowFromDb(row) : undefined;
 }
 

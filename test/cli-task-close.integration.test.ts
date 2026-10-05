@@ -107,7 +107,7 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
       expect(human.exitCode).toBeNull();
       expect(human.stdout).toContain("Don't forget to commit");
       expect(human.stdout).toContain(
-        "cd $(mu workspace path worker-1 -w test) && git commit -am 'Implement Helpful Thing'",
+        "cd $(mu workspace path worker-1 -w test) && git add -A && git commit -m 'Implement Helpful Thing'",
       );
 
       const json = await runCli(["task", "close", "dirty_json", "-w", "test", "--json"], dbPath);
@@ -116,7 +116,8 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
       const payload = JSON.parse(json.stdout) as JsonClosePayload;
       expect(payload.nextSteps).toContainEqual({
         intent: "Don't forget to commit",
-        command: "cd $(mu workspace path worker-1 -w test) && git commit -am 'Emit JSON Hint'",
+        command:
+          "cd $(mu workspace path worker-1 -w test) && git add -A && git commit -m 'Emit JSON Hint'",
       });
     });
   });
@@ -129,7 +130,7 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
       expect(json.error).toBeUndefined();
       const payload = JSON.parse(json.stdout) as JsonClosePayload;
       expect(payload.nextSteps.map((s) => s.intent)).not.toContain("Don't forget to commit");
-      expect(json.stdout).not.toContain("git commit -am");
+      expect(json.stdout).not.toContain("git commit -m");
     });
   });
 
@@ -141,7 +142,7 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
       expect(json.error).toBeUndefined();
       const payload = JSON.parse(json.stdout) as JsonClosePayload;
       expect(payload.nextSteps.map((s) => s.intent)).not.toContain("Don't forget to commit");
-      expect(json.stdout).not.toContain("git commit -am");
+      expect(json.stdout).not.toContain("git commit -m");
     });
   });
 });

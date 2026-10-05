@@ -117,11 +117,6 @@ export interface WorkstreamSnapshotSlowFields {
   doctor: DoctorSummary | null;
 }
 
-/**
- * Fast TUI/state snapshot tier: pure SQLite reads only. Subprocess-backed
- * fields are intentionally empty placeholders so callers can merge the last
- * slow-tier values without blocking a 1s render tick on tmux or VCS probes.
- */
 function remoteNoteRows(
   db: Db,
   workstream: string,
@@ -185,6 +180,11 @@ export function findRemoteDispatch(
   return dispatch;
 }
 
+/**
+ * Fast TUI/state snapshot tier: pure SQLite reads only. Subprocess-backed
+ * fields are intentionally empty placeholders so callers can merge the last
+ * slow-tier values without blocking a 1s render tick on tmux or VCS probes.
+ */
 export async function loadWorkstreamSnapshotFast(
   db: Db,
   workstream: string,
