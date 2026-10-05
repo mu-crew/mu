@@ -14,7 +14,7 @@
 // (src/compact.ts); this file adds the dry run, the backup beside the
 // DB, the VACUUM, and the drift check after.
 
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Command } from "commander";
 import { emitJson, handle, JSON_OPT } from "../cli.js";
@@ -67,13 +67,21 @@ function backupBeside(db: Db, verb: string): string {
 }
 
 /** Reclaim the freed pages, then prove the log still explains the tables. */
-function vacuumAndCheck(db: Db, backup: string): { before: number; after: number } {
-  const before = statSync(db.name).size;
+function vacuumAndCheck(
+  db: Db,
+  backup: string,
+): { before: number; after: number; checkpointed: boolean } {
+  // Sizes are the logical DB (page_count × page_size, read through the
+  // WAL), not statSync(db.name): in WAL mode VACUUM's rewritten pages sit
+  // in -wal until a checkpoint, and a concurrent reader can make that
+  // checkpoint return busy, leaving the main file at its old size.
+  const before = dbBytes(db);
   db.exec("VACUUM");
-  // WAL mode: VACUUM's rewritten pages sit in the -wal file until a
-  // checkpoint, so without one the main file reports the old size.
-  db.pragma("wal_checkpoint(TRUNCATE)");
-  const after = statSync(db.name).size;
+  // Shrink the main file now when no reader pins the WAL; otherwise the
+  // next checkpoint (any later mu write) does it.
+  const [cp] = db.pragma("wal_checkpoint(TRUNCATE)") as { busy: number }[];
+  const checkpointed = cp?.busy === 0;
+  const after = dbBytes(db);
   const report = checkDrift(db);
   if (!report.clean) {
     console.error(
@@ -81,8 +89,17 @@ function vacuumAndCheck(db: Db, backup: string): { before: number; after: number
     );
     throw new DriftDetectedError(report.totalDrift, report.records);
   }
-  return { before, after };
+  return { before, after, checkpointed };
 }
+
+function dbBytes(db: Db): number {
+  const pages = db.pragma("page_count", { simple: true }) as number;
+  const pageSize = db.pragma("page_size", { simple: true }) as number;
+  return pages * pageSize;
+}
+
+const CHECKPOINT_PENDING =
+  "another connection is reading the DB; the file shrinks on its next checkpoint";
 
 export function cmdDbCompact(db: Db, opts: { yes?: boolean; json?: boolean } = {}): void {
   const plan = planCompact(db);
@@ -111,6 +128,7 @@ export function cmdDbCompact(db: Db, opts: { yes?: boolean; json?: boolean } = {
   console.log(
     `Compacted ${plan.tombstones} note tombstones: ${formatBytes(size.before)} → ${formatBytes(size.after)}. Drift check clean.`,
   );
+  if (!size.checkpointed) console.log(pc.dim(CHECKPOINT_PENDING));
   console.log(pc.dim(`backup: ${backup}`));
 }
 
@@ -166,6 +184,7 @@ export function cmdDbForget(
   console.log(
     `Forgot ${plan.candidates.length} workstream(s), ${r.ops} ops: ${formatBytes(size.before)} → ${formatBytes(size.after)}. Drift check clean.`,
   );
+  if (!size.checkpointed) console.log(pc.dim(CHECKPOINT_PENDING));
   console.log(pc.dim(`backup (the only way back): ${backup}`));
 }
 
