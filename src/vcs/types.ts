@@ -17,8 +17,9 @@ export interface RebaseResult {
    *  resolveGitMainRef() symbolic ref; for jj/sl it's the literal
    *  `trunk()` revset (or whatever the operator passed via fromRef). */
   fromRef: string;
-  /** Concrete commit id of the workspace's new fork point (the merge
-   *  base of the rebased head and fromRef). The caller writes it to
+  /** Concrete commit id of the workspace's new fork point: fromRef's
+   *  commit, or the previous fork point when that already descends from
+   *  it (parent_ref never moves backward). The caller writes it to
    *  `vcs_workspaces.parent_ref` so staleness, `mu workspace commits`
    *  and the close-time clean check measure from the new base. Omitted
    *  when the backend cannot resolve a single commit (e.g. a jj revset
@@ -136,33 +137,35 @@ export class WorkspaceDirtyError extends Error implements HasNextSteps {
  * git and sl abort the rebase before throwing, so the workspace is back
  * at its pre-rebase state (`aborted` is true). jj cannot abort: the
  * rebase is done and the conflicts are committed in place (`aborted` is
- * false, and `parentRef` carries the new fork point when resolvable).
+ * false). Either way the row's parent_ref is unchanged, so the hint
+ * ends with re-running refresh: once the conflicts are resolved, that
+ * rebase is clean and records the base the disk is on.
  */
 export class WorkspaceConflictError extends Error implements HasNextSteps {
   override readonly name = "WorkspaceConflictError";
-  /** True when the backend aborted the rebase and the workspace is unchanged. */
-  public readonly aborted: boolean;
-  /** New fork point of a rebase that stayed in place (jj). */
-  public readonly parentRef?: string;
   constructor(
     public readonly workspacePath: string,
     public readonly fromRef: string,
     public readonly conflicts: readonly string[],
-    rebased?: { parentRef?: string },
+    /** True when the backend aborted the rebase and the workspace is unchanged. */
+    public readonly aborted = true,
   ) {
     super(
-      `rebase onto ${fromRef} produced ${conflicts.length} conflict(s)${rebased === undefined ? "; rebase aborted, workspace unchanged" : "; conflicts left in place"}: ${workspacePath}`,
+      `rebase onto ${fromRef} produced ${conflicts.length} conflict(s)${aborted ? "; rebase aborted, workspace unchanged" : "; conflicts left in place"}: ${workspacePath}`,
     );
-    this.aborted = rebased === undefined;
-    if (rebased?.parentRef !== undefined) this.parentRef = rebased.parentRef;
   }
   errorNextSteps(): NextStep[] {
+    const resync = {
+      intent: "After resolving, record the new base (a clean refresh updates the fork point)",
+      command: `mu workspace refresh <agent> --from '${this.fromRef}'`,
+    };
     if (this.aborted) {
       return [
         {
           intent: "The rebase was aborted. Rebase by hand in the workspace and resolve",
           command: `cd ${this.workspacePath}  # then: git rebase ${this.fromRef}  (sl: sl rebase -d '${this.fromRef}')`,
         },
+        resync,
         {
           intent: "Or DISCARD the workspace entirely (the lossy escape)",
           command: "mu workspace free <agent>",
@@ -174,6 +177,7 @@ export class WorkspaceConflictError extends Error implements HasNextSteps {
         intent: "Resolve the conflicted commits in place",
         command: `cd ${this.workspacePath}  # then: jj resolve; or undo the rebase: jj op undo`,
       },
+      resync,
     ];
   }
 }
@@ -278,7 +282,13 @@ export interface VcsBackend {
    * main; that killed the worker's LLM context. `refresh` updates
    * the on-disk dir without touching the agent or pane.
    */
-  rebaseTo(workspacePath: string, fromRef?: string): Promise<RebaseResult>;
+  rebaseTo(
+    workspacePath: string,
+    fromRef?: string,
+    /** The row's current parent_ref. Kept as the result's parentRef
+     *  when it already descends from fromRef and is under the head. */
+    previousParentRef?: string,
+  ): Promise<RebaseResult>;
 
   /**
    * Cheap "is the working copy clean?" probe used by close-auto-free

@@ -59,10 +59,11 @@ export async function run(bin: string, args: readonly string[], cwd?: string): P
 
 /**
  * Run a VCS `show` and cap its text at SHOW_COMMIT_MAX_CHARS. Output
- * past the exec buffer (2x the cap) kills the child with
- * ERR_CHILD_PROCESS_STDIO_MAXBUFFER; that error still carries the
- * stdout read so far, which is more than the cap, so it is clipped
- * like any other oversized output instead of surfacing as an error.
+ * past the exec buffer (2x the cap, in bytes) kills the child with
+ * ERR_CHILD_PROCESS_STDIO_MAXBUFFER. A stdout overflow keeps the stdout
+ * read so far and is always reported as truncated, even when multi-byte
+ * text decodes to fewer characters than the cap. A stderr overflow is a
+ * failure and surfaces as an error.
  */
 export async function runShow(
   bin: string,
@@ -70,10 +71,11 @@ export async function runShow(
   cwd?: string,
 ): Promise<ShowCommitResult> {
   let stdout: string;
+  let overflowed = false;
   try {
     ({ stdout } = await exec(bin, [...args], { cwd, maxBuffer: SHOW_COMMIT_MAX_CHARS * 2 }));
   } catch (err) {
-    const partial = maxBufferStdout(err);
+    const partial = stdoutOverflow(err);
     if (partial === undefined) {
       return {
         text: "",
@@ -82,8 +84,9 @@ export async function runShow(
       };
     }
     stdout = partial;
+    overflowed = true;
   }
-  if (stdout.length > SHOW_COMMIT_MAX_CHARS) {
+  if (overflowed || stdout.length > SHOW_COMMIT_MAX_CHARS) {
     return {
       text: `${stdout.slice(0, SHOW_COMMIT_MAX_CHARS)}\n…(truncated at ${SHOW_COMMIT_MAX_CHARS} chars)`,
       truncated: true,
@@ -92,13 +95,16 @@ export async function runShow(
   return { text: stdout, truncated: false };
 }
 
-function maxBufferStdout(err: unknown): string | undefined {
-  if (typeof err !== "object" || err === null) return undefined;
-  const e = err as { code?: unknown; stdout?: unknown };
+/** The partial stdout of a stdout maxBuffer overflow; undefined for any
+ *  other failure (a stderr overflow included). Node names the stream
+ *  only in the message: "stdout maxBuffer length exceeded". */
+function stdoutOverflow(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const e = err as Error & { code?: unknown; stdout?: unknown };
   if (e.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || typeof e.stdout !== "string") {
     return undefined;
   }
-  return e.stdout;
+  return e.message.startsWith("stdout ") ? e.stdout : undefined;
 }
 
 function relTimeFromIso(iso: string): string {

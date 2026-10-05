@@ -125,7 +125,7 @@ export const slBackend: VcsBackend = {
   // and keep the U-prefixed (unresolved) lines. A failure with no
   // unresolved files (bad ref, unresolvable trunk()) is rethrown, as
   // the git impl does.
-  async rebaseTo(workspacePath, fromRef) {
+  async rebaseTo(workspacePath, fromRef, previousParentRef) {
     if (!existsSync(workspacePath)) {
       throw new Error(`vcs sl: workspace path missing: ${workspacePath}`);
     }
@@ -151,12 +151,24 @@ export const slBackend: VcsBackend = {
       throw err;
     }
     // After the rebase the draft chain sits on `target`, so `target`'s
-    // node is the new fork point (recorded as the row's parent_ref).
-    const parentRef = await run(
+    // node is the new fork point (recorded as the row's parent_ref),
+    // unless the old fork point already descends from it and is still
+    // under `.` (no-op refresh onto an older base): parent_ref never
+    // moves backward.
+    const targetNode = await run(
       "sl",
       ["log", "-r", `last(${target})`, "--template", "{node}"],
       workspacePath,
     ).catch(() => "");
+    const keepPrevious =
+      previousParentRef !== undefined &&
+      targetNode.length > 0 &&
+      (await run(
+        "sl",
+        ["log", "-r", `${previousParentRef} & ${targetNode}:: & ::.`, "--template", "{node}"],
+        workspacePath,
+      ).catch(() => "")) !== "";
+    const parentRef = keepPrevious ? previousParentRef : targetNode;
     // Replayed = log of `target..` post-rebase, oldest-first. Single-
     // line subjects via `{desc|firstline}`. Empty when nothing replayed.
     const replayedRaw = await run(

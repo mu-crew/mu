@@ -75,14 +75,28 @@ describe("refreshWorkspace parent_ref", () => {
     expect(parentRef()).toBe("old-base");
   });
 
-  it("writes the fork point of a conflicted rebase that stayed in place (jj)", async () => {
+  it("passes the current parent_ref so the backend never moves it backward", async () => {
+    const spy = vi.spyOn(gitBackend, "rebaseTo").mockResolvedValue({
+      fromRef: "origin/main",
+      parentRef: "old-base",
+      replayed: [],
+      conflicts: [],
+    });
+    await refreshWorkspace(db, { agent: "worker-1", workstream: "auth", fromRef: "origin/main" });
+    expect(spy).toHaveBeenCalledWith(expect.any(String), "origin/main", "old-base");
+    expect(parentRef()).toBe("old-base");
+  });
+
+  it("keeps the old value when a conflicted rebase stayed in place (jj)", async () => {
+    // The disk may be rolled back with `jj op undo`; the next clean
+    // refresh records the base it is on (g_fix_vcs_git_conflict_parent_hint).
     vi.spyOn(gitBackend, "rebaseTo").mockRejectedValue(
-      new WorkspaceConflictError("/ws", "trunk()", ["abc"], { parentRef: "new-base" }),
+      new WorkspaceConflictError("/ws", "trunk()", ["abc"], false),
     );
     await expect(refreshWorkspace(db, { agent: "worker-1", workstream: "auth" })).rejects.toThrow(
       WorkspaceConflictError,
     );
-    expect(parentRef()).toBe("new-base");
+    expect(parentRef()).toBe("old-base");
   });
 
   it("keeps the old value when the backend aborted the conflicted rebase (git/sl)", async () => {

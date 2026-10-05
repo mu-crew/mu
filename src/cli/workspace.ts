@@ -289,7 +289,7 @@ export function wireWorkspaceCommands(program: Command): void {
   workspace
     .command("refresh <agent>")
     .description(
-      "Rebase an agent's workspace onto a fresh base WITHOUT touching the agent or pane. Default base = the backend's tracked main (origin/HEAD for git, trunk() for jj/sl); override with --from <ref>. Refuses on dirty WC (git/sl) with the file list and a Next: hint to commit/stash. Records the new fork point as the workspace's parent_ref. On rebase conflict exits 5: git and sl abort the rebase and leave the workspace unchanged; jj keeps the rebase with the conflicts committed in place. The `none` backend errors (refresh requires a real VCS).",
+      "Rebase an agent's workspace onto a fresh base WITHOUT touching the agent or pane. Default base = the backend's tracked main (origin/HEAD for git, trunk() for jj/sl); override with --from <ref>. Refuses on dirty WC (git/sl) with the file list and a Next: hint to commit/stash. Records the new fork point as the workspace's parent_ref (never moving it backward). On rebase conflict exits 5 and leaves parent_ref unchanged: git and sl abort the rebase and leave the workspace unchanged; jj keeps the rebase with the conflicts committed in place. After resolving, run refresh again to record the new base. The `none` backend errors (refresh requires a real VCS).",
     )
     .option("--from <ref>", "override the rebase target (default: backend's tracked main)")
     .option(...WORKSTREAM_OPT)

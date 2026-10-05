@@ -106,7 +106,7 @@ export const gitBackend: VcsBackend = {
   // be as fresh as the local refs cache, and the operator running
   // `mu workspace refresh` is explicitly asking for the latest. This
   // is the one-and-only place mu fetches; commitsBehind() stays pure.
-  async rebaseTo(workspacePath, fromRef) {
+  async rebaseTo(workspacePath, fromRef, previousParentRef) {
     if (!existsSync(workspacePath)) {
       throw new Error(`vcs git: workspace path missing: ${workspacePath}`);
     }
@@ -149,13 +149,20 @@ export const gitBackend: VcsBackend = {
       throw err;
     }
     // After a successful `git rebase <ref>`, HEAD descends from <ref>,
-    // so <ref>'s commit IS the new fork point: it becomes the row's
-    // parent_ref, and HEAD's history above it is the replayed set.
-    const parentRef = await run(
+    // so <ref>'s commit is the new fork point, unless the old fork
+    // point already descends from <ref> (a no-op refresh onto an older
+    // base): moving parent_ref back would relabel the commits between
+    // them as the worker's. HEAD's history above it is the replayed set.
+    const target = await run(
       "git",
       ["rev-parse", "--verify", `${resolvedRef}^{commit}`],
       workspacePath,
     );
+    const keepPrevious =
+      previousParentRef !== undefined &&
+      (await gitIsAncestor(workspacePath, target, previousParentRef)) &&
+      (await gitIsAncestor(workspacePath, previousParentRef, "HEAD"));
+    const parentRef = keepPrevious ? previousParentRef : target;
     const logOut = await run(
       "git",
       ["log", "--reverse", "--format=%s", `${parentRef}..HEAD`],
@@ -299,6 +306,16 @@ export const gitBackend: VcsBackend = {
  * Returns the resolved ref string (suitable for `git rev-list`) or
  * undefined if none of the three resolve.
  */
+/** `git merge-base --is-ancestor`: exit 0 = yes; exit 1 or any failure = no. */
+async function gitIsAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await run("git", ["merge-base", "--is-ancestor", ancestor, descendant], cwd);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveGitMainRef(workspacePath: string): Promise<string | undefined> {
   for (const candidate of [
     "refs/remotes/origin/HEAD",

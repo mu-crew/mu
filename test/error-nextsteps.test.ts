@@ -357,7 +357,17 @@ const cases: NextStepsCase[] = [
   {
     error: new WorkspaceConflictError("/path/to/ws", "origin/main", ["src/file.ts"]),
     label: "WorkspaceConflictError",
-    expectedTokens: ["/path/to/ws", "git rebase origin/main", "mu workspace free"],
+    expectedTokens: [
+      "/path/to/ws",
+      "git rebase origin/main",
+      "mu workspace refresh <agent> --from 'origin/main'",
+      "mu workspace free",
+    ],
+  },
+  {
+    error: new WorkspaceConflictError("/path/to/ws", "trunk()", ["abc"], false),
+    label: "WorkspaceConflictError (jj, rebase kept)",
+    expectedTokens: ["jj op undo", "mu workspace refresh <agent> --from 'trunk()'"],
   },
 
   // src/workstream.ts / src/db.ts
