@@ -79,7 +79,8 @@ per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
   test once passed with zero cases.
 - **Accept evidence, not close notes.** Re-run the key measurement from
   a clean checkout; close notes have claimed unpushed commits. A
-  worker's "done" counts only once the diff shows the change.
+  worker's "done" counts only once the diff shows the change. Your own
+  accept and close notes name the check run and the commit.
 - **Ask whether the check could have failed.** A gate that cannot say
   no is not evidence: a test filtered to zero cases, a script you wrote
   agreeing with itself, a fixture you tuned on. A nonzero diff is a

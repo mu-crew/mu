@@ -69,24 +69,31 @@ across reviewers and creates one task per real problem.
    or several reviewers on one change: a `triage_<umbrella>` task, run
    by a fresh agent, so the orchestrator reads only its result.
 2. **Refute** each finding before accepting it with a
-   [delegate call](tasks-or-calls.md#delegate-call): a fresh agent tries
-   to prove it false and ends with
-   `VERDICT: <id> CONFIRMED | REFUTED | UNVERIFIED <evidence>`. Skip this
-   for low-severity style findings. High severity: three refuters,
-   accept only if at least two say CONFIRMED.
-3. **Decide** each one; the decision is the task's state:
+   [delegate call](tasks-or-calls.md#delegate-call) that passes
+   `record: { task: "<ws>/<id>" }`: a fresh agent tries to prove it
+   false, and its VERDICT block lands on the finding as a
+   `REFUTER <label>` note (VERDICT line, 3-6 EVIDENCE lines). Without
+   `mu_delegate`, write that note yourself before deciding
+   ([tasks-or-calls § Delegate call](tasks-or-calls.md#delegate-call)).
+   Skip this for low-severity style findings. High severity: three
+   refuters, accept only if at least two say CONFIRMED.
+3. **Decide** each one; the decision is the task's state. The reason
+   names the deciding evidence, not a tally or a judgement. mu warns
+   when a reason is under 40 chars and no note holds a `VERDICT:` line
+   or `REFUTER` note. Prose reasons go through a heredoc variable
+   ([brief § Quoting](brief.md#quoting)).
 
-   | Decision | Command |
-   | --- | --- |
-   | real work | `mu task accept <id> --evidence '<what confirmed it>'` |
-   | false | `mu task close <id> --as rejected --why '<evidence>'` |
-   | same as another | `mu task close <id> --as duplicate --why 'same as <id>'` |
-   | valid, not worth it | `mu task close <id> --as wontfix --why '<reason>'` |
-   | could not check | stays in triage, with an `UNVERIFIED: <why>` note |
+   | Decision | Command | Bad reason |
+   | --- | --- | --- |
+   | real work | `mu task accept <id> --evidence "2/3 CONFIRMED: refuters 1 and 3 show the checklist:3 vs :33 cycle"` | `valid`, `orchestrator: valid`, `2/3 CONFIRMED` |
+   | false | `mu task close <id> --as rejected --why "<the guard or command that disproves it>"` | `refuter REFUTED` |
+   | same as another | `mu task close <id> --as duplicate --why "same as <id>"` | |
+   | valid, not worth it | `mu task close <id> --as wontfix --why "<cost vs impact>"` | `not worth it` |
+   | could not check | stays in triage, with an `UNVERIFIED: <why>` note | |
 
 4. **Group** accepted findings that touch the same files into one fix
    task when separate workers would collide; close the grouped findings
-   `--as superseded --why 'fixed in <fix-task>'`.
+   `--as superseded --why "fixed in <fix-task>"`.
 
 Done when `mu task list --substate triage -w <ws>` lists only findings
 with an `UNVERIFIED` note, and each of those is reported to the human.

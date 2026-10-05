@@ -27,8 +27,8 @@ fact-check nobody will track, use delegate mode from
    [delegate call](tasks-or-calls.md#delegate-call), not a task. The
    refuter gets the finding and the code, not the finder's reasoning,
    and tries to prove it false: run it, find the guard, read the caller.
-   Record its verdict on the finding, and apply the skip and
-   three-refuter rules, as in [findings § Triage](findings.md#triage).
+   Pass `record` so its verdict lands on the finding, and apply the
+   skip and three-refuter rules, as in [findings § Triage](findings.md#triage).
    Many findings: issue the calls in batches under the cap ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)); to
    get the verdicts back as one table, see
    [codemode-driver § Delegate calls](codemode-driver.md#delegate-calls).

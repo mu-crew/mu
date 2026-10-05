@@ -37,7 +37,10 @@ rules are findings: [findings](findings.md) says where they live.
    line and the rule, and drops false positives (the rule does not
    apply here, the code already complies, the rule has a stated
    exception). In workstream mode, a dropped flag is
-   `close --as rejected --why '<reason>'`; a confirmed one is accepted.
+   `close --as rejected --why "<why the rule does not bite here>"`; a
+   confirmed one is accepted with `--evidence` naming the flagged line
+   ([findings § Triage](findings.md#triage) step 3; quoting:
+   [brief § Quoting](brief.md#quoting)).
 5. **Report or fix** confirmed violations, as in review-panel step 5.
 
 Done when every rule from step 1 has a checker result, and every flag
@@ -62,10 +65,11 @@ is decided.
    corrections from different occasions; a one-off is not a rule.
 3. **One `OPEN/triage` task per candidate rule**, the rule as the
    title and its cluster of corrections in the note.
-4. **Refute each candidate** with a [delegate call](tasks-or-calls.md#delegate-call): would it have
+4. **Refute each candidate** with a [delegate call](tasks-or-calls.md#delegate-call) that passes `record`: would it have
    prevented the real mistakes in its cluster? Does it contradict an
    existing rule? Is it already enforced by a linter or test (then it
-   needs no prose)? Dropped candidates close `--as rejected`.
+   needs no prose)? Dropped candidates close `--as rejected --why`
+   naming the deciding answer.
 5. **Propose, don't commit.** The candidates left in triage are the
    proposal: write them as a diff to the rule file in the umbrella's
    note, worded per [brief](brief.md) (positive, specific, with the
