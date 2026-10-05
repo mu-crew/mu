@@ -5,6 +5,7 @@ import type { MuResult } from "../extension/delegate.js";
 import {
   dispatchedWorkstreams,
   keepDrivingRule,
+  type MuNudgeCtx,
   NUDGE_LOG_KIND,
   NUDGE_MESSAGE_TYPE,
   nudgeText,
@@ -13,7 +14,7 @@ import {
 
 const SKILL = readFileSync(join(import.meta.dirname, "..", "skills", "mu", "SKILL.md"), "utf8");
 
-type Handler = (event: unknown, ctx: unknown) => unknown;
+type Handler = (event: unknown, ctx: MuNudgeCtx) => unknown;
 
 function fakePi() {
   const handlers = new Map<string, Handler[]>();

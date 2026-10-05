@@ -3,12 +3,13 @@ import type { MuResult } from "../extension/delegate.js";
 import {
   CLOSE_NUDGE_MESSAGE_TYPE,
   closeNudgeText,
+  type MuNudgeCtx,
   NUDGE_LOG_KIND,
   registerCloseNudge,
   workerIdentity,
 } from "../extension/nudge.js";
 
-type Handler = (event: unknown, ctx: unknown) => unknown;
+type Handler = (event: unknown, ctx: MuNudgeCtx) => unknown;
 
 function fakePi() {
   const handlers = new Map<string, Handler[]>();

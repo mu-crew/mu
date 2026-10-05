@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuResult } from "../extension/delegate.js";
 import {
   dispatchedTasks,
+  type MuNudgeCtx,
   NUDGE_LOG_KIND,
   REFUTE_NUDGE_MESSAGE_TYPE,
   registerRefuteNudge,
 } from "../extension/nudge.js";
 
-type Handler = (event: unknown, ctx: unknown) => unknown;
+type Handler = (event: unknown, ctx: MuNudgeCtx) => unknown;
 
 function fakePi() {
   const handlers = new Map<string, Handler[]>();
