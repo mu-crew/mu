@@ -70,11 +70,11 @@ function mockTmux(state: MockState): { calls: string[][]; executor: TmuxExecutor
     const verb = args[0];
 
     if (verb === "has-session") {
-      const target = args[2];
+      const target = args[2]?.replace(/^=(.*):$/, "$1");
       return state.sessions.has(target ?? "") ? ok() : fail(`can't find session: ${target}`);
     }
     if (verb === "kill-session") {
-      const target = args[2];
+      const target = args[2]?.replace(/^=(.*):$/, "$1");
       if (!target || !state.sessions.has(target)) {
         return fail(`can't find session: ${target}`);
       }

@@ -40,6 +40,15 @@ export function freshMockState(): MockState {
   };
 }
 
+/** Session name from a `-t` session target. mu targets sessions exactly
+ *  as `=<name>:` (see exactSessionTarget in src/mux/tmux.ts); like real
+ *  tmux, the mock resolves only that form, so a regression to a bare,
+ *  prefix-matching `-t <name>` fails the lookup. */
+function sessionFromTarget(target: string | undefined): string {
+  const m = /^=(.*):$/.exec(target ?? "");
+  return m?.[1] ?? "";
+}
+
 export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxExecutor } {
   const calls: string[][] = [];
 
@@ -48,8 +57,8 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
     const verb = args[0];
 
     if (verb === "has-session") {
-      const target = args[2];
-      return state.sessions.has(target ?? "") ? ok() : fail(`can't find session: ${target}`);
+      const target = sessionFromTarget(args[2]);
+      return state.sessions.has(target) ? ok() : fail(`can't find session: ${target}`);
     }
 
     if (verb === "new-session") {
@@ -76,14 +85,14 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
 
     if (verb === "list-windows") {
       const targetFlag = args.indexOf("-t");
-      const target = targetFlag >= 0 ? args[targetFlag + 1] : undefined;
-      const wins = state.windows.get(target ?? "") ?? [];
+      const target = sessionFromTarget(targetFlag >= 0 ? args[targetFlag + 1] : undefined);
+      const wins = state.windows.get(target) ?? [];
       return ok(wins.map((w) => `${w.id}\t${w.name}`).join("\n") + (wins.length ? "\n" : ""));
     }
 
     if (verb === "new-window") {
       const tFlag = args.indexOf("-t");
-      const sessionName = tFlag >= 0 ? args[tFlag + 1] : "";
+      const sessionName = sessionFromTarget(tFlag >= 0 ? args[tFlag + 1] : undefined);
       const nFlag = args.indexOf("-n");
       const windowName = nFlag >= 0 ? args[nFlag + 1] : "window";
       if (!sessionName || !state.sessions.has(sessionName)) {
@@ -148,8 +157,8 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
 
     if (verb === "list-panes" && args[1] === "-s") {
       const tFlag = args.indexOf("-t");
-      const session = tFlag >= 0 ? args[tFlag + 1] : "";
-      const sessionWindowIds = new Set(state.windows.get(session ?? "")?.map((w) => w.id) ?? []);
+      const session = sessionFromTarget(tFlag >= 0 ? args[tFlag + 1] : undefined);
+      const sessionWindowIds = new Set(state.windows.get(session)?.map((w) => w.id) ?? []);
       const lines: string[] = [];
       for (const pane of state.panes.values()) {
         if (sessionWindowIds.has(pane.windowId)) {

@@ -214,6 +214,24 @@ describe("listSessions", () => {
     expect(await listSessions()).toEqual([]);
   });
 
+  it("returns empty list when the socket file does not exist", async () => {
+    // Fresh boot / cleared /tmp / new TMUX_TMPDIR: tmux reports a missing
+    // socket as a connect error, not as "no server running".
+    const { executor } = harness(() =>
+      fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
+    );
+    setTmuxExecutor(executor);
+    expect(await listSessions()).toEqual([]);
+  });
+
+  it("propagates a connect error that is not a missing socket", async () => {
+    const { executor } = harness(() =>
+      fail("error connecting to /tmp/tmux-1000/default (Permission denied)"),
+    );
+    setTmuxExecutor(executor);
+    await expect(listSessions()).rejects.toBeInstanceOf(TmuxError);
+  });
+
   it("returns empty list when no sessions", async () => {
     const { executor } = harness(() => fail("no sessions"));
     setTmuxExecutor(executor);
@@ -240,11 +258,13 @@ describe("sessionExists", () => {
     expect(await sessionExists("foo")).toBe(false);
   });
 
-  it("calls tmux has-session -t <name>", async () => {
+  it("targets the session exactly (=<name>:), never by prefix", async () => {
+    // A bare `-t mu-auth` prefix-matches `mu-auth-refactor`, so workstream
+    // `auth` would see (and tear down) another workstream's session.
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
-    await sessionExists("foo");
-    expect(calls).toEqual([{ args: ["has-session", "-t", "foo"] }]);
+    await sessionExists("mu-auth");
+    expect(calls).toEqual([{ args: ["has-session", "-t", "=mu-auth:"] }]);
   });
 });
 
@@ -289,6 +309,21 @@ describe("killSession", () => {
     await expect(killSession("foo")).resolves.toBeUndefined();
   });
 
+  it("succeeds idempotently when the socket file does not exist", async () => {
+    const { executor } = harness(() =>
+      fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
+    );
+    setTmuxExecutor(executor);
+    await expect(killSession("foo")).resolves.toBeUndefined();
+  });
+
+  it("targets the session exactly (=<name>:), never by prefix", async () => {
+    const { executor, calls } = harness(() => ok());
+    setTmuxExecutor(executor);
+    await killSession("mu-auth");
+    expect(calls).toEqual([{ args: ["kill-session", "-t", "=mu-auth:"] }]);
+  });
+
   it("propagates other errors", async () => {
     const { executor } = harness(() => fail("server unreachable"));
     setTmuxExecutor(executor);
@@ -306,6 +341,13 @@ describe("listWindows", () => {
       { id: "@1", name: "main" },
       { id: "@2", name: "Backend" },
     ]);
+  });
+
+  it("targets the session exactly (=<name>:)", async () => {
+    const { executor, calls } = harness(() => ok(""));
+    setTmuxExecutor(executor);
+    await listWindows("mu-auth");
+    expect(calls[0]?.args.slice(0, 3)).toEqual(["list-windows", "-t", "=mu-auth:"]);
   });
 
   it("parses cross-session output", async () => {
@@ -326,7 +368,7 @@ describe("listWindows", () => {
 });
 
 describe("newWindow", () => {
-  it("calls new-window -d -t <session> -n <name> with command", async () => {
+  it("calls new-window -d -t =<session>: -n <name> with command", async () => {
     const { executor, calls } = harness(() => ok("%15\n"));
     setTmuxExecutor(executor);
     const paneId = await newWindow({ session: "foo", name: "Backend", command: "bash" });
@@ -335,7 +377,7 @@ describe("newWindow", () => {
       "new-window",
       "-d",
       "-t",
-      "foo",
+      "=foo:",
       "-n",
       "Backend",
       "-P",
@@ -360,7 +402,9 @@ describe("listPanesInSession", () => {
     setTmuxExecutor(executor);
     const { listPanesInSession } = await import("../src/tmux.js");
     const panes = await listPanesInSession("mu-auth");
-    expect(calls[0]?.args.slice(0, 4)).toEqual(["list-panes", "-s", "-t", "mu-auth"]);
+    // `=mu-auth:`, not `mu-auth` or `=mu-auth`: both of those still
+    // prefix-match `mu-auth-refactor` for list-panes.
+    expect(calls[0]?.args.slice(0, 4)).toEqual(["list-panes", "-s", "-t", "=mu-auth:"]);
     expect(panes).toEqual([
       { paneId: "%5", title: "alice", command: "pi", windowId: "@1" },
       { paneId: "%6", title: "rev", command: "claude", windowId: "@2" },
@@ -391,6 +435,15 @@ describe("listPanesInSession", () => {
 
   it("returns [] when the server is up with zero sessions ('no current target')", async () => {
     const { executor } = harness(() => fail("no current target"));
+    setTmuxExecutor(executor);
+    const { listPanesInSession } = await import("../src/tmux.js");
+    expect(await listPanesInSession("mu-ghost")).toEqual([]);
+  });
+
+  it("returns [] when the socket file does not exist (no server)", async () => {
+    const { executor } = harness(() =>
+      fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
+    );
     setTmuxExecutor(executor);
     const { listPanesInSession } = await import("../src/tmux.js");
     expect(await listPanesInSession("mu-ghost")).toEqual([]);
@@ -626,6 +679,14 @@ describe("killPane", () => {
     await expect(killPane("%15")).rejects.toBeInstanceOf(TmuxError);
   });
 
+  it("idempotent when the tmux socket does not exist", async () => {
+    const { executor } = harness(() =>
+      fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
+    );
+    setTmuxExecutor(executor);
+    await expect(killPane("%15")).resolves.toBeUndefined();
+  });
+
   it("rejects invalid pane ids before calling tmux", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
@@ -677,6 +738,14 @@ describe("paneTTY", () => {
 
   it("throws PaneNotFoundError when tmux says the pane is gone", async () => {
     const { executor } = harness(() => fail("can't find pane: %15"));
+    setTmuxExecutor(executor);
+    await expect(paneTTY("%15")).rejects.toBeInstanceOf(PaneNotFoundError);
+  });
+
+  it("throws PaneNotFoundError when the tmux socket does not exist", async () => {
+    const { executor } = harness(() =>
+      fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
+    );
     setTmuxExecutor(executor);
     await expect(paneTTY("%15")).rejects.toBeInstanceOf(PaneNotFoundError);
   });
@@ -824,6 +893,37 @@ describe("sendToPane", () => {
     expect(calls[3]?.args).toEqual(["send-keys", "-t", "%15", "Enter"]);
   });
 
+  it("fails fast on a dead pane instead of polling the readiness budget", async () => {
+    // A vanished pane never quiesces. Before the fix the capture failure
+    // counted as "busy" and the send slept out the full budget (15s by
+    // default) before failing at copy-mode.
+    const { executor, calls } = harness(() => fail("can't find pane: %15"));
+    setTmuxExecutor(executor);
+    let slept = 0;
+    setSleepForTests(async (ms) => {
+      slept += ms;
+    });
+    await expect(sendToPane("%15", "hello", { readinessMs: 15_000 })).rejects.toThrow(
+      /can't find pane/,
+    );
+    expect(slept).toBe(0);
+    expect(calls.map((c) => c.args[0])).toEqual(["capture-pane"]);
+  });
+
+  it("keeps polling on a transient capture failure", async () => {
+    let captures = 0;
+    const { executor } = harness((args) => {
+      if (args[0] === "capture-pane") {
+        captures++;
+        return captures === 1 ? fail("server busy") : ok("$ \n");
+      }
+      return ok();
+    });
+    setTmuxExecutor(executor);
+    await sendToPane("%15", "", { readinessMs: 15_000 });
+    expect(captures).toBeGreaterThan(1);
+  });
+
   it("uses a unique buffer name per call", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
@@ -914,6 +1014,22 @@ describe("capturePane", () => {
     setTmuxExecutor(executor);
     await capturePane("%15", { lines: 50 });
     expect(calls[0]?.args).toEqual(["capture-pane", "-t", "%15", "-p", "-S", "-50"]);
+  });
+
+  it("returns exactly the last N non-blank-ended lines, not screen + N", async () => {
+    // `-S -3` starts 3 rows above the TOP of the screen, so tmux prints
+    // those 3 rows plus the whole visible screen, blank rows included.
+    // Shape of a real 6-row pane after `seq 1 9` and a prompt.
+    const tmuxOut = "line1\nline2\nline3\nline4\nline5\nline6\n$ \n\n\n";
+    const { executor } = harness(() => ok(tmuxOut));
+    setTmuxExecutor(executor);
+    expect(await capturePane("%15", { lines: 3 })).toBe("line5\nline6\n$ \n");
+  });
+
+  it("returns '' when the last N lines are all blank", async () => {
+    const { executor } = harness(() => ok("\n\n\n"));
+    setTmuxExecutor(executor);
+    expect(await capturePane("%15", { lines: 3 })).toBe("");
   });
 
   it("captures only visible pane when lines is 0", async () => {

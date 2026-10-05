@@ -109,14 +109,14 @@ describe("reconcile — empty cases", () => {
     const { executor, calls } = mockTmux([]);
     setTmuxExecutor(executor);
     await reconcile(db, { workstream: "auth-refactor" });
-    expect(calls[0]?.slice(0, 4)).toEqual(["list-panes", "-s", "-t", "mu-auth-refactor"]);
+    expect(calls[0]?.slice(0, 4)).toEqual(["list-panes", "-s", "-t", "=mu-auth-refactor:"]);
   });
 
   it("uses explicit tmuxSession override when provided", async () => {
     const { executor, calls } = mockTmux([]);
     setTmuxExecutor(executor);
     await reconcile(db, { workstream: "auth", tmuxSession: "custom-session" });
-    expect(calls[0]?.slice(0, 4)).toEqual(["list-panes", "-s", "-t", "custom-session"]);
+    expect(calls[0]?.slice(0, 4)).toEqual(["list-panes", "-s", "-t", "=custom-session:"]);
   });
 });
 
