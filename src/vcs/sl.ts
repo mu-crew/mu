@@ -134,6 +134,9 @@ export const slBackend: VcsBackend = {
     if (dirtyFiles.length > 0) {
       throw new WorkspaceDirtyError(workspacePath, dirtyFiles);
     }
+    // `.`'s node before the rebase: unchanged afterwards means sl had
+    // nothing to rebase, so nothing was replayed.
+    const headBefore = await slCommitId(workspacePath);
     try {
       await run(
         "sl",
@@ -171,11 +174,14 @@ export const slBackend: VcsBackend = {
     const parentRef = keepPrevious ? previousParentRef : targetNode;
     // Replayed = log of `target..` post-rebase, oldest-first. Single-
     // line subjects via `{desc|firstline}`. Empty when nothing replayed.
-    const replayedRaw = await run(
-      "sl",
-      ["log", "-r", `${target}::. - ${target}`, "--template", "{desc|firstline}\\n"],
-      workspacePath,
-    ).catch(() => "");
+    const moved = (await slCommitId(workspacePath)) !== headBefore;
+    const replayedRaw = moved
+      ? await run(
+          "sl",
+          ["log", "-r", `${target}::. - ${target}`, "--template", "{desc|firstline}\\n"],
+          workspacePath,
+        ).catch(() => "")
+      : "";
     const replayed = replayedRaw
       .split("\n")
       .map((l) => l.trim())

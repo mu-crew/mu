@@ -155,26 +155,32 @@ export const jjBackend: VcsBackend = {
       throw new Error(`vcs jj: workspace path missing: ${workspacePath}`);
     }
     const target = fromRef ?? "trunk()";
+    // @'s commit id before the rebase (reading it snapshots the WC
+    // first). jj skips commits already in place, so an unchanged id
+    // after the rebase means a no-op: nothing was replayed.
+    const headBefore = await jjCommitId(workspacePath);
     await run("jj", ["rebase", "-d", target], workspacePath);
-    // Replayed = descriptions of commits in (target..@), oldest-first.
-    // Template prints `description ++ "\n\x00"` so multi-line descs
-    // survive splitting; we keep the first non-empty line as subject.
-    const replayedRaw = await run(
-      "jj",
-      [
-        "log",
-        "-r",
-        `${target}..@`,
-        "--no-graph",
-        "--no-pager",
-        "--color",
-        "never",
-        "--reversed",
-        "--template",
-        'description.first_line() ++ "\\n"',
-      ],
-      workspacePath,
-    ).catch(() => "");
+    const moved = (await jjCommitId(workspacePath)) !== headBefore;
+    // Replayed = first-line descriptions of commits in (target..@),
+    // oldest-first, one per line; empty when the rebase was a no-op.
+    const replayedRaw = moved
+      ? await run(
+          "jj",
+          [
+            "log",
+            "-r",
+            `${target}..@`,
+            "--no-graph",
+            "--no-pager",
+            "--color",
+            "never",
+            "--reversed",
+            "--template",
+            'description.first_line() ++ "\\n"',
+          ],
+          workspacePath,
+        ).catch(() => "")
+      : "";
     const replayed = replayedRaw
       .split("\n")
       .map((l) => l.trim())

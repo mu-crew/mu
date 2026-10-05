@@ -131,6 +131,9 @@ export const gitBackend: VcsBackend = {
       }
       resolvedRef = main;
     }
+    // HEAD before the rebase: when the rebase leaves it unchanged,
+    // nothing was replayed, whatever sits above the fork point.
+    const headBefore = await run("git", ["rev-parse", "HEAD"], workspacePath);
     try {
       await run(
         "git",
@@ -152,7 +155,8 @@ export const gitBackend: VcsBackend = {
     // so <ref>'s commit is the new fork point, unless the old fork
     // point already descends from <ref> (a no-op refresh onto an older
     // base): moving parent_ref back would relabel the commits between
-    // them as the worker's. HEAD's history above it is the replayed set.
+    // them as the worker's. HEAD's history above it is the replayed set,
+    // or nothing when the rebase left HEAD where it was (a no-op).
     const target = await run(
       "git",
       ["rev-parse", "--verify", `${resolvedRef}^{commit}`],
@@ -163,11 +167,15 @@ export const gitBackend: VcsBackend = {
       (await gitIsAncestor(workspacePath, target, previousParentRef)) &&
       (await gitIsAncestor(workspacePath, previousParentRef, "HEAD"));
     const parentRef = keepPrevious ? previousParentRef : target;
-    const logOut = await run(
-      "git",
-      ["log", "--reverse", "--format=%s", `${parentRef}..HEAD`],
-      workspacePath,
-    );
+    const headAfter = await run("git", ["rev-parse", "HEAD"], workspacePath);
+    const logOut =
+      headAfter === headBefore
+        ? ""
+        : await run(
+            "git",
+            ["log", "--reverse", "--format=%s", `${parentRef}..HEAD`],
+            workspacePath,
+          );
     const replayed = logOut.length === 0 ? [] : logOut.split("\n");
     return { fromRef: resolvedRef, parentRef, replayed, conflicts: [] };
   },
@@ -231,11 +239,10 @@ export const gitBackend: VcsBackend = {
     // entry pointing here. Without a prune, the next `git worktree
     // add` at this path errors out (the mufeedback case). We can't
     // reach the project root via the workspace itself (the .git
-    // pointer file is gone with the dir), but `worktree prune` runs
-    // from inside any git repo and reaps every dead worktree. We
-    // can't reliably guess WHICH project root, so log it as a hint
-    // in the result rather than running prune ourselves; the spawn
-    // path's defensive prune (above) will clean it on next use.
+    // pointer file is gone with the dir), and we can't reliably guess
+    // WHICH project root, so we return { removed: false } without
+    // pruning; createWorkspace's defensive prune (above) reaps the
+    // dead registry entry on next use.
     if (!existsSync(opts.workspacePath)) {
       return { removed: false };
     }

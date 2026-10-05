@@ -11,6 +11,7 @@ const fake = vi.hoisted(() => ({
   calls: [] as string[][],
   rebaseError: null as Error | null,
   unresolved: "",
+  head: "before",
 }));
 
 vi.mock("../src/vcs/helpers.js", async (importOriginal) => {
@@ -22,9 +23,11 @@ vi.mock("../src/vcs/helpers.js", async (importOriginal) => {
       if (args[0] === "status") return "";
       if (args.includes("rebase") && args.includes("-d")) {
         if (fake.rebaseError) throw fake.rebaseError;
+        fake.head = "after";
         return "";
       }
       if (args[0] === "resolve") return fake.unresolved;
+      if (args[0] === "log" && args[2] === ".") return fake.head;
       if (args[0] === "log" && args[2] === "last(main)") return "a".repeat(40);
       if (args[0] === "log") return "work\n";
       return "";
@@ -40,6 +43,7 @@ beforeEach(() => {
   fake.calls = [];
   fake.rebaseError = null;
   fake.unresolved = "";
+  fake.head = "before";
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });

@@ -1,5 +1,7 @@
-// Tests for src/vcs.ts backend implementations: detectBackend
-// precedence (git > jj > sl > none), the noneBackend (cp -a), and the
+// Tests for src/vcs.ts backend implementations: detectBackend's
+// fallback to none (precedence is jj > sl > git > none; the
+// jj-over-git case is in vcs-detect.integration.test.ts), the
+// noneBackend (cp -a), and the
 // real-VCS backends (git always; jj/sl skipped when not on PATH),
 // plus each backend's commitsBehind() reporter.
 //
@@ -56,7 +58,7 @@ afterEach(() => {
 
 // ─── detectBackend ────────────────────────────────────────────────────
 
-describe("detectBackend precedence", () => {
+describe("detectBackend fallback", () => {
   it("falls back to none when no VCS owns the directory", async () => {
     const backend = await detectBackend(projectRoot);
     expect(backend.name).toBe("none");
