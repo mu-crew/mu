@@ -249,8 +249,11 @@ mu agent spawn reviewer-1 --cli pi_big
    The exceptions are `mu log --tail` and the TUI (`mu state --tui`, or
    bare `mu` on a TTY). Both are:
    - owned by a human or parent script and gone when it ends;
-   - read-only: TUI actions copy the `mu <verb>` command to the
-     clipboard and exit, so every write is a fresh CLI call;
+   - free of user mutations: TUI actions copy the `mu <verb>` command
+     to the clipboard and exit, so every task, agent or workspace change
+     is a fresh CLI call. The one write the TUI makes itself is ambient
+     sync on its slow tick (ingest peer ops, flush the local segment),
+     the same pass every mu invocation runs;
    - limited to stdin, stdout, and a poll timer: no sockets or watches.
      The TUI's slow tick runs short-lived probes (mux liveness, VCS
      status) and ambient sync, and its handoffs (lazygit, tuicr, attach,
