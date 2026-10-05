@@ -215,9 +215,14 @@ export MU_PI_COMMAND="pi --model sonnet:medium"
 mu agent spawn a --cli pi_big   # uses $MU_PI_BIG_COMMAND
 ```
 
-Convention: `pi_mini` for probing, `pi` for build and refactor,
-`pi_big` for design, review, and incidents. List models with
-`pi --list-models [search]`.
+`pi_mini` scouts and finds, `pi` builds, `pi_big` designs. A reviewer, refuter,
+judge or auditor checks level or up, never down: at least the worker's
+capability, from another family if one exists (provider or model-id prefix in
+`pi --list-models`). Small-model signs: a local runtime (ollama, lmstudio,
+llama.cpp), a size (`4b`, `27b`), mini/haiku/flash/nano/lite, thinking `no`,
+context or max-out far below the worker's. No such peer: same model, fresh
+context, higher thinking unless at max. Probe an unused model first
+(`pi --model <provider/model> -p "say ok"`); `ctl: ok` does not test it.
 
 ## Reaper and agent state
 

@@ -36,6 +36,6 @@ final check passed.
   calls, judge the pair twice with the order swapped; a split decision
   goes to a third judge.
 - **Same model, same taste.** Vary the attempt models, and judge with a
-  model that made no attempt.
+  model that made no attempt ([Models](../SKILL.md#models-and-thinking-effort)).
 - **Ranking many items** (tickets by severity): bucket them in parallel,
   then run pairwise comparisons only within and across bucket edges.
