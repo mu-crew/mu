@@ -6,7 +6,7 @@
 // helper with no ink/react imports.
 
 import { execFile } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -51,14 +51,30 @@ async function slProjectRoot(workspacePath: string): Promise<string | null> {
   }
 }
 
+// A jj workspace made by `jj workspace add` has no .git; its
+// `.jj/repo` is a file holding the path (relative to `.jj/`) of the
+// main workspace's `.jj/repo` store. The main workspace's own
+// `.jj/repo` is that store directory.
+async function jjProjectRoot(workspacePath: string): Promise<string | null> {
+  const dotJj = resolve(workspacePath, ".jj");
+  const repo = resolve(dotJj, "repo");
+  try {
+    if ((await stat(repo)).isDirectory()) return realpathOrResolve(workspacePath);
+    const store = resolve(dotJj, (await readFile(repo, "utf8")).trim());
+    return realpathOrResolve(dirname(dirname(store)));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Resolve the canonical project root for a registered workspace path.
  *
  * - git: parent of `git rev-parse --git-common-dir`, so git worktrees
  *   map back to the main checkout's project root rather than the
  *   per-agent worktree directory.
- * - jj: prefer the same git-common-dir path for jj-on-git; otherwise
- *   fall back to the parent directory of the nested jj workspace.
+ * - jj: the directory holding the repo store that the workspace's
+ *   `.jj/repo` pointer names (the main workspace), git-backed or not.
  * - sl: `sl root` is the project root.
  * - none: no VCS relationship to infer.
  */
@@ -69,8 +85,5 @@ export async function workspaceProjectRoot(
   if (backend === "none") return null;
   if (backend === "git") return gitProjectRoot(workspacePath);
   if (backend === "sl") return slProjectRoot(workspacePath);
-
-  const gitRoot = await gitProjectRoot(workspacePath);
-  if (gitRoot !== null) return gitRoot;
-  return realpathOrResolve(dirname(workspacePath));
+  return jjProjectRoot(workspacePath);
 }

@@ -200,6 +200,28 @@ jjDescribe("jjBackend", () => {
     expect(list).not.toContain("worker-1:");
   });
 
+  it("same-named agents in two workstreams get distinct jj workspaces", async () => {
+    await jjBackend.createWorkspace({
+      projectRoot,
+      workspacePath: join(stateRoot, "workspaces", "auth", "worker-1"),
+    });
+    const r = await jjBackend.createWorkspace({
+      projectRoot,
+      workspacePath: join(stateRoot, "workspaces", "billing", "worker-1"),
+    });
+    expect(r.parentRef).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("recreating a workspace whose dir was removed out from under jj succeeds", async () => {
+    const wsPath = join(stateRoot, "workspaces", "auth", "worker-1");
+    await jjBackend.createWorkspace({ projectRoot, workspacePath: wsPath });
+    rmSync(wsPath, { recursive: true, force: true });
+    const freed = await jjBackend.freeWorkspace({ workspacePath: wsPath, commit: false });
+    expect(freed.removed).toBe(false);
+    const r = await jjBackend.createWorkspace({ projectRoot, workspacePath: wsPath });
+    expect(r.parentRef).toMatch(/^[0-9a-f]{40}$/);
+  });
+
   it("freeWorkspace --commit captures the current commit_id", async () => {
     const wsPath = join(stateRoot, "workspaces", "auth", "worker-1");
     await jjBackend.createWorkspace({ projectRoot, workspacePath: wsPath });

@@ -13,13 +13,17 @@ import {
 import { type FreeWorkspaceResult, type VcsBackend, WorkspaceConflictError } from "./types.js";
 
 // `jj workspace add --name <name> <path>` shares the .jj/repo store
-// while giving each agent its own working copy. Workspaces are named;
-// we use basename(workspacePath) which (per our on-disk layout) is the
-// agent name.
+// while giving each agent its own working copy. Workspaces are named
+// per repo; we use `<workstream>/<agent>` (the last two segments of
+// our on-disk layout) because agent names are unique only per
+// workstream.
 //
-// Free is two-step: `jj workspace forget <name>` from the workspace
-// itself unregisters; then we rm the dir since jj leaves the files
-// behind.
+// Free is two-step: `jj workspace forget` (no name: the current
+// workspace) from the workspace itself unregisters; then we rm the dir
+// since jj leaves the files behind. A dir that is already gone cannot
+// be forgotten from here (free has no project root), so createWorkspace
+// forgets a same-named registration whose root is missing, as git's
+// `worktree prune` does.
 //
 // --commit semantics for jj: jj's working copy is always automatically
 // snapshotted, so "commit" is really "capture the current change_id
@@ -41,6 +45,7 @@ export const jjBackend: VcsBackend = {
     }
     await ensureParent(opts.workspacePath);
     const name = jjWorkspaceName(opts.workspacePath);
+    await forgetIfRootMissing(name, opts.projectRoot);
     const args = ["workspace", "add", "--name", name];
     if (opts.parentRef) args.push("--revision", opts.parentRef);
     args.push(opts.workspacePath);
@@ -53,7 +58,6 @@ export const jjBackend: VcsBackend = {
     if (!existsSync(opts.workspacePath)) {
       return { removed: false };
     }
-    const name = jjWorkspaceName(opts.workspacePath);
     let committedRef: string | undefined;
     if (opts.commit) {
       const desc = await run(
@@ -76,10 +80,11 @@ export const jjBackend: VcsBackend = {
       }
       committedRef = await jjCommitId(opts.workspacePath);
     }
-    // `jj workspace forget` works from inside the workspace itself.
-    // jj prints a hint about the working copy becoming orphaned;
-    // we resolve that immediately by rm-ing the dir.
-    await run("jj", ["workspace", "forget", name], opts.workspacePath);
+    // Bare `jj workspace forget` forgets the workspace it runs in, so
+    // free never depends on how the name was derived (older mu used
+    // the agent name alone). jj prints a hint about the working copy
+    // becoming orphaned; we resolve that immediately by rm-ing the dir.
+    await run("jj", ["workspace", "forget"], opts.workspacePath);
     rmDirSync(opts.workspacePath);
     const result: FreeWorkspaceResult = { removed: true };
     if (committedRef !== undefined) result.committedRef = committedRef;
@@ -210,7 +215,9 @@ export const jjBackend: VcsBackend = {
     return { fromRef: target, replayed, conflicts: [] };
   },
 
-  // List jj commits in (baseRef..@), oldest-first. jj's templating
+  // List jj commits in (baseRef..@), oldest-first, minus @ itself when
+  // it is the empty, undescribed working-copy commit jj snapshots on
+  // every command: that is "no work yet", not a commit. jj's templating
   // gives us per-field strings; we glue them with NUL field-separators
   // and \x1e record-separators so multi-line descriptions/bodies
   // round-trip cleanly. The author timestamp template is
@@ -225,7 +232,7 @@ export const jjBackend: VcsBackend = {
       [
         "log",
         "-r",
-        `${baseRef}..@`,
+        `(${baseRef}..@) ~ (@ & empty() & description(exact:""))`,
         "--no-graph",
         "--no-pager",
         "--color",
@@ -281,9 +288,40 @@ export const jjBackend: VcsBackend = {
 const jjCommitSummaryTemplate =
   'commit_id ++ "\\x00" ++ description.first_line() ++ "\\x00" ++ description ++ "\\x00" ++ author.timestamp().format("%Y-%m-%dT%H:%M:%S%:z") ++ "\\x00" ++ author.name() ++ "\\x1e"';
 
-function jjWorkspaceName(workspacePath: string): string {
-  // basename of /foo/bar/worker-1 → worker-1
-  return workspacePath.replace(/\/+$/, "").split("/").pop() ?? workspacePath;
+/** jj workspace name for a mu workspace path:
+ *  <state>/workspaces/auth/worker-1 → auth/worker-1. Workstream and
+ *  agent names cannot contain "/", so the name is unique per repo. */
+export function jjWorkspaceName(workspacePath: string): string {
+  const parts = workspacePath.split("/").filter((p) => p.length > 0);
+  return parts.slice(-2).join("/") || workspacePath;
+}
+
+// Forget `name` if jj still registers it but its root dir is gone (the
+// dir was rm -rf'd, or freed while already missing). jj reports such a
+// workspace's root as "". Best-effort: on a jj without the
+// `WorkspaceRef.root()` template, `workspace add` reports the clash.
+async function forgetIfRootMissing(name: string, projectRoot: string): Promise<void> {
+  try {
+    const out = await run(
+      "jj",
+      [
+        "workspace",
+        "list",
+        "--color",
+        "never",
+        "--template",
+        'name ++ "\\x00" ++ self.root() ++ "\\x1e"',
+      ],
+      projectRoot,
+    );
+    const stale = out
+      .split("\x1e")
+      .map((r) => r.trim().split("\x00"))
+      .some(([n, root]) => n === name && root === "");
+    if (stale) await run("jj", ["workspace", "forget", name], projectRoot);
+  } catch {
+    // best-effort; `workspace add` surfaces any remaining conflict
+  }
 }
 
 async function jjCommitId(workspacePath: string): Promise<string> {
