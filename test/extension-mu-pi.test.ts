@@ -457,6 +457,25 @@ describe("mu pi extension", () => {
       expect(types(await prompt(reloaded)).sort()).toEqual(all);
     });
 
+    it("a pi with no MU_CTL_SOCK (orchestrator) keeps all three nudges", async () => {
+      const key = "MU_CTL_SOCK";
+      delete process.env[key];
+      const orch = samePi(busyMu());
+      await orch.emit("session_start");
+      const all = ["mu-close-task", "mu-keep-driving", "mu-refute-brief"];
+      expect(types(await prompt(orch, { ...orch.ctx, hasUI: true })).sort()).toEqual(all);
+    });
+
+    it("a plain pi (no MU_CTL_SOCK, no MU_AGENT_NAME) keeps keep-driving and refute", async () => {
+      for (const k of ["MU_CTL_SOCK", "MU_AGENT_NAME"]) delete process.env[k];
+      const run = busyMu();
+      const plain = samePi(run);
+      await plain.emit("session_start");
+      const rs = await prompt(plain, { ...plain.ctx, hasUI: true });
+      expect(types(rs).sort()).toEqual(["mu-keep-driving", "mu-refute-brief"]);
+      expect(run).toHaveBeenCalledWith(expect.arrayContaining(["notes"]));
+    });
+
     it("no UI (pi -p, json): no close or refute nudge, keep-driving stays", async () => {
       const agent = samePi(busyMu());
       await agent.emit("session_start");
