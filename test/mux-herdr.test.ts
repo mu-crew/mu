@@ -255,6 +255,30 @@ describe("herdr sessions (= workspaces, addressed by label)", () => {
     expect(calls.argsOf(3)).toEqual(["tab", "rename", "w1:t1", "_mu"]);
   });
 
+  it("closes the new workspace when the first-tab rename fails, then rethrows", async () => {
+    // Spawn's rollback never sees a pane id here, so the backend must not
+    // leave a bare-shell workspace behind.
+    for (const create of [
+      () => herdrBackend.newSessionWithPane("mu-topotest", { windowName: "worker-1", command: "" }),
+      () => newSession("mu-topotest", { windowName: "_mu" }),
+    ]) {
+      const calls = mockHerdr([
+        ["workspace create", WORKSPACE_CREATED],
+        ["tab rename", serverError('{"error":{"code":"server_error","message":"boom"}}')],
+        ["workspace close", OK],
+      ]);
+      await expect(create()).rejects.toThrow(/tab rename/);
+      expect(calls.calls.map((c) => c.slice(0, 2).join(" "))).toEqual([
+        "workspace create",
+        "tab rename",
+        "workspace close",
+      ]);
+      expect(calls.argsOf(2)).toEqual(["workspace", "close", "w1"]);
+      harness?.restore();
+      harness = undefined;
+    }
+  });
+
   it("killSession resolves the label to an id, then closes it", async () => {
     const calls = mockHerdr([
       ["workspace list", WORKSPACE_LIST],

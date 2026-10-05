@@ -630,7 +630,8 @@ export async function newSessionWithPane(
  * by window name (attach focuses the agent's tab, spawn reuses a tab by
  * `--tab`, init checks for `_mu`), so rename it to `windowName`, the
  * label `newWindow` gives every later tab. Load-bearing: an unlabelled
- * first tab is invisible to all three lookups.
+ * first tab is invisible to all three lookups. On failure the new
+ * workspace is closed before the error propagates.
  */
 async function labelRootTab(
   created: Record<string, unknown>,
@@ -642,15 +643,39 @@ async function labelRootTab(
   const tabId =
     (isRecord(root) ? asString(root.tab_id) : undefined) ??
     (isRecord(tab) ? asString(tab.tab_id) : undefined);
-  if (tabId === undefined) {
-    throw new HerdrError(
-      ["workspace", "create"],
-      `herdr response had no root tab id: ${JSON.stringify(created)}`,
-      "",
-      0,
-    );
+  try {
+    if (tabId === undefined) {
+      throw new HerdrError(
+        ["workspace", "create"],
+        `herdr response had no root tab id: ${JSON.stringify(created)}`,
+        "",
+        0,
+      );
+    }
+    await herdr(["tab", "rename", tabId, windowName]);
+  } catch (err) {
+    await closeCreatedWorkspace(created);
+    throw err;
   }
-  await herdr(["tab", "rename", tabId, windowName]);
+}
+
+/**
+ * Best-effort rollback for a workspace this call just created: the caller
+ * never got a pane id, so spawn's rollback cannot reach it. The original
+ * error is what the caller must see, so a failed close is swallowed.
+ */
+async function closeCreatedWorkspace(created: Record<string, unknown>): Promise<void> {
+  const ws = created.workspace;
+  const root = created.root_pane;
+  const id =
+    (isRecord(ws) ? asString(ws.workspace_id) : undefined) ??
+    (isRecord(root) ? asString(root.workspace_id) : undefined);
+  if (id === undefined) return;
+  try {
+    await herdrTolerating(["workspace", "close", id], ["workspace_not_found"]);
+  } catch {
+    // Best effort; the rename error propagates.
+  }
 }
 
 /**
