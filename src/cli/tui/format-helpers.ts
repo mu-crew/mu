@@ -79,7 +79,8 @@ export function formatSinceClaim(ms: number | null | undefined): string {
   return relTime(ms);
 }
 
-/** Render a closed-at age in milliseconds as a short relative-time
+/** Render an age in milliseconds (the Recent views pass updated_at, a
+ *  proxy for close time) as a short relative-time
  *  token with the trailing " ago" suffix:
  *    < 60s   → "Ns ago"
  *    < 60m   → "Nm ago"

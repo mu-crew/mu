@@ -11,7 +11,9 @@
 //
 // Column shape mirrors Card 8 (cards/recent.tsx) but adds two
 // columns the card was too narrow to fit:
-//   glyph   id   STATUS   closed-at   impact   effort   ROI   title
+//   glyph   id   STATUS   updated   impact   effort   ROI   title
+// ("updated" is updated_at, a proxy for close time: a later note or
+// edge on a CLOSED task bumps it.)
 // Per feat_column_aligned_lists clipping policy: every cell except
 // `title` is identity-bearing and PROTECTED; only `title` is
 // CLIPPABLE. Wider title column than the card (more pixels here).
@@ -38,7 +40,7 @@ const COLUMN_SPECS: ReadonlyArray<ColumnSpec> = [
   { kind: "protect" }, // glyph
   { kind: "protect" }, // task id
   { kind: "protect" }, // status (always CLOSED; constant for now)
-  { kind: "protect", align: "right" }, // closed-at (relative-time token)
+  { kind: "protect", align: "right" }, // updated_at age (relative-time token)
   { kind: "protect", align: "right" }, // impact
   { kind: "protect", align: "right" }, // effort
   { kind: "protect", align: "right" }, // ROI label
