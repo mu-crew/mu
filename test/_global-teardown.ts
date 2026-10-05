@@ -175,7 +175,8 @@ async function killPrivateTmuxServer(): Promise<void> {
  * The allowlist has two sources, unioned:
  *
  *   1. USER WORKSTREAMS — every workstream name in the user's REAL
- *      mu DB (`~/.local/state/mu/mu.db` or `$XDG_STATE_HOME/mu/mu.db`).
+ *      mu DB (every candidate from userDbPaths(): `MU_DB_PATH`,
+ *      `MU_STATE_DIR/mu.db`, `$XDG_STATE_HOME/mu/mu.db`).
  *      A `mu-<name>` session matching one of these is the user's
  *      workstream session, even if it was created mid-suite by an
  *      orchestrator agent. We can't open the DB through the SDK
@@ -189,8 +190,10 @@ async function killPrivateTmuxServer(): Promise<void> {
  *   2. THE ORCHESTRATOR'S OWN SESSION — `mu-$MU_SESSION` if
  *      `$MU_SESSION` is set in the parent shell. Belt-and-suspenders
  *      protection for the workstream the orchestrator is actively
- *      running in, in case its DB row was somehow not visible at the
- *      moment buildAllowlist() ran (DB locked, schema mismatch, etc).
+ *      running in, in case its row is in a DB we did not read.
+ *
+ * If no candidate DB exists, or one exists but cannot be read, there
+ * is no allowlist and the sweep is skipped (fail OPEN).
  *
  * Anything on the default socket starting with `mu-` and NOT in the
  * union of those two sets is, by elimination, test residue — a
@@ -205,54 +208,75 @@ async function killPrivateTmuxServer(): Promise<void> {
  */
 
 /**
- * Compute the user's REAL DB path the same way src/db.ts does, but
- * WITHOUT going through `defaultDbPath()` (which honours `MU_DB_PATH`
- * and would land on a per-test temp DB) and WITHOUT going through
- * `openDb()` (which has a hard guard refusing to open the user DB
- * under vitest). We need the user DB specifically and metadata-only.
+ * Every path the user's REAL DB can live at, resolved the way
+ * src/db.ts `defaultDbPath()` does: `MU_DB_PATH`, else
+ * `MU_STATE_DIR/mu.db`, else `$XDG_STATE_HOME/mu/mu.db`. globalSetup
+ * runs in vitest's main process with the developer's unscrubbed env
+ * (test/_setup.ts only scrubs forks), so these are the user's values.
+ * We read EVERY candidate, not just the winner: the user's sessions
+ * may belong to a DB the current shell does not point at, and a
+ * larger allowlist only means fewer kills. We open via better-sqlite3
+ * directly because `openDb()` refuses the user DB under vitest.
  */
-function userDbPath(): string {
-  const home = process.env.HOME ?? homedir();
-  const xdg = process.env.XDG_STATE_HOME ?? join(home, ".local", "state");
-  return join(xdg, "mu", "mu.db");
+export function userDbPaths(env: NodeJS.ProcessEnv = process.env): readonly string[] {
+  const home = env.HOME ?? homedir();
+  const xdg = env.XDG_STATE_HOME ?? join(home, ".local", "state");
+  const paths = [env.MU_DB_PATH, env.MU_STATE_DIR ? join(env.MU_STATE_DIR, "mu.db") : undefined];
+  paths.push(join(xdg, "mu", "mu.db"));
+  return [...new Set(paths.filter((p): p is string => p !== undefined && p.length > 0))];
 }
 
-function readUserWorkstreamsFromDb(): ReadonlySet<string> {
-  const path = userDbPath();
-  if (!existsSync(path)) return new Set();
-  let db: Database.Database | undefined;
-  try {
-    // readonly: true — SQLite refuses every write at the storage
-    //   layer, so even a buggy query can't mutate user state.
-    // fileMustExist: true — don't accidentally CREATE the user DB.
-    db = new Database(path, { readonly: true, fileMustExist: true });
-    const rows = db.prepare("SELECT name FROM workstreams").all() as { name: string }[];
-    return new Set(rows.map((r) => r.name));
-  } catch (err) {
-    // Schema mismatch (DB on a newer version), permission denied,
-    // SQLite locked, etc. We fail OPEN — better to leave a stray
-    // session than to nuke the user's workstreams.
-    console.warn(
-      `[mu-test global-setup] could not read user workstreams from ${path}: ${err instanceof Error ? err.message : String(err)}; allowlist falls back to $MU_SESSION only`,
-    );
-    return new Set();
-  } finally {
-    db?.close();
+/**
+ * Union of workstream names across the candidate DBs, or `null` when
+ * the sweep must not run. It fails OPEN: if no candidate DB exists
+ * (the user's DB is somewhere we did not look) or any existing one
+ * cannot be read (locked, newer schema, corrupt, permission denied),
+ * we cannot tell the user's sessions from test residue, and leaving a
+ * stray session beats killing a live workstream.
+ */
+export function readUserWorkstreams(paths: readonly string[]): ReadonlySet<string> | null {
+  const names = new Set<string>();
+  let found = false;
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    found = true;
+    let db: Database.Database | undefined;
+    try {
+      // readonly: true — SQLite refuses every write at the storage
+      //   layer, so even a buggy query can't mutate user state.
+      // fileMustExist: true — don't accidentally CREATE the user DB.
+      db = new Database(path, { readonly: true, fileMustExist: true });
+      const rows = db.prepare("SELECT name FROM workstreams").all() as { name: string }[];
+      for (const r of rows) names.add(r.name);
+    } catch (err) {
+      console.warn(
+        `[mu-test global-setup] could not read user workstreams from ${path}: ${err instanceof Error ? err.message : String(err)}; skipping the default-socket sweep`,
+      );
+      return null;
+    } finally {
+      db?.close();
+    }
   }
+  return found ? names : null;
 }
 
 /**
  * The protected allowlist of `mu-*` session names that the sweep
- * MUST NEVER kill. Computed lazily at sweep time so we always pick
- * up workstreams the user added to their DB DURING the suite
- * (e.g. an orchestrator agent's `mu workstream init` mid-run).
+ * MUST NEVER kill, or `null` when the user DB is missing or
+ * unreadable (see readUserWorkstreams). Computed lazily at sweep time
+ * so we always pick up workstreams the user added to their DB DURING
+ * the suite (e.g. an orchestrator agent's `mu workstream init` mid-run).
  */
-function buildAllowlist(): ReadonlySet<string> {
+export function buildAllowlist(
+  paths: readonly string[] = userDbPaths(),
+  orchSession: string | undefined = process.env.MU_SESSION,
+): ReadonlySet<string> | null {
+  const workstreams = readUserWorkstreams(paths);
+  if (workstreams === null) return null;
   const allowed = new Set<string>();
-  for (const ws of readUserWorkstreamsFromDb()) {
+  for (const ws of workstreams) {
     allowed.add(`mu-${ws}`);
   }
-  const orchSession = process.env.MU_SESSION;
   if (orchSession !== undefined && orchSession.length > 0) {
     allowed.add(`mu-${orchSession}`);
   }
@@ -282,6 +306,7 @@ async function sweepLeakedDefaultSocketSessions(phase: "setup" | "teardown"): Pr
   const all = (ls.stdout ?? "").split("\n").filter((l) => l.length > 0);
   const muSessions = all.filter((name) => name.startsWith("mu-"));
   const allowlist = buildAllowlist();
+  if (allowlist === null) return;
   const leaked = sessionsToKill(muSessions, allowlist);
   if (leaked.length === 0) return;
 

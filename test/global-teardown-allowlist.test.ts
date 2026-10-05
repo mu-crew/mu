@@ -19,11 +19,21 @@
 //   3. Non-`mu-` sessions are never considered (the helper takes
 //      pre-filtered `mu-*` sessions; this just documents the contract).
 //
-// We don't try to test `readUserWorkstreamsFromDb` here — it's an
-// I/O wrapper exercised by the suite running it on every `npm test`.
+//   4. The allowlist reads the user's DB from every path src/db.ts
+//      could resolve (MU_STATE_DIR included), and fails OPEN (null:
+//      no sweep) when no DB exists or one cannot be read.
 
-import { describe, expect, it } from "vitest";
-import { sessionsToKill } from "./_global-teardown.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  buildAllowlist,
+  readUserWorkstreams,
+  sessionsToKill,
+  userDbPaths,
+} from "./_global-teardown.js";
 
 describe("global-teardown allowlist sweep policy", () => {
   it("kills nothing when every session is in the allowlist", () => {
@@ -97,9 +107,10 @@ describe("global-teardown allowlist sweep policy", () => {
   });
 
   it("treats the empty allowlist as kill-all-mu-sessions (defensive — should never fire in production)", () => {
-    // If DB-read produces an empty set (no user DB) and `$MU_SESSION`
-    // is unset, the suite is the only thing producing mu-* sessions
-    // and they're all leaked-by-definition.
+    // A readable user DB with no workstreams and no `$MU_SESSION`:
+    // the suite is the only thing producing mu-* sessions and they're
+    // all leaked-by-definition. (A missing or unreadable DB yields no
+    // allowlist at all; see the next describe block.)
     const allowlist = new Set<string>();
     const sessions = ["mu-foo", "mu-bar"];
     expect(sessionsToKill(sessions, allowlist)).toEqual(["mu-foo", "mu-bar"]);
@@ -112,5 +123,64 @@ describe("global-teardown allowlist sweep policy", () => {
     const allowlist = new Set(["mu-keep"]);
     const sessions = ["mu-zzz", "mu-keep", "mu-aaa", "mu-mmm"];
     expect(sessionsToKill(sessions, allowlist)).toEqual(["mu-zzz", "mu-aaa", "mu-mmm"]);
+  });
+});
+
+describe("global-teardown allowlist source (user DB)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mu-teardown-allowlist-"));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {}
+  });
+
+  const makeDb = (path: string, names: string[]): void => {
+    const db = new Database(path);
+    db.exec("CREATE TABLE workstreams (name TEXT)");
+    for (const n of names) db.prepare("INSERT INTO workstreams (name) VALUES (?)").run(n);
+    db.close();
+  };
+
+  it("resolves MU_DB_PATH, MU_STATE_DIR and the XDG path, like src/db.ts", () => {
+    expect(
+      userDbPaths({ HOME: "/h", MU_DB_PATH: "/d/x.db", MU_STATE_DIR: "/s", XDG_STATE_HOME: "/x" }),
+    ).toEqual(["/d/x.db", "/s/mu.db", "/x/mu/mu.db"]);
+    expect(userDbPaths({ HOME: "/h" })).toEqual(["/h/.local/state/mu/mu.db"]);
+  });
+
+  it("protects workstreams from a DB under MU_STATE_DIR", () => {
+    const stateDir = join(dir, "state");
+    const paths = userDbPaths({ HOME: join(dir, "home"), MU_STATE_DIR: stateDir });
+    mkdirSync(stateDir);
+    makeDb(join(stateDir, "mu.db"), ["realws"]);
+    expect(buildAllowlist(paths, undefined)).toEqual(new Set(["mu-realws"]));
+  });
+
+  it("unions every readable DB and $MU_SESSION", () => {
+    const a = join(dir, "a.db");
+    const b = join(dir, "b.db");
+    makeDb(a, ["one"]);
+    makeDb(b, ["two"]);
+    expect(buildAllowlist([a, b, join(dir, "missing.db")], "orch")).toEqual(
+      new Set(["mu-one", "mu-two", "mu-orch"]),
+    );
+  });
+
+  it("fails open (no sweep) when no user DB exists, even with $MU_SESSION set", () => {
+    expect(readUserWorkstreams([join(dir, "missing.db")])).toBeNull();
+    expect(buildAllowlist([join(dir, "missing.db")], "orch")).toBeNull();
+  });
+
+  it("fails open (no sweep) when a user DB exists but cannot be read", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const good = join(dir, "good.db");
+    const corrupt = join(dir, "corrupt.db");
+    makeDb(good, ["realws"]);
+    writeFileSync(corrupt, "not a sqlite db");
+    expect(buildAllowlist([good, corrupt], "orch")).toBeNull();
   });
 });

@@ -170,6 +170,10 @@ export function openDb(options: OpenDbOptions = {}): Db {
  * The user's REAL DB path is computed from HOME / XDG_STATE_HOME
  * directly (NOT from defaultDbPath() — which would honour MU_DB_PATH
  * and produce the temp path the test set, defeating the check).
+ * MU_STATE_DIR is deliberately not consulted: test/_setup.ts deletes
+ * the user's MU_* vars in every fork, so any MU_STATE_DIR seen here was
+ * set by a test to a temp dir (test/disk-recon.test.ts opens
+ * <MU_STATE_DIR>/mu.db), and guarding it would refuse that temp DB.
  * Production code paths (the `mu` CLI binary) never set VITEST, so
  * the guard is a complete no-op outside the test runner.
  */
