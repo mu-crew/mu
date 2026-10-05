@@ -139,15 +139,18 @@ type Heredoc = { delim: string; strip: boolean };
  * quotes, so a quoted `--evidence 'a | b'` stays one word. A
  * backslash-newline joins lines, and heredoc bodies are skipped: they
  * are data, not commands. A `<<<` here-string and a `<<` shift inside
- * `(( ))` arithmetic do not start a heredoc.
+ * `(( ))` arithmetic do not start a heredoc. As in bash, `((` is
+ * arithmetic only when its matching close is `))`; otherwise it is
+ * nested subshells, where `<<` is a heredoc. A `#` that starts a word
+ * comments out the rest of the line.
  */
 export function shellSegments(command: string): string[][] {
   const segs: string[][] = [];
   let words: string[] = [];
   let word: string | undefined;
   const heredocs: Heredoc[] = [];
-  /** Open parens inside a `((` arithmetic, where `<<` is a shift. */
-  let arith = 0;
+  /** Index of the closing `)` of the current `(( ))` arithmetic, where `<<` is a shift. */
+  let arithEnd = -1;
   const endWord = () => {
     if (word !== undefined) words.push(word);
     word = undefined;
@@ -182,20 +185,17 @@ export function shellSegments(command: string): string[][] {
       i++; // line continuation: neither a word nor a segment break
     } else if (c === "\\" && i + 1 < command.length) {
       word = (word ?? "") + command[++i];
-    } else if (c === "(" && arith === 0 && command[i + 1] === "(") {
-      arith = 2;
+    } else if (c === "#" && word === undefined) {
+      const eol = command.indexOf("\n", i);
+      i = (eol < 0 ? command.length : eol) - 1; // a comment: the newline still ends the segment
+    } else if (c === "(" && command[i + 1] === "(" && i > arithEnd) {
+      arithEnd = arithmeticEnd(command, i);
       word = `${word ?? ""}((`;
       i++;
-    } else if (c === "(" && arith > 0) {
-      arith++;
-      word = (word ?? "") + c;
-    } else if (c === ")" && arith > 0) {
-      arith--;
-      word = (word ?? "") + c;
     } else if (command.startsWith("<<<", i)) {
       endWord(); // a here-string: its word is data on the same line
       i += 2;
-    } else if (c === "<" && command[i + 1] === "<" && arith === 0) {
+    } else if (c === "<" && command[i + 1] === "<" && i > arithEnd) {
       // `<<[-] DELIM`: the delimiter may be quoted; its body starts on the next line.
       endWord();
       const m = /^<<(-?)[ \t]*('([^']*)'|"([^"]*)"|[^\s;&|<>()]+)/.exec(command.slice(i));
@@ -218,6 +218,31 @@ export function shellSegments(command: string): string[][] {
   }
   endSeg();
   return segs;
+}
+
+/**
+ * For the `((` at `open`: the index of the `)` that closes it when the
+ * matching close is a `))` pair (arithmetic), else -1 (nested
+ * subshells, or unclosed). Bash decides `((` the same way.
+ */
+function arithmeticEnd(command: string, open: number): number {
+  let depth = 0;
+  for (let i = open + 2; i < command.length; i++) {
+    const c = command[i];
+    if (c === "'" || c === '"') {
+      const close = command.indexOf(c, i + 1);
+      if (close < 0) return -1;
+      i = close;
+    } else if (c === "\\") {
+      i++;
+    } else if (c === "(") {
+      depth++;
+    } else if (c === ")") {
+      if (depth > 0) depth--;
+      else return command[i + 1] === ")" ? i + 1 : -1;
+    }
+  }
+  return -1;
 }
 
 /** The task a `mu task claim <id> --for` dispatches, from the args after

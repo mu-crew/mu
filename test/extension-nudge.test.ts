@@ -110,6 +110,8 @@ describe("dispatchedWorkstreams", () => {
     ["mu agent send w1 \\\n  -w ws 'go'", ["ws"]],
     ["grep x <<< foo\nmu task claim t1 --for w1 -w ws", ["ws"]],
     ["echo $((1<<2))\nmu agent send w1 -w ws 'go'", ["ws"]],
+    ["((cd /tmp && cat) <<EOF\nmu agent send w1 -w ws 'go'\nEOF\n)", undefined],
+    ["# see ((note\ncat <<EOF\nmu agent send w1 -w ws 'go'\nEOF", undefined],
   ])("%s", (cmd, want) => {
     expect(dispatchedWorkstreams(cmd)).toEqual(want);
   });

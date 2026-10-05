@@ -115,6 +115,14 @@ describe("dispatchedTasks", () => {
     ["grep x <<< foo\nmu task claim t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
     ["echo $((1<<2))\nmu task claim t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
     ["((x = 1 << 2))\nmu task claim t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
+    // `((` closed by `) )` is nested subshells, so `<<` there is a heredoc.
+    ["((cd /tmp && cat) <<EOF\nmu task claim x --for w1 -w ws\nEOF\n)", []],
+    ["out=$((cd /tmp && cat) <<EOF\nmu task claim x --for w1 -w ws\nEOF\n)", []],
+    ["echo $(( (1 << 2) ))\nmu task claim t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
+    // A comment is not code: no `((`, quote or heredoc starts inside it.
+    ["# see ((note\ncat <<EOF\nmu task claim x --for w1 -w ws\nEOF", []],
+    ["# don't\nmu task claim t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
+    ["echo a#b <<EOF\nmu task claim x --for w1 -w ws\nEOF", []],
   ])("%s", (cmd, want) => {
     expect(dispatchedTasks(cmd)).toEqual(want);
   });
