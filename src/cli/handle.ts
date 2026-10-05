@@ -637,7 +637,7 @@ export function findCommandForArgv(root: Command, argv: readonly string[]): Comm
       if (inline || !opt.required) continue;
       i++;
       // A variadic option keeps consuming non-option tokens, as in
-      // commander: `mu -w a b task` binds [a, b, task] to -w.
+      // commander: `--substate a b` binds [a, b] to --substate.
       if (opt.variadic) {
         while (i + 1 < argv.length && !(argv[i + 1] ?? "-").startsWith("-")) i++;
       }
