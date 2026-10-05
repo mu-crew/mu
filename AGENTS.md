@@ -74,7 +74,8 @@ TS 7.0 lacks. Revisit at TS 7.1.
 - `test/_setup.ts` clears inherited `MU_*` vars except
   `MU_TMUX_SOCKET`. Opt in per test with `withEnv()` from `test/_env.ts`.
 - `test/_global-teardown.ts` kills every `mu-*` tmux session on the
-  default socket that has no workstream in your real DB.
+  default socket that has no workstream in your real DB. It skips the
+  sweep when that DB is missing or unreadable.
 - Workers run `npm run test` concurrently. A test that fails
   under load but passes alone is a test-infra concurrency bug (shared
   `/tmp`, sockets, leaked subprocesses). One that also fails alone is a

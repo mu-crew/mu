@@ -10,6 +10,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- The test suite's default-socket tmux sweep no longer kills your live
+  `mu-*` workstream sessions when your DB lives under `MU_STATE_DIR` or
+  `MU_DB_PATH`, or is missing, locked, corrupt or on a newer schema. It
+  reads every DB path mu resolves and skips the sweep when it cannot
+  read one.
+
 ## [3.8.1] — 2026-10-05
 
 **The mu skill loads again.** 3.8.0's skill description contained ": ",
