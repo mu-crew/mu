@@ -88,12 +88,17 @@ per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
 
 ## Sending
 
-- A plain `mu agent send` appends to prior context; use it to steer or
-  answer. Unrelated work to pi: `mu agent send worker-1 --fresh 'Claim
-  task_x...'`.
+A running worker sees what you send, never a new task note. pi:
+
+| `mu agent send` | busy pi acts | Use for |
+| --- | --- | --- |
+| plain | after the run ends | answers, same-task additions |
+| `--steer` | after the current tool call | advice that can wait for the tool boundary |
+| `--interrupt` | now: kills the running tool | a correction that wastes the current work (stale input, wrong target, changed stop rule) |
+| `--fresh` | refused (`--force` drops the run) | unrelated work: new session + prompt |
+
 - claude-code/codex: send `/new` (codex: `/clear`), then the prompt; a
-  send it cannot confirm prints a `warning:` on stderr. For pi,
-  `--fresh` does both in one step.
+  send it cannot confirm prints a `warning:` on stderr.
 - Use `mu agent send`, not raw mux input. Quote prompts per
   [brief](brief.md#quoting).
 - Cross-workstream wait and claim use qualified refs; only task

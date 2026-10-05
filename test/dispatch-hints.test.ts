@@ -1,5 +1,5 @@
 // Dispatch-time Next: hints: a new task to a pi agent is sent --fresh;
-// steering stays a plain send; pi agents are pointed at `mu agent abort`.
+// steering stays a plain send; a send queued on a busy pi names --interrupt.
 // A real unix-socket server stands in for the mu pi extension; the mux
 // is the fake tmux harness.
 
@@ -101,14 +101,34 @@ describe("dispatchHint", () => {
     expect(nextDispatchHint(claude, "auth")).toBeNull();
   });
 
-  it("plain send: busy → --steer + abort; idle after a run → --fresh nudge; first run → none", () => {
-    const busy = plainSendHints(pi, { state: "busy", runs: 2 }).map((s) => s.command);
+  it("plain send: busy → busy-since + --interrupt; idle after a run → --fresh nudge; first run → none", () => {
+    const now = 1_000_000;
+    const busy = plainSendHints(pi, { state: "busy", runs: 2, since: now - 125_000 }, now);
     expect(busy).toEqual([
-      "mu agent send worker-1 --steer '...' -w auth",
-      "mu agent abort worker-1 -w auth",
+      {
+        intent: "busy since 2m: sees this after the current run ends; to act now: --interrupt",
+        command: "mu agent send worker-1 --interrupt '...' -w auth",
+      },
     ]);
     expect(plainSendHints(pi, { state: "idle", runs: 2 })[0]?.intent).toMatch(/--fresh next time/);
     expect(plainSendHints(pi, { state: "idle", runs: 0 })).toEqual([]);
+  });
+
+  it("steer send: busy → after the current tool call + --interrupt; idle → none", () => {
+    const now = 1_000_000;
+    const busy = plainSendHints(pi, { state: "busy", runs: 2, since: now - 5_000 }, now, "steer");
+    expect(busy.map((s) => s.intent)).toEqual([
+      "busy since 5s: sees this after the current tool call; to act now: --interrupt",
+    ]);
+    expect(plainSendHints(pi, { state: "idle", runs: 2 }, now, "steer")).toEqual([]);
+  });
+
+  it("no hint names --steer as an interrupt", () => {
+    const all = [
+      ...plainSendHints(pi, { state: "busy", runs: 2, since: 0 }, 1),
+      ...plainSendHints(pi, { state: "busy", runs: 2, since: 0 }, 1, "steer"),
+    ];
+    expect(all.some((s) => /--steer/.test(s.intent + s.command))).toBe(false);
   });
 
   it("stall error names abort first-resort only for a ctl owner", () => {
@@ -203,19 +223,37 @@ describe("mu agent send hints", () => {
     expect(steps.some((s) => /--fresh next time/.test(s.intent))).toBe(true);
   });
 
-  it("--steer: no nudge", async () => {
+  it("--steer to an idle pi: no nudge, no busy hint", async () => {
     seed();
     await serve("worker-1", "idle", 3);
     const steps = await send("--steer");
     expect(steps.some((s) => s.command.includes("--fresh"))).toBe(false);
+    expect(steps.some((s) => /busy since/.test(s.intent))).toBe(false);
   });
 
-  it("plain send to a busy pi: --steer and abort, no --fresh nudge", async () => {
+  it("plain send to a busy pi: busy-since hint naming --interrupt, no --fresh nudge", async () => {
     seed();
     await serve("worker-1", "busy", 3);
-    const cmds = (await send()).map((s) => s.command);
-    expect(cmds).toContain("mu agent send worker-1 --steer '...' -w auth");
-    expect(cmds).toContain("mu agent abort worker-1 -w auth");
-    expect(cmds.some((c) => c.includes("--fresh"))).toBe(false);
+    const steps = await send();
+    const hint = steps.find((s) => /busy since/.test(s.intent));
+    expect(hint?.intent).toMatch(/after the current run ends; to act now: --interrupt$/);
+    expect(hint?.command).toBe("mu agent send worker-1 --interrupt '...' -w auth");
+    expect(steps.some((s) => s.command.includes("--fresh"))).toBe(false);
+  });
+
+  it("--steer to a busy pi: busy-since hint, after the current tool call", async () => {
+    seed();
+    await serve("worker-1", "busy", 3);
+    const steps = await send("--steer");
+    expect(steps.find((s) => /busy since/.test(s.intent))?.intent).toMatch(
+      /after the current tool call; to act now: --interrupt$/,
+    );
+  });
+
+  it("plain send to an idle pi on its first run: no busy hint", async () => {
+    seed();
+    await serve("worker-1", "idle", 0);
+    const steps = await send();
+    expect(steps.some((s) => /busy since/.test(s.intent))).toBe(false);
   });
 });

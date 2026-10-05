@@ -32,6 +32,7 @@ reply carries `v: 1`; the client (`src/ctl/client.ts`) throws
 | `send` | `pi.sendUserMessage`; when busy, `mode` is `steer` or `followUp` (default). Replies with the `status` fields measured before the dispatch, so `runs` is the baseline for a later `wait` |
 | `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` |
 | `abort` | `ctx.abort()` (pi's Esc) |
+| `interrupt` | busy: `ctx.abort()`, wait for `agent_settled` (up to `timeoutMs`), then `pi.sendUserMessage(text)` as a new run; idle: just the send. Replies `wasBusy`, `pending` (measured before the abort) and the `status` fields measured after the settle and before the send, so `runs` is the `wait` baseline for the new run. `timeout`: nothing sent |
 | `fresh` | new session plus prompt as one operation, through the internal `/mu-fresh` command; replies once the new run starts; refused with `busy` unless `force` |
 | `command` | `name` `new`, `reload` or `compact` (with optional `instructions`), through the internal `/mu-new`, `/mu-reload`, `/mu-compact` commands, which call `ctx.newSession()`, `ctx.reload()`, `ctx.compact()`. `new` replies once the session is replaced, `reload` after the `session_start` it causes, `compact` when compaction starts or with pi's error (`Nothing to compact ...`). Refused with `busy` unless `force` |
 
@@ -41,13 +42,14 @@ extension command, triggered with `expandPromptTemplates: true`, and
 its handler gets the command context that can replace or reload the
 session.
 
-These back `mu agent send` (`--fresh`, `--steer`, session commands), `mu agent wait`,
+These back `mu agent send` (`--fresh`, `--steer`, `--interrupt`, session commands), `mu agent wait`,
 `mu agent abort`, the agent state reading, and `mu_delegate`.
 
 ## Version skew
 
 An op the extension does not serve returns `unknown op: <op>` with its
-`ops` list. mu raises `AgentExtensionOutdatedError` (exit 4), whose
+`ops` list. `mu agent send --interrupt` then composes `abort`, `wait`
+and `send` itself. Any other op raises `AgentExtensionOutdatedError` (exit 4), whose
 next steps are `/reload` through the mux (an extension that lacks the
 `command` op cannot run it over ctl) or a respawn. `mu doctor`
 probes every pi agent's socket (the `ctl` row) and flags an

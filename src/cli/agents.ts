@@ -26,7 +26,9 @@ import {
   delegateOutcome,
   expectsCtl,
   getAgent,
+  interruptAgent,
   isKickSignal,
+  isSlashCommand,
   type KickSignal,
   kickAgent,
   listLiveAgents,
@@ -227,14 +229,32 @@ export async function cmdSend(
     via?: string;
     fresh?: boolean;
     force?: boolean;
+    interrupt?: boolean;
+    timeout?: number;
   } = {},
 ): Promise<void> {
   const via = parseVia(opts.via);
   const text = rawText === STDIN_ARG ? await readStdinText("send text") : rawText;
+  if (opts.interrupt) {
+    for (const [on, flag] of [
+      [opts.fresh, "--fresh"],
+      [opts.steer, "--steer"],
+      [via === "mux", "--via mux"],
+      [opts.force, "--force"],
+    ] as const) {
+      if (on) throw new UsageError(`--interrupt and ${flag} are mutually exclusive`);
+    }
+    if (isSlashCommand(text)) {
+      throw new UsageError("--interrupt sends a prompt, not a slash command");
+    }
+  } else if (opts.timeout !== undefined) {
+    throw new UsageError("--timeout only applies with --interrupt");
+  }
   if (opts.force && !opts.fresh && parseSessionCommand(text) === undefined) {
     throw new UsageError("--force only applies with --fresh or a /new, /reload, /compact");
   }
   if (opts.fresh && opts.steer) throw new UsageError("--fresh and --steer are mutually exclusive");
+  if (opts.interrupt) return cmdSendInterrupt(db, rawName, text, opts);
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
@@ -271,10 +291,20 @@ export async function cmdSend(
   // dispatch, so the hints can tell a queued follow-up (busy) from a new
   // task landing in an old context (idle after a settled run). An older
   // extension replies without runs and its state is post-dispatch: no hints.
-  const plainCtl =
-    sent.transport === "ctl" && !opts.fresh && !opts.steer && sent.command === undefined;
+  const plainCtl = sent.transport === "ctl" && !opts.fresh && sent.command === undefined;
   if (agentRow !== undefined && plainCtl && sent.state !== undefined && sent.runs !== undefined) {
-    nextSteps.push(...plainSendHints(agentRow, { state: sent.state, runs: sent.runs }));
+    nextSteps.push(
+      ...plainSendHints(
+        agentRow,
+        {
+          state: sent.state,
+          runs: sent.runs,
+          ...(sent.since !== undefined ? { since: sent.since } : {}),
+        },
+        Date.now(),
+        opts.steer ? "steer" : "followUp",
+      ),
+    );
   }
   if (stalenessCheck.warned && stalenessCheck.nextStep !== null) {
     nextSteps.push(stalenessCheck.nextStep);
@@ -318,6 +348,59 @@ export async function cmdSend(
               : `via ctl, pi ${sent.state ?? "?"}`;
     console.log(pc.dim(`sent ${text.length} bytes to ${name} (${how})`));
   }
+  printNextSteps(nextSteps);
+}
+
+/** `mu agent send --interrupt`: abort a busy pi, wait for settle, send. */
+async function cmdSendInterrupt(
+  db: Db,
+  rawName: string,
+  text: string,
+  opts: { workstream?: string; json?: boolean; strictStaleness?: boolean; timeout?: number },
+): Promise<void> {
+  const { name } = await resolveEntityRef(db, rawName, opts, "agent");
+  assertAgentInWorkstream(db, name, opts.workstream);
+  const ws = await resolveWorkstream(opts.workstream);
+  const stalenessCheck = await checkWorkspaceStalenessForDispatch(db, name, ws, {
+    strict: opts.strictStaleness === true,
+  });
+  const r = await interruptAgent(db, name, text, {
+    workstream: ws,
+    ...(opts.timeout === undefined ? {} : { timeoutMs: Math.round(opts.timeout * 1000) }),
+  });
+  const nextSteps: NextStep[] = [
+    r.runs !== undefined
+      ? {
+          intent: "Wait for the response (returns its final text)",
+          command: `mu agent wait ${name} --after-runs ${r.runs} --json -w ${ws}`,
+        }
+      : { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
+  ];
+  if (r.pending) {
+    nextSteps.push({
+      intent: "Queued messages went back to the pane's editor unsent: read them there",
+      command: `mu agent read ${name} -n 30 -w ${ws}`,
+    });
+  }
+  if (stalenessCheck.warned && stalenessCheck.nextStep !== null) {
+    nextSteps.push(stalenessCheck.nextStep);
+  }
+  if (opts.json) {
+    emitJson({
+      agentName: name,
+      sentBytes: text.length,
+      transport: "ctl",
+      interrupt: true,
+      ...r,
+      staleness: stalenessCheck.staleness,
+      nextSteps,
+    });
+    return;
+  }
+  const what = r.wasBusy ? "interrupted a busy run" : "pi was idle";
+  const runs = r.runs !== undefined ? `, runs ${r.runs}` : "";
+  console.log(pc.dim(`sent ${text.length} bytes to ${name} (via ctl, ${what}${runs})`));
+  if (r.pending) console.log(pc.yellow("queued messages went back to the pane's editor unsent"));
   printNextSteps(nextSteps);
 }
 
@@ -993,7 +1076,19 @@ export function wireAgentCommands(program: Command): void {
       "--strict-staleness",
       "refuse send when the target agent's workspace is stale (default: warn and proceed)",
     )
-    .option("--steer", "if pi is busy, interrupt the current run (default: queue as a follow-up)")
+    .option(
+      "--steer",
+      "if pi is busy, deliver after the current tool calls finish, before the next model call (default: after the run ends); does not stop a running tool: use --interrupt",
+    )
+    .option(
+      "--interrupt",
+      "pi only: if busy, abort the current run (kills the running tool; queued messages go back to the editor), wait for pi to settle, then send the text as a new run. Exit 5 if pi does not settle; the text is then not sent",
+    )
+    .option(
+      "--timeout <seconds>",
+      "with --interrupt: max seconds to wait for pi to settle (default 30)",
+      parsePositiveNumber,
+    )
     .option("--via <transport>", "force the transport: ctl or mux (mux = paste into the pane)")
     .option(
       "--fresh",
@@ -1014,6 +1109,8 @@ export function wireAgentCommands(program: Command): void {
         via?: string;
         fresh?: boolean;
         force?: boolean;
+        interrupt?: boolean;
+        timeout?: number;
       };
       return handle((db) => cmdSend(db, name, text, opts), this as Command)();
     });

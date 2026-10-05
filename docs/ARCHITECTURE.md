@@ -120,7 +120,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/agents/spawn.ts` | spawn: CLI resolution, pane create or reuse, liveness, readiness, ctl handshake, rollback |
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
 | `src/agents/transport.ts` | send routing: ctl for pi agents, mux paste otherwise, no fallback; `expectsCtl` |
-| `src/agents/abort.ts` | stop a pi turn through the control socket |
+| `src/agents/abort.ts` | stop a pi turn through the control socket; abort + send (`--interrupt`) |
 | `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `died` / `timeout` / `pending` |
 | `src/agents/wait.ts` | block until task-less agents leave `busy` |
 | `src/agents/adopt.ts` | register an existing pane as an agent |
@@ -168,7 +168,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/cli.ts` | Commander wiring (`buildProgram`) |
 | `src/cli/*.ts` | one file per verb namespace, thin wrappers over the SDK; `format.ts` renders tables, `handle.ts` maps errors to exit codes and runs ambient sync |
 | `src/cli/tasks/*.ts` | the `mu task` namespace, including `mu me tasks` / `mu me next` |
-| `src/cli/dispatch-hints.ts` | dispatch-time `Next:` hints for pi agents (`--fresh`, `--steer`, abort) |
+| `src/cli/dispatch-hints.ts` | dispatch-time `Next:` hints for pi agents (`--fresh`, `--interrupt`, abort) |
 | `src/cli/stdin.ts` | `-` as a text argument: reads note / send text from stdin (heredoc prose) |
 | `src/cli/agents-remote.ts` | `mu agent remote-env`: prints the ssh forward and env, runs nothing |
 | `src/cli/tui-launch-focus.ts` | initial-tab focus ladder for bare `mu` and `mu state --tui` |

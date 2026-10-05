@@ -564,9 +564,34 @@ function serveCtl(pi: MuPiApi): void {
         if (!g.ctx) return fail("no pi context yet");
         g.ctx.abort();
         return { v: V, ok: true, state: g.state };
+      case "interrupt":
+        return interrupt(req, conn);
       default:
         return { ...fail(`${UNKNOWN_OP_PREFIX}${String(req.op)}`), ops: [...CTL_OPS] };
     }
+  }
+
+  /**
+   * Abort a busy turn, wait for its settle, then send `text` as a new run.
+   * The waiter is registered before the abort, so a settle that lands at
+   * once is not missed. `runs` is read after that settle and before the
+   * send: the caller's wait baseline for the new run, not the aborted one.
+   */
+  async function interrupt(req: Record<string, unknown>, conn: Socket): Promise<Reply> {
+    const text = str(req, "text");
+    if (text === undefined) return fail("interrupt needs a string text");
+    const wasBusy = !(g.ctx?.isIdle() ?? g.state === "idle");
+    const { pending } = status();
+    if (wasBusy) {
+      if (!g.ctx) return fail("no pi context yet");
+      const settled = wait(g.runs, num(req, "timeoutMs"), conn);
+      g.ctx.abort();
+      const w = await settled;
+      if (!w.ok) return w;
+    }
+    const before = status();
+    await g.pi.sendUserMessage(text);
+    return { v: V, ok: true, ...before, pending, wasBusy };
   }
 
   const settledRun = () => ({

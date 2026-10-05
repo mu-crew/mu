@@ -65,8 +65,8 @@ export class CtlUnknownOpError extends Error {
 function clientTimeout(req: CtlRequest, override?: number): number | undefined {
   if (override !== undefined) return override;
   if (req.op === "fresh" || req.op === "command") return CTL_FRESH_TIMEOUT_MS;
-  if (req.op !== "wait") return CTL_DEFAULT_TIMEOUT_MS;
-  // An unbounded wait is held until pi settles.
+  if (req.op !== "wait" && req.op !== "interrupt") return CTL_DEFAULT_TIMEOUT_MS;
+  // An unbounded wait (or interrupt) is held until pi settles.
   return req.timeoutMs === undefined ? undefined : req.timeoutMs + CTL_WAIT_SLACK_MS;
 }
 

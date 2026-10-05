@@ -13,7 +13,10 @@ or may hit flakes.
 3. **Keep state in the DB.** Progress lives in task notes, not in the
    orchestrator's context. After a compaction, `mu state` and
    `mu task notes <id>` are the whole picture.
-4. **Accept evidence, not close notes**
+4. **Bound each tool call** to minutes: batches of ≤10 minutes,
+   `mu task wait --timeout` re-issued, no open-ended `sleep` loops.
+   A `--steer` lands only when the running tool returns.
+5. **Accept evidence, not close notes**
    ([orchestrator-loop § Merging](orchestrator-loop.md#merging)).
 
 Done when every unit is `CLOSED/done` and the criterion from step 1
