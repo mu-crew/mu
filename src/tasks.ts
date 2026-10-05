@@ -88,6 +88,7 @@ export {
   slugifyTitleVerbose,
 } from "./tasks/id.js";
 export {
+  type AttributedEvidence,
   acceptTask,
   type CloseSkippedResult,
   type CloseSubstate,
@@ -103,6 +104,8 @@ export {
   type SetStatusResult,
   setTaskStatus,
   unparkTask,
+  WEAK_REASON_CHARS,
+  weakDecisionWarning,
 } from "./tasks/lifecycle.js";
 export {
   getTask,

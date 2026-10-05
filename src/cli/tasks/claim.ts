@@ -38,6 +38,7 @@ import {
   getTask,
   ReaperDetectedDuringWaitError,
   releaseTask,
+  resolveActorIdentity,
   TaskNotFoundError,
   type TaskWaitRef,
   type TaskWaitTaskState,
@@ -56,11 +57,12 @@ export async function cmdTaskRelease(
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
-  const sdkOpts: { reopen: boolean; evidence?: string; workstream: string } = {
+  const sdkOpts: Parameters<typeof releaseTask>[2] = {
     reopen: opts.reopen ?? false,
     workstream: ws,
   };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
+  if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
   const r = releaseTask(db, localId, sdkOpts);
   // Title push for the agent that just lost the task. Prev-owner could
   // be null (anonymous claim release — nothing to refresh).
@@ -143,21 +145,16 @@ export async function cmdClaim(
       }
     }
   }
-  const sdkOpts: {
-    agentName?: string;
-    agentWorkstream?: string;
-    self?: boolean;
-    actor?: string;
-    evidence?: string;
-    force?: boolean;
-    workstream: string;
-  } = { workstream: ws };
+  const sdkOpts: Parameters<typeof claimTask>[2] = { workstream: ws };
   if (forName !== undefined) sdkOpts.agentName = forName;
   if (opts.force) sdkOpts.force = true;
   if (forWorkstream !== undefined) sdkOpts.agentWorkstream = forWorkstream;
   if (opts.self) sdkOpts.self = true;
   if (opts.actor !== undefined) sdkOpts.actor = opts.actor;
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
+  // `--for` dispatch: the CLAIM note is the dispatcher's, not the
+  // worker's (the SDK defaults it to the claimer).
+  if (opts.evidence && forName !== undefined) sdkOpts.author = await resolveActorIdentity();
   const stalenessCheck =
     forName !== undefined
       ? await checkWorkspaceStalenessForDispatch(db, forName, forWorkstream ?? ws, {

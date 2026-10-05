@@ -139,6 +139,10 @@ mu task release build -w auth
 
 - Closed substates other than `done` need `--why`. Every `CLOSED`
   substate satisfies a blocker.
+- Deciding a finding (`accept`, or `close --as rejected|wontfix|duplicate`)
+  with a reason under 40 characters and no `VERDICT:` or `REFUTER` note
+  prints a warning. The exit code stays the same. A `REJECTED` or `SUPERSEDED`
+  note appends the title of each task id it names.
 - `--if-ready` closes only when every blocker is closed. Otherwise it
   lists the open blockers and exits 0.
 - A parked task leaves the ready set, and its dependents keep waiting.
