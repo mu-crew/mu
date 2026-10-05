@@ -18,6 +18,9 @@ Litestream, cr-sqlite or a peer list, and why the DB must never sit in
   `applyOp`.
 - Peer discovery is implicit: every non-self `*.jsonl` is a peer. A
   peer disappears only when its segment is deleted.
+- A Syncthing conflict copy (`<machine>.sync-conflict-….jsonl`) is
+  ingested too, with its own watermark keyed by the file stem: it can
+  diverge from the original, so line counts are not comparable.
 
 **Single writer per file.** A machine appends only to its own segment,
 so nothing is contended and any folder syncer is adequate. Segments
@@ -35,8 +38,10 @@ anything else, unwrapping on ingest.
 
 ## Robustness layers
 
-Four checks stop ingest at the first bad record and advance the
-watermark only that far:
+The first three checks stop ingest at the first bad record and advance
+the watermark only that far. The fourth is whole-file: it reports the
+defect without halting, because every line still present is valid, and
+only a fresh copy of the file clears it:
 
 | Layer | Catches |
 | --- | --- |
@@ -54,8 +59,9 @@ distinguishes three cases:
 
 | Line | Result |
 | --- | --- |
-| damaged | halt |
+| damaged (including a blank line) | halt |
 | a known machine-local entity | reported defect, skipped |
+| a historical log-only intent (`workstream.export` prose from mu < 1.1) | skipped silently, as flush and `--from` skip it |
 | an unrecognised entity | applied as a no-op, no defect (a reader behind the writer is normal in a mixed fleet) |
 
 `mu sync` suggests `--repair` only for defects a re-read can clear.
@@ -71,8 +77,9 @@ poll outliving a command. It happens because you already run `mu`
 constantly.
 
 The seam is `handle()` (`src/cli/handle.ts`), which every verb passes
-through and which is already async. `syncPass` is async because it
-takes the file lock, while most verb bodies are synchronous
+through and which is already async. It awaits `ambientIngest` and
+`ambientFlush`; the flush is async because it takes the file lock,
+while most verb bodies are synchronous
 better-sqlite3 code. One `await` before `fn(db)` and one after cover
 every verb.
 
@@ -86,7 +93,8 @@ every verb.
 `src/sync.ts` holds `ambientIngest`, `ambientFlush`, `ambientSyncPass`,
 `peerStatuses`, `ingestFromDb` (`mu sync --from <path>`) and
 `repairPeer` (`mu sync --repair <peer>`, a unique prefix; ambiguity is
-exit 4).
+exit 4). A prefix names a machine, so it resets the watermark of the
+peer's segment and of every conflict copy of it.
 
 ### Carve-outs
 

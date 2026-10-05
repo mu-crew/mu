@@ -519,7 +519,7 @@ export interface HandleOptions {
  *  THE AMBIENT-SYNC SEAM. `handle()` is the one place every verb passes
  *  through, and it is ALREADY async while most verb bodies are
  *  synchronous — which is exactly why the hook belongs here and nowhere
- *  else. `syncPass` is async (it takes a cross-process file lock); if the
+ *  else. `ambientFlush` is async (it takes a cross-process file lock); if the
  *  hook lived inside the verbs, ~63 synchronous handlers would have had
  *  to become async to await it. Here, one `await` before `fn(db)` and one
  *  after covers all of them, and no verb learns that sync exists.

@@ -10,9 +10,8 @@
 //   (b) DB on a network mount   -> broken WAL locking.
 //   (c) case-colliding names    -> collide on macOS, coexist on Linux.
 //
-// MU_SYNC_DIR does not exist yet (v2-sync introduces it). These checks
-// read it if set and no-op otherwise, so they are live the moment sync
-// lands rather than needing a follow-up.
+// The checks that need MU_SYNC_DIR read it if set and no-op otherwise,
+// so a single-machine install pays nothing.
 
 import { existsSync, statfsSync } from "node:fs";
 import { resolve, sep } from "node:path";
@@ -304,7 +303,7 @@ export function checkCaseCollisions(db: Db): FleetHazard {
       "name, and destroy the old one:",
       "  mu db backup <file>",
       "  mu workstream init <new-name>",
-      "  mu workstream teardown <old-name>",
+      "  mu workstream teardown <old-name> --yes",
     ],
   };
 }

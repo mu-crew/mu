@@ -806,6 +806,7 @@ CREATE INDEX IF NOT EXISTS idx_ops_group ON ops (group_id);
 -- into that peer's segment we have applied. One integer suffices
 -- because segments are append-only and ordered. Rows are created on
 -- demand at first ingest; there is no membership list to configure.
+-- A Syncthing conflict copy gets its own row, keyed by its file stem.
 CREATE TABLE IF NOT EXISTS sync_peers (
   machine_id       TEXT PRIMARY KEY,
   last_applied_seq INTEGER NOT NULL DEFAULT 0,

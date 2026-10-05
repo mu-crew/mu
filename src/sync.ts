@@ -130,7 +130,9 @@ export interface PeerStatus {
   path: string;
   /** True for a Syncthing-style `*.sync-conflict-*.jsonl` copy. */
   conflictCopy: boolean;
-  /** Lines of this peer's segment already applied. */
+  /** `sync_peers` key of this file's watermark (see `PeerSegment`). */
+  watermarkKey: string;
+  /** Lines of this segment file already applied. */
   watermark: number;
   /** GOOD lines currently in the segment (a defect stops the count). */
   total: number;
@@ -158,13 +160,14 @@ export function peerStatuses(db: Db, dir: string): PeerStatus[] {
       lastSeenMs = null;
     }
     const total = segmentLineCount(peer.path);
-    const watermark = getWatermark(db, peer.machineId);
+    const watermark = getWatermark(db, peer.watermarkKey);
     const ageMs = lastSeenMs === null ? null : Math.max(0, now - lastSeenMs);
     return {
       machineId: peer.machineId,
       short: peer.machineId.slice(0, PEER_SHORT_LEN),
       path: peer.path,
       conflictCopy: peer.conflictCopy,
+      watermarkKey: peer.watermarkKey,
       watermark,
       total,
       behind: Math.max(0, total - watermark),
@@ -179,33 +182,43 @@ export function peerStatuses(db: Db, dir: string): PeerStatus[] {
 /** Resolve an operator-typed peer reference (full machine id, or any
  *  unique prefix) against the discovered peers. Ambiguity is a
  *  UsageError, never a guess — repairing the wrong peer would re-read a
- *  whole segment for nothing and confuse the report. */
+ *  whole segment for nothing and confuse the report.
+ *
+ *  A ref names a MACHINE, so a segment and its conflict copies (same
+ *  machine id) count as one match; the peer's own segment is returned
+ *  when present. Counting them separately made the short id `mu sync`
+ *  prints unresolvable. */
 export function resolvePeerRef(peers: readonly PeerStatus[], ref: string): PeerStatus {
-  const exact = peers.find((p) => p.machineId === ref);
-  if (exact !== undefined) return exact;
   const matches = peers.filter((p) => p.machineId.startsWith(ref));
-  const first = matches[0];
+  const exact = matches.filter((p) => p.machineId === ref);
+  const candidates = exact.length > 0 ? exact : matches;
+  const machines = [...new Set(candidates.map((p) => p.machineId))];
+  const first = candidates.find((p) => !p.conflictCopy) ?? candidates[0];
   if (first === undefined) {
     throw new SyncPeerNotFoundError(
       ref,
       peers.map((p) => p.short),
     );
   }
-  if (matches.length > 1) {
+  if (machines.length > 1) {
     throw new SyncPeerRefAmbiguousError(
       ref,
-      matches.map((p) => p.short),
+      machines.map((m) => m.slice(0, PEER_SHORT_LEN)),
     );
   }
   return first;
 }
 
-/** Reset a peer's watermark so the next ingest re-reads its segment from
- *  zero. Safe by construction: apply is idempotent and `ops` dedupes on
+/** Reset the watermark of every segment file a peer has (its own and
+ *  any conflict copies) so the next ingest re-reads them from zero. Safe
+ *  by construction: apply is idempotent and `ops` dedupes on
  *  `UNIQUE (machine_id, hlc)`. */
 export function repairPeer(db: Db, ref: string, dir: string): PeerStatus {
-  const peer = resolvePeerRef(peerStatuses(db, dir), ref);
-  resetWatermark(db, peer.machineId);
+  const peers = peerStatuses(db, dir);
+  const peer = resolvePeerRef(peers, ref);
+  for (const p of peers) {
+    if (p.machineId === peer.machineId) resetWatermark(db, p.watermarkKey);
+  }
   return peer;
 }
 
@@ -250,11 +263,19 @@ function describeDefects(peerShort: string, defects: readonly SegmentDefect[]): 
   // line is deterministic: re-reading hits the identical line and the
   // hint would be self-referentially useless, which is exactly how the
   // original incident's operator was sent in a circle. A re-delivered
-  // op is deterministic for the same reason.
+  // op is deterministic for the same reason. So is a manifest mismatch:
+  // the file itself is short, re-reading it changes nothing, and only a
+  // fresh copy from the peer clears it.
   const skipped = new Set(["entity-not-synced", "duplicate-op"]);
-  const hint = defects.every((d) => skipped.has(d.kind))
-    ? " — skipped; the rest of the segment applied"
-    : ` — re-read with \`mu sync --repair ${peerShort}\``;
+  const fileWide = new Set(["manifest-mismatch"]);
+  let hint: string;
+  if (defects.every((d) => skipped.has(d.kind))) {
+    hint = " — skipped; the rest of the segment applied";
+  } else if (defects.every((d) => skipped.has(d.kind) || fileWide.has(d.kind))) {
+    hint = " — the file is shorter than its manifest; copy it from the peer again";
+  } else {
+    hint = ` — re-read with \`mu sync --repair ${peerShort}\``;
+  }
   return `peer ${peerShort}: ${detail}${more}${hint}`;
 }
 
