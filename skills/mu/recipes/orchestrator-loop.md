@@ -88,7 +88,9 @@ per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
 
 ## Sending
 
-A running worker sees what you send, never a new task note. pi:
+A running worker sees what you send, never a new task note: deliver
+an instruction for it with a send (or the next `--fresh` brief), and
+keep the note as the durable copy. pi:
 
 | `mu agent send` | busy pi acts | Use for |
 | --- | --- | --- |
@@ -103,6 +105,7 @@ A running worker sees what you send, never a new task note. pi:
   [brief](brief.md#quoting).
 - Cross-workstream wait and claim use qualified refs; only task
   ownership crosses.
+- A long run drifts unseen: audit it per [drift-audit](drift-audit.md).
 
 ## Stopping a worker
 

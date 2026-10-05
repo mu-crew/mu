@@ -331,6 +331,16 @@ export async function cmdTaskNote(
     { intent: "Show all notes on this task", command: `mu task notes ${localId} -w ${ws}` },
     { intent: "Show full task state", command: `mu task show ${localId} -w ${ws}` },
   ];
+  // A worker reads notes at dispatch, not while it runs: a note on its
+  // IN_PROGRESS task reaches it only through a send.
+  const task = getTask(db, localId, ws);
+  const owner = task?.status === "IN_PROGRESS" ? task.ownerName : null;
+  if (owner !== null && owner !== author) {
+    nextSteps.unshift({
+      intent: `${owner} will not see this note: send it (--steer, or --interrupt if the note makes the current work wasted)`,
+      command: `mu agent send ${owner} -w ${ws} --steer "..."`,
+    });
+  }
   if (opts.json) {
     emitJson({
       taskName: localId,

@@ -115,6 +115,7 @@ export {
 import { AgentNotFoundError, WorkspacePreservedError } from "./agents/errors.js";
 import {
   agentCtlSocket,
+  recordSend,
   type SendResult,
   sendViaTransport,
   type TransportSendOptions,
@@ -533,10 +534,23 @@ export async function sendToAgent(
 ): Promise<SendResult> {
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) throw new AgentNotFoundError(name);
-  return sendViaTransport(agent, text, {
+  const sent = await sendViaTransport(agent, text, {
     ...opts,
     socket: opts.socket ?? agentCtlSocket(db, agent),
   });
+  recordSend(
+    db,
+    agent,
+    opts.fresh ? "fresh" : opts.mode === "steer" ? "steer" : "plain",
+    text.length,
+    {
+      transport: sent.transport,
+      command: sent.command,
+      state: sent.state,
+      since: sent.since,
+    },
+  );
+  return sent;
 }
 
 /**
