@@ -10,20 +10,16 @@ hundreds of tasks and a workstream nobody wanted.
 A **delegate call** is one `mu_delegate` tool call in pi.
 
 - **It starts empty.** The brief carries everything: the finding or
-  claim, file paths, the criteria, and the answer line to end with
-  (`WINNER: ...` for a tournament judge). See [brief](brief.md).
-- **A check that judges one task** (refuter, claim checker) passes
-  `record: { task: "<ws>/<id>" }`, and its brief ends with this block:
+  claim, file paths, the criteria, and the answer to end with. See
+  [brief](brief.md). A tournament judge ends with `WINNER: ...`
+  ([tournament](tournament.md)). A refuter or claim checker passes
+  `record: { task: "<ws>/<id>" }` and ends with:
 
   ```text
   VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <one line>
   EVIDENCE: <file:line or command + result>   (3-6 lines)
   ```
 
-  `record` writes it onto the task as a note headed
-  `REFUTER <label> (<delegate>, <elapsed>):`.
-  A tournament judge judges a pair, not a task: no `record`
-  ([tournament](tournament.md)).
 - **Fan out in one turn.** Issue every call for a step together; in pi
   the answers arrive later as follow-up messages. Calling one, waiting,
   then the next runs them in series.
@@ -34,8 +30,7 @@ A **delegate call** is one `mu_delegate` tool call in pi.
   check as `UNVERIFIED` on its task, then close the kept pane
   (`mu_delegate_cancel`, or `mu agent close`).
 
-Without the tool (another harness, a script), spawn in `scratch` and
-write the `record` note yourself, before deciding the task:
+Without the tool, write the note `record` would, before deciding:
 
 ```bash
 mu agent spawn refuter-1 -w scratch
@@ -45,13 +40,14 @@ EOF
 )
 mu agent wait refuter-1 -w scratch --after-runs "$runs" --json   # answer in lastText
 mu task note <id> -w <ws> - <<'EOF'
-REFUTER 1 (refuter-1, <elapsed>):
+REFUTER 1 (refuter-1, 4m 05s):
 <the VERDICT line and EVIDENCE lines, verbatim>
 EOF
 mu agent close refuter-1 -w scratch
 ```
 
-`--after-runs` counts a run that finished before the wait started. The
+A wait that times out or dies leaves `REFUTER 1: no verdict (<outcome>)`.
+`--after-runs` counts a run that finished before the wait started; the
 quoted heredocs keep the evidence verbatim ([brief § Quoting](brief.md#quoting)).
 
 ## The rule
@@ -66,15 +62,15 @@ quoted heredocs keep the evidence verbatim ([brief § Quoting](brief.md#quoting)
 | the umbrella, and each round of a loop | a skeptic or dedupe pass |
 | anything that needs its own workspace | a reader or scout whose output feeds one step |
 
-A call adds no node: its `REFUTER` note and your decision
-([findings § Triage](findings.md#triage) step 3) land on the task it judged.
+A call adds no node: its note and your decision land on the task it
+judged ([findings § Triage](findings.md#triage)).
 
 ## Examples
 
-- A refuter checks 30 findings: 30 delegate calls, 0 new tasks; each
-  finding task gets the refuter's evidence and is accepted or closed.
-- A tournament over 16 names: 15 judge delegate calls; the winner goes
-  in the umbrella's note.
+- 30 findings to refute: 30 delegate calls, 0 new tasks; each finding
+  gets a `REFUTER` note, then your decision.
+- A tournament over 16 names: 15 judge calls; each round's `WINNER:`
+  lines go on the umbrella.
 - A hypothesis test that reverts commits or forces a race needs a
   workspace: that one is a task.
 

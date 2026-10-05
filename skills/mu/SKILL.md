@@ -53,9 +53,9 @@ Recipe words, the same in every recipe:
 - **wave** — the units dispatched from one main revision; refresh
   workspaces before the next.
 - **finding** — one reported problem, recorded as an `OPEN/triage` task.
-- **verdict** — the last line of a check's answer:
-  `VERDICT: CONFIRMED | REFUTED | UNVERIFIED <evidence>` (or ACCEPT |
-  REJECT for a review gate).
+- **verdict** — a check's answer: `VERDICT: <id> CONFIRMED | REFUTED |
+  UNVERIFIED <one line>` plus `EVIDENCE:` lines (or ACCEPT | REJECT for
+  a review gate).
 - **stop rule** — the command and condition that end a loop, written on
   the umbrella first ([loop-until-done](recipes/loop-until-done.md)).
 
@@ -176,9 +176,9 @@ rules hold even when you skip it:
 - **Checks are calls, not tasks.** Refuters, claim checkers, judges and
   skeptics are [delegate calls](recipes/tasks-or-calls.md#delegate-call)
   (`mu_delegate`, or a `scratch` spawn without it), all issued in one
-  turn; a check's verdict lands on the task it judged (`record`, or a
-  hand-written `REFUTER` note). `mu_delegate` runs `MU_DELEGATE_MAX`
-  (default 16) at once and queues the rest.
+  turn. Refuters and claim checkers pass `record` (or hand-write the
+  `REFUTER` note) to land the verdict on the task; judges report
+  `WINNER:`. `MU_DELEGATE_MAX` (16) run at once; the rest queue.
 - **Findings are tasks.** A reviewer's or auditor's findings become
   `mu task add --triage` tasks blocking the review, decided with
   `mu task accept` or `close --as rejected|duplicate`. A review nobody

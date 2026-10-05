@@ -65,17 +65,21 @@ the `scratch` form through `tools.bash`:
 const ws = "audit";
 const findings = ["f_auth_put", "f_sql_order"]; // finding task ids, at most the cap per script
 const sh = async (c) => (await tools.bash({ command: c })).output;
+const json = (s) => { try { return JSON.parse(s); } catch { return {}; } };
+const el = (ms) => { const t = Math.round(ms / 1000); return t < 60 ? `${t}s` : `${Math.floor(t / 60)}m ${String(t % 60).padStart(2, "0")}s`; };
 const rows = await Promise.all(findings.map(async (id, i) => {
-  const a = `refuter-${i + 1}`;
+  const a = `refuter-${i + 1}`, t0 = Date.now();
   await sh(`mu agent spawn ${a} -w scratch`);
-  const { runs } = JSON.parse(await sh(`mu agent send ${a} -w scratch --fresh --json - <<'MU_EOF'\n<brief for ${id}, ending with the VERDICT block>\nMU_EOF`));
-  const w = JSON.parse(await sh(`mu agent wait ${a} -w scratch --after-runs ${runs} --json --timeout 1200`));
-  const text = w.agents?.[0]?.lastText ?? "";
-  const at = text.lastIndexOf("VERDICT:");
-  const block = at < 0 ? `NO VERDICT LINE: ${text.slice(-1500)}` : text.slice(at);
-  await sh(`mu task note ${id} -w ${ws} - <<'MU_EOF'\nREFUTER ${i + 1} (${a}):\n${block}\nMU_EOF`);
-  await sh(`mu agent close ${a} -w scratch`);
-  return `${id}\t${block.split("\n")[0]}`;
+  const { runs } = json(await sh(`mu agent send ${a} -w scratch --fresh --json - <<'MU_EOF'\n<brief for ${id}, ending with the VERDICT block>\nMU_EOF`));
+  const w = json(await sh(`mu agent wait ${a} -w scratch --after-runs ${runs} --json --timeout 1200`)).agents?.[0] ?? {};
+  const lines = (w.lastText ?? "").trimEnd().split("\n");
+  const at = lines.findLastIndex((l) => /^[\s>*_`-]*VERDICT:/.test(l));
+  const note = w.outcome !== "done" ? `REFUTER ${i + 1}: no verdict (${w.outcome ?? "no result"})`
+    : `REFUTER ${i + 1} (${a}, ${el(Date.now() - t0)}):\n` + (at < 0 ? `NO VERDICT LINE: ${(w.lastText ?? "").slice(-1500)}`
+    : [lines[at], ...lines.slice(at + 1).filter((l) => /^[\s>*_`-]*EVIDENCE:/.test(l))].join("\n"));
+  await sh(`mu task note ${id} -w ${ws} - <<'MU_EOF'\n${note}\nMU_EOF`);
+  if (w.outcome === "done") await sh(`mu agent close ${a} -w scratch`);
+  return `${id}\t${note.split("\n")[1] ?? note}`;
 }));
 return rows.join("\n");
 ```
@@ -86,9 +90,10 @@ What the tool did for you, the script now owns:
   each script's list at or under it.
 - **Cleanup.** Close each scratch pane; a timed-out one stays, readable
   with `mu agent read <a> -w scratch`.
-- **Recording.** The script writes each `REFUTER` note, as `record`
-  would. The table is for you; decide each finding after it returns
-  ([findings § Triage](findings.md#triage) step 3).
+- **Recording.** The script writes each `REFUTER` note as `record`
+  would, including `no verdict (<outcome>)` for a failed wait. Decide
+  each finding after it returns ([findings § Triage](findings.md#triage)
+  step 3).
 
 ## Traps
 
