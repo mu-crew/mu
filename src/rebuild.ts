@@ -370,7 +370,7 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
         }
       });
     });
-    replay();
+    replay.immediate();
 
     const rebuiltRows: Record<string, number> = {};
     for (const table of ["workstreams", "tasks", "task_edges", "task_notes", "ops"]) {

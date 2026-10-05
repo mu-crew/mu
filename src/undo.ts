@@ -811,7 +811,7 @@ export function undoGroup(db: Db, groupId: string, opts: UndoOptions = {}): Undo
       },
     );
   });
-  run();
+  run.immediate();
 
   return { plan, undoGroupId, applied };
 }

@@ -865,7 +865,7 @@ export function applyOp(db: Db, op: Op): ApplyResult {
         // UPDATEs pass through an invalid (status, substate) pair, and
         // the deferred FK only tolerates that inside a transaction. In
         // autocommit it would check each UPDATE on its own.
-        return db.transaction(() => applyTaskPut(db, op))();
+        return db.transaction(() => applyTaskPut(db, op)).immediate();
       case "note":
         return applyNotePut(db, op);
       case "edge":
@@ -1070,5 +1070,5 @@ function installOpKeyFunctions(db: Db): void {
 export function applyOps(db: Db, ops: readonly Op[]): ApplyResult[] {
   const ordered = [...ops].sort((a, b) => compareHlc(a.hlc, b.hlc));
   const run = db.transaction(() => ordered.map((op) => applyOp(db, op)));
-  return run();
+  return run.immediate();
 }

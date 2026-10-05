@@ -1,12 +1,17 @@
 // mu — agent error classes.
 //
 // Every agent verb that can fail in a typed way has its own error class
-// here. The CLI's classifyError() (src/cli.ts) maps them to exit codes:
+// here. The CLI's classifyError() (src/cli/handle.ts) maps them to exit
+// codes:
+//   usage      → 2   (AgentAbortNeedsCtlError, AgentFreshNeedsCtlError,
+//                     AgentSlashCommandUnsupportedError)
 //   not found  → 3   (AgentNotFoundError)
 //   conflict   → 4   (AgentExistsError, AgentNotInWorkstreamError,
-//                     PaneNotInSessionError,
-//                     AgentDiedOnSpawnError, AgentSpawnStartupError,
-//                     WorkspacePreservedError)
+//                     PaneNotInSessionError, WorkspacePreservedError,
+//                     AgentExtensionOutdatedError, AgentBusyError)
+//   timeout    → 5   (AgentAbortTimeoutError)
+//   failure    → 1   (AgentSpawnCliNotFoundError, AgentDiedOnSpawnError,
+//                     AgentSpawnStartupError, AgentCtlUnreachableError)
 //
 // AgentDiedOnSpawnError + AgentSpawnStartupError reach into spawn.ts for
 // defaultSpawnLivenessMs — a single, narrow cross-cluster import that

@@ -49,7 +49,7 @@ export function compact(db: Db): CompactPlan {
     db.prepare(
       `UPDATE ops SET payload = '{}' WHERE seq IN (SELECT seq FROM (${REDUNDANT_TOMBSTONES_SQL}))`,
     ).run();
-  })();
+  }).immediate();
   return plan;
 }
 
@@ -120,6 +120,6 @@ export function forget(db: Db, plan: ForgetPlan): { ops: number } {
   let ops = 0;
   db.transaction(() => {
     for (const c of plan.candidates) ops += del.run({ ws: c.name }).changes;
-  })();
+  }).immediate();
   return { ops };
 }

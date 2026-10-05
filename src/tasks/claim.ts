@@ -295,17 +295,18 @@ async function claimTaskImpl(
   }
 
   return withOpContext(db, { intent: "task.claim", actor: agentName, group: "new" }, () =>
-    db.transaction(() => {
-      // Resolve the task within opts.workstream. This locks the
-      // (workstream, local_id) pair for the rest of the transaction.
-      const before = getTask(db, localId, opts.workstream);
-      if (!before) throw new TaskNotFoundError(localId);
-      assertNotParked(before, opts);
+    db
+      .transaction(() => {
+        // Resolve the task within opts.workstream. This locks the
+        // (workstream, local_id) pair for the rest of the transaction.
+        const before = getTask(db, localId, opts.workstream);
+        if (!before) throw new TaskNotFoundError(localId);
+        assertNotParked(before, opts);
 
-      const now = new Date().toISOString();
-      const result = db
-        .prepare(
-          `UPDATE tasks
+        const now = new Date().toISOString();
+        const result = db
+          .prepare(
+            `UPDATE tasks
             SET owner_id = ?,
                 status = CASE WHEN status = 'OPEN' THEN 'IN_PROGRESS' ELSE status END,
                 -- SQLite evaluates every SET expression against the OLD
@@ -315,36 +316,37 @@ async function claimTaskImpl(
           WHERE local_id = ?
             AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)
             AND (owner_id IS NULL OR owner_id = ?)`,
-        )
-        .run(claimerRow.id, now, localId, opts.workstream, claimerRow.id);
+          )
+          .run(claimerRow.id, now, localId, opts.workstream, claimerRow.id);
 
-      if (result.changes === 0) {
-        throw new TaskAlreadyOwnedError(localId, before.ownerName ?? "<unknown>");
-      }
+        if (result.changes === 0) {
+          throw new TaskAlreadyOwnedError(localId, before.ownerName ?? "<unknown>");
+        }
 
-      const after = getTask(db, localId, opts.workstream);
-      if (!after) throw new Error(`claimTask: row missing after update: ${localId}`);
-      // The CLAIM note's author: the dispatcher when the CLI passed one
-      // (`--for`), else the claiming agent.
-      recordEvidenceNote(db, localId, opts.workstream, "CLAIM", {
-        ...opts,
-        author: opts.author ?? agentName,
-      });
-      // No emitEvent: the UPDATE fired the capture trigger under
-      // intent='task.claim' with actor=agentName (withOpContext above
-      // put it in _op_ctx, and the trigger copies it into ops.actor).
-      // The op payload carries the new owner_id, so the prose
-      // `formatClaimEvent` breadcrumb — and the tab-delimited prefix
-      // that existed only because prose had to be re-parsed — are both
-      // redundant. `lastClaimActor` now reads ops.actor directly.
-      return {
-        ownerName: agentName,
-        actorName: agentName,
-        previousOwnerName: before.ownerName,
-        previousStatus: before.status,
-        status: after.status,
-      };
-    })(),
+        const after = getTask(db, localId, opts.workstream);
+        if (!after) throw new Error(`claimTask: row missing after update: ${localId}`);
+        // The CLAIM note's author: the dispatcher when the CLI passed one
+        // (`--for`), else the claiming agent.
+        recordEvidenceNote(db, localId, opts.workstream, "CLAIM", {
+          ...opts,
+          author: opts.author ?? agentName,
+        });
+        // No emitEvent: the UPDATE fired the capture trigger under
+        // intent='task.claim' with actor=agentName (withOpContext above
+        // put it in _op_ctx, and the trigger copies it into ops.actor).
+        // The op payload carries the new owner_id, so the prose
+        // `formatClaimEvent` breadcrumb — and the tab-delimited prefix
+        // that existed only because prose had to be re-parsed — are both
+        // redundant. `lastClaimActor` now reads ops.actor directly.
+        return {
+          ownerName: agentName,
+          actorName: agentName,
+          previousOwnerName: before.ownerName,
+          previousStatus: before.status,
+          status: after.status,
+        };
+      })
+      .immediate(),
   );
 }
 
@@ -438,54 +440,56 @@ async function claimSelf(db: Db, localId: string, opts: ClaimTaskOptions): Promi
   const actor =
     opts.actor !== undefined && opts.actor !== "" ? opts.actor : await resolveActorIdentity();
   return withOpContext(db, { intent: "task.claim", actor, group: "new" }, () =>
-    db.transaction(() => {
-      // Scope by the operator's workstream so a same-named task
-      // elsewhere can't be self-claimed by accident.
-      const before = getTask(db, localId, opts.workstream);
-      if (!before) throw new TaskNotFoundError(localId);
-      assertNotParked(before, opts);
+    db
+      .transaction(() => {
+        // Scope by the operator's workstream so a same-named task
+        // elsewhere can't be self-claimed by accident.
+        const before = getTask(db, localId, opts.workstream);
+        if (!before) throw new TaskNotFoundError(localId);
+        assertNotParked(before, opts);
 
-      // Anonymous claim: owner stays NULL, status flips OPEN -> IN_PROGRESS.
-      // Gate on `owner_id IS NULL` so an in-flight worker claim can't be
-      // silently overwritten.
-      const now = new Date().toISOString();
-      const result = db
-        .prepare(
-          `UPDATE tasks
+        // Anonymous claim: owner stays NULL, status flips OPEN -> IN_PROGRESS.
+        // Gate on `owner_id IS NULL` so an in-flight worker claim can't be
+        // silently overwritten.
+        const now = new Date().toISOString();
+        const result = db
+          .prepare(
+            `UPDATE tasks
             SET status = CASE WHEN status = 'OPEN' THEN 'IN_PROGRESS' ELSE status END,
                 substate = CASE WHEN status = 'OPEN' THEN 'active' ELSE substate END,
                 updated_at = ?
           WHERE local_id = ?
             AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)
             AND owner_id IS NULL`,
-        )
-        .run(now, localId, before.workstreamName);
+          )
+          .run(now, localId, before.workstreamName);
 
-      if (result.changes === 0) {
-        // Task exists but is already owned (by someone). Mirror the
-        // worker-path error so callers can pattern-match consistently.
-        throw new TaskAlreadyOwnedError(localId, before.ownerName ?? "<unknown>");
-      }
+        if (result.changes === 0) {
+          // Task exists but is already owned (by someone). Mirror the
+          // worker-path error so callers can pattern-match consistently.
+          throw new TaskAlreadyOwnedError(localId, before.ownerName ?? "<unknown>");
+        }
 
-      const after = getTask(db, localId, before.workstreamName);
-      if (!after) throw new Error(`claimTask: row missing after update: ${localId}`);
-      recordEvidenceNote(db, localId, before.workstreamName, "CLAIM", {
-        ...opts,
-        author: opts.author ?? actor,
-      });
-      // No emitEvent. This is the interesting case: the `--self` path
-      // leaves tasks.owner_id NULL deliberately, so the op PAYLOAD
-      // cannot name the actor — but ops.actor can and does, because
-      // withOpContext seeded _op_ctx with it. That is precisely what
-      // `lastClaimActor` needs, and reading a column beats
-      // prefix-matching prose (review_code_last_claim_actor_brittle).
-      return {
-        ownerName: null,
-        actorName: actor,
-        previousOwnerName: before.ownerName,
-        previousStatus: before.status,
-        status: after.status,
-      };
-    })(),
+        const after = getTask(db, localId, before.workstreamName);
+        if (!after) throw new Error(`claimTask: row missing after update: ${localId}`);
+        recordEvidenceNote(db, localId, before.workstreamName, "CLAIM", {
+          ...opts,
+          author: opts.author ?? actor,
+        });
+        // No emitEvent. This is the interesting case: the `--self` path
+        // leaves tasks.owner_id NULL deliberately, so the op PAYLOAD
+        // cannot name the actor — but ops.actor can and does, because
+        // withOpContext seeded _op_ctx with it. That is precisely what
+        // `lastClaimActor` needs, and reading a column beats
+        // prefix-matching prose (review_code_last_claim_actor_brittle).
+        return {
+          ownerName: null,
+          actorName: actor,
+          previousOwnerName: before.ownerName,
+          previousStatus: before.status,
+          status: after.status,
+        };
+      })
+      .immediate(),
   );
 }

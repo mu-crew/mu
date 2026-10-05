@@ -110,6 +110,11 @@ export function openDb(options: OpenDbOptions = {}): Db {
     // once — without this, the losers of a write-lock race die with
     // 'database is locked' and roll back their agent. WAL handles
     // concurrent readers; busy_timeout handles concurrent writers.
+    // busy_timeout only covers a lock taken at BEGIN, so every write
+    // transaction runs as `db.transaction(fn).immediate()` (or `BEGIN
+    // IMMEDIATE`). A deferred one that reads first and then writes gets
+    // SQLITE_BUSY_SNAPSHOT at once if another process committed in
+    // between, and busy_timeout does not retry that.
     db.pragma("busy_timeout = 5000");
     // Detect schema version BEFORE applySchema so a real v<11 DB is not
     // silently stamped as v11 by the CREATE-IF-NOT-EXISTS in applySchema.

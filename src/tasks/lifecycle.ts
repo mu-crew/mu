@@ -282,25 +282,29 @@ function closeTaskImpl(
   }
   // No pre-mutation snapshot: v9 dropped the `snapshots` table and
   // rollback is inverse ops over the ops log (`mu undo`).
-  return db.transaction((): CloseTaskResult => {
-    const track = as !== "done" && before !== undefined;
-    const readyBefore = track ? readyDependents(db, localId, before.workstreamName) : [];
-    const r = setTaskStatus(db, localId, "CLOSED", {
-      workstream: opts.workstream,
-      substate: as,
-      ...(opts.evidence !== undefined ? { evidence: opts.evidence } : {}),
-    });
-    if (!r.changed || !before) return { ...r, unblocked: [] };
-    recordReasonNote(db, localId, before.workstreamName, as, opts.why, opts.author);
-    // mufeedback task_close_evidence_does_not_append_the: evidence must
-    // reach `mu task notes <id>` / `mu task show <id>`, not just the log.
-    // Since v2-retire-log-shim the note is the ONLY home for it.
-    recordEvidenceNote(db, localId, before.workstreamName, "CLOSE", opts);
-    const unblocked = track
-      ? readyDependents(db, localId, before.workstreamName).filter((n) => !readyBefore.includes(n))
-      : [];
-    return { ...r, unblocked };
-  })();
+  return db
+    .transaction((): CloseTaskResult => {
+      const track = as !== "done" && before !== undefined;
+      const readyBefore = track ? readyDependents(db, localId, before.workstreamName) : [];
+      const r = setTaskStatus(db, localId, "CLOSED", {
+        workstream: opts.workstream,
+        substate: as,
+        ...(opts.evidence !== undefined ? { evidence: opts.evidence } : {}),
+      });
+      if (!r.changed || !before) return { ...r, unblocked: [] };
+      recordReasonNote(db, localId, before.workstreamName, as, opts.why, opts.author);
+      // mufeedback task_close_evidence_does_not_append_the: evidence must
+      // reach `mu task notes <id>` / `mu task show <id>`, not just the log.
+      // Since v2-retire-log-shim the note is the ONLY home for it.
+      recordEvidenceNote(db, localId, before.workstreamName, "CLOSE", opts);
+      const unblocked = track
+        ? readyDependents(db, localId, before.workstreamName).filter(
+            (n) => !readyBefore.includes(n),
+          )
+        : [];
+      return { ...r, unblocked };
+    })
+    .immediate();
 }
 
 /** Direct dependents of `localId` currently in the `ready` view, sorted.
@@ -448,22 +452,24 @@ export interface ParkTaskOptions extends EvidenceOption {
 export function parkTask(db: Db, localId: string, opts: ParkTaskOptions): SetStatusResult {
   if (opts.why.trim() === "") throw new SubstateReasonRequiredError("park", "parked", localId);
   return withOpContext(db, { intent: "task.park", actor: opts.author, group: "new" }, () =>
-    db.transaction((): SetStatusResult => {
-      const before = getTask(db, localId, opts.workstream);
-      if (!before) throw new TaskNotFoundError(localId);
-      if (before.status !== "OPEN") {
-        throw new TaskParkStateError(localId, before.status, before.workstreamName);
-      }
-      const r = setTaskStatus(db, localId, "OPEN", {
-        workstream: opts.workstream,
-        substate: "parked",
-      });
-      if (r.changed) {
-        recordReasonNote(db, localId, before.workstreamName, "parked", opts.why, opts.author);
-        recordEvidenceNote(db, localId, before.workstreamName, "PARK", opts);
-      }
-      return r;
-    })(),
+    db
+      .transaction((): SetStatusResult => {
+        const before = getTask(db, localId, opts.workstream);
+        if (!before) throw new TaskNotFoundError(localId);
+        if (before.status !== "OPEN") {
+          throw new TaskParkStateError(localId, before.status, before.workstreamName);
+        }
+        const r = setTaskStatus(db, localId, "OPEN", {
+          workstream: opts.workstream,
+          substate: "parked",
+        });
+        if (r.changed) {
+          recordReasonNote(db, localId, before.workstreamName, "parked", opts.why, opts.author);
+          recordEvidenceNote(db, localId, before.workstreamName, "PARK", opts);
+        }
+        return r;
+      })
+      .immediate(),
   );
 }
 
@@ -478,22 +484,24 @@ export function acceptTask(
   opts: AttributedEvidence & { workstream: string },
 ): SetStatusResult {
   return withOpContext(db, { intent: "task.accept", actor: opts.author, group: "new" }, () =>
-    db.transaction((): SetStatusResult => {
-      const before = getTask(db, localId, opts.workstream);
-      if (!before) throw new TaskNotFoundError(localId);
-      if (before.status !== "OPEN" || before.substate !== "triage") {
-        return {
-          previousStatus: before.status,
-          status: before.status,
-          previousSubstate: before.substate,
-          substate: before.substate,
-          changed: false,
-        };
-      }
-      const r = setTaskStatus(db, localId, "OPEN", { workstream: opts.workstream });
-      recordEvidenceNote(db, localId, before.workstreamName, "ACCEPT", opts);
-      return r;
-    })(),
+    db
+      .transaction((): SetStatusResult => {
+        const before = getTask(db, localId, opts.workstream);
+        if (!before) throw new TaskNotFoundError(localId);
+        if (before.status !== "OPEN" || before.substate !== "triage") {
+          return {
+            previousStatus: before.status,
+            status: before.status,
+            previousSubstate: before.substate,
+            substate: before.substate,
+            changed: false,
+          };
+        }
+        const r = setTaskStatus(db, localId, "OPEN", { workstream: opts.workstream });
+        recordEvidenceNote(db, localId, before.workstreamName, "ACCEPT", opts);
+        return r;
+      })
+      .immediate(),
   );
 }
 
@@ -504,21 +512,23 @@ export function unparkTask(
   opts: AttributedEvidence & { workstream: string },
 ): SetStatusResult {
   return withOpContext(db, { intent: "task.unpark", actor: opts.author, group: "new" }, () =>
-    db.transaction((): SetStatusResult => {
-      const before = getTask(db, localId, opts.workstream);
-      if (!before) throw new TaskNotFoundError(localId);
-      if (before.status !== "OPEN" || before.substate !== "parked") {
-        return {
-          previousStatus: before.status,
-          status: before.status,
-          previousSubstate: before.substate,
-          substate: before.substate,
-          changed: false,
-        };
-      }
-      const r = setTaskStatus(db, localId, "OPEN", { workstream: opts.workstream });
-      recordEvidenceNote(db, localId, before.workstreamName, "UNPARK", opts);
-      return r;
-    })(),
+    db
+      .transaction((): SetStatusResult => {
+        const before = getTask(db, localId, opts.workstream);
+        if (!before) throw new TaskNotFoundError(localId);
+        if (before.status !== "OPEN" || before.substate !== "parked") {
+          return {
+            previousStatus: before.status,
+            status: before.status,
+            previousSubstate: before.substate,
+            substate: before.substate,
+            changed: false,
+          };
+        }
+        const r = setTaskStatus(db, localId, "OPEN", { workstream: opts.workstream });
+        recordEvidenceNote(db, localId, before.workstreamName, "UNPARK", opts);
+        return r;
+      })
+      .immediate(),
   );
 }

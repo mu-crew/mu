@@ -55,94 +55,96 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
     throw new TaskIdInvalidError(opts.localId);
   }
 
-  return db.transaction(() => {
-    // Auto-create the workstream row so tasks.workstream_id FK is
-    // satisfied (preserves spawn-without-init ergonomics).
-    ensureWorkstream(db, opts.workstream);
-    const wsId = resolveWorkstreamId(db, opts.workstream);
+  return db
+    .transaction(() => {
+      // Auto-create the workstream row so tasks.workstream_id FK is
+      // satisfied (preserves spawn-without-init ergonomics).
+      ensureWorkstream(db, opts.workstream);
+      const wsId = resolveWorkstreamId(db, opts.workstream);
 
-    // Per-workstream uniqueness: a duplicate local_id within the same
-    // workstream throws TaskExistsError. Different workstreams may
-    // legitimately share local_ids in v5.
-    const existing = db
-      .prepare("SELECT id FROM tasks WHERE workstream_id = ? AND local_id = ?")
-      .get(wsId, opts.localId) as { id: number } | undefined;
-    if (existing) {
-      throw new TaskExistsError(opts.localId);
-    }
+      // Per-workstream uniqueness: a duplicate local_id within the same
+      // workstream throws TaskExistsError. Different workstreams may
+      // legitimately share local_ids in v5.
+      const existing = db
+        .prepare("SELECT id FROM tasks WHERE workstream_id = ? AND local_id = ?")
+        .get(wsId, opts.localId) as { id: number } | undefined;
+      if (existing) {
+        throw new TaskExistsError(opts.localId);
+      }
 
-    const now = new Date().toISOString();
-    const insertResult = db
-      .prepare(
-        `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
+      const now = new Date().toISOString();
+      const insertResult = db
+        .prepare(
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
          VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        wsId,
-        opts.localId,
-        opts.title,
-        opts.triage === true ? "triage" : "todo",
-        opts.impact,
-        opts.effortDays,
-        now,
-        now,
-      );
-    const newTaskId = Number(insertResult.lastInsertRowid);
+        )
+        .run(
+          wsId,
+          opts.localId,
+          opts.title,
+          opts.triage === true ? "triage" : "todo",
+          opts.impact,
+          opts.effortDays,
+          now,
+          now,
+        );
+      const newTaskId = Number(insertResult.lastInsertRowid);
 
-    if (opts.blockedBy && opts.blockedBy.length > 0) {
-      // Prefer the same-workstream blocker first (v5 per-workstream
-      // local_id), then fall back to a global lookup so a cross-ws
-      // blocker still surfaces CrossWorkstreamEdgeError (not
-      // TaskNotFoundError). Without the same-ws preference, two
-      // blockers of the same local_id (one in this ws, one elsewhere)
-      // could silently bind to the wrong row
-      // (bug_v5_name_clash_silent_misroute).
-      const blockerLookupSameWs = db.prepare(
-        `SELECT t.id AS id, ws.name AS workstream FROM tasks t
+      if (opts.blockedBy && opts.blockedBy.length > 0) {
+        // Prefer the same-workstream blocker first (v5 per-workstream
+        // local_id), then fall back to a global lookup so a cross-ws
+        // blocker still surfaces CrossWorkstreamEdgeError (not
+        // TaskNotFoundError). Without the same-ws preference, two
+        // blockers of the same local_id (one in this ws, one elsewhere)
+        // could silently bind to the wrong row
+        // (bug_v5_name_clash_silent_misroute).
+        const blockerLookupSameWs = db.prepare(
+          `SELECT t.id AS id, ws.name AS workstream FROM tasks t
            JOIN workstreams ws ON ws.id = t.workstream_id
           WHERE t.local_id = ? AND t.workstream_id = ?`,
-      );
-      const blockerLookupAnyWs = db.prepare(
-        `SELECT t.id AS id, ws.name AS workstream FROM tasks t
+        );
+        const blockerLookupAnyWs = db.prepare(
+          `SELECT t.id AS id, ws.name AS workstream FROM tasks t
            JOIN workstreams ws ON ws.id = t.workstream_id
           WHERE t.local_id = ? LIMIT 1`,
-      );
-      const requestedBlockers = opts.blockedBy.map((blocker) => {
-        const row = (blockerLookupSameWs.get(blocker, wsId) ?? blockerLookupAnyWs.get(blocker)) as
-          | { id: number; workstream: string }
-          | undefined;
-        if (!row) {
-          throw new TaskNotFoundError(blocker);
+        );
+        const requestedBlockers = opts.blockedBy.map((blocker) => {
+          const row = (blockerLookupSameWs.get(blocker, wsId) ?? blockerLookupAnyWs.get(blocker)) as
+            | { id: number; workstream: string }
+            | undefined;
+          if (!row) {
+            throw new TaskNotFoundError(blocker);
+          }
+          if (row.workstream !== opts.workstream) {
+            throw new CrossWorkstreamEdgeError(
+              blocker,
+              row.workstream,
+              opts.localId,
+              opts.workstream,
+            );
+          }
+          if (wouldCreateCycle(db, row.id, newTaskId)) {
+            throw new CycleError(blocker, opts.localId);
+          }
+          return { localId: blocker, id: row.id };
+        });
+        const canonicalBlockers = dedupeBlockersById(requestedBlockers);
+        const insertEdge = db.prepare(
+          "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
+        );
+        for (const blocker of canonicalBlockers) {
+          insertEdge.run(blocker.id, newTaskId, now);
         }
-        if (row.workstream !== opts.workstream) {
-          throw new CrossWorkstreamEdgeError(
-            blocker,
-            row.workstream,
-            opts.localId,
-            opts.workstream,
-          );
-        }
-        if (wouldCreateCycle(db, row.id, newTaskId)) {
-          throw new CycleError(blocker, opts.localId);
-        }
-        return { localId: blocker, id: row.id };
-      });
-      const canonicalBlockers = dedupeBlockersById(requestedBlockers);
-      const insertEdge = db.prepare(
-        "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
-      );
-      for (const blocker of canonicalBlockers) {
-        insertEdge.run(blocker.id, newTaskId, now);
       }
-    }
 
-    const row = getTask(db, opts.localId, opts.workstream);
-    if (!row) throw new Error(`addTask: row missing after insert: ${opts.localId}`);
-    // No emitEvent: the INSERT above fired the tasks capture trigger,
-    // which already wrote intent='task.add' key='<ws>/<id>' with the
-    // full row as payload (v2-retire-log-shim).
-    return row;
-  })();
+      const row = getTask(db, opts.localId, opts.workstream);
+      if (!row) throw new Error(`addTask: row missing after insert: ${opts.localId}`);
+      // No emitEvent: the INSERT above fired the tasks capture trigger,
+      // which already wrote intent='task.add' key='<ws>/<id>' with the
+      // full row as payload (v2-retire-log-shim).
+      return row;
+    })
+    .immediate();
 }
 
 export interface AddNoteOptions {
@@ -179,7 +181,7 @@ export function insertNote(db: Db, taskLocalId: string, content: string, opts: A
     // freshly-noted tasks (task_updatedat_not_bumped_by_reparent).
     touchTask(db, taskId, now);
     return r;
-  })();
+  }).immediate();
   // No emitEvent: the task_notes INSERT fired the capture trigger
   // (intent='task.note', key='<ws>/<id>#<n>').
   return {

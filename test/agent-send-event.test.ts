@@ -98,6 +98,17 @@ describe("agent.send op", () => {
     ]);
   });
 
+  it("counts UTF-8 bytes, not UTF-16 code units", async () => {
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "claude" });
+    // "é" is 2 bytes and "🚀" is 4 bytes in UTF-8 (String.length: 1 and 2).
+    const r = await runCli(["agent", "send", "worker-1", "é🚀", "--json", "-w", "auth"], dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(JSON.parse(r.stdout)).toMatchObject({ sentBytes: 6 });
+    expect(sendOps().map((o) => o.payload)).toEqual([
+      "agent send worker-1 (mode=plain transport=mux, 6 bytes)",
+    ]);
+  });
+
   it("a failed send records nothing", async () => {
     insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "pi" });
     const r = await runCli(["agent", "send", "worker-1", "go", "-w", "auth"], dbPath);

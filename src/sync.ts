@@ -444,7 +444,7 @@ export function ingestFromDb(db: Db, path: string): IngestFromDbResult {
         if (result.changed) changed += 1;
       }
     });
-    run();
+    run.immediate();
     // Same out-of-order repair the segment path runs: a peer's `ops`
     // table can hold an edge whose task op we only got from a THIRD
     // machine, in either order.
