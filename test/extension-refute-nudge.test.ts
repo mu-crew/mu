@@ -103,6 +103,14 @@ describe("dispatchedTasks", () => {
         { ws: "q", id: "b" },
       ],
     ],
+    // A backslash-newline joins lines; it is not a word.
+    ["mu task claim \\\n  t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
+    ["MU_X=1 mu task claim t1 --for w1 -w ws", [{ ws: "ws", id: "t1" }]],
+    // A heredoc body is skipped; the command after it still counts.
+    [
+      "cat <<EOF\nmu task claim x --for w1 -w ws\nEOF\nmu task claim t1 --for w1 -w ws",
+      [{ ws: "ws", id: "t1" }],
+    ],
   ])("%s", (cmd, want) => {
     expect(dispatchedTasks(cmd)).toEqual(want);
   });

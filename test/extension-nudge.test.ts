@@ -102,6 +102,12 @@ describe("dispatchedWorkstreams", () => {
     ["mu task claim --evidence 'brief; refuted' --for w1 build -w auth", ["auth"]],
     ["mu task claim build --for w1 --evidence 'a | b' -w auth", ["auth"]],
     ["mu agent send a 'x; y' -w one && mu agent send b -w two 'p'", ["one", "two"]],
+    // The same claim parse as dispatchedTasks: -f, --for=, a leading --for.
+    ["mu task claim t1 -f w1 -w ws", ["ws"]],
+    ["mu task claim t1 --for=w1 -w ws", ["ws"]],
+    ["mu task claim --for w1 ws/t1", ["ws"]],
+    ["MU_X=1 mu task claim t1 --for w1 -w ws", ["ws"]],
+    ["mu agent send w1 \\\n  -w ws 'go'", ["ws"]],
   ])("%s", (cmd, want) => {
     expect(dispatchedWorkstreams(cmd)).toEqual(want);
   });
@@ -112,6 +118,10 @@ describe("dispatchedWorkstreams", () => {
     "mu agent send helper-1 -w scratch --fresh 'x'",
     "echo mu",
     "echo 'x && mu agent send w1 -w auth go'",
+    // mu as an argument, or inside a heredoc body, is not a command.
+    "grep mu agent send foo",
+    "cat <<'EOF'\nmu agent send w1 x -w ws\nEOF",
+    "cat <<-EOF > brief.md\n\tmu task claim t1 --for w1 -w ws\n\tEOF",
   ])("not a dispatch: %s", (cmd) => {
     expect(dispatchedWorkstreams(cmd)).toBeUndefined();
   });

@@ -450,6 +450,36 @@ describe("mu_delegate", () => {
     }
   });
 
+  it("a direct call that fails while a call is queued starts the queued call", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    try {
+      let fail: (r: MuResult) => void = () => {};
+      let n = 0;
+      const mu = fakeMu({
+        on: {
+          // The first spawn stays pending until the second call has queued.
+          spawn: () => (++n === 1 ? new Promise<MuResult>((r) => (fail = r)) : undefined),
+        },
+      });
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      const a = tool(p).execute("a", { task: "one" });
+      const b = await tool(p).execute("b", { task: "two" });
+      expect(b.content[0]?.text).toContain("Queued as queued-1");
+      for (let i = 0; i < 5 && n === 0; i++) await flush();
+      expect(n).toBe(1); // the first spawn is in flight
+      fail({ code: 1, stdout: "", stderr: "boom" });
+      await expect(a).rejects.toThrow("boom");
+      for (let i = 0; i < 5; i++) await flush();
+      const spawns = mu.calls.filter((x) => x[1] === "spawn");
+      expect(spawns).toHaveLength(2);
+      expect(mu.calls.some((x) => x[1] === "send" && x.includes("two"))).toBe(true);
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
   it("delegateMax: default 16; ignores junk", () => {
     expect(delegateMax({})).toBe(16);
     expect(delegateMax({ MU_DELEGATE_MAX: "4" })).toBe(4);
