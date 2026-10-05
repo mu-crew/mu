@@ -27,6 +27,7 @@ import {
   splitWindow,
 } from "../src/mux/herdr.js";
 import { PaneNotFoundError } from "../src/mux/types.js";
+import { withEnv } from "./_env.js";
 import { installMux, type MuxExecResult, type MuxExecutor, type MuxHarness } from "./_mux.js";
 import {
   OK,
@@ -150,6 +151,21 @@ describe("herdr exit-code mapping", () => {
       ["workspace list", { stdout: "<html>proxy error</html>", stderr: "", exitCode: 0 }],
     ]);
     await expect(listSessions()).rejects.toBeInstanceOf(HerdrError);
+  });
+});
+
+describe("HerdrError message", () => {
+  it("falls back to stdout when stderr is empty (zero-exit, non-JSON stdout)", () => {
+    const err = new HerdrError(["workspace", "list"], "", "<html>proxy error</html>", 0);
+    expect(err.message).toBe("herdr workspace list failed (exit 0): <html>proxy error</html>");
+  });
+
+  it("prefers the JSON envelope message, then raw stderr", () => {
+    expect(new HerdrError(["pane", "get"], PANE_NOT_FOUND, "out", 1).message).toContain(
+      "pane w9:p9 not found",
+    );
+    expect(new HerdrError(["x"], "boom\n", "out", 1).message).toBe("herdr x failed (exit 1): boom");
+    expect(new HerdrError(["x"], "", "", 1).message).toBe("herdr x failed (exit 1): no output");
   });
 });
 
@@ -331,7 +347,7 @@ describe("herdr windows (= tabs)", () => {
     ]);
   });
 
-  it("newWindow with a command defers to mux-herdr-spawn instead of dropping it", async () => {
+  it("newWindow with a command is refused instead of dropped", async () => {
     // Silently ignoring the command would produce an empty shell pane
     // that mu believes is running an agent — the worst failure mode.
     mockHerdr([["workspace list", WORKSPACE_LIST]]);
@@ -453,6 +469,29 @@ describe("herdr panes", () => {
   it("paneTTY throws PaneNotFoundError when the pane is gone", async () => {
     mockHerdr([["pane process-info", serverError(PANE_NOT_FOUND)]]);
     await expect(herdrBackend.paneTTY("w1:p9")).rejects.toBeInstanceOf(PaneNotFoundError);
+    // Named by the backend, with herdr's remediation, not "mux pane not found".
+    const err = await herdrBackend.paneTTY("w1:p9").catch((e: unknown) => e);
+    expect((err as Error).message).toBe("herdr pane not found: w1:p9");
+    expect((err as PaneNotFoundError).errorNextSteps()[0]?.command).toBe("herdr pane get w1:p9");
+  });
+
+  it("a pane's detected agent kind is its command, so reconcile can spot herdr orphans", async () => {
+    const withAgent = JSON.stringify({
+      id: "cli:pane:list",
+      result: {
+        panes: [
+          { pane_id: "w1:p1", tab_id: "w1:t1", workspace_id: "w1", agent: "claude" },
+          { pane_id: "w1:p2", tab_id: "w1:t1", workspace_id: "w1" },
+        ],
+        type: "pane_list",
+      },
+    });
+    mockHerdr([
+      ["workspace list", WORKSPACE_LIST],
+      ["pane list", withAgent],
+    ]);
+    const panes = await listPanesInSession("mu-topotest");
+    expect(panes.map((p) => p.command)).toEqual(["claude", ""]);
   });
 });
 
@@ -568,16 +607,20 @@ describe("herdrBackend.available", () => {
   });
 });
 
-// ─── Deferred surfaces ─────────────────────────────────────────────────
+// ─── Refused / no-op surfaces ──────────────────────────────────────────
 
-describe("deferred surfaces", () => {
-  it("spawn (a creation verb carrying a command) still names its owning task", async () => {
-    // IO landed (see mux-herdr-io.test.ts); spawn deliberately did not.
+describe("refused and no-op surfaces", () => {
+  it("a creation verb carrying a command is refused and names the two-step path", async () => {
+    // Spawn is two steps on herdr (bare pane, then startAgentInPane); a
+    // command here is a caller bug, not an unimplemented feature.
     await expect(herdrBackend.newSession("mu-x", { command: "pi" })).rejects.toBeInstanceOf(
       HerdrNotImplementedError,
     );
     await expect(herdrBackend.newSession("mu-x", { command: "pi" })).rejects.toThrow(
-      /mux-herdr-spawn/,
+      /startAgentInPane/,
+    );
+    await expect(herdrBackend.newSession("mu-x", { command: "pi" })).rejects.not.toThrow(
+      /not implemented yet/,
     );
   });
 
@@ -587,5 +630,78 @@ describe("deferred surfaces", () => {
     });
     expect(await herdrBackend.enableMuPaneBordersForSession("mu-x")).toBe(0);
     await expect(herdrBackend.enableMuPaneBordersForPane("w1:p1")).resolves.toBeUndefined();
+  });
+});
+
+// ─── Attach ────────────────────────────────────────────────────────────
+
+describe("herdr attach (focus a workspace or tab, never `session attach <label>`)", () => {
+  // `mu-<ws>` is a workspace LABEL. `herdr session attach mu-<ws>` would
+  // start a new, empty herdr SERVER under that name.
+  const HERDR_ENV = "HERDR_ENV";
+  const HERDR_SESSION = "MU_HERDR_SESSION";
+
+  it("from outside herdr, focuses the agent's tab and then opens a client", async () => {
+    await withEnv(HERDR_ENV, undefined, async () => {
+      mockHerdr([
+        ["workspace list", WORKSPACE_LIST],
+        ["tab list --workspace w1", TAB_LIST],
+      ]);
+      const target = { session: "mu-topotest", window: "mytab" };
+      expect(await herdrBackend.attachHint(target)).toBe("herdr tab focus w1:t2 && herdr");
+      expect(await herdrBackend.attachCommands(target)).toEqual([
+        { command: "herdr", args: ["tab", "focus", "w1:t2"] },
+        { command: "herdr", args: [] },
+      ]);
+    });
+  });
+
+  it("inside a herdr pane, only focuses: the caller's client already shows it", async () => {
+    await withEnv(HERDR_ENV, "1", async () => {
+      mockHerdr([["workspace list", WORKSPACE_LIST]]);
+      expect(await herdrBackend.attachHint({ session: "mu-topotest" })).toBe(
+        "herdr workspace focus w1",
+      );
+      expect(await herdrBackend.attachCommands({ session: "mu-topotest" })).toEqual([
+        { command: "herdr", args: ["workspace", "focus", "w1"] },
+      ]);
+    });
+  });
+
+  it("falls back to the workspace when no tab carries the window label", async () => {
+    await withEnv(HERDR_ENV, "1", async () => {
+      mockHerdr([
+        ["workspace list", WORKSPACE_LIST],
+        ["tab list", TAB_LIST],
+      ]);
+      expect(await herdrBackend.attachHint({ session: "mu-topotest", window: "nope" })).toBe(
+        "herdr workspace focus w1",
+      );
+    });
+  });
+
+  it("targets the MU_HERDR_SESSION server mu drives", async () => {
+    await withEnv(HERDR_ENV, undefined, async () => {
+      await withEnv(HERDR_SESSION, "work", async () => {
+        mockHerdr([["workspace list", WORKSPACE_LIST]]);
+        expect(await herdrBackend.attachHint({ session: "mu-topotest" })).toBe(
+          "herdr --session work workspace focus w1 && herdr --session work",
+        );
+        expect(await herdrBackend.attachCommands({ session: "mu-topotest" })).toEqual([
+          { command: "herdr", args: ["--session", "work", "workspace", "focus", "w1"] },
+          { command: "herdr", args: ["--session", "work"] },
+        ]);
+      });
+    });
+  });
+
+  it("an unknown label: the hint degrades to a recipe, the TUI steps throw", async () => {
+    mockHerdr([["workspace list", WORKSPACE_LIST_EMPTY]]);
+    const hint = await herdrBackend.attachHint({ session: "mu-gone" });
+    expect(hint).toContain("workspace list");
+    expect(hint).not.toContain("session attach");
+    await expect(herdrBackend.attachCommands({ session: "mu-gone" })).rejects.toBeInstanceOf(
+      HerdrError,
+    );
   });
 });

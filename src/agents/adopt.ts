@@ -4,8 +4,8 @@
 // adoptAgent hooks an already-existing pane into mu's registry.
 //
 // Two flavours of resolution:
-//   - by paneId   ('%15')         : look up directly via tmux
-//   - by paneTitle ('worker-1')   : scan tmux panes for matching title
+//   - by paneId   ('%15', 'w1:p2') : look up directly via the mux
+//   - by paneTitle ('worker-1')    : scan the session's panes for that title
 //
 // Common cases for adopt:
 //   - operator manually started a CLI in a pane before installing mu
@@ -33,7 +33,7 @@ import { agentCtlSocket, expectsCtl } from "./transport.js";
 const ADOPT_CTL_PROBE_MS = 1000;
 
 export interface AdoptAgentOptions {
-  /** tmux pane id (e.g. '%15'). Must already exist on the tmux server. */
+  /** Mux pane id (tmux '%15', herdr 'w1:p2'). Must already exist. */
   paneId: string;
   /** Workstream to adopt the pane into. The pane MUST be in the
    *  matching tmux session (`mu-<workstream>`); cross-session adopt is

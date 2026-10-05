@@ -165,7 +165,7 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
     const mux = await activeMux();
     nextSteps.push({
       intent: "Attach the pane",
-      command: mux.attachHint({
+      command: await mux.attachHint({
         session: `mu-${workstream}`,
         window: agent.tab ?? name,
         inside: Boolean(process.env.TMUX),
@@ -455,7 +455,7 @@ export async function cmdList(
     console.log(pc.dim("  Panes that look like agents but aren't in the registry."));
     console.log(
       pc.dim(
-        "  Run `mu agent adopt <pane-id>` to register one as a managed agent (e.g. `mu agent adopt %15`).",
+        `  Run \`mu agent adopt <pane-id>\` to register one as a managed agent (e.g. \`mu agent adopt ${view.orphans[0]?.paneId ?? "%15"}\`).`,
       ),
     );
     for (const orphan of view.orphans) {
@@ -623,17 +623,19 @@ interface AdoptCliOpts {
 export async function cmdAdopt(db: Db, paneOrTitle: string, opts: AdoptCliOpts): Promise<void> {
   const ws = await resolveWorkstream(opts.workstream);
 
-  // Allow `mu agent adopt <pane-id>` (literal '%15') OR `mu agent adopt <pane-title>`
-  // (a string that looks like an agent name; we look it up in the
-  // workstream's tmux session). Pane-id form is preferred for scripting;
-  // pane-title form is the ergonomic form for interactive use.
+  // Allow `mu agent adopt <pane-id>` (the backend's id form: tmux '%15',
+  // herdr 'w1:p2') OR `mu agent adopt <pane-title>` (a string that looks
+  // like an agent name; we look it up in the workstream's mux session).
+  // Pane-id form is preferred for scripting; pane-title form is the
+  // ergonomic form for interactive use.
+  // Load-bearing: resolving the pane IS the verb's input.
+  const mux = await activeMux();
   let paneId: string;
-  if (paneOrTitle.startsWith("%")) {
+  if (mux.isValidPaneId(paneOrTitle)) {
     paneId = paneOrTitle;
   } else {
     const session = `mu-${ws}`;
-    // Load-bearing: resolving the title to a pane id IS the verb's input.
-    const panes = await (await activeMux()).listPanesInSession(session);
+    const panes = await mux.listPanesInSession(session);
     const match = panes.find((p) => p.title === paneOrTitle);
     if (!match) {
       throw new UsageError(
@@ -658,9 +660,7 @@ export async function cmdAdopt(db: Db, paneOrTitle: string, opts: AdoptCliOpts):
   // Window-scoped border for the adopted pane's window. (cmdInit set
   // it on _mu but adopted panes can be in any window.) Self-checks
   // MU_BANNER_QUIET; best-effort.
-  await activeMux()
-    .then((mux) => mux.enableMuPaneBordersForPane(paneId))
-    .catch(() => {});
+  await mux.enableMuPaneBordersForPane(paneId).catch(() => {});
 
   const nextSteps: NextStep[] = [];
   // An adopted pi pane was started without MU_CTL_SOCK, so sends to it
@@ -1291,7 +1291,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("adopt <pane-or-title>")
     .description(
-      "Register an existing mux pane as a managed mu agent (the inverse of `mu agent list`'s 'orphan' state). Pane id form '%15' or pane title form 'worker-2'.",
+      "Register an existing mux pane as a managed mu agent (the inverse of `mu agent list`'s 'orphan' state). Pane id form (tmux '%15', herdr 'w1:p2') or pane title form 'worker-2'.",
     )
     .option("--name <name>", "agent name (defaults to the pane's current title)")
     .option("--cli <cli>", "agent CLI key (default: pi)")
