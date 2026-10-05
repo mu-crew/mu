@@ -10,6 +10,12 @@
  * nudge`; the armed set and fired flag are per-prompt scratch. The rule
  * text lives in skills/mu/SKILL.md between the keep-driving markers.
  *
+ * The refute nudge: `mu task claim <id> --for` on a task whose notes
+ * carry no line starting `REFUTER `, `VERDICT:` or `REFUTE-EXEMPT:`
+ * (read with `mu task notes --json`) gets ONE visible message per prompt
+ * listing those tasks. It informs, never continues; `review_*` tasks
+ * are exempt (their brief is the fixed reviewer template).
+ *
  * Its worker-side twin, the close nudge: a mu-spawned pi worker
  * ($MU_AGENT_NAME + $MU_WORKSTREAM) that settles while it still owns an
  * IN_PROGRESS task is told once to close it or say why not. Same
@@ -22,6 +28,7 @@ import { defaultRunner, type MuRunner } from "./delegate.js";
 export const NUDGE_MESSAGE_TYPE = "mu-keep-driving";
 export const NUDGE_LOG_KIND = "nudge";
 export const CLOSE_NUDGE_MESSAGE_TYPE = "mu-close-task";
+export const REFUTE_NUDGE_MESSAGE_TYPE = "mu-refute-brief";
 const MARK_START = "<!-- mu:keep-driving -->";
 const MARK_END = "<!-- /mu:keep-driving -->";
 /** Tasks named in the wait hint; the rest are counted, not listed. */
@@ -88,6 +95,48 @@ export function dispatchedWorkstreams(command: string): string[] | undefined {
     if (ws !== "scratch") found.add(ws);
   }
   return found.size > 0 ? [...found] : undefined;
+}
+
+/** Claim options that take a value; the task id is the first other positional. */
+const CLAIM_VALUE_OPTS = new Set(["--for", "-f", "-w", "--workstream", "--evidence", "--actor"]);
+
+/** Shell words of one segment; quotes group words and are dropped. */
+function shellWords(seg: string): string[] {
+  return [...seg.matchAll(/'([^']*)'|"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2] ?? m[3] ?? "");
+}
+
+/**
+ * The tasks a bash command dispatches with `mu task claim <id> --for`,
+ * as `{ ws, id }`. `ws` is `""` for the default workstream; a qualified
+ * `<ws>/<id>` splits. `scratch` is skipped, like dispatchedWorkstreams.
+ */
+export function dispatchedTasks(command: string): { ws: string; id: string }[] {
+  const out: { ws: string; id: string }[] = [];
+  for (const seg of command.split(/&&|\|\||;|\n|\|/)) {
+    const words = shellWords(seg.trim());
+    if (words[0] !== "mu" && !words[0]?.endsWith("/mu")) continue;
+    if (words[1] !== "task" || words[2] !== "claim") continue;
+    let ws = "";
+    let id: string | undefined;
+    let isFor = false;
+    for (let k = 3; k < words.length; k++) {
+      const w = words[k] ?? "";
+      const [opt, eq] = w.startsWith("--") && w.includes("=") ? w.split("=", 2) : [w, undefined];
+      if (opt === "--for" || opt === "-f") isFor = true;
+      if (opt === "-w" || opt === "--workstream") ws = eq ?? words[k + 1] ?? "";
+      if (CLAIM_VALUE_OPTS.has(opt ?? "")) {
+        if (eq === undefined) k++;
+      } else if (id === undefined && !w.startsWith("-")) id = w;
+    }
+    if (!isFor || id === undefined) continue;
+    const slash = id.indexOf("/");
+    if (slash >= 0) {
+      if (ws === "") ws = id.slice(0, slash);
+      id = id.slice(slash + 1);
+    }
+    if (ws !== "scratch") out.push({ ws, id });
+  }
+  return out;
 }
 
 function unquote(s: string): string {
@@ -273,6 +322,74 @@ export function registerCloseNudge(
         },
       ],
       continue: true,
+    };
+  });
+}
+
+/** A note counts as a refute decision only when a line starts with a marker. */
+const REFUTE_MARK = /^(REFUTER |VERDICT:|REFUTE-EXEMPT:)/m;
+
+/** True when the task's notes hold a refute decision; undefined if unreadable. */
+async function briefRefuted(run: MuRunner, ws: string, id: string): Promise<boolean | undefined> {
+  const r = await run(["task", "notes", id, ...(ws ? ["-w", ws] : []), "--json"]);
+  if (r.code !== 0) return undefined;
+  try {
+    const json = JSON.parse(r.stdout) as { items?: { content?: string }[] };
+    return (json.items ?? []).some((n) => REFUTE_MARK.test(n.content ?? ""));
+  } catch {
+    return undefined;
+  }
+}
+
+/** The refute-nudge text: name each task and the two ways out. */
+export function refuteNudgeText(refs: string[]): string {
+  return `[mu] dispatched ${refs.join(", ")} with an unrefuted brief: refute it (delegate, record) or note REFUTE-EXEMPT: <why>`;
+}
+
+export function registerRefuteNudge(pi: MuNudgeApi, run: MuRunner = defaultRunner()): void {
+  if (!nudgeEnabled()) return;
+  const armed = new Map<string, { ws: string; id: string }>();
+  let fired = false;
+
+  pi.on("input", () => {
+    armed.clear();
+    fired = false;
+  });
+
+  pi.on("tool_call", (event) => {
+    const cmd = bashCommand(event);
+    if (cmd === undefined) return;
+    for (const t of dispatchedTasks(cmd)) {
+      if (!t.id.startsWith("review_")) armed.set(`${t.ws}/${t.id}`, t);
+    }
+  });
+
+  pi.on("agent_before_settle", async (event) => {
+    if (fired || armed.size === 0) return;
+    if (outcomeOf(event) !== "completed") return;
+    fired = true;
+    const refs: string[] = [];
+    for (const [ref, t] of armed) {
+      if ((await briefRefuted(run, t.ws, t.id)) === false) refs.push(ref);
+    }
+    if (refs.length === 0) return;
+    const logWs = [...armed.values()].find((t) => t.ws !== "")?.ws;
+    await run([
+      "log",
+      ...(logWs ? ["-w", logWs] : []),
+      "--kind",
+      NUDGE_LOG_KIND,
+      `refute: ${refs.join(", ")}`,
+    ]);
+    return {
+      entries: [
+        {
+          type: "custom_message",
+          customType: REFUTE_NUDGE_MESSAGE_TYPE,
+          content: refuteNudgeText(refs),
+          display: true,
+        },
+      ],
     };
   });
 }

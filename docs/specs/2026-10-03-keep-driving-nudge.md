@@ -140,3 +140,24 @@ claimed a task for a worker, ended its turn, received one
 `[mu-keep-driving]` message with `mu task wait nudgeprobe/slow ...`, and
 `mu log --kind nudge` held one entry. With nothing IN_PROGRESS, no
 nudge fired.
+
+## Refute nudge (2026-10-05)
+
+A sibling hook in the same file (`registerRefuteNudge`), registered on
+its own: it does not need the keep-driving markers and has its own
+once-per-prompt flag.
+
+- **Arm** on `mu task claim <id> --for` (`dispatchedTasks`: the id is
+  the first positional that is not an option value; `<ws>/<id>`
+  splits). `review_*` tasks never arm: their brief is the fixed
+  reviewer template, judging work against an already-refuted brief.
+- **Check** at a completed `agent_before_settle`: `mu task notes <id>
+  -w <ws> --json` per armed task. This is a second read beside
+  `mu state --json`. A task counts as refuted when a note has a line
+  starting `REFUTER `, `VERDICT:` or `REFUTE-EXEMPT:`; prose that only
+  mentions the words mid-line does not count.
+- **Notify** once per prompt: one `custom_message`
+  (`customType: "mu-refute-brief"`, `display: true`) listing every
+  unrefuted `<ws>/<id>`, and `mu log --kind nudge 'refute: ...'`. No
+  `continue`: it informs, and the orchestrator decides. `MU_NUDGE=0`
+  turns it off.

@@ -40,14 +40,18 @@ human asks for a file.
    consumes what B produces. Plan order is not a dependency: an extra
    edge serialises tracks that could run in parallel. The exception:
    tasks that edit the same files share a track ([waves](waves.md)).
-7. **Self-review before dispatch.** Walk each spec requirement and name
-   the task that implements it. Grep the notes for placeholders. Check
-   that names in INTERFACES match across tasks. Then read the graph back
-   with `mu task tree task_0 -w <ws> --down`, or `mu state -w <ws>` for the tracks.
+7. **Self-review before dispatch.** Map each spec requirement to its
+   task, grep the notes for placeholders, match INTERFACES names across
+   tasks, and read the graph back (`mu task tree task_0 -w <ws> --down`).
+   Then refute each brief that makes claims ([call](tasks-or-calls.md#delegate-call),
+   all in one turn): "What in this brief is false about the code,
+   ambiguous, or would make a correct worker fail review? Cite
+   file:line." Rewrite each AMEND. Five of six briefs refuted in one run had
+   such a defect, e.g. a fallback test old extensions made unpassable.
 
 Done when every spec requirement maps to a task, no note holds a
-placeholder, and `mu state` shows the intended parallel tracks. Then
-dispatch per [orchestrator-loop](orchestrator-loop.md).
+placeholder, every claim-making brief has a verdict, and `mu state`
+shows the intended parallel tracks. Then dispatch per [orchestrator-loop](orchestrator-loop.md).
 
 ## Notes
 

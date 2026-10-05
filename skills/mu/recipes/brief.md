@@ -32,6 +32,7 @@ not in the brief, or one pointer away, does not exist for it.
 6. **Ask for evidence, not reassurance.** The final note names the
    commands run and their exit codes (the task note contract). "Done,
    all good" is not a result.
+7. **A brief that makes claims is refuted before dispatch** ([SKILL.md](../SKILL.md#orchestrator-rules)).
 
 ## Shape
 
