@@ -50,7 +50,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **tmux: a workstream never acts on another workstream's session.** Session-level calls (`has-session`, `kill-session`, `list-windows`, `new-window`, `list-panes -s`) target `=mu-<name>:`, so they no longer fall back to tmux's prefix match. Before, `mu workstream teardown auth` with no `mu-auth` session killed `mu-auth-refactor`, and reconcile listed its panes.
 - **tmux: a missing socket file means "no server".** On a fresh boot, a cleared `/tmp` or a new `TMUX_TMPDIR`, tmux reports "error connecting to … (No such file or directory)". `mu state`, `mu agent list` and teardown now treat it like "no server running" instead of exiting 5.
 - **tmux: `mu agent read -n N` and `mu agent show -n N` print the last N lines.** They printed the visible screen plus N rows above it. Trailing blank rows below the cursor are dropped first, so the result matches herdr's `--lines N`.
-- **tmux: `mu agent send` to a dead pane fails at once** (non-pi agents and `--via mux`). It polled the full readiness budget (`MU_SEND_READINESS_MS`, 15s) before failing with "can't find pane". A transient capture failure still waits.
+- **tmux: `mu agent send` to a dead pane fails at once** (non-pi agents and `--via mux`). It polled the full readiness budget (`MU_SEND_READINESS_MS`, 15s) before failing with "can't find pane" (or "no current target" when the server has zero sessions). A transient capture failure still waits.
 
 ## [3.8.1] — 2026-10-05
 

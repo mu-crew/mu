@@ -273,11 +273,14 @@ function exactSessionTarget(name: string): string {
 const NO_SERVER_RE = /no server running|error connecting to .*\(No such file or directory\)/i;
 
 /** True when a tmux call failed because the pane (or the whole server)
- *  is gone, rather than for a transient reason. */
+ *  is gone, rather than for a transient reason. "no current target" is
+ *  what a server with zero sessions (`exit-empty off`) says about a dead
+ *  pane, as in killSession and sendToPane's copy-mode check. */
 function isPaneGoneError(err: unknown): boolean {
   return (
     err instanceof TmuxError &&
-    (/can't find pane|pane not found/i.test(err.stderr) || NO_SERVER_RE.test(err.stderr))
+    (/can't find pane|pane not found|no current target/i.test(err.stderr) ||
+      NO_SERVER_RE.test(err.stderr))
   );
 }
 

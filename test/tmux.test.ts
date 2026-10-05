@@ -910,6 +910,23 @@ describe("sendToPane", () => {
     expect(calls.map((c) => c.args[0])).toEqual(["capture-pane"]);
   });
 
+  it("fails fast on a dead pane when the server has zero sessions ('no current target')", async () => {
+    // With `exit-empty off` the server outlives its last session, and
+    // capture-pane on a dead pane says "no current target" instead of
+    // "can't find pane". It is the same gone pane.
+    const { executor, calls } = harness(() => fail("no current target"));
+    setTmuxExecutor(executor);
+    let slept = 0;
+    setSleepForTests(async (ms) => {
+      slept += ms;
+    });
+    await expect(sendToPane("%15", "hello", { readinessMs: 15_000 })).rejects.toThrow(
+      /no current target/,
+    );
+    expect(slept).toBe(0);
+    expect(calls.map((c) => c.args[0])).toEqual(["capture-pane"]);
+  });
+
   it("keeps polling on a transient capture failure", async () => {
     let captures = 0;
     const { executor } = harness((args) => {
