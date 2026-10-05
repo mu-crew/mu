@@ -71,11 +71,12 @@ Before you act on a claim, root cause, plan, fix or brief, or to get a second
 look at your own work or diff, make a [delegate call](recipes/tasks-or-calls.md#delegate-call)
 that tries to refute it (briefs: see Orchestrator rules; many claims: [refute](recipes/refute.md)).
 
-For one-shot work inside pi, call `mu_delegate` (installed by `mu link pi`).
-Outside pi: spawn into the reserved `scratch` workstream (no task DAG,
-auto-created), `send --fresh --json`, then `mu agent wait --after-runs <its runs> --json`
-(`lastText`); without `--after-runs` a run that ends first hangs the wait.
-Recipes call either form a **delegate call**.
+For one-shot work inside pi, call `mu_delegate` (installed by `mu link pi`). Outside pi: spawn
+into the reserved `scratch` workstream (no task DAG, auto-created), `send --fresh --json`, then
+`mu agent wait --after-runs <its runs> --json` (`lastText`); without `--after-runs` a run that
+ends first hangs the wait. Recipes call either form a **delegate call**. A check judging a mu
+task lands its verdict there: `record: { task: "<ws>/<id>" }` on `mu_delegate`, a hand-written
+`REFUTER` note on the spawn path; with no task, skip both.
 
 - `mu agent wait <names...> --first` waits for busy → idle instead of a
   `sleep` loop; exit 0 met, 5 timeout, 6 pane died.
