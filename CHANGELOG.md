@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.8.0] — 2026-10-05
+
+**Checks before you commit, and decisions that keep their evidence.**
+The mu skill now leads with refuting a claim, plan or brief through a
+fresh `mu_delegate` call before acting on it. `mu_delegate record`
+writes the refuter's verdict onto the task it judged, and bare decisions
+warn. `mu agent send --interrupt` redirects a busy pi now, `mu agent
+wait --after-runs` waits from an exact baseline, and a new `drift-audit`
+recipe finds what an orchestrator has let slip.
+
+Upgrade with `npm i -g @mu-crew/mu@3.8.0`, then `/reload` in running pi
+sessions (`/reload --via mux` for agents spawned before 3.3.0). The pi
+extension gains the ctl op `interrupt`; older extensions fall back to
+abort plus send. No schema change.
+
 ### Changed
 
 - **`mu_delegate` `record`: a check's verdict lands on the task it judged.** `record: { task, workstream? }` checks the task exists before spawning, then writes the answer's last `VERDICT:` line and its `EVIDENCE:` lines onto that task as one note headed `REFUTER <label> (...)` (a no-verdict note on timeout, death, error or cancel). The follow-up says where it was recorded.
