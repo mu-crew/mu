@@ -2,8 +2,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CTL_DEFAULT_TIMEOUT_MS,
+  CTL_WAIT_SLACK_MS,
   CtlTimeoutError,
   CtlUnknownOpError,
   CtlVersionError,
@@ -170,6 +172,60 @@ describe("ctlRequest", () => {
     });
     const reply = await ctlRequest(p, { op: "wait", afterRuns: 0, timeoutMs: 10 });
     expect(reply).toMatchObject({ ok: true, runs: 1 });
+  });
+
+  describe("interrupt client timeout", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Serve a socket that holds each request until the test replies. */
+    async function holdingServer(): Promise<{ path: string; held: Promise<Socket> }> {
+      let gotReq!: (s: Socket) => void;
+      const held = new Promise<Socket>((r) => {
+        gotReq = r;
+      });
+      const path = await serve((_l, sock) => gotReq(sock));
+      return { path, held };
+    }
+
+    it("waits past the default timeout while pi settles within the interrupt budget", async () => {
+      const { path, held } = await holdingServer();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const settle = 30_000;
+      let outcome: unknown;
+      const pending = ctlRequest(path, { op: "interrupt", text: "x", timeoutMs: settle }).then(
+        (r) => {
+          outcome = r;
+        },
+        (e: unknown) => {
+          outcome = e;
+        },
+      );
+      const sock = await held;
+      // Settle slower than the default request timeout, within the budget.
+      vi.advanceTimersByTime(CTL_DEFAULT_TIMEOUT_MS + 1000);
+      await Promise.resolve();
+      expect(outcome).toBeUndefined();
+      sock.end(encode({ v: 1, ok: true }));
+      await pending;
+      expect(outcome).toEqual({ v: 1, ok: true });
+    });
+
+    it("bounds the wait at the settle budget plus slack", async () => {
+      const { path, held } = await holdingServer();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const settle = 10_000;
+      const pending = ctlRequest(path, { op: "interrupt", text: "x", timeoutMs: settle }).catch(
+        (e: unknown) => e,
+      );
+      await held;
+      vi.advanceTimersByTime(settle + CTL_WAIT_SLACK_MS - 1);
+      vi.advanceTimersByTime(1);
+      const err = await pending;
+      expect(err).toBeInstanceOf(CtlTimeoutError);
+      expect(err).toMatchObject({ timeoutMs: settle + CTL_WAIT_SLACK_MS });
+    });
   });
 
   it("rejects when the server closes without replying", async () => {
