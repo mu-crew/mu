@@ -342,8 +342,14 @@ function recordReasonNote(
   insertNote(db, localId, `${substate.toUpperCase()}: ${text}`, noteOpts);
 }
 
-/** A token shaped like a task id, not inside a word, path, or file name. */
-const TASK_ID_TOKEN = /(?<![\w./-])[a-z][a-z0-9_-]{0,63}(?![\w-])/g;
+/** A token shaped like a task id, not inside a word, path, or file
+ *  name: never preceded by a word char, `.`, `/` or `-`, and never
+ *  followed by an extension (`fix.ts`) or a line number (`fix:12`). */
+const TASK_ID_TOKEN = /(?<![\w./-])[a-z][a-z0-9_-]{0,63}(?![\w-]|\.\w|:\d)/g;
+
+/** {@link TASK_ID_TOKEN}, plus an optional parenthetical opener right
+ *  after it (group 1), so the title can merge into it. */
+const TASK_ID_WITH_PAREN = new RegExp(`(?:${TASK_ID_TOKEN.source})(\\s*\\()?`, "g");
 
 /** Ids in `text` naming another task in `workstream`. */
 function namedTaskIds(db: Db, text: string, workstream: string, self: string): string[] {
@@ -352,14 +358,19 @@ function namedTaskIds(db: Db, text: string, workstream: string, self: string): s
 }
 
 /** Append each named task's title after its id, so a REJECTED /
- *  SUPERSEDED note reads without looking the ids up. Text that names
- *  no task in the workstream is left as is. */
+ *  SUPERSEDED note reads without looking the ids up: `f2 (title)`.
+ *  An id already followed by a parenthetical (the skill's REJECT form
+ *  `<id> (<why it fails>)`) gets one merged parenthetical instead:
+ *  `f2 (title; why it fails)`. Text that names no task in the
+ *  workstream is left as is. */
 function withTitles(db: Db, why: string, workstream: string, self: string): string {
   const named = new Set(namedTaskIds(db, why, workstream, self));
   if (named.size === 0) return why;
-  return why.replace(TASK_ID_TOKEN, (id) => {
-    if (!named.has(id)) return id;
-    return `${id} (${getTask(db, id, workstream)?.title ?? ""})`;
+  return why.replace(TASK_ID_WITH_PAREN, (match: string, paren: string | undefined) => {
+    const id = paren === undefined ? match : match.slice(0, -paren.length);
+    if (!named.has(id)) return match;
+    const title = getTask(db, id, workstream)?.title ?? "";
+    return paren === undefined ? `${id} (${title})` : `${id} (${title}; `;
   });
 }
 
