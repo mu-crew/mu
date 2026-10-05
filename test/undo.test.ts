@@ -777,6 +777,47 @@ describe("undo", () => {
       expect(pairOwner("a")).toEqual({ status: "OPEN", substate: "todo", owner_id: null });
       expectNoDrift();
     });
+
+    it("a STALE peer tombstone (lost to a newer put) does not reset the restored owner", async () => {
+      // The delete arrives after a put with a higher hlc, so applyDel
+      // skips it and the row is never deleted. Undoing a later release
+      // must still restore the live owner (g_fix_undo2_stale_tombstone).
+      seedAgents();
+      await claimTask(db, "a", { agentName: "w1", workstream: "demo" });
+      const machineId = "9f1c8a2e-0000-4000-8000-0000000000aa";
+      const peerHlc = (offsetMs: number): string =>
+        formatHlc({ wallMs: Date.now() + offsetMs, counter: 0, machineId });
+      const base = { machineId, actor: "peer", entity: "task", key: "demo/a" } as const;
+      applyIncomingOp(db, {
+        ...base,
+        hlc: peerHlc(2000),
+        groupId: "peer-put",
+        intent: "task.update",
+        op: "put",
+        payload: JSON.stringify({ title: "peer title" }),
+      });
+      const del = applyIncomingOp(db, {
+        ...base,
+        hlc: peerHlc(1000),
+        groupId: "peer-del",
+        intent: "task.delete",
+        op: "del",
+        payload: "{}",
+      });
+      expect(del.changed).toBe(false);
+      expect(pairOwner("a")?.owner_id).toBe(agentId("w1"));
+
+      releaseTask(db, "a", { workstream: "demo" });
+      const target = groupFor("task.release");
+      const ownerRestore = planUndo(db, target).inverses.find((i) => "owner_id" in i.fields);
+      expect(ownerRestore?.fields.owner_id).toBe(agentId("w1"));
+      undoGroup(db, target);
+      expect(pairOwner("a")).toEqual({
+        status: "IN_PROGRESS",
+        substate: "active",
+        owner_id: agentId("w1"),
+      });
+    });
   });
 
   // ─── provenance reuse ────────────────────────────────────────────────

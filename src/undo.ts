@@ -720,9 +720,11 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
  * Always found: a task row only ever starts unowned. Apply strips a
  * peer's owner_id and inserts the row with owner_id NULL without
  * capturing, so a task created (or recreated after a tombstone) by a
- * peer has no local op naming owner_id. A local op older than the
- * newest tombstone described a row that no longer exists, so it does
- * not count either.
+ * peer has no local op naming owner_id. A local op older than a
+ * tombstone that won described a row that no longer exists, so it does
+ * not count either. A tombstone lost (and deleted nothing) when a newer
+ * put had already arrived, i.e. one with a higher hlc and a lower seq:
+ * the same check applyDel makes.
  */
 function priorOwner(
   db: Db,
@@ -734,13 +736,16 @@ function priorOwner(
   if (!local.found) return { found: true, value: null };
   const tomb = db
     .prepare(
-      `SELECT 1 FROM ops
-        WHERE entity = 'task' AND key = @key AND op = 'del' AND hlc < @hlc
-          AND hlc > (SELECT MAX(hlc) FROM ops
-                      WHERE entity = 'task' AND key = @key AND op = 'put'
-                        AND hlc < @hlc AND machine_id = @machineId
-                        AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
-                        AND json_type(payload, '$.owner_id') IS NOT NULL)
+      `SELECT 1 FROM ops d
+        WHERE d.entity = 'task' AND d.key = @key AND d.op = 'del' AND d.hlc < @hlc
+          AND d.hlc > (SELECT MAX(hlc) FROM ops
+                        WHERE entity = 'task' AND key = @key AND op = 'put'
+                          AND hlc < @hlc AND machine_id = @machineId
+                          AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
+                          AND json_type(payload, '$.owner_id') IS NOT NULL)
+          AND NOT EXISTS (SELECT 1 FROM ops p
+                           WHERE p.entity = 'task' AND p.key = @key AND p.op = 'put'
+                             AND p.hlc > d.hlc AND p.seq < d.seq)
         LIMIT 1`,
     )
     .get({ key, hlc, machineId });
