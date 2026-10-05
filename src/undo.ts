@@ -25,6 +25,10 @@
 //                                 value of exactly those fields
 //   del                        -> inverse is a put restoring the row
 //
+// A field the group wrote more than once is restored once, from the value
+// before its FIRST write in the group: later writes' "prior" values are
+// the group's own intermediate states.
+//
 // "Did this put create the row" is answered by provenance, not by a flag:
 // a put created the row iff no op for that key precedes it. "What was
 // this field's prior value" is the newest op before this one that named
@@ -66,7 +70,10 @@
 //
 // (c) is implemented. `planUndo` detects, per field, whether a LATER op
 // (from a different group) has written that field since, and reports it
-// as a `supersededBy` conflict. `undoGroup` refuses unless
+// as a `supersededBy` conflict. `updated_at` is the exception: almost
+// every write touches it (a `task note` touches its task), so a later
+// write to it is not a conflict; the undo just leaves the newer
+// timestamp. `undoGroup` refuses unless
 // `opts.force === true`. So the default is safe and loud, and the
 // override exists and says what it will destroy. Fail safe, never fail
 // silent — the same rule capture follows.
@@ -85,6 +92,7 @@ import { LEGACY_LOG_ONLY_SQL_EXCLUSION } from "./legacy-ops.js";
 import { groupIdFromPrefix } from "./logs.js";
 import { withOpContext } from "./op-context.js";
 import type { HasNextSteps, NextStep } from "./output.js";
+import { localMachineId } from "./segments.js";
 import { mapLegacyStatus, resolvePair } from "./tasks/status.js";
 
 /** One op as stored, with the provenance we need to invert it. */
@@ -92,6 +100,7 @@ interface GroupOpRow {
   seq: number;
   hlc: string;
   group_id: string;
+  machine_id: string;
   intent: string | null;
   actor: string | null;
   entity: string;
@@ -250,6 +259,10 @@ function restoreRank(entity: string): number {
  * Returns `{ found: false }` when no earlier op named the field, which
  * means the field had no value before this op — so there is nothing to
  * restore and the op must have been part of the row's creation.
+ *
+ * `machineId` limits the lookup to one machine's ops. Undo passes it for
+ * `owner_id`, whose live value only this machine's ops ever wrote (apply
+ * strips it from peers' ops).
  */
 export function priorFieldValue(
   db: Db,
@@ -257,6 +270,7 @@ export function priorFieldValue(
   key: string,
   hlc: string,
   field: string,
+  machineId?: string,
 ): { found: true; value: string | number | null } | { found: false } {
   const row = db
     .prepare(
@@ -266,18 +280,22 @@ export function priorFieldValue(
           AND key    = @key
           AND op     = 'put'
           AND hlc    < @hlc
+          AND (@machineId IS NULL OR machine_id = @machineId)
           AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
           AND json_type(payload, '$.' || @field) IS NOT NULL
         ORDER BY hlc DESC
         LIMIT 1`,
     )
-    .get({ entity, key, hlc, field }) as { value: string | number | null } | undefined;
+    .get({ entity, key, hlc, field, machineId: machineId ?? null }) as
+    | { value: string | number | null }
+    | undefined;
   if (row === undefined) return { found: false };
   return { found: true, value: row.value };
 }
 
 /** Groups that wrote `field` of `key` AFTER `hlc`. Non-empty means the
- *  field has been superseded since the group we are undoing. */
+ *  field has been superseded since the group we are undoing. `machineId`
+ *  as in `priorFieldValue`. */
 function laterWriters(
   db: Db,
   entity: string,
@@ -285,6 +303,7 @@ function laterWriters(
   hlc: string,
   field: string,
   excludeGroup: string,
+  machineId?: string,
 ): Array<{ groupId: string; intent: string | null }> {
   return db
     .prepare(
@@ -295,10 +314,11 @@ function laterWriters(
           AND op       = 'put'
           AND hlc      > @hlc
           AND group_id <> @excludeGroup
+          AND (@machineId IS NULL OR machine_id = @machineId)
           AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
           AND json_type(payload, '$.' || @field) IS NOT NULL`,
     )
-    .all({ entity, key, hlc, field, excludeGroup }) as Array<{
+    .all({ entity, key, hlc, field, excludeGroup, machineId: machineId ?? null }) as Array<{
     groupId: string;
     intent: string | null;
   }>;
@@ -452,10 +472,24 @@ const CAPTURED_TABLE_FOR: Record<string, string> = {
   edge: "task_edges",
 };
 
-/** Fields never restored by an undo, mirroring apply's NEVER_APPLY.
- *  `local_id` / `name` are encoded in the natural key, and `owner_id` is
- *  an FK into machine-local `agents`. */
-const NEVER_RESTORE = new Set(["id", "local_id", "name", "workstream_id", "task_id", "owner_id"]);
+/** Fields never restored by an undo: surrogate ids and the columns
+ *  encoded in the natural key (`local_id` / `name`). */
+const NEVER_RESTORE = new Set(["id", "local_id", "name", "workstream_id", "task_id"]);
+
+/** `tasks.owner_id` is an FK into machine-local `agents`. Undoing a
+ *  claim or release restores it with the status/substate pair it was
+ *  written with, but only from THIS machine's ops (a peer's value names
+ *  a peer's agent) and only when that agent still exists. A whole-row
+ *  restore from a tombstone leaves it NULL, as apply does. */
+const OWNER_FIELD = "owner_id";
+
+/** Excluded from whole-row reconstruction (tombstone restores). */
+const NEVER_RECONSTRUCT = new Set([...NEVER_RESTORE, OWNER_FIELD]);
+
+/** Bookkeeping timestamp written by nearly every task change, including
+ *  the parent touch of `mu task note`. A later write to it alone is not
+ *  a supersession: undo then leaves the newer timestamp in place. */
+const TOUCH_FIELD = "updated_at";
 
 /**
  * Compute what undoing `groupId` would do, WITHOUT doing it.
@@ -467,7 +501,7 @@ const NEVER_RESTORE = new Set(["id", "local_id", "name", "workstream_id", "task_
 export function planUndo(db: Db, groupId: string): UndoPlan {
   const rows = db
     .prepare(
-      `SELECT o.seq, o.hlc, o.group_id, o.intent, o.actor, o.entity, o.key, o.op, o.payload,
+      `SELECT o.seq, o.hlc, o.group_id, o.machine_id, o.intent, o.actor, o.entity, o.key, o.op, o.payload,
               (SELECT COUNT(*) FROM ops p
                 WHERE p.entity = o.entity AND p.key = o.key AND p.hlc < o.hlc) AS prior,
               (SELECT p.op FROM ops p
@@ -487,6 +521,16 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
   /** Task keys already handled by the legacy-note recovery below, which
    *  works per TASK rather than per tombstone (see there). */
   const seenLegacyNoteTasks = new Set<string>();
+  /** Per row key, the fields an EARLIER op of this group already
+   *  restores. A group can write one field twice (`task.park` writes
+   *  updated_at in two statements); only the first write's prior value
+   *  is the pre-group state, so later writes add no inverse for it. */
+  const restoredFields = new Map<string, Set<string>>();
+  let machine: string | undefined;
+  const localMachine = (): string => {
+    machine ??= localMachineId(db);
+    return machine;
+  };
 
   for (const row of rows) {
     if (row.op === "del") {
@@ -591,16 +635,32 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
     const payload = JSON.parse(row.payload) as Record<string, unknown>;
     const fields: Record<string, string | number | null> = {};
     const supersededBy: InverseOp["supersededBy"] = [];
+    const rowKey = `${row.entity}\u0000${row.key}`;
+    const restored = restoredFields.get(rowKey) ?? new Set<string>();
+    restoredFields.set(rowKey, restored);
     for (const field of Object.keys(payload)) {
-      if (NEVER_RESTORE.has(field)) continue;
-      const prior = priorFieldValue(db, row.entity, row.key, row.hlc, field);
+      if (NEVER_RESTORE.has(field) || restored.has(field)) continue;
+      restored.add(field);
+      let machineId: string | undefined;
+      if (field === OWNER_FIELD) {
+        // A peer's owner_id was never applied here, so there is nothing
+        // of it to undo.
+        if (row.machine_id !== localMachine()) continue;
+        machineId = localMachine();
+      }
+      const prior = priorFieldValue(db, row.entity, row.key, row.hlc, field, machineId);
       if (!prior.found) {
         // No earlier op named this field, so it had no prior value to go
         // back to. Nothing to restore for it.
         continue;
       }
+      // The prior owner's agent row is gone (ON DELETE SET NULL): its id
+      // would violate the FK, so the owner stays as it is.
+      if (field === OWNER_FIELD && prior.value !== null && !agentExists(db, prior.value)) continue;
+      const writers = laterWriters(db, row.entity, row.key, row.hlc, field, groupId, machineId);
+      if (field === TOUCH_FIELD && writers.length > 0) continue;
       fields[field] = prior.value;
-      for (const writer of laterWriters(db, row.entity, row.key, row.hlc, field, groupId)) {
+      for (const writer of writers) {
         supersededBy.push({ field, groupId: writer.groupId, intent: writer.intent });
       }
     }
@@ -648,6 +708,10 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
     superseded: ordered.some((i) => i.supersededBy.length > 0),
     skipped,
   };
+}
+
+function agentExists(db: Db, id: string | number): boolean {
+  return db.prepare("SELECT 1 FROM agents WHERE id = ?").get(id) !== undefined;
 }
 
 function groupWhen(db: Db, groupId: string): string {
@@ -717,14 +781,14 @@ function recoverLegacyNoteContents(
 
 /** The restorable fields carried by one op's payload.
  *
- *  Shares `NEVER_RESTORE` and the scalar-only guard with
+ *  Shares `NEVER_RECONSTRUCT` and the scalar-only guard with
  *  `reconstructRow`, so a fallback can never reintroduce a surrogate id
  *  or an FK the fold would have dropped. */
 function payloadFields(payload: string): Record<string, string | number | null> {
   const fields: Record<string, string | number | null> = {};
   const parsed = JSON.parse(payload) as Record<string, unknown>;
   for (const [field, value] of Object.entries(parsed)) {
-    if (NEVER_RESTORE.has(field)) continue;
+    if (NEVER_RECONSTRUCT.has(field)) continue;
     if (value === null || typeof value === "string" || typeof value === "number") {
       fields[field] = value;
     }
@@ -750,7 +814,7 @@ function reconstructRow(
   for (const put of puts) {
     const parsed = JSON.parse(put.payload) as Record<string, unknown>;
     for (const [field, value] of Object.entries(parsed)) {
-      if (NEVER_RESTORE.has(field)) continue;
+      if (NEVER_RECONSTRUCT.has(field)) continue;
       if (value === null || typeof value === "string" || typeof value === "number") {
         fields[field] = value;
       }

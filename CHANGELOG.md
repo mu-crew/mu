@@ -99,6 +99,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   over 200,000 bytes at the 100,000-character cap and marks it
   truncated. Before, it showed an error and no text. A command that
   floods stderr shows an error instead of an empty commit.
+- **`mu undo` no longer refuses after a `mu task note`.** A note touches its task's `updated_at`, and undo counted that as newer work, so undoing an earlier edit exited 4 unless you passed `--force`. A later write to `updated_at` alone is no longer a conflict.
+- **`mu undo` restores a field the action wrote twice.** `mu task park` and `mu task close` write `updated_at` twice, and undo restored the intermediate value instead of the value from before the action.
+- **Undoing a claim or release restores the owner too.** Before, undoing a claim left the task OPEN but still owned, so other workers could not claim it. Undoing a release left the task IN_PROGRESS with no owner. Undo now restores the owner from this machine's ops if that agent still exists.
 
 ## [3.8.1] — 2026-10-05
 
