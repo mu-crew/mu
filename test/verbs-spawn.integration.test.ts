@@ -334,7 +334,7 @@ describe("spawnAgent", () => {
     expect(state.sessions.has("custom-session")).toBe(true);
     expect(state.sessions.has("mu-auth")).toBe(false);
     // has-session called against custom-session, not mu-auth.
-    expect(calls[0]?.[2]).toBe("custom-session");
+    expect(calls[0]?.[2]).toBe("=custom-session:"); // exact-match target (fix_tmux)
   });
 
   it("passes cwd through to new-session/new-window/split-window", async () => {
