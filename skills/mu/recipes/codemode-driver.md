@@ -90,8 +90,9 @@ What the tool did for you, the script now owns:
   each script's list at or under it.
 - **Cleanup.** Close each scratch pane; a timed-out one stays, readable
   with `mu agent read <a> -w scratch`.
-- **Recording.** The script writes each `REFUTER` note as `record`
-  would, including `no verdict (<outcome>)` for a failed wait. Decide
+- **Recording.** The script writes each `REFUTER` note in `record`'s
+  shape, and `no verdict (<outcome>)` for a failed wait; it does not
+  cap long answers or special-case empty ones as `record` does. Decide
   each finding after it returns ([findings § Triage](findings.md#triage)
   step 3).
 
