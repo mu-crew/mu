@@ -242,6 +242,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - TUI: Tracks, Commits and Activity log drills stay on the row you
   opened. A filtered Tracks drill opened the unfiltered list's track,
   and a new commit or log event switched an open drill to another row.
+- TUI: the Tracks task-detail leaf stays on the task you opened. A task
+  that changed status re-sorted the track's task list, and the open
+  leaf switched to the task now at that position.
 - TUI: `?` over a popup keeps its cursor, filter and drill. Closing help
   used to reopen the popup's first row.
 - TUI: popup hints and the `?` overlay no longer advertise

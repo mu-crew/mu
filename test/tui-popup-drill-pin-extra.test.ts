@@ -19,7 +19,7 @@ import { TracksPopup } from "../src/cli/tui/popups/tracks.js";
 import { type Db, openDb } from "../src/db.js";
 import type { LogRow } from "../src/logs.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
-import { addTask } from "../src/tasks.js";
+import { addNote, addTask, setTaskStatus } from "../src/tasks.js";
 import { getParallelTracks } from "../src/tracks.js";
 import type { CommitSummary } from "../src/vcs.js";
 import {
@@ -142,6 +142,51 @@ describe("TracksPopup: filtered drill opens the track the user selected", () => 
     const drill = frame(stdout);
     expect(drill).toContain("Track 1 · bbb_goal");
     expect(drill).not.toContain("aaa_goal");
+    instance.unmount();
+  });
+});
+
+describe("TracksPopup: task-detail leaf stays on the drilled task", () => {
+  it("a status change that re-sorts the drill list does not switch the open leaf", async () => {
+    const db = fixtureDb();
+    for (const id of ["a", "b"]) {
+      addTask(db, { workstream: "demo", localId: id, title: id, impact: 50, effortDays: 1 });
+      addNote(db, id, `note on ${id}`, { workstream: "demo", author: "t" });
+    }
+    addTask(db, {
+      workstream: "demo",
+      localId: "g",
+      title: "G",
+      impact: 90,
+      effortDays: 1,
+      blockedBy: ["a", "b"],
+    });
+    const before = snapshot({ tracks: getParallelTracks(db, "demo") });
+    const { stdin, stdout, instance } = mount(TracksPopup, before, db);
+    await waitForInkOutput(stdout);
+    // Drill the track (rows: a, b, g), move to b, open its leaf.
+    await simulateInput(stdin, "enter");
+    await waitForInkOutput(stdout);
+    await simulateInput(stdin, "j");
+    await waitForInkOutput(stdout);
+    await simulateInput(stdin, "enter");
+    await waitForInkOutput(stdout);
+    expect(frame(stdout)).toContain("task: b (notes)");
+
+    // b goes IN_PROGRESS and sorts to index 0; a moves to index 1.
+    setTaskStatus(db, "b", "IN_PROGRESS", { workstream: "demo" });
+    const after = snapshot({ tracks: getParallelTracks(db, "demo") });
+    instance.rerender(createElement(Harness, { popup: TracksPopup, snap: after, db }));
+    await waitForInkOutput(stdout);
+    const leaf = frame(stdout);
+    expect(leaf).toContain("task: b (notes)");
+    expect(leaf).toContain("note on b");
+    expect(leaf).not.toContain("note on a");
+
+    // Esc back to the task list keeps the cursor on b (now row 1/3).
+    await simulateInput(stdin, "escape");
+    await waitForInkOutput(stdout);
+    expect(frame(stdout)).toContain("(1/3)");
     instance.unmount();
   });
 });

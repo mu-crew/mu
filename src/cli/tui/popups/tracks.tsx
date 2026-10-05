@@ -120,6 +120,10 @@ export function TracksPopup({
   const [cursor, setCursor] = useState(0);
   const [drillCursor, setDrillCursor] = useState(0);
   const [drillSubMode, setDrillSubMode] = useState<DrillSubMode>("task-list");
+  // The task-detail leaf is pinned to the task name set when it opens.
+  // drillTasks is re-queried and status-sorted on every render, so an
+  // index would switch the open leaf when a task changes status.
+  const [leafTaskName, setLeafTaskName] = useState<string | null>(null);
   // Filter is only active at the top-level (list-of-tracks) view
   // per spec MATCHING RULES (Tracks blob = head_id + head_title).
   // Drill sub-views own their own navigation; widening the filter
@@ -155,6 +159,7 @@ export function TracksPopup({
   useEffect(() => {
     if (mode !== "drill") {
       setDrillSubMode("task-list");
+      setLeafTaskName(null);
     }
   }, [mode]);
 
@@ -168,7 +173,17 @@ export function TracksPopup({
     return out;
   }, [mode, focusedTrack, db, workstream]);
 
-  const focusedTask = drillTasks[drillCursor];
+  const focusedTask =
+    drillSubMode === "task-detail"
+      ? drillTasks.find((t) => t.name === leafTaskName)
+      : drillTasks[drillCursor];
+  const openLeaf = (index: number) => {
+    const t = drillTasks[index];
+    if (!t) return;
+    setDrillCursor(index);
+    setLeafTaskName(t.name);
+    setDrillSubMode("task-detail");
+  };
   const notesBody = useMemo<string>(() => {
     void fastTickNonce;
     if (mode !== "drill" || drillSubMode !== "task-detail" || !focusedTask) return "";
@@ -177,7 +192,13 @@ export function TracksPopup({
   const taskDetailDrill = useDrillKeymap({
     body: notesBody,
     viewport: detailViewport,
-    onClose: () => setDrillSubMode("task-list"),
+    onClose: () => {
+      // Back on the task list, keep the cursor on the task the leaf showed.
+      const index = drillTasks.findIndex((t) => t.name === leafTaskName);
+      if (index >= 0) setDrillCursor(index);
+      setLeafTaskName(null);
+      setDrillSubMode("task-list");
+    },
     onYank: () => {
       if (!focusedTask || !snapshot) return;
       return yank(`mu task notes ${focusedTask.name} -w ${snapshot.workstreamName}`);
@@ -204,17 +225,14 @@ export function TracksPopup({
         case "clickRow": {
           const hit = clickedItem(drillTasks, drillCursor, viewport, action.row);
           if (!hit) return;
-          setDrillCursor(hit.index);
-          setDrillSubMode("task-detail");
+          openLeaf(hit.index);
           return;
         }
         case "drill": {
           // Chain into the task-detail leaf. This is the recursion
           // step the task asks for: Enter on a Tracks-drill row
           // opens the same notes view the Tasks popup drill renders.
-          const t = drillTasks[drillCursor];
-          if (!t) return;
-          setDrillSubMode("task-detail");
+          openLeaf(drillCursor);
           return;
         }
         case "yank": {
@@ -295,11 +313,12 @@ export function TracksPopup({
   }
 
   if (mode === "drill" && drillSubMode === "task-detail" && focusedTrack) {
-    const t = drillTasks[drillCursor];
+    const t = focusedTask;
     if (t === undefined) {
-      // Defensive: drillTasks shape changed under us; back to drill.
-      // Render a benign placeholder; the next render will show the
-      // task-list once setDrillSubMode runs.
+      // The pinned task left this track (deleted, or the track split);
+      // back to the task list. Render a benign placeholder; the next
+      // render shows the task list once setDrillSubMode runs.
+      setLeafTaskName(null);
       setDrillSubMode("task-list");
       return (
         <PopupShell title={`Track ${trackNumber} · (resyncing)`}>
