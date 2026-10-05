@@ -65,6 +65,7 @@ import {
   type IngestResult,
   ingestSegment,
   localMachineId,
+  peerWatermarkKey,
   resetWatermark,
   type SegmentDefect,
   segmentLineCount,
@@ -160,14 +161,15 @@ export function peerStatuses(db: Db, dir: string): PeerStatus[] {
       lastSeenMs = null;
     }
     const total = segmentLineCount(peer.path);
-    const watermark = getWatermark(db, peer.watermarkKey);
+    const watermarkKey = peerWatermarkKey(peer);
+    const watermark = getWatermark(db, watermarkKey);
     const ageMs = lastSeenMs === null ? null : Math.max(0, now - lastSeenMs);
     return {
       machineId: peer.machineId,
       short: peer.machineId.slice(0, PEER_SHORT_LEN),
       path: peer.path,
       conflictCopy: peer.conflictCopy,
-      watermarkKey: peer.watermarkKey,
+      watermarkKey,
       watermark,
       total,
       behind: Math.max(0, total - watermark),

@@ -695,8 +695,9 @@ export interface PeerSegment {
    *  the peer's own segment, the full file stem for a conflict copy.
    *  A copy diverges from its original, so line N of one says nothing
    *  about line N of the other; sharing one watermark skipped every op
-   *  that existed only in the copy. */
-  watermarkKey: string;
+   *  that existed only in the copy. Optional for SDK callers written
+   *  before it existed: absent means the machine id (`peerWatermarkKey`). */
+  watermarkKey?: string;
   /** Path on disk. */
   path: string;
   /** True for a Syncthing-style conflict copy. */
@@ -740,6 +741,12 @@ export function discoverPeers(dir: string, selfMachineId: string): PeerSegment[]
     peers.push({ machineId, watermarkKey: conflictCopy ? stem : machineId, path, conflictCopy });
   }
   return peers.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** The `sync_peers` key for a segment file: `watermarkKey`, else the
+ *  machine id (the pre-watermarkKey `PeerSegment` shape). */
+export function peerWatermarkKey(peer: PeerSegment): string {
+  return peer.watermarkKey ?? peer.machineId;
 }
 
 // ─── watermarks ───────────────────────────────────────────────────────
@@ -839,7 +846,8 @@ export interface IngestResult {
  */
 export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
   const defects: SegmentDefect[] = [];
-  const start = getWatermark(db, peer.watermarkKey);
+  const watermarkKey = peerWatermarkKey(peer);
+  const start = getWatermark(db, watermarkKey);
 
   if (!existsSync(peer.path)) {
     return {
@@ -979,7 +987,7 @@ export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
       previousHlc = op.hlc;
       watermark = lineNo;
     }
-    setWatermark(db, peer.watermarkKey, watermark);
+    setWatermark(db, watermarkKey, watermark);
   });
   run.immediate();
 
