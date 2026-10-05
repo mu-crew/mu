@@ -210,7 +210,8 @@ export interface CloseTaskOptions extends EvidenceOption {
    *  as a bare `addNote` without `--author`). Surfaced in mufeedback
    *  task_close_evidence_does_not_append_the. */
   author?: string;
-  /** Closing substate; default "done". Any CLOSED/* satisfies edges. */
+  /** Closing substate; default "done" (or, for an already-CLOSED task,
+   *  its current substate). Any CLOSED/* satisfies edges. */
   as?: CloseSubstate;
   /** Required (non-empty) unless `as` is "done"; stored as a
    *  `<AS>: <why>` note in the same op group. */
@@ -227,9 +228,9 @@ export interface CloseTaskResult extends SetStatusResult {
 }
 
 /** Convenience: setTaskStatus(db, id, "CLOSED"). Accepts evidence.
- *  Skipped
- *  for the idempotent no-op (already CLOSED) so we don't accumulate
- *  empty-delta snapshots on retry loops.
+ *  Notes are skipped for the idempotent no-op (already CLOSED with the
+ *  same substate; a bare close without `as` keeps the current one) so
+ *  retry loops don't accumulate duplicates.
  *
  *  With `ifReady: true`, returns a `CloseSkippedResult` (no mutation,
  *  no snapshot) when any blocker is still OPEN / IN_PROGRESS. Used by
@@ -257,8 +258,12 @@ function closeTaskImpl(
   localId: string,
   opts: CloseTaskOptions,
 ): CloseTaskResult | CloseSkippedResult {
-  const as: CloseSubstate = opts.as ?? "done";
   const before = getTask(db, localId, opts.workstream);
+  // A bare re-close (no --as) of an already-CLOSED task keeps its
+  // substate, so it stays the idempotent no-op the help promises
+  // instead of rewriting wontfix/rejected/duplicate to done.
+  const as: CloseSubstate =
+    opts.as ?? (before?.status === "CLOSED" ? (before.substate as CloseSubstate) : "done");
   if (opts.ifReady && before) {
     // Inspect direct blockers only — the umbrella convention is one
     // hop (umbrella -[blocked-by]→ each wave task). If any direct

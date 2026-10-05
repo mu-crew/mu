@@ -99,6 +99,7 @@ import {
   TaskNotInWorkstreamError,
   TaskParkedError,
   TaskParkStateError,
+  TaskTitleSlugEmptyError,
 } from "../tasks.js";
 import { NothingToUndoError, UndoGroupNotFoundError, UndoSupersededError } from "../undo.js";
 import { WorkspaceConflictError, WorkspaceDirtyError, WorkspaceVcsRequiredError } from "../vcs.js";
@@ -195,7 +196,8 @@ function isUsageClassError(err: unknown): boolean {
   if (
     err instanceof WorkstreamNameInvalidError ||
     err instanceof WorkstreamNameReservedError ||
-    err instanceof TaskIdInvalidError
+    err instanceof TaskIdInvalidError ||
+    err instanceof TaskTitleSlugEmptyError
   ) {
     return true;
   }
@@ -249,6 +251,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentSlashCommandUnsupportedError ||
     err instanceof WorkstreamNameInvalidError ||
     err instanceof WorkstreamNameReservedError ||
+    // Same typed-*Invalid* class: a task id or a title the operator
+    // typed that cannot become an id. isUsageClassError prints --help.
+    err instanceof TaskIdInvalidError ||
+    err instanceof TaskTitleSlugEmptyError ||
     // The operator asked the ACTIVE backend for something it cannot do:
     // a `--cli` the mux does not recognise as an agent kind, or a
     // `--command` / `MU_<CLI>_COMMAND` override it cannot honour. The
@@ -305,7 +311,6 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof ClaimerNotRegisteredError ||
     err instanceof SchemaTooOldError ||
     err instanceof SchemaTooNewError ||
-    err instanceof TaskIdInvalidError ||
     err instanceof WorkstreamExistsError ||
     // Rebuild refuses to overwrite an existing target or to write onto
     // the source DB: both are name/state collisions, not usage errors.

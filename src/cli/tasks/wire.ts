@@ -83,9 +83,9 @@ export function wireTaskCommands(program: Command): void {
       return handle((db) => cmdTaskAdd(db, id, opts), this as Command)();
     });
 
-  // --sort key list shared across list/next/ready. `id` is the
-  // historical default for `mu task list`; `roi` is the default for
-  // `next`/`ready` (the "what should I do" verbs). The two time-based
+  // --sort key list shared across list/next. `id` is the historical
+  // default for `mu task list`; `roi` is the default for `next` (the
+  // "what should I do" verb; `next -n 0` replaced `task ready`). The two time-based
   // keys (`recency` = updated_at DESC, `age` = created_at ASC) trigger
   // an extra `updated`/`created` column with relative timestamps so
   // the user sees the dimension they sorted by.

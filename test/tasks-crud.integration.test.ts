@@ -109,7 +109,7 @@ describe("addTask", () => {
     expect(err.attempted).toBe("Bad ID");
     const steps = err.errorNextSteps();
     expect(steps.length).toBeGreaterThan(0);
-    // First step: drop --id and pass --title (auto-derive path).
+    // First step: drop the <id> positional and pass --title (auto-derive path).
     expect(steps[0]?.command).toMatch(/--title/);
     // Sanitised candidate must be a runnable id (lowercase + alnum/_/-).
     // Assert only the load-bearing parts (verb, sanitised id, --title flag)

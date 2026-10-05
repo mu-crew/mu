@@ -128,6 +128,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - `mu doctor`'s case-collision fix now ends with
   `mu workstream teardown <old-name> --yes`; without `--yes` it was a
   dry run.
+- **`mu task block` and `mu task reparent` find the blocker in the dependent's workstream.** When another workstream that sorts earlier had a task with the same id, both verbs bound to that one and failed with a cross-workstream error. They now look in the dependent's workstream first, as `mu task add -b` already did.
+- **A bare `mu task close` on a closed task is a no-op.** Without `--as` it keeps the current substate. Before, re-closing a `wontfix`, `rejected` or `duplicate` task silently changed it to `done`. Pass `--as` to reclassify.
+- **Typed `mu task add` input errors exit 2.** An invalid task id now exits 2 (usage, with `--help`), like an invalid workstream name. It used to exit 4. A title with no ASCII letter or digit (for example `日本語`) raises `TaskTitleSlugEmptyError` (exit 2) and says to pass the `<id>` positional. It used to be a generic exit 1.
+- **Auto-derived ids keep a word that ends exactly at the 40-character cap.** That word used to be dropped.
+- **Correct hints.** `mu task tree --down` says "omit --down" (there is no `--no-down`). The "commit" hint on `mu task close` matches the workspace's VCS and includes untracked files (`git add -A && git commit -m`, `jj commit -m`, `sl commit --addremove -m`). Before, it was always `git commit -am`, which refuses when only untracked files are dirty. The dormant-workstream hint lists `OPEN,IN_PROGRESS` tasks to match its unclosed count. The invalid-workstream-name hint no longer suggests a name that fails the same check. The invalid-task-id hint no longer names a nonexistent `--id` flag, and the not-found hint no longer prints the same recipe twice.
 
 ## [3.8.1] — 2026-10-05
 

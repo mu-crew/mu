@@ -25,7 +25,7 @@ interface TreeOpts {
 
 /** JSON shape: each node carries its full TaskRow plus a recursive
  *  `children` array (whose contents depend on direction — blockers if
- *  --no-down, dependents if --down). Diamond-recurrent nodes carry
+ *  --down is omitted, dependents if --down). Diamond-recurrent nodes carry
  *  `recurrence: true` and an empty `children` (instead of expanding). */
 interface TreeJsonNode {
   task: TaskRow;
@@ -55,7 +55,7 @@ export async function cmdTaskTree(db: Db, rawId: string, opts: TreeOpts): Promis
   }
 
   const direction = down ? "dependents" : "blockers";
-  const swapHint = down ? "swap to --no-down for blockers" : "--down for dependents";
+  const swapHint = down ? "omit --down for blockers" : "--down for dependents";
   console.log(pc.bold(`Tree of ${rootId}  ${pc.dim(`(${direction} below; ${swapHint})`)}`));
   console.log(
     renderTaskTree(db, ws, root, down ? "dependents" : "blockers", (task) => colorPair(task)),

@@ -1,6 +1,6 @@
 // mu — `mu task` lifecycle verbs (status transitions).
 //
-// close / open / park / unpark. Each delegates to the SDK; changes are captured as ops
+// close / open / park / accept / unpark. Each delegates to the SDK; changes are captured as ops
 // and optionally reported as evidence notes.
 //
 // Extracted from src/cli/tasks.ts as part of refactor_split_large_src_files.
@@ -26,7 +26,7 @@ import {
   unparkTask,
   weakDecisionWarning,
 } from "../../tasks.js";
-import { backendByName } from "../../vcs.js";
+import { backendByName, type VcsBackendName } from "../../vcs.js";
 import { getWorkspaceForAgent } from "../../workspace.js";
 
 export async function cmdTaskClose(
@@ -184,6 +184,15 @@ function transition(r: {
   return `${from} → ${formatPair({ status: r.status, substate: r.substate })}`;
 }
 
+/** Commit-everything command per backend, message appended. Every
+ *  form picks up untracked files, because `isClean` counts them as
+ *  dirty (`git commit -am` alone would refuse with "nothing added"). */
+const COMMIT_ALL: Record<Exclude<VcsBackendName, "none">, string> = {
+  git: "git add -A && git commit -m",
+  jj: "jj commit -m",
+  sl: "sl commit --addremove -m",
+};
+
 async function maybeAppendDirtyWorkspaceCommitHint(
   db: Db,
   nextSteps: NextStep[],
@@ -200,7 +209,7 @@ async function maybeAppendDirtyWorkspaceCommitHint(
     if (clean) return;
     nextSteps.push({
       intent: "Don't forget to commit",
-      command: `cd $(mu workspace path ${actor} -w ${workstream}) && git commit -am ${shellSingleQuote(taskTitle)}`,
+      command: `cd $(mu workspace path ${actor} -w ${workstream}) && ${COMMIT_ALL[row.backend]} ${shellSingleQuote(taskTitle)}`,
     });
   } catch {
     // Best-effort hint only: a VCS probe failure must never make

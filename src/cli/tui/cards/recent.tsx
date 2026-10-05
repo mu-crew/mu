@@ -41,10 +41,9 @@
 //   — `closeTask` is the most recent lifecycle flip on a CLOSED row
 //   (re-opens flip back to OPEN). A real `closed_at` column would
 //   need a schema add + agent_logs scan; OUT OF SCOPE per the brief.
-//   If a row is later updated (e.g. a note is appended), updatedAt
-//   moves; that's a known limitation — note-append doesn't change
-//   updated_at today (notes have their own created_at), so in
-//   practice this is "time since close". Verified in src/tasks.ts.
+//   If a row is later updated (a note appended, an edge added or
+//   removed), touchTask bumps updatedAt, so the row moves up and its
+//   "when" reads as the time of that later write. Known limitation.
 //
 // POPUP
 //   Shift+8 (`*`) opens the matching Recent popup. Card slot 8 and

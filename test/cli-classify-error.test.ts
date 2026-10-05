@@ -41,6 +41,7 @@ import {
   TaskNotInWorkstreamError,
   TaskParkedError,
   TaskParkStateError,
+  TaskTitleSlugEmptyError,
 } from "../src/tasks.js";
 import { PaneNotFoundError, TmuxError } from "../src/tmux.js";
 import {
@@ -62,6 +63,8 @@ describe("classifyError exit-code map", () => {
     // switch branch 1: usage / invalid operator input
     [new UsageError("bad flag"), 2, "error"],
     [new WorkstreamNameInvalidError("Bad-Name"), 2, "error"],
+    [new TaskIdInvalidError("Bad ID"), 2, "error"],
+    [new TaskTitleSlugEmptyError("!!!"), 2, "error"],
 
     // switch branch 2: resolve-time misses
     [new AgentNotFoundError("alice"), 3, "not found"],
@@ -99,7 +102,6 @@ describe("classifyError exit-code map", () => {
     [new WorkspaceDirtyError("/tmp/ws/alice", ["src/file.ts"]), 4, "conflict"],
     [new ClaimerNotRegisteredError("pi-mu", "%6441"), 4, "conflict"],
     [new SchemaTooOldError(4, 5), 4, "conflict"],
-    [new TaskIdInvalidError("Bad ID"), 4, "conflict"],
     [new WorkstreamExistsError("existing-ws"), 4, "conflict"],
     [new SubstateReasonRequiredError("close", "wontfix", "foo"), 4, "conflict"],
     [new TaskParkStateError("foo", "IN_PROGRESS", "ws"), 4, "conflict"],

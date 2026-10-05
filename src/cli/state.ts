@@ -26,8 +26,8 @@
 // stacks per-workstream full cards. In TUI mode N≥2
 // switches workstreams via tabs.
 //
-// Static snapshots run full reconciliation: refresh status + pane title
-// (the operator's primary signal) and reap missing panes. Mid-spawn
+// Static snapshots run full reconciliation: refresh pane titles (the
+// operator's primary signal) and reap missing panes. Mid-spawn
 // placeholders remain protected by reconcile's pending-pane skip
 // (bug_agent_spawn_workspace_fk_failure). The TUI launches first and
 // performs its own fast/slow polling after Ink renders.

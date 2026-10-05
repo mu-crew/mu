@@ -5,11 +5,12 @@
 //   not found  → 3   (TaskNotFoundError)
 //   conflict   → 4   (TaskExistsError, TaskNotInWorkstreamError,
 //                     TaskAlreadyOwnedError, ClaimerNotRegisteredError,
-//                     CrossWorkstreamEdgeError, TaskIdInvalidError,
+//                     CrossWorkstreamEdgeError,
 //                     SubstateReasonRequiredError, TaskParkStateError,
 //                     TaskParkedError, TaskInTriageError,
 //                     InvalidSubstateError)
 //   cycle      → 4   (CycleError — also a conflict)
+//   usage      → 2   (TaskIdInvalidError; TaskTitleSlugEmptyError in id.ts)
 //
 // Each error implements HasNextSteps so the CLI can render a per-error
 // `Next:` block with the most useful follow-up commands.
@@ -36,8 +37,7 @@ export class TaskNotFoundError extends Error implements HasNextSteps {
     const recipe = `mu sql "SELECT ws.name AS workstream, t.local_id, t.status, t.title FROM tasks t JOIN workstreams ws ON ws.id = t.workstream_id WHERE LOWER(t.local_id) LIKE '%${idLit}%' OR LOWER(t.title) LIKE '%${idLit}%'"`;
     return [
       { intent: "List tasks in workstream", command: "mu task list -w <workstream>" },
-      { intent: "Search by substring (id + title)", command: recipe },
-      { intent: "Find which workstream owns it", command: recipe },
+      { intent: "Search every workstream by substring (id + title)", command: recipe },
     ];
   }
 }
@@ -45,8 +45,8 @@ export class TaskNotFoundError extends Error implements HasNextSteps {
 /**
  * Thrown by `addTask` when `localId` violates the schema regex
  * `/^[a-z][a-z0-9_-]{0,63}$/`. Replaces a bare `TypeError` so the
- * CLI's `handle()` wrapper can map it to exit code 4 (validation /
- * conflict) and surface a `--json` `nextSteps` block pointing at
+ * CLI's `handle()` wrapper can map it to exit code 2 (usage, with the
+ * verb's --help, like WorkstreamNameInvalidError) and surface a `--json` `nextSteps` block pointing at
  * the auto-derived-id workflow and a sanitised candidate.
  */
 export class TaskIdInvalidError extends Error implements HasNextSteps {
@@ -58,7 +58,7 @@ export class TaskIdInvalidError extends Error implements HasNextSteps {
     const sanitised = sanitiseTaskId(this.attempted);
     return [
       {
-        intent: "Use the auto-derived id (drop --id and pass --title)",
+        intent: "Use the auto-derived id (drop the <id> positional; --title derives it)",
         command: 'mu task add --title "..." --impact <n> --effort-days <n>',
       },
       {
@@ -146,7 +146,7 @@ export class TaskAlreadyOwnedError extends Error implements HasNextSteps {
  * Thrown when `mu task claim` resolves a claimer agent name (from the
  * pane title or --for) that has no matching row in the agents table.
  *
- * The FK on `tasks.owner` references `agents.name`; without this guard
+ * The FK on `tasks.owner_id` references `agents.id`; without this guard
  * the claim attempt would fail with the unhelpful 'FOREIGN KEY constraint
  * failed' from SQLite. This typed error gives the user actionable next
  * steps (run `mu agent adopt <pane-id>` to register, or use --for to pick a
