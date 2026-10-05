@@ -95,7 +95,8 @@ describe("restore() is one teardown for both seams", () => {
     const h = installMux("herdr", [["status", STATUS_RUNNING]]);
     expect((await activeMux()).name).toBe("herdr");
     h.restore();
-    // resetMux() ran, so activeMux() is no longer pinned to herdr.
+    // restore() re-armed detection (setMuxForTests(previous)), so
+    // activeMux() is no longer pinned to herdr.
     // MU_MUX drives detection deterministically without a real mux.
     await withEnv("MU_MUX", "tmux", async () => {
       expect((await activeMux()).name).toBe("tmux");
