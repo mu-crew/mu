@@ -105,7 +105,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **op** | One `ops` row, written by a trigger in the mutation's transaction. Holds only changed columns. | "event", "delta", "change" |
 | **ops log** | The `ops` table: the append-only record that sync, undo, and history read. | "event log", "journal", "WAL" |
 | **log entry** | An op as rendered by `mu log`, through one formatter (`src/log-render.ts`). | "message", "event" |
-| **kind** | The operator's channel tag on a log entry (`mu log --kind`), stored as the op's `entity`. | "category", "type" |
+| **kind** | The operator's channel tag on a log entry (`mu log --kind`), stored as the op's `entity`. `workstream`, `task`, `edge`, and `note` are reserved. | "category", "type" |
 | **log ledger** | A convention: a custom `--kind` used as a watcher loop's durable dedupe record. | "state file" |
 | **intent** | The semantic label on an op (`task.close`), set once per SDK function via **op context**. | "verb", "action" |
 | **group** | The ops of one user action (`group_id`), undone as a unit. Any unique id prefix works. | "transaction", "batch" |

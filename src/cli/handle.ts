@@ -56,7 +56,7 @@ import {
 import { DriftDetectedError } from "../drift.js";
 import { HazardFailError } from "../fleet-hazards.js";
 import { LinkConflictError } from "../link.js";
-import { GroupIdAmbiguousError } from "../logs.js";
+import { GroupIdAmbiguousError, LogKindReservedError } from "../logs.js";
 import {
   HerdrCommandOverrideError,
   HerdrUnsupportedCliError,
@@ -245,6 +245,8 @@ export class NameAmbiguousError extends Error {
 export function classifyError(err: unknown): { label: string; exitCode: number } {
   if (
     err instanceof UsageError ||
+    // `mu log --kind task|note|...`: a tag naming a projectable entity.
+    err instanceof LogKindReservedError ||
     // abort on a non-pi agent: the operator picked the wrong verb (kick).
     err instanceof AgentAbortNeedsCtlError ||
     // send --fresh on an agent with no control socket: wrong recipe.

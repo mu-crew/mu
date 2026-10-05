@@ -66,7 +66,14 @@ mu sql "WITH RECURSIVE prereqs(id) AS (
 ```
 
 `mu sql` runs writes too and prints the number of rows changed. Writes
-are captured as ops, so `mu undo` can revert them.
+are captured as ops under one `sql.write` group per call, so `mu undo`
+reverts the whole call. `--confirm-rows N` counts rows removed by
+`ON DELETE CASCADE` too: deleting a task with one edge counts 2.
+
+`mu sql` refuses to change a natural-key column (`workstreams.name`,
+`tasks.workstream_id`, `tasks.local_id`, a note's task, or an edge's
+endpoints). The ops log files every change under that key, so changing
+it would desync sync, undo, and `mu doctor`. Add a new row instead.
 
 ## Pass list flags
 

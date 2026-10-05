@@ -207,6 +207,7 @@ export {
   type ListLogsOptions,
   type LocalIntent,
   type LogKind,
+  LogKindReservedError,
   type LogRow,
   latestSeq,
   listLogs,

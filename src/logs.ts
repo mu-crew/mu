@@ -29,7 +29,7 @@
 // group; these are hand-written log lines, not captured mutations.
 
 import { randomUUID } from "node:crypto";
-import type { Db } from "./db.js";
+import { type Db, SYNCED_ENTITIES } from "./db.js";
 import { nextHlc } from "./hlc.js";
 import { intentSpellings } from "./legacy-ops.js";
 import type { HasNextSteps, NextStep } from "./output.js";
@@ -288,6 +288,35 @@ export interface AppendLogOptions {
   intent?: string;
 }
 
+/** Kinds a log line may not use: the entities that sync AND project
+ *  into a portable table. A log line's kind is stored as `ops.entity`,
+ *  so `mu log "x" --kind task` wrote a prose op that sync, rebuild and
+ *  apply then read as a real task op ("malformed task key"), wedging
+ *  `mu rebuild` and every peer's ingest. 'message' syncs but projects
+ *  nowhere, so it stays allowed (it is the default). */
+const RESERVED_LOG_KINDS: ReadonlySet<string> = new Set(
+  SYNCED_ENTITIES.filter((e) => e !== "message"),
+);
+
+/** Raised by `appendLog` for a kind in RESERVED_LOG_KINDS. Usage lane
+ *  (exit 2): the operator picked a tag that names a projectable entity. */
+export class LogKindReservedError extends Error implements HasNextSteps {
+  override readonly name = "LogKindReservedError";
+  constructor(readonly kind: string) {
+    super(
+      `--kind ${JSON.stringify(kind)} is reserved: ${[...RESERVED_LOG_KINDS].join(", ")} name projectable op entities, and a log line under one would be synced and replayed as a real ${kind} change`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Use a channel tag that names your ledger",
+        command: `mu log --kind ${this.kind}-log '<text>'`,
+      },
+    ];
+  }
+}
+
 /**
  * Append a log entry. Returns the inserted row (with assigned `seq`).
  * Constant-time. Single INSERT; safe to call from any state-changing
@@ -295,6 +324,7 @@ export interface AppendLogOptions {
  */
 export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
   const kind = opts.kind ?? "message";
+  if (RESERVED_LOG_KINDS.has(kind)) throw new LogKindReservedError(kind);
   const createdAt = new Date().toISOString();
   // `ops.key` is the NATURAL key, so the workstream NAME goes in
   // verbatim — no resolution, and the op stays readable after the

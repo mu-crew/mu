@@ -569,6 +569,61 @@ describe("op capture (triggers)", () => {
 
   // ─── the fail-safe default row ──────────────────────────────────────
 
+  // Natural keys are immutable (f_mux_capture_move_blocker).
+  describe("natural-key guard", () => {
+    // Each of these UPDATEs re-keys a row (`a/t1` -> `b/t1`). The UPDATE
+    // triggers diff only CAPTURED_COLUMNS, so before the guard they
+    // committed with NO op and left the log describing a row that no
+    // longer existed under that key.
+    const rekeys: Array<[string, string]> = [
+      [
+        "tasks.workstream_id",
+        "UPDATE tasks SET workstream_id = (SELECT id FROM workstreams WHERE name = 'other') WHERE local_id = 'a'",
+      ],
+      ["tasks.local_id", "UPDATE tasks SET local_id = 'renamed' WHERE local_id = 'a'"],
+      ["workstreams.name", "UPDATE workstreams SET name = 'renamed' WHERE name = 'demo'"],
+      [
+        "task_notes.task_id",
+        "UPDATE task_notes SET task_id = (SELECT id FROM tasks WHERE local_id = 'b')",
+      ],
+      [
+        "task_edges endpoints",
+        "UPDATE task_edges SET from_task_id = (SELECT id FROM tasks WHERE local_id = 'c')",
+      ],
+    ];
+
+    for (const [label, sql] of rekeys) {
+      it(`refuses an UPDATE of ${label} and writes nothing`, () => {
+        ensureWorkstream(db, "demo");
+        ensureWorkstream(db, "other");
+        seedTask("a");
+        seedTask("b");
+        seedTask("c");
+        addBlockEdge(db, "demo", "b", "a");
+        addNote(db, "a", "n", { workstream: "demo" });
+        clearOps();
+        const snapshot = (): unknown[] =>
+          ["workstreams", "tasks", "task_notes", "task_edges"].map((t) =>
+            db.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all(),
+          );
+        const before = snapshot();
+
+        expect(() => db.prepare(sql).run()).toThrow(/natural key/);
+
+        expect(ops()).toEqual([]);
+        expect(snapshot()).toEqual(before);
+      });
+    }
+
+    it("allows an UPDATE that rewrites a key column to its current value", () => {
+      ensureWorkstream(db, "demo");
+      seedTask("a");
+      clearOps();
+      db.prepare("UPDATE tasks SET local_id = local_id, impact = 9 WHERE local_id = 'a'").run();
+      expect(ops("task").map((r) => payloadOf(r))).toEqual([{ impact: 9 }]);
+    });
+  });
+
   describe("default op context (fail safe, never fail silent)", () => {
     it("a raw mutation with no SDK context is still captured, with a null intent", () => {
       ensureWorkstream(db, "demo");

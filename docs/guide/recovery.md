@@ -126,11 +126,17 @@ other with `rm -rf <path>`.
 
 ## Rename a workstream
 
-There is no rename verb. Every child table cascades on the name:
+There is no rename verb, and `mu sql` refuses to change
+`workstreams.name`. The name is part of the key that every op is filed
+under, so a raw rename leaves the ops log on the old name: `mu doctor`
+reports drift, and sync or `mu rebuild` brings the old name back.
+Re-create the workstream instead:
 
 ```bash
-mu sql "UPDATE workstreams SET name='auth-refactor' WHERE name='auth-refator'"
-tmux rename-session -t mu-auth-refator mu-auth-refactor
+mu db backup /tmp/mu-before-rename.db
+mu workstream init auth-refactor
+# re-add the tasks you still need, with -w auth-refactor
+mu workstream teardown auth-refator --yes
 ```
 
 Names start with a lowercase letter, use letters, digits, `_`, or
