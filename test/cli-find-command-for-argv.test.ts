@@ -25,9 +25,14 @@ describe("findCommandForArgv", () => {
     expect(find(["-wx", "task", "list"])).toBe("mu task list");
   });
 
-  it("a variadic root -w swallows following words, as commander does", () => {
-    expect(find(["-w", "a", "b", "task", "list"])).toBe("mu");
-    expect(find(["-w", "a", "--json", "task", "list"])).toBe("mu task list");
+  it("a leading root -w takes one value, then the verb resolves", () => {
+    expect(find(["-w", "x", "task", "list", "--bogus"])).toBe("mu task list");
+    expect(find(["-w", "x", "task", "note", "b", "a", "b", "c"])).toBe("mu task note");
+    expect(find(["--workstream", "x", "task", "list"])).toBe("mu task list");
+  });
+
+  it("a variadic option consumes following words, as commander does", () => {
+    expect(find(["task", "list", "--substate", "a", "b", "--bogus"])).toBe("mu task list");
   });
 
   it("stops at an unknown option or token", () => {
