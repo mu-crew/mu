@@ -131,8 +131,10 @@ describe("StatusBar", () => {
     expect(text).toContain("drill");
     expect(text).toContain("y");
     expect(text).toContain("yank");
-    expect(text).toContain("Shift 0-9");
-    expect(text).toContain("switch");
+    // Only one popup is open at a time: Shift 0-9 is swallowed in a
+    // popup, so the list cluster must not advertise switching.
+    expect(text).not.toContain("Shift 0-9");
+    expect(text).not.toContain("switch");
     expect(text).toContain("?");
     expect(text).toContain("help");
     expect(text).toContain("Esc");

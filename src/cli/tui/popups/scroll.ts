@@ -56,8 +56,6 @@ export type NavAction =
   | { kind: "pageUp"; half: boolean }
   | { kind: "pageDown"; half: boolean };
 
-type CursorAction = NavAction | { kind: "setCursor"; index: number };
-
 const NAV_KINDS = new Set<string>([
   "moveUp",
   "moveDown",
@@ -111,8 +109,6 @@ function clampCursor(cursor: number, total: number): number {
 /**
  * Apply a navigation action to a cursor-based view. Returns the new
  * cursor index, clamped to [0, total-1] (or 0 when total === 0).
- * `setCursor` is first-class so mouse double-click can focus row N
- * directly instead of replaying `g` + N×`j` synthetic keys.
  *
  *   cursor    current cursor index
  *   action    one of the six NavAction kinds
@@ -121,7 +117,7 @@ function clampCursor(cursor: number, total: number): number {
  */
 export function applyCursor(
   cursor: number,
-  action: CursorAction,
+  action: NavAction,
   total: number,
   viewport: number,
 ): number {
@@ -139,9 +135,32 @@ export function applyCursor(
       return clampCursor(cursor + pageStep(viewport, action.half), total);
     case "pageUp":
       return clampCursor(cursor - pageStep(viewport, action.half), total);
-    case "setCursor":
-      return clampCursor(action.index, total);
   }
+}
+
+/**
+ * Resolve a double-clicked popup body row (PopupAction `clickRow`) to
+ * the item it shows. The popup passes the SAME list, cursor and
+ * viewport it renders with, so the scroll window matches the screen.
+ * Returns null when the click missed the data rows.
+ *
+ *   bodyRow     0-based row inside the popup's top border
+ *   headerRows  in-body rows rendered above the data window (filter /
+ *               sort strips, a drill title line)
+ */
+export function clickedItem<T>(
+  items: readonly T[],
+  cursor: number,
+  viewport: number,
+  bodyRow: number,
+  headerRows = 0,
+): { index: number; item: T } | null {
+  const { start, visible } = centredVisibleSlice(items, cursor, viewport);
+  const offset = bodyRow - headerRows;
+  if (offset < 0 || offset >= visible.length) return null;
+  const index = start + offset;
+  const item = items[index];
+  return item === undefined ? null : { index, item };
 }
 
 /**

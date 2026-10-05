@@ -17,7 +17,7 @@
 // feat_column_aligned_lists clipping policy: glyph, agent name,
 // status are PROTECTED; the role description is CLIPPABLE.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 import { type LiveAgent, readAgent } from "../../../agents.js";
 import type { Db } from "../../../db.js";
@@ -26,14 +26,15 @@ import { agentStateGlyph } from "../agent-display.js";
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { ListRow } from "../list-row.js";
+import { usePopupInput } from "../popup-input.js";
 import { PopupShell } from "../popup-shell.js";
 import { resolveAttachCommands, runTmuxAttachInteractive } from "../tmux-attach.js";
 import { usePopupActionQueue } from "../use-popup-action-queue.js";
-import { applyFilter, FilterPrompt, usePopupFilter } from "../use-popup-filter.js";
+import { applyFilter, FilterPrompt, listViewport, usePopupFilter } from "../use-popup-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { DrillScrollView, useDrillKeymap } from "./drill.js";
-import { applyCursor, centredVisibleSlice, isNavAction } from "./scroll.js";
-import { usePopupViewport } from "./viewport.js";
+import { applyCursor, centredVisibleSlice, clickedItem, isNavAction } from "./scroll.js";
+import { POPUP_DRILL_CHROME_ROWS, usePopupViewport } from "./viewport.js";
 
 export interface PopupProps {
   yank: (command: string) => Promise<void>;
@@ -91,6 +92,8 @@ export function AgentsPopup({
   const [scrollbackErr, setScrollbackErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const flt = usePopupFilter({ onEditingChange: onFilterEditingChange });
+  const rowsViewport = listViewport(viewport, flt);
+  const drillViewport = usePopupViewport(POPUP_DRILL_CHROME_ROWS);
   // Per bug_filter_drill_opens_wrong_task: text filter applied
   // UNIFORMLY across list and drill modes (the previous mode-conditional
   // dropped the filter on drill, shifting `agents` under a constant
@@ -158,7 +161,7 @@ export function AgentsPopup({
   const drillBody = scrollbackErr !== null ? `error: ${scrollbackErr}` : scrollback;
   const drill = useDrillKeymap({
     body: drillBody,
-    viewport,
+    viewport: drillViewport,
     onClose: () => {
       setDrilledAgent(null);
       onModeChange("list");
@@ -177,8 +180,8 @@ export function AgentsPopup({
       drill.dispatch(action);
       return;
     }
-    if (action.kind === "setCursor" || isNavAction(action)) {
-      setCursor((c) => applyCursor(c, action, agents.length, viewport));
+    if (isNavAction(action)) {
+      setCursor((c) => applyCursor(c, action, agents.length, rowsViewport));
       return;
     }
     switch (action.kind) {
@@ -194,6 +197,14 @@ export function AgentsPopup({
           onModeChange("drill");
         }
         return;
+      case "clickRow": {
+        const hit = clickedItem(agents, safeCursor, rowsViewport, action.row);
+        if (!hit) return;
+        setCursor(hit.index);
+        setDrilledAgent(hit.item);
+        onModeChange("drill");
+        return;
+      }
       case "yank": {
         const a = agents[safeCursor];
         if (!a || !snapshot) return;
@@ -233,7 +244,7 @@ export function AgentsPopup({
 
   usePopupActionQueue(popupActions, dispatchListAction);
 
-  useInput((input, key) => {
+  usePopupInput((input, key) => {
     // Filter-mode keystrokes (when the prompt is editing) consume
     // every printable + Esc/Enter/Bksp; the popup's own dispatchPopupKey
     // is bypassed for the duration of the edit.
@@ -269,7 +280,7 @@ export function AgentsPopup({
           <DrillScrollView
             title={`mu agent read ${drillAgent.name} -n ${SCROLLBACK_LINES}`}
             body={drillBody}
-            viewport={viewport}
+            viewport={drillViewport}
             scrollTop={drill.scrollTop}
             wrappedBody={drill.wrappedBody}
             hint={`y yanks \`mu agent read -n ${SCROLLBACK_LINES}\``}
@@ -280,7 +291,7 @@ export function AgentsPopup({
     );
   }
 
-  const { start, visible } = centredVisibleSlice(agents, safeCursor, viewport);
+  const { start, visible } = centredVisibleSlice(agents, safeCursor, rowsViewport);
   const rows = visible.map((a) => [agentStateGlyph(a.state), a.name, a.state, a.role]);
   const widths = layoutColumns(rows, COLUMN_SPECS, contentWidth);
 

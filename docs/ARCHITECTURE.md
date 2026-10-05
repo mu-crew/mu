@@ -95,6 +95,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/apply.ts` | apply one op: per-field LWW, tombstones, substate pair repair, `reprojectDeferredOps` |
 | `src/undo.ts` | inverse ops for one group; refuses a superseded group |
 | `src/rebuild.ts` | replay the whole log into a new DB file |
+| `src/compact.ts` | `mu db compact` (blank redundant note-tombstone payloads) and `mu db forget` (drop a torn-down workstream's ops); this machine only |
 | `src/legacy-ops.ts` | classifier for historical log-only intents; rebuild copies them unprojected |
 | `src/drift.ts` | cheap invariant (every row has an op) and `--deep` rebuild-diff |
 | `src/logs.ts` | typed reader over `ops`; `appendLog` and `emitEvent`, the writes triggers cannot cover |
@@ -128,6 +129,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/agents/errors.ts` | typed agent errors |
 | `src/agent-state.ts` | runtime state from ctl, herdr or murmur; `unknown` with a reason |
 | `src/reconcile.ts` | ghost prune and orphan surfacing |
+| `src/mux/index.ts` | cluster barrel that `src/mux.ts` re-exports |
 | `src/mux/types.ts` | `MuxBackend` interface; `MuxError`, `PaneNotFoundError`, `NoMultiplexerError` |
 | `src/mux/detect.ts` | `MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH` ladder; `activeMux()` |
 | `src/mux/tmux.ts` | tmux backend: the `tmux()` wrapper, bracketed-paste send, pane validation |

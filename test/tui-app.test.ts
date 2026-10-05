@@ -92,7 +92,7 @@ describe("App popup-lifecycle state-restore (structural)", () => {
       "onFilterEditingChange",
       "setPopupFilterEditing",
       // mouse double-click routing: <App> owns a small action queue so
-      // popups can consume setCursor → drill without receiving raw
+      // popups can consume clickRow without receiving raw
       // mouse events or App state setters.
       "popupActions",
       "setPopupActions",

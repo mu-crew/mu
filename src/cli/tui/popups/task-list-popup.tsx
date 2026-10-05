@@ -14,7 +14,7 @@
 //
 // Per ROADMAP pledge: ink/react import limited to src/cli/tui/*.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { type ReactElement, useState } from "react";
 import type { Db } from "../../../db.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
@@ -22,15 +22,16 @@ import type { TaskRow } from "../../../tasks.js";
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { type CellColor, ListRow } from "../list-row.js";
+import { usePopupInput } from "../popup-input.js";
 import { PopupShell } from "../popup-shell.js";
 import { useNotesDrill } from "../use-notes-drill.js";
 import { usePopupActionQueue } from "../use-popup-action-queue.js";
-import { applyFilter, FilterPrompt, usePopupFilter } from "../use-popup-filter.js";
+import { applyFilter, FilterPrompt, listViewport, usePopupFilter } from "../use-popup-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { useDrillKeymap } from "./drill.js";
-import { applyCursor, centredVisibleSlice, isNavAction } from "./scroll.js";
+import { applyCursor, centredVisibleSlice, clickedItem, isNavAction } from "./scroll.js";
 import { TaskDetailDrill } from "./task-detail.js";
-import { usePopupViewport } from "./viewport.js";
+import { POPUP_DRILL_CHROME_ROWS, usePopupViewport } from "./viewport.js";
 
 export interface PopupProps {
   yank: (command: string) => Promise<void>;
@@ -110,8 +111,10 @@ export function TaskListPopup({
   const { cols } = useTerminalSize();
   const contentWidth = contentWidthFromCols(cols);
   const viewport = usePopupViewport();
+  const drillViewport = usePopupViewport(POPUP_DRILL_CHROME_ROWS);
   const [cursor, setCursor] = useState(0);
   const flt = usePopupFilter({ onEditingChange: onFilterEditingChange });
+  const rowsViewport = listViewport(viewport, flt);
 
   const sourceTasks = snapshot ? config.sourceTasks(snapshot) : [];
   // Per bug_filter_drill_opens_wrong_task: filter applied UNIFORMLY
@@ -130,7 +133,7 @@ export function TaskListPopup({
 
   const drill = useDrillKeymap({
     body: notesText,
-    viewport,
+    viewport: drillViewport,
     onClose: () => {
       setDrilledTask(null);
       onModeChange("list");
@@ -147,8 +150,8 @@ export function TaskListPopup({
       drill.dispatch(action);
       return;
     }
-    if (action.kind === "setCursor" || isNavAction(action)) {
-      setCursor((c) => applyCursor(c, action, tasks.length, viewport));
+    if (isNavAction(action)) {
+      setCursor((c) => applyCursor(c, action, tasks.length, rowsViewport));
       return;
     }
     switch (action.kind) {
@@ -164,6 +167,14 @@ export function TaskListPopup({
           onModeChange("drill");
         }
         return;
+      case "clickRow": {
+        const hit = clickedItem(tasks, safeCursor, rowsViewport, action.row);
+        if (!hit) return;
+        setCursor(hit.index);
+        setDrilledTask(hit.item);
+        onModeChange("drill");
+        return;
+      }
       case "yank": {
         const t = tasks[safeCursor];
         if (!t || !snapshot) return;
@@ -176,7 +187,7 @@ export function TaskListPopup({
 
   usePopupActionQueue(popupActions, dispatchListAction);
 
-  useInput((input, key) => {
+  usePopupInput((input, key) => {
     if (mode !== "drill" && flt.onKey(input, key) === "consumed") return;
     dispatchListAction(dispatchPopupKeyFromInk(input, key));
   });
@@ -213,7 +224,7 @@ export function TaskListPopup({
             db={db}
             workstream={workstream}
             scrollTop={drill.scrollTop}
-            viewport={viewport}
+            viewport={drillViewport}
             tickNonce={fastTickNonce}
             body={notesText}
             wrappedBody={drill.wrappedBody}
@@ -223,7 +234,7 @@ export function TaskListPopup({
     );
   }
 
-  const { start, visible } = centredVisibleSlice(tasks, safeCursor, viewport);
+  const { start, visible } = centredVisibleSlice(tasks, safeCursor, rowsViewport);
   const rendered = config.renderRows(visible, start, snapshot);
   const rowCells = rendered.map((r) => r.cells);
   const widths = layoutColumns(rowCells, config.columnSpecs, contentWidth);

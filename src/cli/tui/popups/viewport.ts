@@ -15,15 +15,15 @@
 // size. The default `POPUP_CHROME_ROWS` budget (3) accounts for:
 //
 //   - 2 rows: Shell rounded border (top + bottom)
-//   - 1 row: <FilterPrompt> when filter is editing OR has a query
+//   - 1 row: the App's StatusBar below the popup (`rows` is the whole
+//     terminal, and the popup branch shares it with the StatusBar)
 //
-// Title + per-popup hint no longer cost body rows after
-// nit_tui_drill_inset_title_and_hints — both inset into the top
-// and bottom border lines respectively (Layer 1 of that fix), so
-// the budget drops from 6 to 3. Drill bodies pick up ~3 extra
-// visible rows for free. (StatusBar at the bottom of <App> is
-// OUTSIDE the popup region — `App` height-pins the popup branch
-// above it — so it's not part of the popup chrome budget.)
+// Title + per-popup hint cost no body rows: both inset into the top
+// and bottom border lines (nit_tui_drill_inset_title_and_hints).
+//
+// <FilterPrompt> is NOT in this budget: it is 2 rows only while a
+// filter is active, so list popups subtract it per render with
+// `listViewport(viewport, flt)` from use-popup-filter.tsx.
 //
 // Per-popup overrides: callers that render extra in-body chrome
 // (e.g. Workspaces drill's title + dim "(L-T/T)" indicator) pass
@@ -48,12 +48,19 @@
 
 import { useTerminalSize } from "../use-terminal-size.js";
 
-/** Default rows of chrome consumed inside a popup Shell.
- *  Subtracted from `stdout.rows` to get the body slice budget.
- *  Was 6 before nit_tui_drill_inset_title_and_hints; dropped to 3
- *  once the title (top border) and per-popup hint (bottom border)
- *  stopped costing body rows. */
+/** Default rows outside the popup body: the Shell's top + bottom
+ *  border rows and the App StatusBar. Subtracted from `stdout.rows`
+ *  to get the body slice budget. */
 export const POPUP_CHROME_ROWS = 3;
+
+/** Rows a `<DrillScrollView>` renders around its scroll window: the
+ *  magenta title line above and the hint line below. */
+export const DRILL_VIEW_CHROME_ROWS = 2;
+
+/** Chrome budget for a popup whose body is one `<DrillScrollView>`.
+ *  Pass it to `usePopupViewport` for drill bodies so the title and
+ *  hint lines do not push the popup's borders out of the pane. */
+export const POPUP_DRILL_CHROME_ROWS = POPUP_CHROME_ROWS + DRILL_VIEW_CHROME_ROWS;
 
 /** Minimum body rows. Keeps very-small terminals usable: at 12
  *  rows we'd otherwise compute 6 → users couldn't see the cursor. */

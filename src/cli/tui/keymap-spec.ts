@@ -54,7 +54,6 @@ const POPUP_LIST_HINTS: readonly StatusHintEntry[] = [
   hint("/", "filter", ["/"]),
   hint("Enter", "drill", ["Enter"]),
   hint("y", "yank", ["y"]),
-  hint("Shift 0-9", "switch", ["Shift 0-9"]),
   hint("?", "help", ["?"]),
   hint("Esc", "back", ["Esc"]),
 ];
@@ -167,7 +166,6 @@ export const HELP_PANES: readonly HelpPaneSpec[] = [
       row("l", "launch lazygit in the project root (Commits popup only; user-driven TUI escape)", [
         "l",
       ]),
-      row("Shift 0-9", "switch numbered popup", ["Shift 0-9"]),
       row("Esc/q", "back to dashboard", ["Esc", "q"]),
       row("?", "toggle this overlay", ["?"]),
     ],

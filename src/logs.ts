@@ -129,14 +129,14 @@ const LOG_FROM_JOIN = "FROM ops l";
  *  only `key = 'demo'` would therefore hide every task, note, and edge
  *  op in the workstream — which is most of them. Exact-or-prefix is the
  *  smallest predicate that reads "belongs to this workstream". */
-function workstreamScopeSql(column = "l.key"): string {
+export function workstreamScopeSql(column = "l.key"): string {
   return `(${column} = ? OR ${column} LIKE ? ESCAPE '\\')`;
 }
 
 /** Bind params for `workstreamScopeSql`. The LIKE pattern escapes the
  *  operator-supplied name so a workstream containing '%' or '_' cannot
  *  widen the match. */
-function workstreamScopeParams(workstream: string): [string, string] {
+export function workstreamScopeParams(workstream: string): [string, string] {
   const escaped = workstream.replace(/[\\%_]/g, (c) => `\\${c}`);
   return [workstream, `${escaped}/%`];
 }

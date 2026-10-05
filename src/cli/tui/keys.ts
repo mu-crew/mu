@@ -206,7 +206,10 @@ export type PopupAction =
   | { kind: "jumpBottom" }
   | { kind: "pageDown"; half: boolean }
   | { kind: "pageUp"; half: boolean }
-  | { kind: "setCursor"; index: number }
+  // Mouse double-click on popup body row `row` (0-based from the first
+  // row inside the top border). The popup maps it through its own
+  // scroll window and header rows, focuses that item, and drills it.
+  | { kind: "clickRow"; row: number }
   | { kind: "filter" }
   | { kind: "nextMatch" }
   | { kind: "prevMatch" }

@@ -67,9 +67,9 @@ pane. The dashboard comes back when the tool exits.
 `/` filters the popup's rows by substring as you type. `Enter` keeps
 the filter. `Esc` clears it.
 
-In task popups, `o`, `i`, and `c` toggle `OPEN`, `IN_PROGRESS`, and
-`CLOSED`. In the DAG and All-tasks popups, `p` toggles parked tasks and
-`w` toggles tasks closed as anything but `done`. In All tasks, `b`
+In the DAG and All-tasks popups, `o`, `i`, and `c` toggle `OPEN`,
+`IN_PROGRESS`, and `CLOSED`, `p` toggles parked tasks, and `w` toggles
+tasks closed as anything but `done`. In All tasks, `b`
 cycles the blocked filter and `s` cycles the sort: ROI, recency, age,
 id.
 

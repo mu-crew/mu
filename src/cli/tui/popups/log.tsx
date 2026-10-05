@@ -19,21 +19,23 @@
 // are PROTECTED (identity / numeric / short tokens); the payload rest
 // is CLIPPABLE.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { type ReactElement, useState } from "react";
 import type { Db } from "../../../db.js";
 import { opSubject, renderOp, renderOpLine } from "../../../log-render.js";
+import type { LogRow } from "../../../logs.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
 import { type ColumnSpec, contentWidthFromCols, layoutColumns, renderRow } from "../columns.js";
 import { dispatchPopupKeyFromInk, type PopupAction, type PopupActionEnvelope } from "../keys.js";
 import { ListRow } from "../list-row.js";
+import { usePopupInput } from "../popup-input.js";
 import { PopupShell } from "../popup-shell.js";
 import { usePopupActionQueue } from "../use-popup-action-queue.js";
-import { applyFilter, FilterPrompt, usePopupFilter } from "../use-popup-filter.js";
+import { applyFilter, FilterPrompt, listViewport, usePopupFilter } from "../use-popup-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { DrillScrollView, useDrillKeymap } from "./drill.js";
-import { applyCursor, centredVisibleSlice, isNavAction } from "./scroll.js";
-import { usePopupViewport } from "./viewport.js";
+import { applyCursor, centredVisibleSlice, clickedItem, isNavAction } from "./scroll.js";
+import { POPUP_DRILL_CHROME_ROWS, usePopupViewport } from "./viewport.js";
 
 export interface PopupProps {
   yank: (command: string) => Promise<void>;
@@ -73,6 +75,8 @@ export function LogPopup({
   const viewport = usePopupViewport();
   const [cursor, setCursor] = useState(0);
   const flt = usePopupFilter({ onEditingChange: onFilterEditingChange });
+  const rowsViewport = listViewport(viewport, flt);
+  const drillViewport = usePopupViewport(POPUP_DRILL_CHROME_ROWS);
   const sourceEvents = snapshot?.recent ?? [];
   // Per spec: blob = `${verb} ${rest} ${source}`. Built from the SAME
   // formatter the rows render with, so '/' searches match what the user
@@ -80,25 +84,33 @@ export function LogPopup({
   const events = applyFilter(sourceEvents, flt.query, (e) => `${renderOpLine(e)} ${e.source}`);
   const safeCursor = events.length === 0 ? 0 : Math.min(cursor, events.length - 1);
   const focused = events[safeCursor];
+  // Pin the drilled event at Enter: new events arrive at the top and
+  // the 200-event cap drops the oldest, so the cursor index alone
+  // would slide the open drill onto a different event.
+  const [drilledEvent, setDrilledEvent] = useState<LogRow | null>(null);
+  const drillEvent = mode === "drill" ? (drilledEvent ?? focused) : focused;
 
   // Drill shows the prose FIRST (what the row says) then the raw op
   // payload, so the detail view is readable but still lossless.
   const drillBody =
-    focused === undefined
+    drillEvent === undefined
       ? ""
-      : focused.intent === null
-        ? focused.payload
-        : `${renderOpLine(focused)}\n\nintent: ${focused.intent}\nkey: ${focused.workstreamName ?? "—"}\ngroup: ${focused.group}\npayload: ${focused.payload}`;
+      : drillEvent.intent === null
+        ? drillEvent.payload
+        : `${renderOpLine(drillEvent)}\n\nintent: ${drillEvent.intent}\nkey: ${drillEvent.workstreamName ?? "—"}\ngroup: ${drillEvent.group}\npayload: ${drillEvent.payload}`;
   const drill = useDrillKeymap({
     body: drillBody,
-    viewport,
-    onClose: () => onModeChange("list"),
+    viewport: drillViewport,
+    onClose: () => {
+      setDrilledEvent(null);
+      onModeChange("list");
+    },
     onYank: () => {
-      if (!focused || !snapshot) return;
-      const since = Math.max(0, focused.seq - 1);
+      if (!drillEvent || !snapshot) return;
+      const since = Math.max(0, drillEvent.seq - 1);
       return yank(`mu log --since ${since} -n 1 -w ${snapshot.workstreamName}`);
     },
-    resetKey: focused?.seq ?? "",
+    resetKey: drillEvent?.seq ?? "",
   });
 
   const dispatchListAction = (action: PopupAction) => {
@@ -106,8 +118,8 @@ export function LogPopup({
       drill.dispatch(action);
       return;
     }
-    if (action.kind === "setCursor" || isNavAction(action)) {
-      setCursor((c) => applyCursor(c, action, events.length, viewport));
+    if (isNavAction(action)) {
+      setCursor((c) => applyCursor(c, action, events.length, rowsViewport));
       return;
     }
     switch (action.kind) {
@@ -119,9 +131,18 @@ export function LogPopup({
         return;
       case "drill":
         if (focused !== undefined) {
+          setDrilledEvent(focused);
           onModeChange("drill");
         }
         return;
+      case "clickRow": {
+        const hit = clickedItem(events, safeCursor, rowsViewport, action.row);
+        if (!hit) return;
+        setCursor(hit.index);
+        setDrilledEvent(hit.item);
+        onModeChange("drill");
+        return;
+      }
       case "yank": {
         const e = events[safeCursor];
         if (!e || !snapshot) return;
@@ -144,7 +165,7 @@ export function LogPopup({
 
   usePopupActionQueue(popupActions, dispatchListAction);
 
-  useInput((input, key) => {
+  usePopupInput((input, key) => {
     if (mode !== "drill" && flt.onKey(input, key) === "consumed") return;
     dispatchListAction(dispatchPopupKeyFromInk(input, key));
   });
@@ -152,14 +173,16 @@ export function LogPopup({
   if (snapshot === null) {
     return <PopupShell title="Activity log · popup">{<Text dimColor>loading…</Text>}</PopupShell>;
   }
-  if (mode === "drill" && focused !== undefined) {
+  if (mode === "drill" && drillEvent !== undefined) {
     return (
-      <PopupShell title={`Activity log · #${focused.seq} (${focused.createdAt.slice(11, 19)})`}>
+      <PopupShell
+        title={`Activity log · #${drillEvent.seq} (${drillEvent.createdAt.slice(11, 19)})`}
+      >
         <Box flexDirection="column" flexGrow={1}>
           <DrillScrollView
             title="event payload"
             body={drillBody}
-            viewport={viewport}
+            viewport={drillViewport}
             scrollTop={drill.scrollTop}
             wrappedBody={drill.wrappedBody}
             emptyText="(empty payload)"
@@ -190,7 +213,7 @@ export function LogPopup({
   // Centre the cursor in the viewport. `viewport` is BOTH the slice
   // size and the half-window for centring — must use the per-render
   // value consistently (see CAVEAT in bug_tui_popup_data_doesnt_fill).
-  const { visible } = centredVisibleSlice(events, safeCursor, viewport);
+  const { visible } = centredVisibleSlice(events, safeCursor, rowsViewport);
 
   const rows = visible.map((e) => {
     const r = renderOp(e);

@@ -5,7 +5,7 @@
 // as `mu task tree --down`, separated by blank lines. No card owns this
 // popup; it is a dashboard-level graph affordance for large workstreams.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { type ReactElement, useMemo, useRef, useState } from "react";
 import { loadFullDag, renderForest } from "../../../dag.js";
 import type { Db } from "../../../db.js";
@@ -14,6 +14,7 @@ import type { TaskStatus } from "../../../tasks/status.js";
 import { colorPair } from "../../format.js";
 import { contentWidthFromCols, truncateCell } from "../columns.js";
 import { dispatchPopupKeyFromInk } from "../keys.js";
+import { usePopupInput } from "../popup-input.js";
 import { PopupShell } from "../popup-shell.js";
 import {
   type FilterState,
@@ -23,7 +24,7 @@ import {
 } from "../use-status-filter.js";
 import { useTerminalSize } from "../use-terminal-size.js";
 import { DrillScrollView, useDrillKeymap } from "./drill.js";
-import { usePopupViewport } from "./viewport.js";
+import { POPUP_DRILL_CHROME_ROWS, usePopupViewport } from "./viewport.js";
 
 export interface PopupProps {
   yank: (command: string) => Promise<void>;
@@ -37,6 +38,8 @@ export interface PopupProps {
   workstream: string;
 }
 
+const DAG_STRIP_ROWS = 1;
+
 interface DagBody {
   body: string;
   roots: string[];
@@ -49,7 +52,8 @@ export function DagPopup({
   workstream,
   fastTickNonce,
 }: PopupProps): ReactElement {
-  const viewport = usePopupViewport();
+  // DrillScrollView (title + hint) below one StatusFilterStrip row.
+  const viewport = usePopupViewport(POPUP_DRILL_CHROME_ROWS + DAG_STRIP_ROWS);
   const statusFilter = useStatusFilter();
   const { statuses, showParked, showNotDone } = statusFilter;
   const { cols } = useTerminalSize();
@@ -82,7 +86,7 @@ export function DagPopup({
   );
   lineToRootRef.current = lineToRoot;
 
-  useInput((input, key) => {
+  usePopupInput((input, key) => {
     if (statusFilter.onKey(input, key)) return;
     const action = dispatchPopupKeyFromInk(input, key);
     drill.dispatch(action);

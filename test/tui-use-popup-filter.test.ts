@@ -39,16 +39,26 @@ describe("popupFilterReducer", () => {
     expect(b).toEqual({ query: "dog", editing: true });
   });
 
-  it("appendChar drops non-printable / empty / multi-char input", () => {
+  it("appendChar drops empty / control-only input", () => {
     const a: FilterState = { query: "x", editing: true };
     const empty = popupFilterReducer(a, { kind: "appendChar", char: "" });
     const tab = popupFilterReducer(a, { kind: "appendChar", char: "\t" });
-    const multi = popupFilterReducer(a, { kind: "appendChar", char: "ab" });
     const ctrl = popupFilterReducer(a, { kind: "appendChar", char: "\x01" });
     expect(empty).toEqual(a);
     expect(tab).toEqual(a);
-    expect(multi).toEqual(a);
     expect(ctrl).toEqual(a);
+  });
+
+  it("appendChar keeps multi-char (paste) and non-ASCII text, minus controls", () => {
+    const a: FilterState = { query: "x", editing: true };
+    expect(popupFilterReducer(a, { kind: "appendChar", char: "ab" }).query).toBe("xab");
+    expect(popupFilterReducer(a, { kind: "appendChar", char: "é中" }).query).toBe("xé中");
+    expect(popupFilterReducer(a, { kind: "appendChar", char: "a\nb\x1b" }).query).toBe("xab");
+  });
+
+  it("backspace removes a whole astral code point", () => {
+    const a: FilterState = { query: "a😀", editing: true };
+    expect(popupFilterReducer(a, { kind: "backspace" }).query).toBe("a");
   });
 
   it("backspace pops one char", () => {
@@ -152,6 +162,12 @@ describe("classifyFilterKey", () => {
     expect(classifyFilterKey(editing, "g", {})).toEqual({ kind: "appendChar", char: "g" });
     expect(classifyFilterKey(editing, " ", {})).toEqual({ kind: "appendChar", char: " " });
     expect(classifyFilterKey(editing, "/", {})).toEqual({ kind: "appendChar", char: "/" });
+  });
+
+  it("pasted (multi-char) and non-ASCII input → appendChar of the whole string", () => {
+    expect(classifyFilterKey(editing, "abc", {})).toEqual({ kind: "appendChar", char: "abc" });
+    expect(classifyFilterKey(editing, "é", {})).toEqual({ kind: "appendChar", char: "é" });
+    expect(classifyFilterKey(editing, "中", {})).toEqual({ kind: "appendChar", char: "中" });
   });
 
   it("nav keys (arrows / pageDown / pageUp / tab / Fn) consume-and-ignore", () => {

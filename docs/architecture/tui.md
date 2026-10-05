@@ -30,9 +30,10 @@ Press `?` in the TUI for the keymap.
 | `index.ts`, `escapes.ts` | `runTui` entry; alt-screen and SGR mouse-mode lifecycle; pure escape bytes |
 | `app.tsx` | `<App>` root: popup state machine, global keymap, tabs, footer |
 | `state.ts` | `useDashboardSnapshot` poll loop (fast and slow tiers) |
-| `keys.ts`, `keymap-spec.ts`, `help.tsx` | pure key dispatch; the keymap source of truth that drives both dispatch and the `?`/F1 overlay |
+| `keys.ts`, `keymap-spec.ts`, `help.tsx` | pure key dispatch; the keymap source of truth that drives both dispatch and the `?` overlay |
 | `mouse.ts`, `use-popup-action-queue.ts` | vendored SGR mouse parser with double-click; one queued popup action per render |
 | `layout.ts`, `columns.ts`, `wrap-ansi.ts`, `use-terminal-size.ts` | responsive columns and row budgets; aligned clipping; ANSI-aware wrapping; resize hook |
+| `popup-input.ts` | `usePopupInput`: popup keyboard, off while the help overlay covers the popup |
 | `titled-box.tsx`, `popup-shell.tsx`, `list-row.tsx`, `padded-rows.tsx`, `status-bar.tsx`, `tab-strip*.ts(x)` | chrome primitives |
 | `format-helpers.ts`, `agent-display.ts` | shared formatters and agent-row display |
 | `use-popup-filter.tsx`, `use-status-filter.tsx`, `use-notes-drill.ts` | `/` filter; status (`o`/`i`/`c`) and substate (`p`/`w`) toggles; shared notes drill |
@@ -45,9 +46,12 @@ Press `?` in the TUI for the keymap.
 `<App>` owns:
 
 - **Popup state:** `null` (dashboard) or one popup id. One popup at a
-  time; `Esc` or `q` returns to the dashboard.
+  time; `Esc` or `q` returns to the dashboard. `?` over a popup hides
+  it (`display="none"`) and turns its keyboard off rather than
+  unmounting it, so its cursor, filter and drill survive the overlay.
 - **Card visibility:** toggled by `0`-`9`.
-- **Tick rate:** fast tick, 1s default, adjusted with `+` `-` `=` `0`.
+- **Tick rate:** fast tick, 1s default, adjusted with `+` / `=` and
+  `-`. There is no reset key: `0` toggles the Commits card.
 - **Active workstream tab:** `Tab` / `Shift-Tab` cycles when there are
   two or more. A torn-down workstream keeps its tab position and
   renders dimmed with strikethrough until the name is recreated. A
@@ -98,7 +102,7 @@ the right border.
 
 Every popup row exposes one canonical `mu` command through `y`.
 `yank.ts` probes pbcopy, wl-copy, xclip, xsel and clip.exe, then falls
-back to OSC-52 over stderr.
+back to OSC-52 written to `/dev/tty`, since ink owns stdout.
 
 The handoffs leave the alt screen, disable mouse mode, run a
 foreground subprocess, and restore both on exit:
@@ -114,16 +118,22 @@ A TUI gesture that mutates state needs a ROADMAP entry first.
 
 Mouse support uses SGR mouse mode. `mouse.ts` parses
 `ESC[<button;x;y;M/m`, detects double-clicks, and exposes `useMouse()`.
-A double-click on a card emits `setCursor` then `drill` through the
-action queue, which consumes one action per render, so the cursor lands
-before the drill reads the focused row.
+A double-click on a card opens its popup. A double-click on a popup row
+emits one `clickRow` action (the 0-based body row) through the action
+queue. The popup maps that row through its own scroll window and
+header strips (`clickedItem` in `popups/scroll.ts`), then focuses and
+drills the item. App cannot do the mapping: only the popup knows its
+window start and strip rows.
 
 `keys.ts` holds `dispatchGlobalKey` (dashboard), `dispatchPopupKey`
 (popup), and `shouldSwallowGlobalKey` (keys a popup consumes).
 
 ## Drill recursion
 
-List popups drill with `Enter`. `DrillScrollView`
+List popups drill with `Enter`. Each popup pins the drilled row's
+identity at `Enter` (task, agent, check, commit sha, log seq, track
+goals), so a refresh that reorders or extends the list cannot move an
+open drill to another row. `DrillScrollView`
 (`popups/drill.tsx`) is the shared scrollable text leaf: Workspaces'
 git show, Agents' scrollback, Activity log payloads, and Doctor
 remediation. Task popups drill into `TaskDetailDrill`
