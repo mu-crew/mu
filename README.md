@@ -57,6 +57,7 @@ Run this inside tmux or herdr:
 
 ```bash
 mu workstream init auth
+export MU_SESSION=auth   # init does not attach you; or pass -w auth to each verb
 mu task add design_auth --title "Design auth" --impact 80 --effort-days 2
 mu task add build_auth  --title "Build auth"  --impact 80 --effort-days 5 --blocked-by design_auth
 mu agent spawn worker-1 --workspace

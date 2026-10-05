@@ -1,6 +1,8 @@
 # Environment variables
 
-Every env var mu reads or sets. mu has no config file. Durations are
+Every env var mu reads or sets, except standard ones it reads as any
+tool does (`HOME`, `PATH`, `SHELL`, `USER`, `TERM`, `DISPLAY`,
+`WAYLAND_DISPLAY`). mu has no config file. Durations are
 milliseconds; `0` disables a wait unless noted.
 
 ## State and workstream
@@ -19,7 +21,10 @@ milliseconds; `0` disables a wait unless noted.
 | --- | --- | --- |
 | `MU_MUX` | Force `tmux` or `herdr`, skipping mux detection. An unknown value fails the invocation. | detected |
 | `HERDR_ENV` | Read only. `1` (set by herdr in its panes) selects herdr; outranks `$TMUX`. | |
-| `MU_TMUX_SOCKET` | tmux socket name (`-L <name>`). tmux only. | `$TMUX` |
+| `TMUX`, `TMUX_PANE` | Read only. Either one (set by tmux in its panes) selects tmux. `$TMUX` gates reading the current session name, which resolves the workstream when `-w` and `MU_SESSION` are absent. `$TMUX_PANE` identifies the calling agent (`mu me`, `mu log`, task claim errors). | |
+| `HERDR_WORKSPACE_ID` | Read only. Set by herdr in its panes; pane listing with no target reads this workspace first. | |
+| `HERDR_PANE_ID` | Read only. Set by herdr in its panes; fallback rung of actor identity after `MU_AGENT_NAME`. | |
+| `MU_TMUX_SOCKET` | Test isolation. Runs every tmux call on a private server (`-L <name>`) with `-f /dev/null`, so `~/.tmux.conf` is not loaded. tmux only. | unset: tmux's default server |
 | `MU_HERDR_SESSION` | Named herdr server (`--session <name>`). herdr only. Tests must set it to a non-default name. | herdr default session |
 | `MU_BANNER_QUIET` | `1` disables mu's pane border and banner decorations. tmux only. | unset |
 

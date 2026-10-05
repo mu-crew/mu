@@ -309,7 +309,7 @@ export class SchemaTooOldError extends Error implements HasNextSteps {
         command: `mv "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}" "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}.old"`,
       },
       {
-        intent: `Migrate the old DB into a fresh v${this.requiredVersion} DB`,
+        intent: `Migrate the old DB into a fresh v${this.requiredVersion} DB (run in a mu git checkout: the npm package does not ship scripts/)`,
         command: `npx tsx scripts/migrate.ts "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}.old" --out /tmp/mu-v${this.requiredVersion}.db`,
       },
       {

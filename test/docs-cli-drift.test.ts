@@ -5,7 +5,7 @@
 // tree walk rather than N `--help` subprocesses, and for the escape
 // hatch (SKIP_MARKER) an author uses on an illustrative snippet.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildProgram } from "../src/cli.js";
@@ -72,6 +72,7 @@ const DOC_FILES = [
   "skills/mu/recipes/rules-audit.md",
   "skills/mu/recipes/findings.md",
   "skills/mu/recipes/tasks-or-calls.md",
+  "skills/mu/recipes/drift-audit.md",
   "scripts/README.md",
 ];
 
@@ -103,12 +104,38 @@ describe("docs name only real CLI surface", () => {
     ],
     ["a removed subverb", "`mu snapshot list`", "unknown command 'snapshot'"],
     ["a flag removed from a live verb", "`mu undo --to 12`", "unknown option '--to'"],
+    // `mu` inside a path or a quoted brief is not a second command, so
+    // it must not exempt the line from the check.
+    [
+      "a bad flag next to a mu-named path",
+      "`mu db backup /tmp/mu-backup.db --bogus`",
+      "unknown option '--bogus'",
+    ],
+    [
+      "a bad flag next to a quoted brief naming mu",
+      "`mu agent send w-1 --bogus 'run mu task notes x'`",
+      "unknown option '--bogus'",
+    ],
   ])("detects %s", (_label, snippet, expected) => {
     const found = extractDocCommands("fixture.md", snippet);
     expect(found).toHaveLength(1);
     const first = found[0];
     if (!first) throw new Error("unreachable");
     expect(checkDocCommand(program, first)).toContain(expected);
+  });
+
+  it("still skips a line that chains two mu commands", () => {
+    const found = extractDocCommands("fixture.md", "`mu task list; mu task show x --bogus`");
+    const first = found[0];
+    if (!first) throw new Error("unreachable");
+    expect(checkDocCommand(program, first)).toBeNull();
+  });
+
+  it("covers every skills/mu recipe", () => {
+    const recipes = readdirSync(join(ROOT, "skills/mu/recipes"))
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => `skills/mu/recipes/${f}`);
+    expect(recipes.filter((r) => !DOC_FILES.includes(r))).toEqual([]);
   });
 
   it("honours the skip region so historical sections can name dead verbs", () => {

@@ -134,5 +134,5 @@ when `MU_MANAGED_AGENT` is set (inside a mu-spawned pane) or
 `wait --json`, read, abort, close) and only format the CLI's
 `outcome` into a follow-up message. `delegateOutcome`
 (`src/agents/delegate.ts`) maps one wait result to `done`, `empty`,
-`died`, `timeout` or `pending`. The extension imports nothing from pi;
+`error`, `died`, `timeout` or `pending`. The extension imports nothing from pi;
 it types pi's API structurally.

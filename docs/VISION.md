@@ -109,7 +109,7 @@ which task.
 A workstream is a mux session: a tmux session on tmux, a herdr workspace
 on herdr. Its agents are panes in that session, so
 `tmux a -t mu-<workstream>` shows the whole crew. Workstreams on one
-machine are separate sessions, partitioned in the DB by `session_id`.
+machine are separate sessions, partitioned in the DB by `workstream_id`.
 The crew survives detach and reattach.
 
 The multiplexer is a backend chosen by detection
@@ -161,7 +161,7 @@ win32-x64) or a C++ toolchain.
 - **Read views**: the `ready`, `blocked`, and `goals` views, and
   `mu state` as the state card.
 - **Typed verbs** that map to resource transitions (`task claim`,
-  `task close`, `agent spawn --workspace`, `workstream destroy`).
+  `task close`, `agent spawn --workspace`, `workstream teardown`).
 - **`--json` on every read verb**, so scripts use `jq`, not table parsing.
 - **`mu sql`** underneath, as the explicit escape hatch.
 
@@ -251,8 +251,10 @@ mu agent spawn reviewer-1 --cli pi_big
    - owned by a human or parent script and gone when it ends;
    - read-only: TUI actions copy the `mu <verb>` command to the
      clipboard and exit, so every write is a fresh CLI call;
-   - limited to stdin, stdout, and a poll timer: no sockets, watches, or
-     subprocesses;
+   - limited to stdin, stdout, and a poll timer: no sockets or watches.
+     The TUI's slow tick runs short-lived probes (mux liveness, VCS
+     status) and ambient sync, and its handoffs (lazygit, tuicr, attach,
+     clipboard) run one foreground child each; none outlives the TUI;
    - TTY-gated: pipes, CI, `--json`, and `MU_NO_TUI=1` never enter the
      TUI, and plain `mu state` prints the static card.
 
@@ -276,5 +278,5 @@ the work, pi plus manual tmux is more transparent than mu.
 
 Known gaps, none promoted yet: `--evidence` grounds but does not verify,
 mutations have no declared idempotency keys, most mutations have no dry
-run (`workstream destroy`, `task delete`, and `undo` do), and the `role`
+run (`workstream teardown`, `task delete`, and `undo` do), and the `role`
 field is stored but not enforced.

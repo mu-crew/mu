@@ -5,7 +5,7 @@ mu runs agents in multiplexer panes, tmux or herdr, behind one
 
 ## One mux session per workstream
 
-One workstream is one mux session and one `session_id` partition in
+One workstream is one mux session and one `workstream_id` partition in
 `~/.local/state/mu/mu.db`. Workstreams on one machine are independent
 mux sessions.
 

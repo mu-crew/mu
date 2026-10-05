@@ -7,7 +7,7 @@
  *
  * Everything is the `mu` CLI (spawn / send / wait --json / read / abort /
  * close): the tool only orders the calls and formats the result, so a
- * shell gets the same delegation (ROADMAP § Pi extension, rule 2). The one
+ * shell gets the same delegation (VISION § 1, rule 2). The one
  * thing only an extension can do is the callback into the parent
  * conversation, and that is presentation. No extension-only state: the
  * in-flight set below is the list of `mu agent wait` children this pi owns.

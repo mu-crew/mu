@@ -222,5 +222,4 @@ deprecated, always `spawning`, and never read.
 | **pi session** | pi's conversation |
 | **agent session** | Colloquial for an agent's lifetime; avoid in code |
 
-New columns and variables say `workstream_id`, not `session_id`. The
-`agents.session_id` column keeps its name for schema stability.
+Columns and variables say `workstream_id`, never `session_id`.

@@ -37,9 +37,9 @@ clears all blockers.
 | Id | Shape | Unique within |
 | --- | --- | --- |
 | Agent name | `[a-z][a-z0-9_-]*`, ≤ 32 chars | workstream |
-| Task `local_id` | same | DB |
-| Workstream name | same; mux session is `mu-<name>` | DB |
-| Window (`--tab`) | `[A-Za-z][A-Za-z0-9 _-]*`, ≤ 32 chars | workstream |
+| Task `local_id` | `[a-z][a-z0-9_-]*`, ≤ 64 chars | workstream |
+| Workstream name | `[a-z][a-z0-9_-]*`, ≤ 32 chars; mux session is `mu-<name>` | DB |
+| Window (`--tab`) | not validated; passed to the mux as given. Avoid `:` and `.`, which tmux reads as target separators | workstream |
 
 `scratch` is reserved: it is created only by the first
 `mu agent spawn <name> -w scratch`, and `mu workstream init scratch`
@@ -87,7 +87,6 @@ The state dir is `MU_STATE_DIR`, else `$XDG_STATE_HOME/mu`, else
 | Path | Contents |
 | --- | --- |
 | `<state-dir>/mu.db` | The SQLite DB for every workstream |
-| `<state-dir>/workstreams/<workstream>/` | Per-workstream artifacts, created lazily |
 | `<state-dir>/workspaces/<workstream>/<agent>/` | Per-agent VCS workspace, created by `mu agent spawn --workspace` |
 | `<sync-dir>/<machine_id>.jsonl` | This machine's segment; `<sync-dir>` is `MU_SYNC_DIR` |
 | `<sync-dir>/<machine_id>.manifest` | `{count, last_hlc, sha256}` for segment verification |

@@ -300,7 +300,7 @@ export function checkCaseCollisions(db: Db): FleetHazard {
       "",
       "Fix: rename one side to a distinct name before adding a Mac to the fleet.",
       "There is no in-place rename verb; back the DB up, re-init under the new",
-      "name, and destroy the old one:",
+      "name, and tear down the old one:",
       "  mu db backup <file>",
       "  mu workstream init <new-name>",
       "  mu workstream teardown <old-name> --yes",
