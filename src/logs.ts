@@ -283,8 +283,8 @@ export interface AppendLogOptions {
   payload: string;
   /** Structured intent. Set by `emitEvent` for the local-only changes
    *  no trigger can see. Stays null for operator-authored `mu log
-   *  write` / `mu agent send` lines, which are prose by nature and have
-   *  no state change to name. */
+   *  write` lines, which are prose by nature and have no state change
+   *  to name. */
   intent?: string;
 }
 
@@ -487,6 +487,7 @@ export type LocalIntent =
   | "agent.close"
   | "agent.adopt"
   | "agent.kick"
+  | "agent.send"
   | "agent.stall"
   | "workspace.create"
   | "workspace.free"

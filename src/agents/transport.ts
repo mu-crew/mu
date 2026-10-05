@@ -21,6 +21,7 @@ import {
   type CtlState,
 } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
+import { emitEvent } from "../logs.js";
 import { activeMux, type SendOptions } from "../mux.js";
 import {
   AgentBusyError,
@@ -166,6 +167,35 @@ export async function ctlFailure(
     agent.workstreamName,
     sock,
     errCode(e) === "ENOENT" ? "missing" : "refused",
+  );
+}
+
+/** How `mu agent send` delivered: the `mode=` of an `agent.send` op. */
+export type SendMode = "plain" | "steer" | "interrupt" | "fresh";
+
+/**
+ * Record a delivered send as an `agent.send` op. `agents` is machine-local
+ * and a send mutates no table, so this emit is the only record that a
+ * running worker was told something, and when. `fields` carries pi's
+ * pre-send state (`since` as ISO) so an audit can see a worker stuck in
+ * one long turn when a plain/steer send queued behind it.
+ */
+export function recordSend(
+  db: Db,
+  agent: Pick<AgentRow, "name" | "workstreamName">,
+  mode: SendMode,
+  bytes: number,
+  fields: Record<string, string | number | boolean | undefined>,
+): void {
+  const detail = Object.entries({ mode, ...fields })
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${k}=${k === "since" ? new Date(Number(v)).toISOString() : v}`)
+    .join(" ");
+  emitEvent(
+    db,
+    agent.workstreamName,
+    "agent.send",
+    `agent send ${agent.name} (${detail}, ${bytes} bytes)`,
   );
 }
 

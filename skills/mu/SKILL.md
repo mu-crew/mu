@@ -180,6 +180,7 @@ rules hold even when you skip it:
 - **Stop a worker gently**: `mu agent abort`, then `kick`, then `close`.
   To redirect a busy pi now: `send --interrupt` (`--steer` waits for
   the running tool).
+- **Send, don't note, a running worker**: it never sees new notes. The note is the durable copy.
 - **Refute a brief claiming a cause, fix, threshold or code fact** before dispatch:
   one `record`ed refuter call; rewrite on AMEND. Others get a `REFUTE-EXEMPT: <why>` note.
 - **Checks are calls, not tasks.** Refuters, claim checkers, judges and
@@ -275,6 +276,7 @@ risky job that needs several of them, start with
 | [remote-workers](recipes/remote-workers.md) | an agent runs on another machine |
 | [waves](recipes/waves.md) | more than one worker edits the same repo at once |
 | [long-run](recipes/long-run.md) | a task or proof runs for hours, or must survive flakes |
+| [drift-audit](recipes/drift-audit.md) | hours into a long run, after a batch, compaction or resume, before a stop rule |
 | [watcher](recipes/watcher.md) | a helper polls a PR, CI, or log for change |
 | [findings](recipes/findings.md) | any review, audit, or check reports problems: where they live, how they are triaged |
 | [tasks-or-calls](recipes/tasks-or-calls.md) | a recipe step spawns an agent: DAG task or delegate call |

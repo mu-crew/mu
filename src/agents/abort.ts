@@ -13,7 +13,13 @@ import { CtlUnknownOpError, ctlRequest } from "../ctl/client.js";
 import type { CtlState } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { AgentAbortNeedsCtlError, AgentAbortTimeoutError, AgentNotFoundError } from "./errors.js";
-import { agentCtlSocket, ctlFailure, expectsCtl, ctlRequestFor as request } from "./transport.js";
+import {
+  agentCtlSocket,
+  ctlFailure,
+  expectsCtl,
+  recordSend,
+  ctlRequestFor as request,
+} from "./transport.js";
 
 export const DEFAULT_ABORT_TIMEOUT_MS = 30_000;
 
@@ -107,6 +113,20 @@ export type InterruptResult = {
  * AgentAbortNeedsCtlError.
  */
 export async function interruptAgent(
+  db: Db,
+  name: string,
+  text: string,
+  opts: AbortAgentOptions,
+): Promise<InterruptResult> {
+  const r = await interruptAgentImpl(db, name, text, opts);
+  recordSend(db, { name, workstreamName: opts.workstream }, "interrupt", text.length, {
+    transport: "ctl",
+    wasBusy: r.wasBusy,
+  });
+  return r;
+}
+
+async function interruptAgentImpl(
   db: Db,
   name: string,
   text: string,

@@ -212,6 +212,7 @@ describe("machine-local lifecycle ops", () => {
       "agent.close",
       "agent.adopt",
       "agent.kick",
+      "agent.send",
       "agent.stall",
       "workspace.create",
       "workspace.free",
