@@ -68,7 +68,7 @@ pi agent's `--command`. mu never reads them back.
 | --- | --- | --- |
 | `MU_DELEGATE` | `0` hides the `mu_delegate` tool. `mu doctor` reports it. | unset: shown |
 | `MU_DELEGATE_MAX` | Most delegates one pi session runs at once. Further calls queue, up to four times this; past that `mu_delegate` refuses. A positive integer. | `16` |
-| `MU_NUDGE` | `0` turns off both nudges: the keep-driving nudge (one reminder when an orchestrator ends a turn with dispatched work still IN_PROGRESS) and the close nudge (one reminder when a mu-spawned pi worker ends a turn still owning an IN_PROGRESS task). `mu doctor` reports it. | unset: on |
+| `MU_NUDGE` | `0` turns off the three nudges: the keep-driving nudge (one reminder when an orchestrator ends a turn with dispatched work still IN_PROGRESS), the close nudge (one reminder when a mu-spawned pi worker ends a turn still owning an IN_PROGRESS task), and the refute nudge (one notice when an orchestrator dispatched a task whose notes hold no `REFUTER`, `VERDICT:` or `REFUTE-EXEMPT:` line). `mu doctor` reports it. | unset: on |
 | `MU_PI_HOME` | Root under which `mu link pi` writes `.pi/` and `.agents/`. | `$HOME` |
 | `PI_CODING_AGENT_DIR` | Read only. pi's agent dir, checked for a linked murmur extension. | `~/.pi/agent` |
 | `MU_EXTENSION_ENTRY` | Test only. Built extension the `mu link pi` shim imports. | `dist/extension/mu-pi.js` |

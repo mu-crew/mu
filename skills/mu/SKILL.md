@@ -175,6 +175,8 @@ rules hold even when you skip it:
 - **Stop a worker gently**: `mu agent abort`, then `kick`, then `close`.
   To redirect a busy pi now: `send --interrupt` (`--steer` waits for
   the running tool).
+- **Refute a brief claiming a cause, fix, threshold or code fact** before dispatch:
+  one `record`ed refuter call; rewrite on AMEND. Others get a `REFUTE-EXEMPT: <why>` note.
 - **Checks are calls, not tasks.** Refuters, claim checkers, judges and
   skeptics are [delegate calls](recipes/tasks-or-calls.md#delegate-call)
   (`mu_delegate`, or a `scratch` spawn without it), all issued in one
