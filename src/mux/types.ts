@@ -381,13 +381,14 @@ export interface MuxBackend {
   //
   // Two shapes for the same intent because mu prints attach hints after
   // workstream creation while the TUI's `a` key executes the steps.
-  // Neither may hardcode a tmux string. Async because herdr must
-  // resolve the session name to an opaque workspace id first.
+  // Neither may hardcode a tmux string. Sync or async: tmux builds the
+  // line from the target alone, herdr must first resolve the session
+  // name to an opaque workspace id. Callers always `await` the result.
 
   /** Copy-pasteable shell line that lands the user on `target`. */
-  attachHint(target: AttachTarget): Promise<string>;
+  attachHint(target: AttachTarget): string | Promise<string>;
   /** The same attach, as argv steps to spawn in order. */
-  attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]>;
+  attachCommands(target: AttachTarget): readonly MuxCommand[] | Promise<readonly MuxCommand[]>;
 
   // — diagnostics —
 

@@ -503,7 +503,7 @@ function readTab(v: unknown): MuxWindow | undefined {
   const id = asString(v.tab_id);
   if (id === undefined) return undefined;
   // herdr auto-labels a tab with its ordinal ("1"), which is the closest
-  // analogue to a tmux window name; mu's `newWindow` sets a real label.
+  // analogue to a tmux window name; mu labels every tab it creates.
   return { id, name: asString(v.label) ?? "" };
 }
 
@@ -594,15 +594,14 @@ export async function sessionExists(name: string): Promise<boolean> {
  * detached workspace anyway; use `workspace focus` explicitly if you
  * really mean to move the user.
  *
- * `opts.windowName` is ignored — herdr names the implicit first tab "1"
- * and mu's window naming happens in `newWindow`.
+ * `opts.windowName` labels the implicit first tab (see `labelRootTab`).
  */
 export async function newSession(name: string, opts: NewSessionOptions = {}): Promise<void> {
   rejectCommand("newSession", opts.command);
   const args = ["workspace", "create", "--label", name, "--no-focus"];
   if (opts.cwd) args.push("--cwd", opts.cwd);
   appendEnvFlags(args, opts.env);
-  await herdr(args);
+  await labelRootTab(await herdr(args), opts.windowName);
 }
 
 /**
@@ -621,7 +620,37 @@ export async function newSessionWithPane(
   if (opts.cwd) args.push("--cwd", opts.cwd);
   appendEnvFlags(args, opts.env);
   const result = await herdr(args);
-  return readCreatedPaneId(result, "root_pane", args);
+  const paneId = readCreatedPaneId(result, "root_pane", args);
+  await labelRootTab(result, opts.windowName);
+  return paneId;
+}
+
+/**
+ * herdr labels a new workspace's implicit first tab "1". mu finds tabs
+ * by window name (attach focuses the agent's tab, spawn reuses a tab by
+ * `--tab`, init checks for `_mu`), so rename it to `windowName`, the
+ * label `newWindow` gives every later tab. Load-bearing: an unlabelled
+ * first tab is invisible to all three lookups.
+ */
+async function labelRootTab(
+  created: Record<string, unknown>,
+  windowName: string | undefined,
+): Promise<void> {
+  if (windowName === undefined || windowName.length === 0) return;
+  const root = created.root_pane;
+  const tab = created.tab;
+  const tabId =
+    (isRecord(root) ? asString(root.tab_id) : undefined) ??
+    (isRecord(tab) ? asString(tab.tab_id) : undefined);
+  if (tabId === undefined) {
+    throw new HerdrError(
+      ["workspace", "create"],
+      `herdr response had no root tab id: ${JSON.stringify(created)}`,
+      "",
+      0,
+    );
+  }
+  await herdr(["tab", "rename", tabId, windowName]);
 }
 
 /**

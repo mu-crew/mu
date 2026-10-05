@@ -274,32 +274,35 @@ describe("tmuxBackend.attachHint / attachCommands", () => {
   // src/cli/agents.ts prints the hint and the TUI runs the commands.
   // Both must come from the BACKEND: a herdr user handed `tmux attach`
   // is worse off than one handed nothing.
-  it("inside a client, switches rather than attaching a second one", async () => {
+  // Asserted WITHOUT `await`: tmux's attach methods are synchronous and
+  // exported via `tmuxBackend`, so SDK callers must get a string, not a
+  // Promise (only herdr needs an async lookup).
+  it("inside a client, switches rather than attaching a second one", () => {
     const target = { session: "mu-auth", window: "worker-1", inside: true };
-    expect(await tmuxBackend.attachHint(target)).toBe("tmux switch-client -t mu-auth:worker-1");
-    expect(await tmuxBackend.attachCommands(target)).toEqual([
+    expect(tmuxBackend.attachHint(target)).toBe("tmux switch-client -t mu-auth:worker-1");
+    expect(tmuxBackend.attachCommands(target)).toEqual([
       { command: "tmux", args: ["switch-client", "-t", "mu-auth:worker-1"] },
     ]);
   });
 
-  it("outside a client, attaches then selects the window in two steps", async () => {
+  it("outside a client, attaches then selects the window in two steps", () => {
     // `tmux attach -t session:window` does not reliably select the
     // window across tmux versions, hence the explicit second step.
     const target = { session: "mu-auth", window: "worker-1" };
-    expect(await tmuxBackend.attachHint(target)).toBe(
+    expect(tmuxBackend.attachHint(target)).toBe(
       "tmux attach -t mu-auth && tmux select-window -t mu-auth:worker-1",
     );
-    const cmds = await tmuxBackend.attachCommands(target);
+    const cmds = tmuxBackend.attachCommands(target);
     expect(cmds.map((c) => c.args[0])).toEqual(["attach-session", "select-window"]);
     // The select is decorative: failing it still leaves the user in
     // the right session, so the runner must not report an error.
     expect(cmds[1]?.optional).toBe(true);
   });
 
-  it("a session-only target omits window selection entirely", async () => {
+  it("a session-only target omits window selection entirely", () => {
     // `mu workstream init` has no agent yet, so there is no window.
-    expect(await tmuxBackend.attachHint({ session: "mu-auth" })).toBe("tmux attach -t mu-auth");
-    expect(await tmuxBackend.attachCommands({ session: "mu-auth" })).toHaveLength(1);
+    expect(tmuxBackend.attachHint({ session: "mu-auth" })).toBe("tmux attach -t mu-auth");
+    expect(tmuxBackend.attachCommands({ session: "mu-auth" })).toHaveLength(1);
   });
 });
 

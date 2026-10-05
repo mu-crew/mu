@@ -316,6 +316,7 @@ describe("spawn on herdr is create-then-start, in that order", () => {
     const calls = mockHerdr([
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
       ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", ok(AGENT_STARTED)],
     ]);
@@ -407,6 +408,7 @@ describe("a failed agent start never leaves a pane mu thinks is an agent", () =>
     const calls = mockHerdr([
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
       ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", serverError(AGENT_START_TIMEOUT)],
       ["pane close", ok(OK_PANE_CLOSE)],
@@ -430,6 +432,7 @@ describe("a failed agent start never leaves a pane mu thinks is an agent", () =>
     const calls = mockHerdr([
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
       ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", serverError(AGENT_INVALID_NAME)],
       ["pane close", ok(OK_PANE_CLOSE)],
@@ -447,6 +450,7 @@ describe("a failed agent start never leaves a pane mu thinks is an agent", () =>
     const calls = mockHerdr([
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
       ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", serverError(AGENT_NAME_TAKEN)],
       ["pane close", ok(OK_PANE_CLOSE)],
@@ -657,6 +661,7 @@ describe("decision 2: a command override mu cannot honour is REFUSED", () => {
     const calls = mockHerdr([
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
       ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["pane close", ok(OK_PANE_CLOSE)],
     ]);
@@ -778,6 +783,7 @@ describe("spawn branches on the CAPABILITY, not the backend name", () => {
     const calls = mockHerdr([
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
       ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", ok(AGENT_STARTED)],
     ]);
