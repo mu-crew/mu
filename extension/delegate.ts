@@ -711,8 +711,10 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         },
       };
     } finally {
+      // A start that threw frees its slot here, and a call queued while it
+      // was starting must take that slot: drain whether queued or direct.
       freeSlot();
-      if (queuedAs) drain();
+      drain();
     }
   }
 

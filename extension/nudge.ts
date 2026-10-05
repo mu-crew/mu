@@ -84,31 +84,43 @@ function readSkill(): string | undefined {
   return undefined;
 }
 
+/** Leading `NAME=value` words: env assignments before the command. */
+const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/** The args after `mu` when this segment runs mu (after any env
+ *  assignments), or undefined when it runs something else. */
+function muArgs(words: string[]): string[] | undefined {
+  let at = 0;
+  while (at < words.length && ENV_ASSIGN.test(words[at] ?? "")) at++;
+  const cmd = words[at];
+  if (cmd !== "mu" && !cmd?.endsWith("/mu")) return undefined;
+  return words.slice(at + 1);
+}
+
 /**
  * The workstreams a bash command dispatches mu work into, or undefined
  * when it dispatches nothing. Dispatch = `mu agent send|spawn`, or
- * `mu task claim ... --for`. `""` stands for the default workstream
- * (resolved by mu itself: $MU_SESSION, then tmux).
+ * `mu task claim <id> --for` (parsed by claimOf, as the refute nudge
+ * does). `""` stands for the default workstream (resolved by mu
+ * itself: $MU_SESSION, then tmux).
  */
 export function dispatchedWorkstreams(command: string): string[] | undefined {
   const found = new Set<string>();
   // One mu invocation per shell segment.
   for (const words of shellSegments(command)) {
-    const at = words.findIndex((w) => w === "mu" || w.endsWith("/mu"));
-    if (at < 0) continue;
-    const [noun, verb] = [words[at + 1], words[at + 2]];
-    const isSendSpawn = noun === "agent" && (verb === "send" || verb === "spawn");
-    const isClaimFor = noun === "task" && verb === "claim" && words.includes("--for");
-    if (!isSendSpawn && !isClaimFor) continue;
-    let ws = "";
-    for (let k = at + 3; k < words.length; k++) {
-      const w = words[k] ?? "";
-      if (w === "-w" || w === "--workstream") ws = words[k + 1] ?? "";
-      else if (w.startsWith("--workstream=")) ws = w.slice("--workstream=".length);
+    const args = muArgs(words);
+    if (args === undefined) continue;
+    const claim = claimOf(args);
+    if (claim !== undefined) {
+      if (claim.ws !== "scratch") found.add(claim.ws);
+      continue;
     }
-    if (ws === "" && isClaimFor) {
-      const ref = words[at + 3] ?? "";
-      if (ref.includes("/")) ws = ref.split("/")[0] ?? "";
+    if (args[0] !== "agent" || (args[1] !== "send" && args[1] !== "spawn")) continue;
+    let ws = "";
+    for (let k = 2; k < args.length; k++) {
+      const w = args[k] ?? "";
+      if (w === "-w" || w === "--workstream") ws = args[k + 1] ?? "";
+      else if (w.startsWith("--workstream=")) ws = w.slice("--workstream=".length);
     }
     if (ws !== "scratch") found.add(ws);
   }
@@ -118,15 +130,21 @@ export function dispatchedWorkstreams(command: string): string[] | undefined {
 /** Claim options that take a value; the task id is the first other positional. */
 const CLAIM_VALUE_OPTS = new Set(["--for", "-f", "-w", "--workstream", "--evidence", "--actor"]);
 
+/** A heredoc body to skip: lines up to `delim` (leading tabs stripped with `<<-`). */
+type Heredoc = { delim: string; strip: boolean };
+
 /**
  * The words of each shell segment. Quotes group words and are dropped;
  * `&&`, `||`, `;`, `|` and newlines split segments only outside
- * quotes, so a quoted `--evidence 'a | b'` stays one word.
+ * quotes, so a quoted `--evidence 'a | b'` stays one word. A
+ * backslash-newline joins lines, and heredoc bodies are skipped: they
+ * are data, not commands.
  */
 export function shellSegments(command: string): string[][] {
   const segs: string[][] = [];
   let words: string[] = [];
   let word: string | undefined;
+  const heredocs: Heredoc[] = [];
   const endWord = () => {
     if (word !== undefined) words.push(word);
     word = undefined;
@@ -136,6 +154,20 @@ export function shellSegments(command: string): string[][] {
     if (words.length > 0) segs.push(words);
     words = [];
   };
+  /** Skip the pending heredoc bodies that start after the newline at `i`;
+   *  returns the index of the last newline consumed. */
+  const skipHeredocs = (i: number): number => {
+    for (const h of heredocs.splice(0)) {
+      while (i < command.length) {
+        const eol = command.indexOf("\n", i + 1);
+        const end = eol < 0 ? command.length : eol;
+        const line = command.slice(i + 1, end);
+        i = end;
+        if ((h.strip ? line.replace(/^\t+/, "") : line) === h.delim) break;
+      }
+    }
+    return i;
+  };
   for (let i = 0; i < command.length; i++) {
     const c = command[i] ?? "";
     if (c === "'" || c === '"') {
@@ -143,11 +175,25 @@ export function shellSegments(command: string): string[][] {
       const end = close < 0 ? command.length : close;
       word = (word ?? "") + command.slice(i + 1, end);
       i = end;
+    } else if (c === "\\" && command[i + 1] === "\n") {
+      i++; // line continuation: neither a word nor a segment break
     } else if (c === "\\" && i + 1 < command.length) {
       word = (word ?? "") + command[++i];
+    } else if (c === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
+      // `<<[-] DELIM`: the delimiter may be quoted; its body starts on the next line.
+      endWord();
+      const m = /^<<(-?)[ \t]*('([^']*)'|"([^"]*)"|[^\s;&|<>()]+)/.exec(command.slice(i));
+      if (!m) {
+        i++;
+        continue;
+      }
+      const delim = m[3] ?? m[4] ?? (m[2] ?? "").replace(/\\/g, "");
+      heredocs.push({ delim, strip: m[1] === "-" });
+      i += m[0].length - 1;
     } else if (c === ";" || c === "|" || c === "\n" || (c === "&" && command[i + 1] === "&")) {
       if (c !== ";" && c !== "\n" && command[i + 1] === c) i++;
       endSeg();
+      if (c === "\n" && heredocs.length > 0) i = skipHeredocs(i);
     } else if (/\s/.test(c)) {
       endWord();
     } else {
@@ -158,6 +204,31 @@ export function shellSegments(command: string): string[][] {
   return segs;
 }
 
+/** The task a `mu task claim <id> --for` dispatches, from the args after
+ *  `mu`, as `{ ws, id }`; undefined for any other mu command. */
+function claimOf(args: string[]): { ws: string; id: string } | undefined {
+  if (args[0] !== "task" || args[1] !== "claim") return undefined;
+  let ws = "";
+  let id: string | undefined;
+  let isFor = false;
+  for (let k = 2; k < args.length; k++) {
+    const w = args[k] ?? "";
+    const [opt, eq] = w.startsWith("--") && w.includes("=") ? w.split("=", 2) : [w, undefined];
+    if (opt === "--for" || opt === "-f") isFor = true;
+    if (opt === "-w" || opt === "--workstream") ws = eq ?? args[k + 1] ?? "";
+    if (CLAIM_VALUE_OPTS.has(opt ?? "")) {
+      if (eq === undefined) k++;
+    } else if (id === undefined && !w.startsWith("-")) id = w;
+  }
+  if (!isFor || id === undefined) return undefined;
+  const slash = id.indexOf("/");
+  if (slash >= 0) {
+    if (ws === "") ws = id.slice(0, slash);
+    id = id.slice(slash + 1);
+  }
+  return { ws, id };
+}
+
 /**
  * The tasks a bash command dispatches with `mu task claim <id> --for`,
  * as `{ ws, id }`. `ws` is `""` for the default workstream; a qualified
@@ -166,27 +237,9 @@ export function shellSegments(command: string): string[][] {
 export function dispatchedTasks(command: string): { ws: string; id: string }[] {
   const out: { ws: string; id: string }[] = [];
   for (const words of shellSegments(command)) {
-    if (words[0] !== "mu" && !words[0]?.endsWith("/mu")) continue;
-    if (words[1] !== "task" || words[2] !== "claim") continue;
-    let ws = "";
-    let id: string | undefined;
-    let isFor = false;
-    for (let k = 3; k < words.length; k++) {
-      const w = words[k] ?? "";
-      const [opt, eq] = w.startsWith("--") && w.includes("=") ? w.split("=", 2) : [w, undefined];
-      if (opt === "--for" || opt === "-f") isFor = true;
-      if (opt === "-w" || opt === "--workstream") ws = eq ?? words[k + 1] ?? "";
-      if (CLAIM_VALUE_OPTS.has(opt ?? "")) {
-        if (eq === undefined) k++;
-      } else if (id === undefined && !w.startsWith("-")) id = w;
-    }
-    if (!isFor || id === undefined) continue;
-    const slash = id.indexOf("/");
-    if (slash >= 0) {
-      if (ws === "") ws = id.slice(0, slash);
-      id = id.slice(slash + 1);
-    }
-    if (ws !== "scratch") out.push({ ws, id });
+    const args = muArgs(words);
+    const claim = args === undefined ? undefined : claimOf(args);
+    if (claim !== undefined && claim.ws !== "scratch") out.push(claim);
   }
   return out;
 }
