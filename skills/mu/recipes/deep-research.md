@@ -41,12 +41,13 @@ answer rests on is an `OPEN/triage` task, decided like a finding
    gets the claim and its sources, not the searcher's reasoning, fetches
    the source itself, and tries to break the claim: is the quote there,
    does it say that, is it current, does another source disagree? It
-   ends with `VERDICT: c4 CONFIRMED | REFUTED | UNVERIFIED <evidence>`.
+   ends with the VERDICT block
+   ([tasks-or-calls § Delegate call](tasks-or-calls.md#delegate-call)).
    For contradicted claims, one checker per side. Batch under the cap
-   ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)). In workstream mode the
-   verdict is the claim task's state: `accept` for confirmed,
-   `close --as rejected` for refuted, an `UNVERIFIED:` note in triage
-   otherwise.
+   ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
+   In workstream mode the checker passes `record` on the claim task, and
+   the verdict is decided as in [findings § Triage](findings.md#triage)
+   step 3.
 5. **Synthesize** once every checker has answered (in workstream mode,
    when no claim task is left undecided): answer the question
    from confirmed claims only, each with its source URL. List

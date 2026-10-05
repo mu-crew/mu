@@ -20,8 +20,9 @@ reliable than scoring one.
    each, so no judge holds the whole field
    ([tasks-or-calls](tasks-or-calls.md)). The judge sees the two
    candidates and the rubric and ends with `WINNER: <a|b> <reason>`.
-   Record each round's results in the umbrella's note; winners meet in
-   the next round. A round wider than the cap runs in batches
+   A judge decides a pair, not a task: no `record`. Record each round
+   (pair, winner, reason) in the umbrella's note; winners meet in the
+   next round. A round wider than the cap runs in batches
    ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
 5. **Confirm the winner** with a final check against the rubric, then
    merge it. Free the losing workspaces.

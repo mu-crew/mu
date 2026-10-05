@@ -62,16 +62,20 @@ the `scratch` form through `tools.bash`:
 
 ```js
 // @options: {"timeout_ms": 1800000}
+const ws = "audit";
 const findings = ["f_auth_put", "f_sql_order"]; // finding task ids, at most the cap per script
 const sh = async (c) => (await tools.bash({ command: c })).output;
 const rows = await Promise.all(findings.map(async (id, i) => {
   const a = `refuter-${i + 1}`;
   await sh(`mu agent spawn ${a} -w scratch`);
-  const { runs } = JSON.parse(await sh(`mu agent send ${a} -w scratch --fresh --json '<brief for ${id}: ... end with VERDICT: ...>'`));
+  const { runs } = JSON.parse(await sh(`mu agent send ${a} -w scratch --fresh --json - <<'MU_EOF'\n<brief for ${id}, ending with the VERDICT block>\nMU_EOF`));
   const w = JSON.parse(await sh(`mu agent wait ${a} -w scratch --after-runs ${runs} --json --timeout 1200`));
   const text = w.agents?.[0]?.lastText ?? "";
+  const at = text.lastIndexOf("VERDICT:");
+  const block = at < 0 ? `NO VERDICT LINE: ${text.slice(-1500)}` : text.slice(at);
+  await sh(`mu task note ${id} -w ${ws} - <<'MU_EOF'\nREFUTER ${i + 1} (${a}):\n${block}\nMU_EOF`);
   await sh(`mu agent close ${a} -w scratch`);
-  return `${id}\t${(text.match(/VERDICT:.*$/m) ?? ["VERDICT: UNVERIFIED no verdict line"])[0]}`;
+  return `${id}\t${block.split("\n")[0]}`;
 }));
 return rows.join("\n");
 ```
@@ -82,9 +86,9 @@ What the tool did for you, the script now owns:
   each script's list at or under it.
 - **Cleanup.** Close each scratch pane; a timed-out one stays, readable
   with `mu agent read <a> -w scratch`.
-- **Recording.** The table is not the record. Record each verdict on its
-  finding (`mu task accept`, `close --as rejected --why`), from the
-  script or after it returns.
+- **Recording.** The script writes each `REFUTER` note, as `record`
+  would. The table is for you; decide each finding after it returns
+  ([findings § Triage](findings.md#triage) step 3).
 
 ## Traps
 

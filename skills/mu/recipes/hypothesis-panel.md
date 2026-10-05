@@ -23,9 +23,11 @@ form independent theories; separate agents then try to kill them.
 3. **Test each hypothesis.** An experiment that changes code (force the
    race, revert the commit) needs a workspace: `mu task accept` the
    hypothesis and dispatch it as a task. One that only reads (feed the
-   data, grep the logs) is a delegate call. A killed hypothesis closes
-   `--as rejected --why '<evidence>'`; a survivor gets a
-   `SURVIVED: <evidence>` note.
+   data, grep the logs) is a delegate call with `record` on the
+   hypothesis ([tasks-or-calls § Delegate call](tasks-or-calls.md#delegate-call)).
+   A killed hypothesis closes `--as rejected --why "<the observation
+   that contradicts PREDICTS>"`; a survivor gets a `SURVIVED: <evidence>`
+   note. Prose reasons: [brief § Quoting](brief.md#quoting).
 4. **If one survives**, add a fix task for it, then a review task
    ([adversarial-review](adversarial-review.md)). The fix is accepted
    only if the step 1 repro stops reproducing.
