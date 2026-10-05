@@ -16,6 +16,7 @@ import {
   parseImpact,
   parseLines,
   parsePositiveNumber,
+  parseSeconds,
   TASK_SORT_KEYS,
   WORKSTREAM_OPT,
 } from "../../cli.js";
@@ -541,7 +542,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("wait <ids...>")
     .description(
-      "Block until the listed tasks reach --status (default CLOSED). Each <id> may be bare (resolves via -w / $MU_SESSION / tmux) or qualified `<workstream>/<name>` (cross-workstream waits don't need -w). Default: every task must reach the target (--all). --any / --first exit on the first one that does; --first additionally prints the firing ref's qualified id to stdout. A worker needing attention terminates the wait with exit 7 (--on-stall exit, the default). Exit 0 = condition met; 5 = timeout; 6 = a watched task was reaper-flipped IN_PROGRESS→OPEN (target=CLOSED only); 7 = a worker needs attention (target=CLOSED, unless --on-stall warn).",
+      "Block until the listed tasks reach --status (default CLOSED). Each <id> may be bare (resolves via -w / $MU_SESSION / tmux) or qualified `<workstream>/<name>` (cross-workstream waits don't need -w). Default: every task must reach the target. --any / --first exit on the first one that does; --first additionally prints the firing ref's qualified id to stdout. A worker needing attention terminates the wait with exit 7 (--on-stall exit, the default). Exit 0 = condition met; 5 = timeout; 6 = a watched task was reaper-flipped IN_PROGRESS→OPEN (target=CLOSED only); 7 = a worker needs attention (target=CLOSED, unless --on-stall warn).",
     )
     .option(
       "--status <status>",
@@ -555,11 +556,15 @@ export function wireTaskCommands(program: Command): void {
       "--first",
       "alias for --any that ALSO prints the firing ref's qualified id to stdout and populates `firing` in --json (which --any leaves null). Use to drive a single-shot dispatch loop: `closed=$(mu task wait a b --first --json | jq -r .firing.qualifiedId)`.",
     )
-    .option("--timeout <seconds>", "max seconds to wait (0 = forever, default 600)", parseLines)
+    .option(
+      "--timeout <seconds>",
+      "max seconds to wait, fractions allowed (0 = forever, default 600)",
+      parseSeconds,
+    )
     .option(
       "--stuck-after <seconds>",
       "the TRIGGER: mark an IN_PROGRESS task as needing attention when its owner has been in needs_input for >= N seconds since their last status change (0 = disable; default 120, or 5 for a pi owner read over its control socket, whose idle is exact and comes after the close nudge; an explicit value applies to every owner). needs_input has several causes — the worker may have finished without closing, be waiting on an answer, or be sitting at a prompt — so the warning names the observation and points at `mu agent read <owner>`, which is the next move in every case. The default ACTION is `exit` (exit 7); see --on-stall warn to keep polling instead.",
-      parseLines,
+      parseSeconds,
     )
     .option(
       "--on-stall <action>",
