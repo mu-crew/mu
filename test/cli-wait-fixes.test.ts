@@ -191,10 +191,63 @@ describe("mu task wait exit 6 (reaper)", () => {
     expect(res.stderr).not.toMatch(/reaper/i);
   });
 
+  it("fires when a cross-workstream owner's pane dies", async () => {
+    addTask(db, { localId: "x1", workstream: "task-ws", title: "x1", impact: 50, effortDays: 1 });
+    panes.set("%2", "working");
+    insertAgent(db, { name: "w2", workstream: "agent-ws", paneId: "%2", cli: "sh" });
+    await claimTask(db, "x1", {
+      workstream: "task-ws",
+      agentName: "w2",
+      agentWorkstream: "agent-ws",
+    });
+    onFirstSleep(setWaitSleepForTests, () => panes.delete("%2"));
+    const res = await runCli(
+      ["task", "wait", "x1", "-w", "task-ws", "--timeout", "0.2", "--stuck-after", "0"],
+      dbPath,
+    );
+    expect(res.exitCode).toBe(6);
+    expect(res.stderr).toMatch(/reaper/i);
+  });
+
   it("still fires when the owner row is removed directly (agent close)", async () => {
     onFirstSleep(setWaitSleepForTests, () => deleteAgent(db, "w1", WS));
     const res = await wait();
     expect(res.exitCode).toBe(6);
+  });
+});
+
+describe("mu task wait --on-stall exit (exit 7)", () => {
+  it("fires for an idle cross-workstream owner and names its workstream", async () => {
+    addTask(db, { localId: "x1", workstream: "task-ws", title: "x1", impact: 50, effortDays: 1 });
+    // The mocked murmur since is 1000 ms after the epoch: idle for decades.
+    panes.set("%2", "idle");
+    insertAgent(db, { name: "w2", workstream: "agent-ws", paneId: "%2", cli: "sh" });
+    await claimTask(db, "x1", {
+      workstream: "task-ws",
+      agentName: "w2",
+      agentWorkstream: "agent-ws",
+    });
+    setWaitSleepForTests(shortSleep);
+    const res = await runCli(
+      [
+        "task",
+        "wait",
+        "x1",
+        "-w",
+        "task-ws",
+        "--stuck-after",
+        "0.001",
+        "--on-stall",
+        "exit",
+        "--timeout",
+        "0.05",
+      ],
+      dbPath,
+    );
+    expect(res.exitCode).toBe(7);
+    expect(res.stderr).toContain("mu agent read w2 -w agent-ws");
+    expect(res.stderr).not.toContain("mu agent read w2 -w task-ws");
+    expect(res.stderr).toContain("mu task close x1 -w task-ws");
   });
 });
 

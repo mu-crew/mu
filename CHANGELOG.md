@@ -64,6 +64,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   reaper). A manual `mu task release` or `mu task delete` of a watched
   task no longer reports a dead pane, including when the owner lives in
   another workstream (`mu task claim --for <ws>/<agent>`).
+- `mu task wait` follows a watched task's owner into its own workstream
+  (`mu task claim --for <ws>/<agent>`). It reconciles that workstream,
+  so the owner's dead pane exits 6, and it reads the owner's state there,
+  so `--stuck-after` and `--on-stall exit` (exit 7) fire. The stall hints
+  name the owner's workstream. Before, such a wait ran on to the exit 5
+  timeout.
 - `mu agent wait` reports a dead pane and exits 6 even when another
   watched agent finished. Before, it printed "All N agent(s) finished"
   and exited 0. `--any` names the agent that finished.
