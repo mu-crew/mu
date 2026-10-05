@@ -657,7 +657,6 @@ export async function cmdTaskWait(
       all: reachedRefs.map((t) => ({
         ...t,
         qualifiedId: qualifiedId(t),
-        reachedAt: new Date().toISOString(),
       })),
       timedOut: timedOutArray,
       nextSteps,

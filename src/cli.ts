@@ -511,11 +511,17 @@ export function assertTaskInWorkstream(
   );
 }
 
-// ─── Numeric arg parser (for --impact, --effort-days) ────────────────
+// ─── Numeric arg parsers ─────────────────────────────────────────────
+//
+// All strict: the whole string must be the number. parseInt/parseFloat
+// kept a numeric prefix ("5.9abc" -> 5, "2x" -> 2) and parseFloat let
+// "1e999" through as Infinity, which JSON serialises as null.
+
+const NON_NEGATIVE_INT_RE = /^\s*\d+\s*$/;
 
 export function parsePositiveNumber(value: string): number {
-  const n = Number.parseFloat(value);
-  if (Number.isNaN(n) || n <= 0) {
+  const n = value.trim() === "" ? Number.NaN : Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
     throw new InvalidArgumentError(`expected a positive number, got ${JSON.stringify(value)}`);
   }
   return n;
@@ -536,16 +542,18 @@ export function parseSeconds(value: string): number {
 }
 
 export function parseImpact(value: string): number {
-  const n = Number.parseInt(value, 10);
+  const n = NON_NEGATIVE_INT_RE.test(value) ? Number(value) : Number.NaN;
   if (Number.isNaN(n) || n < 1 || n > 100) {
     throw new InvalidArgumentError(`expected 1..100, got ${JSON.stringify(value)}`);
   }
   return n;
 }
 
-export function parseLines(value: string): number {
-  const n = Number.parseInt(value, 10);
-  if (Number.isNaN(n) || n < 0) {
+// Parses a non-negative integer (0 is valid): line counts, --limit,
+// and --since, which uses 0 as the "replay everything" cursor.
+export function parseNonNegativeInt(value: string): number {
+  const n = NON_NEGATIVE_INT_RE.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(n)) {
     throw new InvalidArgumentError(`expected a non-negative integer, got ${JSON.stringify(value)}`);
   }
   return n;
@@ -553,25 +561,16 @@ export function parseLines(value: string): number {
 
 // Parses a positive integer (0 is rejected). Used where 0 would mean
 // "nothing", e.g. `mu undo -n`, whose empty list reads as an empty log.
-// Digits only: parseInt's prefix parsing would read 1.5, 2x and 1e3 as
-// 1, 2 and 1.
 export function parsePositiveInt(value: string): number {
-  const n = Number(value);
-  if (!/^\d+$/.test(value) || !Number.isSafeInteger(n) || n < 1) {
+  const n = NON_NEGATIVE_INT_RE.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(n) || n < 1) {
     throw new InvalidArgumentError(`expected a positive integer, got ${JSON.stringify(value)}`);
   }
   return n;
 }
 
-// Parses a non-negative integer (0 is valid). Used for --since which
-// uses 0 as the "replay everything" cursor.
-export function parseNonNegativeInt(value: string): number {
-  const n = Number.parseInt(value, 10);
-  if (Number.isNaN(n) || n < 0) {
-    throw new InvalidArgumentError(`expected a non-negative integer, got ${JSON.stringify(value)}`);
-  }
-  return n;
-}
+/** Line counts (-n/--lines/--events): same rule as parseNonNegativeInt. */
+export const parseLines = parseNonNegativeInt;
 
 // ─── Program definition ───────────────────────────────────────────────
 //
