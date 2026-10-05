@@ -81,6 +81,27 @@ describe("dispatchedTasks", () => {
         { ws: "y", id: "b" },
       ],
     ],
+    // Separators inside quotes are part of the word, before and after --for.
+    [
+      "mu task claim --evidence 'brief | refuted' --for w1 build -w auth",
+      [{ ws: "auth", id: "build" }],
+    ],
+    [
+      'mu task claim --evidence "brief && refuted" --for w1 build -w auth',
+      [{ ws: "auth", id: "build" }],
+    ],
+    [
+      "mu task claim --evidence 'brief; refuted' --for w1 build -w auth",
+      [{ ws: "auth", id: "build" }],
+    ],
+    ["mu task claim build --for w1 --evidence 'a || b; c' -w auth", [{ ws: "auth", id: "build" }]],
+    [
+      "mu task claim a --for w1 --evidence 'x; y' -w p; mu task claim b --for w2 -w q | cat",
+      [
+        { ws: "p", id: "a" },
+        { ws: "q", id: "b" },
+      ],
+    ],
   ])("%s", (cmd, want) => {
     expect(dispatchedTasks(cmd)).toEqual(want);
   });
@@ -90,6 +111,7 @@ describe("dispatchedTasks", () => {
     "mu agent send worker-1 -w auth --fresh 'x'",
     "mu task claim build -w scratch --for helper",
     "echo mu task claim build --for w1",
+    "echo 'x; mu task claim build --for w1 -w auth'",
   ])("not a task dispatch: %s", (cmd) => {
     expect(dispatchedTasks(cmd)).toEqual([]);
   });

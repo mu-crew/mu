@@ -96,6 +96,11 @@ describe("dispatchedWorkstreams", () => {
     ["cd x && mu agent send a -w one 'p' && mu agent send b -w two 'q'", ["one", "two"]],
     ["node dist/cli.js agent send a -w x", undefined],
     ["/usr/bin/mu agent send a -w x 'p'", ["x"]],
+    // Separators inside quotes are part of the word, before and after --for.
+    ["mu agent send w1 'do a && b; c | d' -w auth", ["auth"]],
+    ["mu task claim --evidence 'brief; refuted' --for w1 build -w auth", ["auth"]],
+    ["mu task claim build --for w1 --evidence 'a | b' -w auth", ["auth"]],
+    ["mu agent send a 'x; y' -w one && mu agent send b -w two 'p'", ["one", "two"]],
   ])("%s", (cmd, want) => {
     expect(dispatchedWorkstreams(cmd)).toEqual(want);
   });
@@ -105,6 +110,7 @@ describe("dispatchedWorkstreams", () => {
     "mu state -w auth",
     "mu agent send helper-1 -w scratch --fresh 'x'",
     "echo mu",
+    "echo 'x && mu agent send w1 -w auth go'",
   ])("not a dispatch: %s", (cmd) => {
     expect(dispatchedWorkstreams(cmd)).toBeUndefined();
   });
