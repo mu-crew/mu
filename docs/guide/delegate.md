@@ -23,6 +23,7 @@ Delegates called in one turn run in parallel.
 | `workspace` | Own VCS checkout, for delegates that edit files. The follow-up names its path. It isolates repository edits only. |
 | `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`), e.g. a cheaper model. |
 | `keep` | Keep the pane after it finishes, to talk to it again. |
+| `record` | `{ task, workstream? }` (or `task: "<ws>/<task>"`): write the answer's verdict onto that task as a note. See [Record a verdict](#record-a-verdict). |
 
 - Watch or steer: run the attach command.
 - Stop: `mu_delegate_cancel`, or `mu agent abort <name> -w scratch`.
@@ -44,6 +45,23 @@ Delegates called in one turn run in parallel.
   `"all"`.
 
 `MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
+
+### Record a verdict
+
+For a refuter or check, pass `record` so the verdict lands on the task
+it judged. The task must exist (`mu task show`), else the call fails
+and nothing spawns. When the answer arrives, the tool runs
+`mu task note <task> -w <ws> --author <delegate>` once:
+
+- Done: `REFUTER <label> (<delegate>, <elapsed>):`, then the last
+  `VERDICT:` line and every `EVIDENCE:` line after it. Without a
+  VERDICT line, the answer's last 1500 chars after `NO VERDICT LINE:`.
+  Capped at 4000 chars.
+- Timeout, died, empty, error, or cancelled:
+  `REFUTER <label>: no verdict (<outcome>)`.
+
+The follow-up still carries the full answer and ends with
+`Recorded on <ws>/<task> as a note.`, or the reason recording failed.
 
 ## Delegate without pi
 
