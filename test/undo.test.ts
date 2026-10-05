@@ -100,6 +100,12 @@ describe("undo", () => {
       | { status: string; substate: string; owner_id: number | null }
       | undefined;
 
+  /** The group an applied undo recorded, for redoing it. */
+  const redoId = (result: { undoGroupId: string | null }): string => {
+    if (result.undoGroupId === null) throw new Error("the undo recorded no group");
+    return result.undoGroupId;
+  };
+
   /** No drift means the tables and the log still agree. */
   const expectNoDrift = (): void => {
     const report = checkDrift(db);
@@ -286,6 +292,21 @@ describe("undo", () => {
       expectNoDrift();
     });
 
+    it("a legacy workstream.export group is not listed and cannot be undone", () => {
+      // Its prose payload is log-only: listing it offered a group whose
+      // plan crashed on JSON.parse, or, with no prior op for the key,
+      // planned DELETING the workstream as "created by this group".
+      ensureWorkstream(db, "other");
+      db.prepare(
+        `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
+         VALUES ('009900000000000.000000.legacy', 'legacy', 'legacy-export', NULL,
+                 'workstream.export', 'workstream', 'demo', 'put',
+                 'workstream export demo (out=/tmp/x)', '2026-01-01T00:00:00.000Z')`,
+      ).run();
+      expect(listRecentGroups(db, 50).map((g) => g.groupId)).not.toContain("legacy-export");
+      expect(() => planUndo(db, "legacy-export")).toThrow(UndoGroupNotFoundError);
+    });
+
     it("restores notes whose creating put op is under a STALE key (rowid shifted)", async () => {
       // REGRESSION (drift-641). A note's op key embeds its rowid
       // (`<ws>/<task>#<id>`), which is NOT portable: a rebuild, a v8/v9
@@ -428,13 +449,27 @@ describe("undo", () => {
       expect(task("a")?.impact).toBe(60);
 
       // Redo is just undo of the undo's group. No separate mechanism.
-      const second = undoGroup(db, first.undoGroupId);
+      const second = undoGroup(db, redoId(first));
       expect(task("a")?.impact).toBe(90);
       expectNoDrift();
 
       // …and that is undoable too, indefinitely.
-      undoGroup(db, second.undoGroupId);
+      undoGroup(db, redoId(second));
       expect(task("a")?.impact).toBe(60);
+      expectNoDrift();
+    });
+
+    it("a second undo of a create changes nothing and names no redo group", () => {
+      seed();
+      const add = creationGroupFor("task", "demo/a");
+      const first = undoGroup(db, add);
+      expect(first.applied).toBe(1);
+      expect(first.undoGroupId).not.toBeNull();
+      // The row is already gone: the dry run lists nothing to delete.
+      expect(planUndo(db, add).inverses.filter((i) => i.key === "demo/a")).toEqual([]);
+      const second = undoGroup(db, add);
+      expect(second.applied).toBe(0);
+      expect(second.undoGroupId).toBeNull();
       expectNoDrift();
     });
 
@@ -443,7 +478,7 @@ describe("undo", () => {
       deleteTask(db, "a", "demo");
       const first = undoGroup(db, groupFor("task.delete"));
       expect(task("a")).toBeDefined();
-      undoGroup(db, first.undoGroupId);
+      undoGroup(db, redoId(first));
       expect(task("a")).toBeUndefined();
       expectNoDrift();
     });

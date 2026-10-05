@@ -33,10 +33,10 @@
 // a put created the row iff no op for that key precedes it. "What was
 // this field's prior value" is the newest op before this one that named
 // that field — the same shape of query src/apply.ts uses for per-field
-// LWW, and deliberately the same helper (`priorFieldValue` below is built
-// on the provenance query exported for exactly this reason). A second
-// implementation of "what was this field before" is how the two drift
-// apart, and drift here would mean undo quietly restoring wrong values.
+// LWW (its private `fieldHlc`), pointed backwards. `priorFieldValue`
+// below is the one place undo answers "what was this field before";
+// keep its predicates (json_type, the legacy-intent exclusion) in step
+// with apply's, or undo will quietly restore wrong values.
 //
 // WHY INVERSES GO THROUGH THE NORMAL WRITE PATH
 // ---------------------------------------------
@@ -152,8 +152,9 @@ export interface UndoPlan {
 export interface UndoResult {
   plan: UndoPlan;
   /** Group id of the ops the UNDO itself wrote — pass this to
-   *  `mu undo` to redo. */
-  undoGroupId: string;
+   *  `mu undo` to redo. Null when no inverse changed a row: the undo
+   *  wrote no ops, so there is no group to redo. */
+  undoGroupId: string | null;
   /** Inverse ops that actually changed a row. */
   applied: number;
 }
@@ -237,8 +238,9 @@ const ENTITY_RESTORE_ORDER: Record<string, number> = {
   edge: 2,
 };
 
-/** Deletion is the mirror image: children before parents, so a task's
- *  notes/edges go before the task and the workstream goes last. */
+/** Entity depth for ordering inverses. Restores sort by ascending rank
+ *  (parents first); deletes sort by descending rank, the mirror image
+ *  (children first, so the workstream goes last). */
 function restoreRank(entity: string): number {
   return ENTITY_RESTORE_ORDER[entity] ?? 3;
 }
@@ -352,6 +354,21 @@ function laterRowWriters(
   }>;
 }
 
+/** True iff the newest op for `key` is a tombstone written by a group
+ *  other than `groupId`, i.e. the row is gone and not by this group's
+ *  own hand. */
+function isDeletedByLaterGroup(db: Db, entity: string, key: string, groupId: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT op, group_id AS groupId FROM ops
+        WHERE entity = @entity AND key = @key
+          AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
+        ORDER BY hlc DESC LIMIT 1`,
+    )
+    .get({ entity, key }) as { op: string; groupId: string } | undefined;
+  return row?.op === "del" && row.groupId !== groupId;
+}
+
 /** True iff a later group DELETED this key after `hlc`. Undoing a change
  *  to a row that has since been deleted would resurrect it. */
 function laterDeleters(
@@ -407,6 +424,7 @@ export function listRecentGroups(db: Db, limit = 10): GroupSummary[] {
               MAX(actor)                  AS actor
          FROM ops
         WHERE entity IN ('workstream','task','note','edge')
+          AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
         GROUP BY group_id
         ORDER BY MAX(hlc) DESC
         LIMIT @limit`,
@@ -504,13 +522,16 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
     .prepare(
       `SELECT o.seq, o.hlc, o.group_id, o.machine_id, o.intent, o.actor, o.entity, o.key, o.op, o.payload,
               (SELECT COUNT(*) FROM ops p
-                WHERE p.entity = o.entity AND p.key = o.key AND p.hlc < o.hlc) AS prior,
+                WHERE p.entity = o.entity AND p.key = o.key AND p.hlc < o.hlc
+                  AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}) AS prior,
               (SELECT p.op FROM ops p
                 WHERE p.entity = o.entity AND p.key = o.key AND p.hlc < o.hlc
+                  AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
                 ORDER BY p.hlc DESC LIMIT 1) AS priorKind
          FROM ops o
         WHERE o.group_id = @groupId
           AND o.entity IN ('workstream','task','note','edge')
+          AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
         ORDER BY o.hlc`,
     )
     .all({ groupId }) as GroupOpRow[];
@@ -618,8 +639,16 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
     // and the delete), so it would be treated as a field change and its
     // inverse would restore fields instead of deleting the row.
     if (row.prior === 0 || row.priorKind === "del") {
-      // Created it: the inverse is a delete. A later group that wrote
-      // this key is a supersession — deleting would discard that work.
+      // Created it: the inverse is a delete. If the newest op for the
+      // key is a delete by another group (an earlier undo of this one,
+      // or a later delete), the row is gone and there is nothing to
+      // revert.
+      if (isDeletedByLaterGroup(db, row.entity, row.key, groupId)) {
+        skipped += 1;
+        continue;
+      }
+      // A later group that wrote this key is a supersession — deleting
+      // would discard that work.
       const later = [...laterRowWriters(db, row.entity, row.key, row.hlc, groupId)];
       inverses.push({
         entity: row.entity,
@@ -764,16 +793,6 @@ function groupWhen(db: Db, groupId: string): string {
 }
 
 /**
- * Rebuild the full field set a row had just before `beforeHlc`, by
- * folding every put for that key in HLC order.
- *
- * Necessary because ops are SEMANTIC PARTIAL UPDATES: the tombstone
- * carries no payload and the creating put may have been amended by later
- * partial puts, so no single op holds the whole row. Folding is the only
- * correct reconstruction, and it is the same fold the rebuild path does —
- * just bounded to one key and one point in time.
- */
-/**
  * Note contents the log holds for a task, for tombstones no other tier
  * can resolve (see the call site for why this is per-task).
  *
@@ -838,6 +857,16 @@ function payloadFields(payload: string): Record<string, string | number | null> 
   return fields;
 }
 
+/**
+ * Rebuild the full field set a row had just before `beforeHlc`, by
+ * folding every put for that key in HLC order.
+ *
+ * Necessary because ops are SEMANTIC PARTIAL UPDATES: most tombstones
+ * carry no payload and the creating put may have been amended by later
+ * partial puts, so no single op holds the whole row. Folding is the only
+ * correct reconstruction, and it is the same fold the rebuild path does —
+ * just bounded to one key and one point in time.
+ */
 function reconstructRow(
   db: Db,
   entity: string,
@@ -919,7 +948,7 @@ export function undoGroup(db: Db, groupId: string, opts: UndoOptions = {}): Undo
   });
   run.immediate();
 
-  return { plan, undoGroupId, applied };
+  return { plan, undoGroupId: applied > 0 && undoGroupId !== "" ? undoGroupId : null, applied };
 }
 
 /** Apply one inverse by MUTATING THE TABLE, letting capture record it.
