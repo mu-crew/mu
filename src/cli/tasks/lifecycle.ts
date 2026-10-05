@@ -193,6 +193,17 @@ const COMMIT_ALL: Record<Exclude<VcsBackendName, "none">, string> = {
   sl: "sl commit --addremove -m",
 };
 
+/** The "Don't forget to commit" command for a dirty workspace. Exported
+ *  for the fast-tier test that pins every backend's form. */
+export function commitHintCommand(
+  backend: Exclude<VcsBackendName, "none">,
+  actor: string,
+  workstream: string,
+  taskTitle: string,
+): string {
+  return `cd $(mu workspace path ${actor} -w ${workstream}) && ${COMMIT_ALL[backend]} ${shellSingleQuote(taskTitle)}`;
+}
+
 async function maybeAppendDirtyWorkspaceCommitHint(
   db: Db,
   nextSteps: NextStep[],
@@ -209,7 +220,7 @@ async function maybeAppendDirtyWorkspaceCommitHint(
     if (clean) return;
     nextSteps.push({
       intent: "Don't forget to commit",
-      command: `cd $(mu workspace path ${actor} -w ${workstream}) && ${COMMIT_ALL[row.backend]} ${shellSingleQuote(taskTitle)}`,
+      command: commitHintCommand(row.backend, actor, workstream, taskTitle),
     });
   } catch {
     // Best-effort hint only: a VCS probe failure must never make
