@@ -20,7 +20,7 @@ import {
   TaskNotFoundError,
   TaskParkStateError,
 } from "./errors.js";
-import { getTask } from "./queries.js";
+import { getTask, listNotes } from "./queries.js";
 import {
   DEFAULT_SUBSTATE,
   isValidPair,
@@ -57,6 +57,13 @@ export interface EvidenceOption {
   evidence?: string;
 }
 
+/** Evidence plus the actor its note is attributed to. The CLI passes
+ *  `resolveActorIdentity()`; without it the note has no author and
+ *  renders as `<orchestrator>`. */
+export interface AttributedEvidence extends EvidenceOption {
+  author?: string;
+}
+
 /**
  * Persist `--evidence` as a task note, so it survives as a captured op.
  *
@@ -74,7 +81,7 @@ export function recordEvidenceNote(
   localId: string,
   workstream: string,
   label: string,
-  opts: (EvidenceOption & { author?: string }) | undefined,
+  opts: AttributedEvidence | undefined,
 ): void {
   if (!opts || opts.evidence === undefined || opts.evidence === "") return;
   const noteOpts: { author?: string; workstream: string } = { workstream };
@@ -326,9 +333,73 @@ function recordReasonNote(
   if (why === undefined || why.trim() === "") return;
   const noteOpts: { author?: string; workstream: string } = { workstream };
   if (author !== undefined && author !== "") noteOpts.author = author;
+  const text =
+    substate === "rejected" || substate === "superseded"
+      ? withTitles(db, why, workstream, localId)
+      : why;
   // insertNote, not addNote: the note joins the verb's group and
   // intent instead of minting its own, so one undo reverts both.
-  insertNote(db, localId, `${substate.toUpperCase()}: ${why}`, noteOpts);
+  insertNote(db, localId, `${substate.toUpperCase()}: ${text}`, noteOpts);
+}
+
+/** A token shaped like a task id, not inside a word, path, or file name. */
+const TASK_ID_TOKEN = /(?<![\w./-])[a-z][a-z0-9_-]{0,63}(?![\w-])/g;
+
+/** Ids in `text` naming another task in `workstream`. */
+function namedTaskIds(db: Db, text: string, workstream: string, self: string): string[] {
+  const ids = (text.match(TASK_ID_TOKEN) ?? []).filter((t) => t !== self);
+  return [...new Set(ids)].filter((t) => getTask(db, t, workstream) !== undefined);
+}
+
+/** Append each named task's title after its id, so a REJECTED /
+ *  SUPERSEDED note reads without looking the ids up. Text that names
+ *  no task in the workstream is left as is. */
+function withTitles(db: Db, why: string, workstream: string, self: string): string {
+  const named = new Set(namedTaskIds(db, why, workstream, self));
+  if (named.size === 0) return why;
+  return why.replace(TASK_ID_TOKEN, (id) => {
+    if (!named.has(id)) return id;
+    return `${id} (${getTask(db, id, workstream)?.title ?? ""})`;
+  });
+}
+
+/** Below this many characters a decision reason names no check. */
+export const WEAK_REASON_CHARS = 40;
+
+/** A note line recording a verdict: `VERDICT: …`, or the header
+ *  `REFUTER <label> (...)` a recorded delegate answer starts with. */
+const VERDICT_LINE = /^\s*(VERDICT:|REFUTER\s)/m;
+
+/**
+ * Decision-time guardrail for a finding. Returns one warning (or
+ * none) for accepting a task in triage (`kind: "accept"`, reason =
+ * `--evidence`) or closing it as rejected / wontfix / duplicate
+ * (reason = `--why`). Warns only when the task is OPEN/triage, the
+ * reason is missing or under {@link WEAK_REASON_CHARS} chars, and no
+ * note records a verdict. A duplicate whose reason names an existing
+ * task is fine. Read-only: call it before the verb writes.
+ */
+export function weakDecisionWarning(
+  db: Db,
+  localId: string,
+  workstream: string,
+  kind: "accept" | CloseSubstate,
+  reason: string | undefined,
+): string | undefined {
+  if (kind === "done" || kind === "superseded") return undefined;
+  const task = getTask(db, localId, workstream);
+  if (task?.status !== "OPEN" || task.substate !== "triage") return undefined;
+  const trimmed = (reason ?? "").trim();
+  if (trimmed.length >= WEAK_REASON_CHARS) return undefined;
+  if (kind === "duplicate" && namedTaskIds(db, trimmed, workstream, localId).length > 0) {
+    return undefined;
+  }
+  if (listNotes(db, localId, workstream).some((n) => VERDICT_LINE.test(n.content))) {
+    return undefined;
+  }
+  const flag = kind === "accept" ? "--evidence" : "--why";
+  const what = trimmed === "" ? `no ${flag}` : `${flag} is ${trimmed.length} chars`;
+  return `${localId}: ${kind === "accept" ? "accepting" : `closing as ${kind}`} a finding with ${what} and no verdict recorded (no VERDICT: line or REFUTER note); record what confirmed it`;
 }
 
 /** Convenience: setTaskStatus(db, id, "OPEN"). Owner intentionally NOT
@@ -336,11 +407,14 @@ function recordReasonNote(
 export function openTask(
   db: Db,
   localId: string,
-  opts: EvidenceOption & { workstream: string },
+  opts: AttributedEvidence & { workstream: string },
 ): SetStatusResult {
-  return withOpContext(db, { intent: "task.open", group: "new" }, () => {
+  return withOpContext(db, { intent: "task.open", actor: opts.author, group: "new" }, () => {
     const before = getTask(db, localId, opts.workstream);
-    const r = setTaskStatus(db, localId, "OPEN", opts);
+    const r = setTaskStatus(db, localId, "OPEN", {
+      workstream: opts.workstream,
+      ...(opts.evidence !== undefined ? { evidence: opts.evidence } : {}),
+    });
     if (r.changed && before) recordEvidenceNote(db, localId, before.workstreamName, "OPEN", opts);
     return r;
   });
@@ -390,9 +464,9 @@ export function parkTask(db: Db, localId: string, opts: ParkTaskOptions): SetSta
 export function acceptTask(
   db: Db,
   localId: string,
-  opts: EvidenceOption & { workstream: string },
+  opts: AttributedEvidence & { workstream: string },
 ): SetStatusResult {
-  return withOpContext(db, { intent: "task.accept", group: "new" }, () =>
+  return withOpContext(db, { intent: "task.accept", actor: opts.author, group: "new" }, () =>
     db.transaction((): SetStatusResult => {
       const before = getTask(db, localId, opts.workstream);
       if (!before) throw new TaskNotFoundError(localId);
@@ -416,9 +490,9 @@ export function acceptTask(
 export function unparkTask(
   db: Db,
   localId: string,
-  opts: EvidenceOption & { workstream: string },
+  opts: AttributedEvidence & { workstream: string },
 ): SetStatusResult {
-  return withOpContext(db, { intent: "task.unpark", group: "new" }, () =>
+  return withOpContext(db, { intent: "task.unpark", actor: opts.author, group: "new" }, () =>
     db.transaction((): SetStatusResult => {
       const before = getTask(db, localId, opts.workstream);
       if (!before) throw new TaskNotFoundError(localId);

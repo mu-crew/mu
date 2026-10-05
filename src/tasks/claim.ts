@@ -25,7 +25,7 @@ import {
   TaskNotFoundError,
   TaskParkedError,
 } from "./errors.js";
-import { type EvidenceOption, recordEvidenceNote } from "./lifecycle.js";
+import { type AttributedEvidence, recordEvidenceNote } from "./lifecycle.js";
 import { getTask } from "./queries.js";
 import { DEFAULT_SUBSTATE, type TaskStatus } from "./status.js";
 
@@ -40,7 +40,7 @@ export interface ReleaseResult {
   changed: boolean;
 }
 
-export interface ReleaseTaskOptions extends EvidenceOption {
+export interface ReleaseTaskOptions extends AttributedEvidence {
   /** Workstream context for the task (v5: tasks.local_id is
    *  per-workstream unique). */
   workstream: string;
@@ -69,7 +69,7 @@ export interface ReleaseTaskOptions extends EvidenceOption {
  * Throws TaskNotFoundError on missing.
  */
 export function releaseTask(db: Db, localId: string, opts: ReleaseTaskOptions): ReleaseResult {
-  return withOpContext(db, { intent: "task.release", group: "new" }, () =>
+  return withOpContext(db, { intent: "task.release", actor: opts.author, group: "new" }, () =>
     releaseTaskImpl(db, localId, opts),
   );
 }
@@ -127,7 +127,7 @@ function releaseTaskImpl(db: Db, localId: string, opts: ReleaseTaskOptions): Rel
 
 // ─── claimTask (verb) ──────────────────────────────────────────────────
 
-export interface ClaimTaskOptions extends EvidenceOption {
+export interface ClaimTaskOptions extends AttributedEvidence {
   /** Workstream context for both the task and the claiming agent.
    *  v5: agents.name and tasks.local_id are per-workstream unique;
    *  the task lookup AND the agent FK lookup scope to this
@@ -324,7 +324,12 @@ async function claimTaskImpl(
 
       const after = getTask(db, localId, opts.workstream);
       if (!after) throw new Error(`claimTask: row missing after update: ${localId}`);
-      recordEvidenceNote(db, localId, opts.workstream, "CLAIM", opts);
+      // The CLAIM note's author: the dispatcher when the CLI passed one
+      // (`--for`), else the claiming agent.
+      recordEvidenceNote(db, localId, opts.workstream, "CLAIM", {
+        ...opts,
+        author: opts.author ?? agentName,
+      });
       // No emitEvent: the UPDATE fired the capture trigger under
       // intent='task.claim' with actor=agentName (withOpContext above
       // put it in _op_ctx, and the trigger copies it into ops.actor).
@@ -464,7 +469,10 @@ async function claimSelf(db: Db, localId: string, opts: ClaimTaskOptions): Promi
 
       const after = getTask(db, localId, before.workstreamName);
       if (!after) throw new Error(`claimTask: row missing after update: ${localId}`);
-      recordEvidenceNote(db, localId, before.workstreamName, "CLAIM", opts);
+      recordEvidenceNote(db, localId, before.workstreamName, "CLAIM", {
+        ...opts,
+        author: opts.author ?? actor,
+      });
       // No emitEvent. This is the interesting case: the `--self` path
       // leaves tasks.owner_id NULL deliberately, so the op PAYLOAD
       // cannot name the actor — but ops.actor can and does, because

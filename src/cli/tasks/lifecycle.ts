@@ -13,7 +13,7 @@ import {
   resolveWorkstream,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
-import { type NextStep, pc, printNextSteps } from "../../output.js";
+import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../../output.js";
 import { formatPair, type TaskPair } from "../../tasks/status.js";
 import {
   acceptTask,
@@ -24,6 +24,7 @@ import {
   parkTask,
   resolveActorIdentity,
   unparkTask,
+  weakDecisionWarning,
 } from "../../tasks.js";
 import { backendByName } from "../../vcs.js";
 import { getWorkspaceForAgent } from "../../workspace.js";
@@ -68,6 +69,8 @@ export async function cmdTaskClose(
   // even though closeTask doesn't return owner info. owner won't
   // change as a result of close (FK SET NULL only fires on delete).
   const taskRow = getTask(db, localId, ws);
+  // Read before the close: the warning is about the finding as it was.
+  const warnings = decisionWarnings(db, localId, ws, sdkOpts.as ?? "done", opts.why);
   const r = closeTask(db, localId, sdkOpts);
   // --if-ready can return a CloseSkippedResult (no mutation). Branch
   // first so the typed `skipped` field stays in scope below.
@@ -127,9 +130,10 @@ export async function cmdTaskClose(
     await maybeAppendDirtyWorkspaceCommitHint(db, nextSteps, actor, ws, taskRow?.title ?? localId);
   }
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, nextSteps });
+    emitJson({ taskName: localId, ...r, warnings, nextSteps });
     return;
   }
+  printDecisionWarnings(warnings, localId, ws);
   if (!r.changed) {
     console.log(pc.dim(`${localId} already CLOSED (no-op)`));
     printNextSteps(nextSteps);
@@ -140,6 +144,33 @@ export async function cmdTaskClose(
   if (ev) console.log(ev);
   if (r.unblocked.length > 0) console.log(`Unblocked: ${r.unblocked.join(", ")}`);
   printNextSteps(nextSteps);
+}
+
+/** The weak-decision warning for this accept / close, as a 0-or-1 list
+ *  (the `warnings` array in --json). Never blocks the verb. */
+function decisionWarnings(
+  db: Db,
+  localId: string,
+  ws: string,
+  kind: Parameters<typeof weakDecisionWarning>[3],
+  reason: string | undefined,
+): string[] {
+  const w = weakDecisionWarning(db, localId, ws, kind, reason);
+  return w === undefined ? [] : [w];
+}
+
+function printDecisionWarnings(warnings: readonly string[], localId: string, ws: string): void {
+  if (warnings.length === 0) return;
+  for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
+  printNextStepsTo(
+    [
+      {
+        intent: "Record what confirmed it",
+        command: `mu task note ${localId} -w ${ws} "EVIDENCE: <command + result>"`,
+      },
+    ],
+    "stderr",
+  );
 }
 
 /** "OPEN → CLOSED/wontfix": the pair transition a lifecycle verb made. */
@@ -189,8 +220,9 @@ export async function cmdTaskOpen(
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
-  const sdkOpts: { evidence?: string; workstream: string } = { workstream: ws };
+  const sdkOpts: Parameters<typeof openTask>[2] = { workstream: ws };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
+  if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
   const r = openTask(db, localId, sdkOpts);
   const nextSteps: NextStep[] = [
     {
@@ -255,6 +287,8 @@ export async function cmdTaskAccept(
   const ws = await resolveWorkstream(opts.workstream);
   const sdkOpts: Parameters<typeof acceptTask>[2] = { workstream: ws };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
+  if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
+  const warnings = decisionWarnings(db, localId, ws, "accept", opts.evidence);
   const r = acceptTask(db, localId, sdkOpts);
   const nextSteps: NextStep[] = [
     {
@@ -264,9 +298,10 @@ export async function cmdTaskAccept(
     { intent: "Triage the next one", command: `mu task list --substate triage -w ${ws}` },
   ];
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, nextSteps });
+    emitJson({ taskName: localId, ...r, warnings, nextSteps });
     return;
   }
+  printDecisionWarnings(warnings, localId, ws);
   if (!r.changed) {
     const pair = formatPair({ status: r.status, substate: r.substate });
     console.log(pc.dim(`${localId} is ${pair}, not in triage (no-op)`));
@@ -286,6 +321,7 @@ export async function cmdTaskUnpark(
   const ws = await resolveWorkstream(opts.workstream);
   const sdkOpts: Parameters<typeof unparkTask>[2] = { workstream: ws };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
+  if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
   const r = unparkTask(db, localId, sdkOpts);
   const nextSteps: NextStep[] = [
     {
