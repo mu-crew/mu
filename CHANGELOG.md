@@ -8,19 +8,31 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
-## [Unreleased]
+## [3.9.0] — 2026-10-05
 
-### Fixed
+**A repo-wide review: about 130 bugs and doc/code mismatches fixed.**
+tmux calls now target exact session names, so a workstream never acts on
+another workstream's session, and `mu workstream teardown --empty` no
+longer kills live or unregistered sessions. The test suite's tmux sweep
+no longer kills your sessions. Undo, sync ingest, `mu sql` capture and
+`--confirm-rows`, and `mu rebuild --force` keep data intact; workspace
+refresh records the new fork point, `mu workspace free --commit` keeps
+git commits, and jj workspaces work across workstreams. The `mu-scratch`
+session stays open after its last agent, and concurrent writers no
+longer fail with `database is locked`.
 
-- Numeric flags reject trailing text and non-finite values instead of
-  keeping a numeric prefix: `-i 5.9abc`, `-e 1e999` (stored as Infinity,
-  serialised as null), `mu log -n 2x`, `--since 1.9` and
-  `mu undo -n 2x` are now usage errors (exit 2).
-- A commander parse error after a leading root option
-  (`mu --json task list --bogus`, `mu -w x task note …`) now shows the
-  verb's usage and hints instead of the root `mu` help.
-- `mu task wait --json` no longer adds a `reachedAt` field to `all`. It
-  held the emit time, not when each task reached the target.
+Upgrade with `npm i -g @mu-crew/mu@3.9.0`, then `/reload` in running pi
+sessions. The pi extension changed (`mu_delegate` queue drain, nudge
+parsing). No schema change.
+
+### Changed
+
+- `mu workstream teardown --empty` no longer kills `mu-*` sessions
+  that have no workstream row. With no row there is no evidence the
+  session is idle (a pane running a `bash -c` loop reports `bash`), and
+  a run against a throwaway `MU_DB_PATH` had killed a live crew's panes.
+  The sweep now takes registered empty workstreams only, and names the
+  skipped sessions so you can tear one down by name.
 - The `scratch` tmux session now outlives its last agent, so the next
   delegate does not pay for creating it again. The first spawn into
   `scratch` creates `mu-scratch` with the placeholder `_mu` window that
@@ -29,34 +41,75 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   sweeps the idle `scratch` session; `mu workstream teardown scratch
   --yes` still removes it. On herdr, the `_mu` tab is now labelled, so
   re-running `mu workstream init` no longer adds a second one.
-- The test suite's default-socket tmux sweep no longer kills your live
-  `mu-*` workstream sessions when your DB lives under `MU_STATE_DIR` or
-  `MU_DB_PATH`, or is missing, locked, corrupt or on a newer schema. It
-  reads every DB path mu resolves and skips the sweep when it cannot
-  read one.
+- `mu -w <ws> <verb> …` works. The root `-w` was variadic and swallowed
+  the verb, so `mu -w ws task list` printed help and exited 0. It now
+  takes one value per flag and hands it to the verb's own `-w`; a verb
+  without `-w`, or `-w` on both sides, is a usage error (exit 2). This
+  also stops `mu --workstream=other workstream teardown --yes` from
+  tearing down the `$MU_SESSION` workstream: teardown and `mu state`
+  ignored a root `-w` and fell back to the ambient one.
+- `mu sql` refuses to change a natural-key column (`workstreams.name`,
+  `tasks.workstream_id`, `tasks.local_id`, a note's task, an edge's
+  endpoints). Such an UPDATE wrote no op, so the ops log, sync, undo,
+  and `mu doctor` disagreed with the table. The cross-workstream-edge
+  hint no longer prints a "move the blocker" UPDATE, and the recovery
+  guide no longer renames a workstream with `mu sql`.
+- `mu log --kind` refuses `workstream`, `task`, `edge`, and `note` (exit
+  2). A log line under one of those kinds was synced and replayed as a
+  real change, so `mu rebuild` and every peer's `mu sync` failed with
+  "malformed task key".
+- Numeric flags reject trailing text and non-finite values instead of
+  keeping a numeric prefix: `-i 5.9abc`, `-e 1e999` (stored as Infinity,
+  serialised as null), `mu log -n 2x`, `--since 1.9` and
+  `mu undo -n 2x` are now usage errors (exit 2).
+- **`mu undo -n` rejects a value that is not a positive integer** (exit 2). Before, `-n abc` failed with `datatype mismatch`, `-n 0` claimed the log was empty, `-n -1` listed every group, and `-n 1.5`, `-n 2x` and `-n 1e3` silently used 1, 2 and 1.
+- **Typed `mu task add` input errors exit 2.** An invalid task id now exits 2 (usage, with `--help`), like an invalid workstream name. It used to exit 4. A title with no ASCII letter or digit (for example `日本語`) raises `TaskTitleSlugEmptyError` (exit 2) and says to pass the `<id>` positional. It used to be a generic exit 1.
+- `mu task wait --timeout`, `--stuck-after` and `mu agent wait
+  --timeout` take fractional seconds and reject suffixes. Before,
+  `--timeout 0.5` parsed as 0 (wait forever, or stall detection off)
+  and `--timeout 10m` as 10 seconds.
+- **A bare `mu task close` on a closed task is a no-op.** Without `--as` it keeps the current substate. Before, re-closing a `wontfix`, `rejected` or `duplicate` task silently changed it to `done`. Pass `--as` to reclassify.
+- `mu rebuild <file> --force` deletes an existing `<file>` (and its
+  `-wal`/`-shm`) before replaying. It used to replay into it, keeping
+  that DB's foreign workstreams and ops.
+- `mu workspace refresh` on sl now fails when `sl rebase` fails for a
+  reason other than a conflict (bad `--from` ref, unresolvable
+  `trunk()`). Before, it reported success.
+- A DB lock held past the 5 s busy timeout (`database is locked`) exits
+  5, as the exit-code table says, instead of 1. The table in
+  `docs/architecture/sdk.md` now lists exits 6 and 7.
+- `mu doctor` exits 5 when a row FAILs (today: the DB inside
+  `MU_SYNC_DIR`), after printing the report or the `--json` payload.
+  It printed FAIL and exited 0. WARN rows still exit 0.
+- `mu task wait` exits 6 only when the owner's agent row is gone (the
+  reaper). A manual `mu task release` or `mu task delete` of a watched
+  task no longer reports a dead pane, including when the owner lives in
+  another workstream (`mu task claim --for <ws>/<agent>`).
+- `mu agent wait` reports a dead pane and exits 6 even when another
+  watched agent finished. Before, it printed "All N agent(s) finished"
+  and exited 0. `--any` names the agent that finished.
 - Two parallel `mu agent spawn` calls with the same name no longer let
   the loser delete the winner's agent row and orphan its pane. The name
   check is repeated inside the spawn lock, and the loser exits 4 with
   `AgentExistsError` instead of a raw `SqliteError`.
-- `mu agent spawn` of a pi agent whose control socket answered no longer
-  rolls back on a `No such file or directory` or `command not found`
-  line in the pane tail. A resumed `--session` shows such lines as old
-  tool output. The scan still catches provider and auth errors, and
-  `AgentSpawnStartupError` no longer suggests API-key fixes for an
-  exec failure.
 - `mu agent adopt` of a pane in another session now throws
   `PaneNotInSessionError` (exit 4). The old error read "agent pane %15
   is in workstream a different tmux session" and suggested a command
   that could not run.
+- `mu link pi` no longer writes the shim through a symlinked
+  `~/.pi/agent/extensions/mu.ts` into its target, such as a dev
+  checkout. A live symlink there is refused (exit 4) unless you pass
+  `--force`, which replaces the link and not its target.
 - `mu agent remote-env --remote-sock` rejects `:` and `%`. ssh `-L`
   splits on `:` and expands `%` tokens, so the forward broke or pointed
   at a different socket.
-- **jj workspaces: same-named agents, missing dirs, project root, empty `@`.** A jj workspace is now named `<workstream>/<agent>`, so `worker-1` in two workstreams on one repo no longer fails with "Workspace named 'worker-1' already exists". Creating a workspace forgets a same-named registration whose directory is gone, so a workspace freed after `rm -rf` can be recreated. The TUI's project-root launch focus now maps a jj workspace to the repo it came from (via `.jj/repo`) instead of mu's state dir. `mu workspace commits` and the clean-workspace auto-free on `mu agent close` no longer count jj's empty, undescribed working-copy commit as a commit.
-- Concurrent `mu` processes no longer fail with `database is locked`
-  when one closes an agent or task while others write. Every write
-  transaction now takes the write lock at `BEGIN IMMEDIATE`, so
-  `busy_timeout` waits for it. A deferred transaction that read and
-  then wrote failed at once if another process committed in between.
+- `mu task wait --json` no longer adds a `reachedAt` field to `all`. It
+  held the emit time, not when each task reached the target.
+- **`mu undo --yes` on an already-undone group says nothing changed.** It used to print `Undid …` with a redo hint naming a group that recorded no ops; `--json` now reports `undoGroupId: null`. The preview no longer lists deleting a row that is already gone.
+- `mu workspace refresh` on a workspace already on its base now prints
+  "already at <ref> — nothing to replay" and `--json` returns an empty
+  `replayed`. Before, it listed every commit above the fork point as
+  replayed although the rebase moved nothing.
 - `mu agent send` reports bytes as UTF-8 bytes (`sent N bytes`,
   `--json` `sentBytes`, and the `agent.send` op). It used to report
   UTF-16 code units, which undercounts non-ASCII text.
@@ -64,34 +117,66 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   is now the number of lines returned, counted the same way in both.
   `read` counted a final newline as an extra line, and `show` echoed the
   requested `-n`.
-- **tmux: a workstream never acts on another workstream's session.** Session-level calls (`has-session`, `kill-session`, `list-windows`, `new-window`, `list-panes -s`) target `=mu-<name>:`, so they no longer fall back to tmux's prefix match. Before, `mu workstream teardown auth` with no `mu-auth` session killed `mu-auth-refactor`, and reconcile listed its panes.
+- `mu workstream teardown --empty --yes` and `mu task delete` no longer
+  promise a snapshot or offer `mu undo --yes`, which only lists groups.
+  `task delete --yes` prints `mu undo <group> --yes` for its own group
+  (and `--json` carries `group`); the sweep points at
+  `mu workstream list --torn-down`, one group per workstream.
+- `mu db compact --yes` and `mu db forget --yes` now report the shrunk
+  DB size. Before and after are measured as pages × page size, so the
+  shrink shows even when another connection's open read keeps the WAL
+  checkpoint from rewriting the file; mu then says the file shrinks on
+  the next checkpoint, and `--json` carries `checkpointed: false`.
+  Before, the printed size was the same before and after.
+- **SDK: `MuxBackend.attachHint` / `attachCommands` may return a Promise.** herdr needs an async workspace lookup, so the interface allows `string | Promise<string>` (and the same for the command list). Await the result when you call them through `MuxBackend` or `activeMux()`. `tmuxBackend` still returns plain values, and a third-party backend with synchronous methods still satisfies the interface.
+- **A Syncthing conflict copy keeps its own watermark.** It shared the
+  original's line count, so ops that existed only in the copy were
+  skipped silently. The SDK's new `PeerSegment.watermarkKey` and
+  `PeerStatus.watermarkKey` fields are optional; without them, the
+  watermark is keyed by `machineId`.
+- The SDK (`src/index.ts`) now exports every typed error the CLI maps
+  to an exit code, including `SchemaTooNewError`,
+  `WorkstreamNotFoundError` and `TaskIdInvalidError`.
+
+### Fixed
+
 - **tmux: a workstream never acts on another workstream's session.** Session-level calls (`has-session`, `kill-session`, `list-windows`, `new-window`, `list-panes -s`) target `=mu-<name>:`, so they no longer fall back to tmux's prefix match. Before, `mu workstream teardown auth` with no `mu-auth` session killed `mu-auth-refactor`, and reconcile listed its panes. `mu agent spawn --tab <window>` splits the window it listed by id (`=mu-<name>:@N`), so a session that vanishes mid-spawn fails the spawn instead of adding the pane to `mu-<name>-…`'s window of the same name.
-- **tmux: a missing socket file means "no server".** On a fresh boot, a cleared `/tmp` or a new `TMUX_TMPDIR`, tmux reports "error connecting to … (No such file or directory)". `mu state`, `mu agent list` and teardown now treat it like "no server running" instead of exiting 5.
-- **tmux: `mu agent read -n N` and `mu agent show -n N` print the last N lines.** They printed the visible screen plus N rows above it. Trailing blank rows below the cursor are dropped first, so the result matches herdr's `--lines N`.
-- **tmux: `mu agent send` to a dead pane fails at once** (non-pi agents and `--via mux`). It polled the full readiness budget (`MU_SEND_READINESS_MS`, 15s) before failing with "can't find pane" (or "no current target" when the server has zero sessions). A transient capture failure still waits.
-- `mu task wait --timeout`, `--stuck-after` and `mu agent wait
-  --timeout` take fractional seconds and reject suffixes. Before,
-  `--timeout 0.5` parsed as 0 (wait forever, or stall detection off)
-  and `--timeout 10m` as 10 seconds.
-- `mu task wait --help` no longer names an `--all` flag that does not
-  exist. Waiting for every task is the default.
-- `mu task wait --status OPEN` no longer reports a task deleted
-  mid-wait as reached.
-- `mu task wait` exits 6 only when the owner's agent row is gone (the
-  reaper). A manual `mu task release` or `mu task delete` of a watched
-  task no longer reports a dead pane, including when the owner lives in
-  another workstream (`mu task claim --for <ws>/<agent>`).
-- `mu task wait` follows a watched task's owner into its own workstream
-  (`mu task claim --for <ws>/<agent>`). It reconciles that workstream,
-  so the owner's dead pane exits 6, and it reads the owner's state there,
-  so `--stuck-after` and `--on-stall exit` (exit 7) fire. The stall hints
-  name the owner's workstream. Before, such a wait ran on to the exit 5
-  timeout.
-- `mu agent wait` reports a dead pane and exits 6 even when another
-  watched agent finished. Before, it printed "All N agent(s) finished"
-  and exited 0. `--any` names the agent that finished.
-- `mu task notes --since` compares timestamps as instants. A cutoff
-  without milliseconds or with a UTC offset no longer hides notes.
+- The test suite's default-socket tmux sweep no longer kills your live
+  `mu-*` workstream sessions when your DB lives under `MU_STATE_DIR` or
+  `MU_DB_PATH`, or is missing, locked, corrupt or on a newer schema. It
+  reads every DB path mu resolves and skips the sweep when it cannot
+  read one.
+- Concurrent `mu` processes no longer fail with `database is locked`
+  when one closes an agent or task while others write. Every write
+  transaction now takes the write lock at `BEGIN IMMEDIATE`, so
+  `busy_timeout` waits for it. A deferred transaction that read and
+  then wrote failed at once if another process committed in between.
+- **`mu undo` no longer refuses after a `mu task note`.** A note touches its task's `updated_at`, and undo counted that as newer work, so undoing an earlier edit exited 4 unless you passed `--force`. A later write to `updated_at` alone is no longer a conflict.
+- **`mu undo` restores a field the action wrote twice.** `mu task park` and `mu task close` write `updated_at` twice, and undo restored the intermediate value instead of the value from before the action.
+- **Undoing a claim or release restores the owner too.** Before, undoing a claim left the task OPEN but still owned, so other workers could not claim it. Undoing a release left the task IN_PROGRESS with no owner. Undo now restores the owner from this machine's ops if that agent still exists. A task that arrived from a peer, or that a peer re-created after a delete, goes back to unowned.
+- **`mu undo` no longer lists or plans a legacy `workstream.export` group.** Its prose payload made the preview crash with a JSON error, or, with no earlier op for the workstream, plan deleting it.
+- **Sync ingest no longer wedges on a segment written by mu < 1.1.** A
+  historical `workstream.export` line (prose payload) threw a JSON
+  error that rolled back the whole segment on every invocation. Ingest
+  now skips it, as flush and `mu sync --from` already did.
+- **`mu sync --repair <short>` works when the peer has a conflict
+  copy.** The short id matched both files and exited 4. A ref now names
+  a machine, and repair resets every file of that machine.
+- **A blank line in your own segment is now self-repaired.** The owner
+  skipped it while peers halted on it, so peers stopped there forever.
+- **A segment shorter than its manifest no longer suggests
+  `--repair`,** which cannot clear it. The warning says to copy the
+  file again.
+- **A peer now deletes a note whose tombstone key shifted.** When a reprojection gave a note a new rowid, its tombstone carries the full row, but apply only looked for a put under the tombstone's key and skipped it, so rebuilds and peers kept a note the origin had deleted. Apply now reads the tombstone's own payload.
+- `mu sql` writes share one undo group with the intent `sql.write`, so
+  `mu undo` reverts a whole `mu sql` call and `mu log` prints prose
+  instead of raw JSON. Before, each changed row was its own
+  "(no intent)" group.
+- `mu sql --confirm-rows` counts the same rows for one statement as for
+  a script: rows removed by `ON DELETE CASCADE` are now counted on both
+  paths. `UPDATE ... RETURNING` is accepted as a write. The SQL runs
+  once: the count comes from the same execution that commits, so a
+  nondeterministic `WHERE` can no longer commit a count other than N.
 - `mu workspace refresh` now records the new fork point as the
   workspace's `parent_ref`. Before, the `behind` count never cleared,
   `mu workspace commits` listed main's commits as the worker's, and
@@ -105,79 +190,62 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   auto-commit, and any commit the agent made, on no branch for `git gc`
   to delete. mu now creates the branch `mu/<workstream>/<agent>-<sha>`
   when no branch, remote or tag already holds HEAD, and prints it.
-- `mu workspace refresh` on sl now fails when `sl rebase` fails for a
-  reason other than a conflict (bad `--from` ref, unresolvable
-  `trunk()`). Before, it reported success.
-- `mu workspace refresh` on a workspace already on its base now prints
-  "already at <ref> — nothing to replay" and `--json` returns an empty
-  `replayed`. Before, it listed every commit above the fork point as
-  replayed although the rebase moved nothing.
+- **jj workspaces: same-named agents, missing dirs, project root, empty `@`.** A jj workspace is now named `<workstream>/<agent>`, so `worker-1` in two workstreams on one repo no longer fails with "Workspace named 'worker-1' already exists". Creating a workspace forgets a same-named registration whose directory is gone, so a workspace freed after `rm -rf` can be recreated. The TUI's project-root launch focus now maps a jj workspace to the repo it came from (via `.jj/repo`) instead of mu's state dir. `mu workspace commits` and the clean-workspace auto-free on `mu agent close` no longer count jj's empty, undescribed working-copy commit as a commit.
 - `mu workspace refresh --help` and the conflict hint no longer say a
   git or sl workspace is left mid-rebase to resolve. Those backends
   abort the rebase, so the hint now says to rebase by hand. jj keeps the
   rebase and its conflicts, and the hint says so.
-- The commit view (TUI `show`) clips a commit whose `show` output is
-  over 200,000 bytes at the 100,000-character cap and marks it
-  truncated. Before, it showed an error and no text. A command that
-  floods stderr shows an error instead of an empty commit.
-- **`mu undo` no longer refuses after a `mu task note`.** A note touches its task's `updated_at`, and undo counted that as newer work, so undoing an earlier edit exited 4 unless you passed `--force`. A later write to `updated_at` alone is no longer a conflict.
-- **`mu undo` restores a field the action wrote twice.** `mu task park` and `mu task close` write `updated_at` twice, and undo restored the intermediate value instead of the value from before the action.
-- **Undoing a claim or release restores the owner too.** Before, undoing a claim left the task OPEN but still owned, so other workers could not claim it. Undoing a release left the task IN_PROGRESS with no owner. Undo now restores the owner from this machine's ops if that agent still exists. A task that arrived from a peer, or that a peer re-created after a delete, goes back to unowned.
 - **`mu_delegate`: a failed start no longer strands the queue.** When a direct call failed to start (spawn error, control socket not ok) while another call sat queued behind it, the freed slot went unused and the queued call never started. Now any start, queued or direct, starts the next queued call once its slot is free.
 - **Keep-driving and refute nudges parse claims the same way.** The keep-driving nudge now arms on `mu task claim <id> -f <w>` and `--for=<w>`, and reads the workstream from `<ws>/<id>` after a leading `--for`. Both nudges count `mu` only as a segment's command (after any `NAME=value` env assignments), so `grep mu agent send` and heredoc bodies do not count as dispatch. A `<<<` here-string or a `<<` shift inside `$(( ))` does not start a heredoc, so a later claim still counts; a `((` that closes as nested subshells (`((cd x && cat) <<EOF … )`) still does, and a `#` comment is skipped, so neither exposes a heredoc body as dispatch. A backslash-newline continuation no longer becomes a word, which made the task id `\n`.
-- **Sync ingest no longer wedges on a segment written by mu < 1.1.** A
-  historical `workstream.export` line (prose payload) threw a JSON
-  error that rolled back the whole segment on every invocation. Ingest
-  now skips it, as flush and `mu sync --from` already did.
-- **A Syncthing conflict copy keeps its own watermark.** It shared the
-  original's line count, so ops that existed only in the copy were
-  skipped silently. The SDK's new `PeerSegment.watermarkKey` and
-  `PeerStatus.watermarkKey` fields are optional; without them, the
-  watermark is keyed by `machineId`.
-- **`mu sync --repair <short>` works when the peer has a conflict
-  copy.** The short id matched both files and exited 4. A ref now names
-  a machine, and repair resets every file of that machine.
-- **A blank line in your own segment is now self-repaired.** The owner
-  skipped it while peers halted on it, so peers stopped there forever.
-- **A segment shorter than its manifest no longer suggests
-  `--repair`,** which cannot clear it. The warning says to copy the
-  file again.
+- `mu task wait` follows a watched task's owner into its own workstream
+  (`mu task claim --for <ws>/<agent>`). It reconciles that workstream,
+  so the owner's dead pane exits 6, and it reads the owner's state there,
+  so `--stuck-after` and `--on-stall exit` (exit 7) fire. The stall hints
+  name the owner's workstream. Before, such a wait ran on to the exit 5
+  timeout.
+- `mu task wait --status OPEN` no longer reports a task deleted
+  mid-wait as reached.
+- **tmux: `mu agent send` to a dead pane fails at once** (non-pi agents and `--via mux`). It polled the full readiness budget (`MU_SEND_READINESS_MS`, 15s) before failing with "can't find pane" (or "no current target" when the server has zero sessions). A transient capture failure still waits.
+- **tmux: a missing socket file means "no server".** On a fresh boot, a cleared `/tmp` or a new `TMUX_TMPDIR`, tmux reports "error connecting to … (No such file or directory)". `mu state`, `mu agent list` and teardown now treat it like "no server running" instead of exiting 5.
+- **tmux: `mu agent read -n N` and `mu agent show -n N` print the last N lines.** They printed the visible screen plus N rows above it. Trailing blank rows below the cursor are dropped first, so the result matches herdr's `--lines N`.
+- `mu agent spawn` of a pi agent whose control socket answered no longer
+  rolls back on a `No such file or directory` or `command not found`
+  line in the pane tail. A resumed `--session` shows such lines as old
+  tool output. The scan still catches provider and auth errors, and
+  `AgentSpawnStartupError` no longer suggests API-key fixes for an
+  exec failure.
+- **herdr: attach hints land on the workstream.** The `Next:` attach line (`mu workstream init`, `mu agent spawn`) and the TUI's `a` key ran `herdr session attach mu-<ws>`, which starts a new, empty herdr server named after the workspace label. They now focus the agent's tab or the workspace by id (`herdr tab focus w1:t2`), then open a client with `herdr` when run outside a herdr pane, and carry `--session <name>` when `MU_HERDR_SESSION` is set.
+- **herdr: the first agent's tab carries its name.** herdr labels a new workspace's first tab "1", so attach to the first agent spawned in a workstream fell back to focusing the workspace and showed whichever tab was active. mu now renames that tab to the agent's window name (or `_mu` for `mu workstream init`), as it already does for every later tab. If that rename fails, mu closes the new workspace before reporting the error, so a failed spawn leaves no bare-shell `mu-<ws>` workspace behind.
+- **herdr: `mu agent adopt w1:p2` adopts by pane id.** Only `%`-prefixed arguments were treated as pane ids, so a herdr id was looked up as a pane title and failed. The orphan hint in `mu agent list` now shows a real orphan's id instead of a hardcoded `%15`.
+- **herdr: orphan panes are surfaced.** herdr panes reported an empty command, so `mu agent list` and `mu doctor` never listed a herdr pane running an agent without a registry row. The pane's command is now the agent kind herdr detected.
+- **herdr: clearer errors.** A herdr failure with empty stderr shows stdout instead of "no output". A vanished pane in `mu agent kick` reads "herdr pane not found" with herdr remediation. A creation verb given a command no longer claims to be "not implemented yet (owned by task mux-herdr-spawn)".
+- A DB refused with `SchemaTooOldError` or `SchemaTooNewError` is now
+  really left untouched. mu used to switch it to WAL mode (rewriting
+  the header and creating `-wal`/`-shm`) before checking the version.
+- An empty or relative `XDG_STATE_HOME` is ignored, as the XDG spec
+  says. It used to put the state dir at `./mu` relative to the cwd.
+- `mu log --source system` now lists the ops `mu log` shows as
+  `system` (captured with no actor). It used to print "(no log
+  entries)". `-n/--lines` help now says that with `--since` it keeps
+  the first N entries after the cursor, not the latest N.
+- `mu sync` suggested `mu log --limit 20`, which exits 2. It now
+  suggests `mu log -n 20`.
+- `mu log` renders `task accept` as `→ OPEN` instead of the raw field
+  name `substate`.
+- `mu task list` sizes the status column by the rendered pair (e.g.
+  `CLOSED/wontfix`), so rows no longer run past the terminal width.
+- `mu task notes --since` compares timestamps as instants. A cutoff
+  without milliseconds or with a UTC offset no longer hides notes.
+- `mu task wait --help` no longer names an `--all` flag that does not
+  exist. Waiting for every task is the default.
+- **Auto-derived ids keep a word that ends exactly at the 40-character cap.** That word used to be dropped.
+- **`mu task block` and `mu task reparent` find the blocker in the dependent's workstream.** When another workstream that sorts earlier had a task with the same id, both verbs bound to that one and failed with a cross-workstream error. They now look in the dependent's workstream first, as `mu task add -b` already did.
+- A commander parse error after a leading root option
+  (`mu --json task list --bogus`, `mu -w x task note …`) now shows the
+  verb's usage and hints instead of the root `mu` help.
 - `mu doctor`'s case-collision fix now ends with
   `mu workstream teardown <old-name> --yes`; without `--yes` it was a
   dry run.
-- **`mu task block` and `mu task reparent` find the blocker in the dependent's workstream.** When another workstream that sorts earlier had a task with the same id, both verbs bound to that one and failed with a cross-workstream error. They now look in the dependent's workstream first, as `mu task add -b` already did.
-- **A bare `mu task close` on a closed task is a no-op.** Without `--as` it keeps the current substate. Before, re-closing a `wontfix`, `rejected` or `duplicate` task silently changed it to `done`. Pass `--as` to reclassify.
-- **Typed `mu task add` input errors exit 2.** An invalid task id now exits 2 (usage, with `--help`), like an invalid workstream name. It used to exit 4. A title with no ASCII letter or digit (for example `日本語`) raises `TaskTitleSlugEmptyError` (exit 2) and says to pass the `<id>` positional. It used to be a generic exit 1.
-- **Auto-derived ids keep a word that ends exactly at the 40-character cap.** That word used to be dropped.
-- **Correct hints.** `mu task tree --down` says "omit --down" (there is no `--no-down`). The "commit" hint on `mu task close` matches the workspace's VCS and includes untracked files (`git add -A && git commit -m`, `jj commit -m`, `sl commit --addremove -m`). Before, it was always `git commit -am`, which refuses when only untracked files are dirty. The dormant-workstream hint lists `OPEN,IN_PROGRESS` tasks to match its unclosed count. The invalid-workstream-name hint no longer suggests a name that fails the same check. The invalid-task-id hint no longer names a nonexistent `--id` flag, and the not-found hint no longer prints the same recipe twice.
-- **README quick start runs as written.** `mu workstream init` does not
-  attach you to `mu-<name>`, so the next verb failed with "workstream
-  required". The quick start now exports `MU_SESSION`.
-- **The migration recipe says it needs a git checkout.** The npm package
-  ships neither `scripts/` nor `src/`; `docs/guide/upgrade.md`,
-  `scripts/README.md`, and the `SchemaTooOldError` next step now say so.
-- **The `drift-audit` recipe's check 3 no longer flags every closed
-  task.** Its query counted the `CLOSE:` / `<SUBSTATE>:` note that
-  `mu task close` writes right after the close op; it now skips them.
-- **Docs match the code.** `mu_` is no reserved task-id prefix (skill
-  guardrail removed). Task ids allow 64 chars and are unique per
-  workstream; `--tab` names are not validated; no
-  `<state-dir>/workstreams/` dir exists (`docs/reference/naming.md`).
-  `docs/reference/env.md` lists `TMUX`, `TMUX_PANE`, `HERDR_PANE_ID` and
-  `HERDR_WORKSPACE_ID`, and says `MU_TMUX_SOCKET` skips `~/.tmux.conf`.
-  The DB partitions by `workstream_id` (no `session_id` column).
-  `workstream destroy` is `workstream teardown`. The delegate outcome
-  list includes `error`. VISION no longer claims the TUI runs no
-  subprocesses.
-- **The doc/CLI drift test checks more commands.** `mu` inside a path
-  or a quoted brief no longer exempts a command, and `drift-audit.md`
-  is checked (a test now fails if a recipe is left out).
-- `mu doctor` exits 5 when a row FAILs (today: the DB inside
-  `MU_SYNC_DIR`), after printing the report or the `--json` payload.
-  It printed FAIL and exited 0. WARN rows still exit 0.
-- A DB lock held past the 5 s busy timeout (`database is locked`) exits
-  5, as the exit-code table says, instead of 1. The table in
-  `docs/architecture/sdk.md` now lists exits 6 and 7.
 - `mu doctor`'s `ops rows` counts the workstream's task, note and edge
   ops. It counted only the workstream's own row.
 - Orphan workspace dir advice no longer says `mu workspace free`, which
@@ -192,64 +260,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the export verb went in 1.1.0, not 1.0.
 - The TUI doctor popup's murmur row matches the card on herdr (`agent
   state from herdr`) instead of warning that murmur is missing.
-- `mu workstream teardown --empty` no longer kills an unregistered
-  `mu-*` session that has something running in it. Only sessions whose
-  panes all sit at a shell prompt are swept; on herdr, which does not
-  report a pane's command, unregistered workspaces are never swept. A
-  run against a throwaway `MU_DB_PATH` had killed a live crew's panes.
-- `mu workstream teardown --empty` no longer kills `mu-*` sessions
-  that have no workstream row. With no row there is no evidence the
-  session is idle (a pane running a `bash -c` loop reports `bash`), and
-  a run against a throwaway `MU_DB_PATH` had killed a live crew's panes.
-  The sweep now takes registered empty workstreams only, and names the
-  skipped sessions so you can tear one down by name.
-- `mu workstream teardown --empty --yes` and `mu task delete` no longer
-  promise a snapshot or offer `mu undo --yes`, which only lists groups.
-  `task delete --yes` prints `mu undo <group> --yes` for its own group
-  (and `--json` carries `group`); the sweep points at
-  `mu workstream list --torn-down`, one group per workstream.
-- `mu -w <ws> <verb> …` works. The root `-w` was variadic and swallowed
-  the verb, so `mu -w ws task list` printed help and exited 0. It now
-  takes one value per flag and hands it to the verb's own `-w`; a verb
-  without `-w`, or `-w` on both sides, is a usage error (exit 2). This
-  also stops `mu --workstream=other workstream teardown --yes` from
-  tearing down the `$MU_SESSION` workstream: teardown and `mu state`
-  ignored a root `-w` and fell back to the ambient one.
-- `mu log --source system` now lists the ops `mu log` shows as
-  `system` (captured with no actor). It used to print "(no log
-  entries)". `-n/--lines` help now says that with `--since` it keeps
-  the first N entries after the cursor, not the latest N.
-- `mu sync` suggested `mu log --limit 20`, which exits 2. It now
-  suggests `mu log -n 20`.
-- `mu link pi` no longer writes the shim through a symlinked
-  `~/.pi/agent/extensions/mu.ts` into its target, such as a dev
-  checkout. A live symlink there is refused (exit 4) unless you pass
-  `--force`, which replaces the link and not its target.
-- `mu db compact --yes` and `mu db forget --yes` now report the shrunk
-  DB size. Before and after are measured as pages × page size, so the
-  shrink shows even when another connection's open read keeps the WAL
-  checkpoint from rewriting the file; mu then says the file shrinks on
-  the next checkpoint, and `--json` carries `checkpointed: false`.
-  Before, the printed size was the same before and after.
-- `mu rebuild <file> --force` deletes an existing `<file>` (and its
-  `-wal`/`-shm`) before replaying. It used to replay into it, keeping
-  that DB's foreign workstreams and ops.
-- `mu log` renders `task accept` as `→ OPEN` instead of the raw field
-  name `substate`.
-- `mu task list` sizes the status column by the rendered pair (e.g.
-  `CLOSED/wontfix`), so rows no longer run past the terminal width.
-- The SDK (`src/index.ts`) now exports every typed error the CLI maps
-  to an exit code, including `SchemaTooNewError`,
-  `WorkstreamNotFoundError` and `TaskIdInvalidError`.
-- A DB refused with `SchemaTooOldError` or `SchemaTooNewError` is now
-  really left untouched. mu used to switch it to WAL mode (rewriting
-  the header and creating `-wal`/`-shm`) before checking the version.
-- An empty or relative `XDG_STATE_HOME` is ignored, as the XDG spec
-  says. It used to put the state dir at `./mu` relative to the cwd.
-- **A peer now deletes a note whose tombstone key shifted.** When a reprojection gave a note a new rowid, its tombstone carries the full row, but apply only looked for a put under the tombstone's key and skipped it, so rebuilds and peers kept a note the origin had deleted. Apply now reads the tombstone's own payload.
-- **`mu undo` no longer lists or plans a legacy `workstream.export` group.** Its prose payload made the preview crash with a JSON error, or, with no earlier op for the workstream, plan deleting it.
-- **`mu undo -n` rejects a value that is not a positive integer** (exit 2). Before, `-n abc` failed with `datatype mismatch`, `-n 0` claimed the log was empty, `-n -1` listed every group, and `-n 1.5`, `-n 2x` and `-n 1e3` silently used 1, 2 and 1.
-- **`mu undo --yes` on an already-undone group says nothing changed.** It used to print `Undid …` with a redo hint naming a group that recorded no ops; `--json` now reports `undoGroupId: null`. The preview no longer lists deleting a row that is already gone.
+- The commit view (TUI `show`) clips a commit whose `show` output is
+  over 200,000 bytes at the 100,000-character cap and marks it
+  truncated. Before, it showed an error and no text. A command that
+  floods stderr shows an error instead of an empty commit.
 - TUI: an active `/` filter no longer pushes a popup past the pane, and
   long drill bodies no longer do either. Both used to overwrite the
   popup's title border and clip its bottom border and hint.
@@ -275,31 +289,29 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   were dropped.
 - TUI: launch focus counts task, note and edge activity when it breaks a
   project-root tie. It counted only agent and workspace rows.
-- `mu log --kind` refuses `workstream`, `task`, `edge`, and `note` (exit
-  2). A log line under one of those kinds was synced and replayed as a
-  real change, so `mu rebuild` and every peer's `mu sync` failed with
-  "malformed task key".
-- `mu sql` writes share one undo group with the intent `sql.write`, so
-  `mu undo` reverts a whole `mu sql` call and `mu log` prints prose
-  instead of raw JSON. Before, each changed row was its own
-  "(no intent)" group.
-- `mu sql --confirm-rows` counts the same rows for one statement as for
-  a script: rows removed by `ON DELETE CASCADE` are now counted on both
-  paths. `UPDATE ... RETURNING` is accepted as a write. The SQL runs
-  once: the count comes from the same execution that commits, so a
-  nondeterministic `WHERE` can no longer commit a count other than N.
-- `mu sql` refuses to change a natural-key column (`workstreams.name`,
-  `tasks.workstream_id`, `tasks.local_id`, a note's task, an edge's
-  endpoints). Such an UPDATE wrote no op, so the ops log, sync, undo,
-  and `mu doctor` disagreed with the table. The cross-workstream-edge
-  hint no longer prints a "move the blocker" UPDATE, and the recovery
-  guide no longer renames a workstream with `mu sql`.
-- **herdr: attach hints land on the workstream.** The `Next:` attach line (`mu workstream init`, `mu agent spawn`) and the TUI's `a` key ran `herdr session attach mu-<ws>`, which starts a new, empty herdr server named after the workspace label. They now focus the agent's tab or the workspace by id (`herdr tab focus w1:t2`), then open a client with `herdr` when run outside a herdr pane, and carry `--session <name>` when `MU_HERDR_SESSION` is set.
-- **herdr: the first agent's tab carries its name.** herdr labels a new workspace's first tab "1", so attach to the first agent spawned in a workstream fell back to focusing the workspace and showed whichever tab was active. mu now renames that tab to the agent's window name (or `_mu` for `mu workstream init`), as it already does for every later tab. If that rename fails, mu closes the new workspace before reporting the error, so a failed spawn leaves no bare-shell `mu-<ws>` workspace behind.
-- **SDK: `MuxBackend.attachHint` / `attachCommands` may return a Promise.** herdr needs an async workspace lookup, so the interface allows `string | Promise<string>` (and the same for the command list). Await the result when you call them through `MuxBackend` or `activeMux()`. `tmuxBackend` still returns plain values, and a third-party backend with synchronous methods still satisfies the interface.
-- **herdr: `mu agent adopt w1:p2` adopts by pane id.** Only `%`-prefixed arguments were treated as pane ids, so a herdr id was looked up as a pane title and failed. The orphan hint in `mu agent list` now shows a real orphan's id instead of a hardcoded `%15`.
-- **herdr: orphan panes are surfaced.** herdr panes reported an empty command, so `mu agent list` and `mu doctor` never listed a herdr pane running an agent without a registry row. The pane's command is now the agent kind herdr detected.
-- **herdr: clearer errors.** A herdr failure with empty stderr shows stdout instead of "no output". A vanished pane in `mu agent kick` reads "herdr pane not found" with herdr remediation. A creation verb given a command no longer claims to be "not implemented yet (owned by task mux-herdr-spawn)".
+- **Correct hints.** `mu task tree --down` says "omit --down" (there is no `--no-down`). The "commit" hint on `mu task close` matches the workspace's VCS and includes untracked files (`git add -A && git commit -m`, `jj commit -m`, `sl commit --addremove -m`). Before, it was always `git commit -am`, which refuses when only untracked files are dirty. The dormant-workstream hint lists `OPEN,IN_PROGRESS` tasks to match its unclosed count. The invalid-workstream-name hint no longer suggests a name that fails the same check. The invalid-task-id hint no longer names a nonexistent `--id` flag, and the not-found hint no longer prints the same recipe twice.
+- **README quick start runs as written.** `mu workstream init` does not
+  attach you to `mu-<name>`, so the next verb failed with "workstream
+  required". The quick start now exports `MU_SESSION`.
+- **The migration recipe says it needs a git checkout.** The npm package
+  ships neither `scripts/` nor `src/`; `docs/guide/upgrade.md`,
+  `scripts/README.md`, and the `SchemaTooOldError` next step now say so.
+- **The `drift-audit` recipe's check 3 no longer flags every closed
+  task.** Its query counted the `CLOSE:` / `<SUBSTATE>:` note that
+  `mu task close` writes right after the close op; it now skips them.
+- **Docs match the code.** `mu_` is no reserved task-id prefix (skill
+  guardrail removed). Task ids allow 64 chars and are unique per
+  workstream; `--tab` names are not validated; no
+  `<state-dir>/workstreams/` dir exists (`docs/reference/naming.md`).
+  `docs/reference/env.md` lists `TMUX`, `TMUX_PANE`, `HERDR_PANE_ID` and
+  `HERDR_WORKSPACE_ID`, and says `MU_TMUX_SOCKET` skips `~/.tmux.conf`.
+  The DB partitions by `workstream_id` (no `session_id` column).
+  `workstream destroy` is `workstream teardown`. The delegate outcome
+  list includes `error`. VISION no longer claims the TUI runs no
+  subprocesses.
+- **The doc/CLI drift test checks more commands.** `mu` inside a path
+  or a quoted brief no longer exempts a command, and `drift-audit.md`
+  is checked (a test now fails if a recipe is left out).
 - **Docs: herdr refuses command overrides.** `docs/guide/backends.md` and `docs/reference/env.md` said `MU_<CLI>_COMMAND` is ignored on herdr; spawn refuses it and `--command` with exit 2.
 
 ## [3.8.1] — 2026-10-05
