@@ -54,11 +54,11 @@ function mockTmux(state: MockState): TmuxExecutor {
   return async (args) => {
     const verb = args[0];
     if (verb === "has-session") {
-      const target = args[2];
+      const target = args[2]?.replace(/^=(.*):$/, "$1");
       return state.sessions.has(target ?? "") ? ok() : fail(`can't find session: ${target}`);
     }
     if (verb === "kill-session") {
-      const target = args[2] ?? "";
+      const target = (args[2] ?? "").replace(/^=(.*):$/, "$1");
       if (state.killShouldFail.has(target)) {
         // killSession only swallows /can't find session|session not found/i.
         // Anything else propagates as TmuxError → teardownWorkstream throws.

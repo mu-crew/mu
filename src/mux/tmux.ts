@@ -247,6 +247,40 @@ export function sleep(ms: number): Promise<void> {
 
 // ─── Sessions ──────────────────────────────────────────────────────────
 
+/**
+ * The `-t` form that names session `name` EXACTLY. A bare `-t mu-auth`
+ * falls back to prefix matching, so it resolves to `mu-auth-refactor`
+ * when `mu-auth` does not exist, and a teardown of workstream `auth`
+ * kills another workstream's session. `=` disables the prefix and
+ * pattern fallback. The trailing `:` makes it a session target for
+ * pane- and window-scoped verbs too: `list-panes -s -t =mu-auth`
+ * still prefix-matches through the pane lookup, but
+ * `-t =mu-auth:` does not (verified on tmux 3.7c).
+ */
+function exactSessionTarget(name: string): string {
+  return `=${name}:`;
+}
+
+/**
+ * stderr shapes that mean "no tmux server is running", so there is no
+ * session, window or pane to find. tmux prints "no server running on
+ * <path>" when the socket file exists but nothing listens, and "error
+ * connecting to <path> (No such file or directory)" when the socket file
+ * does not exist at all (fresh boot, cleared /tmp, new TMUX_TMPDIR).
+ * Other "error connecting" causes, such as permission denied, stay
+ * real errors.
+ */
+const NO_SERVER_RE = /no server running|error connecting to .*\(No such file or directory\)/i;
+
+/** True when a tmux call failed because the pane (or the whole server)
+ *  is gone, rather than for a transient reason. */
+function isPaneGoneError(err: unknown): boolean {
+  return (
+    err instanceof TmuxError &&
+    (/can't find pane|pane not found/i.test(err.stderr) || NO_SERVER_RE.test(err.stderr))
+  );
+}
+
 export async function listSessions(): Promise<TmuxSession[]> {
   // `list-sessions` exits 1 when no sessions exist; treat as empty.
   try {
@@ -256,7 +290,10 @@ export async function listSessions(): Promise<TmuxSession[]> {
       .filter((line) => line.length > 0)
       .map((name) => ({ name }));
   } catch (err) {
-    if (err instanceof TmuxError && /no server running|no sessions/i.test(err.stderr)) {
+    if (
+      err instanceof TmuxError &&
+      (NO_SERVER_RE.test(err.stderr) || /no sessions/i.test(err.stderr))
+    ) {
       return [];
     }
     throw err;
@@ -264,7 +301,7 @@ export async function listSessions(): Promise<TmuxSession[]> {
 }
 
 export async function sessionExists(name: string): Promise<boolean> {
-  const result = await currentExecutor(["has-session", "-t", name]);
+  const result = await currentExecutor(["has-session", "-t", exactSessionTarget(name)]);
   return result.exitCode === 0;
 }
 
@@ -306,7 +343,8 @@ export async function newSessionWithPane(
  * Four swallowed shapes:
  *   - "can't find session: <name>"  — session never existed.
  *   - "session not found"           — alternate phrasing on some tmux builds.
- *   - "no server running on <path>" — the tmux server itself has exited
+ *   - "no server running on <path>" (or "error connecting to <path> (No
+ *     such file or directory)", see NO_SERVER_RE) — the tmux server itself has exited
  *     (typical when the test suite runs against a private `tmux -L
  *     <socket>` server and the just-killed session was its last; tmux
  *     quietly shuts the server down). Without this, killSession would
@@ -322,17 +360,14 @@ export async function newSessionWithPane(
  *     we were asked to kill is gone.
  */
 export async function killSession(name: string): Promise<void> {
-  const result = await currentExecutor(["kill-session", "-t", name]);
+  const args = ["kill-session", "-t", exactSessionTarget(name)];
+  const result = await currentExecutor(args);
   if (
     result.exitCode !== 0 &&
-    !/can't find session|session not found|no server running|no current target/i.test(result.stderr)
+    !/can't find session|session not found|no current target/i.test(result.stderr) &&
+    !NO_SERVER_RE.test(result.stderr)
   ) {
-    throw new TmuxError(
-      ["kill-session", "-t", name],
-      result.stderr,
-      result.stdout,
-      result.exitCode,
-    );
+    throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
   }
 }
 
@@ -340,7 +375,13 @@ export async function killSession(name: string): Promise<void> {
 
 export async function listWindows(session?: string): Promise<TmuxWindow[]> {
   if (session) {
-    const out = await tmux(["list-windows", "-t", session, "-F", "#{window_id}\t#{window_name}"]);
+    const out = await tmux([
+      "list-windows",
+      "-t",
+      exactSessionTarget(session),
+      "-F",
+      "#{window_id}\t#{window_name}",
+    ]);
     return parseWindows(out);
   }
   // Cross-session: include the session name.
@@ -378,7 +419,7 @@ function parseWindows(output: string): TmuxWindow[] {
 export async function newWindow(opts: NewWindowOptions): Promise<string> {
   const args = ["new-window"];
   if (opts.detached !== false) args.push("-d");
-  if (opts.session) args.push("-t", opts.session);
+  if (opts.session) args.push("-t", exactSessionTarget(opts.session));
   args.push("-n", opts.name);
   if (opts.cwd) args.push("-c", opts.cwd);
   appendEnvFlags(args, opts.env);
@@ -410,16 +451,15 @@ export async function listPanesInSession(session: string): Promise<TmuxPane[]> {
     "list-panes",
     "-s",
     "-t",
-    session,
+    exactSessionTarget(session),
     "-F",
     "#{window_id}\t#{pane_id}\t#{pane_title}\t#{pane_current_command}",
   ];
   const result = await currentExecutor(args);
   if (result.exitCode !== 0) {
     if (
-      /can't find (session|window)|no server running|no sessions|no current target/i.test(
-        result.stderr,
-      )
+      /can't find (session|window)|no sessions|no current target/i.test(result.stderr) ||
+      NO_SERVER_RE.test(result.stderr)
     ) {
       return [];
     }
@@ -515,7 +555,11 @@ function appendEnvFlags(args: string[], env: Record<string, string> | undefined)
 export async function killPane(paneId: string): Promise<void> {
   assertValidPaneId(paneId);
   const result = await currentExecutor(["kill-pane", "-t", paneId]);
-  if (result.exitCode !== 0 && !/can't find pane/i.test(result.stderr)) {
+  if (
+    result.exitCode !== 0 &&
+    !/can't find pane/i.test(result.stderr) &&
+    !NO_SERVER_RE.test(result.stderr)
+  ) {
     throw new TmuxError(["kill-pane", "-t", paneId], result.stderr, result.stdout, result.exitCode);
   }
 }
@@ -659,7 +703,7 @@ export async function paneTTY(paneId: string): Promise<string> {
   assertValidPaneId(paneId);
   const result = await currentExecutor(["display-message", "-t", paneId, "-p", "#{pane_tty}"]);
   if (result.exitCode !== 0) {
-    if (/can't find pane|pane not found/i.test(result.stderr)) {
+    if (/can't find pane|pane not found/i.test(result.stderr) || NO_SERVER_RE.test(result.stderr)) {
       throw new PaneNotFoundError(paneId, tmuxBackend);
     }
     throw new TmuxError(
@@ -794,7 +838,10 @@ export function hasWorkMarker(scrollback: string): boolean {
 
 /**
  * Block until the pane is ready to ACCEPT input, or the budget expires.
- * Returns true if the pane quiesced, false on timeout.
+ * Returns true if the pane quiesced, false on timeout. Throws the
+ * capture's TmuxError at once when the pane or the server is gone:
+ * a dead pane never quiesces, so polling it would only burn the whole
+ * budget before the send fails anyway.
  *
  * WHY THIS EXISTS (dogfood_send_after_new_dropped, reproduced 3/6 at
  * sleep=0.3s and 1/5 at sleep=2s against a real pi pane):
@@ -840,7 +887,11 @@ export async function awaitPaneQuiescence(paneId: string, budgetMs: number): Pro
   const deadline = Date.now() + budgetMs;
   let calm = 0;
   for (;;) {
-    const scrollback = await capturePane(paneId, { lines: 50 }).catch(() => undefined);
+    // A transient capture failure counts as busy; a vanished pane is fatal.
+    const scrollback = await capturePane(paneId, { lines: 50 }).catch((err: unknown) => {
+      if (isPaneGoneError(err)) throw err;
+      return undefined;
+    });
     const busy = scrollback === undefined || paneLooksBusy(scrollback);
     // Busy BECAUSE the agent is working a turn: not a re-init modal.
     // Send now and let the TUI queue it behind the current turn.
@@ -1021,7 +1072,12 @@ export async function sendToPane(
  *
  * - No options: full scrollback (`-S - -E -`)
  * - `lines: 0`: visible pane only
- * - `lines: N`: last N lines (`-S -N`)
+ * - `lines: N`: last N lines, ending at the last non-blank row
+ *
+ * `-S -N` counts from the TOP of the visible screen, so tmux returns the
+ * N rows above the screen plus every visible row, blank rows below the
+ * cursor included. That range always holds the last N non-blank-ended
+ * lines, so drop the trailing blank rows and keep the last N.
  */
 export async function capturePane(paneId: string, opts: CaptureOptions = {}): Promise<string> {
   assertValidPaneId(paneId);
@@ -1030,8 +1086,20 @@ export async function capturePane(paneId: string, opts: CaptureOptions = {}): Pr
     args.push("-S", "-", "-E", "-");
   } else if (opts.lines > 0) {
     args.push("-S", `-${opts.lines}`);
+    return lastLines(await tmux(args), opts.lines);
   }
   return tmux(args);
+}
+
+/** The last `n` lines of `text` after dropping trailing blank lines.
+ *  Keeps a trailing newline when `text` had one (tmux prints one). */
+function lastLines(text: string, n: number): string {
+  const lines = text.split("\n");
+  let end = lines.length;
+  while (end > 0 && (lines[end - 1] ?? "").trim() === "") end--;
+  if (end === 0) return "";
+  const kept = lines.slice(Math.max(0, end - n), end).join("\n");
+  return text.endsWith("\n") ? `${kept}\n` : kept;
 }
 
 // ─── Backend record ────────────────────────────────────────────────────
