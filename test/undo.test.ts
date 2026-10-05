@@ -14,7 +14,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
+import { formatHlc } from "../src/hlc.js";
 import { withOpContext } from "../src/op-context.js";
+import { applyIncomingOp } from "../src/segments.js";
 import { claimTask, releaseTask } from "../src/tasks/claim.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
@@ -702,6 +704,78 @@ describe("undo", () => {
 
       undoGroup(db, groupFor("task.release"));
       expect(pairOwner("a")).toEqual({ status: "IN_PROGRESS", substate: "active", owner_id: null });
+    });
+
+    /** Apply a peer's task op as sync ingest does. `offsetMs` orders
+     *  peer ops among themselves; receiveHlc keeps later local ops newer. */
+    const peerTaskOp = (offsetMs: number, op: "put" | "del", localId: string): void => {
+      const machineId = "9f1c8a2e-0000-4000-8000-0000000000aa";
+      const at = "2026-01-01T00:00:00.000Z";
+      applyIncomingOp(db, {
+        hlc: formatHlc({ wallMs: Date.now() + offsetMs, counter: 0, machineId }),
+        machineId,
+        groupId: `peer-${offsetMs}`,
+        actor: "peer",
+        intent: op === "put" ? "task.add" : "task.delete",
+        entity: "task",
+        key: `demo/${localId}`,
+        op,
+        payload: JSON.stringify(
+          op === "del"
+            ? {}
+            : {
+                title: localId,
+                status: "OPEN",
+                substate: "todo",
+                impact: 50,
+                effort_days: 1,
+                owner_id: 99,
+                created_at: at,
+                updated_at: at,
+              },
+        ),
+      });
+    };
+
+    it("undoing the first local claim of a PEER-created task clears the owner", async () => {
+      // The row came from a peer op: apply strips its owner_id and
+      // capture is suppressed, so no local op ever named owner_id before
+      // the claim. The pre-claim local value was still NULL
+      // (g_fix_undo_peer_claim).
+      ensureWorkstream(db, "demo");
+      peerTaskOp(0, "put", "p");
+      insertAgent(db, { name: "w1", workstream: "demo", paneId: "%1" });
+      insertAgent(db, { name: "w2", workstream: "demo", paneId: "%2" });
+      expect(pairOwner("p")).toEqual({ status: "OPEN", substate: "todo", owner_id: null });
+      expectNoDrift();
+
+      await claimTask(db, "p", { agentName: "w1", workstream: "demo" });
+      expect(pairOwner("p")?.owner_id).toBe(agentId("w1"));
+
+      const target = groupFor("task.claim");
+      const ownerRestore = planUndo(db, target).inverses.find((i) => "owner_id" in i.fields);
+      expect(ownerRestore?.fields.owner_id).toBeNull();
+      undoGroup(db, target);
+      expect(pairOwner("p")).toEqual({ status: "OPEN", substate: "todo", owner_id: null });
+      expectNoDrift();
+      await claimTask(db, "p", { agentName: "w2", workstream: "demo" });
+      expect(pairOwner("p")?.owner_id).toBe(agentId("w2"));
+    });
+
+    it("undoing a claim of a task a PEER recreated ignores the owner from before the delete", async () => {
+      // A local claim named owner_id, then a peer deleted and re-added
+      // the task (owner NULL again, uncaptured). The pre-delete owner is
+      // not what the recreated row held before the new claim.
+      seedAgents();
+      await claimTask(db, "a", { agentName: "w1", workstream: "demo" });
+      peerTaskOp(1, "del", "a");
+      peerTaskOp(2, "put", "a");
+      expect(pairOwner("a")).toEqual({ status: "OPEN", substate: "todo", owner_id: null });
+
+      await claimTask(db, "a", { agentName: "w2", workstream: "demo" });
+      undoGroup(db, groupFor("task.claim"));
+      expect(pairOwner("a")).toEqual({ status: "OPEN", substate: "todo", owner_id: null });
+      expectNoDrift();
     });
   });
 

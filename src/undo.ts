@@ -479,7 +479,8 @@ const NEVER_RESTORE = new Set(["id", "local_id", "name", "workstream_id", "task_
 /** `tasks.owner_id` is an FK into machine-local `agents`. Undoing a
  *  claim or release restores it with the status/substate pair it was
  *  written with, but only from THIS machine's ops (a peer's value names
- *  a peer's agent) and only when that agent still exists. A whole-row
+ *  a peer's agent) and only when that agent still exists. No local op
+ *  before it means the row came from a peer and the owner was NULL. A whole-row
  *  restore from a tombstone leaves it NULL, as apply does. */
 const OWNER_FIELD = "owner_id";
 
@@ -648,7 +649,10 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
         if (row.machine_id !== localMachine()) continue;
         machineId = localMachine();
       }
-      const prior = priorFieldValue(db, row.entity, row.key, row.hlc, field, machineId);
+      const prior =
+        field === OWNER_FIELD
+          ? priorOwner(db, row.key, row.hlc, localMachine())
+          : priorFieldValue(db, row.entity, row.key, row.hlc, field, machineId);
       if (!prior.found) {
         // No earlier op named this field, so it had no prior value to go
         // back to. Nothing to restore for it.
@@ -708,6 +712,39 @@ export function planUndo(db: Db, groupId: string): UndoPlan {
     superseded: ordered.some((i) => i.supersededBy.length > 0),
     skipped,
   };
+}
+
+/**
+ * The owner_id a task had just before `hlc`, from this machine's ops.
+ *
+ * Always found: a task row only ever starts unowned. Apply strips a
+ * peer's owner_id and inserts the row with owner_id NULL without
+ * capturing, so a task created (or recreated after a tombstone) by a
+ * peer has no local op naming owner_id. A local op older than the
+ * newest tombstone described a row that no longer exists, so it does
+ * not count either.
+ */
+function priorOwner(
+  db: Db,
+  key: string,
+  hlc: string,
+  machineId: string,
+): { found: true; value: string | number | null } {
+  const local = priorFieldValue(db, "task", key, hlc, OWNER_FIELD, machineId);
+  if (!local.found) return { found: true, value: null };
+  const tomb = db
+    .prepare(
+      `SELECT 1 FROM ops
+        WHERE entity = 'task' AND key = @key AND op = 'del' AND hlc < @hlc
+          AND hlc > (SELECT MAX(hlc) FROM ops
+                      WHERE entity = 'task' AND key = @key AND op = 'put'
+                        AND hlc < @hlc AND machine_id = @machineId
+                        AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
+                        AND json_type(payload, '$.owner_id') IS NOT NULL)
+        LIMIT 1`,
+    )
+    .get({ key, hlc, machineId });
+  return tomb === undefined ? local : { found: true, value: null };
 }
 
 function agentExists(db: Db, id: string | number): boolean {
