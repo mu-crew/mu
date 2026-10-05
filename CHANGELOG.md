@@ -258,6 +258,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   were dropped.
 - TUI: launch focus counts task, note and edge activity when it breaks a
   project-root tie. It counted only agent and workspace rows.
+- `mu log --kind` refuses `workstream`, `task`, `edge`, and `note` (exit
+  2). A log line under one of those kinds was synced and replayed as a
+  real change, so `mu rebuild` and every peer's `mu sync` failed with
+  "malformed task key".
+- `mu sql` writes share one undo group with the intent `sql.write`, so
+  `mu undo` reverts a whole `mu sql` call and `mu log` prints prose
+  instead of raw JSON. Before, each changed row was its own
+  "(no intent)" group.
+- `mu sql --confirm-rows` counts the same rows for one statement as for
+  a script: rows removed by `ON DELETE CASCADE` are now counted on both
+  paths. `UPDATE ... RETURNING` is accepted as a write.
+- `mu sql` refuses to change a natural-key column (`workstreams.name`,
+  `tasks.workstream_id`, `tasks.local_id`, a note's task, an edge's
+  endpoints). Such an UPDATE wrote no op, so the ops log, sync, undo,
+  and `mu doctor` disagreed with the table. The cross-workstream-edge
+  hint no longer prints a "move the blocker" UPDATE, and the recovery
+  guide no longer renames a workstream with `mu sql`.
 
 ## [3.8.1] — 2026-10-05
 

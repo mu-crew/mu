@@ -394,28 +394,21 @@ export class CrossWorkstreamEdgeError extends Error implements HasNextSteps {
     );
   }
   errorNextSteps(): NextStep[] {
-    // schema v5+: tasks.workstream_id is an INTEGER FK to
-    // workstreams.id (no tasks.workstream column), and (workstream_id,
-    // local_id) is the per-workstream unique key — so the move-blocker
-    // recipe must scope by BOTH the source workstream's id AND set the
-    // destination workstream's id via subselects. The v4-shaped
-    // `UPDATE tasks SET workstream='…' WHERE local_id='…'` recipe we
-    // used to print here errored at runtime ("no such column:
-    // workstream") and was also ambiguous across workstreams.
-    //
-    // We also dropped the "rename one workstream to the other" hint:
-    // it silently moves *every* task in the source workstream and
-    // fails outright when the destination name already exists
-    // (UNIQUE violation). Operators almost always want to move just
-    // the blocker — or duplicate it — not merge whole workstreams.
+    // No "move the blocker" recipe. A task's workstream is part of its
+    // natural key (`<ws>/<local_id>`), which every op is filed under, so
+    // a raw `UPDATE tasks SET workstream_id=...` re-keys the row with no
+    // op for either key: sync, undo and `mu doctor` then disagree with
+    // the table. The capture layer refuses that UPDATE (src/capture.ts
+    // KEY_COLUMNS). The "rename one workstream to the other" hint went
+    // earlier for the same reason, and because it moved every task.
     return [
       {
-        intent: "Move the blocker into the dependent's workstream",
-        command: `mu sql "UPDATE tasks SET workstream_id=(SELECT id FROM workstreams WHERE name='${this.dependentWorkstream}') WHERE local_id='${this.blocker}' AND workstream_id=(SELECT id FROM workstreams WHERE name='${this.blockerWorkstream}')"`,
+        intent: "Duplicate the blocker into the dependent's workstream",
+        command: `mu task add <new-id> -w ${this.dependentWorkstream} --title "<copy of ${this.blocker}>" --impact <n> --effort-days <n>`,
       },
       {
-        intent: "Or duplicate the blocker (typed verb deferred)",
-        command: `mu task add <new-id> -w ${this.dependentWorkstream} --title "<copy of ${this.blocker}>" --impact <n> --effort-days <n>`,
+        intent: "Or wait on the blocker across workstreams instead of an edge",
+        command: `mu task wait ${this.blockerWorkstream}/${this.blocker}`,
       },
     ];
   }

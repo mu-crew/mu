@@ -7,13 +7,15 @@
 // separated statements but returns nothing structured.
 //
 // `--confirm-rows N` adds a transactional safety belt: if the actual
-// affected-row count doesn't match N, the whole thing rolls back.
+// affected-row count (FK cascades included) doesn't match N, the whole
+// thing rolls back. Every write is captured as ops under one `sql.write`
+// group, so `mu undo` reverts a whole `mu sql` call.
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
 import { emitJson, UsageError } from "../cli.js";
 import type { Db } from "../db.js";
-import { withCaptureSuppressed } from "../op-context.js";
+import { withCaptureSuppressed, withOpContext } from "../op-context.js";
 import { muTable, pc } from "../output.js";
 
 export async function cmdSql(
@@ -21,6 +23,15 @@ export async function cmdSql(
   query: string,
   opts: { json?: boolean; confirmRows?: number } = {},
 ): Promise<void> {
+  // ONE op context for the whole invocation. Without it every captured
+  // row got its own random group and a null intent, so one multi-row
+  // UPDATE showed up in `mu undo` as N separate "(no intent)" actions
+  // and `mu log` fell back to printing the raw JSON payload. With it,
+  // `mu undo` reverts the whole `mu sql` call as one action.
+  withOpContext(db, { intent: "sql.write", group: "new" }, () => runSql(db, query, opts));
+}
+
+function runSql(db: Db, query: string, opts: { json?: boolean; confirmRows?: number }): void {
   // Read OR write — `mu sql` is the explicit escape hatch.
   //
   // Single-statement path uses better-sqlite3's prepare() so we can
@@ -32,89 +43,25 @@ export async function cmdSql(
   // This keeps the simple case fast and well-typed while making
   // multi-statement migrations / cleanup scripts a one-shot.
   const trimmed = query.trim();
-  // Probe whether this is a single statement by trying prepare(); if
-  // better-sqlite3 throws 'more than one statement', use exec() instead.
   // Capture the prepared statement so the single-statement path below
   // doesn't re-prepare (review_code_sql_double_prepare).
   let stmt: ReturnType<typeof db.prepare> | undefined;
-  let isMulti = false;
   try {
     stmt = db.prepare(trimmed);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/more than one statement/i.test(msg)) {
-      isMulti = true;
-    } else {
-      throw err;
-    }
+    if (!/more than one statement/i.test(msg)) throw err;
   }
 
-  if (isMulti) {
-    // Multi-statement: db.exec() doesn't report a per-statement change
-    // count, so for --confirm-rows we wrap the whole script in a manual
-    // transaction and diff total_changes() before/after. Note: scripts
-    // that contain their own BEGIN/COMMIT will fail under --confirm-rows
-    // (sqlite refuses nested transactions); that's the price of an
-    // atomic confirm-or-rollback wrapper around an opaque blob.
+  if (stmt === undefined) {
+    // Multi-statement. Note: scripts that contain their own BEGIN/COMMIT
+    // fail under --confirm-rows (sqlite refuses nested transactions);
+    // that's the price of an atomic confirm-or-rollback wrapper around
+    // an opaque blob.
     if (opts.confirmRows !== undefined) {
       const expected = opts.confirmRows;
-      db.exec("BEGIN IMMEDIATE");
-      let actual: number;
-      try {
-        // Count the OPERATOR's rows only. Since v2-capture, a write to a
-        // portable table also runs a capture trigger, and every trigger
-        // body is several statements (the op INSERT plus the HLC clock
-        // UPDATEs) — all of which total_changes() counts. --confirm-rows
-        // is a safety prompt about the rows the operator is touching
-        // ("expected 3, would hit 300 — abort"), so a count inflated ~5x
-        // by bookkeeping would make the number meaningless and the
-        // re-run hint wrong.
-        //
-        // So the probe runs with capture suppressed, and the `before`
-        // baseline is sampled INSIDE the suppressed scope — after
-        // withCaptureSuppressed's own bookkeeping UPDATE on _op_ctx,
-        // which would otherwise be counted too. Sampling inside is why
-        // this needs no magic constant to subtract.
-        //
-        // Suppressing the probe is safe because --confirm-rows always
-        // ends in either a ROLLBACK (mismatch) or a re-execution with
-        // capture ON (see the COMMIT path below), so an uncaptured write
-        // is never committed.
-        actual = withCaptureSuppressed(db, () => {
-          const before = (db.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
-          db.exec(trimmed);
-          const after = (db.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
-          return after - before;
-        });
-      } catch (e) {
-        try {
-          db.exec("ROLLBACK");
-        } catch {}
-        throw e;
-      }
-      if (actual !== expected) {
-        db.exec("ROLLBACK");
-        throw new UsageError(
-          `expected ${expected} rows, would have affected ${actual} (rolled back). Re-run with --confirm-rows ${actual} if intentional.`,
-        );
-      }
-      // The count matched, but the run above was capture-suppressed, so
-      // committing it as-is would land rows with NO ops — silent
-      // corruption of undo/sync, precisely what capture exists
-      // to make impossible. Roll that probe back and re-execute the
-      // script with capture ON, inside its own transaction, so the
-      // committed writes are captured normally.
-      db.exec("ROLLBACK");
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        db.exec(trimmed);
-      } catch (e) {
-        try {
-          db.exec("ROLLBACK");
-        } catch {}
-        throw e;
-      }
-      db.exec("COMMIT");
+      const actual = probeAffectedRows(db, trimmed, expected);
+      runInTransaction(db, () => db.exec(trimmed));
       const n = countTopLevelStatements(trimmed);
       if (opts.json) {
         emitJson({
@@ -142,17 +89,31 @@ export async function cmdSql(
     return;
   }
 
-  // Past the multi-statement branch: prepare() succeeded, so `stmt` must
-  // be set. Narrow once instead of repeating the unreachable check at
-  // every read/write fork below. better-sqlite3's prepared-statement
-  // metadata is the source of truth for row-returning statements; prefix
-  // guesses miss PRAGMA reads and comment-prefixed SELECTs.
-  if (!stmt) throw new Error("unreachable: stmt should be set on the single-statement path");
   const single = stmt;
-  if (opts.confirmRows !== undefined && single.reader) {
-    throw new UsageError(
-      "--confirm-rows is only meaningful on write statements (UPDATE / DELETE / INSERT / REPLACE)",
-    );
+  // better-sqlite3's prepared-statement metadata is the source of truth;
+  // prefix guesses miss PRAGMA reads and comment-prefixed SELECTs.
+  // `readonly` (not `reader`) decides whether --confirm-rows applies:
+  // `reader` is also true for `UPDATE ... RETURNING`, which IS a write.
+  if (opts.confirmRows !== undefined) {
+    if (single.readonly) {
+      throw new UsageError(
+        "--confirm-rows is only meaningful on write statements (UPDATE / DELETE / INSERT / REPLACE)",
+      );
+    }
+    const expected = opts.confirmRows;
+    const actual = probeAffectedRows(db, trimmed, expected);
+    const result = runInTransaction(db, () => single.run([]));
+    if (opts.json) {
+      emitJson({
+        changes: result.changes,
+        lastInsertRowid: Number(result.lastInsertRowid),
+        confirmRows: expected,
+        actualRows: actual,
+      });
+      return;
+    }
+    console.log(pc.dim(`${actual} row${actual === 1 ? "" : "s"} affected`));
+    return;
   }
   if (single.reader) {
     const rows = single.all([]);
@@ -187,48 +148,82 @@ export async function cmdSql(
     }
     console.log(table.toString());
     console.log(pc.dim(`(${rows.length} row${rows.length === 1 ? "" : "s"})`));
-  } else {
-    if (opts.confirmRows !== undefined) {
-      const expected = opts.confirmRows;
-      db.exec("BEGIN IMMEDIATE");
-      let result: { changes: number; lastInsertRowid: number | bigint };
-      try {
-        result = single.run([]);
-      } catch (e) {
-        try {
-          db.exec("ROLLBACK");
-        } catch {}
-        throw e;
-      }
-      if (result.changes !== expected) {
-        db.exec("ROLLBACK");
-        throw new UsageError(
-          `expected ${expected} rows, would have affected ${result.changes} (rolled back). Re-run with --confirm-rows ${result.changes} if intentional.`,
-        );
-      }
-      db.exec("COMMIT");
-      if (opts.json) {
-        emitJson({
-          changes: result.changes,
-          lastInsertRowid: Number(result.lastInsertRowid),
-          confirmRows: expected,
-          actualRows: result.changes,
-        });
-        return;
-      }
-      console.log(pc.dim(`${result.changes} row${result.changes === 1 ? "" : "s"} affected`));
-      return;
-    }
-    const result = single.run([]);
-    if (opts.json) {
-      emitJson({
-        changes: result.changes,
-        lastInsertRowid: Number(result.lastInsertRowid),
-      });
-      return;
-    }
-    console.log(pc.dim(`${result.changes} row${result.changes === 1 ? "" : "s"} affected`));
+    return;
   }
+  const result = single.run([]);
+  if (opts.json) {
+    emitJson({
+      changes: result.changes,
+      lastInsertRowid: Number(result.lastInsertRowid),
+    });
+    return;
+  }
+  console.log(pc.dim(`${result.changes} row${result.changes === 1 ? "" : "s"} affected`));
+}
+
+/**
+ * The --confirm-rows probe, shared by the single- and multi-statement
+ * paths so the same statement always gets the same count. Runs `sql` in
+ * a transaction, measures it, and ALWAYS rolls back; throws a UsageError
+ * on a mismatch, otherwise returns the count for the caller to report
+ * after it re-runs the SQL for real.
+ *
+ * The count is the total_changes() delta: every row the SQL changes,
+ * INCLUDING rows removed by ON DELETE CASCADE (deleting a task also
+ * deletes its edges and notes). It used to be cascades-included on the
+ * multi path and `stmt.changes` (cascades excluded) on the single path,
+ * so the same DELETE counted 1 alone and 2 with a `; SELECT 1` after it.
+ * The cascade-inclusive number is the honest blast radius.
+ *
+ * Capture bookkeeping is NOT counted. A write to a portable table also
+ * runs a capture trigger whose body is several statements (the op
+ * INSERT plus the HLC clock UPDATEs), all of which total_changes()
+ * counts, inflating the number ~5x. So the probe runs with capture
+ * suppressed, and the `before` baseline is sampled INSIDE the
+ * suppressed scope, after withCaptureSuppressed's own UPDATE on
+ * _op_ctx. Suppressing is safe because the probe is always rolled back;
+ * the caller re-runs with capture ON, so no uncaptured write commits.
+ */
+function probeAffectedRows(db: Db, sql: string, expected: number): number {
+  db.exec("BEGIN IMMEDIATE");
+  let actual: number;
+  try {
+    actual = withCaptureSuppressed(db, () => {
+      const before = totalChanges(db);
+      db.exec(sql);
+      return totalChanges(db) - before;
+    });
+  } finally {
+    try {
+      db.exec("ROLLBACK");
+    } catch {}
+  }
+  if (actual !== expected) {
+    throw new UsageError(
+      `expected ${expected} rows, would have affected ${actual} (rolled back). Re-run with --confirm-rows ${actual} if intentional.`,
+    );
+  }
+  return actual;
+}
+
+function totalChanges(db: Db): number {
+  return (db.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
+}
+
+/** BEGIN, run `fn`, COMMIT; ROLLBACK and rethrow on failure. */
+function runInTransaction<T>(db: Db, fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  let result: T;
+  try {
+    result = fn();
+  } catch (e) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {}
+    throw e;
+  }
+  db.exec("COMMIT");
+  return result;
 }
 
 /**
@@ -337,7 +332,7 @@ export function wireSqlCommand(program: Command): void {
     .option(...JSON_OPT)
     .option(
       "--confirm-rows <n>",
-      "abort if affected-row count differs from N (rollback)",
+      "abort if the affected-row count (ON DELETE CASCADE rows included) differs from N (rollback)",
       parseLines,
     )
     .action(function (query: string) {

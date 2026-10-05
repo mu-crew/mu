@@ -48,6 +48,8 @@ export type CaptureIntent =
   | "task.reparent"
   | "workstream.init"
   | "workstream.teardown"
+  // Any write made through `mu sql`, on whichever portable table it hit.
+  | "sql.write"
   // Pre-1.2.0 name for workstream.teardown. Read-only: nothing emits it
   // any more, but ~5k ops in existing logs carry it and must keep
   // rendering. See LEGACY_INTENT_SYNONYMS in src/legacy-ops.ts.
@@ -179,6 +181,7 @@ const VERBS: Record<KnownIntent, string> = {
   "workstream.init": "workstream init",
   "workstream.teardown": "workstream teardown",
   "workstream.destroy": "workstream teardown",
+  "sql.write": "sql write",
   "agent.spawn": "agent spawn",
   "agent.close": "agent close",
   "agent.adopt": "agent adopt",
@@ -355,6 +358,23 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
         subject,
         detail: key.local === undefined ? "" : "(cascaded)",
       };
+    case "sql.write": {
+      // A raw write can hit any portable table, so name the entity and
+      // the changed columns (values truncated: a note body is free text).
+      if (deleted) return { verb: VERBS[intent], subject, detail: `${row.kind} deleted` };
+      const edge = key.to === undefined ? "" : ` -> ${key.to}`;
+      const changed = changedFields(bag)
+        .map((f) => {
+          const v = bag[f];
+          return typeof v === "object" && v !== null ? f : `${f}=${oneLine(String(v), 40)}`;
+        })
+        .join(" ");
+      return {
+        verb: VERBS[intent],
+        subject,
+        detail: `${row.kind}${edge} ${changed === "" ? "(touched)" : changed}`,
+      };
+    }
     // Local intents: no trigger can see these, so `emitEvent` wrote the
     // payload as prose. It is already human-readable — show it as the
     // detail rather than inventing a second phrasing. The leading verb

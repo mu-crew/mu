@@ -90,7 +90,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | --- | --- |
 | `src/db.ts` | better-sqlite3 connection (WAL); schema v11 (11 tables, 3 views) in `applySchema`; installs capture; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
 | `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
-| `src/capture.ts` | TEMP triggers recording each portable write as an op |
+| `src/capture.ts` | TEMP triggers recording each portable write as an op, and refusing natural-key changes |
 | `src/op-context.ts` | `withOpContext` (intent, actor, group); `withCaptureSuppressed` echo guard |
 | `src/apply.ts` | apply one op: per-field LWW, tombstones, substate pair repair, `reprojectDeferredOps` |
 | `src/undo.ts` | inverse ops for one group; refuses a superseded group |

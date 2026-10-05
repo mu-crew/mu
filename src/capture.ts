@@ -308,7 +308,8 @@ function emitOp(
  *  ids and FK columns that are already encoded in the natural key
  *  (`tasks.workstream_id`, `task_notes.task_id`, the edge endpoints),
  *  because shipping a peer our local rowids would be worse than
- *  useless. `tasks.owner_id` IS captured: it is an FK into the
+ *  useless. Changing one of those would re-key the row, which no op
+ *  can express, so KEY_COLUMNS below refuses it instead. `tasks.owner_id` IS captured: it is an FK into the
  *  machine-local `agents` table, so it never syncs (see
  *  MACHINE_LOCAL_TABLES), but it must still be captured for local
  *  history and undo of a claim/release. */
@@ -328,6 +329,44 @@ const CAPTURED_COLUMNS = {
   task_notes: ["author", "content", "created_at"],
   task_edges: ["created_at"],
 } as const satisfies Record<(typeof PORTABLE_TABLES)[number], readonly string[]>;
+
+/** Columns that make up (or resolve to) each table's natural key.
+ *
+ *  An UPDATE of one of these moves the row to a different `ops.key`
+ *  (`a/t1` -> `b/t1`), and every op already in the log stays filed under
+ *  the old key. The UPDATE triggers above diff only CAPTURED_COLUMNS, so
+ *  such an update used to emit NOTHING: no tombstone for the old key, no
+ *  put for the new one. Sync, undo, rebuild and `mu doctor` then disagree
+ *  with the live row. Children re-key with it (a task's notes and edges
+ *  embed its key), so capturing a move would mean re-emitting a subtree.
+ *
+ *  Natural keys are immutable instead: apply (NEVER_APPLY) and undo
+ *  (NEVER_RESTORE) already never write these columns, and a raw
+ *  `mu sql` UPDATE is refused here with an explicit error rather than
+ *  committing a row the log cannot explain. The guard is NOT gated on
+ *  the echo guard: no mu path re-keys a row, ingest included. */
+const KEY_COLUMNS = {
+  workstreams: ["name"],
+  tasks: ["workstream_id", "local_id"],
+  task_notes: ["id", "task_id"],
+  task_edges: ["from_task_id", "to_task_id"],
+} as const satisfies Record<(typeof PORTABLE_TABLES)[number], readonly string[]>;
+
+/** BEFORE UPDATE trigger refusing a natural-key change on `table`. */
+function keyGuard(table: keyof typeof KEY_COLUMNS): string {
+  const cols = KEY_COLUMNS[table];
+  const msg =
+    `mu: ${table}.${cols.join("/")} is part of the natural key that every op is filed under; ` +
+    "changing it would desync the ops log, sync and undo. " +
+    "Add a new row (mu task add / mu workstream init) instead of moving or renaming one.";
+  return `
+CREATE TEMP TRIGGER IF NOT EXISTS _cap_${table}_key
+BEFORE UPDATE OF ${cols.join(", ")} ON ${table}
+  WHEN ${anyChanged(cols)}
+BEGIN
+  SELECT RAISE(ABORT, '${msg.replaceAll("'", "''")}');
+END;`;
+}
 
 /**
  * THE DELETE SUBTLETY
@@ -391,6 +430,12 @@ function buildTriggerDdl(): string {
   const edgeKeyOld = `${taskKey("OLD.from_task_id")} || '->' || ${taskKey("OLD.to_task_id")}`;
 
   return `
+-- ─── natural-key guards (see KEY_COLUMNS) ───────────────────────────
+${keyGuard("workstreams")}
+${keyGuard("tasks")}
+${keyGuard("task_notes")}
+${keyGuard("task_edges")}
+
 -- ─── workstreams ────────────────────────────────────────────────────
 CREATE TEMP TRIGGER IF NOT EXISTS _cap_workstreams_ins
 AFTER INSERT ON workstreams WHEN ${NOT_APPLYING}

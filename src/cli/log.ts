@@ -240,7 +240,7 @@ export function wireLogCommand(program: Command): void {
     .option("--as <name>", "override the source name (default: agent via $TMUX_PANE, else 'user')")
     .option(
       "--kind <kind>",
-      "operator-chosen channel tag: sets it on write, filters to it on read (log-ledger pattern)",
+      "operator-chosen channel tag: sets it on write, filters to it on read (log-ledger pattern); workstream, task, edge and note are reserved",
     )
     .option(
       "--intent <intent>",
