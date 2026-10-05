@@ -108,6 +108,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **Undoing a claim or release restores the owner too.** Before, undoing a claim left the task OPEN but still owned, so other workers could not claim it. Undoing a release left the task IN_PROGRESS with no owner. Undo now restores the owner from this machine's ops if that agent still exists. A task that arrived from a peer, or that a peer re-created after a delete, goes back to unowned.
 - **`mu_delegate`: a failed start no longer strands the queue.** When a direct call failed to start (spawn error, control socket not ok) while another call sat queued behind it, the freed slot went unused and the queued call never started. Now any start, queued or direct, starts the next queued call once its slot is free.
 - **Keep-driving and refute nudges parse claims the same way.** The keep-driving nudge now arms on `mu task claim <id> -f <w>` and `--for=<w>`, and reads the workstream from `<ws>/<id>` after a leading `--for`. Both nudges count `mu` only as a segment's command (after any `NAME=value` env assignments), so `grep mu agent send` and heredoc bodies do not count as dispatch. A `<<<` here-string or a `<<` shift inside `$(( ))` does not start a heredoc, so a later claim still counts; a `((` that closes as nested subshells (`((cd x && cat) <<EOF … )`) still does, and a `#` comment is skipped, so neither exposes a heredoc body as dispatch. A backslash-newline continuation no longer becomes a word, which made the task id `\n`.
+- **Sync ingest no longer wedges on a segment written by mu < 1.1.** A
+  historical `workstream.export` line (prose payload) threw a JSON
+  error that rolled back the whole segment on every invocation. Ingest
+  now skips it, as flush and `mu sync --from` already did.
+- **A Syncthing conflict copy keeps its own watermark.** It shared the
+  original's line count, so ops that existed only in the copy were
+  skipped silently.
+- **`mu sync --repair <short>` works when the peer has a conflict
+  copy.** The short id matched both files and exited 4. A ref now names
+  a machine, and repair resets every file of that machine.
+- **A blank line in your own segment is now self-repaired.** The owner
+  skipped it while peers halted on it, so peers stopped there forever.
+- **A segment shorter than its manifest no longer suggests
+  `--repair`,** which cannot clear it. The warning says to copy the
+  file again.
+- `mu doctor`'s case-collision fix now ends with
+  `mu workstream teardown <old-name> --yes`; without `--yes` it was a
+  dry run.
 
 ## [3.8.1] — 2026-10-05
 

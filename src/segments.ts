@@ -46,10 +46,12 @@
 //   3. Monotonic hlc       = reordering, duplication, and silent
 //      mid-file truncation. Structural, zero extra bytes.
 //   4. Manifest sidecar    = whole-file verification (count, last_hlc,
-//      sha256).
+//      sha256). REPORTS, does not halt: it fires when every remaining
+//      line is individually valid (a truncation on a line boundary), so
+//      the prefix is safe to apply and the fix is a fresh copy.
 //
-// On a bad record we stop at the last GOOD one and advance the watermark
-// only that far, then report it. Because `UNIQUE (machine_id, hlc)` makes
+// On a bad record (layers 1-3) we stop at the last GOOD one and advance
+// the watermark only that far, then report it. Because `UNIQUE (machine_id, hlc)` makes
 // ingest idempotent, the universal repair is "re-read from zero" — so a
 // damaged segment is recoverable, never fatal.
 
@@ -596,14 +598,20 @@ function readSegmentTail(path: string): {
   defect: SegmentDefect | null;
 } {
   if (!existsSync(path)) return { count: 0, lastHlc: null, goodLines: [], defect: null };
-  const raw = readFileSync(path, "utf8");
-  const lines = raw.split("\n").filter((l) => l.trim() !== "");
+  const lines = segmentLines(readFileSync(path, "utf8"));
   let lastHlc: string | null = null;
   let count = 0;
   let defect: SegmentDefect | null = null;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
     if (line === undefined) break;
+    // Same rule as `ingestSegment`: a blank line is damage. Skipping it
+    // here while peers halt on it left the owner blind to the defect,
+    // so it never self-repaired and every peer stopped there forever.
+    if (line.trim() === "") {
+      defect = { kind: "malformed-shape", line: index + 1, detail: "blank line" };
+      break;
+    }
     const decoded = decodeLine(line);
     if (!decoded.ok) {
       defect = { kind: decoded.kind, line: index + 1, detail: decoded.detail };
@@ -613,6 +621,17 @@ function readSegmentTail(path: string): {
     count += 1;
   }
   return { count, lastHlc, goodLines: lines.slice(0, count), defect };
+}
+
+/** Split a segment into its lines exactly as every reader must: a
+ *  trailing newline is normal, a trailing PARTIAL line is a torn write
+ *  (kept so layer 1 can catch it), and a blank line stays in place so
+ *  the caller reports it as damage. One splitter, so the owner's
+ *  self-check and a peer's ingest cannot disagree about line numbers. */
+function segmentLines(raw: string): string[] {
+  const lines = raw.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
 }
 
 /** LAYER 4: whole-file verification sidecar. */
@@ -672,6 +691,12 @@ export function verifyAgainstManifest(
 export interface PeerSegment {
   /** Machine id the segment belongs to. */
   machineId: string;
+  /** Key of this FILE's watermark in `sync_peers`: the machine id for
+   *  the peer's own segment, the full file stem for a conflict copy.
+   *  A copy diverges from its original, so line N of one says nothing
+   *  about line N of the other; sharing one watermark skipped every op
+   *  that existed only in the copy. */
+  watermarkKey: string;
   /** Path on disk. */
   path: string;
   /** True for a Syncthing-style conflict copy. */
@@ -712,7 +737,7 @@ export function discoverPeers(dir: string, selfMachineId: string): PeerSegment[]
     } catch {
       continue;
     }
-    peers.push({ machineId, path, conflictCopy });
+    peers.push({ machineId, watermarkKey: conflictCopy ? stem : machineId, path, conflictCopy });
   }
   return peers.sort((a, b) => a.path.localeCompare(b.path));
 }
@@ -720,7 +745,9 @@ export function discoverPeers(dir: string, selfMachineId: string): PeerSegment[]
 // ─── watermarks ───────────────────────────────────────────────────────
 
 /**
- * How far into a peer's segment we have applied.
+ * How far into one segment file we have applied, keyed by
+ * `PeerSegment.watermarkKey` (the machine id, or a conflict copy's own
+ * stem).
  *
  * ONE INTEGER SUFFICES because segments are append-only and ordered — a
  * set or a vector clock would be strictly more state for no more
@@ -731,26 +758,26 @@ export function discoverPeers(dir: string, selfMachineId: string): PeerSegment[]
  * `ops.seq` (which is a local-only cursor on their machine and means
  * nothing here).
  */
-export function getWatermark(db: Db, machineId: string): number {
+export function getWatermark(db: Db, watermarkKey: string): number {
   const row = db
     .prepare("SELECT last_applied_seq AS n FROM sync_peers WHERE machine_id = ?")
-    .get(machineId) as { n: number } | undefined;
+    .get(watermarkKey) as { n: number } | undefined;
   return row?.n ?? 0;
 }
 
-export function setWatermark(db: Db, machineId: string, value: number): void {
+export function setWatermark(db: Db, watermarkKey: string, value: number): void {
   db.prepare(
     `INSERT INTO sync_peers (machine_id, last_applied_seq, last_seen_at)
      VALUES (@machineId, @value, @seenAt)
      ON CONFLICT (machine_id) DO UPDATE
        SET last_applied_seq = @value, last_seen_at = @seenAt`,
-  ).run({ machineId, value, seenAt: new Date().toISOString() });
+  ).run({ machineId: watermarkKey, value, seenAt: new Date().toISOString() });
 }
 
 /** Reset a peer's watermark so the next ingest re-reads from zero. The
  *  universal repair, safe because ingest is idempotent. */
-export function resetWatermark(db: Db, machineId: string): void {
-  setWatermark(db, machineId, 0);
+export function resetWatermark(db: Db, watermarkKey: string): void {
+  setWatermark(db, watermarkKey, 0);
 }
 
 // ─── ingest: peer segment -> applyOp ──────────────────────────────────
@@ -758,7 +785,9 @@ export function resetWatermark(db: Db, machineId: string): void {
 export interface IngestResult {
   machineId: string;
   path: string;
-  /** Lines read past the watermark. */
+  /** Lines consumed past the starting watermark: applied plus skipped
+   *  (refused, re-delivered, historical log-only) lines. A line that
+   *  halted ingest is not counted. */
   read: number;
   /** Ops applied (some are no-ops: already present, or lost an LWW). */
   applied: number;
@@ -795,13 +824,22 @@ export interface IngestResult {
  * lines, forever — so it is reported and SKIPPED. A non-monotonic line
  * we have NOT seen before is still real damage and still halts.
  *
+ * A HISTORICAL log-only line (`isLegacyLogOnlyIntent`: a prose payload
+ * under an otherwise projectable entity, written by a mu older than the
+ * flush filter) is skipped silently, exactly as flush and `--from` skip
+ * it. Applying it threw a JSON SyntaxError that rolled back the whole
+ * segment on every invocation.
+ *
+ * A manifest mismatch (layer 4) is reported but does not halt: every
+ * line still present is individually valid, so applying them is safe.
+ *
  * Calls `receiveHlc` per op so the local clock advances past the peer's,
  * which is what makes "laptop edits after seeing the devserver's op" order
  * correctly rather than losing to it.
  */
 export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
   const defects: SegmentDefect[] = [];
-  const start = getWatermark(db, peer.machineId);
+  const start = getWatermark(db, peer.watermarkKey);
 
   if (!existsSync(peer.path)) {
     return {
@@ -821,14 +859,12 @@ export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
     // Whole-file damage, distinct from a torn line: every remaining
     // record may be individually valid (truncation exactly on a line
     // boundary), which is precisely what the per-line layers cannot see.
+    // Reported, NOT a halt: the lines that remain are a valid prefix, so
+    // the per-line layers below still decide how far to apply.
     defects.push({ kind: "manifest-mismatch", line: 0, detail: verified.reason });
   }
 
-  const raw = readFileSync(peer.path, "utf8");
-  // A trailing newline is normal; a trailing PARTIAL line is a torn
-  // write, and splitting keeps it so layer 1 can catch it.
-  const lines = raw.split("\n");
-  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  const lines = segmentLines(readFileSync(peer.path, "utf8"));
 
   let applied = 0;
   let changed = 0;
@@ -902,6 +938,12 @@ export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
         break;
       }
 
+      if (isLegacyLogOnlyIntent(decoded.line.intent)) {
+        previousHlc = op.hlc;
+        watermark = lineNo;
+        continue;
+      }
+
       try {
         const result = applyIncomingOp(db, op);
         if (result.changed) changed += 1;
@@ -937,14 +979,14 @@ export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
       previousHlc = op.hlc;
       watermark = lineNo;
     }
-    setWatermark(db, peer.machineId, watermark);
+    setWatermark(db, peer.watermarkKey, watermark);
   });
   run.immediate();
 
   return {
     machineId: peer.machineId,
     path: peer.path,
-    read: applied,
+    read: watermark - start,
     applied,
     changed,
     watermark,
@@ -953,24 +995,6 @@ export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
   };
 }
 
-/**
- * Apply ONE incoming op and record it in the local `ops` table.
- *
- * The shared tail of every ingest path — segment ingest above, and the
- * `mu sync --from <peer.db>` reader in `src/sync.ts`, which is a
- * different READER over the same apply semantics. Extracted so the two
- * cannot drift: a second copy of "advance the clock, apply, record" is
- * how one of them silently stops advancing the clock.
- *
- * Three steps, in this order:
- *   1. `receiveHlc` BEFORE applying, so anything we mint afterwards
- *      sorts above the peer's op.
- *   2. `applyOp`, which is capture-suppressed (no echo op is minted).
- *   3. Record the op locally so it survives, participates in
- *      provenance, and can be re-flushed by rebuild. INSERT OR IGNORE
- *      makes this idempotent via UNIQUE (machine_id, hlc) — the
- *      property that lets "re-read from zero" be the universal repair.
- */
 /**
  * Is this exact op already in our `ops` table?
  *
@@ -999,6 +1023,24 @@ function isAlreadyRecorded(db: Db, op: Op): boolean {
   return row !== undefined;
 }
 
+/**
+ * Apply ONE incoming op and record it in the local `ops` table.
+ *
+ * The shared tail of every ingest path — segment ingest above, and the
+ * `mu sync --from <peer.db>` reader in `src/sync.ts`, which is a
+ * different READER over the same apply semantics. Extracted so the two
+ * cannot drift: a second copy of "advance the clock, apply, record" is
+ * how one of them silently stops advancing the clock.
+ *
+ * Three steps, in this order:
+ *   1. `receiveHlc` BEFORE applying, so anything we mint afterwards
+ *      sorts above the peer's op.
+ *   2. `applyOp`, which is capture-suppressed (no echo op is minted).
+ *   3. Record the op locally so it survives, participates in
+ *      provenance, and can be re-flushed by rebuild. INSERT OR IGNORE
+ *      makes this idempotent via UNIQUE (machine_id, hlc) — the
+ *      property that lets "re-read from zero" be the universal repair.
+ */
 export function applyIncomingOp(db: Db, op: Op): { changed: boolean } {
   receiveHlc(db, op.hlc);
   const result = applyOp(db, op);
@@ -1033,7 +1075,7 @@ export interface SyncPassResult {
 /**
  * One flush + one ingest of every discovered peer.
  *
- * This is the SDK seam `mu sync` (v2-sync) will call; it deliberately
+ * The SDK seam `mu sync` calls (src/cli/sync.ts); it deliberately
  * prints nothing and starts nothing. No daemon, no watcher, no polling
  * loop that outlives the command — the anti-feature pledges are firm, and
  * mu never moves files itself: the operator owns transport.

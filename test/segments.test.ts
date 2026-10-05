@@ -137,6 +137,39 @@ describe("segments", () => {
     expect(readFileSync(result.segmentPath ?? "", "utf8")).toBe("");
   });
 
+  it("ingest skips a historical prose workstream.export line instead of wedging", async () => {
+    // A segment written by mu < 1.1 (before the flush filter) carries
+    // the prose line; applying it threw a JSON SyntaxError that rolled
+    // back the whole segment on every invocation.
+    seedTask(a, "before");
+    await flushSegment(a, dir);
+    const path = segFor(a);
+    const lines = linesOf(path);
+    const last = lines[lines.length - 1];
+    if (last === undefined) throw new Error("need a line");
+    const prev = parseHlc((JSON.parse(last) as { hlc: string }).hlc);
+    const legacy = encodeSegmentLine({
+      hlc: formatHlc({ ...prev, counter: prev.counter + 1, machineId: localMachineId(a) }),
+      machineId: localMachineId(a),
+      groupId: "legacy-export",
+      intent: "workstream.export",
+      actor: "system",
+      entity: "workstream",
+      key: "demo",
+      op: "put",
+      payload: "workstream export demo (out=/tmp/x)",
+    });
+    writeFileSync(path, `${[...lines, legacy].join("\n")}\n`);
+    seedTask(a, "after");
+    await flushSegment(a, dir);
+
+    const results = ingestAll(b);
+    expect(results.flatMap((r) => r.defects)).toEqual([]);
+    expect(task(b, "before")).toBeDefined();
+    expect(task(b, "after")).toBeDefined();
+    expect(getWatermark(b, localMachineId(a))).toBe(linesOf(path).length);
+  });
+
   // ─── round trip ──────────────────────────────────────────────────────
 
   describe("round trip between two machines", () => {
@@ -167,7 +200,12 @@ describe("segments", () => {
       const path = join(dir, `${machineId}.jsonl`);
       writeFileSync(path, `${line}\n`);
 
-      const result = ingestSegment(b, { machineId, path, conflictCopy: false });
+      const result = ingestSegment(b, {
+        machineId,
+        watermarkKey: machineId,
+        path,
+        conflictCopy: false,
+      });
       expect(result.defects).toEqual([]);
       expect(task(b, "legacy")?.status).toBe(projected);
       expect(
@@ -477,6 +515,9 @@ describe("segments", () => {
       // walks past it and finishes the file rather than wedging.
       expect(result.truncatedAt).toBeNull();
       expect(result.watermark).toBe(lines.length + 1);
+      // `read` counts every line consumed, the skipped one included.
+      expect(result.read).toBe(lines.length + 1);
+      expect(result.applied).toBe(lines.length);
     });
 
     it("LAYER 3: a re-delivered BLOCK mid-file does not wedge the watermark", async () => {
@@ -537,6 +578,26 @@ describe("segments", () => {
       if (peer === undefined) throw new Error("expected a peer");
       const result = ingestSegment(b, peer);
       expect(result.defects.some((d) => d.kind === "manifest-mismatch")).toBe(true);
+      // Reported, not a halt: the two remaining lines are valid.
+      expect(result.truncatedAt).toBeNull();
+      expect(result.applied).toBe(2);
+    });
+
+    it("a blank line in OWN segment is self-repaired, so peers do not halt there forever", async () => {
+      const path = await seedFour();
+      const lines = linesOf(path);
+      writeFileSync(path, `${[lines[0], "", ...lines.slice(1)].join("\n")}\n`);
+
+      // The owner must see the same defect peers halt on.
+      addTask(a, { workstream: "demo", localId: "t4", title: "T4", impact: 50, effortDays: 1 });
+      const flushed = await flushSegment(a, dir);
+      expect(flushed.selfRepaired).toMatchObject({ kind: "malformed-shape", line: 2 });
+      expect(readFileSync(path, "utf8")).not.toMatch(/\n\n/);
+
+      const results = ingestAll(b);
+      expect(results.flatMap((r) => r.defects)).toEqual([]);
+      expect(task(b, "t4")).toBeDefined();
+      expect(getWatermark(b, localMachineId(a))).toBe(flushed.total);
     });
 
     it("LAYER 4: a GROWN segment is not reported as damage", async () => {
@@ -916,6 +977,38 @@ describe("segments", () => {
 
       for (const peer of peers) ingestSegment(b, peer);
       expect(task(b, "conflicted")).toBeDefined();
+    });
+
+    it("a DIVERGED conflict copy has its own watermark, so ops only in the copy land", async () => {
+      // Original [t1, t2, t3] and copy [t1, t2, t4]: a shared line-count
+      // watermark of 3 would skip the copy's t4 without a defect.
+      seedTask(a, "t1");
+      seedTask(a, "t2");
+      await flushSegment(a, dir);
+      const original = segFor(a);
+      const shared = readFileSync(original, "utf8");
+      addTask(a, { workstream: "demo", localId: "t4", title: "T4", impact: 50, effortDays: 1 });
+      await flushSegment(a, dir);
+      const copyText = readFileSync(original, "utf8");
+      // Rewind the original and give it a different third op.
+      writeFileSync(original, shared);
+      a.prepare("DELETE FROM ops WHERE key LIKE '%/t4'").run();
+      addTask(a, { workstream: "demo", localId: "t3", title: "T3", impact: 50, effortDays: 1 });
+      await flushSegment(a, dir);
+      const conflict = join(
+        dir,
+        `${localMachineId(a)}.sync-conflict-20260609-123456-ABCDEFG.jsonl`,
+      );
+      writeFileSync(conflict, copyText);
+      expect(linesOf(conflict).length).toBe(linesOf(original).length);
+
+      const results = ingestAll(b);
+      expect(results.flatMap((r) => r.defects)).toEqual([]);
+      for (const id of ["t1", "t2", "t3", "t4"]) expect(task(b, id)).toBeDefined();
+      const copy = peersFor(b).find((p) => p.conflictCopy);
+      if (copy === undefined) throw new Error("expected the conflict copy");
+      expect(copy.watermarkKey).not.toBe(copy.machineId);
+      expect(getWatermark(b, copy.watermarkKey)).toBe(linesOf(conflict).length);
     });
 
     it("ignores non-segment files in the sync dir", async () => {

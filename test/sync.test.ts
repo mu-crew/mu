@@ -227,6 +227,7 @@ describe("sync", () => {
       short: machineId.slice(0, 8),
       path: `/tmp/${machineId}.jsonl`,
       conflictCopy: false,
+      watermarkKey: machineId,
       watermark: 0,
       total: 0,
       behind: 0,
@@ -244,6 +245,21 @@ describe("sync", () => {
     it("refuses an ambiguous prefix rather than guessing", () => {
       const peers = [peer("aaaa1111-x"), peer("aaaa2222-y")];
       expect(() => resolvePeerRef(peers, "aaaa")).toThrow(SyncPeerRefAmbiguousError);
+    });
+
+    it("treats a segment and its conflict copy as ONE machine", () => {
+      const copy = {
+        ...peer("aaaa1111-x"),
+        conflictCopy: true,
+        watermarkKey: "aaaa1111-x.sync-conflict-1",
+      };
+      const peers = [copy, peer("aaaa1111-x"), peer("bbbb2222-y")];
+      const hit = resolvePeerRef(peers, "aaaa1111");
+      expect(hit.conflictCopy).toBe(false);
+      expect(resolvePeerRef(peers, "aaaa1111-x").conflictCopy).toBe(false);
+      // Two different machines are still ambiguous, each named once.
+      const two = [copy, peer("aaaa1111-x"), peer("aaaa2222-y")];
+      expect(() => resolvePeerRef(two, "aaaa")).toThrow(/matches 2 peers \(aaaa1111, aaaa2222\)/);
     });
 
     it("names the known peers when nothing matches", () => {
@@ -275,6 +291,24 @@ describe("sync", () => {
       expect(opCount(b)).toBe(opsBefore);
       expect(taskRow(b, "t1")?.status).toBe("OPEN");
     });
+
+    it("resets the conflict copy's watermark too, by its short id", async () => {
+      seed(a, "t1");
+      await flushSegment(a, dir);
+      const path = segmentPath(dir, localMachineId(a));
+      writeFileSync(
+        join(dir, `${localMachineId(a)}.sync-conflict-20260609-123456-ABCDEFG.jsonl`),
+        readFileSync(path, "utf8"),
+      );
+      await syncPass(b, dir);
+      const before = peerStatuses(b, dir);
+      expect(before).toHaveLength(2);
+      expect(before.every((p) => p.watermark > 0)).toBe(true);
+
+      const short = before[0]?.short ?? "";
+      repairPeer(b, short, dir);
+      expect(peerStatuses(b, dir).map((p) => p.watermark)).toEqual([0, 0]);
+    });
   });
 
   // ─── never fail a command ──────────────────────────────────────────
@@ -293,6 +327,21 @@ describe("sync", () => {
       // b is still perfectly usable: the local write path is untouched.
       seed(b, "t2");
       expect(taskRow(b, "t2")).toBeDefined();
+    });
+
+    it("does not suggest --repair for a manifest mismatch it cannot clear", async () => {
+      seed(a, "t1");
+      seed(a, "t2");
+      await flushSegment(a, dir);
+      const path = segmentPath(dir, localMachineId(a));
+      const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+      // Truncated exactly on a line boundary, manifest kept.
+      writeFileSync(path, `${lines.slice(0, 2).join("\n")}\n`, "utf8");
+
+      const result = await ambientIngest(b, { quiet: true });
+      expect(result.warnings.join(" ")).toMatch(/manifest-mismatch/);
+      expect(result.warnings.join(" ")).not.toMatch(/--repair/);
+      expect(result.warnings.join(" ")).toMatch(/copy it from the peer again/);
     });
 
     it("survives a sync dir that is a FILE, not a directory", async () => {
@@ -437,6 +486,7 @@ describe("sync", () => {
       short: "aaaa1111",
       path: "/tmp/aaaa1111.jsonl",
       conflictCopy: false,
+      watermarkKey: "aaaa1111",
       watermark: 0,
       total: 0,
       behind: 0,
