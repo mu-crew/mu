@@ -29,6 +29,7 @@ import {
   ambientSyncPass,
   ingestFromDb,
   PEER_STALE_MS,
+  type PeerStatus,
   peerStatuses,
   repairPeer,
   resolvePeerRef,
@@ -260,6 +261,26 @@ describe("sync", () => {
       // Two different machines are still ambiguous, each named once.
       const two = [copy, peer("aaaa1111-x"), peer("aaaa2222-y")];
       expect(() => resolvePeerRef(two, "aaaa")).toThrow(/matches 2 peers \(aaaa1111, aaaa2222\)/);
+    });
+
+    it("accepts the pre-watermarkKey PeerStatus shape (SDK compat)", () => {
+      // PeerStatus is exported from src/index.ts. A caller that builds
+      // it without watermarkKey must still compile (npm run typecheck
+      // covers test/) and resolve / produce transport hints.
+      const oldShape: PeerStatus = {
+        machineId: "aaaa1111-x",
+        short: "aaaa1111",
+        path: "/tmp/aaaa1111-x.jsonl",
+        conflictCopy: false,
+        watermark: 0,
+        total: 0,
+        behind: 0,
+        lastSeenMs: 0,
+        ageMs: PEER_STALE_MS + 1,
+        stale: true,
+      };
+      expect(resolvePeerRef([oldShape], "aaaa").machineId).toBe("aaaa1111-x");
+      expect(transportNextSteps("/mnt/sync", [oldShape]).length).toBeGreaterThan(0);
     });
 
     it("names the known peers when nothing matches", () => {

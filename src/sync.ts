@@ -131,8 +131,11 @@ export interface PeerStatus {
   path: string;
   /** True for a Syncthing-style `*.sync-conflict-*.jsonl` copy. */
   conflictCopy: boolean;
-  /** `sync_peers` key of this file's watermark (see `PeerSegment`). */
-  watermarkKey: string;
+  /** `sync_peers` key of this file's watermark (see `PeerSegment`).
+   *  `peerStatuses` always sets it. Optional so SDK callers that build
+   *  the pre-watermarkKey shape still compile; absent means the machine
+   *  id (`peerWatermarkKey`). */
+  watermarkKey?: string;
   /** Lines of this segment file already applied. */
   watermark: number;
   /** GOOD lines currently in the segment (a defect stops the count). */
@@ -219,7 +222,7 @@ export function repairPeer(db: Db, ref: string, dir: string): PeerStatus {
   const peers = peerStatuses(db, dir);
   const peer = resolvePeerRef(peers, ref);
   for (const p of peers) {
-    if (p.machineId === peer.machineId) resetWatermark(db, p.watermarkKey);
+    if (p.machineId === peer.machineId) resetWatermark(db, peerWatermarkKey(p));
   }
   return peer;
 }

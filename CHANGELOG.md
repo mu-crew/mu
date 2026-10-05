@@ -114,8 +114,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   now skips it, as flush and `mu sync --from` already did.
 - **A Syncthing conflict copy keeps its own watermark.** It shared the
   original's line count, so ops that existed only in the copy were
-  skipped silently. The SDK's `PeerSegment.watermarkKey` is optional;
-  without it, `ingestSegment` keys the watermark by `machineId`.
+  skipped silently. The SDK's new `PeerSegment.watermarkKey` and
+  `PeerStatus.watermarkKey` fields are optional; without them, the
+  watermark is keyed by `machineId`.
 - **`mu sync --repair <short>` works when the peer has a conflict
   copy.** The short id matched both files and exited 4. A ref now names
   a machine, and repair resets every file of that machine.
