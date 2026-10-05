@@ -34,6 +34,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - `mu agent remote-env --remote-sock` rejects `:` and `%`. ssh `-L`
   splits on `:` and expands `%` tokens, so the forward broke or pointed
   at a different socket.
+- **jj workspaces: same-named agents, missing dirs, project root, empty `@`.** A jj workspace is now named `<workstream>/<agent>`, so `worker-1` in two workstreams on one repo no longer fails with "Workspace named 'worker-1' already exists". Creating a workspace forgets a same-named registration whose directory is gone, so a workspace freed after `rm -rf` can be recreated. The TUI's project-root launch focus now maps a jj workspace to the repo it came from (via `.jj/repo`) instead of mu's state dir. `mu workspace commits` and the clean-workspace auto-free on `mu agent close` no longer count jj's empty, undescribed working-copy commit as a commit.
 
 ## [3.8.1] — 2026-10-05
 

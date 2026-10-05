@@ -352,4 +352,24 @@ jjDescribe("jjBackend.commitsSinceBase (smoke)", () => {
     expect(commit.sha).toMatch(/^[0-9a-f]+$/);
     expect(commit.authorDate).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
+
+  it("omits the empty undescribed working-copy commit jj leaves after `jj commit`", async () => {
+    const wsPath = join(stateRoot, "workspaces", "auth", "worker-1");
+    const r = await jjBackend.createWorkspace({ projectRoot, workspacePath: wsPath });
+    writeFileSync(join(wsPath, "work.txt"), "work\n");
+    execFileSync("jj", ["commit", "-m", "work"], { cwd: wsPath, stdio: "ignore" });
+
+    const commits = await jjBackend.commitsSinceBase(wsPath, r.parentRef ?? "");
+    expect(commits.map((c) => c.subject)).toEqual(["work"]);
+  });
+
+  it("an edit that is reverted leaves no commits", async () => {
+    const wsPath = join(stateRoot, "workspaces", "auth", "worker-1");
+    const r = await jjBackend.createWorkspace({ projectRoot, workspacePath: wsPath });
+    writeFileSync(join(wsPath, "tmp.txt"), "x\n");
+    execFileSync("jj", ["status"], { cwd: wsPath, stdio: "ignore" });
+    rmSync(join(wsPath, "tmp.txt"));
+
+    expect(await jjBackend.commitsSinceBase(wsPath, r.parentRef ?? "")).toEqual([]);
+  });
 });
