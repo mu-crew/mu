@@ -56,7 +56,7 @@ triage and the umbrella closes with `--if-ready` (workstream mode).
 
 - **Reviewers padding the list.** A panel that always finds ten things
   is guessing.
-- **Use different models across angles** where you can; one model's
-  blind spot repeated five times is still one blind spot.
+- **Vary models across angles** ([Models](../SKILL.md#models-and-thinking-effort)); one model's blind spot
+  repeated five times is still one blind spot.
 - **The panel is not the gate command.** Merge verification still runs on the
   merged tree ([orchestrator-loop](orchestrator-loop.md#merging)).

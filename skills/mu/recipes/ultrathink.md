@@ -43,8 +43,8 @@ and check, skip it.
    [brief](brief.md) ([plan](plan.md) for a spec-driven build). Rounds
    of a loop are the one exception: add each when the last closes.
 5. **Review every unit that ships.** Each commit-producing task gets a
-   review task ([adversarial-review](adversarial-review.md)), on a
-   different model where you can. Every finding is a triage task,
+   review task ([adversarial-review](adversarial-review.md)) on a
+   [comparable model](../SKILL.md#models-and-thinking-effort). Every finding is a triage task,
    refuted before it is accepted ([findings](findings.md)).
 6. **Run the loop** ([orchestrator-loop](orchestrator-loop.md)): pipeline
    merges, verify each merge, keep workers busy
