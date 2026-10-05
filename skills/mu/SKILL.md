@@ -215,7 +215,8 @@ export MU_PI_COMMAND="pi --model sonnet:medium"
 mu agent spawn a --cli pi_big   # uses $MU_PI_BIG_COMMAND
 ```
 
-`pi_mini` scouts and finds, `pi` builds, `pi_big` designs. A reviewer, refuter,
+`pi_mini` scouts and finds, `pi` builds and refactors, `pi_big` designs and
+handles incidents. A reviewer, refuter,
 judge or auditor checks level or up, never down: at least the worker's
 capability, from another family if one exists (provider or model-id prefix in
 `pi --list-models`). Small-model signs: a local runtime (ollama, lmstudio,
