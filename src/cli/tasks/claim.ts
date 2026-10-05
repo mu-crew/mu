@@ -13,7 +13,7 @@
 import { dirname } from "node:path";
 import { agentKey, readAgentStates, type StateReading } from "../../agent-state.js";
 import { AgentNotFoundError } from "../../agents/errors.js";
-import { getAgent, refreshAgentTitle } from "../../agents.js";
+import { type AgentRow, getAgent, refreshAgentTitle } from "../../agents.js";
 import {
   assertTaskInWorkstream,
   CliExitError,
@@ -442,7 +442,26 @@ export async function cmdTaskWait(
   // who pass --on-stall exit + --status OPEN get warn-only behaviour
   // (the SDK still emits the stderr warning + agent_logs event).
   if (onStallRaw === "exit" && target === "CLOSED") sdkOpts.onStall = "exit";
-  const priorState = new Map<string, { status: string; owner: string | null }>();
+  // The owner is read by owner_id, not by name in the task's
+  // workstream: `task claim --for <ws>/<agent>` assigns an owner from
+  // another workstream.
+  const ownerOf = (ref: TaskWaitRef): AgentRow | undefined => {
+    const row = db
+      .prepare(
+        `SELECT a.name AS name, aws.name AS ws
+           FROM tasks t
+           JOIN workstreams tws ON tws.id = t.workstream_id
+           JOIN agents a ON a.id = t.owner_id
+           JOIN workstreams aws ON aws.id = a.workstream_id
+          WHERE t.local_id = ? AND tws.name = ?`,
+      )
+      .get(ref.name, ref.workstreamName) as { name: string; ws: string } | undefined;
+    return row === undefined ? undefined : getAgent(db, row.name, row.ws);
+  };
+  const priorState = new Map<
+    string,
+    { status: string; owner: { name: string; workstream: string } | null }
+  >();
   sdkOpts.beforePoll = async () => {
     // Reconcile each unique workstream in the wait set. Each call is
     // a cheap (~few ms) mux pane listing; it captures no pane text.
@@ -459,9 +478,7 @@ export async function cmdTaskWait(
       }
     }
     const owners = refs.flatMap((ref) => {
-      const owner = getTask(db, ref.name, ref.workstreamName)?.ownerName;
-      if (owner === null || owner === undefined) return [];
-      const agent = getAgent(db, owner, ref.workstreamName);
+      const agent = ownerOf(ref);
       return agent === undefined ? [] : [agent];
     });
     ownerReadings = await readAgentStates(owners, { stateDir: dirname(db.name) });
@@ -470,7 +487,11 @@ export async function cmdTaskWait(
       const key = qualifiedId(ref);
       const row = getTask(db, ref.name, ref.workstreamName);
       const status = row?.status ?? "OPEN";
-      const owner = row?.ownerName ?? null;
+      const ownerRow = ownerOf(ref);
+      const owner =
+        ownerRow === undefined
+          ? null
+          : { name: ownerRow.name, workstream: ownerRow.workstreamName };
       const prior = priorState.get(key);
       // Reaper-flip detected on a watched task: IN_PROGRESS → OPEN AND
       // the prior owner's agent row is gone. The reaper is the agent
@@ -486,9 +507,9 @@ export async function cmdTaskWait(
         prior.status === "IN_PROGRESS" &&
         status === "OPEN" &&
         prior.owner !== null &&
-        getAgent(db, prior.owner, ref.workstreamName) === undefined
+        getAgent(db, prior.owner.name, prior.owner.workstream) === undefined
       ) {
-        throw new ReaperDetectedDuringWaitError(ref.name, prior.owner, ref.workstreamName);
+        throw new ReaperDetectedDuringWaitError(ref.name, prior.owner.name, ref.workstreamName);
       }
       priorState.set(key, { status, owner });
     }

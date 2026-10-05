@@ -173,6 +173,24 @@ describe("mu task wait exit 6 (reaper)", () => {
     expect(res.stderr).not.toMatch(/reaper/i);
   });
 
+  it("does not fire on a manual release of a cross-workstream owner", async () => {
+    addTask(db, { localId: "x1", workstream: "task-ws", title: "x1", impact: 50, effortDays: 1 });
+    panes.set("%2", "working");
+    insertAgent(db, { name: "w2", workstream: "agent-ws", paneId: "%2", cli: "sh" });
+    await claimTask(db, "x1", {
+      workstream: "task-ws",
+      agentName: "w2",
+      agentWorkstream: "agent-ws",
+    });
+    onFirstSleep(setWaitSleepForTests, () => releaseTask(db, "x1", { workstream: "task-ws" }));
+    const res = await runCli(
+      ["task", "wait", "x1", "-w", "task-ws", "--timeout", "0.2", "--stuck-after", "0"],
+      dbPath,
+    );
+    expect(res.exitCode).toBe(5);
+    expect(res.stderr).not.toMatch(/reaper/i);
+  });
+
   it("still fires when the owner row is removed directly (agent close)", async () => {
     onFirstSleep(setWaitSleepForTests, () => deleteAgent(db, "w1", WS));
     const res = await wait();
