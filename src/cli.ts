@@ -553,9 +553,11 @@ export function parseLines(value: string): number {
 
 // Parses a positive integer (0 is rejected). Used where 0 would mean
 // "nothing", e.g. `mu undo -n`, whose empty list reads as an empty log.
+// Digits only: parseInt's prefix parsing would read 1.5, 2x and 1e3 as
+// 1, 2 and 1.
 export function parsePositiveInt(value: string): number {
-  const n = Number.parseInt(value, 10);
-  if (Number.isNaN(n) || n < 1) {
+  const n = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(n) || n < 1) {
     throw new InvalidArgumentError(`expected a positive integer, got ${JSON.stringify(value)}`);
   }
   return n;
