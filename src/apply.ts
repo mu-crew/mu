@@ -763,16 +763,23 @@ function applyDel(db: Db, op: Op): ApplyResult {
       const taskId = taskRowId(db, taskKey);
       if (taskId === null) return { changed: false, appliedFields: [], skipped: "absent" };
       // A note's local surrogate id is not the origin's, so delete by
-      // the content identity the grow-only insert used.
-      const src = db
-        .prepare(
-          `SELECT payload FROM ops
-            WHERE entity = 'note' AND key = @key AND op = 'put'
-            ORDER BY hlc DESC LIMIT 1`,
-        )
-        .get({ key: op.key }) as { payload: string } | undefined;
-      if (!src) return { changed: false, appliedFields: [], skipped: "absent" };
-      const entries = decodePayload(src.payload);
+      // the content identity the grow-only insert used. A self-describing
+      // tombstone (capture writes the full row when no put shares its
+      // key, drift-641) carries that identity itself; otherwise read it
+      // from the put under the same key.
+      let entries = decodePayload(op.payload);
+      if (!entries.some(([f, v]) => f === "content" && v !== null)) {
+        const src = db
+          .prepare(
+            `SELECT payload FROM ops
+              WHERE entity = 'note' AND key = @key AND op = 'put'
+                AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
+              ORDER BY hlc DESC LIMIT 1`,
+          )
+          .get({ key: op.key }) as { payload: string } | undefined;
+        if (!src) return { changed: false, appliedFields: [], skipped: "absent" };
+        entries = decodePayload(src.payload);
+      }
       const content = entries.find(([f]) => f === "content")?.[1] ?? "";
       const author = entries.find(([f]) => f === "author")?.[1] ?? null;
       const createdAt = entries.find(([f]) => f === "created_at")?.[1] ?? null;

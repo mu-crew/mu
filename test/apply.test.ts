@@ -552,6 +552,27 @@ describe("applyOp", () => {
       expect(runOrder([a, b])).toEqual(["alpha", "beta"]);
       expect(runOrder([b, a])).toEqual(["alpha", "beta"]);
     });
+
+    it("a self-describing tombstone under a shifted key deletes the note (drift-641)", () => {
+      // capture writes the full row on a note tombstone when no put shares
+      // its key (a reprojection gave the note a new rowid). Apply must read
+      // that payload, or a peer keeps a note the origin deleted.
+      seedLocalTask("t1");
+      const row = { author: "x", content: "hello", created_at: "2026-01-01T00:00:00.000Z" };
+      ingest(makeOp({ hlc: peerHlc(1000), entity: "note", key: "demo/t1#5", payload: row }));
+      expect(noteCount()).toBe(1);
+      const r = ingest(
+        makeOp({
+          hlc: peerHlc(2000),
+          entity: "note",
+          key: "demo/t1#9",
+          op: "del",
+          payload: { id: 9, task_id: 1, ...row },
+        }),
+      );
+      expect(r).toMatchObject({ changed: true });
+      expect(noteCount()).toBe(0);
+    });
   });
 
   // ─── edges: LWW-element-set ──────────────────────────────────────────

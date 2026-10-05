@@ -6,6 +6,7 @@ import {
   parseImpact,
   parseLines,
   parseNonNegativeInt,
+  parsePositiveInt,
   parsePositiveNumber,
   parseQualifiedRef,
   parseStatusesOption,
@@ -228,6 +229,12 @@ describe("CLI parser properties", () => {
       for (const raw of ["", " ", "0", "-0.1", "NaN", "abc", "--", "."]) {
         expect(() => parsePositiveNumber(raw)).toThrow();
       }
+      // `mu undo -n`: NaN reached SQL LIMIT, 0 claimed an empty log and
+      // -1 meant unlimited.
+      for (const raw of ["", "0", "-1", "abc"]) {
+        expect(() => parsePositiveInt(raw)).toThrow();
+      }
+      expect(parsePositiveInt("3")).toBe(3);
     });
 
     it("documents current permissive prefix parsing for numeric options", () => {

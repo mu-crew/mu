@@ -103,7 +103,8 @@ prefix previews, and `--yes` applies.
   old key (drift-641). The `task_notes` delete trigger records `OLD.*`
   only when no put under the current key is in the log, and `'{}'`
   otherwise; `planUndo` folds the puts first and falls back to the
-  tombstone payload. For the same reason `src/drift.ts` matches notes on
+  tombstone payload, and `applyOp` deletes by the payload's content
+  identity, falling back to the put under the same key. For the same reason `src/drift.ts` matches notes on
   the task-key prefix.
 
 ## Rewriting history (local only)

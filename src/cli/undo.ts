@@ -13,7 +13,7 @@
 //     needing `mu log` (whose group surface is v2-log-verb's).
 //   * `--json` shape + a `Next:` block on every path.
 
-import { emitJson, handle, JSON_OPT } from "../cli.js";
+import { emitJson, handle, JSON_OPT, parsePositiveInt } from "../cli.js";
 import type { Db } from "../db.js";
 import { type NextStep, pc, printNextSteps } from "../output.js";
 import {
@@ -43,18 +43,26 @@ function describeGroup(group: GroupSummary): string {
 }
 
 /** Steps that make the next move obvious from wherever the operator is. */
-function nextStepsForPlan(plan: UndoPlan, applied: boolean, undoGroupId?: string): NextStep[] {
+function nextStepsForPlan(
+  plan: UndoPlan,
+  applied: boolean,
+  undoGroupId?: string | null,
+): NextStep[] {
   if (!applied) {
     return [
       { intent: "Apply this undo", command: `mu undo ${short(plan.groupId)} --yes` },
       { intent: "Inspect the group's ops", command: `mu log --group ${short(plan.groupId)}` },
     ];
   }
+  // No row changed, so the undo recorded no ops and there is no group
+  // to redo.
+  if (undoGroupId === null || undoGroupId === undefined) {
+    return [
+      { intent: "Inspect the group's ops", command: `mu log --group ${short(plan.groupId)}` },
+    ];
+  }
   return [
-    {
-      intent: "Redo (undo the undo)",
-      command: `mu undo ${undoGroupId === undefined ? "<group>" : short(undoGroupId)} --yes`,
-    },
+    { intent: "Redo (undo the undo)", command: `mu undo ${short(undoGroupId)} --yes` },
     { intent: "Verify the log and tables still agree", command: "mu doctor --deep" },
   ];
 }
@@ -203,6 +211,11 @@ export async function cmdUndo(
   for (const inverse of result.plan.inverses) {
     console.log(pc.dim(`  ${inverse.summary}`));
   }
+  if (result.undoGroupId === null) {
+    console.log(pc.yellow("  nothing changed (already undone, or the group changed nothing)"));
+    printNextSteps(nextStepsForPlan(result.plan, true, null));
+    return;
+  }
   console.log(
     pc.dim(
       `  ${result.applied} row change(s), recorded as group ${pc.bold(short(result.undoGroupId))}`,
@@ -230,7 +243,7 @@ export function wireUndoCommand(program: Command): void {
     .option(...JSON_OPT)
     .option("--yes", "actually apply the inverse (default is a dry run)")
     .option("--force", "apply even when the group was superseded by later work (discards it)")
-    .option("-n, --limit <n>", "how many recent groups to list", (v) => Number.parseInt(v, 10))
+    .option("-n, --limit <n>", "how many recent groups to list", parsePositiveInt)
     .action(function (group: string | undefined) {
       const opts = (this as Command).opts() as UndoCmdOptions;
       return handle((db) => cmdUndo(db, group, opts), this as Command)();
