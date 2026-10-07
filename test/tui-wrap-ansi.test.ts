@@ -2,7 +2,13 @@ import { Box, render, Text } from "ink";
 import { createElement } from "react";
 import stringWidth from "string-width";
 import { afterEach, describe, expect, it } from "vitest";
-import { padAnsiLine, wrapAndPadAnsiLines, wrapAnsi } from "../src/cli/tui/wrap-ansi.js";
+import {
+  padAnsiLine,
+  visibleWidth,
+  wrapAndPadAnsiLines,
+  wrapAnsi,
+  wrapCacheSizeForTests,
+} from "../src/cli/tui/wrap-ansi.js";
 import { CaptureStream, collectRenderedLines, createInkCaptureStream } from "./_ink-render.js";
 
 const ESC = "\u001B";
@@ -133,6 +139,35 @@ describe("wrapAnsi", () => {
     expect(rows.every((row) => stringWidth(row) === boxWidth)).toBe(true);
     for (const row of rows.slice(1, -1)) {
       expect(row.endsWith("│")).toBe(true);
+    }
+  });
+});
+
+describe("wrapAndPadAnsiLines line cache", () => {
+  it("re-wrapping an unchanged body adds no cache entries; a changed line adds one", () => {
+    const body = Array.from({ length: 50 }, (_, i) => `${CYAN}cache-probe-${i}${RESET} ─ ↻`).join(
+      "\n",
+    );
+    const first = wrapAndPadAnsiLines(body, 17);
+    const size = wrapCacheSizeForTests();
+    expect(wrapAndPadAnsiLines(body, 17)).toBe(first);
+    expect(wrapCacheSizeForTests()).toBe(size);
+    wrapAndPadAnsiLines(`${body}\ncache-probe-new`, 17);
+    expect(wrapCacheSizeForTests()).toBe(size + 1);
+  });
+});
+
+describe("visibleWidth", () => {
+  it("matches string-width on the narrow fast path and on wide/emoji text", () => {
+    for (const s of [
+      "plain ascii",
+      `${RED}├── ↻ π — “q” …${RESET}`,
+      "日本語",
+      "😀 ok",
+      "e\u0301",
+      "",
+    ]) {
+      expect(visibleWidth(s)).toBe(stringWidth(s));
     }
   });
 });

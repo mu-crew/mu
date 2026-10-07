@@ -27,8 +27,8 @@
 // cells take their natural width unconditionally, clippable cells
 // share whatever budget is left.
 
-import stringWidth from "string-width";
 import { truncate } from "../format.js";
+import { visibleWidth } from "./wrap-ansi.js";
 
 export type ColumnKind = "protect" | "clip";
 
@@ -47,7 +47,7 @@ export interface ColumnSpec {
 
 /** Display width of `s`, ignoring ANSI escapes and counting wide chars. */
 export function cellWidth(s: string): number {
-  return stringWidth(s);
+  return visibleWidth(s);
 }
 
 /** Pad `s` to width `n` with spaces. align="right" pads on the left.

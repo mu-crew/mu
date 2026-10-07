@@ -1,9 +1,22 @@
+import { stripVTControlCharacters } from "node:util";
 import stringWidth from "string-width";
 
 const ESC = "\u001B";
 const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, "y");
 const SGR_PATTERN = new RegExp(`^${ESC}\\[([0-9;]*)m$`);
 const RESET = `${ESC}[0m`;
+
+// Printable ASCII plus the width-1 glyphs mu draws (dashes/quotes/"…",
+// arrows incl. "↻", box-drawing, "π"), after stripping SGR: width is the
+// stripped length. string-width's per-grapheme segmentation cost
+// ~150 ms per 4.4k-line DAG body; everything else still goes through it.
+const NARROW = /^[\x20-\x7e\u03c0\u2010-\u2027\u2190-\u21ff\u2500-\u257f]*$/;
+
+/** Terminal-visible width of `s` (ANSI-aware, wide-char-aware). */
+export function visibleWidth(s: string): number {
+  const plain = s.includes(ESC) ? stripVTControlCharacters(s) : s;
+  return NARROW.test(plain) ? plain.length : stringWidth(s);
+}
 
 interface Token {
   text: string;
@@ -16,7 +29,7 @@ interface Token {
  */
 export function wrapAnsi(line: string, width: number): string[] {
   if (line === "") return [line];
-  if (width <= 0 || stringWidth(line) <= width) {
+  if (width <= 0 || visibleWidth(line) <= width) {
     // Even the early-return path must guarantee SGR is closed so the ink
     // render does not leak colour into adjacent chrome (the popup right
     // border is the canonical reproducer): a short colored line like
@@ -68,27 +81,50 @@ export function wrapAnsi(line: string, width: number): string[] {
 }
 
 export function padAnsiLine(line: string, width: number): string {
-  const visibleWidth = stringWidth(line);
-  if (visibleWidth >= width) return line;
-  return line + " ".repeat(width - visibleWidth);
+  const w = visibleWidth(line);
+  if (w >= width) return line;
+  return line + " ".repeat(width - w);
+}
+
+// Wrapped+padded output per (width, raw line). Drill bodies are rebuilt on
+// every changed fast tick, but almost all of their lines are unchanged, so
+// a re-wrap is a split + lookups + join instead of ~4k width computations.
+// Bounded: cleared wholesale when full (a big body refills it in one pass).
+const WRAP_CACHE_MAX = 20_000;
+const wrapCache = new Map<string, string>();
+
+function wrapAndPadLine(line: string, width: number): string {
+  const key = `${width}\u0000${line}`;
+  const hit = wrapCache.get(key);
+  if (hit !== undefined) return hit;
+  const out = wrapAnsi(line, width)
+    .map((l) => padAnsiLine(l, width))
+    .join("\n");
+  if (wrapCache.size >= WRAP_CACHE_MAX) wrapCache.clear();
+  wrapCache.set(key, out);
+  return out;
 }
 
 export function wrapAndPadAnsiLines(text: string, width: number): string {
   if (text === "") return "";
   return text
     .split("\n")
-    .flatMap((line) => wrapAnsi(line, width))
-    .map((line) => padAnsiLine(line, width))
+    .map((line) => wrapAndPadLine(line, width))
     .join("\n");
+}
+
+/** Test hook: number of cached wrapped lines. */
+export function wrapCacheSizeForTests(): number {
+  return wrapCache.size;
 }
 
 function nextToken(text: string, offset: number): Token {
   const first = text[offset];
   if (first === undefined) return { text: "", width: 0 };
   const codePoint = text.codePointAt(offset);
-  if (codePoint === undefined) return { text: first, width: stringWidth(first) };
+  if (codePoint === undefined) return { text: first, width: visibleWidth(first) };
   const char = String.fromCodePoint(codePoint);
-  return { text: char, width: stringWidth(char) };
+  return { text: char, width: visibleWidth(char) };
 }
 
 function closeIfOpen(text: string, active: string[]): string {
