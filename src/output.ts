@@ -126,43 +126,50 @@ export function printNextStepsTo(steps: readonly NextStep[], sink: "stdout" | "s
 }
 
 // Printable ASCII plus the width-1 punctuation mu prints (dashes,
-// quotes, "…", "∞"), after stripping picocolors' SGR codes. Such a cell
+// quotes, "…", "∞"), after stripping picocolors' SGR codes. Such a line
 // renders as itself with width = stripped length, skipping per-grapheme
 // segmentation (~95 ms on 1901 rows). Anything else (unbalanced SGR,
-// zero-width/format characters, wide text, other escapes) goes through
-// cli-table3's own strlen and colorizeLines, so it is byte-identical by
-// construction: cli-table3 bundles an older string-width that measures
-// soft hyphen and U+200B differently, and closes SGR left open.
+// zero-width/format characters, wide text, tabs, CR, other escapes) goes
+// through cli-table3's own strlen and colorizeLines, so it is
+// byte-identical by construction: cli-table3 bundles an older
+// string-width that measures soft hyphen and U+200B differently, and
+// closes SGR left open at each line end.
 const NARROW = /^[\x20-\x7e\u2010-\u2027\u221e]*$/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching SGR escapes is the point
 const SGR = /\u001b\[(?:\d*;){0,5}\d*m/g;
-function boxCell(c: string): { text: string; width: number } {
-  if (NARROW.test(c)) return { text: c, width: c.length };
-  const plain = c.replace(SGR, ""); // cli-table3's strlen strip regex
-  const width = NARROW.test(plain) ? plain.length : tableUtils.strlen(c);
-  return { text: tableUtils.colorizeLines([c])[0] ?? c, width };
+interface BoxCell {
+  lines: string[];
+  widths: number[];
+  width: number;
+}
+// Mirrors cli-table3's Cell: lines = colorizeLines(content.split("\n")),
+// width = widest line. Splitting on "\n" only (not CR) is what it does.
+function boxCell(c: string): BoxCell {
+  if (NARROW.test(c)) return { lines: [c], widths: [c.length], width: c.length };
+  const raw = c.split("\n");
+  const lines = tableUtils.colorizeLines(raw);
+  const widths = raw.map((l) => {
+    const plain = l.replace(SGR, ""); // cli-table3's strlen strip regex
+    return NARROW.test(plain) ? plain.length : tableUtils.strlen(l);
+  });
+  return { lines, widths, width: Math.max(...widths) };
 }
 
 /**
  * Render a bordered table byte-identical to `muTable({ head }).toString()`
- * (default style, auto widths) for single-line cells, in linear time.
+ * (default style, auto widths), in linear time.
  *
  * cli-table3's layout pass (`fillInTable` → `conflictExists`) scans
  * every earlier row for every cell, so a 1901-row `mu task list` spent
- * ~1.5 s there. Plain cells take a fast path; the rest use
- * cli-table3's own width and SGR-closing helpers (see boxCell). A cell containing a
- * newline falls back to cli-table3, which renders multi-line rows.
+ * ~1.5 s there. Plain cells take a fast path; the rest use cli-table3's
+ * own width and SGR-closing helpers (see boxCell). A row is as tall as
+ * its tallest cell; shorter cells get blank lines below, as in cli-table3.
  */
 export function renderBoxTable(
   head: readonly string[],
   rows: readonly (readonly string[])[],
 ): string {
   const all = [head, ...rows];
-  if (all.some((r) => r.some((c) => c.includes("\n")))) {
-    const table = muTable({ head: [...head] });
-    for (const r of rows) table.push([...r]);
-    return table.toString();
-  }
   const widths = head.map(() => 0);
   const cells = all.map((r) =>
     r.map((c, i) => {
@@ -178,13 +185,17 @@ export function renderBoxTable(
   for (let y = 0; y < all.length; y++) {
     if (y > 0) out.push(sep);
     const r = cells[y] ?? [];
-    let line = "│";
-    for (let x = 0; x < widths.length; x++) {
-      const cell = r[x];
-      const pad = (widths[x] ?? 0) - (cell?.width ?? 0);
-      line += ` ${cell?.text ?? ""}${" ".repeat(pad)} │`;
+    let height = 1;
+    for (const cell of r) if (cell.lines.length > height) height = cell.lines.length;
+    for (let n = 0; n < height; n++) {
+      let line = "│";
+      for (let x = 0; x < widths.length; x++) {
+        const cell = r[x];
+        const pad = (widths[x] ?? 0) - (cell?.widths[n] ?? 0);
+        line += ` ${cell?.lines[n] ?? ""}${" ".repeat(pad)} │`;
+      }
+      out.push(line);
     }
-    out.push(line);
   }
   out.push(rule("└", "┴", "┘"));
   return out.join("\n");
