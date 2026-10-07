@@ -17,7 +17,6 @@
 // TUI session and cache the result.
 
 import { writeFile } from "node:fs/promises";
-import { execa } from "execa";
 
 export type ClipboardBackend =
   | { kind: "cli"; cmd: string; args: string[] }
@@ -107,6 +106,7 @@ export function osc52Sequence(text: string): string {
 /** Check whether `cmd` exists on PATH. Returns false on any error. */
 async function hasCommand(cmd: string): Promise<boolean> {
   try {
+    const { execa } = await import("execa");
     await execa("command", ["-v", cmd], { shell: true, stdio: "ignore" });
     return true;
   } catch {
@@ -148,6 +148,7 @@ export async function yank(
 
   if (backend.kind === "cli") {
     try {
+      const { execa } = await import("execa");
       await execa(backend.cmd, backend.args, { input: text });
       return { copied: true, backend: backend.cmd };
     } catch (err) {

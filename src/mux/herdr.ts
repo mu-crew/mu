@@ -56,7 +56,6 @@
 // and `startAgentInPane` is the second step mu calls afterwards.
 // See `MuxBackend.startAgentInPane` for how spawn.ts branches on it.
 
-import { execa } from "execa";
 import type { NextStep } from "../output.js";
 import { sleep } from "./tmux.js";
 import {
@@ -365,6 +364,8 @@ function herdrGlobalFlags(): readonly string[] {
 }
 
 const realExecutor: HerdrExecutor = async (args) => {
+  // Lazy-load execa: ~110 modules that --version and DB-only verbs never need.
+  const { execa } = await import("execa");
   const result = await execa("herdr", [...herdrGlobalFlags(), ...args], { reject: false });
   return {
     stdout: result.stdout ?? "",
