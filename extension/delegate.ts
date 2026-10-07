@@ -316,7 +316,6 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   /** Delegates that settled on an error, pane kept: counted in the footer
    *  until the model closes or re-issues them (no call to action). */
   const failed = new Set<string>();
-  const reserved = new Set<string>();
   // The ctx of the latest tool call: answers settle outside any call, so
   // the footer is refreshed through the last ctx pi handed us.
   let ui: DelegateCtx["ui"];
@@ -353,7 +352,6 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
    *  into the freed slot, and refresh the footer. */
   const forget = (name: string) => {
     inflight.delete(name);
-    reserved.delete(name);
     drain();
     showStatus();
   };
@@ -395,81 +393,79 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   const failure = (what: string, r: MuResult) =>
     new Error(`${what} failed (exit ${r.code}): ${(r.stderr || r.stdout).trim()}`);
 
-  async function pickName(stem?: string): Promise<string> {
-    const r = await mu(["agent", "list", "-w", W, "--json"]);
-    const agents = json(r)?.agents;
-    const taken = new Set(
-      Array.isArray(agents)
-        ? agents.map((a: unknown) => (a as { name?: unknown }).name).filter((n) => n)
-        : [],
-    );
-    // A failed delegate whose pane is gone (closed from bash) leaves the footer.
-    if (Array.isArray(agents)) {
+  /** A failed delegate whose pane is gone (closed from bash) leaves the
+   *  footer. Off the call's path: only a footer count rides on it. */
+  function pruneFailed(): void {
+    if (failed.size === 0) return;
+    void mu(["agent", "list", "-w", W, "--json"]).then((r) => {
+      const agents = json(r)?.agents;
+      if (!Array.isArray(agents)) return;
+      const taken = new Set(agents.map((a: unknown) => (a as { name?: unknown }).name));
       for (const f of [...failed]) if (!taken.has(f)) failed.delete(f);
       showStatus();
-    }
-    for (let n = 1; ; n++) {
-      // A label names the delegate (delegate-review, then delegate-review-2);
-      // without one it is numbered.
-      const name = stem
-        ? n === 1
-          ? `delegate-${stem}`
-          : `delegate-${stem}-${n}`
-        : `delegate-${n}`;
-      if (!taken.has(name) && !reserved.has(name)) {
-        reserved.add(name); // sync after the await: parallel calls get distinct names
-        return name;
-      }
-    }
+    });
   }
 
+  /**
+   * Spawn the delegate and send it the task in ONE mu call (`spawn
+   * --next-free --send`): mu picks the free name under its spawn lock, so
+   * parallel calls get distinct names with no `agent list` first. Returns
+   * the name and the send's `runs`, the exact wait baseline.
+   */
   async function spawn(
     params: Record<string, unknown>,
+    text: string,
     cwd: string | undefined,
     signal?: AbortSignal,
-  ): Promise<{ name: string; attach?: string; workspace?: string }> {
+  ): Promise<{ name: string; runs: number; attach?: string; workspace?: string }> {
+    signal?.throwIfAborted();
+    pruneFailed();
     const stem = labelStem(params.label);
-    for (let attempt = 0; ; attempt++) {
-      signal?.throwIfAborted();
-      const name = await pickName(stem);
-      const args = ["agent", "spawn", name, "-w", W, "--json"];
-      if (params.workspace === true) args.push("--workspace");
-      else if (cwd) args.push("--cwd", cwd);
-      if (typeof params.cli === "string" && params.cli) args.push("--cli", params.cli);
-      const r = await mu(args);
-      if (signal?.aborted && r.code === 0) {
-        // The user cancelled while the pane came up: take it down again.
-        reserved.delete(name);
-        await mu(["agent", "close", name, "-w", W]);
-        signal.throwIfAborted();
-      }
-      // Another mu took the name between list and spawn: pick again.
-      if (r.code !== 0 && /already exists/.test(r.stderr) && attempt < 3) {
-        reserved.delete(name);
-        continue;
-      }
-      if (r.code !== 0) {
-        reserved.delete(name);
-        throw failure("mu agent spawn", r);
-      }
-      const out = json(r) ?? {};
-      if (out.ctl !== "ok") {
-        reserved.delete(name);
-        throw new Error(
-          `${W}/${name} spawned but its control socket is ${String(out.ctl)}, so its answer cannot come back. Pane kept; close it with: mu agent close ${name} -w ${W}`,
-        );
-      }
-      const steps = Array.isArray(out.nextSteps) ? out.nextSteps : [];
-      const attach = steps
-        .map((s: unknown) => s as { intent?: unknown; command?: unknown })
-        .find((s) => s.intent === "Attach the pane")?.command;
-      const wsPath = (out.workspace as { path?: unknown } | null | undefined)?.path;
-      return {
-        name,
-        ...(typeof attach === "string" ? { attach } : {}),
-        ...(typeof wsPath === "string" ? { workspace: wsPath } : {}),
-      };
+    // A label names the delegate (delegate-review, then delegate-review-2);
+    // without one it is numbered (delegate-1, delegate-2).
+    const base = stem ? `delegate-${stem}` : "delegate-1";
+    const args = ["agent", "spawn", base, "-w", W, "--next-free", "--send", text, "--json"];
+    if (params.workspace === true) args.push("--workspace");
+    else if (cwd) args.push("--cwd", cwd);
+    if (typeof params.cli === "string" && params.cli) args.push("--cli", params.cli);
+    const r = await mu(args);
+    const out = json(r);
+    const spawned = (out?.agent as { name?: unknown } | undefined)?.name;
+    // No agent in the reply: the spawn itself failed, nothing is up.
+    if (typeof spawned !== "string") throw failure("mu agent spawn", r);
+    const name = spawned;
+    if (signal?.aborted) {
+      // The user cancelled while the pane came up: take it down again.
+      await mu(["agent", "close", name, "-w", W]);
+      signal.throwIfAborted();
     }
+    if (out?.ctl !== "ok") {
+      throw new Error(
+        `${W}/${name} spawned but its control socket is ${String(out?.ctl)}, so its answer cannot come back. Pane kept; close it with: mu agent close ${name} -w ${W}`,
+      );
+    }
+    const sent = out.send as { ok?: unknown; runs?: unknown; message?: unknown } | undefined;
+    if (sent?.ok !== true) {
+      // Nothing reached it: the pane is just an idle pi. Take it down.
+      const c = await mu(["agent", "close", name, "-w", W]);
+      const pane =
+        c.code === 0 ? "Pane closed." : `Pane kept; close it with: mu agent close ${name} -w ${W}`;
+      const why = typeof sent?.message === "string" ? sent.message : (r.stderr || r.stdout).trim();
+      throw new Error(`mu agent send to ${W}/${name} failed (exit ${r.code}): ${why}. ${pane}`);
+    }
+    const steps = Array.isArray(out.nextSteps) ? out.nextSteps : [];
+    const attach = steps
+      .map((s: unknown) => s as { intent?: unknown; command?: unknown })
+      .find((s) => s.intent === "Attach the pane")?.command;
+    const wsPath = (out.workspace as { path?: unknown } | null | undefined)?.path;
+    return {
+      name,
+      // A pi just spawned has settled no run, so 0 is exact when an older
+      // extension's reply carries no runs.
+      runs: typeof sent.runs === "number" ? sent.runs : 0,
+      ...(typeof attach === "string" ? { attach } : {}),
+      ...(typeof wsPath === "string" ? { workspace: wsPath } : {}),
+    };
   }
 
   /** The note label: the caller's label, else the delegate's name. */
@@ -602,7 +598,12 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
           typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
         if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
       }
-      const { name, attach, workspace } = await spawn(params, cwd, signal);
+      const { name, runs, attach, workspace } = await spawn(
+        params,
+        brief ? `${brief}\n\n${task}` : task,
+        cwd,
+        signal,
+      );
       const entry: Inflight = {
         abort: new AbortController(),
         cancelling: false,
@@ -612,52 +613,23 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       freeSlot(); // now counted in inflight
       showStatus();
       const started = Date.now();
-      const waitArgs = (after?: number) => [
-        "agent",
-        "wait",
-        name,
-        "-w",
-        W,
-        "--json",
-        "--timeout",
-        String(timeoutS),
-        ...(after !== undefined ? ["--after-runs", String(after)] : []),
-      ];
-      // Start a plain wait alongside the send: it takes its own baseline at
-      // startup, so an older mu or extension (no `runs` in the send reply)
-      // still catches the run. Its controller follows the entry's (cancel,
-      // shutdown) and is also aborted alone when the send reply has runs.
-      const plain = new AbortController();
-      entry.abort.signal.addEventListener("abort", () => plain.abort(), { once: true });
-      let waiting = mu(waitArgs(), plain.signal);
-      const sent = await mu([
-        "agent",
-        "send",
-        name,
-        brief ? `${brief}\n\n${task}` : task,
-        "-w",
-        W,
-        "--json",
-      ]);
-      if (sent.code !== 0) {
-        plain.abort();
-        forget(name);
-        // Nothing reached it: the pane is just an idle pi. Take it down.
-        const c = await mu(["agent", "close", name, "-w", W]);
-        const pane =
-          c.code === 0
-            ? "Pane closed."
-            : `Pane kept; close it with: mu agent close ${name} -w ${W}`;
-        throw new Error(`${failure(`mu agent send to ${W}/${name}`, sent).message}. ${pane}`);
-      }
       // The send's `runs` is pi's count before this prompt: waiting past it
-      // catches the run even if it settled before that wait started. Without
-      // runs, keep the concurrent plain wait.
-      const runs = json(sent)?.runs;
-      if (typeof runs === "number") {
-        plain.abort();
-        waiting = mu(waitArgs(runs), entry.abort.signal);
-      }
+      // catches the run even if it settled before this wait started.
+      const waiting = mu(
+        [
+          "agent",
+          "wait",
+          name,
+          "-w",
+          W,
+          "--json",
+          "--timeout",
+          String(timeoutS),
+          "--after-runs",
+          String(runs),
+        ],
+        entry.abort.signal,
+      );
       const settle = async (r: MuResult) => {
         forget(name);
         try {

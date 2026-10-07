@@ -15,6 +15,7 @@ import {
 import {
   getAgent,
   insertAgent,
+  nextFreeAgentName,
   resetCommandResolverForTests,
   setCommandResolverForTests,
   spawnAgent,
@@ -369,5 +370,64 @@ describe("mu agent spawn (CLI)", () => {
     db = openDb({ path: dbPath });
     expect((JSON.parse(r.stdout) as { ctl: string }).ctl).toBe("skipped");
     expect(r.stderr).not.toContain("mu link pi");
+  });
+
+  it("--next-free takes the next free name when the asked one is taken", async () => {
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
+    db.close();
+    installPanes("worker-2");
+    const r = await runCli(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--next-free", "--json"],
+      dbPath,
+    );
+    db = openDb({ path: dbPath });
+    expect(r.exitCode ?? 0).toBe(0);
+    const out = JSON.parse(r.stdout) as { agent: { name: string }; ctl: string };
+    expect(out.agent.name).toBe("worker-2");
+    expect(out.ctl).toBe("ok");
+    expect(getAgent(db, "worker-1", "auth")?.paneId).toBe("%1");
+  });
+
+  it("--send sends the first prompt in the same call and reports runs", async () => {
+    db.close();
+    installPanes("worker-1");
+    const r = await runCli(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--send", "hello", "--json"],
+      dbPath,
+    );
+    db = openDb({ path: dbPath });
+    expect(r.exitCode ?? 0).toBe(0);
+    const out = JSON.parse(r.stdout) as {
+      send: { ok: boolean; runs?: number; transport: string; sentBytes: number };
+      nextSteps: { command: string }[];
+    };
+    expect(out.send).toMatchObject({ ok: true, runs: 0, transport: "ctl", sentBytes: 5 });
+    expect(out.nextSteps[0]?.command).toBe("mu agent wait worker-1 --after-runs 0 --json -w auth");
+  });
+
+  it("--send to a pi whose socket never answered keeps the pane and exits non-zero", async () => {
+    db.close();
+    const r = await runCli(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--send", "hello", "--json"],
+      dbPath,
+    );
+    db = openDb({ path: dbPath });
+    expect(r.exitCode).toBe(1);
+    const out = JSON.parse(r.stdout) as { ctl: string; send: { ok: boolean; error: string } };
+    expect(out.ctl).toBe("missing");
+    expect(out.send).toMatchObject({ ok: false, error: "AgentCtlUnreachableError" });
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+  });
+});
+
+describe("nextFreeAgentName", () => {
+  it("counts a -<n> suffix up, and suffixes a bare name from -2", () => {
+    insertAgent(db, { name: "delegate-1", workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: "delegate-2", workstream: "auth", paneId: "%2" });
+    insertAgent(db, { name: "delegate-review", workstream: "auth", paneId: "%3" });
+    expect(nextFreeAgentName(db, "delegate-1", "auth")).toBe("delegate-3");
+    expect(nextFreeAgentName(db, "delegate-review", "auth")).toBe("delegate-review-2");
+    expect(nextFreeAgentName(db, "fresh", "auth")).toBe("fresh");
+    expect(nextFreeAgentName(db, "delegate-1", "other")).toBe("delegate-1");
   });
 });

@@ -80,6 +80,7 @@ export {
   defaultSpawnCtlMs,
   defaultSpawnLivenessMs,
   envVarNameForCli,
+  nextFreeAgentName,
   resetCommandResolverForTests,
   resolveCliCommand,
   resolveCliCommandWithSource,

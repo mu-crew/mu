@@ -248,6 +248,26 @@ export interface SpawnAgentOptions {
   /** Run the control-socket handshake for pi agents (default true).
    *  `false` skips it and reports `ctl: "skipped"`. */
   ctl?: boolean;
+  /** When `name` is taken in the workstream, take the next free one
+   *  (see `nextFreeAgentName`) instead of failing with AgentExistsError. */
+  nextFree?: boolean;
+}
+
+/** How many taken names a `nextFree` spawn skips past before it gives up. */
+const NEXT_FREE_ATTEMPTS = 32;
+
+/**
+ * `name` when it is free in `workstream`, else the next free name: a
+ * trailing `-<n>` counts up (`delegate-1` → `delegate-2`), and a name
+ * without one gets `-2`, `-3`, … (`delegate-review` → `delegate-review-2`).
+ */
+export function nextFreeAgentName(db: Db, name: string, workstream: string): string {
+  const m = /^(.*)-(\d+)$/.exec(name);
+  const [stem, first] = m ? [m[1] ?? "", Number(m[2])] : [name, 1];
+  for (let n = first; ; n++) {
+    const candidate = n === first ? name : `${stem}-${n}`;
+    if (getAgent(db, candidate, workstream) === undefined) return candidate;
+  }
 }
 
 /** Outcome of the spawn-time control-socket handshake. */
@@ -331,6 +351,18 @@ async function awaitCtlHandshake(
  * pane + row + workspace. The caller-visible error is preserved.
  */
 export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<SpawnedAgent> {
+  if (opts.nextFree === true) {
+    // A parallel spawn can take the picked name between the pick and the
+    // insert (the in-lock re-check throws before any side effect): pick again.
+    for (let attempt = 1; ; attempt++) {
+      const name = nextFreeAgentName(db, opts.name, opts.workstream);
+      try {
+        return await spawnAgent(db, { ...opts, name, nextFree: false });
+      } catch (err) {
+        if (!(err instanceof AgentExistsError) || attempt >= NEXT_FREE_ATTEMPTS) throw err;
+      }
+    }
+  }
   if (!isValidAgentName(opts.name)) {
     throw new TypeError(
       `invalid agent name: ${JSON.stringify(opts.name)} (expected /^[a-z][a-z0-9_-]{0,31}$/)`,
