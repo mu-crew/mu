@@ -874,15 +874,19 @@ CREATE TABLE IF NOT EXISTS ops (
   UNIQUE (machine_id, hlc)
 );
 
--- Three indexes, one per read shape that actually exists:
+-- Four indexes, one per read shape that actually exists:
 --   hlc         — replay/rebuild walks the log in HLC order.
 --   entity,key  — "what happened to this task" (history + per-field merge).
 --   group_id    — 'mu undo <group>' gathers one action's ops.
--- (machine_id lookups ride the UNIQUE (machine_id, hlc) index; seq is
--- the PK. No speculative index beyond these.)
+--   machine_id,entity,hlc — sync flush seeks this machine's SYNCED ops
+--                 past the segment's last hlc, so a trailing run of
+--                 machine-local ops (agent.*) costs nothing per flush.
+-- (Other machine_id lookups ride the UNIQUE (machine_id, hlc) index;
+-- seq is the PK. No speculative index beyond these.)
 CREATE INDEX IF NOT EXISTS idx_ops_hlc ON ops (hlc);
 CREATE INDEX IF NOT EXISTS idx_ops_entity_key ON ops (entity, key);
 CREATE INDEX IF NOT EXISTS idx_ops_group ON ops (group_id);
+CREATE INDEX IF NOT EXISTS idx_ops_machine_entity_hlc ON ops (machine_id, entity, hlc);
 
 -- sync_peers: one row per known peer, holding its watermark — how far
 -- into that peer's segment we have applied. One integer suffices

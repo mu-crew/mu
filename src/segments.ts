@@ -427,7 +427,10 @@ export interface FlushResult {
   appended: number;
   /** Total lines in the segment afterwards. */
   total: number;
-  /** Ops skipped because their entity is machine-local. */
+  /** Ops skipped because their entity is machine-local. A full scan
+   *  (`verify`, or an untrusted manifest) counts every unflushed one; the
+   *  fast path counts only those up to the last op it appended, so a
+   *  no-op ambient flush reports 0 (see `pendingLines`). */
   skippedLocal: number;
   /**
    * Non-null when THIS MACHINE'S OWN segment was found defective past
@@ -507,7 +510,7 @@ export async function flushSegment(
   const verify = opts?.verify === true;
   const pre = verify ? null : trustedTail(path, machineId);
   if (pre !== null) {
-    const pending = pendingLines(db, machineId, pre.lastHlc);
+    const pending = pendingLines(db, machineId, pre.lastHlc, false);
     if (pending.lines.length === 0) {
       return {
         segmentPath: path,
@@ -587,7 +590,7 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
     }
   }
 
-  const pending = pendingLines(db, machineId, since);
+  const pending = pendingLines(db, machineId, since, trusted === null);
   let appended: Buffer | null = null;
   if (pending.lines.length > 0) {
     // NO fsync. The segment is derived from `ops`; a lost tail costs one
@@ -623,22 +626,45 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
   return result;
 }
 
-/** This machine's synced ops newer than `since`, encoded as segment
- *  lines, plus how many machine-local ops were skipped. */
+const SYNCED_ENTITIES_SQL = SYNCED_ENTITIES.map((e) => `'${e}'`).join(", ");
+
+/**
+ * This machine's synced ops newer than `since`, encoded as segment
+ * lines, plus how many skipped ops (machine-local, legacy log-only)
+ * lie in the range this call covered.
+ *
+ * The entity filter is IN THE SQL, seeking
+ * `idx_ops_machine_entity_hlc`, so a run of machine-local ops after the
+ * segment's last line (agent.* churn from a long session) is never
+ * read: the segment's watermark is the last SYNCED hlc, and filtering
+ * in JS rescanned that whole run on every invocation. `INDEXED BY`
+ * because without ANALYZE stats the planner prefers the UNIQUE
+ * (machine_id, hlc) index and walks the run anyway.
+ *
+ * `skippedLocal` counts ops up to the last line written by this call.
+ * With `countTrailing` (the full-scan path, already O(file)) it also
+ * counts skipped ops after it, as before; the fast path does not,
+ * because recounting the same trailing run every time is the cost this
+ * query exists to avoid.
+ */
 function pendingLines(
   db: Db,
   machineId: string,
   since: string | null,
+  countTrailing: boolean,
 ): { lines: string[]; lastHlc: string | null; skippedLocal: number } {
-  const rows = db
-    .prepare(
-      `SELECT hlc, machine_id, group_id, intent, actor, entity, key, op, payload
-         FROM ops
-        WHERE machine_id = @machineId
-          AND (@since IS NULL OR hlc > @since)
-        ORDER BY hlc`,
-    )
-    .all({ machineId, since }) as Array<{
+  // "" sorts before every hlc, so it stands for "from the start" and
+  // keeps the range a plain index seek (an `IS NULL OR` defeats it).
+  const from = since ?? "";
+  const rows = prepareCached(
+    db,
+    `SELECT hlc, machine_id, group_id, intent, actor, entity, key, op, payload
+       FROM ops INDEXED BY idx_ops_machine_entity_hlc
+      WHERE machine_id = @machineId
+        AND entity IN (${SYNCED_ENTITIES_SQL})
+        AND hlc > @from
+      ORDER BY hlc`,
+  ).all({ machineId, from }) as Array<{
     hlc: string;
     machine_id: string;
     group_id: string;
@@ -650,16 +676,11 @@ function pendingLines(
     payload: string;
   }>;
 
-  const synced = new Set<string>(SYNCED_ENTITIES);
   const lines: string[] = [];
-  let skippedLocal = 0;
   let lastHlc: string | null = null;
 
   for (const row of rows) {
-    if (!synced.has(row.entity) || isLegacyLogOnlyIntent(row.intent)) {
-      skippedLocal += 1;
-      continue;
-    }
+    if (isLegacyLogOnlyIntent(row.intent)) continue;
     lines.push(
       encodeSegmentLine({
         hlc: row.hlc,
@@ -675,7 +696,25 @@ function pendingLines(
     );
     lastHlc = row.hlc;
   }
-  return { lines, lastHlc, skippedLocal };
+  // Everything in the covered range that did not become a line. A
+  // range count on the UNIQUE (machine_id, hlc) index: proportional to
+  // the range, never to what trails it on the fast path.
+  let row: { n: number };
+  if (countTrailing) {
+    row = prepareCached(
+      db,
+      "SELECT COUNT(*) AS n FROM ops WHERE machine_id = @machineId AND hlc > @from",
+    ).get({ machineId, from }) as { n: number };
+  } else if (lastHlc !== null) {
+    row = prepareCached(
+      db,
+      `SELECT COUNT(*) AS n FROM ops
+        WHERE machine_id = @machineId AND hlc > @from AND hlc <= @upTo`,
+    ).get({ machineId, from, upTo: lastHlc }) as { n: number };
+  } else {
+    return { lines, lastHlc, skippedLocal: 0 };
+  }
+  return { lines, lastHlc, skippedLocal: row.n - lines.length };
 }
 
 /**

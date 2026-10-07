@@ -141,7 +141,7 @@ describe("openDb", () => {
     db.close();
   });
 
-  it("indexes ops on hlc, (entity,key) and group_id", () => {
+  it("indexes ops on hlc, (entity,key), group_id and (machine_id,entity,hlc)", () => {
     const db = openDb({ path: dbPath });
     const idx = (
       db
@@ -150,7 +150,12 @@ describe("openDb", () => {
         )
         .all() as { name: string }[]
     ).map((r) => r.name);
-    expect(idx).toEqual(["idx_ops_entity_key", "idx_ops_group", "idx_ops_hlc"]);
+    expect(idx).toEqual([
+      "idx_ops_entity_key",
+      "idx_ops_group",
+      "idx_ops_hlc",
+      "idx_ops_machine_entity_hlc",
+    ]);
     db.close();
   });
 
