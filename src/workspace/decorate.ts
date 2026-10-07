@@ -39,6 +39,7 @@ export async function decorateWithStaleness(
   rows: readonly WorkspaceRow[],
 ): Promise<WorkspaceRow[]> {
   const cache = new Map<string, Promise<number | null>>();
+  const mainRefCache = new Map<string, Promise<string | undefined>>();
   const fetchBehind = (r: WorkspaceRow): Promise<number | null> => {
     const parentRef = r.parentRef;
     if (parentRef === null) return Promise.resolve(null);
@@ -48,7 +49,7 @@ export async function decorateWithStaleness(
     const p = (async (): Promise<number | null> => {
       try {
         const backend = backendByName(r.backend);
-        return await backend.commitsBehind(r.path, parentRef);
+        return await backend.commitsBehind(r.path, parentRef, mainRefCache);
       } catch {
         return null;
       }
