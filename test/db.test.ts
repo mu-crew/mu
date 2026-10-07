@@ -294,6 +294,60 @@ describe("openDb", () => {
     db.close();
   });
 
+  it("reopening an up-to-date DB runs no DDL (schema cookie unchanged)", () => {
+    openDb({ path: dbPath }).close();
+    const cookie = () => {
+      const raw = new Database(dbPath, { readonly: true });
+      const v = raw.pragma("schema_version", { simple: true });
+      raw.close();
+      return v;
+    };
+    const before = cookie();
+    for (let i = 0; i < 3; i++) openDb({ path: dbPath }).close();
+    expect(cookie()).toBe(before);
+  });
+
+  it("opens an up-to-date DB while another connection holds the write lock", () => {
+    openDb({ path: dbPath }).close();
+    const writer = new Database(dbPath);
+    writer.exec("BEGIN IMMEDIATE");
+    try {
+      const started = Date.now();
+      const db = openDb({ path: dbPath });
+      db.close();
+      // The old path queued behind the writer for busy_timeout (5 s).
+      expect(Date.now() - started).toBeLessThan(2000);
+    } finally {
+      writer.exec("ROLLBACK");
+      writer.close();
+    }
+  });
+
+  it("recreates a view whose stored definition differs from this build", () => {
+    openDb({ path: dbPath }).close();
+    const raw = new Database(dbPath);
+    raw.exec("DROP VIEW ready; CREATE VIEW ready AS SELECT * FROM tasks WHERE 0");
+    raw.exec("DROP VIEW goals");
+    raw.exec("DROP INDEX idx_ops_group");
+    raw.exec("DELETE FROM task_substates WHERE substate = 'parked'");
+    raw.close();
+
+    const db = openDb({ path: dbPath });
+    const sqlOf = (name: string) =>
+      (
+        db.prepare("SELECT sql FROM sqlite_master WHERE name = ?").get(name) as
+          | { sql: string }
+          | undefined
+      )?.sql;
+    expect(sqlOf("ready")).toContain("NOT EXISTS");
+    expect(sqlOf("goals")).toContain("CREATE VIEW goals");
+    expect(sqlOf("idx_ops_group")).toContain("group_id");
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM task_substates WHERE substate = 'parked'").get(),
+    ).toEqual({ n: 1 });
+    db.close();
+  });
+
   it("enables WAL journal mode", () => {
     const db = openDb({ path: dbPath });
     const mode = db.pragma("journal_mode", { simple: true });
