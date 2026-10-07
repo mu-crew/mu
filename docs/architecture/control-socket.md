@@ -132,7 +132,11 @@ probes `refused`, and `mu agent close` or the reaper deletes it.
 when `MU_MANAGED_AGENT` is set (inside a mu-spawned pane) or
 `MU_DELEGATE=0`. The tools shell out to the `mu` CLI (spawn, send,
 `wait --json`, read, abort, close) and only format the CLI's
-`outcome` into a follow-up message. `delegateOutcome`
+`outcome` into a follow-up message. A call runs one
+`mu agent spawn --next-free --send <task> --json` (mu picks the free
+name under its spawn lock and returns the send's `runs`), then one
+`mu agent wait --after-runs <runs>` in the background; with `record`,
+a `mu task show` comes first. `delegateOutcome`
 (`src/agents/delegate.ts`) maps one wait result to `done`, `empty`,
 `error`, `died`, `timeout` or `pending`. The extension imports nothing from pi;
 it types pi's API structurally.

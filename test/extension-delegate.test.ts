@@ -57,6 +57,8 @@ function fakeMu(
   opts: {
     ctl?: string;
     workspace?: string;
+    /** Overrides per agent verb. `send` answers the `--send` inside spawn,
+     *  as `mu agent send --json` would (a non-zero code fails the send). */
     on?: Record<string, Override>;
     /** `mu task <verb>` overrides; default `task show` finds the task in ws `crew`. */
     task?: Record<string, Override>;
@@ -64,6 +66,38 @@ function fakeMu(
 ) {
   const calls: string[][] = [];
   const waits = new Map<string, Deferred>();
+  /** Agents up in scratch: delegate-1 belongs to someone else. */
+  const taken = new Set(["delegate-1"]);
+  /** `--next-free`, as mu picks it. */
+  const nextFree = (base: string) => {
+    const m = /^(.*)-(\d+)$/.exec(base);
+    const [stem, first] = m ? [m[1] ?? "", Number(m[2])] : [base, 1];
+    for (let n = first; ; n++) {
+      const name = n === first ? base : `${stem}-${n}`;
+      if (!taken.has(name)) return name;
+    }
+  };
+  const spawnReply = async (args: readonly string[]): Promise<MuResult> => {
+    const name = args.includes("--next-free") ? nextFree(String(args[2])) : String(args[2]);
+    taken.add(name);
+    const base = {
+      agent: { name },
+      ctl: opts.ctl ?? "ok",
+      workspace: opts.workspace ? { path: opts.workspace } : null,
+      nextSteps: [{ intent: "Attach the pane", command: `tmux attach -t mu-scratch` }],
+    };
+    const text = args[args.indexOf("--send") + 1];
+    if (!args.includes("--send") || base.ctl !== "ok") return ok(base);
+    const sendArgs = ["agent", "send", name, String(text), "-w", "scratch", "--json"];
+    const s = (await opts.on?.send?.(sendArgs)) ?? ok({ transport: "ctl", runs: 0 });
+    if (s.code !== 0)
+      return {
+        code: s.code,
+        stdout: JSON.stringify({ ...base, send: { ok: false, message: s.stderr } }),
+        stderr: s.stderr,
+      };
+    return ok({ ...base, send: { ok: true, ...(JSON.parse(s.stdout) as object) } });
+  };
   const run: MuRunner = (args, signal) => {
     calls.push([...args]);
     const [ns, verb, name] = args;
@@ -84,15 +118,12 @@ function fakeMu(
     if (o) return o;
     switch (verb) {
       case "list":
-        return Promise.resolve(ok({ agents: [{ name: "delegate-1" }] }));
+        return Promise.resolve(ok({ agents: [...taken].map((n) => ({ name: n })) }));
       case "spawn":
-        return Promise.resolve(
-          ok({
-            ctl: opts.ctl ?? "ok",
-            workspace: opts.workspace ? { path: opts.workspace } : null,
-            nextSteps: [{ intent: "Attach the pane", command: `tmux attach -t mu-scratch` }],
-          }),
-        );
+        return spawnReply(args);
+      case "close":
+        taken.delete(String(name));
+        return Promise.resolve(ok("{}"));
       case "wait":
         return new Promise((resolve) => {
           waits.set(name ?? "", { resolve, ...(signal ? { signal } : {}) });
@@ -103,8 +134,12 @@ function fakeMu(
         return Promise.resolve(ok("{}"));
     }
   };
-  return { run, calls, waits };
+  return { run, calls, waits, taken };
 }
+
+/** The text a spawn call sent (`--send`), or undefined. */
+const sentArg = (c: readonly string[]) =>
+  c[1] === "spawn" && c.includes("--send") ? c[c.indexOf("--send") + 1] : undefined;
 
 function fakePi() {
   const tools = new Map<string, DelegateTool>();
@@ -185,14 +220,16 @@ describe("mu_delegate", () => {
     expect(mu.calls.find((c) => c[1] === "spawn")).toEqual([
       "agent",
       "spawn",
-      "delegate-2",
+      "delegate-1",
       "-w",
       "scratch",
+      "--next-free",
+      "--send",
+      "You are terse.\n\nfind X",
       "--json",
       "--cwd",
       process.cwd(),
     ]);
-    expect(mu.calls.find((c) => c[1] === "send")?.[3]).toBe("You are terse.\n\nfind X");
     expect(p.sendMessage).not.toHaveBeenCalled();
 
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "X is 42" }] }));
@@ -206,46 +243,43 @@ describe("mu_delegate", () => {
     expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
   });
 
-  it("with runs in the send reply, drops the concurrent wait for --after-runs after the send", async () => {
-    const signals: (AbortSignal | undefined)[] = [];
-    const mu = fakeMu({ on: { send: () => Promise.resolve(ok({ transport: "ctl", runs: 0 })) } });
-    const run: MuRunner = (args, signal) => {
-      if (args[1] === "wait") signals.push(signal);
-      return mu.run(args, signal);
-    };
+  it("returns after ONE mu call (spawn --next-free --send), then waits --after-runs <runs>", async () => {
+    const mu = fakeMu({ on: { send: () => Promise.resolve(ok({ transport: "ctl", runs: 3 })) } });
     const p = fakePi();
-    registerDelegate(p.pi, run);
+    registerDelegate(p.pi, mu.run);
     await tool(p).execute("t", { task: "x" });
-    const send = mu.calls.findIndex((c) => c[1] === "send");
-    const waits = mu.calls.flatMap((c, i) => (c[1] === "wait" ? [i] : []));
-    expect(mu.calls[send]).toContain("--json");
-    expect(waits).toHaveLength(2);
-    const [plainAt = -1, afterAt = -1] = waits;
-    expect(plainAt).toBeLessThan(send);
-    expect(mu.calls[plainAt]).not.toContain("--after-runs");
-    expect(signals[0]?.aborted).toBe(true);
-    expect(afterAt).toBeGreaterThan(send);
-    const wait = mu.calls[afterAt] ?? [];
-    expect(wait[wait.indexOf("--after-runs") + 1]).toBe("0");
-    expect(signals[1]?.aborted).toBe(false);
+    // No agent list, no separate send, no speculative plain wait.
+    expect(mu.calls.map((c) => c[1])).toEqual(["spawn", "wait"]);
+    const wait = mu.calls[1] ?? [];
+    expect(wait[wait.indexOf("--after-runs") + 1]).toBe("3");
   });
 
-  it("without runs in the send reply (older mu or extension) keeps the wait started before the send", async () => {
-    const signals: (AbortSignal | undefined)[] = [];
-    const mu = fakeMu({ on: { send: () => Promise.resolve(ok({ transport: "ctl" })) } });
-    const run: MuRunner = (args, signal) => {
-      if (args[1] === "wait") signals.push(signal);
-      return mu.run(args, signal);
-    };
+  it("with record: task show, spawn, wait (at most 2 mu calls before the tool returns)", async () => {
+    const mu = fakeMu();
     const p = fakePi();
-    registerDelegate(p.pi, run);
+    registerDelegate(p.pi, mu.run);
+    let returned = -1;
+    await tool(p)
+      .execute("t", { task: "x", record: { task: "f1", workstream: "crew" } })
+      .then(() => {
+        returned = mu.calls.length;
+      });
+    // The wait runs in the background; the tool returned after show + spawn.
+    expect(mu.calls.slice(0, 2).map((c) => c.slice(0, 2))).toEqual([
+      ["task", "show"],
+      ["agent", "spawn"],
+    ]);
+    expect(returned).toBe(3);
+    expect(mu.calls[2]?.[1]).toBe("wait");
+  });
+
+  it("without runs in the send reply (older extension) waits past run 0: the pi just started", async () => {
+    const mu = fakeMu({ on: { send: () => Promise.resolve(ok({ transport: "ctl" })) } });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
     await tool(p).execute("t", { task: "x" });
-    const send = mu.calls.findIndex((c) => c[1] === "send");
-    const waits = mu.calls.flatMap((c, i) => (c[1] === "wait" ? [i] : []));
-    expect(waits).toHaveLength(1);
-    expect(waits[0]).toBeLessThan(send);
-    expect(mu.calls[waits[0] ?? -1]).not.toContain("--after-runs");
-    expect(signals[0]?.aborted).toBe(false);
+    const wait = mu.calls.find((c) => c[1] === "wait") ?? [];
+    expect(wait[wait.indexOf("--after-runs") + 1]).toBe("0");
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "old" }] }));
     await flush();
     await flush();
@@ -320,10 +354,10 @@ describe("mu_delegate", () => {
       for (let i = 0; i < 5; i++) await flush();
       expect(spawns()).toHaveLength(3);
       expect(spawns()[2]).toContain("--cwd");
-      expect(mu.calls.some((x) => x[1] === "send" && x.includes("three"))).toBe(true);
+      expect(sentArg(spawns()[2] ?? [])).toBe("three");
       // Its answer names the handle the model was given, so a batch of
       // answers still maps back to the calls.
-      const third = String(spawns()[2]?.[2]);
+      const third = [...mu.waits.keys()].at(-1) ?? "";
       mu.waits.get(third)?.resolve(ok({ agents: [{ outcome: "done", lastText: "z" }] }));
       for (let i = 0; i < 4; i++) await flush();
       const texts = p.sendMessage.mock.calls.map((x) => (x[0] as { content: string }).content);
@@ -473,7 +507,7 @@ describe("mu_delegate", () => {
       for (let i = 0; i < 5; i++) await flush();
       const spawns = mu.calls.filter((x) => x[1] === "spawn");
       expect(spawns).toHaveLength(2);
-      expect(mu.calls.some((x) => x[1] === "send" && x.includes("two"))).toBe(true);
+      expect(sentArg(spawns[1] ?? [])).toBe("two");
     } finally {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];
@@ -780,7 +814,7 @@ describe("murmur pending report", () => {
     // The queued one took the freed slot: still one outstanding.
     expect(counts(p).at(-1)).toBe(1);
 
-    const name = mu.calls.filter((c) => c[1] === "spawn").at(-1)?.[2] ?? "";
+    const name = [...mu.waits.keys()].at(-1) ?? "";
     const before = p.sendMessage.mock.calls.length;
     let atDelivery: number | undefined;
     p.sendMessage.mockImplementationOnce(async () => {
@@ -851,7 +885,9 @@ describe("footer status", () => {
     await flush();
     // The spawn has not returned: the footer already shows the call.
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 starting"]);
-    releaseSpawn(ok({ ctl: "ok", nextSteps: [] }));
+    releaseSpawn(
+      ok({ agent: { name: "delegate-2" }, ctl: "ok", send: { ok: true, runs: 0 }, nextSteps: [] }),
+    );
     await call;
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
   });

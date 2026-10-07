@@ -37,6 +37,7 @@ import {
   refreshAgentTitle,
   resolveCliCommand,
   resolveCliCommandWithSource,
+  type SpawnedAgent,
   sendToAgent,
   spawnAgent,
   type Transport,
@@ -45,6 +46,8 @@ import {
 import {
   applyQualifiedRef,
   assertAgentInWorkstream,
+  CliExitError,
+  classifyError,
   emitJson,
   formatAgentsTable,
   formatTaskListTable,
@@ -78,6 +81,10 @@ interface SpawnOpts {
   workspaceProjectRoot?: string;
   /** commander's `--no-ctl` negation: false skips the ctl handshake. */
   ctl?: boolean;
+  /** Take the next free name when `<name>` is taken. */
+  nextFree?: boolean;
+  /** Send this text once the agent is up (`-` reads stdin). */
+  send?: string;
   json?: boolean;
 }
 // Preflight: when --workspace is set, resolve+announce the backend
@@ -105,13 +112,20 @@ async function maybePrintWorkspacePreflight(opts: SpawnOpts): Promise<void> {
   );
 }
 
-export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<void> {
+export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
   const workstream = await resolveWorkstream(opts.workstream);
+  // Read stdin before any side effect: an empty pipe must not leave a pane.
+  const sendText =
+    opts.send === undefined
+      ? undefined
+      : opts.send === STDIN_ARG
+        ? await readStdinText("send text")
+        : opts.send;
 
   await maybePrintWorkspacePreflight(opts);
 
   const agent = await spawnAgent(db, {
-    name,
+    name: rawName,
     workstream,
     ...(opts.cli !== undefined ? { cli: opts.cli } : {}),
     ...(opts.command !== undefined ? { command: opts.command } : {}),
@@ -125,7 +139,10 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
       ? { workspaceProjectRoot: opts.workspaceProjectRoot }
       : {}),
     ...(opts.ctl === false ? { ctl: false } : {}),
+    ...(opts.nextFree === true ? { nextFree: true } : {}),
   });
+  // --next-free may have picked another name than the one asked for.
+  const name = agent.name;
   // A pi agent whose control socket never answered still spawned (the
   // pane is usable by hand), but say so loudly on stderr: every exact
   // send / wait on it will fail until the extension answers.
@@ -134,6 +151,7 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
     console.error(pc.yellow(`warning: ${warn.message}`));
     printNextStepsTo(warn.errorNextSteps(), "stderr");
   }
+  const sent = sendText === undefined ? undefined : await spawnSend(db, agent, sendText);
   const workspace = opts.workspace ? getWorkspaceForAgent(db, name, workstream) : undefined;
   // Resolve the actual command that landed in the pane, so the operator
   // can confirm `--command 'pi-meta --no-solo'` (etc.) took effect.
@@ -152,7 +170,17 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
   const envSourced =
     opts.command === undefined ? resolveCliCommandWithSource(agent.cli) : undefined;
   const nextSteps: NextStep[] = [
-    dispatchHint(agent),
+    // After --send the next step is the wait (or the pane read below).
+    ...(!sent?.ok
+      ? [dispatchHint(agent)]
+      : sent.runs !== undefined
+        ? [
+            {
+              intent: "Wait for the response (returns its final text)",
+              command: `mu agent wait ${name} --after-runs ${sent.runs} --json -w ${workstream}`,
+            },
+          ]
+        : []),
     { intent: "Read pane", command: `mu agent read ${name} -w ${workstream}` },
     { intent: "Watch live events", command: `mu log -w ${workstream} --tail` },
     {
@@ -186,8 +214,10 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
       ...(envSourced?.resolvedFromEnv ? { resolvedFromEnvVar: envSourced.envVar } : {}),
       ctl: agent.ctl,
       ctlSocket: agent.ctlSocket,
+      ...(sent !== undefined ? { send: sent } : {}),
       nextSteps,
     });
+    if (sent !== undefined && !sent.ok) throw new CliExitError(sent.exitCode);
     return;
   }
   const wsBit = opts.workspace ? pc.dim(" with auto-workspace") : "";
@@ -209,7 +239,65 @@ export async function cmdSpawn(db: Db, name: string, opts: SpawnOpts): Promise<v
   );
   if (workspace) console.log(pc.dim(`  workspace: ${workspace.path} (${workspace.backend})`));
   console.log(pc.dim(`  ctl: ${agent.ctl} (${agent.ctlSocket})`));
+  if (sent?.ok) {
+    const runs = sent.runs !== undefined ? `, runs ${sent.runs}` : "";
+    console.log(pc.dim(`  sent ${sent.sentBytes} bytes (via ${sent.transport}${runs})`));
+  } else if (sent !== undefined) {
+    console.error(pc.red(`error: --send failed: ${sent.message}`));
+  }
   printNextSteps(nextSteps);
+  if (sent !== undefined && !sent.ok) throw new CliExitError(sent.exitCode);
+}
+
+/** `mu agent spawn --send`: the outcome of the send, as `--json` reports it. */
+type SpawnSend =
+  | {
+      ok: true;
+      sentBytes: number;
+      transport: Transport;
+      state?: string;
+      runs?: number;
+      delivered: boolean;
+    }
+  | { ok: false; error: string; message: string; exitCode: number };
+
+/**
+ * Send the first prompt to a just-spawned agent, so a caller that would
+ * run spawn then send pays one mu process instead of two. The pane stays
+ * up when the send fails: the spawn succeeded, and the caller decides.
+ * A pi whose control socket never answered is not sent to (the send
+ * could not be confirmed).
+ */
+async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<SpawnSend> {
+  const fail = (err: unknown): SpawnSend => ({
+    ok: false,
+    error: err instanceof Error ? err.name : "Error",
+    message: err instanceof Error ? err.message : String(err),
+    exitCode: classifyError(err).exitCode,
+  });
+  if (agent.ctl === "missing" || agent.ctl === "refused")
+    return fail(
+      new AgentCtlUnreachableError(agent.name, agent.workstreamName, agent.ctlSocket, agent.ctl),
+    );
+  let undelivered = false;
+  try {
+    const sent = await sendToAgent(db, agent.name, text, {
+      workstream: agent.workstreamName,
+      onUndelivered: () => {
+        undelivered = true;
+      },
+    });
+    return {
+      ok: true,
+      sentBytes: Buffer.byteLength(text),
+      transport: sent.transport,
+      ...(sent.state !== undefined ? { state: sent.state } : {}),
+      ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
+      delivered: !undelivered,
+    };
+  } catch (err) {
+    return fail(err);
+  }
 }
 
 function parseVia(raw: string | undefined): Transport | undefined {
@@ -1068,10 +1156,20 @@ export function wireAgentCommands(program: Command): void {
       "override the project root the workspace branches from (default: cwd)",
     )
     .option("--no-ctl", "skip the control-socket handshake with the mu pi extension")
+    .option(
+      "--next-free",
+      "if <name> is taken, take the next free one (worker-1 → worker-2, review → review-2); --json's agent.name says which",
+    )
+    .option(
+      "--send <text>",
+      "send this text once the agent is up (one mu call for spawn + send; `-` reads stdin). A failed send keeps the pane and exits non-zero; --json still prints the spawn with send.error",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string) {
       const opts = (this as Command).opts() as {
+        nextFree?: boolean;
+        send?: string;
         cli?: string;
         command?: string;
         tab?: string;

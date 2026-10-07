@@ -58,6 +58,9 @@ socket. Pick the mode by what the agent is doing:
   pastes nothing. `--via mux` pastes into the pane on purpose.
 
 After a claim, spawn, or wait, the `Next:` block prints the right send.
+`mu agent spawn --send <text>` spawns and sends the first prompt in one
+call; `--next-free` takes the next free name when `<name>` is taken
+(`worker-1` → `worker-2`).
 
 ### Non-pi agents
 
