@@ -12,7 +12,7 @@
 //   - 1 sync table:    sync_peers (per-peer watermarks)
 //   - 2 meta tables:   schema_version, machine_identity
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
-//                                      seeded from code on every open)
+//                                      seeded from code when missing)
 //   - 3 views:         ready, blocked, goals
 //   => EXPECTED_TABLES is exactly 11 entries.
 //
@@ -98,7 +98,8 @@ export function defaultDbPath(): string {
 
 /**
  * Open the mu database. Creates the parent directory and applies the schema
- * idempotently on every open. Safe to call from many short-lived processes
+ * idempotently when it is missing or differs from this build (an
+ * up-to-date DB opens without a write). Safe to call from many short-lived processes
  * concurrently — WAL mode handles cross-process writes.
  */
 export function openDb(options: OpenDbOptions = {}): Db {
@@ -151,7 +152,12 @@ export function openDb(options: OpenDbOptions = {}): Db {
     }
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
-    applySchema(db);
+    // Skip the DDL write transaction when the DB already matches this
+    // build. applySchema takes the write lock and rewrites the views,
+    // which bumps the schema cookie on every open: every `mu` call,
+    // reads included, queued behind any writer and forced every other
+    // connection to re-parse the schema (f_opendb_schema_write).
+    if (detectedVersion !== CURRENT_SCHEMA_VERSION || !schemaIsCurrent(db)) applySchema(db);
     seedMachineIdentity(db);
     // Install the op-capture triggers + the _op_ctx temp tables they
     // read. Per-connection, because SQLite forbids a main-schema
@@ -443,6 +449,59 @@ function applySchema(db: Db): void {
   );
 }
 
+/** Names CURRENT_SCHEMA creates with IF NOT EXISTS, and the exact SQL
+ *  SQLite stores for each view (the CREATE statement minus its `;`). */
+interface ExpectedObjects {
+  tables: string[];
+  indexes: string[];
+  views: Map<string, string>;
+}
+let expectedCache: ExpectedObjects | undefined;
+function expectedObjects(): ExpectedObjects {
+  if (expectedCache !== undefined) return expectedCache;
+  const names = (re: RegExp): string[] =>
+    [...CURRENT_SCHEMA.matchAll(re)].map((m) => m[1]).filter((n) => n !== undefined);
+  const views = new Map<string, string>();
+  for (const sql of [READY_VIEW_SQL, BLOCKED_VIEW_SQL, GOALS_VIEW_SQL]) {
+    const m = /CREATE VIEW (\w+)[^;]*/.exec(sql);
+    if (m?.[1] !== undefined) views.set(m[1], m[0]);
+  }
+  expectedCache = {
+    tables: names(/CREATE TABLE IF NOT EXISTS (\w+)/g),
+    indexes: names(/CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)/g),
+    views,
+  };
+  return expectedCache;
+}
+
+/** True when applySchema would change nothing: every table, index and
+ *  seeded substate row exists, and every view's stored SQL equals this
+ *  build's definition. Reads only, so openDb on an up-to-date DB takes
+ *  no write lock and leaves PRAGMA schema_version alone. */
+function schemaIsCurrent(db: Db): boolean {
+  const rows = db.prepare("SELECT type, name, sql FROM sqlite_master").all() as {
+    type: string;
+    name: string;
+    sql: string | null;
+  }[];
+  const have = new Map(rows.map((r) => [`${r.type}:${r.name}`, r.sql]));
+  const expected = expectedObjects();
+  if (expected.tables.some((t) => !have.has(`table:${t}`))) return false;
+  if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
+  for (const [name, sql] of expected.views) {
+    if (have.get(`view:${name}`) !== sql) return false;
+  }
+  const pairs = new Set(
+    (
+      db.prepare("SELECT status, substate FROM task_substates").all() as {
+        status: string;
+        substate: string;
+      }[]
+    ).map((r) => `${r.status}/${r.substate}`),
+  );
+  return TASK_SUBSTATE_ROWS.every(([status, substate]) => pairs.has(`${status}/${substate}`));
+}
+
 /** The schema version a fresh DB starts at. v11 adds tasks.substate
  *  and the task_substates lookup table on top of v10's three-state
  *  lifecycle (OPEN, IN_PROGRESS, CLOSED). See CHANGELOG.md. */
@@ -564,7 +623,8 @@ export type MachineLocalTable = (typeof MACHINE_LOCAL_TABLES)[number];
 // ─── View DDL — single source of truth ────────────────────────────────
 //
 // The three views (ready, blocked, goals) get DROPped + CREATEd by
-// applySchema on every openDb. Each constant is self-contained:
+// applySchema whenever openDb finds them missing or different from
+// these definitions (schemaIsCurrent). Each constant is self-contained:
 // DROP IF EXISTS + CREATE. Running DROP twice in a row is harmless,
 // so callers that already DROP up-front can still re-execute these
 // without churn.
@@ -839,7 +899,7 @@ CREATE TABLE IF NOT EXISTS vcs_workspaces (
 
 CREATE INDEX IF NOT EXISTS idx_vcs_workspaces_workstream ON vcs_workspaces (workstream_id);
 
--- ─── Views (always replaced so the latest definition wins) ────────────
+-- ─── Views (replaced when stale so the latest definition wins) ────────
 -- See READY_VIEW_SQL / BLOCKED_VIEW_SQL / GOALS_VIEW_SQL above for the
 -- canonical DDL — interpolated here so applySchema is one db.exec().
 ${READY_VIEW_SQL}
