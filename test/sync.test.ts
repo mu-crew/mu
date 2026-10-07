@@ -24,7 +24,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { formatHlc } from "../src/hlc.js";
 import { withCaptureSuppressed } from "../src/op-context.js";
-import { flushSegment, localMachineId, segmentPath, syncPass } from "../src/segments.js";
+import {
+  discoverPeers,
+  flushSegment,
+  ingestSegment,
+  localMachineId,
+  segmentPath,
+  syncPass,
+} from "../src/segments.js";
 import {
   ambientFlush,
   ambientIngest,
@@ -415,6 +422,40 @@ describe("sync", () => {
 
         renameSync(`${aSeg}.hidden`, aSeg);
         await ambientIngest(b);
+        expect(edgeCount(b)).toBe(1);
+      } finally {
+        c.close();
+      }
+    });
+
+    it("a pass that died before the repair is repaired by the next ambient pass", async () => {
+      const c = openDb({ path: join(tempDir, "c.db") });
+      try {
+        seed(a, "parent");
+        await flushSegment(a, dir);
+        await ambientIngest(c);
+        seed(c, "child");
+        addBlockEdge(c, "demo", "child", "parent");
+        await flushSegment(c, dir);
+
+        // b holds the edge, deferred: its parent has not arrived.
+        const aSeg = segmentPath(dir, localMachineId(a));
+        renameSync(aSeg, `${aSeg}.hidden`);
+        await ambientIngest(b);
+        expect(edgeCount(b)).toBe(0);
+        renameSync(`${aSeg}.hidden`, aSeg);
+
+        // A process ingests the parent's segment and exits before the
+        // pass-wide repair runs.
+        const parentPeer = discoverPeers(dir, localMachineId(b)).find(
+          (p) => p.machineId === localMachineId(a),
+        );
+        if (parentPeer === undefined) throw new Error("expected a's segment");
+        expect(ingestSegment(b, parentPeer).applied).toBeGreaterThan(0);
+
+        // The next ordinary invocation applies nothing new.
+        const next = await ambientIngest(b);
+        expect(next.ingested.every((r) => r.applied === 0)).toBe(true);
         expect(edgeCount(b)).toBe(1);
       } finally {
         c.close();

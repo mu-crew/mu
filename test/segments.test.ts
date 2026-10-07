@@ -38,6 +38,7 @@ import {
   syncPass,
   verifyAgainstManifest,
 } from "../src/segments.js";
+import { ambientIngest } from "../src/sync.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
@@ -1087,14 +1088,39 @@ describe("segments", () => {
       writeFileSync(path, `${lines.join("\n")}\n`);
     };
 
+    /** Rewrite, then date the segment before its manifest, as a rewrite
+     *  that preserved its mtime would leave it: then no stat can tell.
+     *  (A full second back: restoring the exact old mtime through a
+     *  float can land a few hundred ns later, past the manifest.) */
+    const keepMtime = (path: string, rewrite: () => void): void => {
+      rewrite();
+      const earlier = new Date(statSync(path.replace(/\.jsonl$/, ".manifest")).mtimeMs - 1000);
+      utimesSync(path, earlier, earlier);
+    };
+
     it("at the watermark it neither hashes nor decodes the segment", async () => {
       const peer = await caughtUpPeer();
-      rotLineTwo(peer.path);
+      keepMtime(peer.path, () => rotLineTwo(peer.path));
       // The old path sha256'd the file, saw the mismatch, decoded every
       // line and reported manifest-mismatch. Caught up, it reads only
       // the manifest and the last line, so the rot is invisible.
       const again = ingestSegment(b, peer);
       expect(again).toMatchObject({ read: 0, applied: 0, defects: [] });
+    });
+
+    it("a segment rewritten after its manifest is read and reported, every time", async () => {
+      const peer = await caughtUpPeer();
+      rotLineTwo(peer.path);
+      // The rewrite lands after the peer wrote its manifest.
+      const later = new Date(statSync(peer.path).mtimeMs + 2000);
+      utimesSync(peer.path, later, later);
+      await withEnv("MU_SYNC_DIR", dir, async () => {
+        for (let i = 0; i < 2; i++) {
+          const result = await ambientIngest(b, { quiet: true });
+          expect(result.ingested[0]?.defects.map((d) => d.kind)).toContain("manifest-mismatch");
+          expect(result.warnings.join("\n")).toContain("copy it from the peer again");
+        }
+      });
     });
 
     it("explicit verification still reads the whole file", async () => {
