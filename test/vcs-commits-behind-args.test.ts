@@ -1,6 +1,7 @@
 // The staleness probe behind `mu state` and the TUI slow tick
 // (f_vcs_staleness_snapshot): jj must read with --ignore-working-copy
-// (no working-copy snapshot, no new jj operation), and git must resolve
+// (no working-copy snapshot, no new jj operation), importing Git refs
+// explicitly when colocated, and git must resolve
 // its main ref once per repo per decorate call, not once per workspace.
 // `run` and `exec` are mocked; real-VCS counts are covered in
 // workspace-backends.integration.test.ts.
@@ -69,6 +70,15 @@ describe("jj commitsBehind", () => {
         "--template",
         '"x\\n"',
       ],
+    ]);
+  });
+
+  it("imports Git refs first in a colocated workspace, still without a snapshot", async () => {
+    mkdirSync(join(dir, ".git"));
+    expect(await jjBackend.commitsBehind(dir, "abc")).toBe(2);
+    expect(fake.runs.map((c) => c.slice(0, 4))).toEqual([
+      ["jj", "git", "import", "--ignore-working-copy"],
+      ["jj", "log", "--ignore-working-copy", "-r"],
     ]);
   });
 });

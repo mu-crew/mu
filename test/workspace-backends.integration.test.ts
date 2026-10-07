@@ -443,6 +443,49 @@ jjDescribe("jjBackend.commitsBehind returns a number or null", () => {
   });
 });
 
+jjDescribe("jjBackend.commitsBehind in a colocated repo", () => {
+  // `jj log --ignore-working-copy` skips the colocated Git import, so a
+  // plain `git fetch` must still be seen (the probe imports first) while
+  // a clean re-probe or a dirty working copy writes no jj operation.
+  const env = { ...process.env, JJ_USER: "t", JJ_EMAIL: "t@t" };
+  const sh = (bin: string, args: string[], cwd: string): string =>
+    execFileSync(bin, args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  const gitCommit = (cwd: string, msg: string): void => {
+    sh(
+      "git",
+      ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", msg],
+      cwd,
+    );
+  };
+  const opHead = (cwd: string): string =>
+    sh("jj", ["op", "log", "--ignore-working-copy", "-n1", "--no-graph", "-T", "id"], cwd);
+
+  it("sees a git fetch without snapshotting the working copy", async () => {
+    const origin = join(projectRoot, "origin.git");
+    const seed = join(projectRoot, "seed");
+    const repo = join(projectRoot, "repo");
+    sh("git", ["init", "-q", "--bare", origin], projectRoot);
+    sh("git", ["clone", "-q", origin, seed], projectRoot);
+    gitCommit(seed, "a");
+    sh("git", ["push", "-q", "origin", "HEAD:main"], seed);
+    sh("git", ["clone", "-q", origin, repo], projectRoot);
+    sh("jj", ["git", "init", "--colocate"], repo);
+    sh("jj", ["bookmark", "track", "main", "--remote=origin"], repo);
+    const parent = sh("jj", ["log", "-r", "trunk()", "--no-graph", "-T", "commit_id"], repo);
+    expect(await jjBackend.commitsBehind(repo, parent)).toBe(0);
+
+    gitCommit(seed, "b");
+    sh("git", ["push", "-q", "origin", "HEAD:main"], seed);
+    sh("git", ["fetch", "-q"], repo);
+    expect(await jjBackend.commitsBehind(repo, parent)).toBe(1);
+
+    const op = opHead(repo);
+    writeFileSync(join(repo, "dirty.txt"), "x");
+    expect(await jjBackend.commitsBehind(repo, parent)).toBe(1);
+    expect(opHead(repo)).toBe(op);
+  });
+});
+
 slDescribe("slBackend.commitsBehind returns a number or null", () => {
   beforeEach(() => {
     execFileSync("sl", ["init", projectRoot], { stdio: "ignore" });

@@ -1,6 +1,7 @@
 // mu — jj VCS backend.
 
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   ensureParent,
   parseNulRecords,
@@ -118,10 +119,17 @@ export const jjBackend: VcsBackend = {
   // so the probe neither snapshots the working copy (a full tree stat
   // per workspace on every `mu state` / TUI slow tick) nor writes a jj
   // operation. `<ref>..trunk()` never involves `@`, so the count is the
-  // same either way.
+  // same either way. But the flag also skips the automatic Git import a
+  // colocated workspace (`.git` beside `.jj`) does, so a plain `git
+  // fetch` would go unseen; import explicitly there first. The import
+  // writes an op only when Git refs moved, as the implicit one did.
+  // Non-colocated workspaces never auto-imported, so they skip it.
   async commitsBehind(workspacePath, ref) {
     if (!existsSync(workspacePath)) return null;
     try {
+      if (existsSync(join(workspacePath, ".git"))) {
+        await run("jj", ["git", "import", "--ignore-working-copy", "--quiet"], workspacePath);
+      }
       // `<ref>..trunk()` is the set of commits reachable from trunk
       // but not from ref — exactly the staleness number. Template `"x\n"`
       // gives one line per commit, which we count.
