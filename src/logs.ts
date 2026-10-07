@@ -141,6 +141,62 @@ export function workstreamScopeParams(workstream: string): [string, string] {
   return [workstream, `${escaped}/%`];
 }
 
+/** Every distinct `ops.entity`, read by skip-scanning idx_ops_entity_key
+ *  (one seek per entity, ~a dozen). `entity IN (…) AND key …` lets SQLite
+ *  seek (entity, key) without knowing the entity: the only index on key
+ *  leads with entity, and a bare `key` predicate scans all of ops. */
+const OPS_ENTITIES_SQL = `WITH RECURSIVE e(entity) AS (
+    SELECT MIN(entity) FROM ops
+    UNION ALL
+    SELECT (SELECT MIN(entity) FROM ops WHERE entity > e.entity) FROM e WHERE e.entity IS NOT NULL
+  ) SELECT entity FROM e WHERE entity IS NOT NULL`;
+
+/** Index-seekable superset of `workstreamScopeSql`: keys from '<ws>' up
+ *  to (not including) '<ws>0', '0' being the byte after '/'. AND it with
+ *  the exact-or-LIKE scope, never use it alone. */
+const INDEXED_SCOPE_SQL = `l.entity IN (${OPS_ENTITIES_SQL}) AND l.key >= ? AND l.key < ?`;
+
+/** Above this many ops a workstream is "busy": its newest rows are
+ *  near the end of ops, so walking seq backwards finds them fast, while
+ *  the index seek would read and sort every one of its ops. Below it the
+ *  seek wins, and a quiet or unknown workstream no longer scans all of
+ *  ops looking for rows that are not there (f_ops_key_scan). */
+const SMALL_SCOPE_OPS = 2000;
+
+/** Extra predicate + params that make a workstream-scoped ops read an
+ *  index seek, or null when the workstream is busy and the seq walk is
+ *  already cheap. The predicate only narrows to rows the scope already
+ *  matches, so the row set is unchanged. */
+function indexedScope(db: Db, workstream: string): { sql: string; params: string[] } | null {
+  const params = [workstream, `${workstream}0`];
+  const { n } = db
+    .prepare(`SELECT COUNT(*) AS n FROM (SELECT 1 FROM ops l WHERE ${INDEXED_SCOPE_SQL} LIMIT ?)`)
+    .get(...params, SMALL_SCOPE_OPS) as { n: number };
+  return n < SMALL_SCOPE_OPS ? { sql: INDEXED_SCOPE_SQL, params } : null;
+}
+
+/** `workstreamScopeSql` (column `l.key`) plus, for a small workstream,
+ *  the indexed bound. Same row set, fewer rows visited. */
+export function scopeFor(db: Db, workstream: string): { sql: string; params: string[] } {
+  const scope = { sql: workstreamScopeSql(), params: workstreamScopeParams(workstream) };
+  const indexed = indexedScope(db, workstream);
+  if (indexed === null) return scope;
+  return {
+    sql: `${scope.sql} AND ${indexed.sql}`,
+    params: [...scope.params, ...indexed.params],
+  };
+}
+
+/** `workstreamScopeSql` limited to the newest SMALL_SCOPE_OPS ops: a
+ *  bounded seq-range read, enough for an active workstream's latest
+ *  rows. Callers that find too few fall back to `scopeFor`. */
+function recentScope(workstream: string): { sql: string; params: unknown[] } {
+  return {
+    sql: `${workstreamScopeSql()} AND l.seq > (SELECT COALESCE(MAX(seq), 0) FROM ops) - ?`,
+    params: [...workstreamScopeParams(workstream), SMALL_SCOPE_OPS],
+  };
+}
+
 /**
  * Hide parent-row TOUCH ops from the log surface.
  *
@@ -233,8 +289,12 @@ export function groupIdFromPrefix(db: Db, prefix: string): string | null {
   if (prefix === "") return null;
   const rows = db
     .prepare(
+      // The range lets idx_ops_group seek; LIKE alone scanned it all.
+      // char(0x10FFFF) sorts after any continuation of the prefix.
       `SELECT DISTINCT group_id AS groupId FROM ops
-        WHERE group_id = @exact OR group_id LIKE @prefix || '%' ESCAPE '\\'`,
+        WHERE group_id = @exact
+           OR (group_id >= @exact AND group_id < @exact || char(1114111)
+               AND group_id LIKE @prefix || '%' ESCAPE '\\')`,
     )
     .all({ exact: prefix, prefix: prefix.replace(/[\\%_]/g, (c) => `\\${c}`) }) as {
     groupId: string;
@@ -391,9 +451,6 @@ export function listLogs(db: Db, opts: ListLogsOptions = {}): LogRow[] {
   if (opts.workstream === null) {
     conditions.push("l.key = ?");
     params.push(MACHINE_WIDE_KEY);
-  } else if (opts.workstream !== undefined) {
-    conditions.push(workstreamScopeSql());
-    params.push(...workstreamScopeParams(opts.workstream));
   }
   if (opts.since !== undefined) {
     conditions.push("l.seq > ?");
@@ -425,19 +482,35 @@ export function listLogs(db: Db, opts: ListLogsOptions = {}): LogRow[] {
   }
   // Same predicate as latestSeq — see TOUCH_OP_FILTER.
   conditions.push(TOUCH_OP_FILTER);
-
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const ws = opts.workstream ?? null;
 
   // Two query shapes:
   //   - When `since` is set, ascending order is what we want directly.
   //   - When `limit` is set without `since`, fetch the most-recent N
   //     (descending) then reverse so the caller still sees oldest-first.
   if (opts.limit !== undefined && opts.since === undefined) {
-    const rowsDesc = db
-      .prepare(`SELECT ${SELECT_LOG_COLS} ${LOG_FROM_JOIN} ${where} ORDER BY l.seq DESC LIMIT ?`)
-      .all(...params, opts.limit) as RawLogRow[];
+    const limit = opts.limit;
+    const newest = (scope: { sql: string; params: unknown[] }) =>
+      db
+        .prepare(
+          `SELECT ${SELECT_LOG_COLS} ${LOG_FROM_JOIN} WHERE ${[scope.sql, ...conditions].join(" AND ")} ORDER BY l.seq DESC LIMIT ?`,
+        )
+        .all(...scope.params, ...params, limit) as RawLogRow[];
+    // An active workstream fills the limit from the newest ops; try
+    // that cheap seq range first and fall back to scopeFor only when the
+    // workstream is quiet. The first `limit` rows by seq DESC are the
+    // same either way.
+    let rowsDesc = newest(ws === null ? { sql: "1", params: [] } : recentScope(ws));
+    if (ws !== null && rowsDesc.length < limit) rowsDesc = newest(scopeFor(db, ws));
     return rowsDesc.reverse().map(rowFromDb);
   }
+
+  if (ws !== null) {
+    const scope = scopeFor(db, ws);
+    conditions.unshift(scope.sql);
+    params.unshift(...scope.params);
+  }
+  const where = `WHERE ${conditions.join(" AND ")}`;
 
   let sql = `SELECT ${SELECT_LOG_COLS} ${LOG_FROM_JOIN} ${where} ORDER BY l.seq ASC`;
   if (opts.limit !== undefined) {
@@ -458,17 +531,19 @@ export function latestSeq(db: Db, workstream?: string): number {
   // INTO it. When the two disagreed (a filter here that listLogs did
   // not apply, or vice versa) `--tail` started past rows the non-tail
   // view had already shown and silently skipped them.
-  const row =
-    workstream === undefined
-      ? (db.prepare(`SELECT MAX(seq) AS s FROM ops l WHERE ${TOUCH_OP_FILTER}`).get() as {
-          s: number | null;
-        })
-      : (db
-          .prepare(
-            `SELECT MAX(seq) AS s FROM ops l WHERE ${workstreamScopeSql()} AND ${TOUCH_OP_FILTER}`,
-          )
-          .get(...workstreamScopeParams(workstream)) as { s: number | null });
-  return row.s ?? 0;
+  if (workstream === undefined) {
+    const row = db.prepare(`SELECT MAX(seq) AS s FROM ops l WHERE ${TOUCH_OP_FILTER}`).get() as {
+      s: number | null;
+    };
+    return row.s ?? 0;
+  }
+  const max = (scope: { sql: string; params: unknown[] }) =>
+    (
+      db
+        .prepare(`SELECT MAX(seq) AS s FROM ops l WHERE ${scope.sql} AND ${TOUCH_OP_FILTER}`)
+        .get(...scope.params) as { s: number | null }
+    ).s;
+  return max(recentScope(workstream)) ?? max(scopeFor(db, workstream)) ?? 0;
 }
 
 /**
@@ -566,7 +641,7 @@ function lastClaimOp(
   const row = db
     .prepare(
       `SELECT actor, created_at FROM ops
-        WHERE key = ? AND intent = 'task.claim'
+        WHERE entity = 'task' AND key = ? AND intent = 'task.claim'
         ORDER BY seq DESC LIMIT 1`,
     )
     .get(`${workstream}/${localId}`) as { actor: string | null; created_at: string } | undefined;
