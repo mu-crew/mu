@@ -16,7 +16,7 @@ import { realpathSync } from "node:fs";
 import path from "node:path";
 
 import type { Db } from "../db.js";
-import { workstreamScopeParams, workstreamScopeSql } from "../logs.js";
+import { scopeFor } from "../logs.js";
 import { workspaceProjectRoot } from "../project-root.js";
 import { listWorkspaces } from "../workspace.js";
 import { resolveMuxSessionWorkstreamName } from "../workstream.js";
@@ -41,18 +41,18 @@ export function latestActiveWorkstream(db: Db, candidates: readonly string[]): s
   // but "<ws>/<local_id>" (and "#<id>" / "-><ref>" suffixes) for tasks,
   // notes, and edges. Use the same exact-or-prefix scope as `mu log`, or
   // all task work is invisible to the tie-break.
-  const stmt = db.prepare(
-    `SELECT l.created_at AS createdAt, l.seq AS seq
-       FROM ops l
-      WHERE ${workstreamScopeSql()}
-      ORDER BY l.created_at DESC, l.seq DESC
-      LIMIT 1`,
-  );
   let best: { name: string; createdAt: string; seq: number } | null = null;
   for (const name of candidates) {
-    const row = stmt.get(...workstreamScopeParams(name)) as
-      | { createdAt: string; seq: number }
-      | undefined;
+    const scope = scopeFor(db, name);
+    const row = db
+      .prepare(
+        `SELECT l.created_at AS createdAt, l.seq AS seq
+           FROM ops l
+          WHERE ${scope.sql}
+          ORDER BY l.created_at DESC, l.seq DESC
+          LIMIT 1`,
+      )
+      .get(...scope.params) as { createdAt: string; seq: number } | undefined;
     if (row === undefined) continue;
     if (
       best === null ||
