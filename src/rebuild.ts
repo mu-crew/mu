@@ -367,6 +367,9 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
           if (applyOp(target, opFromRow(row)).changed) opsChangedRows += 1;
         }
 
+        // sync_fingerprints is NOT copied: it is a cache that vouches for
+        // the old DB's last reads, and without it the next ingest of
+        // each peer simply reads its segment in full once.
         for (const peer of peerRows) {
           insertPeer.run({
             machineId: peer.machine_id,

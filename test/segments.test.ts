@@ -1240,6 +1240,21 @@ describe("segments", () => {
       }
     });
 
+    it("keeps last_seen_at a timestamp; the fingerprint lives in sync_fingerprints", async () => {
+      await caughtUpPeer();
+      const key = localMachineId(a);
+      const seen = b
+        .prepare("SELECT datetime(last_seen_at) AS t FROM sync_peers WHERE machine_id = ?")
+        .get(key) as { t: string | null };
+      expect(seen.t).not.toBeNull();
+      const fp = () =>
+        b.prepare("SELECT fingerprint FROM sync_fingerprints WHERE machine_id = ?").get(key);
+      expect(fp()).toBeDefined();
+      // A watermark write without a clean read drops the fingerprint.
+      setWatermark(b, key, getWatermark(b, key));
+      expect(fp()).toBeUndefined();
+    });
+
     it("a same-size rewrite with a backdated mtime is read and reported", async () => {
       const peer = await caughtUpPeer();
       const recordedMtime = statSync(peer.path).mtimeMs;

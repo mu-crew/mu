@@ -9,12 +9,13 @@
 //                      task_notes, vcs_workspaces
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
-//   - 1 sync table:    sync_peers (per-peer watermarks)
+//   - 2 sync tables:   sync_peers (per-peer watermarks),
+//                      sync_fingerprints (caught-up fingerprints)
 //   - 2 meta tables:   schema_version, machine_identity
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
 //   - 3 views:         ready, blocked, goals
-//   => EXPECTED_TABLES is exactly 11 entries.
+//   => EXPECTED_TABLES is exactly 12 entries.
 //
 // v11 adds tasks.substate, which qualifies status (OPEN/parked,
 // CLOSED/wontfix, ...). A composite FK (status, substate) ->
@@ -528,12 +529,14 @@ const MIN_ACCEPTED_SCHEMA_VERSION = 11;
 /** Tables a healthy DB must contain. Single source of truth so
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
- *  CURRENT_SCHEMA_VERSION bump. Sorted; exactly 11 entries in v11. */
+ *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
+ *  additive, and an older mu ignores it). Sorted; exactly 12 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agents",
   "machine_identity",
   "ops",
   "schema_version",
+  "sync_fingerprints",
   "sync_peers",
   "task_edges",
   "task_notes",
@@ -605,6 +608,7 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    machine_identity IS the per-machine identity.
  *    schema_version   local bookkeeping.
  *    sync_peers       local bookkeeping (per-peer watermarks).
+ *    sync_fingerprints local cache of what the last clean ingest saw.
  *    task_substates   seeded identically on every machine from
  *                     TASK_SUBSTATE_ROWS; code, not data.
  *    ops              see below — the carrier, not cargo.
@@ -626,6 +630,7 @@ export const MACHINE_LOCAL_TABLES = [
   "machine_identity",
   "ops",
   "schema_version",
+  "sync_fingerprints",
   "sync_peers",
   "task_substates",
   "vcs_workspaces",
@@ -893,14 +898,23 @@ CREATE INDEX IF NOT EXISTS idx_ops_machine_entity_hlc ON ops (machine_id, entity
 -- because segments are append-only and ordered. Rows are created on
 -- demand at first ingest; there is no membership list to configure.
 -- A Syncthing conflict copy gets its own row, keyed by its file stem.
--- last_seen_at is the ISO time of the last watermark write, followed
--- by '<size> <mtimeMs> <manifest sha256>' when that write followed a
--- clean read to the segment's end (the caught-up fingerprint,
--- src/segments.ts segmentCaughtUp). Free text, so no schema bump.
+-- last_seen_at is the ISO time of the last watermark write.
 CREATE TABLE IF NOT EXISTS sync_peers (
   machine_id       TEXT PRIMARY KEY,
   last_applied_seq INTEGER NOT NULL DEFAULT 0,
   last_seen_at     TEXT
+);
+
+-- sync_fingerprints: the caught-up fingerprint, '<size> <mtimeMs>
+-- <manifest sha256>' of a peer segment, recorded with the watermark
+-- when ingest read that segment cleanly to its end (src/segments.ts
+-- segmentCaughtUp). Keyed like sync_peers; a watermark write without a
+-- clean read deletes the row. A cache: losing it costs one full read.
+-- Additive, so no schema bump: an older mu ignores it, and any
+-- watermark it writes can no longer match a stale fingerprint.
+CREATE TABLE IF NOT EXISTS sync_fingerprints (
+  machine_id  TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL
 );
 
 -- vcs_workspaces: one isolated working copy per agent.

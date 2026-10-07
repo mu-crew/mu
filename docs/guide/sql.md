@@ -25,7 +25,7 @@ FAIL-row failure, `6` reaped pane, `7` stall.
 
 ## Read the schema
 
-The schema has 11 tables and 3 views (`ready`, `blocked`, `goals`).
+The schema has 12 tables and 3 views (`ready`, `blocked`, `goals`).
 Four tables travel between machines: `workstreams`, `tasks`,
 `task_edges`, and `task_notes`. List them all:
 

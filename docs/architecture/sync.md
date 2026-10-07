@@ -18,7 +18,7 @@ Litestream, cr-sqlite or a peer list, and why the DB must never sit in
   `applyOp`. Ambient ingest skips a peer that is caught up: the manifest
   counts the watermark, and the segment's size, exact mtime and
   manifest sha256 equal what the last clean read to the end recorded
-  (in `sync_peers.last_seen_at`). Any change, including a rewrite with a
+  (in `sync_fingerprints`). Any change, including a rewrite with a
   backdated mtime, fails that check, so the full read hashes the file
   and reports the mismatch. `mu sync` always reads every line.
 - Peer discovery is implicit: every non-self `*.jsonl` is a peer. A
