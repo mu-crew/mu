@@ -206,6 +206,30 @@ describe("reconcile — pruning ghost rows", () => {
 
 // ─── Step 3: surface orphans ───────────────────────────────────────────
 
+describe("reconcile — title refresh", () => {
+  it("full mode skips select-pane when the pane title already matches", async () => {
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
+    const { executor, calls } = mockTmux([
+      { windowId: "@1", paneId: "%15", title: "alice", command: "pi" },
+    ]);
+    setTmuxExecutor(executor);
+    await reconcile(db, { workstream: "auth" });
+    expect(calls.some((c) => c[0] === "select-pane")).toBe(false);
+  });
+
+  it("full mode retitles once when the pane title differs", async () => {
+    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
+    const { executor, calls } = mockTmux([
+      { windowId: "@1", paneId: "%15", title: "stale", command: "pi" },
+    ]);
+    setTmuxExecutor(executor);
+    await reconcile(db, { workstream: "auth" });
+    expect(calls.filter((c) => c[0] === "select-pane")).toEqual([
+      ["select-pane", "-t", "%15", "-T", "alice"],
+    ]);
+  });
+});
+
 describe("reconcile — orphan surfacing", () => {
   it("pi pane with no DB row → surfaced as orphan", async () => {
     const { executor } = mockTmux([

@@ -420,16 +420,21 @@ export function composeAgentTitle(db: Db, agent: AgentRow): string {
 
 /** Push a fresh pane title for `agentName`. Best-effort — a missing
  *  agent, a placeholder pane id, or a tmux failure are all swallowed
- *  silently (titles are decorative; never block the calling verb). */
+ *  silently (titles are decorative; never block the calling verb).
+ *  `currentTitle` is the pane's live title when the caller already read
+ *  it (reconcile); the write is skipped when it equals the new title,
+ *  since each retitle is a mux server write plus a status redraw. */
 export async function refreshAgentTitle(
   db: Db,
   agentName: string,
   workstream: string,
+  currentTitle?: string,
 ): Promise<void> {
   const agent = getAgent(db, agentName, workstream);
   if (!agent) return;
   if (isPendingPaneId(agent.paneId)) return; // workspace pre-stage placeholder; see PENDING_PANE_PREFIX
   const title = composeAgentTitle(db, agent);
+  if (title === currentTitle) return;
   // Best-effort all the way down, including "no mux reachable at all":
   // pane titles are decorative and must never fail the calling verb.
   await activeMux()
