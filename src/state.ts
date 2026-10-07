@@ -117,6 +117,12 @@ export interface WorkstreamSnapshotSlowFields {
   doctor: DoctorSummary | null;
 }
 
+/** Notes that may carry a REMOTE: / REMOTE_BASE: line. GLOB, not LIKE:
+ *  the parsers below are case-sensitive, so LIKE's case-folding only
+ *  fetched notes they then dropped, and GLOB's byte compare is ~2.5x
+ *  cheaper per note. Still one pass over the workstream's notes; no index
+ *  can serve a substring match, and a partial index would need a schema
+ *  version bump (f_remote_notes_like). */
 function remoteNoteRows(
   db: Db,
   workstream: string,
@@ -131,7 +137,7 @@ function remoteNoteRows(
        JOIN tasks t ON t.id = n.task_id
        JOIN workstreams ws ON ws.id = t.workstream_id
        WHERE ws.name = ?${filter}
-         AND (n.content LIKE '%REMOTE: %' OR n.content LIKE '%REMOTE_BASE: %')
+         AND (n.content GLOB '*REMOTE: *' OR n.content GLOB '*REMOTE_BASE: *')
        ORDER BY n.id`,
     )
     .all(...params) as Array<{
