@@ -776,23 +776,34 @@ function readLastLine(path: string, size: number): string | null {
 /**
  * True when the segment at `path` holds exactly `lines` lines, judged
  * without reading it: its manifest counts `lines`, the file's size
- * matches the manifest's when the manifest records one, and the file
- * ends in a newline-terminated line that decodes to the manifest's
- * lastHlc. A peer that appended past its manifest, a torn tail, a
- * missing or stale manifest, or a file shorter than its manifest all
- * fail one of these and send the caller down the full read. Cost: the
- * manifest, one stat and the last line, whatever the file's size.
+ * matches the manifest's when the manifest records one, the file was
+ * not modified after its manifest, and the file ends in a
+ * newline-terminated line that decodes to the manifest's lastHlc. A
+ * peer that appended past its manifest, a rewrite after the manifest, a
+ * torn tail, a missing or stale manifest, or a file shorter than its
+ * manifest all fail one of these and send the caller down the full
+ * read, which hashes the file and reports any mismatch. Cost: the
+ * manifest, two stats and the last line, whatever the file's size.
  */
 export function segmentCaughtUp(path: string, lines: number): boolean {
   const m = readManifest(path);
   if (m === null || m.count !== lines) return false;
   let size: number;
+  let mtimeMs: number;
+  let manifestMtimeMs: number;
   try {
-    size = statSync(path).size;
+    ({ size, mtimeMs } = statSync(path));
+    manifestMtimeMs = statSync(manifestPath(path)).mtimeMs;
   } catch {
     return false;
   }
   if (typeof m.size === "number" && m.size !== size) return false;
+  // The owner writes the segment, then its manifest, so a segment newer
+  // than its manifest file was touched afterwards (rewritten, repaired by
+  // hand, half-copied). The mtime the manifest recorded also vouches for
+  // the file, for a transport that kept the segment's mtime but not the
+  // manifest's.
+  if (mtimeMs > manifestMtimeMs && m.mtimeMs !== mtimeMs) return false;
   if (lines === 0) return size === 0;
   const last = readLastLine(path, size);
   if (last === null) return false;
@@ -1031,6 +1042,40 @@ export function setWatermark(db: Db, watermarkKey: string, value: number): void 
   ).run({ machineId: watermarkKey, value, seenAt: new Date().toISOString() });
 }
 
+/**
+ * The pending-reprojection marker: SQLite's `user_version` header field,
+ * 1 while applied ops await `reprojectDeferredOps`. mu uses it for
+ * nothing else (the schema version lives in `schema_version`). Written
+ * inside the applying transaction, so it commits or rolls back with the
+ * ops; reading it costs no table lookup and adds no row anyone lists.
+ */
+export function markReprojectionPending(db: Db): void {
+  db.pragma("user_version = 1");
+}
+
+/**
+ * Run `reprojectDeferredOps` when an ingest left the marker behind (or
+ * always, with `force`), and clear the marker in the same transaction.
+ *
+ * The marker is what lets ambient ingest skip the repair scan (~130 ms
+ * on a large log) when nothing arrived, yet still retry it after a
+ * process died between its ingest commit and the repair. Clearing it
+ * atomically with the repair means a concurrent ingest's marker is
+ * either seen by this repair or survives it. Returns the rows changed.
+ */
+export function reprojectIfPending(db: Db, opts?: { force?: boolean }): number {
+  if (opts?.force !== true && db.pragma("user_version", { simple: true }) === 0) return 0;
+  return db
+    .transaction(() => {
+      const pending = db.pragma("user_version", { simple: true }) !== 0;
+      if (!pending && opts?.force !== true) return 0;
+      const changed = reprojectDeferredOps(db);
+      if (pending) db.pragma("user_version = 0");
+      return changed;
+    })
+    .immediate();
+}
+
 /** Reset a peer's watermark so the next ingest re-reads from zero. The
  *  universal repair, safe because ingest is idempotent. */
 export function resetWatermark(db: Db, watermarkKey: string): void {
@@ -1261,6 +1306,9 @@ export function ingestSegment(
       watermark = lineNo;
     }
     setWatermark(db, watermarkKey, watermark);
+    // In the same transaction as the ops: a process that dies before
+    // the pass-wide reprojection leaves this behind for the next one.
+    if (applied > 0) markReprojectionPending(db);
   });
   run.immediate();
 
@@ -1381,7 +1429,7 @@ export async function syncPass(db: Db, dir: string | null = syncDir()): Promise<
   // a task in peer B's, and `discoverPeers` order is `localeCompare` over
   // random UUID filenames, so "parent first" is a coin flip. One pass at
   // the end sees the union. See `reprojectDeferredOps`.
-  reprojectDeferredOps(db);
+  reprojectIfPending(db, { force: true });
   return {
     flushed,
     ingested,

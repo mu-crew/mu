@@ -15,7 +15,11 @@ Litestream, cr-sqlite or a peer list, and why the DB must never sit in
 - `flushSegment` appends this machine's unflushed ops to
   `<MU_SYNC_DIR>/<machine_id>.jsonl`.
 - `ingestSegment` reads a peer segment from its watermark into
-  `applyOp`.
+  `applyOp`. Ambient ingest skips a peer that is caught up: the manifest
+  counts the watermark, the size matches, the segment is not newer than
+  its manifest, and the last line decodes to the manifest's `lastHlc`.
+  A rewrite after the manifest fails that check, so the full read hashes
+  the file and reports the mismatch. `mu sync` always reads every line.
 - Peer discovery is implicit: every non-self `*.jsonl` is a peer. A
   peer disappears only when its segment is deleted.
 - A Syncthing conflict copy (`<machine>.sync-conflict-….jsonl`) is
@@ -122,8 +126,11 @@ edge puts that are resolvable now but unprojected. It skips ops whose
 parent task is gone and keys with a newer `del`, so a deleted edge is
 never resurrected and an orphan is not retried forever. It runs once
 per ingest pass, not per peer, because an edge in one segment may name
-a task in another. On a healthy DB it is two indexed queries returning
-zero rows.
+a task in another. Ambient ingest runs it only while SQLite's
+`user_version` is 1. An ingest that applies ops sets that marker in the
+same transaction, and the repair clears it. A process that dies between
+the two leaves the marker set, so the next invocation runs the repair.
+`mu sync` and `--from` always run it.
 
 There is no retry queue. A queue would be a second source of truth and
 would not survive a short-lived `mu` process when the parent arrives
