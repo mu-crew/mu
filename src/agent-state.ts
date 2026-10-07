@@ -1,7 +1,6 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { execa } from "execa";
 import { expectsCtl } from "./agents/transport.js";
 import { ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
@@ -94,6 +93,8 @@ export function murmurAvailable(): boolean {
 
 const defaultMurmurRunner: MurmurRunner = async () => {
   try {
+    // Lazy-load execa: ~110 modules that --version and DB-only verbs never need.
+    const { execa } = await import("execa");
     const result = await execa("murmur", ["status", "--json"], {
       timeout: 5_000,
       reject: false,

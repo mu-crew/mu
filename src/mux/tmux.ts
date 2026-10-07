@@ -25,7 +25,6 @@
 // input box while `mu agent send` reported exit 0. See
 // `awaitPaneQuiescence`.
 
-import { execa } from "execa";
 import type { NextStep } from "../output.js";
 import { paneLooksBusy } from "./input-timing.js";
 import {
@@ -180,6 +179,8 @@ function tmuxGlobalFlags(): readonly string[] {
 }
 
 const realExecutor: TmuxExecutor = async (args) => {
+  // Lazy-load execa: ~110 modules that --version and DB-only verbs never need.
+  const { execa } = await import("execa");
   const result = await execa("tmux", [...tmuxGlobalFlags(), ...args], { reject: false });
   return {
     stdout: result.stdout ?? "",
