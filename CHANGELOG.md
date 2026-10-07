@@ -20,6 +20,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   much faster: 1901 tasks render in ~10 ms instead of ~1.5 s. Output is
   byte-identical to before, including titles with unclosed ANSI colour
   or zero-width characters.
+- **Faster CLI startup.** `dist/cli.js` no longer loads ink, react and
+  yoga for every verb: the TUI is a lazy chunk (748 -> 203 modules for
+  `mu --version` and `mu task list`). The CLI enables Node's compile
+  cache under `<state>/compile-cache`, and skips it when the directory
+  is unavailable or unwritable (`NODE_DISABLE_COMPILE_CACHE=1` turns it
+  off). The TUI runs React's production build unless `NODE_ENV` is set.
+  execa now loads only at its call sites. On a 69 MB DB with a 56 MB
+  sync dir, `mu --version` drops from ~310 ms to ~60 ms.
+- **Sync flush is O(appended).** A verb with nothing new to sync no
+  longer reads and re-hashes the whole own segment, skips the segment
+  lock, and leaves the `.manifest` untouched; appends hash only the new
+  bytes. A pending flush that cannot take the lock leaves its ops for the
+  next invocation instead of appending unlocked after 15 s. On a 41 MB
+  segment a no-op flush drops from ~850 ms to ~1 ms, and 16 parallel
+  synced verbs from ~10 s to ~1.5 s. `mu task list -w <ws>` on that data
+  drops from ~1.1 s to ~85 ms. Explicit `mu sync` still verifies every
+  line.
+- **Sync ingest is cheaper.** Apply compiles each SQL statement once per
+  connection, so a 19k-op catch-up drops from ~17 s to ~1.2 s, and a
+  long-lived synced `mu task wait` peaks at ~118 MB instead of ~390 MB.
 - Ambient sync ingest skips peers it is caught up on: a peer is skipped
   only when its segment's size, exact mtime and manifest hash match what
   the last clean full read recorded, so any rewrite (even one with a
@@ -30,6 +50,33 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   makes the next invocation run the repair. The skip's fingerprint is kept in a new
   machine-local `sync_fingerprints` table (created on first open, no
   schema bump), so `sync_peers.last_seen_at` stays an ISO timestamp.
+
+### Fixed
+
+- `mu state --tui` no longer freezes for up to ~0.8 s every 10 s while
+  it syncs: the slow-tick sync pass runs in a worker thread
+  (`dist/tui-sync-worker.js`) with its own DB connection.
+- TUI drill popups (DAG, notes) no longer re-wrap their whole body on
+  every refresh tick (swayward DAG tick 130-250 ms -> ~6 ms). The TUI
+  shares one terminal resize listener, which removes the
+  MaxListenersExceededWarning.
+- Read verbs no longer take the DB write lock: `openDb` skips its schema
+  DDL when the DB is current, so reads stop bumping
+  `PRAGMA schema_version` and stop failing with "database is locked"
+  behind a long writer. Ops lookups for task claims, `mu undo`,
+  `mu log --group` and quiet workstreams use index seeks.
+- `mu agent list` and `mu state` probe each pi control socket with one
+  `status` connection under one 1 s deadline, so a hung pi adds at most
+  ~1 s instead of 2 s. `mu state -w <ws>` with 11 live agents drops from
+  ~1.2 s to ~0.22 s on the data above.
+- Workspace staleness in `mu state` and the TUI no longer snapshots jj
+  working copies, and git resolves the main ref once per repo.
+- `mu_delegate` starts a delegate in one mu call: new
+  `mu agent spawn --next-free` (take the next free name) and
+  `--send <text>` (send the first prompt in the same call; `--json`
+  reports `send.runs`). The keep-driving, close and refute nudges check
+  in parallel behind one settle handler, and every nudge that fires is
+  delivered (before, only the last one survived).
 
 ## [3.9.0] — 2026-10-05
 
