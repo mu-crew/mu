@@ -60,8 +60,10 @@ function setup() {
   settle.flush();
   const emit = async (event: string, extra: object = {}) => {
     let last: unknown;
-    for (const h of handlers.get(event) ?? [])
-      last = await h({ type: event, ...extra }, { hasUI: true });
+    for (const h of handlers.get(event) ?? []) {
+      const r = await h({ type: event, ...extra }, { hasUI: true });
+      if (r !== undefined) last = r;
+    }
     return last;
   };
   return { handlers, calls, held, emit };
@@ -70,8 +72,9 @@ function setup() {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("parallelSettle", () => {
-  it("registers ONE agent_before_settle handler for the three nudges", () => {
-    expect(setup().handlers.get("agent_before_settle")).toHaveLength(1);
+  it("registers ONE working agent_before_settle handler, then a no-op reporter per nudge", () => {
+    // 1 merged handler + 3 reporters that only rethrow a nudge's error.
+    expect(setup().handlers.get("agent_before_settle")).toHaveLength(4);
   });
 
   it("starts every nudge's mu read at once and does not wait for the log breadcrumbs", async () => {
@@ -104,19 +107,41 @@ describe("parallelSettle", () => {
   });
 
   it("returns undefined when no nudge fires", async () => {
-    const handlers = new Map<string, Handler[]>();
-    const pi = {
-      on(event: string, h: Handler) {
-        handlers.set(event, [...(handlers.get(event) ?? []), h]);
-      },
-    };
-    const settle = parallelSettle(pi);
+    const handlers: Handler[] = [];
+    const settle = parallelSettle({ on: (_e: string, h: Handler) => handlers.push(h) });
     settle.api.on("agent_before_settle", () => undefined);
+    settle.flush();
+    expect(await handlers[0]?.({ entries: [] }, {})).toBeUndefined();
+  });
+
+  it("a throwing nudge still reaches pi's error path; the others still deliver", async () => {
+    const handlers: Handler[] = [];
+    const settle = parallelSettle({ on: (_e: string, h: Handler) => handlers.push(h) });
+    settle.api.on("agent_before_settle", () => ({ entries: ["a"] }));
     settle.api.on("agent_before_settle", () => {
       throw new Error("boom");
     });
+    settle.api.on("agent_before_settle", async () => {
+      throw new Error("bang");
+    });
     settle.flush();
-    const h = handlers.get("agent_before_settle")?.[0];
-    expect(await h?.({ entries: [] }, {})).toBeUndefined();
+    // pi's emitBoundary: await each handler in order, report a throw via
+    // emitError and go on, take entries from each result.
+    const emitBoundary = async () => {
+      const reported: string[] = [];
+      let entries: unknown[] = [];
+      for (const h of handlers) {
+        try {
+          const r = (await h({ entries }, {})) as { entries?: unknown[] } | undefined;
+          if (r?.entries !== undefined) entries = r.entries;
+        } catch (err) {
+          reported.push((err as Error).message);
+        }
+      }
+      return { reported, entries };
+    };
+    expect(await emitBoundary()).toEqual({ reported: ["boom", "bang"], entries: ["a"] });
+    // Each settle reports its own errors (the nudges throw again here).
+    expect((await emitBoundary()).reported).toEqual(["boom", "bang"]);
   });
 });
