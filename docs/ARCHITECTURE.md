@@ -180,6 +180,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/cli/tui-launch-focus.ts` | initial-tab focus ladder for bare `mu` and `mu state --tui` |
 | `src/cli/tui-load.ts` | lazy `import()` of the TUI with `NODE_ENV` defaulted to `production` (React prod build) |
 | `src/cli/tui/` | the ink TUI; the only place ink and react are imported |
+| `src/cli/tui/sync-worker.ts` | worker_thread (`dist/tui-sync-worker.js`) running the TUI's slow-tick sync pass off ink's thread |
 | `src/output.ts`, `src/shell-quote.ts` | `printNextSteps` / `errorNextSteps`; POSIX quoting for hints |
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
 | `src/index.ts` | SDK entry point |

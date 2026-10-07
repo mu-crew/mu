@@ -14,6 +14,8 @@ export default defineConfig([
       // dist/cli.js is the bin: src/main.ts enables the compile cache,
       // then dynamically imports src/cli.ts (its own chunk).
       cli: "src/main.ts",
+      // The TUI's sync pass runs in this worker_thread (src/cli/tui/state.ts).
+      "tui-sync-worker": "src/cli/tui/sync-worker.ts",
     },
     format: ["esm"],
     dts: { entry: { index: "src/index.ts" } }, // .d.ts only for the SDK entry, not the CLI

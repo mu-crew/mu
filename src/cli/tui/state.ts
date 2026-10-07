@@ -35,6 +35,9 @@
 //   enough in practice. Revisit only if visible flicker regresses
 //   against a stable workstream.
 
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { useEffect, useRef, useState } from "react";
 import { type Db, tryResolveWorkstreamId } from "../../db.js";
 import {
@@ -63,6 +66,40 @@ const NO_OBSERVED_WORKSTREAMS: readonly string[] = [];
  */
 let syncInFlight = false;
 
+/** Built next to dist/cli.js by tsup (entry `tui-sync-worker`). Absent
+ *  when running from source (vitest), where the pass runs in-process. */
+const SYNC_WORKER_PATH = fileURLToPath(new URL("./tui-sync-worker.js", import.meta.url));
+let syncWorker: { worker: Worker; done: (() => void) | null } | null = null;
+
+/** One pass in the worker_thread, started lazily and kept for the TUI's
+ *  life (`unref`, so it never holds the process open). A worker that
+ *  dies settles its pass and is respawned on the next beat. */
+function workerSyncPass(dbPath: string): Promise<void> {
+  if (syncWorker === null) {
+    const worker = new Worker(SYNC_WORKER_PATH, { workerData: { dbPath } });
+    worker.unref();
+    const state: { worker: Worker; done: (() => void) | null } = { worker, done: null };
+    const settle = () => {
+      const done = state.done;
+      state.done = null;
+      done?.();
+    };
+    worker.on("message", settle);
+    const drop = () => {
+      if (syncWorker === state) syncWorker = null;
+      settle();
+    };
+    worker.on("error", drop);
+    worker.on("exit", drop);
+    syncWorker = state;
+  }
+  const state = syncWorker;
+  return new Promise((resolve) => {
+    state.done = resolve;
+    state.worker.postMessage(null);
+  });
+}
+
 /**
  * The TUI's share of the AMBIENT sync hook.
  *
@@ -83,7 +120,13 @@ async function tuiSyncPass(db: Db): Promise<void> {
   if (!syncEnabled() || syncInFlight) return;
   syncInFlight = true;
   try {
-    await ambientSyncPass(db, { quiet: true });
+    // Off ink's thread when the bundle has the worker and the DB is a
+    // file a second connection can open; in-process otherwise.
+    if (db.name !== ":memory:" && existsSync(SYNC_WORKER_PATH)) {
+      await workerSyncPass(db.name);
+    } else {
+      await ambientSyncPass(db, { quiet: true });
+    }
   } catch {
     // Never let sync fail a repaint.
   } finally {
