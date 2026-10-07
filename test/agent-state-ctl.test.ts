@@ -160,6 +160,32 @@ describe("readAgentStates via the control socket", () => {
     });
   });
 
+  it("a hung socket costs one connection and one probe budget, and no murmur read", async () => {
+    const path = ctlSocketPath(WS, "pia", dir);
+    mkdirSync(dirname(path), { recursive: true });
+    let conns = 0;
+    const held: Socket[] = [];
+    const server = createServer((sock) => {
+      conns++;
+      held.push(sock); // accepts, never replies
+      sock.on("error", () => {});
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(path, () => r()));
+    let murmurCalls = 0;
+    setMurmurRunnerForTests(async () => {
+      murmurCalls++;
+      return null;
+    });
+    const started = Date.now();
+    expect(await read()).toMatchObject({ state: "unknown", ctl: "refused" });
+    const elapsed = Date.now() - started;
+    for (const s of held) s.destroy();
+    expect(elapsed).toBeLessThan(1500);
+    expect(conns).toBe(1);
+    expect(murmurCalls).toBe(0);
+  });
+
   it("a non-pi agent keeps murmur and has no ctl field", async () => {
     murmurToken = "working";
     const sh = { name: "sh1", workstreamName: WS, paneId: "%1", cli: "sh" };

@@ -119,6 +119,31 @@ describe("ctlProbe", () => {
     expect(await ctlProbe(p)).toEqual({ kind: "version", got: undefined });
   });
 
+  it("hello: false sends only status, on one connection", async () => {
+    const seen: string[] = [];
+    let conns = 0;
+    const p = await serve((line, sock) => {
+      seen.push((JSON.parse(line) as { op: string }).op);
+      sock.end(encode({ v: 1, ok: true, ...IDLE }));
+    });
+    servers[0]?.on("connection", () => conns++);
+    expect(await ctlProbe(p, 1000, { hello: false })).toEqual({ kind: "ok", status: IDLE });
+    expect(seen).toEqual(["status"]);
+    expect(conns).toBe(1);
+  });
+
+  it("bounds hello + a hung status by one overall timeout", async () => {
+    const p = await serve((line, sock) => {
+      const req = JSON.parse(line) as { op: string };
+      // hello answers late; status never answers.
+      if (req.op === "hello") setTimeout(() => sock.end(encode({ v: 1, ok: true })), 60);
+    });
+    const started = Date.now();
+    const r = await ctlProbe(p, 100);
+    expect(r.kind).toBe("refused");
+    expect(Date.now() - started).toBeLessThan(160);
+  });
+
   it("reports refused when the server never replies", async () => {
     const p = await serve(() => {});
     const r = await ctlProbe(p, 100);

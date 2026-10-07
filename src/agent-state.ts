@@ -37,7 +37,7 @@ export interface StateAgentRef {
   cli?: string;
 }
 
-/** Per-agent budget for the control-socket status read. */
+/** Per-agent budget for the control-socket status read (one connection). */
 const CTL_STATE_PROBE_MS = 1000;
 
 /** ctl's idle maps to needs_input, the same as murmur's idle. */
@@ -279,7 +279,9 @@ export async function readAgentStates(
   );
   const probes = await Promise.all(
     ctlAgents.map((a) =>
-      ctlProbe(ctlSocketPath(a.workstreamName, a.name, opts.stateDir), CTL_STATE_PROBE_MS),
+      ctlProbe(ctlSocketPath(a.workstreamName, a.name, opts.stateDir), CTL_STATE_PROBE_MS, {
+        hello: false,
+      }),
     ),
   );
   const readings = new Map<string, StateReading>();
@@ -302,7 +304,9 @@ export async function readAgentStates(
   });
   const rest = agents.filter((a) => !readings.has(agentKey(a)));
   if (rest.length === 0) return readings;
-  for (const [key, reading] of await readBaseStates(rest, opts)) {
+  // A ctl-failed agent keeps only the base reading's liveness, so it never
+  // needs the murmur remote read (whose rows are always alive).
+  for (const [key, reading] of await readBaseStates(rest, opts, new Set(failed.keys()))) {
     const ctl = failed.get(key);
     if (ctl === undefined) readings.set(key, reading);
     else if (!reading.alive) readings.set(key, { ...reading, ctl });
@@ -317,6 +321,7 @@ export async function readAgentStates(
 async function readBaseStates(
   agents: readonly StateAgentRef[],
   opts: { now?: number },
+  livenessOnly: ReadonlySet<string> = new Set(),
 ): Promise<Map<string, StateReading>> {
   const readings = new Map<string, StateReading>();
   let mux: Awaited<ReturnType<typeof activeMux>>;
@@ -355,6 +360,8 @@ async function readBaseStates(
     const pane = local.get(agent.paneId);
     if (pane === undefined) {
       readings.set(agentKey(agent), unknown(UNKNOWN_REASON.paneGone, false));
+    } else if (livenessOnly.has(agentKey(agent))) {
+      readings.set(agentKey(agent), unknown(UNKNOWN_REASON.noRow));
     } else if (pane.token.length > 0) {
       readings.set(agentKey(agent), mapMurmurState(pane.token, pane.since));
     } else {

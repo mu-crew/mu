@@ -136,17 +136,25 @@ export function errCode(e: unknown): string | undefined {
 }
 
 /**
- * hello + status. ENOENT → missing; a version mismatch → version; any
- * other failure (ECONNREFUSED, ENOTSOCK, timeout, bad reply) → refused.
+ * hello + status (status only with `hello: false`, one connection).
+ * `timeoutMs` bounds the whole probe, not each request. ENOENT → missing;
+ * a version mismatch → version; any other failure (ECONNREFUSED,
+ * ENOTSOCK, timeout, bad reply) → refused.
  */
 export async function ctlProbe(
   sock: string,
   timeoutMs = CTL_DEFAULT_TIMEOUT_MS,
+  opts: { hello?: boolean } = {},
 ): Promise<CtlProbe> {
+  const deadline = Date.now() + timeoutMs;
   try {
-    const hello = await ctlRequest(sock, { op: "hello" }, { timeoutMs });
-    if (!hello.ok) return { kind: "refused", error: hello.error };
-    const st = await ctlRequest(sock, { op: "status" }, { timeoutMs });
+    let hello: CtlReply | undefined;
+    if (opts.hello !== false) {
+      hello = await ctlRequest(sock, { op: "hello" }, { timeoutMs });
+      if (!hello.ok) return { kind: "refused", error: hello.error };
+    }
+    const left = Math.max(1, deadline - Date.now());
+    const st = await ctlRequest(sock, { op: "status" }, { timeoutMs: left });
     if (!st.ok) return { kind: "refused", error: st.error };
     const { state, since, runs, pending } = st;
     if (state === undefined || since === undefined || runs === undefined || pending === undefined) {
@@ -155,8 +163,8 @@ export async function ctlProbe(
     return {
       kind: "ok",
       status: { state, since, runs, pending },
-      ...(hello.ops !== undefined ? { ops: hello.ops } : {}),
-      ...(hello.extVersion !== undefined ? { extVersion: hello.extVersion } : {}),
+      ...(hello?.ok && hello.ops !== undefined ? { ops: hello.ops } : {}),
+      ...(hello?.ok && hello.extVersion !== undefined ? { extVersion: hello.extVersion } : {}),
     };
   } catch (e) {
     if (e instanceof CtlVersionError) return { kind: "version", got: e.got };
