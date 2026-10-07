@@ -66,7 +66,7 @@ export async function withSpawnLock<T>(
   fn: () => Promise<T>,
   opts?: SpawnLockOptions,
 ): Promise<T> {
-  const lockOpts: FileLockOptions = {
+  const lockOpts: FileLockOptions<T> = {
     acquireTimeoutMs: opts?.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS,
     staleLockMs: opts?.staleLockMs ?? STALE_LOCK_MS,
     timeoutEnvVar: "MU_SPAWN_LOCK_TIMEOUT_MS",
