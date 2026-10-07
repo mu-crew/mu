@@ -27,6 +27,7 @@ export {
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   type AgentRow,

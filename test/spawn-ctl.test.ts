@@ -10,11 +10,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentDiedOnSpawnError,
   AgentExistsError,
+  AgentNameExhaustedError,
   AgentSpawnStartupError,
 } from "../src/agents/errors.js";
 import {
   getAgent,
   insertAgent,
+  isValidAgentName,
   nextFreeAgentName,
   resetCommandResolverForTests,
   setCommandResolverForTests,
@@ -429,5 +431,36 @@ describe("nextFreeAgentName", () => {
     expect(nextFreeAgentName(db, "delegate-review", "auth")).toBe("delegate-review-2");
     expect(nextFreeAgentName(db, "fresh", "auth")).toBe("fresh");
     expect(nextFreeAgentName(db, "delegate-1", "other")).toBe("delegate-1");
+  });
+
+  it("cuts the stem so a taken 31- or 32-char name yields a valid name", () => {
+    const n31 = "a".repeat(31);
+    const n32 = "b".repeat(32);
+    insertAgent(db, { name: n31, workstream: "auth", paneId: "%1" });
+    insertAgent(db, { name: n32, workstream: "auth", paneId: "%2" });
+    insertAgent(db, { name: `${"b".repeat(30)}-2`, workstream: "auth", paneId: "%3" });
+    const a = nextFreeAgentName(db, n31, "auth");
+    const b = nextFreeAgentName(db, n32, "auth");
+    expect(a).toBe(`${"a".repeat(30)}-2`);
+    expect(b).toBe(`${"b".repeat(30)}-3`);
+    expect(isValidAgentName(a) && isValidAgentName(b)).toBe(true);
+  });
+
+  it("counts a huge numeric suffix exactly and gives up typed when it outgrows the name", () => {
+    const huge = `a-${"9".repeat(29)}8`; // 32 chars, beyond Number precision
+    insertAgent(db, { name: huge, workstream: "auth", paneId: "%1" });
+    expect(nextFreeAgentName(db, huge, "auth")).toBe(`a-${"9".repeat(30)}`);
+    const full = `a-${"9".repeat(30)}`;
+    insertAgent(db, { name: full, workstream: "auth", paneId: "%2" });
+    // The next suffix needs 32 chars on its own: no valid name is left.
+    expect(() => nextFreeAgentName(db, full, "auth")).toThrow(AgentNameExhaustedError);
+  });
+
+  it("gives up typed after a bounded number of taken names", () => {
+    insertAgent(db, { name: "w-1", workstream: "auth", paneId: "%0" });
+    for (let i = 2; i <= 1001; i++) {
+      insertAgent(db, { name: `w-${i}`, workstream: "auth", paneId: `%${i}` });
+    }
+    expect(() => nextFreeAgentName(db, "w-1", "auth")).toThrow(AgentNameExhaustedError);
   });
 });

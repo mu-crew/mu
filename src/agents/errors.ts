@@ -6,7 +6,8 @@
 //   usage      → 2   (AgentAbortNeedsCtlError, AgentFreshNeedsCtlError,
 //                     AgentSlashCommandUnsupportedError)
 //   not found  → 3   (AgentNotFoundError)
-//   conflict   → 4   (AgentExistsError, AgentNotInWorkstreamError,
+//   conflict   → 4   (AgentExistsError, AgentNameExhaustedError,
+//                     AgentNotInWorkstreamError,
 //                     PaneNotInSessionError, WorkspacePreservedError,
 //                     AgentExtensionOutdatedError, AgentBusyError)
 //   timeout    → 5   (AgentAbortTimeoutError)
@@ -116,6 +117,26 @@ export class AgentExistsError extends Error implements HasNextSteps {
         command: `mu agent close ${this.agentName}  &&  mu agent spawn ${this.agentName}`,
       },
       { intent: "Or pick a different name", command: "mu agent spawn <new-name>" },
+    ];
+  }
+}
+
+/** `spawn --next-free` found no free valid name near the asked one. */
+export class AgentNameExhaustedError extends Error implements HasNextSteps {
+  override readonly name = "AgentNameExhaustedError";
+  constructor(
+    public readonly agentName: string,
+    reason: string,
+  ) {
+    super(`no free agent name after ${agentName}: ${reason}`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Pick a shorter or different name",
+        command: "mu agent spawn <new-name> --next-free",
+      },
+      { intent: "Or close agents you no longer need", command: "mu agent list" },
     ];
   }
 }

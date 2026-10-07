@@ -20,6 +20,7 @@ import {
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentSlashCommandUnsupportedError,
@@ -197,6 +198,11 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["MU_PI_META_COMMAND", "pi-meta"],
   },
   { error: new AgentExistsError("alice"), label: "AgentExistsError", expectedTokens: ["alice"] },
+  {
+    error: new AgentNameExhaustedError("alice", "taken"),
+    label: "AgentNameExhaustedError",
+    expectedTokens: ["--next-free"],
+  },
   {
     error: new AgentNotFoundError("alice"),
     label: "AgentNotFoundError",
