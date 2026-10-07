@@ -106,6 +106,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | Module | Responsibility |
 | --- | --- |
 | `src/segments.ts` | JSONL segments: flush own ops, ingest peers from a watermark |
+| `src/sha256-resumable.ts` | SHA-256 with a serialisable running state, so the segment manifest hashes only appended bytes |
 | `src/sync.ts` | peer status, the ambient hook, `--from`, `--repair` |
 | `src/file-lock.ts` | cross-process advisory lock through atomic `fs.mkdir` |
 | `src/fleet-hazards.ts` | mixed-fleet checks: DB inside `MU_SYNC_DIR`, network mount, case collisions |
