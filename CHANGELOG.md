@@ -16,6 +16,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   rewrite every agent's pane title on each pass. mu now retitles a pane
   only when its title changed, which cuts tmux server load on hosts with
   many agent panes.
+- `mu task list` (and the other task tables) render large workstreams
+  much faster: 1901 tasks render in ~10 ms instead of ~1.5 s. Output is
+  byte-identical to before, including titles with unclosed ANSI colour
+  or zero-width characters.
 
 ## [3.9.0] — 2026-10-05
 

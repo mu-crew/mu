@@ -23,6 +23,31 @@ describe("renderBoxTable", () => {
     expect(renderBoxTable(head, rows)).toBe(viaCliTable3(head, rows));
   });
 
+  it("matches cli-table3 for unbalanced ANSI and zero-width/format characters", () => {
+    const head = ["name", "title"];
+    const titles = [
+      "\u001b[31mred title", // unclosed foreground
+      "\u001b[1m\u001b[44mbold on blue", // unclosed bold + background
+      "\u001b[0mreset first",
+      "\u001b[38;5;196m256 colour",
+      "closed early\u001b[39m",
+      "soft\u00adhyphen",
+      "zero\u200bwidth",
+      "zwj\u200dzwnj\u200c",
+      "bom\ufeffwj\u2060",
+      "rtl\u200fmark\u202e",
+      "combining e\u0301",
+      "emoji 👍🏽 flag 🇬🇧",
+      "tab\there",
+      "bell\u0007 osc \u001b]8;;http://x\u0007link\u001b]8;;\u0007",
+      "\u001b[2Kerase",
+      pc.red("soft\u00adhyphen in red"),
+    ];
+    const rows = titles.map((t, i) => [`t${i}`, t]);
+    expect(renderBoxTable(head, rows)).toBe(viaCliTable3(head, rows));
+    for (const r of rows) expect(renderBoxTable(head, [r])).toBe(viaCliTable3(head, [r]));
+  });
+
   it("matches cli-table3 for a header-only table", () => {
     expect(renderBoxTable(["a", "bb"], [])).toBe(viaCliTable3(["a", "bb"], []));
   });

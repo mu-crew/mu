@@ -10,11 +10,10 @@
 // src/workstream.ts (error nextSteps), and tests. Keeping the type +
 // helpers in one place avoids circular imports.
 
-import { stripVTControlCharacters } from "node:util";
 import Table from "cli-table3";
+import tableUtils from "cli-table3/src/utils.js";
 import type { Command } from "commander";
 import picocolors from "picocolors";
-import stringWidth from "string-width";
 
 /**
  * Should we emit ANSI color escapes from this process?
@@ -127,13 +126,21 @@ export function printNextStepsTo(steps: readonly NextStep[], sink: "stdout" | "s
 }
 
 // Printable ASCII plus the width-1 punctuation mu prints (dashes,
-// quotes, "…", "∞"), after stripping picocolors' SGR codes: width is
-// the stripped length, skipping string-width's per-grapheme
-// segmentation (~95 ms on 1901 rows). Anything else goes to string-width.
+// quotes, "…", "∞"), after stripping picocolors' SGR codes. Such a cell
+// renders as itself with width = stripped length, skipping per-grapheme
+// segmentation (~95 ms on 1901 rows). Anything else (unbalanced SGR,
+// zero-width/format characters, wide text, other escapes) goes through
+// cli-table3's own strlen and colorizeLines, so it is byte-identical by
+// construction: cli-table3 bundles an older string-width that measures
+// soft hyphen and U+200B differently, and closes SGR left open.
 const NARROW = /^[\x20-\x7e\u2010-\u2027\u221e]*$/;
-function cellWidth(c: string): number {
-  const plain = c.includes("\u001b") ? stripVTControlCharacters(c) : c;
-  return NARROW.test(plain) ? plain.length : stringWidth(c);
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching SGR escapes is the point
+const SGR = /\u001b\[(?:\d*;){0,5}\d*m/g;
+function boxCell(c: string): { text: string; width: number } {
+  if (NARROW.test(c)) return { text: c, width: c.length };
+  const plain = c.replace(SGR, ""); // cli-table3's strlen strip regex
+  const width = NARROW.test(plain) ? plain.length : tableUtils.strlen(c);
+  return { text: tableUtils.colorizeLines([c])[0] ?? c, width };
 }
 
 /**
@@ -142,8 +149,8 @@ function cellWidth(c: string): number {
  *
  * cli-table3's layout pass (`fillInTable` → `conflictExists`) scans
  * every earlier row for every cell, so a 1901-row `mu task list` spent
- * ~1.5 s there. Cells may carry balanced ANSI colour (picocolors);
- * widths use string-width, which ignores ANSI. A cell containing a
+ * ~1.5 s there. Plain cells take a fast path; the rest use
+ * cli-table3's own width and SGR-closing helpers (see boxCell). A cell containing a
  * newline falls back to cli-table3, which renders multi-line rows.
  */
 export function renderBoxTable(
@@ -157,11 +164,11 @@ export function renderBoxTable(
     return table.toString();
   }
   const widths = head.map(() => 0);
-  const cellWidths = all.map((r) =>
+  const cells = all.map((r) =>
     r.map((c, i) => {
-      const w = cellWidth(c);
-      if (w > (widths[i] ?? 0)) widths[i] = w;
-      return w;
+      const cell = boxCell(c);
+      if (cell.width > (widths[i] ?? 0)) widths[i] = cell.width;
+      return cell;
     }),
   );
   const rule = (l: string, m: string, r: string) =>
@@ -170,12 +177,12 @@ export function renderBoxTable(
   const out: string[] = [rule("┌", "┬", "┐")];
   for (let y = 0; y < all.length; y++) {
     if (y > 0) out.push(sep);
-    const r = all[y] ?? [];
-    const cw = cellWidths[y] ?? [];
+    const r = cells[y] ?? [];
     let line = "│";
     for (let x = 0; x < widths.length; x++) {
-      const pad = (widths[x] ?? 0) - (cw[x] ?? 0);
-      line += ` ${r[x] ?? ""}${" ".repeat(pad)} │`;
+      const cell = r[x];
+      const pad = (widths[x] ?? 0) - (cell?.width ?? 0);
+      line += ` ${cell?.text ?? ""}${" ".repeat(pad)} │`;
     }
     out.push(line);
   }
