@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // mu — command-line interface.
 //
 // One namespace/command per verb group (see `mu --help` for the current
@@ -16,9 +15,9 @@
 // import paths. The exit-code catalogue is documented at the top of
 // `src/cli/handle.ts`.
 
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { Command, InvalidArgumentError } from "commander";
 
 import { AgentNotInWorkstreamError, type AgentRow, getAgentByPane } from "./agents.js";
@@ -962,18 +961,12 @@ export function injectBareNamespaceHelp(
   return [...argv, "--help"];
 }
 
-// When invoked as `mu …` from the shell, parse argv. When imported (e.g.
-// from tests), do nothing — buildProgram() is exported for direct use.
-//
-// Symlink-safe: when installed via `npm install -g .` the `mu` binary
-// is a symlink (`/opt/homebrew/bin/mu → .../dist/cli.js`). `process.argv[1]`
-// is the symlink path as given; `import.meta.url` is Node's resolved
-// path (symlinks followed). Compare resolved-to-resolved by realpath-
-// ing argv[1] first — otherwise the entry-point check fails silently
-// and `mu --version` produces no output.
-if (isMainEntrypoint()) {
+/** Parse and run one `mu` invocation. Called by the bin bootstrap
+ *  (src/main.ts) after it enables the compile cache; tests use
+ *  buildProgram() directly. */
+export async function runCli(rawArgv: readonly string[]): Promise<void> {
   const program = buildProgram();
-  const argv = injectBareNamespaceHelp(program, process.argv);
+  const argv = injectBareNamespaceHelp(program, rawArgv);
   try {
     await program.parseAsync(argv);
   } catch (err) {
@@ -984,18 +977,5 @@ if (isMainEntrypoint()) {
     const failingCmd = findCommandForArgv(program, argv.slice(2));
     const exitCode = emitParseError(err, failingCmd);
     process.exit(exitCode);
-  }
-}
-
-function isMainEntrypoint(): boolean {
-  const argv1 = process.argv[1];
-  if (!argv1) return false;
-  try {
-    const resolved = realpathSync(argv1);
-    return import.meta.url === pathToFileURL(resolved).href;
-  } catch {
-    // realpath can fail for non-file argv[1]. Fall back to the naive
-    // check, which works when no symlink is involved.
-    return import.meta.url === pathToFileURL(argv1).href;
   }
 }

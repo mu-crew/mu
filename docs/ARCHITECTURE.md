@@ -167,7 +167,9 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 
 | Module | Responsibility |
 | --- | --- |
-| `src/cli.ts` | Commander wiring (`buildProgram`) |
+| `src/main.ts` | the `mu` bin (`dist/cli.js`): enables the compile cache, then `import()`s `src/cli.ts` |
+| `src/compile-cache.ts`, `src/state-dir.ts` | best-effort V8 compile cache under `<state>/compile-cache`; builtins-only state-dir resolution |
+| `src/cli.ts` | Commander wiring (`buildProgram`, `runCli`) |
 | `src/cli/*.ts` | one file per verb namespace, thin wrappers over the SDK; `format.ts` renders tables, `handle.ts` maps errors to exit codes and runs ambient sync |
 | `src/cli/tasks/*.ts` | the `mu task` namespace, including `mu me tasks` / `mu me next` |
 | `src/cli/dispatch-hints.ts` | dispatch-time `Next:` hints for pi agents (`--fresh`, `--interrupt`, abort) |

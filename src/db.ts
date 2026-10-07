@@ -47,11 +47,14 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import Database, { type Database as DatabaseType } from "better-sqlite3";
 import { installCapture } from "./capture.js";
 import type { HasNextSteps, NextStep } from "./output.js";
+import { defaultStateDir, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
+
+export { defaultStateDir };
 
 export type Db = DatabaseType;
 
@@ -68,23 +71,6 @@ export interface OpenDbOptions {
    * surfaces to enforce no-mutation guarantees at the connection level.
    */
   readonly?: boolean;
-}
-
-/**
- * Resolve the canonical mu state directory:
- *   MU_STATE_DIR > $XDG_STATE_HOME/mu (absolute only) > ~/.local/state/mu
- */
-export function defaultStateDir(): string {
-  if (process.env.MU_STATE_DIR) return process.env.MU_STATE_DIR;
-  return join(xdgStateHome(homedir()), "mu");
-}
-
-/** `$XDG_STATE_HOME`, or `<home>/.local/state` when it is unset, empty,
- *  or relative: the XDG spec says such a value must be ignored, and a
- *  relative one would scatter state across every cwd mu runs in. */
-function xdgStateHome(home: string): string {
-  const xdg = process.env.XDG_STATE_HOME;
-  return xdg !== undefined && isAbsolute(xdg) ? xdg : join(home, ".local", "state");
 }
 
 /**
