@@ -29,6 +29,7 @@ import {
   getWatermark,
   ingestSegment,
   localMachineId,
+  manifestSeal,
   peerWatermarkKey,
   readManifest,
   resetWatermark,
@@ -871,8 +872,11 @@ describe("segments", () => {
      *  could reveal the change. */
     const restampManifestMtime = (path: string): void => {
       const manifestFile = path.replace(/\.jsonl$/, ".manifest");
-      const m = JSON.parse(readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+      const m = JSON.parse(readFileSync(manifestFile, "utf8")) as Parameters<
+        typeof manifestSeal
+      >[0] & { seal: string };
       m.mtimeMs = statSync(path).mtimeMs;
+      m.seal = manifestSeal(m);
       writeFileSync(manifestFile, `${JSON.stringify(m, null, 2)}\n`);
     };
 
@@ -939,6 +943,73 @@ describe("segments", () => {
         );
       }
       expect(verifyAgainstManifest(segFor(a)).ok).toBe(true);
+    });
+
+    /** Edit one manifest field in place, leaving the seal as it was. */
+    const editManifest = (path: string, edit: (m: Record<string, unknown>) => void): void => {
+      const manifestFile = path.replace(/\.jsonl$/, ".manifest");
+      const m = JSON.parse(readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+      edit(m);
+      writeFileSync(manifestFile, `${JSON.stringify(m, null, 2)}\n`);
+    };
+    const fullSha = (path: string): string =>
+      createHash("sha256").update(readFileSync(path)).digest("hex");
+
+    it("a wrong manifest count is not trusted, persisted, or able to mask truncation", async () => {
+      const path = await seedFour();
+      for (let i = 0; i < 6; i++) seedTask(a, `more-${i}`);
+      await flushSegment(a, dir);
+      editManifest(path, (m) => {
+        m.count = 1;
+      });
+
+      // The no-op falls back to the full scan and reports the real count.
+      expect((await flushSegment(a, dir)).total).toBe(11);
+      seedTask(a, "one-more");
+      expect((await flushSegment(a, dir)).total).toBe(12);
+      expect(readManifest(path)?.count).toBe(12);
+      expect(readManifest(path)?.sha256).toBe(fullSha(path));
+
+      // Truncation on a line boundary is still reported to a peer.
+      writeFileSync(path, `${linesOf(path).slice(0, 10).join("\n")}\n`);
+      expect(verifyAgainstManifest(path).ok).toBe(false);
+    });
+
+    it("a corrupt hash state is not resumed, so the manifest sha stays the file's", async () => {
+      const path = await seedFour();
+      editManifest(path, (m) => {
+        const state = m.shaState as { h: string };
+        state.h = `${state.h.slice(0, -1)}${state.h.endsWith("0") ? "1" : "0"}`;
+      });
+      seedTask(a, "t4");
+      expect((await flushSegment(a, dir)).appended).toBe(1);
+      expect(readManifest(path)?.sha256).toBe(fullSha(path));
+      expect(verifyAgainstManifest(path).ok).toBe(true);
+    });
+
+    it.each([
+      ["size and count disagree", (m: Record<string, unknown>) => (m.count = 0)],
+      [
+        "shaState.n is not size",
+        (m: Record<string, unknown>) => ((m.shaState as { n: number }).n += 1),
+      ],
+      [
+        "shaState.tail has the wrong length",
+        (m: Record<string, unknown>) => ((m.shaState as { tail: string }).tail = ""),
+      ],
+      ["sha256 is not hex", (m: Record<string, unknown>) => (m.sha256 = "zz")],
+      ["the seal is missing", (m: Record<string, unknown>) => delete m.seal],
+      ["lastHlc is a number", (m: Record<string, unknown>) => (m.lastHlc = 7)],
+    ])("a manifest where %s falls back to the full scan and is rewritten", async (_name, edit) => {
+      const path = await seedFour();
+      editManifest(path, edit);
+      seedTask(a, "t4");
+      const result = await flushSegment(a, dir);
+      expect(result).toMatchObject({ appended: 1, total: 6 });
+      const m = readManifest(path);
+      expect(m?.count).toBe(6);
+      expect(m?.sha256).toBe(fullSha(path));
+      expect(m?.seal).toMatch(/^[0-9a-f]{64}$/);
     });
 
     it("a torn tail is still detected and self-repaired", async () => {
