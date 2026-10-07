@@ -16,10 +16,11 @@ Litestream, cr-sqlite or a peer list, and why the DB must never sit in
   `<MU_SYNC_DIR>/<machine_id>.jsonl`.
 - `ingestSegment` reads a peer segment from its watermark into
   `applyOp`. Ambient ingest skips a peer that is caught up: the manifest
-  counts the watermark, the size matches, the segment is not newer than
-  its manifest, and the last line decodes to the manifest's `lastHlc`.
-  A rewrite after the manifest fails that check, so the full read hashes
-  the file and reports the mismatch. `mu sync` always reads every line.
+  counts the watermark, and the segment's size, exact mtime and
+  manifest sha256 equal what the last clean read to the end recorded
+  (in `sync_peers.last_seen_at`). Any change, including a rewrite with a
+  backdated mtime, fails that check, so the full read hashes the file
+  and reports the mismatch. `mu sync` always reads every line.
 - Peer discovery is implicit: every non-self `*.jsonl` is a peer. A
   peer disappears only when its segment is deleted.
 - A Syncthing conflict copy (`<machine>.sync-conflict-….jsonl`) is
@@ -127,8 +128,10 @@ parent task is gone and keys with a newer `del`, so a deleted edge is
 never resurrected and an orphan is not retried forever. It runs once
 per ingest pass, not per peer, because an edge in one segment may name
 a task in another. Ambient ingest runs it only while SQLite's
-`user_version` is 1. An ingest that applies ops sets that marker in the
-same transaction, and the repair clears it. A process that dies between
+`user_version` is 1. `applyIncomingOp` sets that marker in the same
+transaction whenever an op changes a row or defers (`absent`), whether
+it came from a segment, `--from`, or an SDK caller; the repair clears
+it. A process that dies between
 the two leaves the marker set, so the next invocation runs the repair.
 `mu sync` and `--from` always run it.
 

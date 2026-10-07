@@ -787,41 +787,62 @@ function readLastLine(path: string, size: number): string | null {
 }
 
 /**
- * True when the segment at `path` holds exactly `lines` lines, judged
- * without reading it: its manifest counts `lines`, the file's size
- * matches the manifest's when the manifest records one, the file was
- * not modified after its manifest, and the file ends in a
- * newline-terminated line that decodes to the manifest's lastHlc. A
- * peer that appended past its manifest, a rewrite after the manifest, a
- * torn tail, a missing or stale manifest, or a file shorter than its
- * manifest all fail one of these and send the caller down the full
- * read, which hashes the file and reports any mismatch. Cost: the
- * manifest, two stats and the last line, whatever the file's size.
+ * What a full, clean ingest saw of a peer's segment: its size, its
+ * exact mtime, and the sha256 of its manifest's bytes, plus the count
+ * that manifest claims. Null when the segment or its manifest cannot be
+ * read. Taken BEFORE the read, so a file that changes mid-read no longer
+ * matches next time.
  */
-export function segmentCaughtUp(path: string, lines: number): boolean {
-  const m = readManifest(path);
-  if (m === null || m.count !== lines) return false;
-  let size: number;
-  let mtimeMs: number;
-  let manifestMtimeMs: number;
+function segmentFingerprint(path: string): { key: string; count: unknown } | null {
   try {
-    ({ size, mtimeMs } = statSync(path));
-    manifestMtimeMs = statSync(manifestPath(path)).mtimeMs;
+    const { size, mtimeMs } = statSync(path);
+    const manifest = readFileSync(manifestPath(path));
+    const sha = createHash("sha256").update(manifest).digest("hex");
+    let count: unknown = null;
+    try {
+      count = (JSON.parse(manifest.toString("utf8")) as { count?: unknown }).count;
+    } catch {
+      // An unparseable manifest still fingerprints; its count is unknown.
+    }
+    return { key: `${size} ${mtimeMs} ${sha}`, count };
   } catch {
-    return false;
+    return null;
   }
-  if (typeof m.size === "number" && m.size !== size) return false;
-  // The owner writes the segment, then its manifest, so a segment newer
-  // than its manifest file was touched afterwards (rewritten, repaired by
-  // hand, half-copied). The mtime the manifest recorded also vouches for
-  // the file, for a transport that kept the segment's mtime but not the
-  // manifest's.
-  if (mtimeMs > manifestMtimeMs && m.mtimeMs !== mtimeMs) return false;
-  if (lines === 0) return size === 0;
-  const last = readLastLine(path, size);
-  if (last === null) return false;
-  const decoded = decodeLine(last);
-  return decoded.ok && decoded.line.hlc === m.lastHlc;
+}
+
+/** The fingerprint recorded with a watermark (see `setWatermark`), or
+ *  null when the last write of the watermark recorded none. */
+function recordedFingerprint(db: Db, watermarkKey: string): string | null {
+  const row = prepareCached(
+    db,
+    "SELECT last_seen_at AS seen FROM sync_peers WHERE machine_id = ?",
+  ).get(watermarkKey) as { seen: string | null } | undefined;
+  const seen = row?.seen ?? null;
+  if (seen === null) return null;
+  const space = seen.indexOf(" ");
+  return space < 0 ? null : seen.slice(space + 1);
+}
+
+/**
+ * True when ingest is caught up on the segment at `path`, judged without
+ * reading it: the manifest counts `lines` (the watermark), and the
+ * segment's size, exact mtime and manifest bytes are what the last full,
+ * defect-free ingest of this file recorded. Any difference (an append, a
+ * rewrite whatever its mtime, a new or edited manifest, a watermark
+ * written since by a reset or partial ingest) sends the caller down the
+ * full read, which hashes the file and reports any mismatch. Cost: one
+ * row lookup, one stat and one manifest read.
+ */
+export function segmentCaughtUp(
+  db: Db,
+  watermarkKey: string,
+  path: string,
+  lines: number,
+): boolean {
+  const recorded = recordedFingerprint(db, watermarkKey);
+  if (recorded === null) return false;
+  const now = segmentFingerprint(path);
+  return now !== null && now.count === lines && now.key === recorded;
 }
 
 /** Number of GOOD lines in a segment (stopping at the first defect, as
@@ -1033,13 +1054,30 @@ export function getWatermark(db: Db, watermarkKey: string): number {
   return row?.n ?? 0;
 }
 
-export function setWatermark(db: Db, watermarkKey: string, value: number): void {
-  db.prepare(
+/**
+ * Store a watermark. `last_seen_at` holds the ISO time, followed (after
+ * a space) by the segment fingerprint when the caller just read the file
+ * cleanly to its end (`segmentCaughtUp`). Every other write drops the
+ * fingerprint, so a reset or partial ingest never vouches for the file.
+ */
+export function setWatermark(
+  db: Db,
+  watermarkKey: string,
+  value: number,
+  fingerprint?: string | null,
+): void {
+  const now = new Date().toISOString();
+  prepareCached(
+    db,
     `INSERT INTO sync_peers (machine_id, last_applied_seq, last_seen_at)
      VALUES (@machineId, @value, @seenAt)
      ON CONFLICT (machine_id) DO UPDATE
        SET last_applied_seq = @value, last_seen_at = @seenAt`,
-  ).run({ machineId: watermarkKey, value, seenAt: new Date().toISOString() });
+  ).run({
+    machineId: watermarkKey,
+    value,
+    seenAt: fingerprint == null ? now : `${now} ${fingerprint}`,
+  });
 }
 
 /**
@@ -1050,7 +1088,7 @@ export function setWatermark(db: Db, watermarkKey: string, value: number): void 
  * ops; reading it costs no table lookup and adds no row anyone lists.
  */
 export function markReprojectionPending(db: Db): void {
-  db.pragma("user_version = 1");
+  prepareCached(db, "PRAGMA user_version = 1").run();
 }
 
 /**
@@ -1148,13 +1186,13 @@ export function ingestSegment(
   const watermarkKey = peerWatermarkKey(peer);
   const start = getWatermark(db, watermarkKey);
 
-  // CAUGHT UP: the peer's manifest says the file holds exactly the lines
-  // we already consumed, and its last line is the one the manifest
-  // names. Nothing to apply, so do not read, hash or split the file.
-  // `verify` (explicit `mu sync`) skips this and checks the whole file,
-  // so damage that left the count and the last line intact is still
-  // reported somewhere.
-  if (opts?.verify !== true && segmentCaughtUp(peer.path, start)) {
+  // CAUGHT UP: the file and its manifest are byte-for-byte what the last
+  // clean full read saw (size, exact mtime, manifest hash), and the
+  // manifest counts the lines we consumed. Nothing to apply, so do not
+  // read, hash or split the file. `verify` (explicit `mu sync`) skips
+  // this and checks the whole file, so damage that kept size and mtime
+  // is still reported somewhere.
+  if (opts?.verify !== true && segmentCaughtUp(db, watermarkKey, peer.path, start)) {
     return {
       machineId: peer.machineId,
       path: peer.path,
@@ -1180,6 +1218,7 @@ export function ingestSegment(
     };
   }
 
+  const fingerprint = segmentFingerprint(peer.path);
   const verified = verifyAgainstManifest(peer.path);
   if (!verified.ok) {
     // Whole-file damage, distinct from a torn line: every remaining
@@ -1305,10 +1344,13 @@ export function ingestSegment(
       previousHlc = op.hlc;
       watermark = lineNo;
     }
-    setWatermark(db, watermarkKey, watermark);
-    // In the same transaction as the ops: a process that dies before
-    // the pass-wide reprojection leaves this behind for the next one.
-    if (applied > 0) markReprojectionPending(db);
+    // Vouch for the file only after a clean read to its end, so a file
+    // with a defect is read (and reported) again on every pass.
+    const clean = defects.length === 0 && watermark === lines.length;
+    setWatermark(db, watermarkKey, watermark, clean ? (fingerprint?.key ?? null) : null);
+    // applyIncomingOp left the reprojection marker in this transaction
+    // if anything changed or deferred: a process that dies before the
+    // pass-wide reprojection leaves it behind for the next one.
   });
   run.immediate();
 
@@ -1372,6 +1414,11 @@ function isAlreadyRecorded(db: Db, op: Op): boolean {
 export function applyIncomingOp(db: Db, op: Op): { changed: boolean } {
   receiveHlc(db, op.hlc);
   const result = applyOp(db, op);
+  // A deferred note/edge (`absent`: its task is not here yet), or a row
+  // change that may be the parent some deferred op waits for: either way
+  // the next ambient pass must run the repair, however this op arrived
+  // (segment, `--from`, or an SDK caller).
+  if (result.changed || result.skipped === "absent") markReprojectionPending(db);
   prepareCached(
     db,
     `INSERT OR IGNORE INTO ops

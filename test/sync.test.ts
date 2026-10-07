@@ -21,10 +21,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Op } from "../src/apply.js";
 import { type Db, openDb } from "../src/db.js";
 import { formatHlc } from "../src/hlc.js";
 import { withCaptureSuppressed } from "../src/op-context.js";
 import {
+  applyIncomingOp,
   discoverPeers,
   flushSegment,
   ingestSegment,
@@ -460,6 +462,35 @@ describe("sync", () => {
       } finally {
         c.close();
       }
+    });
+
+    it("repairs an edge an SDK caller applied before its parent", async () => {
+      seed(a, "parent");
+      seed(a, "child");
+      addBlockEdge(a, "demo", "child", "parent");
+      const ops = (
+        a
+          .prepare(
+            `SELECT hlc, machine_id AS machineId, group_id AS groupId, actor, intent,
+                    entity, key, op, payload FROM ops ORDER BY seq`,
+          )
+          .all() as Op[]
+      ).sort((x, y) => (x.entity === "edge" ? -1 : y.entity === "edge" ? 1 : 0));
+      expect(ops[0]?.entity).toBe("edge");
+      // Edge first (deferred: neither task is here), then its parents,
+      // straight through the exported incoming-op seam.
+      for (const op of ops) applyIncomingOp(b, op);
+      expect(edgeCount(b)).toBe(0);
+
+      // An ambient pass over an empty sync dir applies nothing, yet runs
+      // the repair the direct calls left pending.
+      const empty = join(tempDir, "empty-sync");
+      mkdirSync(empty);
+      process.env[SYNC_DIR_KEY] = empty;
+      const pass = await ambientIngest(b);
+      expect(pass.ingested).toEqual([]);
+      expect(edgeCount(b)).toBe(1);
+      expect(b.pragma("user_version", { simple: true })).toBe(0);
     });
 
     it("does no repair scan when the pass applied nothing", async () => {

@@ -7,6 +7,7 @@
 
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -35,6 +36,7 @@ import {
   resetWatermark,
   SEGMENT_FORMAT_VERSION,
   segmentPath,
+  setWatermark,
   syncDir,
   syncPass,
   verifyAgainstManifest,
@@ -1226,14 +1228,56 @@ describe("segments", () => {
       utimesSync(path, earlier, earlier);
     };
 
-    it("at the watermark it neither hashes nor decodes the segment", async () => {
+    it("an unchanged file at the watermark is not read", async () => {
       const peer = await caughtUpPeer();
+      // Unreadable: a full read would throw EACCES. The caught-up path
+      // only stats the segment.
+      chmodSync(peer.path, 0o000);
+      try {
+        expect(ingestSegment(b, peer)).toMatchObject({ read: 0, applied: 0, defects: [] });
+      } finally {
+        chmodSync(peer.path, 0o644);
+      }
+    });
+
+    it("a same-size rewrite with a backdated mtime is read and reported", async () => {
+      const peer = await caughtUpPeer();
+      const recordedMtime = statSync(peer.path).mtimeMs;
       keepMtime(peer.path, () => rotLineTwo(peer.path));
-      // The old path sha256'd the file, saw the mismatch, decoded every
-      // line and reported manifest-mismatch. Caught up, it reads only
-      // the manifest and the last line, so the rot is invisible.
-      const again = ingestSegment(b, peer);
-      expect(again).toMatchObject({ read: 0, applied: 0, defects: [] });
+      expect(statSync(peer.path).mtimeMs).not.toBe(recordedMtime);
+      await withEnv("MU_SYNC_DIR", dir, async () => {
+        for (let i = 0; i < 2; i++) {
+          const result = await ambientIngest(b, { quiet: true });
+          expect(result.ingested[0]?.defects.map((d) => d.kind)).toContain("manifest-mismatch");
+          expect(result.warnings.join("\n")).toContain("copy it from the peer again");
+        }
+      });
+    });
+
+    it("a same-size rewrite restamped to the recorded mtime is caught by the manifest", async () => {
+      const peer = await caughtUpPeer();
+      const { mtime } = statSync(peer.path);
+      const manifestFile = peer.path.replace(/\.jsonl$/, ".manifest");
+      // A new manifest (another flush, a hand edit) with the same count:
+      // the recorded manifest hash no longer matches.
+      const m = JSON.parse(readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+      m.updatedAt = "2000-01-01T00:00:00.000Z";
+      writeFileSync(manifestFile, `${JSON.stringify(m, null, 2)}\n`);
+      rotLineTwo(peer.path);
+      utimesSync(peer.path, mtime, mtime);
+      expect(ingestSegment(b, peer).defects.map((d) => d.kind)).toContain("manifest-mismatch");
+    });
+
+    it("a reset watermark is never vouched for by an old fingerprint", async () => {
+      const peer = await caughtUpPeer();
+      const key = localMachineId(a);
+      const w = getWatermark(b, key);
+      setWatermark(b, key, 0);
+      setWatermark(b, key, w);
+      rotLineTwo(peer.path);
+      const st = statSync(peer.path);
+      utimesSync(peer.path, st.atime, st.mtime);
+      expect(ingestSegment(b, peer).defects.map((d) => d.kind)).toContain("manifest-mismatch");
     });
 
     it("a segment rewritten after its manifest is read and reported, every time", async () => {
