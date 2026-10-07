@@ -72,7 +72,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { crc32 } from "node:zlib";
 import { applyOp, type Op, OpEntityNotSyncedError, reprojectDeferredOps } from "./apply.js";
-import { type Db, SYNCED_ENTITIES } from "./db.js";
+import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { receiveHlc } from "./hlc.js";
 import { isLegacyLogOnlyIntent } from "./legacy-ops.js";
@@ -1200,20 +1200,19 @@ export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
  * itself refuse) can never be mistaken for a re-delivery.
  */
 function isAlreadyRecorded(db: Db, op: Op): boolean {
-  const row = db
-    .prepare(
-      `SELECT 1 FROM ops
+  const row = prepareCached(
+    db,
+    `SELECT 1 FROM ops
         WHERE machine_id = @machineId AND hlc = @hlc
           AND entity = @entity AND key = @key AND op = @op
         LIMIT 1`,
-    )
-    .get({
-      machineId: op.machineId,
-      hlc: op.hlc,
-      entity: op.entity,
-      key: op.key,
-      op: op.op,
-    });
+  ).get({
+    machineId: op.machineId,
+    hlc: op.hlc,
+    entity: op.entity,
+    key: op.key,
+    op: op.op,
+  });
   return row !== undefined;
 }
 
@@ -1238,7 +1237,8 @@ function isAlreadyRecorded(db: Db, op: Op): boolean {
 export function applyIncomingOp(db: Db, op: Op): { changed: boolean } {
   receiveHlc(db, op.hlc);
   const result = applyOp(db, op);
-  db.prepare(
+  prepareCached(
+    db,
     `INSERT OR IGNORE INTO ops
        (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
      VALUES (@hlc, @machineId, @groupId, @actor, @intent, @entity, @key, @op, @payload, @createdAt)`,

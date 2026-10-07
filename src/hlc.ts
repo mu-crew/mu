@@ -51,7 +51,7 @@
 // (`last_wall`, `last_counter`), which is also where `machine_id`
 // already lives — one row, one read, one write.
 
-import type { Db } from "./db.js";
+import { type Db, prepareCached } from "./db.js";
 
 /** Zero-pad width for the wall-clock millisecond field. */
 const WALL_WIDTH = 15;
@@ -217,14 +217,16 @@ export function nextHlc(db: Db, now: number = Date.now()): string {
 export function receiveHlc(db: Db, remoteHlc: string, now: number = Date.now()): string {
   const remote = parseHlc(remoteHlc);
   const wallNow = Math.floor(now);
-  const read = db.prepare(
+  const read = prepareCached(
+    db,
     "SELECT machine_id, last_wall, last_counter FROM machine_identity WHERE id = 1",
   );
-  const write = db.prepare(
+  const write = prepareCached(
+    db,
     "UPDATE machine_identity SET last_wall = @wall, last_counter = @counter WHERE id = 1",
   );
 
-  const advance = db.transaction((): string => {
+  const advance = (): string => {
     const row = read.get() as ClockRow | undefined;
     if (!row) throw new MachineIdentityMissingError();
     const wall = Math.max(row.last_wall, remote.wallMs, wallNow);
@@ -243,7 +245,11 @@ export function receiveHlc(db: Db, remoteHlc: string, now: number = Date.now()):
     if (counter > MAX_COUNTER) throw new HlcOverflowError("counter", counter);
     write.run({ wall, counter });
     return formatHlc({ wallMs: wall, counter, machineId: row.machine_id });
-  });
+  };
 
-  return advance.immediate();
+  // Inside a caller's transaction (ingest applies a whole segment in
+  // one) the write lock is already held, so a savepoint per op would buy
+  // nothing.
+  if (db.inTransaction) return advance();
+  return db.transaction(advance).immediate();
 }

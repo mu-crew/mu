@@ -48,7 +48,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import Database, { type Database as DatabaseType } from "better-sqlite3";
+import Database, { type Database as DatabaseType, type Statement } from "better-sqlite3";
 import { installCapture } from "./capture.js";
 import type { HasNextSteps, NextStep } from "./output.js";
 import { defaultStateDir, xdgStateHome } from "./state-dir.js";
@@ -57,6 +57,33 @@ import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
 export { defaultStateDir };
 
 export type Db = DatabaseType;
+
+const statementCache = new WeakMap<Db, Map<string, Statement>>();
+
+/**
+ * `db.prepare(sql)`, compiled once per connection and reused.
+ *
+ * better-sqlite3 has no statement cache, so a hot loop that calls
+ * `db.prepare` per row pays SQL compilation every time. Ingest applies
+ * thousands of ops and prepared ~10 statements per op, which made SQL
+ * compilation most of a large catch-up's cost. Use this on per-op paths;
+ * one-off queries keep plain `db.prepare`. `sql` must come from a fixed
+ * template (the cache never evicts). Not for a statement a caller
+ * `.iterate()`s while re-entering the same SQL: a busy statement throws.
+ */
+export function prepareCached(db: Db, sql: string): Statement {
+  let byDb = statementCache.get(db);
+  if (byDb === undefined) {
+    byDb = new Map();
+    statementCache.set(db, byDb);
+  }
+  let stmt = byDb.get(sql);
+  if (stmt === undefined) {
+    stmt = db.prepare(sql);
+    byDb.set(sql, stmt);
+  }
+  return stmt;
+}
 
 export interface OpenDbOptions {
   /**

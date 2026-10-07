@@ -89,7 +89,13 @@
 // than a seen `del` loses; a `del` older than a seen `put` loses. One
 // code path, no special casing.
 
-import { type Db, MACHINE_LOCAL_ENTITIES, SYNCED_ENTITIES, type SyncedEntity } from "./db.js";
+import {
+  type Db,
+  MACHINE_LOCAL_ENTITIES,
+  prepareCached,
+  SYNCED_ENTITIES,
+  type SyncedEntity,
+} from "./db.js";
 import { compareHlc } from "./hlc.js";
 import { LEGACY_LOG_ONLY_SQL_EXCLUSION } from "./legacy-ops.js";
 import { withCaptureSuppressed } from "./op-context.js";
@@ -190,9 +196,9 @@ function isKnownMachineLocalEntity(entity: string): boolean {
  * second apply would compare its HLC against itself and lose.
  */
 function fieldHlc(db: Db, op: Op, field: string): string | null {
-  const row = db
-    .prepare(
-      `SELECT MAX(hlc) AS hlc
+  const row = prepareCached(
+    db,
+    `SELECT MAX(hlc) AS hlc
          FROM ops
         WHERE entity = @entity
           AND key    = @key
@@ -200,8 +206,7 @@ function fieldHlc(db: Db, op: Op, field: string): string | null {
           AND hlc   <> @self
           AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
           AND json_type(payload, '$.' || @field) IS NOT NULL`,
-    )
-    .get({ entity: op.entity, key: op.key, self: op.hlc, field }) as
+  ).get({ entity: op.entity, key: op.key, self: op.hlc, field }) as
     | { hlc: string | null }
     | undefined;
   return row?.hlc ?? null;
@@ -213,13 +218,12 @@ function fieldHlc(db: Db, op: Op, field: string): string | null {
  * ordinary op, so "has this been deleted, and when" is one MAX().
  */
 function tombstoneHlc(db: Db, op: Op): string | null {
-  const row = db
-    .prepare(
-      `SELECT MAX(hlc) AS hlc
+  const row = prepareCached(
+    db,
+    `SELECT MAX(hlc) AS hlc
          FROM ops
         WHERE entity = @entity AND key = @key AND op = 'del' AND hlc <> @self`,
-    )
-    .get({ entity: op.entity, key: op.key, self: op.hlc }) as { hlc: string | null } | undefined;
+  ).get({ entity: op.entity, key: op.key, self: op.hlc }) as { hlc: string | null } | undefined;
   return row?.hlc ?? null;
 }
 
@@ -227,13 +231,12 @@ function tombstoneHlc(db: Db, op: Op): string | null {
  *  grow-only and element-set paths, which care about the row's
  *  existence rather than individual fields. */
 function anyHlc(db: Db, op: Op, kind: "put" | "del"): string | null {
-  const row = db
-    .prepare(
-      `SELECT MAX(hlc) AS hlc
+  const row = prepareCached(
+    db,
+    `SELECT MAX(hlc) AS hlc
          FROM ops
         WHERE entity = @entity AND key = @key AND op = @kind AND hlc <> @self`,
-    )
-    .get({ entity: op.entity, key: op.key, kind, self: op.hlc }) as
+  ).get({ entity: op.entity, key: op.key, kind, self: op.hlc }) as
     | { hlc: string | null }
     | undefined;
   return row?.hlc ?? null;
@@ -360,15 +363,15 @@ const NEVER_APPLY = new Set(["owner_id", "local_id", "name", "id", "workstream_i
  *  rather than rejecting. The subsequent workstream op then fills in
  *  its real fields by ordinary per-field LWW. */
 function ensureWorkstreamRow(db: Db, name: string): number {
-  const existing = db.prepare("SELECT id FROM workstreams WHERE name = ?").get(name) as
+  const existing = prepareCached(db, "SELECT id FROM workstreams WHERE name = ?").get(name) as
     | { id: number }
     | undefined;
   if (existing) return existing.id;
-  db.prepare("INSERT INTO workstreams (name, created_at) VALUES (?, ?)").run(
+  prepareCached(db, "INSERT INTO workstreams (name, created_at) VALUES (?, ?)").run(
     name,
     new Date().toISOString(),
   );
-  const created = db.prepare("SELECT id FROM workstreams WHERE name = ?").get(name) as
+  const created = prepareCached(db, "SELECT id FROM workstreams WHERE name = ?").get(name) as
     | { id: number }
     | undefined;
   if (!created) throw new Error(`failed to create workstream row for ${name}`);
@@ -378,14 +381,13 @@ function ensureWorkstreamRow(db: Db, name: string): number {
 /** Surrogate id for a task natural key, or null when absent. */
 function taskRowId(db: Db, key: string): number | null {
   const { workstream, localId } = parseTaskKey(key);
-  const row = db
-    .prepare(
-      `SELECT t.id AS id
+  const row = prepareCached(
+    db,
+    `SELECT t.id AS id
          FROM tasks t
          JOIN workstreams w ON w.id = t.workstream_id
         WHERE w.name = ? AND t.local_id = ?`,
-    )
-    .get(workstream, localId) as { id: number } | undefined;
+  ).get(workstream, localId) as { id: number } | undefined;
   return row?.id ?? null;
 }
 
@@ -423,12 +425,12 @@ function applyFieldLww(
     //
     // Identifier is not user input: `field` is filtered against the
     // table's real column list by `filterAppliable` before we get here.
-    const current = db.prepare(`SELECT ${field} AS v FROM ${table} WHERE id = ?`).get(rowId) as
-      | { v: string | number | null }
-      | undefined;
+    const current = prepareCached(db, `SELECT ${field} AS v FROM ${table} WHERE id = ?`).get(
+      rowId,
+    ) as { v: string | number | null } | undefined;
     if (current !== undefined && current.v === value) continue;
 
-    db.prepare(`UPDATE ${table} SET ${field} = ? WHERE id = ?`).run(value, rowId);
+    prepareCached(db, `UPDATE ${table} SET ${field} = ? WHERE id = ?`).run(value, rowId);
     applied.push(field);
   }
   return applied;
@@ -492,7 +494,8 @@ function applyTaskPut(db: Db, op: Op): ApplyResult {
     // filled by whichever op does.
     const wsId = ensureWorkstreamRow(db, workstream);
     const now = new Date().toISOString();
-    db.prepare(
+    prepareCached(
+      db,
       `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days,
                           owner_id, created_at, updated_at)
        VALUES (?, ?, ?, 'OPEN', 'todo', 50, 1, NULL, ?, ?)`,
@@ -566,26 +569,24 @@ export function repairTaskPair(
   rowId: number,
   pending?: { hlc: string; substate: string | null },
 ): boolean {
-  const row = db
-    .prepare(
-      `SELECT t.status, t.substate, w.name || '/' || t.local_id AS key
+  const row = prepareCached(
+    db,
+    `SELECT t.status, t.substate, w.name || '/' || t.local_id AS key
          FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
         WHERE t.id = ?`,
-    )
-    .get(rowId) as { status: string; substate: string; key: string } | undefined;
+  ).get(rowId) as { status: string; substate: string; key: string } | undefined;
   if (!row) return false;
 
   let winner: { hlc: string; substate: string } | null = null;
-  const writers = db
-    .prepare(
-      `SELECT hlc, payload FROM ops
+  const writers = prepareCached(
+    db,
+    `SELECT hlc, payload FROM ops
         WHERE entity = 'task' AND key = ? AND op = 'put' AND hlc <> ?
           AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
           AND (json_type(payload, '$.substate') IS NOT NULL
                OR json_type(payload, '$.status') IS NOT NULL)
         ORDER BY hlc DESC`,
-    )
-    .iterate(row.key, pending?.hlc ?? "") as Iterable<{ hlc: string; payload: string }>;
+  ).iterate(row.key, pending?.hlc ?? "") as Iterable<{ hlc: string; payload: string }>;
   for (const w of writers) {
     const substate = carriedSubstate(JSON.parse(w.payload));
     if (substate === null) continue;
@@ -598,7 +599,7 @@ export function repairTaskPair(
 
   const target = resolvePair(row.status, winner?.substate ?? row.substate);
   if (target === null || target.substate === row.substate) return false;
-  db.prepare("UPDATE tasks SET substate = ? WHERE id = ?").run(target.substate, rowId);
+  prepareCached(db, "UPDATE tasks SET substate = ? WHERE id = ?").run(target.substate, rowId);
   return true;
 }
 
@@ -607,7 +608,7 @@ function applyWorkstreamPut(db: Db, op: Op): ApplyResult {
   if (name.length === 0) throw new OpKeyMalformedError("workstream", name);
   const entries = filterAppliable("workstreams", decodePayload(op.payload));
 
-  const existing = db.prepare("SELECT id FROM workstreams WHERE name = ?").get(name) as
+  const existing = prepareCached(db, "SELECT id FROM workstreams WHERE name = ?").get(name) as
     | { id: number }
     | undefined;
   if (!existing) {
@@ -671,20 +672,19 @@ function applyNotePut(db: Db, op: Op): ApplyResult {
   // A put without created_at (capture always writes one) is matched on
   // text alone: stamping it with "now" and then matching on that would
   // make every re-delivery look new.
-  const already = db
-    .prepare(
-      `SELECT 1 AS present FROM task_notes
+  const already = prepareCached(
+    db,
+    `SELECT 1 AS present FROM task_notes
         WHERE task_id = @taskId AND content = @content
           AND COALESCE(author, '') = COALESCE(@author, '')
           AND (@stamped IS NULL OR created_at = @stamped)
         LIMIT 1`,
-    )
-    .get({
-      taskId,
-      content: String(content),
-      author: authorText,
-      stamped: stamped === undefined || stamped === null ? null : String(stamped),
-    }) as { present: number } | undefined;
+  ).get({
+    taskId,
+    content: String(content),
+    author: authorText,
+    stamped: stamped === undefined || stamped === null ? null : String(stamped),
+  }) as { present: number } | undefined;
   if (already) return { changed: false, appliedFields: [], skipped: "already-present" };
 
   // A note deleted by a NEWER tombstone must not be re-inserted by a
@@ -694,7 +694,8 @@ function applyNotePut(db: Db, op: Op): ApplyResult {
     return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
   }
 
-  db.prepare(
+  prepareCached(
+    db,
     "INSERT INTO task_notes (task_id, author, content, created_at) VALUES (?, ?, ?, ?)",
   ).run(taskId, authorText, String(content), String(createdAt));
   return { changed: true, appliedFields: ["content"] };
@@ -715,18 +716,18 @@ function applyEdgePut(db: Db, op: Op): ApplyResult {
   if (removedAt !== null && !wins(op.hlc, removedAt)) {
     return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
   }
-  const existing = db
-    .prepare("SELECT 1 AS present FROM task_edges WHERE from_task_id = ? AND to_task_id = ?")
-    .get(fromId, toId) as { present: number } | undefined;
+  const existing = prepareCached(
+    db,
+    "SELECT 1 AS present FROM task_edges WHERE from_task_id = ? AND to_task_id = ?",
+  ).get(fromId, toId) as { present: number } | undefined;
   if (existing) return { changed: false, appliedFields: [], skipped: "already-present" };
 
   const entries = decodePayload(op.payload);
   const createdAt = entries.find(([f]) => f === "created_at")?.[1] ?? new Date().toISOString();
-  db.prepare("INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)").run(
-    fromId,
-    toId,
-    String(createdAt),
-  );
+  prepareCached(
+    db,
+    "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
+  ).run(fromId, toId, String(createdAt));
   return { changed: true, appliedFields: ["created_at"] };
 }
 
@@ -745,7 +746,7 @@ function applyDel(db: Db, op: Op): ApplyResult {
   switch (op.entity) {
     case "workstream": {
       // FK CASCADE removes the tasks, notes and edges beneath it.
-      const r = db.prepare("DELETE FROM workstreams WHERE name = ?").run(op.key);
+      const r = prepareCached(db, "DELETE FROM workstreams WHERE name = ?").run(op.key);
       return {
         changed: r.changes > 0,
         appliedFields: [],
@@ -755,7 +756,7 @@ function applyDel(db: Db, op: Op): ApplyResult {
     case "task": {
       const rowId = taskRowId(db, op.key);
       if (rowId === null) return { changed: false, appliedFields: [], skipped: "absent" };
-      db.prepare("DELETE FROM tasks WHERE id = ?").run(rowId);
+      prepareCached(db, "DELETE FROM tasks WHERE id = ?").run(rowId);
       return { changed: true, appliedFields: [] };
     }
     case "note": {
@@ -769,14 +770,13 @@ function applyDel(db: Db, op: Op): ApplyResult {
       // from the put under the same key.
       let entries = decodePayload(op.payload);
       if (!entries.some(([f, v]) => f === "content" && v !== null)) {
-        const src = db
-          .prepare(
-            `SELECT payload FROM ops
+        const src = prepareCached(
+          db,
+          `SELECT payload FROM ops
               WHERE entity = 'note' AND key = @key AND op = 'put'
                 AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
               ORDER BY hlc DESC LIMIT 1`,
-          )
-          .get({ key: op.key }) as { payload: string } | undefined;
+        ).get({ key: op.key }) as { payload: string } | undefined;
         if (!src) return { changed: false, appliedFields: [], skipped: "absent" };
         entries = decodePayload(src.payload);
       }
@@ -786,19 +786,18 @@ function applyDel(db: Db, op: Op): ApplyResult {
       // created_at narrows the delete to this note, not every repeat of
       // its text. A put without one (never written by capture) falls
       // back to text alone.
-      const r = db
-        .prepare(
-          `DELETE FROM task_notes
+      const r = prepareCached(
+        db,
+        `DELETE FROM task_notes
             WHERE task_id = @taskId AND content = @content
               AND COALESCE(author, '') = COALESCE(@author, '')
               AND (@createdAt IS NULL OR created_at = @createdAt)`,
-        )
-        .run({
-          taskId,
-          content: String(content),
-          author: author === null ? null : String(author),
-          createdAt: createdAt === null ? null : String(createdAt),
-        });
+      ).run({
+        taskId,
+        content: String(content),
+        author: author === null ? null : String(author),
+        createdAt: createdAt === null ? null : String(createdAt),
+      });
       return {
         changed: r.changes > 0,
         appliedFields: [],
@@ -812,9 +811,10 @@ function applyDel(db: Db, op: Op): ApplyResult {
       if (fromId === null || toId === null) {
         return { changed: false, appliedFields: [], skipped: "absent" };
       }
-      const r = db
-        .prepare("DELETE FROM task_edges WHERE from_task_id = ? AND to_task_id = ?")
-        .run(fromId, toId);
+      const r = prepareCached(
+        db,
+        "DELETE FROM task_edges WHERE from_task_id = ? AND to_task_id = ?",
+      ).run(fromId, toId);
       return {
         changed: r.changes > 0,
         appliedFields: [],
