@@ -68,6 +68,7 @@ import {
   peerWatermarkKey,
   resetWatermark,
   type SegmentDefect,
+  segmentCaughtUp,
   segmentLineCount,
   syncDir,
 } from "./segments.js";
@@ -163,9 +164,10 @@ export function peerStatuses(db: Db, dir: string): PeerStatus[] {
     } catch {
       lastSeenMs = null;
     }
-    const total = segmentLineCount(peer.path);
     const watermarkKey = peerWatermarkKey(peer);
     const watermark = getWatermark(db, watermarkKey);
+    // Caught up: the count is the watermark, no need to decode the file.
+    const total = segmentCaughtUp(peer.path, watermark) ? watermark : segmentLineCount(peer.path);
     const ageMs = lastSeenMs === null ? null : Math.max(0, now - lastSeenMs);
     return {
       machineId: peer.machineId,
