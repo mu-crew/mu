@@ -341,6 +341,10 @@ type SettleHandler = (event: unknown, ctx: MuNudgeCtx) => unknown;
  * The merged result appends every handler's entries to the event's
  * (pi replaces `entries` with each handler's return, so separate
  * handlers dropped all but the last nudge) and continues when any asks.
+ * A nudge that throws still reaches pi's extension-error path: after the
+ * merged handler, one reporter handler per nudge rethrows that nudge's
+ * error, so pi reports each failure (as it did when every nudge was its
+ * own handler) while the other nudges' entries are still delivered.
  * Call `flush()` after registering the nudges.
  */
 export function parallelSettle(pi: MuNudgeApi): { api: MuNudgeApi; flush(): void } {
@@ -351,17 +355,21 @@ export function parallelSettle(pi: MuNudgeApi): { api: MuNudgeApi; flush(): void
       else pi.on(event, handler);
     },
   };
+  // Errors of the last settle, by handler index; each reporter takes its own.
+  let errors: (unknown[] | undefined)[] = [];
   return {
     api,
     flush() {
       if (handlers.length === 0) return;
       pi.on("agent_before_settle", async (event, ctx) => {
+        errors = handlers.map(() => undefined);
         const results = await Promise.all(
-          handlers.map(async (h) => {
+          handlers.map(async (h, i) => {
             try {
               return (await h(event, ctx)) as SettleResult;
-            } catch {
-              return undefined; // one nudge's fault must not cost the others
+            } catch (err) {
+              errors[i] = [err]; // reported by reporter i, after the merge
+              return undefined;
             }
           }),
         );
@@ -372,6 +380,14 @@ export function parallelSettle(pi: MuNudgeApi): { api: MuNudgeApi; flush(): void
           entries: [...prior, ...fired.flatMap((r) => r.entries ?? [])],
           ...(fired.some((r) => r.continue === true) ? { continue: true } : {}),
         };
+      });
+      handlers.forEach((_, i) => {
+        pi.on("agent_before_settle", () => {
+          const err = errors[i];
+          errors[i] = undefined;
+          if (err !== undefined) throw err[0];
+          return undefined;
+        });
       });
     },
   };
