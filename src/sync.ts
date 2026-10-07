@@ -340,8 +340,9 @@ export async function ambientIngest(db: Db, opts?: AmbientOptions): Promise<Ambi
  * laptop followed by `mu sync` on the devserver would show nothing —
  * exactly the no-hands claim, broken.
  *
- * Runs under the cross-process file lock inside `flushSegment`, so two
- * concurrent mu processes cannot interleave partial lines.
+ * Appends under the cross-process file lock inside `flushSegment`, so
+ * two concurrent mu processes cannot interleave partial lines. A flush
+ * with nothing to append skips the lock, so read-only verbs never queue.
  */
 export async function ambientFlush(db: Db, opts?: AmbientOptions): Promise<FlushResult | null> {
   const dir = syncDir();
