@@ -413,6 +413,30 @@ describe("drift detection", () => {
       expect(checkCheapDriftInvariant(db).clean).toBe(true);
     });
 
+    it("names every note of a task the log has no note ops for, once each", () => {
+      seed();
+      uncaptured(() => {
+        const now = new Date().toISOString();
+        const insert = db.prepare(
+          `INSERT INTO task_notes (task_id, author, content, created_at)
+           VALUES ((SELECT id FROM tasks WHERE local_id = ?), NULL, 'n', ?)`,
+        );
+        insert.run("b", now);
+        insert.run("b", now);
+      });
+      const ids = (
+        db
+          .prepare(
+            "SELECT n.id FROM task_notes n JOIN tasks t ON t.id = n.task_id WHERE t.local_id = 'b' ORDER BY n.id",
+          )
+          .all() as { id: number }[]
+      ).map((r) => r.id);
+      const notes = checkCheapDriftInvariant(db).unexplainedRows.filter(
+        (r) => r.table === "task_notes",
+      );
+      expect(notes).toEqual(ids.map((id) => ({ table: "task_notes", key: `demo/b#${id}` })));
+    });
+
     it("is fast enough for the default doctor with thousands of notes", () => {
       ensureWorkstream(db, "demo");
       const workstream = db.prepare("SELECT id FROM workstreams WHERE name = 'demo'").get() as {

@@ -112,8 +112,9 @@ export interface CheapDriftReport {
 /**
  * Every live row must have at least one op naming its natural key.
  *
- * ~1ms on a 200-task DB: four indexed NOT EXISTS scans, no rebuild, no
- * temp file. Cheap enough to run on every `mu doctor`.
+ * Four indexed NOT EXISTS scans, no rebuild, no temp file: ~10 ms on a
+ * 2.3k-task, 10.7k-note, 67k-op DB. Cheap enough to run on every `mu
+ * doctor` and the TUI slow tick.
  *
  * WHAT IT CATCHES: a row that exists with no history — an uncaptured
  * INSERT, or a mutation path that bypassed the triggers entirely.
@@ -170,16 +171,26 @@ export function checkCheapDriftInvariant(db: Db): CheapDriftReport {
       // live note (seconds on the dogfood DB); '#'..'$' contains exactly
       // the strings beginning with `task_key || '#'` because task ids
       // cannot contain either delimiter.
+      //
+      // The answer is per TASK, so probe each task that has notes once
+      // (2.3k probes, not 10.7k on the dogfood DB), then list the notes
+      // of the tasks that fail. MATERIALIZED stops SQLite flattening the
+      // probe back into a per-note subquery.
       table: "task_notes",
-      sql: `SELECT w.name || '/' || t.local_id || '#' || n.id AS key
-              FROM task_notes n
-              JOIN tasks t ON t.id = n.task_id
-              JOIN workstreams w ON w.id = t.workstream_id
-             WHERE NOT EXISTS (
-               SELECT 1 FROM ops o
-                WHERE o.entity = 'note'
-                  AND o.key >= w.name || '/' || t.local_id || '#'
-                  AND o.key <  w.name || '/' || t.local_id || '$')`,
+      sql: `WITH bare AS MATERIALIZED (
+              SELECT t.id AS task_id, w.name || '/' || t.local_id AS task_key
+                FROM tasks t
+                JOIN workstreams w ON w.id = t.workstream_id
+               WHERE t.id IN (SELECT task_id FROM task_notes)
+                 AND NOT EXISTS (
+                   SELECT 1 FROM ops o
+                    WHERE o.entity = 'note'
+                      AND o.key >= w.name || '/' || t.local_id || '#'
+                      AND o.key <  w.name || '/' || t.local_id || '$'))
+            SELECT b.task_key || '#' || n.id AS key
+              FROM bare b
+              JOIN task_notes n ON n.task_id = b.task_id
+             ORDER BY n.task_id, n.id`,
     },
   ];
 
