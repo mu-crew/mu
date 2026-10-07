@@ -146,7 +146,11 @@ describe("TUI end-to-end acceptance", () => {
     // dynamic-import. Bare `mu` owns the TTY auto-route; `mu state`
     // stays static by default for back-compat.
     expect(src).toMatch(/opts\.tui === true/);
-    expect(src).toMatch(/await import\("\.\/tui\/index\.js"\)/);
+    // The TUI loads lazily through importTui (src/cli/tui-load.ts), which
+    // sets NODE_ENV=production for React while the chunk loads.
+    expect(src).toMatch(/await importTui\(\)/);
+    const loader = readFileSync("./src/cli/tui-load.ts", "utf-8");
+    expect(loader).toMatch(/import\("\.\/tui\/index\.js"\)/);
     // Multi-ws TUI shipped as feat_tui_multi_workstream: runTui
     // now takes an array of workstream names (Tab/Shift-Tab cycles
     // the active tab). Single-ws is the N=1 degenerate case.
