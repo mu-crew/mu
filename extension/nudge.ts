@@ -324,6 +324,59 @@ export function nudgeText(rule: string, refs: string[]): string {
   ].join("\n");
 }
 
+/** Write a `mu log` breadcrumb without holding the settle for it: the
+ *  nudge's message does not depend on the log line. */
+function breadcrumb(run: MuRunner, args: string[]): void {
+  void run(args).catch(() => {});
+}
+
+type SettleResult = { entries?: unknown[]; continue?: boolean } | undefined;
+type SettleHandler = (event: unknown, ctx: MuNudgeCtx) => unknown;
+
+/**
+ * A view of `pi` whose `agent_before_settle` handlers run in PARALLEL
+ * behind one real handler. pi awaits boundary handlers one after the
+ * other, and each nudge awaits a mu subprocess, so three nudges held the
+ * settle (and every `mu agent wait` on it) for the sum of their calls.
+ * The merged result appends every handler's entries to the event's
+ * (pi replaces `entries` with each handler's return, so separate
+ * handlers dropped all but the last nudge) and continues when any asks.
+ * Call `flush()` after registering the nudges.
+ */
+export function parallelSettle(pi: MuNudgeApi): { api: MuNudgeApi; flush(): void } {
+  const handlers: SettleHandler[] = [];
+  const api: MuNudgeApi = {
+    on(event, handler) {
+      if (event === "agent_before_settle") handlers.push(handler);
+      else pi.on(event, handler);
+    },
+  };
+  return {
+    api,
+    flush() {
+      if (handlers.length === 0) return;
+      pi.on("agent_before_settle", async (event, ctx) => {
+        const results = await Promise.all(
+          handlers.map(async (h) => {
+            try {
+              return (await h(event, ctx)) as SettleResult;
+            } catch {
+              return undefined; // one nudge's fault must not cost the others
+            }
+          }),
+        );
+        const fired = results.filter((r) => r !== undefined);
+        if (fired.length === 0) return undefined;
+        const prior = (event as { entries?: unknown[] } | null)?.entries ?? [];
+        return {
+          entries: [...prior, ...fired.flatMap((r) => r.entries ?? [])],
+          ...(fired.some((r) => r.continue === true) ? { continue: true } : {}),
+        };
+      });
+    },
+  };
+}
+
 function outcomeOf(event: unknown): unknown {
   return typeof event === "object" && event !== null
     ? (event as { outcome?: unknown }).outcome
@@ -370,7 +423,7 @@ export function registerNudge(
     if (refs === undefined || refs.length === 0) return;
     const text = nudgeText(rule, refs);
     const logWs = [...armed].find((w) => w !== "");
-    await run([
+    breadcrumb(run, [
       "log",
       ...(logWs ? ["-w", logWs] : []),
       "--kind",
@@ -448,7 +501,7 @@ export function registerCloseNudge(
     fired = true;
     const names = await ownedInProgress(run, me.agent, me.workstream);
     if (names === undefined || names.length === 0) return;
-    await run([
+    breadcrumb(run, [
       "log",
       "-w",
       me.workstream,
@@ -516,13 +569,13 @@ export function registerRefuteNudge(
     if (fired || armed.size === 0 || nested() || noUI(ctx)) return;
     if (outcomeOf(event) !== "completed") return;
     fired = true;
-    const refs: string[] = [];
-    for (const [ref, t] of armed) {
-      if ((await briefRefuted(run, t.ws, t.id)) === false) refs.push(ref);
-    }
+    // One read per armed task, all at once: the settle waits for the slowest.
+    const tasks = [...armed];
+    const refuted = await Promise.all(tasks.map(([, t]) => briefRefuted(run, t.ws, t.id)));
+    const refs = tasks.flatMap(([ref], i) => (refuted[i] === false ? [ref] : []));
     if (refs.length === 0) return;
     const logWs = [...armed.values()].find((t) => t.ws !== "")?.ws;
-    await run([
+    breadcrumb(run, [
       "log",
       ...(logWs ? ["-w", logWs] : []),
       "--kind",

@@ -41,6 +41,7 @@ import {
 } from "./delegate.js";
 import {
   type MuNudgeApi,
+  parallelSettle,
   registerCloseNudge,
   registerNudge,
   registerRefuteNudge,
@@ -354,9 +355,12 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
   // Identity follows the bind: a pi that finds MU_CTL_SOCK served by
   // another pi is nested and gets none of the agent's nudges.
   const nested = serveCtl(pi);
-  registerNudge(pi, run, undefined, nested);
-  registerCloseNudge(pi, run, process.env, nested);
-  registerRefuteNudge(pi, run, nested);
+  // The three nudges' settle checks run in parallel, as one handler.
+  const settle = parallelSettle(pi);
+  registerNudge(settle.api, run, undefined, nested);
+  registerCloseNudge(settle.api, run, process.env, nested);
+  registerRefuteNudge(settle.api, run, nested);
+  settle.flush();
 }
 
 /**
