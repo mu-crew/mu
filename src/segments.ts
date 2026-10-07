@@ -76,7 +76,15 @@ import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { receiveHlc } from "./hlc.js";
 import { isLegacyLogOnlyIntent } from "./legacy-ops.js";
+import {
+  manifestPath,
+  manifestSelfConsistent,
+  readManifest,
+  writeManifestFile,
+} from "./segment-manifest.js";
 import { type Sha256State, sha256Digest, sha256Initial, sha256Update } from "./sha256-resumable.js";
+
+export { manifestSeal, readManifest, type SegmentManifest } from "./segment-manifest.js";
 
 /** Current segment line format. Bumped only on a breaking shape change;
  *  a reader that sees a version it does not know REFUSES the line rather
@@ -85,8 +93,6 @@ export const SEGMENT_FORMAT_VERSION = 1;
 
 /** Segment filename suffix. */
 const SEGMENT_EXT = ".jsonl";
-/** Manifest filename suffix. */
-const MANIFEST_EXT = ".manifest";
 
 /** One serialized op, as it appears on a line of a segment. */
 export interface SegmentLine {
@@ -101,25 +107,6 @@ export interface SegmentLine {
   op: "put" | "del";
   payload: unknown;
   crc: string;
-}
-
-/** Whole-file verification sidecar. */
-export interface SegmentManifest {
-  v: number;
-  machine: string;
-  count: number;
-  lastHlc: string | null;
-  sha256: string;
-  updatedAt: string;
-  /** Bytes of the segment `sha256` covers. Written by the owner so its
-   *  next flush can trust this manifest instead of rescanning; absent in
-   *  manifests from older builds. */
-  size?: number;
-  /** The segment's mtime when this manifest was written (owner-local). */
-  mtimeMs?: number;
-  /** Running hash state after `size` bytes, so an append rehashes only
-   *  what it added. */
-  shaState?: Sha256State;
 }
 
 /** Why a segment line was rejected. Reported, never silently swallowed. */
@@ -206,10 +193,6 @@ export function localMachineId(db: Db): string {
 /** Path of a machine's own segment inside `dir`. */
 export function segmentPath(dir: string, machineId: string): string {
   return join(dir, `${machineId}${SEGMENT_EXT}`);
-}
-
-function manifestPath(segment: string): string {
-  return segment.replace(new RegExp(`${SEGMENT_EXT}$`), MANIFEST_EXT);
 }
 
 // ─── framing ──────────────────────────────────────────────────────────
@@ -701,7 +684,9 @@ function pendingLines(
  * caller must scan the file.
  *
  * Trusted only when the manifest is ours, carries the fields this build
- * writes, matches the file's current size AND mtime (any rewrite, hand
+ * writes and they agree with each other (`manifestSelfConsistent`:
+ * format, hash state finishing to `sha256`, seal), matches the file's
+ * current size AND mtime (any rewrite, hand
  * edit or truncation changes one of them), and the file's last line ends
  * in a newline and decodes cleanly to the manifest's lastHlc. That last
  * check reads only the final line, so a torn or corrupt tail still falls
@@ -714,18 +699,8 @@ function trustedTail(
 ): { count: number; lastHlc: string | null; size: number; shaState: Sha256State } | null {
   const m = readManifest(path);
   if (m === null || m.v !== SEGMENT_FORMAT_VERSION || m.machine !== machineId) return null;
+  if (!manifestSelfConsistent(m)) return null;
   const { count, lastHlc, size, mtimeMs, shaState } = m;
-  if (typeof count !== "number" || typeof size !== "number" || typeof mtimeMs !== "number") {
-    return null;
-  }
-  if (
-    shaState === undefined ||
-    typeof shaState.h !== "string" ||
-    typeof shaState.tail !== "string" ||
-    shaState.n !== size
-  ) {
-    return null;
-  }
   let stat: ReturnType<typeof statSync>;
   try {
     stat = statSync(path);
@@ -733,8 +708,7 @@ function trustedTail(
     return null;
   }
   if (stat.size !== size || stat.mtimeMs !== mtimeMs) return null;
-  if (count === 0)
-    return size === 0 && lastHlc === null ? { count, lastHlc, size, shaState } : null;
+  if (count === 0) return lastHlc === null ? { count, lastHlc, size, shaState } : null;
   const last = readLastLine(path, size);
   if (last === null) return null;
   const decoded = decodeLine(last);
@@ -895,29 +869,16 @@ function writeManifest(
     shaState = sha256Update(sha256Initial(), bytes);
     stat = statSync(path);
   }
-  const manifest: SegmentManifest = {
+  writeManifestFile(path, {
     v: SEGMENT_FORMAT_VERSION,
     machine,
     count,
     lastHlc,
     sha256: sha256Digest(shaState),
-    updatedAt: new Date().toISOString(),
     size: shaState.n,
     mtimeMs: stat.mtimeMs,
     shaState,
-  };
-  writeFileSync(manifestPath(path), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-}
-
-/** Read a segment's manifest, or null when absent/unparsable. */
-export function readManifest(segment: string): SegmentManifest | null {
-  const path = manifestPath(segment);
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as SegmentManifest;
-  } catch {
-    return null;
-  }
+  });
 }
 
 /**
