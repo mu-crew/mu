@@ -8,6 +8,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- `mu state`, `mu agent list` and the `mu state --tui` refresh no longer
+  rewrite every agent's pane title on each pass. mu now retitles a pane
+  only when its title changed, which cuts tmux server load on hosts with
+  many agent panes.
+
 ## [3.9.0] — 2026-10-05
 
 **A repo-wide review: about 130 bugs and doc/code mismatches fixed.**

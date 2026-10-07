@@ -140,10 +140,12 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
   }
 
   // 2. Refresh durable pane titles in mutating mode. Runtime state is
-  //    resolved separately and is never written to the registry.
+  //    resolved separately and is never written to the registry. Pass
+  //    the live title so unchanged panes are not rewritten every tick.
   if (mode === "full") {
     for (const agent of survivors) {
-      await agentSdk.refreshAgentTitle(db, agent.name, agent.workstreamName);
+      const currentTitle = paneById.get(agent.paneId)?.title;
+      await agentSdk.refreshAgentTitle(db, agent.name, agent.workstreamName, currentTitle);
     }
   }
 
