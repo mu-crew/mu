@@ -893,6 +893,10 @@ CREATE INDEX IF NOT EXISTS idx_ops_machine_entity_hlc ON ops (machine_id, entity
 -- because segments are append-only and ordered. Rows are created on
 -- demand at first ingest; there is no membership list to configure.
 -- A Syncthing conflict copy gets its own row, keyed by its file stem.
+-- last_seen_at is the ISO time of the last watermark write, followed
+-- by '<size> <mtimeMs> <manifest sha256>' when that write followed a
+-- clean read to the segment's end (the caught-up fingerprint,
+-- src/segments.ts segmentCaughtUp). Free text, so no schema bump.
 CREATE TABLE IF NOT EXISTS sync_peers (
   machine_id       TEXT PRIMARY KEY,
   last_applied_seq INTEGER NOT NULL DEFAULT 0,

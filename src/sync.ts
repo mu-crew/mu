@@ -65,7 +65,6 @@ import {
   type IngestResult,
   ingestSegment,
   localMachineId,
-  markReprojectionPending,
   peerWatermarkKey,
   reprojectIfPending,
   resetWatermark,
@@ -169,7 +168,9 @@ export function peerStatuses(db: Db, dir: string): PeerStatus[] {
     const watermarkKey = peerWatermarkKey(peer);
     const watermark = getWatermark(db, watermarkKey);
     // Caught up: the count is the watermark, no need to decode the file.
-    const total = segmentCaughtUp(peer.path, watermark) ? watermark : segmentLineCount(peer.path);
+    const total = segmentCaughtUp(db, watermarkKey, peer.path, watermark)
+      ? watermark
+      : segmentLineCount(peer.path);
     const ageMs = lastSeenMs === null ? null : Math.max(0, now - lastSeenMs);
     return {
       machineId: peer.machineId,
@@ -485,7 +486,6 @@ export function ingestFromDb(db: Db, path: string): IngestFromDbResult {
         read += 1;
         if (result.changed) changed += 1;
       }
-      if (read > 0) markReprojectionPending(db);
     });
     run.immediate();
     // Same out-of-order repair the segment path runs: a peer's `ops`

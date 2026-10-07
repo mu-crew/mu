@@ -20,11 +20,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   much faster: 1901 tasks render in ~10 ms instead of ~1.5 s. Output is
   byte-identical to before, including titles with unclosed ANSI colour
   or zero-width characters.
-- Ambient sync ingest skips peers it is caught up on, but still reports
-  a peer segment that was rewritten after its manifest. It also still
-  repairs deferred edges and notes after a process died between ingest
-  and repair: a marker in SQLite's `user_version`, set in the ingest
-  transaction, makes the next invocation run the repair.
+- Ambient sync ingest skips peers it is caught up on: a peer is skipped
+  only when its segment's size, exact mtime and manifest hash match what
+  the last clean full read recorded, so any rewrite (even one with a
+  backdated mtime) is still read and reported. It also still repairs
+  deferred edges and notes after a process died between ingest and
+  repair, or when an SDK caller applied them through `applyIncomingOp`:
+  a marker in SQLite's `user_version`, set in the applying transaction,
+  makes the next invocation run the repair.
 
 ## [3.9.0] — 2026-10-05
 
