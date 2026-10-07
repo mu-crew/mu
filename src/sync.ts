@@ -320,7 +320,15 @@ export async function ambientIngest(db: Db, opts?: AmbientOptions): Promise<Ambi
     // parent task did. Deliberately outside the per-peer loop, and
     // deliberately inside the outer try: a repair failure must not fail
     // the verb any more than a torn segment does.
-    reprojectDeferredOps(db);
+    //
+    // Only when this pass applied something. The repair scans every
+    // historical edge/note put, which cost ~130 ms on every synced verb
+    // while finding nothing: a deferred op can only become projectable
+    // when its parent task arrives, and that arrival is an applied op in
+    // some pass, which then runs the repair. Explicit `mu sync`
+    // (`syncPass`) always runs it, which covers a pass that died between
+    // its ingest commit and this line.
+    if (ingested.some((r) => r.applied > 0)) reprojectDeferredOps(db);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warnings.push(message);

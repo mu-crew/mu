@@ -13,6 +13,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -22,6 +23,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { formatHlc } from "../src/hlc.js";
+import { withCaptureSuppressed } from "../src/op-context.js";
 import { flushSegment, localMachineId, segmentPath, syncPass } from "../src/segments.js";
 import {
   ambientFlush,
@@ -39,6 +41,7 @@ import {
   syncEnabled,
   transportNextSteps,
 } from "../src/sync.js";
+import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -389,6 +392,54 @@ describe("sync", () => {
   });
 
   // ─── ordering: ingest before, flush after ──────────────────────────
+
+  describe("deferred-op repair on ambient ingest", () => {
+    const edgeCount = (db: Db): number =>
+      (db.prepare("SELECT COUNT(*) AS n FROM task_edges").get() as { n: number }).n;
+
+    it("projects an edge whose parent task arrives in a LATER pass", async () => {
+      const c = openDb({ path: join(tempDir, "c.db") });
+      try {
+        seed(a, "parent");
+        await flushSegment(a, dir);
+        await ambientIngest(c);
+        seed(c, "child");
+        addBlockEdge(c, "demo", "child", "parent");
+        await flushSegment(c, dir);
+
+        // b sees only c's segment first: the edge names a parent b lacks.
+        const aSeg = segmentPath(dir, localMachineId(a));
+        renameSync(aSeg, `${aSeg}.hidden`);
+        await ambientIngest(b);
+        expect(edgeCount(b)).toBe(0);
+
+        renameSync(`${aSeg}.hidden`, aSeg);
+        await ambientIngest(b);
+        expect(edgeCount(b)).toBe(1);
+      } finally {
+        c.close();
+      }
+    });
+
+    it("does no repair scan when the pass applied nothing", async () => {
+      seed(a, "parent");
+      seed(a, "child");
+      addBlockEdge(a, "demo", "child", "parent");
+      await flushSegment(a, dir);
+      await ambientIngest(b);
+      expect(edgeCount(b)).toBe(1);
+
+      // Drop the projected edge behind capture's back, so only the
+      // repair scan could restore it.
+      withCaptureSuppressed(b, () => b.prepare("DELETE FROM task_edges").run());
+      await ambientIngest(b);
+      expect(edgeCount(b)).toBe(0);
+
+      // Explicit `mu sync` always runs the repair.
+      await syncPass(b, dir);
+      expect(edgeCount(b)).toBe(1);
+    });
+  });
 
   describe("hook ordering", () => {
     it("flush AFTER the body publishes ops the same invocation wrote", async () => {
