@@ -58,10 +58,13 @@
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -73,6 +76,7 @@ import { type Db, SYNCED_ENTITIES } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { receiveHlc } from "./hlc.js";
 import { isLegacyLogOnlyIntent } from "./legacy-ops.js";
+import { type Sha256State, sha256Digest, sha256Initial, sha256Update } from "./sha256-resumable.js";
 
 /** Current segment line format. Bumped only on a breaking shape change;
  *  a reader that sees a version it does not know REFUSES the line rather
@@ -107,6 +111,15 @@ export interface SegmentManifest {
   lastHlc: string | null;
   sha256: string;
   updatedAt: string;
+  /** Bytes of the segment `sha256` covers. Written by the owner so its
+   *  next flush can trust this manifest instead of rescanning; absent in
+   *  manifests from older builds. */
+  size?: number;
+  /** The segment's mtime when this manifest was written (owner-local). */
+  mtimeMs?: number;
+  /** Running hash state after `size` bytes, so an append rehashes only
+   *  what it added. */
+  shaState?: Sha256State;
 }
 
 /** Why a segment line was rejected. Reported, never silently swallowed. */
@@ -469,13 +482,42 @@ export interface FlushResult {
  * incremental and idempotent: calling it twice appends nothing the second
  * time.
  */
-export async function flushSegment(db: Db, dir: string | null = syncDir()): Promise<FlushResult> {
+export async function flushSegment(
+  db: Db,
+  dir: string | null = syncDir(),
+  opts?: { verify?: boolean },
+): Promise<FlushResult> {
   if (dir === null)
     return { segmentPath: null, appended: 0, total: 0, skippedLocal: 0, selfRepaired: null };
 
   const machineId = localMachineId(db);
   mkdirSync(dir, { recursive: true });
   const path = segmentPath(dir, machineId);
+
+  // LOCK-FREE NO-OP. Most verbs write no synced op, and every mu
+  // process used to queue on the lock below just to learn that, so N
+  // parallel read-only verbs ran their flushes one after another. When
+  // our own manifest still describes the file and no op is pending,
+  // there is nothing to append and nothing to serialise against: a
+  // concurrent appender either finished (we would see its manifest) or
+  // has not, and its ops are its own to write.
+  // `verify` (explicit `mu sync`) skips both shortcuts and decodes every
+  // line, so damage that kept size, mtime and the last line intact
+  // (bit rot mid-file) is still found and self-repaired somewhere.
+  const verify = opts?.verify === true;
+  const pre = verify ? null : trustedTail(path, machineId);
+  if (pre !== null) {
+    const pending = pendingLines(db, machineId, pre.lastHlc);
+    if (pending.lines.length === 0) {
+      return {
+        segmentPath: path,
+        appended: 0,
+        total: pre.count,
+        skippedLocal: pending.skippedLocal,
+        selfRepaired: null,
+      };
+    }
+  }
 
   // Serialise concurrent local flushes so two processes cannot interleave
   // partial lines in the same file. Keyed on the sync dir + machine, since
@@ -485,34 +527,89 @@ export async function flushSegment(db: Db, dir: string | null = syncDir()): Prom
     .digest("hex")
     .slice(0, 16);
   return withFileLock(join(locksDir(), `segment-${lockName}.lock`), `segment:${machineId}`, () =>
-    Promise.resolve(flushLocked(db, path, machineId)),
+    Promise.resolve(flushLocked(db, path, machineId, verify)),
   );
 }
 
-function flushLocked(db: Db, path: string, machineId: string): FlushResult {
-  const existing = readSegmentTail(path);
-  const since = existing.lastHlc;
-
-  // The defect this exists to close: readSegmentTail STOPS at the first
-  // bad record either because it hit real damage or because it simply
-  // ran out of well-formed lines. Those two cases used to be
-  // indistinguishable to this function, and treating "stopped early on
-  // damage" the same as "reached clean EOF" is exactly what let a
-  // corrupted line grow the file forever: `since` never advanced past
-  // it, so every flush re-selected and re-appended the same ops after
-  // it again, unbounded. Distinguish them and heal our own segment
-  // (truncate back to the last verified-good line) before appending
-  // anything new, rather than stacking fresh data after the wound.
+function flushLocked(db: Db, path: string, machineId: string, verify: boolean): FlushResult {
+  // Fast path: our own manifest still describes the file (same size and
+  // mtime, last line decodes to its lastHlc), so count and high-water
+  // mark come from it and nothing before the tail is read.
+  const trusted = verify ? null : trustedTail(path, machineId);
+  let count: number;
+  let since: string | null;
   let selfRepaired: SegmentDefect | null = null;
-  if (existing.defect !== null) {
-    selfRepaired = existing.defect;
-    writeFileSync(
-      path,
-      existing.goodLines.length > 0 ? `${existing.goodLines.join("\n")}\n` : "",
-      "utf8",
-    );
+  if (trusted !== null) {
+    count = trusted.count;
+    since = trusted.lastHlc;
+  } else {
+    const existing = readSegmentTail(path);
+    count = existing.count;
+    since = existing.lastHlc;
+
+    // The defect this exists to close: readSegmentTail STOPS at the first
+    // bad record either because it hit real damage or because it simply
+    // ran out of well-formed lines. Those two cases used to be
+    // indistinguishable to this function, and treating "stopped early on
+    // damage" the same as "reached clean EOF" is exactly what let a
+    // corrupted line grow the file forever: `since` never advanced past
+    // it, so every flush re-selected and re-appended the same ops after
+    // it again, unbounded. Distinguish them and heal our own segment
+    // (truncate back to the last verified-good line) before appending
+    // anything new, rather than stacking fresh data after the wound.
+    if (existing.defect !== null) {
+      selfRepaired = existing.defect;
+      writeFileSync(
+        path,
+        existing.goodLines.length > 0 ? `${existing.goodLines.join("\n")}\n` : "",
+        "utf8",
+      );
+    }
   }
 
+  const pending = pendingLines(db, machineId, since);
+  let appended: Buffer | null = null;
+  if (pending.lines.length > 0) {
+    // NO fsync. The segment is derived from `ops`; a lost tail costs one
+    // re-flush, so paying for durability here would buy nothing.
+    appended = Buffer.from(`${pending.lines.join("\n")}\n`, "utf8");
+    appendFileSync(path, appended);
+  } else if (!existsSync(path)) {
+    // Create the file even with nothing to say, so peers can discover
+    // this machine before its first change.
+    writeFileSync(path, "", "utf8");
+  }
+
+  const total = count + pending.lines.length;
+  const result = {
+    segmentPath: path,
+    appended: pending.lines.length,
+    total,
+    skippedLocal: pending.skippedLocal,
+    selfRepaired,
+  };
+  // Nothing changed and the manifest already says so: leave it alone,
+  // so a read-only verb does not hand the sync tool a file to ship.
+  if (trusted !== null && appended === null) return result;
+  writeManifest(
+    path,
+    machineId,
+    total,
+    pending.lastHlc ?? since,
+    trusted !== null && appended !== null
+      ? { state: trusted.shaState, size: trusted.size, appended }
+      : null,
+  );
+  return result;
+}
+
+/** This machine's synced ops newer than `since`, encoded as segment
+ *  lines, plus how many machine-local ops were skipped. */
+function pendingLines(
+  db: Db,
+  machineId: string,
+  since: string | null,
+): { lines: string[]; lastHlc: string | null; skippedLocal: number } {
   const rows = db
     .prepare(
       `SELECT hlc, machine_id, group_id, intent, actor, entity, key, op, payload
@@ -536,7 +633,7 @@ function flushLocked(db: Db, path: string, machineId: string): FlushResult {
   const synced = new Set<string>(SYNCED_ENTITIES);
   const lines: string[] = [];
   let skippedLocal = 0;
-  let lastHlc = existing.lastHlc;
+  let lastHlc: string | null = null;
 
   for (const row of rows) {
     if (!synced.has(row.entity) || isLegacyLogOnlyIntent(row.intent)) {
@@ -558,20 +655,85 @@ function flushLocked(db: Db, path: string, machineId: string): FlushResult {
     );
     lastHlc = row.hlc;
   }
+  return { lines, lastHlc, skippedLocal };
+}
 
-  if (lines.length > 0) {
-    // NO fsync. The segment is derived from `ops`; a lost tail costs one
-    // re-flush, so paying for durability here would buy nothing.
-    appendFileSync(path, `${lines.join("\n")}\n`, "utf8");
-  } else if (!existsSync(path)) {
-    // Create the file even with nothing to say, so peers can discover
-    // this machine before its first change.
-    writeFileSync(path, "", "utf8");
+/**
+ * Count, last hlc, size and running hash of OUR OWN segment, taken from
+ * its manifest, or null when the manifest cannot be trusted and the
+ * caller must scan the file.
+ *
+ * Trusted only when the manifest is ours, carries the fields this build
+ * writes, matches the file's current size AND mtime (any rewrite, hand
+ * edit or truncation changes one of them), and the file's last line ends
+ * in a newline and decodes cleanly to the manifest's lastHlc. That last
+ * check reads only the final line, so a torn or corrupt tail still falls
+ * through to the full scan and its self-repair. Cost: one stat plus one
+ * line, independent of file size.
+ */
+function trustedTail(
+  path: string,
+  machineId: string,
+): { count: number; lastHlc: string | null; size: number; shaState: Sha256State } | null {
+  const m = readManifest(path);
+  if (m === null || m.v !== SEGMENT_FORMAT_VERSION || m.machine !== machineId) return null;
+  const { count, lastHlc, size, mtimeMs, shaState } = m;
+  if (typeof count !== "number" || typeof size !== "number" || typeof mtimeMs !== "number") {
+    return null;
   }
+  if (
+    shaState === undefined ||
+    typeof shaState.h !== "string" ||
+    typeof shaState.tail !== "string" ||
+    shaState.n !== size
+  ) {
+    return null;
+  }
+  let stat: ReturnType<typeof statSync>;
+  try {
+    stat = statSync(path);
+  } catch {
+    return null;
+  }
+  if (stat.size !== size || stat.mtimeMs !== mtimeMs) return null;
+  if (count === 0)
+    return size === 0 && lastHlc === null ? { count, lastHlc, size, shaState } : null;
+  const last = readLastLine(path, size);
+  if (last === null) return null;
+  const decoded = decodeLine(last);
+  if (!decoded.ok || decoded.line.hlc !== lastHlc) return null;
+  return { count, lastHlc, size, shaState };
+}
 
-  const total = existing.count + lines.length;
-  writeManifest(path, machineId, total, lastHlc);
-  return { segmentPath: path, appended: lines.length, total, skippedLocal, selfRepaired };
+/** The last newline-terminated line of the first `size` bytes of
+ *  `path`, without its newline; null when those bytes do not end in a
+ *  newline (a torn write). Reads backwards in chunks, so a long line
+ *  costs its own length and the file's size costs nothing. */
+function readLastLine(path: string, size: number): string | null {
+  if (size === 0) return null;
+  const fd = openSync(path, "r");
+  try {
+    const last = Buffer.alloc(1);
+    readSync(fd, last, 0, 1, size - 1);
+    if (last[0] !== 0x0a) return null;
+    const chunks: Buffer[] = [];
+    let end = size - 1;
+    while (end > 0) {
+      const start = Math.max(0, end - 64 * 1024);
+      const buf = Buffer.alloc(end - start);
+      readSync(fd, buf, 0, buf.length, start);
+      const nl = buf.lastIndexOf(0x0a);
+      if (nl >= 0) {
+        chunks.unshift(buf.subarray(nl + 1));
+        break;
+      }
+      chunks.unshift(buf);
+      end = start;
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** Number of GOOD lines in a segment (stopping at the first defect, as
@@ -634,16 +796,40 @@ function segmentLines(raw: string): string[] {
   return lines;
 }
 
-/** LAYER 4: whole-file verification sidecar. */
-function writeManifest(path: string, machine: string, count: number, lastHlc: string | null): void {
-  const bytes = existsSync(path) ? readFileSync(path) : Buffer.alloc(0);
+/**
+ * LAYER 4: whole-file verification sidecar.
+ *
+ * `incremental` carries the running hash of the bytes the manifest last
+ * covered, so an append hashes only what it added. Without it (first
+ * flush, a repair, a manifest from an older build, or a file that grew
+ * by more than we appended) the whole file is hashed once.
+ */
+function writeManifest(
+  path: string,
+  machine: string,
+  count: number,
+  lastHlc: string | null,
+  incremental: { state: Sha256State; size: number; appended: Buffer } | null,
+): void {
+  let stat = statSync(path);
+  let shaState: Sha256State;
+  if (incremental !== null && stat.size === incremental.size + incremental.appended.length) {
+    shaState = sha256Update(incremental.state, incremental.appended);
+  } else {
+    const bytes = readFileSync(path);
+    shaState = sha256Update(sha256Initial(), bytes);
+    stat = statSync(path);
+  }
   const manifest: SegmentManifest = {
     v: SEGMENT_FORMAT_VERSION,
     machine,
     count,
     lastHlc,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sha256: sha256Digest(shaState),
     updatedAt: new Date().toISOString(),
+    size: shaState.n,
+    mtimeMs: stat.mtimeMs,
+    shaState,
   };
   writeFileSync(manifestPath(path), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
@@ -1099,7 +1285,7 @@ export async function syncPass(db: Db, dir: string | null = syncDir()): Promise<
       defective: false,
     };
   }
-  const flushed = await flushSegment(db, dir);
+  const flushed = await flushSegment(db, dir, { verify: true });
   const self = localMachineId(db);
   const ingested = discoverPeers(dir, self).map((peer) => ingestSegment(db, peer));
   // AFTER every peer, not per peer: an edge in peer A's segment may name

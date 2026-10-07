@@ -5,7 +5,8 @@
 // else moves. Single-DB tests would pass while missing the whole point,
 // so most tests here open two temp DBs.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -33,6 +34,7 @@ import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 
 describe("segments", () => {
@@ -806,6 +808,161 @@ describe("segments", () => {
       const result = ingestSegment(b, peer);
       expect(result.defects.map((d) => d.kind)).toContain("malformed-shape");
       expect(result.defects.map((d) => d.kind)).not.toContain("torn-write");
+    });
+  });
+
+  // ─── flush cost: O(appended), not O(file) ────────────────────────────
+
+  describe("flush trusts its own manifest", () => {
+    const seedFour = async (): Promise<string> => {
+      ensureWorkstream(a, "demo");
+      for (let i = 0; i < 4; i++) seedTask(a, `t${i}`);
+      await flushSegment(a, dir);
+      return segFor(a);
+    };
+
+    /** Rot line 2 in place: same byte length, mtime restored, so only a
+     *  reader that decodes line 2 can tell. */
+    const rotLineTwoInvisibly = (path: string): void => {
+      const before = statSync(path);
+      const lines = linesOf(path);
+      const second = lines[1];
+      if (second === undefined) throw new Error("need 2 lines");
+      lines[1] = second.replace(/"crc":"(.)/, (_m, c: string) => `"crc":"${c === "0" ? "1" : "0"}`);
+      writeFileSync(path, `${lines.join("\n")}\n`);
+      expect(statSync(path).size).toBe(before.size);
+      restampManifestMtime(path);
+    };
+
+    /** Point the manifest at the file's current mtime, as if the rewrite
+     *  had kept it: the stat check then passes and only decoding a line
+     *  could reveal the change. */
+    const restampManifestMtime = (path: string): void => {
+      const manifestFile = path.replace(/\.jsonl$/, ".manifest");
+      const m = JSON.parse(readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+      m.mtimeMs = statSync(path).mtimeMs;
+      writeFileSync(manifestFile, `${JSON.stringify(m, null, 2)}\n`);
+    };
+
+    it("a no-op flush decodes no existing line and leaves the manifest untouched", async () => {
+      const path = await seedFour();
+      const manifestFile = path.replace(/\.jsonl$/, ".manifest");
+      rotLineTwoInvisibly(path);
+      const manifestBefore = readFileSync(manifestFile, "utf8");
+      const rotted = readFileSync(path, "utf8");
+
+      // The old path decoded every line, so it saw the rot and
+      // "repaired" it. The new one reads the manifest and the last line.
+      const result = await flushSegment(a, dir);
+      expect(result.selfRepaired).toBeNull();
+      expect(result.appended).toBe(0);
+      expect(result.total).toBe(4 + 1); // workstream + four tasks
+      expect(readFileSync(path, "utf8")).toBe(rotted);
+      expect(readFileSync(manifestFile, "utf8")).toBe(manifestBefore);
+    });
+
+    it("an append reads only the tail and hashes incrementally", async () => {
+      const path = await seedFour();
+      const original = readFileSync(path);
+      rotLineTwoInvisibly(path);
+      const rotted = readFileSync(path, "utf8");
+      seedTask(a, "t4");
+      const result = await flushSegment(a, dir);
+      // Line 2 was not decoded (no repair), the new op was appended.
+      expect(result.selfRepaired).toBeNull();
+      expect(result.appended).toBe(1);
+      expect(result.total).toBe(6);
+      const now = readFileSync(path);
+      expect(now.toString("utf8").startsWith(rotted)).toBe(true);
+      // The hash resumed from the manifest's state (the ORIGINAL bytes)
+      // and covered only the appended bytes; it never re-read the file.
+      const appended = now.subarray(original.length);
+      const manifest = readManifest(path);
+      expect(manifest?.sha256).toBe(
+        createHash("sha256")
+          .update(Buffer.concat([original, appended]))
+          .digest("hex"),
+      );
+      expect(manifest?.count).toBe(6);
+    });
+
+    it("explicit mu sync (syncPass) still decodes every line and repairs hidden rot", async () => {
+      const path = await seedFour();
+      rotLineTwoInvisibly(path);
+      const pass = await syncPass(a, dir);
+      expect(pass.flushed.selfRepaired).toMatchObject({ kind: "crc-mismatch", line: 2 });
+      expect(pass.defective).toBe(true);
+      expect(linesOf(path)).toHaveLength(5);
+      expect(verifyAgainstManifest(path).ok).toBe(true);
+    });
+
+    it("incremental hashes stay equal to a full hash across many appends", async () => {
+      await seedFour();
+      for (let i = 0; i < 20; i++) {
+        seedTask(a, `many-${i}`);
+        await flushSegment(a, dir);
+        const path = segFor(a);
+        expect(readManifest(path)?.sha256).toBe(
+          createHash("sha256").update(readFileSync(path)).digest("hex"),
+        );
+      }
+      expect(verifyAgainstManifest(segFor(a)).ok).toBe(true);
+    });
+
+    it("a torn tail is still detected and self-repaired", async () => {
+      const path = await seedFour();
+      const whole = readFileSync(path, "utf8");
+      writeFileSync(path, `${whole}{"v":1,"hlc":"0019`);
+      const result = await flushSegment(a, dir);
+      expect(result.selfRepaired?.kind).toBe("torn-write");
+      expect(readFileSync(path, "utf8")).toBe(whole);
+      expect(result.total).toBe(5);
+    });
+
+    it("a corrupt last line is still detected even when size and mtime match", async () => {
+      const path = await seedFour();
+      const before = statSync(path);
+      const lines = linesOf(path);
+      const last = lines[lines.length - 1];
+      if (last === undefined) throw new Error("need a line");
+      lines[lines.length - 1] = last.replace(
+        /"crc":"(.)/,
+        (_m, c: string) => `"crc":"${c === "0" ? "1" : "0"}`,
+      );
+      writeFileSync(path, `${lines.join("\n")}\n`);
+      expect(statSync(path).size).toBe(before.size);
+      restampManifestMtime(path);
+      const result = await flushSegment(a, dir);
+      expect(result.selfRepaired?.kind).toBe("crc-mismatch");
+      // Truncated to the good prefix and regenerated from `ops`.
+      expect(linesOf(path)).toHaveLength(5);
+      expect(result.appended).toBe(1);
+    });
+
+    it("a segment truncated on a line boundary is regenerated from ops", async () => {
+      const path = await seedFour();
+      const lines = linesOf(path);
+      writeFileSync(path, `${lines.slice(0, 2).join("\n")}\n`);
+      const result = await flushSegment(a, dir);
+      expect(result.appended).toBe(3);
+      expect(linesOf(path)).toEqual(lines);
+    });
+
+    it("a no-op flush does not wait on a held segment lock", async () => {
+      await seedFour();
+      const stateDir = join(tempDir, "state");
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        const lockName = createHash("sha256")
+          .update(`${dir}\u001f${localMachineId(a)}`)
+          .digest("hex")
+          .slice(0, 16);
+        mkdirSync(join(stateDir, "locks", `segment-${lockName}.lock`), { recursive: true });
+        const started = Date.now();
+        const result = await flushSegment(a, dir);
+        expect(result.appended).toBe(0);
+        // The locked path would spin until the 15s acquire timeout.
+        expect(Date.now() - started).toBeLessThan(1000);
+      });
     });
   });
 
