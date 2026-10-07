@@ -10,7 +10,7 @@ milliseconds; `0` disables a wait unless noted.
 | Name | Effect | Default |
 | --- | --- | --- |
 | `MU_DB_PATH` | SQLite file path. Wins over the state dir. | `<state-dir>/mu.db` |
-| `MU_STATE_DIR` | State directory. | `$XDG_STATE_HOME/mu` |
+| `MU_STATE_DIR` | State directory. Also holds `compile-cache/` (V8 code cache for the CLI; `NODE_DISABLE_COMPILE_CACHE=1` turns it off). | `$XDG_STATE_HOME/mu` |
 | `XDG_STATE_HOME` | XDG state base; mu appends `mu/`. An empty or relative value is ignored. | `~/.local/state` |
 | `MU_SESSION` | Active workstream when `-w` is absent. | current `mu-<name>` mux session |
 | `MU_SYNC_DIR` | Folder holding one segment per machine. This is the whole sync setup; there is no peer list. | unset: sync off |

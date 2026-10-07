@@ -4,10 +4,14 @@
 // `import "react"` to the top of dist/cli.js, so `mu --version` and every
 // verb evaluated ink, react, yoga, and es-toolkit (748 modules vs 201).
 //
+// dist/cli.js is the src/main.ts bootstrap; the CLI proper is a cli-*.js
+// chunk it dynamically imports.
+//
 // Builds the real tsup.config.ts into a temp dir (no .d.ts, no sourcemap),
 // then walks dist/cli.js's static import graph.
 
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { build, type Options } from "tsup";
@@ -60,7 +64,31 @@ describe("bundle keeps the TUI lazy", () => {
     expect(tui).toBeDefined();
     if (tui === undefined) return;
     expect(staticImports(readFileSync(join(out, tui), "utf8"))).toContain("ink");
-    expect(readFileSync(join(out, "cli.js"), "utf8")).toContain(`import("./${tui}")`);
+    const chunks = readdirSync(out).filter((f) => f.endsWith(".js"));
+    const importers = chunks.filter((f) =>
+      readFileSync(join(out, f), "utf8").includes(`import("./${tui}")`),
+    );
+    expect(importers.length).toBeGreaterThan(0);
+  });
+
+  it("the bin bootstrap statically loads only builtins before the CLI", () => {
+    // src/main.ts must enable the compile cache before the CLI graph
+    // loads, so its static graph holds no third-party packages.
+    const bare = new Set<string>();
+    const seen = new Set<string>();
+    const queue = ["cli.js"];
+    for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+      if (seen.has(file)) continue;
+      seen.add(file);
+      for (const spec of staticImports(readFileSync(join(out, file), "utf8"))) {
+        if (spec.startsWith("./")) queue.push(spec.slice(2));
+        else bare.add(spec);
+      }
+    }
+    expect([...bare].filter((b) => !isBuiltin(b))).toEqual([]);
+    expect(readFileSync(join(out, "cli.js"), "utf8")).toMatch(
+      /await import\("\.\/cli-[^"]+\.js"\)/,
+    );
   });
 
   it("dist/extension/mu-pi.js is standalone (imports no sibling chunks)", () => {
