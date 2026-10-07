@@ -34,7 +34,7 @@
 // its own group passes `group: "new"`.
 
 import { randomUUID } from "node:crypto";
-import type { Db } from "./db.js";
+import { type Db, prepareCached } from "./db.js";
 
 /** What an op context carries. All fields optional — a partial context
  *  is fine and a null intent is captured as null (fail safe). */
@@ -98,14 +98,15 @@ export function currentOpContext(db: Db): {
 }
 
 function writeCtx(db: Db, row: CtxRow): void {
-  db.prepare(
+  prepareCached(
+    db,
     `UPDATE _op_ctx SET group_id = @group_id, actor = @actor,
                         intent = @intent, applying = @applying`,
   ).run(row);
 }
 
 function readCtx(db: Db): CtxRow | undefined {
-  return db.prepare("SELECT group_id, actor, intent, applying FROM _op_ctx").get() as
+  return prepareCached(db, "SELECT group_id, actor, intent, applying FROM _op_ctx").get() as
     | CtxRow
     | undefined;
 }

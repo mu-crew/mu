@@ -420,6 +420,29 @@ describe("segments", () => {
       expect((b.prepare("SELECT COUNT(*) AS n FROM ops").get() as { n: number }).n).toBe(ops);
     });
 
+    it("a large re-read compiles each SQL statement once, not once per op", async () => {
+      for (let i = 0; i < 30; i++) seedTask(a, `bulk-${i}`, 10 + i);
+      await flushSegment(a, dir);
+      const peer = peersFor(b)[0];
+      if (peer === undefined) throw new Error("expected a peer");
+      ingestSegment(b, peer); // warm the per-connection cache
+      resetWatermark(b, localMachineId(a));
+
+      const real = b.prepare.bind(b);
+      let compiles = 0;
+      b.prepare = ((sql: string) => {
+        compiles += 1;
+        return real(sql);
+      }) as typeof b.prepare;
+      const again = ingestSegment(b, peer);
+      b.prepare = real;
+
+      expect(again.applied).toBeGreaterThanOrEqual(30);
+      // The old path prepared ~10 statements per op (300+ here). What is
+      // left is per-ingest setup and the op-context/watermark queries.
+      expect(compiles).toBeLessThan(again.applied);
+    });
+
     it("flushing twice appends nothing the second time", async () => {
       seedTask(a, "s");
       const first = await flushSegment(a, dir);
