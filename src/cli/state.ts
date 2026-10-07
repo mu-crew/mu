@@ -60,6 +60,7 @@ import {
 } from "../state.js";
 import { isScratchWorkstream, listWorkstreams } from "../workstream.js";
 import { resolveInitialTab } from "./tui-launch-focus.js";
+import { importTui } from "./tui-load.js";
 
 // ─── Per-workstream loaded data ─────────────────────────────────────
 
@@ -220,7 +221,7 @@ export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
   // feat_tui_multi_workstream (workstream `tui-impl`): the resolved
   // ws set is forwarded to <App>; Tab / Shift-Tab cycles tabs.
   if (opts.tui === true) {
-    const { runTui } = await import("./tui/index.js");
+    const { runTui } = await importTui();
     const initialActive = await resolveInitialTab(workstreams, db);
     await runTui(db, { workstreams: workstreams, initialActive });
     return;

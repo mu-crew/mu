@@ -86,6 +86,7 @@ pi agent's `--command`. mu never reads them back.
 | `MU_FORCE_COLOR` | Truthy forces colour on. `""`, `0`, and `false` opt out. Checked before `FORCE_COLOR`. | unset |
 | `MU_NO_TUI` | `1` makes bare `mu` print help instead of opening the TUI. | unset |
 | `MU_TUI_DEBUG_MOUSE` | `1` logs mouse hit-tests to stderr. | unset |
+| `NODE_ENV` | Unset: the TUI loads React's production build. Set it (e.g. `development`) to get React's dev build and warnings. | unset |
 
 ## Tests
 
