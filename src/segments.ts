@@ -460,6 +460,13 @@ export interface FlushResult {
    * to be (`mu sync`, `ambientFlush`).
    */
   selfRepaired: SegmentDefect | null;
+  /**
+   * True when ops were pending but another process held the segment
+   * lock past the wait, so this call wrote nothing. The ops stay
+   * unflushed in `ops` (the segment's last hlc is the watermark), and
+   * the next flush appends them. Never set on a successful flush.
+   */
+  lockBusy?: boolean;
 }
 
 /**
@@ -482,10 +489,20 @@ export interface FlushResult {
  * incremental and idempotent: calling it twice appends nothing the second
  * time.
  */
+/** How long an ambient flush (every verb's post-body hook) waits for
+ *  the segment lock before deferring its ops to the next invocation.
+ *  An incremental append holds the lock for milliseconds, so 2 s
+ *  clears a deep queue of parallel appenders; a holder slower than
+ *  that is doing a full rescan, and the verb should not wait it out. */
+export const AMBIENT_FLUSH_LOCK_WAIT_MS = 2_000;
+/** Explicit `mu sync` (verify) waits longer: the operator asked for the
+ *  flush and a full-scan holder takes seconds on a large segment. */
+export const VERIFY_FLUSH_LOCK_WAIT_MS = 15_000;
+
 export async function flushSegment(
   db: Db,
   dir: string | null = syncDir(),
-  opts?: { verify?: boolean },
+  opts?: { verify?: boolean; lockWaitMs?: number },
 ): Promise<FlushResult> {
   if (dir === null)
     return { segmentPath: null, appended: 0, total: 0, skippedLocal: 0, selfRepaired: null };
@@ -522,12 +539,32 @@ export async function flushSegment(
   // Serialise concurrent local flushes so two processes cannot interleave
   // partial lines in the same file. Keyed on the sync dir + machine, since
   // that names the single file being appended to.
+  //
+  // NEVER UNLOCKED. If the lock is still held at the deadline, write
+  // nothing: an unlocked append can splice lines into another writer's,
+  // or land after its self-repair truncate, and the ops are safe in the
+  // DB anyway. The next invocation's flush appends them. A stale lock
+  // (crashed holder) is still broken inside withFileLock.
   const lockName = createHash("sha256")
     .update(`${dir}\u001f${machineId}`)
     .digest("hex")
     .slice(0, 16);
-  return withFileLock(join(locksDir(), `segment-${lockName}.lock`), `segment:${machineId}`, () =>
-    Promise.resolve(flushLocked(db, path, machineId, verify)),
+  return withFileLock(
+    join(locksDir(), `segment-${lockName}.lock`),
+    `segment:${machineId}`,
+    () => Promise.resolve(flushLocked(db, path, machineId, verify)),
+    {
+      acquireTimeoutMs:
+        opts?.lockWaitMs ?? (verify ? VERIFY_FLUSH_LOCK_WAIT_MS : AMBIENT_FLUSH_LOCK_WAIT_MS),
+      onUnavailable: () => ({
+        segmentPath: path,
+        appended: 0,
+        total: pre?.count ?? 0,
+        skippedLocal: 0,
+        selfRepaired: null,
+        lockBusy: true,
+      }),
+    },
   );
 }
 

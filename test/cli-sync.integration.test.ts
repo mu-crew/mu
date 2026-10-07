@@ -8,10 +8,20 @@
 //   TWO temp DBs + ONE temp dir — the real deployment shape. A
 //   single-DB test would pass while missing the entire point.
 
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCli } from "./_runCli.js";
 
@@ -115,6 +125,74 @@ describe("mu sync (CLI)", () => {
     await seedTask(lap, "brand-new");
     const { stdout } = await runCli(["task", "list", "-w", "demo", "--json"], dev);
     expect(stdout).toContain("brand-new");
+  });
+
+  it("a verb whose flush finds the segment lock held by a live process defers, then a later verb flushes once", async () => {
+    await runCli(["workstream", "init", "demo"], lap);
+    await seedTask(lap, "t1");
+    const { stdout: idOut } = await runCli(
+      ["sql", "SELECT machine_id AS id FROM machine_identity", "--json"],
+      lap,
+    );
+    const machineId = (JSON.parse(idOut) as Array<{ id: string }>)[0]?.id ?? "";
+    const segment = join(dir, `${machineId}.jsonl`);
+    const stateDir = join(tempDir, "state");
+    const lockName = createHash("sha256")
+      .update(`${dir}\u001f${machineId}`)
+      .digest("hex")
+      .slice(0, 16);
+    const lockPath = join(stateDir, "locks", `segment-${lockName}.lock`);
+    mkdirSync(join(stateDir, "locks"), { recursive: true });
+
+    // Another live process takes the lock the way withFileLock does and
+    // keeps it until killed.
+    const holder = spawn(
+      process.execPath,
+      [
+        "-e",
+        `require("fs").mkdirSync(${JSON.stringify(lockPath)}); process.stdout.write("held\\n"); setInterval(() => {}, 1000);`,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        holder.stdout?.once("data", () => resolve());
+        holder.once("exit", () => reject(new Error("lock holder exited")));
+      });
+      const before = readFileSync(segment, "utf8");
+
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        const started = Date.now();
+        const added = await runCli(
+          ["task", "add", "t2", "-t", "T2", "-i", "50", "-e", "1", "-w", "demo"],
+          lap,
+        );
+        expect(added.exitCode).toBeNull();
+        expect(added.error).toBeUndefined();
+        // Gave up after the short ambient wait, not the old 15 s.
+        expect(Date.now() - started).toBeLessThan(6_000);
+        expect(readFileSync(segment, "utf8")).toBe(before);
+        expect(existsSync(lockPath)).toBe(true);
+      });
+
+      holder.kill();
+      await new Promise((r) => holder.once("exit", r));
+      rmFixtureDir(lockPath);
+
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        await runCli(["task", "list", "-w", "demo", "--json"], lap);
+        await runCli(["task", "list", "-w", "demo", "--json"], lap);
+      });
+      const lines = readFileSync(segment, "utf8").trimEnd().split("\n");
+      const hlcs = lines.map((l) => (JSON.parse(l) as { hlc: string }).hlc);
+      expect(new Set(hlcs).size).toBe(hlcs.length);
+      expect(lines.filter((l) => l.includes('"t2"')).length).toBeGreaterThan(0);
+      expect(lines.length).toBeGreaterThan(before.trimEnd().split("\n").length);
+    } finally {
+      try {
+        holder.kill();
+      } catch {}
+    }
   });
 
   // ─── implicit peer discovery ───────────────────────────────────────

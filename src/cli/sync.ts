@@ -158,6 +158,11 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
 
   const pass = await syncPass(db, dir);
   const peers = peerStatuses(db, dir);
+  if (pass.flushed.lockBusy === true) {
+    process.stderr.write(
+      "mu: sync: own segment is locked by another mu process; local ops stay pending and the next flush appends them\n",
+    );
+  }
 
   if (opts.json === true) {
     emitJson({

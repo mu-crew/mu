@@ -12,13 +12,13 @@
 // atomic and fails EEXIST when the directory exists — the classic
 // primitive, no dependency (honours the ROADMAP anti-feature pledge).
 //
-// BEST-EFFORT BY DESIGN. A lock-acquire failure that is not contention (a
-// read-only state dir, say) falls through to running the body UNLOCKED
-// rather than failing the command. The lock narrows a race; it is not a
-// correctness gate. For segments specifically, correctness comes from
-// single-writer-per-file plus `UNIQUE (machine_id, hlc)` on ingest — the
-// lock only stops two concurrent local flushes from interleaving lines in
-// the same file.
+// BEST-EFFORT BY DEFAULT. A lock that cannot be taken (a read-only state
+// dir, or still contended at the deadline) falls through to running the
+// body UNLOCKED rather than failing the command. That suits the spawn
+// lock, which only narrows a race. A caller whose body must never run
+// unlocked passes `onUnavailable`, which runs INSTEAD of the body: the
+// segment flush does, because an unlocked append can interleave partial
+// lines or race another flush's self-repair truncate.
 
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,23 +29,27 @@ export function locksDir(): string {
   return join(defaultStateDir(), "locks");
 }
 
-/** Default: max time to wait to acquire before proceeding unlocked. */
+/** Default: max time to wait to acquire before giving up. */
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 15_000;
 /** A held lock older than this is presumed abandoned (crashed process). */
 const DEFAULT_STALE_LOCK_MS = 30_000;
 /** Poll interval while spinning. */
 const RETRY_INTERVAL_MS = 25;
 
-export interface FileLockOptions {
+export interface FileLockOptions<T = unknown> {
   acquireTimeoutMs?: number;
   staleLockMs?: number;
   /** Env var consulted for the acquire timeout, if any. */
   timeoutEnvVar?: string;
+  /** Run instead of `fn` when the lock cannot be taken (contended past
+   *  the deadline, or the lock dir cannot be created). Absent, `fn` runs
+   *  unlocked. */
+  onUnavailable?: () => T;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-function resolveTimeout(opts?: FileLockOptions): number {
+function resolveTimeout(opts?: FileLockOptions<unknown>): number {
   const envVar = opts?.timeoutEnvVar;
   if (envVar !== undefined) {
     const raw = process.env[envVar];
@@ -79,17 +83,20 @@ export async function withFileLock<T>(
   lockPath: string,
   label: string,
   fn: () => Promise<T>,
-  opts?: FileLockOptions,
+  opts?: FileLockOptions<T>,
 ): Promise<T> {
   const staleMs = opts?.staleLockMs ?? DEFAULT_STALE_LOCK_MS;
   const deadline = Date.now() + resolveTimeout(opts);
+  const onUnavailable = opts?.onUnavailable;
+  const unlocked = async (): Promise<T> =>
+    onUnavailable === undefined ? await fn() : onUnavailable();
   let held = false;
 
   try {
     await mkdir(locksDir(), { recursive: true });
   } catch {
     // Cannot even create the locks dir: run unlocked rather than refuse.
-    return await fn();
+    return await unlocked();
   }
 
   while (!held) {
@@ -98,12 +105,12 @@ export async function withFileLock<T>(
       held = true;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") return await fn();
+      if (code !== "EEXIST") return await unlocked();
       if (await isStale(lockPath, staleMs)) {
         await rm(lockPath, { recursive: true, force: true }).catch(() => {});
         continue;
       }
-      if (Date.now() >= deadline) return await fn();
+      if (Date.now() >= deadline) return await unlocked();
       await sleep(RETRY_INTERVAL_MS);
     }
   }

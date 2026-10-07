@@ -353,6 +353,9 @@ export async function ambientIngest(db: Db, opts?: AmbientOptions): Promise<Ambi
  * Appends under the cross-process file lock inside `flushSegment`, so
  * two concurrent mu processes cannot interleave partial lines. A flush
  * with nothing to append skips the lock, so read-only verbs never queue.
+ * A flush that cannot take the lock within AMBIENT_FLUSH_LOCK_WAIT_MS
+ * writes nothing (`lockBusy`) and the verb carries on silently: its ops
+ * stay pending in `ops` and the next invocation's flush appends them.
  */
 export async function ambientFlush(db: Db, opts?: AmbientOptions): Promise<FlushResult | null> {
   const dir = syncDir();

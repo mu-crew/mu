@@ -6,7 +6,15 @@
 // so most tests here open two temp DBs.
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -985,6 +993,74 @@ describe("segments", () => {
         expect(result.appended).toBe(0);
         // The locked path would spin until the 15s acquire timeout.
         expect(Date.now() - started).toBeLessThan(1000);
+      });
+    });
+
+    /** Create the segment lock as a live holder would: a fresh lock dir
+     *  whose meta names another pid. Staleness is by age, so it holds. */
+    const holdSegmentLock = (stateDir: string, ageMs = 0): string => {
+      const lockName = createHash("sha256")
+        .update(`${dir}\u001f${localMachineId(a)}`)
+        .digest("hex")
+        .slice(0, 16);
+      const lockPath = join(stateDir, "locks", `segment-${lockName}.lock`);
+      mkdirSync(lockPath, { recursive: true });
+      writeFileSync(
+        join(lockPath, "meta.json"),
+        JSON.stringify({ pid: process.pid + 1, label: "other", acquiredAt: "" }),
+      );
+      if (ageMs > 0) {
+        const t = new Date(Date.now() - ageMs);
+        utimesSync(lockPath, t, t);
+      }
+      return lockPath;
+    };
+
+    it("a pending flush never appends while another process holds the lock", async () => {
+      const path = await seedFour();
+      const stateDir = join(tempDir, "state");
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        const lockPath = holdSegmentLock(stateDir);
+        const bytes = readFileSync(path);
+        const before = linesOf(path).length;
+        const manifestFile = path.replace(/\.jsonl$/, ".manifest");
+        const manifest = readFileSync(manifestFile, "utf8");
+        seedTask(a, "pending");
+
+        const busy = await flushSegment(a, dir, { lockWaitMs: 30 });
+        expect(busy.lockBusy).toBe(true);
+        expect(busy.appended).toBe(0);
+        // Neither the segment nor its manifest was touched, and the
+        // foreign lock is still in place.
+        expect(readFileSync(path).equals(bytes)).toBe(true);
+        expect(readFileSync(manifestFile, "utf8")).toBe(manifest);
+        expect(existsSync(lockPath)).toBe(true);
+
+        // The holder releases; the next flush appends the op once.
+        rmFixtureDir(lockPath);
+        const later = await flushSegment(a, dir);
+        expect(later.lockBusy).toBeUndefined();
+        expect(later.appended).toBe(1);
+        expect(await flushSegment(a, dir)).toMatchObject({ appended: 0 });
+        const hlcs = linesOf(path).map((l) => (JSON.parse(l) as { hlc: string }).hlc);
+        expect(hlcs).toHaveLength(before + 1);
+        expect(new Set(hlcs).size).toBe(before + 1);
+      });
+    });
+
+    it("a stale segment lock is still broken and the flush appends", async () => {
+      const path = await seedFour();
+      const stateDir = join(tempDir, "state");
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        const lockPath = holdSegmentLock(stateDir, 60_000);
+        const before = linesOf(path).length;
+        seedTask(a, "pending");
+        const result = await flushSegment(a, dir, { lockWaitMs: 30 });
+        expect(result.lockBusy).toBeUndefined();
+        expect(result.appended).toBe(1);
+        expect(linesOf(path)).toHaveLength(before + 1);
+        // Released after the flush, not left behind.
+        expect(existsSync(lockPath)).toBe(false);
       });
     });
   });
