@@ -945,6 +945,63 @@ describe("segments", () => {
       expect(verifyAgainstManifest(segFor(a)).ok).toBe(true);
     });
 
+    it("a no-op flush reads none of a long trailing run of machine-local ops", async () => {
+      const path = await seedFour();
+      const manifestFile = path.replace(/\.jsonl$/, ".manifest");
+      const manifestBefore = readFileSync(manifestFile, "utf8");
+      const machineId = localMachineId(a);
+      const insert = a.prepare(
+        `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
+         VALUES (?, ?, 'g', 'user', 'agent.update', 'agent', 'demo/w', 'put', '{"pane_id":"%1"}', '')`,
+      );
+      a.transaction(() => {
+        for (let i = 0; i < 100_000; i++) {
+          insert.run(
+            formatHlc({ wallMs: 3_000_000_000_000 + i, counter: 0, machineId }),
+            machineId,
+          );
+        }
+        // As capture would have: the clock now sits past the run.
+        a.prepare("UPDATE machine_identity SET last_wall = ? WHERE id = 1").run(
+          3_000_000_000_000 + 100_000,
+        );
+      })();
+
+      // Count every row any statement hands to JS during the flush. The
+      // old query returned all 100k agent rows and filtered them in JS,
+      // on every invocation.
+      const proto = Object.getPrototypeOf(a.prepare("SELECT 1")) as {
+        all: (...args: unknown[]) => unknown[];
+      };
+      const realAll = proto.all;
+      let rowsRead = 0;
+      proto.all = function (this: unknown, ...args: unknown[]) {
+        const rows = realAll.apply(this, args);
+        rowsRead += rows.length;
+        return rows;
+      };
+      try {
+        for (let i = 0; i < 3; i++) {
+          const result = await flushSegment(a, dir);
+          expect(result).toMatchObject({ appended: 0, total: 5, skippedLocal: 0 });
+        }
+        // One synced op after the run: only it is read and appended.
+        seedTask(a, "after-run");
+        const appended = await flushSegment(a, dir);
+        expect(appended.appended).toBe(1);
+        expect(appended.total).toBe(6);
+        // The covered range includes the 100k agent ops, counted once.
+        expect(appended.skippedLocal).toBe(100_000);
+        expect(await flushSegment(a, dir)).toMatchObject({ appended: 0, skippedLocal: 0 });
+      } finally {
+        proto.all = realAll;
+      }
+      expect(rowsRead).toBeLessThan(10);
+      expect(readFileSync(path, "utf8")).not.toContain("pane_id");
+      expect(readFileSync(manifestFile, "utf8")).not.toBe(manifestBefore);
+      expect(verifyAgainstManifest(path).ok).toBe(true);
+    });
+
     /** Edit one manifest field in place, leaving the seal as it was. */
     const editManifest = (path: string, edit: (m: Record<string, unknown>) => void): void => {
       const manifestFile = path.replace(/\.jsonl$/, ".manifest");
