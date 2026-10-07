@@ -52,6 +52,7 @@ export {
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentSlashCommandUnsupportedError,
@@ -532,6 +533,8 @@ function deleteAgentRow(db: Db, name: string, workstream: string): boolean {
 /** Allowed agent name shape: lowercase alpha first, then alnum/underscore/
  *  hyphen. Mirrors docs/reference/naming.md. */
 const AGENT_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+/** Longest name AGENT_NAME_RE accepts. */
+export const MAX_AGENT_NAME_LEN = 32;
 
 export function isValidAgentName(name: string): boolean {
   return AGENT_NAME_RE.test(name);

@@ -38,6 +38,7 @@ import {
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentSlashCommandUnsupportedError,
@@ -291,6 +292,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   if (
     err instanceof NameAmbiguousError ||
     err instanceof AgentExistsError ||
+    err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||
     err instanceof TaskAlreadyOwnedError ||
     // Substate refusals (ts_4): a missing --why, a park from the wrong

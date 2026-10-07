@@ -19,6 +19,7 @@ import {
   getAgent,
   insertAgent,
   isValidAgentName,
+  MAX_AGENT_NAME_LEN,
   pendingPaneIdFor,
 } from "../agents.js";
 import { type CtlProbe, ctlProbe } from "../ctl/client.js";
@@ -37,6 +38,7 @@ import { ensureWorkstreamSession, isScratchWorkstream } from "../workstream.js";
 import {
   AgentDiedOnSpawnError,
   AgentExistsError,
+  AgentNameExhaustedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
 } from "./errors.js";
@@ -256,18 +258,30 @@ export interface SpawnAgentOptions {
 /** How many taken names a `nextFree` spawn skips past before it gives up. */
 const NEXT_FREE_ATTEMPTS = 32;
 
+/** How many names `nextFreeAgentName` looks up before it gives up. */
+const NEXT_FREE_LOOKUPS = 1000;
+
 /**
  * `name` when it is free in `workstream`, else the next free name: a
  * trailing `-<n>` counts up (`delegate-1` → `delegate-2`), and a name
  * without one gets `-2`, `-3`, … (`delegate-review` → `delegate-review-2`).
+ * The stem is cut so a candidate stays within the 32-char name limit.
+ * Throws AgentNameExhaustedError after NEXT_FREE_LOOKUPS taken names,
+ * or when no valid candidate is left (the suffix alone outgrows it).
  */
 export function nextFreeAgentName(db: Db, name: string, workstream: string): string {
+  if (getAgent(db, name, workstream) === undefined) return name;
   const m = /^(.*)-(\d+)$/.exec(name);
-  const [stem, first] = m ? [m[1] ?? "", Number(m[2])] : [name, 1];
-  for (let n = first; ; n++) {
-    const candidate = n === first ? name : `${stem}-${n}`;
+  const [stem, first] = m ? [m[1] ?? "", BigInt(m[2] ?? "1")] : [name, 1n];
+  for (let i = 1n; i <= BigInt(NEXT_FREE_LOOKUPS); i++) {
+    const suffix = `-${first + i}`;
+    const candidate = `${stem.slice(0, MAX_AGENT_NAME_LEN - suffix.length)}${suffix}`;
+    if (!isValidAgentName(candidate)) {
+      throw new AgentNameExhaustedError(name, `no valid name left (tried ${candidate})`);
+    }
     if (getAgent(db, candidate, workstream) === undefined) return candidate;
   }
+  throw new AgentNameExhaustedError(name, `the next ${NEXT_FREE_LOOKUPS} names are taken`);
 }
 
 /** Outcome of the spawn-time control-socket handshake. */
