@@ -15,7 +15,7 @@
 //   3. a resize event with UNCHANGED dims does NOT re-render.
 
 import type { EventEmitter } from "node:events";
-import { render, Text } from "ink";
+import { Box, render, Text } from "ink";
 import { createElement, type ReactElement, useRef } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useTerminalSize } from "../src/cli/tui/use-terminal-size.js";
@@ -110,6 +110,32 @@ describe("useTerminalSize", () => {
     // Render count stays at 1 — the same-reference bail skipped it.
     expect(stdout.output).toContain("r=1 140x40");
     expect(stdout.output).not.toContain("r=2");
+    instance.unmount();
+  });
+
+  it("shares one stdout resize listener across many mounted hooks", async () => {
+    const { stdout, resize } = makeResizableStdout(140, 40);
+    const emitter = stdout as unknown as EventEmitter;
+    const before = emitter.listenerCount("resize");
+    const many = (): ReactElement =>
+      createElement(
+        Box,
+        null,
+        ...Array.from({ length: 15 }, (_, i) => createElement(Probe, { key: i })),
+      );
+    const instance = render(createElement(many), {
+      stdout,
+      stdin: process.stdin,
+      stderr: process.stderr,
+      debug: true,
+      patchConsole: false,
+    });
+    await waitForInkOutput(stdout);
+    // ink may add its own listener; 15 hooks must add at most one more.
+    expect(emitter.listenerCount("resize") - before).toBeLessThanOrEqual(2);
+    resize(90, 30);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(stdout.output.match(/90x30/g)?.length ?? 0).toBeGreaterThanOrEqual(15);
     instance.unmount();
   });
 });

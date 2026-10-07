@@ -20,6 +20,27 @@
 import { useStdout } from "ink";
 import { useEffect, useState } from "react";
 
+// One "resize" listener per stream, fanned out to every mounted hook.
+// A listener per hook instance tripped Node's MaxListenersExceededWarning
+// (>10) once a popup + drill + cards were mounted at once.
+const subscribers = new WeakMap<NodeJS.WriteStream, Set<() => void>>();
+
+function subscribeResize(stdout: NodeJS.WriteStream, fn: () => void): () => void {
+  let set = subscribers.get(stdout);
+  if (set === undefined) {
+    const fresh = new Set<() => void>();
+    set = fresh;
+    subscribers.set(stdout, fresh);
+    stdout.on("resize", () => {
+      for (const sub of [...fresh]) sub();
+    });
+  }
+  set.add(fn);
+  return () => {
+    set.delete(fn);
+  };
+}
+
 export interface TerminalSize {
   cols: number;
   rows: number;
@@ -54,14 +75,12 @@ export function useTerminalSize(): TerminalSize {
         return { cols, rows };
       });
     };
-    stdout.on("resize", onResize);
+    const unsubscribe = subscribeResize(stdout, onResize);
     // Sync in case the size changed between initial render and effect
     // registration (unlikely but defensive). Now a no-op when the size
     // is unchanged — see the reference-equality bail above.
     onResize();
-    return () => {
-      stdout.off("resize", onResize);
-    };
+    return unsubscribe;
   }, [stdout]);
 
   return size;
