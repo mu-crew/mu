@@ -989,6 +989,79 @@ describe("segments", () => {
     });
   });
 
+  // ─── ingest cost: nothing new means nothing read ─────────────────────
+
+  describe("ingest skips a caught-up peer", () => {
+    const caughtUpPeer = async () => {
+      for (let i = 0; i < 4; i++) seedTask(a, `c${i}`);
+      await flushSegment(a, dir);
+      const peer = peersFor(b)[0];
+      if (peer === undefined) throw new Error("expected a peer");
+      expect(ingestSegment(b, peer).applied).toBeGreaterThan(0);
+      return peer;
+    };
+
+    /** Flip a crc digit on line 2, keeping the byte length, so only a
+     *  reader that hashes or decodes line 2 can tell. */
+    const rotLineTwo = (path: string): void => {
+      const lines = linesOf(path);
+      const second = lines[1];
+      if (second === undefined) throw new Error("need 2 lines");
+      lines[1] = second.replace(/"crc":"(.)/, (_m, c: string) => `"crc":"${c === "0" ? "1" : "0"}`);
+      writeFileSync(path, `${lines.join("\n")}\n`);
+    };
+
+    it("at the watermark it neither hashes nor decodes the segment", async () => {
+      const peer = await caughtUpPeer();
+      rotLineTwo(peer.path);
+      // The old path sha256'd the file, saw the mismatch, decoded every
+      // line and reported manifest-mismatch. Caught up, it reads only
+      // the manifest and the last line, so the rot is invisible.
+      const again = ingestSegment(b, peer);
+      expect(again).toMatchObject({ read: 0, applied: 0, defects: [] });
+    });
+
+    it("explicit verification still reads the whole file", async () => {
+      const peer = await caughtUpPeer();
+      rotLineTwo(peer.path);
+      const verified = ingestSegment(b, peer, { verify: true });
+      expect(verified.defects.map((d) => d.kind)).toContain("manifest-mismatch");
+      const pass = await syncPass(b, dir);
+      expect(pass.defective).toBe(true);
+    });
+
+    it("lines appended past a stale manifest are still applied", async () => {
+      const peer = await caughtUpPeer();
+      const manifestFile = peer.path.replace(/\.jsonl$/, ".manifest");
+      const staleManifest = readFileSync(manifestFile, "utf8");
+      seedTask(a, "late");
+      await flushSegment(a, dir);
+      // The transport delivered the grown segment but not its manifest.
+      writeFileSync(manifestFile, staleManifest);
+      const again = ingestSegment(b, peer);
+      expect(again.applied).toBe(1);
+      expect(task(b, "late")).toBeDefined();
+    });
+
+    it("a stale manifest from an older build (no size) still lets new lines through", async () => {
+      const peer = await caughtUpPeer();
+      const manifestFile = peer.path.replace(/\.jsonl$/, ".manifest");
+      const m = JSON.parse(readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+      for (const k of ["size", "mtimeMs", "shaState"]) delete m[k];
+      seedTask(a, "late");
+      await flushSegment(a, dir);
+      writeFileSync(manifestFile, `${JSON.stringify(m, null, 2)}\n`);
+      expect(ingestSegment(b, peer).applied).toBe(1);
+    });
+
+    it("a torn tail at the watermark is still reported", async () => {
+      const peer = await caughtUpPeer();
+      writeFileSync(peer.path, `${readFileSync(peer.path, "utf8")}{"v":1,"hlc":"0`);
+      const again = ingestSegment(b, peer);
+      expect(again.defects.map((d) => d.kind)).toContain("torn-write");
+    });
+  });
+
   // ─── filtering ───────────────────────────────────────────────────────
 
   describe("filtering", () => {

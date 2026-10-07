@@ -736,6 +736,33 @@ function readLastLine(path: string, size: number): string | null {
   }
 }
 
+/**
+ * True when the segment at `path` holds exactly `lines` lines, judged
+ * without reading it: its manifest counts `lines`, the file's size
+ * matches the manifest's when the manifest records one, and the file
+ * ends in a newline-terminated line that decodes to the manifest's
+ * lastHlc. A peer that appended past its manifest, a torn tail, a
+ * missing or stale manifest, or a file shorter than its manifest all
+ * fail one of these and send the caller down the full read. Cost: the
+ * manifest, one stat and the last line, whatever the file's size.
+ */
+export function segmentCaughtUp(path: string, lines: number): boolean {
+  const m = readManifest(path);
+  if (m === null || m.count !== lines) return false;
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch {
+    return false;
+  }
+  if (typeof m.size === "number" && m.size !== size) return false;
+  if (lines === 0) return size === 0;
+  const last = readLastLine(path, size);
+  if (last === null) return false;
+  const decoded = decodeLine(last);
+  return decoded.ok && decoded.line.hlc === m.lastHlc;
+}
+
 /** Number of GOOD lines in a segment (stopping at the first defect, as
  *  ingest does). The denominator of "how far behind am I" — exported for
  *  `mu sync`'s peer table. */
@@ -1030,10 +1057,33 @@ export interface IngestResult {
  * which is what makes "laptop edits after seeing the devserver's op" order
  * correctly rather than losing to it.
  */
-export function ingestSegment(db: Db, peer: PeerSegment): IngestResult {
+export function ingestSegment(
+  db: Db,
+  peer: PeerSegment,
+  opts?: { verify?: boolean },
+): IngestResult {
   const defects: SegmentDefect[] = [];
   const watermarkKey = peerWatermarkKey(peer);
   const start = getWatermark(db, watermarkKey);
+
+  // CAUGHT UP: the peer's manifest says the file holds exactly the lines
+  // we already consumed, and its last line is the one the manifest
+  // names. Nothing to apply, so do not read, hash or split the file.
+  // `verify` (explicit `mu sync`) skips this and checks the whole file,
+  // so damage that left the count and the last line intact is still
+  // reported somewhere.
+  if (opts?.verify !== true && segmentCaughtUp(peer.path, start)) {
+    return {
+      machineId: peer.machineId,
+      path: peer.path,
+      read: 0,
+      applied: 0,
+      changed: 0,
+      watermark: start,
+      defects,
+      truncatedAt: null,
+    };
+  }
 
   if (!existsSync(peer.path)) {
     return {
@@ -1287,7 +1337,9 @@ export async function syncPass(db: Db, dir: string | null = syncDir()): Promise<
   }
   const flushed = await flushSegment(db, dir, { verify: true });
   const self = localMachineId(db);
-  const ingested = discoverPeers(dir, self).map((peer) => ingestSegment(db, peer));
+  const ingested = discoverPeers(dir, self).map((peer) =>
+    ingestSegment(db, peer, { verify: true }),
+  );
   // AFTER every peer, not per peer: an edge in peer A's segment may name
   // a task in peer B's, and `discoverPeers` order is `localeCompare` over
   // random UUID filenames, so "parent first" is a coin flip. One pass at
