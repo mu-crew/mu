@@ -253,8 +253,17 @@ export interface VcsBackend {
    *    missing refs, the `none` backend which has no notion of "main")
    *
    * Callers treat null as "unknown — render — — and don't warn".
+   *
+   * `mainRefCache`, when given, is shared across the rows of one
+   * decorate call so a backend that must resolve "main" per repo (git's
+   * origin/HEAD probe) does it once per repo, not once per workspace.
+   * Backends that resolve main inside the count command ignore it.
    */
-  commitsBehind(workspacePath: string, ref: string): Promise<number | null>;
+  commitsBehind(
+    workspacePath: string,
+    ref: string,
+    mainRefCache?: Map<string, Promise<string | undefined>>,
+  ): Promise<number | null>;
 
   /**
    * Rebase the workspace onto `fromRef` (or the backend's tracked

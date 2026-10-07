@@ -114,7 +114,11 @@ export const jjBackend: VcsBackend = {
   // Returns null when trunk() is unresolvable (e.g. fresh repo with
   // no configured trunk) or when the log call fails.
   //
-  // Pure observation: NO `jj git fetch`.
+  // Pure observation: NO `jj git fetch`, and `--ignore-working-copy`
+  // so the probe neither snapshots the working copy (a full tree stat
+  // per workspace on every `mu state` / TUI slow tick) nor writes a jj
+  // operation. `<ref>..trunk()` never involves `@`, so the count is the
+  // same either way.
   async commitsBehind(workspacePath, ref) {
     if (!existsSync(workspacePath)) return null;
     try {
@@ -125,6 +129,7 @@ export const jjBackend: VcsBackend = {
         "jj",
         [
           "log",
+          "--ignore-working-copy",
           "-r",
           `${ref}..trunk()`,
           "--no-graph",

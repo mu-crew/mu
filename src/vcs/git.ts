@@ -1,7 +1,7 @@
 // mu — git VCS backend.
 
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import {
   commitSummary,
   ensureParent,
@@ -83,9 +83,21 @@ export const gitBackend: VcsBackend = {
   // Pure observation: NO `git fetch`. The number is as fresh as the
   // last time the user (or some other process) updated the local
   // remote-tracking refs.
-  async commitsBehind(workspacePath, ref) {
+  async commitsBehind(workspacePath, ref, mainRefCache) {
     if (!existsSync(workspacePath)) return null;
-    const main = await resolveGitMainRef(workspacePath);
+    let main: string | undefined;
+    if (mainRefCache === undefined) {
+      main = await resolveGitMainRef(workspacePath);
+    } else {
+      // Worktrees of one repo share refs: key on the common git dir.
+      const key = gitCommonDir(workspacePath);
+      let p = mainRefCache.get(key);
+      if (p === undefined) {
+        p = resolveGitMainRef(workspacePath);
+        mainRefCache.set(key, p);
+      }
+      main = await p;
+    }
     if (main === undefined) return null;
     try {
       const out = await run("git", ["rev-list", "--count", `${ref}..${main}`], workspacePath);
@@ -320,6 +332,29 @@ async function gitIsAncestor(cwd: string, ancestor: string, descendant: string):
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * The repo's common git dir, read from the filesystem (no subprocess):
+ * `<ws>/.git` when it is a directory, else the `gitdir:` its `.git` file
+ * names, followed through that dir's `commondir` pointer (a worktree).
+ * Falls back to the workspace path, which only costs a cache miss.
+ */
+export function gitCommonDir(workspacePath: string): string {
+  const dotGit = join(workspacePath, ".git");
+  try {
+    if (statSync(dotGit).isDirectory()) return resolve(dotGit);
+    const m = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf8"));
+    if (m?.[1] === undefined) return resolve(workspacePath);
+    const gitDir = resolve(workspacePath, m[1]);
+    try {
+      return resolve(gitDir, readFileSync(join(gitDir, "commondir"), "utf8").trim());
+    } catch {
+      return gitDir;
+    }
+  } catch {
+    return resolve(workspacePath);
   }
 }
 
