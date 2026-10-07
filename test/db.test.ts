@@ -32,7 +32,7 @@ describe("openDb", () => {
     // No throw = parent dirs created.
   });
 
-  it("applies exactly the 11 v11 tables (task_substates lookup added)", () => {
+  it("applies exactly the 12 v11 tables (task_substates lookup, sync_fingerprints added)", () => {
     const db = openDb({ path: dbPath });
     const tables = (
       db
@@ -46,6 +46,7 @@ describe("openDb", () => {
       "machine_identity",
       "ops",
       "schema_version",
+      "sync_fingerprints",
       "sync_peers",
       "task_edges",
       "task_notes",
@@ -54,7 +55,7 @@ describe("openDb", () => {
       "vcs_workspaces",
       "workstreams",
     ]);
-    expect(tables).toHaveLength(11);
+    expect(tables).toHaveLength(12);
     expect([...tables].sort()).toEqual(tables);
     // schema_version stamped to current (v11).
     const v = (
@@ -383,6 +384,7 @@ describe("openDb", () => {
       "machine_identity",
       "ops",
       "schema_version",
+      "sync_fingerprints",
       "sync_peers",
       "task_edges",
       "task_notes",

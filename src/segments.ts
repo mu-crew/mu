@@ -815,12 +815,9 @@ function segmentFingerprint(path: string): { key: string; count: unknown } | nul
 function recordedFingerprint(db: Db, watermarkKey: string): string | null {
   const row = prepareCached(
     db,
-    "SELECT last_seen_at AS seen FROM sync_peers WHERE machine_id = ?",
-  ).get(watermarkKey) as { seen: string | null } | undefined;
-  const seen = row?.seen ?? null;
-  if (seen === null) return null;
-  const space = seen.indexOf(" ");
-  return space < 0 ? null : seen.slice(space + 1);
+    "SELECT fingerprint FROM sync_fingerprints WHERE machine_id = ?",
+  ).get(watermarkKey) as { fingerprint: string } | undefined;
+  return row?.fingerprint ?? null;
 }
 
 /**
@@ -1055,10 +1052,11 @@ export function getWatermark(db: Db, watermarkKey: string): number {
 }
 
 /**
- * Store a watermark. `last_seen_at` holds the ISO time, followed (after
- * a space) by the segment fingerprint when the caller just read the file
- * cleanly to its end (`segmentCaughtUp`). Every other write drops the
- * fingerprint, so a reset or partial ingest never vouches for the file.
+ * Store a watermark and stamp `last_seen_at` with the ISO time. The
+ * segment fingerprint goes to `sync_fingerprints` when the caller just
+ * read the file cleanly to its end (`segmentCaughtUp`). Every other
+ * write deletes it, so a reset or partial ingest never vouches for the
+ * file.
  */
 export function setWatermark(
   db: Db,
@@ -1073,11 +1071,16 @@ export function setWatermark(
      VALUES (@machineId, @value, @seenAt)
      ON CONFLICT (machine_id) DO UPDATE
        SET last_applied_seq = @value, last_seen_at = @seenAt`,
-  ).run({
-    machineId: watermarkKey,
-    value,
-    seenAt: fingerprint == null ? now : `${now} ${fingerprint}`,
-  });
+  ).run({ machineId: watermarkKey, value, seenAt: now });
+  if (fingerprint == null) {
+    prepareCached(db, "DELETE FROM sync_fingerprints WHERE machine_id = ?").run(watermarkKey);
+  } else {
+    prepareCached(
+      db,
+      `INSERT INTO sync_fingerprints (machine_id, fingerprint) VALUES (?, ?)
+       ON CONFLICT (machine_id) DO UPDATE SET fingerprint = excluded.fingerprint`,
+    ).run(watermarkKey, fingerprint);
+  }
 }
 
 /**

@@ -27,7 +27,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   deferred edges and notes after a process died between ingest and
   repair, or when an SDK caller applied them through `applyIncomingOp`:
   a marker in SQLite's `user_version`, set in the applying transaction,
-  makes the next invocation run the repair.
+  makes the next invocation run the repair. The skip's fingerprint is kept in a new
+  machine-local `sync_fingerprints` table (created on first open, no
+  schema bump), so `sync_peers.last_seen_at` stays an ISO timestamp.
 
 ## [3.9.0] — 2026-10-05
 
