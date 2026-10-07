@@ -8,7 +8,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
-## [Unreleased]
+## [3.10.0] — 2026-10-07
+
+**A performance pass: common verbs are 5-14x faster on a large DB with
+sync on, and the TUI no longer freezes every 10 s.** On a 69 MB DB with a
+56 MB sync dir, `mu --version` drops from ~310 ms to ~60 ms,
+`mu task list` from ~1.1 s to ~85 ms, and `mu state` / `mu agent list`
+from ~1.2 s to ~0.2 s. The TUI chunk loads only for the TUI, sync flush
+and ingest touch only new data, read verbs no longer take the DB write
+lock, and the TUI sync pass runs in a worker thread.
+
+Upgrade with `npm i -g @mu-crew/mu@3.10.0`, then `/reload` in running pi
+sessions: the pi extension changed (`mu_delegate` starts in one mu call,
+nudges run in parallel). No schema version change; the first open adds a
+local `sync_fingerprints` table and an index on `ops`, and 3.9.0 still
+opens the DB.
+
 
 ### Changed
 
