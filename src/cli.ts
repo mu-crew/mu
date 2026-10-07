@@ -40,6 +40,7 @@ import { printBareNoWorkstreamsHint, wireStateCommands } from "./cli/state.js";
 import { wireSyncCommand } from "./cli/sync.js";
 import { wireTaskCommands } from "./cli/tasks.js";
 import { resolveInitialTab } from "./cli/tui-launch-focus.js";
+import { importTui } from "./cli/tui-load.js";
 import { wireUndoCommand } from "./cli/undo.js";
 import { wireWorkspaceCommands } from "./cli/workspace.js";
 import { wireWorkstreamCommands } from "./cli/workstream.js";
@@ -745,7 +746,7 @@ async function cmdBareTui(
   }
   const initialActive = await resolveInitialTab(names, db);
   try {
-    const { runTui } = await import("./cli/tui/index.js");
+    const { runTui } = await importTui();
     await runTui(db, { workstreams: names, initialActive });
   } catch (err) {
     // If stdout is a TTY but stdin is not, ink can fail before rendering.

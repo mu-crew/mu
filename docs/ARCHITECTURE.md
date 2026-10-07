@@ -174,6 +174,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/cli/stdin.ts` | `-` as a text argument: reads note / send text from stdin (heredoc prose) |
 | `src/cli/agents-remote.ts` | `mu agent remote-env`: prints the ssh forward and env, runs nothing |
 | `src/cli/tui-launch-focus.ts` | initial-tab focus ladder for bare `mu` and `mu state --tui` |
+| `src/cli/tui-load.ts` | lazy `import()` of the TUI with `NODE_ENV` defaulted to `production` (React prod build) |
 | `src/cli/tui/` | the ink TUI; the only place ink and react are imported |
 | `src/output.ts`, `src/shell-quote.ts` | `printNextSteps` / `errorNextSteps`; POSIX quoting for hints |
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
