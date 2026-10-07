@@ -7,8 +7,9 @@
 // TUI sees the result on its next read.
 //
 // Protocol: the parent posts any message to start one pass, and the
-// worker replies `null` when the pass is over. ambientSyncPass is total,
-// and `quiet` keeps stderr off the alternate screen.
+// worker replies with the pass's result (`null` if it threw) when the
+// pass is over. ambientSyncPass is total, and `quiet` keeps stderr off
+// the alternate screen.
 
 import { parentPort, workerData } from "node:worker_threads";
 import { openDb } from "../../db.js";
@@ -19,6 +20,6 @@ if (port === null) throw new Error("tui-sync-worker must run as a worker_thread"
 const db = openDb({ path: (workerData as { dbPath: string }).dbPath });
 port.on("message", () => {
   void ambientSyncPass(db, { quiet: true })
-    .catch(() => undefined)
-    .then(() => port.postMessage(null));
+    .catch(() => null)
+    .then((result) => port.postMessage(result));
 });

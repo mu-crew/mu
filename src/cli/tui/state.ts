@@ -68,26 +68,43 @@ let syncInFlight = false;
 
 /** Built next to dist/cli.js by tsup (entry `tui-sync-worker`). Absent
  *  when running from source (vitest), where the pass runs in-process. */
-const SYNC_WORKER_PATH = fileURLToPath(new URL("./tui-sync-worker.js", import.meta.url));
-let syncWorker: { worker: Worker; done: (() => void) | null } | null = null;
+const BUILT_SYNC_WORKER_PATH = fileURLToPath(new URL("./tui-sync-worker.js", import.meta.url));
+let syncWorkerPath = BUILT_SYNC_WORKER_PATH;
+type SyncPassResult = Awaited<ReturnType<typeof ambientSyncPass>>;
+type SyncWorkerState = { worker: Worker; done: ((r: SyncPassResult | null) => void) | null };
+let syncWorker: SyncWorkerState | null = null;
+
+/** Test seam: point the worker path at a built bundle (or back to the
+ *  default with null), dropping any running worker. */
+export async function setSyncWorkerPathForTests(path: string | null): Promise<void> {
+  syncWorkerPath = path ?? BUILT_SYNC_WORKER_PATH;
+  const state = syncWorker;
+  syncWorker = null;
+  await state?.worker.terminate();
+}
+
+/** Test seam: the live sync worker, if one is running. */
+export function syncWorkerForTests(): Worker | null {
+  return syncWorker?.worker ?? null;
+}
 
 /** One pass in the worker_thread, started lazily and kept for the TUI's
  *  life (`unref`, so it never holds the process open). A worker that
- *  dies settles its pass and is respawned on the next beat. */
-function workerSyncPass(dbPath: string): Promise<void> {
+ *  dies settles its pass with null and is respawned on the next beat. */
+function workerSyncPass(dbPath: string): Promise<SyncPassResult | null> {
   if (syncWorker === null) {
-    const worker = new Worker(SYNC_WORKER_PATH, { workerData: { dbPath } });
+    const worker = new Worker(syncWorkerPath, { workerData: { dbPath } });
     worker.unref();
-    const state: { worker: Worker; done: (() => void) | null } = { worker, done: null };
-    const settle = () => {
+    const state: SyncWorkerState = { worker, done: null };
+    const settle = (result: SyncPassResult | null) => {
       const done = state.done;
       state.done = null;
-      done?.();
+      done?.(result);
     };
-    worker.on("message", settle);
+    worker.on("message", (result: SyncPassResult | null) => settle(result));
     const drop = () => {
       if (syncWorker === state) syncWorker = null;
-      settle();
+      settle(null);
     };
     worker.on("error", drop);
     worker.on("exit", drop);
@@ -114,21 +131,23 @@ function workerSyncPass(dbPath: string): Promise<void> {
  * through the Doctor card instead, which is where a TUI operator looks.
  *
  * Total by construction (see src/sync.ts): a broken segment or an
- * unreadable sync dir must never take the dashboard down.
+ * unreadable sync dir must never take the dashboard down. Resolves to
+ * the pass's result, or null when skipped (sync off, a pass already in
+ * flight) or failed (including a worker that died mid-pass).
  */
-async function tuiSyncPass(db: Db): Promise<void> {
-  if (!syncEnabled() || syncInFlight) return;
+export async function tuiSyncPass(db: Db): Promise<SyncPassResult | null> {
+  if (!syncEnabled() || syncInFlight) return null;
   syncInFlight = true;
   try {
     // Off ink's thread when the bundle has the worker and the DB is a
     // file a second connection can open; in-process otherwise.
-    if (db.name !== ":memory:" && existsSync(SYNC_WORKER_PATH)) {
-      await workerSyncPass(db.name);
-    } else {
-      await ambientSyncPass(db, { quiet: true });
+    if (db.name !== ":memory:" && existsSync(syncWorkerPath)) {
+      return await workerSyncPass(db.name);
     }
+    return await ambientSyncPass(db, { quiet: true });
   } catch {
     // Never let sync fail a repaint.
+    return null;
   } finally {
     syncInFlight = false;
   }
