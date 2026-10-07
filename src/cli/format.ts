@@ -17,7 +17,7 @@ import type { LiveAgent } from "../agents.js";
 import { agentStateGlyph, GLYPH } from "../glyphs.js";
 import { parseOpKey, renderOp } from "../log-render.js";
 import type { LogRow } from "../logs.js";
-import { muTable, pc } from "../output.js";
+import { muTable, pc, renderBoxTable } from "../output.js";
 import { formatPair, type TaskPair } from "../tasks/status.js";
 import type { TaskRow } from "../tasks.js";
 import type { Track } from "../tracks.js";
@@ -469,11 +469,10 @@ export function formatTaskListTable(
   const padding = numCols * 3 + 1;
   const titleBudget = Math.max(20, terminalWidth() - otherTotal - padding);
 
-  // Title is pre-truncated to titleBudget above; muTable adds the
-  // wordWrap:false safety belt for any cell we don't trim.
-  const table = muTable({
-    head: head.map((h) => pc.bold(h)),
-  });
+  // Title is pre-truncated to titleBudget above. renderBoxTable, not
+  // cli-table3: its layout pass is quadratic in rows
+  // (f_tasklist_table_render).
+  const rows: string[][] = [];
   for (let i = 0; i < tasks.length; i++) {
     const t = tasks[i];
     if (!t) continue; // noUncheckedIndexedAccess
@@ -500,7 +499,10 @@ export function formatTaskListTable(
           t.ownerName ?? pc.dim("—"),
         ];
     const row = timeHeader === null ? baseRow : [...baseRow, pc.dim(timeCells[i] ?? "")];
-    table.push(row);
+    rows.push(row);
   }
-  return table.toString();
+  return renderBoxTable(
+    head.map((h) => pc.bold(h)),
+    rows,
+  );
 }
