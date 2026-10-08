@@ -67,6 +67,13 @@ These have a design but no proven friction yet.
   SQLite update hooks or `fs.watch` on the WAL would cut latency for
   more machinery. Build it when someone hits the limit.
 
+- **`mu agent list --json` as `{items, count}`.** It emits
+  `{workstreamName, agents, orphans}`, the one collection off the
+  documented shape (SKILL.md notes the exception). Conforming breaks
+  `.agents` readers, `mu_delegate` among them; do it with the next
+  breaking release. Reported in
+  docs/bugs/2026-10-08-review-panel-friction.md (#3).
+
 ## Open questions
 
 - **Capability tags on operations.** Today the only authorization is

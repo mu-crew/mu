@@ -23,7 +23,7 @@ not in `--help` do not exist.
 
 Default output is a card on stdout plus a `Next:` block. Read both.
 Every verb takes `--json`: one stdout object; collections are
-`{items, count}`; `mu sql --json` is bare rows; `mu log --tail` is
+`{items, count}`, except `mu agent list` (`{agents, orphans}`); `mu sql --json` is bare rows; `mu log --tail` is
 NDJSON. Errors are `{error,message,nextSteps,exitCode}` on stderr
 (validation errors add `usage`). **`nextSteps` survives in JSON.**
 

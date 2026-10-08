@@ -283,6 +283,26 @@ export function labelStem(label: unknown): string | undefined {
   return stem || undefined;
 }
 
+/** A `model` value pi takes as `--model` (`provider/id:thinking`); no
+ *  shell characters, since it lands inside a `--command` string. */
+const MODEL_RE = /^[A-Za-z0-9._:/@+-]+$/;
+
+/**
+ * The command a delegate with `model` runs: the cli key's command
+ * (`$MU_<KEY>_COMMAND`, else the key itself, as `resolveCliCommand` in
+ * src/agents/spawn.ts does) plus `--model <model>`. Inlined: the extension
+ * bundles standalone and spawn.ts pulls in the DB.
+ */
+export function modelCommand(
+  cli: string,
+  model: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = env[`MU_${cli.toUpperCase().replace(/-/g, "_")}_COMMAND`];
+  const base = override && override.trim() !== "" ? override.trim() : cli;
+  return `${base} --model ${model}`;
+}
+
 /**
  * One delegate this pi waits on. `cancelling` is set while a cancel's abort
  * is in flight: the abort itself settles the run, so a wait resolving then
@@ -427,7 +447,10 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     const args = ["agent", "spawn", base, "-w", W, "--next-free", "--send", text, "--json"];
     if (params.workspace === true) args.push("--workspace");
     else if (cwd) args.push("--cwd", cwd);
-    if (typeof params.cli === "string" && params.cli) args.push("--cli", params.cli);
+    const cli = typeof params.cli === "string" && params.cli ? params.cli : undefined;
+    if (cli) args.push("--cli", cli);
+    if (typeof params.model === "string" && params.model)
+      args.push("--command", modelCommand(cli ?? "pi", params.model));
     const r = await mu(args);
     const out = json(r);
     const spawned = (out?.agent as { name?: unknown } | undefined)?.name;
@@ -728,7 +751,12 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         cli: {
           type: "string",
           description:
-            "Agent CLI key (default pi). Name a configured key such as 'pi_fast' to run a cheaper model.",
+            "Agent CLI key (default pi). Only keys with $MU_<KEY>_COMMAND set in pi's environment exist; to pick a model, use model instead.",
+        },
+        model: {
+          type: "string",
+          description:
+            "Model for the subagent, passed to pi as --model (e.g. 'sonnet', 'openai/gpt-5:high'); appended to the cli's command. Default: the cli's own model. Use it to vary models across a review panel.",
         },
         keep: {
           type: "boolean",
@@ -763,6 +791,11 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
           typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
         if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
       }
+      const m = params.model;
+      if (m !== undefined && !(typeof m === "string" && MODEL_RE.test(m)))
+        throw new Error(
+          `mu_delegate: model must be a pi model id like 'provider/id:thinking' (got ${JSON.stringify(m)})`,
+        );
       const record = await resolveRecord(params.record);
       // Count slots synchronously, before any await: parallel calls in one
       // turn all run this line before the first spawn returns.

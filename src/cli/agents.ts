@@ -1359,7 +1359,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--after-runs <n>",
-      "pi agents only: fire on the first run settled past N (the `runs` that `mu agent send --json` printed), even one that settled before this wait started",
+      "pi agents only: fire on the first run settled past N (the `runs` that `mu agent send --json` printed), even one that settled before this wait started. One N applies to every named agent",
       parseNonNegativeInt,
     )
     .option(...WORKSTREAM_OPT)
