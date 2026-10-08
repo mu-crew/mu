@@ -8,7 +8,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
-## [Unreleased]
+## [3.10.1] — 2026-10-08
+
+**`mu_delegate` can pick a model per call**, so a review panel can mix
+models from pi without configuring `cli` keys first.
+
+Upgrade with `npm i -g @mu-crew/mu@3.10.1`, then `/reload` in running pi
+sessions: the pi extension changed (the new `model` parameter). No schema
+change.
+
 
 ### Added
 
