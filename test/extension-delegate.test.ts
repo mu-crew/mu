@@ -17,6 +17,7 @@ import {
   registerDelegate,
 } from "../extension/delegate.js";
 import muPi from "../extension/mu-pi.js";
+import { withEnv } from "./_env.js";
 
 const ENV_KEYS = [
   "MU_MANAGED_AGENT",
@@ -302,6 +303,41 @@ describe("mu_delegate", () => {
     await flush();
     await flush();
     expect(sentText(p)).toContain("still running after 90s");
+  });
+
+  it("model appends --model to the cli's resolved command and spawns with --command", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await withEnv("MU_PI_COMMAND", "pi-meta --approve", async () => {
+      await tool(p).execute("t", { task: "x", model: "anthropic/claude-opus-4:high" });
+    });
+    const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
+    expect(spawn[spawn.indexOf("--command") + 1]).toBe(
+      "pi-meta --approve --model anthropic/claude-opus-4:high",
+    );
+    expect(spawn).not.toContain("--cli");
+  });
+
+  it("model with cli resolves that key's command, or the bare key when unset", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", cli: "pi-alt", model: "sonnet" });
+    const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
+    expect(spawn[spawn.indexOf("--command") + 1]).toBe("pi-alt --model sonnet");
+    // --cli still names the agent's kind; --command wins for what runs.
+    expect(spawn[spawn.indexOf("--cli") + 1]).toBe("pi-alt");
+  });
+
+  it("refuses a model with shell characters before spawning", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("t", { task: "x", model: "x; rm -rf ~" })).rejects.toThrow(
+      /model/,
+    );
+    expect(mu.calls.some((c) => c[1] === "spawn")).toBe(false);
   });
 
   it("workspace: true spawns with --workspace (no --cwd) and reports the checkout path", async () => {

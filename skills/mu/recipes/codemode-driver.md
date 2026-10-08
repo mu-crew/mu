@@ -104,6 +104,9 @@ What the tool did for you, the script now owns:
   tournament runs one round per script.
 - **A script timeout cancels the waits, not the workers.** Workers keep
   running and their tasks stay claimed. Re-read `mu state` and carry on.
+- **Briefs are not template literals.** A backtick in a brief ends the
+  string and the whole script fails before any call starts. Build
+  briefs with `tools.read` from a file, or as plain strings.
 - **Exit codes are data.** `mu task wait` exit 7 means a worker needs
   you; return it to the model instead of retrying.
 

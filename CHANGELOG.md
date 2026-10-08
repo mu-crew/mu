@@ -8,6 +8,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`mu_delegate` takes `model`.** The value is appended as
+  `--model <value>` to the cli's resolved command (`$MU_<KEY>_COMMAND`,
+  else the key) and spawned with `--command`, so a review panel can vary
+  models from pi without configured `cli` keys. Values with shell
+  characters are refused before anything spawns. herdr refuses a command
+  override, so `model` works on tmux only. The `cli` description no
+  longer names a `pi_fast` key that may not exist. Reported in
+  docs/bugs/2026-10-08-review-panel-friction.md (#1).
+
+### Changed
+
+- Docs: SKILL.md names `mu agent list --json` as the exception to
+  `{items, count}`; codemode-driver warns against template-literal
+  briefs; `mu agent wait --after-runs` help says one N applies to every
+  named agent.
+
 ## [3.10.0] — 2026-10-07
 
 **A performance pass: common verbs are 5-14x faster on a large DB with
