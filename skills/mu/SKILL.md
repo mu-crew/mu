@@ -1,7 +1,7 @@
 ---
 name: mu
 description: >-
-  Fresh-context subagents and crews in tmux/herdr panes. Check before you
+  Fresh-context delegates (mu's answer to hidden subagents) and crews in tmux/herdr panes. Check before you
   commit: before acting on a claim, root cause, plan, fix or brief, have a
   `mu_delegate` call refute it. Also for a fresh delegate's second look at
   your own work or diff; parallel read-only research, investigation or fan-out
@@ -24,14 +24,14 @@ not in `--help` do not exist.
 Default output is a card on stdout plus a `Next:` block. Read both.
 Every verb takes `--json`: one stdout object; collections are
 `{items, count}`, except `mu agent list` (`{agents, orphans}`); `mu sql --json` is bare rows; `mu log --tail` is
-NDJSON. Errors are `{error,message,nextSteps,exitCode}` on stderr
+NDJSON; `mu log` writes print text even with `--json`. Errors are `{error,message,nextSteps,exitCode}` on stderr
 (validation errors add `usage`). **`nextSteps` survives in JSON.**
 
 ## Vocabulary
 
 - **workstream** — one **mux session** `mu-<name>` (tmux session or
   herdr workspace) and one DB partition.
-- **agent** — named worker in a pane (you may be one).
+- **agent** — named process in a pane (you may be one); a **worker** is an agent claiming tasks.
 - **mux** — tmux or herdr, one per invocation. `mu doctor` names it;
   `MU_MUX` forces it. `mu agent kick` is Linux-only on herdr.
 - **control socket (ctl)** — how mu drives a pi agent: the mu pi
@@ -62,7 +62,7 @@ Recipe words, the same in every recipe:
 - **finding** — one reported problem, recorded as an `OPEN/triage` task.
 - **verdict** — a check's answer: `VERDICT: <id> CONFIRMED | REFUTED |
   UNVERIFIED <one line>` plus `EVIDENCE:` lines (or ACCEPT | REJECT for
-  a review gate).
+  a review gate). REFUTED on a brief means it holds a false claim: rewrite it.
 - **stop rule** — the command and condition that end a loop, written on
   the umbrella first ([loop-until-done](recipes/loop-until-done.md)).
 
@@ -80,9 +80,8 @@ that tries to refute it, on another model family ([models](recipes/models.md#che
 Orchestrator rules; many claims: [refute](recipes/refute.md)).
 
 For one-shot work inside pi, call `mu_delegate` (installed by `mu link pi`). Outside pi: spawn
-into the reserved `scratch` workstream (no task DAG, auto-created), `send --fresh --json`, then
-`mu agent wait --after-runs <its runs> --json` (`lastText`); without `--after-runs` a run that
-ends first hangs the wait. Recipes call either form a **delegate call**. A check judging a mu
+into the reserved `scratch` workstream (no task DAG, auto-created), as in
+[delegate call](recipes/tasks-or-calls.md#delegate-call). Recipes call either form a **delegate call**. A check judging a mu
 task lands its verdict there: `record: { task: "<ws>/<id>" }` on `mu_delegate`, a hand-written
 `REFUTER` note on the spawn path; with no task, skip both.
 
@@ -113,11 +112,9 @@ repo, spawn with `--workspace`. Two builds in one checkout corrupt each
 other; keep the main checkout for orchestration.
 
 Workspaces auto-detect jj, sl, or git (else `cp -a`). `mu agent close`
-frees one **only if clean** (no uncommitted changes, no commits since
-fork); otherwise it fails with `WorkspacePreservedError`. A `cp -a` copy is
-never clean. Inspect the workspace, cherry-pick what to keep (or
-`mu workspace free <agent> --commit`), and pass `--discard-workspace`
-only to throw the rest away.
+frees one **only if clean**; otherwise it fails with
+`WorkspacePreservedError`. A `cp -a` copy is never clean. Cherry-pick what
+to keep, and pass `--discard-workspace` only to throw the rest away.
 Before each `--fresh` send, `mu workspace refresh <agent>` rebases onto
 main and keeps LLM context ([waves](recipes/waves.md) when workers share
 files). Claim and send warn at ≥10 commits behind
@@ -193,7 +190,7 @@ rules hold even when you skip it:
 - **Send, don't note, a running worker**: it never sees new notes. The note is the durable copy
   ([how to send](recipes/orchestrator-loop.md#sending)).
 - **Refute a brief claiming a cause, fix, threshold or code fact** before dispatch:
-  one `record`ed refuter call; rewrite on AMEND. Others get a `REFUTE-EXEMPT: <why>` note.
+  one `record`ed refuter call; rewrite on REFUTED. Others get a `REFUTE-EXEMPT: <why>` note.
 - **Checks are calls, not tasks.** Refuters, claim checkers, judges and
   skeptics are [delegate calls](recipes/tasks-or-calls.md#delegate-call)
   (`mu_delegate`, or a `scratch` spawn without it), all issued in one
@@ -208,13 +205,9 @@ rules hold even when you skip it:
 
 ## CLI gotchas
 
-- **`task close --if-ready`** no-ops until every blocker is CLOSED; bare
-  `task release` reopens IN_PROGRESS.
 - **`task close --as rejected|wontfix --why ...`** unblocks dependents
   (listed in the output). `rejected` = the claim is false; `wontfix` =
-  true, not worth doing. To keep dependents waiting, `task park --why` instead: parked
-  leaves `next`, and `claim` refuses it without `--force`. Park refuses
-  IN_PROGRESS — `task release` first.
+  true, not worth doing. To keep dependents waiting, `task park --why` instead.
 - **For waits use `task wait`, not `log --tail`.** `mu log --kind <k>`
   entries are your own durable state (a ledger); `--intent` filters what
   mu recorded.
@@ -258,7 +251,7 @@ Close the task as your last action, or the orchestrator's wait hangs.
 ## Guardrails
 
 Task ownership outranks agent state. Coordinate through task notes and
-the activity log. Keep edges within one workstream. Give workers
+the ops log (`mu log`). Keep edges within one workstream. Give workers
 bounded paths and commands.
 
 ## Recipes

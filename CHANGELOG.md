@@ -16,6 +16,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Skill: wording fixes.** `REFUTED` is the verdict that sends a brief back for rewrite (there was no `AMEND`); SKILL.md drops text that restates `--help` and the outside-pi spawn steps, uses VOCABULARY terms, and models, worker and brief recipes get checkable Done whens.
 - **Skill: model tiers.** New `skills/mu/recipes/models.md` ranks models
   by position in a lab's lineup (frontier, strong, mid, cheap, local),
   says which roles need which tier, and keeps local models as a last
