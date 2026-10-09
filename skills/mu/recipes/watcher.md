@@ -12,6 +12,10 @@ acts on change. Run it in `scratch`, or in the workstream it serves.
 3. **Wait with mu, not `sleep`.** `mu agent wait <names...> --first`
    returns when an agent goes busy → idle.
 
+A watcher runs cheap (hosted): polling and diffing a ledger line needs
+no judgement. It hands anything that does to you or a stronger helper
+([models](models.md#roles)).
+
 The ledger survives a dead or fresh helper: a replacement reads the
 last line and carries on. To act on new items (issues, alerts), see
 [backlog-triage](backlog-triage.md).

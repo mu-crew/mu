@@ -56,8 +56,9 @@ triage and the umbrella closes with `--if-ready` (workstream mode).
 
 - **Reviewers padding the list.** A panel that always finds ten things
   is guessing.
-- **Vary models across angles** ([Models](../SKILL.md#models-and-thinking-effort)); one model's blind spot
-  repeated five times is still one blind spot. In delegate mode pass
-  `model` to `mu_delegate`; `cli` keys exist only if `$MU_<KEY>_COMMAND` is set.
+- **Vary families across angles, not tiers.** Every reviewer is at the
+  author's tier or higher ([models](models.md#checkers)); one model's
+  blind spot repeated five times is still one blind spot. Pass `model`
+  to `mu_delegate`.
 - **The panel is not the gate command.** Merge verification still runs on the
   merged tree ([orchestrator-loop](orchestrator-loop.md#merging)).

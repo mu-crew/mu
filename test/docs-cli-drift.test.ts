@@ -73,6 +73,7 @@ const DOC_FILES = [
   "skills/mu/recipes/findings.md",
   "skills/mu/recipes/tasks-or-calls.md",
   "skills/mu/recipes/drift-audit.md",
+  "skills/mu/recipes/models.md",
   "scripts/README.md",
 ];
 

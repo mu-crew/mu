@@ -31,7 +31,8 @@ answer rests on is an `OPEN/triage` task, decided like a finding
    ```
 
    A claim without a source and a quote is not a claim. Searchers can
-   run on a cheap model.
+   run cheap (hosted, not local: [models](models.md#local-models-are-a-last-resort));
+   the checkers in step 4 run mid or higher.
 3. **Dedupe claims**: merge the same fact from several sources (keep
    every source), and flag claims that contradict each other. In
    workstream mode, each surviving claim becomes an `OPEN/triage` task

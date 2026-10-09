@@ -46,7 +46,9 @@ are fixed or handed off.
 - **UNVERIFIED is not REFUTED.** A refuter that hit a rate limit or
   could not run the code disproved nothing. The finding stays in triage
   with an `UNVERIFIED:` note, reported apart.
-- **Cheap finders, strong refuters.** Finders can run on `pi_mini`; the
-  refute step is where the judgement is (`pi_big`).
+- **Cheap finders, strong refuters.** Finders can run cheap when a
+  missed finding is affordable: refuters test what was reported, not
+  what was missed. Refuters run at the finder's tier or higher, and no
+  lower than mid, from another family ([models](models.md#checkers)).
 - **No findings is a result.** A slice that finds nothing closes with
   that in its note; do not re-run it until it finds something.

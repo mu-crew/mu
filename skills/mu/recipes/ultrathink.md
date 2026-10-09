@@ -44,7 +44,7 @@ and check, skip it.
    of a loop are the one exception: add each when the last closes.
 5. **Review every unit that ships.** Each commit-producing task gets a
    review task ([adversarial-review](adversarial-review.md)) on a
-   [comparable model](../SKILL.md#models-and-thinking-effort). Every finding is a triage task,
+   [comparable model](models.md#checkers). Every finding is a triage task,
    refuted before it is accepted ([findings](findings.md)).
 6. **Run the loop** ([orchestrator-loop](orchestrator-loop.md)): pipeline
    merges, verify each merge, keep workers busy
@@ -69,8 +69,10 @@ tree, every shipped unit's latest review task is `CLOSED/done`
   survive, not a task per refuter and judge.
 - The run gets its own workstream, `<project>-ut-<topic>`, torn down
   when the umbrella closes ([recovery](recovery.md) before teardown).
-- Cheap models scout and find (`pi_mini`); the default builds (`pi`);
-  strong models review, refute, judge, and synthesize (`pi_big`).
+- Tiers per phase ([models](models.md#roles)): cheap scouts and finds,
+  mid builds, strong plans and synthesizes; each checker at the tier of
+  whoever wrote what it checks, or higher, another family. Calibrate the
+  tier split on the slice, not only the cost.
 - Calibrate on a slice: run the phase on a few units, check the result
   and the cost, then fan out the rest.
 

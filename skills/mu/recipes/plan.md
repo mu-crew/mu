@@ -44,7 +44,7 @@ human asks for a file.
    task, grep the notes for placeholders, match INTERFACES names across
    tasks, and read the graph back (`mu task tree task_0 -w <ws> --down`).
    Then refute each brief that makes claims ([call](tasks-or-calls.md#delegate-call),
-   all in one turn): "What in this brief is false about the code,
+   all in one turn, at your tier from another family: [models](models.md#checkers)): "What in this brief is false about the code,
    ambiguous, or would make a correct worker fail review? Cite
    file:line." Rewrite each AMEND. Five of six briefs refuted in one run had
    such a defect, e.g. a fallback test old extensions made unpassable.
