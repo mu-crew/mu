@@ -58,7 +58,7 @@ and check, skip it.
 Done when the umbrella is closed, its stop rule holds on the merged
 tree, every shipped unit's latest review task is `CLOSED/done`
 (ACCEPT), and
-`mu task list --substate triage` is empty or only `UNVERIFIED`.
+`mu task list --substate triage` is empty.
 
 ## Budget
 

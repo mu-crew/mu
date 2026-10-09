@@ -7,7 +7,8 @@ hundreds of tasks and a workstream nobody wanted.
 
 ## Delegate call
 
-A **delegate call** is one `mu_delegate` tool call in pi.
+A **delegate call** is one `mu_delegate` tool call in pi, or outside pi
+a `scratch` spawn + `send --fresh` + `wait --after-runs` (below).
 
 - **It starts empty.** The brief carries everything: the finding or
   claim, file paths, the criteria, and the answer to end with. See
@@ -85,4 +86,6 @@ up to four times the cap; see
 [orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency).
 
 Done when every agent a recipe step spawns is either a task in the DAG
-or a delegate call whose verdict is recorded on a task.
+or a delegate call whose answer landed where its step says: a
+`REFUTER` note on the task it judged, a `WINNER` line in the umbrella's
+note, or a unit list in the umbrella's note.

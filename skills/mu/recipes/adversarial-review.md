@@ -1,13 +1,15 @@
 # Adversarial review
 
 Use when a unit of work must be checked by someone other than its
-author before it counts: a fix, a finding, a claim, a plan. The author
+author before it counts: a unit that produces commits (a fix, a feature).
+Checking a finding or claim is a delegate call
+([findings § Triage](findings.md#triage), [refute](refute.md)). The author
 grades its own work generously; a fresh agent told to refute it does
 not. Every other review-shaped recipe builds on this one.
 
 The review is a task in the DAG, not a step inside the worker's
-session. Its verdict, its evidence, and every gap it finds stay in the
-DB: each gap is a finding task ([findings](findings.md)). For a one-off
+session. Its verdict, its evidence, and every finding it makes stay in the
+DB: each is a finding task ([findings](findings.md)). For a one-off
 check outside any workstream, one
 [delegate call](tasks-or-calls.md#delegate-call) is enough; to review a
 PR or diff from several angles, use [review-panel](review-panel.md).
@@ -22,7 +24,7 @@ PR or diff from several angles, use [review-panel](review-panel.md).
 
    ```bash
    mu task add review_x -w <ws> -t "Review x" -i 50 -e 0.5 --blocked-by x \
-     --note 'ACCEPTANCE: see x notes. Refute; report gaps, not style.'
+     --note 'ACCEPTANCE: see x notes. Refute; report findings, not style.'
    ```
 
 3. **Dispatch the work** as usual. When `x` closes, `review_x` becomes
@@ -36,13 +38,15 @@ PR or diff from several angles, use [review-panel](review-panel.md).
    The review's state is the verdict: `CLOSED/done` for ACCEPT,
    `CLOSED/rejected` for REJECT.
    - `ACCEPT`: cherry-pick `x`'s commits and verify the merge.
-   - `REJECT`: the reviewer recorded each gap as an `OPEN/triage` task.
-     Add `review_x_2` and block it on every gap
-     (`mu task block review_x_2 --by <gap>`); work downstream of `x`
-     waits on `review_x_2`, not on the rejected review. Decide each gap
-     as a finding ([findings § Triage](findings.md#triage)), then
-     dispatch the accepted gaps to the original worker, whose context
-     still holds the work. Repeat from step 4 when the gaps are closed.
+   - `REJECT`: the reviewer recorded each finding as an `OPEN/triage` task.
+     Add `review_x_2` and block it on every finding
+     (`mu task block review_x_2 --by <finding>`). Closing `review_x`
+     `--as rejected` unblocked its dependents, so re-block each task
+     downstream of `x` on `review_x_2`
+     (`mu task block <downstream> --by review_x_2`). Decide each
+     finding ([findings § Triage](findings.md#triage)), then
+     dispatch the accepted ones to the original worker, whose context
+     still holds the work. Repeat from step 4 when the findings are closed.
      The DAG grows; nothing is rewritten.
 7. **Cap the rounds.** After two rejections on the same unit, stop the
    loop and decide yourself: split the unit, change the criteria, or
@@ -60,24 +64,25 @@ You are reviewing task <x>. You did not write it. Your job is to find
 where it fails the acceptance criteria in `mu task notes <x>`.
 
 - Read the diff (<range>) and the criteria. Run the tests that cover it.
-- Report gaps against the criteria: a requirement not met, an edge case
+- Report findings against the criteria: a requirement not met, an edge case
   without a test, a change outside scope, a claim the evidence does not
   support. Not style, not preferences.
-- Record each gap as a finding, per findings.md § Record:
-  mu task add -w <ws> --triage -t "<severity>: <gap>" -i <n> -e <days> \
-    --note 'FINDING: <severity> <file:line> <gap> EVIDENCE: <command + output>'
+- Record each as a finding, per findings.md § Record:
+  mu task add -w <ws> --triage -t "<severity>: <title>" -i <n> -e <days> \
+    --note 'FINDING: <severity> <file:line> <what fails> EVIDENCE: <command + output>'
 - If you could not check something (tool failed, no access), say
   UNVERIFIED for it. Unverified is not a pass and not a fail.
-- Do not edit files.
+- Your only writes are `mu task add` (findings), the verdict note, and
+  the close; leave the workspace as you found it.
 
 Write the verdict note (FILES/COMMANDS/FINDINGS/VERIFIED), then close
 (long reasons: a heredoc variable, brief.md § Quoting):
   ACCEPT: mu task close review_<x> --evidence "<key command>: <result>"
   REJECT: mu task close review_<x> --as rejected \
-            --why "<n> gaps: <id> (<why it fails, one clause>), ..."
+            --why "<n> findings: <id> (<why it fails, one clause>), ..."
 ```
 
-mu adds each named gap's title to the REJECTED note.
+mu adds each named finding's title to the REJECTED note.
 
 **Closing a review yourself** (you fixed a finding, or accept without a
 fresh reviewer): write the reviewer's note plus `COMMIT: <sha> fixes
@@ -93,7 +98,7 @@ by orchestrator`.
   reviewer ran. A review with no evidence is a
   rejected review: re-send it.
 - **Reviewers drift into fixing.** A reviewer that edits the code is now
-  an author nobody reviews. The fix belongs to the gap tasks.
+  an author nobody reviews. The fix belongs to the finding tasks.
 - **Review is not merge verification.** An accepted unit can still
   break once merged with moved main. Verify the merge as in
   [orchestrator-loop](orchestrator-loop.md#merging).

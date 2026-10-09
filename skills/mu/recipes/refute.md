@@ -38,8 +38,9 @@ fact-check nobody will track, use delegate mode from
    A synthesis task is needed only when the human wants prose.
 
 Done when no finding is left in triage without an `UNVERIFIED` note,
-and the umbrella closes with `--if-ready` once the accepted findings
-are fixed or handed off.
+and the accepted findings are fixed or handed off. The umbrella closes
+with `--if-ready` once no finding is open; while an `UNVERIFIED` finding
+remains it stays open and the human gets the list.
 
 ## Traps
 
