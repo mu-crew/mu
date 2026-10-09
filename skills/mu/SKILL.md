@@ -1,7 +1,8 @@
 ---
 name: mu
 description: >-
-  Fresh-context delegates (mu's answer to hidden subagents) and crews in tmux/herdr panes. Check before you
+  Fresh-context delegates (mu's counterpart to hidden subagents) and crews
+  in tmux/herdr panes. Check before you
   commit: before acting on a claim, root cause, plan, fix or brief, have a
   `mu_delegate` call refute it. Also for a fresh delegate's second look at
   your own work or diff; parallel read-only research, investigation or fan-out
