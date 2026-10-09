@@ -453,7 +453,7 @@ const GIT = (() => {
 const gitDescribe = GIT ? describe : describe.skip;
 
 describe("closeAgent + workspace integration", () => {
-  it("closeAgent auto-frees a clean workspace (none backend: no commits, no dirty) without --discard-workspace", async () => {
+  it("closeAgent refuses a none-backend (cp -a) workspace: a copy cannot prove it is clean", async () => {
     const ws = await createWorkspace(db, {
       agent: "worker-1",
       workstream: "auth",
@@ -463,16 +463,13 @@ describe("closeAgent + workspace integration", () => {
     expect(() => execFileSync("ls", [ws.path], { stdio: "pipe" })).not.toThrow();
 
     const { closeAgent } = await import("../src/agents.js");
-    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    await expect(closeAgent(db, "worker-1", { workstream: "auth" })).rejects.toMatchObject({
+      name: "WorkspacePreservedError",
+    });
 
-    expect(r.killedPane).toBe(true);
-    expect(r.deletedRow).toBe(true);
-    expect(r.workspaceFreed).toBe(true);
-    expect(r.workspaceAutoFreedClean).toBe(true);
-
-    // Workspace gone from DB AND from disk.
-    expect(getWorkspaceForAgent(db, "worker-1", "auth")).toBeUndefined();
-    expect(() => execFileSync("ls", [ws.path], { stdio: "pipe" })).toThrow();
+    // Nothing was removed: the row and the copy are both still there.
+    expect(getWorkspaceForAgent(db, "worker-1", "auth")).toBeDefined();
+    expect(() => execFileSync("ls", [ws.path], { stdio: "pipe" })).not.toThrow();
   });
 
   it("closeAgent { discardWorkspace: true } frees workspace AND deletes agent in one shot (lossy override path)", async () => {
