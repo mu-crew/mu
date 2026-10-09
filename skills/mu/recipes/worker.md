@@ -13,7 +13,7 @@ mu me
 mu me next
 mu task show <id>; mu task notes <id>
 mu task claim <id> --evidence "starting; read notes"
-mu task note <id> "FILES: ...\nDECISION: ...\nVERIFIED: ..."
+mu task note <id> "FILES: ...\nCOMMANDS: ... (exit codes)\nDECISION: ...\nVERIFIED: ..."
 mu task close <id> --evidence "tests pass: ..."  # LAST action
 ```
 
@@ -23,5 +23,5 @@ you only between tool calls. Commit before you close: the orchestrator cherry-pi
 review or audit task records each problem per
 [findings § Record](findings.md#record).
 
-Done when the task is closed. Skipping close makes the orchestrator's
+Done when your changes are committed in the workspace, the task note holds FILES, COMMANDS (with exit codes) and VERIFIED, and `mu task close` succeeded as your last action. Skipping close makes the orchestrator's
 wait hang. Won't do it: `close --as wontfix --why "..."`.

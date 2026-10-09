@@ -77,5 +77,6 @@ mu task close <id> -w <ws> --evidence "$v"
 Chain batched adds with `&&`, then `mu task list`, so one
 quoting failure cannot half-apply the batch unseen.
 
-Done when a worker with no other context could finish the task from
-the brief and the notes it points at, and could tell when it is done.
+Done when the brief has GOAL, FILES, DONE WHEN, VERIFY and the
+final-action block, every shared fact is a `Read:` pointer, and the task
+holds a refuter verdict or a `REFUTE-EXEMPT:` note.

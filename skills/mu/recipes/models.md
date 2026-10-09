@@ -46,7 +46,7 @@ local model never reviews, refutes or judges.
 
 | Work | Tier |
 | --- | --- |
-| fan-out scouting (listing units), claim lookups against a cited source, watchers, first-pass finders | cheap |
+| fan-out scouting (listing units), searchers collecting quoted claims, watchers, first-pass finders | cheap |
 | building, refactoring, tests, routine fixes | mid |
 | review, refute, judge, audit, synthesize | the tier of whoever wrote the thing being checked, or higher; another family when one exists |
 | design, plans, incidents, root cause, final synthesis of a large run | strong |
@@ -96,3 +96,7 @@ with "No API key".
 Probe a model you have not used this session
 (`pi --model <id> -p "say ok"`); `ctl: ok` after spawn does not test the
 model.
+
+Done when the chosen `model` is placed in a tier, a checker is at the
+author's tier or higher and from another family (or the verdict says why
+not), and a model new this session answered `pi --model <id> -p "say ok"`.

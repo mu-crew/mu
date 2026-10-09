@@ -109,9 +109,7 @@ keep the note as the durable copy. pi:
 
 ## Stopping a worker
 
-`mu agent abort <w>` first for pi (exact, local or remote, keeps
-context, waits for idle; exit 5 = still busy; queued follow-ups return
-to the editor unsent). Then `mu agent kick` (pi unresponsive, or
-non-pi; local panes only), then `mu agent close`.
+`mu agent abort <w>` first for pi, then `mu agent kick` (pi
+unresponsive, or non-pi), then `mu agent close`.
 
 Done when every task is closed, or a decision only a human can make blocks all progress (SKILL.md § Orchestrator rules).

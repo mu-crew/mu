@@ -81,9 +81,7 @@ Before a wave, count what it will add: units + gates + expected
 findings. If the count is more than a few hundred for one change, the
 steps that only check things are probably tasks by mistake.
 
-`mu_delegate` runs 16 at once (`MU_DELEGATE_MAX`) and queues the rest
-up to four times the cap; see
-[orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency).
+Cap and queue: [orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency).
 
 Done when every agent a recipe step spawns is either a task in the DAG
 or a delegate call whose answer landed where its step says: a
