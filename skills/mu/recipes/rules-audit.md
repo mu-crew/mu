@@ -28,22 +28,23 @@ rules are findings: [findings](findings.md) says where they live.
 2. **Pin the target**: the diff, branch, or PR, as in
    [review-panel](review-panel.md) step 1.
 3. **One checker per rule**, as a [delegate call](tasks-or-calls.md#delegate-call)
-   The checker gets one rule and the diff, and records each violation
-   as a finding ([findings § Record](findings.md#record); title
-   `<severity>: r7 <what>`), or reports `r7: no violations` with what it
+   The checker gets one rule and the diff. Delegate mode: end the answer
+   with `FINDING: … r7 …` lines. Workstream mode: one triage task per
+   violation ([findings § Record](findings.md#record); title
+   `<severity>: r7 <what>`). With no violation it reports `r7: no violations` with what it
    looked at. One rule per checker keeps it from skimming; batch under
    the cap ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
-4. **A skeptic pass** over the flags, also a delegate call: one fresh agent reads each flagged
+4. **A skeptic pass** over the findings, also a delegate call: one fresh agent reads each flagged
    line and the rule, and drops false positives (the rule does not
    apply here, the code already complies, the rule has a stated
-   exception). In workstream mode, a dropped flag is
+   exception). In workstream mode, a dropped finding is
    `close --as rejected --why "<why the rule does not bite here>"`; a
    confirmed one is accepted with `--evidence` naming the flagged line
    ([findings § Triage](findings.md#triage) step 3; quoting:
    [brief § Quoting](brief.md#quoting)).
 5. **Report or fix** confirmed violations, as in review-panel step 5.
 
-Done when every rule from step 1 has a checker result, and every flag
+Done when every rule from step 1 has a checker result, and every finding
 is decided.
 
 ## Mine: rules you keep stating but never wrote

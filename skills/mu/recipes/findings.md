@@ -94,8 +94,10 @@ across reviewers and creates one task per real problem.
    | could not check | stays in triage, with an `UNVERIFIED: <why>` note | |
 
 4. **Group** accepted findings that touch the same files into one fix
-   task when separate workers would collide; close the grouped findings
-   `--as superseded --why "fixed in <fix-task>"`.
+   task when separate workers would collide. Block the umbrella on the
+   fix task (`mu task block <umbrella> --by <fix-task>`), then close the
+   grouped findings `--as superseded --why "fixed in <fix-task>"`:
+   superseding unblocks the umbrella.
 
 Done when `mu task list --substate triage -w <ws>` lists only findings
 with an `UNVERIFIED` note, and each of those is reported to the human.
@@ -105,7 +107,9 @@ with an `UNVERIFIED` note, and each of those is reported to the human.
 Accepted findings are ordinary tasks: dispatch them, review the fix
 ([adversarial-review](adversarial-review.md)), merge. The umbrella
 closes with `mu task close <umbrella> --if-ready` once every finding is
-`CLOSED/*`. A plain `close` would succeed with findings still open.
+`CLOSED/*`. A plain `close` would succeed with findings still open; an
+`UNVERIFIED` finding blocks `--if-ready`, so the umbrella stays open
+until the human decides it.
 
 The report is a query, not a document: `mu task list -w <ws>
 --substate rejected`, `--substate duplicate`, `--status OPEN`, and the

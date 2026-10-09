@@ -10,6 +10,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **Skill: review recipes keep blockers honest.** `UNVERIFIED` findings no longer contradict `--if-ready` (umbrella stays open); adversarial-review re-blocks downstream work on `review_x_2` after a rejection; findings Group blocks the umbrella on the fix before superseding; adversarial-review uses *finding* and scopes itself to commit-producing units; rules-audit splits delegate/workstream mode; tasks-or-calls defines delegate call for scratch and a satisfiable Done when.
+
 ### Changed
 
 - **Skill: model tiers.** New `skills/mu/recipes/models.md` ranks models
