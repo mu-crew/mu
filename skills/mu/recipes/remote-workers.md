@@ -45,7 +45,8 @@ mu task claim t1 -w big --for worker-1 --evidence 'remote on dev'
 mu agent send worker-1 -w big --fresh '...'
 
 # 5. WAIT: pi: mu agent wait worker-1 -w big --after-runs <send's runs> --json,
-#    then the claim's Next: once. non-pi: run the claim's Next: once per turn
+#    then the claim's Next: once, after the worker reports done.
+#    non-pi: the same, once per reported-done turn
 
 # 6. COLLECT: fetch straight from the remote worktree
 git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
@@ -89,15 +90,15 @@ plus a 10 s cache.
 
 ### Step 5: poll once per turn
 
-The claim's `Next:` mule poll is mandatory. It proves the commit is on
-the host and closes the task. For a pi worker, first block on
+The claim's `Next:` mule poll closes the task as done on any change of
+the remote HEAD. Run it once, only after the worker reports done (its
+close or final answer). For a pi worker, first block on
 `mu agent wait <name> --after-runs <runs> --json`, with `runs` from
-`mu agent send --json`. It settles exactly over the forwarded socket.
-Without `--after-runs`, a worker that is already idle blocks until
-`--timeout`. If the worker may already be done, pass `<runs-1>`: the
-wait then returns the last answer at once. Then run `Next:` once instead
-of on every turn. On exit 5 (timeout), or on a wait that returns while
-the worker asks a question, run `Next:` anyway.
+`mu agent send --json`. It settles exactly over the forwarded socket,
+and it returns at once for a run that settled before the wait started.
+Pass `<runs>` unchanged. On exit 5 (timeout), or on a wait that returns
+while the worker asks a question, do not poll: read the pane
+(`mu agent read <name> -n 20`) and answer.
 
 - Never `sleep` in a tool call. Aborting the loop can leave remote work
   and a capped channel running.
@@ -122,10 +123,15 @@ there with its warm dependencies:
 
 ```bash
 git cherry-pick <sha>
-git push -q "ssh://dev/~/hacking/<repo>.git" HEAD:refs/heads/main
-mule run --cwd ~/hacking/<checkout> --wait \
-  'git fetch -q origin && git reset -q --hard origin/main && npm run check'
+git push -q "ssh://dev/~/hacking/<repo>.git" HEAD:refs/heads/gate-tmp
+mule run --cwd ~/hacking/<gate-checkout> --wait \
+  'git fetch -q origin gate-tmp && git checkout -q --detach FETCH_HEAD && npm run check'
 ```
+
+`<gate-checkout>` is a scratch checkout or worktree used only for
+gates, never one holding work. Push to a temporary ref, never `main`;
+delete it afterwards (`git push origin :gate-tmp`). Push to `main` only
+after the gate passes.
 
 `--wait` exits with the suite's code. A bare ssh would hold the capped
 channel for minutes. Keep two gates local: platform-sensitive tests (macOS `ps` returns argv,
@@ -307,8 +313,10 @@ command but cannot serve `git fetch`.
 et dev        # or your site's wrapper, such as `x2ssh -et dev`
 ```
 
-An aborted `et` or `x2ssh` leaves local processes behind. Run
-`pkill -f x2ssh` before retrying.
+An aborted `et` or `x2ssh` leaves local processes behind. Find them
+with `ps -o pid=,command= -ax | grep "[x]2ssh"` and kill only those of
+the aborted invocation (match its host or tty), not every x2ssh, before
+retrying.
 
 On a capped host: ET for you, mule for tooling, detached tmux for mu
 agents. None of them competes for the slot.

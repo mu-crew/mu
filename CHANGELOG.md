@@ -10,13 +10,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
-### Fixed
-
-- **Skill: codemode driver.** The scratch script writes each note to a file
-  and pipes it to `mu task note`, so answer text (e.g. a `MU_EOF` line)
-  never runs as shell; the stale cap-refusal warning points to
-  orchestrator-loop § Concurrency.
-
 ### Changed
 
 - **Skill: model tiers.** New `skills/mu/recipes/models.md` ranks models
@@ -29,18 +22,31 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
-- **`mu agent close` no longer deletes `cp -a` workspaces silently.** A `none`-backend workspace can't prove it is clean, so close refuses (`WorkspacePreservedError`) unless `--discard-workspace`. SKILL.md and waves.md now give the safe `workspace free` path and the `refresh --from` fix for unpushed merges.
-
-- **`model` examples with `:<level>` failed through a gateway provider.** pi
-  reads the first segment as the provider, so `anthropic/…:high` died with
-  "No API key". The models recipe, delegate guide and `mu_delegate` help now
-  say to copy `<provider>/<model>` from `pi --list-models`; a test pins that
-  `mu_delegate` accepts `provider/family/id:level`.
+- **Skill: codemode driver.** The scratch script writes each note to a
+  file and pipes it to `mu task note`, so answer text (e.g. a `MU_EOF`
+  line) never runs as shell; the stale cap-refusal warning points to
+  orchestrator-loop § Concurrency.
+- **Skill: remote-workers recipe safety.** Poll only after the worker
+  reports done (the poll closes the task); gate on a scratch checkout
+  via a temporary ref, never `main`; `--after-runs` takes the send's
+  `runs` unchanged; no blanket `pkill -f x2ssh`.
+- **`mu agent close` no longer deletes `cp -a` workspaces silently.** A
+  `none`-backend workspace can't prove it is clean, so close refuses
+  (`WorkspacePreservedError`) unless `--discard-workspace`. SKILL.md and
+  waves.md now give the safe `workspace free` path and the `refresh
+  --from` fix for unpushed merges.
+- **`model` examples with `:<level>` failed through a gateway
+  provider.** pi reads the first segment as the provider, so
+  `anthropic/…:high` died with "No API key". The models recipe, delegate
+  guide and `mu_delegate` help now say to copy `<provider>/<model>` from
+  `pi --list-models`; a test pins that `mu_delegate` accepts
+  `provider/family/id:level`.
 - **`mu agent send` to a dead pane no longer says "ctl: refused".** When
-  the control socket is silent and the pane is gone (the CLI exited, e.g.
-  no API key), ctl verbs now raise `AgentPaneDeadError` with next steps to
-  read the log, close the row and respawn, not link/kick/ssh advice. A
-  live pane whose socket refuses still raises `AgentCtlUnreachableError`.
+  the control socket is silent and the pane is gone (the CLI exited,
+  e.g. no API key), ctl verbs now raise `AgentPaneDeadError` with next
+  steps to read the log, close the row and respawn, not link/kick/ssh
+  advice. A live pane whose socket refuses still raises
+  `AgentCtlUnreachableError`.
 
 ## [3.10.2] — 2026-10-09
 
