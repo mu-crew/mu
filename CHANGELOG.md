@@ -8,7 +8,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
-## [Unreleased]
+## [3.11.0] — 2026-10-09
+
+**The skill learns model tiers, and a review panel's fixes land.** A new
+`recipes/models.md` says which model tier each role needs; a five-angle
+review of the skill found 41 problems, and the confirmed ones are fixed.
+`mu agent close` no longer deletes edits in a `cp -a` workspace, and
+`mu agent send` to a dead pane says so.
+
+Upgrade with `npm i -g @mu-crew/mu@3.11.0`, then `/reload` in running pi
+sessions to pick up the skill. No schema change.
 
 ### Changed
 
