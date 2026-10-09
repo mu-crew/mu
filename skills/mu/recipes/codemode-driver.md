@@ -44,7 +44,7 @@ return wait.output;
 
 Size the worker list from the ceiling on the umbrella
 ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)),
-one per ready track. Merge and verify outside the script
+one per ready task. Merge and verify outside the script
 ([orchestrator-loop § Merging](orchestrator-loop.md#merging)). Check
 field names against `--json` output; the script is a shape, not an API.
 

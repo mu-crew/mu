@@ -45,7 +45,8 @@ NDJSON; `mu log` writes print text even with `--json`. Errors are `{error,messag
 - **claim / release** — atomic take/clear of `tasks.owner`.
 - **note** — append-only task context; survives sessions.
 - **track** — tasks connected by `block` edges (`mu task block B --by A`
-  puts B on A's track); spawn at most one agent per ready track.
+  puts B on A's track). Spawn one agent per ready task, not per track:
+  an umbrella puts all its units on one track.
 - **workspace** — per-agent VCS copy under
   `<state-dir>/workspaces/<workstream>/<agent>/`.
 
@@ -103,8 +104,10 @@ wrapper whose argv0 is not `pi`/`pi-meta` it shows `needs_input`): add
 ### Workstreams, DAGs, tracks
 
 The DAG has one edge: `mu task block A --by B` means **B blocks A**.
-Tracks sharing a prerequisite collapse into one, so two agents never
-take the same dependency.
+Tracks sharing a prerequisite collapse into one, so an umbrella every
+unit blocks makes the whole job one track. Parallelism is the ready
+set: tasks that edit the same files get a `block` edge between them,
+so only one is ready at a time.
 
 ### Workspaces prevent trampling
 

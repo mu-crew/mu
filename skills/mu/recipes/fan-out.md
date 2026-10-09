@@ -25,13 +25,13 @@ some and calls the job done; one task per unit cannot.
    only checks (no commits) makes each unit a delegate call instead
    ([tasks-or-calls](tasks-or-calls.md)).
 3. **Cap concurrency** ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
-   Spawn at most one agent per ready track. Tell workers to avoid
+   One agent per ready unit, up to the ceiling. Tell workers to avoid
    repo-wide commands so more can run.
 4. **Pipeline.** Dispatch, wait `--first`, merge
    ([orchestrator-loop § Merging](orchestrator-loop.md#merging)), dispatch
    the next unit to the freed worker with `--fresh`. With `codemode`, a
    [driver](codemode-driver.md) can dispatch each batch. Units that touch the same files
-   go on one track (see [waves](waves.md)).
+   are chained with `block` (see [waves](waves.md)).
 5. **Review per unit** when a wrong unit is costly: add a review task
    per unit ([adversarial-review](adversarial-review.md)).
 6. **Synthesize** when the output is a report, not commits: one

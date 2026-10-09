@@ -6,10 +6,10 @@ the loop and the reasons behind them.
 
 ## Every turn
 
-1. `mu state -w <ws>` — read agents, IN_PROGRESS, ready tasks,
-   parallel tracks.
-2. Spawn at most one agent per independent ready track ([waves](waves.md)
-   when workers share files).
+1. `mu state -w <ws>` — read agents, IN_PROGRESS, ready tasks.
+2. Spawn one agent per ready task, up to the ceiling below. Tasks that
+   edit the same files are chained with `block`, so only one is ready
+   ([waves](waves.md)).
 3. **Claim before sending — even one-shot reviewers/scouts.**
    `mu task claim <id> -w <ws> --for <agent> --evidence "..."`.
    If no task exists, `mu task add` first (`--note 'REPRO: ...'` when
