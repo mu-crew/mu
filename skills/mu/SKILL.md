@@ -114,8 +114,10 @@ other; keep the main checkout for orchestration.
 
 Workspaces auto-detect jj, sl, or git (else `cp -a`). `mu agent close`
 frees one **only if clean** (no uncommitted changes, no commits since
-fork); otherwise it fails with `WorkspacePreservedError`. Then use
-`mu workspace free <agent>` or `--discard-workspace` (lossy).
+fork); otherwise it fails with `WorkspacePreservedError`. A `cp -a` copy is
+never clean. Inspect the workspace, cherry-pick what to keep (or
+`mu workspace free <agent> --commit`), and pass `--discard-workspace`
+only to throw the rest away.
 Before each `--fresh` send, `mu workspace refresh <agent>` rebases onto
 main and keeps LLM context ([waves](recipes/waves.md) when workers share
 files). Claim and send warn at ≥10 commits behind

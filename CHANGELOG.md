@@ -29,6 +29,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`mu agent close` no longer deletes `cp -a` workspaces silently.** A `none`-backend workspace can't prove it is clean, so close refuses (`WorkspacePreservedError`) unless `--discard-workspace`. SKILL.md and waves.md now give the safe `workspace free` path and the `refresh --from` fix for unpushed merges.
+
 - **`model` examples with `:<level>` failed through a gateway provider.** pi
   reads the first segment as the provider, so `anthropic/…:high` died with
   "No API key". The models recipe, delegate guide and `mu_delegate` help now
