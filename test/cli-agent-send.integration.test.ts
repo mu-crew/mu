@@ -165,6 +165,13 @@ describe("mu agent send workspace staleness", () => {
 describe("mu agent send to a pi agent", () => {
   beforeEach(() => {
     insertAgent(db, { name: "pi-1", workstream: "auth", paneId: "%2", cli: "pi" });
+    // The pane is alive (paneExists echoes the id) but has no control
+    // socket: the ctl-unreachable case, not a dead pane.
+    setTmuxExecutor(async (args) => {
+      (calls as string[][]).push([...args]);
+      const live = args[0] === "display-message" && args.includes("#{pane_id}");
+      return { stdout: live ? "%2\n" : "", stderr: "", exitCode: 0 };
+    });
   });
 
   it("fails loud when the control socket is missing, without pasting", async () => {
@@ -176,6 +183,22 @@ describe("mu agent send to a pi agent", () => {
     const env = JSON.parse(stderr) as { error: string; nextSteps: { command: string }[] };
     expect(env.error).toBe("AgentCtlUnreachableError");
     expect(env.nextSteps.some((s) => s.command === "mu link pi")).toBe(true);
+    expect(calls.filter((c) => c[0] === "paste-buffer")).toEqual([]);
+  });
+
+  it("a pi agent whose pane is gone reports a dead agent, not ctl unreachable", async () => {
+    setTmuxExecutor(async (args) => {
+      (calls as string[][]).push([...args]);
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    const { exitCode, stderr } = await runCli(
+      ["agent", "send", "pi-1", "hello", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBe(1);
+    const env = JSON.parse(stderr) as { error: string; nextSteps: { command: string }[] };
+    expect(env.error).toBe("AgentPaneDeadError");
+    expect(env.nextSteps.some((s) => s.command === "mu link pi")).toBe(false);
     expect(calls.filter((c) => c[0] === "paste-buffer")).toEqual([]);
   });
 
