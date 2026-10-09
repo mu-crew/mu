@@ -538,7 +538,17 @@ export interface HandleOptions {
    * segment lands mid-query.
    */
   ambientSync?: false;
+  /**
+   * Segment-lock wait for the exit flush (default: ambientFlush's).
+   * The TUI passes 0: its worker already flushed what it saw, so waiting
+   * on another process's lock only delays `q`; on a busy lock the ops
+   * stay in the DB for the next flush.
+   */
+  flushLockWaitMs?: number;
 }
+
+/** For the two TUI entry points (bare `mu`, `mu state --tui`). */
+export const TUI_HANDLE_OPTS: HandleOptions = { flushLockWaitMs: 0 };
 
 /** Wrap an async handler so typed errors become specific exit codes.
  *
@@ -588,7 +598,7 @@ export function handle(
       // command happened to exit 0.
       if (ambient && db !== undefined) {
         try {
-          await ambientFlush(db);
+          await ambientFlush(db, { lockWaitMs: opts?.flushLockWaitMs });
         } catch {
           // ambientFlush is already total; belt and braces.
         }

@@ -29,6 +29,7 @@ import {
   findCommandForArgv,
   handle,
   NameAmbiguousError,
+  TUI_HANDLE_OPTS,
   UsageError,
 } from "./cli/handle.js";
 import { wireLinkCommand } from "./cli/link.js";
@@ -829,7 +830,7 @@ export function buildProgram(): Command {
         program.outputHelp();
         return;
       }
-      return handle((db) => cmdBareTui(db, program, opts.workstream), command)();
+      return handle((db) => cmdBareTui(db, program, opts.workstream), command, TUI_HANDLE_OPTS)();
     });
 
   wireWorkstreamCommands(program);
