@@ -22,7 +22,7 @@ Delegates called in one turn run in parallel.
 | `timeout` | Seconds to wait for the answer (default 3600). After it, the answer does not come back; the follow-up gives the `mu agent wait` command. |
 | `workspace` | Own VCS checkout, for delegates that edit files. The follow-up names its path. It isolates repository edits only. |
 | `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`). Only keys set in pi's environment exist. |
-| `model` | pi `--model` value, appended to the cli's command (`sonnet`, `openai/gpt-5:high`). Varies models across a panel. tmux only: herdr refuses a command override. |
+| `model` | pi `--model` value, appended to the cli's command (`sonnet`, `<provider>/<model>:high`, copied from `pi --list-models`). Varies models across a panel. tmux only: herdr refuses a command override. |
 | `keep` | Keep the pane after it finishes, to talk to it again. |
 | `record` | `{ task, workstream? }` (or `task: "<ws>/<task>"`): write the answer's verdict onto that task as a note. See [Record a verdict](#record-a-verdict). |
 

@@ -319,6 +319,17 @@ describe("mu_delegate", () => {
     expect(spawn).not.toContain("--cli");
   });
 
+  it("model accepts a gateway provider/family/id:level value", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", model: "modelbridge/anthropic/claude-sonnet-5-5:low" });
+    const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
+    expect(spawn[spawn.indexOf("--command") + 1]).toContain(
+      "--model modelbridge/anthropic/claude-sonnet-5-5:low",
+    );
+  });
+
   it("model with cli resolves that key's command, or the bare key when unset", async () => {
     const mu = fakeMu();
     const p = fakePi();

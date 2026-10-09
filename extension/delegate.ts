@@ -756,7 +756,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         model: {
           type: "string",
           description:
-            "Model for the subagent, passed to pi as --model (e.g. 'sonnet', 'openai/gpt-5:high'); appended to the cli's command. Default: the cli's own model. Use it to vary models across a review panel.",
+            "Model for the subagent, passed to pi as --model (e.g. 'sonnet', '<provider>/<model>:high' copied from `pi --list-models`); appended to the cli's command. Default: the cli's own model. Use it to vary models across a review panel.",
         },
         keep: {
           type: "boolean",

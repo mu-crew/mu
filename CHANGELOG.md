@@ -8,6 +8,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`model` examples with `:<level>` failed through a gateway provider.** pi
+  reads the first segment as the provider, so `anthropic/…:high` died with
+  "No API key". The models recipe, delegate guide and `mu_delegate` help now
+  say to copy `<provider>/<model>` from `pi --list-models`; a test pins that
+  `mu_delegate` accepts `provider/family/id:level`.
+
 ## [3.10.2] — 2026-10-09
 
 **The TUI exits on `q` again with sync on.** Upgrade with

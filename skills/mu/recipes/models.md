@@ -79,10 +79,14 @@ matters, pass `model`.
 
 pi takes both in one `--model` value: `<provider/id>:<level>`, where the
 thinking (effort) level is one of `off`, `minimal`, `low`, `medium`,
-`high`, `xhigh`, `max`. Leave `:<level>` off to keep the model's default.
+`high`, `xhigh`, `max`. Leave `:<level>` off to keep the model's default. With `:<level>`, pi
+reads the first segment as the provider, so copy `<provider>/<model>`
+exactly from `pi --list-models`. Through a gateway that is
+`modelbridge/anthropic/claude-sonnet-5-5:high`; `anthropic/…:high` fails
+with "No API key".
 
-- `mu_delegate`: `model: "anthropic/claude-sonnet-5-5:high"`.
-- Spawn: `mu agent spawn r -w <ws> --command "pi --model anthropic/claude-sonnet-5-5:high"`.
+- `mu_delegate`: `model: "<provider>/<model>:high"`.
+- Spawn: `mu agent spawn r -w <ws> --command "pi --model <provider>/<model>:high"`.
 - A `cli` key (`--cli pi_big`) works only if `$MU_<KEY>_COMMAND` is set
   in the environment; check before you rely on one.
 - herdr refuses a command override, so neither model nor level can be
