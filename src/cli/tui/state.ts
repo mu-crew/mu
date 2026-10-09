@@ -94,7 +94,6 @@ export function syncWorkerForTests(): Worker | null {
 function workerSyncPass(dbPath: string): Promise<SyncPassResult | null> {
   if (syncWorker === null) {
     const worker = new Worker(syncWorkerPath, { workerData: { dbPath } });
-    worker.unref();
     const state: SyncWorkerState = { worker, done: null };
     const settle = (result: SyncPassResult | null) => {
       const done = state.done;
@@ -108,6 +107,10 @@ function workerSyncPass(dbPath: string): Promise<SyncPassResult | null> {
     };
     worker.on("error", drop);
     worker.on("exit", drop);
+    // AFTER the listeners: adding a "message" listener re-refs the
+    // worker's port, so an earlier unref() is silently undone and the
+    // process hangs on exit after `q`.
+    worker.unref();
     syncWorker = state;
   }
   const state = syncWorker;
