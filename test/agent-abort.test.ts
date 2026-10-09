@@ -17,6 +17,7 @@ import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
 let dir: string;
@@ -24,6 +25,7 @@ let dbPath: string;
 let db: Db;
 let servers: Server[];
 let ops: string[];
+let mux: MuxHarness;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mab-"));
@@ -32,9 +34,12 @@ beforeEach(() => {
   ensureWorkstream(db, "auth");
   servers = [];
   ops = [];
+  // The pane is alive: a silent socket is then "unreachable", not "dead".
+  mux = installMux("tmux", async () => ({ stdout: "%1\n", stderr: "", exitCode: 0 }));
 });
 
 afterEach(async () => {
+  mux.restore();
   await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
   db.close();
   rmSync(dir, { recursive: true, force: true });

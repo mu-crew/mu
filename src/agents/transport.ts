@@ -28,6 +28,7 @@ import {
   AgentCtlUnreachableError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentPaneDeadError,
   AgentSlashCommandUnsupportedError,
 } from "./errors.js";
 import { resolveCliCommand, speaksMuCtl } from "./spawn.js";
@@ -143,7 +144,7 @@ export async function extensionOutdated(
  * (missing on ENOENT, else refused).
  */
 export async function ctlRequestFor(
-  agent: Pick<AgentRow, "name" | "workstreamName">,
+  agent: Pick<AgentRow, "name" | "workstreamName" | "paneId">,
   sock: string,
   req: CtlRequest,
 ): Promise<CtlReply> {
@@ -156,18 +157,31 @@ export async function ctlRequestFor(
 
 /** The error ctlRequestFor raises for a failed ctl request (see there). */
 export async function ctlFailure(
-  agent: Pick<AgentRow, "name" | "workstreamName">,
+  agent: Pick<AgentRow, "name" | "workstreamName" | "paneId">,
   sock: string,
   e: unknown,
 ): Promise<unknown> {
   if (e instanceof CtlVersionError) return e;
   if (e instanceof CtlUnknownOpError) return extensionOutdated(agent, sock, e);
+  // A silent socket on a vanished pane is a dead agent, not a link problem.
+  if (await paneGone(agent.paneId)) {
+    return new AgentPaneDeadError(agent.name, agent.workstreamName, agent.paneId);
+  }
   return new AgentCtlUnreachableError(
     agent.name,
     agent.workstreamName,
     sock,
     errCode(e) === "ENOENT" ? "missing" : "refused",
   );
+}
+
+/** True only when the mux positively reports the pane gone (a mux error is "unknown"). */
+async function paneGone(paneId: string): Promise<boolean> {
+  try {
+    return !(await (await activeMux()).paneExists(paneId));
+  } catch {
+    return false;
+  }
 }
 
 /** How `mu agent send` delivered: the `mode=` of an `agent.send` op. */

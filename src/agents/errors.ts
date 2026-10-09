@@ -491,6 +491,41 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
 }
 
 /**
+ * A ctl verb (send, abort, ...) found the agent's control socket silent
+ * AND its pane gone: the process exited (or the pane was closed behind
+ * mu's back), so there is nothing to link, kick or forward. Raised
+ * instead of AgentCtlUnreachableError, which is for a live pane.
+ */
+export class AgentPaneDeadError extends Error implements HasNextSteps {
+  override readonly name = "AgentPaneDeadError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly paneId: string,
+  ) {
+    super(
+      `agent ${agentName} is dead: its pane ${paneId} no longer exists, so its control socket is gone`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Read the log for why it exited (a bad model or missing API key is common)",
+        command: `mu log -w ${this.workstream}`,
+      },
+      {
+        intent: "Drop the dead registry row, then respawn",
+        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
+      },
+      {
+        intent: "Respawn it",
+        command: `mu agent spawn ${this.agentName} -w ${this.workstream}`,
+      },
+    ];
+  }
+}
+
+/**
  * `mu agent abort` on an agent that does not run pi: there is no control
  * socket to carry the abort, and mu does not silently signal the pane.
  */
