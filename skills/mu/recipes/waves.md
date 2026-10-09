@@ -4,8 +4,8 @@ Use when two or more workers edit the same repo at once. Every worker
 runs in its own `--workspace`; this recipe decides what each one gets.
 
 1. **Bucket by file cluster, not severity.** Two agents editing one
-   file conflict, whatever the priority. Put tasks that share files on
-   one track (`mu task block`) so only one agent holds them.
+   file conflict, whatever the priority. Chain tasks that share files
+   (`mu task block B --by A`) so only one is ready at a time.
 2. **Freeze only what conflicts.** Give idle workers tasks that avoid
    the shared files. A blanket freeze idled four of five workers for a
    day.

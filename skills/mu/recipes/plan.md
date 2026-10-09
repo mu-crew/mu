@@ -38,8 +38,8 @@ human asks for a file.
    of order.
 6. **Add edges for dependencies only.** `mu task block A --by B` when A
    consumes what B produces. Plan order is not a dependency: an extra
-   edge serialises tracks that could run in parallel. The exception:
-   tasks that edit the same files share a track ([waves](waves.md)).
+   edge serialises tasks that could run in parallel. The exception:
+   tasks that edit the same files are chained ([waves](waves.md)).
 7. **Self-review before dispatch.** Map each spec requirement to its
    task, grep the notes for placeholders, match INTERFACES names across
    tasks, and read the graph back (`mu task tree task_0 -w <ws> --down`).
@@ -51,7 +51,7 @@ human asks for a file.
 
 Done when every spec requirement maps to a task, no note holds a
 placeholder, every claim-making brief has a verdict, and `mu state`
-shows the intended parallel tracks. Then dispatch per [orchestrator-loop](orchestrator-loop.md).
+lists the tasks you meant to run in parallel as Ready together. Then dispatch per [orchestrator-loop](orchestrator-loop.md).
 
 ## Notes
 
