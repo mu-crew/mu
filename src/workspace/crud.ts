@@ -365,6 +365,8 @@ export async function listCommitsForWorkspace(
  * fork point. Used by closeAgent to auto-free clean workspaces.
  */
 export async function isWorkspaceClean(row: WorkspaceRow): Promise<boolean> {
+  // A `cp -a` copy has no history to prove it is unchanged: never clean.
+  if (row.backend === "none") return false;
   const backend = backendByName(row.backend);
   let clean: boolean;
   try {
@@ -373,7 +375,6 @@ export async function isWorkspaceClean(row: WorkspaceRow): Promise<boolean> {
     return false;
   }
   if (!clean) return false;
-  if (row.backend === "none") return true;
   if (row.parentRef === null || row.parentRef.length === 0) return false;
   try {
     const commits = await backend.commitsSinceBase(row.path, row.parentRef);
