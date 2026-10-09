@@ -54,8 +54,8 @@ field names against `--json` output; the script is a shape, not an API.
 answers arrive after the script, as follow-up messages: the script
 gains nothing over issuing the calls in one turn. Use it from a script
 only when `codemode.mode` is `only` and the tool is not offered
-directly. Check `Promise.allSettled` results for rejections: past the
-cap, `mu_delegate` refuses.
+directly. Check `Promise.allSettled` results for rejections; the cap is in
+[orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency).
 
 To get the verdicts back as one table instead of one message each, use
 the `scratch` form through `tools.bash`:
@@ -63,8 +63,9 @@ the `scratch` form through `tools.bash`:
 ```js
 // @options: {"timeout_ms": 1800000}
 const ws = "audit";
-const findings = ["f_auth_put", "f_sql_order"]; // finding task ids, at most the cap per script
+const findings = ["f_auth_put", "f_sql_order"]; // finding task ids, within the cap
 const sh = async (c) => (await tools.bash({ command: c })).output;
+const dir = `${(await sh("echo $HOME")).trim()}/.local/state/mu`;
 const json = (s) => { try { return JSON.parse(s); } catch { return {}; } };
 const el = (ms) => { const t = Math.round(ms / 1000); return t < 60 ? `${t}s` : `${Math.floor(t / 60)}m ${String(t % 60).padStart(2, "0")}s`; };
 const rows = await Promise.all(findings.map(async (id, i) => {
@@ -77,7 +78,8 @@ const rows = await Promise.all(findings.map(async (id, i) => {
   const note = w.outcome !== "done" ? `REFUTER ${i + 1}: no verdict (${w.outcome ?? "no result"})`
     : `REFUTER ${i + 1} (${a}, ${el(Date.now() - t0)}):\n` + (at < 0 ? `NO VERDICT LINE: ${(w.lastText ?? "").slice(-1500)}`
     : [lines[at], ...lines.slice(at + 1).filter((l) => /^[\s>*_`-]*EVIDENCE:/.test(l))].join("\n"));
-  await sh(`mu task note ${id} -w ${ws} - <<'MU_EOF'\n${note}\nMU_EOF`);
+  await tools.write({ path: `${dir}/note-${a}.txt`, content: note }); // answer text never touches a shell
+  await sh(`mu task note ${id} -w ${ws} - < ${dir}/note-${a}.txt && rm ${dir}/note-${a}.txt`);
   if (w.outcome === "done") await sh(`mu agent close ${a} -w scratch`);
   return `${id}\t${note.split("\n")[1] ?? note}`;
 }));
@@ -87,7 +89,8 @@ return rows.join("\n");
 What the tool did for you, the script now owns:
 
 - **The cap.** `MU_DELEGATE_MAX` does not apply to bash spawns: keep
-  each script's list at or under it.
+  each script's list within
+  [orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency).
 - **Cleanup.** Close each scratch pane; a timed-out one stays, readable
   with `mu agent read <a> -w scratch`.
 - **Recording.** The script writes each `REFUTER` note in `record`'s

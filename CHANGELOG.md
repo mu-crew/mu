@@ -10,6 +10,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **Skill: codemode driver.** The scratch script writes each note to a file
+  and pipes it to `mu task note`, so answer text (e.g. a `MU_EOF` line)
+  never runs as shell; the stale cap-refusal warning points to
+  orchestrator-loop § Concurrency.
+
 ### Changed
 
 - **Skill: model tiers.** New `skills/mu/recipes/models.md` ranks models
