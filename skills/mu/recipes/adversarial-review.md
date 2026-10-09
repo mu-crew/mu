@@ -28,8 +28,8 @@ PR or diff from several angles, use [review-panel](review-panel.md).
 3. **Dispatch the work** as usual. When `x` closes, `review_x` becomes
    ready.
 4. **Spawn a fresh reviewer.** A new agent, or `--fresh` on an idle one,
-   so it has none of the author's reasoning, on a model chosen per
-   [Models](../SKILL.md#models-and-thinking-effort). Give it the worker's workspace path
+   so it has none of the author's reasoning, at the worker's tier or
+   higher and from another family ([models](models.md#checkers)). Give it the worker's workspace path
    and commits read-only by instruction; it edits nothing.
 5. **Claim `review_x` for the reviewer**, send the brief (below), wait.
 6. **Act on the verdict:**

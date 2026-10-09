@@ -9,7 +9,9 @@ some and calls the job done; one task per unit cannot.
 1. **Enumerate first.** A scout (a [delegate call](tasks-or-calls.md#delegate-call)) lists the units and
    writes them to the umbrella's note, one per line. The list is done
    when it matches a command the scout ran (`rg -l`, a test listing),
-   not when it looks complete. Record the command and the count.
+   not when it looks complete. Record the command and the count. The
+   scout runs cheap; the units run mid, or strong when each is a
+   judgement call ([models](models.md#roles)).
 2. **One task per unit**, blocked into an umbrella:
 
    ```bash

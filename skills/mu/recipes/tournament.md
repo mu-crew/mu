@@ -35,7 +35,10 @@ final check passed.
 - **Position bias.** Judges favour the first candidate shown. For close
   calls, judge the pair twice with the order swapped; a split decision
   goes to a third judge.
-- **Same model, same taste.** Vary the attempt models, and judge with a
-  model that made no attempt ([Models](../SKILL.md#models-and-thinking-effort)).
+- **Same model, same taste.** Vary the attempts across families at the
+  same tier, and judge with a model that made no attempt, at that tier
+  or above ([models](models.md#checkers)). A close final goes to a
+  frontier judge, or with none available, the strongest model from a
+  family that made no attempt.
 - **Ranking many items** (tickets by severity): bucket them in parallel,
   then run pairwise comparisons only within and across bucket edges.

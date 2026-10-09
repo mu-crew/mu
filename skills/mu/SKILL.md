@@ -76,7 +76,8 @@ or inspection.
 
 Before you act on a claim, root cause, plan, fix or brief, or to get a second
 look at your own work or diff, make a [delegate call](recipes/tasks-or-calls.md#delegate-call)
-that tries to refute it (briefs: see Orchestrator rules; many claims: [refute](recipes/refute.md)).
+that tries to refute it, on another model family ([models](recipes/models.md#checkers); briefs: see
+Orchestrator rules; many claims: [refute](recipes/refute.md)).
 
 For one-shot work inside pi, call `mu_delegate` (installed by `mu link pi`). Outside pi: spawn
 into the reserved `scratch` workstream (no task DAG, auto-created), `send --fresh --json`, then
@@ -225,23 +226,14 @@ rules hold even when you skip it:
 
 ## Models and thinking effort
 
-mu doesn't reason about models; pi does. Controls:
+mu passes the model through; you pick it. Before you choose one for a
+spawn or a delegate call, read [recipes/models.md](recipes/models.md):
+tiers, which roles need which, and local models as a last resort.
 
-```bash
-mu agent spawn r --command "pi --model opus:high"
-export MU_PI_COMMAND="pi --model sonnet:medium"
-mu agent spawn a --cli pi_big   # uses $MU_PI_BIG_COMMAND
-```
-
-`pi_mini` scouts and finds, `pi` builds and refactors, `pi_big` designs and
-handles incidents. A reviewer, refuter,
-judge or auditor checks level or up, never down: at least the worker's
-capability, from another family if one exists (provider or model-id prefix in
-`pi --list-models`). Small-model signs: a local runtime (ollama, lmstudio,
-llama.cpp), a size (`4b`, `27b`), mini/haiku/flash/nano/lite, thinking `no`,
-context or max-out far below the worker's. No such peer: same model, fresh
-context, higher thinking unless at max. Probe an unused model first
-(`pi --model <provider/model> -p "say ok"`); `ctl: ok` does not test it.
+- `mu_delegate` takes `model`; a spawn takes `--command "pi --model <id>"`.
+- A checker (reviewer, refuter, judge, auditor) runs at the author's tier
+  or higher, from another family when one exists. A delegate with no
+  `model` runs the cli's default model; pass `model` when it matters.
 
 ## Reaper and agent state
 
@@ -287,6 +279,7 @@ risky job that needs several of them, start with
 | [drift-audit](recipes/drift-audit.md) | hours into a long run, after a batch, compaction or resume, before a stop rule |
 | [watcher](recipes/watcher.md) | a helper polls a PR, CI, or log for change |
 | [findings](recipes/findings.md) | any review, audit, or check reports problems: where they live, how they are triaged |
+| [models](recipes/models.md) | you pick a model for a spawn or delegate call |
 | [tasks-or-calls](recipes/tasks-or-calls.md) | a recipe step spawns an agent: DAG task or delegate call |
 | [adversarial-review](recipes/adversarial-review.md) | gate each unit you dispatch before it merges (a review task per unit) |
 | [fan-out](recipes/fan-out.md) | a sweep or migration: the same change over many files or call sites |

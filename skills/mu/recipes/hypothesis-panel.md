@@ -9,7 +9,8 @@ form independent theories; separate agents then try to kill them.
 
 1. **Write the symptom** on the umbrella: what happens, how often, the
    repro command, and what would count as fixed.
-2. **One reader per evidence source** (a [delegate call](tasks-or-calls.md#delegate-call)): logs, the
+2. **One reader per evidence source** (a [delegate call](tasks-or-calls.md#delegate-call), strong tier:
+   root cause is judgement, [models](models.md#roles)): logs, the
    code path, recent commits, data, environment. Each sees only its
    source, so the theories do not anchor on each other. Record each
    theory as an `OPEN/triage` task blocking the umbrella, decided like

@@ -201,6 +201,9 @@ mu agent spawn worker-1   --cli pi_mini
 mu agent spawn reviewer-1 --cli pi_big
 ```
 
+The skill's [model tiers](../skills/mu/recipes/models.md) are advice to
+the agent choosing; mu reads none of it.
+
 ## What it enables
 
 - **Visible crews.** Spawn agents once and send them work all day. Each
