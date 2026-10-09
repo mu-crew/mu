@@ -8,6 +8,27 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [3.10.2] — 2026-10-09
+
+**The TUI exits on `q` again with sync on.** Upgrade with
+`npm i -g @mu-crew/mu@3.10.2`. No schema or pi extension change.
+
+### Fixed
+
+- **`mu` hung after `q` when `MU_SYNC_DIR` was set.** The TUI stopped
+  rendering but the process never exited: the 3.10.0 sync worker was
+  unref'd before its `message` listener was attached, and attaching it
+  re-refs the worker. It is now unref'd after its listeners.
+- **The TUI's exit flush no longer waits for the segment lock.** After
+  `q`, the flush could wait up to 2 s on a lock held by another mu
+  process. The TUI (bare `mu`, `mu state --tui`) now tries the lock
+  once; if it is busy, nothing is written and the ops stay in the DB
+  for the next flush. The TUI's worker has already flushed every 10 s.
+  Other verbs keep the 2 s wait. Exit is ~150-450 ms when the segment
+  manifest is sealed. A mu older than 3.10.0 still running on this
+  machine rewrites it unsealed, which makes every flush rescan the
+  segment, so restart those processes.
+
 ## [3.10.1] — 2026-10-08
 
 **`mu_delegate` can pick a model per call**, so a review panel can mix
