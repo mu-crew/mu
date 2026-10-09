@@ -17,6 +17,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   "No API key". The models recipe, delegate guide and `mu_delegate` help now
   say to copy `<provider>/<model>` from `pi --list-models`; a test pins that
   `mu_delegate` accepts `provider/family/id:level`.
+- **`mu agent send` to a dead pane no longer says "ctl: refused".** When
+  the control socket is silent and the pane is gone (the CLI exited, e.g.
+  no API key), ctl verbs now raise `AgentPaneDeadError` with next steps to
+  read the log, close the row and respawn, not link/kick/ssh advice. A
+  live pane whose socket refuses still raises `AgentCtlUnreachableError`.
 
 ## [3.10.2] — 2026-10-09
 

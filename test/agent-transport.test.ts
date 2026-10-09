@@ -12,6 +12,7 @@ import {
   AgentCtlUnreachableError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentPaneDeadError,
   type AgentRow,
   AgentSlashCommandUnsupportedError,
   expectsCtl,
@@ -34,6 +35,7 @@ let db: Db;
 let mux: MuxHarness;
 let servers: Server[];
 let received: Record<string, unknown>[];
+let paneAlive: boolean;
 
 beforeEach(() => {
   // Short prefix: the socket path must fit macOS's 104-byte sun_path.
@@ -44,7 +46,12 @@ beforeEach(() => {
   servers = [];
   received = [];
   setSleepForTests(async () => {});
-  mux = installMux("tmux", async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+  paneAlive = true;
+  mux = installMux("tmux", async (args) => ({
+    stdout: args[0] === "display-message" && paneAlive ? "%1\n" : "",
+    stderr: "",
+    exitCode: 0,
+  }));
 });
 
 afterEach(async () => {
@@ -147,6 +154,37 @@ describe("sendViaTransport", () => {
     expect((err as AgentCtlUnreachableError).kind).toBe("missing");
     expect((err as AgentCtlUnreachableError).socket).toBe(sockFor("worker-1"));
     expect(pasted()).toBe(false);
+  });
+
+  it("a silent socket on a vanished pane is AgentPaneDeadError, not link advice", async () => {
+    seed("worker-1");
+    paneAlive = false;
+    const err = await sendToAgent(db, "worker-1", "hello", { workstream: "auth" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentPaneDeadError);
+    expect((err as AgentPaneDeadError).errorNextSteps().map((s) => s.command)).toEqual([
+      "mu log -w auth",
+      "mu agent close worker-1 -w auth",
+      "mu agent spawn worker-1 -w auth",
+    ]);
+    expect(pasted()).toBe(false);
+  });
+
+  it("a live pane whose socket refuses stays AgentCtlUnreachableError", async () => {
+    seed("worker-1");
+    // A stale socket file nobody listens on: connect gets ECONNREFUSED.
+    const path = sockFor("worker-1");
+    const s = createServer();
+    mkdirSync(dirname(path), { recursive: true });
+    await new Promise<void>((r) => s.listen(path, () => r()));
+    s.unref();
+    // the socket file is gone after close, so this reads "missing" with the pane still alive.
+    await new Promise<void>((r) => s.close(() => r()));
+    const err = await sendToAgent(db, "worker-1", "hello", { workstream: "auth" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentCtlUnreachableError);
   });
 
   it("via mux forces the paste path for a pi agent", async () => {

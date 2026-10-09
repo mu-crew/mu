@@ -30,6 +30,7 @@ export {
   AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
+  AgentPaneDeadError,
   type AgentRow,
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
