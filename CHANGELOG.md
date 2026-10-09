@@ -10,6 +10,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **Skill: model tiers.** New `skills/mu/recipes/models.md` ranks models
+  by position in a lab's lineup (frontier, strong, mid, cheap, local),
+  says which roles need which tier, and keeps local models as a last
+  resort. Checkers run at the tier of whoever wrote what they check, or
+  higher, from another family. SKILL.md and ten recipes point at it in
+  place of the `pi_mini`/`pi_big` keys. Skill-only: `/reload` in running
+  pi sessions to pick it up.
+
 ### Fixed
 
 - **`model` examples with `:<level>` failed through a gateway provider.** pi
