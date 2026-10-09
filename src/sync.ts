@@ -256,6 +256,13 @@ export interface AmbientOptions {
   quiet?: boolean;
 }
 
+export interface AmbientFlushOptions extends AmbientOptions {
+  /** How long to wait for the segment lock (default
+   *  AMBIENT_FLUSH_LOCK_WAIT_MS). On timeout nothing is written; the ops
+   *  stay in the DB and the next flush appends them. */
+  lockWaitMs?: number;
+}
+
 /** Format one non-fatal sync problem for stderr. Prefixed so it is
  *  unmistakably mu's own aside and not the verb's output. */
 function warn(message: string, opts?: AmbientOptions): void {
@@ -360,11 +367,14 @@ export async function ambientIngest(db: Db, opts?: AmbientOptions): Promise<Ambi
  * writes nothing (`lockBusy`) and the verb carries on silently: its ops
  * stay pending in `ops` and the next invocation's flush appends them.
  */
-export async function ambientFlush(db: Db, opts?: AmbientOptions): Promise<FlushResult | null> {
+export async function ambientFlush(
+  db: Db,
+  opts?: AmbientFlushOptions,
+): Promise<FlushResult | null> {
   const dir = syncDir();
   if (dir === null) return null;
   try {
-    const result = await flushSegment(db, dir);
+    const result = await flushSegment(db, dir, { lockWaitMs: opts?.lockWaitMs });
     if (result.selfRepaired !== null) {
       const d = result.selfRepaired;
       warn(

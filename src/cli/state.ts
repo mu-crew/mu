@@ -59,6 +59,7 @@ import {
   type WorkstreamSnapshot,
 } from "../state.js";
 import { isScratchWorkstream, listWorkstreams } from "../workstream.js";
+import { TUI_HANDLE_OPTS } from "./handle.js";
 import { resolveInitialTab } from "./tui-launch-focus.js";
 import { importTui } from "./tui-load.js";
 
@@ -405,6 +406,10 @@ export function wireStateCommands(program: Command): void {
     .option(...JSON_OPT)
     .action(function () {
       const opts = (this as Command).opts() as StateOpts;
-      return handle((db) => cmdState(db, opts), this as Command)();
+      return handle(
+        (db) => cmdState(db, opts),
+        this as Command,
+        opts.tui === true ? TUI_HANDLE_OPTS : undefined,
+      )();
     });
 }

@@ -41,7 +41,7 @@ import {
   syncPass,
   verifyAgainstManifest,
 } from "../src/segments.js";
-import { ambientIngest } from "../src/sync.js";
+import { ambientFlush, ambientIngest } from "../src/sync.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
@@ -1176,6 +1176,22 @@ describe("segments", () => {
         const hlcs = linesOf(path).map((l) => (JSON.parse(l) as { hlc: string }).hlc);
         expect(hlcs).toHaveLength(before + 1);
         expect(new Set(hlcs).size).toBe(before + 1);
+      });
+    });
+
+    it("ambientFlush lockWaitMs: 0 gives up on a held lock at once (the TUI's exit flush)", async () => {
+      await seedFour();
+      const stateDir = join(tempDir, "state");
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        await withEnv("MU_SYNC_DIR", dir, async () => {
+          holdSegmentLock(stateDir);
+          seedTask(a, "pending");
+          const started = Date.now();
+          const busy = await ambientFlush(a, { lockWaitMs: 0 });
+          expect(busy?.lockBusy).toBe(true);
+          // The default wait (AMBIENT_FLUSH_LOCK_WAIT_MS) is 2s.
+          expect(Date.now() - started).toBeLessThan(500);
+        });
       });
     });
 
