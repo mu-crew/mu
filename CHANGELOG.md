@@ -10,13 +10,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
-### Fixed
-
-- **Skill: review recipes keep blockers honest.** `UNVERIFIED` findings no longer contradict `--if-ready` (umbrella stays open); adversarial-review re-blocks downstream work on `review_x_2` after a rejection; findings Group blocks the umbrella on the fix before superseding; adversarial-review uses *finding* and scopes itself to commit-producing units; rules-audit splits delegate/workstream mode; tasks-or-calls defines delegate call for scratch and a satisfiable Done when.
-
 ### Changed
 
-- **Skill: wording fixes.** `REFUTED` is the verdict that sends a brief back for rewrite (there was no `AMEND`); SKILL.md drops text that restates `--help` and the outside-pi spawn steps, uses VOCABULARY terms, and models, worker and brief recipes get checkable Done whens.
+- **Skill: one agent per ready task, not per track.** An umbrella puts
+  every unit on one track, so "one agent per ready track" read literally
+  ran a fan-out with one worker. The skill now says to spawn per ready
+  task, and to chain tasks that share files with `block` so only one is
+  ready at a time.
+- **Skill: wording fixes.** `REFUTED` is the verdict that sends a brief
+  back for rewrite (there was no `AMEND`); SKILL.md drops text that
+  restates `--help` and the outside-pi spawn steps, uses VOCABULARY
+  terms, and models, worker and brief recipes get checkable Done whens.
 - **Skill: model tiers.** New `skills/mu/recipes/models.md` ranks models
   by position in a lab's lineup (frontier, strong, mid, cheap, local),
   says which roles need which tier, and keeps local models as a last
@@ -27,10 +31,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **Skill: review recipes keep blockers honest.** `UNVERIFIED` findings
+  no longer contradict `--if-ready` (umbrella stays open);
+  adversarial-review re-blocks downstream work on `review_x_2` after a
+  rejection; findings Group blocks the umbrella on the fix before
+  superseding; adversarial-review uses *finding* and scopes itself to
+  commit-producing units; rules-audit splits delegate/workstream mode;
+  tasks-or-calls defines delegate call for scratch and a satisfiable
+  Done when.
 - **Skill: drift-audit and recovery.** The drift-audit late-note query
   no longer hides an unrelated `CLOSE:` note that follows a close;
-  recovery's Done when is per operation and reachable on the DRIFT
-  path; its teardown/undo bullets keep only what `--help` lacks.
+  recovery's Done when is per operation and reachable on the DRIFT path;
+  its teardown/undo bullets keep only what `--help` lacks.
 - **Skill: codemode driver.** The scratch script writes each note to a
   file and pipes it to `mu task note`, so answer text (e.g. a `MU_EOF`
   line) never runs as shell; the stale cap-refusal warning points to
