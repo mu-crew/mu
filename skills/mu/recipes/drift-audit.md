@@ -35,13 +35,14 @@ or close you compare against is often older than it.
    IN_PROGRESS note, and each merged fix its task's findings depend on:
    git merge-base --is-ancestor <fix> <pinned>. Exit 1 = pin is stale.
 3. Closed-task notes: notes added after the task's last task.close op,
-   minus the `CLOSE:` or `<SUBSTATE>:` note the close verb itself writes
-   as the very next op (seq + 1); any other note counts, whatever its
-   prefix. Report each of the top 5 by count as its own finding with its count,
+   minus those the close verb writes in its own transaction
+   (`--evidence`, `--why`: timestamp within 50ms of the close op); any
+   other note counts, whatever its prefix. Report each of the top 5 by
+   count as its own finding with its count,
    even when the notes look routine. A late note that reports the
    closed bug again usually ran on a build without the closing fix:
    check its sha with git merge-base --is-ancestor <fix> <sha>.
-   mu sql "select t.local_id name, count(*) late from tasks t join workstreams w on w.id=t.workstream_id join task_notes n on n.task_id=t.id join (select key, max(seq) seq, max(created_at) at from ops where intent='task.close' and entity='task' group by key) c on c.key='<ws>/'||t.local_id where w.name='<ws>' and t.status='CLOSED' and n.created_at > c.at and not exists (select 1 from ops x where x.seq=c.seq+1 and x.entity='note' and x.key=c.key||'#'||n.id and (n.content like 'CLOSE: %' or n.content like upper(t.substate)||': %')) group by t.local_id order by late desc"
+   mu sql "select t.local_id name, count(*) late from tasks t join workstreams w on w.id=t.workstream_id join task_notes n on n.task_id=t.id join (select key, max(created_at) at from ops where intent='task.close' and entity='task' group by key) c on c.key='<ws>/'||t.local_id where w.name='<ws>' and t.status='CLOSED' and (julianday(n.created_at)-julianday(c.at))*86400 > 0.05 group by t.local_id order by late desc"
 4. Thin decisions: an ACCEPT/REJECTED/CLOSE/SUPERSEDED note under 40
    chars; a refuter tally with no REFUTER or VERDICT note; a review the
    orchestrator closed with no FILES/COMMANDS note and no commit.

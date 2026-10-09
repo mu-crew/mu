@@ -22,6 +22,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **Skill: drift-audit and recovery.** The drift-audit late-note query
+  no longer hides an unrelated `CLOSE:` note that follows a close;
+  recovery's Done when is per operation and reachable on the DRIFT
+  path; its teardown/undo bullets keep only what `--help` lacks.
 - **Skill: codemode driver.** The scratch script writes each note to a
   file and pipes it to `mu task note`, so answer text (e.g. a `MU_EOF`
   line) never runs as shell; the stale cap-refusal warning points to

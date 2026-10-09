@@ -4,13 +4,10 @@ Use before you undo a change, rebuild the DB, tear down a workstream,
 set up sync, or act on `mu doctor` output. Each of these can lose work
 when done in the wrong order.
 
-- **`workstream teardown`** is dry-run without `--yes`. It writes
-  TOMBSTONE ops, so `mu undo <group> --yes` reverses it; the log is the
-  backup. `workstream list --torn-down` lists group ids to undo.
-- **`mu undo`** bare lists groups; `<group>` previews; `<group> --yes`
-  emits inverse ops for that group only (redo = undo the undo). Exit 4
-  if a later action changed the same fields (`--force` discards it).
-  Rows only: killed panes and freed workspace dirs do not come back.
+- **`workstream teardown`** is reversible: `workstream list --torn-down`
+  lists the group ids to `mu undo`; the log is the backup.
+- **`mu undo`** restores rows only: killed panes and freed workspace
+  dirs do not come back. Redo = undo the undo.
 - **`mu rebuild <file>`** writes a new DB from the ops log, without
   agents or workspaces; re-spawn after the swap. Recovery is
   `mu rebuild`, not `mu db backup`.
@@ -28,4 +25,8 @@ when done in the wrong order.
   only copy of uncommitted work, so mu prints cleanup commands and runs
   none. Read before you run them.
 
-Done when `mu doctor` reports no DRIFT and every cleanup command you ran was read first.
+Done when, per operation: undo or teardown was previewed, then applied
+with `--yes`; rebuild was swapped in and agents re-spawned; `mu sync`
+lists the peer; forget touched only the named workstreams. Any
+`doctor --deep` DRIFT is backed up and reported to the human, and you
+read every cleanup command before you ran it.
