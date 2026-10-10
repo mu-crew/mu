@@ -8,6 +8,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`mu_delegate` footer counts results pending.** A delegate that
+  finished while pi was mid-turn has its answer queued as a follow-up,
+  and the footer used to drop it from the count, so it looked as if
+  nothing was outstanding. The footer now reads `1 result pending` until
+  the answer enters the conversation. Escape, which clears pi's
+  follow-up queue, also clears the count.
+
 ## [3.11.0] — 2026-10-09
 
 **The skill learns model tiers, and a review panel's fixes land.** A new

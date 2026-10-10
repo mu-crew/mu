@@ -30,7 +30,9 @@ Delegates called in one turn run in parallel.
 - Stop: `mu_delegate_cancel`, or `mu agent abort <name> -w scratch`.
 - The pane closes after a clean finish; died or timed-out panes stay
   as evidence.
-- pi's footer shows how many delegates this session is waiting on.
+- pi's footer shows how many delegates this session is waiting on, and
+  `N results pending` for delegates that finished but whose answer has
+  not reached the conversation yet (queued behind the running turn).
 - Each delegate costs a pane and a pi process. A session runs at most
   `MU_DELEGATE_MAX` at once (default 16). Further calls are queued, up
   to four times the cap: the footer reads `16 delegates running, 4 queued`,

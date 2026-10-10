@@ -86,6 +86,7 @@ export interface MuPiApi extends MuDelegateApi {
       | "agent_start"
       | "agent_end"
       | "agent_settled"
+      | "message_start"
       | "resources_discover"
       | Parameters<MuNudgeApi["on"]>[0],
     handler: (event: unknown, ctx: MuPiContext) => unknown,
