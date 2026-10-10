@@ -8,7 +8,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
-## [Unreleased]
+## [3.11.1] — 2026-10-10
+
+**pi's footer shows delegate results that have not arrived yet.**
+Upgrade with `npm i -g @mu-crew/mu@3.11.1`, then `/reload` in running
+pi sessions to pick up the extension. No schema change.
 
 ### Added
 
