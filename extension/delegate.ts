@@ -27,7 +27,10 @@ export interface MuDelegateApi {
     message: { customType: string; content: string; display: boolean; details?: unknown },
     options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
   ): void | Promise<void>;
-  on(event: "session_shutdown", handler: (event: unknown, ctx: DelegateCtx) => unknown): unknown;
+  on(
+    event: "session_shutdown" | "message_start" | "agent_settled",
+    handler: (event: unknown, ctx: DelegateCtx) => unknown,
+  ): unknown;
   /** pi's in-process bus between extensions. */
   events: { emit(channel: string, data: unknown): void };
 }
@@ -79,20 +82,22 @@ export const DELEGATE_STATUS_KEY = "mu-delegate";
  */
 export const PENDING_CHANNEL = "murmur:pending";
 
-/** Footer text for `n` running delegates; undefined clears the entry. */
-/** Footer text: delegates still spawning (the call returned no pane yet)
- *  and delegates whose pane is up and working. */
+/** Footer text: delegates running (pane up), starting (no pane yet),
+ *  queued, failed, and finished whose answer has not reached this
+ *  conversation yet (pending); undefined clears the entry. */
 export function delegateStatus(
   running: number,
   starting = 0,
   queued = 0,
   failed = 0,
+  pending = 0,
 ): string | undefined {
   const parts: string[] = [];
   if (running > 0) parts.push(`${running} delegate${running === 1 ? "" : "s"} running`);
   if (starting > 0) parts.push(`${starting} starting`);
   if (queued > 0) parts.push(`${queued} queued`);
   if (failed > 0) parts.push(`${failed} failed`);
+  if (pending > 0) parts.push(`${pending} result${pending === 1 ? "" : "s"} pending`);
   return parts.length > 0 ? parts.join(", ") : undefined;
 }
 /** Default `mu agent wait --timeout` for a delegate, in seconds. */
@@ -336,6 +341,13 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   /** Delegates that settled on an error, pane kept: counted in the footer
    *  until the model closes or re-issues them (no call to action). */
   const failed = new Set<string>();
+  /** Delegates that finished whose follow-up has not entered the
+   *  conversation: being delivered, or queued behind a running turn.
+   *  Keyed by a per-delivery id carried in the message's details, and
+   *  cleared on that message's message_start. The value says whether
+   *  pi.sendMessage has returned, i.e. the message sits in pi's queue. */
+  const arriving = new Map<number, boolean>();
+  let deliverySeq = 0;
   // The ctx of the latest tool call: answers settle outside any call, so
   // the footer is refreshed through the last ctx pi handed us.
   let ui: DelegateCtx["ui"];
@@ -359,7 +371,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     try {
       ui?.setStatus?.(
         DELEGATE_STATUS_KEY,
-        delegateStatus(inflight.size, starting, queue.length, failed.size),
+        delegateStatus(inflight.size, starting, queue.length, failed.size, arriving.size),
       );
     } catch {
       // stale ctx after a session switch: the footer is decoration
@@ -533,6 +545,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     wait: MuResult,
     keep: boolean,
     extras: MessageExtras,
+    delivery: number,
     record?: { target: RecordTarget; label: string },
   ) {
     const agent = (json(wait)?.agents as WaitAgent[] | undefined)?.[0];
@@ -577,6 +590,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
           answer: outcome === "done" ? (agent?.lastText ?? null) : null,
           elapsedMs: extras.elapsedMs ?? null,
           workspace: extras.workspace ?? null,
+          delivery,
         },
       },
       { deliverAs: "followUp", triggerTurn: true },
@@ -654,6 +668,8 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         entry.abort.signal,
       );
       const settle = async (r: MuResult) => {
+        const delivery = ++deliverySeq;
+        arriving.set(delivery, false);
         forget(name);
         try {
           await deliver(
@@ -667,8 +683,10 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
               ...(attach ? { attach } : {}),
               ...(workspace ? { workspace } : {}),
             },
+            delivery,
             entry.record,
           );
+          if (arriving.has(delivery)) arriving.set(delivery, true);
         } catch (e) {
           // A throw here would be an unhandled rejection and a lost answer.
           await Promise.resolve(
@@ -677,11 +695,15 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
                 customType: DELEGATE_MESSAGE_TYPE,
                 content: `Delegate ${W}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${W}`,
                 display: true,
-                details: { name, workstream: W, outcome: null, closed: false },
+                details: { name, workstream: W, outcome: null, closed: false, delivery },
               },
               { deliverAs: "followUp", triggerTurn: true },
             ),
-          ).catch(() => {});
+          ).catch(() => {
+            // Nothing will arrive: stop counting it.
+            arriving.delete(delivery);
+            showStatus();
+          });
         }
       };
       void waiting.then(async (r) => {
@@ -897,10 +919,38 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     },
   });
 
+  // A follow-up enters the conversation at its message_start: at once
+  // when pi is idle, or when the running turn drains its follow-ups.
+  pi.on("message_start", (e) => {
+    const m = (e as { message?: { role?: unknown; customType?: unknown; details?: unknown } })
+      .message;
+    if (m?.role !== "custom" || m.customType !== DELEGATE_MESSAGE_TYPE) return;
+    const id = (m.details as { delivery?: unknown } | undefined)?.delivery;
+    if (typeof id === "number" && arriving.delete(id)) showStatus();
+  });
+
+  // Escape clears pi's follow-up queue along with the run: answers that
+  // were queued in it never arrive, so stop counting them.
+  pi.on("agent_settled", (e) => {
+    if ((e as { aborted?: unknown }).aborted !== true) return;
+    let dropped = false;
+    for (const [id, queued] of arriving)
+      if (queued) {
+        arriving.delete(id);
+        dropped = true;
+      }
+    if (dropped) showStatus();
+  });
+
   // The watchers die with this runtime (/reload, /new, quit): say which
   // delegates lose their callback, so none is lost silently. The names
   // are also in the tool results, and `mu agent wait` recovers them.
   pi.on("session_shutdown", (_e, ctx) => {
+    if (arriving.size > 0) {
+      // Answers still being delivered or queued die with this runtime.
+      arriving.clear();
+      showStatus();
+    }
     if (inflight.size === 0 && queue.length === 0) return;
     const names = [...inflight.keys()];
     const never = queue.splice(0).map((q) => q.handle);

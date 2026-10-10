@@ -145,7 +145,14 @@ const sentArg = (c: readonly string[]) =>
 function fakePi() {
   const tools = new Map<string, DelegateTool>();
   const shutdown: Array<(e: unknown, c: DelegateCtx) => unknown> = [];
-  const sendMessage = vi.fn(async (_m: unknown, _o?: unknown) => {});
+  const handlers = new Map<string, Array<(e: unknown, c: DelegateCtx) => unknown>>();
+  /** pi mid-turn: a follow-up waits in its queue instead of starting at once. */
+  const state = { busy: false };
+  const start = (m: unknown) =>
+    fire("message_start", { type: "message_start", message: { role: "custom", ...(m as object) } });
+  const sendMessage = vi.fn(async (m: unknown, _o?: unknown) => {
+    if (!state.busy) await start(m);
+  });
   const emitted: { channel: string; data: unknown }[] = [];
   const pi = {
     events: { emit: (channel: string, data: unknown) => void emitted.push({ channel, data }) },
@@ -153,11 +160,21 @@ function fakePi() {
       tools.set(t.name, t);
     },
     sendMessage,
-    on: (_e: "session_shutdown", h: (e: unknown, c: DelegateCtx) => unknown) => {
-      shutdown.push(h);
+    on: (e: string, h: (e: unknown, c: DelegateCtx) => unknown) => {
+      if (e === "session_shutdown") shutdown.push(h);
+      handlers.set(e, [...(handlers.get(e) ?? []), h]);
     },
   };
-  return { pi, tools, sendMessage, shutdown, emitted };
+  /** Fire a pi event at the extension's handlers. */
+  const fire = async (event: string, data: unknown) => {
+    for (const h of handlers.get(event) ?? []) await h(data, {});
+  };
+  /** The turn ends and pi starts every queued follow-up. */
+  const drainQueue = async () => {
+    state.busy = false;
+    for (const [m] of sendMessage.mock.calls) await start(m);
+  };
+  return { pi, tools, sendMessage, shutdown, emitted, state, fire, drainQueue };
 }
 
 function sentText(p: { sendMessage: { mock: { calls: unknown[][] } } }): string {
@@ -952,6 +969,46 @@ describe("footer status", () => {
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
   });
 
+  it("counts a finished answer as pending until it enters the conversation", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const { setStatus, ctx } = uiCtx();
+    p.state.busy = true;
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
+    await tool(p).execute("b", { task: "two" }, undefined, undefined, ctx);
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
+    await flush();
+    await flush();
+    // Sent, but pi is mid-turn: it waits in pi's follow-up queue.
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running, 1 result pending"]);
+    // Someone else's custom message does not clear it.
+    await p.fire("message_start", {
+      message: { role: "custom", customType: "other", details: { delivery: 1 } },
+    });
+    expect(last(setStatus)?.[1]).toContain("1 result pending");
+    await p.drainQueue();
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
+  });
+
+  it("an aborted run drops queued answers from the pending count", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const { setStatus, ctx } = uiCtx();
+    p.state.busy = true;
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
+    await flush();
+    await flush();
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 result pending"]);
+    await p.fire("agent_settled", { type: "agent_settled", aborted: false });
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 result pending"]);
+    await p.fire("agent_settled", { type: "agent_settled", aborted: true });
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+  });
+
   it("works without a UI ctx (print mode, tests)", async () => {
     const p = fakePi();
     registerDelegate(p.pi, fakeMu().run);
@@ -966,6 +1023,8 @@ describe("footer status", () => {
     expect(delegateStatus(3, 1)).toBe("3 delegates running, 1 starting");
     expect(delegateStatus(16, 0, 4)).toBe("16 delegates running, 4 queued");
     expect(delegateStatus(2, 0, 0, 1)).toBe("2 delegates running, 1 failed");
+    expect(delegateStatus(0, 0, 0, 0, 1)).toBe("1 result pending");
+    expect(delegateStatus(1, 0, 0, 0, 2)).toBe("1 delegate running, 2 results pending");
   });
 });
 
