@@ -288,9 +288,33 @@ export function labelStem(label: unknown): string | undefined {
   return stem || undefined;
 }
 
-/** A `model` value pi takes as `--model` (`provider/id:thinking`); no
- *  shell characters, since it lands inside a `--command` string. */
-const MODEL_RE = /^[A-Za-z0-9._:/@+-]+$/;
+/** Model values that need no shell quoting inside a `--command` string. */
+const MODEL_BARE_RE = /^[A-Za-z0-9._:/@+=-]+$/;
+
+/**
+ * Forgive the usual slips in a `model` value: surrounding quotes or
+ * backticks, a pasted `--model ` / `--model=` prefix, stray whitespace.
+ * Anything else (brackets as in `gpt-6.1-sol[1m]`, odd provider ids) is
+ * kept and shell-quoted by `modelCommand`, so pi gets to judge the id.
+ * Returns undefined for an empty value or one with inner whitespace,
+ * which no model id has.
+ */
+export function normalizeModel(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  let m = raw.trim();
+  for (let prev = ""; prev !== m; ) {
+    prev = m;
+    m = m
+      .replace(/^--model(?:=|\s+)/, "")
+      .replace(/^(["'`])(.*)\1$/s, "$2")
+      .trim();
+  }
+  return m && !/\s/.test(m) ? m : undefined;
+}
+
+function shellArg(s: string): string {
+  return MODEL_BARE_RE.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`;
+}
 
 /**
  * The command a delegate with `model` runs: the cli key's command
@@ -305,7 +329,7 @@ export function modelCommand(
 ): string {
   const override = env[`MU_${cli.toUpperCase().replace(/-/g, "_")}_COMMAND`];
   const base = override && override.trim() !== "" ? override.trim() : cli;
-  return `${base} --model ${model}`;
+  return `${base} --model ${shellArg(model)}`;
 }
 
 /**
@@ -813,11 +837,14 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
           typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
         if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
       }
-      const m = params.model;
-      if (m !== undefined && !(typeof m === "string" && MODEL_RE.test(m)))
-        throw new Error(
-          `mu_delegate: model must be a pi model id like 'provider/id:thinking' (got ${JSON.stringify(m)})`,
-        );
+      if (params.model !== undefined && params.model !== "") {
+        const m = normalizeModel(params.model);
+        if (!m)
+          throw new Error(
+            `mu_delegate: model must be one pi model id like 'provider/id:thinking', as listed by \`pi --list-models\` (got ${JSON.stringify(params.model)}); omit it for the cli's default`,
+          );
+        params = { ...params, model: m };
+      }
       const record = await resolveRecord(params.record);
       // Count slots synchronously, before any await: parallel calls in one
       // turn all run this line before the first spawn returns.
