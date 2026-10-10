@@ -8,6 +8,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **`mu_delegate` is forgiving about `model`.** It used to refuse any
+  value outside `[A-Za-z0-9._:/@+-]`, so real ids such as
+  `modelbridge/meta-openai/gpt-6.1-sol[1m]:high` were rejected, and
+  that happened in 12 past sessions. It now trims whitespace, drops
+  surrounding quotes or backticks and a pasted `--model ` / `--model=`
+  prefix, and shell-quotes any other value inside `--command`, so pi
+  decides whether the id exists. An empty `model` counts as unset. The
+  only value still refused is one with whitespace inside it.
+
 ## [3.11.1] — 2026-10-10
 
 **pi's footer shows delegate results that have not arrived yet.**

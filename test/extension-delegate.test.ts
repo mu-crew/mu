@@ -358,7 +358,36 @@ describe("mu_delegate", () => {
     expect(spawn[spawn.indexOf("--cli") + 1]).toBe("pi-alt");
   });
 
-  it("refuses a model with shell characters before spawning", async () => {
+  it.each([
+    [
+      "modelbridge/meta-openai/gpt-6.1-sol[1m]:high",
+      "'modelbridge/meta-openai/gpt-6.1-sol[1m]:high'",
+    ],
+    ["  `anthropic/claude-opus-5-5:high`  ", "anthropic/claude-opus-5-5:high"],
+    ["'sonnet'", "sonnet"],
+    ["--model sonnet", "sonnet"],
+    ['--model="sonnet"', "sonnet"],
+    ["x;$(rm)", "'x;$(rm)'"],
+    ["it's", "'it'\\''s'"],
+  ])("model forgives %j, passing --model %s", async (model, arg) => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", cli: "pi-alt", model });
+    const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
+    expect(spawn[spawn.indexOf("--command") + 1]).toBe(`pi-alt --model ${arg}`);
+  });
+
+  it("treats an empty model as unset", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", model: "" });
+    const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
+    expect(spawn).not.toContain("--command");
+  });
+
+  it("refuses a model with inner whitespace before spawning", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
