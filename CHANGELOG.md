@@ -8,7 +8,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
-## [Unreleased]
+## [3.11.2] — 2026-10-10
+
+**`mu_delegate` accepts model ids it used to refuse.**
+Upgrade with `npm i -g @mu-crew/mu@3.11.2`, then `/reload` in running
+pi sessions to pick up the extension. No schema change.
 
 ### Changed
 
