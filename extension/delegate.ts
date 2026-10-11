@@ -16,7 +16,7 @@
  * that one serves a pi mu spawned; this one runs in a pi that is not.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultCacheDir } from "../src/state-dir.js";
@@ -184,7 +184,60 @@ export type MessageExtras = {
   elapsedMs?: number;
   /** The queue handle the caller was given (`queued-3`), if it was queued. */
   queuedAs?: string;
+  /** The delegate's pi session file: the full transcript. */
+  sessionFile?: string;
+  /** A local copy of the delegate's last assistant text so far. */
+  partial?: string;
 };
+
+/**
+ * Text of the last assistant message in a pi session file (JSONL), or
+ * undefined when there is none or the file cannot be read. A delegate
+ * that timed out, died or was cancelled has no final answer, but what it
+ * wrote so far is here.
+ */
+export function lastAssistantTextIn(sessionFile: string): string | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(sessionFile, "utf8");
+  } catch {
+    return undefined;
+  }
+  const lines = raw.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line?.includes('"assistant"')) continue;
+    try {
+      const e = JSON.parse(line) as { message?: { role?: unknown; content?: unknown } };
+      if (e.message?.role !== "assistant") continue;
+      const c = e.message.content;
+      const text =
+        typeof c === "string"
+          ? c
+          : Array.isArray(c)
+            ? c
+                .map((p: unknown) => {
+                  const q = p as { type?: unknown; text?: unknown };
+                  return q.type === "text" && typeof q.text === "string" ? q.text : "";
+                })
+                .join("")
+            : "";
+      if (text.trim()) return text;
+    } catch {
+      // a torn last line while pi writes: keep looking
+    }
+  }
+  return undefined;
+}
+
+/** Where to look next for a delegate with no final answer: the copy of
+ *  its partial text and its session file, one line each. */
+function evidenceLines(x: { sessionFile?: string; partial?: string }): string[] {
+  return [
+    x.partial ? `Partial answer so far: ${x.partial}` : undefined,
+    x.sessionFile ? `Session: ${x.sessionFile}` : undefined,
+  ].filter((v) => v !== undefined);
+}
 
 /** `42s`, `3m 05s`, `1h 02m`. */
 export function formatElapsed(ms: number): string {
@@ -216,29 +269,33 @@ export function delegateMessage(
   ].filter((v) => v !== undefined);
   const tailBlock = x.tail?.trim() ? `\n\nPane tail:\n${x.tail.trimEnd()}` : "";
   const ws = x.workspace ? ` Workspace: ${x.workspace}` : "";
+  const ev = evidenceLines(x);
+  const evBlock = ev.length > 0 ? `\n${ev.join("\n")}` : "";
   switch (agent?.outcome) {
     case "done":
       return `${who} finished${took}. ${fate}${ws}\n\n${agent.lastText ?? ""}`;
     case "empty":
-      return `${who} finished${took} without a text answer. ${fate}${ws}${tailBlock}`;
+      return `${who} finished${took} without a text answer. ${fate}${ws}${evBlock}${tailBlock}`;
     case "error":
       return [
         `${who} stopped on an API error${took}, after pi's own retries: ${(agent.lastError ?? "unknown error").replace(/[.\s]+$/, "")}. ${fate}${ws}`,
         "Decide: re-issue the call, or record the check as UNVERIFIED.",
+        ...ev,
         ...look,
         `Close: mu agent close ${name} -w ${W}`,
       ].join("\n");
     case "died":
-      return `${who} died${took} before answering. ${fate}${ws}${tailBlock}`;
+      return `${who} died${took} before answering. ${fate}${ws}${evBlock}${tailBlock}`;
     case "timeout":
     case "pending":
       return [
         `${who} is still running after ${timeoutS}s; stopped waiting, so its answer will not arrive here. ${fate}${ws}`,
+        ...ev,
         ...look,
         `Wait again: mu agent wait ${name} -w ${W} --json`,
       ].join("\n");
     default:
-      return `${who}: mu agent wait gave no result. ${fate}${ws}${tailBlock}`;
+      return `${who}: mu agent wait gave no result. ${fate}${ws}${evBlock}${tailBlock}`;
   }
 }
 
@@ -391,6 +448,8 @@ export function modelCommand(
  */
 type Inflight = {
   abort: AbortController;
+  /** The delegate's pi session file, reported by the spawn's send. */
+  sessionFile?: string;
   record?: { target: RecordTarget; label: string };
   cancelling: boolean;
   parked?: () => Promise<void>;
@@ -465,17 +524,23 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     if (a) a.queued = true;
   };
   /** Copy a dropped answer under the mu cache dir; undefined if that fails. */
-  const saveCopy = (name: string, content: string): string | undefined => {
+  const saveCopy = (name: string, content: string, kind = ""): string | undefined => {
     try {
       const dir = droppedAnswersDir();
       mkdirSync(dir, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const path = join(dir, `${stamp}_${name}.md`);
+      const path = join(dir, `${stamp}_${name}${kind}.md`);
       writeFileSync(path, `${content}\n`);
       return path;
     } catch {
       return undefined;
     }
+  };
+  /** Copy a delegate's last assistant text so far (from its session
+   *  file) next to the dropped answers; undefined when it wrote none. */
+  const partialCopy = (name: string, sessionFile: string): string | undefined => {
+    const text = lastAssistantTextIn(sessionFile);
+    return text ? saveCopy(name, text, ".partial") : undefined;
   };
   /** Drop a delegate from the in-flight set, start the next queued call
    *  into the freed slot, and refresh the footer. */
@@ -546,7 +611,13 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     text: string,
     cwd: string | undefined,
     signal?: AbortSignal,
-  ): Promise<{ name: string; runs: number; attach?: string; workspace?: string }> {
+  ): Promise<{
+    name: string;
+    runs: number;
+    attach?: string;
+    workspace?: string;
+    sessionFile?: string;
+  }> {
     signal?.throwIfAborted();
     pruneFailed();
     const stem = labelStem(params.label);
@@ -576,7 +647,9 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         `${W}/${name} spawned but its control socket is ${String(out?.ctl)}, so its answer cannot come back. Pane kept; close it with: mu agent close ${name} -w ${W}`,
       );
     }
-    const sent = out.send as { ok?: unknown; runs?: unknown; message?: unknown } | undefined;
+    const sent = out.send as
+      | { ok?: unknown; runs?: unknown; message?: unknown; sessionFile?: unknown }
+      | undefined;
     if (sent?.ok !== true) {
       // Nothing reached it: the pane is just an idle pi. Take it down.
       const c = await mu(["agent", "close", name, "-w", W]);
@@ -597,6 +670,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       runs: typeof sent.runs === "number" ? sent.runs : 0,
       ...(typeof attach === "string" ? { attach } : {}),
       ...(typeof wsPath === "string" ? { workspace: wsPath } : {}),
+      ...(typeof sent.sessionFile === "string" ? { sessionFile: sent.sessionFile } : {}),
     };
   }
 
@@ -666,6 +740,16 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       failed.add(name);
       showStatus();
     }
+    // No final answer: point at the transcript, and copy what it wrote so far.
+    if (outcome !== "done") {
+      const sessionFile = agent?.sessionFile ?? extras.sessionFile;
+      const partial = sessionFile ? partialCopy(name, sessionFile) : undefined;
+      extras = {
+        ...extras,
+        ...(sessionFile ? { sessionFile } : {}),
+        ...(partial ? { partial } : {}),
+      };
+    }
     const recorded = record
       ? await writeRecord(
           record.target,
@@ -696,6 +780,8 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
           answer: outcome === "done" ? (agent?.lastText ?? null) : null,
           elapsedMs: extras.elapsedMs ?? null,
           workspace: extras.workspace ?? null,
+          sessionFile: agent?.sessionFile ?? extras.sessionFile ?? null,
+          partial: extras.partial ?? null,
           delivery,
         },
       },
@@ -741,7 +827,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
           typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
         if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
       }
-      const { name, runs, attach, workspace } = await spawn(
+      const { name, runs, attach, workspace, sessionFile } = await spawn(
         params,
         brief ? `${brief}\n\n${task}` : task,
         cwd,
@@ -750,6 +836,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       const entry: Inflight = {
         abort: new AbortController(),
         cancelling: false,
+        ...(sessionFile ? { sessionFile } : {}),
         ...(record ? { record: { target: record, label: recordLabel(params, name) } } : {}),
       };
       inflight.set(name, entry);
@@ -788,6 +875,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
               ...(queuedAs ? { queuedAs } : {}),
               ...(attach ? { attach } : {}),
               ...(workspace ? { workspace } : {}),
+              ...(entry.sessionFile ? { sessionFile: entry.sessionFile } : {}),
             },
             delivery,
             entry.record,
@@ -1020,6 +1108,13 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       }
       failed.delete(name);
       let text = `Aborted ${W}/${name}.`;
+      // What it wrote before the abort, and its transcript.
+      const sessionFile = entry?.sessionFile;
+      const partial = sessionFile ? partialCopy(name, sessionFile) : undefined;
+      const evidence = evidenceLines({
+        ...(sessionFile ? { sessionFile } : {}),
+        ...(partial ? { partial } : {}),
+      });
       if (entry?.record)
         text += ` ${await writeRecord(entry.record.target, name, recordNote(entry.record.label, name, "cancelled", undefined, 0))}`;
       if (params.keep === true) text += " Pane kept.";
@@ -1030,6 +1125,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
             ? " Pane closed."
             : ` Pane kept: close refused: ${(c.stderr || c.stdout).trim()}`;
       }
+      if (evidence.length > 0) text += `\n${evidence.join("\n")}`;
       return { content: [{ type: "text", text }], details: { name, workstream: W } };
     },
   });
@@ -1089,6 +1185,9 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     }
     if (inflight.size === 0 && queue.length === 0) return;
     const names = [...inflight.keys()];
+    const sessions = [...inflight].flatMap(([n, e]) =>
+      e.sessionFile ? [`${n}: ${e.sessionFile}`] : [],
+    );
     const never = queue.splice(0).map((q) => q.handle);
     for (const e of inflight.values()) e.abort.abort();
     inflight.clear();
@@ -1099,6 +1198,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       parts.push(
         `${names.length} delegate${names.length === 1 ? "" : "s"} still running: ${names.join(", ")}. Their answers will not come back here; use mu agent wait <name> -w ${W} --json.`,
       );
+    if (sessions.length > 0) parts.push(`Sessions: ${sessions.join("; ")}.`);
     if (never.length > 0)
       parts.push(`${never.length} queued, never started: ${never.join(", ")}. Re-issue them.`);
     const msg = parts.join(" ");

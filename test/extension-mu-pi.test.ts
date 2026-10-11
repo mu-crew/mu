@@ -207,6 +207,16 @@ describe("mu pi extension", () => {
       });
     });
 
+    it("status reports the session file from the start, before any run settles", async () => {
+      await fake.emit("session_start");
+      Object.assign(fake.ctx, { sessionManager: { getSessionFile: () => "/s/early.jsonl" } });
+      expect(await ctlRequest(sock, { op: "status" })).toMatchObject({
+        ok: true,
+        runs: 0,
+        sessionFile: "/s/early.jsonl",
+      });
+    });
+
     it("wait carries the settled run's session file", async () => {
       await fake.emit("session_start");
       Object.assign(fake.ctx, { sessionManager: { getSessionFile: () => "/s/delegate.jsonl" } });

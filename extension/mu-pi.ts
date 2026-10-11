@@ -400,6 +400,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     since: g.since,
     runs: g.runs,
     pending: g.ctx?.hasPendingMessages() ?? false,
+    ...sessionFileOf(g.ctx),
   });
 
   const settleFresh = (r: Reply) => {
@@ -431,6 +432,16 @@ function serveCtl(pi: MuPiApi): () => boolean {
     g.endError = lastAssistantError(e);
   });
 
+  /** The session file of `c`, as a spreadable field; {} when unknown. */
+  function sessionFileOf(c: MuPiContext | undefined): { sessionFile?: string } {
+    try {
+      const f = c?.sessionManager?.getSessionFile();
+      return f ? { sessionFile: f } : {};
+    } catch {
+      return {}; // stale ctx: the pointer is a convenience
+    }
+  }
+
   pi.on("agent_settled", (_e, c) => {
     g.ctx = c;
     g.state = "idle";
@@ -440,11 +451,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     g.endText = undefined;
     g.lastError = g.endError;
     g.endError = undefined;
-    try {
-      g.sessionFile = c.sessionManager?.getSessionFile();
-    } catch {
-      g.sessionFile = undefined; // stale ctx: the pointer is a convenience
-    }
+    g.sessionFile = sessionFileOf(c).sessionFile;
     for (const w of [...g.waiters]) w();
   });
 

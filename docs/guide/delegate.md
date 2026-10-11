@@ -48,6 +48,11 @@ Delegates called in one turn run in parallel.
   keeps its pane. The answer names the error and leaves the choice to
   the model: re-issue, or record the check as unverified. The footer
   counts it as `1 failed` until the pane is closed.
+- Every answer without a final text (API error, empty, timeout, died,
+  `mu_delegate_cancel`) names the delegate's pi session file and, when
+  it wrote anything, a copy of its last message so far under
+  `~/.cache/mu/delegate-answers/` (`*.partial.md`). Quitting pi or
+  `/reload` lists each running delegate's session file.
 - Answers arrive as follow-up messages when pi would otherwise stop,
   never mid-turn. To get several at once, set pi's `followUpMode` to
   `"all"`.

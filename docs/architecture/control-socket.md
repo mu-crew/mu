@@ -28,7 +28,7 @@ reply carries `v: 1`; the client (`src/ctl/client.ts`) throws
 | op | does |
 | --- | --- |
 | `hello` | identity plus `ops` (served ops) and `extVersion` (the mu version the extension was built from) |
-| `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending` |
+| `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending`, and pi's `sessionFile` when it has one |
 | `send` | `pi.sendUserMessage`; when busy, `mode` is `steer` or `followUp` (default). Replies with the `status` fields measured before the dispatch, so `runs` is the baseline for a later `wait` |
 | `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` and pi's `sessionFile` |
 | `abort` | `ctx.abort()` (pi's Esc) |

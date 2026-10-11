@@ -47,6 +47,8 @@ export type SendResult = {
   runs?: number;
   /** ctl only: when pi entered `state` (epoch ms), from the same status. */
   since?: number;
+  /** ctl only: pi's session file, from the same status. */
+  sessionFile?: string;
   /** Set when the text ran as a pi session command over ctl. */
   command?: CtlCommandName;
 };
@@ -260,6 +262,7 @@ export async function sendViaTransport(
     ...(reply.state !== undefined ? { state: reply.state } : {}),
     ...(reply.runs !== undefined ? { runs: reply.runs } : {}),
     ...(reply.since !== undefined ? { since: reply.since } : {}),
+    ...(reply.sessionFile !== undefined ? { sessionFile: reply.sessionFile } : {}),
   };
 }
 
