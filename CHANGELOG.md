@@ -8,7 +8,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
-## [Unreleased]
+## [3.12.0] — 2026-10-11
+
+**A delegate that ends without an answer leaves its evidence.** Timeout,
+API error, empty finish, dead pane or cancel: the follow-up names the
+delegate's pi session file and copies its last message so far to
+`~/.cache/mu/delegate-answers/`.
+
+Upgrade with `npm i -g @mu-crew/mu@3.12.0`, then `/reload` in running
+pi sessions to pick up the extension. No schema change. The session
+file is reported by the delegate's own extension, so delegates need
+3.12.0 too; an older one still gets the `mu agent read` pointer.
 
 ### Added
 
