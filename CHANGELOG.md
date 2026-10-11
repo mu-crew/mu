@@ -23,6 +23,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   transcript of the run it waited for. The control socket's `wait`
   reply carries it.
 
+### Fixed
+
+- **Parallel `mu` calls on a fresh DB no longer drop one.** The first
+  fan-out into a new DB (a new machine or `MU_DB_PATH`) could lose a
+  process two ways. Switching the file to WAL returns SQLITE_BUSY
+  without honouring `busy_timeout`, so a loser exited `db locked`; it is
+  now retried for up to 5 s. A process reading the schema version while
+  another created the tables could see a half-built DB and refuse it as
+  v1 (`SchemaTooOldError`); the version is now read in one transaction.
+
 ## [3.11.2] — 2026-10-10
 
 **`mu_delegate` accepts model ids it used to refuse.**
