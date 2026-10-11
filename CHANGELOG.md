@@ -8,7 +8,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
-## [Unreleased]
+## [3.11.3] — 2026-10-11
+
+**Escape no longer loses delegate answers; spawn and DB-open fixes.**
+An Escape that drops queued delegate answers leaves a pointer to each
+one. A fresh DB survives a parallel fan-out, and `--next-free` skips
+names whose workspace dir is left on disk.
+
+Upgrade with `npm i -g @mu-crew/mu@3.11.3`, then `/reload` in running
+pi sessions to pick up the extension. No schema change. Both sides of a
+delegate need 3.11.3 for the session-file pointer: an older delegate
+falls back to the copy and `mu agent read`.
 
 ### Added
 
