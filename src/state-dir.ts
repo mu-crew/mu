@@ -14,6 +14,16 @@ export function defaultStateDir(): string {
   return join(xdgStateHome(homedir()), "mu");
 }
 
+/**
+ * The mu cache directory, `$XDG_CACHE_HOME/mu` (absolute only) else
+ * `~/.cache/mu`: files mu can lose at any time, such as copies of data
+ * that lives elsewhere too.
+ */
+export function defaultCacheDir(): string {
+  const xdg = process.env.XDG_CACHE_HOME;
+  return join(xdg !== undefined && isAbsolute(xdg) ? xdg : join(homedir(), ".cache"), "mu");
+}
+
 /** `$XDG_STATE_HOME`, or `<home>/.local/state` when it is unset, empty,
  *  or relative: the XDG spec says such a value must be ignored, and a
  *  relative one would scatter state across every cwd mu runs in. */

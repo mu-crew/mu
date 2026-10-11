@@ -63,6 +63,8 @@ export type CtlReply =
         lastText?: string;
         /** wait only: the error that ended the settled run (retries exhausted). */
         lastError?: string;
+        /** wait only: the settled pi's session file, where its full transcript lives. */
+        sessionFile?: string;
         /** interrupt only: pi was busy, so the turn was aborted before the send. */
         wasBusy?: boolean;
       })

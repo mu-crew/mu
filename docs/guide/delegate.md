@@ -33,6 +33,11 @@ Delegates called in one turn run in parallel.
 - pi's footer shows how many delegates this session is waiting on, and
   `N results pending` for delegates that finished but whose answer has
   not reached the conversation yet (queued behind the running turn).
+  Escape drops those queued answers from pi. The extension then writes
+  one line per answer into the conversation, without starting a turn,
+  pointing at a copy under `~/.cache/mu/delegate-answers/` and
+  at the delegate's own pi session file. An answer that lands after
+  Escape arrives as usual.
 - Each delegate costs a pane and a pi process. A session runs at most
   `MU_DELEGATE_MAX` at once (default 16). Further calls are queued, up
   to four times the cap: the footer reads `16 delegates running, 4 queued`,
@@ -91,6 +96,8 @@ row carries:
   `error` means the run stopped on an API error after pi's own retries;
   `lastError` holds the message and the pane is kept.
 - `lastText`: the final message, capped at 64 KiB.
+- `sessionFile`: the agent's pi session file, holding the full
+  transcript (absent for an ephemeral pi or an older extension).
 
 Exit codes: `0` met, `5` timeout, `6` pane died. Non-pi agents have no
 `lastText`; read the pane with `mu agent read helper-1 -w scratch -n 80`.

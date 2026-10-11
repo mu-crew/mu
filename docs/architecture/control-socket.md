@@ -30,7 +30,7 @@ reply carries `v: 1`; the client (`src/ctl/client.ts`) throws
 | `hello` | identity plus `ops` (served ops) and `extVersion` (the mu version the extension was built from) |
 | `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending` |
 | `send` | `pi.sendUserMessage`; when busy, `mode` is `steer` or `followUp` (default). Replies with the `status` fields measured before the dispatch, so `runs` is the baseline for a later `wait` |
-| `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` |
+| `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` and pi's `sessionFile` |
 | `abort` | `ctx.abort()` (pi's Esc) |
 | `interrupt` | busy: `ctx.abort()`, wait for `agent_settled` (up to `timeoutMs`), then `pi.sendUserMessage(text)` as a new run; idle: just the send. Replies `wasBusy`, `pending` (measured before the abort) and the `status` fields measured after the settle and before the send, so `runs` is the `wait` baseline for the new run. `timeout`: nothing sent |
 | `fresh` | new session plus prompt as one operation, through the internal `/mu-fresh` command; replies once the new run starts; refused with `busy` unless `force` |

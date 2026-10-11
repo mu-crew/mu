@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DELEGATE_CANCEL_TOOL,
@@ -9,6 +12,7 @@ import {
   delegateMax,
   delegateMessage,
   delegateStatus,
+  droppedNote,
   formatElapsed,
   labelStem,
   type MuResult,
@@ -25,6 +29,7 @@ const ENV_KEYS = [
   "MU_DELEGATE_MAX",
   "MU_MUX",
   "MU_CTL_SOCK",
+  "XDG_CACHE_HOME",
 ] as const;
 const saved: Record<string, string | undefined> = {};
 
@@ -1021,21 +1026,57 @@ describe("footer status", () => {
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
   });
 
-  it("an aborted run drops queued answers from the pending count", async () => {
+  it("an aborted run drops queued answers from the pending count and points at each one", async () => {
+    const cache = mkdtempSync(join(tmpdir(), "mu-dropped-"));
+    process.env.XDG_CACHE_HOME = cache;
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
     const { setStatus, ctx } = uiCtx();
     p.state.busy = true;
     await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
-    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
+    mu.waits
+      .get("delegate-2")
+      ?.resolve(
+        ok({ agents: [{ outcome: "done", lastText: "the answer", sessionFile: "/s/d2.jsonl" }] }),
+      );
     await flush();
     await flush();
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 result pending"]);
     await p.fire("agent_settled", { type: "agent_settled", aborted: false });
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 result pending"]);
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
     await p.fire("agent_settled", { type: "agent_settled", aborted: true });
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+    // One note, no turn, one line pointing at the copy and the session.
+    expect(p.sendMessage).toHaveBeenCalledTimes(2);
+    const [note, opts] = p.sendMessage.mock.calls[1] ?? [];
+    expect(opts).toEqual({ triggerTurn: false });
+    const text = (note as { content: string }).content;
+    const line = text.split("\n").find((l) => l.startsWith("- scratch/delegate-2")) ?? "";
+    expect(line).toContain("(done, ");
+    expect(line).toContain("session: /s/d2.jsonl");
+    const copy = /answer: (\S+)/.exec(line)?.[1] ?? "";
+    expect(copy.startsWith(join(cache, "mu", "delegate-answers"))).toBe(true);
+    expect(readFileSync(copy, "utf8")).toContain("the answer");
+    rmSync(cache, { recursive: true, force: true });
+  });
+
+  it("an interrupt with nothing queued leaves no note", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await p.fire("agent_settled", { type: "agent_settled", aborted: true });
+    expect(p.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("droppedNote falls back to mu agent read without a copy or session file", () => {
+    const text = droppedNote([{ name: "delegate-3", outcome: "error" }]);
+    expect(text).toContain("The interrupt dropped 1 delegate answer before it arrived:");
+    expect(text).toContain(
+      "- scratch/delegate-3 (error) read: mu agent read delegate-3 -n 50 -w scratch",
+    );
   });
 
   it("works without a UI ctx (print mode, tests)", async () => {

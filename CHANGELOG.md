@@ -8,6 +8,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Escape no longer loses queued delegate answers.** Escape clears
+  pi's follow-up queue, so an answer waiting there was gone. The
+  extension now copies each dropped answer to
+  `~/.cache/mu/delegate-answers/` (`$XDG_CACHE_HOME/mu`) and writes
+  one line per answer into the conversation, without starting a turn,
+  naming the copy and the delegate's pi session file. The copy is
+  cache: the session file keeps the original.
+- **`mu agent wait --json` reports a pi agent's `sessionFile`**, the
+  transcript of the run it waited for. The control socket's `wait`
+  reply carries it.
+
 ## [3.11.2] — 2026-10-10
 
 **`mu_delegate` accepts model ids it used to refuse.**

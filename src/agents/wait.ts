@@ -54,6 +54,8 @@ export interface AgentStatusSnapshot {
   lastText?: string;
   /** Error that ended the settled run (control-socket watches only). */
   lastError?: string;
+  /** The pi session file holding the run's transcript (control-socket watches only). */
+  sessionFile?: string;
 }
 
 export interface AgentWaitOptions {
@@ -106,6 +108,8 @@ export interface AgentWaitAgentState {
   lastText?: string;
   /** Error that ended the settled run (API error after pi's retries). */
   lastError?: string;
+  /** The pi session file holding the run's transcript; control-socket agents only. */
+  sessionFile?: string;
   /** True when the agent's pane vanished mid-wait. Surfaced separately
    *  so the CLI can exit non-zero rather than treating a crash as a
    *  clean finish. */
@@ -203,6 +207,7 @@ export async function waitForAgents(
             st.fired = true;
             if (snap.lastText !== undefined) st.lastText = snap.lastText;
             if (snap.lastError !== undefined) st.lastError = snap.lastError;
+            if (snap.sessionFile !== undefined) st.sessionFile = snap.sessionFile;
           }
           wake();
         },
