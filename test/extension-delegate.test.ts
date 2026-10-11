@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,7 @@ import {
   droppedNote,
   formatElapsed,
   labelStem,
+  lastAssistantTextIn,
   type MuResult,
   type MuRunner,
   PENDING_CHANNEL,
@@ -1368,5 +1369,119 @@ describe("labelStem", () => {
     expect(labelStem(7)).toBeUndefined();
     expect(labelStem("a".repeat(40))).toHaveLength(20);
     expect(labelStem("abcdefghijklmnopqrs-tuv")).toBe("abcdefghijklmnopqrs");
+  });
+});
+
+describe("evidence when there is no final answer", () => {
+  /** A pi session file whose last assistant message is `text`. */
+  const sessionWith = (dir: string, text: string) => {
+    const f = join(dir, "s.jsonl");
+    const line = (o: object) => JSON.stringify(o);
+    writeFileSync(
+      f,
+      [
+        line({ type: "session", id: "x" }),
+        line({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "q" }] },
+        }),
+        line({
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: "earlier" }] },
+        }),
+        line({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "hmm" },
+              { type: "text", text },
+            ],
+          },
+        }),
+        '{"type":"message","message":{"role":"assist', // torn line pi is still writing
+      ].join("\n"),
+    );
+    return f;
+  };
+  /** Session file reported by the spawn's send, as the child extension does. */
+  const muWithSession = (sessionFile: string) =>
+    fakeMu({ on: { send: () => Promise.resolve(ok({ transport: "ctl", runs: 0, sessionFile })) } });
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "mu-evidence-"));
+    process.env.XDG_CACHE_HOME = tmp;
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  it("lastAssistantTextIn takes the last assistant text, skipping a torn line", () => {
+    expect(lastAssistantTextIn(sessionWith(tmp, "so far"))).toBe("so far");
+    expect(lastAssistantTextIn(join(tmp, "missing.jsonl"))).toBeUndefined();
+  });
+
+  it("a timeout points at the session and copies the partial answer", async () => {
+    const mu = muWithSession(sessionWith(tmp, "halfway there"));
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "timeout" }] }));
+    await flush();
+    await flush();
+    const text = sentText(p);
+    expect(text).toContain(`Session: ${join(tmp, "s.jsonl")}`);
+    const copy = /Partial answer so far: (\S+)/.exec(text)?.[1] ?? "";
+    expect(copy.startsWith(join(tmp, "mu", "delegate-answers"))).toBe(true);
+    expect(copy.endsWith("_delegate-2.partial.md")).toBe(true);
+    expect(readFileSync(copy, "utf8")).toBe("halfway there\n");
+  });
+
+  it("an API error prefers the session file the wait reports", async () => {
+    const mu = muWithSession(join(tmp, "from-spawn.jsonl"));
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    const settled = sessionWith(tmp, "partial");
+    mu.waits
+      .get("delegate-2")
+      ?.resolve(ok({ agents: [{ outcome: "error", lastError: "529", sessionFile: settled }] }));
+    await flush();
+    await flush();
+    expect(sentText(p)).toContain(`Session: ${settled}`);
+    expect(sentText(p)).toContain("Partial answer so far:");
+  });
+
+  it("a clean finish adds no evidence lines", async () => {
+    const mu = muWithSession(sessionWith(tmp, "ignored"));
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "A" }] }));
+    await flush();
+    await flush();
+    expect(sentText(p)).not.toContain("Session:");
+    expect(sentText(p)).not.toContain("Partial answer");
+  });
+
+  it("cancel copies what it wrote and names the session", async () => {
+    const mu = muWithSession(sessionWith(tmp, "before the abort"));
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    const r = await tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "delegate-2" });
+    const text = r.content[0]?.text ?? "";
+    expect(text).toContain("Aborted scratch/delegate-2.");
+    expect(text).toContain(`Session: ${join(tmp, "s.jsonl")}`);
+    const copy = /Partial answer so far: (\S+)/.exec(text)?.[1] ?? "";
+    expect(readFileSync(copy, "utf8")).toBe("before the abort\n");
+  });
+
+  it("shutdown names each running delegate's session", async () => {
+    const mu = muWithSession("/s/d2.jsonl");
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    const notify = vi.fn();
+    for (const h of p.shutdown) await h({}, { hasUI: true, ui: { notify } });
+    expect(String(notify.mock.calls[0]?.[0])).toContain("Sessions: delegate-2: /s/d2.jsonl.");
   });
 });

@@ -8,6 +8,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Delegates that end without an answer leave evidence.** A
+  `mu_delegate` follow-up for an API error, an empty finish, a
+  timeout or a dead pane, and the `mu_delegate_cancel` result, now
+  name the delegate's pi session file and copy its last message so far
+  to `~/.cache/mu/delegate-answers/<ts>_<name>.partial.md`. Before, the
+  only pointer was `mu agent read`, which stops working once the pane
+  is gone. Quitting pi or `/reload` lists each running delegate's
+  session file too.
+- **The control socket's `status` reports `sessionFile`**, so the reply
+  to `mu agent spawn --send` / `mu agent send` carries it before any
+  run settles.
+
 ## [3.11.3] — 2026-10-11
 
 **Escape no longer loses delegate answers; spawn and DB-open fixes.**

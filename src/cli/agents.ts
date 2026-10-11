@@ -257,6 +257,8 @@ type SpawnSend =
       transport: Transport;
       state?: string;
       runs?: number;
+      /** pi's session file, where the delegate's transcript is written. */
+      sessionFile?: string;
       delivered: boolean;
     }
   | { ok: false; error: string; message: string; exitCode: number };
@@ -293,6 +295,7 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
       transport: sent.transport,
       ...(sent.state !== undefined ? { state: sent.state } : {}),
       ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
+      ...(sent.sessionFile !== undefined ? { sessionFile: sent.sessionFile } : {}),
       delivered: !undelivered,
     };
   } catch (err) {

@@ -48,7 +48,14 @@ export const CTL_OPS = [
   "command",
 ] as const satisfies readonly CtlRequest["op"][];
 
-export type CtlStatus = { state: CtlState; since: number; runs: number; pending: boolean };
+export type CtlStatus = {
+  state: CtlState;
+  since: number;
+  runs: number;
+  pending: boolean;
+  /** The pi session file (where the transcript is written); absent for an ephemeral pi or an older extension. */
+  sessionFile?: string;
+};
 
 export type CtlReply =
   | ({ v: 1; ok: true } & Partial<CtlStatus> & {

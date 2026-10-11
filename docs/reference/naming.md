@@ -100,7 +100,7 @@ it can be deleted at any time.
 
 | Path | Contents |
 | --- | --- |
-| `<cache-dir>/delegate-answers/` | Copies of delegate answers an Escape dropped from pi's queue (the delegate's pi session file keeps the original) |
+| `<cache-dir>/delegate-answers/` | Copies of delegate answers an Escape dropped from pi's queue, and `*.partial.md`: a delegate's last message before it timed out, died, failed or was cancelled (the delegate's pi session file keeps the original) |
 
 mu reads no agent-template directory (`~/.pi/agent/agents/`,
 `.pi/agents/`). A role is a name and a brief.
