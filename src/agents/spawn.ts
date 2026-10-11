@@ -9,7 +9,7 @@
 // Extracted from src/agents.ts as part of refactor_split_large_src_files.
 
 import { execFile } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -33,7 +33,7 @@ import { isJsonMode, type NextStep } from "../output.js";
 // joining the MuxBackend contract.
 import { sleep } from "../tmux.js";
 import type { VcsBackendName } from "../vcs.js";
-import { createWorkspace, freeWorkspace } from "../workspace.js";
+import { createWorkspace, freeWorkspace, workspacePath } from "../workspace.js";
 import { ensureWorkstreamSession, isScratchWorkstream } from "../workstream.js";
 import {
   AgentDiedOnSpawnError,
@@ -266,11 +266,16 @@ const NEXT_FREE_LOOKUPS = 1000;
  * trailing `-<n>` counts up (`delegate-1` → `delegate-2`), and a name
  * without one gets `-2`, `-3`, … (`delegate-review` → `delegate-review-2`).
  * The stem is cut so a candidate stays within the 32-char name limit.
+ * A name whose workspace dir is still on disk counts as taken: a dead
+ * agent's checkout outlives its row (kept as evidence), and spawning
+ * that name with --workspace would fail on the dir instead of moving on.
  * Throws AgentNameExhaustedError after NEXT_FREE_LOOKUPS taken names,
  * or when no valid candidate is left (the suffix alone outgrows it).
  */
 export function nextFreeAgentName(db: Db, name: string, workstream: string): string {
-  if (getAgent(db, name, workstream) === undefined) return name;
+  const free = (n: string) =>
+    getAgent(db, n, workstream) === undefined && !existsSync(workspacePath(workstream, n));
+  if (free(name)) return name;
   const m = /^(.*)-(\d+)$/.exec(name);
   const [stem, first] = m ? [m[1] ?? "", BigInt(m[2] ?? "1")] : [name, 1n];
   for (let i = 1n; i <= BigInt(NEXT_FREE_LOOKUPS); i++) {
@@ -279,7 +284,7 @@ export function nextFreeAgentName(db: Db, name: string, workstream: string): str
     if (!isValidAgentName(candidate)) {
       throw new AgentNameExhaustedError(name, `no valid name left (tried ${candidate})`);
     }
-    if (getAgent(db, candidate, workstream) === undefined) return candidate;
+    if (free(candidate)) return candidate;
   }
   throw new AgentNameExhaustedError(name, `the next ${NEXT_FREE_LOOKUPS} names are taken`);
 }
