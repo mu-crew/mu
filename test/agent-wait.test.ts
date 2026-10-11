@@ -272,10 +272,15 @@ describe("waitForAgents", () => {
             status: "needs_input",
             lastText: "",
             lastError: "Connection error.",
+            sessionFile: "/s/x.jsonl",
           }),
         }),
       });
-      expect(res.agents[0]).toMatchObject({ fired: true, lastError: "Connection error." });
+      expect(res.agents[0]).toMatchObject({
+        fired: true,
+        lastError: "Connection error.",
+        sessionFile: "/s/x.jsonl",
+      });
     });
 
     it("marks the agent dead when the watch reports null", async () => {

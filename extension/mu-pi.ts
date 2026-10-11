@@ -53,6 +53,8 @@ const EXT_VERSION = typeof __MU_VERSION__ === "string" ? __MU_VERSION__ : undefi
 
 /** The slice of pi's ExtensionContext this extension uses. */
 export interface MuPiContext extends DelegateCtx {
+  /** pi's session manager; only the session file is read. */
+  sessionManager?: { getSessionFile(): string | undefined };
   isIdle(): boolean;
   hasPendingMessages(): boolean;
   abort(): void;
@@ -205,6 +207,8 @@ type Shared = {
   /** Error that ended the last settled run, if any; served by `wait`. */
   lastError?: string;
   endError?: string;
+  /** Session file of the last settled run; served by `wait`. */
+  sessionFile?: string;
   ctx?: MuPiContext;
   pi: MuPiApi;
   handle: (req: Record<string, unknown>, conn: Socket) => Promise<Reply>;
@@ -436,6 +440,11 @@ function serveCtl(pi: MuPiApi): () => boolean {
     g.endText = undefined;
     g.lastError = g.endError;
     g.endError = undefined;
+    try {
+      g.sessionFile = c.sessionManager?.getSessionFile();
+    } catch {
+      g.sessionFile = undefined; // stale ctx: the pointer is a convenience
+    }
     for (const w of [...g.waiters]) w();
   });
 
@@ -622,6 +631,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
   const settledRun = () => ({
     lastText: g.lastText,
     ...(g.lastError !== undefined ? { lastError: g.lastError } : {}),
+    ...(g.sessionFile !== undefined ? { sessionFile: g.sessionFile } : {}),
   });
 
   /** Resolve once a run past `afterRuns` has settled (any next settle when omitted). */

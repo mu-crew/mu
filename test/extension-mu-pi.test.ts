@@ -207,10 +207,18 @@ describe("mu pi extension", () => {
       });
     });
 
+    it("wait carries the settled run's session file", async () => {
+      await fake.emit("session_start");
+      Object.assign(fake.ctx, { sessionManager: { getSessionFile: () => "/s/delegate.jsonl" } });
+      const r = await run([assistant({ type: "text", text: "a" })]);
+      expect(r).toMatchObject({ ok: true, lastText: "a", sessionFile: "/s/delegate.jsonl" });
+    });
+
     it("is empty when the run ended with only tool calls or no agent_end", async () => {
       await fake.emit("session_start");
       const r = await run([assistant({ type: "toolCall", id: "1", name: "bash", arguments: {} })]);
       expect(r).toMatchObject({ ok: true, lastText: "" });
+      expect(r).not.toHaveProperty("sessionFile"); // no session manager in this ctx
       await fake.emit("agent_start");
       const p = ctlRequest(sock, { op: "wait", afterRuns: 1 });
       await new Promise((r) => setTimeout(r, 20));

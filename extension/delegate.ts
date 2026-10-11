@@ -16,9 +16,10 @@
  * that one serves a pi mu spawned; this one runs in a pi that is not.
  */
 import { execFile } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { defaultCacheDir } from "../src/state-dir.js";
 
 /** The slice of pi's ExtensionAPI the delegate side uses. */
 export interface MuDelegateApi {
@@ -161,7 +162,13 @@ export function defaultRunner(): MuRunner {
 }
 
 /** One agent row of `mu agent wait --json`, as far as the tool reads it. */
-export type WaitAgent = { outcome?: string; lastText?: string; lastError?: string };
+export type WaitAgent = {
+  outcome?: string;
+  lastText?: string;
+  lastError?: string;
+  /** The delegate's pi session file (mu ≥ 3.11.2 on the delegate side). */
+  sessionFile?: string;
+};
 
 /** What happened to the pane after delivery, for the message. */
 export type PaneFate = { closed: true } | { closed: false; why: string };
@@ -233,6 +240,50 @@ export function delegateMessage(
     default:
       return `${who}: mu agent wait gave no result. ${fate}${ws}${tailBlock}`;
   }
+}
+
+/** A finished delegate whose answer an aborted run dropped from pi's queue. */
+export type DroppedAnswer = {
+  name: string;
+  outcome?: string;
+  elapsedMs?: number;
+  /** The local copy of the follow-up message, if writing it worked. */
+  copy?: string;
+  sessionFile?: string;
+};
+
+/** Where dropped answers are copied: `<mu cache dir>/delegate-answers`.
+ *  Cache, not state: the delegate's pi session file keeps the answer. */
+export function droppedAnswersDir(): string {
+  return join(defaultCacheDir(), "delegate-answers");
+}
+
+/**
+ * The note left in the conversation when Escape drops queued answers:
+ * one line per delegate, pointing at the local copy and the delegate's
+ * own session file. Pure.
+ */
+export function droppedNote(dropped: readonly DroppedAnswer[]): string {
+  const n = dropped.length;
+  const lines = dropped.map((d) => {
+    const how = [
+      d.outcome ?? "no result",
+      d.elapsedMs !== undefined ? formatElapsed(d.elapsedMs) : undefined,
+    ]
+      .filter((x) => x !== undefined)
+      .join(", ");
+    const where = [
+      d.copy ? `answer: ${d.copy}` : undefined,
+      d.sessionFile ? `session: ${d.sessionFile}` : undefined,
+    ].filter((x) => x !== undefined);
+    if (where.length === 0) where.push(`read: mu agent read ${d.name} -n 50 -w ${W}`);
+    return `- ${W}/${d.name} (${how}) ${where.join(" · ")}`;
+  });
+  return [
+    `The interrupt dropped ${n} delegate answer${n === 1 ? "" : "s"} before ${n === 1 ? "it" : "they"} arrived:`,
+    ...lines,
+    "The answer file holds the message that would have arrived; in a session file the answer is the last assistant message.",
+  ].join("\n");
 }
 
 /** Where a delegate's answer is recorded: a task, resolved by `mu task show`. */
@@ -368,9 +419,13 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   /** Delegates that finished whose follow-up has not entered the
    *  conversation: being delivered, or queued behind a running turn.
    *  Keyed by a per-delivery id carried in the message's details, and
-   *  cleared on that message's message_start. The value says whether
-   *  pi.sendMessage has returned, i.e. the message sits in pi's queue. */
-  const arriving = new Map<number, boolean>();
+   *  cleared on that message's message_start. `queued` says whether
+   *  pi.sendMessage has returned, i.e. the message sits in pi's queue;
+   *  the rest is what an interrupt needs to point at the answer. */
+  const arriving = new Map<
+    number,
+    { queued: boolean; name: string; content?: string } & Omit<DroppedAnswer, "copy">
+  >();
   let deliverySeq = 0;
   // The ctx of the latest tool call: answers settle outside any call, so
   // the footer is refreshed through the last ctx pi handed us.
@@ -403,6 +458,24 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   };
   const track = (ctx: DelegateCtx | undefined) => {
     if (ctx?.hasUI !== false && ctx?.ui) ui = ctx.ui;
+  };
+  /** The follow-up for `delivery` is in pi's queue now. */
+  const markQueued = (delivery: number) => {
+    const a = arriving.get(delivery);
+    if (a) a.queued = true;
+  };
+  /** Copy a dropped answer under the mu cache dir; undefined if that fails. */
+  const saveCopy = (name: string, content: string): string | undefined => {
+    try {
+      const dir = droppedAnswersDir();
+      mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const path = join(dir, `${stamp}_${name}.md`);
+      writeFileSync(path, `${content}\n`);
+      return path;
+    } catch {
+      return undefined;
+    }
   };
   /** Drop a delegate from the in-flight set, start the next queued call
    *  into the freed slot, and refresh the footer. */
@@ -601,10 +674,19 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         )
       : undefined;
     const message = delegateMessage(name, agent, pane, { ...extras, ...(tail ? { tail } : {}) });
+    const content = recorded ? `${message}\n\n${recorded}` : message;
+    const a = arriving.get(delivery);
+    if (a)
+      Object.assign(a, {
+        content,
+        ...(outcome ? { outcome } : {}),
+        ...(extras.elapsedMs !== undefined ? { elapsedMs: extras.elapsedMs } : {}),
+        ...(agent?.sessionFile ? { sessionFile: agent.sessionFile } : {}),
+      });
     await pi.sendMessage(
       {
         customType: DELEGATE_MESSAGE_TYPE,
-        content: recorded ? `${message}\n\n${recorded}` : message,
+        content,
         display: true,
         details: {
           name,
@@ -693,7 +775,7 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       );
       const settle = async (r: MuResult) => {
         const delivery = ++deliverySeq;
-        arriving.set(delivery, false);
+        arriving.set(delivery, { queued: false, name });
         forget(name);
         try {
           await deliver(
@@ -710,24 +792,30 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
             delivery,
             entry.record,
           );
-          if (arriving.has(delivery)) arriving.set(delivery, true);
+          markQueued(delivery);
         } catch (e) {
           // A throw here would be an unhandled rejection and a lost answer.
+          const content = `Delegate ${W}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${W}`;
+          const a = arriving.get(delivery);
+          if (a) a.content = content;
           await Promise.resolve(
             pi.sendMessage(
               {
                 customType: DELEGATE_MESSAGE_TYPE,
-                content: `Delegate ${W}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${W}`,
+                content,
                 display: true,
                 details: { name, workstream: W, outcome: null, closed: false, delivery },
               },
               { deliverAs: "followUp", triggerTurn: true },
             ),
-          ).catch(() => {
-            // Nothing will arrive: stop counting it.
-            arriving.delete(delivery);
-            showStatus();
-          });
+          ).then(
+            () => markQueued(delivery),
+            () => {
+              // Nothing will arrive: stop counting it.
+              arriving.delete(delivery);
+              showStatus();
+            },
+          );
         }
       };
       void waiting.then(async (r) => {
@@ -957,16 +1045,37 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
   });
 
   // Escape clears pi's follow-up queue along with the run: answers that
-  // were queued in it never arrive, so stop counting them.
+  // were queued in it never arrive. Stop counting them, copy each to the
+  // mu cache dir, and leave one line per answer in the conversation (no
+  // turn: the model sees it with the user's next prompt). An answer
+  // still being delivered is not in the queue yet and arrives as usual.
   pi.on("agent_settled", (e) => {
     if ((e as { aborted?: unknown }).aborted !== true) return;
-    let dropped = false;
-    for (const [id, queued] of arriving)
-      if (queued) {
-        arriving.delete(id);
-        dropped = true;
-      }
-    if (dropped) showStatus();
+    const dropped: DroppedAnswer[] = [];
+    for (const [id, a] of arriving) {
+      if (!a.queued) continue;
+      arriving.delete(id);
+      dropped.push({
+        name: a.name,
+        ...(a.outcome ? { outcome: a.outcome } : {}),
+        ...(a.elapsedMs !== undefined ? { elapsedMs: a.elapsedMs } : {}),
+        ...(a.sessionFile ? { sessionFile: a.sessionFile } : {}),
+        ...(a.content ? { copy: saveCopy(a.name, a.content) } : {}),
+      });
+    }
+    if (dropped.length === 0) return;
+    showStatus();
+    void Promise.resolve(
+      pi.sendMessage(
+        {
+          customType: DELEGATE_MESSAGE_TYPE,
+          content: droppedNote(dropped),
+          display: true,
+          details: { dropped },
+        },
+        { triggerTurn: false },
+      ),
+    ).catch(() => {});
   });
 
   // The watchers die with this runtime (/reload, /new, quit): say which

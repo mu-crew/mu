@@ -95,5 +95,12 @@ Never put `MU_DB_PATH` inside `MU_SYNC_DIR`: syncing a live SQLite
 file and its `-wal` and `-shm` sidecars corrupts it. `mu doctor` checks
 for this.
 
+The cache dir is `$XDG_CACHE_HOME/mu`, else `~/.cache/mu`. Anything in
+it can be deleted at any time.
+
+| Path | Contents |
+| --- | --- |
+| `<cache-dir>/delegate-answers/` | Copies of delegate answers an Escape dropped from pi's queue (the delegate's pi session file keeps the original) |
+
 mu reads no agent-template directory (`~/.pi/agent/agents/`,
 `.pi/agents/`). A role is a name and a brief.
