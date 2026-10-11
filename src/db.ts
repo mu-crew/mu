@@ -141,7 +141,10 @@ export function openDb(options: OpenDbOptions = {}): Db {
     // silently stamped as v11 by the CREATE-IF-NOT-EXISTS in applySchema,
     // and before `journal_mode = WAL`, which rewrites the file header:
     // a refused DB must be left byte-for-byte untouched.
-    const detectedVersion = detectExistingSchemaVersion(db);
+    // One read transaction: a process creating this DB can commit
+    // between two bare reads, and "no schema_version table, then a
+    // workstreams table" read as a pre-versioning v1 DB.
+    const detectedVersion = db.transaction(() => detectExistingSchemaVersion(db))();
     if (detectedVersion !== null && detectedVersion > CURRENT_SCHEMA_VERSION) {
       // A newer mu wrote this DB. Its writes would fail here in
       // confusing ways (unknown columns, constraints this build does not
@@ -164,7 +167,7 @@ export function openDb(options: OpenDbOptions = {}): Db {
       }
       throw new SchemaTooOldError(detectedVersion, MIN_ACCEPTED_SCHEMA_VERSION);
     }
-    db.pragma("journal_mode = WAL");
+    setWalMode(db);
     db.pragma("foreign_keys = ON");
     // Skip the DDL write transaction when the DB already matches this
     // build. applySchema takes the write lock and rewrites the views,
@@ -363,6 +366,32 @@ export class SchemaTooNewError extends Error implements HasNextSteps {
   }
   errorNextSteps(): NextStep[] {
     return [{ intent: "Check which mu is on PATH", command: "which mu && mu --version" }];
+  }
+}
+
+/** How long openDb retries the switch to WAL while another process holds the lock. */
+const WAL_SWITCH_RETRY_MS = 5000;
+
+/**
+ * `journal_mode = WAL`, retried on SQLITE_BUSY. On a fresh file the
+ * switch needs an exclusive lock, and SQLite can return SQLITE_BUSY
+ * for it without calling the busy handler, so busy_timeout does not
+ * cover it: N processes opening a new DB at once lost one with
+ * "database is locked". Once the file is WAL the switch is a no-op.
+ */
+function setWalMode(db: Db): void {
+  const deadline = Date.now() + WAL_SWITCH_RETRY_MS;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try {
+      db.pragma("journal_mode = WAL");
+      return;
+    } catch (err) {
+      const code = (err as { code?: unknown }).code;
+      const busy = typeof code === "string" && code.startsWith("SQLITE_BUSY");
+      if (!busy || Date.now() >= deadline) throw err;
+      Atomics.wait(pause, 0, 0, 10 + Math.floor(Math.random() * 20));
+    }
   }
 }
 
