@@ -25,6 +25,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`spawn --next-free` skips a name whose workspace dir is left on
+  disk.** A dead agent's checkout outlives its row, kept as evidence.
+  `--next-free` checked only agent rows, so it picked that name again,
+  and `--workspace` then failed with `WorkspacePathNotEmptyError`
+  instead of moving on. `mu_delegate` with `workspace: true` hit this
+  when a label repeated. The leftover dir is untouched; the spawn takes
+  the next name.
 - **Parallel `mu` calls on a fresh DB no longer drop one.** The first
   fan-out into a new DB (a new machine or `MU_DB_PATH`) could lose a
   process two ways. Switching the file to WAL returns SQLITE_BUSY

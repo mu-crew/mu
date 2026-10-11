@@ -27,6 +27,8 @@ import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
+import { workspacePath } from "../src/workspace.js";
+import { withEnv } from "./_env.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -431,6 +433,17 @@ describe("nextFreeAgentName", () => {
     expect(nextFreeAgentName(db, "delegate-review", "auth")).toBe("delegate-review-2");
     expect(nextFreeAgentName(db, "fresh", "auth")).toBe("fresh");
     expect(nextFreeAgentName(db, "delegate-1", "other")).toBe("delegate-1");
+  });
+
+  it("skips a name whose workspace dir outlived its agent", async () => {
+    await withEnv("MU_STATE_DIR", join(dir, "state"), async () => {
+      // A dead delegate's checkout: no agent row, the dir kept as evidence.
+      mkdirSync(workspacePath("scratch", "delegate-review"), { recursive: true });
+      mkdirSync(workspacePath("scratch", "delegate-review-2"), { recursive: true });
+      expect(nextFreeAgentName(db, "delegate-review", "scratch")).toBe("delegate-review-3");
+      // Another workstream's dir does not count.
+      expect(nextFreeAgentName(db, "delegate-review", "auth")).toBe("delegate-review");
+    });
   });
 
   it("cuts the stem so a taken 31- or 32-char name yields a valid name", () => {
