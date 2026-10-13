@@ -8,6 +8,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Skill: orchestrators clean up scratch files.** Review panels and
+  other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
+  hoc dirs under `$HOME`. SKILL.md's orchestrator rules now say to keep
+  briefs and answers in task notes and `mu log` (stdin for pure
+  delegate calls), keep any files in one `mktemp -d` dir per job,
+  and remove it before the turn ends.
+- **Skill: worker checkouts come from mu.** Orchestrators made their
+  own `git worktree`s for workers, which mu could not refresh, diff or
+  free, so they leaked. SKILL.md now says to use `--workspace` /
+  `workspace: true` for every local agent; remote agents keep the
+  manual recipe.
+
 ## [3.12.0] — 2026-10-11
 
 **A delegate that ends without an answer leaves its evidence.** Timeout,

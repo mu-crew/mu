@@ -112,8 +112,12 @@ so only one is ready at a time.
 ### Workspaces prevent trampling
 
 If an agent may edit, build, or test while another is active in the same
-repo, spawn with `--workspace`. Two builds in one checkout corrupt each
-other; keep the main checkout for orchestration.
+repo, spawn with `--workspace` (`workspace: true` on `mu_delegate`).
+Two builds in one checkout corrupt each other; keep the main checkout
+for orchestration. Never make your own `git worktree`, `jj workspace`
+or copy for a local agent: mu cannot refresh, list, diff or free what
+it did not create, so it leaks. Remote agents are the exception
+([remote-workers](recipes/remote-workers.md)).
 
 Workspaces auto-detect jj, sl, or git (else `cp -a`). `mu agent close`
 frees one **only if clean**; otherwise it fails with
@@ -201,6 +205,12 @@ rules hold even when you skip it:
   turn. Refuters and claim checkers pass `record` (or hand-write the
   `REFUTER` note) to land the verdict on the task; judges report
   `WINNER:`. `MU_DELEGATE_MAX` (16) run at once; the rest queue.
+- **Leave no scratch files.** With tasks, briefs and answers live in
+  mu (task notes, `mu log`); for pure delegate calls, pass them through
+  stdin (`-` plus a quoted heredoc). A job that needs files
+  (diffs, a brief shared by a panel, reviewer outputs) keeps them in
+  one `mktemp -d` directory and `rm -rf`s it once the results are in
+  notes or your answer, before the turn ends.
 - **Findings are tasks.** A reviewer's or auditor's findings become
   `mu task add --triage` tasks blocking the review, decided with
   `mu task accept` or `close --as rejected|duplicate`. A review nobody
