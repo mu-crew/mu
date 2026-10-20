@@ -97,6 +97,9 @@ by orchestrator`.
   verdict (`done` or `--as rejected`) and at least one command the
   reviewer ran. A review with no evidence is a
   rejected review: re-send it.
+- **A review with only UNVERIFIED items is not a REJECT.** A broken
+  environment or unreachable resource starts no coder round: report it
+  to the human.
 - **Reviewers drift into fixing.** A reviewer that edits the code is now
   an author nobody reviews. The fix belongs to the finding tasks.
 - **Review is not merge verification.** An accepted unit can still
