@@ -10,6 +10,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.13.0] — 2026-10-20
+
+**Faster everyday verbs.** tmux-touching verbs no longer load execa (about
+50-60 ms each), pure-JS dependencies are bundled, and a bare verb in a
+mu-spawned pane skips the tmux workstream lookup. `mu doctor` counts ops by
+key range (~250 ms less), peer sync resumes from where it stopped, and the
+TUI launches faster and stops re-detecting the VCS every 10 s.
+
+Upgrade with `npm i -g @mu-crew/mu@3.13.0`, then `/reload` in running pi
+sessions to pick up the extension. No schema change. Task, track and peer
+lists now sort names by code unit (`a-b, a0, a_b`; uppercase first).
+
 ### Changed
 
 - **Spawn warns on Claude's folder-trust dialog.** The dialog defaults to
