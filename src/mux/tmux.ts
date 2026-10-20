@@ -309,9 +309,16 @@ export async function sessionExists(name: string): Promise<boolean> {
   return result.exitCode === 0;
 }
 
+/**
+ * A detached session otherwise gets tmux's default-size (80x24), so
+ * `mu agent read` captures wrap at 80. Never resize-window: it pins
+ * window-size to manual.
+ */
+const DETACHED_SIZE = ["-x", "200", "-y", "50"];
+
 export async function newSession(name: string, opts: NewSessionOptions = {}): Promise<void> {
   const args = ["new-session"];
-  if (opts.detached !== false) args.push("-d");
+  if (opts.detached !== false) args.push("-d", ...DETACHED_SIZE);
   args.push("-s", name);
   if (opts.windowName) args.push("-n", opts.windowName);
   if (opts.cwd) args.push("-c", opts.cwd);
@@ -331,7 +338,7 @@ export async function newSessionWithPane(
   opts: NewSessionWithPaneOptions,
 ): Promise<string> {
   const args = ["new-session"];
-  if (opts.detached !== false) args.push("-d");
+  if (opts.detached !== false) args.push("-d", ...DETACHED_SIZE);
   args.push("-s", name, "-n", opts.windowName);
   if (opts.cwd) args.push("-c", opts.cwd);
   appendEnvFlags(args, opts.env);

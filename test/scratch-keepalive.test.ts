@@ -74,7 +74,18 @@ describe("spawn into scratch keeps the session alive (tmux)", () => {
     await spawnAgent(db, { name: "helper-1", workstream: "scratch" });
 
     const create = calls.find((c) => c[0] === "new-session");
-    expect(create).toEqual(["new-session", "-d", "-s", "mu-scratch", "-n", "_mu"]);
+    expect(create).toEqual([
+      "new-session",
+      "-d",
+      "-x",
+      "200",
+      "-y",
+      "50",
+      "-s",
+      "mu-scratch",
+      "-n",
+      "_mu",
+    ]);
     expect(calls.filter((c) => c[0] === "new-session")).toHaveLength(1);
     expect(calls.some((c) => c[0] === "new-window" && c.includes("helper-1"))).toBe(true);
     expect(windowNames("mu-scratch")).toEqual(["_mu", "helper-1"]);
@@ -124,7 +135,17 @@ describe("spawn into scratch keeps the session alive (tmux)", () => {
     await spawnAgent(db, { name: "worker-1", workstream: "auth" });
 
     const create = calls.find((c) => c[0] === "new-session");
-    expect(create?.slice(0, 6)).toEqual(["new-session", "-d", "-s", "mu-auth", "-n", "worker-1"]);
+    expect(create?.slice(0, 9)).toEqual([
+      "new-session",
+      "-d",
+      "-x",
+      "200",
+      "-y",
+      "50",
+      "-s",
+      "mu-auth",
+      "-n",
+    ]);
     expect(create).toContain("-P");
     expect(windowNames("mu-auth")).toEqual(["worker-1"]);
   });
