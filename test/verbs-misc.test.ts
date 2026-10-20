@@ -229,6 +229,19 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     expect(result.ctl).toBe("skipped");
   });
 
+  it("locks the pane title on first adopt and on idempotent re-adopt", async () => {
+    const { calls, executor } = mockTmux(state);
+    setTmuxExecutor(executor);
+    const { adoptAgent } = await import("../src/agents.js");
+    const { paneId } = seedOrphanPane({ sessionName: "mu-auth", title: "worker-2" });
+    const lock = () =>
+      calls.filter((c) => c.includes("allow-set-title") && c.includes("off") && c.includes(paneId));
+    await adoptAgent(db, { paneId, workstream: "auth" });
+    expect(lock().length).toBe(1);
+    await adoptAgent(db, { paneId, workstream: "auth" });
+    expect(lock().length).toBe(2);
+  });
+
   it("(case 6) adopt twice with same input -> alreadyAdopted=true (idempotent)", async () => {
     const { calls, executor } = mockTmux(state);
     setTmuxExecutor(executor);

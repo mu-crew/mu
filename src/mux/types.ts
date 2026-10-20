@@ -343,6 +343,9 @@ export interface MuxBackend {
   // first by the caller (src/tasks/claim.ts) and is backend-independent;
   // this exists because adopted panes predate that env injection.
   setPaneTitle(paneId: string, title: string): Promise<void>;
+  /** Stop the pane's program from retitling it (tmux `allow-set-title off`;
+   *  pi emits OSC "π - <cwd>"). No-op where the backend has no equivalent. */
+  lockPaneTitle(paneId: string): Promise<void>;
   getPaneTitle(paneId: string): Promise<string | undefined>;
   currentAgentName(): Promise<string | undefined>;
   /** Name of the session the CALLER is running inside, or undefined

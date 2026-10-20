@@ -905,6 +905,9 @@ export async function paneTTY(paneId: string): Promise<string> {
 // ─── Identity ──────────────────────────────────────────────────────────
 
 /** herdr's pane `label` is mu's pane title. */
+/** herdr labels are not rewritten by OSC titles: nothing to lock. */
+export async function lockPaneTitle(_paneId: string): Promise<void> {}
+
 export async function setPaneTitle(paneId: string, title: string): Promise<void> {
   assertValidPaneId(paneId);
   await herdr(["pane", "rename", paneId, title]);
@@ -1508,6 +1511,7 @@ export const herdrBackend: MuxBackend = Object.freeze({
   paneTTY,
 
   setPaneTitle,
+  lockPaneTitle,
   getPaneTitle,
   currentAgentName,
   currentSessionName,

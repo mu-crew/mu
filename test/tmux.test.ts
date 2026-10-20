@@ -18,6 +18,7 @@ import {
   listPanes,
   listSessions,
   listWindows,
+  lockPaneTitle,
   newSession,
   newSessionWithPane,
   newWindow,
@@ -770,6 +771,15 @@ describe("paneTTY", () => {
     setTmuxExecutor(executor);
     await expect(paneTTY("garbage")).rejects.toThrow(/invalid tmux pane id/);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("lockPaneTitle", () => {
+  it("sets pane-scoped allow-set-title off", async () => {
+    const { executor, calls } = harness(() => ok());
+    setTmuxExecutor(executor);
+    await lockPaneTitle("%15");
+    expect(calls[0]?.args).toEqual(["set-option", "-p", "-t", "%15", "allow-set-title", "off"]);
   });
 });
 

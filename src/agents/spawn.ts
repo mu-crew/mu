@@ -529,6 +529,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       paneId = pid;
       const mux = await activeMux();
       await mux.setPaneTitle(pid, opts.name);
+      await mux.lockPaneTitle(pid);
       // Apply the mu pane border to the new window. Window-scoped option;
       // see enableMuPaneBorders docstring for why this is required per
       // window (and not just per session). Self-checks MU_BANNER_QUIET
