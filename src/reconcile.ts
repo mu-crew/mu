@@ -134,8 +134,11 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
     } else if (paneById.has(agent.paneId)) {
       survivors.push(agent);
     } else {
-      if (mode === "full") agentSdk.deleteAgent(db, agent.name, agent.workstreamName);
-      prunedGhosts++;
+      if (mode !== "full") {
+        prunedGhosts++;
+      } else if (agentSdk.deleteAgent(db, agent.name, agent.workstreamName, agent.paneId)) {
+        prunedGhosts++;
+      }
     }
   }
 

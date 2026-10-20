@@ -10,6 +10,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reconcile no longer deletes a respawned agent.** The ghost prune
+  deleted by name, so an agent closed and respawned under the same name
+  during a pass lost its new row and had its tasks reopened. The delete
+  now checks the snapshotted pane id inside the reaper transaction and
+  skips the row (and the ctl socket unlink) on a mismatch.
+
 ### Changed
 
 - **Skill: orchestrators clean up scratch files.** Review panels and
