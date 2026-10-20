@@ -46,6 +46,7 @@ import {
   registerCloseNudge,
   registerNudge,
   registerRefuteNudge,
+  withQueuedInput,
 } from "./nudge.js";
 
 /** The mu package version, baked in by tsup's `define`; absent when run from source. */
@@ -424,7 +425,9 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
   // The three nudges' settle checks run in parallel, as one handler.
   // A delegate answer on its way resumes the agent itself; an open
   // dialog means nobody is driving. Either holds the nudges.
-  const hold = () => (delegates.answerPending() ? "answer" : isUiBlocked() ? "blocked" : undefined);
+  const hold = withQueuedInput(() =>
+    delegates.answerPending() ? "answer" : isUiBlocked() ? "blocked" : undefined,
+  );
   const settle = parallelSettle(pi, hold);
   registerNudge(settle.api, run, undefined, nested, hold);
   registerCloseNudge(settle.api, run, process.env, nested, hold);
