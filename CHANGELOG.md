@@ -67,6 +67,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   fetched, and falls back to per-workstream `has-session` when
   `list-sessions` fails, so a transient failure still never marks live
   sessions dead. ~22 ms CLI CPU saved; output is identical.
+- **`mu agent spawn` sets the tmux pane border in one tmux call.** The four
+  `set-option -w` calls are `;`-chained into one invocation and target the
+  pane directly, which drops the `display-message #{window_id}` lookup
+  (6 tmux processes become 1, ~33-80 ms per spawn). Options, `-w` scope,
+  `MU_BANNER_QUIET`, and the swallow-all-errors behaviour are unchanged.
 - **Task, track and sync-peer sorts use code-unit order, not
   `localeCompare`.** The first `localeCompare` call initialised ICU
   (~4 ms on nearly every list verb). Ties by name now sort by code unit,

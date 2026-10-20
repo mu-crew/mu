@@ -838,47 +838,54 @@ describe("enableMuPaneBorders", () => {
     }
   });
 
-  it("enableMuPaneBordersForPane resolves window then enables its border", async () => {
-    const { executor, calls } = harness((args) => {
-      if (args[0] === "display-message") return ok("@99\n");
-      return ok();
-    });
+  it("enableMuPaneBordersForPane targets the pane directly in one tmux call", async () => {
+    const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
     await enableMuPaneBordersForPane("%15");
-    expect(calls[0]?.args).toEqual(["display-message", "-t", "%15", "-p", "#{window_id}"]);
-    expect(calls[1]?.args).toEqual(["set-option", "-w", "-t", "@99", "pane-border-status", "top"]);
-    expect(calls.length).toBe(5);
+    expect(calls.length).toBe(1);
+    expect(calls.some((call) => call.args[0] === "display-message")).toBe(false);
+    expect(calls[0]?.args.slice(0, 6)).toEqual([
+      "set-option",
+      "-w",
+      "-t",
+      "%15",
+      "pane-border-status",
+      "top",
+    ]);
+  });
+
+  it("enableMuPaneBordersForPane ignores invalid pane ids and tmux errors", async () => {
+    const { executor, calls } = harness(() => ({ stdout: "", stderr: "boom", exitCode: 1 }));
+    setTmuxExecutor(executor);
+    await enableMuPaneBordersForPane("not-a-pane");
+    expect(calls.length).toBe(0);
+    await expect(enableMuPaneBordersForPane("%15")).resolves.toBeUndefined();
+    expect(calls.length).toBe(1);
   });
 
   it("enables pane borders without overriding the user's format", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
     await enableMuPaneBorders("@42");
-    expect(calls.length).toBe(4);
+    // One `;`-chained tmux invocation, not four spawns.
+    expect(calls.length).toBe(1);
+    const args = calls[0]?.args ?? [];
+    expect(args.includes("pane-border-format")).toBe(false);
     // -w is critical: pane-border-status is a WINDOW option in tmux,
     // not a session option. Without -w, set-option on a session
     // target only updates the currently-active window; windows
     // created later inherit from the global default ('off').
-    expect(calls[0]?.args).toEqual(["set-option", "-w", "-t", "@42", "pane-border-status", "top"]);
-    expect(calls.some((call) => call.args.includes("pane-border-format"))).toBe(false);
     // Heavy box-drawing on bottom + sides so a mu pane is visually
     // distinct from a non-mu tmux window even when not focused.
-    expect(calls[1]?.args).toEqual(["set-option", "-w", "-t", "@42", "pane-border-lines", "heavy"]);
-    expect(calls[2]?.args).toEqual([
-      "set-option",
-      "-w",
-      "-t",
-      "@42",
-      "pane-active-border-style",
-      "fg=cyan,bold",
-    ]);
-    expect(calls[3]?.args).toEqual([
-      "set-option",
-      "-w",
-      "-t",
-      "@42",
-      "pane-border-style",
-      "fg=brightblack",
+    const w = (opt: string, val: string) => ["set-option", "-w", "-t", "@42", opt, val];
+    expect(args).toEqual([
+      ...w("pane-border-status", "top"),
+      ";",
+      ...w("pane-border-lines", "heavy"),
+      ";",
+      ...w("pane-active-border-style", "fg=cyan,bold"),
+      ";",
+      ...w("pane-border-style", "fg=brightblack"),
     ]);
   });
 });
