@@ -662,8 +662,10 @@ export async function enableMuPaneBordersForSession(session: string): Promise<nu
  */
 export async function enableMuPaneBordersForPane(paneId: string): Promise<void> {
   if (muBannersDisabled()) return;
-  const wid = await getWindowIdForPane(paneId).catch(() => undefined);
-  if (wid) await enableMuPaneBorders(wid).catch(() => {});
+  if (!isValidPaneId(paneId)) return;
+  // Target the pane directly: `set-option -w` resolves a pane target to
+  // its window, so no `display-message #{window_id}` round-trip needed.
+  await enableMuPaneBorders(paneId).catch(() => {});
 }
 
 /**
@@ -693,16 +695,23 @@ export async function enableMuPaneBordersForPane(paneId: string): Promise<void> 
  */
 export async function enableMuPaneBorders(target: string): Promise<void> {
   if (muBannersDisabled()) return;
-  await tmux(["set-option", "-w", "-t", target, "pane-border-status", "top"]);
+  // One tmux invocation (`;`-chained) instead of four: each spawn of the
+  // tmux client costs ~10 ms. tmux aborts the chain at the first error.
   // Bottom + sides: heavy box-drawing lines so a mu-managed pane is
   // visually distinct even when not the active pane (top carries the
   // labeled status text; the rest of the frame carries the visual
   // "this is mu" cue). Cyan-bold for the active pane, dim brightblack
   // for inactive ones, so the operator's eye lands on the pane that
   // currently has focus.
-  await tmux(["set-option", "-w", "-t", target, "pane-border-lines", "heavy"]);
-  await tmux(["set-option", "-w", "-t", target, "pane-active-border-style", "fg=cyan,bold"]);
-  await tmux(["set-option", "-w", "-t", target, "pane-border-style", "fg=brightblack"]);
+  await tmux([
+    ...["set-option", "-w", "-t", target, "pane-border-status", "top"],
+    ";",
+    ...["set-option", "-w", "-t", target, "pane-border-lines", "heavy"],
+    ";",
+    ...["set-option", "-w", "-t", target, "pane-active-border-style", "fg=cyan,bold"],
+    ";",
+    ...["set-option", "-w", "-t", target, "pane-border-style", "fg=brightblack"],
+  ]);
 }
 
 /**
