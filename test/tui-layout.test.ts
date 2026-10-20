@@ -263,7 +263,8 @@ describe("dashboard card-to-column search", () => {
   it("finds the optimum on a small fixture", () => {
     // Two columns of 20 rows. Default: [1, 2] | [3, 6]. Ready and
     // In-progress both hold 14 rows; split them one per column and
-    // nothing hides.
+    // nothing hides. Both splits move two cards; slot order breaks the
+    // tie (Tasks, slot 3, stays in the earlier column).
     const counts: Partial<Record<CardId, number>> = { 3: 14, 6: 14, 1: 1, 2: 1 };
     const initial: ColumnAssignment[] = [{ cards: [1, 2] }, { cards: [3, 6] }];
     const result = arrangeColumns({
@@ -273,8 +274,8 @@ describe("dashboard card-to-column search", () => {
     });
     expect(result.hiddenRows).toBe(0);
     expect(HEIGHT_OF(result.assignments)).toEqual([
-      [1, 6],
-      [2, 3],
+      [1, 3],
+      [2, 6],
     ]);
   });
 
@@ -391,6 +392,66 @@ describe("dashboard card-to-column search", () => {
         }
       }
     }
+  });
+
+  it("prefers fewer cards moved among equal-hidden neighbours", () => {
+    // 260 cols, 62 rows, all ten cards: swapping 1 and 7 from the
+    // former result hid the same 23 rows with one card fewer moved.
+    const rows = 62;
+    const initial = layoutColumns(260, ALL);
+    const counts: Partial<Record<CardId, number>> = {
+      0: 24,
+      1: 23,
+      2: 17,
+      3: 36,
+      4: 9,
+      5: 0,
+      6: 44,
+      7: 31,
+      8: 52,
+      9: 13,
+    };
+    const result = arrangeColumns({
+      initial,
+      availableRows: rows,
+      dataCountFn: (id) => counts[id] ?? 0,
+    });
+    const home = HEIGHT_OF(initial);
+    const movedOf = (lanes: CardId[][]) =>
+      lanes.reduce(
+        (s, lane, c) => s + lane.filter((id) => !(home[c] ?? []).includes(id)).length,
+        0,
+      );
+    const lanes = HEIGHT_OF(result.assignments);
+    const moved = movedOf(lanes);
+    const slot = (id: CardId) => (id === 0 ? 10 : id);
+    const sorted = (lane: CardId[]) => [...lane].sort((x, y) => slot(x) - slot(y));
+    const checkNeighbour = (next: CardId[][]) => {
+      if (hiddenRows(rows, next, counts) === result.hiddenRows) {
+        expect(movedOf(next)).toBeGreaterThanOrEqual(moved);
+      }
+    };
+    for (let from = 0; from < lanes.length; from++) {
+      for (let to = 0; to < lanes.length; to++) {
+        if (from === to) continue;
+        for (const x of lanes[from] ?? []) {
+          if ((lanes[from] ?? []).length > 1) {
+            const next = lanes.map((l) => [...l]);
+            next[from] = (lanes[from] ?? []).filter((id) => id !== x);
+            next[to] = sorted([...(lanes[to] ?? []), x]);
+            checkNeighbour(next);
+          }
+          for (const y of lanes[to] ?? []) {
+            const next = lanes.map((l) => [...l]);
+            next[from] = sorted([...(lanes[from] ?? []).filter((id) => id !== x), y]);
+            next[to] = sorted([...(lanes[to] ?? []).filter((id) => id !== y), x]);
+            checkNeighbour(next);
+          }
+        }
+      }
+    }
+    expect(result.hiddenRows).toBeLessThanOrEqual(23);
+    expect(moved).toBeLessThanOrEqual(3);
   });
 
   it("ignores a previous assignment over a different card set", () => {
