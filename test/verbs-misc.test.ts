@@ -284,6 +284,23 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     expect(ops.n).toBe(1);
   });
 
+  it("idempotent re-adopt of a composed-title pane survives a title-write failure", async () => {
+    const { executor } = mockTmux(state);
+    setTmuxExecutor(executor);
+    const { adoptAgent } = await import("../src/agents.js");
+    const { paneId } = seedOrphanPane({ sessionName: "mu-auth", title: "worker-6" });
+    await adoptAgent(db, { paneId, workstream: "auth" });
+    const pane = state.panes.get(paneId);
+    if (pane) pane.title = "worker-6 · some-task"; // mu's composed title
+    setTmuxExecutor(async (args) =>
+      args[0] === "select-pane" && args.includes("-T")
+        ? { stdout: "", stderr: "server busy", exitCode: 1 }
+        : executor(args),
+    );
+    const again = await adoptAgent(db, { paneId, workstream: "auth" });
+    expect(again.alreadyAdopted).toBe(true);
+  });
+
   it("two concurrent adopts of one pane under different names register it once", async () => {
     const { executor } = mockTmux(state);
     setTmuxExecutor(executor);

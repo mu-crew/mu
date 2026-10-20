@@ -149,7 +149,8 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
   const existingByPane = getAgentByPane(db, opts.paneId);
   if (existingByPane) {
     if (existingByPane.name === resolvedName) {
-      await lockThenTitle(mux, opts.paneId, resolvedName, previousTitle === resolvedName);
+      // Already registered: the write only repairs a title, never fails re-adopt.
+      await lockThenTitle(mux, opts.paneId, resolvedName, true);
       return {
         agent: existingByPane,
         alreadyAdopted: true,
