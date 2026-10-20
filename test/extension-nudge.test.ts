@@ -149,6 +149,8 @@ describe("registerNudge", () => {
       "--status",
       "IN_PROGRESS",
       "--json",
+      "--sort",
+      "recency",
       "-w",
       "auth",
     ]);
@@ -199,6 +201,37 @@ describe("registerNudge", () => {
     expect(run.mock.calls.filter((c) => c[0][0] === "task").map((c) => c[0].at(-1))).toEqual([
       "one",
       "two",
+    ]);
+  });
+
+  it("the default workstream and the same one named explicitly are counted once", async () => {
+    // Without -w the CLI resolves the default (here "small") and reports it.
+    const table: Table = { small: ["a1", "a2"], two: ["only"] };
+    const f = fakePi();
+    const run = vi.fn(async (args: readonly string[]) =>
+      listAnswer(table, args.includes("-w") ? args : ["task", "-w", "small"]),
+    );
+    registerNudge(f.pi, run, SKILL);
+    await f.emit(
+      "tool_call",
+      bash("mu agent send w1 go && mu agent send w2 -w small go && mu agent send w3 -w two go"),
+    );
+    const r = (await f.emit("agent_before_settle", { outcome: "completed" })) as {
+      entries: { content: string }[];
+    };
+    const text = r.entries[0]?.content ?? "";
+    expect(text).toContain("3 task(s) IN_PROGRESS");
+    expect(text).toContain("mu task wait small/a1 small/a2 two/only --first");
+  });
+
+  it("asks for newest-first so the capped wait hint keeps the latest tasks", async () => {
+    const { emit, run } = setup(card("auth", ["build"]));
+    await emit("tool_call", bash("mu agent send worker-1 -w auth 'go'"));
+    await emit("agent_before_settle", { outcome: "completed" });
+    const args = run.mock.calls[0]?.[0] ?? [];
+    expect(args.slice(args.indexOf("--sort"), args.indexOf("--sort") + 2)).toEqual([
+      "--sort",
+      "recency",
     ]);
   });
 

@@ -309,7 +309,7 @@ type ListJson = { items?: { name?: string; workstreamName?: string }[] };
 
 /**
  * IN_PROGRESS task refs, one `mu task list --status IN_PROGRESS --json`
- * per workstream, all in flight at once. (`mu state` also lists tmux
+ * per workstream (newest first, as `mu state` listed them), all in flight at once. (`mu state` also lists tmux
  * panes and builds orphans and workspaces; this read needs none of it.
  * `task list` does not reap dead owners, so a task a ghost agent still
  * owns shows until the next `mu state` or `mu task wait` reaps it.)
@@ -324,6 +324,8 @@ async function inProgress(run: MuRunner, workstreams: string[]): Promise<string[
         "--status",
         "IN_PROGRESS",
         "--json",
+        "--sort",
+        "recency",
         ...(w ? ["-w", w] : []),
       ]);
       if (r.code !== 0) return undefined;
@@ -336,7 +338,9 @@ async function inProgress(run: MuRunner, workstreams: string[]): Promise<string[
     }),
   );
   if (results.some((r) => r === undefined)) return undefined;
-  return results.flatMap((r) => r ?? []);
+  // The default workstream ("") and an explicit name can be the same one:
+  // dedupe by qualified ref, keeping first (most recent) position.
+  return [...new Set(results.flatMap((r) => r ?? []))];
 }
 
 /** The nudge text: the rule verbatim, then the live count and the wait. */
