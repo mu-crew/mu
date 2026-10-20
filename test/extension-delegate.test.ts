@@ -18,6 +18,7 @@ import {
   type MuResult,
   type MuRunner,
   PENDING_CHANNEL,
+  PRUNE_FAILED_MS,
   registerDelegate,
 } from "../extension/delegate.js";
 import muPi, { type MuPiContext } from "../extension/mu-pi.js";
@@ -505,6 +506,33 @@ describe("mu_delegate", () => {
     expect(content).toContain("re-issue the call, or record the check as UNVERIFIED");
     expect(content).toContain("mu agent close delegate-2 -w scratch");
     expect(setStatus.mock.calls.at(-1)).toEqual([DELEGATE_STATUS_KEY, "1 failed"]);
+  });
+
+  it("spawns while a failed delegate lingers list agents at most once per PRUNE_FAILED_MS", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const mu = fakeMu({
+        on: { list: () => Promise.resolve(ok({ agents: [{ name: "delegate-2" }] })) },
+      });
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus: vi.fn() } };
+      await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
+      mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "error", lastError: "529" }] }));
+      await flush();
+      await flush();
+      const lists = () => mu.calls.filter((c) => c[1] === "list").length;
+      const before = lists();
+      for (const id of ["a", "b", "c"]) {
+        await tool(p).execute(id, { task: id }, undefined, undefined, ctx);
+      }
+      expect(lists() - before).toBe(1); // three spawns, one listing
+      vi.setSystemTime(Date.now() + PRUNE_FAILED_MS);
+      await tool(p).execute("d", { task: "d" }, undefined, undefined, ctx);
+      expect(lists() - before).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a failed delegate leaves the footer once its pane is gone", async () => {

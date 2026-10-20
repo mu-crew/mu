@@ -67,6 +67,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   fetched, and falls back to per-workstream `has-session` when
   `list-sessions` fails, so a transient failure still never marks live
   sessions dead. ~22 ms CLI CPU saved; output is identical.
+- **`mu_delegate` lists agents at most every 30 s while a failed delegate
+  lingers.** Each spawn ran `mu agent list` (~150 ms of CPU) only to prune
+  the footer's failed count; the refresh is now throttled to once per
+  30 s. Spawning and safety checks are unchanged; the footer may show a
+  closed failure for up to 30 s longer.
 - **`mu agent spawn` sets the tmux pane border in one tmux call.** The four
   `set-option -w` calls are `;`-chained into one invocation and target the
   pane directly, which drops the `display-message #{window_id}` lookup
