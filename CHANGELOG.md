@@ -33,6 +33,31 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   prefers fewer cards away from their default column, then slot order. Footers and mouse hit regions read the same
   budgets (`columnRowBudgets`).
 
+
+- **Skill: recipe wording from a prior runtime.** An `unknown` owner
+  is not a dead one: orchestrator-loop says to read the pane or run
+  `mu doctor` before releasing its task. Reviews with only
+  UNVERIFIED items go to the human, not into a REJECT round. findings § Record
+  grades severity strictly (critical needs a concrete scenario).
+  ultrathink and loop-until-done refute the umbrella's criteria on the
+  merged tree before `close --if-ready`.
+  watcher caps attempts per item and parks it with every attempt listed.
+  long-run records `DEAD-END:` notes on the umbrella.
+  backlog-triage re-verifies an item against the code before starting.
+  dag.md states that every edge comes from a verb the caller ran (`block`, `add`/`reparent --blocked-by`) and no write adds edges on its own.
+  VISION cites a prior runtime's transport and sentinel-marker lessons.
+- **Skill: orchestrators clean up scratch files.** Review panels and
+  other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
+  hoc dirs under `$HOME`. SKILL.md's orchestrator rules now say to keep
+  briefs and answers in task notes and `mu log` (stdin for pure
+  delegate calls), keep any files in one `mktemp -d` dir per job,
+  and remove it before the turn ends.
+- **Skill: worker checkouts come from mu.** Orchestrators made their
+  own `git worktree`s for workers, which mu could not refresh, diff or
+  free, so they leaked. SKILL.md now says to use `--workspace` /
+  `workspace: true` for every local agent; remote agents keep the
+  manual recipe.
+
 ### Fixed
 
 - **`mu log` names who sent, spawned or aborted.** `agent.send`,
@@ -135,32 +160,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `π - <cwd>`, which overwrote the pane title mu uses as its identity
   fallback. Spawn and adopt (including idempotent re-adopt) now set
   `allow-set-title off` on the pane. herdr is unchanged.
-
-### Changed
-
-- **Skill: recipe wording from a prior runtime.** An `unknown` owner
-  is not a dead one: orchestrator-loop says to read the pane or run
-  `mu doctor` before releasing its task. Reviews with only
-  UNVERIFIED items go to the human, not into a REJECT round. findings § Record
-  grades severity strictly (critical needs a concrete scenario).
-  ultrathink and loop-until-done refute the umbrella's criteria on the
-  merged tree before `close --if-ready`.
-  watcher caps attempts per item and parks it with every attempt listed.
-  long-run records `DEAD-END:` notes on the umbrella.
-  backlog-triage re-verifies an item against the code before starting.
-  dag.md states that every edge comes from a verb the caller ran (`block`, `add`/`reparent --blocked-by`) and no write adds edges on its own.
-  VISION cites a prior runtime's transport and sentinel-marker lessons.
-- **Skill: orchestrators clean up scratch files.** Review panels and
-  other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
-  hoc dirs under `$HOME`. SKILL.md's orchestrator rules now say to keep
-  briefs and answers in task notes and `mu log` (stdin for pure
-  delegate calls), keep any files in one `mktemp -d` dir per job,
-  and remove it before the turn ends.
-- **Skill: worker checkouts come from mu.** Orchestrators made their
-  own `git worktree`s for workers, which mu could not refresh, diff or
-  free, so they leaked. SKILL.md now says to use `--workspace` /
-  `workspace: true` for every local agent; remote agents keep the
-  manual recipe.
 
 ## [3.12.0] — 2026-10-11
 
