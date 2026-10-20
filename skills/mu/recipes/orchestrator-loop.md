@@ -60,6 +60,10 @@ worker may be waiting on you. For a pi owner it leads with
 last answer at once. The pane read follows because dialogs and crashes
 show only in the pane.
 
+Never release or reassign a task because its owner reads `unknown`:
+that is degraded reading, not absence. Read the pane or run `mu doctor`
+first. The reaper acts only on a dead pane.
+
 For an idle worker, read its last answer (the same `--after-runs`
 wait for pi, else the pane), then answer, retry, or release its task.
 `MU_IDLE_THRESHOLD_MS` defaults to 5m. A remote owner: for pi,
