@@ -3,9 +3,9 @@
 // Renders the blocker subtree (default) or dependent subtree (--down)
 // of a task. Diamonds — a node reachable by two parent paths — collapse
 // to one full subtree render plus a one-line "↻" recurrence marker
-// at every later occurrence. Schema forbids cycles, so the seen-set
-// only fires on diamonds in practice; double-edged as defence against
-// future bugs.
+// at every later occurrence. The seen-set fires on diamonds and
+// also stops traversal on a cycle, which sync can create (`mu doctor`
+// reports those).
 //
 // Extracted from src/cli/tasks.ts as part of the wire-out follow-up
 // to refactor_split_large_src_files.

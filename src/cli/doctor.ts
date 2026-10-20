@@ -41,6 +41,7 @@ import {
 import { checkFleetHazards, type FleetHazard, HazardFailError } from "../fleet-hazards.js";
 import { activeMux, type MuxHealth } from "../mux.js";
 import { pc } from "../output.js";
+import { type EdgeCycle, findEdgeCycles } from "../tasks/edges.js";
 import { summarizeWorkstream } from "../workstream.js";
 import { forgetHint } from "./db.js";
 
@@ -56,6 +57,10 @@ function agentStateCheck(health: MuxHealth | undefined, muExt: DoctorCheck): Doc
   return murmurDoctorCheck(health?.name === "herdr" ? "herdr" : "murmur", {
     muExtOk: muExt.status === "ok",
   });
+}
+
+function cycleFix(c: EdgeCycle): string {
+  return `mu task unblock ${c.blocked} --by ${c.blocker} -w ${c.workstream}`;
 }
 
 function printCheck(label: string, check: DoctorCheck): void {
@@ -258,6 +263,23 @@ export async function cmdDoctor(
   console.log(pc.bold("\nfleet"));
   const fleet = checkFleetHazards(db, { dbPath: defaultDbPath() });
   let sawHazard = printHazards(fleet);
+
+  // Sync can merge two valid edges into a cycle; its tasks never turn
+  // ready. Report-only: the fix is an existing verb.
+  console.log(pc.bold("\ndag"));
+  const cycles = findEdgeCycles(db);
+  if (cycles.length === 0) {
+    console.log(`  ${"cycles".padEnd(16)} : ${pc.green("ok")} ${pc.dim("no dependency cycles")}`);
+  } else {
+    sawHazard = true;
+    console.log(
+      `  ${"cycles".padEnd(16)} : ${pc.yellow("WARN")} ${pc.dim(`${cycles.length} dependency cycle(s); members never become ready`)}`,
+    );
+    for (const c of cycles) {
+      console.log(`      ${c.workstream}: ${[...c.path, c.path[0]].join(" -> ")}`);
+      console.log(pc.dim(`      break it: ${cycleFix(c)}`));
+    }
+  }
 
   // ─ Housekeeping: workstreams that look torn-down-able
   //
@@ -518,6 +540,8 @@ export async function cmdDoctorJson(
     detail: h.detail,
   }));
 
+  const dagCycles = findEdgeCycles(db).map((c) => ({ ...c, fix: cycleFix(c) }));
+
   // Disk ↔ DB: same checks as the human path. Remediation lines ride
   // along here (unlike `fleet`, which drops them) because the whole
   // point of the section is that an agent reading --json can act on it.
@@ -581,6 +605,7 @@ export async function cmdDoctorJson(
     state: workstreamStats,
     fleet: hazards,
     housekeeping,
+    dagCycles,
     disk,
     workspaceUsage,
     drift,

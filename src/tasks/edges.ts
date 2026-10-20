@@ -474,3 +474,65 @@ function reparentTaskImpl(
     })
     .immediate();
 }
+
+export interface EdgeCycle {
+  workstream: string;
+  /** Local ids around the cycle, `a -> b -> … -> a` (first id not repeated). */
+  path: string[];
+  /** Local ids of an edge on it: `blocker` blocks `blocked`. Removing it breaks this cycle. */
+  blocker: string;
+  blocked: string;
+}
+
+/**
+ * Cycles already present in task_edges. addBlockEdge refuses to make one,
+ * but sync can merge two locally valid edges into one (apply never
+ * rejects a peer's edge). Cycle members never become ready. One cycle is
+ * reported per strongly-connected stretch; breaking it may reveal another.
+ */
+export function findEdgeCycles(db: Db): EdgeCycle[] {
+  const rows = db
+    .prepare(
+      `SELECT e.from_task_id AS f, e.to_task_id AS t, w.name AS ws
+         FROM task_edges e
+         JOIN tasks a ON a.id = e.from_task_id
+         JOIN workstreams w ON w.id = a.workstream_id
+        ORDER BY w.name, e.from_task_id, e.to_task_id`,
+    )
+    .all() as { f: number; t: number; ws: string }[];
+  // Peel nodes with no in-edges or no out-edges until stable: what is
+  // left lies on, or between, cycles.
+  let live = rows;
+  for (;;) {
+    const ins = new Set(live.map((r) => r.t));
+    const outs = new Set(live.map((r) => r.f));
+    const kept = live.filter((r) => ins.has(r.f) && outs.has(r.t));
+    if (kept.length === live.length) break;
+    live = kept;
+  }
+  const name = db.prepare("SELECT local_id FROM tasks WHERE id = ?");
+  const local = (id: number): string =>
+    (name.get(id) as { local_id: string } | undefined)?.local_id ?? String(id);
+  const seen = new Set<number>();
+  const cycles: EdgeCycle[] = [];
+  for (const r of live) {
+    if (seen.has(r.f) && seen.has(r.t)) continue;
+    const path = findCyclePath(db, r.f, r.t); // r.t -> … -> r.f
+    if (path === null) continue;
+    cycles.push({
+      workstream: r.ws,
+      path: [local(r.f), ...path.slice(0, -1)],
+      blocker: local(r.f),
+      blocked: local(r.t),
+    });
+    const ids = db
+      .prepare(
+        "SELECT id FROM tasks WHERE workstream_id = (SELECT workstream_id FROM tasks WHERE id = ?) AND local_id IN (" +
+          path.map(() => "?").join(",") +
+          ")",
+      )
+      .all(r.f, ...path) as { id: number }[];
+    for (const { id } of ids) seen.add(id);
+  }
+  return cycles;
+}
