@@ -357,6 +357,26 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 
+  it("a frozen error thrown after workspace pre-stage reaches the caller as itself", async () => {
+    const frozen = Object.freeze(new Error("frozen mux failure"));
+    mux.restore();
+    state = freshMockState();
+    const fake = mockTmux(state).executor;
+    mux = installMux("tmux", async (args) => {
+      if (args[0] === "new-session") throw frozen;
+      return fake(args);
+    });
+    const err = await spawnAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      workspace: true,
+      workspaceBackend: "none",
+      workspaceProjectRoot: dir,
+    }).catch((e) => e);
+    expect(err).toBe(frozen);
+    expect(spawnRows().map((r) => r.intent)).toContain("agent.spawn_failed");
+  });
+
   it("scans for a startup error once the handshake times out, and rolls back", async () => {
     installLivePanes({ scrollback: "Error: No API key found for amazon-bedrock" });
     const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);
