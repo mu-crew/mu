@@ -70,6 +70,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   and the `mu_delegate` follow-up, blocked or timed out) passes it as
   `--after-runs`, so a run that finishes after the dialog is answered
   but before the re-wait starts is returned rather than missed.
+- **tmux panes keep their mu title.** pi sets an OSC title
+  `π - <cwd>`, which overwrote the pane title mu uses as its identity
+  fallback. Spawn and adopt (including idempotent re-adopt) now set
+  `allow-set-title off` on the pane. herdr is unchanged.
 
 ### Changed
 

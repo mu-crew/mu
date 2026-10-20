@@ -149,6 +149,7 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
   const existingByPane = getAgentByPane(db, opts.paneId);
   if (existingByPane) {
     if (existingByPane.name === resolvedName) {
+      await mux.lockPaneTitle(opts.paneId);
       return {
         agent: existingByPane,
         alreadyAdopted: true,
@@ -180,6 +181,7 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
   if (resolvedName !== previousTitle) {
     await mux.setPaneTitle(opts.paneId, resolvedName);
   }
+  await mux.lockPaneTitle(opts.paneId);
   // Machine-local table (`agents`): no trigger, so this emit is the
   // only record.
   emitEvent(

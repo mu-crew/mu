@@ -203,6 +203,7 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       return ok(`${paneId}\n`);
     }
 
+    if (verb === "set-option") return ok();
     if (verb === "copy-mode") return ok();
     if (verb === "set-buffer") return ok();
     if (verb === "paste-buffer") return ok();

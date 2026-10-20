@@ -590,6 +590,12 @@ export async function setPaneTitle(paneId: string, title: string): Promise<void>
   await tmux(["select-pane", "-t", paneId, "-T", title]);
 }
 
+/** Pane-scoped `allow-set-title off`: OSC title escapes from the app no longer overwrite the mu title. */
+export async function lockPaneTitle(paneId: string): Promise<void> {
+  assertValidPaneId(paneId);
+  await tmux(["set-option", "-p", "-t", paneId, "allow-set-title", "off"]);
+}
+
 /**
  * Look up the window id (e.g. `@42`) that contains a given pane id
  * (e.g. `%15`). Used by spawn so we can apply window-scoped options
@@ -1248,6 +1254,7 @@ export const tmuxBackend: TmuxBackend = Object.freeze({
   paneTTY,
 
   setPaneTitle,
+  lockPaneTitle,
   getPaneTitle,
   currentAgentName,
   currentSessionName,
