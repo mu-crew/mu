@@ -1630,20 +1630,30 @@ describe("nudges yield to a delegate answer on its way", () => {
     expect(await settling).toBeUndefined();
   });
 
-  it("a fast nudge's result yields to an answer that queues during a slower nudge's read", async () => {
+  // reviewer-3's interleaving (high_parallel_settle_merge_continues): the
+  // state and owned-by reads answer first, the refute notes read is held,
+  // the delegate answer queues, then the notes read is released.
+  it("fast nudges' results yield to an answer that queues during a slower nudge's read", async () => {
     const mu = fakeMu();
     const p = fakePi();
     const heldNotes: (() => void)[] = [];
-    const state = ok({ workstreamName: "crew", inProgress: [{ name: "t1" }] });
     const run: MuRunner = (args, signal) => {
-      if (args[0] === "state") return Promise.resolve(state);
+      if (args[0] === "state")
+        return Promise.resolve(ok({ workstreamName: "crew", inProgress: [{ name: "t1" }] }));
+      if (args[0] === "task" && args[1] === "owned-by")
+        return Promise.resolve(ok({ items: [{ name: "w1-task", status: "IN_PROGRESS" }] }));
       if (args[0] === "task" && args[1] === "notes")
         return new Promise((resolve) => heldNotes.push(() => resolve(ok({ items: [] }))));
       return mu.run(args, signal);
     };
     const on = (e: string, h: (e: unknown, c: MuPiContext) => unknown) =>
       p.pi.on(e, h as (e: unknown, c: DelegateCtx) => unknown);
-    muPi({ ...p.pi, on, sendUserMessage: () => {}, registerCommand: () => {} }, run);
+    // The close nudge reads its identity at registration.
+    await withEnv("MU_AGENT_NAME", "w1", () =>
+      withEnv("MU_WORKSTREAM", "crew", async () => {
+        muPi({ ...p.pi, on, sendUserMessage: () => {}, registerCommand: () => {} }, run);
+      }),
+    );
     const settle = async () => {
       let out: unknown;
       for (const h of p.handlers.get("agent_before_settle") ?? []) {
@@ -1661,12 +1671,13 @@ describe("nudges yield to a delegate answer on its way", () => {
     await tool(p).execute("d", { task: "check it" });
     const settling = settle();
     await flush();
-    expect(heldNotes).toHaveLength(1); // keep-driving is done; refute still reads
+    // keep-driving and close are done; refute still reads.
+    expect(heldNotes).toHaveLength(1);
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
     await flush();
     await flush();
     heldNotes[0]?.();
-    // Without the merge's late check, keep-driving's continuation wins here.
+    // Without the merge's late check, the fast nudges' continuation wins here.
     expect(await settling).toBeUndefined();
     await p.drainQueue(); // the answer enters the conversation
     // The dropped nudges were not the prompt's one nudge.
@@ -1676,6 +1687,7 @@ describe("nudges yield to a delegate answer on its way", () => {
     const r = await settled;
     expect(r).toMatchObject({ continue: true });
     expect(r?.entries?.map((e) => e.customType).sort()).toEqual([
+      "mu-close-task",
       "mu-keep-driving",
       "mu-refute-brief",
     ]);
