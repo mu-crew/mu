@@ -528,8 +528,10 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       // (finding_verbs_spawn_rolls_back_pane).
       paneId = pid;
       const mux = await activeMux();
+      // Lock first so an early OSC title cannot be frozen in; best-effort
+      // (identity prefers $MU_AGENT_NAME, reconcile repairs titles).
+      await mux.lockPaneTitle(pid).catch(() => {});
       await mux.setPaneTitle(pid, opts.name);
-      await mux.lockPaneTitle(pid);
       // Apply the mu pane border to the new window. Window-scoped option;
       // see enableMuPaneBorders docstring for why this is required per
       // window (and not just per session). Self-checks MU_BANNER_QUIET
