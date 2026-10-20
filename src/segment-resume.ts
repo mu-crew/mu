@@ -6,10 +6,11 @@
 // bytes. When the peer appends, the next ambient ingest reads only the
 // new bytes, hashes them from the saved state, and accepts them only
 // when the result is the sha256 in the peer's manifest. That equals a
-// whole-file check as long as the prefix is what the first read saw.
-// Anything else falls back to the full read and verify: a shrunk or
-// rewritten file, a stale manifest, a defect (a defect never records a
-// resume point), or an explicit `mu sync` (`verify`). Split out of
+// whole-file check only while the prefix is what the first read saw: a
+// local change to those bytes that keeps the file growing is not seen
+// here, only by an explicit `mu sync` (`verify`). The full read and verify
+// also runs for a shrunk file, a stale manifest, and after a defect (a
+// defect never records a resume point). Split out of
 // segments.ts (1500-LOC cap).
 
 import { createHash } from "node:crypto";

@@ -52,9 +52,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   64 MB segment, ~9 ms of it needed). A clean read now saves the byte
   offset and running sha256 state next to the caught-up fingerprint; the
   next ambient ingest reads only the appended bytes, and accepts them
-  only when their hash is the manifest's sha256 (~20 ms). A shrunk or
-  rewritten file, a stale manifest, a defect (which saves no offset) and
-  `mu sync` take the full read and whole-file verify as before. No
+  only when their hash is the manifest's sha256 (~20 ms). A shrunk
+  file, a stale manifest, a defect (which saves no offset) and `mu sync`
+  take the full read and whole-file verify as before. The resumed hash
+  trusts the prefix it already read: a local edit to those earlier bytes
+  that keeps the file growing is caught only by `mu sync`, not by the
+  ambient ingest. No
   schema change: the offset is extra fields in the existing
   `sync_fingerprints` value, which an older mu never matches and
   ignores.

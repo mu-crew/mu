@@ -1381,6 +1381,17 @@ describe("segments", () => {
       expect(result.watermark).toBe(before);
     });
 
+    it("a prefix damaged locally while the segment grows is caught by verify, not by the ambient resume", async () => {
+      // The documented limit of the resume: it trusts the bytes it already
+      // read. Append + fresh manifest, then damage line 2 only in our copy.
+      const peer = await caughtUpPeer();
+      seedTask(a, "grow");
+      await flushSegment(a, dir);
+      rotLineTwo(peer.path);
+      const verified = ingestSegment(b, peer, { verify: true });
+      expect(verified.defects.map((d) => d.kind)).toContain("manifest-mismatch");
+    });
+
     it("an explicit verify reads the whole file even with a resume point", async () => {
       const peer = await caughtUpPeer();
       seedTask(a, "c4");
