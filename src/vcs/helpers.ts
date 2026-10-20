@@ -14,13 +14,18 @@ import {
 
 export const exec = promisify(execFile);
 
-/** True when `err` is the tool answering: it ran and exited non-zero (numeric
- *  `code`), or is not installed (ENOENT). Anything else (EAGAIN, EMFILE,
+/** What each tool prints when cwd is simply not in its kind of repo. */
+const NOT_A_REPO = /no jj repo|not inside a repository|not a git repository/i;
+
+/** True when `err` is the tool answering "not this VCS": it is not installed
+ *  (ENOENT), or it exited non-zero with its own not-a-repo message. Anything
+ *  else (a config or repo-state error that also exits 1, EAGAIN, EMFILE,
  *  signal kill, timeout, maxBuffer) is an indeterminate probe failure. */
 function isCleanProbeNo(err: unknown): boolean {
   const cause = err instanceof Error ? err.cause : undefined;
-  const code = (cause as { code?: unknown } | undefined)?.code;
-  return typeof code === "number" || code === "ENOENT";
+  const { code, stderr } = (cause ?? {}) as { code?: unknown; stderr?: unknown };
+  if (code === "ENOENT") return true;
+  return typeof code === "number" && typeof stderr === "string" && NOT_A_REPO.test(stderr);
 }
 
 export async function probeVcsRootPath(
