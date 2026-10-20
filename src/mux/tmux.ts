@@ -572,8 +572,16 @@ export async function paneExists(paneId: string): Promise<boolean> {
   if (!isValidPaneId(paneId)) return false;
   // tmux's `display-message -t <bogus>` exits 0 but emits empty output; we
   // must check that the echoed pane id matches what we asked for.
-  const result = await currentExecutor(["display-message", "-t", paneId, "-p", "#{pane_id}"]);
-  if (result.exitCode !== 0) return false;
+  const args = ["display-message", "-t", paneId, "-p", "#{pane_id}"];
+  const result = await currentExecutor(args);
+  if (result.exitCode !== 0) {
+    // Only "the pane or server is gone" means false. Any other failure
+    // (permission denied, a broken socket) is unknown, not dead: callers
+    // that gate destructive work on liveness must not read it as gone.
+    if (/can't find pane|pane not found|no current target/i.test(result.stderr)) return false;
+    if (NO_SERVER_RE.test(result.stderr)) return false;
+    throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
+  }
   return result.stdout.trim() === paneId;
 }
 

@@ -30,6 +30,7 @@ let mux: MuxHarness;
 let wsPath: string;
 let paneLive = true;
 let probeThrows = false;
+let probeStderr: string | undefined;
 
 function workspaceRows(): number {
   return (db.prepare("SELECT COUNT(*) AS n FROM vcs_workspaces").get() as { n: number }).n;
@@ -47,8 +48,10 @@ beforeEach(() => {
   ).run(wsPath);
   paneLive = true;
   probeThrows = false;
+  probeStderr = undefined;
   mux = installMux("tmux", async () => {
     if (probeThrows) throw new Error("probe boom");
+    if (probeStderr !== undefined) return { stdout: "", stderr: probeStderr, exitCode: 1 };
     return {
       stdout: paneLive ? "%7\n" : "",
       stderr: "",
@@ -76,6 +79,21 @@ describe("mu workspace free owner-state guard", () => {
     nextState = "unknown";
     await expect(free()).rejects.toBeInstanceOf(WorkspaceOwnerBusyError);
     expect(workspaceRows()).toBe(1);
+  });
+
+  it("fails closed when tmux exits nonzero for a reason other than a gone pane", async () => {
+    nextState = "unknown";
+    probeStderr = "error connecting to /tmp/tmux-501/default (Permission denied)";
+    const err = await free().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WorkspaceOwnerBusyError);
+    expect(workspaceRows()).toBe(1);
+  });
+
+  it("allows free when tmux reports the pane gone", async () => {
+    nextState = "unknown";
+    probeStderr = "can't find pane: %7";
+    await free();
+    expect(workspaceRows()).toBe(0);
   });
 
   it("fails closed when the liveness probe throws", async () => {

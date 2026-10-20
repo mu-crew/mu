@@ -332,6 +332,8 @@ export interface MuxBackend {
   listPanesInSession(session: string): Promise<MuxPane[]>;
   splitWindow(opts: SplitWindowOptions): Promise<string>;
   killPane(paneId: string): Promise<void>;
+  /** False only when the mux reports the pane (or server) gone; throws
+   *  when the probe itself fails, so liveness gates fail closed. */
   paneExists(paneId: string): Promise<boolean>;
   paneTTY(paneId: string): Promise<string>;
 
