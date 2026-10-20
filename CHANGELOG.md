@@ -12,6 +12,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`paneExists` no longer reads a failed tmux probe as a dead pane.**
+  Any nonzero `display-message` exit returned false, so a permission or
+  socket error looked like "gone" to liveness gates such as
+  `workspace free`. Only "can't find pane" / no-server answers mean
+  false now; other failures throw, and callers fail closed.
+
 - **Reconcile no longer deletes a respawned agent.** The ghost prune
   deleted by name, so an agent closed and respawned under the same name
   during a pass lost its new row and had its tasks reopened. The delete
