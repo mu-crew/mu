@@ -70,14 +70,34 @@ describe("execFileCapture parent-exit cleanup", () => {
     }
   };
 
-  async function runParent(how: "SIGTERM" | "SIGINT" | "SIGHUP" | "exit"): Promise<{
+  // `hook` installs another signal-exit listener in the parent, as Ink does
+  // (Ink bundles signal-exit v3, a different major than ours; they share one
+  // global emitter, so this is the real interplay).
+  async function runParent(
+    how: "SIGTERM" | "SIGINT" | "SIGHUP" | "SIGUSR2" | "exit",
+    hook: "none" | "own" | "ink" = "none",
+  ): Promise<{
     parent: { code: number | null; signal: NodeJS.Signals | null };
     childPid: number;
   }> {
     const dir = mkdtempSync(join(tmpdir(), "mu-exec-cleanup-"));
     const pidFile = join(dir, "child.pid");
     const childScript = `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(()=>{},1000)`;
+    const hookSrc =
+      hook === "none"
+        ? ""
+        : `import { createRequire } from "node:module";
+      const req = createRequire(${JSON.stringify(join(__dirname, "..", "package.json"))});
+      const exitHook = ${
+        hook === "ink"
+          ? `createRequire(req.resolve("ink")).resolve("signal-exit")`
+          : `req.resolve("signal-exit")`
+      };
+      const mod = req(exitHook);
+      (mod.onExit ?? mod)(() => {});
+      setInterval(() => {}, 1000);`;
     const parentScript = `
+      ${hookSrc}
       import { execFileCapture } from ${JSON.stringify(pathToFileURL(join(__dirname, "..", "src", "exec-file.ts")).href)};
       const p = execFileCapture(process.execPath, ["-e", ${JSON.stringify(childScript)}], { timeoutMs: 5000 });
       ${how === "exit" ? `import { existsSync } from "node:fs"; while (!existsSync(${JSON.stringify(pidFile)})) await new Promise((r) => setTimeout(r, 20)); process.exit(0);` : "await p;"}
@@ -108,13 +128,29 @@ describe("execFileCapture parent-exit cleanup", () => {
     }
   }
 
-  for (const how of ["SIGTERM", "SIGINT", "SIGHUP", "exit"] as const) {
+  for (const how of ["SIGTERM", "SIGINT", "SIGHUP", "SIGUSR2", "exit"] as const) {
     it(`kills the in-flight child when the parent gets ${how}`, async () => {
       const { parent, childPid } = await runParent(how);
       try {
         expect(alive(childPid)).toBe(false);
         // Default signal behaviour is preserved: the parent still dies by the signal.
         if (how !== "exit") expect(parent.signal).toBe(how);
+      } finally {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {}
+      }
+    }, 15_000);
+  }
+
+  // With another signal-exit listener installed (Ink's TUI), the parent must
+  // still terminate by the signal and the child must still die.
+  for (const hook of ["own", "ink"] as const) {
+    it(`kills the child and terminates the parent on SIGTERM with another signal-exit listener (${hook})`, async () => {
+      const { parent, childPid } = await runParent("SIGTERM", hook);
+      try {
+        expect(alive(childPid)).toBe(false);
+        expect(parent.signal).toBe("SIGTERM");
       } finally {
         try {
           process.kill(childPid, "SIGKILL");

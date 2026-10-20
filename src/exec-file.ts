@@ -4,6 +4,7 @@
 // of import time on every process that touches a multiplexer.
 
 import { type ChildProcess, execFile } from "node:child_process";
+import { onExit } from "signal-exit";
 
 export interface ExecFileResult {
   stdout: string;
@@ -23,37 +24,25 @@ function stripFinalNewline(s: string): string {
 }
 
 // execa killed in-flight children when the parent exited or was signalled
-// (`cleanup: true`); a bare execFile does not, so an orphaned tmux client or
-// murmur process would outlive mu and its timeout timer. Track live children
-// and kill them on exit / SIGTERM / SIGINT / SIGHUP. The listeners exist only
-// while a child is live, so mu's default signal behaviour is otherwise intact.
+// (`cleanup: true`, via signal-exit); a bare execFile does not, so an orphaned
+// tmux client or murmur process would outlive mu and its timeout timer. Reuse
+// signal-exit (what execa used) so every catchable signal is covered and the
+// parent still terminates correctly next to other signal-exit users such as
+// Ink. The hook is installed only while a child is live.
 const live = new Set<ChildProcess>();
-const SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
+let removeExitHook: (() => void) | undefined;
 
 function killLive(): void {
   for (const c of live) c.kill("SIGKILL");
 }
 
-function onSignal(sig: NodeJS.Signals): void {
-  killLive();
-  // Re-raise with the default action unless something else handles the signal.
-  uninstall();
-  if (process.listenerCount(sig) === 0) process.kill(process.pid, sig);
-}
-
-const handlers = Object.fromEntries(SIGNALS.map((s) => [s, () => onSignal(s)])) as Record<
-  (typeof SIGNALS)[number],
-  () => void
->;
-
 function install(): void {
-  process.on("exit", killLive);
-  for (const s of SIGNALS) process.on(s, handlers[s]);
+  removeExitHook = onExit(killLive);
 }
 
 function uninstall(): void {
-  process.off("exit", killLive);
-  for (const s of SIGNALS) process.off(s, handlers[s]);
+  removeExitHook?.();
+  removeExitHook = undefined;
 }
 
 function track(child: ChildProcess): void {
