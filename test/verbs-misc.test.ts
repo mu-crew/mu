@@ -267,6 +267,19 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     ).toBe(true);
   });
 
+  it("two concurrent adopts of one pane under different names register it once", async () => {
+    const { executor } = mockTmux(state);
+    setTmuxExecutor(executor);
+    const { adoptAgent } = await import("../src/agents.js");
+    const { paneId } = seedOrphanPane({ sessionName: "mu-auth", title: "worker-4" });
+    const results = await Promise.allSettled([
+      adoptAgent(db, { paneId, workstream: "auth", name: "alpha" }),
+      adoptAgent(db, { paneId, workstream: "auth", name: "beta" }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled").length).toBe(1);
+    expect(listAgents(db).filter((a) => a.paneId === paneId).length).toBe(1);
+  });
+
   it("(case 6) adopt twice with same input -> alreadyAdopted=true (idempotent)", async () => {
     const { calls, executor } = mockTmux(state);
     setTmuxExecutor(executor);

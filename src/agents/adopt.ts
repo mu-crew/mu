@@ -170,10 +170,11 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
     throw new AgentExistsError(resolvedName);
   }
 
-  // Step 7: lock + retitle, then insert. The lock goes first so an OSC
-  // title from the running program cannot land between the retitle and
-  // the lock and get frozen in place.
-  await lockThenTitle(mux, opts.paneId, resolvedName);
+  // Step 7: insert, then lock + retitle. The insert stays synchronous
+  // right after the existence checks above (no await in between), so two
+  // concurrent adopts cannot both register this pane. Locking before the
+  // title write means an OSC title that arrived earlier is overwritten,
+  // not frozen in.
   const inserted = insertAgent(db, {
     name: resolvedName,
     workstream: opts.workstream,
@@ -181,6 +182,7 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
     cli: opts.cli,
     role: opts.role,
   });
+  await lockThenTitle(mux, opts.paneId, resolvedName);
   // Machine-local table (`agents`): no trigger, so this emit is the
   // only record.
   emitEvent(
