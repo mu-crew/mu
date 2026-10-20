@@ -24,7 +24,7 @@ import {
   type TaskRow,
 } from "./tasks.js";
 import { getParallelTracks, type Track } from "./tracks.js";
-import { type CommitSummary, detectBackend, type VcsBackendName } from "./vcs.js";
+import { type CommitSummary, detectBackend, type VcsBackend, type VcsBackendName } from "./vcs.js";
 import {
   decorateWithDirty,
   decorateWithStaleness,
@@ -345,12 +345,28 @@ function mergeWorkspaceSlowFields(
   });
 }
 
+/** Backends detected for `withRecentCommits`, per project root. Detection
+ *  spawns up to 4 processes (jj, sl x2, git) and the answer cannot change
+ *  while the TUI polls the same cwd every 10 s. `none` is not cached so a
+ *  later `git init` is still noticed. Only this path reads the cache; the
+ *  one-shot `mu state` never asks for commits. */
+const recentCommitsBackends = new Map<string, VcsBackend>();
+
+/** Test hook: forget cached backends. */
+export function resetRecentCommitsBackendCacheForTests(): void {
+  recentCommitsBackends.clear();
+}
+
 async function loadRecentCommits(
   opt: LoadWorkstreamSnapshotOptions["withRecentCommits"],
 ): Promise<{ backend: VcsBackendName | null; items: CommitSummary[] }> {
   if (opt === undefined) return { backend: null, items: [] };
   const projectRoot = process.cwd();
-  const backend = await detectBackend(projectRoot);
+  let backend = recentCommitsBackends.get(projectRoot);
+  if (backend === undefined) {
+    backend = await detectBackend(projectRoot);
+    if (backend.name !== "none") recentCommitsBackends.set(projectRoot, backend);
+  }
   if (backend.name === "none") return { backend: null, items: [] };
   return { backend: backend.name, items: await backend.recentCommits(projectRoot, opt.limit) };
 }
