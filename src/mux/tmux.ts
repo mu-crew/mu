@@ -837,6 +837,9 @@ const WORK_MARKERS: readonly string[] = ["to interrupt)", "Working"];
  *  in-flight turn. See awaitPaneQuiescence. */
 export function hasWorkMarker(scrollback: string): boolean {
   const tail = scrollback.split("\n").slice(-40).join("\n");
+  // A visible Codex boot marker wins: a cwd like ~/Working must not
+  // bypass readiness while "model: loading" is still on screen.
+  if (tail.includes("model: loading")) return false;
   return WORK_MARKERS.some((m) => tail.includes(m));
 }
 
