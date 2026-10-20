@@ -482,8 +482,19 @@ type Queued = {
   record?: RecordTarget;
 };
 
-export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunner()): void {
-  if (!delegateEnabled()) return;
+/** What the rest of the extension may ask the delegate side. */
+export interface DelegateHandle {
+  /** A delegate answer is being delivered or waits in pi's follow-up
+   *  queue: it will resume the agent itself. pi's hasPendingMessages()
+   *  does not count custom follow-ups, so this is the only signal. */
+  answerPending(): boolean;
+}
+
+export function registerDelegate(
+  pi: MuDelegateApi,
+  run: MuRunner = defaultRunner(),
+): DelegateHandle {
+  if (!delegateEnabled()) return { answerPending: () => false };
   const inflight = new Map<string, Inflight>();
   /** Calls past the cap check whose delegate is not yet in `inflight`. */
   let starting = 0;
@@ -1234,4 +1245,6 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
     if (ctx?.hasUI && ctx.ui) ctx.ui.notify(msg, "warning");
     else process.stderr.write(`mu: ${msg}\n`);
   });
+
+  return { answerPending: () => arriving.size > 0 };
 }

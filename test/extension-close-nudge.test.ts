@@ -146,3 +146,32 @@ describe("closeNudgeText", () => {
     expect(t).toMatch(/blocked or need an answer/);
   });
 });
+
+describe("close nudge and a settle hold", () => {
+  it.each(["answer", "blocked"] as const)(
+    "skips while held (%s), and the held settle is not the prompt's one nudge",
+    async (why) => {
+      const f = fakePi();
+      let h: typeof why | undefined = why;
+      const run = vi.fn(async () => owned([["a", "IN_PROGRESS"]]));
+      registerCloseNudge(f.pi, run, WORKER, undefined, () => h);
+      expect(await f.emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
+      expect(run).not.toHaveBeenCalled();
+      h = undefined;
+      expect(await f.emit("agent_before_settle", { outcome: "completed" })).toBeDefined();
+    },
+  );
+
+  it("drops the nudge when a hold starts during its read", async () => {
+    const f = fakePi();
+    let h: "answer" | undefined;
+    const run = vi.fn(async () => {
+      if (run.mock.calls.length === 1) h = "answer"; // lands during the first read
+      return owned([["a", "IN_PROGRESS"]]);
+    });
+    registerCloseNudge(f.pi, run, WORKER, undefined, () => h);
+    expect(await f.emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
+    h = undefined;
+    expect(await f.emit("agent_before_settle", { outcome: "completed" })).toBeDefined();
+  });
+});

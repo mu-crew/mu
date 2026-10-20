@@ -234,3 +234,27 @@ describe("registerRefuteNudge", () => {
     expect(f.handlers.size).toBeGreaterThan(0);
   });
 });
+
+describe("refute nudge and a settle hold", () => {
+  function held(hold: () => "answer" | "blocked" | undefined) {
+    const f = fakePi();
+    const run = vi.fn(async () => notes(BRIEF));
+    registerRefuteNudge(f.pi, run, undefined, hold);
+    return f;
+  }
+
+  it("waits for a delegate answer's turn, then informs once", async () => {
+    let h: "answer" | undefined = "answer";
+    const { emit } = held(() => h);
+    await emit("tool_call", bash("mu task claim build -w auth --for worker-1"));
+    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
+    h = undefined;
+    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeDefined();
+  });
+
+  it("still informs under an open dialog: it never continues the run", async () => {
+    const { emit } = held(() => "blocked");
+    await emit("tool_call", bash("mu task claim build -w auth --for worker-1"));
+    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeDefined();
+  });
+});
