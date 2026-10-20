@@ -149,7 +149,7 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
   const existingByPane = getAgentByPane(db, opts.paneId);
   if (existingByPane) {
     if (existingByPane.name === resolvedName) {
-      await mux.lockPaneTitle(opts.paneId);
+      await lockThenTitle(mux, opts.paneId, resolvedName);
       return {
         agent: existingByPane,
         alreadyAdopted: true,
@@ -170,7 +170,10 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
     throw new AgentExistsError(resolvedName);
   }
 
-  // Step 7: insert + (conditional) retitle.
+  // Step 7: lock + retitle, then insert. The lock goes first so an OSC
+  // title from the running program cannot land between the retitle and
+  // the lock and get frozen in place.
+  await lockThenTitle(mux, opts.paneId, resolvedName);
   const inserted = insertAgent(db, {
     name: resolvedName,
     workstream: opts.workstream,
@@ -178,10 +181,6 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
     cli: opts.cli,
     role: opts.role,
   });
-  if (resolvedName !== previousTitle) {
-    await mux.setPaneTitle(opts.paneId, resolvedName);
-  }
-  await mux.lockPaneTitle(opts.paneId);
   // Machine-local table (`agents`): no trigger, so this emit is the
   // only record.
   emitEvent(
@@ -197,4 +196,19 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
     paneTitleSetTo: resolvedName,
     ...(await probeAdopted(db, inserted)),
   };
+}
+
+/**
+ * Lock the pane title against OSC rewrites, then write the mu title
+ * (always, so an OSC that arrived before the lock is overwritten). The
+ * lock is best-effort: identity prefers $MU_AGENT_NAME and reconcile
+ * repairs titles, so a failed lock must not fail the adoption.
+ */
+async function lockThenTitle(
+  mux: Awaited<ReturnType<typeof activeMux>>,
+  paneId: string,
+  title: string,
+): Promise<void> {
+  await mux.lockPaneTitle(paneId).catch(() => {});
+  await mux.setPaneTitle(paneId, title);
 }

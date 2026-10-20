@@ -104,7 +104,7 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     return { paneId, windowId };
   }
 
-  it("(case 1) adopt by pane id, pane title is already a valid agent name -> insert, no retitle", async () => {
+  it("(case 1) adopt by pane id, pane title is already a valid agent name -> insert, lock then rewrite title", async () => {
     const { calls, executor } = mockTmux(state);
     setTmuxExecutor(executor);
     const { adoptAgent } = await import("../src/agents.js");
@@ -119,8 +119,12 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     expect(result.agent.paneId).toBe(paneId);
     expect(result.agent.workstreamName).toBe("auth");
     expect(getAgent(db, "worker-2", "auth")).toMatchObject({ name: "worker-2", paneId });
-    // No select-pane -T call (no retitle).
-    expect(calls.find((c) => c[0] === "select-pane")).toBeUndefined();
+    // Title is locked, then rewritten (an OSC title before the lock must
+    // not survive), so select-pane -T runs after set-option.
+    const lockAt = calls.findIndex((c) => c[0] === "set-option" && c.includes("allow-set-title"));
+    const titleAt = calls.findIndex((c) => c[0] === "select-pane" && c.includes("-T"));
+    expect(lockAt).toBeGreaterThanOrEqual(0);
+    expect(titleAt).toBeGreaterThan(lockAt);
   });
 
   it("(case 2) adopt by pane id, --name differs from title -> retitle + insert", async () => {
@@ -242,6 +246,27 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     expect(lock().length).toBe(2);
   });
 
+  it("locks the title before writing it, and adopts even when the lock fails", async () => {
+    const { calls, executor } = mockTmux(state);
+    setTmuxExecutor(async (args) =>
+      args[0] === "set-option" && args.includes("allow-set-title")
+        ? { stdout: "", stderr: "server busy", exitCode: 1 }
+        : executor(args),
+    );
+    const { adoptAgent } = await import("../src/agents.js");
+    const { paneId } = seedOrphanPane({ sessionName: "mu-auth", title: "worker-3" });
+    const result = await adoptAgent(db, { paneId, workstream: "auth" });
+    expect(result.alreadyAdopted).toBe(false);
+    const ops = db.prepare("SELECT COUNT(*) AS n FROM ops WHERE intent = 'agent.adopt'").get() as {
+      n: number;
+    };
+    expect(ops.n).toBe(1);
+    // Title written even when it already matched: an OSC before the lock is overwritten.
+    expect(
+      calls.some((c) => c[0] === "select-pane" && c.includes("-T") && c.includes("worker-3")),
+    ).toBe(true);
+  });
+
   it("(case 6) adopt twice with same input -> alreadyAdopted=true (idempotent)", async () => {
     const { calls, executor } = mockTmux(state);
     setTmuxExecutor(executor);
@@ -258,12 +283,12 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     expect(second.agent.paneId).toBe(paneId);
     // Idempotent path should not insert again — exactly one row.
     expect(listAgents(db).length).toBe(1);
-    // The second call may make tmux probe calls (paneExists, list-panes) but
-    // must NOT call select-pane (no retitle on idempotent path).
+    // The second call may make tmux probe calls (paneExists, list-panes).
+    // Re-adopt re-locks and rewrites the title once (repairs an OSC title).
     const retitlesAfter = calls
       .slice(callsBefore)
       .filter((c) => c[0] === "select-pane" && c.includes("-T"));
-    expect(retitlesAfter.length).toBe(0);
+    expect(retitlesAfter.length).toBe(1);
   });
 
   it("(case 9) on herdr, a `w1:p2` argument is a pane id, not a title to look up", async () => {
