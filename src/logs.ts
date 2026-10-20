@@ -145,7 +145,7 @@ export function workstreamScopeParams(workstream: string): [string, string] {
  *  (one seek per entity, ~a dozen). `entity IN (…) AND key …` lets SQLite
  *  seek (entity, key) without knowing the entity: the only index on key
  *  leads with entity, and a bare `key` predicate scans all of ops. */
-const OPS_ENTITIES_SQL = `WITH RECURSIVE e(entity) AS (
+export const OPS_ENTITIES_SQL = `WITH RECURSIVE e(entity) AS (
     SELECT MIN(entity) FROM ops
     UNION ALL
     SELECT (SELECT MIN(entity) FROM ops WHERE entity > e.entity) FROM e WHERE e.entity IS NOT NULL
