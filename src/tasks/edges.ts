@@ -488,8 +488,8 @@ export interface EdgeCycle {
  * Cycles already present in task_edges. addBlockEdge refuses to make one,
  * but sync can merge two locally valid edges into one (apply never
  * rejects a peer's edge). Members block each other until one closes.
- * Every edge that lies on a cycle is covered by at least one reported
- * cycle; re-run after fixing, since breaking one can leave another.
+ * Returns one cycle per suggested fix; applying every fix together
+ * leaves the graph acyclic.
  */
 export function findEdgeCycles(db: Db): EdgeCycle[] {
   const rows = db
@@ -514,29 +514,56 @@ export function findEdgeCycles(db: Db): EdgeCycle[] {
   const name = db.prepare("SELECT local_id FROM tasks WHERE id = ?");
   const local = (id: number): string =>
     (name.get(id) as { local_id: string } | undefined)?.local_id ?? String(id);
-  // Report a cycle through every edge that no reported cycle covers yet,
-  // so overlapping cycles each get a line (at most one per edge, so this
-  // stays polynomial). Fixes are per cycle: re-run doctor after applying
-  // them, since removing one edge can leave a different cycle.
-  const covered = new Set<string>();
-  const key = (f: number, t: number): string => `${f}>${t}`;
-  const id = db.prepare(
-    "SELECT id FROM tasks WHERE local_id = ? AND workstream_id = (SELECT workstream_id FROM tasks WHERE id = ?)",
-  );
+  // Break cycles on an in-memory copy: find one, report it with its
+  // closing edge, drop that edge, repeat. Applying every reported fix
+  // therefore leaves the graph acyclic (a graph can hold exponentially
+  // many cycles, so "every cycle" is not the contract; "every fix
+  // together breaks them all" is). Each round is a BFS, at most one
+  // round per edge.
+  const out = new Map<number, Set<number>>();
+  for (const r of live) {
+    const set = out.get(r.f) ?? new Set<number>();
+    set.add(r.t);
+    out.set(r.f, set);
+  }
+  const wsOf = new Map(live.map((r) => [r.f, r.ws] as const));
+  const shortestPath = (from: number, to: number): number[] | null => {
+    const parent = new Map<number, number>([[from, from]]);
+    let frontier = [from];
+    while (frontier.length > 0 && !parent.has(to)) {
+      const next: number[] = [];
+      for (const n of frontier)
+        for (const m of out.get(n) ?? []) {
+          if (parent.has(m)) continue;
+          parent.set(m, n);
+          next.push(m);
+        }
+      frontier = next;
+    }
+    if (!parent.has(to)) return null;
+    const ids: number[] = [];
+    for (let n = to; ; ) {
+      ids.unshift(n);
+      if (n === from) return ids;
+      const p = parent.get(n);
+      if (p === undefined) return null;
+      n = p;
+    }
+  };
   const cycles: EdgeCycle[] = [];
   for (const r of live) {
-    if (covered.has(key(r.f, r.t))) continue;
-    const path = findCyclePath(db, r.f, r.t); // r.t -> … -> r.f
-    if (path === null) continue;
-    cycles.push({
-      workstream: r.ws,
-      path: [local(r.f), ...path.slice(0, -1)],
-      blocker: local(r.f),
-      blocked: local(r.t),
-    });
-    const ids = path.map((l) => (id.get(l, r.f) as { id: number } | undefined)?.id ?? -1);
-    covered.add(key(r.f, r.t));
-    for (let k = 0; k + 1 < ids.length; k++) covered.add(key(ids[k] ?? -1, ids[k + 1] ?? -1));
+    for (;;) {
+      if (!out.get(r.f)?.has(r.t)) break;
+      const back = shortestPath(r.t, r.f); // r.t -> … -> r.f closes via r.f -> r.t
+      if (back === null) break;
+      cycles.push({
+        workstream: wsOf.get(r.f) ?? r.ws,
+        path: [r.f, ...back.slice(0, -1)].map(local),
+        blocker: local(r.f),
+        blocked: local(r.t),
+      });
+      out.get(r.f)?.delete(r.t);
+    }
   }
   return cycles;
 }

@@ -192,4 +192,38 @@ describe("mu doctor dependency cycles", () => {
     expect(human.stdout).not.toContain("never become ready");
     expect(human.stdout).toContain("until one closes");
   });
+
+  it("one round of fixes clears cycles assembled from already-reported edges", async () => {
+    // Reviewer case: A has t1->t2, t2->t3, t2->t4, t3->t4; B has t4->t1, t4->t2.
+    const db = openDb({ path: dbPath });
+    addTask(db, { localId: "t4", workstream: "demo", title: "t4", impact: 50, effortDays: 1 });
+    const id = (l: string) =>
+      (
+        db
+          .prepare(
+            "SELECT id FROM tasks WHERE local_id = ? AND workstream_id = (SELECT id FROM workstreams WHERE name = 'demo')",
+          )
+          .get(l) as { id: number }
+      ).id;
+    const ins = db.prepare(
+      "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, 'x')",
+    );
+    for (const [f, t] of [
+      ["t1", "t2"],
+      ["t2", "t3"],
+      ["t2", "t4"],
+      ["t3", "t4"],
+      ["t4", "t1"],
+      ["t4", "t2"],
+    ] as const)
+      ins.run(id(f), id(t));
+    db.close();
+    const first = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout) as {
+      dagCycles: { fix: string }[];
+    };
+    expect(first.dagCycles.length).toBeGreaterThan(0);
+    for (const { fix } of first.dagCycles) await runCli(fix.split(" ").slice(1), dbPath);
+    const after = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout);
+    expect(after.dagCycles).toEqual([]);
+  });
 });

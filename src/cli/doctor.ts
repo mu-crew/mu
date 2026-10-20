@@ -273,7 +273,7 @@ export async function cmdDoctor(
   } else {
     sawHazard = true;
     console.log(
-      `  ${"cycles".padEnd(16)} : ${pc.yellow("WARN")} ${pc.dim(`${cycles.length} dependency cycle(s); members block each other until one closes. Re-run doctor after fixing`)}`,
+      `  ${"cycles".padEnd(16)} : ${pc.yellow("WARN")} ${pc.dim(`${cycles.length} dependency cycle(s); members block each other until one closes. Applying every fix below breaks them all`)}`,
     );
     for (const c of cycles) {
       console.log(`      ${c.workstream}: ${[...c.path, c.path[0]].join(" -> ")}`);
