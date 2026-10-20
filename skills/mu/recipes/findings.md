@@ -57,6 +57,13 @@ the same shape everywhere: `FINDING: <severity> <file:line> <what>
 EVIDENCE: <command + output>`. `OPEN/triage` keeps the finding out of `mu task next`, and
 `claim` refuses it, so no worker starts on an undecided finding.
 
+**Severity** drives the three-refuter rule, so grade it strictly:
+`critical` needs a concrete scenario to data loss, a security breach or
+an outage; `high` a plausible bug; style is `low` unless it hides a bug.
+When unsure, pick the lower. A vague finding from one reviewer (no line,
+no scenario) drops a level at consolidation. Reviewers who differ by 2+
+levels go to the human.
+
 **More than 5 findings from one reviewer:** the reviewer writes them as
 `FINDING:` lines in its own task note instead. Before that reviewer
 task closes, the orchestrator adds `triage_<umbrella>` blocking the
