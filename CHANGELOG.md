@@ -61,6 +61,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   schema change: the offset is extra fields in the existing
   `sync_fingerprints` value, which an older mu never matches and
   ignores.
+- **`mu workstream list` reads mux liveness from one `list-sessions`.**
+  It also ran `has-session` once per workstream (6 spawns for 6
+  workstreams). The listing now reuses the session names it already
+  fetched, and falls back to per-workstream `has-session` when
+  `list-sessions` fails, so a transient failure still never marks live
+  sessions dead. ~22 ms CLI CPU saved; output is identical.
 - **Task, track and sync-peer sorts use code-unit order, not
   `localeCompare`.** The first `localeCompare` call initialised ICU
   (~4 ms on nearly every list verb). Ties by name now sort by code unit,
