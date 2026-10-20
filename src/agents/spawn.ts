@@ -846,7 +846,11 @@ function attachOrphanCleanupHint(err: unknown, agent: string, workstream: string
       command: `mu workspace free ${agent} -w ${workstream}`,
     },
   ];
-  target.errorNextSteps = () => [...(existing ? existing() : []), ...orphanHints];
+  // Best-effort: a frozen or non-extensible error must still reach the
+  // caller as itself, just without the extra hints.
+  try {
+    target.errorNextSteps = () => [...(existing ? existing() : []), ...orphanHints];
+  } catch {}
 }
 
 /**
