@@ -648,8 +648,15 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       );
     }
     const sent = out.send as
-      | { ok?: unknown; runs?: unknown; message?: unknown; sessionFile?: unknown }
+      | { ok?: unknown; error?: unknown; runs?: unknown; message?: unknown; sessionFile?: unknown }
       | undefined;
+    if (sent?.ok !== true && sent?.error === "AgentSendIndeterminateError") {
+      // The prompt may already be running: keep the pane, never auto-retry.
+      const why = typeof sent.message === "string" ? sent.message : "no reply";
+      throw new Error(
+        `mu agent send to ${W}/${name}: delivery unknown (${why}). Pane kept; do NOT resend blindly. Check with: mu agent read ${name} -w ${W} -n 20 (or attach), then close it with: mu agent close ${name} -w ${W}`,
+      );
+    }
     if (sent?.ok !== true) {
       // Nothing reached it: the pane is just an idle pi. Take it down.
       const c = await mu(["agent", "close", name, "-w", W]);
