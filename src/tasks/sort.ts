@@ -5,6 +5,7 @@
 // (that bundle cycle previously made `node dist/cli.js --help` exit
 // silently).
 
+import { compareStrings } from "../compare.js";
 import type { TaskRow } from "./core.js";
 
 export const TASK_SORT_KEYS = ["roi", "recency", "age", "id"] as const;
@@ -23,7 +24,7 @@ export function byRoiDesc(a: TaskRow, b: TaskRow): number {
   const rb = roiOf(b);
   if (rb !== ra) return rb - ra;
   if (a.effortDays !== b.effortDays) return a.effortDays - b.effortDays;
-  return a.name.localeCompare(b.name);
+  return compareStrings(a.name, b.name);
 }
 
 /** Sort a copy of `tasks` by `key`. Pure (does not mutate input). */
@@ -35,17 +36,17 @@ export function sortTasks(tasks: readonly TaskRow[], key: TaskSortKey): TaskRow[
     case "recency":
       // updated_at DESC: most-recently-touched first.
       return out.sort((a, b) => {
-        const byUpdated = b.updatedAt.localeCompare(a.updatedAt);
-        return byUpdated !== 0 ? byUpdated : a.name.localeCompare(b.name);
+        const byUpdated = compareStrings(b.updatedAt, a.updatedAt);
+        return byUpdated !== 0 ? byUpdated : compareStrings(a.name, b.name);
       });
     case "age":
       // created_at ASC: oldest first ("what's gone stale").
       return out.sort((a, b) => {
-        const byCreated = a.createdAt.localeCompare(b.createdAt);
-        return byCreated !== 0 ? byCreated : a.name.localeCompare(b.name);
+        const byCreated = compareStrings(a.createdAt, b.createdAt);
+        return byCreated !== 0 ? byCreated : compareStrings(a.name, b.name);
       });
     case "id":
-      return out.sort((a, b) => a.name.localeCompare(b.name));
+      return out.sort((a, b) => compareStrings(a.name, b.name));
   }
 }
 

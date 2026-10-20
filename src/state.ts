@@ -8,6 +8,7 @@
 
 import type { RuntimeState } from "./agent-state.js";
 import { type LiveAgent, type LiveAgentsView, listLiveAgents } from "./agents.js";
+import { compareStrings } from "./compare.js";
 import type { Db } from "./db.js";
 import { type DoctorSummary, loadDoctorSummary } from "./doctor-summary.js";
 import { GLYPH } from "./glyphs.js";
@@ -377,7 +378,7 @@ function byRoiDesc(a: TaskRow, b: TaskRow): number {
   const rb = b.effortDays > 0 ? b.impact / b.effortDays : Number.POSITIVE_INFINITY;
   if (rb !== ra) return rb - ra;
   if (a.effortDays !== b.effortDays) return a.effortDays - b.effortDays;
-  return a.name.localeCompare(b.name);
+  return compareStrings(a.name, b.name);
 }
 
 // ─── Agent helpers ─────────────────────────────────────────────────

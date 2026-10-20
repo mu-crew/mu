@@ -29,6 +29,7 @@
 
 import { Box, Text } from "ink";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
+import { compareStrings } from "../../../compare.js";
 import type { Db } from "../../../db.js";
 import { GLYPH } from "../../../glyphs.js";
 import type { WorkstreamSnapshot } from "../../../state.js";
@@ -169,7 +170,7 @@ export function TracksPopup({
   const drillTasks = useMemo<TaskRow[]>(() => {
     if (mode !== "drill" || !focusedTrack) return [];
     const out = listTasks(db, workstream).filter((task) => focusedTrack.taskIds.has(task.name));
-    out.sort((a, b) => statusRank(a) - statusRank(b) || a.name.localeCompare(b.name));
+    out.sort((a, b) => statusRank(a) - statusRank(b) || compareStrings(a.name, b.name));
     return out;
   }, [mode, focusedTrack, db, workstream]);
 
