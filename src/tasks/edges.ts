@@ -487,8 +487,9 @@ export interface EdgeCycle {
 /**
  * Cycles already present in task_edges. addBlockEdge refuses to make one,
  * but sync can merge two locally valid edges into one (apply never
- * rejects a peer's edge). Cycle members never become ready. One cycle is
- * reported per strongly-connected stretch; breaking it may reveal another.
+ * rejects a peer's edge). Members block each other until one closes.
+ * Every edge that lies on a cycle is covered by at least one reported
+ * cycle; re-run after fixing, since breaking one can leave another.
  */
 export function findEdgeCycles(db: Db): EdgeCycle[] {
   const rows = db
@@ -513,10 +514,18 @@ export function findEdgeCycles(db: Db): EdgeCycle[] {
   const name = db.prepare("SELECT local_id FROM tasks WHERE id = ?");
   const local = (id: number): string =>
     (name.get(id) as { local_id: string } | undefined)?.local_id ?? String(id);
-  const seen = new Set<number>();
+  // Report a cycle through every edge that no reported cycle covers yet,
+  // so overlapping cycles each get a line (at most one per edge, so this
+  // stays polynomial). Fixes are per cycle: re-run doctor after applying
+  // them, since removing one edge can leave a different cycle.
+  const covered = new Set<string>();
+  const key = (f: number, t: number): string => `${f}>${t}`;
+  const id = db.prepare(
+    "SELECT id FROM tasks WHERE local_id = ? AND workstream_id = (SELECT workstream_id FROM tasks WHERE id = ?)",
+  );
   const cycles: EdgeCycle[] = [];
   for (const r of live) {
-    if (seen.has(r.f) && seen.has(r.t)) continue;
+    if (covered.has(key(r.f, r.t))) continue;
     const path = findCyclePath(db, r.f, r.t); // r.t -> … -> r.f
     if (path === null) continue;
     cycles.push({
@@ -525,14 +534,9 @@ export function findEdgeCycles(db: Db): EdgeCycle[] {
       blocker: local(r.f),
       blocked: local(r.t),
     });
-    const ids = db
-      .prepare(
-        "SELECT id FROM tasks WHERE workstream_id = (SELECT workstream_id FROM tasks WHERE id = ?) AND local_id IN (" +
-          path.map(() => "?").join(",") +
-          ")",
-      )
-      .all(r.f, ...path) as { id: number }[];
-    for (const { id } of ids) seen.add(id);
+    const ids = path.map((l) => (id.get(l, r.f) as { id: number } | undefined)?.id ?? -1);
+    covered.add(key(r.f, r.t));
+    for (let k = 0; k + 1 < ids.length; k++) covered.add(key(ids[k] ?? -1, ids[k + 1] ?? -1));
   }
   return cycles;
 }
