@@ -26,7 +26,8 @@ written down first does neither.
 4. **After each round, check the rule** yourself, from the measurement
    command, not from the worker's note.
    - Rule met: first one delegate call refutes the umbrella's criteria
-     on the merged tree (record on the umbrella). Then `mu task close <umbrella> --if-ready --evidence "<stop
+     on the merged tree (record on the umbrella). Then
+     `mu task close <umbrella> --if-ready --evidence "<stop
      command + result>"` (each round blocks the umbrella).
    - No progress: stop the loop and decide. Change the approach, split
      the work, or park the umbrella with
