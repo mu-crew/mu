@@ -97,14 +97,16 @@ task's context.
 past `--after-runs`. For pi, the `--json`
 row carries:
 
-- `outcome`: `done`, `empty`, `error`, `died`, `timeout`, or `pending`.
-  `error` means the run stopped on an API error after pi's own retries;
-  `lastError` holds the message and the pane is kept.
+- `outcome`: `done`, `empty`, `error`, `died`, `blocked`, `timeout`, or
+  `pending`. `error` means the run stopped on an API error after pi's
+  own retries; `lastError` holds the message and the pane is kept.
+  `blocked` means pi is waiting on an extension dialog (`blocked` holds
+  its kind and title); the run is not finished.
 - `lastText`: the final message, capped at 64 KiB.
 - `sessionFile`: the agent's pi session file, holding the full
   transcript (absent for an ephemeral pi or an older extension).
 
-Exit codes: `0` met, `5` timeout, `6` pane died. Non-pi agents have no
+Exit codes: `0` met, `5` timeout, `6` pane died, `7` blocked on a dialog. Non-pi agents have no
 `lastText`; read the pane with `mu agent read helper-1 -w scratch -n 80`.
 
 ## Keep a helper

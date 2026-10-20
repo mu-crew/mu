@@ -196,7 +196,9 @@ export function formatAgentsTable(agents: readonly LiveAgent[]): string {
       glyphCell,
       nameCell,
       a.cli,
-      a.state === "unknown" && a.reason !== undefined ? `${a.state}: ${a.reason}` : a.state,
+      (a.state === "unknown" || a.state === "needs_permission") && a.reason !== undefined
+        ? `${a.state}: ${a.reason}`
+        : a.state,
       a.tab ?? a.name,
       a.role === "read-only" ? pc.yellow("read-only") : "",
     ]);

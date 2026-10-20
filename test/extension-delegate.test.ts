@@ -1474,6 +1474,36 @@ describe("evidence when there is no final answer", () => {
     expect(sentText(p)).toContain("Partial answer so far:");
   });
 
+  it("a blocked delegate keeps its pane, copies no partial, and says it has not finished", async () => {
+    const mu = muWithSession(sessionWith(tmp, "half an answer"));
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    mu.waits.get("delegate-2")?.resolve(
+      ok({
+        agents: [
+          {
+            outcome: "blocked",
+            lastText: "stale",
+            blocked: { kind: "confirm", title: "Allow push?", since: 1 },
+          },
+        ],
+      }),
+    );
+    await flush();
+    await flush();
+    const text = sentText(p);
+    expect(text).toContain('blocked on a confirm "Allow push?" dialog');
+    expect(text).toContain("has NOT finished");
+    expect(text).toContain("Pane kept (waiting on a dialog)");
+    expect(text).toContain("mu agent wait delegate-2 -w scratch --json");
+    expect(text).toContain(`Session: ${join(tmp, "s.jsonl")}`);
+    expect(text).not.toContain("Partial answer");
+    expect(text).not.toContain("half an answer");
+    expect(text).not.toContain("stale");
+    expect(mu.calls.some((c) => c[1] === "close")).toBe(false);
+  });
+
   it("a clean finish adds no evidence lines", async () => {
     const mu = muWithSession(sessionWith(tmp, "ignored"));
     const p = fakePi();

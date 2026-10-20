@@ -15,6 +15,7 @@ import {
   UNKNOWN_REASON,
 } from "../src/agent-state.js";
 import { getAgent, insertAgent, listLiveAgents } from "../src/agents.js";
+import { formatAgentsTable } from "../src/cli/format.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -66,6 +67,9 @@ interface FakeExt {
   /** Fire agent_settled: runs++, idle, answer held waits. */
   settle: (lastText?: string, lastError?: string) => void;
   start: () => void;
+  /** Open an extension dialog: status gains `blocked`; held
+   *  returnOnBlocked waits end with ended "blocked". */
+  block: (kind: string, title?: string) => void;
   close: () => Promise<void>;
 }
 
@@ -77,14 +81,23 @@ async function fakeExtension(
   let { state, since, runs } = initial;
   const pending = initial.pending ?? false;
   const ops: string[] = [];
-  const waiters: Array<{ after: number | undefined; sock: Socket }> = [];
+  const waiters: Array<{ after: number | undefined; sock: Socket; onBlocked: boolean }> = [];
+  let blocked: { kind: string; title?: string; since: number } | undefined;
   let lastText: string | undefined;
   let lastError: string | undefined;
   const settled = () => ({
     ...(lastText === undefined ? {} : { lastText }),
     ...(lastError === undefined ? {} : { lastError }),
   });
-  const status = () => ({ v: 1, ok: true, state, since, runs, pending });
+  const status = () => ({
+    v: 1,
+    ok: true,
+    state,
+    since,
+    runs,
+    pending,
+    ...(blocked ? { blocked } : {}),
+  });
   mkdirSync(dirname(path), { recursive: true });
   const conns = new Set<Socket>();
   const server = createServer((sock) => {
@@ -95,12 +108,19 @@ async function fakeExtension(
     sock.on("error", () => {});
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
-        const req = JSON.parse(line) as { op: string; afterRuns?: number };
+        const req = JSON.parse(line) as {
+          op: string;
+          afterRuns?: number;
+          returnOnBlocked?: boolean;
+        };
         ops.push(req.op);
         if (req.op === "wait") {
+          const onBlocked = req.returnOnBlocked === true;
           if (req.afterRuns !== undefined && runs > req.afterRuns && state === "idle") {
             sock.end(encode({ ...status(), ...settled() }));
-          } else waiters.push({ after: req.afterRuns, sock });
+          } else if (onBlocked && blocked) {
+            sock.end(encode({ ...status(), ended: "blocked" }));
+          } else waiters.push({ after: req.afterRuns, sock, onBlocked });
         } else sock.end(encode(status()));
       }
     });
@@ -112,6 +132,13 @@ async function fakeExtension(
     start: () => {
       state = "busy";
       since = Date.now();
+    },
+    block: (kind: string, title?: string) => {
+      blocked = { kind, ...(title !== undefined ? { title } : {}), since: 4242 };
+      for (const w of waiters.filter((x) => x.onBlocked)) {
+        waiters.splice(waiters.indexOf(w), 1);
+        w.sock.end(encode({ ...status(), ended: "blocked" }));
+      }
     },
     settle: (text?: string, error?: string) => {
       state = "idle";
@@ -146,6 +173,23 @@ describe("readAgentStates via the control socket", () => {
     });
     ext.settle();
     expect(await read()).toMatchObject({ state: "needs_input", source: "ctl", ctl: "ok" });
+  });
+
+  it("an open extension dialog reads needs_permission, titled, since it opened", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    ext.block("confirm", "Allow rm?");
+    expect(await read()).toMatchObject({
+      state: "needs_permission",
+      source: "ctl",
+      since: 4242,
+      reason: "dialog confirm: Allow rm?",
+    });
+    const view = await listLiveAgents(db, { workstream: WS, mode: "report-only" });
+    expect(view.agents[0]).toMatchObject({
+      state: "needs_permission",
+      reason: "dialog confirm: Allow rm?",
+    });
+    expect(formatAgentsTable(view.agents)).toContain("needs_permission: dialog confirm: Allow rm?");
   });
 
   it("a missing socket reads unknown 'ctl missing', not murmur's working", async () => {
@@ -332,6 +376,44 @@ describe("mu agent wait on a pi agent", () => {
     );
     expect(res.stderr).toContain("unknown option '--lines'");
     process.exitCode = undefined;
+  });
+
+  it("a dialog opening mid-wait ends it: outcome blocked, not fired, exit 7", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    const pending = runCli(
+      ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--timeout", "10", "--json"],
+      dbPath,
+    );
+    for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    ext.block("select", "Pick a branch");
+    const res = await pending;
+    expect(process.exitCode).toBe(7);
+    process.exitCode = undefined;
+    const out = JSON.parse(res.stdout) as {
+      timedOut: boolean;
+      agents: Array<{ fired: boolean; outcome?: string; status?: string; blocked?: unknown }>;
+      nextSteps: unknown[];
+    };
+    expect(out.timedOut).toBe(false);
+    expect(out.agents[0]).toMatchObject({
+      fired: false,
+      outcome: "blocked",
+      status: "needs_permission",
+      blocked: { kind: "select", title: "Pick a branch" },
+    });
+    expect(JSON.stringify(out.nextSteps)).toContain("mu agent wait pia -w cs");
+  });
+
+  it("a dialog already open ends the wait at once; human output names it", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    ext.block("confirm");
+    const res = await runCli(["agent", "wait", "pia", "-w", WS, "--timeout", "10"], dbPath);
+    expect(process.exitCode).toBe(7);
+    process.exitCode = undefined;
+    expect(res.stdout).toContain("cs/pia is waiting on a dialog confirm");
+    expect(res.stdout).toContain("not finished");
   });
 
   it("exits 5 on timeout while pi stays busy", async () => {

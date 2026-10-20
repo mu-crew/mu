@@ -17,6 +17,7 @@ import type { MuRunner } from "../extension/delegate.js";
 import muPi, {
   commandName,
   FRESH_COMMAND,
+  isUiBlocked,
   LAST_TEXT_MAX_BYTES,
   LAST_TEXT_TRUNCATED,
   type MuPiCommandContext,
@@ -91,7 +92,15 @@ describe("mu pi extension", () => {
     const other = fakePi();
     muPi(other.pi);
     expect([...other.handlers.keys()].sort()).toEqual(
-      ["agent_before_settle", "input", "resources_discover", "tool_call"].sort(),
+      [
+        "agent_before_settle",
+        "input",
+        "resources_discover",
+        "session_start",
+        "tool_call",
+        "ui_prompt_end",
+        "ui_prompt_start",
+      ].sort(),
     );
   });
 
@@ -175,6 +184,70 @@ describe("mu pi extension", () => {
     await fake.emit("agent_start");
     await fake.emit("agent_settled");
     expect(await ctlRequest(sock, { op: "wait", afterRuns: 0 })).toMatchObject({ runs: 1 });
+  });
+
+  describe("extension dialogs (ui_prompt_start / ui_prompt_end)", () => {
+    afterEach(async () => {
+      // The open-dialog stack is process-global: drain it between tests.
+      while (isUiBlocked()) await fake.emit("ui_prompt_end", { kind: "confirm" });
+    });
+
+    it("status carries blocked while a dialog is open, nested prompts included", async () => {
+      await fake.emit("session_start");
+      await fake.emit("agent_start");
+      expect(await ctlRequest(sock, { op: "status" })).not.toHaveProperty("blocked");
+      await fake.emit("ui_prompt_start", { kind: "confirm", title: "Run rm -rf?" });
+      await fake.emit("ui_prompt_start", { kind: "input" });
+      expect(isUiBlocked()).toBe(true);
+      const st = await ctlRequest(sock, { op: "status" });
+      expect(st).toMatchObject({ state: "busy", blocked: { kind: "input" } });
+      expect(st.ok && st.blocked?.title).toBeUndefined();
+      await fake.emit("ui_prompt_end", { kind: "input" });
+      expect(await ctlProbe(sock)).toMatchObject({
+        kind: "ok",
+        status: { state: "busy", blocked: { kind: "confirm", title: "Run rm -rf?" } },
+      });
+      await fake.emit("ui_prompt_end", { kind: "confirm" });
+      expect(isUiBlocked()).toBe(false);
+      expect(await ctlRequest(sock, { op: "status" })).not.toHaveProperty("blocked");
+    });
+
+    it("wait with returnOnBlocked ends on a dialog, runs unchanged", async () => {
+      await fake.emit("session_start");
+      await fake.emit("agent_start");
+      const p = ctlRequest(sock, { op: "wait", afterRuns: 0, returnOnBlocked: true });
+      await new Promise((r) => setTimeout(r, 20));
+      await fake.emit("ui_prompt_start", { kind: "select", title: "Pick one" });
+      const r = await p;
+      expect(r).toMatchObject({
+        ok: true,
+        ended: "blocked",
+        runs: 0,
+        blocked: { kind: "select", title: "Pick one" },
+      });
+      expect(r).not.toHaveProperty("lastText");
+      // Already open: a new wait returns at once.
+      expect(
+        await ctlRequest(sock, { op: "wait", afterRuns: 0, returnOnBlocked: true }),
+      ).toMatchObject({ ended: "blocked" });
+    });
+
+    it("wait without returnOnBlocked holds through a dialog until the settle", async () => {
+      await fake.emit("session_start");
+      await fake.emit("agent_start");
+      let done = false;
+      const p = ctlRequest(sock, { op: "wait", afterRuns: 0 }).then((r) => {
+        done = true;
+        return r;
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      await fake.emit("ui_prompt_start", { kind: "confirm" });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(done).toBe(false);
+      await fake.emit("ui_prompt_end", { kind: "confirm" });
+      await fake.emit("agent_settled");
+      expect(await p).toMatchObject({ ended: "settled", runs: 1 });
+    });
   });
 
   describe("lastText", () => {
