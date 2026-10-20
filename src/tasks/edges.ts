@@ -162,6 +162,59 @@ export function wouldCreateCycle(db: Db, fromId: number, toId: number): boolean 
   return result !== undefined;
 }
 
+/**
+ * Shortest existing path `toId -> … -> fromId` (task local ids, both ends
+ * included), i.e. what adding edge `fromId -> toId` would close into a
+ * cycle. Null when there is none. Tracks visited nodes per path, so it
+ * terminates even on cycles already present (e.g. created by sync).
+ */
+export function findCyclePath(db: Db, fromId: number, toId: number): string[] | null {
+  if (fromId === toId) {
+    const t = db.prepare("SELECT local_id FROM tasks WHERE id = ?").get(fromId) as
+      | { local_id: string }
+      | undefined;
+    return t ? [t.local_id] : null;
+  }
+  const row = db
+    .prepare(
+      `WITH RECURSIVE walk(node, path, depth) AS (
+         SELECT @start, ',' || @start || ',', 0
+         UNION ALL
+         SELECT e.to_task_id, walk.path || e.to_task_id || ',', walk.depth + 1
+         FROM task_edges e JOIN walk ON e.from_task_id = walk.node
+         WHERE instr(walk.path, ',' || e.to_task_id || ',') = 0
+       )
+       SELECT path FROM walk WHERE node = @goal ORDER BY depth LIMIT 1`,
+    )
+    .get({ start: toId, goal: fromId }) as { path: string } | undefined;
+  if (!row) return null;
+  const names: string[] = [];
+  for (const id of row.path.split(",").filter(Boolean)) {
+    const t = db.prepare("SELECT local_id FROM tasks WHERE id = ?").get(Number(id)) as
+      | { local_id: string }
+      | undefined;
+    names.push(t?.local_id ?? id);
+  }
+  return names;
+}
+
+/** Build a CycleError for edge `blocker -> blocked`, with the closing path. */
+export function cycleErrorFor(
+  db: Db,
+  blocker: string,
+  blocked: string,
+  blockerId: number,
+  blockedId: number,
+  workstream?: string,
+): CycleError {
+  return new CycleError(
+    blocker,
+    blocked,
+    findCyclePath(db, blockerId, blockedId) ?? [],
+    workstream,
+  );
+}
+
 export interface BlockEdgeResult {
   /** True iff a row was actually inserted (vs. already present). */
   added: boolean;
@@ -218,7 +271,7 @@ function addBlockEdgeImpl(
   const blockerId = taskIdFor(db, blocker, blockerRow.workstreamName);
   if (blockedId === null || blockerId === null) throw new TaskNotFoundError(blocked);
   if (wouldCreateCycle(db, blockerId, blockedId)) {
-    throw new CycleError(blocker, blocked);
+    throw cycleErrorFor(db, blocker, blocked, blockerId, blockedId, blockedRow.workstreamName);
   }
   const now = new Date().toISOString();
   const added = db
@@ -369,7 +422,14 @@ function reparentTaskImpl(
     const blockerId = taskIdFor(db, blocker.name, blocker.workstreamName);
     if (blockerId === null) throw new TaskNotFoundError(blockerLocalId);
     if (wouldCreateCycle(db, blockerId, taskSurrogateId)) {
-      throw new CycleError(blockerLocalId, taskLocalId);
+      throw cycleErrorFor(
+        db,
+        blockerLocalId,
+        taskLocalId,
+        blockerId,
+        taskSurrogateId,
+        task.workstreamName,
+      );
     }
     requestedBlockers.push({ localId: blockerLocalId, id: blockerId });
   }

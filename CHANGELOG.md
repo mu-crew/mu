@@ -17,6 +17,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   socket error looked like "gone" to liveness gates such as
   `workspace free`. Only "can't find pane" / no-server answers mean
   false now; other failures throw, and callers fail closed.
+- **Cycle errors name the full path.** `CycleError` now reads
+  `adding edge c -> a would create a cycle: c -> a -> b -> c` and its
+  next steps give a concrete `mu task unblock <b> --by <a> -w <ws>` for
+  an edge on the path. `findCyclePath` (shortest path, safe on existing
+  cycles) is exported from `src/tasks/edges.ts`.
 
 - **Reconcile no longer deletes a respawned agent.** The ghost prune
   deleted by name, so an agent closed and respawned under the same name
