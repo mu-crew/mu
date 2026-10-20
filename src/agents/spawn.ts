@@ -9,7 +9,7 @@
 // Extracted from src/agents.ts as part of refactor_split_large_src_files.
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -466,6 +466,18 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // `mu` hits the same taskgraph. Local spawns only.
   if (db.name !== "" && db.name !== ":memory:") paneEnv.MU_DB_PATH = resolve(db.name);
   if (process.env.MU_STATE_DIR) paneEnv.MU_STATE_DIR = resolve(process.env.MU_STATE_DIR);
+  // mu sessions are created detached and may never be attached, so tmux's
+  // update-environment never refreshes them and a pane would inherit a
+  // stale SSH_AUTH_SOCK. Forward the caller's. File-type check only (is it
+  // a socket?), not a liveness probe: mu stays ssh-free. Best-effort.
+  const sshSock = process.env.SSH_AUTH_SOCK;
+  if (sshSock) {
+    try {
+      if (statSync(sshSock).isSocket()) paneEnv.SSH_AUTH_SOCK = sshSock;
+    } catch {
+      // missing or unreadable: skip forwarding
+    }
+  }
 
   const hasWorkspace = workspacePathStr !== undefined;
 
