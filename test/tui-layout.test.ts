@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   allocateRowBudgets,
-  balanceColumns,
+  arrangeColumns,
   type CardId,
+  type ColumnAssignment,
+  columnRowBudgets,
   columnWidths,
   cullCardsForRows,
   dashboardColumnCount,
@@ -98,73 +100,6 @@ describe("dashboard responsive layout", () => {
     ]);
   });
 
-  it("balanceColumns: stable when all 10 cards are visible", () => {
-    // Default 4-col layout. Touching this shape with all cards visible
-    // would change the dashboard's baseline glanceability for every
-    // user; the balancer must be a no-op when nothing has been
-    // toggled off.
-    const packed = layoutColumns(260, ALL);
-    const balanced = balanceColumns(packed, () => 5);
-    expect(balanced.map((c) => c.cards)).toEqual(packed.map((c) => c.cards));
-  });
-
-  it("balanceColumns: redistributes a card from the tall column to the short column post-toggle", () => {
-    // 3-col layout with the small-pair column reduced to one card
-    // (slot 1). Ready (slot 3) anchors the middle column with a tall
-    // task list (high dataCount). The balancer must move at least one
-    // task-list card to the short column or to the stream column.
-    const visible: CardId[] = [1, 3, 6, 7, 4];
-    const packed = layoutColumns(200, visible);
-    expect(packed.map((c) => c.cards)).toEqual([[1], [3, 6, 7], [4]]);
-    const balanced = balanceColumns(packed, (id) => (id === 3 || id === 6 || id === 7 ? 12 : 1));
-    const heights = balanced.map((col) => col.cards.length);
-    const spread = Math.max(...heights) - Math.min(...heights);
-    expect(spread).toBeLessThan(2);
-    // Slot 3 (Ready) is anchored — must stay where layoutColumns put it.
-    const readyColumn = balanced.findIndex((col) => col.cards.includes(3));
-    expect(readyColumn).toBe(1);
-  });
-
-  it("balanceColumns: anchored cards (slot 0 Commits, slot 3 Ready) never move", () => {
-    // Wide-spread setup: tall left column has both anchors; short
-    // right column has nothing. Balancer should still leave both
-    // anchors in the left column even though moving them would
-    // perfectly balance heights.
-    const assignments = [{ cards: [3, 0, 7] as CardId[] }, { cards: [1] as CardId[] }];
-    const balanced = balanceColumns(assignments, () => 5);
-    expect(balanced[0]?.cards).toContain(0);
-    expect(balanced[0]?.cards).toContain(3);
-  });
-
-  it("balanceColumns: never strips a column to empty", () => {
-    // Both columns have one card; the taller would be the natural
-    // donor, but doing so would leave it empty. The balancer must
-    // refuse — empty-column filtering belongs upstream in
-    // layoutColumns, not here.
-    const assignments = [{ cards: [1] as CardId[] }, { cards: [7] as CardId[] }];
-    const balanced = balanceColumns(assignments, (id) => (id === 7 ? 30 : 1));
-    expect(balanced[0]?.cards).toEqual([1]);
-    expect(balanced[1]?.cards).toEqual([7]);
-  });
-
-  it("balanceColumns: no-op on a single column", () => {
-    const assignments = [{ cards: [1, 3, 6] as CardId[] }];
-    const balanced = balanceColumns(assignments, () => 5);
-    expect(balanced.map((c) => c.cards)).toEqual([[1, 3, 6]]);
-  });
-
-  it("balanceColumns: preserves slot ordering on the receiver column", () => {
-    // After moving slot 2 from donor to receiver, receiver's cards
-    // must be sorted by compareSlot (slot 0 trailing).
-    const assignments = [{ cards: [1, 2, 7] as CardId[] }, { cards: [4, 0] as CardId[] }];
-    const balanced = balanceColumns(assignments, () => 5);
-    // Slot 0 trails in the receiver column wherever 2 lands.
-    const receiver = balanced[1]?.cards ?? [];
-    if (receiver.includes(0)) {
-      expect(receiver[receiver.length - 1]).toBe(0);
-    }
-  });
-
   it("computes gap-aware integer column widths", () => {
     expect(columnWidths(140, 2).map((c) => c.width)).toEqual([70, 69]);
     expect(columnWidths(200, 3).map((c) => c.width)).toEqual([66, 66, 66]);
@@ -222,18 +157,44 @@ describe("dashboard row-budget allocator", () => {
     expect(budgets[4]).toBe(3); // min guarantee beats dataCount=2
   });
 
-  it("caps one huge card at maxRows while siblings keep min guarantees", () => {
+  it("a huge card takes every spare row past maxRows while siblings keep min guarantees", () => {
     const budgets = allocateRowBudgets(80, [
       { id: 3, dataCount: 100 }, // Ready maxRows=15
       { id: 1, dataCount: 1 },
       { id: 2, dataCount: 1 },
       { id: 9, dataCount: 0 },
     ]);
-    expect(budgets[3]).toBe(15);
-    expect(budgets[1]).toBeGreaterThanOrEqual(2);
-    expect(budgets[2]).toBeGreaterThanOrEqual(2);
-    expect(budgets[9]).toBeGreaterThanOrEqual(2);
-    expect(budgets[1] + budgets[2] + budgets[3] + budgets[9]).toBe(21);
+    expect([budgets[1], budgets[2], budgets[9]]).toEqual([2, 2, 2]);
+    // 80 rows - 8 chrome - 6 sibling rows: the column is full.
+    expect(budgets[3]).toBe(66);
+  });
+
+  it("fills the column when one list overflows its cap (Ready=40 at 80 rows)", () => {
+    const budgets = allocateRowBudgets(80, [
+      { id: 3, dataCount: 40 },
+      { id: 6, dataCount: 2 },
+    ]);
+    expect(budgets[3]).toBe(40);
+    expect(budgets[6]).toBe(3);
+  });
+
+  it("spare rows go to overflowing cards in proportion to the rows they hide", () => {
+    // body = 50 - 6 chrome = 44. First pass: Ready 15, In-progress 12,
+    // Agents 2 (29). Spare 15 split by hidden rows 45 : 18 → 10.7 : 4.3.
+    const budgets = allocateRowBudgets(50, [
+      { id: 3, dataCount: 60 },
+      { id: 6, dataCount: 30 },
+      { id: 1, dataCount: 1 },
+    ]);
+    expect([budgets[3], budgets[6], budgets[1]]).toEqual([26, 16, 2]);
+  });
+
+  it("leaves blank space when no card hides rows", () => {
+    const budgets = allocateRowBudgets(80, [
+      { id: 3, dataCount: 4 },
+      { id: 6, dataCount: 0 },
+    ]);
+    expect([budgets[3], budgets[6]]).toEqual([4, 3]);
   });
 
   it("uses largest-remainder leftover distribution after min rows", () => {
@@ -256,5 +217,175 @@ describe("dashboard row-budget allocator", () => {
     ]);
     expect(budgets[1]).toBe(2);
     expect(budgets[2]).toBe(2);
+  });
+});
+
+const HEIGHT_OF = (lanes: ColumnAssignment[]): CardId[][] => lanes.map((a) => a.cards);
+
+function hiddenRows(rows: number, lanes: CardId[][], counts: Partial<Record<CardId, number>>) {
+  const count = (id: CardId) => counts[id] ?? 0;
+  return lanes.reduce<number>((sum, lane) => {
+    const budgets = columnRowBudgets(rows, lane, count);
+    return sum + lane.reduce<number>((s, id) => s + Math.max(0, count(id) - budgets[id]), 0);
+  }, 0);
+}
+
+describe("dashboard card-to-column search", () => {
+  it("keeps the default layout when nothing overflows", () => {
+    const initial = layoutColumns(260, ALL);
+    const result = arrangeColumns({ initial, availableRows: 60, dataCountFn: () => 3 });
+    expect(HEIGHT_OF(result.assignments)).toEqual(HEIGHT_OF(initial));
+    expect(result.hiddenRows).toBe(0);
+  });
+
+  it("moves cards off a crowded column into one with room", () => {
+    // 4 columns at 30 rows: the task-list column holds four long lists
+    // while the small-pair columns sit near-empty.
+    const counts: Partial<Record<CardId, number>> = { 3: 20, 6: 20, 7: 20, 8: 20 };
+    const initial = layoutColumns(260, ALL);
+    const before = hiddenRows(30, HEIGHT_OF(initial), counts);
+    const result = arrangeColumns({
+      initial,
+      availableRows: 30,
+      dataCountFn: (id) => counts[id] ?? 0,
+    });
+    expect(result.hiddenRows).toBeLessThan(before);
+    expect(result.hiddenRows).toBe(hiddenRows(30, HEIGHT_OF(result.assignments), counts));
+    // Slot order inside every column, Commits last, no empty column.
+    for (const lane of HEIGHT_OF(result.assignments)) {
+      expect(lane.length).toBeGreaterThan(0);
+      const keys = lane.map((id) => (id === 0 ? 10 : id));
+      expect(keys).toEqual([...keys].sort((a, b) => a - b));
+    }
+    expect(HEIGHT_OF(result.assignments).flat().sort()).toEqual([...ALL].sort());
+  });
+
+  it("finds the optimum on a small fixture", () => {
+    // Two columns of 20 rows. Default: [1, 2] | [3, 6]. Ready and
+    // In-progress both hold 14 rows; split them one per column and
+    // nothing hides.
+    const counts: Partial<Record<CardId, number>> = { 3: 14, 6: 14, 1: 1, 2: 1 };
+    const initial: ColumnAssignment[] = [{ cards: [1, 2] }, { cards: [3, 6] }];
+    const result = arrangeColumns({
+      initial,
+      availableRows: 20,
+      dataCountFn: (id) => counts[id] ?? 0,
+    });
+    expect(result.hiddenRows).toBe(0);
+    expect(HEIGHT_OF(result.assignments)).toEqual([
+      [1, 6],
+      [2, 3],
+    ]);
+  });
+
+  it("is deterministic and leaves no improving single move or swap", () => {
+    const counts: Partial<Record<CardId, number>> = { 0: 25, 3: 40, 4: 30, 6: 9, 7: 18, 8: 5 };
+    const input = {
+      initial: layoutColumns(200, ALL),
+      availableRows: 40,
+      dataCountFn: (id: CardId) => counts[id] ?? 0,
+    };
+    const a = arrangeColumns(input);
+    const b = arrangeColumns(input);
+    expect(a).toEqual(b);
+    // No single move or swap from the result hides fewer rows.
+    const lanes = HEIGHT_OF(a.assignments);
+    const slot = (id: CardId) => (id === 0 ? 10 : id);
+    const sorted = (lane: CardId[]) => [...lane].sort((x, y) => slot(x) - slot(y));
+    for (let from = 0; from < lanes.length; from++) {
+      for (let to = 0; to < lanes.length; to++) {
+        if (from === to) continue;
+        for (const x of lanes[from] ?? []) {
+          if ((lanes[from]?.length ?? 0) > 1) {
+            const moved = lanes.map((l) => [...l]);
+            moved[from] = (lanes[from] ?? []).filter((id) => id !== x);
+            moved[to] = sorted([...(lanes[to] ?? []), x]);
+            expect(hiddenRows(40, moved, counts)).toBeGreaterThanOrEqual(a.hiddenRows);
+          }
+          for (const y of lanes[to] ?? []) {
+            const swapped = lanes.map((l) => [...l]);
+            swapped[from] = sorted([...(lanes[from] ?? []).filter((id) => id !== x), y]);
+            swapped[to] = sorted([...(lanes[to] ?? []).filter((id) => id !== y), x]);
+            expect(hiddenRows(40, swapped, counts)).toBeGreaterThanOrEqual(a.hiddenRows);
+          }
+        }
+      }
+    }
+  });
+
+  it("keeps the previous assignment when counts move by one (no jitter)", () => {
+    const counts: Partial<Record<CardId, number>> = { 3: 20, 6: 20, 7: 20, 8: 20 };
+    const initial = layoutColumns(260, ALL);
+    const first = arrangeColumns({
+      initial,
+      availableRows: 30,
+      dataCountFn: (id) => counts[id] ?? 0,
+    });
+    for (const delta of [-1, 1]) {
+      for (const id of [3, 6, 7, 8, 1, 4] as CardId[]) {
+        const next = { ...counts, [id]: (counts[id] ?? 0) + delta };
+        const result = arrangeColumns({
+          initial,
+          availableRows: 30,
+          dataCountFn: (card) => Math.max(0, next[card] ?? 0),
+          previous: first.assignments,
+        });
+        expect(HEIGHT_OF(result.assignments)).toEqual(HEIGHT_OF(first.assignments));
+      }
+    }
+  });
+
+  it("drops the previous assignment once the new one hides enough fewer rows", () => {
+    const initial = layoutColumns(260, ALL);
+    const previous = initial;
+    const counts: Partial<Record<CardId, number>> = { 3: 20, 6: 20, 7: 20, 8: 20 };
+    const result = arrangeColumns({
+      initial,
+      availableRows: 30,
+      dataCountFn: (id) => counts[id] ?? 0,
+      previous,
+    });
+    expect(HEIGHT_OF(result.assignments)).not.toEqual(HEIGHT_OF(initial));
+  });
+
+  it("ignores a previous assignment over a different card set", () => {
+    const initial = layoutColumns(260, ALL);
+    const counts: Partial<Record<CardId, number>> = { 3: 20, 6: 20, 7: 20, 8: 20 };
+    const withoutPrev = arrangeColumns({
+      initial,
+      availableRows: 30,
+      dataCountFn: (id) => counts[id] ?? 0,
+    });
+    const stale = arrangeColumns({
+      initial,
+      availableRows: 30,
+      dataCountFn: (id) => counts[id] ?? 0,
+      previous: [{ cards: [1, 2] }, { cards: [5] }, { cards: [3, 6, 7, 8] }, { cards: [4, 0] }],
+    });
+    expect(stale).toEqual(withoutPrev);
+  });
+
+  it("stays cheap: 10 cards in 4 columns under a few ms per call", () => {
+    const counts: Partial<Record<CardId, number>> = {
+      0: 25,
+      1: 12,
+      2: 9,
+      3: 80,
+      4: 200,
+      5: 11,
+      6: 30,
+      7: 40,
+      8: 5,
+      9: 7,
+    };
+    const initial = layoutColumns(260, ALL);
+    const runs = 50;
+    const start = performance.now();
+    for (let i = 0; i < runs; i++) {
+      arrangeColumns({ initial, availableRows: 40, dataCountFn: (id) => counts[id] ?? 0 });
+    }
+    const perCall = (performance.now() - start) / runs;
+    // Budget is ~2ms; allow headroom for loaded CI machines.
+    expect(perCall).toBeLessThan(20);
   });
 });

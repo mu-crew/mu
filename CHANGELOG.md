@@ -10,6 +10,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **TUI dashboard fills its space.** A card's `maxRows` now caps only
+  the first pass of the row allocator: leftover rows go to cards whose
+  data still overflows, in proportion to the rows each hides, so a
+  40-item Ready list at 80 rows shows all 40 instead of 15 above 60
+  blank rows. Cards also move between columns: `arrangeColumns`
+  (replacing `balanceColumns`, which only ran after a cull) searches
+  single moves and swaps for the fewest hidden rows, even with all ten
+  cards visible, and keeps the previous layout unless the new one hides
+  max(3, 10%) fewer rows. Footers and mouse hit regions read the same
+  budgets (`columnRowBudgets`).
+
 ### Fixed
 
 - **Spawned agents use the spawner's database.** Panes inherit the tmux

@@ -86,8 +86,17 @@ React's diffing short-circuits. The slow tick also runs ambient sync
   180, 4 at 240. Stream cards (Commits, Activity log) trail; Commits
   trails last.
 - **Row budgets:** each card has `min` / `max` / `chrome`. The allocator
-  distributes rows so a noisy list cannot crowd its siblings. Overflow
-  shows as `+N more · Shift+N` in the card's bottom border.
+  distributes rows up to `max` first so a noisy list cannot crowd its
+  siblings, then gives any spare rows to the cards still hiding data,
+  in proportion to what each hides. A column with hidden data always
+  fills its height; short lists are not padded. Overflow shows as
+  `+N more · Shift+N` in the card's bottom border.
+- **Card placement:** `arrangeColumns` starts from the group packing
+  and moves or swaps cards between columns while that lowers the total
+  hidden rows (a local optimum, well under 1ms). It keeps the previous
+  assignment unless the new one hides at least max(3, 10%) fewer rows,
+  so cards do not jump as counts change. A resize, toggle or tab
+  switch reflows freely.
 - **Culling:** when even minimum budgets do not fit, cards drop by
   priority (Doctor → Recent → Workspaces → …) and the screen shows
   `+N cards hidden · resize taller`.

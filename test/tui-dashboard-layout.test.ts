@@ -32,7 +32,8 @@ describe("dashboard responsive-layout wiring", () => {
     expect(APP_SRC).toContain("columnWidths(cols, assignments.length)");
     expect(APP_SRC).toContain("cullCardsForRows(visible, rows)");
     expect(APP_SRC).toContain("+{model.hiddenCount} cards hidden · resize taller");
-    expect(APP_SRC).toContain("allocateRowBudgets(");
+    expect(APP_SRC).toContain("columnRowBudgets(cardsRows, assignment.cards, dataCount)");
+    expect(APP_SRC).toContain("arrangeColumns({");
     expect(APP_SRC).toContain("const Card = CARD_REGISTRY[id]");
     expect(APP_SRC).toMatch(/rowBudget=\{budgets\[id\]\}[\s\S]*?cols=\{width\}/);
     for (const component of [
