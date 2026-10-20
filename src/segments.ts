@@ -72,6 +72,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { crc32 } from "node:zlib";
 import { applyOp, type Op, OpEntityNotSyncedError, reprojectDeferredOps } from "./apply.js";
+import { compareStrings } from "./compare.js";
 import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { receiveHlc } from "./hlc.js";
@@ -1019,7 +1020,7 @@ export function discoverPeers(dir: string, selfMachineId: string): PeerSegment[]
     }
     peers.push({ machineId, watermarkKey: conflictCopy ? stem : machineId, path, conflictCopy });
   }
-  return peers.sort((a, b) => a.path.localeCompare(b.path));
+  return peers.sort((a, b) => compareStrings(a.path, b.path));
 }
 
 /** The `sync_peers` key for a segment file: `watermarkKey`, else the

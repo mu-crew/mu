@@ -18,6 +18,7 @@
 //   3. Build union-find: merge goals while observing shared tasks.
 //   4. Each connected component is one Track.
 
+import { compareStrings } from "./compare.js";
 import type { Db } from "./db.js";
 import { listGoals, listReady, type TaskRow } from "./tasks.js";
 
@@ -136,7 +137,7 @@ export function getParallelTracks(db: Db, workstream: string): Track[] {
   tracks.sort((a, b) => {
     const an = a.roots[0]?.name ?? "";
     const bn = b.roots[0]?.name ?? "";
-    return an.localeCompare(bn);
+    return compareStrings(an, bn);
   });
   return tracks;
 }

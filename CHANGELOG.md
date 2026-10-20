@@ -46,6 +46,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   backlog-triage re-verifies an item against the code before starting.
   dag.md states that every edge comes from a verb the caller ran (`block`, `add`/`reparent --blocked-by`) and no write adds edges on its own.
   VISION cites a prior runtime's transport and sentinel-marker lessons.
+- **Task, track and sync-peer sorts use code-unit order, not
+  `localeCompare`.** The first `localeCompare` call initialised ICU
+  (~4 ms on nearly every list verb). Ties by name now sort by code unit,
+  so `a-b, a0, a_b` replaces the locale order `a_b, a-b, a0`; uppercase
+  sorts before lowercase. Sort keys, ROI order and everything else are
+  unchanged.
 - **`mu doctor` and `mu db forget` count a workstream's ops by key range.**
   The per-workstream `substr(key, …)` test scanned all of `ops` once per
   torn-down workstream (27 scans of 61k rows, ~320 ms of SQL in
