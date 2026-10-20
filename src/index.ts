@@ -84,6 +84,7 @@ export {
   setKickProcessExecutor,
   spawnAgent,
   type Transport,
+  WorkspaceOwnerBusyError,
   WorkspacePreservedError,
 } from "./agents.js";
 export {

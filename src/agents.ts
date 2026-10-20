@@ -61,6 +61,7 @@ export {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   PaneNotInSessionError,
+  WorkspaceOwnerBusyError,
   WorkspacePreservedError,
 } from "./agents/errors.js";
 export {
