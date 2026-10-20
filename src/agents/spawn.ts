@@ -329,12 +329,17 @@ export function defaultSpawnCtlMs(): number {
   return parsed;
 }
 
+/** Cadence of `onMiss` (pane-alive check + capture: ~2 forks per call). */
 const CTL_POLL_INTERVAL_MS = 250;
+/** Cadence of the socket-path stat, which costs no fork. */
+const CTL_STAT_INTERVAL_MS = 50;
 
 /**
  * Poll the control socket until the extension answers or the budget
- * runs out. Returns the last probe outcome. `onMiss` runs after each
- * unanswered probe and may throw to abort (the pane died); otherwise
+ * runs out. Returns the last probe outcome. The socket path is stat'd
+ * every ~50 ms and probed as soon as it exists, so readiness is seen
+ * within ~50 ms of pi binding it. `onMiss` (the pane-alive check) keeps
+ * its 250 ms cadence and may throw to abort (the pane died); otherwise
  * this never throws. Uses real timers, not the `sleep` seam: tests stub
  * that to a no-op, which would turn this into a busy loop.
  */
@@ -344,15 +349,27 @@ async function awaitCtlHandshake(
 ): Promise<Exclude<SpawnCtl, "skipped">> {
   const budgetMs = defaultSpawnCtlMs();
   const deadline = Date.now() + budgetMs;
+  let last: Exclude<SpawnCtl, "skipped"> = "missing";
+  let lastMissAt = Number.NEGATIVE_INFINITY;
+  let first = true;
   for (;;) {
-    const remaining = deadline - Date.now();
-    const probe = await ctlProbe(sock, Math.max(1, Math.min(remaining, CTL_POLL_INTERVAL_MS * 4)));
-    if (probe.kind === "ok") return "ok";
-    const last = probeToSpawnCtl(probe.kind);
-    if (onMiss) await onMiss();
+    if (first || existsSync(sock)) {
+      first = false;
+      const remaining = deadline - Date.now();
+      const probe = await ctlProbe(
+        sock,
+        Math.max(1, Math.min(remaining, CTL_POLL_INTERVAL_MS * 4)),
+      );
+      if (probe.kind === "ok") return "ok";
+      last = probeToSpawnCtl(probe.kind);
+    }
+    if (onMiss && Date.now() - lastMissAt >= CTL_POLL_INTERVAL_MS) {
+      lastMissAt = Date.now();
+      await onMiss();
+    }
     const left = deadline - Date.now();
     if (left <= 0) return last;
-    await delay(Math.min(CTL_POLL_INTERVAL_MS, left));
+    await delay(Math.min(CTL_STAT_INTERVAL_MS, left));
   }
 }
 

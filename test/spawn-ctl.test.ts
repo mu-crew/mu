@@ -377,6 +377,38 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     expect(spawnRows().map((r) => r.intent)).toContain("agent.spawn_failed");
   });
 
+  it("a socket that appears late is probed within the stat interval, not the pane-check interval", async () => {
+    process.env.MU_SPAWN_CTL_MS = "5000";
+    mux.restore();
+    const fake = mockTmux(freshMockState()).executor;
+    let boundAt = 0;
+    mux = installMux("tmux", async (args) => {
+      const res = await fake(args);
+      if (args[0] === "new-session") {
+        setTimeout(() => {
+          boundAt = Date.now();
+          void serveExtension(sockFor("worker-1"));
+        }, 120);
+      }
+      return res;
+    });
+    const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    const seenAfter = Date.now() - boundAt;
+    expect(agent.ctl).toBe("ok");
+    // Generous bound for CI load; the old 250 ms cadence averaged ~125 ms.
+    expect(seenAfter).toBeLessThan(500);
+  });
+
+  it("keeps the pane-alive check at its 250 ms cadence while the socket is absent", async () => {
+    process.env.MU_SPAWN_CTL_MS = "600";
+    installLivePanes();
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch(() => {});
+    const checks = mux.calls.filter((c) => c[0] === "display-message" && c.includes("#{pane_id}"));
+    // 600 ms at 250 ms: ~3 checks (a 50 ms cadence would make ~12).
+    expect(checks.length).toBeGreaterThanOrEqual(1);
+    expect(checks.length).toBeLessThanOrEqual(5);
+  });
+
   it("scans for a startup error once the handshake times out, and rolls back", async () => {
     installLivePanes({ scrollback: "Error: No API key found for amazon-bedrock" });
     const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);
