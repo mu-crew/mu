@@ -284,6 +284,14 @@ mu ships nine of the ten. Approvals are missing because 200+ dogfooded
 tasks never needed them. Below the point where coordination is itself
 the work, pi plus manual tmux is more transparent than mu.
 
+Two lessons back the orchestrator-pull remote design. The runtime built
+multiplexing, flow control, keepalive and retries above a transport that
+already provided them, then deleted them: don't rebuild what the
+transport gives. A child never dials its parent; the parent pulls.
+Tasks injected as prompts and read back through sentinel markers broke
+on line wrapping and lost notes: state belongs in the DB, not in pane
+text.
+
 Known gaps, none promoted yet: `--evidence` grounds but does not verify,
 mutations have no declared idempotency keys, most mutations have no dry
 run (`workstream teardown`, `task delete`, and `undo` do), and the `role`
