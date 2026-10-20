@@ -38,41 +38,33 @@ mu does not add these unless one earns its way back under the criteria:
   system, or a workflow engine.** A prior internal runtime collected all
   of these. Not inheriting them is the point.
 
-## Rejected sync substrates
+## Candidates
 
-mu syncs through the SQLite ops log plus append-only JSONL segments.
-These alternatives were rejected:
+Each has a design but no proven friction yet. Most come from the prior
+runtime, which hit the gap and fixed it its own way. Parked tasks may
+track them; delete the row when one ships.
 
-| Substrate | Why not |
-| --------- | ------- |
-| **Litestream** | Daemon, single writer, one-way to object storage, and `restore` overwrites the whole file. It does disaster recovery, not laptop↔devserver merges. |
-| **LiteFS** | FUSE, which on macOS means a macFUSE kernel extension. |
-| **rqlite / dqlite / Marmot** | A consensus cluster and daemons to sync two machines that are rarely both awake. |
-| **cr-sqlite** | Merges rows by primary key. mu's `INTEGER PRIMARY KEY AUTOINCREMENT` ids collide across machines and merge silently. Also WIP upstream, no DDL sync, and a native build matrix. |
-| **RocksDB / LMDB for the op log** | No triggers, so a forgotten capture silently corrupts undo and sync. Single-process access forces a daemon. Loses SQL views, JOINs, and `mu sql`. |
-| **SQLite file per peer** | A torn transfer makes the whole file unreadable instead of one JSONL line. `-wal`/`-shm` sidecars in a synced folder corrupt DBs. Page churn defeats delta transfer. |
-| **`MU_SYNC_PEERS` list** | A config file that must match on every machine. Peers come from segment filenames instead. |
-| **`mu sync --push/--pull <host>` <!-- doc-cli-drift:skip -->** | mu's first ssh egress, with ssh config, auth, and error mapping. mu prints an rsync line instead. |
+| Item | Gap today | Shape | Size |
+| --- | --- | --- | --- |
+| **Tag mux sessions with their DB** | `teardown --empty` never removes a `mu-*` session that has no DB row, because another DB may own it. | Set `@mu_db=<abs path>` at session creation. Remove unregistered sessions whose tag matches this DB, and keep foreign or untagged ones. Optional mux method, since herdr may have no equivalent. | ~60 LOC |
+| **Token usage per run** | Orchestrators cannot budget a fan-out. | The extension reports pi's usage for the run, and `wait --json` carries it. Unknown stays unknown, never 0. No dollar estimates. | ~80 LOC |
+| **Global delegate cap** | `MU_DELEGATE_MAX` applies per pi session. Several orchestrators, plus workers running `mu agent spawn -w scratch`, are not capped in total. | Count live `scratch` agents from the DB in the queue check. | ~30 LOC |
+| **Wait for a non-pi CLI's prompt** | `spawn --send` treats a blank or booting screen as calm and can paste before the CLI is ready. | Settle only once the CLI has drawn its input prompt. This needs a screen pattern for each CLI, so it waits for real friction. | ~40 LOC |
+| **Absolute deadline in `wait`** | A delegate re-armed after `/reload` restarts its countdown. | Report `deadline` (epoch ms) alongside `timeoutS`. | ~20 LOC |
+| **Bounded `task tree`** | No depth or node limit. | Cap depth, nodes and edges, and report which cap was hit. | ~30 LOC |
+| **Design-doc review angles** | `review-panel`'s angles are for diffs. | Add rollout and back-compat, alternatives, and integration angles. Synthesize into unanimous findings, tensions, and the strongest objection. | recipe |
+| **Sender framing on sends** | The receiving agent cannot tell a peer's message from its human's. | Prefix text sent by a mu agent with `[mu: from <agent>]`. This touches prompts, so it follows logging the sender. | ~20 LOC |
+| **A third mux backend** | None: tmux and herdr are the two implementations that justify `MuxBackend`. | zellij, wezterm or kitty. A third needs its own friction evidence; the existing interface is not evidence. | — |
+| **Subscription-based wakeups** | `mu log --tail` polls once a second. | SQLite update hooks or `fs.watch` on the WAL. Lower latency for more machinery. | — |
 
-The chosen design adds no dependency beyond `better-sqlite3`.
+## Next breaking release
 
-## Possible: small additions with an obvious shape
-
-These have a design but no proven friction yet.
-
-- **A third mux backend** (zellij, wezterm, kitty). tmux and herdr are
-  the two implementations that justify `MuxBackend`. A third needs its
-  own friction evidence. The existing interface is not evidence.
-- **Subscription-based wakeups.** `mu log --tail` polls once a second.
-  SQLite update hooks or `fs.watch` on the WAL would cut latency for
-  more machinery. Build it when someone hits the limit.
-
-- **`mu agent list --json` as `{items, count}`.** It emits
+- **Schema v12 drops `agents.status`.** In v11 it stays for
+  compatibility and always holds `spawning`.
+- **`mu agent list --json` becomes `{items, count}`.** It emits
   `{workstreamName, agents, orphans}`, the one collection off the
   documented shape (SKILL.md notes the exception). Conforming breaks
-  `.agents` readers, `mu_delegate` among them; do it with the next
-  breaking release. Reported in
-  docs/bugs/2026-10-08-review-panel-friction.md (#3).
+  `.agents` readers, `mu_delegate` among them.
 
 ## Open questions
 
@@ -82,11 +74,6 @@ These have a design but no proven friction yet.
 - **Per-workstream config.** Resisted by the pledges, but "this
   workstream uses a different pi binary" is a gap env vars solve poorly.
   Revisit when a second user hits it.
-
-## Next schema change
-
-Drop the deprecated `agents.status` column in schema v12. In v11 it
-stays for compatibility and always holds `spawning`.
 
 ## Explicitly rejected
 
@@ -116,3 +103,21 @@ stays for compatibility and always holds `spawning`.
 - **Reading murmur's `state.db`.** Use its public contract.
 - **murmur as a hard dependency.** pi agents and the task graph do not
   need it.
+
+### Rejected sync substrates
+
+mu syncs through the SQLite ops log plus append-only JSONL segments.
+These alternatives were rejected:
+
+| Substrate | Why not |
+| --------- | ------- |
+| **Litestream** | Daemon, single writer, one-way to object storage, and `restore` overwrites the whole file. It does disaster recovery, not laptop↔devserver merges. |
+| **LiteFS** | FUSE, which on macOS means a macFUSE kernel extension. |
+| **rqlite / dqlite / Marmot** | A consensus cluster and daemons to sync two machines that are rarely both awake. |
+| **cr-sqlite** | Merges rows by primary key. mu's `INTEGER PRIMARY KEY AUTOINCREMENT` ids collide across machines and merge silently. Also WIP upstream, no DDL sync, and a native build matrix. |
+| **RocksDB / LMDB for the op log** | No triggers, so a forgotten capture silently corrupts undo and sync. Single-process access forces a daemon. Loses SQL views, JOINs, and `mu sql`. |
+| **SQLite file per peer** | A torn transfer makes the whole file unreadable instead of one JSONL line. `-wal`/`-shm` sidecars in a synced folder corrupt DBs. Page churn defeats delta transfer. |
+| **`MU_SYNC_PEERS` list** | A config file that must match on every machine. Peers come from segment filenames instead. |
+| **`mu sync --push/--pull <host>` <!-- doc-cli-drift:skip -->** | mu's first ssh egress, with ssh config, auth, and error mapping. mu prints an rsync line instead. |
+
+The chosen design adds no dependency beyond `better-sqlite3`.
