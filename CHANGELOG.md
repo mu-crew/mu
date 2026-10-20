@@ -65,7 +65,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   flag, so they behave as before. A held wait whose connection drops
   falls back to polling, and a dialog seen by that poll also ends the
   wait `blocked` (exit 7) rather than counting busy → needs_permission
-  as a finished run.
+  as a finished run. The blocked JSON row carries `afterRuns`, the run
+  baseline the wait counted from, and the re-wait hint (CLI next steps
+  and the `mu_delegate` follow-up, blocked or timed out) passes it as
+  `--after-runs`, so a run that finishes after the dialog is answered
+  but before the re-wait starts is returned rather than missed.
 
 ### Changed
 

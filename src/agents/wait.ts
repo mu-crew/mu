@@ -92,6 +92,9 @@ export interface AgentWaitOptions {
 
 export interface AgentWatch {
   initial: AgentStatusSnapshot;
+  /** The run count the watch waits past (ctl `afterRuns`): a re-wait with
+   *  `--after-runs <this>` still catches a run that settles in between. */
+  afterRuns?: number;
   settled: Promise<AgentStatusSnapshot>;
 }
 
@@ -117,6 +120,10 @@ export interface AgentWaitAgentState {
   /** Set when the wait ended on an extension dialog pi is waiting on: the
    *  run is not finished (`fired` stays false). Control-socket agents only. */
   blocked?: CtlBlocked;
+  /** The run baseline this wait counted from (control-socket agents only):
+   *  re-wait with `--after-runs <afterRuns>` so a run that settles before
+   *  the re-wait starts is still returned. */
+  afterRuns?: number;
   /** True when the agent's pane vanished mid-wait. Surfaced separately
    *  so the CLI can exit non-zero rather than treating a crash as a
    *  clean finish. */
@@ -202,6 +209,7 @@ export async function waitForAgents(
       if (w === undefined || st === undefined) return;
       watched.add(i);
       st.status = w.initial.status;
+      if (w.afterRuns !== undefined) st.afterRuns = w.afterRuns;
       if (w.initial.status === "busy") st.wasBusy = true;
       void w.settled.then(
         (snap) => {
