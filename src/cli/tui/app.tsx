@@ -46,12 +46,12 @@ import {
   shouldSwallowGlobalKeyFromInk,
 } from "./keys.js";
 import {
-  allocateRowBudgets,
-  balanceColumns,
+  arrangeColumns,
   CARD_CONFIGS,
   type CardId,
   type ColumnAssignment,
   type ColumnWidth,
+  columnRowBudgets,
   columnWidths,
   cullCardsForRows,
   dashboardCardHitRegions,
@@ -279,6 +279,10 @@ export function App({ db, workstreams, initialActive = 0 }: AppProps): ReactElem
 
   // Probe clipboard backend once per session and memoise.
   const clipboardRef = useRef<ClipboardBackend | undefined>(undefined);
+  // Last card-to-column assignment, so arrangeColumns can keep it
+  // across snapshot refreshes (hysteresis). Keyed by geometry, visible
+  // cards and workstream: a resize, toggle or tab switch reflows freely.
+  const previousLayout = useRef<DashboardArrangement | null>(null);
   useEffect(() => {
     void probeClipboardBackend().then((b) => {
       clipboardRef.current = b;
@@ -305,7 +309,15 @@ export function App({ db, workstreams, initialActive = 0 }: AppProps): ReactElem
   const hasTabStrip = workstreams.length > 1 || tornDownWorkstreams.has(workstream);
   const hasSnapshotError = snap.error !== null;
   const availableForCards = dashboardAvailableRows(rows, { hasTabStrip, hasSnapshotError });
-  const dashboardModel = buildDashboardLayoutModel(cols, availableForCards, visibility, snap.data);
+  const dashboardModel = buildDashboardLayoutModel(
+    cols,
+    availableForCards,
+    visibility,
+    snap.data,
+    previousLayout.current,
+    workstream,
+  );
+  previousLayout.current = dashboardModel.arrangement;
   const dashboardTop = 1 + (hasTabStrip ? 1 : 0) + (hasSnapshotError ? 3 : 0);
   const cardHitRegions = dashboardCardHitRegions(
     dashboardModel.assignments,
@@ -637,7 +649,13 @@ export function App({ db, workstreams, initialActive = 0 }: AppProps): ReactElem
   }
 }
 
+interface DashboardArrangement {
+  key: string;
+  assignments: ColumnAssignment[];
+}
+
 interface DashboardLayoutModel {
+  arrangement: DashboardArrangement;
   cardsRows: number;
   assignments: ColumnAssignment[];
   widths: ColumnWidth[];
@@ -658,6 +676,8 @@ function buildDashboardLayoutModel(
   rows: number,
   visibility: CardVisibility,
   snapshot: ReturnType<typeof useDashboardSnapshot>["data"],
+  previous: DashboardArrangement | null,
+  workstream: string,
 ): DashboardLayoutModel {
   const visible = visibleCardIds(visibility);
   const firstCull = cullCardsForRows(visible, rows);
@@ -665,19 +685,26 @@ function buildDashboardLayoutModel(
   const culled = cullBudget === rows ? firstCull : cullCardsForRows(visible, cullBudget);
   const cardsRows = culled.hidden.length > 0 ? Math.max(1, rows - 1) : rows;
   const packed = layoutDashboardColumns(cols, culled.cards);
-  const assignments = balanceColumns(packed, (id) => dataCountForCard(id, snapshot));
+  const dataCount = (id: CardId): number => dataCountForCard(id, snapshot);
+  const key = `${workstream}|${cols}x${cardsRows}|${culled.cards.join(",")}`;
+  const { assignments } = arrangeColumns({
+    initial: packed,
+    availableRows: cardsRows,
+    dataCountFn: dataCount,
+    previous: previous?.key === key ? previous.assignments : null,
+  });
   const widths = columnWidths(cols, assignments.length);
   const budgetsByColumn = assignments.map((assignment) =>
-    capRowBudgetsForColumn(
-      cardsRows,
-      assignment.cards,
-      allocateRowBudgets(
-        cardsRows,
-        assignment.cards.map((id) => ({ id, dataCount: dataCountForCard(id, snapshot) })),
-      ),
-    ),
+    columnRowBudgets(cardsRows, assignment.cards, dataCount),
   );
-  return { cardsRows, assignments, widths, budgetsByColumn, hiddenCount: culled.hidden.length };
+  return {
+    arrangement: { key, assignments },
+    cardsRows,
+    assignments,
+    widths,
+    budgetsByColumn,
+    hiddenCount: culled.hidden.length,
+  };
 }
 
 function DashboardColumns({
@@ -710,28 +737,12 @@ function DashboardColumns({
   );
 }
 
-function capRowBudgetsForColumn(
-  availableRows: number,
-  cards: ReadonlyArray<CardId>,
-  budgets: ReturnType<typeof allocateRowBudgets>,
-): ReturnType<typeof allocateRowBudgets> {
-  const out: Record<CardId, number> = { ...budgets };
-  let remaining = Math.max(0, Math.floor(availableRows));
-  for (const id of cards) {
-    const chrome = CARD_CONFIGS[id].chrome;
-    const maxBody = Math.max(0, remaining - chrome);
-    out[id] = Math.min(out[id], maxBody);
-    remaining = Math.max(0, remaining - chrome - out[id]);
-  }
-  return out;
-}
-
 interface RenderCardContext {
   snapshot: DashboardSnapshot;
   db: Db;
   workstream: string;
   width: number;
-  budgets: ReturnType<typeof allocateRowBudgets>;
+  budgets: RowBudgetMap;
 }
 
 function renderCard(id: CardId, { snapshot, db, workstream, width, budgets }: RenderCardContext) {

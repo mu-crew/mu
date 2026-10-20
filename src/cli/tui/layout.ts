@@ -8,8 +8,12 @@
 //   1. layoutColumns(cols, visibleCardIds) — breakpoint + pair-aware
 //      card packing into dashboard columns.
 //   2. allocateRowBudgets(availableRows, cards) — per-column body-row
-//      allocator with min-row guarantees, max caps, and largest-
-//      remainder leftover distribution.
+//      allocator with min-row guarantees, a maxRows first pass, and
+//      largest-remainder leftover distribution; rows still spare then
+//      go to cards that hide data, so a column fills its height.
+//   3. arrangeColumns({ initial, availableRows, ... }) — local search
+//      that moves cards between columns to minimise hidden rows, with
+//      hysteresis against the previous assignment.
 //
 // No ink/react imports here. Cards import their own config from this
 // file and re-export it as `cardConfig`; <App> imports the pure helpers
@@ -37,7 +41,9 @@ export interface CardRowConfig {
   label: string;
   /** Minimum BODY rows to reserve for the card. Empty data still gets this much budget. */
   minRows: number;
-  /** Maximum BODY rows worth rendering on the dashboard. Popups are exhaustive. */
+  /** First-pass cap on BODY rows. Rows left over after every card
+   *  reaches its cap go to cards that still hide data, so this is a
+   *  share limit under contention, not a hard ceiling. Popups are exhaustive. */
   maxRows: number;
   /** Non-body rows consumed by TitledBox chrome + footer inset when truncated. */
   chrome: number;
@@ -324,99 +330,201 @@ export function cullCardsForRows(
   return { cards: cards.filter((id) => remaining.has(id)), hidden };
 }
 
+/** Hysteresis for `arrangeColumns`: a new card-to-column assignment
+ *  replaces the previous one only when it hides at least this many
+ *  fewer rows (or this fraction of the previous hidden total, if
+ *  larger). Keeps cards from jumping when a list grows by one. */
+export const REARRANGE_MIN_GAIN_ROWS = 3;
+export const REARRANGE_MIN_GAIN_FRACTION = 0.1;
+
+export interface ArrangeColumnsInput {
+  /** Default group packing from `layoutColumns`; the search start. */
+  initial: ReadonlyArray<ColumnAssignment>;
+  /** Rows per column, chrome included (same value fed to the budgets). */
+  availableRows: number;
+  dataCountFn: (id: CardId) => number;
+  /** Assignment from the previous render. Ignored unless it holds the
+   *  same cards in the same number of columns. Pass null after a
+   *  resize or card toggle so the layout may reflow freely. */
+  previous?: ReadonlyArray<ColumnAssignment> | null;
+}
+
+export interface ArrangedColumns {
+  assignments: ColumnAssignment[];
+  /** Rows of data the chosen assignment cannot show, summed over cards. */
+  hiddenRows: number;
+}
+
 /**
- * Post-pack column rebalancer. Pure.
+ * Card-to-column search. Pure: (previous, input) -> next.
  *
- * `layoutColumns` packs cards by static group (small-pair / task-list
- * / stream). When the user toggles cards off, that grouping can leave
- * one column tall and another short — the spatial intuition is
- * preserved, but the screen feels half-empty.
+ * Objective: minimise hidden rows, the sum over cards of
+ * max(0, dataCount - budget) once every column's budgets are filled
+ * (`columnRowBudgets`). Steepest descent from the default packing:
+ * each round tries every single-card move and every pairwise swap
+ * across columns and takes the one that hides the fewest rows,
+ * tie-breaking on fewest cards away from their default column, then
+ * on moving the least important cards (CARD_CULL_PRIORITY order), then
+ * enumeration (slot) order. It stops when nothing strictly improves, so the result
+ * is a deterministic local optimum. With 10 cards and 4 columns a
+ * round is at most 30 moves + 45 swaps; rounds strictly reduce the
+ * objective and are capped at MAX_ARRANGE_ROUNDS.
  *
- * `balanceColumns` is a single greedy pass that moves the most-
- * spread-reducing card from the tallest column to the shortest, until
- * no further move strictly reduces (maxHeight − minHeight). The pass
- * runs after `layoutColumns` and before `allocateRowBudgets`, so the
- * downstream pipeline sees a balanced assignment.
+ * Cards keep slot order inside a column (`compareSlot`, Commits last)
+ * and no column is emptied, so the column count never changes.
  *
- * Invariants:
- *   - Stable-when-all-visible: the default 10-card layout is never
- *     touched. Balance only fires when at least one card has been
- *     toggled off (totalCards < TOTAL_CARD_COUNT). User-driven
- *     toggling is what triggers the reflow.
- *   - Anchored cards never move: slot 0 (Commits, conventionally
- *     last) and slot 3 (Ready, the task-list anchor that motivates
- *     the dashboard's primary column).
- *   - Slot ordering within each receiver column is preserved via
- *     `compareSlot` (slot 0 trailing).
- *   - Column count is preserved: the balancer never strips a donor
- *     column to empty (the empty-column filter is upstream in
- *     `layoutColumns`; the balancer respects whatever it produced).
+ * Stability: a valid `previous` survives unless the search result
+ * hides at least max(REARRANGE_MIN_GAIN_ROWS, 10%) fewer rows.
  */
-const TOTAL_CARD_COUNT = 10;
+const MAX_ARRANGE_ROUNDS = 20;
 
-export function balanceColumns(
-  assignments: ReadonlyArray<ColumnAssignment>,
-  dataCountFn: (id: CardId) => number,
-): ColumnAssignment[] {
-  if (assignments.length < 2) return assignments.map((a) => ({ cards: [...a.cards] }));
-  const totalCards = assignments.reduce((sum, a) => sum + a.cards.length, 0);
-  if (totalCards >= TOTAL_CARD_COUNT) return assignments.map((a) => ({ cards: [...a.cards] }));
+export function arrangeColumns(input: ArrangeColumnsInput): ArrangedColumns {
+  const initial = input.initial.map((a) => sortCards(a.cards));
+  const rows = input.availableRows;
+  const counts = new Map<CardId, number>();
+  for (const lane of initial) {
+    for (const id of lane) counts.set(id, Math.max(0, Math.floor(input.dataCountFn(id))));
+  }
+  const dataCount = (id: CardId): number => counts.get(id) ?? 0;
+  const hiddenOf = (lanes: ReadonlyArray<ReadonlyArray<CardId>>): number =>
+    lanes.reduce((sum, lane) => sum + hiddenRowsForColumn(rows, lane, dataCount), 0);
 
-  const cols = assignments.map((a) => [...a.cards]);
-  const heightOf = (id: CardId): number => {
-    const config = CARD_CONFIGS[id];
-    const data = Math.max(0, Math.floor(dataCountFn(id)));
-    return config.chrome + clamp(data, config.minRows, config.maxRows);
+  const defaultColumn = new Map<CardId, number>();
+  initial.forEach((lane, column) => {
+    for (const id of lane) defaultColumn.set(id, column);
+  });
+  // Cards away from their default column: count, plus a bitmask
+  // weighted by cull priority so ties move the least important cards.
+  const movedOf = (
+    lanes: ReadonlyArray<ReadonlyArray<CardId>>,
+  ): { count: number; mask: number } => {
+    let count = 0;
+    let mask = 0;
+    lanes.forEach((lane, column) => {
+      for (const id of lane) {
+        if (defaultColumn.get(id) === column) continue;
+        count++;
+        mask += 2 ** CARD_CULL_PRIORITY.indexOf(id);
+      }
+    });
+    return { count, mask };
   };
-  const isAnchored = (id: CardId): boolean => id === 0 || id === 3;
-  const heightsOf = (lanes: ReadonlyArray<ReadonlyArray<CardId>>): number[] =>
-    lanes.map((lane) => lane.reduce<number>((sum, id) => sum + heightOf(id), 0));
+  const better = (
+    a: { hidden: number; moved: { count: number; mask: number } },
+    b: { hidden: number; moved: { count: number; mask: number } },
+  ): boolean =>
+    a.hidden !== b.hidden
+      ? a.hidden < b.hidden
+      : a.moved.count !== b.moved.count
+        ? a.moved.count < b.moved.count
+        : a.moved.mask < b.moved.mask;
 
-  // Greedy outer loop. Each iteration takes one strictly-improving
-  // move; bounded by columnCount * cardCount as a hard safety net
-  // since each move shrinks the spread (no cycles possible).
-  const safetyMax = cols.length * TOTAL_CARD_COUNT;
-  for (let iter = 0; iter < safetyMax; iter++) {
-    const heights = heightsOf(cols);
-    const startSpread = Math.max(...heights) - Math.min(...heights);
-    if (startSpread <= 0) break;
+  let current = initial;
+  let currentHidden = hiddenOf(current);
+  for (let round = 0; round < MAX_ARRANGE_ROUNDS && currentHidden > 0; round++) {
+    let best: { lanes: CardId[][]; hidden: number; moved: { count: number; mask: number } } | null =
+      null;
+    for (const lanes of neighbours(current)) {
+      const hidden = hiddenOf(lanes);
+      if (hidden >= currentHidden) continue;
+      const candidate = { lanes, hidden, moved: movedOf(lanes) };
+      if (best === null || better(candidate, best)) best = candidate;
+    }
+    if (best === null) break;
+    current = best.lanes;
+    currentHidden = best.hidden;
+  }
 
-    let best: { donor: number; receiver: number; cardIndex: number; spread: number } | null = null;
-    for (let donor = 0; donor < cols.length; donor++) {
-      const donorCards = cols[donor];
-      const donorH = heights[donor];
-      if (donorCards === undefined || donorH === undefined) continue;
-      if (donorCards.length <= 1) continue; // never strip a column to empty
-      for (let cardIndex = 0; cardIndex < donorCards.length; cardIndex++) {
-        const card = donorCards[cardIndex];
-        if (card === undefined || isAnchored(card)) continue;
-        const cardH = heightOf(card);
-        for (let receiver = 0; receiver < cols.length; receiver++) {
-          if (receiver === donor) continue;
-          const receiverH = heights[receiver];
-          if (receiverH === undefined) continue;
-          const newHeights = heights.slice();
-          newHeights[donor] = donorH - cardH;
-          newHeights[receiver] = receiverH + cardH;
-          const newSpread = Math.max(...newHeights) - Math.min(...newHeights);
-          if (newSpread < startSpread && (best === null || newSpread < best.spread)) {
-            best = { donor, receiver, cardIndex, spread: newSpread };
-          }
+  const previous = validPrevious(input.previous, initial);
+  if (previous !== null) {
+    const previousHidden = hiddenOf(previous);
+    const minGain = Math.max(
+      REARRANGE_MIN_GAIN_ROWS,
+      Math.ceil(previousHidden * REARRANGE_MIN_GAIN_FRACTION),
+    );
+    if (previousHidden - currentHidden < minGain) {
+      return { assignments: previous.map((cards) => ({ cards })), hiddenRows: previousHidden };
+    }
+  }
+  return { assignments: current.map((cards) => ({ cards })), hiddenRows: currentHidden };
+}
+
+/** Every assignment one card move or one cross-column swap away, in slot order. */
+function* neighbours(lanes: ReadonlyArray<ReadonlyArray<CardId>>): Generator<CardId[][]> {
+  for (let from = 0; from < lanes.length; from++) {
+    const donor = lanes[from] ?? [];
+    if (donor.length <= 1) continue;
+    for (const card of donor) {
+      for (let to = 0; to < lanes.length; to++) {
+        if (to === from) continue;
+        const next = lanes.map((lane) => [...lane]);
+        next[from] = donor.filter((id) => id !== card);
+        next[to] = sortCards([...(lanes[to] ?? []), card]);
+        yield next;
+      }
+    }
+  }
+  for (let a = 0; a < lanes.length; a++) {
+    for (let b = a + 1; b < lanes.length; b++) {
+      for (const x of lanes[a] ?? []) {
+        for (const y of lanes[b] ?? []) {
+          const next = lanes.map((lane) => [...lane]);
+          next[a] = sortCards([...(lanes[a] ?? []).filter((id) => id !== x), y]);
+          next[b] = sortCards([...(lanes[b] ?? []).filter((id) => id !== y), x]);
+          yield next;
         }
       }
     }
-    if (best === null) break;
-
-    const donorCards = cols[best.donor];
-    const receiverCards = cols[best.receiver];
-    if (donorCards === undefined || receiverCards === undefined) break;
-    const moved = donorCards.splice(best.cardIndex, 1)[0];
-    if (moved === undefined) break;
-    receiverCards.push(moved);
-    receiverCards.sort(compareSlot);
   }
+}
 
-  return cols.map((cards) => ({ cards }));
+function validPrevious(
+  previous: ReadonlyArray<ColumnAssignment> | null | undefined,
+  initial: ReadonlyArray<ReadonlyArray<CardId>>,
+): CardId[][] | null {
+  if (previous === null || previous === undefined) return null;
+  if (previous.length !== initial.length) return null;
+  if (previous.some((a) => a.cards.length === 0)) return null;
+  const key = (lanes: ReadonlyArray<ReadonlyArray<CardId>>): string =>
+    sortCards(lanes.flat()).join(",");
+  const lanes = previous.map((a) => sortCards(a.cards));
+  if (lanes.flat().length !== new Set(lanes.flat()).size) return null;
+  return key(lanes) === key(initial) ? lanes : null;
+}
+
+function hiddenRowsForColumn(
+  availableRows: number,
+  cards: ReadonlyArray<CardId>,
+  dataCountFn: (id: CardId) => number,
+): number {
+  const budgets = columnRowBudgets(availableRows, cards, dataCountFn);
+  return cards.reduce<number>((sum, id) => sum + Math.max(0, dataCountFn(id) - budgets[id]), 0);
+}
+
+/**
+ * Final body-row budgets for one column: `allocateRowBudgets`, then
+ * clipped top-down so the stack never exceeds `availableRows` even
+ * when the min guarantees alone do not fit. Card footers and
+ * `dashboardCardHitRegions` read these same numbers.
+ */
+export function columnRowBudgets(
+  availableRows: number,
+  cards: ReadonlyArray<CardId>,
+  dataCountFn: (id: CardId) => number,
+): RowBudgetMap {
+  const out: Record<CardId, number> = {
+    ...allocateRowBudgets(
+      availableRows,
+      cards.map((id) => ({ id, dataCount: dataCountFn(id) })),
+    ),
+  };
+  let remaining = Math.max(0, Math.floor(availableRows));
+  for (const id of cards) {
+    const chrome = CARD_CONFIGS[id].chrome;
+    out[id] = Math.min(out[id], Math.max(0, remaining - chrome));
+    remaining = Math.max(0, remaining - chrome - out[id]);
+  }
+  return out;
 }
 
 /**
@@ -443,14 +551,14 @@ export function allocateRowBudgets(
   const out = emptyBudgetMap();
   if (entries.length === 0) return out;
 
+  const chromeTotal = entries.reduce((sum, e) => sum + e.config.chrome, 0);
+  const bodyAvailable = Math.max(0, availableRows - chromeTotal);
+
   const naturalTotal = entries.reduce((sum, e) => sum + e.naturalRows + e.config.chrome, 0);
   if (naturalTotal <= availableRows) {
     for (const e of entries) out[e.id] = e.naturalRows;
-    return out;
+    return fillOverflow(out, entries, bodyAvailable);
   }
-
-  const chromeTotal = entries.reduce((sum, e) => sum + e.config.chrome, 0);
-  const bodyAvailable = Math.max(0, availableRows - chromeTotal);
   const minTotal = entries.reduce((sum, e) => sum + e.minRows, 0);
 
   // Min-row guarantee. If the terminal is too short to fit the
@@ -495,6 +603,50 @@ export function allocateRowBudgets(
     if (!changed) break;
   }
 
+  return fillOverflow(out, entries, bodyAvailable);
+}
+
+/**
+ * Second pass of `allocateRowBudgets`: maxRows capped the first pass,
+ * so rows may be left over while a card still hides data. Hand them to
+ * the cards with hidden rows, in proportion to how many each hides
+ * (largest remainder, ties by input order), never past a card's data.
+ * Cards that fit get nothing, so short lists are not padded.
+ */
+function fillOverflow(
+  out: Record<CardId, number>,
+  entries: ReadonlyArray<{ id: CardId; dataCount: number }>,
+  bodyAvailable: number,
+): Record<CardId, number> {
+  let spare = bodyAvailable - entries.reduce((sum, e) => sum + out[e.id], 0);
+  while (spare > 0) {
+    const hidden = entries
+      .map((e, index) => ({ id: e.id, index, rows: Math.max(0, e.dataCount - out[e.id]) }))
+      .filter((h) => h.rows > 0);
+    const totalHidden = hidden.reduce((sum, h) => sum + h.rows, 0);
+    if (totalHidden === 0) break;
+    const pool = Math.min(spare, totalHidden);
+    const shares = hidden.map((h) => {
+      const raw = (pool * h.rows) / totalHidden;
+      return { ...h, add: Math.floor(raw), remainder: raw - Math.floor(raw) };
+    });
+    let given = 0;
+    for (const share of shares) {
+      out[share.id] += share.add;
+      given += share.add;
+    }
+    shares.sort((a, b) =>
+      b.remainder === a.remainder ? a.index - b.index : b.remainder - a.remainder,
+    );
+    for (const share of shares) {
+      if (given >= pool) break;
+      if (out[share.id] >= (entries[share.index]?.dataCount ?? 0)) continue;
+      out[share.id] += 1;
+      given += 1;
+    }
+    if (given === 0) break;
+    spare -= given;
+  }
   return out;
 }
 
