@@ -28,6 +28,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   ultrathink and loop-until-done refute the umbrella's criteria on the
   merged tree before `close --if-ready`.
   watcher caps attempts per item and parks it with every attempt listed.
+  long-run records `DEAD-END:` notes on the umbrella.
 - **Skill: orchestrators clean up scratch files.** Review panels and
   other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
   hoc dirs under `$HOME`. SKILL.md's orchestrator rules now say to keep

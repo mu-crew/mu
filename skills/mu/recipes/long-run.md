@@ -17,7 +17,9 @@ or may hit flakes.
    carries its own criterion.
 3. **Keep state in the DB.** Progress lives in task notes, not in the
    orchestrator's context. After a compaction, `mu state` and
-   `mu task notes <id>` are the whole picture.
+   `mu task notes <id>` are the whole picture. Append
+   `DEAD-END: <approach> — <why it failed>` to the umbrella so a resumed
+   orchestrator does not retry it.
 4. **Bound each tool call** to minutes: batches of ≤10 minutes,
    `mu task wait --timeout` re-issued, no open-ended `sleep` loops.
    A `--steer` lands only when the running tool returns.
