@@ -42,7 +42,11 @@ export default defineConfig([
     // hard-defines NODE_ENV: react picks its dev/prod build at runtime from
     // process.env.NODE_ENV (see src/cli/tui-load.ts). cli-table3 and react
     // are CJS, so bundled `require()` needs a real require in ESM output.
-    noExternal: ["commander", "cli-table3", "string-width", "picocolors", "ink", "react"],
+    // signal-exit is bundled so ink's and restore-cursor's nested v3
+    // (default export) and mu's own v4 (named `onExit`) each resolve from
+    // their importer; left external, ink's `import signalExit from
+    // "signal-exit"` would resolve to the top-level v4 at runtime and fail.
+    noExternal: ["commander", "cli-table3", "string-width", "picocolors", "ink", "react", "signal-exit"],
     banner: {
       js: 'import { createRequire as __muCreateRequire } from "node:module"; const require = __muCreateRequire(import.meta.url);',
     },
