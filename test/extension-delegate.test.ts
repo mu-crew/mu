@@ -1630,6 +1630,57 @@ describe("nudges yield to a delegate answer on its way", () => {
     expect(await settling).toBeUndefined();
   });
 
+  it("a fast nudge's result yields to an answer that queues during a slower nudge's read", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    const heldNotes: (() => void)[] = [];
+    const state = ok({ workstreamName: "crew", inProgress: [{ name: "t1" }] });
+    const run: MuRunner = (args, signal) => {
+      if (args[0] === "state") return Promise.resolve(state);
+      if (args[0] === "task" && args[1] === "notes")
+        return new Promise((resolve) => heldNotes.push(() => resolve(ok({ items: [] }))));
+      return mu.run(args, signal);
+    };
+    const on = (e: string, h: (e: unknown, c: MuPiContext) => unknown) =>
+      p.pi.on(e, h as (e: unknown, c: DelegateCtx) => unknown);
+    muPi({ ...p.pi, on, sendUserMessage: () => {}, registerCommand: () => {} }, run);
+    const settle = async () => {
+      let out: unknown;
+      for (const h of p.handlers.get("agent_before_settle") ?? []) {
+        const r = await h({ type: "agent_before_settle", outcome: "completed" }, {});
+        if (r !== undefined) out = r;
+      }
+      return out as { continue?: boolean; entries?: { customType?: string }[] } | undefined;
+    };
+    p.state.busy = true;
+    // Arms keep-driving (fast state read) and refute (held notes read).
+    await p.fire("tool_call", {
+      toolName: "bash",
+      input: { command: "mu task claim t1 -w crew --for worker-1" },
+    });
+    await tool(p).execute("d", { task: "check it" });
+    const settling = settle();
+    await flush();
+    expect(heldNotes).toHaveLength(1); // keep-driving is done; refute still reads
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
+    await flush();
+    await flush();
+    heldNotes[0]?.();
+    // Without the merge's late check, keep-driving's continuation wins here.
+    expect(await settling).toBeUndefined();
+    await p.drainQueue(); // the answer enters the conversation
+    // The dropped nudges were not the prompt's one nudge.
+    const settled = settle();
+    await flush();
+    for (const release of heldNotes.splice(0)) release();
+    const r = await settled;
+    expect(r).toMatchObject({ continue: true });
+    expect(r?.entries?.map((e) => e.customType).sort()).toEqual([
+      "mu-keep-driving",
+      "mu-refute-brief",
+    ]);
+  });
+
   it("no continuation while an extension dialog is open", async () => {
     const t = setup();
     await t.dispatch();

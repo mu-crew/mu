@@ -344,7 +344,9 @@ function breadcrumb(run: MuRunner, args: string[]): void {
   void run(args).catch(() => {});
 }
 
-type SettleResult = { entries?: unknown[]; continue?: boolean } | undefined;
+/** A nudge's settle result. `yielded` undoes the nudge's once-per-prompt
+ *  bookkeeping when the merge drops the result for a late hold. */
+type SettleResult = { entries?: unknown[]; continue?: boolean; yielded?: () => void } | undefined;
 type SettleHandler = (event: unknown, ctx: MuNudgeCtx) => unknown;
 
 /**
@@ -359,9 +361,16 @@ type SettleHandler = (event: unknown, ctx: MuNudgeCtx) => unknown;
  * merged handler, one reporter handler per nudge rethrows that nudge's
  * error, so pi reports each failure (as it did when every nudge was its
  * own handler) while the other nudges' entries are still delivered.
+ * The merge reads `hold` once more after the slowest nudge: a fast nudge
+ * checked it long before, so an answer that queued meanwhile drops every
+ * result ("answer") or the continuing ones ("blocked"), and each dropped
+ * nudge may fire on a later settle.
  * Call `flush()` after registering the nudges.
  */
-export function parallelSettle(pi: MuNudgeApi): { api: MuNudgeApi; flush(): void } {
+export function parallelSettle(
+  pi: MuNudgeApi,
+  hold: SettleHold = noHold,
+): { api: MuNudgeApi; flush(): void } {
   const handlers: SettleHandler[] = [];
   const api: MuNudgeApi = {
     on(event, handler) {
@@ -387,7 +396,15 @@ export function parallelSettle(pi: MuNudgeApi): { api: MuNudgeApi; flush(): void
             }
           }),
         );
-        const fired = results.filter((r) => r !== undefined);
+        const late = hold();
+        const fired = results.flatMap((r) => {
+          if (r === undefined) return [];
+          if (late === "answer" || (late === "blocked" && r.continue === true)) {
+            r.yielded?.();
+            return [];
+          }
+          return [r];
+        });
         if (fired.length === 0) return undefined;
         const prior = (event as { entries?: unknown[] } | null)?.entries ?? [];
         return {
@@ -470,6 +487,9 @@ export function registerNudge(
         { type: "custom_message", customType: NUDGE_MESSAGE_TYPE, content: text, display: true },
       ],
       continue: true,
+      yielded: () => {
+        fired = false;
+      },
     };
   });
 }
@@ -559,6 +579,9 @@ export function registerCloseNudge(
         },
       ],
       continue: true,
+      yielded: () => {
+        fired = false;
+      },
     };
   });
 }
@@ -639,6 +662,9 @@ export function registerRefuteNudge(
           display: true,
         },
       ],
+      yielded: () => {
+        fired = false;
+      },
     };
   });
 }
