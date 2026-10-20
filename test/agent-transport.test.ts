@@ -14,6 +14,7 @@ import {
   AgentFreshNeedsCtlError,
   AgentPaneDeadError,
   type AgentRow,
+  AgentSendIndeterminateError,
   AgentSlashCommandUnsupportedError,
   expectsCtl,
   insertAgent,
@@ -185,6 +186,43 @@ describe("sendViaTransport", () => {
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(AgentCtlUnreachableError);
+  });
+
+  it("a send closed without a reply is AgentSendIndeterminateError, no paste", async () => {
+    seed("worker-1");
+    const path = sockFor("worker-1");
+    mkdirSync(dirname(path), { recursive: true });
+    const server = createServer((sock) => {
+      sock.on("data", () => sock.end());
+      sock.on("error", () => {});
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(path, () => r()));
+    const err = await sendToAgent(db, "worker-1", "hello", { workstream: "auth" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentSendIndeterminateError);
+    expect((err as AgentSendIndeterminateError).errorNextSteps().map((s) => s.command)).toEqual([
+      "mu agent read worker-1 -w auth -n 20",
+    ]);
+    expect(pasted()).toBe(false);
+  });
+
+  it("an indeterminate send on a vanished pane is still AgentPaneDeadError", async () => {
+    seed("worker-1");
+    paneAlive = false;
+    const path = sockFor("worker-1");
+    mkdirSync(dirname(path), { recursive: true });
+    const server = createServer((sock) => {
+      sock.on("data", () => sock.end());
+      sock.on("error", () => {});
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(path, () => r()));
+    const err = await sendToAgent(db, "worker-1", "hello", { workstream: "auth" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentPaneDeadError);
   });
 
   it("via mux forces the paste path for a pi agent", async () => {

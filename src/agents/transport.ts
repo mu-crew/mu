@@ -11,7 +11,13 @@
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentRow } from "../agents.js";
-import { CtlUnknownOpError, CtlVersionError, ctlRequest, errCode } from "../ctl/client.js";
+import {
+  CtlDeliveryUnknownError,
+  CtlUnknownOpError,
+  CtlVersionError,
+  ctlRequest,
+  errCode,
+} from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
 import {
   CTL_COMMANDS,
@@ -29,6 +35,7 @@ import {
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
   AgentPaneDeadError,
+  AgentSendIndeterminateError,
   AgentSlashCommandUnsupportedError,
 } from "./errors.js";
 import { resolveCliCommand, speaksMuCtl } from "./spawn.js";
@@ -168,6 +175,9 @@ export async function ctlFailure(
   // A silent socket on a vanished pane is a dead agent, not a link problem.
   if (await paneGone(agent.paneId)) {
     return new AgentPaneDeadError(agent.name, agent.workstreamName, agent.paneId);
+  }
+  if (e instanceof CtlDeliveryUnknownError) {
+    return new AgentSendIndeterminateError(agent.name, agent.workstreamName, e.op, e.cause.message);
   }
   return new AgentCtlUnreachableError(
     agent.name,

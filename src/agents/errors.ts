@@ -491,6 +491,33 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
 }
 
 /**
+ * A side-effecting ctl request (send, fresh, interrupt, command) was
+ * written to a live agent's socket, then no reply arrived (timeout or
+ * close). pi may have queued the prompt, so a blind resend can duplicate it.
+ */
+export class AgentSendIndeterminateError extends Error implements HasNextSteps {
+  override readonly name = "AgentSendIndeterminateError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly op: string,
+    public readonly reason: string,
+  ) {
+    super(
+      `agent ${agentName}: ${op} was written to its control socket but no reply arrived (${reason}); delivery unknown`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Precaution before resending: pi may already have received it, so check first",
+        command: `mu agent read ${this.agentName} -w ${this.workstream} -n 20`,
+      },
+    ];
+  }
+}
+
+/**
  * A ctl verb (send, abort, ...) found the agent's control socket silent
  * AND its pane gone: the process exited (or the pane was closed behind
  * mu's back), so there is nothing to link, kick or forward. Raised

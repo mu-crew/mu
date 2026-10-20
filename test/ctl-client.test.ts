@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CTL_DEFAULT_TIMEOUT_MS,
   CTL_WAIT_SLACK_MS,
+  CtlDeliveryUnknownError,
   CtlTimeoutError,
   CtlUnknownOpError,
   CtlVersionError,
@@ -191,6 +192,37 @@ describe("ctlRequest", () => {
     expect(Date.now() - t0).toBeLessThan(250);
   });
 
+  it("a send that times out after the write is CtlDeliveryUnknownError", async () => {
+    const p = await serve(() => {});
+    const err = await ctlRequest(p, { op: "send", text: "x" }, { timeoutMs: 100 }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(CtlDeliveryUnknownError);
+    expect((err as CtlDeliveryUnknownError).cause).toBeInstanceOf(CtlTimeoutError);
+  });
+
+  it("a send whose connection closes after the write is CtlDeliveryUnknownError", async () => {
+    const p = await serve((_l, sock) => sock.end());
+    await expect(ctlRequest(p, { op: "fresh", text: "x" })).rejects.toBeInstanceOf(
+      CtlDeliveryUnknownError,
+    );
+  });
+
+  it("a send that never connects stays a plain socket error", async () => {
+    const err = await ctlRequest(join(dir, "none.sock"), { op: "send", text: "x" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).not.toBeInstanceOf(CtlDeliveryUnknownError);
+    expect(err).toMatchObject({ code: "ENOENT" });
+  });
+
+  it("a status that times out stays CtlTimeoutError", async () => {
+    const p = await serve(() => {});
+    await expect(ctlRequest(p, { op: "status" }, { timeoutMs: 100 })).rejects.toBeInstanceOf(
+      CtlTimeoutError,
+    );
+  });
+
   it("wait defaults its client timeout to timeoutMs + 5s", async () => {
     const p = await serve((_l, sock) => {
       setTimeout(() => sock.end(encode({ v: 1, ok: true, ...IDLE, runs: 1 })), 30);
@@ -248,8 +280,10 @@ describe("ctlRequest", () => {
       vi.advanceTimersByTime(settle + CTL_WAIT_SLACK_MS - 1);
       vi.advanceTimersByTime(1);
       const err = await pending;
-      expect(err).toBeInstanceOf(CtlTimeoutError);
-      expect(err).toMatchObject({ timeoutMs: settle + CTL_WAIT_SLACK_MS });
+      expect(err).toBeInstanceOf(CtlDeliveryUnknownError);
+      const cause = (err as CtlDeliveryUnknownError).cause;
+      expect(cause).toBeInstanceOf(CtlTimeoutError);
+      expect(cause).toMatchObject({ timeoutMs: settle + CTL_WAIT_SLACK_MS });
     });
   });
 

@@ -17,6 +17,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   during a pass lost its new row and had its tasks reopened. The delete
   now checks the snapshotted pane id inside the reaper transaction and
   skips the row (and the ctl socket unlink) on a mismatch.
+- **`mu agent send` no longer calls an ambiguous failure "refused".**
+  When a send, fresh, interrupt or command request was already written
+  to the control socket and the reply then timed out or the connection
+  closed, pi may have queued the prompt. mu now raises
+  `AgentSendIndeterminateError` (exit 1, "delivery unknown") whose next
+  step is `mu agent read <agent> -w <ws> -n 20` before resending.
+  Failures before the write, dead panes and status/wait/hello keep their
+  old errors.
 
 ### Changed
 
