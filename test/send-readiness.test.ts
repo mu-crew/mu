@@ -77,6 +77,12 @@ describe("send readiness: modal vs working classification", () => {
     expect(hasWorkMarker(IDLE)).toBe(false);
   });
 
+  it("a Codex 'model: loading' screen is busy but has NO work marker", () => {
+    const loading = "OpenAI Codex\n model: loading\n directory: ~/x\n";
+    expect(paneLooksBusy(loading)).toBe(true);
+    expect(hasWorkMarker(loading)).toBe(false);
+  });
+
   // Guards the tail window: a work marker scrolled far above the
   // current frame must not make a later modal look like a live turn.
   it("only recent output counts as a work marker", () => {

@@ -25,6 +25,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   step is `mu agent read <agent> -w <ws> -n 20` before resending.
   Failures before the write, dead panes and status/wait/hello keep their
   old errors.
+- **Send waits for Codex's "model: loading" screen.** The boot screen
+  has no spinner, so `awaitPaneQuiescence` saw it as calm and pasted
+  into a booting Codex, concatenating text. "model: loading" is now a
+  busy marker (visible tail only).
 
 ### Changed
 

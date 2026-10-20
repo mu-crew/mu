@@ -5,7 +5,11 @@
 
 const TAIL_WINDOW_LINES = 100;
 const TAIL_LINES = 20;
-const BUSY_MARKERS: readonly string[] = ["to interrupt)"];
+// "model: loading" is Codex's boot screen: it has no spinner, so without
+// the marker a booting Codex looks calm. This only covers the text being
+// visible in the captured tail, not a blank startup screen or the readiness
+// deadline expiring (sendToPane still pastes then).
+const BUSY_MARKERS: readonly string[] = ["to interrupt)", "model: loading"];
 const BRAILLE_SPINNER_RE = /[\u2800-\u28ff]/;
 
 /** Take the recent non-blank pane tail used by the input-timing checks. */
