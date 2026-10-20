@@ -110,6 +110,10 @@ export const DELEGATE_MAX_DEFAULT = 16;
  *  caps' worth in one turn; past this, the model is refused. */
 export const DELEGATE_QUEUE_FACTOR = 4;
 
+/** Minimum gap between the `mu agent list` calls that prune the footer's
+ *  failed-delegate count. */
+export const PRUNE_FAILED_MS = 30_000;
+
 /** `MU_DELEGATE_MAX`: a positive integer, else the default. */
 export function delegateMax(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.MU_DELEGATE_MAX);
@@ -504,6 +508,8 @@ export function registerDelegate(
   /** Delegates that settled on an error, pane kept: counted in the footer
    *  until the model closes or re-issues them (no call to action). */
   const failed = new Set<string>();
+  /** When pruneFailed last listed agents (0: never). */
+  let lastPruneAt = 0;
   /** Delegates that finished whose follow-up has not entered the
    *  conversation: being delivered, or queued behind a running turn.
    *  Keyed by a per-delivery id carried in the message's details, and
@@ -620,6 +626,11 @@ export function registerDelegate(
    *  footer. Off the call's path: only a footer count rides on it. */
   function pruneFailed(): void {
     if (failed.size === 0) return;
+    // Only the footer count depends on this listing (~150 ms of CPU per
+    // `mu agent list`): refresh it at most once per PRUNE_FAILED_MS.
+    const now = Date.now();
+    if (now - lastPruneAt < PRUNE_FAILED_MS) return;
+    lastPruneAt = now;
     void mu(["agent", "list", "-w", W, "--json"]).then((r) => {
       const agents = json(r)?.agents;
       if (!Array.isArray(agents)) return;
