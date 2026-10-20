@@ -20,6 +20,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Skill: recipe wording from a prior runtime.** An `unknown` owner
+  is not a dead one: orchestrator-loop says to read the pane or run
+  `mu doctor` before releasing its task.
 - **Skill: orchestrators clean up scratch files.** Review panels and
   other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
   hoc dirs under `$HOME`. SKILL.md's orchestrator rules now say to keep
