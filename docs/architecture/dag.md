@@ -11,8 +11,9 @@ it mu is only an agent runner. Overview:
   `effort_days`. `ROI = impact / effort` drives prioritization.
 - **One edge type: `blocks`.** `A → B` means A must close before B can
   start. More edge types would make "can this start?" ambiguous.
-- **No hidden edges.** Only explicit `block` calls create edges; no
-  write wires a task to a top goal. A hidden edge makes phantom
+- **No hidden edges.** Every edge comes from a verb the caller ran (`block`,
+  `add --blocked-by`, `reparent --blocked-by`); no write adds edges
+  on its own or wires a task to a top goal. A hidden edge makes phantom
   blockers and false cycles, and `unblock` appears to do nothing.
 - **Status lifecycle:** `OPEN → IN_PROGRESS → CLOSED`. Status alone
   decides edge satisfaction: any `CLOSED` task satisfies its blockers.
