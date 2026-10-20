@@ -323,9 +323,13 @@ export function jjWorkspaceName(workspacePath: string): string {
 }
 
 // Forget `name` if jj still registers it but its root dir is gone (the
-// dir was rm -rf'd, or freed while already missing). jj reports such a
-// workspace's root as "". Best-effort: on a jj without the
-// `WorkspaceRef.root()` template, `workspace add` reports the clash.
+// dir was rm -rf'd, or freed while already missing). Older jj reports
+// such a root as ""; jj 0.46 keeps printing the stored path, so the path
+// is also checked on disk. In a colocated repo jj 0.46 also made the
+// workspace a Git worktree, which `jj workspace forget` leaves registered
+// in Git; `git worktree prune` drops it, or `workspace add` fails with
+// "missing but already registered worktree". Best-effort: on a jj without
+// the `WorkspaceRef.root()` template, `workspace add` reports the clash.
 async function forgetIfRootMissing(name: string, projectRoot: string): Promise<void> {
   try {
     const out = await run(
@@ -340,14 +344,29 @@ async function forgetIfRootMissing(name: string, projectRoot: string): Promise<v
       ],
       projectRoot,
     );
+    // A deleted workspace dir reads as an empty root on older jj; newer jj
+    // (0.46) still prints the stored path, so also check it on disk.
     const stale = out
       .split("\x1e")
       .map((r) => r.trim().split("\x00"))
-      .some(([n, root]) => n === name && root === "");
-    if (stale) await run("jj", ["workspace", "forget", name], projectRoot);
+      .some(([n, root]) => n === name && (root === undefined || root === "" || !existsSync(root)));
+    if (!stale) return;
+    await run("jj", ["workspace", "forget", name], projectRoot);
+    await pruneGitWorktrees(projectRoot);
   } catch {
     // best-effort; `workspace add` surfaces any remaining conflict
   }
+}
+
+/** `git worktree prune` in the repo's Git store, when jj has one. */
+async function pruneGitWorktrees(projectRoot: string): Promise<void> {
+  let gitDir: string;
+  try {
+    gitDir = await run("jj", ["git", "root"], projectRoot);
+  } catch {
+    return; // not a Git-backed repo, or a jj without `git root`
+  }
+  if (gitDir.length > 0) await run("git", ["--git-dir", gitDir, "worktree", "prune"], projectRoot);
 }
 
 async function jjSingleCommitId(
