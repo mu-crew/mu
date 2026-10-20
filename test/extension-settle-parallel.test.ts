@@ -20,7 +20,8 @@ const json = (v: unknown): MuResult => ({ code: 0, stdout: JSON.stringify(v), st
 
 function answer(args: readonly string[]): MuResult {
   const [noun, verb] = args;
-  if (noun === "state") return json({ workstreamName: "ws", inProgress: [{ name: "t1" }] });
+  if (noun === "task" && verb === "list")
+    return json({ items: [{ name: "t1", workstreamName: "ws", status: "IN_PROGRESS" }] });
   if (noun === "task" && verb === "owned-by")
     return json({ items: [{ name: "t1", status: "IN_PROGRESS" }] });
   if (noun === "task" && verb === "notes") return json({ items: [] });
@@ -86,9 +87,9 @@ describe("parallelSettle", () => {
     });
     const settled = f.emit("agent_before_settle", { outcome: "completed", entries: [] });
     await flush();
-    // state + owned-by + two notes reads, all in flight before any answers.
+    // list + owned-by + two notes reads, all in flight before any answers.
     expect(f.calls.map((c) => c.slice(0, 2).join(" ")).sort()).toEqual([
-      "state --json",
+      "task list",
       "task notes",
       "task notes",
       "task owned-by",
