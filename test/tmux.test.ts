@@ -274,14 +274,42 @@ describe("newSession", () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
     await newSession("foo");
-    expect(calls[0]?.args).toEqual(["new-session", "-d", "-s", "foo"]);
+    expect(calls[0]?.args).toEqual(["new-session", "-d", "-x", "200", "-y", "50", "-s", "foo"]);
+  });
+
+  it("attached (detached:false) passes no size", async () => {
+    const { executor, calls } = harness(() => ok());
+    setTmuxExecutor(executor);
+    await newSession("foo", { detached: false });
+    expect(calls[0]?.args).toEqual(["new-session", "-s", "foo"]);
+  });
+
+  it("newSessionWithPane gets the detached size only when detached", async () => {
+    const { executor, calls } = harness(() => ok("%1\n"));
+    setTmuxExecutor(executor);
+    await newSessionWithPane("foo", { windowName: "w", command: "bash" });
+    await newSessionWithPane("foo", { windowName: "w", command: "bash", detached: false });
+    expect(calls[0]?.args.slice(0, 6)).toEqual(["new-session", "-d", "-x", "200", "-y", "50"]);
+    expect(calls[1]?.args).not.toContain("-x");
   });
 
   it("includes window name and command when provided", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
     await newSession("foo", { windowName: "main", command: "bash" });
-    expect(calls[0]?.args).toEqual(["new-session", "-d", "-s", "foo", "-n", "main", "bash"]);
+    expect(calls[0]?.args).toEqual([
+      "new-session",
+      "-d",
+      "-x",
+      "200",
+      "-y",
+      "50",
+      "-s",
+      "foo",
+      "-n",
+      "main",
+      "bash",
+    ]);
   });
 });
 

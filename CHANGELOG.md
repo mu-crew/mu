@@ -32,6 +32,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   created detached and can stay so, so tmux never refreshed the env and a
   pane could inherit a stale socket. Spawn now forwards it when it is set
   and a socket (file-type check only, no liveness probe).
+- **Detached tmux sessions start at 200x50, not 80x24.** `mu agent read`
+  captured wrapped lines at 80 columns on unattached sessions.
+  `new-session -d` now passes `-x 200 -y 50` (attached sessions are
+  unchanged; no `resize-window`). herdr is unaffected.
+
 - **Spawned agents use the spawner's database.** Panes inherit the tmux
   server's env, so under `MU_DB_PATH=/tmp/x.db` a worker's `mu` hit the
   real DB. Local spawns now pin `MU_DB_PATH` (absolute, skipping
