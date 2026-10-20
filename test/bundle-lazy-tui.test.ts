@@ -64,11 +64,16 @@ describe("bundle keeps the TUI lazy", () => {
     expect([...bare].filter((s) => TUI_PACKAGES.includes(s))).toEqual([]);
   });
 
-  it("the TUI is emitted as its own chunk that does import ink", () => {
+  it("the TUI is emitted as its own chunk, with ink and react bundled into it", () => {
     const tui = readdirSync(out).find((f) => /^tui-.*\.js$/.test(f));
     expect(tui).toBeDefined();
     if (tui === undefined) return;
-    expect(staticImports(readFileSync(join(out, tui), "utf8"))).toContain("ink");
+    const src = readFileSync(join(out, tui), "utf8");
+    // Bundled: ~560 node_modules ESM files otherwise resolve and compile per launch.
+    expect(staticImports(src).filter((s) => TUI_PACKAGES.includes(s))).toEqual([]);
+    // react's dev/prod build stays a runtime choice (src/cli/tui-load.ts
+    // sets NODE_ENV): a `define` of NODE_ENV would fold these away.
+    expect(src).toContain("process.env.NODE_ENV");
     const chunks = readdirSync(out).filter((f) => f.endsWith(".js"));
     const importers = chunks.filter((f) =>
       readFileSync(join(out, f), "utf8").includes(`import("./${tui}")`),
@@ -167,5 +172,28 @@ describe("bundle keeps the TUI lazy", () => {
     expect(r.stdout.trim()).not.toBe("");
     expect(r.resolved.length).toBeGreaterThan(0); // the hook saw the load
     expect(r.resolved.filter((s) => ["ink", "react", "yoga-layout"].includes(s))).toEqual([]);
+  });
+
+  it("the bundled TUI chunk evaluates without resolving ink or react", () => {
+    const tui = readdirSync(out).find((f) => /^tui-.*\.js$/.test(f));
+    expect(tui).toBeDefined();
+    if (tui === undefined) return;
+    // Evaluating the chunk runs the createRequire banner and the bundled
+    // CJS react/reconciler; a missing shim throws "Dynamic require".
+    const script = `const m = await import(${JSON.stringify(`./${tui}`)}); if (typeof m.runTui !== "function") process.exit(3);`;
+    const log = join(out, "tui-resolve.log");
+    const r = spawnSync(
+      process.execPath,
+      ["--import", PRELOAD, "--input-type=module", "-e", script],
+      {
+        encoding: "utf8",
+        cwd: out,
+        env: { PATH: process.env.PATH, HOME: out, MU_RESOLVE_LOG: log },
+      },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    const resolved = readFileSync(log, "utf8").split("\n").filter(Boolean);
+    expect(resolved.length).toBeGreaterThan(0);
+    expect(resolved.filter((s) => ["ink", "react", "yoga-layout"].includes(s))).toEqual([]);
   });
 });
