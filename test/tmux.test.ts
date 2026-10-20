@@ -927,6 +927,22 @@ describe("sendToPane", () => {
     expect(calls.map((c) => c.args[0])).toEqual(["capture-pane"]);
   });
 
+  it("waits out a Codex 'model: loading' screen before pasting", async () => {
+    let captures = 0;
+    const { executor, calls } = harness((args) => {
+      if (args[0] === "capture-pane") {
+        captures++;
+        return ok(captures <= 4 ? " model: loading\n" : "> \n");
+      }
+      return ok();
+    });
+    setTmuxExecutor(executor);
+    await sendToPane("%15", "hello", { readinessMs: 15_000, delayMs: 0 });
+    const firstPaste = calls.findIndex((c) => c.args[0] === "paste-buffer");
+    const capturesBefore = calls.slice(0, firstPaste).filter((c) => c.args[0] === "capture-pane");
+    expect(capturesBefore.length).toBeGreaterThanOrEqual(7);
+  });
+
   it("keeps polling on a transient capture failure", async () => {
     let captures = 0;
     const { executor } = harness((args) => {
