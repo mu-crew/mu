@@ -1392,6 +1392,31 @@ describe("segments", () => {
       expect(result.defects.map((d) => d.kind)).toContain("manifest-mismatch");
     });
 
+    it.each([
+      ["null", () => null],
+      ["a number", () => 7],
+      ["an array", () => []],
+      ["a tail of the wrong type", (st: { tail: string }) => ({ ...st, tail: 123 })],
+      ["a tail that is not the right length", (st: { tail: string }) => ({ ...st, tail: "AA==" })],
+      ["h of the wrong type", (st: { h: string }) => ({ ...st, h: 5 })],
+      ["n beyond the segment length", (st: { n: number }) => ({ ...st, n: st.n + 1000 })],
+      ["n below zero", (st: { n: number }) => ({ ...st, n: -1 })],
+      ["n not a number", (st: { n: number }) => ({ ...st, n: "x" })],
+    ])("a peer manifest with shaState %s is ingested via the full read", async (_name, bad) => {
+      for (let i = 0; i < 4; i++) seedTask(a, `c${i}`);
+      await flushSegment(a, dir);
+      const peer = peersFor(b)[0];
+      if (peer === undefined) throw new Error("expected a peer");
+      const manifestFile = peer.path.replace(/\.jsonl$/, ".manifest");
+      const m = JSON.parse(readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+      m.shaState = (bad as (st: never) => unknown)(m.shaState as never);
+      writeFileSync(manifestFile, `${JSON.stringify(m, null, 2)}\n`);
+      const result = ingestSegment(b, peer);
+      expect(result.defects).toEqual([]);
+      expect(result.applied).toBeGreaterThan(0);
+      expect(task(b, "c3")).toBeDefined();
+    });
+
     it("a defect leaves no resume point", async () => {
       const peer = await caughtUpPeer();
       const key = localMachineId(a);
