@@ -54,6 +54,7 @@ async function serve(
   initial: "busy" | "idle",
   settles = true,
   afterAbort: "busy" | "idle" = "idle",
+  abortWasBusy?: boolean,
 ): Promise<void> {
   let state = initial;
   let runs = 3;
@@ -70,7 +71,14 @@ async function serve(
         const status = { state, since: 0, runs, pending: false };
         if (req.op === "status") sock.end(encode({ v: 1, ok: true, ...status }));
         else if (req.op === "abort") {
-          sock.end(encode({ v: 1, ok: true, state }));
+          sock.end(
+            encode({
+              v: 1,
+              ok: true,
+              state,
+              ...(abortWasBusy !== undefined ? { wasBusy: abortWasBusy } : {}),
+            }),
+          );
           if (settles) {
             state = afterAbort;
             runs++;
@@ -124,6 +132,14 @@ describe("abortAgent", () => {
     } finally {
       delete process.env.MU_AGENT_NAME;
     }
+  });
+
+  it("settled between status and abort (wasBusy=false): no agent.abort row", async () => {
+    seed("worker-1");
+    await serve("worker-1", "busy", true, "idle", false);
+    const r = await abortAgent(db, "worker-1", { workstream: "auth" });
+    expect(r.aborted).toBe(false);
+    expect(abortRows()).toEqual([]);
   });
 
   it("idle: sends no abort and is settled", async () => {

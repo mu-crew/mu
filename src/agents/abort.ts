@@ -82,14 +82,18 @@ export async function abortAgent(
 
   const ab = await request(agent, sock, { op: "abort" });
   if (!ab.ok) throw new Error(`control socket refused the abort: ${ab.error}`);
-  // Only a real abort is logged; an idle no-op returned above.
-  emitEvent(
-    db,
-    opts.workstream,
-    "agent.abort",
-    `agent abort ${name} (state=${before}, pending=${pending})`,
-    await resolveActorIdentity(),
-  );
+  // Only a real abort is logged. wasBusy=false: the run settled between the
+  // status probe and the abort, so pi did nothing. Absent: older extension.
+  const aborted = ab.wasBusy !== false;
+  if (aborted) {
+    emitEvent(
+      db,
+      opts.workstream,
+      "agent.abort",
+      `agent abort ${name} (state=${before}, pending=${pending})`,
+      await resolveActorIdentity(),
+    );
+  }
 
   const w = await request(agent, sock, { op: "wait", afterRuns: st.runs ?? 0, timeoutMs });
   if (!w.ok) {
@@ -101,7 +105,7 @@ export async function abortAgent(
     before,
     after: w.state ?? "idle",
     settled: true,
-    aborted: true,
+    aborted,
     pending,
     elapsedMs: Date.now() - started,
   };

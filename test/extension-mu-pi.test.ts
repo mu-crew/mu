@@ -352,10 +352,17 @@ describe("mu pi extension", () => {
     expect(r).toEqual({ v: 1, ok: false, error: "timeout" });
   });
 
-  it("abort calls ctx.abort", async () => {
+  it("abort calls ctx.abort when busy and reports wasBusy", async () => {
     await fake.emit("session_start");
-    expect(await ctlRequest(sock, { op: "abort" })).toMatchObject({ ok: true });
+    fake.ctx.idle = false;
+    expect(await ctlRequest(sock, { op: "abort" })).toMatchObject({ ok: true, wasBusy: true });
     expect(fake.ctx.abort).toHaveBeenCalledOnce();
+  });
+
+  it("abort on a settled (idle) pi is a no-op reporting wasBusy=false", async () => {
+    await fake.emit("session_start");
+    expect(await ctlRequest(sock, { op: "abort" })).toMatchObject({ ok: true, wasBusy: false });
+    expect(fake.ctx.abort).not.toHaveBeenCalled();
   });
 
   describe("interrupt", () => {
