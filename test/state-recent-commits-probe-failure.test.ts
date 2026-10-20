@@ -2,8 +2,10 @@
 // "not this VCS", so a fallback backend found during that detection is not
 // proof of a stable backend. The TUI's cached detection must skip it and
 // re-detect, or a transient `jj root` failure in a colocated jj/git repo
-// pins git for the TUI's lifetime. A clean "not this VCS" (non-zero exit,
-// tool missing) is a real answer and stays cached.
+// pins git for the TUI's lifetime. A clean "not this VCS" (the tool's own
+// not-a-repo message, or the tool missing) is a real answer and stays
+// cached; a non-zero exit for any other reason (e.g. a jj config error)
+// is not.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,7 +40,10 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 function respond(bin: string, args: string[]): Outcome {
   const fail = (code: unknown): Outcome => ({
-    fail: Object.assign(new Error(`${bin} failed`), { code }),
+    fail: Object.assign(new Error(`${bin} failed`), {
+      code,
+      stderr: "abort: '/repo' is not inside a repository",
+    }),
   });
   if (bin === "jj" && args[0] === "root") {
     const next = script.jjRoot.shift();
@@ -76,9 +81,10 @@ afterEach(() => {
 });
 
 const opts = { withRecentCommits: { limit: 3 } };
-const err = (code: unknown): Outcome => ({
-  fail: Object.assign(new Error("jj root failed"), { code }),
+const err = (code: unknown, stderr = ""): Outcome => ({
+  fail: Object.assign(new Error("jj root failed"), { code, stderr }),
 });
+const notARepo = (): Outcome => err(1, 'Error: There is no jj repo in "."');
 const tick = async () => {
   if (db === undefined) throw new Error("no db");
   return (await loadWorkstreamSnapshotSlow(db, "ws", opts)).commitsBackend;
@@ -95,8 +101,16 @@ describe("recent-commits backend cache vs failed root probes", () => {
     expect(script.calls.filter((c) => c === "jj root")).toHaveLength(probesBefore); // now cached
   });
 
+  it("does not cache a fallback when jj root exits 1 for a config error", async () => {
+    // Real jj exits 1 on a TOML config error too; that is not "no jj repo".
+    script.jjRoot.push(err(1, "Config error: Configuration cannot be parsed as TOML document"));
+
+    expect(await tick()).toBe("git");
+    expect(await tick()).toBe("jj"); // config fixed: jj re-detected
+  });
+
   it("still caches a fallback when jj root cleanly says not-a-repo", async () => {
-    script.jjRoot.push(err(1), err("ENOENT"), err(1));
+    script.jjRoot.push(notARepo(), err("ENOENT"), notARepo());
 
     expect(await tick()).toBe("git");
     expect(await tick()).toBe("git");
