@@ -211,11 +211,31 @@ export class CycleError extends Error implements HasNextSteps {
   constructor(
     public readonly from: string,
     public readonly to: string,
+    /** Existing path `to -> … -> from` (task names) that the new edge would close. */
+    public readonly path: readonly string[] = [],
+    public readonly workstream?: string,
   ) {
-    super(`adding edge ${from} -> ${to} would create a cycle`);
+    super(
+      path.length > 1
+        ? `adding edge ${from} -> ${to} would create a cycle: ${[from, ...path].join(" -> ")}`
+        : `adding edge ${from} -> ${to} would create a cycle`,
+    );
   }
   errorNextSteps(): NextStep[] {
+    const a = this.path[0];
+    const b = this.path[1];
+    const ws = this.workstream ? ` -w ${this.workstream}` : "";
+    const concrete: NextStep[] =
+      a !== undefined && b !== undefined
+        ? [
+            {
+              intent: `Break the cycle by removing existing edge ${a} -> ${b}`,
+              command: `mu task unblock ${b} --by ${a}${ws}`,
+            },
+          ]
+        : [];
     return [
+      ...concrete,
       {
         intent: "Show the dependency tree",
         command: `mu task tree ${this.to} --down`,
