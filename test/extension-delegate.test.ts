@@ -1380,6 +1380,45 @@ describe("record", () => {
     }
   });
 
+  it("close and note overlap: both mu calls are issued before either answers", async () => {
+    let releaseClose: (r: MuResult) => void = () => {};
+    let releaseNote: (r: MuResult) => void = () => {};
+    const mu = fakeMu({
+      on: { close: () => new Promise((r) => (releaseClose = r)) },
+      task: { note: () => new Promise((r) => (releaseNote = r)) },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
+    await settle();
+    expect(mu.calls.some((c) => c[1] === "close")).toBe(true);
+    expect(notes(mu)).toHaveLength(1);
+    expect(p.sendMessage).not.toHaveBeenCalled(); // waits for both
+    releaseNote(ok("{}"));
+    await settle();
+    expect(p.sendMessage).not.toHaveBeenCalled();
+    releaseClose(ok("{}"));
+    await settle();
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
+    expect(sentText(p)).toContain("Recorded on crew/f1 as a note");
+  });
+
+  it("a refused close and a failed note are both reported", async () => {
+    const mu = fakeMu({
+      on: { close: () => Promise.resolve({ code: 4, stdout: "", stderr: "busy" }) },
+      task: { note: () => Promise.resolve({ code: 3, stdout: "", stderr: "db locked" }) },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
+    await settle();
+    const text = sentText(p);
+    expect(text).toMatch(/close refused: busy/);
+    expect(text).toMatch(/Recording on crew\/f1 failed.*db locked/);
+  });
+
   it("without record, no task verb is called", async () => {
     const mu = fakeMu();
     const p = fakePi();
