@@ -149,7 +149,7 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
   const existingByPane = getAgentByPane(db, opts.paneId);
   if (existingByPane) {
     if (existingByPane.name === resolvedName) {
-      await lockThenTitle(mux, opts.paneId, resolvedName);
+      await lockThenTitle(mux, opts.paneId, resolvedName, previousTitle === resolvedName);
       return {
         agent: existingByPane,
         alreadyAdopted: true,
@@ -182,15 +182,16 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
     cli: opts.cli,
     role: opts.role,
   });
-  await lockThenTitle(mux, opts.paneId, resolvedName);
   // Machine-local table (`agents`): no trigger, so this emit is the
-  // only record.
+  // only record. It follows the insert directly so a later mux failure
+  // cannot leave a registered agent without its adoption op.
   emitEvent(
     db,
     opts.workstream,
     "agent.adopt",
     `agent adopt ${resolvedName} (pane ${opts.paneId}, was title='${previousTitle ?? ""}')`,
   );
+  await lockThenTitle(mux, opts.paneId, resolvedName, previousTitle === resolvedName);
   return {
     agent: inserted,
     alreadyAdopted: false,
@@ -201,16 +202,20 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
 }
 
 /**
- * Lock the pane title against OSC rewrites, then write the mu title
- * (always, so an OSC that arrived before the lock is overwritten). The
- * lock is best-effort: identity prefers $MU_AGENT_NAME and reconcile
- * repairs titles, so a failed lock must not fail the adoption.
+ * Lock the pane title against OSC rewrites, then write the mu title, so
+ * an OSC title that landed before the lock is overwritten. The lock is
+ * best-effort ($MU_AGENT_NAME and reconcile still cover identity). The
+ * write is best-effort too when the title already matched (`matched`):
+ * it only repairs a race, and must not fail an adoption that needed no
+ * retitle.
  */
 async function lockThenTitle(
   mux: Awaited<ReturnType<typeof activeMux>>,
   paneId: string,
   title: string,
+  matched: boolean,
 ): Promise<void> {
   await mux.lockPaneTitle(paneId).catch(() => {});
-  await mux.setPaneTitle(paneId, title);
+  const write = mux.setPaneTitle(paneId, title);
+  await (matched ? write.catch(() => {}) : write);
 }
