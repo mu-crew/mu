@@ -12,6 +12,8 @@ import { getAgent } from "../agents.js";
 import { CtlUnknownOpError, ctlRequest } from "../ctl/client.js";
 import type { CtlState } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
+import { emitEvent } from "../logs.js";
+import { resolveActorIdentity } from "../tasks/claim.js";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
@@ -80,6 +82,14 @@ export async function abortAgent(
 
   const ab = await request(agent, sock, { op: "abort" });
   if (!ab.ok) throw new Error(`control socket refused the abort: ${ab.error}`);
+  // Only a real abort is logged; an idle no-op returned above.
+  emitEvent(
+    db,
+    opts.workstream,
+    "agent.abort",
+    `agent abort ${name} (state=${before}, pending=${pending})`,
+    await resolveActorIdentity(),
+  );
 
   const w = await request(agent, sock, { op: "wait", afterRuns: st.runs ?? 0, timeoutMs });
   if (!w.ok) {
@@ -124,10 +134,14 @@ export async function interruptAgent(
   opts: AbortAgentOptions,
 ): Promise<InterruptResult> {
   const r = await interruptAgentImpl(db, name, text, opts);
-  recordSend(db, { name, workstreamName: opts.workstream }, "interrupt", Buffer.byteLength(text), {
-    transport: "ctl",
-    wasBusy: r.wasBusy,
-  });
+  recordSend(
+    db,
+    { name, workstreamName: opts.workstream },
+    "interrupt",
+    Buffer.byteLength(text),
+    { transport: "ctl", wasBusy: r.wasBusy },
+    await resolveActorIdentity(),
+  );
   return r;
 }
 

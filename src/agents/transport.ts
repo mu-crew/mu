@@ -213,6 +213,8 @@ export function recordSend(
   mode: SendMode,
   bytes: number,
   fields: Record<string, string | number | boolean | undefined>,
+  /** Who sent it (resolveActorIdentity); lands in `ops.actor`. */
+  source = "system",
 ): void {
   const detail = Object.entries({ mode, ...fields })
     .filter(([, v]) => v !== undefined)
@@ -223,6 +225,7 @@ export function recordSend(
     agent.workstreamName,
     "agent.send",
     `agent send ${agent.name} (${detail}, ${bytes} bytes)`,
+    source,
   );
 }
 
