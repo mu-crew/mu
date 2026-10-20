@@ -112,3 +112,42 @@ describe("mu doctor state counts", () => {
     expect(human.stdout).toMatch(new RegExp(`ops rows\\s+: ${expected}\\b`));
   });
 });
+
+describe("mu doctor dependency cycles", () => {
+  const cycleDb = () => {
+    const db = openDb({ path: dbPath });
+    const ids = (
+      db.prepare("SELECT id, local_id FROM tasks WHERE local_id IN ('t1','t2')").all() as {
+        id: number;
+        local_id: string;
+      }[]
+    ).sort((a, b) => a.local_id.localeCompare(b.local_id));
+    const ins = db.prepare(
+      "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, 'x')",
+    );
+    ins.run(ids[0]?.id, ids[1]?.id);
+    ins.run(ids[1]?.id, ids[0]?.id);
+    db.close();
+  };
+
+  it("is ok with no cycle", async () => {
+    const r = await runCli(["doctor", "--json"], dbPath);
+    expect(JSON.parse(r.stdout).dagCycles).toEqual([]);
+  });
+
+  it("reports a sync-made cycle in human and json output, and the fix clears it", async () => {
+    cycleDb();
+    const human = await runCli(["doctor"], dbPath);
+    expect(human.stdout).toContain("1 dependency cycle(s)");
+    expect(human.stdout).toMatch(/demo: t[12] -> t[12] -> t[12]/);
+    const json = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout);
+    expect(json.dagCycles).toHaveLength(1);
+    const { fix } = json.dagCycles[0];
+    expect(fix).toMatch(/^mu task unblock t[12] --by t[12] -w demo$/);
+    const argv = fix.split(" ").slice(1);
+    const un = await runCli(argv, dbPath);
+    expect(un.error).toBeUndefined();
+    const after = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout);
+    expect(after.dagCycles).toEqual([]);
+  });
+});
