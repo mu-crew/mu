@@ -1,18 +1,19 @@
 Claude Code at Meta (https://fburl.com/claude.code.users)
 Using AI Gateway (Vertex upstream)
-────────────────────────────────────────
-Accessing workspace:
 
-/private/tmp/trust-fixture
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
 
-Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source
-project, or work from your team). If not, take a moment to review what's in this folder first.
+ /private/tmp/trust-fixture
 
-Claude Code'll be able to read, edit, and execute files here.
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source
+ project, or work from your team). If not, take a moment to review what's in this folder first.
 
-Security guide
+ Claude Code'll be able to read, edit, and execute files here.
 
-❯ No, exit
-Yes, I trust this folder
+ Security guide
 
-Enter to confirm · Esc to cancel
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
