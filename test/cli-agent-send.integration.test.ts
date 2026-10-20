@@ -86,7 +86,9 @@ describe("mu agent send workspace staleness", () => {
     expect(exitCode).toBeNull();
     expect(stderr).toContain("WARN: worker-1 workspace is 12 commits behind main");
     expect(stdout).toContain("mu workspace refresh worker-1 -w auth");
-    expect(calls.map((c) => c[0])).toEqual([
+    // The send itself; a display-message after it is the caller-identity
+    // probe for the agent.send op (only when $TMUX_PANE is set).
+    expect(calls.map((c) => c[0]).filter((v) => v !== "display-message")).toEqual([
       "copy-mode",
       "set-buffer",
       "paste-buffer",
@@ -153,7 +155,9 @@ describe("mu agent send workspace staleness", () => {
     const out = JSON.parse(stdout) as { staleness: null; transport: string };
     expect(out.staleness).toBeNull();
     expect(out.transport).toBe("mux");
-    expect(calls.map((c) => c[0])).toEqual([
+    // The send itself; a display-message after it is the caller-identity
+    // probe for the agent.send op (only when $TMUX_PANE is set).
+    expect(calls.map((c) => c[0]).filter((v) => v !== "display-message")).toEqual([
       "copy-mode",
       "set-buffer",
       "paste-buffer",
