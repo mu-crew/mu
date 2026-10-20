@@ -62,12 +62,19 @@ export const RESERVED_WORKSTREAM_NAMES = new Set(["scratch"]);
 // ("no sessions", "not alive") rather than fail `mu workstream list`
 // on a box where nobody is running a multiplexer right now.
 
-async function listMuxSessions(): Promise<readonly { name: string }[]> {
+/** Live session names, or undefined when the mux could not be listed
+ *  (callers fall back to per-session `sessionExists` probes, since an
+ *  empty answer from a failed list would mark every session dead). */
+async function tryListMuxSessions(): Promise<readonly { name: string }[] | undefined> {
   try {
     return await (await activeMux()).listSessions();
   } catch {
-    return [];
+    return undefined;
   }
+}
+
+async function listMuxSessions(): Promise<readonly { name: string }[]> {
+  return (await tryListMuxSessions()) ?? [];
 }
 
 async function sessionAlive(session: string): Promise<boolean> {
@@ -436,13 +443,18 @@ export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
   // missing mux degrades to "registered workstreams only" rather than
   // failing a read-only listing.
   const muxNames = new Set<string>();
-  for (const session of await listMuxSessions()) {
+  const sessions = await tryListMuxSessions();
+  for (const session of sessions ?? []) {
     if (session.name.startsWith(RESERVED_WORKSTREAM_PREFIX))
       muxNames.add(session.name.slice(RESERVED_WORKSTREAM_PREFIX.length));
   }
 
+  // Reuse the one list-sessions answer for liveness instead of a
+  // has-session spawn per workstream; on a failed list, each summary
+  // probes its own session.
+  const live = sessions && new Set(sessions.map((s) => s.name));
   const allNames = Array.from(new Set([...dbNames, ...muxNames])).sort();
-  return Promise.all(allNames.map((name) => summarizeWorkstream(db, { workstream: name })));
+  return Promise.all(allNames.map((name) => summarize(db, { workstream: name }, live)));
 }
 
 /**
@@ -516,11 +528,21 @@ export async function summarizeWorkstream(
   db: Db,
   opts: WorkstreamOptions,
 ): Promise<WorkstreamSummary> {
+  return summarize(db, opts, undefined);
+}
+
+/** `liveSessions`: the caller's already-fetched session names; when
+ *  undefined, probe this workstream's session itself. */
+async function summarize(
+  db: Db,
+  opts: WorkstreamOptions,
+  liveSessions: ReadonlySet<string> | undefined,
+): Promise<WorkstreamSummary> {
   const muxSession = opts.muxSession ?? `mu-${opts.workstream}`;
   return {
     name: opts.workstream,
     muxSession,
-    muxAlive: await sessionAlive(muxSession),
+    muxAlive: liveSessions ? liveSessions.has(muxSession) : await sessionAlive(muxSession),
     agentCount: countAgents(db, opts.workstream),
     taskCount: countTasks(db, opts.workstream),
     noteCount: countNotes(db, opts.workstream),
