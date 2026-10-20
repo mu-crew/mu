@@ -1567,10 +1567,13 @@ describe("nudges yield to a delegate answer on its way", () => {
       p.pi.on(e, h as (e: unknown, c: DelegateCtx) => unknown);
     muPi({ ...p.pi, on, sendUserMessage: () => {}, registerCommand: () => {} }, run);
     /** One settle through every handler: the merged nudge result, if any. */
-    const settle = async () => {
+    const settle = async (ctx: Partial<MuPiContext> = {}) => {
       let out: unknown;
       for (const h of p.handlers.get("agent_before_settle") ?? []) {
-        const r = await h({ type: "agent_before_settle", outcome: "completed" }, {});
+        const r = await h(
+          { type: "agent_before_settle", outcome: "completed" },
+          ctx as DelegateCtx,
+        );
         if (r !== undefined) out = r;
       }
       return out as { continue?: boolean } | undefined;
@@ -1612,6 +1615,15 @@ describe("nudges yield to a delegate answer on its way", () => {
     await t.p.drainQueue(); // the answer enters the conversation
     // The held settle was not the prompt's one nudge.
     expect(await t.settle()).toMatchObject({ continue: true });
+  });
+
+  it("no continuation while an ordinary user message is queued", async () => {
+    const t = setup();
+    t.p.state.busy = true;
+    await t.dispatch();
+    // pi counts a queued user follow-up itself: its turn comes next.
+    expect(await t.settle({ hasPendingMessages: () => true })).toBeUndefined();
+    expect(await t.settle({ hasPendingMessages: () => false })).toMatchObject({ continue: true });
   });
 
   it("re-checks after the nudge's read: an answer that lands meanwhile wins", async () => {

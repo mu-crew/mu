@@ -41,7 +41,7 @@ const MARK_END = "<!-- /mu:keep-driving -->";
 const WAIT_HINT_MAX = 8;
 
 /** The slice of pi's ExtensionContext the nudge reads. */
-export type MuNudgeCtx = { mode?: string; hasUI?: boolean };
+export type MuNudgeCtx = { mode?: string; hasUI?: boolean; hasPendingMessages?: () => boolean };
 
 /** The slice of pi's ExtensionAPI the nudge uses. */
 export interface MuNudgeApi {
@@ -67,8 +67,14 @@ const notNested: NestedCheck = () => false;
  * follow-ups), "blocked" while an extension dialog is open. undefined
  * when nothing holds the settle.
  */
-export type SettleHold = () => "answer" | "blocked" | undefined;
+export type SettleHold = (ctx?: MuNudgeCtx) => "answer" | "blocked" | undefined;
 const noHold: SettleHold = () => undefined;
+
+/** A queued user message (pi's own count) or a held settle: either way the
+ *  next turn is already coming, so a continuation would run ahead of it. */
+export function withQueuedInput(hold: SettleHold): SettleHold {
+  return (ctx) => (ctx?.hasPendingMessages?.() ? "answer" : hold(ctx));
+}
 
 /** No one can answer a nudge: print or json mode. */
 function noUI(ctx: MuNudgeCtx | undefined): boolean {
@@ -396,7 +402,7 @@ export function parallelSettle(
             }
           }),
         );
-        const late = hold();
+        const late = hold(ctx);
         const fired = results.flatMap((r) => {
           if (r === undefined) return [];
           if (late === "answer" || (late === "blocked" && r.continue === true)) {
@@ -463,13 +469,13 @@ export function registerNudge(
     for (const ws of dispatchedWorkstreams(cmd) ?? []) armed.add(ws);
   });
 
-  pi.on("agent_before_settle", async (event) => {
-    if (fired || armed.size === 0 || nested() || hold()) return;
+  pi.on("agent_before_settle", async (event, ctx) => {
+    if (fired || armed.size === 0 || nested() || hold(ctx)) return;
     if (outcomeOf(event) !== "completed") return; // Esc or an error: stop
     fired = true; // once per prompt, even if the check below fails
     const refs = await inProgress(run, [...armed]);
     if (refs === undefined || refs.length === 0) return;
-    if (hold()) {
+    if (hold(ctx)) {
       fired = false; // the answer's turn settles again; nudge then if still due
       return;
     }
@@ -552,12 +558,12 @@ export function registerCloseNudge(
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {
-    if (fired || nested() || noUI(ctx) || hold()) return; // nested: workerIdentity is the parent's
+    if (fired || nested() || noUI(ctx) || hold(ctx)) return; // nested: workerIdentity is the parent's
     if (outcomeOf(event) !== "completed") return;
     fired = true;
     const names = await ownedInProgress(run, me.agent, me.workstream);
     if (names === undefined || names.length === 0) return;
-    if (hold()) {
+    if (hold(ctx)) {
       fired = false;
       return;
     }
@@ -615,7 +621,7 @@ export function registerRefuteNudge(
   if (!nudgeEnabled()) return;
   // It only informs, so an open dialog does not hold it; an answer on its
   // way does, since its turn settles again and the notice can wait for it.
-  const answerDue = () => hold() === "answer";
+  const answerDue = (ctx?: MuNudgeCtx) => hold(ctx) === "answer";
   const armed = new Map<string, { ws: string; id: string }>();
   let fired = false;
 
@@ -633,7 +639,7 @@ export function registerRefuteNudge(
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {
-    if (fired || armed.size === 0 || nested() || noUI(ctx) || answerDue()) return;
+    if (fired || armed.size === 0 || nested() || noUI(ctx) || answerDue(ctx)) return;
     if (outcomeOf(event) !== "completed") return;
     fired = true;
     // One read per armed task, all at once: the settle waits for the slowest.
@@ -641,7 +647,7 @@ export function registerRefuteNudge(
     const refuted = await Promise.all(tasks.map(([, t]) => briefRefuted(run, t.ws, t.id)));
     const refs = tasks.flatMap(([ref], i) => (refuted[i] === false ? [ref] : []));
     if (refs.length === 0) return;
-    if (answerDue()) {
+    if (answerDue(ctx)) {
       fired = false;
       return;
     }
