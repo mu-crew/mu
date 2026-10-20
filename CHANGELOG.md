@@ -12,6 +12,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **Spawned agents use the spawner's database.** Panes inherit the tmux
+  server's env, so under `MU_DB_PATH=/tmp/x.db` a worker's `mu` hit the
+  real DB. Local spawns now pin `MU_DB_PATH` (absolute, skipping
+  `:memory:`) and `MU_STATE_DIR` in the pane env.
 - **`paneExists` no longer reads a failed tmux probe as a dead pane.**
   Any nonzero `display-message` exit returned false, so a permission or
   socket error looked like "gone" to liveness gates such as
