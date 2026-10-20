@@ -1,7 +1,7 @@
 // mu — herdr substrate (TOPOLOGY half).
 //
 // Single source of truth for all herdr interactions. Every herdr
-// invocation goes through `herdr(args)`, which wraps execa and produces
+// invocation goes through `herdr(args)`, which wraps child_process and produces
 // structured `HerdrError`s carrying args + the server's JSON error.
 //
 // ─── The mapping ──────────────────────────────────────────────────────
@@ -56,6 +56,7 @@
 // and `startAgentInPane` is the second step mu calls afterwards.
 // See `MuxBackend.startAgentInPane` for how spawn.ts branches on it.
 
+import { execFileCapture } from "../exec-file.js";
 import type { NextStep } from "../output.js";
 import { sleep } from "./tmux.js";
 import {
@@ -363,16 +364,8 @@ function herdrGlobalFlags(): readonly string[] {
   return ["--session", session];
 }
 
-const realExecutor: HerdrExecutor = async (args) => {
-  // Lazy-load execa: ~110 modules that --version and DB-only verbs never need.
-  const { execa } = await import("execa");
-  const result = await execa("herdr", [...herdrGlobalFlags(), ...args], { reject: false });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    exitCode: result.exitCode ?? null,
-  };
-};
+const realExecutor: HerdrExecutor = (args) =>
+  execFileCapture("herdr", [...herdrGlobalFlags(), ...args]);
 
 let currentExecutor: HerdrExecutor = realExecutor;
 
@@ -387,7 +380,7 @@ export function setHerdrExecutor(executor: HerdrExecutor): HerdrExecutor {
   return previous;
 }
 
-/** Restore the real (execa-backed) executor. */
+/** Restore the real (child_process-backed) executor. */
 export function resetHerdrExecutor(): void {
   currentExecutor = realExecutor;
 }

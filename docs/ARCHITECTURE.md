@@ -130,6 +130,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/agents/adopt.ts` | register an existing pane as an agent |
 | `src/agents/kick.ts` | `mu agent kick`: signal a wedged pane's foreground process group |
 | `src/agents/errors.ts` | typed agent errors |
+| `src/exec-file.ts` | `execFileCapture`: child_process runner shared by the tmux, herdr, kick and murmur executors (no execa) |
 | `src/agent-state.ts` | runtime state from ctl, herdr or murmur; `unknown` with a reason |
 | `src/reconcile.ts` | ghost prune and orphan surfacing |
 | `src/mux/index.ts` | cluster barrel that `src/mux.ts` re-exports |

@@ -25,6 +25,7 @@
 
 import { type AgentRow, getAgent } from "../agents.js";
 import type { Db } from "../db.js";
+import { execFileCapture } from "../exec-file.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import type { HasNextSteps, NextStep } from "../output.js";
@@ -102,18 +103,7 @@ export type KickProcessExecutor = (
   args: readonly string[],
 ) => Promise<KickProcessExecResult>;
 
-const realExecutor: KickProcessExecutor = async (cmd, args) => {
-  // Lazy-load execa: this module is on the cold path (kick is rare),
-  // and the unit tests swap in a mock executor before any real call
-  // would be made.
-  const { execa } = await import("execa");
-  const result = await execa(cmd, [...args], { reject: false });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    exitCode: result.exitCode ?? null,
-  };
-};
+const realExecutor: KickProcessExecutor = (cmd, args) => execFileCapture(cmd, args);
 
 let currentExecutor: KickProcessExecutor = realExecutor;
 

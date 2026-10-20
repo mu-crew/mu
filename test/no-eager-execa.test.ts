@@ -1,6 +1,7 @@
 // Guards f_eager_execa: execa pulls in ~110 modules, so a static import
 // anywhere in src/ puts it on every CLI startup (--version, DB-only
-// verbs). Load it with `await import("execa")` at the call site instead.
+// verbs). The multiplexer, kick and murmur executors use node:child_process
+// (src/exec-file.ts); a rare caller may `await import("execa")` at its call site.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,5 +21,12 @@ describe("execa stays off the startup path", () => {
       /^\s*import\s[^;]*from\s+["']execa["']/m.test(readFileSync(f, "utf8")),
     );
     expect(offenders).toEqual([]);
+  });
+
+  it("the tmux/herdr/kick/murmur executors do not load execa at all", () => {
+    for (const f of ["mux/tmux.ts", "mux/herdr.ts", "agents/kick.ts", "agent-state.ts"]) {
+      const src = readFileSync(join(__dirname, "..", "src", f), "utf8");
+      expect(src, f).not.toMatch(/import\(["']execa["']\)/);
+    }
   });
 });
