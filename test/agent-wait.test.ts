@@ -308,6 +308,26 @@ describe("waitForAgents", () => {
       expect(res.agents[0]?.fired).toBe(true);
     });
 
+    it("a polled dialog after a dropped watch ends the wait blocked, not fired", async () => {
+      const blocked = { kind: "confirm", title: "Allow rm?", since: 1 };
+      const res = await waitForAgents(db, [ref], {
+        pollMs: 1,
+        timeoutMs: 5_000,
+        readStatuses: async () =>
+          new Map([[`${ws}/worker-1`, { status: "needs_permission" as const, blocked }]]),
+        watch: async () => ({
+          initial: { status: "busy" },
+          settled: Promise.resolve({ status: "unknown", unknownReason: "ctl wait interrupted" }),
+        }),
+      });
+      expect(res.timedOut).toBe(false);
+      expect(res.agents[0]).toMatchObject({
+        fired: false,
+        status: "needs_permission",
+        blocked,
+      });
+    });
+
     it("times out and aborts the watch signal", async () => {
       let signal: AbortSignal | undefined;
       const res = await waitForAgents(db, [ref], {

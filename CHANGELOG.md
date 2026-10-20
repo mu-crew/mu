@@ -62,7 +62,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   exit 7. The `mu_delegate` follow-up says the delegate is blocked and
   has not finished, keeps the pane, and copies no partial answer. Older
   extensions send no field and ignore the new `returnOnBlocked` wait
-  flag, so they behave as before.
+  flag, so they behave as before. A held wait whose connection drops
+  falls back to polling, and a dialog seen by that poll also ends the
+  wait `blocked` (exit 7) rather than counting busy → needs_permission
+  as a finished run.
 
 ### Changed
 

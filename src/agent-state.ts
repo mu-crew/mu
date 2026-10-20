@@ -26,6 +26,8 @@ export interface StateReading {
   pending?: boolean;
   /** ctl only: pi's settled-run count (`mu agent wait --after-runs`). */
   runs?: number;
+  /** ctl only: the extension dialog pi is waiting on (state needs_permission). */
+  blocked?: CtlBlocked;
 }
 
 export interface StateAgentRef {
@@ -303,7 +305,7 @@ export async function readAgentStates(
         source: "ctl",
         since: blocked?.since ?? probe.status.since,
         alive: true,
-        ...(blocked !== undefined ? { reason: blockedReason(blocked) } : {}),
+        ...(blocked !== undefined ? { reason: blockedReason(blocked), blocked } : {}),
         ctl: "ok",
         pending: probe.status.pending,
         runs: probe.status.runs,

@@ -263,7 +263,11 @@ export async function waitForAgents(
       }
       st.status = snap.status;
       st.unknownReason = snap.status === "unknown" ? snap.unknownReason : undefined;
-      if (snap.status === "busy") {
+      if (snap.blocked !== undefined) {
+        // An open extension dialog: the run is not finished, whatever the
+        // busy history says. Reached when a ctl watch dropped back to polling.
+        st.blocked = snap.blocked;
+      } else if (snap.status === "busy") {
         st.wasBusy = true;
       } else if (snap.status !== "unknown" && st.wasBusy) {
         // Unknown is absence of a reading, not evidence that work ended.
