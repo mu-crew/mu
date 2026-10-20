@@ -290,6 +290,28 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 
+  const spawnRows = () =>
+    db
+      .prepare("SELECT intent, payload FROM ops WHERE intent LIKE 'agent.spawn%' ORDER BY rowid")
+      .all() as { intent: string; payload: string }[];
+
+  it("a successful spawn logs its ctl state", async () => {
+    installLivePanes({ extension: true });
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(spawnRows()[0]?.payload).toContain("ctl=ok)");
+  });
+
+  it("a rolled-back spawn logs one agent.spawn_failed", async () => {
+    installLivePanes({ scrollback: "Error: No API key found for amazon-bedrock" });
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch(() => {});
+    expect(spawnRows()).toEqual([
+      {
+        intent: "agent.spawn_failed",
+        payload: "agent spawn failed worker-1 (phase=liveness, error=AgentSpawnStartupError)",
+      },
+    ]);
+  });
+
   it("scans for a startup error once the handshake times out, and rolls back", async () => {
     installLivePanes({ scrollback: "Error: No API key found for amazon-bedrock" });
     const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);

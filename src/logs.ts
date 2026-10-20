@@ -594,6 +594,7 @@ export function emitEvent(
  */
 export type LocalIntent =
   | "agent.spawn"
+  | "agent.spawn_failed"
   | "agent.close"
   | "agent.adopt"
   | "agent.kick"

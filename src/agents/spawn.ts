@@ -501,6 +501,8 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   let ownsRow = hasWorkspace;
   const wantsCtl = opts.ctl !== false && speaksMuCtl(cli, command) && defaultSpawnCtlMs() !== 0;
   let ctl: SpawnCtl | undefined;
+  // Last phase entered, recorded in agent.spawn_failed if we roll back.
+  let phase: "pane" | "liveness" = "pane";
   try {
     // Cross-process critical section: the tmux topology check-then-act
     // (`sessionExists` → `new-session` / `new-window` / `split-window`)
@@ -555,6 +557,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     });
     paneId = created.pid;
     agent = created.row;
+    phase = "liveness";
     // Liveness check: wait briefly, then verify the pane is still alive.
     // Catches the silent-spawn-failure class of bugs where the CLI dies
     // immediately (lock conflict, bad credentials, etc.). On failure,
@@ -615,6 +618,18 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     }
   } catch (err) {
     await rollbackSpawn(db, opts.name, paneId, hasWorkspace, ownsRow, opts.workstream);
+    // Terminal record for a rolled-back spawn. Never masks `err`.
+    try {
+      const errName = err instanceof Error ? err.constructor.name : typeof err;
+      emitEvent(
+        db,
+        opts.workstream,
+        "agent.spawn_failed",
+        `agent spawn failed ${opts.name} (phase=${phase}, error=${errName})`,
+      );
+    } catch {
+      // logging is best-effort
+    }
     if (hasWorkspace) attachOrphanCleanupHint(err, opts.name, opts.workstream);
     throw err;
   }
@@ -630,7 +645,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     db,
     opts.workstream,
     "agent.spawn",
-    `agent spawn ${opts.name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${paneId})`,
+    `agent spawn ${opts.name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${paneId}, ctl=${ctl})`,
   );
   // Lint-grade stderr nudge when the operator picked a name that
   // doesn't fit the <role>-<n> smallest-unused-suffix convention. The
