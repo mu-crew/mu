@@ -682,8 +682,12 @@ function serveCtl(pi: MuPiApi): () => boolean {
         );
       case "abort":
         if (!g.ctx) return fail("no pi context yet");
-        g.ctx.abort();
-        return { v: V, ok: true, state: g.state };
+        {
+          // The run may have settled since the caller's status probe.
+          const wasBusy = !g.ctx.isIdle();
+          if (wasBusy) g.ctx.abort();
+          return { v: V, ok: true, state: g.state, wasBusy };
+        }
       case "interrupt":
         return interrupt(req, conn);
       default:

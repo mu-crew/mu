@@ -89,7 +89,10 @@ export type CtlReply =
         lastError?: string;
         /** wait only: the settled pi's session file, where its full transcript lives. */
         sessionFile?: string;
-        /** interrupt only: pi was busy, so the turn was aborted before the send. */
+        /**
+         * abort, interrupt: pi was busy, so a turn was aborted. For abort,
+         * absent from older extensions (which always call abort).
+         */
         wasBusy?: boolean;
       })
   | { v: 1; ok: false; error: string; ops?: string[] };
