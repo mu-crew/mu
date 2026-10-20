@@ -264,8 +264,8 @@ export async function cmdDoctor(
   const fleet = checkFleetHazards(db, { dbPath: defaultDbPath() });
   let sawHazard = printHazards(fleet);
 
-  // Sync can merge two valid edges into a cycle; its tasks never turn
-  // ready. Report-only: the fix is an existing verb.
+  // Sync can merge two valid edges into a cycle; its members block each
+  // other until one closes. Report-only: the fix is an existing verb.
   console.log(pc.bold("\ndag"));
   const cycles = findEdgeCycles(db);
   if (cycles.length === 0) {
@@ -273,7 +273,7 @@ export async function cmdDoctor(
   } else {
     sawHazard = true;
     console.log(
-      `  ${"cycles".padEnd(16)} : ${pc.yellow("WARN")} ${pc.dim(`${cycles.length} dependency cycle(s); members never become ready`)}`,
+      `  ${"cycles".padEnd(16)} : ${pc.yellow("WARN")} ${pc.dim(`${cycles.length} dependency cycle(s); members block each other until one closes. Re-run doctor after fixing`)}`,
     );
     for (const c of cycles) {
       console.log(`      ${c.workstream}: ${[...c.path, c.path[0]].join(" -> ")}`);

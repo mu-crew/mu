@@ -150,4 +150,46 @@ describe("mu doctor dependency cycles", () => {
     const after = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout);
     expect(after.dagCycles).toEqual([]);
   });
+
+  it("reports overlapping cycles, and applying every fix clears them all", async () => {
+    // Replica A: t1->t2, t2->t3, t1->t3. Replica B: t3->t1. Merged: two
+    // cycles sharing t1 and t3 (t1->t2->t3->t1 and t1->t3->t1).
+    const db = openDb({ path: dbPath });
+    const id = (l: string) =>
+      (
+        db
+          .prepare(
+            "SELECT id FROM tasks WHERE local_id = ? AND workstream_id = (SELECT id FROM workstreams WHERE name = 'demo')",
+          )
+          .get(l) as { id: number }
+      ).id;
+    const ins = db.prepare(
+      "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, 'x')",
+    );
+    for (const [f, t] of [
+      ["t1", "t2"],
+      ["t2", "t3"],
+      ["t1", "t3"],
+      ["t3", "t1"],
+    ] as const)
+      ins.run(id(f), id(t));
+    db.close();
+    for (let round = 0; round < 4; round++) {
+      const { dagCycles } = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout) as {
+        dagCycles: { fix: string }[];
+      };
+      if (round === 0) expect(dagCycles.length).toBeGreaterThanOrEqual(2);
+      if (round === 1) expect(dagCycles).toEqual([]); // one round of fixes is enough here
+      if (dagCycles.length === 0) return;
+      for (const { fix } of dagCycles) await runCli(fix.split(" ").slice(1), dbPath);
+    }
+    throw new Error("cycles survived four rounds of fixes");
+  });
+
+  it("does not claim a cycle blocks readiness forever", async () => {
+    cycleDb();
+    const human = await runCli(["doctor"], dbPath);
+    expect(human.stdout).not.toContain("never become ready");
+    expect(human.stdout).toContain("until one closes");
+  });
 });
