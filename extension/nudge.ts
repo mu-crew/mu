@@ -6,7 +6,7 @@
  * skill's keep-driving rule, and one continuation. If it stops again,
  * that stop stands. Not a goal loop: no re-check, no counter.
  *
- * Its only read is `mu state --json`, its only write `mu log --kind
+ * Its only read is `mu task list --status IN_PROGRESS --json`, its only write `mu log --kind
  * nudge`; the armed set and fired flag are per-prompt scratch. The rule
  * text lives in skills/mu/SKILL.md between the keep-driving markers.
  *
@@ -305,32 +305,38 @@ export function dispatchedTasks(command: string): { ws: string; id: string }[] {
   return out;
 }
 
-type Card = { workstreamName?: string; inProgress?: { name?: string }[] };
-/** `mu state --json` prints one bare card for one workstream, and
- *  `{ workstreams: [...] }` for several (or none named). */
-type StateJson = Card & { workstreams?: Card[] };
+type ListJson = { items?: { name?: string; workstreamName?: string }[] };
 
-/** IN_PROGRESS task refs per workstream, from `mu state --json`. */
+/**
+ * IN_PROGRESS task refs, one `mu task list --status IN_PROGRESS --json`
+ * per workstream, all in flight at once. (`mu state` also lists tmux
+ * panes and builds orphans and workspaces; this read needs none of it.
+ * `task list` does not reap dead owners, so a task a ghost agent still
+ * owns shows until the next `mu state` or `mu task wait` reaps it.)
+ * A workstream named "" is the default one: no `-w`.
+ */
 async function inProgress(run: MuRunner, workstreams: string[]): Promise<string[] | undefined> {
-  const named = workstreams.filter((w) => w !== "");
-  const args = ["state", "--json", "--events", "0"];
-  for (const w of named) args.push("-w", w);
-  const r = await run(args);
-  if (r.code !== 0) return undefined;
-  let json: StateJson;
-  try {
-    json = JSON.parse(r.stdout) as StateJson;
-  } catch {
-    return undefined;
-  }
-  const cards = json.workstreams ?? [json];
-  const refs: string[] = [];
-  for (const ws of cards) {
-    for (const t of ws.inProgress ?? []) {
-      if (t.name) refs.push(`${ws.workstreamName ?? ""}/${t.name}`);
-    }
-  }
-  return refs;
+  const results = await Promise.all(
+    workstreams.map(async (w) => {
+      const r = await run([
+        "task",
+        "list",
+        "--status",
+        "IN_PROGRESS",
+        "--json",
+        ...(w ? ["-w", w] : []),
+      ]);
+      if (r.code !== 0) return undefined;
+      try {
+        const items = (JSON.parse(r.stdout) as ListJson).items ?? [];
+        return items.flatMap((t) => (t.name ? [`${t.workstreamName ?? w}/${t.name}`] : []));
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+  if (results.some((r) => r === undefined)) return undefined;
+  return results.flatMap((r) => r ?? []);
 }
 
 /** The nudge text: the rule verbatim, then the live count and the wait. */

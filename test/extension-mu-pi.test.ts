@@ -501,10 +501,12 @@ describe("mu pi extension", () => {
           };
         if (noun === "task" && verb === "notes")
           return { code: 0, stdout: JSON.stringify({ items: [] }), stderr: "" };
-        if (noun === "state")
+        if (noun === "task" && verb === "list")
           return {
             code: 0,
-            stdout: JSON.stringify({ workstreamName: "ws", inProgress: [{ name: "t1" }] }),
+            stdout: JSON.stringify({
+              items: [{ name: "t1", workstreamName: "ws", status: "IN_PROGRESS" }],
+            }),
             stderr: "",
           };
         return { code: 0, stdout: "", stderr: "" };

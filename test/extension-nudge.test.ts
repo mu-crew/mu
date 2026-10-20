@@ -32,23 +32,21 @@ function fakePi() {
   return { pi, emit, handlers };
 }
 
-// `mu state --json` with one -w prints the bare card (the shape a real
-// e2e run hit); several, or none, print { workstreams: [...] }.
-const card = (ws: string, names: string[]): MuResult => ({
-  code: 0,
-  stdout: JSON.stringify({ workstreamName: ws, inProgress: names.map((name) => ({ name })) }),
-  stderr: "",
-});
-const multi = (cards: [string, string[]][]): MuResult => ({
-  code: 0,
-  stdout: JSON.stringify({
-    workstreams: cards.map(([w, names]) => ({
-      workstreamName: w,
-      inProgress: names.map((name) => ({ name })),
-    })),
-  }),
-  stderr: "",
-});
+// `mu task list --status IN_PROGRESS --json -w <ws>`: one answer per
+// workstream, built from a { workstream: names } table.
+type Table = Record<string, string[]>;
+const card = (ws: string, names: string[]): Table => ({ [ws]: names });
+const multi = (cards: [string, string[]][]): Table => Object.fromEntries(cards);
+const listAnswer = (table: Table, args: readonly string[]): MuResult => {
+  const ws = args[args.indexOf("-w") + 1] ?? "";
+  return {
+    code: 0,
+    stdout: JSON.stringify({
+      items: (table[ws] ?? []).map((name) => ({ name, workstreamName: ws, status: "IN_PROGRESS" })),
+    }),
+    stderr: "",
+  };
+};
 
 const bash = (command: string) => ({ toolName: "bash", toolCallId: "t1", input: { command } });
 
@@ -62,11 +60,12 @@ afterEach(() => {
   else process.env.MU_NUDGE = saved;
 });
 
-function setup(state: MuResult) {
+function setup(state: Table, fixed?: MuResult) {
   const f = fakePi();
-  const run = vi.fn(async (args: readonly string[]) =>
-    args[0] === "state" ? state : { code: 0, stdout: "", stderr: "" },
-  );
+  const run = vi.fn(async (args: readonly string[]) => {
+    if (args[0] !== "task") return { code: 0, stdout: "", stderr: "" };
+    return fixed ?? listAnswer(state, args);
+  });
   registerNudge(f.pi, run, SKILL);
   return { ...f, run };
 }
@@ -144,7 +143,15 @@ describe("registerNudge", () => {
     await emit("tool_call", bash("mu agent send worker-1 -w auth --fresh 'go'"));
     expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls[0]?.[0]).toEqual(["state", "--json", "--events", "0", "-w", "auth"]);
+    expect(run.mock.calls[0]?.[0]).toEqual([
+      "task",
+      "list",
+      "--status",
+      "IN_PROGRESS",
+      "--json",
+      "-w",
+      "auth",
+    ]);
   });
 
   it("dispatch + work in progress: one visible entry, continue, one log line", async () => {
@@ -177,8 +184,8 @@ describe("registerNudge", () => {
     ]);
   });
 
-  it("reads the multi-workstream shape too", async () => {
-    const { emit } = setup(
+  it("lists each dispatched workstream, in parallel", async () => {
+    const { emit, run } = setup(
       multi([
         ["one", ["a"]],
         ["two", ["b"]],
@@ -189,6 +196,10 @@ describe("registerNudge", () => {
       entries: { content: string }[];
     };
     expect(r.entries[0]?.content).toContain("mu task wait one/a two/b");
+    expect(run.mock.calls.filter((c) => c[0][0] === "task").map((c) => c[0].at(-1))).toEqual([
+      "one",
+      "two",
+    ]);
   });
 
   it("fires at most once per prompt", async () => {
@@ -216,8 +227,8 @@ describe("registerNudge", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("a failing mu state: no nudge, and no retry within the prompt", async () => {
-    const { emit, run } = setup({ code: 3, stdout: "", stderr: "no such workstream" });
+  it("a failing mu task list: no nudge, and no retry within the prompt", async () => {
+    const { emit, run } = setup({}, { code: 3, stdout: "", stderr: "no such workstream" });
     await emit("tool_call", bash("mu agent send worker-1 -w auth 'go'"));
     expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
     expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
