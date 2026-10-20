@@ -24,7 +24,13 @@ import {
   type TaskRow,
 } from "./tasks.js";
 import { getParallelTracks, type Track } from "./tracks.js";
-import { type CommitSummary, detectBackend, type VcsBackend, type VcsBackendName } from "./vcs.js";
+import {
+  type CommitSummary,
+  detectBackend,
+  type ProbeReport,
+  type VcsBackend,
+  type VcsBackendName,
+} from "./vcs.js";
 import {
   decorateWithDirty,
   decorateWithStaleness,
@@ -348,7 +354,8 @@ function mergeWorkspaceSlowFields(
 /** Backends detected for `withRecentCommits`, per project root. Detection
  *  spawns up to 4 processes (jj, sl x2, git) and the answer cannot change
  *  while the TUI polls the same cwd every 10 s. `none` is not cached so a
- *  later `git init` is still noticed. Only this path reads the cache; the
+ *  later `git init` is still noticed; nor is a detection during which a
+ *  root probe failed indeterminately. Only this path reads the cache; the
  *  one-shot `mu state` never asks for commits. */
 const recentCommitsBackends = new Map<string, VcsBackend>();
 
@@ -364,8 +371,11 @@ async function loadRecentCommits(
   const projectRoot = process.cwd();
   let backend = recentCommitsBackends.get(projectRoot);
   if (backend === undefined) {
-    backend = await detectBackend(projectRoot);
-    if (backend.name !== "none") recentCommitsBackends.set(projectRoot, backend);
+    const report: ProbeReport = { failed: false };
+    backend = await detectBackend(projectRoot, report);
+    // A probe that failed (rather than cleanly answering "not this VCS")
+    // may have hidden a higher-precedence backend; re-detect next tick.
+    if (backend.name !== "none" && !report.failed) recentCommitsBackends.set(projectRoot, backend);
   }
   if (backend.name === "none") return { backend: null, items: [] };
   return { backend: backend.name, items: await backend.recentCommits(projectRoot, opt.limit) };

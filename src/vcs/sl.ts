@@ -31,13 +31,13 @@ import {
 export const slBackend: VcsBackend = {
   name: "sl",
 
-  async detect(projectRoot) {
-    const root = await probeVcsRootPath("sl", ["root"], projectRoot);
+  async detect(projectRoot, report) {
+    const root = await probeVcsRootPath("sl", ["root"], projectRoot, report);
     if (root === null) return false;
     // Meta's Sapling build can transparently operate in plain git repos
     // by creating `.git/sl`. That should not beat git in BACKENDS order.
     // `--dotdir` keeps true sl / hg-compat repos (`.sl` / `.hg`) distinct.
-    const dotdir = await probeVcsRootPath("sl", ["root", "--dotdir"], projectRoot);
+    const dotdir = await probeVcsRootPath("sl", ["root", "--dotdir"], projectRoot, report);
     return dotdir !== null && isSaplingDotdir(dotdir);
   },
 

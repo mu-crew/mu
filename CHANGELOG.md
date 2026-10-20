@@ -77,8 +77,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `git log` just to learn the same backend again. It now caches the
   backend per project root for the TUI's lifetime (~4 of 5 processes per
   tick; ticks after the first dropped from ~690 to ~175 ms best case on
-  a loaded machine). A `none` result is not cached, and `mu state` is
-  unchanged (it never probes the VCS).
+  a loaded machine). A `none` result is not cached, nor is a detection
+  during which a root probe failed (spawn error, signal) rather than
+  cleanly answering "not this VCS": a transient `jj root` failure in a
+  colocated jj/git repo no longer pins git. `mu state` is unchanged (it
+  never probes the VCS).
 - **Task, track and sync-peer sorts use code-unit order, not
   `localeCompare`.** The first `localeCompare` call initialised ICU
   (~4 ms on nearly every list verb). Ties by name now sort by code unit,

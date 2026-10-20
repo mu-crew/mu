@@ -36,8 +36,8 @@ import { type FreeWorkspaceResult, type VcsBackend, WorkspaceConflictError } fro
 export const jjBackend: VcsBackend = {
   name: "jj",
 
-  async detect(projectRoot) {
-    return probeVcsRoot("jj", ["root"], projectRoot);
+  async detect(projectRoot, report) {
+    return probeVcsRoot("jj", ["root"], projectRoot, report);
   },
 
   async createWorkspace(opts) {
