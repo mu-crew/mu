@@ -16,16 +16,27 @@ import type { AgentWaitAgentState } from "./wait.js";
  *   (`lastError`); the agent is alive and idle.
  * - `died`: the pane or its control socket went away mid-wait.
  * - `timeout`: still working when the wait gave up; the pane is untouched.
+ * - `blocked`: not finished; pi is waiting on an extension dialog
+ *   (`blocked` holds its kind and title). The pane is untouched and needs
+ *   a human (or an attach) to answer it.
  * - `pending`: not finished, and the wait ended for another reason
  *   (`--any` fired on a sibling).
  */
-export type DelegateOutcome = "done" | "empty" | "error" | "died" | "timeout" | "pending";
+export type DelegateOutcome =
+  | "done"
+  | "empty"
+  | "error"
+  | "died"
+  | "blocked"
+  | "timeout"
+  | "pending";
 
 export function delegateOutcome(
-  agent: Pick<AgentWaitAgentState, "fired" | "dead" | "lastText" | "lastError">,
+  agent: Pick<AgentWaitAgentState, "fired" | "dead" | "lastText" | "lastError" | "blocked">,
   timedOut: boolean,
 ): DelegateOutcome {
   if (agent.dead) return "died";
+  if (agent.blocked !== undefined) return "blocked";
   if (agent.fired) {
     if (agent.lastError !== undefined) return "error";
     return agent.lastText ? "done" : "empty";

@@ -20,6 +20,7 @@
 // The CLI wrapper maps the result to task-wait-symmetric exit codes.
 
 import type { RuntimeState } from "../agent-state.js";
+import type { CtlBlocked } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { AgentNotFoundError } from "./errors.js";
 
@@ -56,6 +57,9 @@ export interface AgentStatusSnapshot {
   lastError?: string;
   /** The pi session file holding the run's transcript (control-socket watches only). */
   sessionFile?: string;
+  /** The watch ended because pi opened an extension dialog, not on a
+   *  settle (control-socket watches only). */
+  blocked?: CtlBlocked;
 }
 
 export interface AgentWaitOptions {
@@ -110,6 +114,9 @@ export interface AgentWaitAgentState {
   lastError?: string;
   /** The pi session file holding the run's transcript; control-socket agents only. */
   sessionFile?: string;
+  /** Set when the wait ended on an extension dialog pi is waiting on: the
+   *  run is not finished (`fired` stays false). Control-socket agents only. */
+  blocked?: CtlBlocked;
   /** True when the agent's pane vanished mid-wait. Surfaced separately
    *  so the CLI can exit non-zero rather than treating a crash as a
    *  clean finish. */
@@ -167,6 +174,9 @@ export async function waitForAgents(
   }));
 
   const conditionMet = (): boolean => {
+    // A dialog-blocked agent needs a human now: it ends the wait, like a
+    // stall ends `mu task wait`, whatever --any / --all says.
+    if (state.some((s) => s.blocked !== undefined)) return true;
     const done = state.filter((s) => s.fired || s.dead);
     return any ? done.length > 0 : done.length === state.length;
   };
@@ -198,6 +208,10 @@ export async function waitForAgents(
           if (snap.status === null) {
             st.dead = true;
             st.status = null;
+          } else if (snap.blocked !== undefined) {
+            // A dialog ended the watch: the run is still open, not settled.
+            st.status = snap.status;
+            st.blocked = snap.blocked;
           } else if (snap.status === "unknown") {
             // No settle observed: hand the agent back to polling.
             watched.delete(i);

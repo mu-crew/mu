@@ -50,6 +50,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   permission, or is unreadable with a live pane. Idle (`needs_input`),
   a dead pane and a pane-less row are allowed. `--force` skips only
   this check. `agent close` and spawn rollback are unchanged.
+- **A pi agent stuck on an extension dialog reads `needs_permission`.**
+  The control socket only knew busy / idle, so a pi waiting on a
+  confirm or question mid-run read `busy`, and `mu agent wait` and
+  `mu_delegate` held until their timeout (600 s / 3600 s). The mu pi
+  extension now tracks pi's `ui_prompt_start` / `ui_prompt_end` and adds
+  an optional `blocked: {kind, title, since}` to the status reply; `mu
+  agent list`, `mu state` and `mu agent show` show `needs_permission:
+  dialog <kind>: <title>`. A held `mu agent wait` on a pi agent ends
+  early with outcome `blocked` (not fired, run counter unchanged) and
+  exit 7. The `mu_delegate` follow-up says the delegate is blocked and
+  has not finished, keeps the pane, and copies no partial answer. Older
+  extensions send no field and ignore the new `returnOnBlocked` wait
+  flag, so they behave as before.
 
 ### Changed
 

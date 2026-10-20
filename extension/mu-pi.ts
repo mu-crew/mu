@@ -25,6 +25,7 @@ import {
   CTL_COMMANDS,
   CTL_OPS,
   CTL_PROTOCOL_VERSION,
+  type CtlBlocked,
   type CtlCommandName,
   type CtlReply,
   type CtlState,
@@ -90,6 +91,8 @@ export interface MuPiApi extends MuDelegateApi {
       | "agent_settled"
       | "message_start"
       | "resources_discover"
+      | "ui_prompt_start"
+      | "ui_prompt_end"
       | Parameters<MuNudgeApi["on"]>[0],
     handler: (event: unknown, ctx: MuPiContext) => unknown,
   ): unknown;
@@ -196,7 +199,8 @@ type Shared = {
   /** Inode of the socket file this process bound; the only file it may unlink. */
   ino?: number;
   conns: Set<Socket>;
-  waiters: Set<() => void>;
+  /** Held waits; called with "settle" on agent_settled, "blocked" on ui_prompt_start. */
+  waiters: Set<(why: "settle" | "blocked") => void>;
   state: CtlState;
   since: number;
   runs: number;
@@ -282,6 +286,63 @@ function capText(text: string): string {
   // Cut on bytes; drop a code point split by the cut.
   const cut = Buffer.from(text, "utf8").subarray(0, LAST_TEXT_MAX_BYTES).toString("utf8");
   return `${cut.replace(/\uFFFD$/, "")}\n${LAST_TEXT_TRUNCATED}`;
+}
+
+/** Open extension dialogs, outermost first; process-global like Shared. */
+type UiPrompts = { open: { kind: string; title?: string }[]; since: number };
+const UI_PROMPTS = Symbol.for("mu.pi.uiPrompts");
+
+function uiPrompts(): UiPrompts {
+  const g = globalThis as { [UI_PROMPTS]?: UiPrompts };
+  g[UI_PROMPTS] ??= { open: [], since: 0 };
+  return g[UI_PROMPTS];
+}
+
+/** The open extension dialog pi is waiting on (innermost), or undefined. */
+export function uiBlocked(): CtlBlocked | undefined {
+  const u = uiPrompts();
+  const top = u.open[u.open.length - 1];
+  if (!top) return undefined;
+  return {
+    kind: top.kind,
+    ...(top.title !== undefined ? { title: top.title } : {}),
+    since: u.since,
+  };
+}
+
+/** Whether pi is waiting on a blocking extension dialog right now. */
+export function isUiBlocked(): boolean {
+  return uiPrompts().open.length > 0;
+}
+
+function promptOf(event: unknown): { kind: string; title?: string } {
+  const e = typeof event === "object" && event !== null ? (event as Record<string, unknown>) : {};
+  const kind = typeof e.kind === "string" ? e.kind : "custom";
+  const title = typeof e.title === "string" && e.title !== "" ? e.title : undefined;
+  return { kind, ...(title !== undefined ? { title } : {}) };
+}
+
+/** Track ui_prompt_start / ui_prompt_end; `onStart` runs after each start. */
+function trackUiPrompts(pi: MuPiApi, onStart: () => void = () => {}): void {
+  pi.on("ui_prompt_start", (e) => {
+    const u = uiPrompts();
+    if (u.open.length === 0) u.since = Date.now();
+    u.open.push(promptOf(e));
+    onStart();
+  });
+  // A new runtime has no dialog open: drop any whose end a replaced
+  // session never delivered.
+  pi.on("session_start", () => {
+    uiPrompts().open.length = 0;
+  });
+  pi.on("ui_prompt_end", (e) => {
+    const u = uiPrompts();
+    // Close the innermost dialog of this kind; prompts nest, so ends come LIFO.
+    const { kind } = promptOf(e);
+    let i = u.open.length - 1;
+    while (i >= 0 && u.open[i]?.kind !== kind) i--;
+    u.open.splice(i >= 0 ? i : u.open.length - 1, 1);
+  });
 }
 
 /** Inode at `path`, or undefined when there is no file. */
@@ -375,7 +436,10 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
  */
 function serveCtl(pi: MuPiApi): () => boolean {
   const sock = process.env.MU_CTL_SOCK;
-  if (!sock) return () => false;
+  if (!sock) {
+    trackUiPrompts(pi);
+    return () => false;
+  }
   const sockPath: string = sock;
   const piVersion = detectPiVersion();
 
@@ -401,6 +465,16 @@ function serveCtl(pi: MuPiApi): () => boolean {
     runs: g.runs,
     pending: g.ctx?.hasPendingMessages() ?? false,
     ...sessionFileOf(g.ctx),
+    ...blockedField(),
+  });
+
+  const blockedField = (): { blocked?: CtlBlocked } => {
+    const b = uiBlocked();
+    return b ? { blocked: b } : {};
+  };
+
+  trackUiPrompts(pi, () => {
+    for (const w of [...g.waiters]) w("blocked");
   });
 
   const settleFresh = (r: Reply) => {
@@ -452,7 +526,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     g.lastError = g.endError;
     g.endError = undefined;
     g.sessionFile = sessionFileOf(c).sessionFile;
-    for (const w of [...g.waiters]) w();
+    for (const w of [...g.waiters]) w("settle");
   });
 
   pi.registerCommand(FRESH_COMMAND, {
@@ -600,7 +674,12 @@ function serveCtl(pi: MuPiApi): () => boolean {
       case "command":
         return command(req);
       case "wait":
-        return wait(num(req, "afterRuns"), num(req, "timeoutMs"), conn);
+        return wait(
+          num(req, "afterRuns"),
+          num(req, "timeoutMs"),
+          conn,
+          req.returnOnBlocked === true,
+        );
       case "abort":
         if (!g.ctx) return fail("no pi context yet");
         g.ctx.abort();
@@ -641,11 +720,28 @@ function serveCtl(pi: MuPiApi): () => boolean {
     ...(g.sessionFile !== undefined ? { sessionFile: g.sessionFile } : {}),
   });
 
-  /** Resolve once a run past `afterRuns` has settled (any next settle when omitted). */
-  function wait(afterRuns: number | undefined, timeoutMs: number | undefined, conn: Socket) {
+  /**
+   * Resolve once a run past `afterRuns` has settled (any next settle when
+   * omitted). With `onBlocked`, an open or opening dialog ends the wait
+   * first: `ended: "blocked"`, no settled-run fields, runs unchanged.
+   */
+  function wait(
+    afterRuns: number | undefined,
+    timeoutMs: number | undefined,
+    conn: Socket,
+    onBlocked = false,
+  ) {
     if (afterRuns !== undefined && g.runs > afterRuns && g.state === "idle") {
-      return Promise.resolve<Reply>({ v: V, ok: true, ...status(), ...settledRun() });
+      return Promise.resolve<Reply>({
+        v: V,
+        ok: true,
+        ...status(),
+        ...settledRun(),
+        ended: "settled",
+      });
     }
+    const blockedReply = (): Reply => ({ v: V, ok: true, ...status(), ended: "blocked" });
+    if (onBlocked && isUiBlocked()) return Promise.resolve(blockedReply());
     return new Promise<Reply>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const done = (r: Reply) => {
@@ -655,9 +751,13 @@ function serveCtl(pi: MuPiApi): () => boolean {
         resolve(r);
       };
       // A settle at or below `afterRuns` is not the run asked for: keep waiting.
-      const waiter = () => {
+      const waiter = (why: "settle" | "blocked") => {
+        if (why === "blocked") {
+          if (onBlocked) done(blockedReply());
+          return;
+        }
         if (afterRuns !== undefined && g.runs <= afterRuns) return;
-        done({ v: V, ok: true, ...status(), ...settledRun() });
+        done({ v: V, ok: true, ...status(), ...settledRun(), ended: "settled" });
       };
       const onClose = () => done(fail("client closed"));
       g.waiters.add(waiter);

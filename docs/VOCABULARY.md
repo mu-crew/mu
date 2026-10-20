@@ -186,7 +186,8 @@ Glyphs live in `src/glyphs.ts` (`AGENT_STATE_GLYPH`).
 | `needs_permission` | nf-fa-lock | Waiting for a human answer |
 | `unknown` | nf-fa-question_circle | No usable reading; a reason accompanies it |
 
-The extension's `busy` maps to `busy` and `idle` to `needs_input`. Murmur
+The extension's `busy` maps to `busy` and `idle` to `needs_input`; an
+open extension dialog (its `blocked` field) maps to `needs_permission`. Murmur
 `working` maps to `busy`, `blocked` to `needs_permission`, and `idle`,
 `done`, and `crashed` to `needs_input`. The `agents.status` column is
 deprecated, always `spawning`, and never read.

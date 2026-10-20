@@ -8,11 +8,24 @@ export const CTL_PROTOCOL_VERSION = 1;
 
 export type CtlState = "busy" | "idle";
 
+/**
+ * pi is waiting on a blocking extension dialog (ui_prompt_start without
+ * its ui_prompt_end): a confirm, select, input, editor or custom prompt.
+ * `kind` and `title` are the innermost open dialog's; `since` is when the
+ * first one opened (ms epoch).
+ */
+export type CtlBlocked = { kind: string; title?: string; since: number };
+
 export type CtlRequest =
   | { op: "hello" }
   | { op: "status" }
   | { op: "send"; text: string; mode?: "steer" | "followUp" }
-  | { op: "wait"; afterRuns?: number; timeoutMs?: number }
+  /**
+   * Resolve once a run past afterRuns settles. With returnOnBlocked, also
+   * resolve (ended "blocked", runs unchanged) when a dialog is open or
+   * opens. Older extensions ignore the flag and hold until the settle.
+   */
+  | { op: "wait"; afterRuns?: number; timeoutMs?: number; returnOnBlocked?: boolean }
   | { op: "abort" }
   /**
    * Make a busy pi act on `text` now: abort the running turn, wait for
@@ -55,6 +68,8 @@ export type CtlStatus = {
   pending: boolean;
   /** The pi session file (where the transcript is written); absent for an ephemeral pi or an older extension. */
   sessionFile?: string;
+  /** Set while pi waits on an extension dialog; absent from older extensions. */
+  blocked?: CtlBlocked;
 };
 
 export type CtlReply =
@@ -66,6 +81,8 @@ export type CtlReply =
         ops?: string[];
         /** hello only: the mu package version the extension was built from. */
         extVersion?: string;
+        /** wait only: "blocked" when a dialog ended the wait before a settle (returnOnBlocked). */
+        ended?: "settled" | "blocked";
         /** wait only: text of the settled run's final assistant message ("" when none). */
         lastText?: string;
         /** wait only: the error that ended the settled run (retries exhausted). */

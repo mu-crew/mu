@@ -168,6 +168,8 @@ export type WaitAgent = {
   lastError?: string;
   /** The delegate's pi session file (mu ≥ 3.11.2 on the delegate side). */
   sessionFile?: string;
+  /** outcome `blocked`: the extension dialog the delegate's pi waits on. */
+  blocked?: { kind?: string; title?: string };
 };
 
 /** What happened to the pane after delivery, for the message. */
@@ -286,6 +288,19 @@ export function delegateMessage(
       ].join("\n");
     case "died":
       return `${who} died${took} before answering. ${fate}${ws}${evBlock}${tailBlock}`;
+    case "blocked": {
+      const b = agent.blocked;
+      const dialog = `${b?.kind ?? "dialog"}${b?.title ? ` "${b.title}"` : ""}`;
+      const lines = [
+        `${who} is blocked on a ${dialog} dialog${took} and has NOT finished; stopped waiting, so its answer will not arrive here. ${fate}${ws}`,
+        "Answer the dialog in its pane (attach), then wait again; or close it and record the check as UNVERIFIED.",
+        ...ev,
+        ...look,
+        `Wait again: mu agent wait ${name} -w ${W} --json`,
+        `Close: mu agent close ${name} -w ${W}`,
+      ];
+      return `${lines.join("\n")}${tailBlock}`;
+    }
     case "timeout":
     case "pending":
       return [
@@ -734,7 +749,8 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
         : (await mu(["agent", "read", name, "-n", "50", "-w", W])).stdout;
     // Close only after a clean finish: a died or timed-out pane is evidence.
     let pane: PaneFate = { closed: false, why: "keep: true" };
-    if (outcome !== "done" && outcome !== "empty")
+    if (outcome === "blocked") pane = { closed: false, why: "waiting on a dialog" };
+    else if (outcome !== "done" && outcome !== "empty")
       pane = { closed: false, why: "kept as evidence" };
     else if (!keep) {
       const c = await mu(["agent", "close", name, "-w", W]);
@@ -747,10 +763,13 @@ export function registerDelegate(pi: MuDelegateApi, run: MuRunner = defaultRunne
       failed.add(name);
       showStatus();
     }
-    // No final answer: point at the transcript, and copy what it wrote so far.
+    // No final answer: point at the transcript, and copy what it wrote so
+    // far. A blocked run is mid-flight: no partial copy, which could read
+    // as its answer.
     if (outcome !== "done") {
       const sessionFile = agent?.sessionFile ?? extras.sessionFile;
-      const partial = sessionFile ? partialCopy(name, sessionFile) : undefined;
+      const partial =
+        sessionFile && outcome !== "blocked" ? partialCopy(name, sessionFile) : undefined;
       extras = {
         ...extras,
         ...(sessionFile ? { sessionFile } : {}),

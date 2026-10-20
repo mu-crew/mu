@@ -11,7 +11,7 @@
 // stayed (with `cmdMe` formerly `cmdWhoami`).
 
 import { dirname } from "node:path";
-import { agentKey, ctlRuntimeState, readAgentStates } from "../agent-state.js";
+import { agentKey, blockedReason, ctlRuntimeState, readAgentStates } from "../agent-state.js";
 import {
   type AdoptAgentOptions,
   type AdoptAgentResult,
@@ -897,7 +897,8 @@ export async function cmdAbort(
  * agent doesn't fire instantly — you're waiting for THIS work to end).
  *
  * Mirrors `mu task wait` output/exit shape:
- *   exit 0 = condition met; 5 = timeout; 6 = a watched agent's pane died.
+ *   exit 0 = condition met; 5 = timeout; 6 = a watched agent's pane died;
+ *   7 = a pi agent is waiting on an extension dialog (needs a human).
  * `--any`/`--first` fire on the first agent; default = all must fire.
  * `--first` additionally prints the firing agent's qualified ref.
  */
@@ -999,18 +1000,23 @@ export async function cmdAgentWait(
       const probe = await ctlProbe(sock);
       if (probe.kind !== "ok") return undefined;
       afterRuns = probe.status.runs;
-      initial = { status: ctlRuntimeState(probe.status.state) };
+      initial = { status: ctlRuntimeState(probe.status.state, probe.status.blocked) };
     }
-    const settled = ctlRequest(sock, { op: "wait", afterRuns }, { signal }).then(
+    // returnOnBlocked: a dialog opening mid-run ends the wait (exit 7)
+    // instead of holding it to --timeout. Older extensions ignore it.
+    const req = { op: "wait", afterRuns, returnOnBlocked: true } as const;
+    const settled = ctlRequest(sock, req, { signal }).then(
       (reply): AgentStatusSnapshot =>
-        reply.ok && reply.state !== undefined
-          ? {
-              status: ctlRuntimeState(reply.state),
-              ...(reply.lastText !== undefined ? { lastText: reply.lastText } : {}),
-              ...(reply.lastError !== undefined ? { lastError: reply.lastError } : {}),
-              ...(reply.sessionFile !== undefined ? { sessionFile: reply.sessionFile } : {}),
-            }
-          : { status: "unknown", unknownReason: reply.ok ? "ctl wait: no state" : reply.error },
+        reply.ok && reply.ended === "blocked" && reply.blocked !== undefined
+          ? { status: "needs_permission", blocked: reply.blocked }
+          : reply.ok && reply.state !== undefined
+            ? {
+                status: ctlRuntimeState(reply.state),
+                ...(reply.lastText !== undefined ? { lastText: reply.lastText } : {}),
+                ...(reply.lastError !== undefined ? { lastError: reply.lastError } : {}),
+                ...(reply.sessionFile !== undefined ? { sessionFile: reply.sessionFile } : {}),
+              }
+            : { status: "unknown", unknownReason: reply.ok ? "ctl wait: no state" : reply.error },
       // The connection dropped. A socket that still answers (pi's /new
       // restarts the session) hands back to polling; one that does not
       // means the pi that served it is gone.
@@ -1043,6 +1049,7 @@ export async function cmdAgentWait(
   });
 
   const dead = result.agents.filter((a) => a.dead);
+  const blocked = result.agents.filter((a) => a.blocked !== undefined);
   const fired = result.agents.filter((a) => a.fired);
   const firing = wantFirstShape && fired.length > 0 ? fired[0] : null;
   const qualified = (a: { workstreamName: string; name: string }): string =>
@@ -1058,6 +1065,19 @@ export async function cmdAgentWait(
           },
         ]
       : [];
+  // A blocked run is not finished: point at the dialog and the re-wait.
+  for (const a of blocked) {
+    readHint.push(
+      {
+        intent: "Read the dialog pi is waiting on",
+        command: `mu agent read ${a.name} -w ${a.workstreamName}`,
+      },
+      {
+        intent: "Wait again once it is answered",
+        command: `mu agent wait ${a.name} -w ${a.workstreamName}`,
+      },
+    );
+  }
 
   if (opts.json) {
     emitJson({
@@ -1077,7 +1097,13 @@ export async function cmdAgentWait(
     if (dead.length > 0) {
       console.log(pc.red(`Agent pane(s) died: ${dead.map(qualified).join(", ")}`));
     }
-    if (result.timedOut) {
+    for (const a of blocked) {
+      const why = a.blocked ? blockedReason(a.blocked) : "dialog";
+      console.log(pc.magenta(`${qualified(a)} is waiting on a ${why}; its run is not finished`));
+    }
+    if (blocked.length > 0) {
+      printNextSteps(readHint);
+    } else if (result.timedOut) {
       console.log(
         pc.yellow(
           `Timed out after ${opts.timeout ?? 600}s; ${fired.length}/${result.agents.length} finished`,
@@ -1101,6 +1127,8 @@ export async function cmdAgentWait(
   // met-condition is 0.
   if (dead.length > 0) {
     process.exitCode = 6;
+  } else if (blocked.length > 0) {
+    process.exitCode = 7;
   } else if (result.timedOut) {
     process.exitCode = 5;
   }
@@ -1352,7 +1380,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("wait <names...>")
     .description(
-      "Block until agents finish working (busy → any other state). Keys on AGENTS, so it fires on needs_input too — a worker that stopped to ask a question satisfies it. For task-driven work prefer `mu task wait`, which keys on the task reaching CLOSED and has `--stuck-after` / `--on-stall` for the needs_input case; reach for this verb when the agent owns no task to wait on.",
+      "Block until agents finish working (busy → any other state). Keys on AGENTS, so it fires on needs_input too — a worker that stopped to ask a question satisfies it. For task-driven work prefer `mu task wait`, which keys on the task reaching CLOSED and has `--stuck-after` / `--on-stall` for the needs_input case; reach for this verb when the agent owns no task to wait on. A pi agent that opens an extension dialog (a confirm or question) ends the wait early with outcome `blocked`: its run is not finished. Exit 0 = met; 5 = timeout; 6 = a pane died; 7 = a pi agent is waiting on a dialog.",
     )
     .option("--any", "succeed as soon as ONE listed agent finishes (default: all)")
     .option("--first", "alias for --any that also prints the firing agent's ref")

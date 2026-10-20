@@ -4,7 +4,7 @@ import { delimiter, join } from "node:path";
 import { expectsCtl } from "./agents/transport.js";
 import { ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
-import type { CtlState } from "./ctl/protocol.js";
+import type { CtlBlocked, CtlState } from "./ctl/protocol.js";
 import { activeMux } from "./mux/detect.js";
 import { tmux } from "./tmux.js";
 
@@ -39,9 +39,16 @@ export interface StateAgentRef {
 /** Per-agent budget for the control-socket status read (one connection). */
 const CTL_STATE_PROBE_MS = 1000;
 
-/** ctl's idle maps to needs_input, the same as murmur's idle. */
-export function ctlRuntimeState(state: CtlState): RuntimeState {
+/** ctl's idle maps to needs_input, the same as murmur's idle; an open
+ *  extension dialog (`blocked`) maps to needs_permission. */
+export function ctlRuntimeState(state: CtlState, blocked?: CtlBlocked): RuntimeState {
+  if (blocked !== undefined) return "needs_permission";
   return state === "busy" ? "busy" : "needs_input";
+}
+
+/** The reason line for a dialog-blocked pi: `dialog <kind>: <title>`. */
+export function blockedReason(blocked: CtlBlocked): string {
+  return `dialog ${blocked.kind}${blocked.title !== undefined ? `: ${blocked.title}` : ""}`;
 }
 
 export const UNKNOWN_REASON = {
@@ -290,11 +297,13 @@ export async function readAgentStates(
   ctlAgents.forEach((agent, i) => {
     const probe = probes[i];
     if (probe?.kind === "ok") {
+      const { blocked } = probe.status;
       readings.set(agentKey(agent), {
-        state: ctlRuntimeState(probe.status.state),
+        state: ctlRuntimeState(probe.status.state, blocked),
         source: "ctl",
-        since: probe.status.since,
+        since: blocked?.since ?? probe.status.since,
         alive: true,
+        ...(blocked !== undefined ? { reason: blockedReason(blocked) } : {}),
         ctl: "ok",
         pending: probe.status.pending,
         runs: probe.status.runs,

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { delegateOutcome } from "../src/agents.js";
 
-const st = (o: { fired?: boolean; dead?: boolean; lastText?: string; lastError?: string }) => ({
+const st = (o: {
+  fired?: boolean;
+  dead?: boolean;
+  lastText?: string;
+  lastError?: string;
+  blocked?: { kind: string; since: number };
+}) => ({
+  ...(o.blocked !== undefined ? { blocked: o.blocked } : {}),
   fired: o.fired ?? false,
   dead: o.dead ?? false,
   ...(o.lastText !== undefined ? { lastText: o.lastText } : {}),
@@ -25,6 +32,12 @@ describe("delegateOutcome", () => {
   it("a dead pane or socket is died, even on timeout", () => {
     expect(delegateOutcome(st({ dead: true }), false)).toBe("died");
     expect(delegateOutcome(st({ dead: true }), true)).toBe("died");
+  });
+  it("a dialog-blocked run is blocked, even on timeout; a death wins", () => {
+    const blocked = { kind: "confirm", since: 1 };
+    expect(delegateOutcome(st({ blocked }), false)).toBe("blocked");
+    expect(delegateOutcome(st({ blocked }), true)).toBe("blocked");
+    expect(delegateOutcome(st({ blocked, dead: true }), false)).toBe("died");
   });
   it("unfinished at timeout is timeout; otherwise pending", () => {
     expect(delegateOutcome(st({}), true)).toBe("timeout");
