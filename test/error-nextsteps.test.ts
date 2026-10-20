@@ -24,6 +24,7 @@ import {
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
+  AgentSendIndeterminateError,
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
@@ -238,6 +239,11 @@ const cases: NextStepsCase[] = [
     error: new AgentCtlUnreachableError("alice", "auth", "/s/sock/auth/alice.sock", "missing"),
     label: "AgentCtlUnreachableError",
     expectedTokens: ["mu link pi", "/s/sock/auth/alice.sock"],
+  },
+  {
+    error: new AgentSendIndeterminateError("alice", "auth", "send", "timeout"),
+    label: "AgentSendIndeterminateError",
+    expectedTokens: ["mu agent read alice -w auth -n 20"],
   },
   {
     error: new AgentPaneDeadError("alice", "auth", "%3"),

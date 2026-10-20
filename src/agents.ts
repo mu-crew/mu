@@ -56,6 +56,7 @@ export {
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
+  AgentSendIndeterminateError,
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,

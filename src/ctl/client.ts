@@ -48,6 +48,24 @@ export class CtlTimeoutError extends Error {
 }
 
 /**
+ * A side-effecting request (send, fresh, interrupt, command) was written
+ * to the socket, then the connection timed out, errored or closed with no
+ * reply. pi may or may not have acted on it. `cause` is the raw failure.
+ */
+export class CtlDeliveryUnknownError extends Error {
+  constructor(
+    readonly op: string,
+    override readonly cause: Error,
+  ) {
+    super(`control socket ${op} request was written but no reply arrived: ${cause.message}`);
+    this.name = "CtlDeliveryUnknownError";
+  }
+}
+
+/** Ops that change pi's state: a failure after the write is ambiguous. */
+const SIDE_EFFECT_OPS: ReadonlySet<string> = new Set(["send", "fresh", "interrupt", "command"]);
+
+/**
  * The extension answered "unknown op": it was loaded before mu learned
  * `op`. `ops` lists what it serves (absent from extensions that predate
  * reporting them).
@@ -79,7 +97,8 @@ function parseReply(line: string): CtlReply {
 
 /**
  * Send one request and resolve with its reply. Rejects with the socket
- * error (its `code` intact), CtlTimeoutError, CtlVersionError, or
+ * error (its `code` intact), CtlTimeoutError, CtlDeliveryUnknownError
+ * (side-effecting op failed after the write), CtlVersionError, or
  * CtlUnknownOpError (an ok:false "unknown op" reply).
  * Aborting `signal` closes the connection and rejects.
  */
@@ -91,6 +110,10 @@ export function ctlRequest(
   const timeoutMs = clientTimeout(req, opts?.timeoutMs);
   return new Promise((resolve, reject) => {
     const conn = createConnection(sock);
+    // Set when conn.write is called. A write callback is not a delivery ack, so never cleared.
+    let written = false;
+    const ambiguous = (err: Error): Error =>
+      written && SIDE_EFFECT_OPS.has(req.op) ? new CtlDeliveryUnknownError(req.op, err) : err;
     const dec = new LineDecoder();
     let done = false;
     const finish = (err: Error | null, reply?: CtlReply): void => {
@@ -104,14 +127,17 @@ export function ctlRequest(
     const timer =
       timeoutMs === undefined
         ? undefined
-        : setTimeout(() => finish(new CtlTimeoutError(timeoutMs)), timeoutMs);
+        : setTimeout(() => finish(ambiguous(new CtlTimeoutError(timeoutMs))), timeoutMs);
     const signal = opts?.signal;
     if (signal?.aborted) finish(new Error("control socket request aborted"));
     signal?.addEventListener("abort", () => finish(new Error("control socket request aborted")), {
       once: true,
     });
     conn.setEncoding("utf8");
-    conn.on("connect", () => conn.write(encode(req)));
+    conn.on("connect", () => {
+      written = true;
+      conn.write(encode(req));
+    });
     conn.on("data", (chunk: string) => {
       const line = dec.push(chunk)[0];
       if (line === undefined) return;
@@ -124,8 +150,8 @@ export function ctlRequest(
         finish(e instanceof Error ? e : new Error(String(e)));
       }
     });
-    conn.on("error", (e) => finish(e));
-    conn.on("close", () => finish(new Error("control socket closed without a reply")));
+    conn.on("error", (e) => finish(ambiguous(e)));
+    conn.on("close", () => finish(ambiguous(new Error("control socket closed without a reply"))));
   });
 }
 

@@ -41,6 +41,7 @@ import {
   AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
+  AgentSendIndeterminateError,
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
@@ -374,6 +375,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // matches AgentDiedOnSpawnError / AgentSpawnStartupError below —
     // all three are "the spawn can't produce a working agent".
     return { label: "spawn cli not found", exitCode: 1 };
+  }
+  if (err instanceof AgentSendIndeterminateError) {
+    // Delivery unknown: same lane as ctl unreachable, distinct label.
+    return { label: "send delivery unknown", exitCode: 1 };
   }
   if (err instanceof AgentCtlUnreachableError) {
     // The agent runs, but mu cannot control it: same "spawn can't
