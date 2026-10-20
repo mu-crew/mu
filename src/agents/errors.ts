@@ -9,7 +9,8 @@
 //   conflict   → 4   (AgentExistsError, AgentNameExhaustedError,
 //                     AgentNotInWorkstreamError,
 //                     PaneNotInSessionError, WorkspacePreservedError,
-//                     AgentExtensionOutdatedError, AgentBusyError)
+//                     AgentExtensionOutdatedError, AgentBusyError,
+//                     WorkspaceOwnerBusyError)
 //   timeout    → 5   (AgentAbortTimeoutError)
 //   failure    → 1   (AgentSpawnCliNotFoundError, AgentDiedOnSpawnError,
 //                     AgentSpawnStartupError, AgentCtlUnreachableError)
@@ -691,6 +692,39 @@ export class AgentBusyError extends Error implements HasNextSteps {
         command: `mu agent abort ${this.agentName} -w ${this.workstream}`,
       },
       { intent: "Or abandon the turn in one step", command: retry },
+    ];
+  }
+}
+
+/**
+ * `mu workspace free` refused: the owning agent is mid-turn, waiting on
+ * a permission, or unreadable with a live pane. Freeing would pull the
+ * checkout out from under it. CLI-only guard; `agent close` and spawn
+ * rollback call the SDK directly and are unaffected.
+ */
+export class WorkspaceOwnerBusyError extends Error implements HasNextSteps {
+  override readonly name = "WorkspaceOwnerBusyError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly state: string,
+  ) {
+    super(`agent ${agentName} is ${state}: freeing its workspace would pull it out from under it`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Stop the turn first, then retry",
+        command: `mu agent abort ${this.agentName} -w ${this.workstream}`,
+      },
+      {
+        intent: "Or wait until the agent is idle",
+        command: `mu agent wait ${this.agentName} -w ${this.workstream}`,
+      },
+      {
+        intent: "Or free anyway (pending changes are lost without --commit)",
+        command: `mu workspace free ${this.agentName} --force -w ${this.workstream}`,
+      },
     ];
   }
 }

@@ -29,6 +29,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   has no spinner, so `awaitPaneQuiescence` saw it as calm and pasted
   into a booting Codex, concatenating text. "model: loading" is now a
   busy marker (visible tail only).
+- **`mu workspace free` refuses under a working agent.** It ran
+  `worktree remove --force` beneath a running worker and lost its
+  pending changes. It now exits 4 when the owner is busy, needs
+  permission, or is unreadable with a live pane. Idle (`needs_input`),
+  a dead pane and a pane-less row are allowed. `--force` skips only
+  this check. `agent close` and spawn rollback are unchanged.
 
 ### Changed
 

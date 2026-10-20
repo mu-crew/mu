@@ -8,6 +8,9 @@
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
+import { dirname } from "node:path";
+import { agentKey, readAgentStates } from "../agent-state.js";
+import { getAgent, WorkspaceOwnerBusyError } from "../agents.js";
 import {
   assertAgentInWorkstream,
   emitJson,
@@ -17,6 +20,7 @@ import {
   resolveWorkstream,
 } from "../cli.js";
 import { type Db, tryResolveWorkstreamId, WorkstreamNotFoundError } from "../db.js";
+import { activeMux } from "../mux.js";
 import { type NextStep, pc, printNextSteps } from "../output.js";
 import {
   decorateWithStaleness,
@@ -53,17 +57,45 @@ export async function cmdWorkspaceList(
   console.log(formatWorkspacesTable(decorated));
 }
 
+/**
+ * Refuse to free a workspace under a working agent. Refuses on busy,
+ * needs_permission, or unknown with a live pane; allows needs_input
+ * (idle at the prompt), a dead pane, and an agent with no pane.
+ * Returns the state checked, or undefined when no check applied.
+ */
+async function guardOwnerState(
+  db: Db,
+  agent: string,
+  workstream: string,
+): Promise<string | undefined> {
+  const row = getAgent(db, agent, workstream);
+  if (!row?.paneId) return undefined;
+  const reading = (await readAgentStates([row], { stateDir: dirname(db.name) })).get(agentKey(row));
+  const state = reading?.state ?? "unknown";
+  if (state === "needs_input") return state;
+  if (state === "unknown") {
+    const live = await (await activeMux()).paneExists(row.paneId).catch(() => false);
+    if (!live) return state;
+  }
+  throw new WorkspaceOwnerBusyError(agent, workstream, state);
+}
+
 export async function cmdWorkspaceFree(
   db: Db,
   rawAgent: string,
-  opts: { commit?: boolean; workstream?: string; json?: boolean },
+  opts: { commit?: boolean; force?: boolean; workstream?: string; json?: boolean },
 ): Promise<void> {
   const { name: agent } = await resolveEntityRef(db, rawAgent, opts, "workspace");
   assertAgentInWorkstream(db, agent, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
+  const checkedState = opts.force ? undefined : await guardOwnerState(db, agent, ws);
   const r = await freeWorkspace(db, agent, { commit: opts.commit ?? false, workstream: ws });
   if (opts.json) {
-    emitJson({ agentName: agent, ...r });
+    emitJson({
+      agentName: agent,
+      ...r,
+      ...(checkedState !== undefined ? { ownerState: checkedState } : {}),
+    });
     return;
   }
   if (!r.removed && !r.rowDeleted) {
@@ -306,14 +338,16 @@ export function wireWorkspaceCommands(program: Command): void {
   workspace
     .command("free <agent>")
     .description(
-      "Tear down an agent's workspace. With --commit, attempt to auto-commit pending changes first; without it, pending changes are lost. For git, --commit also creates a branch mu/<workstream>/<agent>-<sha> when the worktree's commits are on no branch, so they survive removal.",
+      "Tear down an agent's workspace. With --commit, attempt to auto-commit pending changes first; without it, pending changes are lost. Refuses (exit 4) while the owning agent is busy, awaiting permission, or unreadable with a live pane; --force skips only that check. For git, --commit also creates a branch mu/<workstream>/<agent>-<sha> when the worktree's commits are on no branch, so they survive removal.",
     )
     .option("--commit", "auto-commit pending changes before removing the workspace")
+    .option("--force", "skip the owner-agent state check (does not make removal any safer)")
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (agent: string) {
       const opts = (this as Command).opts() as {
         commit?: boolean;
+        force?: boolean;
         workstream?: string;
         json?: boolean;
       };

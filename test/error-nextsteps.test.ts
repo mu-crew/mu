@@ -30,6 +30,7 @@ import {
   AgentSpawnStartupError,
   NoForegroundProcessError,
   PaneNotInSessionError,
+  WorkspaceOwnerBusyError,
   WorkspacePreservedError,
 } from "../src/agents.js";
 import { NameAmbiguousError } from "../src/cli.js";
@@ -269,6 +270,11 @@ const cases: NextStepsCase[] = [
     error: new AgentBusyError("alice", "auth"),
     label: "AgentBusyError",
     expectedTokens: ["mu agent abort alice", "--fresh --force"],
+  },
+  {
+    error: new WorkspaceOwnerBusyError("alice", "auth", "busy"),
+    label: "WorkspaceOwnerBusyError",
+    expectedTokens: ["mu agent abort alice", "mu workspace free alice --force"],
   },
   {
     error: new AgentSlashCommandUnsupportedError("alice", "auth", "/tree", ["/new"]),

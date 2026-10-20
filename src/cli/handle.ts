@@ -46,6 +46,7 @@ import {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   PaneNotInSessionError,
+  WorkspaceOwnerBusyError,
   WorkspacePreservedError,
 } from "../agents.js";
 import {
@@ -306,6 +307,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof TaskClaimStaleWorkspaceError ||
     err instanceof TaskNotInWorkstreamError ||
     err instanceof AgentNotInWorkstreamError ||
+    err instanceof WorkspaceOwnerBusyError ||
     err instanceof PaneNotInSessionError ||
     err instanceof CycleError ||
     err instanceof CrossWorkstreamEdgeError ||
