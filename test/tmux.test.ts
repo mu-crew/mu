@@ -939,8 +939,28 @@ describe("sendToPane", () => {
     setTmuxExecutor(executor);
     await sendToPane("%15", "hello", { readinessMs: 15_000, delayMs: 0 });
     const firstPaste = calls.findIndex((c) => c.args[0] === "paste-buffer");
+    const firstEnter = calls.findIndex((c) => c.args[0] === "send-keys" && c.args.includes("Enter"));
+    expect(firstPaste).toBeGreaterThan(-1);
+    expect(firstEnter).toBeGreaterThan(firstPaste);
+    // Paste only after loading cleared (4 loading captures + 3 calm ones).
     const capturesBefore = calls.slice(0, firstPaste).filter((c) => c.args[0] === "capture-pane");
     expect(capturesBefore.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("waits on 'model: loading' even when the banner shows a ~/Working cwd", async () => {
+    let captures = 0;
+    const { executor, calls } = harness((args) => {
+      if (args[0] === "capture-pane") {
+        captures++;
+        return ok(captures <= 4 ? " directory: ~/Working\n model: loading\n" : "> \n");
+      }
+      return ok();
+    });
+    setTmuxExecutor(executor);
+    await sendToPane("%15", "hello", { readinessMs: 15_000, delayMs: 0 });
+    const firstPaste = calls.findIndex((c) => c.args[0] === "paste-buffer");
+    const before = calls.slice(0, firstPaste).filter((c) => c.args[0] === "capture-pane");
+    expect(before.length).toBeGreaterThanOrEqual(7);
   });
 
   it("keeps polling on a transient capture failure", async () => {
