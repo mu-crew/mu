@@ -68,6 +68,10 @@ launched through a wrapper whose name is not `pi` or `pi-meta` shows
 `--command 'pi --approve'`. `--approve` trusts every directory,
 including workspace forks, so use it only on your own code.
 
+Claude asks the same on an untrusted folder, with "No, exit" as the
+default. Spawn warns and skips `--send`: attach the pane, answer it, then
+`mu agent send`.
+
 ## You closed your terminal
 
 The tmux session keeps running. Reattach with `tmux attach -t mu-auth`.

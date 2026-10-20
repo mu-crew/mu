@@ -299,7 +299,12 @@ export function probeToSpawnCtl(kind: CtlProbe["kind"]): Exclude<SpawnCtl, "skip
 }
 
 /** What spawnAgent returns: the registered row plus the handshake outcome. */
-export type SpawnedAgent = AgentRow & { ctl: SpawnCtl; ctlSocket: string };
+export type SpawnedAgent = AgentRow & {
+  ctl: SpawnCtl;
+  ctlSocket: string;
+  /** Set when the startup scan saw a Claude trust dialog parked in the pane. */
+  trustDialog?: true;
+};
 
 /**
  * True when the agent runs pi, so the mu pi extension should answer on
@@ -504,6 +509,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   let ctl: SpawnCtl | undefined;
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
   let phase: "pane" | "liveness" = "pane";
+  let trustDialog = false;
   try {
     // Cross-process critical section: the tmux topology check-then-act
     // (`sessionExists` → `new-session` / `new-window` / `split-window`)
@@ -604,9 +610,10 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         // patterns apply: a shell exec-failure line in the tail is then
         // transcript text (a resumed `--session` re-renders old tool
         // output such as `grep: x: No such file or directory`).
-        if (check) await checkSpawnHealth(pid, opts.name, command, when, ctl === "ok");
+        if (check)
+          trustDialog = await checkSpawnHealth(pid, opts.name, command, when, ctl === "ok");
       } else {
-        await awaitSpawnLiveness(paneId, opts.name, command);
+        trustDialog = await awaitSpawnLiveness(paneId, opts.name, command);
       }
     } else {
       // `startAgentInPane` returns only once the MUX has detected the
@@ -655,7 +662,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // so the hint trails the spawn's own stdout output and so a partial
   // failure (rolled back above) never emits it.
   maybeWarnNonConventionalAgentName(opts.name);
-  return { ...agent, ctl, ctlSocket };
+  return { ...agent, ctl, ctlSocket, ...(trustDialog ? { trustDialog: true as const } : {}) };
 }
 
 /**
@@ -920,17 +927,38 @@ async function awaitSpawnLiveness(
   paneId: string,
   agentName: string,
   command: string,
-): Promise<void> {
+): Promise<boolean> {
   const ms = defaultSpawnLivenessMs();
-  if (ms === 0) return;
+  if (ms === 0) return false;
   await sleep(ms);
-  await checkSpawnHealth(paneId, agentName, command);
+  return checkSpawnHealth(paneId, agentName, command);
+}
+
+/**
+ * Claude's "Is this a project you trust?" dialog, recorded from claude
+ * 2.1.x (test/fixtures/claude-trust-dialog.txt). It is unnumbered and
+ * defaults to "No, exit", so the Enter that ends a send makes claude
+ * quit. Matched on the short option line, which survives line wraps.
+ *
+ * NOT an error: the pane and agent are kept, so this is a warning that
+ * spawn reports and that skips the initial --send. Startup scan only: it
+ * does not protect a later `mu agent send`, and the herdr spawn path
+ * never runs this scan. No keypress is ever sent for the operator.
+ */
+const CLAUDE_TRUST_DIALOG = /Yes, I trust this folder/i;
+
+/** True when the tail of `scrollback` shows Claude's folder-trust dialog. */
+export function detectClaudeTrustDialog(scrollback: string): boolean {
+  const lines = scrollback.split(/\r?\n/);
+  const tail = lines.slice(Math.max(0, lines.length - STARTUP_ERROR_TAIL_LINES));
+  return tail.some((line) => CLAUDE_TRUST_DIALOG.test(line));
 }
 
 /**
  * One liveness verdict: throw AgentDiedOnSpawnError when the pane is
  * gone, AgentSpawnStartupError when its scrollback tail shows a known
- * startup failure.
+ * startup failure. Returns true (non-fatal) when Claude's trust dialog is
+ * showing.
  */
 async function checkSpawnHealth(
   paneId: string,
@@ -940,7 +968,7 @@ async function checkSpawnHealth(
   when?: string,
   /** The CLI answered the ctl handshake; see detectSpawnStartupError. */
   cliStarted = false,
-): Promise<void> {
+): Promise<boolean> {
   // Capture-pane first so we have something to attach to the error if the
   // pane is in the process of being torn down (the buffer survives a beat
   // longer than the pane's existence in some tmux builds).
@@ -959,7 +987,9 @@ async function checkSpawnHealth(
     if (matchedLine !== undefined) {
       throw new AgentSpawnStartupError(agentName, paneId, matchedLine, scrollback, when);
     }
+    return detectClaudeTrustDialog(scrollback);
   }
+  return false;
 }
 
 /**

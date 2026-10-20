@@ -152,7 +152,35 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     console.error(pc.yellow(`warning: ${warn.message}`));
     printNextStepsTo(warn.errorNextSteps(), "stderr");
   }
-  const sent = sendText === undefined ? undefined : await spawnSend(db, agent, sendText);
+  // Claude parks at a trust dialog whose default is "No, exit": the Enter
+  // that ends a send would quit it. Keep the pane, skip the send, say why.
+  const trustSkip = agent.trustDialog === true && sendText !== undefined;
+  if (agent.trustDialog === true) {
+    console.error(
+      pc.yellow(
+        `warning: ${name} is showing Claude's folder-trust dialog (default "No, exit")${trustSkip ? "; --send skipped" : ""}`,
+      ),
+    );
+  }
+  const trustNext: NextStep[] =
+    agent.trustDialog === true
+      ? [
+          {
+            intent: "Answer the trust dialog by hand (attach the pane), then send",
+            command: `mu agent send ${name} <text> -w ${workstream}`,
+          },
+        ]
+      : [];
+  const sent: SpawnSend | undefined = trustSkip
+    ? {
+        ok: false,
+        error: "TrustDialogPending",
+        message: "send skipped: Claude's folder-trust dialog is waiting in the pane",
+        exitCode: 0,
+      }
+    : sendText === undefined
+      ? undefined
+      : await spawnSend(db, agent, sendText);
   const workspace = opts.workspace ? getWorkspaceForAgent(db, name, workstream) : undefined;
   // Resolve the actual command that landed in the pane, so the operator
   // can confirm `--command 'pi-meta --no-solo'` (etc.) took effect.
@@ -171,6 +199,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   const envSourced =
     opts.command === undefined ? resolveCliCommandWithSource(agent.cli) : undefined;
   const nextSteps: NextStep[] = [
+    ...trustNext,
     // After --send the next step is the wait (or the pane read below).
     ...(!sent?.ok
       ? [dispatchHint(agent)]
@@ -218,7 +247,8 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
       ...(sent !== undefined ? { send: sent } : {}),
       nextSteps,
     });
-    if (sent !== undefined && !sent.ok) throw new CliExitError(sent.exitCode);
+    if (sent !== undefined && !sent.ok && sent.exitCode !== 0)
+      throw new CliExitError(sent.exitCode);
     return;
   }
   const wsBit = opts.workspace ? pc.dim(" with auto-workspace") : "";
@@ -244,10 +274,14 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     const runs = sent.runs !== undefined ? `, runs ${sent.runs}` : "";
     console.log(pc.dim(`  sent ${sent.sentBytes} bytes (via ${sent.transport}${runs})`));
   } else if (sent !== undefined) {
-    console.error(pc.red(`error: --send failed: ${sent.message}`));
+    console.error(
+      sent.exitCode === 0
+        ? pc.yellow(`warning: ${sent.message}`)
+        : pc.red(`error: --send failed: ${sent.message}`),
+    );
   }
   printNextSteps(nextSteps);
-  if (sent !== undefined && !sent.ok) throw new CliExitError(sent.exitCode);
+  if (sent !== undefined && !sent.ok && sent.exitCode !== 0) throw new CliExitError(sent.exitCode);
 }
 
 /** `mu agent spawn --send`: the outcome of the send, as `--json` reports it. */

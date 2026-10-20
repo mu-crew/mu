@@ -12,6 +12,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Spawn warns on Claude's folder-trust dialog.** The dialog defaults to
+  "No, exit", so the Enter that ends `--send` quit claude. The tmux
+  startup scan now spots it (non-fatal): the pane and agent stay, the
+  initial `--send` is skipped (`send.error` `TrustDialogPending` in
+  `--json`), and a warning plus next step says to answer it in the pane
+  and then `mu agent send`. It does not guard a later `agent send` or the
+  herdr spawn path, and mu never presses a key for you.
 - **TUI dashboard fills its space.** A card's `maxRows` now caps only
   the first pass of the row allocator: leftover rows go to cards whose
   data still overflows, in proportion to the rows each hides, so a
