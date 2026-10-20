@@ -28,6 +28,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **A rolled-back spawn leaves an `agent.spawn_failed` log entry** with the
+  phase reached and the error class; `agent.spawn` now carries `ctl=`.
 - **Spawned panes get the caller's `SSH_AUTH_SOCK`.** mu sessions are
   created detached and can stay so, so tmux never refreshed the env and a
   pane could inherit a stale socket. Spawn now forwards it when it is set

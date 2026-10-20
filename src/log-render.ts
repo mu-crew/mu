@@ -183,6 +183,7 @@ const VERBS: Record<KnownIntent, string> = {
   "workstream.destroy": "workstream teardown",
   "sql.write": "sql write",
   "agent.spawn": "agent spawn",
+  "agent.spawn_failed": "agent spawn failed",
   "agent.close": "agent close",
   "agent.adopt": "agent adopt",
   "agent.kick": "agent kick",
@@ -380,6 +381,7 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
     // detail rather than inventing a second phrasing. The leading verb
     // is stripped so it is not printed twice.
     case "agent.spawn":
+    case "agent.spawn_failed":
     case "agent.close":
     case "agent.adopt":
     case "agent.kick":
