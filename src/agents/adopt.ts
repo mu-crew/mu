@@ -149,8 +149,10 @@ export async function adoptAgent(db: Db, opts: AdoptAgentOptions): Promise<Adopt
   const existingByPane = getAgentByPane(db, opts.paneId);
   if (existingByPane) {
     if (existingByPane.name === resolvedName) {
-      // Already registered: the write only repairs a title, never fails re-adopt.
-      await lockThenTitle(mux, opts.paneId, resolvedName, true);
+      // Already registered: lock only. The title is left as main left it
+      // (it may be reconcile's composed "name · task"); reconcile repairs
+      // a wrong one. The lock is best-effort, so re-adopt never fails on it.
+      await mux.lockPaneTitle(opts.paneId).catch(() => {});
       return {
         agent: existingByPane,
         alreadyAdopted: true,

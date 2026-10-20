@@ -284,6 +284,19 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     expect(ops.n).toBe(1);
   });
 
+  it("idempotent re-adopt keeps a composed title (main's behaviour)", async () => {
+    const { calls, executor } = mockTmux(state);
+    setTmuxExecutor(executor);
+    const { adoptAgent } = await import("../src/agents.js");
+    const { paneId } = seedOrphanPane({ sessionName: "mu-auth", title: "worker-7" });
+    await adoptAgent(db, { paneId, workstream: "auth" });
+    const pane = state.panes.get(paneId);
+    if (pane) pane.title = "worker-7 · some-task";
+    const before = calls.length;
+    await adoptAgent(db, { paneId, workstream: "auth" });
+    expect(calls.slice(before).some((c) => c[0] === "select-pane" && c.includes("-T"))).toBe(false);
+  });
+
   it("idempotent re-adopt of a composed-title pane survives a title-write failure", async () => {
     const { executor } = mockTmux(state);
     setTmuxExecutor(executor);
@@ -331,11 +344,11 @@ describe("adoptAgent (register an existing tmux pane as a managed agent)", () =>
     // Idempotent path should not insert again — exactly one row.
     expect(listAgents(db).length).toBe(1);
     // The second call may make tmux probe calls (paneExists, list-panes).
-    // Re-adopt re-locks and rewrites the title once (repairs an OSC title).
+    // Re-adopt locks but leaves the title alone (it may be composed).
     const retitlesAfter = calls
       .slice(callsBefore)
       .filter((c) => c[0] === "select-pane" && c.includes("-T"));
-    expect(retitlesAfter.length).toBe(1);
+    expect(retitlesAfter.length).toBe(0);
   });
 
   it("(case 9) on herdr, a `w1:p2` argument is a pane id, not a title to look up", async () => {
