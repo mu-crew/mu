@@ -4,6 +4,15 @@ import type { HasNextSteps, NextStep } from "../output.js";
 
 export type VcsBackendName = "jj" | "sl" | "git" | "none";
 
+/** Out-parameter for `detect()`: set `failed` when a root probe could not
+ *  answer (spawn error, signal, timeout) as opposed to cleanly saying "not
+ *  this VCS". A caller that caches the detected backend must not cache
+ *  when `failed` is set: the probe may have hidden a higher-precedence
+ *  backend. */
+export interface ProbeReport {
+  failed: boolean;
+}
+
 // ─── Refresh / rebase result + typed errors ──────────────────────────
 //
 // rebaseTo is the backend-side of `mu workspace refresh`. The errors
@@ -229,8 +238,9 @@ export interface VcsBackend {
 
   /** True iff this backend should handle `projectRoot`. Implementations
    *  check for the relevant marker dir (`.jj`, `.sl`, `.git`); `none`
-   *  always returns true and is consulted last. */
-  detect(projectRoot: string): Promise<boolean>;
+   *  always returns true and is consulted last. `report.failed` is set
+   *  when a root probe was indeterminate (see `ProbeReport`). */
+  detect(projectRoot: string, report?: ProbeReport): Promise<boolean>;
 
   createWorkspace(opts: CreateWorkspaceOptions): Promise<CreateWorkspaceResult>;
 

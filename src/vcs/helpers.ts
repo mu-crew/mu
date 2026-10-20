@@ -5,28 +5,50 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
-import { type CommitSummary, SHOW_COMMIT_MAX_CHARS, type ShowCommitResult } from "./types.js";
+import {
+  type CommitSummary,
+  type ProbeReport,
+  SHOW_COMMIT_MAX_CHARS,
+  type ShowCommitResult,
+} from "./types.js";
 
 export const exec = promisify(execFile);
+
+/** True when `err` is the tool answering: it ran and exited non-zero (numeric
+ *  `code`), or is not installed (ENOENT). Anything else (EAGAIN, EMFILE,
+ *  signal kill, timeout, maxBuffer) is an indeterminate probe failure. */
+function isCleanProbeNo(err: unknown): boolean {
+  const cause = err instanceof Error ? err.cause : undefined;
+  const code = (cause as { code?: unknown } | undefined)?.code;
+  return typeof code === "number" || code === "ENOENT";
+}
 
 export async function probeVcsRootPath(
   cmd: string,
   args: string[],
   cwd: string,
+  report?: ProbeReport,
 ): Promise<string | null> {
   try {
     const stdout = await run(cmd, args, cwd);
     const root = stdout.trim();
     return root.length > 0 ? root : null;
-  } catch {
+  } catch (err) {
     // Tool not installed, or tool exited non-zero because cwd is not
-    // in that backend's repo type. Both mean "not this backend".
+    // in that backend's repo type. Both mean "not this backend". Other
+    // failures also read as "no" but are flagged in `report`.
+    if (report !== undefined && !isCleanProbeNo(err)) report.failed = true;
     return null;
   }
 }
 
-export async function probeVcsRoot(cmd: string, args: string[], cwd: string): Promise<boolean> {
-  return (await probeVcsRootPath(cmd, args, cwd)) !== null;
+export async function probeVcsRoot(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  report?: ProbeReport,
+): Promise<boolean> {
+  return (await probeVcsRootPath(cmd, args, cwd, report)) !== null;
 }
 
 export function isSaplingDotdir(dotdir: string): boolean {
@@ -53,7 +75,7 @@ export async function run(bin: string, args: readonly string[], cwd?: string): P
     return stdout.trim();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`vcs ${bin} ${args.join(" ")} failed: ${msg}`);
+    throw new Error(`vcs ${bin} ${args.join(" ")} failed: ${msg}`, { cause: err });
   }
 }
 

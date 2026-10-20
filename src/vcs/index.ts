@@ -4,7 +4,7 @@ import { gitBackend } from "./git.js";
 import { jjBackend } from "./jj.js";
 import { noneBackend } from "./none.js";
 import { slBackend } from "./sl.js";
-import type { VcsBackend, VcsBackendName } from "./types.js";
+import type { ProbeReport, VcsBackend, VcsBackendName } from "./types.js";
 
 export { gitBackend } from "./git.js";
 export { jjBackend } from "./jj.js";
@@ -16,6 +16,7 @@ export {
   type CreateWorkspaceResult,
   type FreeWorkspaceOptions,
   type FreeWorkspaceResult,
+  type ProbeReport,
   type RebaseResult,
   SHOW_COMMIT_MAX_CHARS,
   type ShowCommitResult,
@@ -38,9 +39,12 @@ const BACKENDS: readonly VcsBackend[] = [jjBackend, slBackend, gitBackend, noneB
 /** Return the backend that should handle projectRoot. Walks BACKENDS
  *  in precedence order; never returns undefined because noneBackend
  *  always claims. */
-export async function detectBackend(projectRoot: string): Promise<VcsBackend> {
+export async function detectBackend(
+  projectRoot: string,
+  report?: ProbeReport,
+): Promise<VcsBackend> {
   for (const backend of BACKENDS) {
-    if (await backend.detect(projectRoot)) return backend;
+    if (await backend.detect(projectRoot, report)) return backend;
   }
   return noneBackend;
 }

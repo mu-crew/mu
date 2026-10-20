@@ -27,8 +27,8 @@ import {
 export const gitBackend: VcsBackend = {
   name: "git",
 
-  async detect(projectRoot) {
-    return probeVcsRoot("git", ["rev-parse", "--show-toplevel"], projectRoot);
+  async detect(projectRoot, report) {
+    return probeVcsRoot("git", ["rev-parse", "--show-toplevel"], projectRoot, report);
   },
 
   async createWorkspace(opts) {

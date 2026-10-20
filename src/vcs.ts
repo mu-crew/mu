@@ -15,6 +15,7 @@ export {
   gitBackend,
   jjBackend,
   noneBackend,
+  type ProbeReport,
   type RebaseResult,
   SHOW_COMMIT_MAX_CHARS,
   type ShowCommitResult,
