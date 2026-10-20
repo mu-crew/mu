@@ -74,7 +74,17 @@ async function guardOwnerState(
   const state = reading?.state ?? "unknown";
   if (state === "needs_input") return state;
   if (state === "unknown") {
-    const live = await (await activeMux()).paneExists(row.paneId).catch(() => false);
+    let live: boolean;
+    try {
+      live = await (await activeMux()).paneExists(row.paneId);
+    } catch {
+      throw new WorkspaceOwnerBusyError(
+        agent,
+        workstream,
+        state,
+        "pane liveness probe failed; state unknown",
+      );
+    }
     if (!live) return state;
   }
   throw new WorkspaceOwnerBusyError(agent, workstream, state);

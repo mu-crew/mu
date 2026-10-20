@@ -708,8 +708,13 @@ export class WorkspaceOwnerBusyError extends Error implements HasNextSteps {
     public readonly agentName: string,
     public readonly workstream: string,
     public readonly state: string,
+    public readonly detail?: string,
   ) {
-    super(`agent ${agentName} is ${state}: freeing its workspace would pull it out from under it`);
+    super(
+      detail
+        ? `agent ${agentName} is ${state} (${detail}): refusing to free its workspace`
+        : `agent ${agentName} is ${state}: freeing its workspace would pull it out from under it`,
+    );
   }
   errorNextSteps(): NextStep[] {
     return [

@@ -29,6 +29,7 @@ let db: Db;
 let mux: MuxHarness;
 let wsPath: string;
 let paneLive = true;
+let probeThrows = false;
 
 function workspaceRows(): number {
   return (db.prepare("SELECT COUNT(*) AS n FROM vcs_workspaces").get() as { n: number }).n;
@@ -45,11 +46,15 @@ beforeEach(() => {
      SELECT a.id, a.workstream_id, 'none', ?, NULL, '2026-01-01T00:00:00Z' FROM agents a WHERE a.name = 'w1'`,
   ).run(wsPath);
   paneLive = true;
-  mux = installMux("tmux", async () => ({
-    stdout: paneLive ? "%7\n" : "",
-    stderr: "",
-    exitCode: 0,
-  }));
+  probeThrows = false;
+  mux = installMux("tmux", async () => {
+    if (probeThrows) throw new Error("probe boom");
+    return {
+      stdout: paneLive ? "%7\n" : "",
+      stderr: "",
+      exitCode: 0,
+    };
+  });
 });
 
 afterEach(() => {
@@ -70,6 +75,15 @@ describe("mu workspace free owner-state guard", () => {
   it("refuses unknown with a live pane", async () => {
     nextState = "unknown";
     await expect(free()).rejects.toBeInstanceOf(WorkspaceOwnerBusyError);
+    expect(workspaceRows()).toBe(1);
+  });
+
+  it("fails closed when the liveness probe throws", async () => {
+    nextState = "unknown";
+    probeThrows = true;
+    const err = await free().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WorkspaceOwnerBusyError);
+    expect((err as WorkspaceOwnerBusyError).detail).toMatch(/liveness probe failed/);
     expect(workspaceRows()).toBe(1);
   });
 
