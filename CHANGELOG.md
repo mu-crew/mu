@@ -95,6 +95,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   verbs that resolve the workstream via tmux drop by ~50-60 ms per call
   (state ~140 -> ~85 ms). Output and exit codes are unchanged; capture
   keeps execa's 100 MiB buffer cap.
+  In-flight children are killed when mu exits or gets SIGTERM, SIGINT or
+  SIGHUP, as execa's `cleanup` did, so no tmux or murmur process outlives mu.
 - **Faster startup: pure-JS dependencies are bundled.** Every verb
   resolved, read and compiled about 35 `node_modules` files (commander,
   cli-table3, string-width and their dependencies). `tsup` now bundles

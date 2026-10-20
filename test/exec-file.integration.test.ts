@@ -2,6 +2,12 @@
 // Pin the behaviours callers depend on: execa-compatible output trimming,
 // numeric-or-null exit codes, no rejection, big output, timeout kill.
 
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { execFileCapture } from "../src/exec-file.js";
 
@@ -49,4 +55,71 @@ describe("execFileCapture", () => {
     const r = await execFileCapture(node, ["-e", "setTimeout(()=>{},60000)"], { timeoutMs: 200 });
     expect(r.exitCode).toBeNull();
   });
+});
+
+// Parent termination: execa's `cleanup: true` killed in-flight children when
+// the parent died; execFileCapture must too (finding
+// high_executor_children_survive_mu_exit).
+describe("execFileCapture parent-exit cleanup", () => {
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  async function runParent(how: "SIGTERM" | "SIGINT" | "SIGHUP" | "exit"): Promise<{
+    parent: { code: number | null; signal: NodeJS.Signals | null };
+    childPid: number;
+  }> {
+    const dir = mkdtempSync(join(tmpdir(), "mu-exec-cleanup-"));
+    const pidFile = join(dir, "child.pid");
+    const childScript = `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(()=>{},1000)`;
+    const parentScript = `
+      import { execFileCapture } from ${JSON.stringify(pathToFileURL(join(__dirname, "..", "src", "exec-file.ts")).href)};
+      const p = execFileCapture(process.execPath, ["-e", ${JSON.stringify(childScript)}], { timeoutMs: 5000 });
+      ${how === "exit" ? `import { existsSync } from "node:fs"; while (!existsSync(${JSON.stringify(pidFile)})) await new Promise((r) => setTimeout(r, 20)); process.exit(0);` : "await p;"}
+    `;
+    const parent = spawn(process.execPath, ["--input-type=module", "-e", parentScript], {
+      stdio: "ignore",
+      cwd: join(__dirname, ".."),
+    });
+    const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((res) =>
+      parent.once("close", (code, signal) => res({ code, signal })),
+    );
+    try {
+      for (let i = 0; i < 400 && !existsSync(pidFile); i++) await sleep(25);
+      expect(existsSync(pidFile)).toBe(true);
+      // The pid file is written before the parent finishes registering; give it a beat.
+      await sleep(50);
+      if (how !== "exit") parent.kill(how);
+      const res = await closed;
+      const childPid = Number(readFileSync(pidFile, "utf8"));
+      // Allow the OS a moment to reap the SIGKILLed child.
+      for (let i = 0; i < 40 && alive(childPid); i++) await sleep(25);
+      return { parent: res, childPid };
+    } finally {
+      try {
+        parent.kill("SIGKILL");
+      } catch {}
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  for (const how of ["SIGTERM", "SIGINT", "SIGHUP", "exit"] as const) {
+    it(`kills the in-flight child when the parent gets ${how}`, async () => {
+      const { parent, childPid } = await runParent(how);
+      try {
+        expect(alive(childPid)).toBe(false);
+        // Default signal behaviour is preserved: the parent still dies by the signal.
+        if (how !== "exit") expect(parent.signal).toBe(how);
+      } finally {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {}
+      }
+    }, 15_000);
+  }
 });
