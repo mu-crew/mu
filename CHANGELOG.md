@@ -57,6 +57,28 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   torn-down workstream (27 scans of 61k rows, ~320 ms of SQL in
   `mu doctor`'s size hint). It now seeks `idx_ops_entity_key` with a key
   range per entity (~28 ms); counts and deleted rows are identical.
+- **A bare verb in a mu-spawned pane skips the tmux lookup.** With no
+  `-w` and no `$MU_SESSION`, `resolveWorkstream` ran `tmux
+  display-message -p '#S'` (and loaded execa) even though spawn already
+  put the workstream in `$MU_WORKSTREAM`. It now uses `$MU_WORKSTREAM`
+  when `$MU_MANAGED_AGENT=1` is also set: bare `mu task list` ~133 -> ~67
+  ms from an agent pane. `-w` and `$MU_SESSION` still win, and a
+  `$MU_WORKSTREAM` without `$MU_MANAGED_AGENT` (a stale export in a user
+  shell) is ignored. User-started orchestrator panes are unchanged.
+- **Spawn sees a pi agent's control socket within ~50 ms.** The spawn
+  handshake polled every 250 ms, so a socket pi bound just after a poll
+  waited up to 250 ms to be noticed. It now stats the socket path every
+  50 ms (no fork) and probes as soon as it exists: readiness overshoot
+  132 -> 24 ms, ~100 ms less per pi spawn. The pane-alive check and
+  scrollback capture keep their 250 ms cadence, so death detection and
+  crash diagnostics are unchanged.
+- **`mu_delegate` closes the pane and writes the record note in
+  parallel.** A finished delegate with `record` waited for
+  `mu agent close` before starting `mu task note`, though neither needs
+  the other. They now overlap: ~70 ms less before the answer arrives
+  (median of 25 pairs), on clean finishes that close and record. Failure
+  reporting is unchanged: a refused close and a failed note are each
+  named in the follow-up.
 - **The keep-driving nudge reads `mu task list`, not `mu state`.** At
   each armed settle the pi extension ran `mu state --json` only to read
   IN_PROGRESS task names, paying for the tmux pane listing and the

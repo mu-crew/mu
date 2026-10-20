@@ -13,7 +13,7 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_STATE_DIR` | State directory. Also holds `compile-cache/` (V8 code cache for the CLI; `NODE_DISABLE_COMPILE_CACHE=1` turns it off). | `$XDG_STATE_HOME/mu` |
 | `XDG_STATE_HOME` | XDG state base; mu appends `mu/`. An empty or relative value is ignored. | `~/.local/state` |
 | `XDG_CACHE_HOME` | XDG cache base; mu appends `mu/`. Holds only disposable copies. An empty or relative value is ignored. | `~/.cache` |
-| `MU_SESSION` | Active workstream when `-w` is absent. | current `mu-<name>` mux session |
+| `MU_SESSION` | Active workstream when `-w` is absent. Beats `MU_WORKSTREAM`. | current `mu-<name>` mux session |
 | `MU_SYNC_DIR` | Folder holding one segment per machine. This is the whole sync setup; there is no peer list. | unset: sync off |
 
 ## Multiplexer
@@ -60,7 +60,7 @@ These apply to the tmux paste path only. For when that path runs, see
 | Name | Value |
 | --- | --- |
 | `MU_AGENT_NAME` | The agent's name; first rung of actor identity. |
-| `MU_WORKSTREAM` | The agent's workstream. |
+| `MU_WORKSTREAM` | The agent's workstream. With `MU_MANAGED_AGENT=1` it also resolves the workstream when `-w` and `MU_SESSION` are absent (no tmux lookup); without it, ignored. |
 | `MU_CTL_SOCK` | The agent's control socket path, derived from state dir, workstream, and agent. The mu pi extension serves it. |
 | `MU_MANAGED_AGENT` | `1`. Hides `mu_delegate` inside agents, so a helper cannot spawn helpers. |
 

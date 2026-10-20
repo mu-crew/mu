@@ -101,7 +101,11 @@ export {
  * Resolve the active workstream. Order:
  *   1. --workstream <name> flag
  *   2. $MU_SESSION env var
- *   3. Current tmux session name (with `mu-` prefix stripped)
+ *   3. $MU_WORKSTREAM, only when $MU_MANAGED_AGENT=1 (inside a
+ *      mu-spawned pane, where spawn injects both). Saves the
+ *      `tmux display-message` fork; the gate keeps a stale
+ *      $MU_WORKSTREAM in a user shell from overriding the tmux session.
+ *   4. Current tmux session name (with `mu-` prefix stripped)
  *
  * Throws UsageError if none of the above produce a name, or if the
  * explicit value is BLANK (whitespace-only). The blank check lives
@@ -119,6 +123,9 @@ export async function resolveWorkstream(explicit?: string): Promise<string> {
   }
   if (explicit) return explicit;
   if (process.env.MU_SESSION) return process.env.MU_SESSION;
+  if (process.env.MU_MANAGED_AGENT === "1" && process.env.MU_WORKSTREAM) {
+    return process.env.MU_WORKSTREAM;
+  }
   const tmuxWorkstream = await resolveMuxSessionWorkstreamName();
   if (tmuxWorkstream !== null) return tmuxWorkstream;
   throw new UsageError(
