@@ -8,7 +8,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { insertAgent } from "../src/agents.js";
+import { AgentEmptySendError, insertAgent, interruptAgent } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -211,6 +211,15 @@ describe("mu agent send --interrupt", () => {
     const r = await send("--interrupt", "");
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(/--interrupt needs a non-empty prompt/);
+    expect(ops).toEqual([]);
+  });
+
+  it("SDK interruptAgent refuses empty text before any ctl op", async () => {
+    seed();
+    await serve({ hasInterrupt: true });
+    await expect(interruptAgent(db, "worker-1", "", { workstream: "auth" })).rejects.toBeInstanceOf(
+      AgentEmptySendError,
+    );
     expect(ops).toEqual([]);
   });
 
