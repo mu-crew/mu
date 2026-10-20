@@ -939,7 +939,9 @@ describe("sendToPane", () => {
     setTmuxExecutor(executor);
     await sendToPane("%15", "hello", { readinessMs: 15_000, delayMs: 0 });
     const firstPaste = calls.findIndex((c) => c.args[0] === "paste-buffer");
-    const firstEnter = calls.findIndex((c) => c.args[0] === "send-keys" && c.args.includes("Enter"));
+    const firstEnter = calls.findIndex(
+      (c) => c.args[0] === "send-keys" && c.args.includes("Enter"),
+    );
     expect(firstPaste).toBeGreaterThan(-1);
     expect(firstEnter).toBeGreaterThan(firstPaste);
     // Paste only after loading cleared (4 loading captures + 3 calm ones).
