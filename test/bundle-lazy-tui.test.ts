@@ -10,7 +10,8 @@
 // Builds the real tsup.config.ts into a temp dir (no .d.ts, no sourcemap),
 // then walks dist/cli.js's static import graph.
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -37,6 +38,10 @@ describe("bundle keeps the TUI lazy", () => {
       const outDir = join(out, relative("dist", c.outDir ?? "dist"));
       await build({ ...c, outDir, dts: false, sourcemap: false, silent: true, config: false });
     }
+    // Lets the built dist resolve its external deps (better-sqlite3, ink, ...).
+    // Link only after the builds: tsup's `clean` globs the out dir and would
+    // delete the files inside a symlinked node_modules.
+    symlinkSync(join(__dirname, "..", "node_modules"), join(out, "node_modules"), "dir");
   }, 60_000);
 
   afterAll(() => {
@@ -94,5 +99,73 @@ describe("bundle keeps the TUI lazy", () => {
   it("dist/extension/mu-pi.js is standalone (imports no sibling chunks)", () => {
     const src = readFileSync(join(out, "extension", "mu-pi.js"), "utf8");
     expect(staticImports(src).filter((s) => s.startsWith("."))).toEqual([]);
+  });
+
+  // Run the built dist with a loader hook that logs every module specifier
+  // it resolves, so we can see what actually loaded.
+  const HOOK = `data:text/javascript,${encodeURIComponent(`
+    import { appendFileSync } from "node:fs";
+    export async function resolve(spec, ctx, next) {
+      appendFileSync(process.env.MU_RESOLVE_LOG, spec + "\\n");
+      return next(spec, ctx);
+    }`)}`;
+  const PRELOAD = `data:text/javascript,${encodeURIComponent(
+    `import { register } from "node:module"; register(${JSON.stringify(HOOK)});`,
+  )}`;
+
+  function runDist(args: string[], env: NodeJS.ProcessEnv = {}) {
+    const log = join(out, `resolve-${Math.random().toString(36).slice(2)}.log`);
+    const r = spawnSync(process.execPath, ["--import", PRELOAD, join(out, "cli.js"), ...args], {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        HOME: out,
+        MU_DB_PATH: join(out, "smoke.db"),
+        MU_SYNC_DIR: "",
+        MU_RESOLVE_LOG: log,
+        ...env,
+      },
+    });
+    let resolved: string[] = [];
+    try {
+      resolved = readFileSync(log, "utf8").split("\n").filter(Boolean);
+    } catch {}
+    return { ...r, resolved };
+  }
+
+  it("the bundled CJS deps are inlined: no bare import or runtime resolve of them", () => {
+    const BUNDLED = ["commander", "cli-table3", "string-width", "picocolors"];
+    for (const f of readdirSync(out).filter((n) => n.endsWith(".js"))) {
+      const bare = staticImports(readFileSync(join(out, f), "utf8"));
+      expect(
+        bare.filter((s) => BUNDLED.includes(s)),
+        f,
+      ).toEqual([]);
+    }
+    const r = runDist(["sql", "SELECT 1 AS result"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.resolved.filter((s) => BUNDLED.some((b) => s === b || s.startsWith(`${b}/`)))).toEqual(
+      [],
+    );
+  });
+
+  it("the CJS require path works in the built dist (cli-table3 colors its borders)", () => {
+    // cli-table3 (CJS) loads @colors/colors via a dynamic require; without
+    // the createRequire banner it silently drops border colors, so exit 0
+    // and plain output would hide the break.
+    const r = runDist(["sql", "SELECT 1 AS result"], { FORCE_COLOR: "1" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("result");
+    // The grey table border (SGR 90) comes from @colors/colors, loaded by
+    // cli-table3 through the dynamic require; the bold header is picocolors.
+    expect(r.stdout).toContain("\x1b[90m");
+  });
+
+  it("`mu --version` runs from the built dist without loading ink or react", () => {
+    const r = runDist(["--version"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).not.toBe("");
+    expect(r.resolved.length).toBeGreaterThan(0); // the hook saw the load
+    expect(r.resolved.filter((s) => ["ink", "react", "yoga-layout"].includes(s))).toEqual([]);
   });
 });
