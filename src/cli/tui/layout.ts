@@ -424,7 +424,7 @@ export function arrangeColumns(input: ArrangeColumnsInput): ArrangedColumns {
 
   // Steepest descent on the full key: equal-hidden neighbours that
   // move fewer cards (or restore slot order) are taken too.
-  const descend = (start: CardId[][]): { lanes: CardId[][]; hidden: number } => {
+  const descend = (start: CardId[][]): Scored => {
     let current = score(start);
     for (let round = 0; round < MAX_ARRANGE_ROUNDS; round++) {
       let best: Scored | null = null;
@@ -438,7 +438,7 @@ export function arrangeColumns(input: ArrangeColumnsInput): ArrangedColumns {
       if (best === null) break;
       current = best;
     }
-    return { lanes: current.lanes, hidden: current.hidden };
+    return current;
   };
 
   let result = descend(initial);
@@ -449,7 +449,8 @@ export function arrangeColumns(input: ArrangeColumnsInput): ArrangedColumns {
     // search can land in a different local optimum and miss a single
     // move or swap from `previous` that saves more than the hysteresis.
     const fromPrevious = descend(previous);
-    if (fromPrevious.hidden <= result.hidden) result = fromPrevious;
+    // Same full key as the descent: hidden rows, then fewer moved, then slot order.
+    if (better(fromPrevious, result)) result = fromPrevious;
     const minGain = Math.max(
       REARRANGE_MIN_GAIN_ROWS,
       Math.ceil(previousHidden * REARRANGE_MIN_GAIN_FRACTION),
