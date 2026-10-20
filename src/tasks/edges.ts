@@ -175,27 +175,36 @@ export function findCyclePath(db: Db, fromId: number, toId: number): string[] | 
       | undefined;
     return t ? [t.local_id] : null;
   }
-  const row = db
-    .prepare(
-      `WITH RECURSIVE walk(node, path, depth) AS (
-         SELECT @start, ',' || @start || ',', 0
-         UNION ALL
-         SELECT e.to_task_id, walk.path || e.to_task_id || ',', walk.depth + 1
-         FROM task_edges e JOIN walk ON e.from_task_id = walk.node
-         WHERE instr(walk.path, ',' || e.to_task_id || ',') = 0
-       )
-       SELECT path FROM walk WHERE node = @goal ORDER BY depth LIMIT 1`,
-    )
-    .get({ start: toId, goal: fromId }) as { path: string } | undefined;
-  if (!row) return null;
-  const names: string[] = [];
-  for (const id of row.path.split(",").filter(Boolean)) {
-    const t = db.prepare("SELECT local_id FROM tasks WHERE id = ?").get(Number(id)) as
-      | { local_id: string }
-      | undefined;
-    names.push(t?.local_id ?? id);
+  // BFS with parent pointers: linear in edges, shortest by construction,
+  // and terminates on cycles already present (each node is visited once).
+  // A per-path recursive CTE is exponential on wide DAGs.
+  const next = db.prepare("SELECT to_task_id AS id FROM task_edges WHERE from_task_id = ?");
+  const parent = new Map<number, number>([[toId, toId]]);
+  let frontier = [toId];
+  while (frontier.length > 0 && !parent.has(fromId)) {
+    const nextFrontier: number[] = [];
+    for (const node of frontier) {
+      for (const { id } of next.all(node) as { id: number }[]) {
+        if (parent.has(id)) continue;
+        parent.set(id, node);
+        nextFrontier.push(id);
+      }
+    }
+    frontier = nextFrontier;
   }
-  return names;
+  if (!parent.has(fromId)) return null;
+  const ids: number[] = [];
+  for (let n = fromId; ; ) {
+    ids.unshift(n);
+    if (n === toId) break;
+    const p = parent.get(n);
+    if (p === undefined) return null;
+    n = p;
+  }
+  const name = db.prepare("SELECT local_id FROM tasks WHERE id = ?");
+  return ids.map(
+    (id) => (name.get(id) as { local_id: string } | undefined)?.local_id ?? String(id),
+  );
 }
 
 /** Build a CycleError for edge `blocker -> blocked`, with the closing path. */
