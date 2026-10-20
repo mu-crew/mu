@@ -81,4 +81,15 @@ describe("cycle path", () => {
     const ms = Date.now() - t0;
     expect(ms, `cycle check took ${ms}ms`).toBeLessThan(150);
   });
+
+  it("returns the shortest path when a longer route also closes the cycle", () => {
+    for (const n of ["x", "y"])
+      addTask(db, { localId: n, title: n, workstream: WS, impact: 50, effortDays: 1 });
+    addBlockEdge(db, WS, "x", "a"); // a blocks x
+    addBlockEdge(db, WS, "y", "x"); // x blocks y
+    addBlockEdge(db, WS, "c", "y"); // y blocks c: a -> x -> y -> c (longer)
+    const a = taskIdFor(db, "a", WS) as number;
+    const c = taskIdFor(db, "c", WS) as number;
+    expect(findCyclePath(db, c, a)).toEqual(["a", "b", "c"]);
+  });
 });
