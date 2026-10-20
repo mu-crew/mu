@@ -10,6 +10,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.13.1] — 2026-10-20
+
+**jj 0.46: recreating a deleted workspace works again.** A spawn that reuses
+the name of a jj workspace whose directory was deleted failed on jj 0.46.
+
+Upgrade with `npm i -g @mu-crew/mu@3.13.1`. No schema or extension change.
+
 ### Fixed
 
 - **A jj workspace whose directory was deleted can be recreated (jj 0.46).**
