@@ -437,7 +437,15 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // Workspace pre-stage. See `prestageWorkspace` for the FK-ordering
   // rationale. Returns the workspace path (used as the pane's cwd) or
   // undefined when --workspace wasn't requested.
-  const workspacePathStr = opts.workspace ? await prestageWorkspace(db, opts, cli) : undefined;
+  let workspacePathStr: string | undefined;
+  if (opts.workspace) {
+    try {
+      workspacePathStr = await prestageWorkspace(db, opts, cli);
+    } catch (err) {
+      emitSpawnFailed(db, opts, "workspace", err);
+      throw err;
+    }
+  }
 
   // Inject identity env vars into the pane so anything running inside
   // (pi extensions, claim-protocol scripts, status segments) can branch
@@ -508,7 +516,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   const wantsCtl = opts.ctl !== false && speaksMuCtl(cli, command) && defaultSpawnCtlMs() !== 0;
   let ctl: SpawnCtl | undefined;
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
-  let phase: "pane" | "liveness" = "pane";
+  let phase: SpawnPhase = "pane";
   let trustDialog = false;
   try {
     // Cross-process critical section: the tmux topology check-then-act
@@ -558,6 +566,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       // window (and not just per session). Self-checks MU_BANNER_QUIET
       // and is best-effort — the border is decorative.
       await mux.enableMuPaneBordersForPane(pid);
+      phase = "finalize";
       const row = finalizeAgentRow(db, { opts, cli, paneId: pid, hasWorkspace });
       ownsRow = true;
       return { pid, row };
@@ -625,18 +634,19 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       await startAgent({ paneId, name: opts.name, cli, command, commandSource });
     }
   } catch (err) {
-    await rollbackSpawn(db, opts.name, paneId, hasWorkspace, ownsRow, opts.workstream);
-    // Terminal record for a rolled-back spawn. Never masks `err`.
+    // Record first: a throwing cleanup must neither skip the record nor
+    // mask the original error.
+    emitSpawnFailed(db, opts, phase, err);
     try {
-      const errName = err instanceof Error ? err.constructor.name : typeof err;
-      emitEvent(
-        db,
-        opts.workstream,
-        "agent.spawn_failed",
-        `agent spawn failed ${opts.name} (phase=${phase}, error=${errName})`,
-      );
-    } catch {
-      // logging is best-effort
+      await rollbackSpawn(db, opts.name, paneId, hasWorkspace, ownsRow, opts.workstream);
+    } catch (cleanupErr) {
+      if (err instanceof Error && err.cause === undefined) {
+        try {
+          err.cause = cleanupErr;
+        } catch {
+          // frozen error: keep original as-is
+        }
+      }
     }
     if (hasWorkspace) attachOrphanCleanupHint(err, opts.name, opts.workstream);
     throw err;
@@ -704,7 +714,11 @@ async function prestageWorkspace(db: Db, opts: SpawnAgentOptions, cli: string): 
     const ws = await createWorkspace(db, wsOpts);
     return ws.path;
   } catch (err) {
-    deleteAgent(db, opts.name, opts.workstream);
+    try {
+      deleteAgent(db, opts.name, opts.workstream);
+    } catch {
+      // best-effort: never mask the workspace error
+    }
     throw err;
   }
 }
@@ -760,6 +774,23 @@ function finalizeAgentRow(
  * (e.g. it lost a same-name race); the row then belongs to another
  * agent and is left alone.
  */
+type SpawnPhase = "workspace" | "pane" | "finalize" | "liveness";
+
+/** Terminal record for a failed spawn. Best-effort; never throws. */
+function emitSpawnFailed(db: Db, opts: SpawnAgentOptions, phase: SpawnPhase, err: unknown): void {
+  try {
+    const errName = err instanceof Error ? err.constructor.name : typeof err;
+    emitEvent(
+      db,
+      opts.workstream,
+      "agent.spawn_failed",
+      `agent spawn failed ${opts.name} (phase=${phase}, error=${errName})`,
+    );
+  } catch {
+    // logging is best-effort
+  }
+}
+
 async function rollbackSpawn(
   db: Db,
   name: string,

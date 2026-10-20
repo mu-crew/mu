@@ -324,6 +324,39 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     ]);
   });
 
+  it("a failing cleanup keeps the original error and still logs spawn_failed", async () => {
+    installLivePanes({ scrollback: "Error: No API key found for amazon-bedrock" });
+    db.exec(
+      "CREATE TRIGGER no_del BEFORE DELETE ON agents BEGIN SELECT RAISE(ABORT, 'cleanup delete failed'); END",
+    );
+    const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);
+    expect(err).toBeInstanceOf(AgentSpawnStartupError);
+    expect(spawnRows().map((r) => r.intent)).toEqual(["agent.spawn_failed"]);
+  });
+
+  it("a finalize failure reports phase=finalize", async () => {
+    installLivePanes({ extension: true });
+    db.exec(
+      "CREATE TRIGGER no_ins BEFORE INSERT ON agents BEGIN SELECT RAISE(ABORT, 'finalization unavailable'); END",
+    );
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch(() => {});
+    expect(spawnRows()[0]?.payload).toContain("phase=finalize");
+  });
+
+  it("a workspace pre-stage failure logs agent.spawn_failed (phase=workspace)", async () => {
+    installLivePanes({ extension: true });
+    const err = await spawnAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      workspace: true,
+      workspaceBackend: "none",
+      workspaceProjectRoot: "/nonexistent/mu-no-such-root",
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(spawnRows()[0]?.payload).toContain("phase=workspace");
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+
   it("scans for a startup error once the handshake times out, and rolls back", async () => {
     installLivePanes({ scrollback: "Error: No API key found for amazon-bedrock" });
     const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);
