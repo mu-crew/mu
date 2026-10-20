@@ -939,6 +939,9 @@ CREATE TABLE IF NOT EXISTS sync_peers (
 -- when ingest read that segment cleanly to its end (src/segments.ts
 -- segmentCaughtUp). Keyed like sync_peers; a watermark write without a
 -- clean read deletes the row. A cache: losing it costs one full read.
+-- The value may carry tab-separated resume fields after the key
+-- (src/segment-resume.ts): byte offset and sha256 state for ingest
+-- to read only appended bytes.
 -- Additive, so no schema bump: an older mu ignores it, and any
 -- watermark it writes can no longer match a stale fingerprint.
 CREATE TABLE IF NOT EXISTS sync_fingerprints (

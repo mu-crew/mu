@@ -78,14 +78,23 @@ import { locksDir, withFileLock } from "./file-lock.js";
 import { receiveHlc } from "./hlc.js";
 import { isLegacyLogOnlyIntent } from "./legacy-ops.js";
 import {
-  manifestPath,
   manifestSelfConsistent,
   readManifest,
+  type SegmentManifest,
   writeManifestFile,
 } from "./segment-manifest.js";
+import {
+  encodeFingerprint,
+  type ResumePoint,
+  readAppended,
+  resumePoint,
+  segmentCaughtUp,
+  segmentFingerprint,
+} from "./segment-resume.js";
 import { type Sha256State, sha256Digest, sha256Initial, sha256Update } from "./sha256-resumable.js";
 
 export { manifestSeal, readManifest, type SegmentManifest } from "./segment-manifest.js";
+export { segmentCaughtUp } from "./segment-resume.js";
 
 /** Current segment line format. Bumped only on a breaking shape change;
  *  a reader that sees a version it does not know REFUSES the line rather
@@ -787,62 +796,6 @@ function readLastLine(path: string, size: number): string | null {
   }
 }
 
-/**
- * What a full, clean ingest saw of a peer's segment: its size, its
- * exact mtime, and the sha256 of its manifest's bytes, plus the count
- * that manifest claims. Null when the segment or its manifest cannot be
- * read. Taken BEFORE the read, so a file that changes mid-read no longer
- * matches next time.
- */
-function segmentFingerprint(path: string): { key: string; count: unknown } | null {
-  try {
-    const { size, mtimeMs } = statSync(path);
-    const manifest = readFileSync(manifestPath(path));
-    const sha = createHash("sha256").update(manifest).digest("hex");
-    let count: unknown = null;
-    try {
-      count = (JSON.parse(manifest.toString("utf8")) as { count?: unknown }).count;
-    } catch {
-      // An unparseable manifest still fingerprints; its count is unknown.
-    }
-    return { key: `${size} ${mtimeMs} ${sha}`, count };
-  } catch {
-    return null;
-  }
-}
-
-/** The fingerprint recorded with a watermark (see `setWatermark`), or
- *  null when the last write of the watermark recorded none. */
-function recordedFingerprint(db: Db, watermarkKey: string): string | null {
-  const row = prepareCached(
-    db,
-    "SELECT fingerprint FROM sync_fingerprints WHERE machine_id = ?",
-  ).get(watermarkKey) as { fingerprint: string } | undefined;
-  return row?.fingerprint ?? null;
-}
-
-/**
- * True when ingest is caught up on the segment at `path`, judged without
- * reading it: the manifest counts `lines` (the watermark), and the
- * segment's size, exact mtime and manifest bytes are what the last full,
- * defect-free ingest of this file recorded. Any difference (an append, a
- * rewrite whatever its mtime, a new or edited manifest, a watermark
- * written since by a reset or partial ingest) sends the caller down the
- * full read, which hashes the file and reports any mismatch. Cost: one
- * row lookup, one stat and one manifest read.
- */
-export function segmentCaughtUp(
-  db: Db,
-  watermarkKey: string,
-  path: string,
-  lines: number,
-): boolean {
-  const recorded = recordedFingerprint(db, watermarkKey);
-  if (recorded === null) return false;
-  const now = segmentFingerprint(path);
-  return now !== null && now.count === lines && now.key === recorded;
-}
-
 /** Number of GOOD lines in a segment (stopping at the first defect, as
  *  ingest does). The denominator of "how far behind am I" — exported for
  *  `mu sync`'s peer table. */
@@ -952,13 +905,24 @@ export function verifyAgainstManifest(
   const manifest = readManifest(segment);
   if (manifest === null) return { ok: true }; // no manifest: nothing to check
   if (!existsSync(segment)) return { ok: false, reason: "segment missing but manifest present" };
-  const sha = createHash("sha256").update(readFileSync(segment)).digest("hex");
-  if (sha === manifest.sha256) return { ok: true };
+  return checkBytesAgainstManifest(segment, manifest, readFileSync(segment));
+}
+
+/** `verifyAgainstManifest` over bytes the caller already read, so ingest
+ *  reads the segment once. `exact` is true when the bytes hash to the
+ *  manifest's sha256 (the manifest covers exactly this file). */
+function checkBytesAgainstManifest(
+  segment: string,
+  manifest: SegmentManifest,
+  bytes: Buffer,
+): { ok: true; exact: boolean } | { ok: false; reason: string } {
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  if (sha === manifest.sha256) return { ok: true, exact: true };
   // A GROWN file is expected: the peer appended after writing the
   // manifest we have, or our copy is mid-transfer. That is not damage.
   const tail = readSegmentTail(segment);
   if (tail.count >= manifest.count) {
-    return { ok: true };
+    return { ok: true, exact: false };
   }
   return {
     ok: false,
@@ -1196,65 +1160,99 @@ export function ingestSegment(
   // read, hash or split the file. `verify` (explicit `mu sync`) skips
   // this and checks the whole file, so damage that kept size and mtime
   // is still reported somewhere.
-  if (opts?.verify !== true && segmentCaughtUp(db, watermarkKey, peer.path, start)) {
-    return {
-      machineId: peer.machineId,
-      path: peer.path,
-      read: 0,
-      applied: 0,
-      changed: 0,
-      watermark: start,
-      defects,
-      truncatedAt: null,
-    };
-  }
-
-  if (!existsSync(peer.path)) {
-    return {
-      machineId: peer.machineId,
-      path: peer.path,
-      read: 0,
-      applied: 0,
-      changed: 0,
-      watermark: start,
-      defects,
-      truncatedAt: null,
-    };
-  }
+  const nothing: IngestResult = {
+    machineId: peer.machineId,
+    path: peer.path,
+    read: 0,
+    applied: 0,
+    changed: 0,
+    watermark: start,
+    defects,
+    truncatedAt: null,
+  };
+  if (opts?.verify !== true && segmentCaughtUp(db, watermarkKey, peer.path, start)) return nothing;
+  if (!existsSync(peer.path)) return nothing;
 
   const fingerprint = segmentFingerprint(peer.path);
-  const verified = verifyAgainstManifest(peer.path);
-  if (!verified.ok) {
-    // Whole-file damage, distinct from a torn line: every remaining
-    // record may be individually valid (truncation exactly on a line
-    // boundary), which is precisely what the per-line layers cannot see.
-    // Reported, NOT a halt: the lines that remain are a valid prefix, so
-    // the per-line layers below still decide how far to apply.
-    defects.push({ kind: "manifest-mismatch", line: 0, detail: verified.reason });
-  }
 
-  const lines = segmentLines(readFileSync(peer.path, "utf8"));
+  // RESUME: the last clean read recorded where it stopped and the running
+  // hash there. When the file is that prefix plus appended bytes whose
+  // hash is the manifest's, only the appended bytes are read and split.
+  // Anything else (shrunk, stale manifest, no resume point, explicit
+  // `verify`) takes the full read and whole-file verify below.
+  const resume =
+    opts?.verify !== true && fingerprint?.manifest != null && start > 0
+      ? resumePoint(db, watermarkKey, start)
+      : null;
+  const appended =
+    resume !== null && fingerprint?.manifest != null
+      ? readAppended(peer.path, resume, fingerprint.manifest.sha256)
+      : null;
+
+  let lines: string[];
+  let base: number; // lines before `lines[0]` in the file
+  let seedHlc: string | null = null;
+  let nextResume: ResumePoint | null = null; // set only after a clean read, below
+  let resumeState: Sha256State | null = null;
+  let resumeSize = 0;
+  if (resume !== null && appended !== null) {
+    lines = segmentLines(appended.bytes.toString("utf8"));
+    base = resume.lines;
+    seedHlc = resume.lastHlc;
+    resumeState = appended.bytes[appended.bytes.length - 1] === 0x0a ? appended.state : null;
+    resumeSize = appended.state.n;
+  } else {
+    const manifest = readManifest(peer.path);
+    const bytes = readFileSync(peer.path);
+    if (manifest !== null) {
+      const verified = checkBytesAgainstManifest(peer.path, manifest, bytes);
+      if (!verified.ok) {
+        // Whole-file damage, distinct from a torn line: every remaining
+        // record may be individually valid (truncation exactly on a line
+        // boundary), which is precisely what the per-line layers cannot
+        // see. Reported, NOT a halt: the lines that remain are a valid
+        // prefix, so the per-line layers below still decide how far to
+        // apply.
+        defects.push({ kind: "manifest-mismatch", line: 0, detail: verified.reason });
+      } else if (verified.exact) {
+        // The owner's manifest carries the running hash after exactly
+        // these bytes: reuse it instead of hashing the file in JS.
+        const state = manifest.shaState;
+        if (
+          state !== undefined &&
+          state.n === bytes.length &&
+          bytes[bytes.length - 1] === 0x0a &&
+          sha256Digest(state) === manifest.sha256
+        ) {
+          resumeState = state;
+          resumeSize = bytes.length;
+        }
+      }
+    }
+    lines = segmentLines(bytes.toString("utf8"));
+    base = 0;
+    // Seed the monotonicity check from the last line we already accepted,
+    // so a segment rewritten out of order is caught even mid-file.
+    if (start > 0 && start <= lines.length) {
+      const prior = lines[start - 1];
+      if (prior !== undefined) {
+        const decoded = decodeLine(prior);
+        if (decoded.ok) seedHlc = decoded.line.hlc;
+      }
+    }
+  }
+  const total = base + lines.length;
 
   let applied = 0;
   let changed = 0;
   let watermark = start;
   let truncatedAt: number | null = null;
-  let previousHlc: string | null = null;
-
-  // Seed the monotonicity check from the last line we already accepted,
-  // so a segment rewritten out of order is caught even mid-file.
-  if (start > 0 && start <= lines.length) {
-    const prior = lines[start - 1];
-    if (prior !== undefined) {
-      const decoded = decodeLine(prior);
-      if (decoded.ok) previousHlc = decoded.line.hlc;
-    }
-  }
+  let previousHlc: string | null = seedHlc;
 
   const run = db.transaction(() => {
-    for (let index = start; index < lines.length; index++) {
+    for (let index = start - base; index < lines.length; index++) {
       const raw = lines[index];
-      const lineNo = index + 1;
+      const lineNo = base + index + 1;
       if (raw === undefined || raw.trim() === "") {
         // Blank line: treat as damage rather than skipping, since a
         // well-formed segment never contains one.
@@ -1350,8 +1348,16 @@ export function ingestSegment(
     }
     // Vouch for the file only after a clean read to its end, so a file
     // with a defect is read (and reported) again on every pass.
-    const clean = defects.length === 0 && watermark === lines.length;
-    setWatermark(db, watermarkKey, watermark, clean ? (fingerprint?.key ?? null) : null);
+    const clean = defects.length === 0 && watermark === total;
+    if (clean && resumeState !== null && previousHlc !== null) {
+      nextResume = { lines: total, size: resumeSize, lastHlc: previousHlc, state: resumeState };
+    }
+    setWatermark(
+      db,
+      watermarkKey,
+      watermark,
+      clean && fingerprint !== null ? encodeFingerprint(fingerprint.key, nextResume) : null,
+    );
     // applyIncomingOp left the reprojection marker in this transaction
     // if anything changed or deferred: a process that dies before the
     // pass-wide reprojection leaves it behind for the next one.
