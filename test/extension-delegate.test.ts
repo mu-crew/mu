@@ -21,7 +21,7 @@ import {
   PENDING_CHANNEL,
   registerDelegate,
 } from "../extension/delegate.js";
-import muPi from "../extension/mu-pi.js";
+import muPi, { type MuPiContext } from "../extension/mu-pi.js";
 import { withEnv } from "./_env.js";
 
 const ENV_KEYS = [
@@ -183,7 +183,7 @@ function fakePi() {
     state.busy = false;
     for (const [m] of sendMessage.mock.calls) await start(m);
   };
-  return { pi, tools, sendMessage, shutdown, emitted, state, fire, drainQueue };
+  return { pi, tools, sendMessage, shutdown, emitted, state, fire, drainQueue, handlers };
 }
 
 function sentText(p: { sendMessage: { mock: { calls: unknown[][] } } }): string {
@@ -1544,5 +1544,101 @@ describe("evidence when there is no final answer", () => {
     const notify = vi.fn();
     for (const h of p.shutdown) await h({}, { hasUI: true, ui: { notify } });
     expect(String(notify.mock.calls[0]?.[0])).toContain("Sessions: delegate-2: /s/d2.jsonl.");
+  });
+});
+
+describe("nudges yield to a delegate answer on its way", () => {
+  // The real wiring: muPi registers the delegate and the nudges, and the
+  // keep-driving nudge would continue the run while dispatched work is
+  // IN_PROGRESS. pi's hasPendingMessages() does not count the answer.
+  function setup() {
+    const mu = fakeMu();
+    const p = fakePi();
+    const held: (() => void)[] = [];
+    let holdState = false;
+    const state = ok({ workstreamName: "crew", inProgress: [{ name: "t1" }] });
+    const run: MuRunner = (args, signal) => {
+      if (args[0] !== "state") return mu.run(args, signal);
+      if (!holdState) return Promise.resolve(state);
+      return new Promise((resolve) => held.push(() => resolve(state)));
+    };
+    // The fake fires every handler with an empty ctx: no handler here reads it.
+    const on = (e: string, h: (e: unknown, c: MuPiContext) => unknown) =>
+      p.pi.on(e, h as (e: unknown, c: DelegateCtx) => unknown);
+    muPi({ ...p.pi, on, sendUserMessage: () => {}, registerCommand: () => {} }, run);
+    /** One settle through every handler: the merged nudge result, if any. */
+    const settle = async () => {
+      let out: unknown;
+      for (const h of p.handlers.get("agent_before_settle") ?? []) {
+        const r = await h({ type: "agent_before_settle", outcome: "completed" }, {});
+        if (r !== undefined) out = r;
+      }
+      return out as { continue?: boolean } | undefined;
+    };
+    const dispatch = () =>
+      p.fire("tool_call", {
+        toolName: "bash",
+        input: { command: "mu agent send worker-1 go -w crew" },
+      });
+    return {
+      mu,
+      p,
+      run,
+      settle,
+      dispatch,
+      held,
+      holdState: () => {
+        holdState = true;
+      },
+    };
+  }
+
+  /** Start a delegate and let its answer reach pi's follow-up queue. */
+  async function answerQueued(t: ReturnType<typeof setup>) {
+    await tool(t.p).execute("d", { task: "check it" });
+    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
+    await flush();
+    await flush();
+  }
+
+  it("no continuation while the answer is queued; the answer's own turn is nudged", async () => {
+    const t = setup();
+    t.p.state.busy = true;
+    await t.dispatch();
+    await answerQueued(t);
+    expect(t.p.sendMessage).toHaveBeenCalledTimes(1);
+    // Without the hold this settle continues the run ahead of the answer.
+    expect(await t.settle()).toBeUndefined();
+    await t.p.drainQueue(); // the answer enters the conversation
+    // The held settle was not the prompt's one nudge.
+    expect(await t.settle()).toMatchObject({ continue: true });
+  });
+
+  it("re-checks after the nudge's read: an answer that lands meanwhile wins", async () => {
+    const t = setup();
+    t.p.state.busy = true;
+    t.holdState();
+    await t.dispatch();
+    await tool(t.p).execute("d", { task: "check it" });
+    const settling = t.settle();
+    await flush();
+    expect(t.held).toHaveLength(1); // the nudge is reading mu state
+    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
+    await flush();
+    await flush();
+    t.held[0]?.();
+    expect(await settling).toBeUndefined();
+  });
+
+  it("no continuation while an extension dialog is open", async () => {
+    const t = setup();
+    await t.dispatch();
+    await t.p.fire("ui_prompt_start", { kind: "confirm" });
+    try {
+      expect(await t.settle()).toBeUndefined();
+    } finally {
+      await t.p.fire("ui_prompt_end", { kind: "confirm" });
+    }
+    expect(await t.settle()).toMatchObject({ continue: true });
   });
 });

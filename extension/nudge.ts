@@ -23,6 +23,9 @@
  *
  * None fire in a nested pi (mu-pi.ts decides at bind); close and refute
  * also skip a pi with no UI (`pi -p`, json), where nobody can answer.
+ * None fire while a delegate answer is on its way (it resumes the agent
+ * with the answer), and keep-driving and close skip an open dialog. A
+ * held settle does not count as the prompt's one nudge.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -55,6 +58,17 @@ export interface MuNudgeApi {
  */
 export type NestedCheck = () => boolean;
 const notNested: NestedCheck = () => false;
+
+/**
+ * Why this settle must not be nudged, read at settle time and again
+ * after every awaited read: "answer" while a delegate answer is queued
+ * or being delivered (it resumes the agent itself, and a continuation
+ * would run before it; pi's hasPendingMessages() does not count custom
+ * follow-ups), "blocked" while an extension dialog is open. undefined
+ * when nothing holds the settle.
+ */
+export type SettleHold = () => "answer" | "blocked" | undefined;
+const noHold: SettleHold = () => undefined;
 
 /** No one can answer a nudge: print or json mode. */
 function noUI(ctx: MuNudgeCtx | undefined): boolean {
@@ -412,6 +426,7 @@ export function registerNudge(
   run: MuRunner = defaultRunner(),
   skillMd: string | undefined = readSkill(),
   nested: NestedCheck = notNested,
+  hold: SettleHold = noHold,
 ): void {
   if (!nudgeEnabled()) return;
   const rule = skillMd === undefined ? undefined : keepDrivingRule(skillMd);
@@ -432,11 +447,15 @@ export function registerNudge(
   });
 
   pi.on("agent_before_settle", async (event) => {
-    if (fired || armed.size === 0 || nested()) return;
+    if (fired || armed.size === 0 || nested() || hold()) return;
     if (outcomeOf(event) !== "completed") return; // Esc or an error: stop
     fired = true; // once per prompt, even if the check below fails
     const refs = await inProgress(run, [...armed]);
     if (refs === undefined || refs.length === 0) return;
+    if (hold()) {
+      fired = false; // the answer's turn settles again; nudge then if still due
+      return;
+    }
     const text = nudgeText(rule, refs);
     const logWs = [...armed].find((w) => w !== "");
     breadcrumb(run, [
@@ -501,6 +520,7 @@ export function registerCloseNudge(
   run: MuRunner = defaultRunner(),
   env: NodeJS.ProcessEnv = process.env,
   nested: NestedCheck = notNested,
+  hold: SettleHold = noHold,
 ): void {
   if (!nudgeEnabled(env)) return;
   const me = workerIdentity(env);
@@ -512,11 +532,15 @@ export function registerCloseNudge(
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {
-    if (fired || nested() || noUI(ctx)) return; // nested: workerIdentity is the parent's
+    if (fired || nested() || noUI(ctx) || hold()) return; // nested: workerIdentity is the parent's
     if (outcomeOf(event) !== "completed") return;
     fired = true;
     const names = await ownedInProgress(run, me.agent, me.workstream);
     if (names === undefined || names.length === 0) return;
+    if (hold()) {
+      fired = false;
+      return;
+    }
     breadcrumb(run, [
       "log",
       "-w",
@@ -563,8 +587,12 @@ export function registerRefuteNudge(
   pi: MuNudgeApi,
   run: MuRunner = defaultRunner(),
   nested: NestedCheck = notNested,
+  hold: SettleHold = noHold,
 ): void {
   if (!nudgeEnabled()) return;
+  // It only informs, so an open dialog does not hold it; an answer on its
+  // way does, since its turn settles again and the notice can wait for it.
+  const answerDue = () => hold() === "answer";
   const armed = new Map<string, { ws: string; id: string }>();
   let fired = false;
 
@@ -582,7 +610,7 @@ export function registerRefuteNudge(
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {
-    if (fired || armed.size === 0 || nested() || noUI(ctx)) return;
+    if (fired || armed.size === 0 || nested() || noUI(ctx) || answerDue()) return;
     if (outcomeOf(event) !== "completed") return;
     fired = true;
     // One read per armed task, all at once: the settle waits for the slowest.
@@ -590,6 +618,10 @@ export function registerRefuteNudge(
     const refuted = await Promise.all(tasks.map(([, t]) => briefRefuted(run, t.ws, t.id)));
     const refs = tasks.flatMap(([ref], i) => (refuted[i] === false ? [ref] : []));
     if (refs.length === 0) return;
+    if (answerDue()) {
+      fired = false;
+      return;
+    }
     const logWs = [...armed.values()].find((t) => t.ws !== "")?.ws;
     breadcrumb(run, [
       "log",

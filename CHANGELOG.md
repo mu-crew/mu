@@ -52,6 +52,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `new-session -d` now passes `-x 200 -y 50` (attached sessions are
   unchanged; no `resize-window`). herdr is unaffected.
 
+- **Nudges yield to a delegate answer on its way.** The keep-driving and
+  close nudges continued a settling run even when a `mu_delegate` answer
+  sat in pi's follow-up queue (pi's `hasPendingMessages()` does not count
+  custom follow-ups), so the agent took an extra turn without the
+  answer. All three nudges now skip while an answer is being delivered or
+  queued, re-checking after their `mu` read; keep-driving and close also
+  skip while an extension dialog is open. A skipped settle does not use
+  up the prompt's one nudge.
 - **Spawned agents use the spawner's database.** Panes inherit the tmux
   server's env, so under `MU_DB_PATH=/tmp/x.db` a worker's `mu` hit the
   real DB. Local spawns now pin `MU_DB_PATH` (absolute, skipping
