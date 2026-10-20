@@ -10,6 +10,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **A jj workspace whose directory was deleted can be recreated (jj 0.46).**
+  `mu agent spawn --workspace` forgets a stale jj workspace of the same
+  name first. jj 0.46 keeps printing the deleted path as the workspace
+  root, so mu missed it, and in a colocated repo the workspace is also a
+  Git worktree that `jj workspace forget` leaves registered. mu now checks
+  the root on disk and runs `git worktree prune` after the forget, so the
+  re-add no longer fails with "Workspace named … already exists" or
+  "missing but already registered worktree".
+
 ## [3.13.0] — 2026-10-20
 
 **Faster everyday verbs.** tmux-touching verbs no longer load execa (about
