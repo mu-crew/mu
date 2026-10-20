@@ -90,6 +90,7 @@ import {
   resumePoint,
   segmentCaughtUp,
   segmentFingerprint,
+  usableShaState,
 } from "./segment-resume.js";
 import { type Sha256State, sha256Digest, sha256Initial, sha256Update } from "./sha256-resumable.js";
 
@@ -1217,10 +1218,9 @@ export function ingestSegment(
       } else if (verified.exact) {
         // The owner's manifest carries the running hash after exactly
         // these bytes: reuse it instead of hashing the file in JS.
-        const state = manifest.shaState;
+        const state = usableShaState(manifest.shaState, bytes.length);
         if (
-          state !== undefined &&
-          state.n === bytes.length &&
+          state !== null &&
           bytes[bytes.length - 1] === 0x0a &&
           sha256Digest(state) === manifest.sha256
         ) {

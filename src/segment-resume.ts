@@ -18,6 +18,22 @@ import { type Db, prepareCached } from "./db.js";
 import { manifestPath, type SegmentManifest } from "./segment-manifest.js";
 import { type Sha256State, sha256Digest, sha256Update } from "./sha256-resumable.js";
 
+/** A peer manifest's optional `shaState`, usable only when it is
+ *  well-formed and covers exactly `length` bytes. The manifest is peer
+ *  input: anything off (null, wrong types, bad hex, a tail that is not
+ *  `length % 64` bytes of canonical base64, `n` out of range) yields
+ *  null and the caller hashes the bytes itself. */
+export function usableShaState(state: unknown, length: number): Sha256State | null {
+  if (typeof state !== "object" || state === null) return null;
+  const { h, n, tail } = state as Record<string, unknown>;
+  if (typeof h !== "string" || !/^[0-9a-f]{64}$/.test(h)) return null;
+  if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 0 || n !== length) return null;
+  if (typeof tail !== "string") return null;
+  const raw = Buffer.from(tail, "base64");
+  if (raw.length !== n % 64 || raw.toString("base64") !== tail) return null;
+  return { h, n, tail };
+}
+
 /** Where a clean ingest stopped, and what it hashed to get there. */
 export interface ResumePoint {
   /** Lines consumed; always the watermark it was recorded with. */
