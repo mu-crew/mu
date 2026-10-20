@@ -82,6 +82,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   cleanly answering "not this VCS": a transient `jj root` failure in a
   colocated jj/git repo no longer pins git. `mu state` is unchanged (it
   never probes the VCS).
+- **The TUI bundles ink and react into its lazy chunk.** Importing the TUI
+  resolved and compiled ~560 ESM files from `node_modules` per launch. tsup
+  now inlines ink, react and their pure-JS deps into `dist/tui-*.js` (loaded
+  only by bare `mu` and `mu state --tui`; other verbs are unchanged), using
+  the createRequire banner from the commander/cli-table3 bundling. NODE_ENV
+  is not defined at build time, so `src/cli/tui-load.ts` still picks react's
+  production build at runtime and an explicit `NODE_ENV` still wins. TUI
+  import ~470 -> ~67 ms, first Agents card ~890 -> ~440 ms (PTY, 20
+  alternating launches on a copied DB). `react-devtools-core` stays external
+  (ink loads it only under `DEV=true`).
 - **Task, track and sync-peer sorts use code-unit order, not
   `localeCompare`.** The first `localeCompare` call initialised ICU
   (~4 ms on nearly every list verb). Ties by name now sort by code unit,

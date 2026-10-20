@@ -36,10 +36,13 @@ export default defineConfig([
     define,
     // Bundle the pure-JS deps so a verb does not resolve and compile ~35
     // node_modules files (commander, cli-table3, string-width and their
-    // transitive deps). better-sqlite3 (native), execa, ink and react stay
-    // external; ink/react load only via the lazy tui chunk. cli-table3 is
-    // CJS, so bundled `require()` needs a real require in ESM output.
-    noExternal: ["commander", "cli-table3", "string-width", "picocolors"],
+    // transitive deps). better-sqlite3 (native) and execa stay external.
+    // ink and react are bundled too, but only the lazy tui chunk imports
+    // them (~560 ESM modules in node_modules otherwise). Nothing here
+    // hard-defines NODE_ENV: react picks its dev/prod build at runtime from
+    // process.env.NODE_ENV (see src/cli/tui-load.ts). cli-table3 and react
+    // are CJS, so bundled `require()` needs a real require in ESM output.
+    noExternal: ["commander", "cli-table3", "string-width", "picocolors", "ink", "react"],
     banner: {
       js: 'import { createRequire as __muCreateRequire } from "node:module"; const require = __muCreateRequire(import.meta.url);',
     },
