@@ -457,13 +457,24 @@ export async function refreshAgentTitle(
  * crashed (or was explicitly closed mid-task) leaves the task graph
  * in a wrong state — IN_PROGRESS forever, with no owner to release.
  */
-export function deleteAgent(db: Db, name: string, workstream: string): boolean {
-  const deleted = deleteAgentRow(db, name, workstream);
+export function deleteAgent(
+  db: Db,
+  name: string,
+  workstream: string,
+  /** When set, delete only if the row still has this pane id (checked inside the reaper transaction). */
+  expectedPaneId?: string,
+): boolean {
+  const deleted = deleteAgentRow(db, name, workstream, expectedPaneId);
   if (deleted) unlinkCtlSocket(db, name, workstream);
   return deleted;
 }
 
-function deleteAgentRow(db: Db, name: string, workstream: string): boolean {
+function deleteAgentRow(
+  db: Db,
+  name: string,
+  workstream: string,
+  expectedPaneId?: string,
+): boolean {
   // Wrap the whole reaper sequence (snapshot stuck tasks → DELETE
   // agent → per-task UPDATE + addNote + emitEvent) in a single
   // synchronous better-sqlite3 transaction. Without this, a throw
@@ -490,6 +501,13 @@ function deleteAgentRow(db: Db, name: string, workstream: string): boolean {
           // Already gone — idempotent return. (Could happen if reconcile
           // pruned a ghost concurrently.) The DELETE is a no-op.
           return false;
+        }
+        if (expectedPaneId !== undefined) {
+          const cur = db.prepare("SELECT pane_id FROM agents WHERE id = ?").get(agentId) as
+            | { pane_id: string }
+            | undefined;
+          // Same name, different pane: the agent was replaced; keep it.
+          if (cur?.pane_id !== expectedPaneId) return false;
         }
         const stuck = db
           .prepare(
