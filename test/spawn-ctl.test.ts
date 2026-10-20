@@ -135,6 +135,46 @@ describe("spawn control socket", () => {
     expect(args).toContain(`MU_STATE_DIR=${join(process.cwd(), "rel-state")}`);
   });
 
+  describe("SSH_AUTH_SOCK forwarding", () => {
+    const sshArg = () => newSessionArgs().find((a) => a.startsWith("SSH_AUTH_SOCK="));
+
+    it("forwards a valid socket", async () => {
+      process.env.MU_SPAWN_CTL_MS = "0";
+      const path = join(dir, "agent.sock");
+      await serveExtension(path);
+      await withEnv("SSH_AUTH_SOCK", path, async () => {
+        await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+      });
+      expect(sshArg()).toBe(`SSH_AUTH_SOCK=${path}`);
+    });
+
+    it("skips a missing path", async () => {
+      process.env.MU_SPAWN_CTL_MS = "0";
+      await withEnv("SSH_AUTH_SOCK", join(dir, "nope.sock"), async () => {
+        await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+      });
+      expect(sshArg()).toBeUndefined();
+    });
+
+    it("skips a path that is not a socket", async () => {
+      process.env.MU_SPAWN_CTL_MS = "0";
+      const path = join(dir, "plain");
+      writeFileSync(path, "x");
+      await withEnv("SSH_AUTH_SOCK", path, async () => {
+        await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+      });
+      expect(sshArg()).toBeUndefined();
+    });
+
+    it("skips when unset", async () => {
+      process.env.MU_SPAWN_CTL_MS = "0";
+      await withEnv("SSH_AUTH_SOCK", undefined, async () => {
+        await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+      });
+      expect(sshArg()).toBeUndefined();
+    });
+  });
+
   it("resolves a relative db path against the caller's cwd", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";
     const cwd = process.cwd();
