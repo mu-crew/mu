@@ -57,7 +57,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   sat in pi's follow-up queue (pi's `hasPendingMessages()` does not count
   custom follow-ups), so the agent took an extra turn without the
   answer. All three nudges now skip while an answer is being delivered or
-  queued, re-checking after their `mu` read; keep-driving and close also
+  queued, re-checking after their `mu` read and again once the slowest
+  nudge's read finishes (the nudges run in parallel); keep-driving and close also
   skip while an extension dialog is open. A skipped settle does not use
   up the prompt's one nudge.
 - **Spawned agents use the spawner's database.** Panes inherit the tmux

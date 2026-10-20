@@ -106,6 +106,29 @@ describe("parallelSettle", () => {
     expect(f.calls.filter((c) => c[0] === "log")).toHaveLength(3);
   });
 
+  it("re-reads the hold after the slowest nudge: blocked drops continuations, answer drops all", async () => {
+    const handlers: Handler[] = [];
+    let late: "answer" | "blocked" | undefined;
+    const yielded: string[] = [];
+    const settle = parallelSettle({ on: (_e: string, h: Handler) => handlers.push(h) }, () => late);
+    settle.api.on("agent_before_settle", () => ({
+      entries: ["go"],
+      continue: true,
+      yielded: () => yielded.push("go"),
+    }));
+    settle.api.on("agent_before_settle", () => ({
+      entries: ["info"],
+      yielded: () => yielded.push("info"),
+    }));
+    settle.flush();
+    late = "blocked";
+    expect(await handlers[0]?.({ entries: [] }, {})).toEqual({ entries: ["info"] });
+    expect(yielded).toEqual(["go"]);
+    late = "answer";
+    expect(await handlers[0]?.({ entries: [] }, {})).toBeUndefined();
+    expect(yielded).toEqual(["go", "go", "info"]);
+  });
+
   it("returns undefined when no nudge fires", async () => {
     const handlers: Handler[] = [];
     const settle = parallelSettle({ on: (_e: string, h: Handler) => handlers.push(h) });

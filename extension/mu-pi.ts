@@ -425,7 +425,7 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
   // A delegate answer on its way resumes the agent itself; an open
   // dialog means nobody is driving. Either holds the nudges.
   const hold = () => (delegates.answerPending() ? "answer" : isUiBlocked() ? "blocked" : undefined);
-  const settle = parallelSettle(pi);
+  const settle = parallelSettle(pi, hold);
   registerNudge(settle.api, run, undefined, nested, hold);
   registerCloseNudge(settle.api, run, process.env, nested, hold);
   registerRefuteNudge(settle.api, run, nested, hold);
