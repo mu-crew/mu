@@ -1,7 +1,7 @@
 // mu — tmux substrate.
 //
 // Single source of truth for all tmux interactions. Every tmux invocation
-// goes through `tmux(args)`, which wraps execa and produces structured
+// goes through `tmux(args)`, which wraps child_process and produces structured
 // `TmuxError`s carrying args + stderr.
 //
 // The send protocol is the bracketed-paste sequence for NON-pi agents
@@ -25,6 +25,7 @@
 // input box while `mu agent send` reported exit 0. See
 // `awaitPaneQuiescence`.
 
+import { execFileCapture } from "../exec-file.js";
 import type { NextStep } from "../output.js";
 import { extractTail, paneLooksBusy } from "./input-timing.js";
 import {
@@ -178,16 +179,8 @@ function tmuxGlobalFlags(): readonly string[] {
   return ["-L", socket, "-f", "/dev/null"];
 }
 
-const realExecutor: TmuxExecutor = async (args) => {
-  // Lazy-load execa: ~110 modules that --version and DB-only verbs never need.
-  const { execa } = await import("execa");
-  const result = await execa("tmux", [...tmuxGlobalFlags(), ...args], { reject: false });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    exitCode: result.exitCode ?? null,
-  };
-};
+const realExecutor: TmuxExecutor = (args) =>
+  execFileCapture("tmux", [...tmuxGlobalFlags(), ...args]);
 
 let currentExecutor: TmuxExecutor = realExecutor;
 
@@ -201,7 +194,7 @@ export function setTmuxExecutor(executor: TmuxExecutor): TmuxExecutor {
   return previous;
 }
 
-/** Restore the real (execa-backed) executor. */
+/** Restore the real (child_process-backed) executor. */
 export function resetTmuxExecutor(): void {
   currentExecutor = realExecutor;
 }

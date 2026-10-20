@@ -5,6 +5,7 @@ import { expectsCtl } from "./agents/transport.js";
 import { ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import type { CtlBlocked, CtlState } from "./ctl/protocol.js";
+import { execFileCapture } from "./exec-file.js";
 import { activeMux } from "./mux/detect.js";
 import { tmux } from "./tmux.js";
 
@@ -102,13 +103,8 @@ export function murmurAvailable(): boolean {
 
 const defaultMurmurRunner: MurmurRunner = async () => {
   try {
-    // Lazy-load execa: ~110 modules that --version and DB-only verbs never need.
-    const { execa } = await import("execa");
-    const result = await execa("murmur", ["status", "--json"], {
-      timeout: 5_000,
-      reject: false,
-    });
-    return result.exitCode === 0 ? (result.stdout ?? "") : null;
+    const result = await execFileCapture("murmur", ["status", "--json"], { timeoutMs: 5_000 });
+    return result.exitCode === 0 ? result.stdout : null;
   } catch {
     return null;
   }
