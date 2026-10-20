@@ -25,6 +25,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `mu doctor` before releasing its task. Reviews with only
   UNVERIFIED items go to the human, not into a REJECT round. findings § Record
   grades severity strictly (critical needs a concrete scenario).
+  ultrathink and loop-until-done refute the umbrella's criteria on the
+  merged tree before `close --if-ready`.
 - **Skill: orchestrators clean up scratch files.** Review panels and
   other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
   hoc dirs under `$HOME`. SKILL.md's orchestrator rules now say to keep
