@@ -36,6 +36,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **agent** | A named process in a pane with a row in `agents`. Identity is `$MU_AGENT_NAME`, else the **pane title**. | "subagent", "worker" (a role) |
 | **worker** | An agent in its role as task claimer. Prefer **agent** when ambiguous. | |
 | **remote worker** | A worker running on another machine while its pane and the DB stay local. Recorded in task notes as `REMOTE: <host>:<path>` and `REMOTE_BASE: <agent>:<sha>`. | "remote agent record", "host registry" |
+| **delivery unknown** | A send/fresh/interrupt/command request was written to a live agent's control socket but no reply arrived (`AgentSendIndeterminateError`). pi may have acted; read the pane before resending. | "refused" (the request never went out) |
 | **actor** | Whoever caused a state change (`ops.actor`); need not be a worker. | "caller", "author" (notes only) |
 | **role** | The capability flag: `full-access` or `read-only`. | "permission", "tier" |
 | **persistent** | An agent that stays alive across tasks. | "long-lived" (prose only) |

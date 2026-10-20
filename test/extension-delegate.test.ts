@@ -100,7 +100,10 @@ function fakeMu(
     if (s.code !== 0)
       return {
         code: s.code,
-        stdout: JSON.stringify({ ...base, send: { ok: false, message: s.stderr } }),
+        stdout: JSON.stringify({
+          ...base,
+          send: { ok: false, message: s.stderr, ...(s.stdout ? { error: s.stdout } : {}) },
+        }),
         stderr: s.stderr,
       };
     return ok({ ...base, send: { ok: true, ...(JSON.parse(s.stdout) as object) } });
@@ -804,6 +807,27 @@ describe("errors and corner cases", () => {
     expect(mu.calls.some((c) => c[1] === "close" && c[2] === "delegate-2")).toBe(true);
     const again = await tool(p).execute("t2", { task: "y" });
     expect(again.content[0]?.text).toContain("delegate-2");
+  });
+
+  it("a delivery-unknown send keeps the pane, says so, and does not retry", async () => {
+    const mu = fakeMu({
+      on: {
+        send: () =>
+          Promise.resolve({
+            code: 1,
+            stdout: "AgentSendIndeterminateError",
+            stderr: "delivery unknown",
+          }),
+      },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const err = await tool(p)
+      .execute("t", { task: "x" })
+      .catch((e: unknown) => e as Error);
+    expect(String(err)).toMatch(/delivery unknown.*Pane kept.*mu agent read delegate-2 -w scratch/);
+    expect(mu.calls.some((c) => c[1] === "close")).toBe(false);
+    expect(mu.calls.filter((c) => c[1] === "spawn")).toHaveLength(1);
   });
 
   it("an abort signal during spawn takes the new pane down", async () => {
