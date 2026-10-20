@@ -105,6 +105,27 @@ describe("abortAgent", () => {
     expect(r).toMatchObject({ before: "busy", after: "idle", settled: true, aborted: true });
   });
 
+  const abortRows = () =>
+    db.prepare("SELECT actor, payload FROM ops WHERE intent = 'agent.abort'").all();
+
+  it("busy abort logs agent.abort attributed to $MU_AGENT_NAME; idle logs nothing", async () => {
+    process.env.MU_AGENT_NAME = "orch-1";
+    try {
+      seed("worker-1");
+      seed("worker-2");
+      await serve("worker-1", "busy");
+      await abortAgent(db, "worker-1", { workstream: "auth" });
+      expect(abortRows()).toEqual([
+        { actor: "orch-1", payload: "agent abort worker-1 (state=busy, pending=false)" },
+      ]);
+      await serve("worker-2", "idle");
+      await abortAgent(db, "worker-2", { workstream: "auth" });
+      expect(abortRows()).toHaveLength(1);
+    } finally {
+      delete process.env.MU_AGENT_NAME;
+    }
+  });
+
   it("idle: sends no abort and is settled", async () => {
     seed("worker-1");
     await serve("worker-1", "idle");

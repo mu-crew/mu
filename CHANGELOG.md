@@ -28,6 +28,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`mu log` names who sent, spawned or aborted.** `agent.send`,
+  `agent.spawn` and a new `agent.abort` op (written only when a busy agent
+  was actually aborted) carry the caller (`$MU_AGENT_NAME`, pane title,
+  `$USER`) as their actor instead of `system`.
 - **A rolled-back spawn leaves an `agent.spawn_failed` log entry** with the
   phase reached and the error class; `agent.spawn` now carries `ctl=`.
 - **Spawned panes get the caller's `SSH_AUTH_SOCK`.** mu sessions are

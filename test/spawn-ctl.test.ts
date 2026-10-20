@@ -301,6 +301,18 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     expect(spawnRows()[0]?.payload).toContain("ctl=ok)");
   });
 
+  it("agent.spawn is attributed to the caller, not system", async () => {
+    installLivePanes({ extension: true });
+    process.env.MU_AGENT_NAME = "orch-1";
+    try {
+      await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    } finally {
+      delete process.env.MU_AGENT_NAME;
+    }
+    const row = db.prepare("SELECT actor FROM ops WHERE intent = 'agent.spawn'").get();
+    expect(row).toEqual({ actor: "orch-1" });
+  });
+
   it("a rolled-back spawn logs one agent.spawn_failed", async () => {
     installLivePanes({ scrollback: "Error: No API key found for amazon-bedrock" });
     await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch(() => {});

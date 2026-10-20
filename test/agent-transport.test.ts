@@ -361,10 +361,16 @@ describe("pi session commands over ctl", () => {
   it("send, --fresh, /new, /reload, /compact to a pi agent never touch the mux", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "idle" });
-    for (const text of ["hello", "/new", "/reload", "/compact x"]) {
-      await sendToAgent(db, "worker-1", text, { workstream: "auth" });
+    // Actor attribution may probe the mux for a pane title; pin it so only transport is measured.
+    process.env.MU_AGENT_NAME = "orch-1";
+    try {
+      for (const text of ["hello", "/new", "/reload", "/compact x"]) {
+        await sendToAgent(db, "worker-1", text, { workstream: "auth" });
+      }
+      await sendToAgent(db, "worker-1", "task", { workstream: "auth", fresh: true });
+    } finally {
+      delete process.env.MU_AGENT_NAME;
     }
-    await sendToAgent(db, "worker-1", "task", { workstream: "auth", fresh: true });
     expect(received.map((r) => r.op)).toEqual(["send", "command", "command", "command", "fresh"]);
     expect(mux.calls).toEqual([]);
   });
@@ -421,6 +427,21 @@ describe("mu agent send transport", () => {
       setStdinReaderForTests(null);
     }
     expect(received).toEqual([{ op: "fresh", text: brief }]);
+  });
+
+  it("agent.send is attributed to $MU_AGENT_NAME, not system", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"));
+    process.env.MU_AGENT_NAME = "orch-1";
+    try {
+      await runCli(["agent", "send", "worker-1", "hi", "-w", "auth"], dbPath);
+    } finally {
+      delete process.env.MU_AGENT_NAME;
+    }
+    const row = openDb({ path: dbPath })
+      .prepare("SELECT actor FROM ops WHERE intent = 'agent.send'")
+      .get();
+    expect(row).toEqual({ actor: "orch-1" });
   });
 
   it("reports transport ctl in --json", async () => {

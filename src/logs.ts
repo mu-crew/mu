@@ -599,6 +599,7 @@ export type LocalIntent =
   | "agent.adopt"
   | "agent.kick"
   | "agent.send"
+  | "agent.abort"
   | "agent.stall"
   | "workspace.create"
   | "workspace.free"

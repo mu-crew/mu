@@ -28,6 +28,7 @@ import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { activeMux, type MuxBackend } from "../mux.js";
 import { isJsonMode, type NextStep } from "../output.js";
+import { resolveActorIdentity } from "../tasks/claim.js";
 // `sleep` is the shared poll-sleep TEST SEAM (setSleepForTests), not a
 // multiplexer operation, so it stays on the tmux module rather than
 // joining the MuxBackend contract.
@@ -646,6 +647,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     opts.workstream,
     "agent.spawn",
     `agent spawn ${opts.name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${paneId}, ctl=${ctl})`,
+    await resolveActorIdentity(),
   );
   // Lint-grade stderr nudge when the operator picked a name that
   // doesn't fit the <role>-<n> smallest-unused-suffix convention. The

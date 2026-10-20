@@ -56,7 +56,8 @@ describe("sendToAgent", () => {
     // own coverage.
     await sendToAgent(db, "alice", "hello", { workstream: "auth", readinessMs: 0, via: "mux" });
     // Should have emitted the 4-step send protocol.
-    const verbs = calls.map((c) => c[0]);
+    // display-message is the best-effort actor lookup for the agent.send log row.
+    const verbs = calls.map((c) => c[0]).filter((v) => v !== "display-message");
     expect(verbs).toEqual(["copy-mode", "set-buffer", "paste-buffer", "send-keys"]);
     // Targeted at alice's pane id.
     const sendCall = calls.find((c) => c[0] === "send-keys");

@@ -129,6 +129,7 @@ import {
 } from "./agents/transport.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
+import { resolveActorIdentity } from "./tasks/claim.js";
 import { freeWorkspace, getWorkspaceForAgent, isWorkspaceClean } from "./workspace.js";
 // (freeWorkspace is used by the spawn rollback paths below, not by closeAgent.
 // Closing an agent is intentionally a separate concern from freeing its workspace;
@@ -581,6 +582,7 @@ export async function sendToAgent(
     ...opts,
     socket: opts.socket ?? agentCtlSocket(db, agent),
   });
+  const source = await resolveActorIdentity();
   recordSend(
     db,
     agent,
@@ -592,6 +594,7 @@ export async function sendToAgent(
       state: sent.state,
       since: sent.since,
     },
+    source,
   );
   return sent;
 }
