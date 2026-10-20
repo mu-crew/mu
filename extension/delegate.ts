@@ -763,16 +763,25 @@ export function registerDelegate(
         : (await mu(["agent", "read", name, "-n", "50", "-w", W])).stdout;
     // Close only after a clean finish: a died or timed-out pane is evidence.
     let pane: PaneFate = { closed: false, why: "keep: true" };
+    let closing: Promise<MuResult> | undefined;
     if (outcome === "blocked") pane = { closed: false, why: "waiting on a dialog" };
     else if (outcome !== "done" && outcome !== "empty")
       pane = { closed: false, why: "kept as evidence" };
-    else if (!keep) {
-      const c = await mu(["agent", "close", name, "-w", W]);
+    else if (!keep) closing = mu(["agent", "close", name, "-w", W]);
+    // The note never depends on the close, so the two mu calls overlap.
+    const recording = record
+      ? writeRecord(
+          record.target,
+          name,
+          recordNote(record.label, name, outcome, agent?.lastText, extras.elapsedMs ?? 0),
+        )
+      : undefined;
+    const [closed, recorded] = await Promise.all([closing, recording]);
+    if (closed)
       pane =
-        c.code === 0
+        closed.code === 0
           ? { closed: true }
-          : { closed: false, why: `close refused: ${(c.stderr || c.stdout).trim()}` };
-    }
+          : { closed: false, why: `close refused: ${(closed.stderr || closed.stdout).trim()}` };
     if (outcome === "error" && !pane.closed) {
       failed.add(name);
       showStatus();
@@ -790,13 +799,6 @@ export function registerDelegate(
         ...(partial ? { partial } : {}),
       };
     }
-    const recorded = record
-      ? await writeRecord(
-          record.target,
-          name,
-          recordNote(record.label, name, outcome, agent?.lastText, extras.elapsedMs ?? 0),
-        )
-      : undefined;
     const message = delegateMessage(name, agent, pane, { ...extras, ...(tail ? { tail } : {}) });
     const content = recorded ? `${message}\n\n${recorded}` : message;
     const a = arriving.get(delivery);
