@@ -25,8 +25,10 @@ Litestream, cr-sqlite or a peer list, and why the DB must never sit in
   saved the byte offset and running sha256 state with the fingerprint
   (`src/segment-resume.ts`), so only the appended bytes are read, and
   they count only if the resumed hash equals the manifest's sha256. A
-  shrunk or rewritten file, a stale manifest, a defect, or `mu sync`
-  takes the full read and whole-file verify.
+  shrunk file, a stale manifest, a defect, or `mu sync` takes the full
+  read and whole-file verify. The resumed hash trusts the bytes it
+  already read, so a local change to that prefix (with the file still
+  growing) is caught only by `mu sync`.
 - Peer discovery is implicit: every non-self `*.jsonl` is a peer. A
   peer disappears only when its segment is deleted.
 - A Syncthing conflict copy (`<machine>.sync-conflict-….jsonl`) is
