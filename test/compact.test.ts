@@ -153,6 +153,25 @@ describe("forget", () => {
     expect(listForgetCandidates(db).map((c) => c.name)).toEqual(["gone-too"]);
   });
 
+  it("counts only its own key range: '0', '-' and '_' siblings are not swept in", async () => {
+    for (const ws of ["a", "a0", "a-b", "a_b", "ab"]) {
+      seed(ws, ["x"]);
+      await teardownWorkstream(db, { workstream: ws, muxSession: "mu-absent-for-test" });
+    }
+    const count = (ws: string) =>
+      (
+        db
+          .prepare("SELECT COUNT(*) AS n FROM ops WHERE key = ? OR key LIKE ? ESCAPE '\\'")
+          .get(ws, `${ws.replace(/[\\%_]/g, (c) => `\\${c}`)}/%`) as { n: number }
+      ).n;
+    for (const c of listForgetCandidates(db)) expect(c.ops).toBe(count(c.name));
+    expect(listForgetCandidates(db)).toHaveLength(5);
+    const before = count("a");
+    expect(forget(db, planForget(db, ["a"])).ops).toBe(before);
+    expect(count("a")).toBe(0);
+    for (const ws of ["a0", "a-b", "a_b", "ab"]) expect(count(ws)).toBeGreaterThan(0);
+  });
+
   it("cmdDbForget --yes reports the shrunk main file, not the pre-checkpoint size", async () => {
     seed(
       "big",

@@ -46,6 +46,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   backlog-triage re-verifies an item against the code before starting.
   dag.md states that every edge comes from a verb the caller ran (`block`, `add`/`reparent --blocked-by`) and no write adds edges on its own.
   VISION cites a prior runtime's transport and sentinel-marker lessons.
+- **`mu doctor` and `mu db forget` count a workstream's ops by key range.**
+  The per-workstream `substr(key, …)` test scanned all of `ops` once per
+  torn-down workstream (27 scans of 61k rows, ~320 ms of SQL in
+  `mu doctor`'s size hint). It now seeks `idx_ops_entity_key` with a key
+  range per entity (~28 ms); counts and deleted rows are identical.
 - **Skill: orchestrators clean up scratch files.** Review panels and
   other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
   hoc dirs under `$HOME`. SKILL.md's orchestrator rules now say to keep

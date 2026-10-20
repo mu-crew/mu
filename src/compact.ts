@@ -17,6 +17,7 @@
 
 import type { Db } from "./db.js";
 import { intentSpellings } from "./legacy-ops.js";
+import { OPS_ENTITIES_SQL } from "./logs.js";
 
 /** Note tombstones whose payload is redundant with a put under the same key. */
 const REDUNDANT_TOMBSTONES_SQL = `
@@ -55,8 +56,13 @@ export function compact(db: Db): CompactPlan {
 
 /** The ops one workstream's history occupies: the workstream op itself,
  *  and every op keyed under it (`<ws>/...`: tasks, notes, edges, agents,
- *  workspaces, waves). */
-const WORKSTREAM_OPS_WHERE = `(key = @ws OR substr(key, 1, length(@ws) + 1) = @ws || '/')`;
+ *  workspaces, waves). The key range ['<ws>', '<ws>0') ('0' is the byte
+ *  after '/') seeks idx_ops_entity_key once per entity; the exact test
+ *  after it drops siblings such as '<ws>-2'. A bare `substr(key, …)` test, or
+ *  an OR around the range, scanned all of ops per candidate. The entity list
+ *  is read from the data so legacy and future entities are covered. */
+const WORKSTREAM_OPS_WHERE = `(entity IN (${OPS_ENTITIES_SQL}) AND key >= @ws AND key < @ws || '0'
+  AND (key = @ws OR substr(key, 1, length(@ws) + 1) = @ws || '/'))`;
 
 export interface ForgetCandidate {
   name: string;
