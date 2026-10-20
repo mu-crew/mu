@@ -471,6 +471,51 @@ describe("dashboard card-to-column search", () => {
     expect(stale).toEqual(withoutPrev);
   });
 
+  it("picks between the default-start and previous-start optima on the full key", () => {
+    // Found by random search: both starts hide the same rows, but the
+    // previous-start optimum moves 3 cards from their default columns
+    // and the default-start one moves 2.
+    const initial = layoutColumns(260, ALL);
+    const before: Record<number, number> = {
+      0: 17,
+      1: 4,
+      2: 12,
+      3: 51,
+      4: 37,
+      5: 14,
+      6: 23,
+      7: 40,
+      8: 11,
+      9: 0,
+    };
+    const now: Record<number, number> = {
+      0: 27,
+      1: 46,
+      2: 7,
+      3: 36,
+      4: 55,
+      5: 28,
+      6: 37,
+      7: 13,
+      8: 37,
+      9: 16,
+    };
+    const prev = arrangeColumns({
+      initial,
+      availableRows: 58,
+      dataCountFn: (id) => before[id] ?? 0,
+    });
+    const withPrev = arrangeColumns({
+      initial,
+      availableRows: 58,
+      dataCountFn: (id) => now[id] ?? 0,
+      previous: prev.assignments,
+    });
+    const fresh = arrangeColumns({ initial, availableRows: 58, dataCountFn: (id) => now[id] ?? 0 });
+    expect(withPrev.hiddenRows).toBe(fresh.hiddenRows);
+    expect(withPrev.assignments).toEqual(fresh.assignments);
+  });
+
   it("stays cheap: 10 cards in 4 columns under a few ms per call", () => {
     const counts: Partial<Record<CardId, number>> = {
       0: 25,
