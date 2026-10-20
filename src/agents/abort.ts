@@ -12,7 +12,12 @@ import { getAgent } from "../agents.js";
 import { CtlUnknownOpError, ctlRequest } from "../ctl/client.js";
 import type { CtlState } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
-import { AgentAbortNeedsCtlError, AgentAbortTimeoutError, AgentNotFoundError } from "./errors.js";
+import {
+  AgentAbortNeedsCtlError,
+  AgentAbortTimeoutError,
+  AgentEmptySendError,
+  AgentNotFoundError,
+} from "./errors.js";
 import {
   agentCtlSocket,
   ctlFailure,
@@ -134,6 +139,9 @@ async function interruptAgentImpl(
 ): Promise<InterruptResult> {
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) throw new AgentNotFoundError(name, opts.workstream);
+  // Refuse before the abort: an empty prompt would kill the running turn
+  // and then send nothing. Here, not only in the CLI, so SDK callers get it.
+  if (text === "") throw new AgentEmptySendError(name, opts.workstream);
   const sock = opts.socket ?? agentCtlSocket(db, agent);
   if (!expectsCtl(agent, sock)) throw new AgentAbortNeedsCtlError(name, opts.workstream, agent.cli);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS;
