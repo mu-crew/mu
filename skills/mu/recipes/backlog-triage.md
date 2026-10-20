@@ -20,6 +20,8 @@ continuously.
 
 3. **Dedupe against the DAG.** Before acting, check `mu task list` and
    recent closes. A duplicate becomes a note on the existing task.
+   Re-verify an item against the code before starting it: anchors rot,
+   and an entry is a pointer, not a spec.
 4. **Act from the summaries.** The actor is the orchestrator, or a
    worker that gets only the reader notes, never the raw items:
    - real and actionable: `mu task add` with the item ref in the note;
