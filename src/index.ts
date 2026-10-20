@@ -24,6 +24,7 @@ export {
   AgentBusyError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
+  AgentEmptySendError,
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,

@@ -761,3 +761,28 @@ export class AgentSlashCommandUnsupportedError extends Error implements HasNextS
     ];
   }
 }
+
+/**
+ * An empty message sent to a pi agent over the control socket.
+ * pi.sendUserMessage("") is meaningless; a bare Enter is a pane
+ * keystroke, so `--via mux` is the explicit way to press it.
+ */
+export class AgentEmptySendError extends Error implements HasNextSteps {
+  override readonly name = "AgentEmptySendError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+  ) {
+    super(
+      `agent ${agentName} runs pi: an empty message cannot go over the control socket. Pass --via mux to press Enter in the pane`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Press Enter in the pane",
+        command: `mu agent send ${this.agentName} '' --via mux -w ${this.workstream}`,
+      },
+    ];
+  }
+}

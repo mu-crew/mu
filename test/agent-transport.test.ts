@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentBusyError,
   AgentCtlUnreachableError,
+  AgentEmptySendError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
   AgentPaneDeadError,
@@ -234,6 +235,16 @@ describe("sendViaTransport", () => {
     });
     expect(res).toEqual({ transport: "mux" });
     expect(pasted()).toBe(true);
+  });
+
+  it("an empty send to a pi agent over ctl is refused with a --via mux next step", async () => {
+    seed("worker-1");
+    const err = await sendToAgent(db, "worker-1", "", { workstream: "auth" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentEmptySendError);
+    expect((err as AgentEmptySendError).errorNextSteps()[0]?.command).toContain("--via mux");
+    expect(pasted()).toBe(false);
   });
 
   it("sends to a non-pi CLI through the mux", async () => {

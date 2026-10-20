@@ -32,6 +32,7 @@ import { activeMux, type SendOptions } from "../mux.js";
 import {
   AgentBusyError,
   AgentCtlUnreachableError,
+  AgentEmptySendError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
   AgentPaneDeadError,
@@ -242,6 +243,7 @@ export async function sendViaTransport(
     await (await activeMux()).sendToPane(agent.paneId, text, opts);
     return { transport };
   }
+  if (text === "") throw new AgentEmptySendError(agent.name, agent.workstreamName);
   if (!opts.fresh) {
     const cmd = parseSessionCommand(text);
     if (cmd) return runSessionCommand(agent, sock, cmd, opts.force === true);

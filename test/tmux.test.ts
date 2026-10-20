@@ -989,6 +989,16 @@ describe("sendToPane", () => {
     expect(captures).toBeGreaterThan(1);
   });
 
+  it("empty text sends only a bare Enter (no paste-buffer)", async () => {
+    const { executor, calls } = harness(() => ok());
+    setTmuxExecutor(executor);
+    await sendToPane("%15", "", { readinessMs: 0 });
+    const verbs = calls.map((c) => c.args[0]);
+    expect(verbs).not.toContain("set-buffer");
+    expect(verbs).not.toContain("paste-buffer");
+    expect(calls.at(-1)?.args).toEqual(["send-keys", "-t", "%15", "Enter"]);
+  });
+
   it("uses a unique buffer name per call", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);

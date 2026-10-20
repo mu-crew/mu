@@ -1121,6 +1121,13 @@ export async function sendToPane(
   opts: SendOptions = {},
 ): Promise<void> {
   assertValidPaneId(paneId);
+  // Unverified: herdr has no key-send primitive mu knows of, and an empty
+  // `agent prompt` is untested. Refuse rather than guess.
+  if (text === "") {
+    throw new MuxError(
+      "herdr backend cannot send an empty message (no bare-Enter primitive); press Enter in the pane instead",
+    );
+  }
   const wait = opts.readinessMs === 0 ? [] : ["--wait"];
   try {
     await herdr(["agent", "prompt", paneId, text, ...wait]);

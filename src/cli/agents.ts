@@ -339,6 +339,9 @@ export async function cmdSend(
     if (isSlashCommand(text)) {
       throw new UsageError("--interrupt sends a prompt, not a slash command");
     }
+    // Refuse before the abort: an empty prompt would kill the running turn
+    // and then send nothing.
+    if (text === "") throw new UsageError("--interrupt needs a non-empty prompt");
   } else if (opts.timeout !== undefined) {
     throw new UsageError("--timeout only applies with --interrupt");
   }
