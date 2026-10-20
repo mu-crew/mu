@@ -17,6 +17,7 @@ import {
   AgentBusyError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
+  AgentEmptySendError,
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
@@ -280,6 +281,11 @@ const cases: NextStepsCase[] = [
     error: new AgentSlashCommandUnsupportedError("alice", "auth", "/tree", ["/new"]),
     label: "AgentSlashCommandUnsupportedError",
     expectedTokens: ["mu agent send alice '/tree' --via mux"],
+  },
+  {
+    error: new AgentEmptySendError("alice", "auth"),
+    label: "AgentEmptySendError",
+    expectedTokens: ["mu agent send alice '' --via mux"],
   },
   {
     error: new AgentExtensionOutdatedError("alice", "auth", "fresh", "3.0.0"),

@@ -205,6 +205,15 @@ describe("mu agent send --interrupt", () => {
     expect(ops).toEqual([]);
   });
 
+  it("empty text: exit 2, and nothing is aborted", async () => {
+    seed();
+    await serve({ hasInterrupt: true });
+    const r = await send("--interrupt", "");
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toMatch(/--interrupt needs a non-empty prompt/);
+    expect(ops).toEqual([]);
+  });
+
   it("--timeout without --interrupt: exit 2", async () => {
     seed();
     await serve({ hasInterrupt: true });

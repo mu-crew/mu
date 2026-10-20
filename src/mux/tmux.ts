@@ -1042,6 +1042,13 @@ export async function sendToPane(
     );
   }
 
+  // Empty text: tmux refuses to paste an empty buffer ("no buffer"), so
+  // press a bare Enter instead (dismisses a "Press Enter" prompt).
+  if (text === "") {
+    await tmux(["send-keys", "-t", paneId, "Enter"]);
+    return;
+  }
+
   // 2. Load text into a uniquely-named buffer.
   const bufferName = `mu-send-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
   await tmux(["set-buffer", "-b", bufferName, text]);

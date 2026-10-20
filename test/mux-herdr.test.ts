@@ -774,3 +774,10 @@ describe("herdr attach (focus a workspace or tab, never `session attach <label>`
     );
   });
 });
+
+describe("sendToPane empty text", () => {
+  it("refuses an empty send without calling herdr", async () => {
+    const { sendToPane } = await import("../src/mux/herdr.js");
+    await expect(sendToPane("w1:p1", "")).rejects.toThrow(/empty message/);
+  });
+});

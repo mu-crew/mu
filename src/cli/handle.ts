@@ -35,6 +35,7 @@ import {
   AgentBusyError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
+  AgentEmptySendError,
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
@@ -254,7 +255,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentAbortNeedsCtlError ||
     // send --fresh on an agent with no control socket: wrong recipe.
     err instanceof AgentFreshNeedsCtlError ||
-    // an unsupported slash command to a pi agent: --via mux is the recipe.
+    // an empty send or unsupported slash command to a pi agent: --via mux is the recipe.
+    err instanceof AgentEmptySendError ||
     err instanceof AgentSlashCommandUnsupportedError ||
     err instanceof WorkstreamNameInvalidError ||
     err instanceof WorkstreamNameReservedError ||

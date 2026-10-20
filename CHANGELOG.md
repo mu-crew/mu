@@ -41,6 +41,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   tasks from ready/next. A `dag` section (and `dagCycles` in `--json`) lists
   each cycle with a `mu task unblock … --by … -w …` command that breaks it.
   Report-only; the `task tree` header no longer claims the schema forbids cycles.
+
+- **`mu agent send <agent> ""` no longer fails with tmux "no buffer".**
+  On the mux path an empty message now presses a bare Enter (dismisses a
+  "Press Enter" prompt). Over the pi control socket it is refused with
+  `AgentEmptySendError`, whose next step is `--via mux`. herdr refuses an
+  empty send (no verified bare-Enter primitive).
+
 - **`paneExists` no longer reads a failed tmux probe as a dead pane.**
   Any nonzero `display-message` exit returned false, so a permission or
   socket error looked like "gone" to liveness gates such as
