@@ -83,6 +83,11 @@ describe("send readiness: modal vs working classification", () => {
     expect(hasWorkMarker(loading)).toBe(false);
   });
 
+  it("stale 'model: loading' outside the busy tail does not veto a live work marker", () => {
+    const pane = `model: loading\n${"filler\n".repeat(25)}(esc to interrupt)\n`;
+    expect(hasWorkMarker(pane)).toBe(true);
+  });
+
   // Guards the tail window: a work marker scrolled far above the
   // current frame must not make a later modal look like a live turn.
   it("only recent output counts as a work marker", () => {

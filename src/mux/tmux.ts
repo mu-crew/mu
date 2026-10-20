@@ -26,7 +26,7 @@
 // `awaitPaneQuiescence`.
 
 import type { NextStep } from "../output.js";
-import { paneLooksBusy } from "./input-timing.js";
+import { extractTail, paneLooksBusy } from "./input-timing.js";
 import {
   type AttachTarget,
   type CaptureOptions,
@@ -839,7 +839,7 @@ export function hasWorkMarker(scrollback: string): boolean {
   const tail = scrollback.split("\n").slice(-40).join("\n");
   // A visible Codex boot marker wins: a cwd like ~/Working must not
   // bypass readiness while "model: loading" is still on screen.
-  if (tail.includes("model: loading")) return false;
+  if (extractTail(scrollback).includes("model: loading")) return false;
   return WORK_MARKERS.some((m) => tail.includes(m));
 }
 
