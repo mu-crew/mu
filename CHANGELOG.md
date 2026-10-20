@@ -31,6 +31,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   long-run records `DEAD-END:` notes on the umbrella.
   backlog-triage re-verifies an item against the code before starting.
   dag.md states that only explicit `block` calls create edges.
+  VISION cites a prior runtime's transport and sentinel-marker lessons.
 - **Skill: orchestrators clean up scratch files.** Review panels and
   other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
   hoc dirs under `$HOME`. SKILL.md's orchestrator rules now say to keep
