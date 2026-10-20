@@ -89,6 +89,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   deduplicated by task: ~56-69 ms less per armed settle (one
   workstream). A task still owned by a dead agent shows in the nudge until the next
   `mu state` or `mu task wait` reaps it.
+- **Faster tmux-touching verbs.** The tmux, herdr, kick and murmur-status
+  executors run through `node:child_process` instead of lazily importing
+  execa (~110 modules, 25-40 ms). `mu state`, `mu agent list`, and bare
+  verbs that resolve the workstream via tmux drop by ~50-60 ms per call
+  (state ~140 -> ~85 ms). Output and exit codes are unchanged; capture
+  keeps execa's 100 MiB buffer cap.
+- **Faster startup: pure-JS dependencies are bundled.** Every verb
+  resolved, read and compiled about 35 `node_modules` files (commander,
+  cli-table3, string-width and their dependencies). `tsup` now bundles
+  commander, cli-table3, string-width and picocolors into `dist/`
+  (native `better-sqlite3`, `execa`, `ink` and `react` stay external; the TUI
+  chunk is still lazy). Measured on interleaved warm runs: 5-15 ms per
+  invocation (`--version`, `task list`, `state`).
 - **Skill: orchestrators clean up scratch files.** Review panels and
   other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
   hoc dirs under `$HOME`. SKILL.md's orchestrator rules now say to keep
