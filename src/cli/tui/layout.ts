@@ -373,8 +373,11 @@ export interface ArrangedColumns {
  * Cards keep slot order inside a column (`compareSlot`, Commits last)
  * and no column is emptied, so the column count never changes.
  *
- * Stability: a valid `previous` survives unless the search result
- * hides at least max(REARRANGE_MIN_GAIN_ROWS, 10%) fewer rows.
+ * Stability: with a valid `previous`, the search also descends from
+ * it and keeps the better of the two optima. `previous` survives
+ * unless that optimum hides at least max(REARRANGE_MIN_GAIN_ROWS, 10%)
+ * fewer rows, so no single move or swap from a retained layout saves
+ * that much.
  */
 const MAX_ARRANGE_ROUNDS = 20;
 
@@ -419,34 +422,46 @@ export function arrangeColumns(input: ArrangeColumnsInput): ArrangedColumns {
         ? a.moved.count < b.moved.count
         : a.moved.mask < b.moved.mask;
 
-  let current = initial;
-  let currentHidden = hiddenOf(current);
-  for (let round = 0; round < MAX_ARRANGE_ROUNDS && currentHidden > 0; round++) {
-    let best: { lanes: CardId[][]; hidden: number; moved: { count: number; mask: number } } | null =
-      null;
-    for (const lanes of neighbours(current)) {
-      const hidden = hiddenOf(lanes);
-      if (hidden >= currentHidden) continue;
-      const candidate = { lanes, hidden, moved: movedOf(lanes) };
-      if (best === null || better(candidate, best)) best = candidate;
+  const descend = (start: CardId[][]): { lanes: CardId[][]; hidden: number } => {
+    let current = start;
+    let currentHidden = hiddenOf(current);
+    for (let round = 0; round < MAX_ARRANGE_ROUNDS && currentHidden > 0; round++) {
+      let best: {
+        lanes: CardId[][];
+        hidden: number;
+        moved: { count: number; mask: number };
+      } | null = null;
+      for (const lanes of neighbours(current)) {
+        const hidden = hiddenOf(lanes);
+        if (hidden >= currentHidden) continue;
+        const candidate = { lanes, hidden, moved: movedOf(lanes) };
+        if (best === null || better(candidate, best)) best = candidate;
+      }
+      if (best === null) break;
+      current = best.lanes;
+      currentHidden = best.hidden;
     }
-    if (best === null) break;
-    current = best.lanes;
-    currentHidden = best.hidden;
-  }
+    return { lanes: current, hidden: currentHidden };
+  };
 
+  let result = descend(initial);
   const previous = validPrevious(input.previous, initial);
   if (previous !== null) {
     const previousHidden = hiddenOf(previous);
+    // Also descend from the previous assignment: the default-start
+    // search can land in a different local optimum and miss a single
+    // move or swap from `previous` that saves more than the hysteresis.
+    const fromPrevious = descend(previous);
+    if (fromPrevious.hidden <= result.hidden) result = fromPrevious;
     const minGain = Math.max(
       REARRANGE_MIN_GAIN_ROWS,
       Math.ceil(previousHidden * REARRANGE_MIN_GAIN_FRACTION),
     );
-    if (previousHidden - currentHidden < minGain) {
+    if (previousHidden - result.hidden < minGain) {
       return { assignments: previous.map((cards) => ({ cards })), hiddenRows: previousHidden };
     }
   }
-  return { assignments: current.map((cards) => ({ cards })), hiddenRows: currentHidden };
+  return { assignments: result.lanes.map((cards) => ({ cards })), hiddenRows: result.hidden };
 }
 
 /** Every assignment one card move or one cross-column swap away, in slot order. */

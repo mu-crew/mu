@@ -20,7 +20,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (replacing `balanceColumns`, which only ran after a cull) searches
   single moves and swaps for the fewest hidden rows, even with all ten
   cards visible, and keeps the previous layout unless the new one hides
-  max(3, 10%) fewer rows. Footers and mouse hit regions read the same
+  max(3, 10%) fewer rows. The search also descends from the previous
+  layout, so a retained layout never has a single move or swap that
+  beats it by more than that margin. Footers and mouse hit regions read the same
   budgets (`columnRowBudgets`).
 
 ### Fixed

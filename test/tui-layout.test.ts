@@ -348,6 +348,51 @@ describe("dashboard card-to-column search", () => {
     expect(HEIGHT_OF(result.assignments)).not.toEqual(HEIGHT_OF(initial));
   });
 
+  it("retains a previous layout only when no single move or swap saves more than the hysteresis", () => {
+    // 140 cols, 15 rows: the culled card set. The previous layout came
+    // from arrangeColumns itself; the default-start descent lands in a
+    // different local optimum than one swap away from previous.
+    const rows = 15;
+    const visible = cullCardsForRows([0, 1, 2, 4, 6, 7, 8, 9], rows).cards;
+    const initial = layoutColumns(140, visible);
+    const old: Partial<Record<CardId, number>> = { 0: 5, 1: 13, 2: 11, 4: 73, 6: 0, 7: 4 };
+    const counts: Partial<Record<CardId, number>> = { 0: 3, 1: 0, 2: 0, 4: 68, 6: 0, 7: 0 };
+    const previous = arrangeColumns({
+      initial,
+      availableRows: rows,
+      dataCountFn: (id) => old[id] ?? 0,
+    }).assignments;
+    const result = arrangeColumns({
+      initial,
+      availableRows: rows,
+      dataCountFn: (id) => counts[id] ?? 0,
+      previous,
+    });
+    const minGain = Math.max(3, Math.ceil(result.hiddenRows * 0.1));
+    const lanes = HEIGHT_OF(result.assignments);
+    const slot = (id: CardId) => (id === 0 ? 10 : id);
+    const sorted = (lane: CardId[]) => [...lane].sort((x, y) => slot(x) - slot(y));
+    for (let from = 0; from < lanes.length; from++) {
+      for (let to = 0; to < lanes.length; to++) {
+        if (from === to) continue;
+        for (const x of lanes[from] ?? []) {
+          if ((lanes[from] ?? []).length > 1) {
+            const moved = lanes.map((l) => [...l]);
+            moved[from] = (lanes[from] ?? []).filter((id) => id !== x);
+            moved[to] = sorted([...(lanes[to] ?? []), x]);
+            expect(result.hiddenRows - hiddenRows(rows, moved, counts)).toBeLessThan(minGain);
+          }
+          for (const y of lanes[to] ?? []) {
+            const swapped = lanes.map((l) => [...l]);
+            swapped[from] = sorted([...(lanes[from] ?? []).filter((id) => id !== x), y]);
+            swapped[to] = sorted([...(lanes[to] ?? []).filter((id) => id !== y), x]);
+            expect(result.hiddenRows - hiddenRows(rows, swapped, counts)).toBeLessThan(minGain);
+          }
+        }
+      }
+    }
+  });
+
   it("ignores a previous assignment over a different card set", () => {
     const initial = layoutColumns(260, ALL);
     const counts: Partial<Record<CardId, number>> = { 3: 20, 6: 20, 7: 20, 8: 20 };
