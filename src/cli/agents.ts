@@ -58,6 +58,7 @@ import {
   UsageError,
 } from "../cli.js";
 import { ctlProbe, ctlRequest } from "../ctl/client.js";
+import type { CtlBlocked } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { activeMux, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
@@ -953,6 +954,7 @@ export async function cmdAgentWait(
       {
         status: "busy" | "needs_input" | "needs_permission" | "unknown" | null;
         unknownReason?: string;
+        blocked?: CtlBlocked;
       }
     >
   > => {
@@ -966,6 +968,7 @@ export async function cmdAgentWait(
       {
         status: "busy" | "needs_input" | "needs_permission" | "unknown" | null;
         unknownReason?: string;
+        blocked?: CtlBlocked;
       }
     >();
     for (const ref of pending) {
@@ -974,6 +977,7 @@ export async function cmdAgentWait(
       snapshots.set(agentKey(ref), {
         status: reading?.alive === false ? null : (reading?.state ?? "unknown"),
         ...(reading?.reason !== undefined ? { unknownReason: reading.reason } : {}),
+        ...(reading?.blocked !== undefined ? { blocked: reading.blocked } : {}),
       });
     }
     return snapshots;

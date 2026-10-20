@@ -70,6 +70,8 @@ interface FakeExt {
   /** Open an extension dialog: status gains `blocked`; held
    *  returnOnBlocked waits end with ended "blocked". */
   block: (kind: string, title?: string) => void;
+  /** Drop every held wait connection; the server keeps answering. */
+  dropWaits: () => void;
   close: () => Promise<void>;
 }
 
@@ -139,6 +141,9 @@ async function fakeExtension(
         waiters.splice(waiters.indexOf(w), 1);
         w.sock.end(encode({ ...status(), ended: "blocked" }));
       }
+    },
+    dropWaits: () => {
+      for (const w of waiters.splice(0)) w.sock.destroy();
     },
     settle: (text?: string, error?: string) => {
       state = "idle";
@@ -414,6 +419,33 @@ describe("mu agent wait on a pi agent", () => {
     process.exitCode = undefined;
     expect(res.stdout).toContain("cs/pia is waiting on a dialog confirm");
     expect(res.stdout).toContain("not finished");
+  });
+
+  it("a dialog seen after a dropped wait still ends blocked, not fired", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    const pending = runCli(
+      ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--timeout", "10", "--json"],
+      dbPath,
+    );
+    for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    // The held wait drops (socket still answers): mu falls back to polling,
+    // and the dialog opens with no wait held to report it.
+    ext.dropWaits();
+    ext.block("confirm", "Allow rm?");
+    const res = await pending;
+    expect(process.exitCode).toBe(7);
+    process.exitCode = undefined;
+    const out = JSON.parse(res.stdout) as {
+      agents: Array<{ fired: boolean; outcome?: string; status?: string; blocked?: unknown }>;
+    };
+    expect(out.agents[0]).toMatchObject({
+      fired: false,
+      outcome: "blocked",
+      status: "needs_permission",
+      blocked: { kind: "confirm", title: "Allow rm?" },
+    });
   });
 
   it("exits 5 on timeout while pi stays busy", async () => {
