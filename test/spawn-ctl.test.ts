@@ -125,6 +125,16 @@ describe("spawn control socket", () => {
     expect(agent.ctl).toBe("skipped");
   });
 
+  it("pins MU_DB_PATH to the absolute db path and forwards MU_STATE_DIR", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    await withEnv("MU_STATE_DIR", "rel-state", async () => {
+      await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    });
+    const args = newSessionArgs();
+    expect(args).toContain(`MU_DB_PATH=${dbPath}`);
+    expect(args).toContain(`MU_STATE_DIR=${join(process.cwd(), "rel-state")}`);
+  });
+
   it("injects MU_CTL_SOCK for non-pi CLIs too, without a handshake", async () => {
     const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "claude" });
     expect(newSessionArgs()).toContain(`MU_CTL_SOCK=${sockFor("worker-1")}`);

@@ -10,7 +10,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
@@ -461,6 +461,11 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     MU_WORKSTREAM: opts.workstream,
     [CTL_SOCK_ENV]: ctlSocket,
   };
+  // tmux panes inherit the tmux server's env, not ours: pin the DB (and
+  // state dir) this spawn used, resolved against our cwd, so the worker's
+  // `mu` hits the same taskgraph. Local spawns only.
+  if (db.name !== "" && db.name !== ":memory:") paneEnv.MU_DB_PATH = resolve(db.name);
+  if (process.env.MU_STATE_DIR) paneEnv.MU_STATE_DIR = resolve(process.env.MU_STATE_DIR);
 
   const hasWorkspace = workspacePathStr !== undefined;
 
