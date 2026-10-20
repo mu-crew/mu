@@ -7,6 +7,7 @@
 
 import { createHash } from "node:crypto";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -23,6 +24,12 @@ import { type Db, openDb } from "../src/db.js";
 import { formatHlc, parseHlc } from "../src/hlc.js";
 import { appendLog } from "../src/logs.js";
 import { withOpContext } from "../src/op-context.js";
+import {
+  decodeFingerprint,
+  encodeFingerprint,
+  type ResumePoint,
+  readAppended,
+} from "../src/segment-resume.js";
 import {
   discoverPeers,
   encodeSegmentLine,
@@ -41,6 +48,7 @@ import {
   syncPass,
   verifyAgainstManifest,
 } from "../src/segments.js";
+import { sha256Initial, sha256Update } from "../src/sha256-resumable.js";
 import { ambientFlush, ambientIngest } from "../src/sync.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
@@ -1269,6 +1277,155 @@ describe("segments", () => {
       // A watermark write without a clean read drops the fingerprint.
       setWatermark(b, key, getWatermark(b, key));
       expect(fp()).toBeUndefined();
+    });
+
+    // ─── resume: only appended bytes are read and hashed ──────────────
+
+    const resumeOf = (db: Db, key: string): ResumePoint | null => {
+      const row = db
+        .prepare("SELECT fingerprint FROM sync_fingerprints WHERE machine_id = ?")
+        .get(key) as { fingerprint: string } | undefined;
+      return row === undefined ? null : decodeFingerprint(row.fingerprint).resume;
+    };
+
+    it("records a resume point after a clean read and advances it on append", async () => {
+      const peer = await caughtUpPeer();
+      const key = localMachineId(a);
+      const first = resumeOf(b, key);
+      expect(first).toMatchObject({
+        lines: linesOf(peer.path).length,
+        size: statSync(peer.path).size,
+      });
+      const n = linesOf(peer.path).length;
+      for (let i = 4; i < 7; i++) seedTask(a, `c${i}`);
+      await flushSegment(a, dir);
+      const result = ingestSegment(b, peer);
+      expect(result).toMatchObject({
+        read: 3,
+        applied: 3,
+        defects: [],
+        watermark: n + 3,
+        truncatedAt: null,
+      });
+      expect(task(b, "c6")?.title).toBe("C6");
+      // The saved hash state is the hash of the whole file, so the next
+      // append resumes from it too.
+      const second = resumeOf(b, key);
+      expect(second).toMatchObject({ lines: n + 3, size: statSync(peer.path).size });
+      expect(second?.state).toEqual(sha256Update(sha256Initial(), readFileSync(peer.path)));
+      seedTask(a, "c7");
+      await flushSegment(a, dir);
+      expect(ingestSegment(b, peer)).toMatchObject({ applied: 1, defects: [], watermark: n + 4 });
+      expect(task(b, "c7")).toBeDefined();
+    });
+
+    it("a resumed ingest ends in the same state as a full read", async () => {
+      const peer = await caughtUpPeer();
+      const n = linesOf(peer.path).length;
+      for (let i = 4; i < 9; i++) seedTask(a, `c${i}`);
+      await flushSegment(a, dir);
+      const c = openDb({ path: join(tempDir, "c.db") });
+      try {
+        expect(ingestSegment(c, peer)).toMatchObject({ read: n + 5, defects: [] });
+        expect(ingestSegment(b, peer)).toMatchObject({ read: 5, defects: [] });
+        const dump = (db: Db) =>
+          db.prepare("SELECT hlc, entity, key, payload FROM ops ORDER BY hlc").all();
+        expect(dump(b)).toEqual(dump(c));
+        expect(getWatermark(b, localMachineId(a))).toBe(getWatermark(c, localMachineId(a)));
+      } finally {
+        c.close();
+      }
+    });
+
+    it("a rewritten prefix under a refreshed manifest takes the full read", async () => {
+      const peer = await caughtUpPeer();
+      const key = localMachineId(a);
+      const old = resumeOf(b, key);
+      // Same-size rewrite of line 2, then an append: the owner's flush
+      // rehashes the whole file, so the manifest is valid for the new
+      // bytes but the resumed hash (over the OLD prefix) cannot match it.
+      rotLineTwo(peer.path);
+      seedTask(a, "c4");
+      await flushSegment(a, dir);
+      const result = ingestSegment(b, peer);
+      expect(result).toMatchObject({ read: 1, applied: 1, defects: [] });
+      // The full read re-recorded a resume point over the NEW bytes.
+      const now = resumeOf(b, key);
+      expect(now?.state).toEqual(sha256Update(sha256Initial(), readFileSync(peer.path)));
+      expect(now?.state).not.toEqual(old?.state);
+    });
+
+    it("a stale manifest takes the full read and still applies the appended lines", async () => {
+      const peer = await caughtUpPeer();
+      const key = localMachineId(a);
+      const manifest = readFileSync(peer.path.replace(/\.jsonl$/, ".manifest"));
+      seedTask(a, "c4");
+      await flushSegment(a, dir);
+      // The peer's manifest has not arrived yet.
+      writeFileSync(peer.path.replace(/\.jsonl$/, ".manifest"), manifest);
+      const result = ingestSegment(b, peer);
+      expect(result).toMatchObject({ read: 1, applied: 1, defects: [] });
+      expect(task(b, "c4")).toBeDefined();
+      // Not vouched: the file is not what the (stale) manifest covers.
+      expect(resumeOf(b, key)).toBeNull();
+    });
+
+    it("a segment shorter than the recorded size takes the full read", async () => {
+      const peer = await caughtUpPeer();
+      const lines = linesOf(peer.path);
+      const before = getWatermark(b, localMachineId(a));
+      writeFileSync(peer.path, `${lines.slice(0, 3).join("\n")}\n`);
+      const result = ingestSegment(b, peer);
+      expect(result.defects.map((d) => d.kind)).toEqual(["manifest-mismatch"]);
+      expect(result.defects[0]?.detail).toContain("truncated");
+      expect(result.watermark).toBe(before);
+    });
+
+    it("an explicit verify reads the whole file even with a resume point", async () => {
+      const peer = await caughtUpPeer();
+      seedTask(a, "c4");
+      await flushSegment(a, dir);
+      rotLineTwo(peer.path);
+      // Same size, prefix damaged, manifest now wrong for it: the
+      // resumed hash would fail anyway, but verify must report.
+      const result = ingestSegment(b, peer, { verify: true });
+      expect(result.defects.map((d) => d.kind)).toContain("manifest-mismatch");
+    });
+
+    it("a defect leaves no resume point", async () => {
+      const peer = await caughtUpPeer();
+      const key = localMachineId(a);
+      appendFileSync(peer.path, "not json\n");
+      const result = ingestSegment(b, peer);
+      expect(result.truncatedAt).toBe(linesOf(peer.path).length);
+      expect(resumeOf(b, key)).toBeNull();
+    });
+
+    it("readAppended returns the new bytes and the running hash, or null", async () => {
+      const path = join(tempDir, "plain.jsonl");
+      const head = Buffer.from("alpha\nbeta\n");
+      writeFileSync(path, head);
+      const state = sha256Update(sha256Initial(), head);
+      const resume: ResumePoint = { lines: 2, size: head.length, lastHlc: "h", state };
+      const sha = (buf: Buffer) => createHash("sha256").update(buf).digest("hex");
+      // Not longer than the recorded size.
+      expect(readAppended(path, resume, sha(head))).toBeNull();
+      const tail = Buffer.from("gamma\n");
+      appendFileSync(path, tail);
+      const grown = readAppended(path, resume, sha(Buffer.concat([head, tail])));
+      expect(grown?.bytes.toString()).toBe("gamma\n");
+      expect(grown?.state.n).toBe(head.length + tail.length);
+      // Manifest hash does not match the grown file.
+      expect(readAppended(path, resume, sha(head))).toBeNull();
+      expect(readAppended(join(tempDir, "missing"), resume, sha(head))).toBeNull();
+    });
+
+    it("fingerprint encoding round-trips and degrades to no resume point", () => {
+      const state = sha256Update(sha256Initial(), Buffer.from("x\n"));
+      const resume: ResumePoint = { lines: 1, size: 2, lastHlc: "0001-0000-m", state };
+      expect(decodeFingerprint(encodeFingerprint("k", resume))).toEqual({ key: "k", resume });
+      expect(decodeFingerprint(encodeFingerprint("k", null))).toEqual({ key: "k", resume: null });
+      expect(decodeFingerprint("k\t1\t2\th\tzz").resume).toBeNull();
     });
 
     it("a same-size rewrite with a backdated mtime is read and reported", async () => {

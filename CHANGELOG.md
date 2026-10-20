@@ -46,6 +46,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   backlog-triage re-verifies an item against the code before starting.
   dag.md states that every edge comes from a verb the caller ran (`block`, `add`/`reparent --blocked-by`) and no write adds edges on its own.
   VISION cites a prior runtime's transport and sentinel-marker lessons.
+- **A changed peer segment is ingested from where the last read stopped.**
+  Every append used to make each other machine hash the whole segment,
+  read it a second time as text and split it (~120 ms for this fleet's
+  64 MB segment, ~9 ms of it needed). A clean read now saves the byte
+  offset and running sha256 state next to the caught-up fingerprint; the
+  next ambient ingest reads only the appended bytes, and accepts them
+  only when their hash is the manifest's sha256 (~20 ms). A shrunk or
+  rewritten file, a stale manifest, a defect (which saves no offset) and
+  `mu sync` take the full read and whole-file verify as before. No
+  schema change: the offset is extra fields in the existing
+  `sync_fingerprints` value, which an older mu never matches and
+  ignores.
 - **Task, track and sync-peer sorts use code-unit order, not
   `localeCompare`.** The first `localeCompare` call initialised ICU
   (~4 ms on nearly every list verb). Ties by name now sort by code unit,
