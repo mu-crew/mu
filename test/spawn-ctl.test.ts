@@ -388,25 +388,51 @@ describe("spawn liveness for ctl agents (tmux)", () => {
         setTimeout(() => {
           boundAt = Date.now();
           void serveExtension(sockFor("worker-1"));
-        }, 120);
+        }, 60);
       }
       return res;
     });
     const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
     const seenAfter = Date.now() - boundAt;
     expect(agent.ctl).toBe("ok");
-    // Generous bound for CI load; the old 250 ms cadence averaged ~125 ms.
-    expect(seenAfter).toBeLessThan(500);
+    // 250 ms polling (the old cadence) sees a socket bound at 60 ms at
+    // ~250 ms, i.e. ~190 ms late; 50 ms stat polling sees it within ~50 ms.
+    expect(seenAfter).toBeLessThan(120);
   });
 
-  it("keeps the pane-alive check at its 250 ms cadence while the socket is absent", async () => {
-    process.env.MU_SPAWN_CTL_MS = "600";
+  it("keeps the pane-alive check at its 250 ms cadence, plus one final check at the deadline", async () => {
+    process.env.MU_SPAWN_CTL_MS = "400";
     installLivePanes();
     await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch(() => {});
     const checks = mux.calls.filter((c) => c[0] === "display-message" && c.includes("#{pane_id}"));
-    // 600 ms at 250 ms: ~3 checks (a 50 ms cadence would make ~12).
-    expect(checks.length).toBeGreaterThanOrEqual(1);
+    // Checks at ~0, ~250 and the 400 ms deadline (+1 from the post-handshake
+    // health check). A 50 ms cadence would make ~9; no deadline check, 3.
+    expect(checks.length).toBeGreaterThanOrEqual(4);
     expect(checks.length).toBeLessThanOrEqual(5);
+  });
+
+  it("a pane dying in the last 250 ms of the budget keeps the scrollback from the final check", async () => {
+    process.env.MU_SPAWN_CTL_MS = "300";
+    mux.restore();
+    const state = freshMockState();
+    const fake = mockTmux(state).executor;
+    let captures = 0;
+    mux = installMux("tmux", async (args) => {
+      // The pane dies after the 250 ms check, so the third capture (the
+      // deadline's) finds it gone, as on real tmux.
+      if (args[0] === "capture-pane" && ++captures === 3) state.panes.clear();
+      const res = await fake(args);
+      if (args[0] === "new-session") {
+        for (const pane of state.panes.values()) pane.scrollback = "fatal: instance lock held";
+      }
+      return res;
+    });
+    const err = await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch((e) => e);
+    expect(err).toBeInstanceOf(AgentDiedOnSpawnError);
+    expect((err as AgentDiedOnSpawnError).scrollback).toBe("fatal: instance lock held");
+    // Raised by the handshake's own deadline check, not the later health check.
+    expect((err as Error).message).toContain("during the ctl handshake");
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 
   it("scans for a startup error once the handshake times out, and rolls back", async () => {

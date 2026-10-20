@@ -339,9 +339,10 @@ const CTL_STAT_INTERVAL_MS = 50;
  * runs out. Returns the last probe outcome. The socket path is stat'd
  * every ~50 ms and probed as soon as it exists, so readiness is seen
  * within ~50 ms of pi binding it. `onMiss` (the pane-alive check) keeps
- * its 250 ms cadence and may throw to abort (the pane died); otherwise
- * this never throws. Uses real timers, not the `sleep` seam: tests stub
- * that to a no-op, which would turn this into a busy loop.
+ * its 250 ms cadence plus one final check at the deadline, and may
+ * throw to abort (the pane died); otherwise this never throws. Uses real
+ * timers, not the `sleep` seam: tests stub that to a no-op, which would
+ * turn this into a busy loop.
  */
 async function awaitCtlHandshake(
   sock: string,
@@ -363,7 +364,10 @@ async function awaitCtlHandshake(
       if (probe.kind === "ok") return "ok";
       last = probeToSpawnCtl(probe.kind);
     }
-    if (onMiss && Date.now() - lastMissAt >= CTL_POLL_INTERVAL_MS) {
+    // The final check at the deadline always runs, throttle or not: a pane
+    // that dies in the last <250 ms keeps the scrollback onMiss captured.
+    const atDeadline = Date.now() >= deadline;
+    if (onMiss && (atDeadline || Date.now() - lastMissAt >= CTL_POLL_INTERVAL_MS)) {
       lastMissAt = Date.now();
       await onMiss();
     }

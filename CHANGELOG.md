@@ -70,8 +70,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   waited up to 250 ms to be noticed. It now stats the socket path every
   50 ms (no fork) and probes as soon as it exists: readiness overshoot
   132 -> 24 ms, ~100 ms less per pi spawn. The pane-alive check and
-  scrollback capture keep their 250 ms cadence, so death detection and
-  crash diagnostics are unchanged.
+  scrollback capture keep their 250 ms cadence, plus one final check at
+  the budget's deadline, so a pane dying in the last 250 ms keeps its
+  crash scrollback.
 - **`mu_delegate` closes the pane and writes the record note in
   parallel.** A finished delegate with `record` waited for
   `mu agent close` before starting `mu task note`, though neither needs
