@@ -61,9 +61,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   each armed settle the pi extension ran `mu state --json` only to read
   IN_PROGRESS task names, paying for the tmux pane listing and the
   orphan and workspace views it never used. It now runs
-  `mu task list --status IN_PROGRESS --json` per dispatched workstream,
-  in parallel: ~56-69 ms less per armed settle (one workstream). A task
-  still owned by a dead agent shows in the nudge until the next
+  `mu task list --status IN_PROGRESS --json` per dispatched workstream
+  (`--sort recency`, newest first as `state` listed them), in parallel,
+  deduplicated by task: ~56-69 ms less per armed settle (one
+  workstream). A task still owned by a dead agent shows in the nudge until the next
   `mu state` or `mu task wait` reaps it.
 - **Skill: orchestrators clean up scratch files.** Review panels and
   other delegate jobs left briefs, diffs and outputs in `/tmp` or ad
