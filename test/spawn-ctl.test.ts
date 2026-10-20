@@ -2,7 +2,7 @@
 // A real unix-socket server at the derived path stands in for the
 // extension; the mux is the fake tmux harness.
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -133,6 +133,29 @@ describe("spawn control socket", () => {
     const args = newSessionArgs();
     expect(args).toContain(`MU_DB_PATH=${dbPath}`);
     expect(args).toContain(`MU_STATE_DIR=${join(process.cwd(), "rel-state")}`);
+  });
+
+  it("resolves a relative db path against the caller's cwd", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    const cwd = process.cwd();
+    db.close();
+    process.chdir(dir);
+    try {
+      db = openDb({ path: "mu.db" });
+      expect(db.name).toBe("mu.db");
+      await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(newSessionArgs()).toContain(`MU_DB_PATH=${join(realpathSync(dir), "mu.db")}`);
+  });
+
+  it("omits MU_DB_PATH for an in-memory db", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    db.close();
+    db = openDb({ path: ":memory:" });
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(newSessionArgs().some((a) => a.startsWith("MU_DB_PATH="))).toBe(false);
   });
 
   it("injects MU_CTL_SOCK for non-pi CLIs too, without a handshake", async () => {
