@@ -170,6 +170,9 @@ export type WaitAgent = {
   sessionFile?: string;
   /** outcome `blocked`: the extension dialog the delegate's pi waits on. */
   blocked?: { kind?: string; title?: string };
+  /** The run baseline the wait counted from; a re-wait passes it as
+   *  `--after-runs` so a run that settles in between is not missed. */
+  afterRuns?: number;
 };
 
 /** What happened to the pane after delivery, for the message. */
@@ -296,7 +299,7 @@ export function delegateMessage(
         "Answer the dialog in its pane (attach), then wait again; or close it and record the check as UNVERIFIED.",
         ...ev,
         ...look,
-        `Wait again: mu agent wait ${name} -w ${W} --json`,
+        `Wait again: mu agent wait ${name} -w ${W} --json${agent.afterRuns !== undefined ? ` --after-runs ${agent.afterRuns}` : ""}`,
         `Close: mu agent close ${name} -w ${W}`,
       ];
       return `${lines.join("\n")}${tailBlock}`;
@@ -307,7 +310,7 @@ export function delegateMessage(
         `${who} is still running after ${timeoutS}s; stopped waiting, so its answer will not arrive here. ${fate}${ws}`,
         ...ev,
         ...look,
-        `Wait again: mu agent wait ${name} -w ${W} --json`,
+        `Wait again: mu agent wait ${name} -w ${W} --json${agent.afterRuns !== undefined ? ` --after-runs ${agent.afterRuns}` : ""}`,
       ].join("\n");
     default:
       return `${who}: mu agent wait gave no result. ${fate}${ws}${evBlock}${tailBlock}`;

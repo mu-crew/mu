@@ -1032,7 +1032,7 @@ export async function cmdAgentWait(
           : { status: null };
       },
     );
-    return { initial, settled };
+    return { initial, settled, afterRuns };
   };
 
   const timeoutMs = (opts.timeout ?? 600) * 1000;
@@ -1078,7 +1078,7 @@ export async function cmdAgentWait(
       },
       {
         intent: "Wait again once it is answered",
-        command: `mu agent wait ${a.name} -w ${a.workstreamName}`,
+        command: `mu agent wait ${a.name} -w ${a.workstreamName}${a.afterRuns !== undefined ? ` --after-runs ${a.afterRuns}` : ""}`,
       },
     );
   }

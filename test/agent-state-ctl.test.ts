@@ -70,6 +70,8 @@ interface FakeExt {
   /** Open an extension dialog: status gains `blocked`; held
    *  returnOnBlocked waits end with ended "blocked". */
   block: (kind: string, title?: string) => void;
+  /** Close the dialog: status loses `blocked`. */
+  unblock: () => void;
   /** Drop every held wait connection; the server keeps answering. */
   dropWaits: () => void;
   close: () => Promise<void>;
@@ -141,6 +143,9 @@ async function fakeExtension(
         waiters.splice(waiters.indexOf(w), 1);
         w.sock.end(encode({ ...status(), ended: "blocked" }));
       }
+    },
+    unblock: () => {
+      blocked = undefined;
     },
     dropWaits: () => {
       for (const w of waiters.splice(0)) w.sock.destroy();
@@ -419,6 +424,37 @@ describe("mu agent wait on a pi agent", () => {
     process.exitCode = undefined;
     expect(res.stdout).toContain("cs/pia is waiting on a dialog confirm");
     expect(res.stdout).toContain("not finished");
+  });
+
+  it("blocked JSON carries the run baseline; the hinted re-wait returns a run that settled first", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 2 });
+    ext.block("confirm", "Allow push?");
+    // No --after-runs: the baseline is the status read taken at wait start.
+    const first = await runCli(
+      ["agent", "wait", "pia", "-w", WS, "--timeout", "5", "--json"],
+      dbPath,
+    );
+    expect(process.exitCode).toBe(7);
+    process.exitCode = undefined;
+    const out = JSON.parse(first.stdout) as {
+      agents: Array<{ outcome?: string; afterRuns?: number }>;
+      nextSteps: Array<{ command: string }>;
+    };
+    expect(out.agents[0]).toMatchObject({ outcome: "blocked", afterRuns: 2 });
+    const rewait = out.nextSteps.find((s) => s.command.startsWith("mu agent wait"))?.command;
+    expect(rewait).toBe("mu agent wait pia -w cs --after-runs 2");
+    // The human answers and the run settles before the re-wait starts.
+    ext.unblock();
+    ext.settle("the answer");
+    const args = (rewait ?? "").split(" ").slice(1);
+    const again = await runCli([...args, "--timeout", "2", "--json"], dbPath);
+    expect(again.exitCode).toBeNull();
+    expect(process.exitCode).toBeUndefined();
+    expect(JSON.parse(again.stdout).agents[0]).toMatchObject({
+      fired: true,
+      outcome: "done",
+      lastText: "the answer",
+    });
   });
 
   it("a dialog seen after a dropped wait still ends blocked, not fired", async () => {

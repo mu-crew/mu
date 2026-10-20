@@ -1135,6 +1135,12 @@ describe("delegateMessage", () => {
     expect(t).toContain("still running");
     expect(t).toContain("will not arrive here");
     expect(t).toContain("mu agent wait d -w scratch --json");
+    const tb = delegateMessage(
+      "d",
+      { outcome: "timeout", afterRuns: 4 },
+      { closed: false, why: "evidence" },
+    );
+    expect(tb).toContain("mu agent wait d -w scratch --json --after-runs 4");
   });
 
   it("names the run time when given", () => {
@@ -1486,6 +1492,7 @@ describe("evidence when there is no final answer", () => {
             outcome: "blocked",
             lastText: "stale",
             blocked: { kind: "confirm", title: "Allow push?", since: 1 },
+            afterRuns: 0,
           },
         ],
       }),
@@ -1496,7 +1503,7 @@ describe("evidence when there is no final answer", () => {
     expect(text).toContain('blocked on a confirm "Allow push?" dialog');
     expect(text).toContain("has NOT finished");
     expect(text).toContain("Pane kept (waiting on a dialog)");
-    expect(text).toContain("mu agent wait delegate-2 -w scratch --json");
+    expect(text).toContain("mu agent wait delegate-2 -w scratch --json --after-runs 0");
     expect(text).toContain(`Session: ${join(tmp, "s.jsonl")}`);
     expect(text).not.toContain("Partial answer");
     expect(text).not.toContain("half an answer");
