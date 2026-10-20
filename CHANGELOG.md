@@ -22,7 +22,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   cards visible, and keeps the previous layout unless the new one hides
   max(3, 10%) fewer rows. The search also descends from the previous
   layout, so a retained layout never has a single move or swap that
-  beats it by more than that margin. Footers and mouse hit regions read the same
+  beats it by more than that margin. Among layouts that hide the same rows, the search
+  prefers fewer cards away from their default column, then slot order. Footers and mouse hit regions read the same
   budgets (`columnRowBudgets`).
 
 ### Fixed

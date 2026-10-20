@@ -362,13 +362,13 @@ export interface ArrangedColumns {
  * max(0, dataCount - budget) once every column's budgets are filled
  * (`columnRowBudgets`). Steepest descent from the default packing:
  * each round tries every single-card move and every pairwise swap
- * across columns and takes the one that hides the fewest rows,
- * tie-breaking on fewest cards away from their default column, then
- * on moving the least important cards (CARD_CULL_PRIORITY order), then
- * enumeration (slot) order. It stops when nothing strictly improves, so the result
- * is a deterministic local optimum. With 10 cards and 4 columns a
- * round is at most 30 moves + 45 swaps; rounds strictly reduce the
- * objective and are capped at MAX_ARRANGE_ROUNDS.
+ * across columns and takes the best by the key (hidden rows, then
+ * fewest cards away from their default column, then slot order). Equal-
+ * hidden neighbours count when they win on the later keys. It stops
+ * when no neighbour beats the current assignment, so the result is a
+ * deterministic local optimum of the whole key. With 10 cards and 4
+ * columns a round is at most 30 moves + 45 swaps; rounds strictly
+ * improve the key and are capped at MAX_ARRANGE_ROUNDS.
  *
  * Cards keep slot order inside a column (`compareSlot`, Commits last)
  * and no column is emptied, so the column count never changes.
@@ -379,7 +379,7 @@ export interface ArrangedColumns {
  * fewer rows, so no single move or swap from a retained layout saves
  * that much.
  */
-const MAX_ARRANGE_ROUNDS = 20;
+const MAX_ARRANGE_ROUNDS = 40;
 
 export function arrangeColumns(input: ArrangeColumnsInput): ArrangedColumns {
   const initial = input.initial.map((a) => sortCards(a.cards));
@@ -396,52 +396,49 @@ export function arrangeColumns(input: ArrangeColumnsInput): ArrangedColumns {
   initial.forEach((lane, column) => {
     for (const id of lane) defaultColumn.set(id, column);
   });
-  // Cards away from their default column: count, plus a bitmask
-  // weighted by cull priority so ties move the least important cards.
-  const movedOf = (
-    lanes: ReadonlyArray<ReadonlyArray<CardId>>,
-  ): { count: number; mask: number } => {
-    let count = 0;
-    let mask = 0;
-    lanes.forEach((lane, column) => {
-      for (const id of lane) {
-        if (defaultColumn.get(id) === column) continue;
-        count++;
-        mask += 2 ** CARD_CULL_PRIORITY.indexOf(id);
-      }
+  // Lexicographic search key: hidden rows, then cards away from their
+  // default column, then slot order (each card's column, cards taken
+  // in slot order, so earlier slots stay in earlier columns). A total
+  // order, so descent on it terminates.
+  const slotCards = sortCards(initial.flat());
+  type Scored = { lanes: CardId[][]; hidden: number; moved: number; slots: number[] };
+  const score = (lanes: CardId[][], hidden = hiddenOf(lanes)): Scored => {
+    const column = new Map<CardId, number>();
+    lanes.forEach((lane, c) => {
+      for (const id of lane) column.set(id, c);
     });
-    return { count, mask };
+    let moved = 0;
+    for (const id of slotCards) if (column.get(id) !== defaultColumn.get(id)) moved++;
+    return { lanes, hidden, moved, slots: slotCards.map((id) => column.get(id) ?? 0) };
   };
-  const better = (
-    a: { hidden: number; moved: { count: number; mask: number } },
-    b: { hidden: number; moved: { count: number; mask: number } },
-  ): boolean =>
-    a.hidden !== b.hidden
-      ? a.hidden < b.hidden
-      : a.moved.count !== b.moved.count
-        ? a.moved.count < b.moved.count
-        : a.moved.mask < b.moved.mask;
+  const better = (a: Scored, b: Scored): boolean => {
+    if (a.hidden !== b.hidden) return a.hidden < b.hidden;
+    if (a.moved !== b.moved) return a.moved < b.moved;
+    for (let i = 0; i < a.slots.length; i++) {
+      const x = a.slots[i] ?? 0;
+      const y = b.slots[i] ?? 0;
+      if (x !== y) return x < y;
+    }
+    return false;
+  };
 
+  // Steepest descent on the full key: equal-hidden neighbours that
+  // move fewer cards (or restore slot order) are taken too.
   const descend = (start: CardId[][]): { lanes: CardId[][]; hidden: number } => {
-    let current = start;
-    let currentHidden = hiddenOf(current);
-    for (let round = 0; round < MAX_ARRANGE_ROUNDS && currentHidden > 0; round++) {
-      let best: {
-        lanes: CardId[][];
-        hidden: number;
-        moved: { count: number; mask: number };
-      } | null = null;
-      for (const lanes of neighbours(current)) {
+    let current = score(start);
+    for (let round = 0; round < MAX_ARRANGE_ROUNDS; round++) {
+      let best: Scored | null = null;
+      for (const lanes of neighbours(current.lanes)) {
         const hidden = hiddenOf(lanes);
-        if (hidden >= currentHidden) continue;
-        const candidate = { lanes, hidden, moved: movedOf(lanes) };
+        if (hidden > current.hidden) continue;
+        const candidate = score(lanes, hidden);
+        if (!better(candidate, current)) continue;
         if (best === null || better(candidate, best)) best = candidate;
       }
       if (best === null) break;
-      current = best.lanes;
-      currentHidden = best.hidden;
+      current = best;
     }
-    return { lanes: current, hidden: currentHidden };
+    return { lanes: current.lanes, hidden: current.hidden };
   };
 
   let result = descend(initial);
