@@ -52,7 +52,9 @@ and check, skip it.
    [long-run](long-run.md). With codemode, a
    [driver](codemode-driver.md) can dispatch a wave.
 7. **Close against the stop rule**, checked by you on the merged tree,
-   not by any worker's note. Then
+   not by any worker's note. Units can each pass review while the goal
+   fails whole: one [delegate](refute.md) call refutes the umbrella's
+   criteria on the merged tree (record on the umbrella). Then
    `mu task close <umbrella> --if-ready --evidence '...'`.
 
 Done when the umbrella is closed, its stop rule holds on the merged

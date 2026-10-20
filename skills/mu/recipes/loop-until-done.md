@@ -25,7 +25,8 @@ written down first does neither.
    `MEASURE: 14 errors (was 31)`, or `NEW: 0 flaky tests`.
 4. **After each round, check the rule** yourself, from the measurement
    command, not from the worker's note.
-   - Rule met: `mu task close <umbrella> --if-ready --evidence "<stop
+   - Rule met: first one delegate call refutes the umbrella's criteria
+     on the merged tree (record on the umbrella). Then `mu task close <umbrella> --if-ready --evidence "<stop
      command + result>"` (each round blocks the umbrella).
    - No progress: stop the loop and decide. Change the approach, split
      the work, or park the umbrella with
