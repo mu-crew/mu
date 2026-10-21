@@ -55,6 +55,7 @@ const DOC_FILES = [
   "skills/mu/recipes/watcher.md",
   "skills/mu/recipes/orchestrator-loop.md",
   "skills/mu/recipes/worker.md",
+  "skills/mu/recipes/test-health.md",
   "skills/mu/recipes/recovery.md",
   "skills/mu/recipes/adversarial-review.md",
   "skills/mu/recipes/fan-out.md",

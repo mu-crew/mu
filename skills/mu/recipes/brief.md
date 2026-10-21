@@ -14,7 +14,7 @@ not in the brief, or one pointer away, does not exist for it.
    `npm run typecheck`", not "update the call sites". A vague bound
    invites the worker to stop at the first plausible point.
 2. **Inline what every path needs; point to the rest.** Files, the
-   verify command, scope, and the final action go in the brief. Shared
+   targeted verify command, scope, and the final action go in the brief. Shared
    context goes in one place (an umbrella's note) and the brief points
    at it: `Read: mu task notes sweep -w audit`. Repeating it per task
    copies it into every worker's context and lets the copies drift.
@@ -43,12 +43,17 @@ Read: mu task notes <id> -w <ws>   (and the umbrella's, if any)
 GOAL: <one sentence>
 FILES: <paths it may change>
 DONE WHEN: <checkable, exhaustive criterion>
-VERIFY: <exact command>
+VERIFY: <repo Gates pointer + exact targeted command/scope; test-health.md by role>
+NOTE: <applicable gate records before close; test-health.md § Gate contract>
 
 ⚠️ FINAL ACTION
 git commit -am '<msg>' THEN
 mu task close <id> -w <ws> --evidence "$v"   # command + result; see Quoting
 ```
+
+Use [test-health](test-health.md) for worker/reviewer gate allocation, gate
+records, test levels and cheap bug red-green. Point to it rather than asking
+each role for a full gate or parent build.
 
 ## Quoting
 

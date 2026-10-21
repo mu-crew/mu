@@ -19,9 +19,9 @@ the loop and the reasons behind them.
    `mu agent send <w> --fresh '...'` (new session + prompt in one step;
    refuses while busy). The brief ends with its final-action block.
 5. `mu task wait ... --first --on-stall exit --json`.
-6. Cherry-pick the closed worker's **new** commit(s), verify the MERGE,
-   then continue the loop in the same turn. Do not barrier or loop in
-   shell.
+6. Cherry-pick the accepted worker's **new** commit(s) into a merge batch
+   (below), then continue the loop in the same turn. Do not barrier or
+   loop in shell.
    Only `CLOSED/done` ships; other closes: read the reason note.
 7. Repeat from `mu state`.
 
@@ -42,9 +42,9 @@ keeps it.
   ends with its `VERDICT: <id>` block, so a batch still maps back. Read
   every verdict in the batch before deciding any.
 - **Workers with workspaces** build and test: about one per CPU core,
-  fewer when each runs the full suite. A remote host has its own
-  session cap ([remote-workers](remote-workers.md)).
-- **Stream, do not batch.** Keep the pool full: dispatch the next unit
+  fewer when targeted slow checks contend for resources. A remote host has
+  its own session cap ([remote-workers](remote-workers.md)).
+- **Stream dispatch.** Keep the pool full: dispatch the next unit
   when one closes, rather than waiting for a whole wave. With the
   `codemode` tool, a [driver](codemode-driver.md) can dispatch a batch
   of workers in one script.
@@ -72,15 +72,21 @@ per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
 
 ## Merging
 
-- **Pipeline; don't barrier.** Wait for one task, cherry-pick only its
-  new commits, verify, dispatch the next. An umbrella wait hides progress;
-  merging stale branches can restore reverted code.
-- **Verify the merge, not the worker's rerun.** Only the combination
-  with moved main is new, and it breaks in ways the worker's own run
-  cannot show. Remote hosts: [run the merged gate there](remote-workers.md#run-the-merged-gate-on-the-host).
-- **Push only when the gate command passes.** Make `git push` the last
-  line under `set -e`. Check the gate command runs what it claims: an env-gated randomized
-  test once passed with zero cases.
+- **Pipeline; don't barrier.** Cherry-pick accepted new commits as tasks
+  close and dispatch the next unit. Choose a bounded merge batch; an umbrella
+  wait hides progress and stale branches can restore reverted code.
+- **Pin the batch tree.** Run full slow once, plus fast if slow excludes it,
+  under [the gate contract](test-health.md#gate-contract). Keep the tested
+  checkout unchanged during the run; independent workers continue in their
+  workspaces. Later merges form the next batch, not an extension of this pass.
+  Remote hosts: [run the merged gate there](remote-workers.md#run-the-merged-gate-on-the-host).
+- **Bisect a failed batch.** Isolate the offending commit/interaction, fix it,
+  and gate the corrected merged tree before shipping.
+- **Push only the verified tree.** Make `git push` the last line under
+  `set -e`; required integration and safety checks must actually run.
+  Record the gate result and slow duration with the merged tree in the merge
+  note/`mu log`. Queue [upkeep](test-health.md#upkeep-loop) on a budget crossing
+  or milestone, rather than stopping all independent work.
 - **Accept evidence, not close notes.** Re-run the key measurement from
   a clean checkout; close notes have claimed unpushed commits. A
   worker's "done" counts only once the diff shows the change. Your own
@@ -89,6 +95,16 @@ per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
   no is not evidence: a test filtered to zero cases, a script you wrote
   agreeing with itself, a fixture you tuned on. A nonzero diff is a
   failure even when the command exited 0.
+
+## Build cache
+
+Keep build targets private per workspace and auth/profile lane. Share dependency
+downloads and use an existing compiler cache when available; measure cold/warm
+cost and contention. Keep normal-auth, test-auth and release artifacts distinct,
+with explicit executable paths for consumers. A shared writable Cargo target
+can replace a binary after its build lock is released, while tests still use it.
+Warm-up may copy a quiescent snapshot into private storage, never hardlinks or
+a live target. This is build guidance, not a new mu cache or dependency.
 
 ## Sending
 

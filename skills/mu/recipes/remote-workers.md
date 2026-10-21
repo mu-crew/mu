@@ -53,7 +53,7 @@ git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
 ```
 
 Done when the worker's commits are cherry-picked locally, the merged
-tree passes the gate command (on the host, below), and the pane is
+tree passes the merged-tree gates (host and local checks below), and the pane is
 closed.
 
 ### Step 2: the note is load-bearing
@@ -117,9 +117,9 @@ while the worker asks a question, do not poll: read the pane
 
 ### Run the merged gate on the host
 
-Do not re-run what the worker ran. Only the merge is unverified.
-Cherry-pick locally, push the merged head to the host, and run the gate
-there with its warm dependencies:
+Reuse only equivalent [gate records](test-health.md#gate-contract).
+Cherry-pick a merge batch locally, push its pinned head to the host, and run
+full slow there with warm dependencies, plus fast if slow excludes it:
 
 ```bash
 git cherry-pick <sha>
@@ -131,12 +131,16 @@ mule run --cwd ~/hacking/<gate-checkout> --wait \
 `<gate-checkout>` is a scratch checkout or worktree used only for
 gates, never one holding work. Push to a temporary ref, never `main`;
 delete it afterwards (`git push origin :gate-tmp`). Push to `main` only
-after the gate passes.
+after required gates pass. Replace `npm run check` with the repo's canonical
+merged-tree command(s), preserving full scope and recording host conditions.
+Keep the gate checkout pinned while other remote workers continue in theirs;
+use private artifacts ([build cache](orchestrator-loop.md#build-cache)).
 
 `--wait` exits with the suite's code. A bare ssh would hold the capped
-channel for minutes. Keep two gates local: platform-sensitive tests (macOS `ps` returns argv,
-Linux `ps -e` appends the environment, and a real bug lived there), and
-the final gate before the push that matters.
+channel for minutes. Retain local platform-sensitive checks (macOS `ps`
+returns argv, Linux `ps -e` appends the environment, and a real bug lived
+there), and the repo-required final local gate before the push that matters.
+A remote pass does not substitute for non-equivalent local conditions.
 
 ## Traps
 
