@@ -10,6 +10,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.13.2] — 2026-10-21
+
+**Keep verification useful as projects grow.** The mu skill now defines
+fast/slow gate responsibilities, scoped evidence reuse and routine test upkeep.
+
+Upgrade with `npm i -g @mu-crew/mu@3.13.2`. New agent sessions load the updated
+skill. Existing workers need updated briefs; no schema or extension change.
+
 ### Changed
 
 - **Skill: fast/slow gates and routine test upkeep.** Canonical
@@ -22,8 +30,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   fast 216.140 s, slow 341.696 s (e2e 255.561 s, release 82.414 s);
   223 unit tests ~1 s, 64 e2e cases / 422 assertions, no skips. Converters
   initially cost ~28 s in fast: fast is not universally seconds. This is
-  pilot timing, not an equivalent gate record for mu; the readiness-wait
-  follow-up is still in progress, so no before/after speedup is claimed.
+  pilot timing, not an equivalent gate record for mu. A separate targeted
+  vibrancy-wait follow-up preserved all seven assertions and reduced that
+  case's mean from 3.350 s to 2.140 s; it does not establish a full-gate
+  speedup or a solved budget.
 
 ## [3.13.1] — 2026-10-20
 
