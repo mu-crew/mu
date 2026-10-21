@@ -1,6 +1,18 @@
 # Fast and slow gates, and test upkeep as routine work
 
 Status: approved design, not implemented. Battle-test on swaywardlock first (see [Rollout](#rollout)).
+
+**Measurement correction (implementation check):** the initial figures below
+came from exploratory regex scripts, not an execution classifier. The
+museum tool's drill-down showed that many counted "full gate runs" were
+commands writing commit messages or task notes that merely mentioned the
+gate. The claimed six full runs per task and daily run totals are not
+verified and must not be used as a baseline. Command duration also includes
+other work in a compound command, and background work appears in later
+polls. Preserve the initial investigation below for provenance, but establish
+a fresh, inspected baseline with `museum-search calls --tool bash` and step
+timing before judging the pilot. Unit-test runtime and source-size figures
+were read directly from logs and git history.
 Date: 2026-10-21
 
 ## Problem
@@ -62,9 +74,10 @@ normal project work instead of something that never happens.
   checks. Run once per tree, by whoever has to.
 - **Gate budget.** The slow gate's target wall time, written next to the
   gate commands. The default is 5 min, and the project can change it.
-- **Gate record.** `GATE fast|slow ok @ <git tree sha> (<seconds>s)` in a
-  task note. A matching tree hash means the run counts. Nobody re-runs a
-  gate on a tree that already has a record.
+- **Gate record.** A task note names commit/tree, exact command and scope,
+  duration, toolchain/environment and skips. Reuse requires matching tree,
+  scope and equivalent execution conditions. A targeted run or privileged
+  check that skipped is not a full slow-gate pass.
 - **Test upkeep.** Profile the gate, then speed up, move down a level,
   merge or delete tests, so the gate stays inside its budget. It is
   ordinary work in the DAG, not a cleanup that happens when someone
@@ -85,17 +98,17 @@ normal project work instead of something that never happens.
    - **Worker:** the fast gate while iterating. Before closing, the
      slow tests for its own area once, then the fast gate on the final
      commit, and records both.
-   - **Reviewer:** reuses the worker's gate record when the tree hash
-     matches. It runs only the tests that cover the diff, and reproduces
+   - **Reviewer:** reuses the worker's gate record when tree, scope and
+     execution conditions match. It runs only the tests that cover the diff, and reproduces
      a finding when one is claimed. It no longer runs the full gate or
      builds the parent to show a test fails there.
    - **Orchestrator:** the full slow gate once per merge batch, on the
      merged tree. When it fails, it bisects the batch.
 
-   *Why:* this takes the full slow gate from about 6 runs per task to
-   about 1 per batch. The merged-tree run backstops any worker whose
-   record is wrong. In swaywardlock about 10 of the full runs I could
-   classify failed, so a batch rarely needs bisecting.
+   *Why:* avoid repeating equivalent full runs across roles. The merged-tree
+   run checks interactions not covered by individual worker runs. Measure
+   batch failure rate during the pilot; the exploratory counts do not
+   establish how often bisecting will be necessary.
 3. **Red-green only for bug fixes.** A fix shows the test failing on the
    base and passing on the fix, and the worker shows it, not the
    reviewer. Feature work does not have to show a test failing first.
@@ -104,21 +117,24 @@ normal project work instead of something that never happens.
    - it covers behaviour no existing test covers
    - a new slow-gate case states what only it can see, in a comment or
      the commit message
-   - waits poll for the condition, never sleep a fixed time
+   - poll readiness/completion; retain documented temporal sampling,
+     negative-observation windows and deliberately sleeping process fixtures
 5. **Reviewer findings about tests** change from "an edge case without a
    test" to:
    - a risky behaviour that is untested, or broken
    - a test at the wrong level
    - a test that duplicates test X
-   - a new fixed sleep
+   - an unnecessary readiness sleep, not a documented temporal assertion
    - a gate that got noticeably slower in this diff
-6. **Build cache across workspaces.** A recipe section covers sharing
-   build output between worktrees: sccache or a shared
-   `CARGO_TARGET_DIR` (or the same idea for other build systems), and
-   warming a new workspace from main's build output. It is not a mu
-   feature yet.
-   *Why:* about 3 min of every swaywardlock gate was cold compilation,
-   and that is the cheapest thing to fix.
+6. **Build cache across workspaces.** Prefer private targets with shared
+   dependency downloads and, when available, a compiler cache such as
+   sccache. Keep normal-auth, test-auth and release artifacts distinct and
+   pass explicit paths to consumers. Cargo's lock does not protect a binary
+   after a build exits: a shared writable target may replace it under tests.
+   Optional warm-up uses a quiescent snapshot into private storage, never
+   hardlinks or a live copy. This is recipe guidance, not a mu feature.
+   *Why:* inspected logs show substantial build time, but reuse and
+   contention must be measured rather than assuming a cache removes it.
 7. **When test upkeep happens.** A test upkeep task is queued:
    - when a merged slow gate goes over its budget (it comes before any
      new feature work)
@@ -138,14 +154,16 @@ fires, or when the user asks.
 1. **Profile.**
    - Time every gate step.
    - List the 20 slowest tests at each level.
-   - Count the fixed sleeps in slow tests.
+   - Inspect waits: distinguish avoidable readiness padding from temporal
+     assertions, negative observations and sleeping fixtures.
    - Find build work that runs more than once: cold caches, duplicate
      profiles, the same build in dev and release.
    - Record the gate's wall time and test counts as a BEFORE note.
 2. **Classify.** One finder per area (parallel delegate calls). Each
    slow or overlapping test gets one verdict:
    - KEEP
-   - SPEED-UP: poll instead of sleep, share the setup
+   - SPEED-UP: poll readiness instead of padding; share setup only if test
+     isolation is preserved
    - MOVE-DOWN: rewrite at a lower level
    - MERGE: fold into another test, which it names
    - DELETE: covered by the test it names
@@ -180,9 +198,17 @@ and test-coverage tooling.
 ## Rollout
 
 1. **Battle-test on swaywardlock** before editing any recipe:
-   - add `## Gates` to its AGENTS.md
-   - split `contrib/gate` into fast and slow modes, with timing per step
-   - set up a shared build cache
+   - after Phase 3 owners release the repo, add `## Gates` to its README
+   - split and instrument `contrib/gate`, preserving default full execution
+     and all checks; route CI through the canonical inventory
+   - full slow mode clears/rejects inherited `TESTS`; targeted runs remain
+     explicit, and standalone slow mode builds its own test-auth executable
+   - preserve default-feature auth tests and all three release hook scans;
+     report privilege/scdoc skips explicitly
+   - time every gate step and e2e case including setup/teardown; establish
+     an inspected baseline before moving or removing coverage
+   - retain private build artifacts; investigate safe cache reuse separately
+   - make one low-risk readiness-wait change, then measure before/after
    - run `test-health` by hand, from this spec
    - write down where the spec was wrong
 2. Write the recipe changes from what we learned.
