@@ -1,6 +1,8 @@
 # Fast and slow gates, and test upkeep as routine work
 
-Status: approved design, not implemented. Battle-test on swaywardlock first (see [Rollout](#rollout)).
+Status: implemented in mu `10d758c`. Swaywardlock pilot commits `90c3f1c`
+and `36273ff` are merged locally: gate instrumentation and one targeted wait
+improvement. Full-suite upkeep and the slow-gate budget remain open.
 
 **Measurement correction (implementation check):** the initial figures below
 came from exploratory regex scripts, not an execution classifier. The
