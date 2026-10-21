@@ -7,8 +7,10 @@ human asks for a file.
 
 ## Steps
 
-1. **Map the files first.** List what gets created or changed and what
-   each file is responsible for. Task boundaries fall out of this map.
+1. **Map files and gates.** List what gets created or changed and each
+   file's responsibility. For a new project, define repo `## Gates` first
+   ([test-health](test-health.md#gate-contract)); point plan notes there.
+   Existing gates remain until their replacement is approved.
 2. **Size the tasks.** A task is the smallest unit that carries its own
    verification and is worth a review. Split only where a reviewer
    could reject one task and accept its neighbour. Fold setup, config,
@@ -59,5 +61,7 @@ lists the tasks you meant to run in parallel as Ready together. Then dispatch pe
   its step count. Guess honestly rather than defaulting to 50 and 1.
 - Review gates follow [adversarial-review](adversarial-review.md): a
   review task blocked by the work.
+- End each phase/milestone with a [test-health task](test-health.md#upkeep-loop);
+  connect real dependencies, not a barrier across independent workers.
 - When reality disagrees with the plan, append a note saying so. Do not
   rewrite earlier notes.

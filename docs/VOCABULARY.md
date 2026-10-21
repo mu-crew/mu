@@ -83,6 +83,19 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **anonymous claim** | A `--self` claim by an actor that is not a worker. `owner` stays NULL; `ops.actor` records who. | "unowned claim" |
 | **release** | Clear `tasks.owner`. | "unclaim", "unassign" |
 
+### Recipe gates
+
+| Term | Meaning | Don't use |
+| --- | --- | --- |
+| **fast gate** | Repo-defined iteration checks: format, lint, unit tests and cheap integration tests. Cost is measured, not guaranteed seconds. | "gate command" (alone) |
+| **slow gate** | The remaining merge checks: real-environment e2e, release and packaging checks. | "gate command" (alone) |
+| **gate budget** | The slow gate's target wall time; crossing it prioritises test upkeep. | "timeout" |
+| **gate record** | A note identifying commit/tree, exact command/scope, result, duration, environment/toolchain and skips; reuse needs equivalent conditions. | "tests pass" (alone) |
+| **test upkeep** | Ordinary DAG work to profile, speed up, move down, merge or remove tests while preserving coverage; see [test-health](../skills/mu/recipes/test-health.md). | "coverage reduction" |
+| **test level** | Unit < integration < e2e; use the lowest level that catches the guarded failure. | |
+| **review gate** | A review task blocked by a work task, deciding whether its commits count. | "gate command" |
+| **merge batch** | Accepted commits combined into one pinned tree for full merge verification, without a crew-wide barrier. | "wave" (when only verification is batched) |
+
 ### Workspaces and housekeeping
 
 | Term | Meaning | Don't use |

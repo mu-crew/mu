@@ -28,11 +28,12 @@ panel's findings will be fixed by agents. Both modes are in
    | correctness | logic errors, edge cases, error paths, races |
    | security | injection, auth and permission checks, secrets, unsafe input |
    | simplicity | duplication, dead code, needless abstraction, an existing helper not reused |
-   | tests | changed behaviour without a test, tests that cannot fail |
+   | tests | risky coverage gaps, ineffective tests, level/duplication/wait/cost findings ([test-health](test-health.md#adding-or-changing-tests)) |
    | rules | the repo's written rules (see [rules-audit](rules-audit.md)) |
 
    Each reviewer gets the range, its angle, and the [brief](brief.md)
-   rules; it edits nothing. A clean result (`FINDINGS: none` plus the
+   rules and available gate records ([test-health](test-health.md#gate-contract));
+   coordinate targeted checks across angles. It edits nothing. A clean result (`FINDINGS: none` plus the
    commands it ran) is a valid result.
 3. **Record findings** by mode:
    - delegate: each reviewer ends its answer with `FINDING:` lines;
@@ -60,5 +61,5 @@ triage and the umbrella closes with `--if-ready` (workstream mode).
   author's tier or higher ([models](models.md#checkers)); one model's
   blind spot repeated five times is still one blind spot. Pass `model`
   to `mu_delegate`.
-- **The panel is not the gate command.** Merge verification still runs on the
+- **The panel is not the slow gate.** Merge verification still runs on the
   merged tree ([orchestrator-loop](orchestrator-loop.md#merging)).

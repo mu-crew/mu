@@ -56,9 +56,9 @@ Recipe words, the same in every recipe:
   finding and round; holds the brief, criteria and stop rule; closes
   with `mu task close <umbrella> --if-ready`.
 - **unit** — one piece of the job, one task (a file, a call site, a fix).
-- **gate** — two kinds: a **gate command** (tests, build) that must
-  pass on the merged tree, and a **review gate** (a `review_x` task
-  blocked by `x`) that decides whether `x` counts.
+- **fast gate / slow gate / gate budget / gate record / test upkeep** —
+  repo-defined verification and its upkeep ([test-health](recipes/test-health.md#gate-contract));
+  a **review gate** (`review_x` blocked by `x`) decides whether `x` counts.
 - **wave** — the units dispatched from one main revision; refresh
   workspaces before the next.
 - **finding** — one reported problem, recorded as an `OPEN/triage` task.
@@ -183,9 +183,11 @@ rules hold even when you skip it:
 
 - **Claim before sending**, even one-shot reviewers. Ownership is
   durable and waitable; agent state is not.
-- **Pipeline; don't barrier.** Merge each task as it closes.
+- **Pipeline; don't barrier.** Merge accepted tasks as they close; verify
+  one pinned merge batch without pausing independent workers.
 - **Verify the merge, not the worker's rerun.** Only `CLOSED/done` ships.
-- **Push only when the gate command passes** on the merged tree.
+- **Push after merged-tree gates pass.** Run full slow once per batch, plus
+  fast if needed; queue [test upkeep](recipes/test-health.md#upkeep-loop) at milestones or budget crossings.
 - **Define done before a long run**: the completion criterion goes in
   the task note first ([long-run](recipes/long-run.md)).
 - **New work to pi is `mu agent send --fresh`.** Never chain `/new` and
@@ -281,6 +283,7 @@ risky job that needs several of them, start with
 | [brief](recipes/brief.md) | you write a task note or prompt a worker will read |
 | [plan](recipes/plan.md) | you turn a spec or requirements into a task DAG |
 | [worker](recipes/worker.md) | a task was claimed for you |
+| [test-health](recipes/test-health.md) | define gates, choose verification, add tests, or upkeep at milestones/budget crossings |
 | [recovery](recipes/recovery.md) | undo, rebuild, teardown, sync setup, `doctor` cleanup |
 | [remote-workers](recipes/remote-workers.md) | an agent runs on another machine |
 | [waves](recipes/waves.md) | more than one worker edits the same repo at once |

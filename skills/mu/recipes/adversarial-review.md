@@ -17,9 +17,9 @@ PR or diff from several angles, use [review-panel](review-panel.md).
 ## Steps
 
 1. **Write the criteria first.** Before dispatching the work, note on
-   the work task what "accepted" means: the requirements, the edge
-   cases that need tests, the files that must not change. The reviewer
-   judges against this note, not against its own taste.
+   the work task what "accepted" means: requirements, risky behaviours
+   needing coverage, and files that must not change. The reviewer judges
+   against this note, not against its own taste.
 2. **Add the review task, blocked by the work:**
 
    ```bash
@@ -53,20 +53,24 @@ PR or diff from several angles, use [review-panel](review-panel.md).
    ask the human. A third round of the same argument rarely converges.
 
 Done when the latest review task is `CLOSED/done` (ACCEPT), and the
-accepted commits are merged and the merged tree passes the gate command.
+accepted commits are merged and the batch passes the merged-tree gates
+([orchestrator-loop § Merging](orchestrator-loop.md#merging)).
 
 ## Reviewer brief
 
-Send this with the task id, the workspace path, and the commit range:
+Send this with the task id, workspace path, commit range, gate records and
+[test-health](test-health.md) pointer:
 
 ```text
 You are reviewing task <x>. You did not write it. Your job is to find
 where it fails the acceptance criteria in `mu task notes <x>`.
 
-- Read the diff (<range>) and the criteria. Run the tests that cover it.
-- Report findings against the criteria: a requirement not met, an edge case
-  without a test, a change outside scope, a claim the evidence does not
-  support. Not style, not preferences.
+- Read the diff (<range>), criteria and worker gate records. Follow
+  test-health.md for record equivalence, targeted runs and test findings.
+  Reproduce claimed failures; a full rerun or parent build is not routine.
+- Report findings against the criteria: a requirement not met, risky
+  untested/broken behaviour, a change outside scope, unsupported evidence.
+  Not style, not preferences.
 - Record each as a finding, per findings.md § Record:
   mu task add -w <ws> --triage -t "<severity>: <title>" -i <n> -e <days> \
     --note 'FINDING: <severity> <file:line> <what fails> EVIDENCE: <command + output>'
@@ -92,7 +96,7 @@ by orchestrator`.
 ## Traps
 
 - **A reviewer that sees the author's reasoning agrees with it.** Send
-  the diff and the criteria, not the worker's transcript or close note.
+  the diff, criteria and gate records, not the worker's reasoning transcript.
 - **"Looks good" is not a verdict.** Require a close that matches the
   verdict (`done` or `--as rejected`) and at least one command the
   reviewer ran. A review with no evidence is a

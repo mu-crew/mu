@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **Skill: fast/slow gates and routine test upkeep.** Canonical
+  [test-health](skills/mu/recipes/test-health.md) guidance assigns targeted
+  worker/reviewer checks, equivalent gate records and one full merged-tree
+  gate per batch. Milestones and budget crossings prioritise upkeep without
+  a crew-wide barrier; auth/build isolation and required pre-push checks stay.
+  mu's own gate commands remain unchanged pending review.
+  Pilot baseline supplied for swaywardlock `90c3f1c`: cold full 557.885 s,
+  fast 216.140 s, slow 341.696 s (e2e 255.561 s, release 82.414 s);
+  223 unit tests ~1 s, 64 e2e cases / 422 assertions, no skips. Converters
+  initially cost ~28 s in fast: fast is not universally seconds. This is
+  pilot timing, not an equivalent gate record for mu; the readiness-wait
+  follow-up is still in progress, so no before/after speedup is claimed.
+
 ## [3.13.1] — 2026-10-20
 
 **jj 0.46: recreating a deleted workspace works again.** A spawn that reuses
