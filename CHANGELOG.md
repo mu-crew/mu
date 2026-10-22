@@ -10,6 +10,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **Skill: test upkeep ends with a committed report.** The
+  [test-health](skills/mu/recipes/test-health.md#upkeep-loop) loop gains a
+  sixth step: a dated `docs/test-health/` report in the repo, holding the
+  findings and every refuted or rejected verdict, so the next pass starts
+  from them instead of from scratch when the workstream's notes are gone.
+
 ## [3.13.2] — 2026-10-21
 
 **Keep verification useful as projects grow.** The mu skill now defines
