@@ -10,6 +10,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [3.13.3] — 2026-10-22
+
+**Test upkeep leaves a record.** An upkeep pass now ends by committing a
+dated report to the repo, so its findings outlive the workstream.
+
+Upgrade with `npm i -g @mu-crew/mu@3.13.3`. New agent sessions load the updated
+skill. No CLI, API, schema or extension change.
+
 ### Changed
 
 - **Skill: test upkeep ends with a committed report.** The
