@@ -79,6 +79,14 @@ work. A budget is a scheduling trigger, not an indefinite crew-wide stop.
    conditions, including coverage/count changes. If neither faster nor
    smaller, say so and why; smaller alone does not prove preserved coverage.
 
-Done when AFTER records the outcome and the slow gate is within budget, or
-names the remaining bottleneck and prioritised follow-up. Keep unmet required
-checks distinct from a time-budget overrun.
+6. **Report.** Before teardown, commit a dated report to the repo
+   (`docs/test-health/<YYYY-MM-DD>.md`): conditions, BEFORE/AFTER, each
+   finding with its evidence, every refuted or rejected verdict with the
+   reason, and the remaining bottleneck. Task notes die with the
+   workstream; the next pass reads the latest report first and still
+   re-measures. Add a file per pass; never edit an old one.
+
+Done when AFTER records the outcome, the report is committed, and the slow
+gate is within budget or the report names the remaining bottleneck and
+prioritised follow-up. Keep unmet required checks distinct from a
+time-budget overrun.
