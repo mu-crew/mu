@@ -110,6 +110,28 @@
             "workstream": "eval"
           }
         }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c11",
+          "task": "Check claim-11: README.md in the repo root starts with the line \"# eval repo\". Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c11",
+            "workstream": "eval"
+          }
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c12",
+          "task": "Check claim-12: gate.sh in the repo root is a Python script. Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c12",
+            "workstream": "eval"
+          }
+        }
       }
     ]
   },
