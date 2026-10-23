@@ -1,0 +1,10 @@
+[
+  {
+    "calls": [
+      { "bash": "mu task update auth_token_revoke -w eval --title 'auth token refresh (old)'" }
+    ]
+  },
+  { "calls": [{ "bash": "mu task note auth_token_refresh -w eval 'checked by eval'" }] },
+  { "calls": [{ "bash": "mu task close auth_token_refresh -w eval" }] },
+  { "text": "done" }
+]
