@@ -14,6 +14,7 @@ import type { Db } from "../db.js";
 import { renderOpLine } from "../log-render.js";
 import {
   appendLog,
+  GroupNotFoundError,
   groupIdFromPrefix,
   type ListLogsOptions,
   type LogRow,
@@ -21,7 +22,6 @@ import {
   listLogs,
 } from "../logs.js";
 import { pc } from "../output.js";
-import { UndoGroupNotFoundError } from "../undo.js";
 
 export interface LogReadOpts {
   workstream?: string;
@@ -33,7 +33,7 @@ export interface LogReadOpts {
   kind?: string;
   /** Structured intent filter (`ops.intent`), e.g. 'task.close'. */
   intent?: string;
-  /** Undo-group filter (`ops.group_id`). */
+  /** Op-group filter (`ops.group_id`). */
   group?: string;
   json?: boolean;
   tail?: boolean;
@@ -128,14 +128,11 @@ async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
   if (opts.kind !== undefined) listOpts.kind = opts.kind;
   if (opts.intent !== undefined) listOpts.intent = opts.intent;
   if (opts.group !== undefined) {
-    // Accept an abbreviated group id, exactly as `mu undo` does. Without
-    // this, the documented workflow (`mu undo` prints an 8-char prefix →
-    // `mu log --group <prefix>` to inspect it) silently returned nothing
-    // (bug_group_id_prefix_asymmetry). A prefix that matches no group is
-    // reported below rather than degrading to an empty listing, since
-    // "no entries" reads as "this group did nothing".
+    // Accept an abbreviated group id (the 8-char form `mu log` prints). A
+    // prefix that matches no group is an error rather than an empty
+    // listing, since "no entries" reads as "this group did nothing".
     const resolved = groupIdFromPrefix(db, opts.group);
-    if (resolved === null) throw new UndoGroupNotFoundError(opts.group);
+    if (resolved === null) throw new GroupNotFoundError(opts.group);
     listOpts.group = resolved;
   }
 
@@ -246,7 +243,7 @@ export function wireLogCommand(program: Command): void {
       "--intent <intent>",
       "filter reads to one structured intent, e.g. task.close (see `mu log` output)",
     )
-    .option("--group <id>", "filter reads to one undo group (every op of a single action)")
+    .option("--group <id>", "filter reads to one op group (every op of a single action)")
     .option("--tail", "block and print entries as they're appended")
     .option(
       "--since <seq>",

@@ -19,7 +19,7 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
 ┌─────────────────────────────────────────────────────────────────┐
 │  mu core (shared TS modules)                                    │
 │  agents/ mux/ ctl/ · tasks/ tracks · vcs/ workspace/ · ops log  │
-│  (capture, apply, undo, sync, drift)                            │
+│  (capture, apply, sync, drift)                                  │
 └───────────────┬──────────────────┬──────────────────┬───────────┘
                 ▼                  ▼                  ▼
    SQLite (~/.local/state/mu/mu.db) · tmux/herdr panes · jj/sl/git
@@ -31,7 +31,7 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
 **The ops log.** Every write to a portable table (`workstreams`,
 `tasks`, `task_edges`, `task_notes`) is recorded as an op by a SQLite
 trigger in the same transaction. The tables are the materialized view
-reads hit; the log is the record. History (`mu log`), undo, sync,
+reads hit; the log is the record. History (`mu log`), sync,
 rebuild and drift checks are all queries or replays over it. Ops carry
 only changed columns and an HLC, which makes per-field merge across
 machines free. Read this first:
@@ -94,7 +94,6 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/capture.ts` | TEMP triggers recording each portable write as an op, and refusing natural-key changes |
 | `src/op-context.ts` | `withOpContext` (intent, actor, group); `withCaptureSuppressed` echo guard |
 | `src/apply.ts` | apply one op: per-field LWW, tombstones, substate pair repair, `reprojectDeferredOps` |
-| `src/undo.ts` | inverse ops for one group; refuses a superseded group |
 | `src/rebuild.ts` | replay the whole log into a new DB file |
 | `src/compact.ts` | `mu db compact` (blank redundant note-tombstone payloads) and `mu db forget` (drop a torn-down workstream's ops); this machine only |
 | `src/legacy-ops.ts` | classifier for historical log-only intents; rebuild copies them unprojected |

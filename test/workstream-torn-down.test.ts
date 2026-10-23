@@ -1,15 +1,13 @@
 // Fast-tier unit tests for `listTornDownWorkstreams` — the reader
 // behind `mu workstream list --torn-down`.
 //
-// The list exists because a teardown is REVERSIBLE and that is useless
-// if the group id cannot be found: `mu undo` with no args lists only
-// recent groups, so a teardown from last month was unreachable without
-// hand-written SQL over `ops`.
+// The list exists so a teardown from last month is reachable (its group
+// id feeds `mu log --group`) without hand-written SQL over `ops`.
 //
 // It reads the ops log rather than a side table, so the cases that
 // matter are the ones where the log holds more than "one name, one
-// row": a name torn down twice, and a teardown that was already
-// undone.
+// row": a name torn down twice, and a name recreated
+// after its teardown.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,7 +16,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask } from "../src/tasks.js";
-import { undoGroup } from "../src/undo.js";
 import {
   ensureWorkstream,
   listTornDownWorkstreams,
@@ -74,25 +71,25 @@ describe("listTornDownWorkstreams", () => {
     // The counts are the point of the row: they say what is at stake
     // without a second query per line.
     expect(entry).toMatchObject({ tasks: 2, notes: 1, edges: 1, recreated: false });
-    // The group id must be the one `mu undo` accepts, so round-trip it.
     expect(entry.group).toMatch(/^[0-9a-f-]{36}$/);
-    undoGroup(db, entry.group);
-    const rows = db.prepare("SELECT name FROM workstreams").all() as { name: string }[];
-    expect(rows.map((r) => r.name)).toEqual(["demo"]);
+    // The group id resolves to the teardown's ops.
+    const ops = db.prepare("SELECT COUNT(*) AS n FROM ops WHERE group_id = ?").get(entry.group) as {
+      n: number;
+    };
+    expect(ops.n).toBeGreaterThan(0);
   });
 
-  it("marks an entry recreated once the rows are back", async () => {
+  it("marks an entry recreated once the name is back", async () => {
     seed("demo");
     await tearDown("demo");
     const [before] = listTornDownWorkstreams(db);
     if (before === undefined) throw new Error("expected one entry");
     expect(before.recreated).toBe(false);
 
-    undoGroup(db, before.group);
+    ensureWorkstream(db, "demo");
 
     // The teardown op is still in the log — history does not change —
-    // but the entry now says the rows came back, so an operator is not
-    // offered an undo that would be a no-op.
+    // but the entry now says the name came back.
     const [after] = listTornDownWorkstreams(db);
     if (after === undefined) throw new Error("expected the entry to persist");
     expect(after.group).toBe(before.group);

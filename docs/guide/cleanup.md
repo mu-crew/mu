@@ -34,24 +34,22 @@ It never takes a `mu-*` session that has no workstream row in this DB:
 it may be a live workstream from another DB. The output names
 such sessions; tear one down by name once you know it is unused.
 
-## Undo a teardown
+## Find a past teardown
 
-Teardown writes tombstone ops, so the ops log keeps everything. You do
-not need a backup first.
+Teardown writes tombstone ops, so the ops log keeps what was removed.
 
 ```bash
 mu workstream list --torn-down
-mu undo 7a40e6cc --yes
+mu log --group 7a40e6cc
 ```
 
 The list shows one row per teardown, newest first. A `--empty` sweep
-writes one row per workstream, so undo each one. `← recreated since`
-means the name is in use again, so the undo would change nothing.
-Killed panes and freed workspace directories do not come back.
+writes one row per workstream. `← recreated since` means the name is in
+use again.
 
 ## Keep mu.db small
 
-Teardown keeps history so `mu undo` works, and that history is most of
+Teardown keeps its history, and that history is most of
 `mu.db`. `mu doctor` names the largest torn-down workstreams once they
 are worth reclaiming.
 
@@ -63,7 +61,7 @@ mu db forget hail-smoke reltest --yes
 ```
 
 `compact` changes nothing you can see. `forget` deletes those
-workstreams' history for good: `mu undo` can no longer restore them.
+workstreams' history for good.
 Both write a backup next to the DB first (`mu.db.pre-forget-<time>`),
 which is the only way back, and run the drift check after. Only this
 machine's DB shrinks; sync segments are untouched.

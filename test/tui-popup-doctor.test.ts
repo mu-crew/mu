@@ -327,7 +327,6 @@ describe("DoctorPopup: yank intents — informational only (read-only pledge)", 
       "mu agent kick",
       "mu workspace free",
       "mu workspace refresh",
-      "mu undo",
     ]) {
       expect(yankSites, `forbidden mutating yank: ${forbidden}`).not.toContain(forbidden);
     }

@@ -6,7 +6,7 @@
 // That file has 28 good tests and they all share one shape: create,
 // diverge ONCE, sync ONCE, assert. Only two of them reach four exchange
 // points. Measured verb coverage across them was 0 hits for `task
-// claim`, 0 for `task delete`, 0 for `undo`, 2 for
+// claim`, 0 for `task delete`, 2 for
 // notes and 3 for edges. So the substrate was proven and a SESSION was
 // not — which is a different claim, and the one mu actually makes.
 //
@@ -366,29 +366,6 @@ describe("mu sync — a multi-round two-machine session", () => {
     }
     await record();
 
-    // ── round 7: undo on one machine propagates to the other ──────────
-    // Undo is itself ops (inverse ops in a new group), so it syncs by the
-    // same path as the thing it undoes — no special case anywhere.
-    await runCli(["task", "update", "lap-2", "--impact", "12", "-w", WS], lap);
-    await exchange(lap, dev);
-    expect((await view(dev, "lap-2")).task.impact).toBe(12);
-    const groupsRaw = await runCli(["undo", "--json", "-n", "10"], lap);
-    const groups = (
-      JSON.parse(groupsRaw.stdout) as {
-        groups: Array<{ groupId: string; intents: string[] }>;
-      }
-    ).groups;
-    const target = groups.find((g) => g.intents.includes("task.update"));
-    if (target === undefined) throw new Error("expected an undoable task.update group");
-    const undone = await runCli(["undo", target.groupId, "--yes"], lap);
-    expect(undone.exitCode, undone.stderr).toBeNull();
-    await exchange(lap, dev);
-    // Whatever the impact reverted to, BOTH machines must agree on it —
-    // that agreement, not the specific number, is the sync claim.
-    expect((await view(dev, "lap-2")).task.impact).toBe((await view(lap, "lap-2")).task.impact);
-    expect((await view(lap, "lap-2")).task.impact).not.toBe(12);
-    await record();
-
     // ── settle: a couple of quiet rounds, as a real fleet has ─────────
     await exchange(lap, dev, lap, dev);
 
@@ -448,14 +425,14 @@ describe("mu sync — a multi-round two-machine session", () => {
     // back) or a re-flush bug shows up as growth, and nothing else
     // guards it. Each round does a bounded amount of work, so the log
     // must grow by a bounded amount per round — linear, not quadratic.
-    expect(opsPerRound.length).toBeGreaterThanOrEqual(7);
+    expect(opsPerRound.length).toBeGreaterThanOrEqual(6);
     const deltas = opsPerRound.slice(1).map((n, i) => n - (opsPerRound[i] ?? 0));
     for (const [i, d] of deltas.entries()) {
       expect(d, `round ${i + 2} added ${d} ops: ${opsPerRound.join(",")}`).toBeLessThan(40);
     }
     const first = opsPerRound[0] ?? 0;
     const last = opsPerRound[opsPerRound.length - 1] ?? 0;
-    // Quadratic growth over 7 rounds would blow past this by an order of
+    // Quadratic growth over 6 rounds would blow past this by an order of
     // magnitude; the real numbers sit far below it.
     expect(last, `ops per round: ${opsPerRound.join(",")}`).toBeLessThan(first * 8 + 60);
 

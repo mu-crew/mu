@@ -155,7 +155,7 @@ export function cmdDbForget(
   const bytes = plan.candidates.reduce((n, c) => n + c.bytes, 0);
   if (opts.yes !== true) {
     const nextSteps = [
-      { intent: "Forget them (NOT undoable)", command: `mu db forget ${names.join(" ")} --yes` },
+      { intent: "Forget them (irreversible)", command: `mu db forget ${names.join(" ")} --yes` },
     ];
     if (opts.json === true) {
       emitJson({ dryRun: true, candidates: plan.candidates, ops, bytes, nextSteps });
@@ -163,7 +163,7 @@ export function cmdDbForget(
     }
     printForgetTable(plan);
     console.log(
-      `${ops} ops (${formatBytes(bytes)} of payload). Forgetting deletes their history: mu undo can no longer restore these teardowns. Dry run; nothing changed.`,
+      `${ops} ops (${formatBytes(bytes)} of payload). Forgetting deletes their history. Dry run; nothing changed.`,
     );
     printNextSteps(nextSteps);
     return;
@@ -233,7 +233,7 @@ export function wireDbCommands(program: Command): void {
   dbCmd
     .command("forget <workstreams...>")
     .description(
-      "Delete every op of torn-down workstreams to shrink mu.db. NOT undoable: mu undo can no longer restore them. Dry run without --yes; --yes backs up beside the DB first, VACUUMs, and runs the drift check. List candidates: mu workstream list --torn-down.",
+      "Delete every op of torn-down workstreams to shrink mu.db. Irreversible. Dry run without --yes; --yes backs up beside the DB first, VACUUMs, and runs the drift check. List candidates: mu workstream list --torn-down.",
     )
     .option("--yes", "apply (default: dry run)")
     .option(...JSON_OPT)

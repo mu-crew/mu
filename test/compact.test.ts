@@ -11,7 +11,6 @@ import { compact, forget, listForgetCandidates, planCompact, planForget } from "
 import { type Db, openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
-import { listRecentGroups, undoGroup } from "../src/undo.js";
 import { ensureWorkstream, teardownWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -52,21 +51,13 @@ const notesIn = (ws: string) =>
       .all(ws) as { content: string }[]
   ).map((r) => r.content);
 
-const teardownGroup = () => {
-  const g = listRecentGroups(db, 50).find((x) => x.intents.includes("workstream.teardown"));
-  if (!g) throw new Error("no teardown group");
-  return g.groupId;
-};
-
 describe("note tombstones", () => {
-  it("capture writes {} when a put under the key is in the log, and undo still restores", async () => {
+  it("capture writes {} when a put under the key is in the log", async () => {
     seed("demo", ["first", "second"]);
     await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-absent-for-test" });
     const tombs = noteTombstones();
     expect(tombs).toHaveLength(2);
     expect(tombs.every((t) => t.payload === "{}")).toBe(true);
-    undoGroup(db, teardownGroup());
-    expect(notesIn("demo")).toEqual(["first", "second"]);
     expect(checkDrift(db).clean).toBe(true);
   });
 
@@ -81,7 +72,7 @@ describe("note tombstones", () => {
 });
 
 describe("compact", () => {
-  it("blanks only tombstones a put already explains; undo and drift unaffected", async () => {
+  it("blanks only tombstones a put already explains; drift unaffected", async () => {
     seed("demo", ["first", "second"]);
     await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-absent-for-test" });
     // Simulate history written before capture slimmed tombstones.
@@ -95,8 +86,6 @@ describe("compact", () => {
     compact(db);
     expect(planCompact(db).tombstones).toBe(0);
     expect(noteTombstones().every((t) => t.payload === "{}")).toBe(true);
-    undoGroup(db, teardownGroup());
-    expect(notesIn("demo")).toEqual(["first", "second"]);
     expect(checkDrift(db).clean).toBe(true);
   });
 

@@ -389,8 +389,8 @@ export function reparentTask(
   scope: { workstream: string },
 ): ReparentTaskResult {
   // One group for the whole reparent: it DELETEs the old blocker edges
-  // and INSERTs the new ones, which is one operator action and must
-  // undo as one.
+  // and INSERTs the new ones, which is one operator action,
+  // so it shares one op group.
   return withOpContext(db, { intent: "task.reparent", group: "new" }, () =>
     reparentTaskImpl(db, taskLocalId, blockers, scope),
   );

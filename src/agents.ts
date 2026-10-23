@@ -706,7 +706,7 @@ export async function closeAgent(
     }
   }
   // No pre-mutation snapshot: v9 dropped the `snapshots` table and
-  // rollback is inverse ops over the ops log (`mu undo`).
+  // history is the ops log.
   // Free the workspace BEFORE the agent (so the on-disk dir is
   // removed cleanly, not orphaned by FK cascade). freeWorkspace is
   // idempotent on missing rows.

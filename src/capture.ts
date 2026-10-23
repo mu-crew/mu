@@ -10,9 +10,9 @@
 //
 // Hand-emitted ops (an `emitOp(...)` next to each mutation) were
 // rejected because they can be FORGOTTEN. A forgotten op is no
-// longer "sync missed something" — undo, sync and history are
+// longer "sync missed something" — sync, rebuild and history are
 // ALL projections of this one log, so one missing op is silent
-// corruption of all four at once. A future SDK function that mutates
+// corruption of all of them at once. A future SDK function that mutates
 // `tasks` must not be ABLE to skip capture. Triggers make that
 // structural rather than a convention someone has to remember.
 //
@@ -167,7 +167,7 @@ const OP_COLS = "(hlc, machine_id, group_id, actor, intent, entity, key, op, pay
 /** The context/identity columns, in OP_COLS order after `hlc`.
  *  `group_id` falls back to a per-op random hex string so the column is
  *  never NULL: an op outside any SDK context is its own group of one,
- *  which is exactly right for undo. */
+ *  which is exactly right. */
 const OP_CTX_VALUES = `
   (SELECT machine_id FROM machine_identity WHERE id = 1),
   COALESCE((SELECT group_id FROM _op_ctx), lower(hex(randomblob(8)))),
@@ -255,13 +255,11 @@ function fullPayload(cols: readonly string[]): string {
  *  key while a later `del` is emitted under the current one, and
  *  nothing joins the two.
  *
- *  Undo folds the puts for a key to reconstruct a tombstoned row, so a
- *  note in that state reconstructed to `{}` and was silently never
- *  restored (drift-641: `mu undo` of a workstream teardown brought back
- *  every task and edge but only the notes whose rowid happened to be
- *  unchanged). A self-describing note tombstone closes that hole: the
- *  op that removed the row also carries what the row WAS, so the
- *  inverse never depends on finding a matching put. */
+ *  A reader folding the puts for a key to reconstruct a tombstoned row
+ *  would see `{}` for a note in that state (drift-641). A
+ *  self-describing note tombstone closes that hole: the op that removed
+ *  the row also carries what the row WAS, so nothing depends on finding
+ *  a matching put. */
 function fullOldPayload(cols: readonly string[]): string {
   const pairs = cols.map((c) => `'${c}', OLD.${c}`).join(", ");
   return `json_object(${pairs})`;
@@ -269,8 +267,8 @@ function fullOldPayload(cols: readonly string[]): string {
 
 /** A note tombstone's payload. The full row only when the log holds no
  *  put under the same key (a reprojection gave the note a new rowid, so
- *  undo could not fold it back: drift-641); otherwise `{}`, because
- *  undo's fold and apply's delete both read the content from that put.
+ *  a fold of the puts could not find it: drift-641); otherwise `{}`,
+ *  because apply's delete reads the content from that put.
  *  Without this, every workstream teardown wrote each note a second time. */
 function noteTombstonePayload(keyExpr: string, cols: readonly string[]): string {
   return `CASE WHEN EXISTS (
@@ -312,7 +310,7 @@ function emitOp(
  *  can express, so KEY_COLUMNS below refuses it instead. `tasks.owner_id` IS captured: it is an FK into the
  *  machine-local `agents` table, so it never syncs (see
  *  MACHINE_LOCAL_TABLES), but it must still be captured for local
- *  history and undo of a claim/release. */
+ *  history of a claim/release. */
 const CAPTURED_COLUMNS = {
   workstreams: ["name", "created_at"],
   tasks: [
@@ -336,12 +334,12 @@ const CAPTURED_COLUMNS = {
  *  (`a/t1` -> `b/t1`), and every op already in the log stays filed under
  *  the old key. The UPDATE triggers above diff only CAPTURED_COLUMNS, so
  *  such an update used to emit NOTHING: no tombstone for the old key, no
- *  put for the new one. Sync, undo, rebuild and `mu doctor` then disagree
+ *  put for the new one. Sync, rebuild and `mu doctor` then disagree
  *  with the live row. Children re-key with it (a task's notes and edges
  *  embed its key), so capturing a move would mean re-emitting a subtree.
  *
- *  Natural keys are immutable instead: apply (NEVER_APPLY) and undo
- *  (NEVER_RESTORE) already never write these columns, and a raw
+ *  Natural keys are immutable instead: apply (NEVER_APPLY)
+ *  already never writes these columns, and a raw
  *  `mu sql` UPDATE is refused here with an explicit error rather than
  *  committing a row the log cannot explain. The guard is NOT gated on
  *  the echo guard: no mu path re-keys a row, ingest included. */
@@ -357,7 +355,7 @@ function keyGuard(table: keyof typeof KEY_COLUMNS): string {
   const cols = KEY_COLUMNS[table];
   const msg =
     `mu: ${table}.${cols.join("/")} is part of the natural key that every op is filed under; ` +
-    "changing it would desync the ops log, sync and undo. " +
+    "changing it would desync the ops log and sync. " +
     "Add a new row (mu task add / mu workstream init) instead of moving or renaming one.";
   return `
 CREATE TEMP TRIGGER IF NOT EXISTS _cap_${table}_key

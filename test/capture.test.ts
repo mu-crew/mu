@@ -1,5 +1,5 @@
 // Tests for src/capture.ts + src/op-context.ts — the trigger-based op
-// capture that everything downstream (undo, sync, history)
+// capture that everything downstream (sync, rebuild, history)
 // projects from.
 //
 // Adversarial by design. The failure mode that matters most here is not
@@ -131,7 +131,7 @@ describe("op capture (triggers)", () => {
       expect(del).toHaveLength(1);
       const row = del[0];
       if (!row) throw new Error("unreachable");
-      // The CLI's undo hint names this group (`mu undo <group> --yes`).
+      // The CLI surfaces this group for `mu log --group`.
       expect(result.group).toBe(row.group_id);
       expect(row.key).toBe("demo/t1");
       expect(payloadOf(row)).toEqual({});

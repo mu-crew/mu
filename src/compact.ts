@@ -4,13 +4,12 @@
 // rewrite history on THIS machine only and never touch sync segments:
 //
 // - compact: a note tombstone (`op='del'`) whose key also has a put in
-//   the log carries a copy of that put's row. Undo folds the puts and
-//   apply's delete reads the put, so the copy is dead weight; blank it
+//   the log carries a copy of that put's row. apply's delete reads the put, so the copy is dead weight; blank it
 //   to `{}`. Capture stopped writing these copies (src/capture.ts
 //   noteTombstonePayload); this applies the same rule to old rows.
 // - forget: delete every op of named, torn-down workstreams. Their rows
 //   are already gone from the live tables, so rebuild and drift stay
-//   consistent; what is lost is `mu undo` of that teardown, on purpose.
+//   consistent; what is lost is the teardown's history, on purpose.
 //
 // Neither is reached by a trigger or a sync path. The CLI backs up the
 // DB first and runs the drift check after.
@@ -120,7 +119,7 @@ export function planForget(db: Db, names: readonly string[]): ForgetPlan {
   return plan;
 }
 
-/** Delete every op of the plan's candidates, in one transaction. Not undoable. */
+/** Delete every op of the plan's candidates, in one transaction. Irreversible. */
 export function forget(db: Db, plan: ForgetPlan): { ops: number } {
   const del = db.prepare(`DELETE FROM ops WHERE ${WORKSTREAM_OPS_WHERE}`);
   let ops = 0;

@@ -60,7 +60,7 @@ import {
 import { DriftDetectedError } from "../drift.js";
 import { HazardFailError } from "../fleet-hazards.js";
 import { LinkConflictError } from "../link.js";
-import { GroupIdAmbiguousError, LogKindReservedError } from "../logs.js";
+import { GroupIdAmbiguousError, GroupNotFoundError, LogKindReservedError } from "../logs.js";
 import {
   HerdrCommandOverrideError,
   HerdrUnsupportedCliError,
@@ -107,7 +107,6 @@ import {
   TaskParkStateError,
   TaskTitleSlugEmptyError,
 } from "../tasks.js";
-import { NothingToUndoError, UndoGroupNotFoundError, UndoSupersededError } from "../undo.js";
 import { WorkspaceConflictError, WorkspaceDirtyError, WorkspaceVcsRequiredError } from "../vcs.js";
 import {
   HomeDirAsProjectRootError,
@@ -328,15 +327,14 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RebuildTargetExistsError ||
     err instanceof RebuildTargetIsSourceError ||
     // An abbreviated group id matching several groups: the operator must
-    // disambiguate. Guessing would be catastrophic for `mu undo`.
+    // disambiguate. Guessing could pick the wrong group.
     err instanceof GroupIdAmbiguousError ||
     err instanceof LinkConflictError
   ) {
     return { label: "conflict", exitCode: 4 };
   }
   if (
-    err instanceof UndoGroupNotFoundError ||
-    err instanceof NothingToUndoError ||
+    err instanceof GroupNotFoundError ||
     // A `--repair <peer>` ref or a `--from <path>` that names nothing:
     // the same resolve-time-miss lane as every other not-found.
     err instanceof SyncPeerNotFoundError ||
@@ -347,12 +345,6 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   if (err instanceof SyncPeerRefAmbiguousError) {
     // An abbreviated peer id matching several peers. Same rule as an
     // ambiguous group id: the operator disambiguates, mu never guesses.
-    return { label: "conflict", exitCode: 4 };
-  }
-  if (err instanceof UndoSupersededError) {
-    // A conflict in the precise sense the exit-code map means: the
-    // requested change collides with existing state (later work), and the
-    // operator must choose (--force) rather than retry.
     return { label: "conflict", exitCode: 4 };
   }
   if (err instanceof DriftDetectedError) {

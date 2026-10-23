@@ -417,7 +417,7 @@ export class CrossWorkstreamEdgeError extends Error implements HasNextSteps {
     // No "move the blocker" recipe. A task's workstream is part of its
     // natural key (`<ws>/<local_id>`), which every op is filed under, so
     // a raw `UPDATE tasks SET workstream_id=...` re-keys the row with no
-    // op for either key: sync, undo and `mu doctor` then disagree with
+    // op for either key: sync and `mu doctor` then disagree with
     // the table. The capture layer refuses that UPDATE (src/capture.ts
     // KEY_COLUMNS). The "rename one workstream to the other" hint went
     // earlier for the same reason, and because it moved every task.

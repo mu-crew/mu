@@ -415,7 +415,7 @@ describe("reconcile — mode: 'report-only' does not mutate (snap_undo_reconcile
     // Mirrors the exact shape that bit dogfood-snap:
     //   1. snapshot is taken (agent + pane both alive)
     //   2. destroy kills the pane
-    //   3. mu undo restores the snapshot's agents row
+    //   3. a restore brings back the snapshot's agents row
     //   4. post-restore reconcile sees pane is dead
     //   5. WITHOUT report-only: prunes the agents row + cascades vcs_workspaces away
     //   6. WITH    report-only: counts the would-be-prune; row stays

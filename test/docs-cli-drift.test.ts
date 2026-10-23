@@ -104,7 +104,7 @@ describe("docs name only real CLI surface", () => {
       "unknown command 'export' under 'db'",
     ],
     ["a removed subverb", "`mu snapshot list`", "unknown command 'snapshot'"],
-    ["a flag removed from a live verb", "`mu undo --to 12`", "unknown option '--to'"],
+    ["a flag removed from a live verb", "`mu log --to 12`", "unknown option '--to'"],
     // `mu` inside a path or a quoted brief is not a second command, so
     // it must not exempt the line from the check.
     [

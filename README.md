@@ -14,7 +14,7 @@ in-progress, and blocked tasks, the log tail, workspaces, and doctor.*
   `blocks` edges keep agents out of each other's way.
 - **State that outlives a pane.** One SQLite DB holds agents, tasks,
   owners, notes, and workspaces. An append-only ops log records every
-  change, so `mu undo <group>` reverses one action and `mu rebuild`
+  change, so `mu log --group <group>` shows one action and `mu rebuild`
   replays the whole history.
 - **Exact control of pi agents.** mu's pi extension serves a control
   socket inside each agent, so send, state, wait, and abort are exact,

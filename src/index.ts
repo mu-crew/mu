@@ -209,6 +209,7 @@ export {
   appendLog,
   emitEvent,
   GroupIdAmbiguousError,
+  GroupNotFoundError,
   type ListLogsOptions,
   type LocalIntent,
   type LogKind,
@@ -464,22 +465,6 @@ export {
   type TmuxWindow,
 } from "./tmux.js";
 export { getParallelTracks, type Track } from "./tracks.js";
-export {
-  type GroupSummary,
-  type InverseOp,
-  listRecentGroups,
-  mostRecentGroup,
-  NothingToUndoError,
-  planUndo,
-  priorFieldValue,
-  resolveGroupId,
-  UndoGroupNotFoundError,
-  type UndoOptions,
-  type UndoPlan,
-  type UndoResult,
-  UndoSupersededError,
-  undoGroup,
-} from "./undo.js";
 export {
   backendByName,
   detectBackend,

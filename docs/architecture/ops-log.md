@@ -1,6 +1,6 @@
 # The ops log
 
-mu keeps one append-only table, `ops`. History, undo, sync, rebuild and
+mu keeps one append-only table, `ops`. History, sync, rebuild and
 drift detection are all queries or replays over it. Overview:
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 
@@ -29,7 +29,6 @@ rebuilt from.
 | Feature | Over the log |
 | --- | --- |
 | history | `mu log` is a typed reader over `ops` (`src/logs.ts`) |
-| undo | `mu undo <group>` emits the inverse ops for one group |
 | sync | each machine appends its own ops to a JSONL segment and applies each peer's from a watermark ([sync.md](sync.md)) |
 | rebuild | `mu rebuild <file>` replays the whole log into a new DB |
 | drift | `mu doctor --deep` rebuilds into a temp DB and diffs it against the live tables |
@@ -39,7 +38,7 @@ columns that changed. That makes per-field merge free: two machines
 editing different fields of one task both keep their edit. A full-row
 payload would silently regress this to row-level last-writer-wins.
 
-**The cost:** one capture bug breaks history, undo and sync at once,
+**The cost:** one capture bug breaks history and sync at once,
 silently. Hence the two drift tiers below.
 
 **Ordering** across machines comes from the **HLC** (`src/hlc.ts`) on
@@ -65,7 +64,7 @@ events through `emitEvent`. `appendLog` writes operator prose
 - **Op context** (`src/op-context.ts`): `withOpContext(db, {intent,
   actor, group}, fn)` labels every op in a scope and restores in a
   `finally`. Nested scopes inherit the group, which puts a cascade
-  under one `mu undo`. `withCaptureSuppressed` is the echo guard used
+  under one group. `withCaptureSuppressed` is the echo guard used
   by the apply path.
 - An importer must synthesize **ops, not rows**. A direct INSERT is
   invisible to sync and reported as drift.
@@ -84,26 +83,15 @@ peer, it makes the tables reflect it.
 - Task `status` and `substate` are repaired as a pair, not merged per
   field. See [dag.md](dag.md#substate-integrity).
 
-## Undo
+## Notes on capture and apply
 
-`src/undo.ts` derives the inverse ops for one `group_id` from log
-provenance. It refuses a superseded group (exit 4; `--force`
-overrides). Bare `mu undo` lists undoable groups (`-n` widens), a group
-prefix previews, and `--yes` applies.
-
-- **Undo and restore write through the tables**, so capture records
-  them like any other write.
-- `restore` records and applies under the **same** HLC. `applyOp`
-  excludes an op's own HLC from provenance. A fresher HLC would make
-  the row outrank the op and lose every field to an insert default.
 - **Note tombstones are self-describing only when they must be.** Every
   other `del` carries `'{}'`, because its key plus earlier puts describe
   the row. A note's key embeds its rowid (`<ws>/<task>#<id>`), and a
   rebuild or reprojection reassigns rowids, so the puts can sit under an
   old key (drift-641). The `task_notes` delete trigger records `OLD.*`
   only when no put under the current key is in the log, and `'{}'`
-  otherwise; `planUndo` folds the puts first and falls back to the
-  tombstone payload, and `applyOp` deletes by the payload's content
+  otherwise, and `applyOp` deletes by the payload's content
   identity, falling back to the put under the same key. For the same reason `src/drift.ts` matches notes on
   the task-key prefix.
 
@@ -115,11 +103,11 @@ drift check after:
 
 - **`mu db compact`** blanks note tombstones a put under the same key
   already explains: the slim form capture writes now, applied to older
-  rows. Undo and sync unaffected.
+  rows. Sync unaffected.
 - **`mu db forget <workstream...>`** deletes every op of named
   torn-down workstreams (keys `<ws>` and `<ws>/...`). Their rows are
   already gone from the tables, so rebuild and drift stay consistent;
-  `mu undo` of those teardowns is gone on purpose.
+  those teardowns' history is gone on purpose.
 
 Neither touches sync segments. A peer is not affected: watermarks only
 read forward, so a peer never re-sends forgotten history.

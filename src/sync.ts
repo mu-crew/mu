@@ -91,7 +91,7 @@ export class SyncPeerNotFoundError extends Error {
 }
 
 /** A `--repair <peer>` prefix matched several peers. A conflict (exit 4),
- *  never a guess — the same rule `mu undo <group>` follows for
+ *  never a guess — the same rule `mu log --group` follows for
  *  abbreviated group ids. */
 export class SyncPeerRefAmbiguousError extends Error {
   override readonly name = "SyncPeerRefAmbiguousError";

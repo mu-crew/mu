@@ -80,22 +80,10 @@ needs restarting.
 
 ## You ran the wrong command
 
-Every action is one group of ops. Find it, preview the inverse, then
-apply:
-
-```bash
-mu undo                   # list recent groups
-mu undo 6380dd3d          # preview
-mu undo 6380dd3d --yes    # apply
-```
-
-- Any unique prefix of a group id works.
-- The undo is its own group, so undoing it again is redo.
-- If later work changed the same fields, undo exits 4 and names the
-  conflict. A later write to `updated_at` alone, such as `mu task note`,
-  does not count. `--force --yes` overrides and discards the newer work.
-- Undo restores rows only. Killed panes and freed workspace
-  directories do not come back.
+Every action is one group of ops. `mu log` shows the group ids, and
+`mu log --group <prefix>` shows what one action wrote. Any unique prefix
+of a group id works. mu has no general undo: fix a wrong change with the
+inverse verb.
 
 ## `mu doctor` reports drift
 

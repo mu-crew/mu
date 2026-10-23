@@ -115,7 +115,7 @@ These alternatives were rejected:
 | **LiteFS** | FUSE, which on macOS means a macFUSE kernel extension. |
 | **rqlite / dqlite / Marmot** | A consensus cluster and daemons to sync two machines that are rarely both awake. |
 | **cr-sqlite** | Merges rows by primary key. mu's `INTEGER PRIMARY KEY AUTOINCREMENT` ids collide across machines and merge silently. Also WIP upstream, no DDL sync, and a native build matrix. |
-| **RocksDB / LMDB for the op log** | No triggers, so a forgotten capture silently corrupts undo and sync. Single-process access forces a daemon. Loses SQL views, JOINs, and `mu sql`. |
+| **RocksDB / LMDB for the op log** | No triggers, so a forgotten capture silently corrupts sync. Single-process access forces a daemon. Loses SQL views, JOINs, and `mu sql`. |
 | **SQLite file per peer** | A torn transfer makes the whole file unreadable instead of one JSONL line. `-wal`/`-shm` sidecars in a synced folder corrupt DBs. Page churn defeats delta transfer. |
 | **`MU_SYNC_PEERS` list** | A config file that must match on every machine. Peers come from segment filenames instead. |
 | **`mu sync --push/--pull <host>` <!-- doc-cli-drift:skip -->** | mu's first ssh egress, with ssh config, auth, and error mapping. mu prints an rsync line instead. |

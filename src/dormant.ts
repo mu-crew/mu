@@ -4,7 +4,7 @@
 // operator had to answer it by eye, from `mu workstream list`, which
 // prints row counts and no dates — so the two workstreams that had been
 // untouched for three months looked exactly like the one worked on an
-// hour ago. Teardown is reversible (tombstone ops + `mu undo`), so the
+// hour ago. Teardown writes tombstone ops, so the
 // cost of the missing surface was not risk, it was that nobody ever
 // tore anything down and the list grew forever.
 //
@@ -211,8 +211,7 @@ export function checkDormantWorkstreams(
         (d) => `  ${d.name.padEnd(24)} ${days(d.idleDays).padStart(5)} idle, ${d.tasks} closed`,
       ),
       "",
-      "Teardown is reversible: it writes tombstone ops, so `mu undo <group>` puts",
-      "the rows back, and `mu workstream list --torn-down` finds the group later.",
+      "Teardown writes tombstone ops; `mu workstream list --torn-down` finds the group later.",
       ...finished.slice(0, 3).map((d) => `  mu workstream teardown ${d.name} --yes`),
     );
   }
@@ -236,7 +235,7 @@ export function checkDormantWorkstreams(
       // The exclusion in findDormantWorkstreams is what makes this sentence
       // safe, so the two must not drift apart.
       "Removes the task rows and notes — the plan, not the code (no checkout",
-      "is touched, and `mu undo <group>` puts the rows back). The risk is",
+      "is touched). The risk is",
       "losing sight of what was left to do, so read it first:",
       ...abandoned.slice(0, 3).map((d) => `  mu task list -w ${d.name} --status OPEN,IN_PROGRESS`),
     );

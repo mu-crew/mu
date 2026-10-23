@@ -116,7 +116,7 @@ describe("mu log filters", () => {
     expect(stdout).not.toContain("task add");
   });
 
-  it("--group narrows to one undo group (undo discoverability)", async () => {
+  it("--group narrows to one op group", async () => {
     await seedSession();
     const j = await runCli(["log", "-w", "demo", "--intent", "task.close", "--json"], dbPath);
     const items = (JSON.parse(j.stdout.trim()) as { items: LogJson[] }).items;

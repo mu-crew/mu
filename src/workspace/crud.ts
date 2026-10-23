@@ -218,7 +218,7 @@ export async function freeWorkspace(
   if (!row) return { removed: false, rowDeleted: false };
 
   // No pre-mutation snapshot: v9 dropped the `snapshots` table and
-  // rollback is inverse ops over the ops log (`mu undo`).
+  // history is the ops log.
 
   const backend = backendByName(row.backend);
   const result = await backend.freeWorkspace({

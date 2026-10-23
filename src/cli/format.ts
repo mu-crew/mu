@@ -383,8 +383,8 @@ export function formatWorkstreamsTable(rows: WorkstreamSummary[]): string {
  * Past teardowns, newest first.
  *
  * `group` leads after the name because it is the only ACTIONABLE
- * column — the whole point of the list is to feed `mu undo <group>` —
- * and it is shown short (8 chars), which is what `mu undo` accepts.
+ * column — it feeds `mu log --group <group>` — and it is shown
+ * short (8 chars), which `--group` accepts.
  */
 export function formatTornDownWorkstreamsTable(rows: readonly TornDownWorkstream[]): string {
   const table = muTable({
