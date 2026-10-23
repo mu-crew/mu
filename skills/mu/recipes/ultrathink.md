@@ -54,8 +54,9 @@ and check, skip it.
 7. **Close against the stop rule**, checked by you on the merged tree,
    not by any worker's note. Units can each pass review while the goal
    fails whole: one [delegate](refute.md) call refutes the umbrella's
-   criteria on the merged tree (record on the umbrella). Then
-   `mu task close <umbrella> --if-ready --evidence '...'`.
+   criteria on the merged tree (record on the umbrella). Close when no
+   high or critical finding is left unfixed; highs the final pass found
+   and you fixed count. Then `mu task close <umbrella> --if-ready --evidence '...'`.
 
 Done when the umbrella is closed, its stop rule holds on the merged
 tree, every shipped unit's latest review task is `CLOSED/done`
