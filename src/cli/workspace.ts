@@ -64,7 +64,7 @@ async function guardOwnerState(
   if (state === "unknown") {
     let live: boolean;
     try {
-      live = await (await activeMux()).paneExists(row.paneId);
+      live = await (await activeMux()).paneAlive(row.paneId);
     } catch {
       throw new WorkspaceOwnerBusyError(
         agent,

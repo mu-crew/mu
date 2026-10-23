@@ -1,5 +1,5 @@
 // mu — spawnAgent + supporting helpers (resolveCliCommand,
-// awaitSpawnLiveness, createOrReusePane, defaultSpawnLivenessMs,
+// awaitSpawnLiveness, defaultSpawnLivenessMs,
 // prestageWorkspace, finalizeAgentRow, rollbackSpawn).
 //
 // spawnAgent's flow is documented inline. The interesting bit is the
@@ -26,7 +26,7 @@ import { type CtlProbe, ctlProbe } from "../ctl/client.js";
 import { CTL_SOCK_ENV, ctlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
-import { activeMux, type MuxBackend } from "../mux.js";
+import { activeMux } from "../mux.js";
 import { isJsonMode, type NextStep } from "../output.js";
 import { resolveActorIdentity } from "../tasks/claim.js";
 // `sleep` is the shared poll-sleep TEST SEAM (setSleepForTests), not a
@@ -34,7 +34,7 @@ import { resolveActorIdentity } from "../tasks/claim.js";
 // joining the MuxBackend contract.
 import { sleep } from "../tmux.js";
 import { createWorkspace, freeWorkspace, workspacePath } from "../workspace.js";
-import { ensureWorkstreamSession, isScratchWorkstream } from "../workstream.js";
+import { isScratchWorkstream } from "../workstream.js";
 import {
   AgentDiedOnSpawnError,
   AgentExistsError,
@@ -397,16 +397,17 @@ async function awaitCtlHandshake(
  *   1. Validate name + uniqueness.
  *   2. If --workspace: prestageWorkspace() (placeholder agent row +
  *      workspace dir + workspace row).
- *   3. createOrReusePane() in the workspace path (or opts.cwd).
- *   4. setPaneTitle + enableMuPaneBordersForPane.
- *   5. finalizeAgentRow() — patch placeholder pane_id to real (workspace
+ *   3. mux.spawnAgent() in the workspace path (or opts.cwd); the scratch
+ *      session is ensured first.
+ *   4. finalizeAgentRow() — patch placeholder pane_id to real (workspace
  *      path), or insert a fresh agent row (no-workspace path).
- *   6. Liveness: awaitSpawnLiveness() (fixed sleep, then pane + scan
+ *   5. Liveness: awaitSpawnLiveness() (fixed sleep, then pane + scan
  *      check), or for a tmux pi agent the ctl handshake with a pane
- *      check per tick and the scan at the end. herdr: startAgentInPane.
- *   7. ctl handshake for herdr pi agents (outside the rollback).
+ *      check per tick and the scan at the end. A backend with
+ *      `spawnAgentWaitsReady` (herdr) is ready when spawnAgent settles.
+ *   6. ctl handshake for herdr pi agents (outside the rollback).
  *
- * Failure between any of (3)–(6) calls rollbackSpawn() to undo the
+ * Failure between any of (3)–(5) calls rollbackSpawn() to undo the
  * pane + row + workspace. The caller-visible error is preserved.
  */
 export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<SpawnedAgent> {
@@ -445,7 +446,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   const command = opts.command ?? resolved.command;
   // Where `command` came from. Backends that resolve the executable
   // themselves may not silently ignore an operator's choice, and need to
-  // know WHICH knob to name (see `StartAgentInPaneOptions.commandSource`).
+  // know WHICH knob to name (see `SpawnAgentPaneOptions.commandSource`).
   const commandSource =
     opts.command !== undefined ? "explicit" : resolved.resolvedFromEnv ? "env" : "cli-key";
 
@@ -530,14 +531,14 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   const hasWorkspace = workspacePathStr !== undefined;
 
   // Single outer try wrapping every step that can throw AFTER the
-  // workspace has been prestaged: pane create/reuse, pane title +
-  // borders, agent-row finalize, liveness check. Earlier shape had
-  // createOrReusePane outside the try, so a tmux failure (e.g. no
+  // workspace has been prestaged: pane create/reuse,
+  // agent-row finalize, liveness check. Earlier shape had pane creation
+  // outside the try, so a tmux failure (e.g. no
   // workstream session and tmux refusing to create one) left the
   // prestaged workspace dir + placeholder agent row behind as an
   // orphan — task agent_spawn_abort_leaves_orphan_workspace.
   //
-  // paneId is undefined until createOrReusePane returns; rollbackSpawn
+  // paneId is undefined until spawnAgent creates the pane; rollbackSpawn
   // skips killPane in that case. The inner try/catches that previously
   // wrapped finalize and liveness were folded into this single catch
   // (clarity > belt-and-suspenders; rollbackSpawn is idempotent and
@@ -552,20 +553,25 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
   let phase: SpawnPhase = "pane";
   let trustDialog = false;
+  // Settles when the backend considers the agent started (see spawnAgentWaitsReady).
+  let readiness: Promise<unknown> = Promise.resolve();
   try {
-    // Cross-process critical section: the tmux topology check-then-act
-    // (`sessionExists` → `new-session` / `new-window` / `split-window`)
-    // plus the agent-row finalize. Serialised per tmux SESSION so a
-    // parallel fan-out (`for n in …; do mu agent spawn … & done`) can't
-    // race six `new-session -d -s mu-scratch` calls into
-    // five-rolled-back-losers. Keyed on the session name: spawns into
-    // different sessions never contend. See spawn-lock.ts.
+    // Cross-process critical section: the topology check-then-act inside
+    // `ensureSession` / `spawnAgent` (session exists? window exists? →
+    // new-session / new-window / split-window) plus the agent-row
+    // finalize. Serialised per mux SESSION so a parallel fan-out
+    // (`for n in …; do mu agent spawn … & done`) can't race six
+    // `new-session -d -s mu-scratch` calls into five-rolled-back-losers.
+    // Keyed on the session name: spawns into different sessions never
+    // contend. See spawn-lock.ts.
     //
-    // The liveness wait is deliberately OUTSIDE the lock: it is the slow
-    // part (1.5s+), and holding the lock across it would serialise the
-    // very parallelism the operator asked for. Once the row is inserted
-    // and the lock released, the next spawn can build its own window
-    // while this one waits.
+    // The lock covers the pane's CREATION, not its readiness: spawnAgent
+    // calls `onPaneCreated` the moment the pane exists, the row is
+    // finalized, and the lock is released while the backend is still
+    // waiting for the agent (herdr: up to 30s, past the lock's own
+    // 15s acquire / 30s stale budget). The liveness wait below is
+    // equally outside the lock: holding it would serialise the very
+    // parallelism the operator asked for.
     const created = await withSpawnLock(session, async () => {
       // Re-check under the lock: a parallel spawn of the same name may
       // have inserted its row since the fast-path check. (With a
@@ -575,31 +581,38 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       }
       // The name is ours: no live agent owns a socket at this path.
       rmSync(ctlSocket, { force: true });
-      const pid = await createOrReusePane({
+      const mux = await activeMux();
+      // `scratch` is never `workstream init`-ed: ensure its session (with
+      // the placeholder `_mu` window) so it outlives its last agent.
+      if (isScratchWorkstream(opts.workstream)) await mux.ensureSession(session);
+      // Resolves with the pane id at creation; `done` settles when the
+      // backend considers the agent started.
+      let onCreated: (pid: string) => void = () => {};
+      const createdPane = new Promise<string>((res) => {
+        onCreated = res;
+      });
+      const done = mux.spawnAgent({
         session,
-        keepSessionAlive: isScratchWorkstream(opts.workstream),
-        windowName,
+        window: windowName,
+        name: opts.name,
+        cli,
         command,
+        commandSource,
         cwd: workspacePathStr ?? opts.cwd,
         env: paneEnv,
+        onPaneCreated: onCreated,
       });
+      // Observe a rejection immediately: it is awaited after the lock.
+      done.catch(() => {});
+      const pid = await Promise.race([createdPane, done]);
       // Capture the pane id on the OUTER scope as soon as it exists so a
-      // throw later in the lock (setPaneTitle / finalizeAgentRow INSERT
-      // failure) still routes through rollbackSpawn -> killPane. Assigning
-      // only via the returned object meant a finalize failure left paneId
-      // undefined and rollbackSpawn skipped killPane, leaking the pane
+      // throw later in the lock (finalizeAgentRow INSERT failure) still
+      // routes through rollbackSpawn -> killPane. Assigning only via the
+      // returned object meant a finalize failure left paneId undefined
+      // and rollbackSpawn skipped killPane, leaking the pane
       // (finding_verbs_spawn_rolls_back_pane).
       paneId = pid;
-      const mux = await activeMux();
-      // Lock first so an early OSC title cannot be frozen in; best-effort
-      // (identity prefers $MU_AGENT_NAME, reconcile repairs titles).
-      await mux.lockPaneTitle(pid).catch(() => {});
-      await mux.setPaneTitle(pid, opts.name);
-      // Apply the mu pane border to the new window. Window-scoped option;
-      // see enableMuPaneBorders docstring for why this is required per
-      // window (and not just per session). Self-checks MU_BANNER_QUIET
-      // and is best-effort — the border is decorative.
-      await mux.enableMuPaneBordersForPane(pid);
+      readiness = done;
       phase = "finalize";
       const row = finalizeAgentRow(db, { opts, cli, paneId: pid, hasWorkspace });
       ownsRow = true;
@@ -611,14 +624,15 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // Liveness check: wait briefly, then verify the pane is still alive.
     // Catches the silent-spawn-failure class of bugs where the CLI dies
     // immediately (lock conflict, bad credentials, etc.). On failure,
-    // surface a typed error with whatever scrollback tmux still has.
+    // surface a typed error with whatever scrollback the mux still has.
     //
-    // On a backend with no create-and-run form the pane above is a BARE
-    // SHELL and this is where the agent actually starts. Both branches
-    // live outside the spawn lock on purpose — they are the slow part
-    // (1.5s+ here, up to herdr's 30s there) and holding the lock across
-    // either would serialise the very fan-out the operator asked for.
-    // Either branch throwing routes through the same `rollbackSpawn`,
+    // A backend with `spawnAgentWaitsReady` (herdr) starts the agent
+    // inside spawnAgent and returns only once the MUX has detected it and
+    // considers it ready for input — strictly stronger than what the
+    // scrollback poll can prove, so MU_SPAWN_LIVENESS_MS is subsumed and
+    // deliberately not consulted. Both branches live outside the spawn
+    // lock on purpose — they are the slow part (1.5s+ here, up to 30s
+    // there). Either throwing routes through the same `rollbackSpawn`,
     // so a pane that never became an agent never keeps its agent row.
     //
     // A tmux pi agent skips the fixed sleep: the ctl handshake is the
@@ -627,45 +641,35 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // handshake timeout with a live, clean pane is still NOT a
     // rollback (see below). MU_SPAWN_LIVENESS_MS=0 disables the checks
     // here too.
-    const startAgent = (await activeMux()).startAgentInPane;
-    if (startAgent === undefined) {
-      if (wantsCtl) {
-        const pid = paneId;
-        const check = defaultSpawnLivenessMs() !== 0;
-        const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
-        // Capture every tick and keep the last good buffer: on real tmux
-        // capture-pane fails once the pane is gone, so a capture taken
-        // after the death check would always come back empty.
-        let lastScrollback: string | undefined;
-        const assertPaneAlive = async (): Promise<void> => {
-          const mux = await activeMux();
-          const sb = await mux.capturePane(pid, { lines: 50 }).catch(() => undefined);
-          lastScrollback = sb ?? lastScrollback;
-          if (await mux.paneExists(pid)) return;
-          throw new AgentDiedOnSpawnError(opts.name, pid, lastScrollback, command, when);
-        };
-        ctl = await awaitCtlHandshake(ctlSocket, check ? assertPaneAlive : undefined);
-        // Known gap: pi binds the socket in session_start (init), before
-        // it renders startup diagnostics, so an ok on the first tick can
-        // scan a pane that has not printed its error yet.
-        //
-        // An ok handshake proves the CLI started, so only provider/auth
-        // patterns apply: a shell exec-failure line in the tail is then
-        // transcript text (a resumed `--session` re-renders old tool
-        // output such as `grep: x: No such file or directory`).
-        if (check)
-          trustDialog = await checkSpawnHealth(pid, opts.name, command, when, ctl === "ok");
-      } else {
-        trustDialog = await awaitSpawnLiveness(paneId, opts.name, command);
-      }
+    if ((await activeMux()).spawnAgentWaitsReady) {
+      await readiness;
+    } else if (wantsCtl) {
+      const pid = paneId;
+      const check = defaultSpawnLivenessMs() !== 0;
+      const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
+      // Capture every tick and keep the last good buffer: on real tmux
+      // capture-pane fails once the pane is gone, so a capture taken
+      // after the death check would always come back empty.
+      let lastScrollback: string | undefined;
+      const assertPaneAlive = async (): Promise<void> => {
+        const mux = await activeMux();
+        const sb = await mux.capture(pid, { lines: 50 }).catch(() => undefined);
+        lastScrollback = sb ?? lastScrollback;
+        if (await mux.paneAlive(pid)) return;
+        throw new AgentDiedOnSpawnError(opts.name, pid, lastScrollback, command, when);
+      };
+      ctl = await awaitCtlHandshake(ctlSocket, check ? assertPaneAlive : undefined);
+      // Known gap: pi binds the socket in session_start (init), before
+      // it renders startup diagnostics, so an ok on the first tick can
+      // scan a pane that has not printed its error yet.
+      //
+      // An ok handshake proves the CLI started, so only provider/auth
+      // patterns apply: a shell exec-failure line in the tail is then
+      // transcript text (a resumed `--session` re-renders old tool
+      // output such as `grep: x: No such file or directory`).
+      if (check) trustDialog = await checkSpawnHealth(pid, opts.name, command, when, ctl === "ok");
     } else {
-      // `startAgentInPane` returns only once the MUX has detected the
-      // agent in that pane and considers it ready for input — strictly
-      // stronger than what awaitSpawnLiveness's scrollback poll can
-      // prove, so MU_SPAWN_LIVENESS_MS is
-      // subsumed and deliberately not consulted. Branching on the
-      // CAPABILITY, never on `mux.name`.
-      await startAgent({ paneId, name: opts.name, cli, command, commandSource });
+      trustDialog = await awaitSpawnLiveness(paneId, opts.name, command);
     }
   } catch (err) {
     // Record first: a throwing cleanup must neither skip the record nor
@@ -720,8 +724,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
  * (used as cwd). The placeholder unblocks the cycle.
  *
  * The placeholder is a publicly-visible quirk — see `PENDING_PANE_PREFIX`
- * and the consumers it documents (refreshAgentTitle and reconcile's
- * pending-pane prune skip). The deeper fix (eliminate the placeholder
+ * and the consumers it documents (reconcile's pending-pane prune skip). The deeper fix (eliminate the placeholder
  * by reordering ws-dir → pane → atomic dual-insert) is filed as a
  * separate refactor; this shape is the established equilibrium.
  *
@@ -797,7 +800,7 @@ function finalizeAgentRow(
  * swallows its own errors so a partial-cleanup substrate (already-killed
  * pane, no agent row) never masks the original failure.
  *
- * `paneId` is `undefined` when createOrReusePane itself threw before
+ * `paneId` is `undefined` when spawnAgent itself threw before
  * returning a pane id — there's nothing to kill. `hasWorkspace` is
  * `true` when prestageWorkspace succeeded; freeWorkspace is idempotent
  * on a missing workspace so calling it after a same-cycle failure is
@@ -860,7 +863,7 @@ async function rollbackSpawn(
  * `hasNextSteps()` in src/output.ts) so this works whether the inner
  * error is a typed mu error already exposing nextSteps
  * (AgentDiedOnSpawnError) or a bare TmuxError / Error from
- * createOrReusePane that has none. Existing hints (if any) are
+ * mux.spawnAgent that has none. Existing hints (if any) are
  * preserved and listed first; the orphan-cleanup hints are appended
  * so the diagnostic-first ordering of typed errors is kept.
  */
@@ -1041,8 +1044,8 @@ async function checkSpawnHealth(
   // pane is in the process of being torn down (the buffer survives a beat
   // longer than the pane's existence in some tmux builds).
   const mux = await activeMux();
-  const scrollback = await mux.capturePane(paneId, { lines: 50 }).catch(() => undefined);
-  if (!(await mux.paneExists(paneId))) {
+  const scrollback = await mux.capture(paneId, { lines: 50 }).catch(() => undefined);
+  if (!(await mux.paneAlive(paneId))) {
     throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command, when);
   }
   // Pane is alive — but "alive" doesn't mean "working". Scan the tail of
@@ -1058,106 +1061,4 @@ async function checkSpawnHealth(
     return detectClaudeTrustDialog(scrollback);
   }
   return false;
-}
-
-/**
- * Three cases, all returning a stable pane id:
- *   - session doesn't exist          → create session+window+pane in one shot
- *                                      (with `keepSessionAlive`: create the
- *                                      session with its placeholder `_mu`
- *                                      window first, then a window here)
- *   - session exists, no such window → create a new window for this agent
- *   - session and window both exist  → split the window to add a pane
- *
- * BARE-PANE MODE. A backend implementing `startAgentInPane` has no
- * create-and-run form, so passing a command to the creation verbs is a
- * hard error there (deliberately, so it can never be dropped silently).
- * For those backends this creates the pane EMPTY and the caller starts
- * the agent in it as a second step. Keyed on the capability, never on
- * the backend name; on tmux the command still rides along exactly as
- * before and this function is byte-for-byte equivalent to its previous
- * behaviour.
- */
-async function createOrReusePane(opts: {
-  session: string;
-  /** Ensure the placeholder `_mu` window (creating or repairing it) so
-   *  the session outlives its last agent. Set for `scratch`, which is
-   *  never `workstream init`-ed; other workstreams get `_mu` at init. */
-  keepSessionAlive: boolean;
-  windowName: string;
-  command: string;
-  cwd?: string;
-  env?: Record<string, string>;
-}): Promise<string> {
-  // Load-bearing from top to bottom: this IS the pane creation.
-  const mux = await activeMux();
-  const command = mux.startAgentInPane === undefined ? opts.command : "";
-  if (opts.keepSessionAlive) await ensureWorkstreamSession(opts.session);
-  else if (!(await mux.sessionExists(opts.session))) {
-    return mux.newSessionWithPane(opts.session, {
-      windowName: opts.windowName,
-      command,
-      cwd: opts.cwd,
-      env: opts.env,
-    });
-  }
-
-  const windows = await mux.listWindows(opts.session);
-  const matching = windows.find((w) => w.name === opts.windowName);
-
-  if (matching) {
-    return mux.splitWindow({
-      // tmux splits a WINDOW: target it as `=<session>:<window_id>`.
-      // A bare `<session>:<name>` falls back to tmux's session prefix
-      // match, so if `mu-auth` vanishes between listWindows and here,
-      // `mu-auth:Backend` splits `mu-auth-refactor`'s Backend window.
-      // `=` makes the session exact and the stable window id (from
-      // the listing above) must live in that session, so a vanished
-      // session or window fails instead of landing elsewhere.
-      // herdr splits a PANE and has no window-target form at all. Ask
-      // the backend for a concrete pane in that window when it needs
-      // one — cheaper than a `target` union type for two backends.
-      target:
-        mux.startAgentInPane === undefined
-          ? `=${opts.session}:${matching.id}`
-          : await firstPaneInWindow(mux, opts.session, matching.id),
-      command,
-      cwd: opts.cwd,
-      env: opts.env,
-    });
-  }
-
-  return mux.newWindow({
-    session: opts.session,
-    name: opts.windowName,
-    command,
-    cwd: opts.cwd,
-    env: opts.env,
-  });
-}
-
-/**
- * A concrete pane id inside `windowId`, for backends that split panes
- * rather than windows. Any pane in the window is a correct split target
- * — the new pane lands in the same window either way, which is all mu
- * cares about; geometry is the user's business.
- *
- * Throws rather than guessing when the window is empty: an empty window
- * cannot exist on either backend (a window IS its panes), so seeing one
- * means the window vanished between `listWindows` and here, and the
- * caller must roll back rather than create a pane somewhere else.
- */
-async function firstPaneInWindow(
-  mux: MuxBackend,
-  session: string,
-  windowId: string,
-): Promise<string> {
-  const panes = await mux.listPanesInSession(session);
-  const pane = panes.find((p) => p.windowId === windowId);
-  if (pane === undefined) {
-    throw new Error(
-      `spawnAgent: window ${windowId} in session ${session} has no panes to split (it vanished mid-spawn?)`,
-    );
-  }
-  return pane.paneId;
 }

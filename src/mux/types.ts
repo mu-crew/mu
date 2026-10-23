@@ -4,17 +4,22 @@
 // active backend per invocation, chosen by `detectMux()` in ./detect.js.
 // Everything backend-specific lives behind `MuxBackend`:
 //
-//   - session / window / pane topology
+//   - session / window / pane topology, behind `ensureSession` and
+//     `spawnAgent` (a spawn is ONE backend operation: tmux creates and
+//     runs in one step, herdr creates a shell pane and starts the agent)
 //   - the send protocol (herdr only: atomic `agent prompt`)
 //   - scrollback capture
 //   - PANE ID VALIDATION — tmux `%15` vs herdr `w1:p1`, which is why
 //     there is no global pane-id regex
-//   - ACTOR IDENTITY fallback — how to ask "which agent is this pane?"
+//
+// Agent identity is `$MU_AGENT_NAME`; no backend reads or writes pane
+// titles.
 //
 // Same shape as src/vcs/: a types module, one file per impl, and an
 // index that dispatches. See docs/VOCABULARY.md § "mux backend".
 
 import type { HasNextSteps, NextStep } from "../output.js";
+import { shellQuote } from "../shell-quote.js";
 
 /** The multiplexers mu can drive. */
 export type MuxBackendName = "herdr" | "tmux";
@@ -27,78 +32,68 @@ export type MuxPaneStatus = "busy" | "needs_input" | "needs_permission";
 // Deliberately narrow: these carry only the fields mu actually reads.
 // A backend that knows more about a pane keeps that to itself.
 
-export interface MuxSession {
-  name: string;
-}
-
-export interface MuxWindow {
-  /** Backend-specific window handle (tmux `@1`). */
-  id: string;
-  name: string;
-  /** Session this window belongs to (only set by cross-session listings). */
-  sessionName?: string;
-}
-
 export interface MuxPane {
   /** Backend-specific stable pane id (tmux `%15`). Never a volatile index. */
   paneId: string;
-  /** The agent's name, in mu's convention. */
-  title: string;
   /** Current foreground command (e.g. "claude", "node", "bash"). */
   command: string;
-  /** Window this pane lives in. Only set by cross-window listings. */
+  /** Window this pane lives in. */
   windowId?: string;
-  /** Session this pane lives in. Only set by cross-session listings. */
-  sessionName?: string;
 }
 
-export interface NewSessionOptions {
-  detached?: boolean;
-  windowName?: string;
-  command?: string;
-  /** Initial working directory for the first pane (`-c <path>`). */
-  cwd?: string;
-  /** Extra env vars to set in the new pane. On tmux this is `-e KEY=VALUE`
-   *  (tmux 3.0+), which sets the variable in the new pane's environment
-   *  without polluting the server's global env. */
-  env?: Record<string, string>;
+/** Name of the placeholder shell window every `mu-<ws>` session keeps,
+ *  so the session outlives its last agent pane. */
+export const MU_PLACEHOLDER_WINDOW = "_mu";
+
+/** What `ensureSession` did. */
+export interface EnsureSessionResult {
+  /** The session did not exist and was created. */
+  created: boolean;
+  /** The session existed but its `_mu` window was missing and was re-added. */
+  repaired: boolean;
 }
 
-export interface NewSessionWithPaneOptions {
-  windowName: string;
-  command: string;
-  cwd?: string;
-  detached?: boolean;
-  /** Extra env vars to set in the new pane. */
-  env?: Record<string, string>;
-}
-
-export interface NewWindowOptions {
-  /** Target session. Required if invoking outside an existing client. */
-  session?: string;
-  /** Window name. Maps to the agent's `tab:` value (or its name if no tab). */
+/**
+ * What `spawnAgent` needs. mu has already resolved the command it would
+ * run; a backend that starts agents itself (herdr) needs both that string
+ * and the `--cli` key it came from, because those select different routes.
+ */
+export interface SpawnAgentPaneOptions {
+  /** Mux session (tmux session / herdr workspace label), e.g. `mu-auth`. */
+  session: string;
+  /** Window (tmux window / herdr tab) the agent's pane lives in: created
+   *  when missing, otherwise the pane is split into it. */
+  window: string;
+  /** mu's agent name. Backends with their own agent registry use it as
+   *  the mux-level handle too. */
   name: string;
-  /** Command to run in the first pane. */
+  /** mu's `--cli` key, e.g. "pi". A backend that classifies agent kinds
+   *  natively maps this onto its own kind vocabulary. */
+  cli: string;
+  /** Fully resolved command string mu would run. */
   command: string;
-  /** If true, do not switch focus. Defaults to true. */
-  detached?: boolean;
-  /** Initial working directory (`-c <path>`). */
+  /**
+   * Where `command` came from. A backend that resolves the executable
+   * ITSELF must not silently discard an operator's explicit choice, and
+   * needs to know which one it is so the diagnostic can name the right
+   * thing to change:
+   *
+   *   "cli-key"  — just the `--cli` value; nothing to honour, proceed.
+   *   "env"      — a `MU_<UPPER_CLI>_COMMAND` override.
+   *   "explicit" — an explicit `--command "…"`.
+   */
+  commandSource: "cli-key" | "env" | "explicit";
+  /** Initial working directory for the pane. */
   cwd?: string;
-  /** Extra env vars to set in the new pane. */
-  env?: Record<string, string>;
-}
-
-export interface SplitWindowOptions {
-  /** Target window or pane (e.g. ":Backend" or "%15"). */
-  target: string;
-  command: string;
-  /** Horizontal split (side-by-side). Default true. */
-  horizontal?: boolean;
-  detached?: boolean;
-  /** Initial working directory for the new pane (`-c <path>`). */
-  cwd?: string;
-  /** Extra env vars to set in the new pane. */
-  env?: Record<string, string>;
+  /** Identity and state env for the pane (tmux `-e`, herdr `--env`). */
+  env: Record<string, string>;
+  /**
+   * Called as soon as the pane exists, before any readiness wait. The
+   * caller records the pane id under its topology lock and lets the lock
+   * go while a slow readiness wait (herdr: up to 30s) is still running.
+   * The returned promise settles when the agent is started.
+   */
+  onPaneCreated?: (paneId: string) => void;
 }
 
 /** Where an attach should land the user. */
@@ -119,6 +114,8 @@ export interface MuxCommand {
   /** Best-effort step: a non-zero exit is not a failure of the attach
    *  as a whole (tmux's post-attach `select-window`, for instance). */
   optional?: boolean;
+  /** Why an `optional` step may fail (shown when it does). */
+  reason?: string;
 }
 
 /** What a backend can say about its own health. Deliberately DATA, not
@@ -152,36 +149,6 @@ export interface SendWarning {
   message: string;
 }
 
-/**
- * What `startAgentInPane` needs to know. mu has already resolved the
- * command it WOULD have run in a create-and-run backend; a backend that
- * starts agents itself needs both that string and the `--cli` key it came
- * from, because those select different routes (see the herdr impl).
- */
-export interface StartAgentInPaneOptions {
-  /** An existing pane, sitting at its interactive shell prompt. */
-  paneId: string;
-  /** mu's agent name. Backends with their own agent registry use it as
-   *  the mux-level handle too. */
-  name: string;
-  /** mu's `--cli` key, e.g. "pi". A backend that classifies agent kinds
-   *  natively maps this onto its own kind vocabulary. */
-  cli: string;
-  /** Fully resolved command string mu would otherwise have spawned. */
-  command: string;
-  /**
-   * Where `command` came from. A backend that resolves the executable
-   * ITSELF (rather than running the string mu hands it) must not silently
-   * discard an operator's explicit choice, and needs to know which one it
-   * is so the diagnostic can name the right thing to change:
-   *
-   *   "cli-key"  — just the `--cli` value; nothing to honour, proceed.
-   *   "env"      — a `MU_<UPPER_CLI>_COMMAND` override.
-   *   "explicit" — an explicit `--command "…"`.
-   */
-  commandSource: "cli-key" | "env" | "explicit";
-}
-
 export interface CaptureOptions {
   /**
    * Number of trailing lines to capture. Omitted = full scrollback.
@@ -190,22 +157,25 @@ export interface CaptureOptions {
   lines?: number;
 }
 
-// ─── Title parsing ───────────────────────────────────────────────
+// ─── Attach line ───────────────────────────────────────────────────────
+
+const PLAIN_TOKEN = /^[\w@%+=:,./-]+$/;
 
 /**
- * Extract the agent-name token from a (possibly composed) pane title.
- * mu's `composeAgentTitle` renders titles as `name · task_id`;
- * the agent name is always the first ' · '-separated token. Adopted
- * panes mu never re-titled have just the name — still parses.
- *
- * Backend-INDEPENDENT: the format is mu's, not any multiplexer's, so
- * every backend that can read a pane title parses it the same way.
- * Lives here rather than in an impl so migrated call sites can use it
- * without importing tmux.
+ * One copy-pasteable shell line for `steps`: `&&` between required steps,
+ * `;` after an optional one (its failure must not stop what follows).
+ * Callers catch what `attachCommands` throws (herdr: no such workspace)
+ * and omit the line.
  */
-export function parseAgentNameFromTitle(title: string): string {
-  const idx = title.indexOf(" · ");
-  return idx === -1 ? title.trim() : title.slice(0, idx).trim();
+export function attachShellLine(steps: readonly MuxCommand[]): string {
+  let line = "";
+  steps.forEach((step, i) => {
+    if (i > 0) line += steps[i - 1]?.optional === true ? " ; " : " && ";
+    line += [step.command, ...step.args]
+      .map((t) => (PLAIN_TOKEN.test(t) ? t : shellQuote(t)))
+      .join(" ");
+  });
+  return line;
 }
 
 // ─── Errors ────────────────────────────────────────────────────────────
@@ -299,6 +269,11 @@ export class NoMultiplexerError extends Error implements HasNextSteps {
  */
 export interface MuxBackend {
   readonly name: MuxBackendName;
+  /** True when `spawnAgent` returns only once the MUX considers the agent
+   *  ready for input (herdr's `agent start` blocks until it detects the
+   *  agent). spawn.ts then skips its own liveness/readiness polling. A
+   *  capability flag, never a backend-name check. */
+  readonly spawnAgentWaitsReady: boolean;
 
   /** True iff this backend can drive panes on this machine right now.
    *  Consulted by `detectMux()` in precedence order. */
@@ -309,86 +284,56 @@ export interface MuxBackend {
   assertValidPaneId(s: string): void;
 
   // — sessions —
-  listSessions(): Promise<MuxSession[]>;
-  sessionExists(name: string): Promise<boolean>;
-  newSession(name: string, opts?: NewSessionOptions): Promise<void>;
-  newSessionWithPane(name: string, opts?: NewSessionWithPaneOptions): Promise<string>;
-  killSession(name: string): Promise<void>;
-
-  // — windows —
-  listWindows(session?: string): Promise<MuxWindow[]>;
-  newWindow(opts: NewWindowOptions): Promise<string>;
-  selectLayout(window: string, layout: string): Promise<void>;
+  /** Create `session` with its placeholder `_mu` window when missing;
+   *  re-add a missing `_mu` window to an existing one. Load-bearing:
+   *  mux errors propagate. */
+  ensureSession(session: string): Promise<EnsureSessionResult>;
+  /** Idempotent. herdr closes the workspace and refuses (surfacing
+   *  `HerdrWorkspaceGroupCloseError`) when it has linked worktree
+   *  workspaces mu did not create. */
+  killSession(session: string): Promise<void>;
 
   // — panes —
-  listPanes(target?: string): Promise<MuxPane[]>;
-  listPanesInSession(session: string): Promise<MuxPane[]>;
-  splitWindow(opts: SplitWindowOptions): Promise<string>;
-  killPane(paneId: string): Promise<void>;
+  /** Create the agent's pane (new window, or a split of the existing
+   *  `opts.window`; the session is created when missing) and run the
+   *  agent in it. Returns the pane id. tmux: one step running
+   *  `opts.command`. herdr: a bare shell pane, then `agent start --kind`
+   *  with a busy retry; refuses `commandSource` ≠ "cli-key" with
+   *  `HerdrCommandOverrideError` before touching herdr and closes the
+   *  bare pane when the start fails. */
+  spawnAgent(opts: SpawnAgentPaneOptions): Promise<string>;
+  /** Every pane in `session`. `[]` when the session (or server) is gone;
+   *  any other failure throws, so a caller that prunes on absence never
+   *  reads an unreachable mux as "zero panes". */
+  listPanes(session: string): Promise<MuxPane[]>;
   /** False only when the mux reports the pane (or server) gone; throws
    *  when the probe itself fails, so liveness gates fail closed. */
-  paneExists(paneId: string): Promise<boolean>;
+  paneAlive(paneId: string): Promise<boolean>;
+  killPane(paneId: string): Promise<void>;
+  capture(paneId: string, opts?: CaptureOptions): Promise<string>;
 
-  // — identity —
-  //
-  // The FALLBACK rung of actor resolution. `$MU_AGENT_NAME` is checked
-  // first by the caller (src/tasks/claim.ts) and is backend-independent;
-  // this exists because adopted panes predate that env injection.
-  setPaneTitle(paneId: string, title: string): Promise<void>;
-  /** Stop the pane's program from retitling it (tmux `allow-set-title off`;
-   *  pi emits OSC "π - <cwd>"). No-op where the backend has no equivalent. */
-  lockPaneTitle(paneId: string): Promise<void>;
-  getPaneTitle(paneId: string): Promise<string | undefined>;
-  currentAgentName(): Promise<string | undefined>;
-  /** Name of the session the CALLER is running inside, or undefined
-   *  when outside one. Backs the `mu-<name>` rung of workstream
-   *  auto-detection, which is why it is identity and not topology. */
-  currentSessionName(): Promise<string | undefined>;
+  // — attach —
+  /** Ordered argv steps that land the user on `target` (some optional,
+   *  see `MuxCommand.reason`). May throw when the target cannot be
+   *  resolved (herdr: no workspace carries the label). Join with
+   *  `attachShellLine` for a printable line. */
+  attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]>;
 
-  // — spawn —
-  //
-  // OPTIONAL, and its absence is the DEFAULT shape: tmux creates a pane
-  // and runs a command in one atomic call, so `NewWindowOptions.command`
-  // et al. carry the command and there is nothing left to do.
-  //
-  // A backend that has no create-and-run form implements this instead.
-  // mu then creates the pane bare, calls `startAgentInPane`, and — because
-  // such a backend only returns once IT considers the agent ready for
-  // input — SKIPS its own liveness/readiness polling. This is a capability
-  // flag, not a backend name check: `src/agents/spawn.ts` branches on the
-  // method being present, never on `mux.name`.
-  startAgentInPane?(opts: StartAgentInPaneOptions): Promise<void>;
-
-  // — io —
+  // — optional capabilities —
+  /** The pane's runtime state as the mux itself reports it, or undefined
+   *  when the pane is gone or unclassified. herdr only: for non-pi agents. */
+  paneStatus?(paneId: string): Promise<MuxPaneStatus | undefined>;
   /** herdr only: atomic `agent prompt`. tmux has no reliable paste (cut in
    *  mu-next), so callers branch on the method's presence, never on
    *  `mux.name`, and refuse when it is absent. */
   sendToPane?(paneId: string, text: string, opts?: SendOptions): Promise<void>;
-  capturePane(paneId: string, opts?: CaptureOptions): Promise<string>;
 
   /**
-   * The pane's runtime state as the mux itself reports it, or undefined
-   * when the pane is gone or unclassified. tmux omits this capability;
-   * herdr reports it directly.
+   * Name of the session the CALLER is running inside, or undefined when
+   * outside one.
+   * @deprecated scope fallback, removed by the -w unit.
    */
-  paneStatus?(paneId: string): Promise<MuxPaneStatus | undefined>;
-
-  // — chrome (decorative; a backend with no equivalent no-ops) —
-  enableMuPaneBordersForSession(session: string): Promise<number>;
-  enableMuPaneBordersForPane(paneId: string): Promise<void>;
-
-  // — attach —
-  //
-  // Two shapes for the same intent because mu prints attach hints after
-  // workstream creation while the TUI's `a` key executes the steps.
-  // Neither may hardcode a tmux string. Sync or async: tmux builds the
-  // line from the target alone, herdr must first resolve the session
-  // name to an opaque workspace id. Callers always `await` the result.
-
-  /** Copy-pasteable shell line that lands the user on `target`. */
-  attachHint(target: AttachTarget): string | Promise<string>;
-  /** The same attach, as argv steps to spawn in order. */
-  attachCommands(target: AttachTarget): readonly MuxCommand[] | Promise<readonly MuxCommand[]>;
+  currentSessionName(): Promise<string | undefined>;
 
   // — diagnostics —
 

@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   activeMux,
+  attachShellLine,
   detectMux,
   herdrBackend,
   type MuxBackend,
@@ -270,39 +271,52 @@ describe("tmuxBackend conforms to the MuxBackend contract", () => {
   });
 });
 
-describe("tmuxBackend.attachHint / attachCommands", () => {
-  // src/cli/agents.ts prints the hint and the TUI runs the commands.
-  // Both must come from the BACKEND: a herdr user handed `tmux attach`
-  // is worse off than one handed nothing.
-  // Asserted WITHOUT `await`: tmux's attach methods are synchronous and
-  // exported via `tmuxBackend`, so SDK callers must get a string, not a
-  // Promise (only herdr needs an async lookup).
-  it("inside a client, switches rather than attaching a second one", () => {
+describe("attachCommands + attachShellLine", () => {
+  // src/cli/agents.ts prints the joined line and the TUI runs the steps.
+  // Both come from the BACKEND: a herdr user handed `tmux attach` is
+  // worse off than one handed nothing.
+  it("inside a client, switches rather than attaching a second one", async () => {
     const target = { session: "mu-auth", window: "worker-1", inside: true };
-    expect(tmuxBackend.attachHint(target)).toBe("tmux switch-client -t mu-auth:worker-1");
-    expect(tmuxBackend.attachCommands(target)).toEqual([
-      { command: "tmux", args: ["switch-client", "-t", "mu-auth:worker-1"] },
-    ]);
+    const steps = await tmuxBackend.attachCommands(target);
+    expect(steps).toEqual([{ command: "tmux", args: ["switch-client", "-t", "mu-auth:worker-1"] }]);
+    expect(attachShellLine(steps)).toBe("tmux switch-client -t mu-auth:worker-1");
   });
 
-  it("outside a client, attaches then selects the window in two steps", () => {
+  it("outside a client, attaches then selects the window in two steps", async () => {
     // `tmux attach -t session:window` does not reliably select the
     // window across tmux versions, hence the explicit second step.
-    const target = { session: "mu-auth", window: "worker-1" };
-    expect(tmuxBackend.attachHint(target)).toBe(
-      "tmux attach -t mu-auth && tmux select-window -t mu-auth:worker-1",
-    );
-    const cmds = tmuxBackend.attachCommands(target);
-    expect(cmds.map((c) => c.args[0])).toEqual(["attach-session", "select-window"]);
+    const steps = await tmuxBackend.attachCommands({ session: "mu-auth", window: "worker-1" });
+    expect(steps.map((c) => c.args[0])).toEqual(["attach-session", "select-window"]);
     // The select is decorative: failing it still leaves the user in
     // the right session, so the runner must not report an error.
-    expect(cmds[1]?.optional).toBe(true);
+    expect(steps[1]?.optional).toBe(true);
+    expect(steps[1]?.reason).toBeTruthy();
+    expect(attachShellLine(steps)).toBe(
+      "tmux attach-session -t mu-auth && tmux select-window -t mu-auth:worker-1",
+    );
   });
 
-  it("a session-only target omits window selection entirely", () => {
+  it("a session-only target omits window selection entirely", async () => {
     // `mu workstream init` has no agent yet, so there is no window.
-    expect(tmuxBackend.attachHint({ session: "mu-auth" })).toBe("tmux attach -t mu-auth");
-    expect(tmuxBackend.attachCommands({ session: "mu-auth" })).toHaveLength(1);
+    expect(await tmuxBackend.attachCommands({ session: "mu-auth" })).toHaveLength(1);
+  });
+
+  it("joins with `;` after an optional step, so its failure does not stop what follows", () => {
+    expect(
+      attachShellLine([
+        { command: "a", args: [], optional: true, reason: "may fail" },
+        { command: "b", args: [] },
+      ]),
+    ).toBe("a ; b");
+  });
+
+  it("quotes tokens that are not plain, and joins required steps with &&", () => {
+    expect(
+      attachShellLine([
+        { command: "herdr", args: ["--session", "my work"] },
+        { command: "herdr", args: [] },
+      ]),
+    ).toBe("herdr --session 'my work' && herdr");
   });
 });
 

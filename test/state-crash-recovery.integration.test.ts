@@ -1,7 +1,7 @@
 // Entry-point regression for wholesale tmux-server loss. The direct
 // reconcile test covers a successful empty pane list; this file drives the
 // user-facing `mu state --json` path through the non-zero "no server running"
-// branch that listPanesInSession intentionally swallows.
+// branch that listPanes intentionally swallows.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

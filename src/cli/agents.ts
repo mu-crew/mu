@@ -53,7 +53,7 @@ import {
 import { ctlProbe, ctlRequest } from "../ctl/client.js";
 import type { CtlBlocked } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
-import { activeMux, type SendWarning } from "../mux.js";
+import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
 import { listTasksByOwner } from "../tasks.js";
 import { detectBackend } from "../vcs.js";
@@ -203,14 +203,12 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   // Best-effort: the pane exists, so a mux is up; the hint is decoration.
   try {
     const mux = await activeMux();
-    nextSteps.push({
-      intent: "Attach the pane",
-      command: await mux.attachHint({
-        session: `mu-${workstream}`,
-        window: agent.tab ?? name,
-        inside: Boolean(process.env.TMUX),
-      }),
+    const steps = await mux.attachCommands({
+      session: `mu-${workstream}`,
+      window: agent.tab ?? name,
+      inside: Boolean(process.env.TMUX),
     });
+    nextSteps.push({ intent: "Attach the pane", command: attachShellLine(steps) });
   } catch {
     // no hint
   }
@@ -542,9 +540,7 @@ export async function cmdList(
     console.log(pc.dim("  Panes that look like agents but aren't in the registry."));
     console.log(pc.dim("  Kill one with tmux/herdr or ignore it."));
     for (const orphan of view.orphans) {
-      console.log(
-        `  ${pc.dim(orphan.paneId)} title=${pc.bold(orphan.title)} cli=${orphan.command}`,
-      );
+      console.log(`  ${pc.dim(orphan.paneId)} cli=${orphan.command}`);
     }
   }
 }
@@ -567,7 +563,7 @@ export async function cmdAgentShow(
     // Best-effort: `mu agent show` still has a registry row to print
     // when the mux is unreachable. Empty scrollback degrades the
     // status refresh below, it doesn't fail the verb.
-    scrollback = await (await activeMux()).capturePane(agent.paneId, { lines });
+    scrollback = await (await activeMux()).capture(agent.paneId, { lines });
   } catch {
     scrollback = "";
   }

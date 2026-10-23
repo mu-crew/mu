@@ -7,8 +7,8 @@
 //
 //   for n in 1 2 3; do mu agent spawn scout-$n -w scratch & done; wait
 //
-// — each process runs the check-then-act in `createOrReusePane`:
-// `sessionExists(mu-scratch)` → all see "no" → all call
+// — each process runs the check-then-act inside `mux.spawnAgent`:
+// "does mu-scratch exist?" → all see "no" → all call
 // `tmux new-session -d -s mu-scratch`. Exactly one wins; the losers get
 // "duplicate session", throw, and `rollbackSpawn` removes their agent
 // row. Net effect: agents silently dropped (and sometimes duplicated as

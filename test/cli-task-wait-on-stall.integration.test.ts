@@ -106,7 +106,7 @@ describe("mu task wait --on-stall warn|exit", () => {
       if (args[0] === "capture-pane") {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
-      // refreshAgentTitle / set-option / display-message etc.: noop.
+      // set-option / display-message etc.: noop.
       return { stdout: "", stderr: "", exitCode: 0 };
     };
     setTmuxExecutor(executor);

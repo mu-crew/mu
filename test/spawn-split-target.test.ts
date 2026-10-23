@@ -1,7 +1,7 @@
 // spawnAgent's split path (session and --tab window both exist) must
 // target the window it listed, never one tmux resolves by prefix.
 //
-// Review gap g_fix_tmux_split_prefix_race: createOrReusePane split
+// Review gap g_fix_tmux_split_prefix_race: mux.spawnAgent split
 // `-t mu-auth:Backend`. If `mu-auth` vanished between list-windows and
 // split-window, tmux's session prefix fallback resolved it to
 // `mu-auth-refactor` and the agent's pane landed in another workstream

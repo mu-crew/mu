@@ -82,7 +82,6 @@ describe("listLiveAgents", () => {
     state.panes.set(orphanPaneId, {
       windowId: orphanWindowId,
       paneId: orphanPaneId,
-      title: "stranger",
       command: "pi",
     });
 
@@ -139,7 +138,6 @@ describe("listLiveAgents", () => {
       state.panes.set(orphanPaneId, {
         windowId: orphanWindowId,
         paneId: orphanPaneId,
-        title: "stranger",
         command: "pi",
       });
 

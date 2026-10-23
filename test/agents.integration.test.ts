@@ -4,16 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  composeAgentTitle,
-  deleteAgent,
-  getAgent,
-  getAgentByPane,
-  insertAgent,
-  listAgents,
-} from "../src/agents.js";
+import { deleteAgent, getAgent, getAgentByPane, insertAgent, listAgents } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { GLYPH } from "../src/glyphs.js";
 import { listLogs } from "../src/logs.js";
 import { addTask, claimTask, getTask, listNotes } from "../src/tasks.js";
 
@@ -287,97 +279,5 @@ describe("agents CRUD", () => {
     // Task stays CLOSED; only owner (which gets cleared via FK SET NULL).
     expect(getTask(db, "done", "auth")?.status).toBe("CLOSED");
     expect(getTask(db, "done", "auth")?.ownerName).toBeNull();
-  });
-});
-
-// ─── composeAgentTitle (mu's durable context in the pane title) ───
-
-describe("composeAgentTitle", () => {
-  let tempDir: string;
-  let db: Db;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "mu-title-"));
-    db = openDb({ path: join(tempDir, "mu.db") });
-  });
-
-  afterEach(() => {
-    db.close();
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it("renders just the agent name when status is 'spawning' (initial state)", () => {
-    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1" });
-    const a = getAgent(db, "worker-a", "ws");
-    if (!a) throw new Error("agent missing");
-    expect(composeAgentTitle(db, a)).toBe("worker-a");
-  });
-
-  it("appends task id when agent owns one task", () => {
-    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1" });
-    addTask(db, { localId: "build_x", workstream: "ws", title: "X", impact: 50, effortDays: 1 });
-    db.prepare(
-      `UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = 'worker-a')
-        WHERE local_id = 'build_x'`,
-    ).run();
-    const a = getAgent(db, "worker-a", "ws");
-    if (!a) throw new Error();
-    expect(composeAgentTitle(db, a)).toBe("worker-a · build_x");
-  });
-
-  it("compresses to '<multi>N tasks' when agent owns multiple tasks", () => {
-    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1" });
-    for (const id of ["t_a", "t_b", "t_c"]) {
-      addTask(db, { localId: id, workstream: "ws", title: id, impact: 50, effortDays: 1 });
-      db.prepare(
-        `UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = 'worker-a')
-          WHERE local_id = ?`,
-      ).run(id);
-    }
-    const a = getAgent(db, "worker-a", "ws");
-    if (!a) throw new Error();
-    expect(composeAgentTitle(db, a)).toBe(`worker-a · ${GLYPH.multi}3 tasks`);
-  });
-
-  it("excludes CLOSED tasks from the count (live work view)", () => {
-    insertAgent(db, { name: "worker-a", workstream: "ws", paneId: "%1" });
-    for (const id of ["live", "shipped"]) {
-      addTask(db, { localId: id, workstream: "ws", title: id, impact: 50, effortDays: 1 });
-      db.prepare(
-        `UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = 'worker-a')
-          WHERE local_id = ?`,
-      ).run(id);
-    }
-    db.prepare(
-      "UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='shipped'",
-    ).run();
-    const a = getAgent(db, "worker-a", "ws");
-    if (!a) throw new Error();
-    // Only 'live' is OPEN+owned → single-task form, not the multi glyph.
-    expect(composeAgentTitle(db, a)).toBe("worker-a · live");
-  });
-
-  it("truncates titles longer than 64 chars with '…'", () => {
-    const longName = "agent_with_a_very_long_name_that_pushes_us_over";
-    insertAgent(db, { name: longName, workstream: "ws", paneId: "%1" });
-    addTask(db, {
-      localId: "task_with_an_unusually_long_id_too",
-      workstream: "ws",
-      title: "X",
-      impact: 50,
-      effortDays: 1,
-    });
-    db.prepare(
-      `UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = ?)
-        WHERE local_id = 'task_with_an_unusually_long_id_too'`,
-    ).run(longName);
-    const a = getAgent(db, longName, "ws");
-    if (!a) throw new Error();
-    const title = composeAgentTitle(db, a);
-    expect(title.length).toBeLessThanOrEqual(64);
-    expect(title.endsWith("…")).toBe(true);
-    // Agent name (canonical identity) MUST remain intact at the start
-    // so the claim-protocol parser keeps working.
-    expect(title.startsWith(longName)).toBe(true);
   });
 });

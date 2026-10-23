@@ -13,41 +13,29 @@ import type { NextStep } from "../output.js";
 import {
   type AttachTarget,
   type CaptureOptions,
+  type EnsureSessionResult,
+  MU_PLACEHOLDER_WINDOW,
   type MuxBackend,
   type MuxCommand,
   MuxError,
   type MuxHealth,
   type MuxPane,
-  type MuxSession,
-  type MuxWindow,
-  type NewSessionOptions,
-  type NewSessionWithPaneOptions,
-  type NewWindowOptions,
   PaneNotFoundError,
-  parseAgentNameFromTitle,
-  type SplitWindowOptions,
+  type SpawnAgentPaneOptions,
 } from "./types.js";
 
 // Re-exported so the historical `import { ... } from "./tmux.js"` surface
-// keeps resolving these names (47 test files and 12 src modules use it).
+// keeps resolving these names.
 export {
   type AttachTarget,
   type CaptureOptions,
   type MuxCommand,
   MuxError,
   type MuxHealth,
-  type NewSessionOptions,
-  type NewSessionWithPaneOptions,
-  type NewWindowOptions,
   PaneNotFoundError,
-  parseAgentNameFromTitle,
-  type SplitWindowOptions,
 };
 
-/** Back-compat aliases: tmux-specific names predating the MuxBackend
- *  extraction. Same shapes, now owned by ./types.js. */
-export type TmuxSession = MuxSession;
-export type TmuxWindow = MuxWindow;
+/** Back-compat alias: tmux-specific name predating the MuxBackend extraction. */
 export type TmuxPane = MuxPane;
 
 // ─── Error type ────────────────────────────────────────────────────────
@@ -199,8 +187,6 @@ export function sleep(ms: number): Promise<void> {
   return currentSleep(ms);
 }
 
-// ─── Domain types ──────────────────────────────────────────────────────
-
 // ─── Sessions ──────────────────────────────────────────────────────────
 
 /**
@@ -228,26 +214,7 @@ function exactSessionTarget(name: string): string {
  */
 const NO_SERVER_RE = /no server running|error connecting to .*\(No such file or directory\)/i;
 
-export async function listSessions(): Promise<TmuxSession[]> {
-  // `list-sessions` exits 1 when no sessions exist; treat as empty.
-  try {
-    const out = await tmux(["list-sessions", "-F", "#{session_name}"]);
-    return out
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((name) => ({ name }));
-  } catch (err) {
-    if (
-      err instanceof TmuxError &&
-      (NO_SERVER_RE.test(err.stderr) || /no sessions/i.test(err.stderr))
-    ) {
-      return [];
-    }
-    throw err;
-  }
-}
-
-export async function sessionExists(name: string): Promise<boolean> {
+async function sessionExists(name: string): Promise<boolean> {
   const result = await currentExecutor(["has-session", "-t", exactSessionTarget(name)]);
   return result.exitCode === 0;
 }
@@ -259,36 +226,50 @@ export async function sessionExists(name: string): Promise<boolean> {
  */
 const DETACHED_SIZE = ["-x", "200", "-y", "50"];
 
-export async function newSession(name: string, opts: NewSessionOptions = {}): Promise<void> {
-  const args = ["new-session"];
-  if (opts.detached !== false) args.push("-d", ...DETACHED_SIZE);
-  args.push("-s", name);
-  if (opts.windowName) args.push("-n", opts.windowName);
-  if (opts.cwd) args.push("-c", opts.cwd);
-  appendEnvFlags(args, opts.env);
-  if (opts.command) args.push(opts.command);
-  await tmux(args);
+/** `[id, name]` of every window in `session`. */
+async function listWindows(session: string): Promise<{ id: string; name: string }[]> {
+  const out = await tmux([
+    "list-windows",
+    "-t",
+    exactSessionTarget(session),
+    "-F",
+    "#{window_id}\t#{window_name}",
+  ]);
+  const windows: { id: string; name: string }[] = [];
+  for (const line of out.split("\n")) {
+    if (line.length === 0) continue;
+    const [id, name] = line.split("\t");
+    if (!id || name === undefined) continue;
+    windows.push({ id, name });
+  }
+  return windows;
 }
 
 /**
- * Create a tmux session AND its first window+pane in one atomic call.
- * Returns the new pane's stable id. Used by mu when spawning the first
- * agent in a workstream so we never end up with an empty `mu-<workstream>`
- * session left behind by a failed spawn.
+ * Create `session` with its placeholder `_mu` window when it is missing,
+ * and re-add the window when the session exists without it (the operator
+ * killed it, or the session predates it). Without `_mu`, closing the last
+ * agent kills the last window and tmux destroys the session.
  */
-export async function newSessionWithPane(
-  name: string,
-  opts: NewSessionWithPaneOptions,
-): Promise<string> {
-  const args = ["new-session"];
-  if (opts.detached !== false) args.push("-d", ...DETACHED_SIZE);
-  args.push("-s", name, "-n", opts.windowName);
-  if (opts.cwd) args.push("-c", opts.cwd);
-  appendEnvFlags(args, opts.env);
-  args.push("-P", "-F", "#{pane_id}", opts.command);
-  const out = (await tmux(args)).trim();
-  assertValidPaneId(out);
-  return out;
+export async function ensureSession(session: string): Promise<EnsureSessionResult> {
+  if (!(await sessionExists(session))) {
+    await tmux(["new-session", "-d", ...DETACHED_SIZE, "-s", session, "-n", MU_PLACEHOLDER_WINDOW]);
+    return { created: true, repaired: false };
+  }
+  const windows = await listWindows(session).catch(() => []);
+  if (windows.some((w) => w.name === MU_PLACEHOLDER_WINDOW)) {
+    return { created: false, repaired: false };
+  }
+  await tmux([
+    "new-window",
+    "-d",
+    "-t",
+    exactSessionTarget(session),
+    "-n",
+    MU_PLACEHOLDER_WINDOW,
+    process.env.SHELL ?? "/bin/sh",
+  ]);
+  return { created: false, repaired: true };
 }
 
 /**
@@ -325,69 +306,52 @@ export async function killSession(name: string): Promise<void> {
   }
 }
 
-// ─── Windows ───────────────────────────────────────────────────────────
-
-export async function listWindows(session?: string): Promise<TmuxWindow[]> {
-  if (session) {
-    const out = await tmux([
-      "list-windows",
-      "-t",
-      exactSessionTarget(session),
-      "-F",
-      "#{window_id}\t#{window_name}",
-    ]);
-    return parseWindows(out);
-  }
-  // Cross-session: include the session name.
-  const out = await tmux([
-    "list-windows",
-    "-a",
-    "-F",
-    "#{session_name}\t#{window_id}\t#{window_name}",
-  ]);
-  const windows: TmuxWindow[] = [];
-  for (const line of out.split("\n")) {
-    if (line.length === 0) continue;
-    const [sessionName, id, name] = line.split("\t");
-    if (!sessionName || !id || name === undefined) continue;
-    windows.push({ id, name, sessionName });
-  }
-  return windows;
-}
-
-function parseWindows(output: string): TmuxWindow[] {
-  const windows: TmuxWindow[] = [];
-  for (const line of output.split("\n")) {
-    if (line.length === 0) continue;
-    const [id, name] = line.split("\t");
-    if (!id || name === undefined) continue;
-    windows.push({ id, name });
-  }
-  return windows;
-}
-
-/**
- * Create a new tmux window with one pane. Returns the new pane's stable
- * pane id (e.g. `%15`).
- */
-export async function newWindow(opts: NewWindowOptions): Promise<string> {
-  const args = ["new-window"];
-  if (opts.detached !== false) args.push("-d");
-  if (opts.session) args.push("-t", exactSessionTarget(opts.session));
-  args.push("-n", opts.name);
-  if (opts.cwd) args.push("-c", opts.cwd);
-  appendEnvFlags(args, opts.env);
-  args.push("-P", "-F", "#{pane_id}", opts.command);
-  const out = (await tmux(args)).trim();
-  assertValidPaneId(out);
-  return out;
-}
-
 // ─── Panes ─────────────────────────────────────────────────────────────
 
 /**
- * List ALL panes in a tmux session (across every window). Used by
- * reconciliation to find every pane in the workstream's session.
+ * Create the agent's pane and run `opts.command` in it, one tmux call:
+ *   - session doesn't exist          → new session+window+pane
+ *   - session exists, no such window → new window for this agent
+ *   - session and window both exist  → split the window to add a pane
+ * Returns the pane's stable id (`%15`).
+ */
+export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
+  const tail = (args: string[]): string[] => {
+    if (opts.cwd) args.push("-c", opts.cwd);
+    appendEnvFlags(args, opts.env);
+    args.push("-P", "-F", "#{pane_id}", opts.command);
+    return args;
+  };
+  const created = async (args: string[]): Promise<string> => {
+    const paneId = (await tmux(args)).trim();
+    assertValidPaneId(paneId);
+    opts.onPaneCreated?.(paneId);
+    return paneId;
+  };
+
+  if (!(await sessionExists(opts.session))) {
+    return created(
+      tail(["new-session", "-d", ...DETACHED_SIZE, "-s", opts.session, "-n", opts.window]),
+    );
+  }
+  const matching = (await listWindows(opts.session)).find((w) => w.name === opts.window);
+  if (matching) {
+    // tmux splits a WINDOW: target it as `=<session>:<window_id>`. A bare
+    // `<session>:<name>` falls back to tmux's session prefix match, so if
+    // `mu-auth` vanishes between list-windows and here, `mu-auth:Backend`
+    // splits `mu-auth-refactor`'s Backend window. `=` makes the session
+    // exact and the stable window id (from the listing above) must live
+    // in that session, so a vanished session or window fails instead of
+    // landing elsewhere.
+    return created(tail(["split-window", "-h", "-d", "-t", `=${opts.session}:${matching.id}`]));
+  }
+  return created(
+    tail(["new-window", "-d", "-t", exactSessionTarget(opts.session), "-n", opts.window]),
+  );
+}
+
+/**
+ * List ALL panes in a tmux session (across every window).
  *
  * Note `list-panes -t <session>` (no -s) lists panes in the current
  * *window* of that session, not the whole session — a common gotcha.
@@ -398,16 +362,17 @@ export async function newWindow(opts: NewWindowOptions): Promise<string> {
  * "session was just here a moment ago" case is normal during reconcile.
  * tmux's error wording in this case varies ("can't find session",
  * "can't find window", or "no current target" when the server is up
- * with zero sessions), so we match any of them.
+ * with zero sessions), so we match any of them. Every other failure
+ * throws.
  */
-export async function listPanesInSession(session: string): Promise<TmuxPane[]> {
+export async function listPanes(session: string): Promise<MuxPane[]> {
   const args = [
     "list-panes",
     "-s",
     "-t",
     exactSessionTarget(session),
     "-F",
-    "#{window_id}\t#{pane_id}\t#{pane_title}\t#{pane_current_command}",
+    "#{window_id}\t#{pane_id}\t#{pane_current_command}",
   ];
   const result = await currentExecutor(args);
   if (result.exitCode !== 0) {
@@ -419,67 +384,14 @@ export async function listPanesInSession(session: string): Promise<TmuxPane[]> {
     }
     throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
   }
-  const panes: TmuxPane[] = [];
+  const panes: MuxPane[] = [];
   for (const line of result.stdout.split("\n")) {
     if (line.length === 0) continue;
-    const [windowId, paneId, title, command] = line.split("\t");
+    const [windowId, paneId, command] = line.split("\t");
     if (!windowId || !paneId || command === undefined) continue;
-    panes.push({ paneId, title: title ?? "", command, windowId });
+    panes.push({ paneId, command, windowId });
   }
   return panes;
-}
-
-/**
- * List panes in the current session, a specific window/session target, or
- * all panes across all sessions when `target` is the literal "*".
- */
-export async function listPanes(target?: string): Promise<TmuxPane[]> {
-  if (target === "*") {
-    const out = await tmux([
-      "list-panes",
-      "-a",
-      "-F",
-      "#{session_name}\t#{window_id}\t#{pane_id}\t#{pane_title}\t#{pane_current_command}",
-    ]);
-    const panes: TmuxPane[] = [];
-    for (const line of out.split("\n")) {
-      if (line.length === 0) continue;
-      const [sessionName, windowId, paneId, title, command] = line.split("\t");
-      if (!sessionName || !windowId || !paneId || command === undefined) continue;
-      panes.push({ paneId, title: title ?? "", command, windowId, sessionName });
-    }
-    return panes;
-  }
-
-  const args = ["list-panes"];
-  if (target !== undefined) args.push("-t", target);
-  args.push("-F", "#{pane_id}\t#{pane_title}\t#{pane_current_command}");
-  const out = await tmux(args);
-  const panes: TmuxPane[] = [];
-  for (const line of out.split("\n")) {
-    if (line.length === 0) continue;
-    const [paneId, title, command] = line.split("\t");
-    if (!paneId || command === undefined) continue;
-    panes.push({ paneId, title: title ?? "", command });
-  }
-  return panes;
-}
-
-/**
- * Split a window and run a command in the new pane. Returns the new pane's
- * stable pane id.
- */
-export async function splitWindow(opts: SplitWindowOptions): Promise<string> {
-  const args = ["split-window"];
-  if (opts.horizontal !== false) args.push("-h");
-  if (opts.detached !== false) args.push("-d");
-  args.push("-t", opts.target);
-  if (opts.cwd) args.push("-c", opts.cwd);
-  appendEnvFlags(args, opts.env);
-  args.push("-P", "-F", "#{pane_id}", opts.command);
-  const out = (await tmux(args)).trim();
-  assertValidPaneId(out);
-  return out;
 }
 
 /**
@@ -518,7 +430,7 @@ export async function killPane(paneId: string): Promise<void> {
   }
 }
 
-export async function paneExists(paneId: string): Promise<boolean> {
+export async function paneAlive(paneId: string): Promise<boolean> {
   if (!isValidPaneId(paneId)) return false;
   // tmux's `display-message -t <bogus>` exits 0 but emits empty output; we
   // must check that the echoed pane id matches what we asked for.
@@ -535,163 +447,6 @@ export async function paneExists(paneId: string): Promise<boolean> {
   return result.stdout.trim() === paneId;
 }
 
-export async function setPaneTitle(paneId: string, title: string): Promise<void> {
-  assertValidPaneId(paneId);
-  await tmux(["select-pane", "-t", paneId, "-T", title]);
-}
-
-/** Pane-scoped `allow-set-title off`: OSC title escapes from the app no longer overwrite the mu title. */
-export async function lockPaneTitle(paneId: string): Promise<void> {
-  assertValidPaneId(paneId);
-  await tmux(["set-option", "-p", "-t", paneId, "allow-set-title", "off"]);
-}
-
-/**
- * Look up the window id (e.g. `@42`) that contains a given pane id
- * (e.g. `%15`). Used by spawn so we can apply window-scoped options
- * (`pane-border-status`) to the freshly created window.
- *
- * Returns undefined if the pane no longer exists.
- */
-export async function getWindowIdForPane(paneId: string): Promise<string | undefined> {
-  if (!isValidPaneId(paneId)) return undefined;
-  const result = await currentExecutor(["display-message", "-t", paneId, "-p", "#{window_id}"]);
-  if (result.exitCode !== 0) return undefined;
-  const id = result.stdout.trim();
-  return id.length > 0 ? id : undefined;
-}
-
-/**
- * Single source of truth for the operator opt-out from the mu pane
- * banner / border decorations. Set `MU_BANNER_QUIET=1` to disable.
- * All `enableMuPaneBorders*` helpers self-check this so callers
- * don't have to wrap them in env guards (a footgun: forget the
- * guard and you set the border even when the operator wanted
- * quiet).
- */
-function muBannersDisabled(): boolean {
-  return process.env.MU_BANNER_QUIET === "1";
-}
-
-/**
- * Enable the mu pane border on EVERY window currently in `session`
- * without overriding the user's pane-border format. Idempotent. Best-effort:
- * windows that have vanished mid-iteration are silently skipped. Used
- * by `mu workstream init` (covers the placeholder `_mu` window plus
- * any windows that already exist, e.g. on re-init of an upgraded
- * mu-pre-border session) and by `mu agent spawn` (covers the
- * just-created window so the border shows immediately on attach).
- *
- * No-op (returns 0) when `MU_BANNER_QUIET=1`.
- *
- * Returns the number of windows that received the option.
- */
-export async function enableMuPaneBordersForSession(session: string): Promise<number> {
-  if (muBannersDisabled()) return 0;
-  const windows = await listWindows(session).catch(() => []);
-  let n = 0;
-  for (const w of windows) {
-    try {
-      await enableMuPaneBorders(w.id);
-      n += 1;
-    } catch {
-      // Window vanished; skip silently. Border is decorative.
-    }
-  }
-  return n;
-}
-
-/**
- * Apply the mu pane border to the window containing `paneId`. This is
- * the spawn shape: callers have a pane id (from `new-window` or
- * `split-window`), and need to resolve the enclosing window
- * before calling `enableMuPaneBorders` (a window-scoped option).
- *
- * Self-checks `MU_BANNER_QUIET` and swallows tmux errors — the border
- * is decorative; failing to set it is never load-bearing.
- */
-export async function enableMuPaneBordersForPane(paneId: string): Promise<void> {
-  if (muBannersDisabled()) return;
-  if (!isValidPaneId(paneId)) return;
-  // Target the pane directly: `set-option -w` resolves a pane target to
-  // its window, so no `display-message #{window_id}` round-trip needed.
-  await enableMuPaneBorders(paneId).catch(() => {});
-}
-
-/**
- * Enable a one-line top pane border on a specific window/session target.
- * The user's inherited `pane-border-format` is left intact; mu owns the
- * title's durable context, not border presentation. Idempotent
- * (`set-option` is a write, not a toggle).
- *
- * IMPORTANT: tmux's `pane-border-status` is a **window** option, not a
- * session option. `set-option -t <session>`
- * only updates the active window at call time — windows created later
- * inherit from the GLOBAL value (which is `off` by default and which
- * we deliberately do NOT touch, since changing the global would
- * affect every other tmux session on the user's machine, including
- * dotfile-curated ones).
- *
- * Therefore mu must call this twice:
- *   1. At `mu workstream init` time on the placeholder `_mu` window
- *      (so an attached operator sees a border immediately).
- *   2. On every `mu agent spawn` (which calls `tmux new-window`),
- *      against the new window's id.
- *
- * The border is tmux chrome, not pane content: it doesn't scroll, it
- * survives copy-mode, and the inner CLI never sees it.
- *
- * Designed as the pane-border visual cue for mu-managed panes.
- */
-export async function enableMuPaneBorders(target: string): Promise<void> {
-  if (muBannersDisabled()) return;
-  // One tmux invocation (`;`-chained) instead of four: each spawn of the
-  // tmux client costs ~10 ms. tmux aborts the chain at the first error.
-  // Bottom + sides: heavy box-drawing lines so a mu-managed pane is
-  // visually distinct even when not the active pane (top carries the
-  // labeled status text; the rest of the frame carries the visual
-  // "this is mu" cue). Cyan-bold for the active pane, dim brightblack
-  // for inactive ones, so the operator's eye lands on the pane that
-  // currently has focus.
-  await tmux([
-    ...["set-option", "-w", "-t", target, "pane-border-status", "top"],
-    ";",
-    ...["set-option", "-w", "-t", target, "pane-border-lines", "heavy"],
-    ";",
-    ...["set-option", "-w", "-t", target, "pane-active-border-style", "fg=cyan,bold"],
-    ";",
-    ...["set-option", "-w", "-t", target, "pane-border-style", "fg=brightblack"],
-  ]);
-}
-
-export async function getPaneTitle(paneId: string): Promise<string | undefined> {
-  if (!isValidPaneId(paneId)) return undefined;
-  const result = await currentExecutor(["display-message", "-t", paneId, "-p", "#{pane_title}"]);
-  if (result.exitCode !== 0) return undefined;
-  return result.stdout.trimEnd();
-}
-
-/**
- * Read the title of the *current* pane (the one whose shell is running this
- * process), via $TMUX_PANE. Returns undefined when not inside tmux. Used by
- * `mu claim` to derive the agent identity from the pane title — the claim
- * protocol's zero-config identity step.
- */
-export async function currentPaneTitle(): Promise<string | undefined> {
-  const paneId = process.env.TMUX_PANE;
-  if (!paneId || !isValidPaneId(paneId)) return undefined;
-  return getPaneTitle(paneId);
-}
-
-/**
- * Convenience: read the current pane's title and extract the agent name.
- */
-export async function currentAgentName(): Promise<string | undefined> {
-  const title = await currentPaneTitle();
-  if (title === undefined) return undefined;
-  return parseAgentNameFromTitle(title);
-}
-
 /**
  * Name of the tmux session this process is running inside, or
  * undefined outside tmux. Gated on `$TMUX` so a call from a plain
@@ -704,10 +459,6 @@ export async function currentSessionName(): Promise<string | undefined> {
   if (result.exitCode !== 0) return undefined;
   const name = result.stdout.trim();
   return name === "" ? undefined : name;
-}
-
-export async function selectLayout(window: string, layout: string): Promise<void> {
-  await tmux(["select-layout", "-t", window, layout]);
 }
 
 // ─── Capture ───────────────────────────────────────────────────────────
@@ -724,7 +475,7 @@ export async function selectLayout(window: string, layout: string): Promise<void
  * cursor included. That range always holds the last N non-blank-ended
  * lines, so drop the trailing blank rows and keep the last N.
  */
-export async function capturePane(paneId: string, opts: CaptureOptions = {}): Promise<string> {
+export async function capture(paneId: string, opts: CaptureOptions = {}): Promise<string> {
   assertValidPaneId(paneId);
   const args = ["capture-pane", "-t", paneId, "-p"];
   if (opts.lines === undefined) {
@@ -781,22 +532,19 @@ function attachTargetSpec(target: AttachTarget): string {
   return target.window === undefined ? target.session : `${target.session}:${target.window}`;
 }
 
-export function attachHint(target: AttachTarget): string {
-  const spec = attachTargetSpec(target);
-  if (target.inside === true) return `tmux switch-client -t ${spec}`;
-  if (target.window === undefined) return `tmux attach -t ${target.session}`;
-  return `tmux attach -t ${target.session} && tmux select-window -t ${spec}`;
-}
-
-export function attachCommands(target: AttachTarget): readonly MuxCommand[] {
+export async function attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]> {
   const spec = attachTargetSpec(target);
   if (target.inside === true) {
     return [{ command: "tmux", args: ["switch-client", "-t", spec] }];
   }
   const steps: MuxCommand[] = [{ command: "tmux", args: ["attach-session", "-t", target.session] }];
   if (target.window !== undefined) {
-    // Best-effort: if it fails the user is at least in the right session.
-    steps.push({ command: "tmux", args: ["select-window", "-t", spec], optional: true });
+    steps.push({
+      command: "tmux",
+      args: ["select-window", "-t", spec],
+      optional: true,
+      reason: "if it fails you are still in the right session",
+    });
   }
   return steps;
 }
@@ -807,12 +555,12 @@ export function paneNotFoundNextSteps(paneId: string): NextStep[] {
   return [
     {
       intent: `Verify the pane id ${paneId} actually exists`,
-      command: `tmux display-message -t ${paneId} -p '#{pane_id} #{pane_title}'`,
+      command: `tmux display-message -t ${paneId} -p '#{pane_id}'`,
     },
     {
       intent: "List all live panes across all sessions",
       command:
-        "tmux list-panes -a -F '#{session_name}:#{window_id}.#{pane_id}\\t#{pane_title}\\t#{pane_current_command}'",
+        "tmux list-panes -a -F '#{session_name}:#{window_id}.#{pane_id}\\t#{pane_current_command}'",
     },
   ];
 }
@@ -841,54 +589,31 @@ export async function healthCheck(): Promise<MuxHealth> {
   };
 }
 
-/** `MuxBackend` with tmux's synchronous attach methods: SDK callers of
- *  `tmuxBackend.attachHint()` keep getting a string, not a Promise. */
-export interface TmuxBackend extends MuxBackend {
-  attachHint(target: AttachTarget): string;
-  attachCommands(target: AttachTarget): readonly MuxCommand[];
-}
-
 /**
  * The tmux implementation of `MuxBackend`. A frozen record of the
  * module's functions — no state of its own, so swapping backends is a
  * pointer assignment (see ./detect.ts).
  */
-export const tmuxBackend: TmuxBackend = Object.freeze({
+export const tmuxBackend: MuxBackend = Object.freeze({
   name: "tmux" as const,
+  spawnAgentWaitsReady: false,
   available: tmuxAvailable,
 
   isValidPaneId,
   assertValidPaneId,
 
-  listSessions,
-  sessionExists,
-  newSession,
-  newSessionWithPane,
+  ensureSession,
   killSession,
 
-  listWindows,
-  newWindow,
-  selectLayout,
-
+  spawnAgent,
   listPanes,
-  listPanesInSession,
-  splitWindow,
+  paneAlive,
   killPane,
-  paneExists,
+  capture,
 
-  setPaneTitle,
-  lockPaneTitle,
-  getPaneTitle,
-  currentAgentName,
-  currentSessionName,
-
-  capturePane,
-
-  enableMuPaneBordersForSession,
-  enableMuPaneBordersForPane,
-
-  attachHint,
   attachCommands,
+
+  currentSessionName,
 
   paneNotFoundNextSteps,
   healthCheck,

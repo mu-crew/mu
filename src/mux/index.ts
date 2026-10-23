@@ -4,7 +4,6 @@ export { activeMux, detectMux, muxByName, resetMux, setMuxForTests } from "./det
 export {
   HerdrCommandOverrideError,
   HerdrError,
-  HerdrNotImplementedError,
   HerdrSyntaxError,
   HerdrUnsupportedCliError,
   HerdrWorkspaceGroupCloseError,
@@ -16,7 +15,10 @@ export {
 export { tmuxBackend } from "./tmux.js";
 export {
   type AttachTarget,
+  attachShellLine,
   type CaptureOptions,
+  type EnsureSessionResult,
+  MU_PLACEHOLDER_WINDOW,
   type MuxBackend,
   type MuxBackendName,
   type MuxCommand,
@@ -25,16 +27,9 @@ export {
   type MuxHealth,
   type MuxPane,
   type MuxPaneStatus,
-  type MuxSession,
-  type MuxWindow,
-  type NewSessionOptions,
-  type NewSessionWithPaneOptions,
-  type NewWindowOptions,
   NoMultiplexerError,
   PaneNotFoundError,
-  parseAgentNameFromTitle,
   type SendOptions,
   type SendWarning,
-  type SplitWindowOptions,
-  type StartAgentInPaneOptions,
+  type SpawnAgentPaneOptions,
 } from "./types.js";

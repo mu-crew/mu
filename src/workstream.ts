@@ -61,24 +61,12 @@ export const RESERVED_WORKSTREAM_NAMES = new Set(["scratch"]);
 // ("no sessions", "not alive") rather than fail `mu workstream list`
 // on a box where nobody is running a multiplexer right now.
 
-/** Live session names, or undefined when the mux could not be listed
- *  (callers fall back to per-session `sessionExists` probes, since an
- *  empty answer from a failed list would mark every session dead). */
-async function tryListMuxSessions(): Promise<readonly { name: string }[] | undefined> {
-  try {
-    return await (await activeMux()).listSessions();
-  } catch {
-    return undefined;
-  }
-}
-
-async function listMuxSessions(): Promise<readonly { name: string }[]> {
-  return (await tryListMuxSessions()) ?? [];
-}
-
+/** True iff the mux reports panes in `session` (a live session always
+ *  holds its `_mu` pane, and both backends drop a session with its last
+ *  pane). Best-effort: an unreachable mux reads as "not alive". */
 async function sessionAlive(session: string): Promise<boolean> {
   try {
-    return await (await activeMux()).sessionExists(session);
+    return (await (await activeMux()).listPanes(session)).length > 0;
   } catch {
     return false;
   }
@@ -89,43 +77,6 @@ async function sessionAlive(session: string): Promise<boolean> {
  *  session on spawn, and the `teardown --empty` exemption). */
 export function isScratchWorkstream(name: string): boolean {
   return RESERVED_WORKSTREAM_NAMES.has(name);
-}
-
-/** Name of the placeholder shell window every `mu-<ws>` session keeps,
- *  so the session outlives its last agent pane. */
-export const MU_PLACEHOLDER_WINDOW = "_mu";
-
-/**
- * Make sure mux session `session` exists and holds the placeholder
- * `_mu` window: create the session with it when missing, and add the
- * window when the session exists without it (the operator killed it,
- * or the session predates it). Load-bearing: mux errors propagate.
- *
- * Used by `mu workstream init` and by the first spawn into `scratch`
- * (never init-ed). Without `_mu`, closing the last agent kills the
- * last window and tmux destroys the session.
- */
-export async function ensureWorkstreamSession(
-  session: string,
-): Promise<{ created: boolean; muWindowRepaired: boolean }> {
-  const mux = await activeMux();
-  if (!(await mux.sessionExists(session))) {
-    await mux.newSession(session, { detached: true, windowName: MU_PLACEHOLDER_WINDOW });
-    return { created: true, muWindowRepaired: false };
-  }
-  const windows = await mux.listWindows(session).catch(() => []);
-  if (windows.some((w) => w.name === MU_PLACEHOLDER_WINDOW)) {
-    return { created: false, muWindowRepaired: false };
-  }
-  await mux.newWindow({
-    session,
-    name: MU_PLACEHOLDER_WINDOW,
-    // A backend with no create-and-run form rejects a command and
-    // starts a shell anyway (see createOrReusePane in agents/spawn.ts).
-    command: mux.startAgentInPane === undefined ? (process.env.SHELL ?? "/bin/sh") : "",
-    detached: true,
-  });
-  return { created: false, muWindowRepaired: true };
 }
 
 /**
@@ -415,38 +366,18 @@ export function listTornDownWorkstreams(db: Db): TornDownWorkstream[] {
 }
 
 /**
- * Discover every workstream visible on this machine. The union of:
- *   - rows in the `workstreams` table (canonical DB source; populated by
- *     `mu init` and auto-created by insertAgent / addTask)
- *   - mux sessions named `mu-*` (with the prefix stripped) — catches
- *     externally-created sessions (e.g. `tmux new-session -s mu-foo`)
- *     that mu hasn't observed yet
+ * Discover every registered workstream: the rows in the `workstreams`
+ * table (canonical DB source; populated by `mu init` and auto-created by
+ * insertAgent / addTask), each decorated with mux liveness. A `mu-*` mux
+ * session with no row is not discovered: the DB owns the workstream list.
  *
  * Returns one `WorkstreamSummary` per workstream, sorted by name.
- * Useful as a pre-flight before `mu init` ("is this name taken?") and
- * for `mu doctor`-style diagnostics.
  */
 export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
-  const dbNames = new Set<string>(
-    (db.prepare("SELECT name FROM workstreams").all() as { name: string }[]).map((r) => r.name),
-  );
-
-  // Best-effort: the DB half of the union is always answerable, so a
-  // missing mux degrades to "registered workstreams only" rather than
-  // failing a read-only listing.
-  const muxNames = new Set<string>();
-  const sessions = await tryListMuxSessions();
-  for (const session of sessions ?? []) {
-    if (session.name.startsWith(RESERVED_WORKSTREAM_PREFIX))
-      muxNames.add(session.name.slice(RESERVED_WORKSTREAM_PREFIX.length));
-  }
-
-  // Reuse the one list-sessions answer for liveness instead of a
-  // has-session spawn per workstream; on a failed list, each summary
-  // probes its own session.
-  const live = sessions && new Set(sessions.map((s) => s.name));
-  const allNames = Array.from(new Set([...dbNames, ...muxNames])).sort();
-  return Promise.all(allNames.map((name) => summarize(db, { workstream: name }, live)));
+  const names = (
+    db.prepare("SELECT name FROM workstreams ORDER BY name").all() as { name: string }[]
+  ).map((r) => r.name);
+  return Promise.all(names.map((name) => summarize(db, { workstream: name })));
 }
 
 /**
@@ -457,18 +388,15 @@ export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
  * init time and contains no agent panes; the events are audit, not
  * state.
  *
- * Unregistered `mu-*` mux sessions (no `workstreams` row) are NEVER
- * returned. "No DB row" only means THIS DB does not know the
- * session: a run against a throwaway `MU_DB_PATH` sees every real
- * workstream as unregistered, and sweeping them killed a live crew's
- * agent panes. Nothing the mux reports proves such a session idle
- * either: `pane_current_command` is `bash` for a `bash -c` script or
- * loop, and herdr reports no command at all. See
- * listUnregisteredMuxWorkstreams for the names the sweep leaves to an
- * explicit `mu workstream teardown <name> --yes`.
+ * Unregistered `mu-*` mux sessions (no `workstreams` row) are never
+ * seen: the sweep iterates DB rows only. "No DB row" only means THIS
+ * DB does not know the session: a run against a throwaway `MU_DB_PATH`
+ * sees every real workstream as unregistered, and sweeping them killed
+ * a live crew's agent panes. An explicit
+ * `mu workstream teardown <name> --yes` still kills one by name.
  *
  * The `scratch` workstream is NEVER returned: its idle session is kept
- * alive on purpose (see ensureWorkstreamSession), so the next delegate
+ * alive on purpose (see mux.ensureSession), so the next delegate
  * does not pay for creating it. `mu workstream teardown scratch --yes`
  * still removes it.
  *
@@ -499,42 +427,19 @@ export async function listEmptyWorkstreams(db: Db): Promise<WorkstreamSummary[]>
   );
 }
 
-/** Workstream names of live `mu-*` mux sessions with no row in
- *  `workstreams`, sorted. `teardown --empty` never sweeps these (see
- *  listEmptyWorkstreams); it lists them so the operator can tear one
- *  down by name. An unreachable mux yields []. */
-export async function listUnregisteredMuxWorkstreams(db: Db): Promise<string[]> {
-  const dbNames = new Set<string>(
-    (db.prepare("SELECT name FROM workstreams").all() as { name: string }[]).map((r) => r.name),
-  );
-  const names: string[] = [];
-  for (const session of await listMuxSessions()) {
-    if (!session.name.startsWith(RESERVED_WORKSTREAM_PREFIX)) continue;
-    const name = session.name.slice(RESERVED_WORKSTREAM_PREFIX.length);
-    if (!dbNames.has(name)) names.push(name);
-  }
-  return names.sort();
-}
-
 export async function summarizeWorkstream(
   db: Db,
   opts: WorkstreamOptions,
 ): Promise<WorkstreamSummary> {
-  return summarize(db, opts, undefined);
+  return summarize(db, opts);
 }
 
-/** `liveSessions`: the caller's already-fetched session names; when
- *  undefined, probe this workstream's session itself. */
-async function summarize(
-  db: Db,
-  opts: WorkstreamOptions,
-  liveSessions: ReadonlySet<string> | undefined,
-): Promise<WorkstreamSummary> {
+async function summarize(db: Db, opts: WorkstreamOptions): Promise<WorkstreamSummary> {
   const muxSession = opts.muxSession ?? `mu-${opts.workstream}`;
   return {
     name: opts.workstream,
     muxSession,
-    muxAlive: liveSessions ? liveSessions.has(muxSession) : await sessionAlive(muxSession),
+    muxAlive: await sessionAlive(muxSession),
     agentCount: countAgents(db, opts.workstream),
     taskCount: countTasks(db, opts.workstream),
     noteCount: countNotes(db, opts.workstream),
@@ -586,7 +491,7 @@ export async function teardownWorkstream(
   // the session, not silently report success while leaving panes
   // running.
   const mux = await activeMux();
-  const muxAliveBefore = await mux.sessionExists(muxSession);
+  const muxAliveBefore = await sessionAlive(muxSession);
   if (muxAliveBefore) {
     await mux.killSession(muxSession);
   }

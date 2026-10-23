@@ -16,7 +16,7 @@ single `restore()`.
 
 ```ts
 import { installMux, type MuxHarness } from "./_mux.js";
-import { WORKSPACE_LIST } from "./_mux-fixtures.js";
+import { PANE_LIST, WORKSPACE_LIST } from "./_mux-fixtures.js";
 
 let harness: MuxHarness | undefined;
 afterEach(() => {
@@ -24,9 +24,12 @@ afterEach(() => {
   harness = undefined;
 });
 
-it("lists sessions", async () => {
-  harness = installMux("herdr", [["workspace list", WORKSPACE_LIST]]);
-  expect(await listSessions()).toEqual([{ name: "mu-topotest" }]);
+it("lists panes", async () => {
+  harness = installMux("herdr", [
+    ["workspace list", WORKSPACE_LIST],
+    ["pane list", PANE_LIST],
+  ]);
+  expect(await listPanes("mu-topotest")).toHaveLength(2);
   expect(harness.argsOf(0)).toEqual(["workspace", "list"]);
 });
 ```

@@ -21,11 +21,10 @@ import {
   type StateSource,
 } from "./agent-state.js";
 import { type Db, resolveWorkstreamId, tryResolveWorkstreamId } from "./db.js";
-import { GLYPH } from "./glyphs.js";
 import { emitEvent } from "./logs.js";
 import { withOpContext } from "./op-context.js";
 import { type ReconcileMode, type ReconcileReport, reconcile } from "./reconcile.js";
-import { addNote, listTasksByOwner } from "./tasks.js";
+import { addNote } from "./tasks.js";
 
 // Re-export the cluster modules so external callers continue to
 // `import { AgentNotFoundError, spawnAgent, ... } from "./agents.js"`.
@@ -337,27 +336,6 @@ export function listAgents(db: Db, opts: { workstream?: string } = {}): AgentRow
   return rows.map(rowFromDb);
 }
 
-// ─── Pane title composition (mu's durable context) ───────────────────
-//
-// mu owns the pane title as identity plus task context. Runtime status is
-// sampled only when a mu process reconciles, so putting it here leaves a stale
-// glyph after the agent stops. A continuously updated observer may append live
-// status in tmux chrome without competing with mu for the title.
-//
-//   worker-a
-//   worker-a · build_x
-//   worker-a · <glyph multi>2 tasks
-//
-// The agent name MUST remain the first ' · '-separated token so the
-// claim protocol's pane-title-as-identity fallback (currentPaneTitle
-// in src/tmux.ts) keeps working. Adopted panes that haven't been
-// re-titled by mu just have the name (one token) — still parses.
-
-/** Maximum total length for a composed pane title. tmux truncates
- *  silently in some chrome positions; we truncate the task id
- *  ourselves so the suffix is predictable. */
-const MAX_TITLE_LEN = 64;
-
 /**
  * Placeholder pane-id prefix used during the `--workspace` pre-stage in
  * spawnAgent (src/agents/spawn.ts).
@@ -372,8 +350,7 @@ const MAX_TITLE_LEN = 64;
  * Because no real tmux pane has this prefix, a naive mutating reconcile
  * pass would treat the placeholder row as a ghost and prune it
  * (→ FK-failure on the workspace insert mid-spawn). Reconcile now guards
- * against it explicitly via isPendingPaneId(), and refreshAgentTitle skips
- * placeholders for the same reason.
+ * against it explicitly via isPendingPaneId().
  *
  * Bug surfaced as bug_agent_spawn_workspace_fk_failure.
  */
@@ -388,46 +365,6 @@ export function pendingPaneIdFor(agentName: string): string {
  *  to the real tmux pane id). */
 export function isPendingPaneId(paneId: string): boolean {
   return paneId.startsWith(PENDING_PANE_PREFIX);
-}
-
-/** Build the pane title for `agent` based on current DB state.
- *  Pure (no tmux side effect; no DB write). Read-only on the DB. */
-export function composeAgentTitle(db: Db, agent: AgentRow): string {
-  // Scope by the agent's workstream so a same-named worker in another
-  // workstream can't pollute this title's task list.
-  const tasks = listTasksByOwner(db, agent.workstreamName, agent.name);
-  let title = agent.name;
-  if (tasks.length === 1) {
-    title += ` · ${tasks[0]?.name}`;
-  } else if (tasks.length > 1) {
-    title += ` · ${GLYPH.multi}${tasks.length} tasks`;
-  }
-  if (title.length > MAX_TITLE_LEN) title = `${title.slice(0, MAX_TITLE_LEN - 1)}…`;
-  return title;
-}
-
-/** Push a fresh pane title for `agentName`. Best-effort — a missing
- *  agent, a placeholder pane id, or a tmux failure are all swallowed
- *  silently (titles are decorative; never block the calling verb).
- *  `currentTitle` is the pane's live title when the caller already read
- *  it (reconcile); the write is skipped when it equals the new title,
- *  since each retitle is a mux server write plus a status redraw. */
-export async function refreshAgentTitle(
-  db: Db,
-  agentName: string,
-  workstream: string,
-  currentTitle?: string,
-): Promise<void> {
-  const agent = getAgent(db, agentName, workstream);
-  if (!agent) return;
-  if (isPendingPaneId(agent.paneId)) return; // workspace pre-stage placeholder; see PENDING_PANE_PREFIX
-  const title = composeAgentTitle(db, agent);
-  if (title === currentTitle) return;
-  // Best-effort all the way down, including "no mux reachable at all":
-  // pane titles are decorative and must never fail the calling verb.
-  await activeMux()
-    .then((mux) => mux.setPaneTitle(agent.paneId, title))
-    .catch(() => {});
 }
 
 /**
@@ -592,7 +529,7 @@ export async function readAgent(
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) throw new AgentNotFoundError(name);
   // Load-bearing: the scrollback IS the output of this verb.
-  return (await activeMux()).capturePane(agent.paneId, opts);
+  return (await activeMux()).capture(agent.paneId, opts);
 }
 
 export interface CloseAgentOptions {

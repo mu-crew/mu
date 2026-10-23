@@ -186,7 +186,7 @@ export async function ctlFailure(
 /** True only when the mux positively reports the pane gone (a mux error is "unknown"). */
 async function paneGone(paneId: string): Promise<boolean> {
   try {
-    return !(await (await activeMux()).paneExists(paneId));
+    return !(await (await activeMux()).paneAlive(paneId));
   } catch {
     return false;
   }

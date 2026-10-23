@@ -5,7 +5,6 @@
 //
 // Extracted from src/cli/tasks.ts as part of refactor_split_large_src_files.
 
-import { refreshAgentTitle } from "../../agents.js";
 import {
   assertTaskInWorkstream,
   emitJson,
@@ -112,7 +111,6 @@ export async function cmdTaskClose(
     printNextSteps(blockingNextSteps);
     return;
   }
-  if (r.changed && taskRow?.ownerName) await refreshAgentTitle(db, taskRow.ownerName, ws);
   const pickNext: NextStep = {
     intent: r.unblocked.length > 0 ? "Pick up an unblocked task" : "Pick the next ready task",
     command: `mu task next -w ${ws}`,

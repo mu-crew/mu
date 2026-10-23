@@ -14,13 +14,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { herdrBackend, newSession } from "../src/mux/herdr.js";
+import { herdrBackend } from "../src/mux/herdr.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
-import {
-  ensureWorkstream,
-  ensureWorkstreamSession,
-  listEmptyWorkstreams,
-} from "../src/workstream.js";
+import { ensureWorkstream, listEmptyWorkstreams } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 import { fail, freshMockState, type MockState, mockTmux, ok } from "./_verbs-mock.js";
@@ -108,7 +104,7 @@ describe("spawn into scratch keeps the session alive (tmux)", () => {
     // Today's live mu-scratch: created by an older spawn, delegate windows only.
     state.sessions.add("mu-scratch");
     state.windows.set("mu-scratch", [{ id: "@1", name: "old-delegate" }]);
-    state.panes.set("%1", { windowId: "@1", paneId: "%1", title: "old-delegate", command: "pi" });
+    state.panes.set("%1", { windowId: "@1", paneId: "%1", command: "pi" });
     state.nextWindowId = 2;
     state.nextPaneId = 2;
     const { executor, calls } = mockTmux(state);
@@ -206,22 +202,18 @@ describe("herdr: the placeholder window is found by name", () => {
     },
   });
 
-  it("newSession labels the first tab with windowName", async () => {
+  it("ensureSession labels the first tab _mu", async () => {
     mux = installMux("herdr", [
+      ["workspace list", JSON.stringify({ result: { workspaces: [] } })],
       ["workspace create", WORKSPACE_CREATED],
       ["tab rename", JSON.stringify({ result: { type: "ok" } })],
     ]);
-    await newSession("mu-scratch", { detached: true, windowName: "_mu" });
+    await herdrBackend.ensureSession("mu-scratch");
     expect(mux.calls.map((c) => c.join(" "))).toEqual([
+      "workspace list",
       "workspace create --label mu-scratch --no-focus",
       "tab rename w1:t1 _mu",
     ]);
-  });
-
-  it("newSession without windowName leaves herdr's tab label alone", async () => {
-    mux = installMux("herdr", [["workspace create", WORKSPACE_CREATED]]);
-    await newSession("mu-scratch");
-    expect(mux.calls).toHaveLength(1);
   });
 
   it("repairing `_mu` on herdr creates a bare tab (no command)", async () => {
@@ -239,10 +231,9 @@ describe("herdr: the placeholder window is found by name", () => {
         JSON.stringify({ result: { root_pane: { pane_id: "w1:p2", tab_id: "w1:t2" } } }),
       ],
     ]);
-    expect(herdrBackend.startAgentInPane).toBeDefined();
-    expect(await ensureWorkstreamSession("mu-scratch")).toEqual({
+    expect(await herdrBackend.ensureSession("mu-scratch")).toEqual({
       created: false,
-      muWindowRepaired: true,
+      repaired: true,
     });
     expect(mux.calls.at(-1)).toEqual([
       "tab",

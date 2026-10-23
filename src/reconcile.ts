@@ -1,10 +1,9 @@
 // mu — the canonical "reality wins" reconciliation routine.
 //
-// Three steps, in order:
+// Two steps, in order:
 //
 //   1. Prune ghost rows whose pane no longer exists in the mux.
-//   2. Refresh pane titles for surviving agents.
-//   3. Surface orphan panes that look like agents but have no DB row.
+//   2. Surface orphan panes that look like agents but have no DB row.
 //      Never auto-register them — `mu agent list` shows orphans under a
 //      separate section; the user closes the pane or ignores it.
 //
@@ -22,12 +21,10 @@ import { activeMux, type MuxPane } from "./mux.js";
  *   "full"        Default for `mu state` and `mu agent list`. Prunes
  *                 ghosts (deleting the registry row, which fires the
  *                 deleteAgent reaper that flips IN_PROGRESS tasks back
- *                 to OPEN with [reaper] notes), refreshes pane titles
- *                 of surviving agents, surfaces orphans.
+ *                 to OPEN with [reaper] notes), surfaces orphans.
  *
  *   "report-only" Pure observation. Counts would-be-pruned ghosts
- *                 without deleting; skips the title refresh (no DB
- *                 writes, no tmux title writes); surfaces orphans
+ *                 without deleting (no DB writes); surfaces orphans
  *                 (pure read). Used by `mu doctor` (read-only
  *                 diagnostic).
  *
@@ -113,7 +110,7 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
   // is no reality to reconcile against, and silently reporting "zero
   // panes" would prune every registered agent as a ghost.
   const mux = await activeMux();
-  const muxPanes = await mux.listPanesInSession(sessionName);
+  const muxPanes = await mux.listPanes(sessionName);
   const paneById = new Map(muxPanes.map((p) => [p.paneId, p]));
 
   let prunedGhosts = 0;
@@ -124,8 +121,8 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
   //    the would-be-prunes so callers can surface drift, but leaves the
   //    row in place. Mid-spawn placeholder pane ids are protected by
   //    the defensive skip that lets read paths use full mode safely.
-  //    Placeholder rows survive this step, but are split out so the title
-  //    refresh and orphan exclusion only reason about real tmux panes.
+  //    Placeholder rows survive this step, but are split out so the
+  //    orphan exclusion only reasons about real panes.
   const survivors: agentSdk.AgentRow[] = [];
   const pendingSurvivors: agentSdk.AgentRow[] = [];
   for (const agent of dbAgents) {
@@ -142,17 +139,7 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
     }
   }
 
-  // 2. Refresh durable pane titles in mutating mode. Runtime state is
-  //    resolved separately and is never written to the registry. Pass
-  //    the live title so unchanged panes are not rewritten every tick.
-  if (mode === "full") {
-    for (const agent of survivors) {
-      const currentTitle = paneById.get(agent.paneId)?.title;
-      await agentSdk.refreshAgentTitle(db, agent.name, agent.workstreamName, currentTitle);
-    }
-  }
-
-  // 3. Surface orphan panes. `looksLikeAgentPane` is conservative:
+  // 2. Surface orphan panes. `looksLikeAgentPane` is conservative:
   //    pane.command must be one we recognise as an agent CLI. A bash
   //    pane the user spawned for their own use is never an orphan.
   //    Pure read; runs in every mode.

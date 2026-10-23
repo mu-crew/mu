@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent, getAgent, listLiveAgents, readAgent, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { capturePane, killSession, resetTmuxExecutor } from "../src/tmux.js";
+import { capture, killSession, resetTmuxExecutor } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
 
@@ -78,19 +78,8 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
   it("creates the mu-<workstream> tmux session on first spawn", async () => {
     await spawnAgent(db, { name: "alice", workstream, cli: "sh", command: SH_COMMAND });
 
-    const { sessionExists } = await import("../src/tmux.js");
-    expect(await sessionExists(session)).toBe(true);
-  });
-
-  it("sets the pane title to the agent name", async () => {
-    const a = await spawnAgent(db, {
-      name: "alice",
-      workstream,
-      cli: "sh",
-      command: SH_COMMAND,
-    });
-    const { getPaneTitle } = await import("../src/tmux.js");
-    expect(await getPaneTitle(a.paneId)).toBe("alice");
+    const { listPanes } = await import("../src/tmux.js");
+    expect((await listPanes(session)).length).toBeGreaterThan(0);
   });
 
   it("multiple agents in same tab share a window with multiple panes", async () => {
@@ -110,30 +99,32 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
     });
 
     const { listPanes } = await import("../src/tmux.js");
-    const panes = await listPanes(`${session}:Backend`);
-    const ids = panes.map((p) => p.paneId).sort();
-    expect(ids).toEqual([a.paneId, b.paneId].sort());
+    const panes = await listPanes(session);
+    const win = panes.find((p) => p.paneId === a.paneId)?.windowId;
+    expect(win).toBeDefined();
+    expect(panes.find((p) => p.paneId === b.paneId)?.windowId).toBe(win);
   });
 
   it("agents without a shared tab each get their own window", async () => {
-    await spawnAgent(db, {
+    const a = await spawnAgent(db, {
       name: "alice",
       workstream,
       cli: "sh",
       command: SH_COMMAND,
     });
-    await spawnAgent(db, {
+    const b = await spawnAgent(db, {
       name: "bob",
       workstream,
       cli: "sh",
       command: SH_COMMAND,
     });
 
-    const { listWindows } = await import("../src/tmux.js");
-    const windows = await listWindows(session);
-    const names = windows.map((w) => w.name).sort();
-    expect(names).toContain("alice");
-    expect(names).toContain("bob");
+    const { listPanes } = await import("../src/tmux.js");
+    const panes = await listPanes(session);
+    const win = (id: string) => panes.find((p) => p.paneId === id)?.windowId;
+    expect(win(a.paneId)).toBeDefined();
+    expect(win(b.paneId)).toBeDefined();
+    expect(win(a.paneId)).not.toBe(win(b.paneId));
   });
 
   it("readAgent returns scrollback (echoed marker visible)", async () => {
@@ -144,7 +135,7 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
       cli: "sh",
       command: `sh -c 'echo ${marker}; while true; do sleep 60; done'`,
     });
-    await pollUntil(() => capturePane(a.paneId).then((out) => out.includes(marker)), {
+    await pollUntil(() => capture(a.paneId).then((out) => out.includes(marker)), {
       description: "spawned pane scrollback contains echo marker",
     });
     const out = await readAgent(db, "alice", { workstream });

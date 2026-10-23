@@ -19,10 +19,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { insertAgent, readAgent, refreshAgentTitle, sendToAgent } from "../src/agents.js";
+import { getAgent, insertAgent, readAgent, sendToAgent, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { NoMultiplexerError, resetMux, setMuxForTests } from "../src/mux.js";
+import { activeMux, NoMultiplexerError, resetMux, setMuxForTests } from "../src/mux.js";
 import { reconcile } from "../src/reconcile.js";
+import { resolveWorkerIdentity } from "../src/tasks/claim.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream, listWorkstreams, summarizeWorkstream } from "../src/workstream.js";
 import { installUnreachableMux } from "./_mux.js";
@@ -57,9 +58,18 @@ function seedAgent(workstream: string, name = "worker-1"): void {
 }
 
 describe("best-effort call sites degrade when no mux is reachable", () => {
-  it("refreshAgentTitle swallows it — pane titles are decorative", async () => {
-    seedAgent("alpha");
-    await expect(refreshAgentTitle(db, "worker-1", "alpha")).resolves.toBeUndefined();
+  it("resolveWorkerIdentity never touches the mux: $MU_AGENT_NAME or nothing", async () => {
+    const key = "MU_AGENT_NAME";
+    const saved = process.env[key];
+    delete process.env[key];
+    try {
+      expect(await resolveWorkerIdentity()).toBeUndefined();
+      process.env[key] = "worker-1";
+      expect(await resolveWorkerIdentity()).toBe("worker-1");
+    } finally {
+      if (saved === undefined) delete process.env[key];
+      else process.env[key] = saved;
+    }
   });
 
   it("summarizeWorkstream still answers, reporting the session as not alive", async () => {
@@ -79,6 +89,26 @@ describe("best-effort call sites degrade when no mux is reachable", () => {
 });
 
 describe("load-bearing call sites propagate NoMultiplexerError", () => {
+  it("spawnAgent propagates it and rolls back its row — a spawn that reaches no pane failed", async () => {
+    ensureWorkstream(db, "alpha");
+    await expect(spawnAgent(db, { name: "worker-1", workstream: "alpha" })).rejects.toBeInstanceOf(
+      NoMultiplexerError,
+    );
+    expect(getAgent(db, "worker-1", "alpha")).toBeUndefined();
+  });
+
+  it("ensureSession and killSession propagate it", async () => {
+    const mux = await activeMux();
+    await expect(mux.ensureSession("mu-alpha")).rejects.toBeInstanceOf(NoMultiplexerError);
+    await expect(mux.killSession("mu-alpha")).rejects.toBeInstanceOf(NoMultiplexerError);
+  });
+
+  it("killPane and capture propagate it", async () => {
+    const mux = await activeMux();
+    await expect(mux.killPane("%1")).rejects.toBeInstanceOf(NoMultiplexerError);
+    await expect(mux.capture("%1")).rejects.toBeInstanceOf(NoMultiplexerError);
+  });
+
   it("sendToAgent throws — a send that reaches no pane is a failed send", async () => {
     // Only herdr has sendToPane; a non-pi agent's send is the mux-load-bearing one.
     ensureWorkstream(db, "alpha");

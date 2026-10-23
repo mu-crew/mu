@@ -217,7 +217,7 @@ describe("readAgentStates", () => {
       ...tmuxBackend,
       name: "herdr",
       paneStatus: async () => "needs_permission",
-      paneExists: async () => true,
+      paneAlive: async () => true,
     };
     setMuxForTests(backend);
 
@@ -234,7 +234,7 @@ describe("readAgentStates", () => {
       ...tmuxBackend,
       name: "herdr",
       paneStatus: async () => undefined,
-      paneExists: async () => false,
+      paneAlive: async () => false,
     };
     setMuxForTests(backend);
 

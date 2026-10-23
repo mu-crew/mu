@@ -1,5 +1,5 @@
 // Tests for src/reconcile.ts. Uses a real SQLite DB plus a mocked tmux
-// executor so we can drive listPanesInSession + capturePane responses
+// executor so we can drive listPanes + capture responses
 // deterministically.
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -23,7 +23,6 @@ import {
 interface FakePane {
   windowId: string;
   paneId: string;
-  title: string;
   command: string;
   /** Scrollback the capture-pane mock will return. */
   scrollback?: string;
@@ -38,9 +37,7 @@ function mockTmux(panes: FakePane[]): { calls: string[][]; executor: TmuxExecuto
     const verb = args[0];
 
     if (verb === "list-panes" && args[1] === "-s") {
-      const stdout = panes
-        .map((p) => `${p.windowId}\t${p.paneId}\t${p.title}\t${p.command}`)
-        .join("\n");
+      const stdout = panes.map((p) => `${p.windowId}\t${p.paneId}\t${p.command}`).join("\n");
       return ok(stdout);
     }
 
@@ -164,7 +161,7 @@ describe("reconcile — pruning ghost rows", () => {
   it("DB row with matching pane → NOT pruned", async () => {
     insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
     const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
+      { windowId: "@1", paneId: "%15", command: "pi", scrollback: BUSY_SCROLLBACK },
     ]);
     setTmuxExecutor(executor);
     const report = await reconcile(db, { workstream: "auth" });
@@ -177,7 +174,7 @@ describe("reconcile — pruning ghost rows", () => {
     insertAgent(db, { name: "dead1", workstream: "auth", paneId: "%99" });
     insertAgent(db, { name: "dead2", workstream: "auth", paneId: "%100" });
     const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%1", title: "alive", command: "pi", scrollback: IDLE_SCROLLBACK },
+      { windowId: "@1", paneId: "%1", command: "pi", scrollback: IDLE_SCROLLBACK },
     ]);
     setTmuxExecutor(executor);
     const report = await reconcile(db, { workstream: "auth" });
@@ -206,37 +203,12 @@ describe("reconcile — pruning ghost rows", () => {
 
 // ─── Step 3: surface orphans ───────────────────────────────────────────
 
-describe("reconcile — title refresh", () => {
-  it("full mode skips select-pane when the pane title already matches", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
-    const { executor, calls } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi" },
-    ]);
-    setTmuxExecutor(executor);
-    await reconcile(db, { workstream: "auth" });
-    expect(calls.some((c) => c[0] === "select-pane")).toBe(false);
-  });
-
-  it("full mode retitles once when the pane title differs", async () => {
-    insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
-    const { executor, calls } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "stale", command: "pi" },
-    ]);
-    setTmuxExecutor(executor);
-    await reconcile(db, { workstream: "auth" });
-    expect(calls.filter((c) => c[0] === "select-pane")).toEqual([
-      ["select-pane", "-t", "%15", "-T", "alice"],
-    ]);
-  });
-});
-
 describe("reconcile — orphan surfacing", () => {
   it("pi pane with no DB row → surfaced as orphan", async () => {
     const { executor } = mockTmux([
       {
         windowId: "@1",
         paneId: "%42",
-        title: "stranger",
         command: "pi",
         scrollback: IDLE_SCROLLBACK,
       },
@@ -246,15 +218,14 @@ describe("reconcile — orphan surfacing", () => {
     expect(report.orphans).toHaveLength(1);
     expect(report.orphans[0]).toMatchObject({
       paneId: "%42",
-      title: "stranger",
       command: "pi",
     });
   });
 
   it("claude / codex panes with no DB row → also surfaced as orphans", async () => {
     const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%1", title: "rev", command: "claude", scrollback: "" },
-      { windowId: "@2", paneId: "%2", title: "aud", command: "codex", scrollback: "" },
+      { windowId: "@1", paneId: "%1", command: "claude", scrollback: "" },
+      { windowId: "@2", paneId: "%2", command: "codex", scrollback: "" },
     ]);
     setTmuxExecutor(executor);
     const report = await reconcile(db, { workstream: "auth" });
@@ -263,7 +234,7 @@ describe("reconcile — orphan surfacing", () => {
 
   it("bash pane with no DB row → NOT an orphan", async () => {
     const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%99", title: "shell", command: "bash", scrollback: "$ " },
+      { windowId: "@1", paneId: "%99", command: "bash", scrollback: "$ " },
     ]);
     setTmuxExecutor(executor);
     const report = await reconcile(db, { workstream: "auth" });
@@ -273,7 +244,7 @@ describe("reconcile — orphan surfacing", () => {
   it("registered pi pane → NOT surfaced (it's already an agent)", async () => {
     insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
     const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
+      { windowId: "@1", paneId: "%15", command: "pi", scrollback: BUSY_SCROLLBACK },
     ]);
     setTmuxExecutor(executor);
     const report = await reconcile(db, { workstream: "auth" });
@@ -283,9 +254,9 @@ describe("reconcile — orphan surfacing", () => {
   it("registered + orphan + bash mixed: only orphan agent panes surface", async () => {
     insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
     const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
-      { windowId: "@2", paneId: "%42", title: "stranger", command: "pi", scrollback: "" },
-      { windowId: "@3", paneId: "%99", title: "shell", command: "bash", scrollback: "" },
+      { windowId: "@1", paneId: "%15", command: "pi", scrollback: BUSY_SCROLLBACK },
+      { windowId: "@2", paneId: "%42", command: "pi", scrollback: "" },
+      { windowId: "@3", paneId: "%99", command: "bash", scrollback: "" },
     ]);
     setTmuxExecutor(executor);
     const report = await reconcile(db, { workstream: "auth" });
@@ -305,19 +276,18 @@ describe("reconcile — combined scenarios", () => {
 
     const { executor } = mockTmux([
       // alice: was spawning, scrollback shows busy → flip
-      { windowId: "@1", paneId: "%1", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
+      { windowId: "@1", paneId: "%1", command: "pi", scrollback: BUSY_SCROLLBACK },
       // bob: was busy, scrollback shows idle → flip to needs_input
-      { windowId: "@1", paneId: "%2", title: "bob", command: "pi", scrollback: IDLE_SCROLLBACK },
+      { windowId: "@1", paneId: "%2", command: "pi", scrollback: IDLE_SCROLLBACK },
       // orphan pi pane
       {
         windowId: "@2",
         paneId: "%50",
-        title: "stranger",
         command: "pi",
         scrollback: IDLE_SCROLLBACK,
       },
       // unrelated bash pane (not an orphan)
-      { windowId: "@3", paneId: "%80", title: "shell", command: "bash", scrollback: "" },
+      { windowId: "@3", paneId: "%80", command: "bash", scrollback: "" },
     ]);
     setTmuxExecutor(executor);
 
@@ -335,7 +305,7 @@ describe("reconcile — combined scenarios", () => {
   it("repeated reconcile is idempotent when nothing has changed", async () => {
     insertAgent(db, { name: "alice", workstream: "auth", paneId: "%15" });
     const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%15", title: "alice", command: "pi", scrollback: BUSY_SCROLLBACK },
+      { windowId: "@1", paneId: "%15", command: "pi", scrollback: BUSY_SCROLLBACK },
     ]);
     setTmuxExecutor(executor);
 
@@ -400,9 +370,7 @@ describe("reconcile — mode: 'report-only' does not mutate (snap_undo_reconcile
 
   it("orphan-surface still runs in report-only mode", async () => {
     // No agents in DB; one pi pane exists in tmux.
-    const { executor } = mockTmux([
-      { windowId: "@1", paneId: "%42", title: "orphan-1", command: "pi" },
-    ]);
+    const { executor } = mockTmux([{ windowId: "@1", paneId: "%42", command: "pi" }]);
     setTmuxExecutor(executor);
 
     const report = await reconcile(db, { workstream: "auth", mode: "report-only" });
