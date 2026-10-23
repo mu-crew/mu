@@ -548,8 +548,8 @@ export function isValidAgentName(name: string): boolean {
  * Send text to an agent and submit it. A pi agent gets it through its
  * control socket (AgentCtlUnreachableError when that does not answer —
  * never a silent paste), `/new` / `/reload` / `/compact` included; a
- * non-pi CLI or `via: "mux"` goes through the mux paste path. See
- * src/agents/transport.ts.
+ * non-pi CLI gets one atomic herdr `agent prompt`; on tmux it is refused
+ * (AgentSendUnsupportedError). See src/agents/transport.ts.
  */
 export async function sendToAgent(
   db: Db,

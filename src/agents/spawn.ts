@@ -219,7 +219,7 @@ export interface SpawnAgentOptions {
   workstream: string;
   /** Defaults to "pi". Any CLI is accepted: pi is driven over its control
    *  socket; others run `MU_<CLI>_COMMAND` (or the cli name) and get
-   *  text by mux paste. */
+   *  text by herdr `agent prompt` (a send to them on tmux is refused). */
   cli?: string;
   /** The actual command to run in the pane. Defaults to the cli value. */
   command?: string;
