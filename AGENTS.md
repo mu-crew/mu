@@ -33,6 +33,23 @@ npm run test:stress      # pre-release stability gate
 aliased to 6.x on purpose: `tsup --dts` needs the programmatic API that
 TS 7.0 lacks. Revisit at TS 7.1.
 
+## Gates
+
+Measured 2026-10-23 on linuxpc (16 cores, node 26, warm cache).
+
+| Gate | Command | Budget | Today |
+|---|---|---|---|
+| fast | `npm run typecheck && npm run lint && npm run test:fast` | 30 s | ~16 s |
+| slow | `npm run build && npm run test` | 5 min | ~3 min |
+| targeted slow | `npm run build && npx vitest run <files>` | — | — |
+
+Workers run fast while iterating, then targeted slow for the changed area,
+and fast on the final commit. The orchestrator runs slow once per merged
+batch. Record gates per
+[test-health](skills/mu/recipes/test-health.md#gate-contract).
+`test/tui-sync-worker.integration.test.ts` needs `dist/`, hence build
+first.
+
 ## Code style
 
 - Strict TypeScript with `noUncheckedIndexedAccess`, ESM only. Use
@@ -73,10 +90,13 @@ TS 7.0 lacks. Revisit at TS 7.1.
   `{ path }`.
 - `test/_setup.ts` clears inherited `MU_*` vars except
   `MU_TMUX_SOCKET`. Opt in per test with `withEnv()` from `test/_env.ts`.
-- `test/_global-teardown.ts` kills every `mu-*` tmux session on the
-  default socket that has no workstream in your real DB. It skips the
+- Tests use temp DBs. `test/_global-teardown.ts` only reads the real DB
+  to decide which sessions to sweep: it kills every `mu-*` tmux session
+  on the default socket that has no workstream there, and skips the
   sweep when that DB is missing or unreadable.
-- Workers run `npm run test` concurrently. A test that fails
+- Workers run fast while iterating and slow for their changed area (see
+  [Gates](#gates)); the orchestrator runs the full slow gate once per
+  merged batch. Tests may run concurrently across workers. A test that fails
   under load but passes alone is a test-infra concurrency bug (shared
   `/tmp`, sockets, leaked subprocesses). One that also fails alone is a
   real bug.
@@ -181,7 +201,7 @@ Follow [skills/mu/recipes/orchestrator-loop.md](skills/mu/recipes/orchestrator-l
   Resolve source conflicts by hand, never with `--ours` or `--theirs`.
 - Fix a worker's bug in a separate commit after the cherry-pick. Do
   not amend it.
-- Gate the merged tree with the full gate below plus
+- Gate the merged tree with the slow gate (see [Gates](#gates)) plus
   `node dist/cli.js --help`.
 - The installed `mu` may be older than the branch build. Confirm a
   worker received its brief (`mu agent read <w> -n 3`).
@@ -226,9 +246,15 @@ documenting" is not a reason.
 
 ## When you're done
 
+Run the fast gate, then the slow gate for your changed area (see
+[Gates](#gates)):
+
 ```bash
-npm run typecheck && npm run lint && npm run test:fast && npm run test && npm run build
+npm run typecheck && npm run lint && npm run test:fast
+npm run build && npx vitest run <files>
 ```
+
+The orchestrator runs `npm run build && npm run test` on each merged batch.
 
 Then check that VOCABULARY, ARCHITECTURE, and CHANGELOG reflect the
 change.
