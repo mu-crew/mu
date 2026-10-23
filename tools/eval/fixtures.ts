@@ -67,6 +67,7 @@ SQLITE() { sqlite3 -readonly -cmd ".timeout 5000" "$DB" "$1"; }
 T=$(SQLITE "SELECT t.local_id FROM tasks t JOIN agents a ON a.id=t.owner_id JOIN workstreams w ON w.id=t.workstream_id WHERE a.name='$MU_AGENT_NAME' AND w.name='$MU_WORKSTREAM' AND t.status='IN_PROGRESS' LIMIT 1")
 if [ -z "$T" ]; then
   n=$(grep -oE 'claim-[0-9]+' "$W/last-prompt.$AGENT" 2>/dev/null | head -n1 | cut -d- -f2)
+  sleep "$(cat "$W/delegate-delay" 2>/dev/null || echo 0)"
   if [ -n "$n" ] && [ -f "$W/answers/$n.txt" ]; then
     cat "$W/answers/$n.txt"
   else
@@ -157,6 +158,11 @@ export async function workerTask(
   if (opts.sh !== undefined) write(join(dir, `${id}.sh`), `${opts.sh}\n`);
   if (opts.dieOnce) write(join(dir, `${id}.die-once`), "");
   if (opts.errorOnce) write(join(dir, `${id}.error-once`), "");
+}
+
+/** Seconds every delegate holds its answer, so a delegate cap stays saturated while the AUT issues calls. */
+export async function delegateDelay(sb: Sandbox, seconds: number): Promise<void> {
+  write(join(sb.workerDir, "delegate-delay"), `${seconds}\n`);
 }
 
 export async function delegateAnswer(sb: Sandbox, n: number, text: string): Promise<void> {
