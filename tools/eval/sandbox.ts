@@ -56,8 +56,13 @@ export function resolveRealTmux(pathEnv: string | undefined = process.env.PATH):
   );
 }
 
-/** tmux resolved once at import, from the caller's PATH, before any sandbox PATH exists. */
-export const REAL_TMUX: string = resolveRealTmux();
+let realTmuxPath: string | undefined;
+
+/** tmux resolved on first use (never at import, so tmux-free tests can import this file), from the caller's PATH, and cached. Throws when absent. */
+export function realTmux(): string {
+  realTmuxPath ??= resolveRealTmux();
+  return realTmuxPath;
+}
 
 const KEEP = new Set(["PATH", "TERM", "LANG", "LC_ALL", "USER", "SHELL"]);
 
@@ -156,7 +161,7 @@ let handlersInstalled = false;
 /** Kill the server behind a socket path. Always -S <path under a sandbox>, never the default. */
 function killServer(socketPath: string): void {
   try {
-    execFileSync(REAL_TMUX, ["-S", socketPath, "kill-server"], { stdio: "ignore" });
+    execFileSync(realTmux(), ["-S", socketPath, "kill-server"], { stdio: "ignore" });
   } catch {
     // no server on that socket: fine
   }
@@ -217,6 +222,7 @@ export async function createSandbox(
   surface: Surface,
   opts: { env?: Record<string, string> } = {},
 ): Promise<Sandbox> {
+  const tmuxBin = realTmux(); // fail before creating anything on disk
   const id = `mu-eval-${process.pid}-${Date.now()}-${randomBytes(3).toString("hex")}`;
   const dir = join(tmpdir(), id);
   const tmuxSocket = id;
@@ -248,7 +254,7 @@ export async function createSandbox(
 
   // Bare tmux from the AUT or a worker joins the run's private server (an explicit later -L/-S
   // still wins, but TMUX_TMPDIR keeps even that inside the sandbox).
-  writeShim(join(binDir, "tmux"), `exec ${JSON.stringify(REAL_TMUX)} -L ${tmuxSocket} "$@"`);
+  writeShim(join(binDir, "tmux"), `exec ${JSON.stringify(tmuxBin)} -L ${tmuxSocket} "$@"`);
 
   const sb: Sandbox = {
     dir,
