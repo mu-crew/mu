@@ -79,15 +79,12 @@ pi agent's `--command`. mu never reads them back.
 | `PI_CODING_AGENT_DIR` | Read only. pi's agent dir, checked for a linked murmur extension. | `~/.pi/agent` |
 | `MU_EXTENSION_ENTRY` | Test only. Built extension the `mu link pi` shim imports. | `dist/extension/mu-pi.js` |
 
-## Output and TUI
+## Output
 
 | Name | Effect | Default |
 | --- | --- | --- |
 | `NO_COLOR` | Any value turns colour off; wins over everything. | unset |
 | `MU_FORCE_COLOR` | Truthy forces colour on. `""`, `0`, and `false` opt out. Checked before `FORCE_COLOR`. | unset |
-| `MU_NO_TUI` | `1` makes bare `mu` print help instead of opening the TUI. | unset |
-| `MU_TUI_DEBUG_MOUSE` | `1` logs mouse hit-tests to stderr. | unset |
-| `NODE_ENV` | Unset: the TUI loads React's production build. Set it (e.g. `development`) to get React's dev build and warnings. | unset |
 
 ## Tests
 

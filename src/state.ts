@@ -1,7 +1,7 @@
-// SDK seam for `mu state` (static) and the interactive TUI.
+// SDK seam for `mu state` (static) and the later dashboard.
 //
-// Both renderers (the legacy cli-table3-based static fallback in
-// src/cli/state.ts and the new ink-based TUI in src/cli/tui/) consume
+// Every renderer (the cli-table3-based static card in
+// src/cli/state.ts, and the dashboard) consumes
 // the same WorkstreamSnapshot. Pure data + a few small derivation
 // helpers — no rendering. See design_sdk_seam in workstream `tui` for
 // the rationale (`mu task notes design_sdk_seam -w tui`).

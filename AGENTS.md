@@ -47,7 +47,7 @@ Workers run fast while iterating, then targeted slow for the changed area,
 and fast on the final commit. The orchestrator runs fast + slow once per
 merged batch (`npm run test` excludes lint and typecheck). Record gates per
 [test-health](skills/mu/recipes/test-health.md#gate-contract).
-`test/tui-sync-worker.integration.test.ts` needs `dist/`, hence build
+`test/spawn-parallel-race.integration.test.ts` needs `dist/`, hence build
 first.
 
 ## Code style

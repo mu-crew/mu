@@ -27,23 +27,19 @@ import { wireDoctorCommand } from "./cli/doctor.js";
 import {
   emitParseError,
   findCommandForArgv,
-  handle,
   NameAmbiguousError,
-  TUI_HANDLE_OPTS,
   UsageError,
 } from "./cli/handle.js";
 import { wireLinkCommand } from "./cli/link.js";
 import { wireLogCommand } from "./cli/log.js";
 import { wireRebuildCommand } from "./cli/rebuild.js";
 import { wireSqlCommand } from "./cli/sql.js";
-import { printBareNoWorkstreamsHint, wireStateCommands } from "./cli/state.js";
+import { wireStateCommands } from "./cli/state.js";
 import { wireSyncCommand } from "./cli/sync.js";
 import { wireTaskCommands } from "./cli/tasks.js";
-import { resolveInitialTab } from "./cli/tui-launch-focus.js";
-import { importTui } from "./cli/tui-load.js";
 import { wireWorkspaceCommands } from "./cli/workspace.js";
 import { wireWorkstreamCommands } from "./cli/workstream.js";
-import { type Db, WorkstreamNotFoundError } from "./db.js";
+import type { Db } from "./db.js";
 import { isTaskSortKey, TASK_SORT_KEYS, type TaskSortKey } from "./tasks/sort.js";
 import { TASK_SUBSTATES, type TaskSubstate } from "./tasks/status.js";
 import {
@@ -53,7 +49,7 @@ import {
   type TaskRow,
   type TaskStatus,
 } from "./tasks.js";
-import { listWorkstreams, resolveMuxSessionWorkstreamName } from "./workstream.js";
+import { resolveMuxSessionWorkstreamName } from "./workstream.js";
 
 // ─── Re-exports for downstream cli/* modules ──────────────────────────
 //
@@ -585,9 +581,7 @@ export const parseLines = parseNonNegativeInt;
 // optsWithGlobals() verbs also see the root array and funnel it through
 // normalizeInheritedWorkstream.
 //
-// Bare `mu` takes only the root `-w` / `--json` flags. In a TTY it
-// loads every workstream into the TUI; in non-TTY / --json / MU_NO_TUI
-// paths it prints help for script-friendly behaviour.
+// Bare `mu` takes only the root `-w` / `--json` flags and prints help.
 
 // Reusable workstream flag declaration. Each subcommand that needs it
 // gets its own copy via `.option(...WORKSTREAM_OPT)` so there is no
@@ -721,40 +715,6 @@ export function emitJsonCollection<T>(items: readonly T[]): void {
   emitJson({ items, count: items.length });
 }
 
-async function cmdBareTui(
-  db: Db,
-  program: Command,
-  requestedWorkstreams?: readonly string[],
-): Promise<void> {
-  const workstreams = await listWorkstreams(db);
-  const requested = parseCsvFlag(requestedWorkstreams, "-w/--workstream");
-  if (workstreams.length === 0 && requested.length === 0) {
-    program.outputHelp();
-    printBareNoWorkstreamsHint();
-    return;
-  }
-
-  const allNames = workstreams.map((w) => w.name);
-  const names = requested.length > 0 ? Array.from(new Set(requested)) : allNames;
-  for (const name of names) {
-    if (!allNames.includes(name)) throw new WorkstreamNotFoundError(name);
-  }
-  const initialActive = await resolveInitialTab(names, db);
-  try {
-    const { runTui } = await importTui();
-    await runTui(db, { workstreams: names, initialActive });
-  } catch (err) {
-    // If stdout is a TTY but stdin is not, ink can fail before rendering.
-    // Degrade to the non-TTY path instead of crashing a piped/scripted call.
-    // For an actual interactive stdin, surface the TUI error normally.
-    if (process.stdin.isTTY !== true) {
-      program.outputHelp();
-      return;
-    }
-    throw err;
-  }
-}
-
 /**
  * Read the package version from the shipped package.json. Works for
  * both source mode (src/cli.ts → ../package.json) and bundled mode
@@ -803,10 +763,7 @@ export function buildProgram(): Command {
     // options before a subcommand bind to the program; options after
     // bind to the subcommand. Subcommands inherit it automatically.
     .enablePositionalOptions()
-    // Default action when no subcommand is given. Human path (stdout
-    // attached to a TTY) opens the interactive TUI across every
-    // workstream; non-TTY / MU_NO_TUI / --json keeps the CLI-help path
-    // so scripts and agents do not accidentally enter ink.
+    // Default action when no subcommand is given: print help (TTY or not).
     //
     // NOT variadic (`<names...>`): a variadic root flag swallowed the
     // verb too, so `mu -w ws task list` parsed as workstreams
@@ -818,14 +775,8 @@ export function buildProgram(): Command {
     )
     .option(...JSON_OPT)
     .hook("preAction", forwardRootWorkstream)
-    .action(function () {
-      const command = this as Command;
-      const opts = command.opts() as { workstream?: string[]; json?: boolean };
-      if (process.stdout.isTTY !== true || process.env.MU_NO_TUI === "1" || opts.json === true) {
-        program.outputHelp();
-        return;
-      }
-      return handle((db) => cmdBareTui(db, program, opts.workstream), command, TUI_HANDLE_OPTS)();
+    .action(() => {
+      program.outputHelp();
     });
 
   wireWorkstreamCommands(program);

@@ -180,6 +180,4 @@ mu has not freed. That protects work you have not merged.
 
 - [Dispatch work to a worker](dispatch.md) covers more than one
   worker and the `--fresh`, `--interrupt`, `--steer`, and plain send choices.
-- [Use the TUI dashboard](tui.md): run bare `mu` to see every
-  workstream at once.
 - [Clean up](cleanup.md) when the workstream is finished.

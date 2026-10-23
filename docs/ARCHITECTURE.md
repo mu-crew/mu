@@ -65,11 +65,7 @@ JSONL segments before the verb and flushes its own ops after it,
 through `handle()`. There is no daemon and no network code:
 [architecture/sync.md](architecture/sync.md).
 
-**The TUI.** Bare `mu` on a TTY opens a read-only ink dashboard of 10
-cards with drill-down popups. It polls SQL every second and
-subprocesses every 10 seconds, yanks `mu` commands instead of running
-them, and is the only code that imports ink:
-[architecture/tui.md](architecture/tui.md).
+**Dashboard.** Removed in mu-next; rewritten fresh in a later unit.
 
 **CLI and SDK surface.** Each operation is a typed SDK function plus a
 thin Commander wrapper. Public functions take operator-facing names and
@@ -164,7 +160,6 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/vcs/*.ts` | `VcsBackend` with git, jj, sl and none; detection `jj` → `sl` → `git` → none |
 | `src/workspace/*.ts` | per-agent workspace registry: CRUD, staleness and dirty decoration, orphans |
 | `src/staleness.ts` | `WORKSPACE_STALE_THRESHOLD` and `isWorkspaceStale` |
-| `src/project-root.ts` | `detectProjectRoot` for the TUI launch ladder |
 | `src/state.ts` | `mu state` seam: fast SQL tier, slow subprocess tier, merge; parses `REMOTE:` notes |
 
 ### CLI, output and packaging
@@ -179,10 +174,6 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/cli/dispatch-hints.ts` | dispatch-time `Next:` hints for pi agents (`--fresh`, `--interrupt`, abort) |
 | `src/cli/stdin.ts` | `-` as a text argument: reads note / send text from stdin (heredoc prose) |
 | `src/cli/agents-remote.ts` | `mu agent remote-env`: prints the ssh forward and env, runs nothing |
-| `src/cli/tui-launch-focus.ts` | initial-tab focus ladder for bare `mu` and `mu state --tui` |
-| `src/cli/tui-load.ts` | lazy `import()` of the TUI with `NODE_ENV` defaulted to `production` (React prod build) |
-| `src/cli/tui/` | the ink TUI; the only place ink and react are imported |
-| `src/cli/tui/sync-worker.ts` | worker_thread (`dist/tui-sync-worker.js`) running the TUI's slow-tick sync pass off ink's thread |
 | `src/output.ts`, `src/shell-quote.ts` | `printNextSteps` / `errorNextSteps`; POSIX quoting for hints |
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
 | `src/index.ts` | SDK entry point |

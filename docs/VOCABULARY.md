@@ -153,7 +153,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **operation** | A canonical mu verb, each a thin wrapper over a typed SDK function. | "command", "action" |
 | **qualified ref** | `<workstream>/<name>`, used instead of `-w`. | "prefixed name" |
 | **DB** / **registry** | `<state-dir>/mu.db` and its tables. | "store" |
-| **TUI** | The read-only ink dashboard: bare `mu` in a TTY, or `mu state --tui`. | "GUI" |
+| **TUI** | The read-only ink dashboard. The 3.x card TUI is removed in mu-next; bare `mu` prints help until the rewrite lands. | "GUI" |
 | **dashboard** | The TUI's grid of cards. | "home screen" |
 | **card** | A dashboard tile with a toggle digit 0-9. | "panel", "section" |
 | **popup** | A card's full-screen drill-down (`Shift+digit`). One at a time. | "modal", "dialog" |

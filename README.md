@@ -4,11 +4,6 @@
 parallel.** Agents run in multiplexer panes you can attach to. Work is a
 task DAG in SQLite. Each agent gets its own VCS workspace.
 
-![mu dashboard](docs/img/tui-dashboard.png)
-
-*Bare `mu` opens a read-only dashboard: agents, tracks, ready,
-in-progress, and blocked tasks, the log tail, workspaces, and doctor.*
-
 - **Parallel work that does not collide.** Per-agent workspaces (jj
   workspaces, sl shares, or git worktrees) and a task DAG with
   `blocks` edges keep agents out of each other's way.
@@ -64,7 +59,6 @@ mu agent spawn worker-1 --workspace
 mu task claim design_auth --for worker-1
 mu agent send worker-1 --fresh 'Do task design_auth. Close it with evidence.'
 mu task wait design_auth --first --on-stall exit   # exit 7 = worker needs you
-mu                                                  # dashboard
 mu workstream teardown --yes                        # without --yes: dry run
 ```
 
@@ -155,7 +149,7 @@ and [ROADMAP § Anti-feature pledges](docs/ROADMAP.md#anti-feature-pledges).
 - [Getting started](docs/guide/getting-started.md): the first
   workstream, end to end. Start here.
 - [User guide](docs/guide/README.md): how-tos for dispatch, remote
-  workers, sync, recovery, and the dashboard.
+  workers, sync, and recovery.
 - [skills/mu/SKILL.md](skills/mu/SKILL.md): what an orchestrating
   agent reads. [skills/mu/recipes/](skills/mu/recipes/) holds the
   recipes it points to, such as

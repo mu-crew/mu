@@ -174,7 +174,7 @@ export function findDormantWorkstreams(
 
 /** `95d` / `3d`. Doctor rows are narrow and the unit is always days
  *  here, so this stays a suffix rather than growing a duration
- *  formatter (src/cli/tui/format-helpers.ts owns that job for the TUI). */
+ *  formatter. */
 function days(n: number): string {
   return `${n}d`;
 }

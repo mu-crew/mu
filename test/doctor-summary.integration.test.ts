@@ -1,6 +1,6 @@
 // Tests for src/doctor-summary.ts (feat_card_9_doctor, workstream
-// `tui-impl`). The summary is the SDK seam consumed by the TUI's
-// slot-9 Doctor card; it slices the textual `mu doctor` checks into
+// `tui-impl`). The summary is the SDK seam consumed by the
+// dashboard's Doctor view; it slices the textual `mu doctor` checks into
 // a per-tick-cheap structured shape.
 
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -285,7 +285,7 @@ describe("loadDoctorSummary", () => {
   });
 });
 
-// These two helpers used to live in src/cli/tui/popups/doctor.tsx;
+// These two helpers used to live in the removed card TUI's Doctor popup;
 // they're pure DoctorCheck-shape utilities and moved here per
 // review_tui_doctor_remediation_lives_in_popup. Tests moved
 // alongside.

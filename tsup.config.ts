@@ -14,18 +14,14 @@ export default defineConfig([
       // dist/cli.js is the bin: src/main.ts enables the compile cache,
       // then dynamically imports src/cli.ts (its own chunk).
       cli: "src/main.ts",
-      // The TUI's sync pass runs in this worker_thread (src/cli/tui/state.ts).
-      "tui-sync-worker": "src/cli/tui/sync-worker.ts",
     },
     format: ["esm"],
     dts: { entry: { index: "src/index.ts" } }, // .d.ts only for the SDK entry, not the CLI
     // dist/extension/ belongs to the second config; both build in parallel.
     clean: ["!extension/**"],
     target: "node20",
-    // Splitting keeps dynamic imports lazy: the ink TUI lands in its own
-    // tui-*.js chunk. Without it, tsup inlines the TUI and hoists its
-    // `import "ink"` / `import "react"` to static top-level imports of
-    // cli.js, so every verb evaluated ink, react, and yoga.
+    // Splitting keeps dynamic imports lazy: src/main.ts imports src/cli.ts
+    // as its own chunk, and later lazy imports stay lazy.
     splitting: true,
     sourcemap: true,
     outDir: "dist",
@@ -37,16 +33,9 @@ export default defineConfig([
     // Bundle the pure-JS deps so a verb does not resolve and compile ~35
     // node_modules files (commander, cli-table3, string-width and their
     // transitive deps). better-sqlite3 (native) and execa stay external.
-    // ink and react are bundled too, but only the lazy tui chunk imports
-    // them (~560 ESM modules in node_modules otherwise). Nothing here
-    // hard-defines NODE_ENV: react picks its dev/prod build at runtime from
-    // process.env.NODE_ENV (see src/cli/tui-load.ts). cli-table3 and react
-    // are CJS, so bundled `require()` needs a real require in ESM output.
-    // signal-exit is bundled so ink's and restore-cursor's nested v3
-    // (default export) and mu's own v4 (named `onExit`) each resolve from
-    // their importer; left external, ink's `import signalExit from
-    // "signal-exit"` would resolve to the top-level v4 at runtime and fail.
-    noExternal: ["commander", "cli-table3", "string-width", "picocolors", "ink", "react", "signal-exit"],
+    // cli-table3 is CJS, so bundled `require()` needs a real require in
+    // ESM output (the banner below).
+    noExternal: ["commander", "cli-table3", "string-width", "picocolors", "signal-exit"],
     banner: {
       js: 'import { createRequire as __muCreateRequire } from "node:module"; const require = __muCreateRequire(import.meta.url);',
     },

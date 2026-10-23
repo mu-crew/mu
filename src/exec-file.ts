@@ -27,8 +27,8 @@ function stripFinalNewline(s: string): string {
 // (`cleanup: true`, via signal-exit); a bare execFile does not, so an orphaned
 // tmux client or murmur process would outlive mu and its timeout timer. Reuse
 // signal-exit (what execa used) so every catchable signal is covered and the
-// parent still terminates correctly next to other signal-exit users such as
-// Ink. The hook is installed only while a child is live.
+// parent still terminates correctly next to other signal-exit users. The hook
+// is installed only while a child is live.
 const live = new Set<ChildProcess>();
 let removeExitHook: (() => void) | undefined;
 

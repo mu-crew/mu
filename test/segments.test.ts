@@ -1187,7 +1187,7 @@ describe("segments", () => {
       });
     });
 
-    it("ambientFlush lockWaitMs: 0 gives up on a held lock at once (the TUI's exit flush)", async () => {
+    it("ambientFlush lockWaitMs: 0 gives up on a held lock at once", async () => {
       await seedFour();
       const stateDir = join(tempDir, "state");
       await withEnv("MU_STATE_DIR", stateDir, async () => {

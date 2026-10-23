@@ -17,6 +17,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `GroupNotFoundError` (exit 3). The SDK drops `undoGroup`, `planUndo`,
   `listRecentGroups`, `mostRecentGroup`, `resolveGroupId` and
   `priorFieldValue`.
+- The card TUI (bare `mu`, `mu state --tui`). Bare `mu` prints help until
+  the mu-next dashboard lands. Also gone: the `MU_NO_TUI` and
+  `MU_TUI_DEBUG_MOUSE` env vars, the `ink`, `react` and `react-devtools-core`
+  dependencies, the `dist/tui-sync-worker.js` bundle and
+  `src/project-root.ts` (its only caller was the TUI launch ladder).
 
 ### Fixed
 

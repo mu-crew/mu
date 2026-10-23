@@ -70,12 +70,11 @@ describe("execFileCapture parent-exit cleanup", () => {
     }
   };
 
-  // `hook` installs another signal-exit listener in the parent, as Ink does
-  // (Ink bundles signal-exit v3, a different major than ours; they share one
-  // global emitter, so this is the real interplay).
+  // `hook` installs another signal-exit listener in the parent (as a TUI
+  // library would), so we test the interplay on the shared global emitter.
   async function runParent(
     how: "SIGTERM" | "SIGINT" | "SIGHUP" | "SIGUSR2" | "exit",
-    hook: "none" | "own" | "ink" = "none",
+    hook: "none" | "own" = "none",
   ): Promise<{
     parent: { code: number | null; signal: NodeJS.Signals | null };
     childPid: number;
@@ -88,12 +87,7 @@ describe("execFileCapture parent-exit cleanup", () => {
         ? ""
         : `import { createRequire } from "node:module";
       const req = createRequire(${JSON.stringify(join(__dirname, "..", "package.json"))});
-      const exitHook = ${
-        hook === "ink"
-          ? `createRequire(req.resolve("ink")).resolve("signal-exit")`
-          : `req.resolve("signal-exit")`
-      };
-      const mod = req(exitHook);
+      const mod = req(req.resolve("signal-exit"));
       (mod.onExit ?? mod)(() => {});
       setInterval(() => {}, 1000);`;
     const parentScript = `
@@ -143,19 +137,17 @@ describe("execFileCapture parent-exit cleanup", () => {
     }, 15_000);
   }
 
-  // With another signal-exit listener installed (Ink's TUI), the parent must
-  // still terminate by the signal and the child must still die.
-  for (const hook of ["own", "ink"] as const) {
-    it(`kills the child and terminates the parent on SIGTERM with another signal-exit listener (${hook})`, async () => {
-      const { parent, childPid } = await runParent("SIGTERM", hook);
+  // With another signal-exit listener installed, the parent must still
+  // terminate by the signal and the child must still die.
+  it("kills the child and terminates the parent on SIGTERM with another signal-exit listener", async () => {
+    const { parent, childPid } = await runParent("SIGTERM", "own");
+    try {
+      expect(alive(childPid)).toBe(false);
+      expect(parent.signal).toBe("SIGTERM");
+    } finally {
       try {
-        expect(alive(childPid)).toBe(false);
-        expect(parent.signal).toBe("SIGTERM");
-      } finally {
-        try {
-          process.kill(childPid, "SIGKILL");
-        } catch {}
-      }
-    }, 15_000);
-  }
+        process.kill(childPid, "SIGKILL");
+      } catch {}
+    }
+  }, 15_000);
 });
