@@ -1,0 +1,14 @@
+[
+  { "calls": [{ "bash": "mu agent spawn w1 -w eval --workspace" }] },
+  { "calls": [{ "bash": "mu task claim t1 -w eval --for w1" }] },
+  { "calls": [{ "bash": "mu agent send w1 -w eval 'do t1 and close it'" }] },
+  { "calls": [{ "bash": "mu task wait t1 -w eval --timeout 120" }] },
+  {
+    "calls": [
+      {
+        "bash": "git -C \"$PWD\" cherry-pick $(git -C $(mu workspace path w1 -w eval) rev-parse HEAD)"
+      }
+    ]
+  },
+  { "text": "t1 is done and merged into main." }
+]

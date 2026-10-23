@@ -1,9 +1,22 @@
-// Eval harness CLI. Subcommands: prepare <name> <ref> | selftest [--surface <dir>].
+// Eval harness CLI. Subcommands: prepare | selftest | run | matrix | report | check (see usage below).
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  appendResult,
+  loadScenario,
+  logPath,
+  reportCommand,
+  resolveSurface,
+  runCheck,
+  runMatrix,
+  runOne,
+  scenarioIds,
+  summary,
+  timestamp,
+} from "./commands.ts";
 import type { FauxStep } from "./faux.ts";
 import { runAut } from "./runner.ts";
 import { createSandbox, FAUX_EXT, mu, sh, tmuxSocketPath } from "./sandbox.ts";
@@ -11,10 +24,28 @@ import { prepareSurface, surfaceFromDir } from "./surface.ts";
 import type { Sandbox, Scenario, Surface } from "./types.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const DEFAULT_PROVIDER_EXT = join(homedir(), ".pi", "agent", "extensions", "modelbridge.ts");
+const USAGE = `usage: node tools/eval/main.ts <command>
+  prepare <name> <ref>
+  selftest [--surface <dir>]
+  run <scenario> --surface <dir|name> --model <m> [--provider-ext p] [--keep] [--out f]
+  matrix --surface <dir|name>... --model <m>... [--scenarios a,b] [--reps 1] [--concurrency 4] [--budget-tokens N] --out <results.jsonl>
+  report <results.jsonl> [--out file.md]
+  check [--surface <dir>] [--scenarios a,b] [--family 3x|next] [--include-underscore] [--no-preflight] [--verbose]`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
+}
+
+/** Every value of a repeatable flag (--model a --model b), each also split on commas. */
+function flagAll(args: string[], name: string): string[] {
+  const out: string[] = [];
+  args.forEach((a, i) => {
+    const v = args[i + 1];
+    if (a === name && v !== undefined) out.push(...v.split(",").filter((x) => x !== ""));
+  });
+  return out;
 }
 
 let failures = 0;
@@ -185,10 +216,76 @@ async function main(argv: string[]): Promise<number> {
       const root = flag(rest, "--surface") ?? REPO_ROOT;
       return selftest(surfaceFromDir("checkout", root));
     }
+    case "run": {
+      const [id] = rest;
+      const surfaceArg = flag(rest, "--surface");
+      const model = flag(rest, "--model");
+      if (!id || !surfaceArg || !model) throw new Error(USAGE);
+      const surface = resolveSurface(surfaceArg);
+      const scenario = await loadScenario(id);
+      const r = await runOne({
+        surface,
+        scenario,
+        model,
+        providerExt: flag(rest, "--provider-ext") ?? DEFAULT_PROVIDER_EXT,
+        rep: 1,
+        keep: rest.includes("--keep"),
+        log: logPath(REPO_ROOT, timestamp(), {
+          scenario: id,
+          surface: surface.name,
+          model,
+          rep: 1,
+        }),
+      });
+      console.log(summary(r));
+      for (const w of r.verdict.wrong) console.log(`  wrong: ${w}`);
+      for (const d of r.verdict.destructive) console.log(`  destructive: ${d}`);
+      for (const n of r.verdict.notes) console.log(`  note: ${n}`);
+      const out = flag(rest, "--out");
+      if (out) appendResult(out, r);
+      return 0;
+    }
+    case "matrix": {
+      const surfaces = flagAll(rest, "--surface").map(resolveSurface);
+      const models = flagAll(rest, "--model");
+      const out = flag(rest, "--out");
+      if (surfaces.length === 0 || models.length === 0 || !out) throw new Error(USAGE);
+      const only = flag(rest, "--scenarios");
+      await runMatrix({
+        surfaces,
+        models,
+        scenarios: only ? only.split(",") : scenarioIds(false),
+        reps: Number(flag(rest, "--reps") ?? 1),
+        concurrency: Number(flag(rest, "--concurrency") ?? 4),
+        budgetTokens: Number(flag(rest, "--budget-tokens") ?? 42_000_000),
+        providerExt: flag(rest, "--provider-ext") ?? DEFAULT_PROVIDER_EXT,
+        out,
+        root: REPO_ROOT,
+      });
+      return 0;
+    }
+    case "report": {
+      const [file] = rest;
+      if (!file) throw new Error(USAGE);
+      reportCommand(file, flag(rest, "--out"));
+      return 0;
+    }
+    case "check": {
+      const family = flag(rest, "--family") ?? "3x";
+      if (family !== "3x" && family !== "next") throw new Error(`--family must be 3x or next`);
+      const only = flag(rest, "--scenarios");
+      return runCheck({
+        surface: surfaceFromDir("checkout", flag(rest, "--surface") ?? REPO_ROOT),
+        scenarios: only ? only.split(",") : null,
+        includeUnderscore: rest.includes("--include-underscore"),
+        family,
+        preflight: !rest.includes("--no-preflight"),
+        verbose: rest.includes("--verbose"),
+        root: REPO_ROOT,
+      });
+    }
     default:
-      console.error(
-        "usage: node tools/eval/main.ts <prepare <name> <ref> | selftest [--surface <dir>]>",
-      );
+      console.error(USAGE);
       return 2;
   }
 }
