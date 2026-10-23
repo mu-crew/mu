@@ -96,18 +96,17 @@ describe("claimTask", () => {
     });
   });
 
-  it("bare claim falls back to the pane title for adopted panes", async () => {
-    // Panes without the env injection have only the title as identity.
+  it("bare claim ignores the pane title: without $MU_AGENT_NAME there is no identity", async () => {
+    // Pane titles are not identity; nothing reads them, so the mux is
+    // never even asked.
     await withCleanIdentityEnv(async () => {
-      setTmuxExecutor(async (args) => {
-        if (args[0] === "display-message" && args.includes("#{pane_title}")) {
-          return { stdout: "bob\n", stderr: "", exitCode: 0 };
-        }
-        return { stdout: "", stderr: "unmocked", exitCode: 1 };
+      setTmuxExecutor(async () => {
+        throw new Error("identity must not call the mux");
       });
       await withEnv("TMUX_PANE", "%2", async () => {
-        const result = await claimTask(db, "auth", { workstream: "test" });
-        expect(result.ownerName).toBe("bob");
+        await expect(claimTask(db, "auth", { workstream: "test" })).rejects.toThrow(
+          /no agent name/,
+        );
       });
     });
   });
@@ -157,22 +156,15 @@ describe("claimTask", () => {
     ).rejects.toBeInstanceOf(TaskNotFoundError);
   });
 
-  it("derives agentName from currentPaneTitle when not provided", async () => {
-    const executor: TmuxExecutor = async (args) => {
-      if (args[0] === "display-message" && args.includes("#{pane_title}")) {
-        return { stdout: "alice\n", stderr: "", exitCode: 0 };
-      }
-      return { stdout: "", stderr: "unmocked", exitCode: 1 };
-    };
-    setTmuxExecutor(executor);
-    await withEnv("TMUX_PANE", "%15", async () => {
+  it("derives agentName from $MU_AGENT_NAME when not provided", async () => {
+    await withEnv("MU_AGENT_NAME", "alice", async () => {
       const result = await claimTask(db, "auth", { workstream: "test" });
       expect(result.ownerName).toBe("alice");
     });
   });
 
-  it("throws when no agent name available (no $TMUX_PANE, no opts.agentName)", async () => {
-    await withEnv("TMUX_PANE", undefined, async () => {
+  it("throws when no agent name available (no $MU_AGENT_NAME, no opts.agentName)", async () => {
+    await withCleanIdentityEnv(async () => {
       await expect(claimTask(db, "auth", { workstream: "test" })).rejects.toThrow(/no agent name/);
     });
   });
@@ -216,24 +208,19 @@ describe("claimTask", () => {
     }
   });
 
-  it("ClaimerNotRegisteredError names the actual pane id when the name came from $TMUX_PANE", async () => {
-    const executor: TmuxExecutor = async (args) => {
-      if (args[0] === "display-message" && args.includes("#{pane_title}")) {
-        return { stdout: "unregistered\n", stderr: "", exitCode: 0 };
-      }
-      return { stdout: "", stderr: "unmocked", exitCode: 1 };
-    };
-    setTmuxExecutor(executor);
-    await withEnv("TMUX_PANE", "%99", async () => {
-      try {
-        await claimTask(db, "auth", { workstream: "test" });
-        throw new Error("expected throw");
-      } catch (err) {
-        expect(err).toBeInstanceOf(ClaimerNotRegisteredError);
-        const steps = (err as ClaimerNotRegisteredError).errorNextSteps();
-        expect((err as Error).message).toContain("(pane %99)");
-        expect(steps.some((s) => s.command.includes("adopt"))).toBe(false);
-      }
+  it("ClaimerNotRegisteredError names the actual pane id when the name came from the environment", async () => {
+    await withEnv("MU_AGENT_NAME", "unregistered", async () => {
+      await withEnv("TMUX_PANE", "%99", async () => {
+        try {
+          await claimTask(db, "auth", { workstream: "test" });
+          throw new Error("expected throw");
+        } catch (err) {
+          expect(err).toBeInstanceOf(ClaimerNotRegisteredError);
+          const steps = (err as ClaimerNotRegisteredError).errorNextSteps();
+          expect((err as Error).message).toContain("(pane %99)");
+          expect(steps.some((s) => s.command.includes("adopt"))).toBe(false);
+        }
+      });
     });
   });
 
@@ -297,20 +284,11 @@ describe("claimTask", () => {
     ).rejects.toThrow(/mutually exclusive/);
   });
 
-  it("--self resolves actor from $TMUX_PANE when not explicit", async () => {
-    const executor: TmuxExecutor = async (args) => {
-      if (args[0] === "display-message" && args.includes("#{pane_title}")) {
-        return { stdout: "orchestrator-pane\n", stderr: "", exitCode: 0 };
-      }
-      return { stdout: "", stderr: "unmocked", exitCode: 1 };
-    };
-    setTmuxExecutor(executor);
+  it("--self resolves actor from $MU_AGENT_NAME when not explicit", async () => {
     // withCleanIdentityEnv strips MU_AGENT_NAME/TMUX_PANE/USER from
-    // process.env before the inner withEnv reinstates TMUX_PANE.
-    // Without it, MU_AGENT_NAME leaking from a mu-spawned host pane
-    // wins the resolveActorIdentity fallback chain.
+    // process.env before the inner withEnv reinstates MU_AGENT_NAME.
     await withCleanIdentityEnv(async () => {
-      await withEnv("TMUX_PANE", "%42", async () => {
+      await withEnv("MU_AGENT_NAME", "orchestrator-pane", async () => {
         const result = await claimTask(db, "auth", { self: true, workstream: "test" });
         expect(result.actorName).toBe("orchestrator-pane");
       });
@@ -758,18 +736,15 @@ describe("resolveActorIdentity", () => {
     });
   });
 
-  it("falls back to pane title when MU_AGENT_NAME is unset (legacy/adopted pane)", async () => {
-    const executor: TmuxExecutor = async (args) => {
-      if (args[0] === "display-message" && args.includes("#{pane_title}")) {
-        return { stdout: "legacy-pane-title\n", stderr: "", exitCode: 0 };
-      }
-      return { stdout: "", stderr: "unmocked", exitCode: 1 };
-    };
-    setTmuxExecutor(executor);
+  it("ignores the pane title when MU_AGENT_NAME is unset (adopted pane)", async () => {
+    setTmuxExecutor(async () => {
+      throw new Error("identity must not call the mux");
+    });
     await withEnv("MU_AGENT_NAME", undefined, async () => {
       await withEnv("TMUX_PANE", "%99", async () => {
-        const actor = await resolveActorIdentity();
-        expect(actor).toBe("legacy-pane-title");
+        await withEnv("USER", "martin", async () => {
+          expect(await resolveActorIdentity()).toBe("martin");
+        });
       });
     });
   });

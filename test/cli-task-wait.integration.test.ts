@@ -29,7 +29,7 @@ import { spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { setWaitSleepForTests } from "../src/tasks/wait.js";
 import { addTask, claimTask, getTask, setTaskStatus } from "../src/tasks.js";
-import { killPane, killSession, paneExists, resetTmuxExecutor } from "../src/tmux.js";
+import { killPane, killSession, paneAlive, resetTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
@@ -83,7 +83,7 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
   // tmux briefly reports a killed pane as still alive; poll until the
   // pane id has actually disappeared. Shared helper from test/_env.ts.
   async function waitForPaneGone(paneId: string): Promise<void> {
-    await pollUntil(async () => !(await paneExists(paneId)), {
+    await pollUntil(async () => !(await paneAlive(paneId)), {
       description: `pane ${paneId} gone from tmux`,
     });
   }

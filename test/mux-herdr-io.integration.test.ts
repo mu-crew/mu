@@ -16,12 +16,7 @@
 // creating a workspace in the user's real server.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  capturePane,
-  isHerdrStatusUsable,
-  resetHerdrExecutor,
-  sendToPane,
-} from "../src/mux/herdr.js";
+import { capture, isHerdrStatusUsable, resetHerdrExecutor, sendToPane } from "../src/mux/herdr.js";
 import { assertHerdrIsolated, herdrTestExec } from "./_mux.js";
 
 const SESSION = process.env.MU_HERDR_SESSION;
@@ -92,15 +87,15 @@ describe("herdr IO against a real server", () => {
     let seen = "";
     for (let i = 0; i < 20; i++) {
       await new Promise((resolve) => setTimeout(resolve, 250));
-      seen = await capturePane(paneId, { lines: 50 });
+      seen = await capture(paneId, { lines: 50 });
       if (seen.includes("mu-io-probe-42")) break;
     }
     expect(seen).toContain("mu-io-probe-42");
   }, 20_000);
 
-  it("capturePane returns plain text, not a JSON envelope", async (ctx) => {
+  it("capture returns plain text, not a JSON envelope", async (ctx) => {
     if (!ready || paneId === undefined) return ctx.skip();
-    const visible = await capturePane(paneId, { lines: 0 });
+    const visible = await capture(paneId, { lines: 0 });
     expect(typeof visible).toBe("string");
     expect(() => JSON.parse(visible)).toThrow();
   }, 20_000);

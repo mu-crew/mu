@@ -18,15 +18,13 @@ import {
   UsageError,
 } from "../cli.js";
 import type { Db } from "../db.js";
-import { activeMux } from "../mux.js";
+import { type AttachTarget, activeMux, attachShellLine, type MuxBackend } from "../mux.js";
 import { muTable, type NextStep, pc, printNextSteps } from "../output.js";
 import {
   assertWorkstreamInitable,
   ensureWorkstream,
-  ensureWorkstreamSession,
   listEmptyWorkstreams,
   listTornDownWorkstreams,
-  listUnregisteredMuxWorkstreams,
   listWorkstreams,
   summarizeWorkstream,
   teardownWorkstream,
@@ -43,15 +41,9 @@ export async function cmdInit(db: Db, name: string, opts: { json?: boolean } = {
   // without it, tmux a -t mu-<ws> lands on an agent's pane instead of
   // the orchestration shell).
   // (review_bug_workstream_init_does_not_repair_missing_mu_window)
-  const { created: sessionCreated, muWindowRepaired } = await ensureWorkstreamSession(sessionName);
+  const { created: sessionCreated, repaired: muWindowRepaired } =
+    await mux.ensureSession(sessionName);
   const sessionAlready = !sessionCreated;
-  // Always (re)apply the pane-border-status options so re-init or
-  // upgrade-from-pre-banner-mu sessions both pick up the cue. tmux
-  // set-option is idempotent. enableMuPaneBordersForSession self-checks
-  // MU_BANNER_QUIET=1 (covers this and the spawn-time decoration; see
-  // spawnAgent). Older tmux without pane-border-status support is benign
-  // here: the cue is a nice-to-have, not load-bearing. Don't fail init.
-  await mux.enableMuPaneBordersForSession(sessionName).catch(() => {});
   const created = !sessionAlready || dbCreated;
   // Naming convention (docs/reference/naming.md): <project>-<purpose>,
   // so two repos never share `auth` and `workstream list` groups by project.
@@ -59,7 +51,7 @@ export async function cmdInit(db: Db, name: string, opts: { json?: boolean } = {
     ? undefined
     : `name workstreams <project>-<purpose> (e.g. ${projectGuess() ?? "repo"}-${name}); one per effort`;
   const nextSteps: NextStep[] = [
-    { intent: "Attach the session", command: await mux.attachHint({ session: sessionName }) },
+    ...(await attachNextStep(mux, { session: sessionName })),
     {
       intent: "Plan tasks",
       command: `mu task add -w ${name} --title "..." --impact 50 --effort-days 1`,
@@ -93,6 +85,18 @@ export async function cmdInit(db: Db, name: string, opts: { json?: boolean } = {
   console.log(`Created workstream ${pc.bold(name)} (mux session ${pc.bold(sessionName)})`);
   if (nameHint && created) console.log(pc.dim(`hint: ${nameHint}`));
   printNextSteps(nextSteps);
+}
+
+/** The "Attach" next step, or none when the backend cannot resolve the
+ *  target (herdr: no such workspace): the line is a hint, never a failure. */
+async function attachNextStep(mux: MuxBackend, target: AttachTarget): Promise<NextStep[]> {
+  try {
+    return [
+      { intent: "Attach the session", command: attachShellLine(await mux.attachCommands(target)) },
+    ];
+  } catch {
+    return [];
+  }
 }
 
 /** The cwd's repo or folder name, lowercased into a workstream-legal slug. */
@@ -136,7 +140,7 @@ export async function cmdWorkstreamList(
     return;
   }
   if (summaries.length === 0) {
-    console.log(pc.dim("no workstreams found (no DB rows, no mu-* mux sessions)"));
+    console.log(pc.dim("no workstreams found"));
     return;
   }
   console.log(formatWorkstreamsTable(summaries));
@@ -327,7 +331,6 @@ async function cmdTeardownEmpty(
     }
     if (empties.length === 0) {
       console.log(pc.dim("no empty workstreams found"));
-      await printUnregisteredSkipped(db);
       return;
     }
     const table = muTable({
@@ -354,7 +357,6 @@ async function cmdTeardownEmpty(
         command: "mu workstream teardown --empty --yes",
       },
     ]);
-    await printUnregisteredSkipped(db);
     return;
   }
 
@@ -365,7 +367,6 @@ async function cmdTeardownEmpty(
       return;
     }
     console.log(pc.dim("no empty workstreams found; nothing to tear down"));
-    await printUnregisteredSkipped(db);
     return;
   }
 
@@ -427,26 +428,6 @@ async function cmdTeardownEmpty(
       },
     ]);
   }
-  await printUnregisteredSkipped(db);
-}
-
-/** Human-output note naming the live `mu-*` sessions this DB has no
- *  row for: the sweep never takes them, so say how to take one. */
-async function printUnregisteredSkipped(db: Db): Promise<void> {
-  const names = await listUnregisteredMuxWorkstreams(db);
-  if (names.length === 0) return;
-  console.log("");
-  console.log(
-    pc.dim(
-      `Skipped ${names.length} mu-* session${names.length === 1 ? "" : "s"} with no workstream row (--empty never sweeps these; they may be live): ${names.join(", ")}`,
-    ),
-  );
-  printNextSteps([
-    {
-      intent: "Tear one down after checking it is unused",
-      command: `mu workstream teardown ${names[0]} --yes`,
-    },
-  ]);
 }
 
 // ─── commander wiring ────────────────────────────────────────────────
@@ -502,7 +483,7 @@ export function wireWorkstreamCommands(program: Command): void {
 
   workstream
     .command("list")
-    .description("List every workstream on this machine (DB rows + mu-* mux sessions)")
+    .description("List every registered workstream on this machine")
     .option(
       "--torn-down",
       "instead list past teardowns from the ops log, with the op group id (`mu log --group <id>`)",
@@ -522,7 +503,7 @@ export function wireWorkstreamCommands(program: Command): void {
     .option("-y, --yes", "actually tear down (without this flag, prints a dry-run summary)")
     .option(
       "--empty",
-      "sweep every empty workstream (zero tasks, agents, vcs_workspaces); never scratch or a mu-* session with no workstream row; mutually exclusive with -w",
+      "sweep every empty workstream (zero tasks, agents, vcs_workspaces); never scratch; mutually exclusive with -w",
     )
     .option(...JSON_OPT)
     .action(function (name: string | undefined) {

@@ -10,7 +10,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  capturePane,
+  capture,
   HerdrError,
   type HerdrExecResult,
   HerdrSyntaxError,
@@ -268,23 +268,23 @@ describe("herdr sendToPane: surface fallback for panes with no recognized agent"
 
 // ─── Capture ───────────────────────────────────────────────────────────
 
-describe("herdr capturePane: the three CaptureOptions shapes", () => {
+describe("herdr capture: the three CaptureOptions shapes", () => {
   it("no options → everything available, soft wraps joined", async () => {
     const calls = mockHerdr([["pane read", READ_TEXT]]);
-    expect(await capturePane("w1:p1")).toBe(READ_TEXT);
+    expect(await capture("w1:p1")).toBe(READ_TEXT);
     expect(calls[0]?.args).toEqual(["pane", "read", "w1:p1", "--source", "recent-unwrapped"]);
   });
 
   it("lines: 0 → the rendered viewport only", async () => {
     const calls = mockHerdr([["pane read", READ_TEXT]]);
-    await capturePane("w1:p1", { lines: 0 });
+    await capture("w1:p1", { lines: 0 });
     expect(calls[0]?.args).toEqual(["pane", "read", "w1:p1", "--source", "visible"]);
     expect(calls[0]?.args).not.toContain("--lines");
   });
 
   it("lines: N → the last N rows, still soft-wrap-joined", async () => {
     const calls = mockHerdr([["pane read", READ_TEXT]]);
-    await capturePane("w1:p1", { lines: 100 });
+    await capture("w1:p1", { lines: 100 });
     expect(calls[0]?.args).toEqual([
       "pane",
       "read",
@@ -298,28 +298,28 @@ describe("herdr capturePane: the three CaptureOptions shapes", () => {
 
   it("returns plain text unparsed — `pane read` emits no JSON envelope", async () => {
     mockHerdr([["pane read", READ_TEXT]]);
-    const out = await capturePane("w1:p1", { lines: 50 });
+    const out = await capture("w1:p1", { lines: 50 });
     expect(out).toContain("hello-from-mu");
     expect(() => JSON.parse(out)).toThrow();
   });
 
   it("maps a pane_not_found envelope to a HerdrError carrying the code", async () => {
     mockHerdr([["pane read", serverError(PANE_NOT_FOUND)]]);
-    const err = await capturePane("w9:p9").catch((e: unknown) => e);
+    const err = await capture("w9:p9").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HerdrError);
     expect(err instanceof HerdrError ? err.code : undefined).toBe("pane_not_found");
   });
 
   it("exit 2 is a syntax (mu bug) error, not an outage", async () => {
     mockHerdr([["pane read", { stdout: "usage: herdr pane read", stderr: "", exitCode: 2 }]]);
-    await expect(capturePane("w1:p1")).rejects.toBeInstanceOf(HerdrSyntaxError);
+    await expect(capture("w1:p1")).rejects.toBeInstanceOf(HerdrSyntaxError);
   });
 
   it("rejects a tmux pane id at the call site", async () => {
     setHerdrExecutor(async () => {
       throw new Error("must not shell out with an invalid pane id");
     });
-    await expect(capturePane("%15")).rejects.toThrow(/invalid herdr pane id/);
+    await expect(capture("%15")).rejects.toThrow(/invalid herdr pane id/);
   });
 });
 

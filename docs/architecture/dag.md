@@ -93,19 +93,10 @@ The graph algorithm decides, not the LLM.
 `task.claim` op carrying the resolved `actor`. The claim is a CAS in
 SQLite, so two agents cannot claim the same task.
 
-Identity resolution (`resolveWorkerIdentity`, `src/tasks/claim.ts`) is
-a two-rung ladder:
-
-1. **`$MU_AGENT_NAME`**, injected into the pane's environment at spawn.
-   It is backend-independent.
-2. **`backend.currentAgentName()`**, the mux fallback. On tmux it reads
-   the pane title (`display-message -p '#{pane_title}'`), never the
-   window name, because one window can hold several agents. On herdr
-   the name is registered with the mux and looked up by pane id.
-
-The fallback exists for panes that predate the env injection and
-carry only a title. The agent does not
-need to know its own name.
+Identity resolution (`resolveWorkerIdentity`, `src/tasks/claim.ts`) reads
+**`$MU_AGENT_NAME`**, injected into the pane's environment at spawn. It
+is backend-independent and needs no mux call; pane titles are not
+identity. The agent does not need to know its own name.
 
 ## Scoped subtree views
 

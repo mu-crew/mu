@@ -11,11 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
-import {
-  ensureWorkstream,
-  listEmptyWorkstreams,
-  listUnregisteredMuxWorkstreams,
-} from "../src/workstream.js";
+import { ensureWorkstream, listEmptyWorkstreams } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
@@ -40,7 +36,7 @@ function tmuxFake(sessions: Sessions, killed: string[]) {
       case "list-panes": {
         const panes = sessions[target];
         if (panes === undefined) return missing(target);
-        return ok(panes.map((cmd, i) => `@1\t%${i}\t\t${cmd}`).join("\n"));
+        return ok(panes.map((cmd, i) => `@1\t%${i}\t${cmd}`).join("\n"));
       }
       case "kill-session":
         if (!(target in sessions)) return missing(target);
@@ -92,7 +88,6 @@ describe("teardown --empty: live-pane guard and group hint", () => {
     ensureWorkstream(db, "bare");
 
     expect((await listEmptyWorkstreams(db)).map((w) => w.name)).toEqual(["bare"]);
-    expect(await listUnregisteredMuxWorkstreams(db)).toEqual(["busy-shell", "litter", "livecrew"]);
 
     db.close();
     const dry = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
@@ -106,21 +101,6 @@ describe("teardown --empty: live-pane guard and group hint", () => {
     expect(JSON.parse(r.stdout)).toMatchObject({ tornDown: 1, failed: [] });
     expect(killed).toEqual([]);
     expect(Object.keys(sessions).sort()).toEqual(["mu-busy-shell", "mu-litter", "mu-livecrew"]);
-  });
-
-  it("names the skipped unregistered sessions and how to tear one down", async () => {
-    mux = installMux("tmux", tmuxFake({ "mu-busy-shell": ["bash"] }, []));
-    db.close();
-    for (const args of [
-      ["workstream", "teardown", "--empty"],
-      ["workstream", "teardown", "--empty", "--yes"],
-    ]) {
-      const r = await runCli(args, dbPath);
-      expect(r.error).toBeUndefined();
-      expect(r.stdout).toContain("no empty workstreams found");
-      expect(r.stdout).toMatch(/Skipped 1 mu-\* session .*: busy-shell/);
-      expect(r.stdout).toContain("mu workstream teardown busy-shell --yes");
-    }
   });
 
   it("keeps an unregistered herdr workspace", async () => {

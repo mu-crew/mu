@@ -1,21 +1,19 @@
-// Integration tests for src/tmux.ts. Hits a real tmux server.
+// Integration tests for src/mux/tmux.ts. Hits a real tmux server.
 //
 // Skipped when not running inside tmux. Each test creates a unique
 // throwaway session so we never disturb the user's panes.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  capturePane,
+  capture,
+  ensureSession,
+  killPane,
   killSession,
   listPanes,
-  listWindows,
-  newSession,
-  newWindow,
-  paneExists,
+  paneAlive,
   resetTmuxExecutor,
-  sessionExists,
-  setPaneTitle,
-  splitWindow,
+  spawnAgent,
+  tmux,
 } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
@@ -24,8 +22,22 @@ const TMUX_AVAILABLE = process.env.TMUX !== undefined && process.env.TMUX !== ""
 
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
 
+const SLEEP = "sh -c 'while true; do sleep 60; done'";
+
 describeIfTmux("tmux integration (real tmux server)", () => {
   let session: string;
+
+  /** Spawn into `session` (window `window`) running `command`. */
+  const spawn = (window: string, command = SLEEP, env: Record<string, string> = {}) =>
+    spawnAgent({
+      session,
+      window,
+      name: window,
+      cli: "pi",
+      command,
+      commandSource: "cli-key",
+      env,
+    });
 
   beforeEach(async () => {
     resetTmuxExecutor();
@@ -33,124 +45,85 @@ describeIfTmux("tmux integration (real tmux server)", () => {
     // freshWorkstream() encodes pid + monotonic timestamp + random — fits
     // inside tmux's session-name limits (no '.' or ':' chars).
     session = `mu-${freshWorkstream("t")}`;
-    await newSession(session, {
-      windowName: "main",
-      command: "sh -c 'while true; do sleep 60; done'",
-    });
   });
 
   afterEach(async () => {
     await killSession(session); // idempotent
   });
 
-  it("session round-trip: create, exists, list, kill", async () => {
-    expect(await sessionExists(session)).toBe(true);
+  it("ensureSession creates the session with `_mu`, is idempotent, and repairs a missing `_mu`", async () => {
+    expect(await ensureSession(session)).toEqual({ created: true, repaired: false });
+    expect(await ensureSession(session)).toEqual({ created: false, repaired: false });
+    // Keep the session alive while `_mu` is removed.
+    await spawn("worker-1");
+    await tmux(["kill-window", "-t", `=${session}:_mu`]);
+    expect(await ensureSession(session)).toEqual({ created: false, repaired: true });
+  });
+
+  it("killSession is idempotent", async () => {
+    await ensureSession(session);
     await killSession(session);
-    expect(await sessionExists(session)).toBe(false);
-    // killSession again is idempotent.
+    expect(await listPanes(session)).toEqual([]);
     await expect(killSession(session)).resolves.toBeUndefined();
   });
 
-  it("listWindows returns the initial window", async () => {
-    const windows = await listWindows(session);
-    expect(windows).toHaveLength(1);
-    expect(windows[0]?.name).toBe("main");
-    expect(windows[0]?.id).toMatch(/^@\d+$/);
-  });
-
-  it("newWindow returns a valid pane id", async () => {
-    const paneId = await newWindow({
-      session,
-      name: "Backend",
-      command: "sh -c 'while true; do sleep 60; done'",
-    });
+  it("spawnAgent into a missing session creates it and returns a live pane id", async () => {
+    const paneId = await spawn("worker-1");
     expect(paneId).toMatch(/^%\d+$/);
-    expect(await paneExists(paneId)).toBe(true);
+    expect(await paneAlive(paneId)).toBe(true);
   });
 
-  it("listPanesInSession returns ALL panes across windows in the session", async () => {
-    // Add a second window with two panes.
-    const { listPanesInSession, splitWindow } = await import("../src/tmux.js");
-    const w1Pane = await newWindow({
-      session,
-      name: "Backend",
-      command: "sh -c 'while true; do sleep 60; done'",
-    });
-    const w2Pane = await splitWindow({
-      target: `${session}:Backend`,
-      command: "sh -c 'while true; do sleep 60; done'",
-    });
-
-    const panes = await listPanesInSession(session);
-    const paneIds = panes.map((p) => p.paneId).sort();
-    // Includes the initial 'main' pane + Backend's two panes.
-    expect(paneIds).toContain(w1Pane);
-    expect(paneIds).toContain(w2Pane);
-    // Each pane carries its window id.
-    for (const p of panes) {
-      expect(p.windowId).toMatch(/^@\d+$/);
-      expect(p.paneId).toMatch(/^%\d+$/);
-    }
+  it("spawnAgent into an existing window splits it; a new window name adds a window", async () => {
+    await ensureSession(session);
+    const first = await spawn("Backend");
+    const split = await spawn("Backend");
+    const other = await spawn("Frontend");
+    expect(new Set([first, split, other]).size).toBe(3);
+    const panes = await listPanes(session);
+    const win = (id: string) => panes.find((p) => p.paneId === id)?.windowId;
+    expect(win(first)).toBe(win(split));
+    expect(win(other)).not.toBe(win(first));
+    // `_mu` pane + Backend's two + Frontend's one, each carrying a window id.
+    expect(panes).toHaveLength(4);
+    for (const p of panes) expect(p.windowId).toMatch(/^@\d+$/);
   });
 
-  it("splitWindow adds a pane to an existing window", async () => {
-    const win = await newWindow({
-      session,
-      name: "Backend",
-      command: "sh -c 'while true; do sleep 60; done'",
+  it("spawnAgent passes env to the pane", async () => {
+    const paneId = await spawn(
+      "envy",
+      "sh -c 'echo MU_ENV=$MU_AGENT_NAME; while true; do sleep 60; done'",
+      { MU_AGENT_NAME: "envy" },
+    );
+    await pollUntil(() => capture(paneId).then((c) => c.includes("MU_ENV=envy")), {
+      description: "env var visible in the pane",
     });
-    const split = await splitWindow({
-      target: `${session}:Backend`,
-      command: "sh -c 'while true; do sleep 60; done'",
-    });
-    expect(split).toMatch(/^%\d+$/);
-    expect(split).not.toBe(win);
-    const panes = await listPanes(`${session}:Backend`);
-    expect(panes.map((p) => p.paneId).sort()).toEqual([win, split].sort());
   });
 
-  it("setPaneTitle changes pane title and listPanes reflects it", async () => {
-    const paneId = await newWindow({
-      session,
-      name: "Backend",
-      command: "sh -c 'while true; do sleep 60; done'",
-    });
-    await setPaneTitle(paneId, "alice");
-    const panes = await listPanes(`${session}:Backend`);
-    expect(panes[0]?.title).toBe("alice");
+  it("paneAlive is false for a never-existed pane id", async () => {
+    expect(await paneAlive("%999999")).toBe(false);
   });
 
-  it("paneExists is false for a never-existed pane id", async () => {
-    expect(await paneExists("%999999")).toBe(false);
-  });
-
-  it("paneExists transitions true → false after killPane", async () => {
-    const paneId = await newWindow({
-      session,
-      name: "ephemeral",
-      command: "sh -c 'while true; do sleep 60; done'",
-    });
-    expect(await paneExists(paneId)).toBe(true);
-    const { killPane } = await import("../src/tmux.js");
+  it("paneAlive transitions true → false after killPane", async () => {
+    const paneId = await spawn("ephemeral");
+    expect(await paneAlive(paneId)).toBe(true);
     await killPane(paneId);
-    await pollUntil(async () => !(await paneExists(paneId)), {
+    await pollUntil(async () => !(await paneAlive(paneId)), {
       description: "killed pane disappears",
     });
-    expect(await paneExists(paneId)).toBe(false);
+    expect(await paneAlive(paneId)).toBe(false);
   });
 
-  it("capturePane returns pane scrollback as text", async () => {
-    const paneId = await newWindow({
-      session,
-      name: "echo",
+  it("capture returns pane scrollback as text", async () => {
+    const paneId = await spawn(
+      "echo",
       // Print known text and stay alive.
-      command: "sh -c 'echo MU_INTEGRATION_MARKER; while true; do sleep 60; done'",
-    });
+      "sh -c 'echo MU_INTEGRATION_MARKER; while true; do sleep 60; done'",
+    );
     await pollUntil(
-      () => capturePane(paneId).then((content) => content.includes("MU_INTEGRATION_MARKER")),
+      () => capture(paneId).then((content) => content.includes("MU_INTEGRATION_MARKER")),
       { description: "echo marker lands in pane scrollback" },
     );
-    const content = await capturePane(paneId);
+    const content = await capture(paneId);
     expect(content).toContain("MU_INTEGRATION_MARKER");
   });
 });

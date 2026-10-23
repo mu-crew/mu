@@ -207,7 +207,6 @@ describe("loadWorkstreamSnapshot", () => {
     tmuxState.panes.set("%1", {
       windowId: "@1",
       paneId: "%1",
-      title: "worker-1",
       command: "pi",
       scrollback: "Working... (Esc to interrupt)\n",
     });

@@ -18,13 +18,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  closeAgent,
-  deleteAgent,
-  getAgent,
-  insertAgent,
-  refreshAgentTitle,
-} from "../src/agents.js";
+import { closeAgent, deleteAgent, getAgent, insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import {
   addNote,
@@ -242,15 +236,6 @@ describe("v5 name-clash regression: agent verbs scope correctly", () => {
   it("closeAgent({ workstream }) only closes the right row", async () => {
     await closeAgent(db, "worker-1", { workstream: "wsa" });
     expect(getAgent(db, "worker-1", "wsa")).toBeUndefined();
-    expect(getAgent(db, "worker-1", "wsb")?.workstreamName).toBe("wsb");
-  });
-
-  it("refreshAgentTitle({ workstream }) doesn't touch the wrong row", async () => {
-    // Best-effort title refresh shouldn't throw or mutate the wrong row;
-    // we just call it and confirm both registry rows are intact.
-    await refreshAgentTitle(db, "worker-1", "wsa");
-    await refreshAgentTitle(db, "worker-1", "wsb");
-    expect(getAgent(db, "worker-1", "wsa")?.workstreamName).toBe("wsa");
     expect(getAgent(db, "worker-1", "wsb")?.workstreamName).toBe("wsb");
   });
 });

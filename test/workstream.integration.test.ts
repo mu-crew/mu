@@ -82,6 +82,12 @@ function mockTmux(state: MockState): { calls: string[][]; executor: TmuxExecutor
       state.killed.push(target);
       return ok();
     }
+    if (verb === "list-panes") {
+      const target = (args[args.indexOf("-t") + 1] ?? "").replace(/^=(.*):$/, "$1");
+      return state.sessions.has(target)
+        ? ok("@1\t%1\t_mu\n")
+        : fail(`can't find session: ${target}`);
+    }
     if (verb === "list-sessions") {
       if (state.sessions.size === 0) return fail("no server running");
       return ok([...state.sessions].join("\n"));
@@ -295,9 +301,9 @@ describe("listWorkstreams", () => {
     expect(list).toEqual([]);
   });
 
-  it("unions DB workstreams (agents + tasks) and mu-* tmux sessions", async () => {
+  it("lists DB workstreams (agents + tasks) with tmux liveness; unregistered mu-* sessions are not discovered", async () => {
     state.sessions.add("mu-auth"); // both DB rows AND tmux session
-    state.sessions.add("mu-empty"); // tmux only, no DB rows yet
+    state.sessions.add("mu-empty"); // tmux only, no DB rows: not discovered
     state.sessions.add("unrelated"); // not an mu session, ignored
     setTmuxExecutor(mockTmux(state).executor);
     seedAuth();
@@ -308,7 +314,7 @@ describe("listWorkstreams", () => {
     });
 
     const list = await listWorkstreams(db);
-    expect(list.map((w) => w.name)).toEqual(["auth", "billing", "empty"]);
+    expect(list.map((w) => w.name)).toEqual(["auth", "billing"]);
 
     const auth = list.find((w) => w.name === "auth");
     expect(auth?.muxAlive).toBe(true);
@@ -319,17 +325,10 @@ describe("listWorkstreams", () => {
     expect(billing?.muxAlive).toBe(false);
     expect(billing?.agentCount).toBe(1);
     expect(billing?.taskCount).toBe(0);
-
-    const empty = list.find((w) => w.name === "empty");
-    expect(empty?.muxAlive).toBe(true);
-    expect(empty?.agentCount).toBe(0);
-    expect(empty?.taskCount).toBe(0);
   });
 
   it("sorts by workstream name", async () => {
-    state.sessions.add("mu-zeta");
-    state.sessions.add("mu-alpha");
-    state.sessions.add("mu-mike");
+    for (const ws of ["zeta", "alpha", "mike"]) ensureWorkstream(db, ws);
     setTmuxExecutor(mockTmux(state).executor);
     const list = await listWorkstreams(db);
     expect(list.map((w) => w.name)).toEqual(["alpha", "mike", "zeta"]);

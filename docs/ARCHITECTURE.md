@@ -115,8 +115,8 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 
 | Module | Responsibility |
 | --- | --- |
-| `src/agents.ts` | CRUD, send, read, list, close, liveness, reaper; `composeAgentTitle` |
-| `src/agents/spawn.ts` | spawn: CLI resolution, pane create or reuse, liveness, readiness, ctl handshake, rollback |
+| `src/agents.ts` | CRUD, send, read, list, close, liveness, reaper |
+| `src/agents/spawn.ts` | spawn: CLI resolution, `mux.spawnAgent`, liveness, readiness, ctl handshake, rollback |
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
 | `src/agents/transport.ts` | send routing: ctl for pi agents; herdr `sendToPane` for others; tmux refuses (`AgentSendUnsupportedError`); no fallback; `expectsCtl` |
 | `src/agents/abort.ts` | stop a pi turn through the control socket; abort + send (`--interrupt`) |
@@ -127,10 +127,10 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/agent-state.ts` | runtime state from ctl, herdr or murmur; `unknown` with a reason |
 | `src/reconcile.ts` | ghost prune and orphan surfacing |
 | `src/mux/index.ts` | cluster barrel that `src/mux.ts` re-exports |
-| `src/mux/types.ts` | `MuxBackend` interface; `MuxError`, `PaneNotFoundError`, `NoMultiplexerError` |
+| `src/mux/types.ts` | `MuxBackend` interface (`ensureSession`, `spawnAgent`, `listPanes`, `paneAlive`, `capture`, `attachCommands`), `attachShellLine`; `MuxError`, `PaneNotFoundError`, `NoMultiplexerError` |
 | `src/mux/detect.ts` | `MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH` ladder; `activeMux()` |
-| `src/mux/tmux.ts` | tmux backend: the `tmux()` wrapper, pane validation; no send |
-| `src/mux/herdr.ts` | herdr backend: JSON socket API, atomic send, native pane status, `startAgentInPane` |
+| `src/mux/tmux.ts` | tmux backend: the `tmux()` wrapper, one-step `spawnAgent`, pane validation; no send |
+| `src/mux/herdr.ts` | herdr backend: JSON socket API, atomic send, native pane status, `spawnAgent` (bare pane, `agent start`) |
 | `src/tmux.ts` | tmux-only re-exports: `MU_TMUX_SOCKET` seam, `sleep` / `setSleepForTests` |
 | `src/ctl/path.ts` | `ctlSocketPath`, `remoteCtlSocketPath`, `MU_CTL_SOCK` |
 | `src/ctl/protocol.ts` | protocol v1 types, `CTL_OPS`, line framing; imports nothing from mu |

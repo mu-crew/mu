@@ -74,6 +74,12 @@ function mockTmux(state: MockState): TmuxExecutor {
       state.killed.push(target);
       return ok();
     }
+    if (verb === "list-panes") {
+      const target = (args[args.indexOf("-t") + 1] ?? "").replace(/^=(.*):$/, "$1");
+      return state.sessions.has(target)
+        ? ok("@1\t%1\t_mu\n")
+        : fail(`can't find session: ${target}`);
+    }
     if (verb === "list-sessions") {
       if (state.sessions.size === 0) return fail("no server running");
       return ok([...state.sessions].join("\n"));
@@ -323,7 +329,7 @@ describe("mu workstream teardown --empty", () => {
     expect(state.killed).toEqual(["mu-empty-b"]);
   });
 
-  it("never surfaces unregistered mu-* tmux sessions in dry-run; names them as skipped", async () => {
+  it("never surfaces unregistered mu-* tmux sessions in dry-run", async () => {
     // Two tmux sessions exist with the mu- prefix but NO DB row in
     // workstreams. They may be live workstreams of another DB, so the
     // sweep must not list them as empty.
@@ -342,8 +348,7 @@ describe("mu workstream teardown --empty", () => {
     const tbl = await runCli(["workstream", "teardown", "--empty"], dbPath);
     expect(tbl.error).toBeUndefined();
     expect(tbl.stdout).toContain("no empty workstreams found");
-    expect(tbl.stdout).toContain("Skipped 2 mu-* sessions");
-    expect(tbl.stdout).toContain("bar, foo");
+    expect(tbl.stdout).not.toContain("Skipped");
   });
 
   it("--yes leaves unregistered mu-* tmux sessions alone", async () => {

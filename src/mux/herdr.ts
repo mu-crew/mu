@@ -14,7 +14,7 @@
 //   mu window      = herdr TAB
 //   mu agent       = herdr PANE
 //
-// mu addresses workspaces BY LABEL (`MuxSession.name`), because that is
+// mu addresses workspaces BY LABEL (the session name), because that is
 // the only handle mu persists. herdr addresses them by opaque id (`w1`).
 // Every session-taking method therefore resolves label → id first; see
 // `resolveWorkspaceId`.
@@ -34,10 +34,10 @@
 //
 // ─── Scope ────────────────────────────────────────────────────────────
 //
-// This module implements ALL of `MuxBackend` for herdr: sessions,
-// windows, panes, pane-id validation, availability, identity, send,
-// capture, native pane status, and the two-step spawn
-// (`startAgentInPane`).
+// This module implements ALL of `MuxBackend` for herdr: sessions
+// (`ensureSession`, `killSession`), panes (`spawnAgent`, `listPanes`,
+// `paneAlive`, `killPane`, `capture`), pane-id validation, availability,
+// send, native pane status and attach.
 //
 // ─── Two exceptions to "everything is JSON" ───────────────────────────
 //
@@ -50,11 +50,9 @@
 // herdr has NO create-and-run form: `workspace create` / `tab create` /
 // `pane split` always start a plain shell, and `agent start` never
 // creates, splits or moves layout — it requires an ALREADY-EXISTING
-// pane sitting at its interactive prompt. So the creation verbs below
-// REFUSE a non-empty `opts.command` (silently dropping it would leave
-// an empty shell mu believes hosts an agent — the worst failure mode),
-// and `startAgentInPane` is the second step mu calls afterwards.
-// See `MuxBackend.startAgentInPane` for how spawn.ts branches on it.
+// pane sitting at its interactive prompt. `spawnAgent` therefore makes a
+// bare pane and then runs `agent start`; callers never see the two
+// halves.
 
 import { execFileCapture } from "../exec-file.js";
 import type { NextStep } from "../output.js";
@@ -62,21 +60,17 @@ import { sleep } from "./tmux.js";
 import {
   type AttachTarget,
   type CaptureOptions,
+  type EnsureSessionResult,
+  MU_PLACEHOLDER_WINDOW,
   type MuxBackend,
   type MuxCommand,
   MuxError,
   type MuxHealth,
   type MuxPane,
   type MuxPaneStatus,
-  type MuxSession,
-  type MuxWindow,
-  type NewSessionOptions,
-  type NewSessionWithPaneOptions,
-  type NewWindowOptions,
   type SendOptions,
   type SendWarning,
-  type SplitWindowOptions,
-  type StartAgentInPaneOptions,
+  type SpawnAgentPaneOptions,
 } from "./types.js";
 
 // ─── Error types ───────────────────────────────────────────────────────
@@ -285,19 +279,6 @@ export class HerdrWorkspaceGroupCloseError extends Error {
   }
 }
 
-/** A creation verb was handed a command to run. herdr cannot do that
- *  in one step (see `rejectCommand`), so this is a bug in the caller:
- *  spawn passes no command on herdr and calls `startAgentInPane`. */
-export class HerdrNotImplementedError extends Error {
-  override readonly name = "HerdrNotImplementedError";
-  constructor(method: string) {
-    super(
-      `herdr backend: ${method} is not supported: herdr creation verbs always start a plain shell; ` +
-        "create the pane without a command, then start the agent with startAgentInPane",
-    );
-  }
-}
-
 // ─── Pane / workspace / tab ID validation ──────────────────────────────
 //
 // herdr's public ids are opaque stable handles with a documented shape:
@@ -321,7 +302,6 @@ export class HerdrNotImplementedError extends Error {
 const HERDR_ORDINAL = "[0-9A-Z]+";
 export const PANE_ID_RE = new RegExp(`^w${HERDR_ORDINAL}:p${HERDR_ORDINAL}$`);
 const WORKSPACE_ID_RE = new RegExp(`^w${HERDR_ORDINAL}$`);
-const TAB_ID_RE = new RegExp(`^w${HERDR_ORDINAL}:t${HERDR_ORDINAL}$`);
 
 export function isValidPaneId(s: string): boolean {
   return PANE_ID_RE.test(s);
@@ -491,7 +471,12 @@ function readWorkspace(v: unknown): HerdrWorkspace | undefined {
   return { workspaceId, label: asString(v.label) ?? "" };
 }
 
-function readTab(v: unknown): MuxWindow | undefined {
+interface HerdrTab {
+  id: string;
+  name: string;
+}
+
+function readTab(v: unknown): HerdrTab | undefined {
   if (!isRecord(v)) return undefined;
   const id = asString(v.tab_id);
   if (id === undefined) return undefined;
@@ -506,9 +491,6 @@ function readPane(v: unknown): MuxPane | undefined {
   if (paneId === undefined) return undefined;
   return {
     paneId,
-    // herdr's optional `label` is what `pane rename` writes and is
-    // therefore mu's pane-title equivalent.
-    title: asString(v.label) ?? "",
     // herdr reports no foreground command on `pane list` (that costs a
     // `pane process-info` round trip per pane), but it does report the
     // agent kind it detected (`pi`, `claude`, `codex`, ...). That is
@@ -534,10 +516,6 @@ async function listWorkspaces(): Promise<HerdrWorkspace[]> {
     if (ws) out.push(ws);
   }
   return out;
-}
-
-export async function listSessions(): Promise<MuxSession[]> {
-  return (await listWorkspaces()).map((ws) => ({ name: ws.label }));
 }
 
 /**
@@ -574,55 +552,33 @@ async function requireWorkspaceId(name: string): Promise<string> {
   return id;
 }
 
-export async function sessionExists(name: string): Promise<boolean> {
-  return (await resolveWorkspaceId(name)) !== undefined;
-}
-
 /**
- * Create a herdr workspace labelled `name`.
+ * Create `session`'s workspace with its placeholder `_mu` tab when it is
+ * missing, and re-add the tab when the workspace exists without it.
  *
- * `opts.detached` is not a knob on herdr: mu ALWAYS passes `--no-focus`,
- * because stealing the user's focus is the one thing a background agent
- * manager must never do. A caller asking for `detached: false` gets a
- * detached workspace anyway; use `workspace focus` explicitly if you
- * really mean to move the user.
- *
- * `opts.windowName` labels the implicit first tab (see `labelRootTab`).
+ * mu ALWAYS passes `--no-focus`, because stealing the user's focus is the
+ * one thing a background agent manager must never do.
  */
-export async function newSession(name: string, opts: NewSessionOptions = {}): Promise<void> {
-  rejectCommand("newSession", opts.command);
-  const args = ["workspace", "create", "--label", name, "--no-focus"];
-  if (opts.cwd) args.push("--cwd", opts.cwd);
-  appendEnvFlags(args, opts.env);
-  await labelRootTab(await herdr(args), opts.windowName);
-}
-
-/**
- * Create a workspace and return its root pane's id.
- *
- * `opts.command` cannot be honoured here: `workspace create` always
- * starts a plain shell. Spawn runs the agent afterwards with
- * `startAgentInPane` (see `rejectCommand`).
- */
-export async function newSessionWithPane(
-  name: string,
-  opts: NewSessionWithPaneOptions,
-): Promise<string> {
-  rejectCommand("newSessionWithPane", opts.command);
-  const args = ["workspace", "create", "--label", name, "--no-focus"];
-  if (opts.cwd) args.push("--cwd", opts.cwd);
-  appendEnvFlags(args, opts.env);
-  const result = await herdr(args);
-  const paneId = readCreatedPaneId(result, "root_pane", args);
-  await labelRootTab(result, opts.windowName);
-  return paneId;
+export async function ensureSession(session: string): Promise<EnsureSessionResult> {
+  const id = await resolveWorkspaceId(session);
+  if (id === undefined) {
+    const created = await herdr(["workspace", "create", "--label", session, "--no-focus"]);
+    await labelRootTab(created, MU_PLACEHOLDER_WINDOW);
+    return { created: true, repaired: false };
+  }
+  const tabs = readTabs(await herdr(["tab", "list", "--workspace", id]));
+  if (tabs.some((t) => t.name === MU_PLACEHOLDER_WINDOW)) {
+    return { created: false, repaired: false };
+  }
+  await herdr(["tab", "create", "--workspace", id, "--label", MU_PLACEHOLDER_WINDOW, "--no-focus"]);
+  return { created: false, repaired: true };
 }
 
 /**
  * herdr labels a new workspace's implicit first tab "1". mu finds tabs
  * by window name (attach focuses the agent's tab, spawn reuses a tab by
  * `--tab`, init checks for `_mu`), so rename it to `windowName`, the
- * label `newWindow` gives every later tab. Load-bearing: an unlabelled
+ * label `tab create` gives every later tab. Load-bearing: an unlabelled
  * first tab is invisible to all three lookups. On failure the new
  * workspace is closed before the error propagates.
  */
@@ -696,56 +652,13 @@ export async function killSession(name: string): Promise<void> {
 
 // ─── Tabs (= mu windows) ───────────────────────────────────────────────
 
-export async function listWindows(session?: string): Promise<MuxWindow[]> {
-  if (session !== undefined) {
-    const id = await resolveWorkspaceId(session);
-    // A workspace that vanished mid-reconcile lists as empty, matching
-    // the tmux backend's behaviour for a dead session.
-    if (id === undefined) return [];
-    return readTabs(await herdr(["tab", "list", "--workspace", id]));
-  }
-  // Cross-workspace: herdr has no `--all`, so fan out and tag each row
-  // with the workspace LABEL, which is what MuxWindow.sessionName means.
-  const windows: MuxWindow[] = [];
-  for (const ws of await listWorkspaces()) {
-    for (const tab of readTabs(await herdr(["tab", "list", "--workspace", ws.workspaceId]))) {
-      windows.push({ ...tab, sessionName: ws.label });
-    }
-  }
-  return windows;
-}
-
-function readTabs(result: Record<string, unknown>): MuxWindow[] {
-  const out: MuxWindow[] = [];
+function readTabs(result: Record<string, unknown>): HerdrTab[] {
+  const out: HerdrTab[] = [];
   for (const raw of readArray(result, "tabs")) {
     const tab = readTab(raw);
     if (tab) out.push(tab);
   }
   return out;
-}
-
-/**
- * Create a tab in `opts.session`'s workspace and return its root pane id.
- * `opts.command` is refused (see `rejectCommand`).
- */
-export async function newWindow(opts: NewWindowOptions): Promise<string> {
-  rejectCommand("newWindow", opts.command);
-  const args = ["tab", "create"];
-  if (opts.session !== undefined) {
-    args.push("--workspace", await requireWorkspaceId(opts.session));
-  }
-  args.push("--label", opts.name, "--no-focus");
-  if (opts.cwd) args.push("--cwd", opts.cwd);
-  appendEnvFlags(args, opts.env);
-  return readCreatedPaneId(await herdr(args), "root_pane", args);
-}
-
-/**
- * NO-OP. herdr has no layout-algorithm concept: splits are explicit and
- * geometry is the user's, not mu's. Kept so the contract is total.
- */
-export async function selectLayout(_window: string, _layout: string): Promise<void> {
-  // Intentionally empty.
 }
 
 // ─── Panes (= mu agents) ───────────────────────────────────────────────
@@ -755,9 +668,10 @@ export async function selectLayout(_window: string, _layout: string): Promise<vo
  *
  * Returns `[]` rather than throwing when the workspace is gone: herdr
  * closes a workspace when its last pane exits, so "it was here a moment
- * ago" is normal during reconciliation. Same contract as the tmux backend.
+ * ago" is normal during reconciliation. Same contract as the tmux
+ * backend; any other failure throws.
  */
-export async function listPanesInSession(session: string): Promise<MuxPane[]> {
+export async function listPanes(session: string): Promise<MuxPane[]> {
   const id = await resolveWorkspaceId(session);
   if (id === undefined) return [];
   const result = await herdrTolerating(
@@ -765,44 +679,7 @@ export async function listPanesInSession(session: string): Promise<MuxPane[]> {
     ["workspace_not_found"],
   );
   if (result === undefined) return [];
-  return readPanes(result).map((p) => ({ ...p, sessionName: session }));
-}
-
-/**
- * List panes.
- *
- *   - `"*"` or omitted → every pane in every workspace, tagged with its
- *     workspace label. (tmux's default target is "the current session";
- *     herdr has no ambient current workspace outside a managed pane, so
- *     `$HERDR_WORKSPACE_ID` is consulted first and "everything" is the
- *     fallback.)
- *   - a workspace id (`w1`) → that workspace.
- *   - a tab id (`w1:t2`) → that tab's panes.
- *   - a mu session name → that workspace, by label.
- */
-export async function listPanes(target?: string): Promise<MuxPane[]> {
-  if (target !== undefined && target !== "*") {
-    if (TAB_ID_RE.test(target)) {
-      const workspaceId = target.split(":")[0] ?? target;
-      const panes = readPanes(await herdr(["pane", "list", "--workspace", workspaceId]));
-      return panes.filter((p) => p.windowId === target);
-    }
-    if (WORKSPACE_ID_RE.test(target)) {
-      return readPanes(await herdr(["pane", "list", "--workspace", target]));
-    }
-    return listPanesInSession(target);
-  }
-  const ambient = process.env.HERDR_WORKSPACE_ID;
-  if (target === undefined && ambient !== undefined && WORKSPACE_ID_RE.test(ambient)) {
-    return readPanes(await herdr(["pane", "list", "--workspace", ambient]));
-  }
-  const panes: MuxPane[] = [];
-  for (const ws of await listWorkspaces()) {
-    for (const pane of readPanes(await herdr(["pane", "list", "--workspace", ws.workspaceId]))) {
-      panes.push({ ...pane, sessionName: ws.label });
-    }
-  }
-  return panes;
+  return readPanes(result);
 }
 
 function readPanes(result: Record<string, unknown>): MuxPane[] {
@@ -814,37 +691,13 @@ function readPanes(result: Record<string, unknown>): MuxPane[] {
   return out;
 }
 
-/**
- * Split a pane and return the new pane's id.
- *
- * `opts.horizontal` maps to herdr's `--direction`: horizontal (mu's
- * default, side-by-side) is `right`; a vertical split is `down`.
- * `opts.target` must be a herdr pane id — herdr splits panes, not
- * windows, so there is no ":WindowName" form to accept.
- */
-export async function splitWindow(opts: SplitWindowOptions): Promise<string> {
-  rejectCommand("splitWindow", opts.command);
-  assertValidPaneId(opts.target);
-  const args = [
-    "pane",
-    "split",
-    opts.target,
-    "--direction",
-    opts.horizontal === false ? "down" : "right",
-    "--no-focus",
-  ];
-  if (opts.cwd) args.push("--cwd", opts.cwd);
-  appendEnvFlags(args, opts.env);
-  return readCreatedPaneId(await herdr(args), "pane", args);
-}
-
 /** Idempotent: succeeds even if the pane is already gone. */
 export async function killPane(paneId: string): Promise<void> {
   assertValidPaneId(paneId);
   await herdrTolerating(["pane", "close", paneId], ["pane_not_found", "workspace_not_found"]);
 }
 
-export async function paneExists(paneId: string): Promise<boolean> {
+export async function paneAlive(paneId: string): Promise<boolean> {
   if (!isValidPaneId(paneId)) return false;
   const pane = await getPane(paneId);
   return pane !== undefined;
@@ -858,41 +711,6 @@ async function getPane(paneId: string): Promise<MuxPane | undefined> {
   );
   if (result === undefined) return undefined;
   return readPane(result.pane);
-}
-
-// ─── Identity ──────────────────────────────────────────────────────────
-
-/** herdr's pane `label` is mu's pane title. */
-/** herdr labels are not rewritten by OSC titles: nothing to lock. */
-export async function lockPaneTitle(_paneId: string): Promise<void> {}
-
-export async function setPaneTitle(paneId: string, title: string): Promise<void> {
-  assertValidPaneId(paneId);
-  await herdr(["pane", "rename", paneId, title]);
-}
-
-export async function getPaneTitle(paneId: string): Promise<string | undefined> {
-  if (!isValidPaneId(paneId)) return undefined;
-  const pane = await getPane(paneId).catch(() => undefined);
-  if (pane === undefined) return undefined;
-  return pane.title.length > 0 ? pane.title : undefined;
-}
-
-/**
- * The agent name of the pane this process is running in, read from the
- * `$HERDR_PANE_ID` that herdr injects into every managed pane.
- *
- * Fallback rung only: `$MU_AGENT_NAME` is checked first by
- * `src/tasks/claim.ts` and is backend-independent. Titles are composed
- * as `name · task_id · <glyph>`, so the name is the first token.
- */
-export async function currentAgentName(): Promise<string | undefined> {
-  const paneId = process.env.HERDR_PANE_ID;
-  if (paneId === undefined || !isValidPaneId(paneId)) return undefined;
-  const title = await getPaneTitle(paneId);
-  if (title === undefined) return undefined;
-  const idx = title.indexOf(" · ");
-  return idx === -1 ? title.trim() : title.slice(0, idx).trim();
 }
 
 /**
@@ -930,10 +748,7 @@ export async function currentSessionName(): Promise<string | undefined> {
 // unconfirmed on herdr, that is a herdr bug, and the `agent_prompt_
 // stalled` guard below is how it surfaces.
 
-// ─── Spawn, step 2 ─────────────────────────────────────────────────────
-//
-// The creation verbs above make a BARE pane; this turns it into a running
-// agent. Both halves exist because herdr has no create-and-run form.
+// ─── Spawn ─────────────────────────────────────────────────────────────
 
 /**
  * Retry budget for `agent start` while herdr reports the target pane is
@@ -957,33 +772,30 @@ const PANE_READY_RETRY_INTERVAL_MS = 50;
 const PANE_READY_MAX_ATTEMPTS = 60;
 
 /**
- * Turn an existing bare pane into a running agent, and return only once
- * herdr considers that agent ready for input.
+ * Create the agent's bare shell pane (workspace, tab or split as needed)
+ * and turn it into a running agent, returning only once herdr considers
+ * that agent ready for input.
  *
  * `herdr agent start <name> --kind <cli> --pane <id>` blocks until herdr
  * has DETECTED the expected agent in that terminal and it is
  * interactive-ready (30s default timeout, herdr's own). That subsumes
- * mu's tmux-side `awaitSpawnLiveness` scrollback polling completely,
- * which is why `src/agents/spawn.ts` skips it when a backend implements
- * this method. Nothing here re-implements it.
+ * mu's tmux-side scrollback polling completely, which is why
+ * `spawnAgentWaitsReady` is true and `src/agents/spawn.ts` skips it.
  *
- * Three refusals, all deliberate (see each error class):
+ * Refusals, all deliberate (see each error class), and none leaves a
+ * pane behind:
  *   - an operator-pinned command      → `HerdrCommandOverrideError`
+ *     (decided locally, before touching herdr)
  *   - a `--cli` herdr does not know   → `HerdrUnsupportedCliError`
  *   - an agent name herdr rejects     → the raw `HerdrError`
- * On any of them nothing has started, and the caller's rollback kills the
- * bare pane. No path leaves mu holding an agent row for a pane with
- * nothing running in it.
+ * When the start fails the bare pane is closed before the error
+ * propagates.
  *
  * Addressed BY PANE ID: the herdr-level agent NAME is cleared when the
  * occupant exits, so the pane id is the only durable handle (and the
  * only one mu persists). Matching `sendToPane`'s choice.
  */
-export async function startAgentInPane(opts: StartAgentInPaneOptions): Promise<void> {
-  assertValidPaneId(opts.paneId);
-  // Refuse BEFORE touching the server: an override we cannot honour is
-  // decidable locally, and failing fast keeps the pane pristine for the
-  // caller's rollback.
+export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
   if (opts.commandSource !== "cli-key") {
     throw new HerdrCommandOverrideError(
       opts.cli,
@@ -994,7 +806,68 @@ export async function startAgentInPane(opts: StartAgentInPaneOptions): Promise<v
       opts.commandSource === "env" ? envVarNameForCli(opts.cli) : undefined,
     );
   }
-  const args = ["agent", "start", opts.name, "--kind", opts.cli, "--pane", opts.paneId];
+  const paneId = await createBarePane(opts);
+  try {
+    opts.onPaneCreated?.(paneId);
+    await startAgent(paneId, opts);
+    return paneId;
+  } catch (err) {
+    await killPane(paneId).catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * A bare shell pane in `opts.window` of `opts.session`'s workspace:
+ *   - no workspace      → create it (the root tab is labelled `window`)
+ *   - no such tab       → create the tab
+ *   - tab exists        → split one of its panes (herdr splits panes, not
+ *     tabs; geometry is the user's business, any pane in the tab will do)
+ */
+async function createBarePane(opts: SpawnAgentPaneOptions): Promise<string> {
+  const workspaceId = await resolveWorkspaceId(opts.session);
+  if (workspaceId === undefined) {
+    const args = ["workspace", "create", "--label", opts.session, "--no-focus"];
+    if (opts.cwd) args.push("--cwd", opts.cwd);
+    appendEnvFlags(args, opts.env);
+    const result = await herdr(args);
+    const paneId = readCreatedPaneId(result, "root_pane", args);
+    await labelRootTab(result, opts.window);
+    return paneId;
+  }
+  const tab = readTabs(await herdr(["tab", "list", "--workspace", workspaceId])).find(
+    (t) => t.name === opts.window,
+  );
+  if (tab === undefined) {
+    const args = [
+      "tab",
+      "create",
+      "--workspace",
+      workspaceId,
+      "--label",
+      opts.window,
+      "--no-focus",
+    ];
+    if (opts.cwd) args.push("--cwd", opts.cwd);
+    appendEnvFlags(args, opts.env);
+    return readCreatedPaneId(await herdr(args), "root_pane", args);
+  }
+  const panes = readPanes(await herdr(["pane", "list", "--workspace", workspaceId]));
+  const target = panes.find((p) => p.windowId === tab.id);
+  if (target === undefined) {
+    // An empty tab cannot exist: it vanished between the two listings.
+    throw new Error(
+      `spawnAgent: tab ${tab.id} in session ${opts.session} has no panes to split (it vanished mid-spawn?)`,
+    );
+  }
+  const args = ["pane", "split", target.paneId, "--direction", "right", "--no-focus"];
+  if (opts.cwd) args.push("--cwd", opts.cwd);
+  appendEnvFlags(args, opts.env);
+  return readCreatedPaneId(await herdr(args), "pane", args);
+}
+
+async function startAgent(paneId: string, opts: SpawnAgentPaneOptions): Promise<void> {
+  const args = ["agent", "start", opts.name, "--kind", opts.cli, "--pane", paneId];
   for (let attempt = 1; ; attempt += 1) {
     try {
       await herdr(args);
@@ -1126,7 +999,7 @@ export async function sendToPane(
  * treat unparseable stdout as CLI drift) and reads the executor result
  * directly, mapping herdr's JSON error envelope by hand.
  */
-export async function capturePane(paneId: string, opts: CaptureOptions = {}): Promise<string> {
+export async function capture(paneId: string, opts: CaptureOptions = {}): Promise<string> {
   assertValidPaneId(paneId);
   const args = ["pane", "read", paneId];
   if (opts.lines === 0) {
@@ -1206,22 +1079,6 @@ export async function paneStatus(paneId: string): Promise<MuxPaneStatus | undefi
   return mapAgentStatus(status);
 }
 
-// ─── Chrome ────────────────────────────────────────────────────────────
-
-/**
- * NO-OP. herdr owns its own pane chrome and exposes no border knobs;
- * mu-managed panes are distinguished by their label instead. Returns 0
- * (windows decorated) to keep the contract total.
- */
-export async function enableMuPaneBordersForSession(_session: string): Promise<number> {
-  return 0;
-}
-
-/** NO-OP. See `enableMuPaneBordersForSession`. */
-export async function enableMuPaneBordersForPane(_paneId: string): Promise<void> {
-  // Intentionally empty.
-}
-
 // ─── Helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -1239,18 +1096,6 @@ function appendEnvFlags(args: string[], env: Record<string, string> | undefined)
     }
     args.push("--env", `${k}=${v}`);
   }
-}
-
-/**
- * herdr's creation verbs start a plain shell; there is no
- * create-and-run-this form. Running the agent CLI in the new pane is a
- * separate `agent start` step (`startAgentInPane`), which spawn calls
- * after creating the bare pane. Refuse loudly rather than silently
- * dropping the command on the floor.
- */
-function rejectCommand(method: string, command: string | undefined): void {
-  if (command === undefined || command.trim().length === 0) return;
-  throw new HerdrNotImplementedError(`${method} with a command`);
 }
 
 /**
@@ -1367,24 +1212,8 @@ function insideHerdrClient(): boolean {
   return process.env.HERDR_ENV === "1";
 }
 
-/**
- * Copy-pasteable line landing the user on `target`. Never throws: it is
- * a hint, so an unresolvable label degrades to the manual recipe.
- */
-export async function attachHint(target: AttachTarget): Promise<string> {
-  const base = ["herdr", ...herdrGlobalFlags()].join(" ");
-  const focus = await resolveWorkspaceId(target.session)
-    .then((id) => (id === undefined ? undefined : attachFocusArgs(id, target)))
-    .catch(() => undefined);
-  if (focus === undefined) {
-    return `${base} workspace list  # then: ${base} workspace focus <id of ${target.session}>`;
-  }
-  const line = `${base} ${focus.join(" ")}`;
-  return insideHerdrClient() ? line : `${line} && ${base}`;
-}
-
-/** The same attach as argv steps. Throws `HerdrError` when no workspace
- *  carries the label (the TUI shows it in the footer). */
+/** The attach as argv steps. Throws `HerdrError` when no workspace
+ *  carries the label; callers omit the attach line then. */
 export async function attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]> {
   const flags = herdrGlobalFlags();
   const focus = await attachFocusArgs(await requireWorkspaceId(target.session), target);
@@ -1448,44 +1277,27 @@ export async function healthCheck(): Promise<MuxHealth> {
  */
 export const herdrBackend: MuxBackend = Object.freeze({
   name: "herdr" as const,
+  spawnAgentWaitsReady: true,
   available: herdrAvailable,
 
   isValidPaneId,
   assertValidPaneId,
 
-  listSessions,
-  sessionExists,
-  newSession,
-  newSessionWithPane,
+  ensureSession,
   killSession,
 
-  listWindows,
-  newWindow,
-  selectLayout,
-
+  spawnAgent,
   listPanes,
-  listPanesInSession,
-  splitWindow,
+  paneAlive,
   killPane,
-  paneExists,
+  capture,
 
-  setPaneTitle,
-  lockPaneTitle,
-  getPaneTitle,
-  currentAgentName,
+  attachCommands,
+
+  paneStatus,
+  sendToPane,
   currentSessionName,
 
-  startAgentInPane,
-
-  sendToPane,
-  capturePane,
-  paneStatus,
-
-  enableMuPaneBordersForSession,
-  enableMuPaneBordersForPane,
-
-  attachHint,
-  attachCommands,
   paneNotFoundNextSteps,
   healthCheck,
 });

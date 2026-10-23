@@ -74,7 +74,7 @@ describe("mu agent send to a non-pi agent (herdr)", () => {
 describe("mu agent send to a pi agent", () => {
   beforeEach(() => {
     insertAgent(db, { name: "pi-1", workstream: "auth", paneId: "%2", cli: "pi" });
-    // The pane is alive (paneExists echoes the id) but has no control
+    // The pane is alive (paneAlive echoes the id) but has no control
     // socket: the ctl-unreachable case, not a dead pane.
     setTmuxExecutor(async (args) => {
       (calls as string[][]).push([...args]);

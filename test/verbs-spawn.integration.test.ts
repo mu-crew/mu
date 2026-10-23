@@ -123,14 +123,6 @@ describe("spawnAgent", () => {
     expect(newWindowCall).toContain("Review");
   });
 
-  it("sets the pane title to the agent name (claim protocol identity)", async () => {
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(executor);
-    const agent = await spawnAgent(db, { name: "alice", workstream: "auth" });
-    const pane = state.panes.get(agent.paneId);
-    expect(pane?.title).toBe("alice");
-  });
-
   it("inserts a registry row with the captured pane id", async () => {
     const { executor } = mockTmux(state);
     setTmuxExecutor(executor);
@@ -283,7 +275,7 @@ describe("spawnAgent", () => {
 
     // Inject a failure into the no-workspace finalize step: patch
     // db.prepare so the `INSERT INTO agents` statement's .run() throws.
-    // The pane has already been created by createOrReusePane at this
+    // The pane has already been created by spawnAgent pane creation at this
     // point, so the catch in spawnAgent must call rollbackSpawn ->
     // killPane to undo it. (Same db.prepare-Proxy technique as
     // test/agent-reaper-transactional.test.ts.)
@@ -315,7 +307,7 @@ describe("spawnAgent", () => {
     // Restore real prepare for the assertions below.
     (db as unknown as { prepare: typeof db.prepare }).prepare = originalPrepare;
 
-    // The pane that createOrReusePane created was killed by the rollback
+    // The pane that spawnAgent pane creation created was killed by the rollback
     // catch path, so the pane count is back to baseline …
     expect(state.panes.size).toBe(panesBaseline);
     // … a kill-pane was actually issued …
@@ -405,7 +397,7 @@ describe("spawn liveness check", () => {
     setTmuxExecutor(executor);
     setSleepForTests(async () => {
       // Populate scrollback first ("the agent's last words"), then kill
-      // the pane so paneExists returns false. The capture-pane call in
+      // the pane so paneAlive returns false. The capture-pane call in
       // awaitSpawnLiveness should still see the scrollback because it
       // happens BEFORE the existence check.
       for (const pane of state.panes.values()) {
@@ -463,7 +455,7 @@ describe("spawn liveness check", () => {
 // prompt. The pane stays alive so the existing liveness check passes,
 // but the worker can never do work — the orchestrator only discovers
 // this when `mu task wait` stalls minutes later. Fix: after confirming
-// paneExists, scan the tail of the captured scrollback for a curated
+// paneAlive, scan the tail of the captured scrollback for a curated
 // list of startup-error patterns.
 
 describe("detectSpawnStartupError (pure scanner)", () => {
@@ -611,7 +603,7 @@ describe("spawn startup-error scan", () => {
 //
 // Regression for agent_spawn_abort_leaves_orphan_workspace: when a
 // `--workspace` spawn prestaged the workspace dir + placeholder agent
-// row and then createOrReusePane threw (tmux refused, e.g. no
+// row and then spawnAgent pane creation threw (tmux refused, e.g. no
 // workstream session and `new-session` failed), the workspace dir +
 // placeholder row were left behind as an orphan. The fix wraps
 // pane-create in the same outer try as finalize/liveness so
@@ -653,7 +645,7 @@ describe("spawn --workspace rollback on tmux failure", () => {
     };
   }
 
-  it("rolls back the workspace dir + agent row when createOrReusePane throws", async () => {
+  it("rolls back the workspace dir + agent row when spawnAgent pane creation throws", async () => {
     const { executor } = mockTmux(state);
     setTmuxExecutor(failOnVerb(executor, "new-session"));
 
@@ -699,11 +691,14 @@ describe("spawn --workspace rollback on tmux failure", () => {
   });
 
   it("rollback also runs when finalize fails (regression: existing inner-try path now folded into outer try)", async () => {
-    // Make select-pane (used by setPaneTitle) fail. That happens AFTER
-    // createOrReusePane returned a paneId — exercises the path that
+    // Make the placeholder-row patch (finalizeAgentRow's UPDATE) fail.
+    // That happens AFTER the pane exists — exercises the path that
     // used to be the first inner try-block.
     const { executor } = mockTmux(state);
-    setTmuxExecutor(failOnVerb(executor, "select-pane"));
+    setTmuxExecutor(executor);
+    db.exec(
+      "CREATE TRIGGER fail_finalize BEFORE UPDATE ON agents BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
     const expectedWsPath = workspacePath("auth", "worker-1");
 
     await expect(

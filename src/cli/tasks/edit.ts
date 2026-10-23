@@ -319,7 +319,7 @@ export async function cmdTaskNote(
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   // Author resolution: explicit --author wins; otherwise consult
-  // MU_AGENT_NAME (env var injected at spawn) > pane title > $USER >
+  // MU_AGENT_NAME (env var injected at spawn) > $USER >
   // 'orchestrator'. Surfaced from mufeedback note #176: notes from
   // spawned agents were appearing as <orchestrator> because the CLI
   // wasn't propagating identity. After this fix, mu-spawned workers'

@@ -16,8 +16,52 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `status` can confirm; `wait` refuses a mismatched `incarnation`; `hello`
   lists `features` (additive; protocol v1).
 
+### Changed
+
+- **`MuxBackend` shrinks to the mux-seam contract.** The interface is
+  `available`, `ensureSession`, `killSession`, `spawnAgent`, `listPanes`,
+  `paneAlive`, `killPane`, `capture`, `attachCommands`, `healthCheck`,
+  `paneNotFoundNextSteps` and the id validators, plus optional `paneStatus`
+  and `sendToPane` (herdr) and the deprecated `currentSessionName` (scope
+  fallback, goes with the `-w` unit). `spawnAgent(opts)` is one backend
+  operation (tmux: create and run in one step; herdr: bare shell pane, then
+  `agent start --kind` with the busy retry, refusing a command override
+  before touching herdr and closing the bare pane when the start fails).
+  `src/agents/spawn.ts` calls only `ensureSession` (scratch) and
+  `spawnAgent`, and branches on the capability flag `spawnAgentWaitsReady`
+  (herdr true, tmux false), not on a name. `spawnAgent` reports the pane
+  through `onPaneCreated` as soon as it exists, so herdr's readiness wait
+  (up to 30s) runs outside the per-session spawn lock.
+  `listPanes(session)` replaces `listPanes` / `listPanesInSession`,
+  `paneAlive` replaces `paneExists`, `capture` replaces `capturePane`;
+  `MuxPane` has no `title`. `ensureSession` returns `{ created, repaired }`
+  (`repaired`: the `_mu` window was re-added). `attachCommands` steps carry
+  an optional `reason`; `attachShellLine(steps)` joins them (`&&`, `;` after
+  an optional step) and replaces `attachHint`. `mu workstream init` and the
+  attach next step of `mu agent spawn` omit the line when `attachCommands`
+  throws (herdr: no such workspace). Mux reads keep their failure modes:
+  reconcile still propagates an unreachable mux instead of pruning every
+  agent.
+- **Identity is `$MU_AGENT_NAME` only.** `resolveWorkerIdentity` no longer
+  falls back to the pane title; nothing reads or writes pane titles, so a
+  pane adopted without the env var resolves to `$USER` / `orchestrator`.
+
 ### Removed
 
+- **Pane titles, pane borders and mux session discovery.** Gone from the
+  backends and the SDK: `setPaneTitle`, `lockPaneTitle`, `getPaneTitle`,
+  `currentAgentName`, `currentPaneTitle`, `parseAgentNameFromTitle`,
+  `composeAgentTitle`, `refreshAgentTitle` (and reconcile's title refresh),
+  `enableMuPaneBorders*` and the `MU_BANNER_QUIET` env var, `listSessions`,
+  `sessionExists`, `newSession`, `newSessionWithPane`, `listWindows`,
+  `newWindow`, `selectLayout`, `splitWindow`, `startAgentInPane`,
+  `ensureWorkstreamSession` (now `mux.ensureSession`) and the
+  `title=` column of orphan panes in `mu agent list` / `mu state`.
+  `mu workstream list` shows registered workstreams only: a `mu-*` session
+  with no workstream row is no longer discovered, so `mu workstream teardown
+  --empty` no longer prints its "Skipped N mu-* sessions" note
+  (`listUnregisteredMuxWorkstreams` is gone). An explicit `mu workstream
+  teardown <name> --yes` still kills one by name.
 - **The jj, sl and `cp -a` workspace backends, staleness, `workspace commits`
   and orphan listing.** `src/vcs/jj.ts`, `sl.ts`, `none.ts`, `src/staleness.ts`,
   `src/cli/staleness.ts`, `src/workspace/decorate.ts` and `orphans.ts` are gone

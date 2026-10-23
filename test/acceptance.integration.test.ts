@@ -28,7 +28,7 @@ import {
   listNotes,
   listReady,
 } from "../src/tasks.js";
-import { killPane, killSession, paneExists, resetTmuxExecutor } from "../src/tmux.js";
+import { killPane, killSession, paneAlive, resetTmuxExecutor } from "../src/tmux.js";
 import { getParallelTracks } from "../src/tracks.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
@@ -244,7 +244,7 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
     // tmux briefly reports a killed pane as still alive; wait for it
     // to actually disappear from the live pane set before reconcile,
     // otherwise prunedGhosts can be 0 on a loaded runner.
-    await pollUntil(async () => !(await paneExists(bob.paneId)), {
+    await pollUntil(async () => !(await paneAlive(bob.paneId)), {
       description: `bob's pane ${bob.paneId} gone from tmux`,
     });
     const view2 = await listLiveAgents(db, { workstream });

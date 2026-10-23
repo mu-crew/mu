@@ -247,7 +247,7 @@ async function readHerdrStates(
         });
         continue;
       }
-      const alive = await mux.paneExists(agent.paneId);
+      const alive = await mux.paneAlive(agent.paneId);
       readings.set(
         agentKey(agent),
         alive

@@ -1,37 +1,25 @@
-// Unit tests for src/tmux.ts. Uses a mocked executor so we can verify
+// Unit tests for src/mux/tmux.ts. Uses a mocked executor so we can verify
 // exactly which tmux args each function emits, without needing a real
 // tmux server. Integration tests against real tmux live in
 // test/tmux.integration.test.ts.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AGENT_STATE_GLYPH, GLYPH } from "../src/glyphs.js";
 import {
   assertValidPaneId,
-  capturePane,
-  enableMuPaneBorders,
-  enableMuPaneBordersForPane,
-  enableMuPaneBordersForSession,
+  attachCommands,
+  capture,
+  ensureSession,
   isValidPaneId,
   killPane,
   killSession,
   listPanes,
-  listSessions,
-  listWindows,
-  lockPaneTitle,
-  newSession,
-  newSessionWithPane,
-  newWindow,
   PANE_ID_RE,
-  paneExists,
-  parseAgentNameFromTitle,
+  paneAlive,
   resetSleep,
   resetTmuxExecutor,
-  selectLayout,
-  sessionExists,
-  setPaneTitle,
   setSleepForTests,
   setTmuxExecutor,
-  splitWindow,
+  spawnAgent,
   TmuxError,
   type TmuxExecResult,
   type TmuxExecutor,
@@ -158,116 +146,7 @@ describe("tmux() wrapper", () => {
 
 // ─── Sessions ──────────────────────────────────────────────────────────
 
-describe("listSessions", () => {
-  it("parses tab-separated names", async () => {
-    const { executor } = harness(() => ok("alpha\nbeta\ngamma\n"));
-    setTmuxExecutor(executor);
-    expect(await listSessions()).toEqual([{ name: "alpha" }, { name: "beta" }, { name: "gamma" }]);
-  });
-
-  it("returns empty list when no server is running", async () => {
-    const { executor } = harness(() => fail("no server running on /tmp/tmux-501/default"));
-    setTmuxExecutor(executor);
-    expect(await listSessions()).toEqual([]);
-  });
-
-  it("returns empty list when the socket file does not exist", async () => {
-    // Fresh boot / cleared /tmp / new TMUX_TMPDIR: tmux reports a missing
-    // socket as a connect error, not as "no server running".
-    const { executor } = harness(() =>
-      fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
-    );
-    setTmuxExecutor(executor);
-    expect(await listSessions()).toEqual([]);
-  });
-
-  it("propagates a connect error that is not a missing socket", async () => {
-    const { executor } = harness(() =>
-      fail("error connecting to /tmp/tmux-1000/default (Permission denied)"),
-    );
-    setTmuxExecutor(executor);
-    await expect(listSessions()).rejects.toBeInstanceOf(TmuxError);
-  });
-
-  it("returns empty list when no sessions", async () => {
-    const { executor } = harness(() => fail("no sessions"));
-    setTmuxExecutor(executor);
-    expect(await listSessions()).toEqual([]);
-  });
-
-  it("propagates other errors", async () => {
-    const { executor } = harness(() => fail("permission denied"));
-    setTmuxExecutor(executor);
-    await expect(listSessions()).rejects.toBeInstanceOf(TmuxError);
-  });
-});
-
-describe("sessionExists", () => {
-  it("true on exit 0", async () => {
-    const { executor } = harness(() => ok());
-    setTmuxExecutor(executor);
-    expect(await sessionExists("foo")).toBe(true);
-  });
-
-  it("false on non-zero exit", async () => {
-    const { executor } = harness(() => fail("can't find session: foo"));
-    setTmuxExecutor(executor);
-    expect(await sessionExists("foo")).toBe(false);
-  });
-
-  it("targets the session exactly (=<name>:), never by prefix", async () => {
-    // A bare `-t mu-auth` prefix-matches `mu-auth-refactor`, so workstream
-    // `auth` would see (and tear down) another workstream's session.
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await sessionExists("mu-auth");
-    expect(calls).toEqual([{ args: ["has-session", "-t", "=mu-auth:"] }]);
-  });
-});
-
-describe("newSession", () => {
-  it("invokes new-session -d -s <name>", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await newSession("foo");
-    expect(calls[0]?.args).toEqual(["new-session", "-d", "-x", "200", "-y", "50", "-s", "foo"]);
-  });
-
-  it("attached (detached:false) passes no size", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await newSession("foo", { detached: false });
-    expect(calls[0]?.args).toEqual(["new-session", "-s", "foo"]);
-  });
-
-  it("newSessionWithPane gets the detached size only when detached", async () => {
-    const { executor, calls } = harness(() => ok("%1\n"));
-    setTmuxExecutor(executor);
-    await newSessionWithPane("foo", { windowName: "w", command: "bash" });
-    await newSessionWithPane("foo", { windowName: "w", command: "bash", detached: false });
-    expect(calls[0]?.args.slice(0, 6)).toEqual(["new-session", "-d", "-x", "200", "-y", "50"]);
-    expect(calls[1]?.args).not.toContain("-x");
-  });
-
-  it("includes window name and command when provided", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await newSession("foo", { windowName: "main", command: "bash" });
-    expect(calls[0]?.args).toEqual([
-      "new-session",
-      "-d",
-      "-x",
-      "200",
-      "-y",
-      "50",
-      "-s",
-      "foo",
-      "-n",
-      "main",
-      "bash",
-    ]);
-  });
-});
+// ─── Sessions ──────────────────────────────────────────────────────────
 
 describe("killSession", () => {
   it("succeeds on normal kill", async () => {
@@ -318,111 +197,43 @@ describe("killSession", () => {
 
 // ─── Windows ───────────────────────────────────────────────────────────
 
-describe("listWindows", () => {
-  it("parses session-scoped output", async () => {
-    const { executor } = harness(() => ok("@1\tmain\n@2\tBackend\n"));
-    setTmuxExecutor(executor);
-    expect(await listWindows("foo")).toEqual([
-      { id: "@1", name: "main" },
-      { id: "@2", name: "Backend" },
-    ]);
-  });
-
-  it("targets the session exactly (=<name>:)", async () => {
-    const { executor, calls } = harness(() => ok(""));
-    setTmuxExecutor(executor);
-    await listWindows("mu-auth");
-    expect(calls[0]?.args.slice(0, 3)).toEqual(["list-windows", "-t", "=mu-auth:"]);
-  });
-
-  it("parses cross-session output", async () => {
-    const { executor } = harness(() => ok("alpha\t@1\tmain\nbeta\t@2\tReview\n"));
-    setTmuxExecutor(executor);
-    expect(await listWindows()).toEqual([
-      { id: "@1", name: "main", sessionName: "alpha" },
-      { id: "@2", name: "Review", sessionName: "beta" },
-    ]);
-  });
-
-  it("handles empty windows (window with empty name)", async () => {
-    // tmux can have empty window names; we should still parse.
-    const { executor } = harness(() => ok("@1\t\n"));
-    setTmuxExecutor(executor);
-    expect(await listWindows("foo")).toEqual([{ id: "@1", name: "" }]);
-  });
-});
-
-describe("newWindow", () => {
-  it("calls new-window -d -t =<session>: -n <name> with command", async () => {
-    const { executor, calls } = harness(() => ok("%15\n"));
-    setTmuxExecutor(executor);
-    const paneId = await newWindow({ session: "foo", name: "Backend", command: "bash" });
-    expect(paneId).toBe("%15");
-    expect(calls[0]?.args).toEqual([
-      "new-window",
-      "-d",
-      "-t",
-      "=foo:",
-      "-n",
-      "Backend",
-      "-P",
-      "-F",
-      "#{pane_id}",
-      "bash",
-    ]);
-  });
-
-  it("rejects non-pane-id output (defensive)", async () => {
-    const { executor } = harness(() => ok("not a pane id\n"));
-    setTmuxExecutor(executor);
-    await expect(newWindow({ name: "x", command: "bash" })).rejects.toThrow(/invalid tmux pane id/);
-  });
-});
-
-// ─── Panes ─────────────────────────────────────────────────────────────
-
-describe("listPanesInSession", () => {
+describe("listPanes", () => {
   it("calls list-panes -s -t <session> with the session-scoped format", async () => {
-    const { executor, calls } = harness(() => ok("@1\t%5\talice\tpi\n@2\t%6\trev\tclaude\n"));
+    const { executor, calls } = harness(() => ok("@1\t%5\tpi\n@2\t%6\tclaude\n"));
     setTmuxExecutor(executor);
-    const { listPanesInSession } = await import("../src/tmux.js");
-    const panes = await listPanesInSession("mu-auth");
+    const panes = await listPanes("mu-auth");
     // `=mu-auth:`, not `mu-auth` or `=mu-auth`: both of those still
     // prefix-match `mu-auth-refactor` for list-panes.
     expect(calls[0]?.args.slice(0, 4)).toEqual(["list-panes", "-s", "-t", "=mu-auth:"]);
     expect(panes).toEqual([
-      { paneId: "%5", title: "alice", command: "pi", windowId: "@1" },
-      { paneId: "%6", title: "rev", command: "claude", windowId: "@2" },
+      { paneId: "%5", command: "pi", windowId: "@1" },
+      { paneId: "%6", command: "claude", windowId: "@2" },
     ]);
   });
 
   it("returns empty array when session has no panes", async () => {
     const { executor } = harness(() => ok(""));
     setTmuxExecutor(executor);
-    const { listPanesInSession } = await import("../src/tmux.js");
-    expect(await listPanesInSession("mu-empty")).toEqual([]);
+    expect(await listPanes("mu-empty")).toEqual([]);
   });
 
   it("returns [] when the session does not exist (tmux destroys it on last pane close)", async () => {
     const { executor } = harness(() => fail("can't find session: mu-ghost"));
     setTmuxExecutor(executor);
-    const { listPanesInSession } = await import("../src/tmux.js");
-    expect(await listPanesInSession("mu-ghost")).toEqual([]);
+    expect(await listPanes("mu-ghost")).toEqual([]);
   });
 
   it("returns [] when tmux reports 'can't find window' for the session target (tmux quirk)", async () => {
     // Some tmux versions report the missing-session case with a 'window' wording.
     const { executor } = harness(() => fail("can't find window: mu-ghost"));
     setTmuxExecutor(executor);
-    const { listPanesInSession } = await import("../src/tmux.js");
-    expect(await listPanesInSession("mu-ghost")).toEqual([]);
+    expect(await listPanes("mu-ghost")).toEqual([]);
   });
 
   it("returns [] when the server is up with zero sessions ('no current target')", async () => {
     const { executor } = harness(() => fail("no current target"));
     setTmuxExecutor(executor);
-    const { listPanesInSession } = await import("../src/tmux.js");
-    expect(await listPanesInSession("mu-ghost")).toEqual([]);
+    expect(await listPanes("mu-ghost")).toEqual([]);
   });
 
   it("returns [] when the socket file does not exist (no server)", async () => {
@@ -430,217 +241,13 @@ describe("listPanesInSession", () => {
       fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
     );
     setTmuxExecutor(executor);
-    const { listPanesInSession } = await import("../src/tmux.js");
-    expect(await listPanesInSession("mu-ghost")).toEqual([]);
+    expect(await listPanes("mu-ghost")).toEqual([]);
   });
 
   it("propagates TmuxError on unexpected failures", async () => {
     const { executor } = harness(() => fail("server crashed"));
     setTmuxExecutor(executor);
-    const { listPanesInSession } = await import("../src/tmux.js");
-    await expect(listPanesInSession("mu-ghost")).rejects.toBeInstanceOf(TmuxError);
-  });
-});
-
-describe("listPanes", () => {
-  it("parses single-target output", async () => {
-    const { executor } = harness(() => ok("%5\talice\tclaude\n%6\tbob\tbash\n"));
-    setTmuxExecutor(executor);
-    expect(await listPanes(":Backend")).toEqual([
-      { paneId: "%5", title: "alice", command: "claude" },
-      { paneId: "%6", title: "bob", command: "bash" },
-    ]);
-  });
-
-  it("uses -a for cross-session listing when target is '*'", async () => {
-    const { executor, calls } = harness(() =>
-      ok("alpha\t@1\t%5\talice\tclaude\nbeta\t@2\t%6\tbob\tbash\n"),
-    );
-    setTmuxExecutor(executor);
-    const panes = await listPanes("*");
-    expect(calls[0]?.args).toContain("-a");
-    expect(panes).toEqual([
-      {
-        paneId: "%5",
-        title: "alice",
-        command: "claude",
-        windowId: "@1",
-        sessionName: "alpha",
-      },
-      {
-        paneId: "%6",
-        title: "bob",
-        command: "bash",
-        windowId: "@2",
-        sessionName: "beta",
-      },
-    ]);
-  });
-
-  it("handles empty title", async () => {
-    const { executor } = harness(() => ok("%5\t\tbash\n"));
-    setTmuxExecutor(executor);
-    expect(await listPanes()).toEqual([{ paneId: "%5", title: "", command: "bash" }]);
-  });
-
-  it("calls list-panes with no -t when target omitted (current session)", async () => {
-    const { executor, calls } = harness(() => ok(""));
-    setTmuxExecutor(executor);
-    await listPanes();
-    expect(calls[0]?.args).toEqual([
-      "list-panes",
-      "-F",
-      "#{pane_id}\t#{pane_title}\t#{pane_current_command}",
-    ]);
-  });
-});
-
-describe("splitWindow", () => {
-  it("calls split-window -h -d -t <target> -P -F", async () => {
-    const { executor, calls } = harness(() => ok("%16\n"));
-    setTmuxExecutor(executor);
-    const id = await splitWindow({ target: ":Backend", command: "bash" });
-    expect(id).toBe("%16");
-    expect(calls[0]?.args).toEqual([
-      "split-window",
-      "-h",
-      "-d",
-      "-t",
-      ":Backend",
-      "-P",
-      "-F",
-      "#{pane_id}",
-      "bash",
-    ]);
-  });
-
-  it("vertical split when horizontal: false", async () => {
-    const { executor, calls } = harness(() => ok("%17\n"));
-    setTmuxExecutor(executor);
-    await splitWindow({ target: "%15", command: "bash", horizontal: false });
-    expect(calls[0]?.args).not.toContain("-h");
-  });
-});
-
-// ─── Pane env injection (-e KEY=VALUE) ───────────────────────────
-//
-// All four pane-creating helpers (newSession, newSessionWithPane,
-// newWindow, splitWindow) accept an optional env: Record<string,string>
-// that emits one tmux `-e KEY=VALUE` flag per entry. The flag must be
-// emitted BEFORE the command argument; tmux 3.0+ supports it on all
-// three subcommands.
-
-/** Assert that args contains the pair `-e`, `KEY=VALUE` adjacent. */
-function expectEnvFlag(args: string[], key: string, value: string): void {
-  const expected = `${key}=${value}`;
-  for (let i = 0; i < args.length - 1; i++) {
-    if (args[i] === "-e" && args[i + 1] === expected) return;
-  }
-  throw new Error(`expected -e ${expected} in args, got: ${args.join(" ")}`);
-}
-
-/** Index of the first `-e` flag in args, or -1 if none. */
-function firstEnvFlagIndex(args: string[]): number {
-  return args.indexOf("-e");
-}
-
-/** Find the index of the command arg in args. tmux helpers always pass
- *  the command as the LAST positional after `-P -F #{pane_id}` (or as
- *  the last arg for newSession). */
-function commandIndex(args: string[]): number {
-  return args.length - 1;
-}
-
-describe("newWindow with env", () => {
-  it("emits one -e KEY=VALUE per entry, before the command arg", async () => {
-    const { executor, calls } = harness(() => ok("%20\n"));
-    setTmuxExecutor(executor);
-    await newWindow({
-      session: "foo",
-      name: "Backend",
-      command: "bash",
-      env: { FOO: "bar", BAZ: "qux" },
-    });
-    const args = calls[0]?.args ?? [];
-    expectEnvFlag(args, "FOO", "bar");
-    expectEnvFlag(args, "BAZ", "qux");
-    // -e must come before the command (last positional).
-    expect(firstEnvFlagIndex(args)).toBeLessThan(commandIndex(args));
-  });
-
-  it("emits no -e flags when env is omitted", async () => {
-    const { executor, calls } = harness(() => ok("%21\n"));
-    setTmuxExecutor(executor);
-    await newWindow({ session: "foo", name: "Backend", command: "bash" });
-    expect(calls[0]?.args).not.toContain("-e");
-  });
-
-  it("throws TypeError on empty key", async () => {
-    const { executor } = harness(() => ok("%22\n"));
-    setTmuxExecutor(executor);
-    await expect(
-      newWindow({
-        session: "foo",
-        name: "Backend",
-        command: "bash",
-        env: { "": "x" },
-      }),
-    ).rejects.toBeInstanceOf(TypeError);
-  });
-
-  it("throws TypeError on key containing '='", async () => {
-    const { executor } = harness(() => ok("%23\n"));
-    setTmuxExecutor(executor);
-    await expect(
-      newWindow({
-        session: "foo",
-        name: "Backend",
-        command: "bash",
-        env: { "BAD=KEY": "x" },
-      }),
-    ).rejects.toBeInstanceOf(TypeError);
-  });
-});
-
-describe("splitWindow with env", () => {
-  it("emits one -e KEY=VALUE per entry, before the command arg", async () => {
-    const { executor, calls } = harness(() => ok("%24\n"));
-    setTmuxExecutor(executor);
-    await splitWindow({
-      target: ":Backend",
-      command: "bash",
-      env: { FOO: "bar", BAZ: "qux" },
-    });
-    const args = calls[0]?.args ?? [];
-    expectEnvFlag(args, "FOO", "bar");
-    expectEnvFlag(args, "BAZ", "qux");
-    expect(firstEnvFlagIndex(args)).toBeLessThan(commandIndex(args));
-  });
-});
-
-describe("newSessionWithPane with env", () => {
-  it("emits one -e KEY=VALUE per entry, before the command arg", async () => {
-    const { executor, calls } = harness(() => ok("%25\n"));
-    setTmuxExecutor(executor);
-    await newSessionWithPane("mu-foo", {
-      windowName: "alice",
-      command: "bash",
-      env: { FOO: "bar", BAZ: "qux" },
-    });
-    const args = calls[0]?.args ?? [];
-    expectEnvFlag(args, "FOO", "bar");
-    expectEnvFlag(args, "BAZ", "qux");
-    expect(firstEnvFlagIndex(args)).toBeLessThan(commandIndex(args));
-  });
-});
-
-describe("newSession with env", () => {
-  it("emits -e KEY=VALUE flags (kept symmetric with the other pane-creating helpers)", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await newSession("mu-foo", { env: { FOO: "bar" } });
-    expect(calls[0]?.args).toContain("-e");
-    expect(calls[0]?.args).toContain("FOO=bar");
+    await expect(listPanes("mu-ghost")).rejects.toBeInstanceOf(TmuxError);
   });
 });
 
@@ -680,150 +287,51 @@ describe("killPane", () => {
   });
 });
 
-describe("paneExists", () => {
+describe("paneAlive", () => {
   it("true when display-message echoes the pane id", async () => {
     const { executor } = harness(() => ok("%15\n"));
     setTmuxExecutor(executor);
-    expect(await paneExists("%15")).toBe(true);
+    expect(await paneAlive("%15")).toBe(true);
   });
 
   it("false on non-zero exit", async () => {
     const { executor } = harness(() => fail("can't find pane"));
     setTmuxExecutor(executor);
-    expect(await paneExists("%15")).toBe(false);
+    expect(await paneAlive("%15")).toBe(false);
   });
 
   it("false when display-message exits 0 but echoes empty (tmux quirk for bogus targets)", async () => {
     const { executor } = harness(() => ok("\n"));
     setTmuxExecutor(executor);
-    expect(await paneExists("%15")).toBe(false);
+    expect(await paneAlive("%15")).toBe(false);
   });
 
   it("false when display-message echoes a different pane id", async () => {
     const { executor } = harness(() => ok("%99\n"));
     setTmuxExecutor(executor);
-    expect(await paneExists("%15")).toBe(false);
+    expect(await paneAlive("%15")).toBe(false);
   });
 
   it("false (no tmux call) on invalid pane id", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
-    expect(await paneExists("garbage")).toBe(false);
+    expect(await paneAlive("garbage")).toBe(false);
     expect(calls).toEqual([]);
   });
 });
 
-describe("lockPaneTitle", () => {
-  it("sets pane-scoped allow-set-title off", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await lockPaneTitle("%15");
-    expect(calls[0]?.args).toEqual(["set-option", "-p", "-t", "%15", "allow-set-title", "off"]);
-  });
-});
-
-describe("setPaneTitle", () => {
-  it("invokes select-pane -T", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await setPaneTitle("%15", "alice");
-    expect(calls[0]?.args).toEqual(["select-pane", "-t", "%15", "-T", "alice"]);
-  });
-});
-
-describe("enableMuPaneBorders", () => {
-  it("is a no-op when MU_BANNER_QUIET=1 (operator opt-out)", async () => {
-    const key = "MU_BANNER_QUIET";
-    const prev = process.env[key];
-    process.env[key] = "1";
-    try {
-      const { executor, calls } = harness(() => ok());
-      setTmuxExecutor(executor);
-      await enableMuPaneBorders("@42");
-      await enableMuPaneBordersForPane("%15");
-      expect(await enableMuPaneBordersForSession("some-session")).toBe(0);
-      expect(calls.length).toBe(0);
-    } finally {
-      if (prev === undefined) delete process.env[key];
-      else process.env[key] = prev;
-    }
-  });
-
-  it("enableMuPaneBordersForPane targets the pane directly in one tmux call", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await enableMuPaneBordersForPane("%15");
-    expect(calls.length).toBe(1);
-    expect(calls.some((call) => call.args[0] === "display-message")).toBe(false);
-    expect(calls[0]?.args.slice(0, 6)).toEqual([
-      "set-option",
-      "-w",
-      "-t",
-      "%15",
-      "pane-border-status",
-      "top",
-    ]);
-  });
-
-  it("enableMuPaneBordersForPane ignores invalid pane ids and tmux errors", async () => {
-    const { executor, calls } = harness(() => ({ stdout: "", stderr: "boom", exitCode: 1 }));
-    setTmuxExecutor(executor);
-    await enableMuPaneBordersForPane("not-a-pane");
-    expect(calls.length).toBe(0);
-    await expect(enableMuPaneBordersForPane("%15")).resolves.toBeUndefined();
-    expect(calls.length).toBe(1);
-  });
-
-  it("enables pane borders without overriding the user's format", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await enableMuPaneBorders("@42");
-    // One `;`-chained tmux invocation, not four spawns.
-    expect(calls.length).toBe(1);
-    const args = calls[0]?.args ?? [];
-    expect(args.includes("pane-border-format")).toBe(false);
-    // -w is critical: pane-border-status is a WINDOW option in tmux,
-    // not a session option. Without -w, set-option on a session
-    // target only updates the currently-active window; windows
-    // created later inherit from the global default ('off').
-    // Heavy box-drawing on bottom + sides so a mu pane is visually
-    // distinct from a non-mu tmux window even when not focused.
-    const w = (opt: string, val: string) => ["set-option", "-w", "-t", "@42", opt, val];
-    expect(args).toEqual([
-      ...w("pane-border-status", "top"),
-      ";",
-      ...w("pane-border-lines", "heavy"),
-      ";",
-      ...w("pane-active-border-style", "fg=cyan,bold"),
-      ";",
-      ...w("pane-border-style", "fg=brightblack"),
-    ]);
-  });
-});
-
-describe("selectLayout", () => {
-  it("invokes select-layout", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await selectLayout(":Backend", "even-horizontal");
-    expect(calls[0]?.args).toEqual(["select-layout", "-t", ":Backend", "even-horizontal"]);
-  });
-});
-
-// ─── Capture ───────────────────────────────────────────────────────────
-
-describe("capturePane", () => {
+describe("capture", () => {
   it("captures full scrollback by default (-S - -E -)", async () => {
     const { executor, calls } = harness(() => ok("scrollback contents"));
     setTmuxExecutor(executor);
-    expect(await capturePane("%15")).toBe("scrollback contents");
+    expect(await capture("%15")).toBe("scrollback contents");
     expect(calls[0]?.args).toEqual(["capture-pane", "-t", "%15", "-p", "-S", "-", "-E", "-"]);
   });
 
   it("captures last N lines when lines provided", async () => {
     const { executor, calls } = harness(() => ok("last 50"));
     setTmuxExecutor(executor);
-    await capturePane("%15", { lines: 50 });
+    await capture("%15", { lines: 50 });
     expect(calls[0]?.args).toEqual(["capture-pane", "-t", "%15", "-p", "-S", "-50"]);
   });
 
@@ -834,69 +342,233 @@ describe("capturePane", () => {
     const tmuxOut = "line1\nline2\nline3\nline4\nline5\nline6\n$ \n\n\n";
     const { executor } = harness(() => ok(tmuxOut));
     setTmuxExecutor(executor);
-    expect(await capturePane("%15", { lines: 3 })).toBe("line5\nline6\n$ \n");
+    expect(await capture("%15", { lines: 3 })).toBe("line5\nline6\n$ \n");
   });
 
   it("returns '' when the last N lines are all blank", async () => {
     const { executor } = harness(() => ok("\n\n\n"));
     setTmuxExecutor(executor);
-    expect(await capturePane("%15", { lines: 3 })).toBe("");
+    expect(await capture("%15", { lines: 3 })).toBe("");
   });
 
   it("captures only visible pane when lines is 0", async () => {
     const { executor, calls } = harness(() => ok("visible"));
     setTmuxExecutor(executor);
-    await capturePane("%15", { lines: 0 });
+    await capture("%15", { lines: 0 });
     expect(calls[0]?.args).toEqual(["capture-pane", "-t", "%15", "-p"]);
   });
 
   it("rejects invalid pane id before tmux call", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
-    await expect(capturePane("garbage")).rejects.toThrow(/invalid tmux pane id/);
+    await expect(capture("garbage")).rejects.toThrow(/invalid tmux pane id/);
     expect(calls).toEqual([]);
   });
 });
 
 // ─── parseAgentNameFromTitle (back-compat with adopted/legacy panes) ──
 
-describe("parseAgentNameFromTitle", () => {
-  it("returns the input unchanged when no ' · ' separator (adopted/legacy panes)", () => {
-    expect(parseAgentNameFromTitle("worker-a")).toBe("worker-a");
-    expect(parseAgentNameFromTitle("reviewer-1")).toBe("reviewer-1");
-  });
+// ─── ensureSession ─────────────────────────────────────────────────────
 
-  it("returns the first ' · '-separated token (composed titles)", () => {
-    // Use the shared glyph constants production emits, so this test breaks
-    // loud if title composition and parsing drift apart.
-    expect(parseAgentNameFromTitle(`worker-a · ${AGENT_STATE_GLYPH.needs_input}`)).toBe("worker-a");
-    expect(parseAgentNameFromTitle(`worker-a · ${AGENT_STATE_GLYPH.busy} · build_x`)).toBe(
-      "worker-a",
+describe("ensureSession", () => {
+  it("creates a missing session with its placeholder _mu window", async () => {
+    const { executor, calls } = harness((args) =>
+      args[0] === "has-session" ? fail("can't find session") : ok(),
     );
-    expect(
-      parseAgentNameFromTitle(`worker-a · ${AGENT_STATE_GLYPH.busy} · ${GLYPH.multi}3 tasks`),
-    ).toBe("worker-a");
+    setTmuxExecutor(executor);
+    expect(await ensureSession("mu-auth")).toEqual({ created: true, repaired: false });
+    expect(calls[1]?.args).toEqual([
+      "new-session",
+      "-d",
+      "-x",
+      "200",
+      "-y",
+      "50",
+      "-s",
+      "mu-auth",
+      "-n",
+      "_mu",
+    ]);
   });
 
-  it("trims whitespace around the name token", () => {
-    expect(parseAgentNameFromTitle("  worker-a  ")).toBe("worker-a");
-    expect(parseAgentNameFromTitle(`  worker-a · ${AGENT_STATE_GLYPH.needs_input}  `)).toBe(
-      "worker-a",
+  it("does nothing when the session already holds _mu", async () => {
+    const { executor, calls } = harness((args) =>
+      args[0] === "list-windows" ? ok("@1\t_mu\n@2\tworker-1\n") : ok(),
     );
+    setTmuxExecutor(executor);
+    expect(await ensureSession("mu-auth")).toEqual({ created: false, repaired: false });
+    expect(calls.map((c) => c.args[0])).toEqual(["has-session", "list-windows"]);
   });
 
-  // Drift guard: every AGENT_STATE_GLYPH codepoint must round-trip through
-  // parseAgentNameFromTitle. The earlier `needs_input + busy` cases
-  // pinned 2 of 7 glyphs; this loop pins all 7 so a one-codepoint
-  // change to AGENT_STATE_GLYPH[unreachable] (or any other entry) fails
-  // loud instead of silently degrading state-card / pane-title output.
-  it("recovers the agent name for every AGENT_STATE_GLYPH entry", () => {
-    for (const [status, glyph] of Object.entries(AGENT_STATE_GLYPH)) {
-      expect(parseAgentNameFromTitle(`worker-a · ${glyph}`), `status=${status}`).toBe("worker-a");
-      expect(
-        parseAgentNameFromTitle(`worker-a · ${glyph} · build_x`),
-        `status=${status} (with claim)`,
-      ).toBe("worker-a");
-    }
+  it("re-adds a missing _mu window to an existing session", async () => {
+    const { executor, calls } = harness((args) =>
+      args[0] === "list-windows" ? ok("@2\tworker-1\n") : ok(),
+    );
+    setTmuxExecutor(executor);
+    expect(await ensureSession("mu-auth")).toEqual({ created: false, repaired: true });
+    const add = calls[2]?.args ?? [];
+    expect(add.slice(0, 6)).toEqual(["new-window", "-d", "-t", "=mu-auth:", "-n", "_mu"]);
+  });
+
+  it("targets the session exactly (=<name>:), never by prefix", async () => {
+    const { executor, calls } = harness(() => ok("@1\t_mu\n"));
+    setTmuxExecutor(executor);
+    await ensureSession("mu-auth");
+    expect(calls[0]).toEqual({ args: ["has-session", "-t", "=mu-auth:"] });
+    expect(calls[1]?.args.slice(0, 3)).toEqual(["list-windows", "-t", "=mu-auth:"]);
+  });
+});
+
+// ─── spawnAgent ────────────────────────────────────────────────────────
+
+const SPAWN = {
+  session: "mu-auth",
+  window: "worker-1",
+  name: "worker-1",
+  cli: "pi",
+  command: "pi",
+  commandSource: "cli-key" as const,
+  env: {},
+};
+
+describe("spawnAgent", () => {
+  it("creates session, window and pane in one new-session when the session is missing", async () => {
+    const { executor, calls } = harness((args) =>
+      args[0] === "has-session" ? fail("can't find session") : ok("%7\n"),
+    );
+    setTmuxExecutor(executor);
+    const seen: string[] = [];
+    const id = await spawnAgent({
+      ...SPAWN,
+      cwd: "/work/tree",
+      env: { MU_AGENT_NAME: "worker-1" },
+      onPaneCreated: (p) => seen.push(p),
+    });
+    expect(id).toBe("%7");
+    expect(seen).toEqual(["%7"]);
+    expect(calls[1]?.args).toEqual([
+      "new-session",
+      "-d",
+      "-x",
+      "200",
+      "-y",
+      "50",
+      "-s",
+      "mu-auth",
+      "-n",
+      "worker-1",
+      "-c",
+      "/work/tree",
+      "-e",
+      "MU_AGENT_NAME=worker-1",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "pi",
+    ]);
+  });
+
+  it("adds a new window when the session exists without that window", async () => {
+    const { executor, calls } = harness((args) =>
+      args[0] === "list-windows" ? ok("@1\t_mu\n") : args[0] === "new-window" ? ok("%8\n") : ok(),
+    );
+    setTmuxExecutor(executor);
+    expect(await spawnAgent({ ...SPAWN, env: { FOO: "bar" } })).toBe("%8");
+    expect(calls[2]?.args).toEqual([
+      "new-window",
+      "-d",
+      "-t",
+      "=mu-auth:",
+      "-n",
+      "worker-1",
+      "-e",
+      "FOO=bar",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "pi",
+    ]);
+  });
+
+  it("splits the existing window, targeting its id inside the exact session", async () => {
+    const { executor, calls } = harness((args) =>
+      args[0] === "list-windows"
+        ? ok("@1\t_mu\n@4\tworker-1\n")
+        : args[0] === "split-window"
+          ? ok("%9\n")
+          : ok(),
+    );
+    setTmuxExecutor(executor);
+    expect(await spawnAgent({ ...SPAWN, cwd: "/w", env: { A: "1", B: "2" } })).toBe("%9");
+    const args = calls[2]?.args ?? [];
+    expect(args.slice(0, 5)).toEqual(["split-window", "-h", "-d", "-t", "=mu-auth:@4"]);
+    expectEnvFlag(args, "A", "1");
+    expectEnvFlag(args, "B", "2");
+    // -e flags precede the command, which is the last positional.
+    expect(args.indexOf("-e")).toBeLessThan(args.length - 1);
+    expect(args[args.length - 1]).toBe("pi");
+  });
+
+  it("emits no -e flags for an empty env", async () => {
+    const { executor, calls } = harness((args) =>
+      args[0] === "has-session" ? fail("can't find session") : ok("%10\n"),
+    );
+    setTmuxExecutor(executor);
+    await spawnAgent(SPAWN);
+    expect(calls[1]?.args).not.toContain("-e");
+  });
+
+  it("throws TypeError on an empty env key or a key containing '='", async () => {
+    const { executor } = harness((args) =>
+      args[0] === "has-session" ? fail("can't find session") : ok("%11\n"),
+    );
+    setTmuxExecutor(executor);
+    await expect(spawnAgent({ ...SPAWN, env: { "": "x" } })).rejects.toThrow(TypeError);
+    await expect(spawnAgent({ ...SPAWN, env: { "A=B": "x" } })).rejects.toThrow(TypeError);
+  });
+
+  it("rejects non-pane-id output and never reports a pane", async () => {
+    const { executor } = harness((args) =>
+      args[0] === "has-session" ? fail("can't find session") : ok("garbage\n"),
+    );
+    setTmuxExecutor(executor);
+    const seen: string[] = [];
+    await expect(spawnAgent({ ...SPAWN, onPaneCreated: (p) => seen.push(p) })).rejects.toThrow(
+      TypeError,
+    );
+    expect(seen).toEqual([]);
+  });
+});
+
+/** Assert that args contains the pair `-e`, `KEY=VALUE` adjacent. */
+function expectEnvFlag(args: string[], key: string, value: string): void {
+  const expected = `${key}=${value}`;
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === "-e" && args[i + 1] === expected) return;
+  }
+  throw new Error(`expected -e ${expected} in args, got: ${args.join(" ")}`);
+}
+
+// ─── attachCommands ────────────────────────────────────────────────────
+
+describe("attachCommands", () => {
+  it("inside a client: one switch-client step", async () => {
+    expect(await attachCommands({ session: "mu-a", window: "w", inside: true })).toEqual([
+      { command: "tmux", args: ["switch-client", "-t", "mu-a:w"] },
+    ]);
+  });
+
+  it("outside: attach-session, then a best-effort select-window carrying its reason", async () => {
+    const steps = await attachCommands({ session: "mu-a", window: "w" });
+    expect(steps.map((s) => s.args)).toEqual([
+      ["attach-session", "-t", "mu-a"],
+      ["select-window", "-t", "mu-a:w"],
+    ]);
+    expect(steps[1]?.optional).toBe(true);
+    expect(steps[1]?.reason).toBeTruthy();
+  });
+
+  it("outside with no window: attach-session only", async () => {
+    expect(await attachCommands({ session: "mu-a" })).toHaveLength(1);
   });
 });

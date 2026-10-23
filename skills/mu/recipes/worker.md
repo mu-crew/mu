@@ -3,8 +3,7 @@
 Use when you are the worker: a task was claimed for you, or you were
 told to claim one.
 
-`$MU_AGENT_NAME` (injected at spawn) resolves identity; panes without
-it fall back to the pane title. In a worker pane, bare
+`$MU_AGENT_NAME` (injected at spawn) resolves identity. In a worker pane, bare
 `mu task claim <id>` works. In the unregistered orchestrator pane it
 errors; use `--self` or `--for <worker>`.
 

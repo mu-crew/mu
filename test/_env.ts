@@ -1,7 +1,7 @@
 // Shared env helpers for tests that touch process.env.
 //
 // Why this lives in its own file: identity-resolution tests (claimSelf,
-// resolveActorIdentity, currentAgentName) keep silently failing when
+// resolveActorIdentity, resolveWorkerIdentity) keep silently failing when
 // the test suite is run from inside a mu-spawned pane, because the
 // host pane leaks MU_AGENT_NAME / TMUX_PANE / USER into the vitest
 // child env. A test that asserts "fall back to $USER" can't afford to
@@ -57,8 +57,8 @@ export async function pollUntil(
   throw new Error(`pollUntil: ${what} did not become true within ${attempts} × ${intervalMs}ms`);
 }
 
-// Identity-resolution chain (resolveActorIdentity / currentAgentName)
-// reads MU_AGENT_NAME, TMUX_PANE, and USER. Strip all three for the
+// Identity-resolution chain (resolveActorIdentity / resolveWorkerIdentity)
+// reads MU_AGENT_NAME and USER (TMUX_PANE no longer matters). Strip all three for the
 // duration of `fn` so tests can construct the exact fallback state
 // they want to verify, regardless of the surrounding shell. Inner
 // withEnv() calls can still set individual vars to specific values.

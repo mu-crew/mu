@@ -121,7 +121,7 @@ A pi agent's `/new`, `/reload` and `/compact [instructions]` go
 through the `command` op. Any other slash command to a pi agent raises
 `AgentSlashCommandUnsupportedError` (exit 2). Text such as
 `/tmp/x.log ...` is a plain prompt, not a slash command. A pi agent
-therefore never reaches `capturePane` or the mux send.
+therefore never reaches `capture` or the mux send.
 
 ## Remote agents
 

@@ -1,10 +1,11 @@
-// Spawn on the herdr backend: the two-step create-then-start.
+// Spawn on the herdr backend: `herdrBackend.spawnAgent` is one operation
+// that internally does create-then-start.
 //
 // herdr has no create-and-run form (`workspace create` / `tab create` /
 // `pane split` always start a plain shell, and `agent start` never
-// creates layout), so a spawn is necessarily:
+// creates layout), so the backend:
 //
-//   1. create the pane bare
+//   1. creates the pane bare
 //   2. `herdr agent start <name> --kind <cli> --pane <id>`
 //
 // Every JSON body below is a VERBATIM capture from a real herdr 0.8.0
@@ -13,7 +14,7 @@
 // default session was never started or touched. Hardcoding the
 // recordings keeps this in the fast tier: no subprocess, no server.
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -23,23 +24,19 @@ import {
   setCommandResolverForTests,
   spawnAgent,
 } from "../src/agents/spawn.js";
+import { lockPathForSession } from "../src/agents/spawn-lock.js";
 import { getAgent, isValidAgentName } from "../src/agents.js";
 import { classifyError } from "../src/cli/handle.js";
 import { type Db, openDb } from "../src/db.js";
 import {
   HerdrCommandOverrideError,
   HerdrError,
-  HerdrNotImplementedError,
   HerdrUnsupportedCliError,
   herdrBackend,
   isValidPaneId,
-  newSessionWithPane,
-  newWindow,
   PANE_ID_RE,
   resetHerdrExecutor,
   setHerdrExecutor,
-  splitWindow,
-  startAgentInPane,
 } from "../src/mux/herdr.js";
 import type { MuxBackend } from "../src/mux/types.js";
 import { resetMux, setMuxForTests } from "../src/mux.js";
@@ -248,6 +245,28 @@ const UNSUPPORTED_KIND = {
 
 const OK_PANE_CLOSE = JSON.stringify({ id: "cli:pane:close", result: { type: "ok" } });
 
+/** Answers for a first-ever spawn into a workspace that does not exist yet. */
+function freshWorkspace(args: readonly string[]) {
+  const key = args.join(" ");
+  if (key.startsWith("workspace list")) return ok(WORKSPACE_LIST_EMPTY);
+  if (key.startsWith("workspace create")) return ok(WORKSPACE_CREATED);
+  return ok(OK_PANE_CLOSE); // tab rename, pane close
+}
+
+/** `herdrBackend.spawnAgent` with the default options; override per test. */
+function backendSpawn(over: Partial<Parameters<typeof herdrBackend.spawnAgent>[0]> = {}) {
+  return herdrBackend.spawnAgent({
+    session: "mu-spawntest",
+    window: "worker-1",
+    name: "worker-1",
+    cli: "pi",
+    command: "pi",
+    commandSource: "cli-key",
+    env: {},
+    ...over,
+  });
+}
+
 // ─── Harness ───────────────────────────────────────────────────────────
 
 interface Call {
@@ -317,7 +336,6 @@ describe("spawn on herdr is create-then-start, in that order", () => {
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
       ["tab rename", ok(OK_PANE_CLOSE)],
-      ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", ok(AGENT_STARTED)],
     ]);
     ensureWorkstream(db, "spawntest");
@@ -347,7 +365,6 @@ describe("spawn on herdr is create-then-start, in that order", () => {
       ["tab list", ok(TAB_LIST)],
       ["pane list", ok(PANE_LIST)],
       ["pane split", ok(PANE_SPLIT)],
-      ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p3" } } }))],
       ["agent start", ok(AGENT_STARTED)],
     ]);
     ensureWorkstream(db, "spawntest");
@@ -370,7 +387,6 @@ describe("spawn on herdr is create-then-start, in that order", () => {
       ["workspace list", ok(WORKSPACE_LIST)],
       ["tab list", ok(TAB_LIST)],
       ["tab create", ok(TAB_CREATED)],
-      ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p2" } } }))],
       ["agent start", ok(AGENT_STARTED)],
     ]);
     ensureWorkstream(db, "spawntest");
@@ -384,20 +400,25 @@ describe("spawn on herdr is create-then-start, in that order", () => {
     expect(issued.some((k) => k === "agent start worker-1 --kind pi --pane w1:p2")).toBe(true);
   });
 
-  it("the creation verbs still REFUSE a command rather than dropping it", async () => {
-    // The property worker-2 established and this task must preserve: an
-    // ignored command leaves an empty shell mu believes hosts an agent.
-    // Callers reach step 2 explicitly or not at all.
-    mockHerdr([["workspace list", ok(WORKSPACE_LIST)]]);
-    await expect(
-      newSessionWithPane("mu-x", { windowName: "w", command: "pi" }),
-    ).rejects.toBeInstanceOf(HerdrNotImplementedError);
-    await expect(
-      newWindow({ session: "mu-spawntest", name: "t", command: "pi" }),
-    ).rejects.toBeInstanceOf(HerdrNotImplementedError);
-    await expect(splitWindow({ target: "w1:p1", command: "pi" })).rejects.toBeInstanceOf(
-      HerdrNotImplementedError,
-    );
+  it("reports the pane BEFORE the readiness wait, so the caller can drop its lock", async () => {
+    const order: string[] = [];
+    setHerdrExecutor(async (args) => {
+      if (args[0] === "agent") order.push("agent start");
+      return args[0] === "agent" ? ok(AGENT_STARTED) : freshWorkspace(args);
+    });
+    await backendSpawn({ onPaneCreated: (p) => order.push(`created ${p}`) });
+    expect(order).toEqual(["created w1:p1", "agent start"]);
+  });
+
+  it("never writes a pane label: identity is $MU_AGENT_NAME", async () => {
+    const calls = mockHerdr([
+      ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
+      ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
+      ["agent start", ok(AGENT_STARTED)],
+    ]);
+    await backendSpawn({ env: { MU_AGENT_NAME: "worker-1" } });
+    expect(keys(calls).some((k) => k.startsWith("pane rename"))).toBe(false);
   });
 });
 
@@ -409,7 +430,6 @@ describe("a failed agent start never leaves a pane mu thinks is an agent", () =>
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
       ["tab rename", ok(OK_PANE_CLOSE)],
-      ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", serverError(AGENT_START_TIMEOUT)],
       ["pane close", ok(OK_PANE_CLOSE)],
     ]);
@@ -433,7 +453,6 @@ describe("a failed agent start never leaves a pane mu thinks is an agent", () =>
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
       ["tab rename", ok(OK_PANE_CLOSE)],
-      ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", serverError(AGENT_INVALID_NAME)],
       ["pane close", ok(OK_PANE_CLOSE)],
     ]);
@@ -451,7 +470,6 @@ describe("a failed agent start never leaves a pane mu thinks is an agent", () =>
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
       ["tab rename", ok(OK_PANE_CLOSE)],
-      ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", serverError(AGENT_NAME_TAKEN)],
       ["pane close", ok(OK_PANE_CLOSE)],
     ]);
@@ -484,18 +502,10 @@ describe("agent_pane_busy is retried, not surfaced", () => {
           ? { stdout: "", stderr: AGENT_PANE_BUSY, exitCode: 1 }
           : ok(AGENT_STARTED);
       }
-      return ok("{}");
+      return freshWorkspace(args);
     });
 
-    await expect(
-      startAgentInPane({
-        paneId: "w1:p3",
-        name: "worker-2",
-        cli: "pi",
-        command: "pi",
-        commandSource: "cli-key",
-      }),
-    ).resolves.toBeUndefined();
+    await expect(backendSpawn({ name: "worker-2" })).resolves.toBe("w1:p1");
     expect(attempts).toBe(3);
   });
 
@@ -504,17 +514,14 @@ describe("agent_pane_busy is retried, not surfaced", () => {
     // spin on forever. The loop is bounded by ATTEMPTS, so the nulled
     // sleep makes this instant and deterministic.
     let attempts = 0;
-    setHerdrExecutor(async () => {
+    const closed: string[] = [];
+    setHerdrExecutor(async (args) => {
+      if (args[0] === "pane" && args[1] === "close") closed.push(args[2] ?? "");
+      if (args[0] !== "agent") return freshWorkspace(args);
       attempts += 1;
       return { stdout: "", stderr: AGENT_PANE_BUSY, exitCode: 1 };
     });
-    const err = await startAgentInPane({
-      paneId: "w1:p3",
-      name: "worker-2",
-      cli: "pi",
-      command: "pi",
-      commandSource: "cli-key",
-    }).catch((e: unknown) => e);
+    const err = await backendSpawn({ name: "worker-2" }).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(HerdrError);
     if (!(err instanceof HerdrError)) throw new Error("unreachable");
@@ -522,6 +529,8 @@ describe("agent_pane_busy is retried, not surfaced", () => {
     // Bounded, and it really did retry rather than failing on the first.
     expect(attempts).toBeGreaterThan(1);
     expect(attempts).toBeLessThan(200);
+    // …and the bare pane does not outlive the failed start.
+    expect(closed).toEqual(["w1:p1"]);
   });
 });
 
@@ -532,14 +541,10 @@ describe("decision 1: a --cli herdr does not know is REFUSED, not shell-run", ()
     // `--kind` is a closed enum, so an unknown value is a SYNTAX error
     // to herdr. Everywhere else exit 2 means mu drifted from the CLI, so
     // it must not read as "bug in mu" here — it is an operator typo.
-    mockHerdr([["agent start", UNSUPPORTED_KIND]]);
-    const err = await startAgentInPane({
-      paneId: "w1:p1",
-      name: "worker-1",
-      cli: "notacli",
-      command: "notacli",
-      commandSource: "cli-key",
-    }).catch((e: unknown) => e);
+    setHerdrExecutor(async (args) =>
+      args[0] === "agent" ? UNSUPPORTED_KIND : freshWorkspace(args),
+    );
+    const err = await backendSpawn({ cli: "notacli", command: "notacli" }).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(HerdrUnsupportedCliError);
     expect(String(err)).toContain("notacli");
@@ -550,32 +555,33 @@ describe("decision 1: a --cli herdr does not know is REFUSED, not shell-run", ()
   });
 
   it("does NOT fall back to `pane run`", async () => {
-    const calls = mockHerdr([["agent start", UNSUPPORTED_KIND]]);
-    await startAgentInPane({
-      paneId: "w1:p1",
-      name: "worker-1",
-      cli: "notacli",
-      command: "notacli",
-      commandSource: "cli-key",
-    }).catch(() => {});
+    const calls = mockHerdr([
+      ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
+      ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
+      ["pane close", ok(OK_PANE_CLOSE)],
+      ["agent start", UNSUPPORTED_KIND],
+    ]);
+    await backendSpawn({ cli: "notacli", command: "notacli" }).catch(() => {});
     expect(keys(calls).some((k) => k.startsWith("pane run"))).toBe(false);
+    // The bare pane is closed, not left as an unclassifiable shell.
+    expect(keys(calls)).toContain("pane close w1:p1");
   });
 
   it("mu does not hardcode herdr's kind list — herdr is the authority", async () => {
     // The kind is forwarded verbatim and the REJECTION is translated, so
     // a herdr release adding a kind works with no mu change. Proven by a
     // kind mu has never heard of succeeding.
-    const calls = mockHerdr([["agent start", ok(AGENT_STARTED)]]);
-    await expect(
-      startAgentInPane({
-        paneId: "w1:p1",
-        name: "worker-1",
-        cli: "brandnewagent",
-        command: "brandnewagent",
-        commandSource: "cli-key",
-      }),
-    ).resolves.toBeUndefined();
-    expect(keys(calls)[0]).toContain("--kind brandnewagent");
+    const calls = mockHerdr([
+      ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
+      ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
+      ["agent start", ok(AGENT_STARTED)],
+    ]);
+    await expect(backendSpawn({ cli: "brandnewagent", command: "brandnewagent" })).resolves.toBe(
+      "w1:p1",
+    );
+    expect(keys(calls).at(-1)).toContain("--kind brandnewagent");
   });
 
   it("exits 2 (usage), not 5 (mux down) — the substrate is healthy", () => {
@@ -593,21 +599,17 @@ describe("decision 2: a command override mu cannot honour is REFUSED", () => {
     // no override flag, and args after `--` go to the AGENT, not to
     // executable selection. Accepting the var and not honouring it is
     // the one outcome ruled out.
-    const calls = mockHerdr([["agent start", ok(AGENT_STARTED)]]);
-    const err = await startAgentInPane({
-      paneId: "w1:p1",
-      name: "worker-1",
-      cli: "pi",
-      command: "pi-alt",
-      commandSource: "env",
-    }).catch((e: unknown) => e);
+    const calls = mockHerdr([["", ok(OK_PANE_CLOSE)]]);
+    const err = await backendSpawn({ command: "pi-alt", commandSource: "env" }).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBeInstanceOf(HerdrCommandOverrideError);
     // Names the variable, so the operator can act without guessing.
     expect(String(err)).toContain("MU_PI_COMMAND");
     expect(String(err)).toContain("pi-alt");
-    // And refuses BEFORE touching the server: nothing was started, so
-    // there is nothing to roll back beyond the bare pane.
+    // And refuses BEFORE touching the server: no pane was created, so
+    // there is nothing to roll back.
     expect(calls).toHaveLength(0);
   });
 
@@ -625,10 +627,7 @@ describe("decision 2: a command override mu cannot honour is REFUSED", () => {
   it("an explicit --command is refused too, and does NOT name an env var", async () => {
     // "unset MU_PI_COMMAND" is useless advice to someone who typed
     // --command, so the two overrides carry different remediation.
-    const err = await startAgentInPane({
-      paneId: "w1:p1",
-      name: "worker-1",
-      cli: "pi",
+    const err = await backendSpawn({
       command: "bash -lc 'pi --yolo'",
       commandSource: "explicit",
     }).catch((e: unknown) => e);
@@ -644,25 +643,21 @@ describe("decision 2: a command override mu cannot honour is REFUSED", () => {
   it("a bare --cli with no override starts normally", async () => {
     // The control case: commandSource "cli-key" means there is nothing to
     // honour, so herdr resolving the binary itself is exactly right.
-    const calls = mockHerdr([["agent start", ok(AGENT_STARTED)]]);
-    await expect(
-      startAgentInPane({
-        paneId: "w1:p1",
-        name: "worker-1",
-        cli: "pi",
-        command: "pi",
-        commandSource: "cli-key",
-      }),
-    ).resolves.toBeUndefined();
-    expect(keys(calls)).toEqual(["agent start worker-1 --kind pi --pane w1:p1"]);
-  });
-
-  it("end-to-end: spawn under MU_PI_COMMAND refuses and rolls the pane back", async () => {
     const calls = mockHerdr([
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
       ["tab rename", ok(OK_PANE_CLOSE)],
-      ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
+      ["agent start", ok(AGENT_STARTED)],
+    ]);
+    await expect(backendSpawn()).resolves.toBe("w1:p1");
+    expect(keys(calls).at(-1)).toBe("agent start worker-1 --kind pi --pane w1:p1");
+  });
+
+  it("end-to-end: spawn under MU_PI_COMMAND refuses before any pane exists", async () => {
+    const calls = mockHerdr([
+      ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
+      ["workspace create", ok(WORKSPACE_CREATED)],
+      ["tab rename", ok(OK_PANE_CLOSE)],
       ["pane close", ok(OK_PANE_CLOSE)],
     ]);
     ensureWorkstream(db, "spawntest");
@@ -676,8 +671,10 @@ describe("decision 2: a command override mu cannot honour is REFUSED", () => {
       delete process.env[key];
     }
     expect(getAgent(db, "worker-1", "spawntest")).toBeUndefined();
-    expect(keys(calls)).toContain("pane close w1:p1");
-    expect(keys(calls).some((k) => k.startsWith("agent start"))).toBe(false);
+    // Refused locally: herdr was never asked to create or start anything.
+    expect(
+      keys(calls).some((k) => /^(workspace create|tab create|pane split|agent start)/.test(k)),
+    ).toBe(false);
   });
 });
 
@@ -732,6 +729,36 @@ describe("decision 3: mu's and herdr's agent-name shapes are identical", () => {
 
 // ─── Pane ids are base32, not decimal ──────────────────────────────────
 
+describe("herdr readiness runs outside the spawn lock", () => {
+  it("the per-session lock is released before `agent start` returns", async () => {
+    let lockHeldDuringStart: boolean | undefined;
+    setHerdrExecutor(async (args) => {
+      if (args[0] === "agent") {
+        // A real start takes seconds; give the lock holder time to finalize and release.
+        await new Promise((r) => setTimeout(r, 100));
+        lockHeldDuringStart = existsSync(lockPathForSession("mu-spawntest"));
+        return ok(AGENT_STARTED);
+      }
+      return freshWorkspace(args);
+    });
+    ensureWorkstream(db, "spawntest");
+    await spawnAgent(db, { name: "worker-1", workstream: "spawntest" });
+    // herdr's start wait is up to 30s; the lock's own budget is 15s/30s.
+    expect(lockHeldDuringStart).toBe(false);
+  });
+
+  it("a failed start after the lock was released still rolls the row back", async () => {
+    setHerdrExecutor(async (args) =>
+      args[0] === "agent" ? serverError(AGENT_START_TIMEOUT) : freshWorkspace(args),
+    );
+    ensureWorkstream(db, "spawntest");
+    await expect(
+      spawnAgent(db, { name: "worker-1", workstream: "spawntest" }),
+    ).rejects.toBeInstanceOf(HerdrError);
+    expect(getAgent(db, "worker-1", "spawntest")).toBeUndefined();
+  });
+});
+
 describe("herdr pane ordinals are base32 — spawn breaks at pane 10 otherwise", () => {
   it("accepts the ids a real server hands out past the ninth pane", () => {
     // VERIFIED by opening 38 panes on 0.8.0: the sequence is
@@ -767,10 +794,10 @@ describe("herdr pane ordinals are base32 — spawn breaks at pane 10 otherwise",
 // ─── The capability seam ───────────────────────────────────────────────
 
 describe("spawn branches on the CAPABILITY, not the backend name", () => {
-  it("herdr advertises startAgentInPane; tmux does not", async () => {
+  it("herdr advertises spawnAgentWaitsReady; tmux does not", async () => {
     const { tmuxBackend } = await import("../src/mux/tmux.js");
-    expect(typeof herdrBackend.startAgentInPane).toBe("function");
-    expect(tmuxBackend.startAgentInPane).toBeUndefined();
+    expect(herdrBackend.spawnAgentWaitsReady).toBe(true);
+    expect(tmuxBackend.spawnAgentWaitsReady).toBe(false);
   });
 
   it("MU_SPAWN_LIVENESS_MS is not consulted on herdr", async () => {
@@ -784,7 +811,6 @@ describe("spawn branches on the CAPABILITY, not the backend name", () => {
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
       ["tab rename", ok(OK_PANE_CLOSE)],
-      ["pane rename", ok(JSON.stringify({ result: { pane: { pane_id: "w1:p1" } } }))],
       ["agent start", ok(AGENT_STARTED)],
     ]);
     ensureWorkstream(db, "spawntest");

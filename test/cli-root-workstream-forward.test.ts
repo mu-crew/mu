@@ -74,7 +74,7 @@ describe("root-position -w forwards to the verb's -w", () => {
   it("teardown honours root --workstream over $MU_SESSION", async () => {
     await withEnv("MU_SESSION", "wsa", async () => {
       const mux = installMux("tmux", [
-        ["has-session", { stdout: "", stderr: "can't find session", exitCode: 1 }],
+        ["list-panes", { stdout: "", stderr: "can't find session", exitCode: 1 }],
       ]);
       try {
         const r = await runCli(

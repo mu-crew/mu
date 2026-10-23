@@ -2,8 +2,7 @@
 //
 // The claim protocol's headline property: an agent can run `mu claim
 // <task>` from inside its own pane WITHOUT passing its name explicitly.
-// mu reads `tmux display-message -t $TMUX_PANE -p '#{pane_title}'` to
-// derive the agent identity from the pane title set on spawn.
+// mu reads `$MU_AGENT_NAME`, which spawnAgent injects into the pane.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,12 +47,13 @@ describeIfTmux("claim integration (real tmux + real DB)", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  // Helper: run a callback with $TMUX_PANE temporarily set. Computed-key
-  // form for env deletion so Biome's noDelete rule doesn't trip.
-  async function withPane<T>(paneId: string, fn: () => Promise<T>): Promise<T> {
-    const key = "TMUX_PANE";
+  // Helper: run a callback as the agent `name`, the way a pane spawned
+  // by mu is: $MU_AGENT_NAME set. Computed-key form for env deletion so
+  // Biome's noDelete rule doesn't trip.
+  async function withAgent<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const key = "MU_AGENT_NAME";
     const original = process.env[key];
-    process.env[key] = paneId;
+    process.env[key] = name;
     try {
       return await fn();
     } finally {
@@ -66,7 +66,7 @@ describeIfTmux("claim integration (real tmux + real DB)", () => {
   }
 
   it("claim from a spawned pane derives owner = agent name (zero-config)", async () => {
-    // 1. Spawn an agent. spawnAgent sets the pane title to the agent name.
+    // 1. Spawn an agent. spawnAgent injects $MU_AGENT_NAME.
     const agent = await spawnAgent(db, {
       name: "alice",
       workstream,
@@ -87,11 +87,11 @@ describeIfTmux("claim integration (real tmux + real DB)", () => {
     });
 
     // 3. Simulate "running mu claim from inside alice's pane" by setting
-    //    $TMUX_PANE to alice's pane id and calling claimTask with no
+    //    $MU_AGENT_NAME to alice and calling claimTask with no
     //    explicit agentName.
-    const result = await withPane(agent.paneId, () => claimTask(db, "design", { workstream }));
+    const result = await withAgent(agent.name, () => claimTask(db, "design", { workstream }));
 
-    // 4. The claim should have derived owner = "alice" from the pane title.
+    // 4. The claim should have derived owner = "alice" from $MU_AGENT_NAME.
     expect(result.ownerName).toBe("alice");
     expect(result.previousOwnerName).toBeNull();
     expect(result.previousStatus).toBe("OPEN");
@@ -121,13 +121,13 @@ describeIfTmux("claim integration (real tmux + real DB)", () => {
     });
 
     // Alice claims first.
-    const aliceResult = await withPane(alice.paneId, () => claimTask(db, "task1", { workstream }));
+    const aliceResult = await withAgent(alice.name, () => claimTask(db, "task1", { workstream }));
     expect(aliceResult.ownerName).toBe("alice");
 
     // Bob's claim attempt fails — task is already owned.
-    await expect(
-      withPane(bob.paneId, () => claimTask(db, "task1", { workstream })),
-    ).rejects.toThrow(/already owned by alice/);
+    await expect(withAgent(bob.name, () => claimTask(db, "task1", { workstream }))).rejects.toThrow(
+      /already owned by alice/,
+    );
 
     // Final state: alice still owns it.
     expect(getTask(db, "task1", workstream)?.ownerName).toBe("alice");
@@ -138,8 +138,8 @@ describeIfTmux("claim integration (real tmux + real DB)", () => {
     // pre-check redundant: claimTask scopes the task lookup by
     // opts.workstream, so a same-named task elsewhere is invisible
     // and surfaces as TaskNotFoundError (the same shape every other
-    // verb raises). The pane-title → agent-name parse is still
-    // exercised by the surrounding withPane / no-explicit-agentName
+    // verb raises). The $MU_AGENT_NAME identity is still
+    // exercised by the surrounding withAgent / no-explicit-agentName
     // path.
     const alice = await spawnAgent(db, {
       name: "alice",
@@ -159,7 +159,7 @@ describeIfTmux("claim integration (real tmux + real DB)", () => {
     });
 
     await expect(
-      withPane(alice.paneId, () => claimTask(db, "design", { workstream })),
+      withAgent(alice.name, () => claimTask(db, "design", { workstream })),
     ).rejects.toBeInstanceOf(TaskNotFoundError);
     // Task stayed unowned (in its own workstream).
     expect(getTask(db, "design", otherWorkstream)?.ownerName).toBeNull();
@@ -180,9 +180,9 @@ describeIfTmux("claim integration (real tmux + real DB)", () => {
       effortDays: 1,
     });
 
-    await withPane(alice.paneId, () => claimTask(db, "task1", { workstream }));
+    await withAgent(alice.name, () => claimTask(db, "task1", { workstream }));
     // Second claim by alice succeeds (no error).
-    const second = await withPane(alice.paneId, () => claimTask(db, "task1", { workstream }));
+    const second = await withAgent(alice.name, () => claimTask(db, "task1", { workstream }));
     expect(second.ownerName).toBe("alice");
     expect(second.previousStatus).toBe("IN_PROGRESS"); // already in progress
   });

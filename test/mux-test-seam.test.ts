@@ -10,10 +10,10 @@
 // executable form of "never touch the user's default herdr session".
 
 import { afterEach, describe, expect, it } from "vitest";
-import { listSessions } from "../src/mux/herdr.js";
+import { herdr } from "../src/mux/herdr.js";
 import { NoMultiplexerError } from "../src/mux/types.js";
 import { activeMux } from "../src/mux.js";
-import { listSessions as tmuxListSessions } from "../src/tmux.js";
+import { tmux } from "../src/tmux.js";
 import { withEnv } from "./_env.js";
 import {
   assertHerdrIsolated,
@@ -28,6 +28,21 @@ import {
 import { STATUS_RUNNING, WORKSPACE_LIST } from "./_mux-fixtures.js";
 
 const MU_HERDR_SESSION = "MU_HERDR_SESSION";
+
+/** One raw call through each backend's executor seam (the thing under test). */
+async function listSessions(): Promise<{ name: string }[]> {
+  const result = await herdr(["workspace", "list"]);
+  const rows = Array.isArray(result.workspaces) ? (result.workspaces as { label: string }[]) : [];
+  return rows.map((w) => ({ name: w.label }));
+}
+
+async function tmuxListSessions(): Promise<{ name: string }[]> {
+  const out = await tmux(["list-sessions", "-F", "#{session_name}"]);
+  return out
+    .split("\n")
+    .filter((l) => l.length > 0)
+    .map((name) => ({ name }));
+}
 
 let harness: MuxHarness | undefined;
 
@@ -143,8 +158,8 @@ describe("installUnreachableMux models a box with no multiplexer", () => {
     const unreachable = installUnreachableMux("tmux", () => new NoMultiplexerError(["tmux"]));
     try {
       const mux = await activeMux();
-      await expect(mux.listSessions()).rejects.toBeInstanceOf(NoMultiplexerError);
-      await expect(mux.paneExists("%1")).rejects.toBeInstanceOf(NoMultiplexerError);
+      await expect(mux.listPanes("mu-x")).rejects.toBeInstanceOf(NoMultiplexerError);
+      await expect(mux.paneAlive("%1")).rejects.toBeInstanceOf(NoMultiplexerError);
     } finally {
       unreachable.restore();
     }

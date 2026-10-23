@@ -85,9 +85,12 @@ function respond(response: MuxResponse): MuxExecResult {
  * let mux: MuxHarness;
  * afterEach(() => mux.restore());
  *
- * it("lists sessions", async () => {
- *   mux = installMux("herdr", [["workspace list", WORKSPACE_LIST]]);
- *   expect(await listSessions()).toEqual([{ name: "mu-topotest" }]);
+ * it("lists panes", async () => {
+ *   mux = installMux("herdr", [
+ *     ["workspace list", WORKSPACE_LIST],
+ *     ["pane list", PANE_LIST],
+ *   ]);
+ *   expect(await listPanes("mu-topotest")).toHaveLength(2);
  *   expect(mux.argsOf(0)).toEqual(["workspace", "list"]);
  * });
  * ```
@@ -161,9 +164,9 @@ export function installUnreachableMux(
     throw reject();
   };
   const stub: Record<string, unknown> = { name: backend };
-  for (const key of Object.keys(real)) {
-    if (key === "name") continue;
-    stub[key] = boom;
+  for (const [key, value] of Object.entries(real)) {
+    // Methods reject; capability flags (spawnAgentWaitsReady) keep their value.
+    stub[key] = typeof value === "function" ? boom : value;
   }
   const previousBackend = setMuxForTests(stub as unknown as MuxBackend);
   return {

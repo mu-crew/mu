@@ -25,7 +25,6 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **window name** | A window's name: the agent's `--tab` value, or the agent name. | "tab name" |
 | **pane** | One shell view inside a **window**. | "terminal", "shell" |
 | **pane id** | The mux's stable pane handle: tmux `%15`, herdr `w1:p1`. Not the volatile tmux pane index, which is never stored. | "pane number", "pane index" |
-| **pane title** | Equals the agent name. The fallback for **actor** identity when `$MU_AGENT_NAME` is absent. | "pane name" |
 | **substrate** | An external system mu depends on: tmux, herdr, git, SQLite. | "dependency" (an npm dep), "service" |
 | **crew** | Informal: the agents in a workstream. Prose only. | |
 
@@ -33,7 +32,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 
 | Term | Meaning | Don't use |
 | --- | --- | --- |
-| **agent** | A named process in a pane with a row in `agents`. Identity is `$MU_AGENT_NAME`, else the **pane title**. | "subagent", "worker" (a role) |
+| **agent** | A named process in a pane with a row in `agents`. Identity is `$MU_AGENT_NAME`; mu never reads or writes pane titles. | "subagent", "worker" (a role) |
 | **worker** | An agent in its role as task claimer. Prefer **agent** when ambiguous. | |
 | **remote worker** | A worker running on another machine while its pane and the DB stay local. Recorded in task notes as `REMOTE: <host>:<path>` and `REMOTE_BASE: <agent>:<sha>`. | "remote agent record", "host registry" |
 | **delivery unknown** | A send/fresh/interrupt/command request was written to a live agent's control socket but no reply arrived (`AgentSendIndeterminateError`). pi may have acted; read the pane before resending. | "refused" (the request never went out) |
@@ -176,8 +175,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
   └──────────────────────────────────────────────────────────────┘
 ```
 
-Actor resolution reads `$MU_AGENT_NAME`, then the **pane title**. On tmux, read `#{pane_title}`, not
-`#W`: they differ when agents share a window.
+Actor resolution reads `$MU_AGENT_NAME` only; pane titles are not identity.
 
 ## Agent state values
 

@@ -13,7 +13,7 @@
 import { dirname } from "node:path";
 import { agentKey, readAgentStates, type StateReading } from "../../agent-state.js";
 import { AgentNotFoundError } from "../../agents/errors.js";
-import { type AgentRow, getAgent, refreshAgentTitle } from "../../agents.js";
+import { type AgentRow, getAgent } from "../../agents.js";
 import {
   assertTaskInWorkstream,
   CliExitError,
@@ -64,9 +64,6 @@ export async function cmdTaskRelease(
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
   const r = releaseTask(db, localId, sdkOpts);
-  // Title push for the agent that just lost the task. Prev-owner could
-  // be null (anonymous claim release — nothing to refresh).
-  if (r.previousOwnerName) await refreshAgentTitle(db, r.previousOwnerName, ws);
   const nextSteps: NextStep[] = [
     {
       intent: "Reclaim",
@@ -155,13 +152,6 @@ export async function cmdClaim(
   // worker's (the SDK defaults it to the claimer).
   if (opts.evidence && forName !== undefined) sdkOpts.author = await resolveActorIdentity();
   const result = await claimTask(db, localId, sdkOpts);
-  // Title push for the new owner. Anonymous claims (--self) leave
-  // owner=null — nothing to refresh. Refresh in the agent's OWN
-  // workstream (forWorkstream when the dispatch was cross-ws), not
-  // the task's — the agent row only exists in its own workstream.
-  if (result.ownerName) {
-    await refreshAgentTitle(db, result.ownerName, forWorkstream ?? ws);
-  }
   const nextSteps: NextStep[] = [];
   // claim-before-send: a --for claim is the moment of dispatch, so the
   // first hint is the send that hands the task over.

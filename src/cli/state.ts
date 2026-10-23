@@ -13,8 +13,7 @@
 // support variadic `-w X[,Y]...` / `-w X -w Y` and `--all`. N=1 renders
 // single-mode (legacy shape); N≥2 stacks per-workstream full cards.
 //
-// Static snapshots run full reconciliation: refresh pane titles (the
-// operator's primary signal) and reap missing panes. Mid-spawn
+// Static snapshots run full reconciliation: reap missing panes. Mid-spawn
 // placeholders remain protected by reconcile's pending-pane skip
 // (bug_agent_spawn_workspace_fk_failure).
 
@@ -240,9 +239,7 @@ function renderFullCard(d: PerWsData): void {
   console.log(formatAgentsTable(view.agents));
   if (view.orphans.length > 0) {
     for (const orphan of view.orphans) {
-      console.log(
-        `  ${pc.yellow("orphan")} ${pc.dim(orphan.paneId)} title=${pc.bold(orphan.title)} cli=${orphan.command}`,
-      );
+      console.log(`  ${pc.yellow("orphan")} ${pc.dim(orphan.paneId)} cli=${orphan.command}`);
     }
   }
   const nudge = scratchIdleNudge(workstreamName, view.agents);

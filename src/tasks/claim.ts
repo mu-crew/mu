@@ -9,14 +9,13 @@
 //                                  in agent_logs
 //
 // resolveActorIdentity is the env-aware identity helper:
-// $MU_AGENT_NAME > pane title > $USER > 'orchestrator'. Used by --self
+// $MU_AGENT_NAME > $USER > 'orchestrator'. Used by --self
 // AND by the bare worker-claim path, so both flavours answer "who am
 // I?" identically.
 //
 // Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
 import type { Db } from "../db.js";
-import { activeMux } from "../mux.js";
 import { withOpContext } from "../op-context.js";
 import {
   ClaimerNotRegisteredError,
@@ -174,9 +173,8 @@ export interface ClaimTaskOptions extends AttributedEvidence {
    * Resolution order for the actor name (used as the log source):
    *   1. `actor` if explicitly passed.
    *   2. `$MU_AGENT_NAME`.
-   *   3. The mux's current agent name (pane title on tmux).
-   *   4. `$USER`.
-   *   5. The literal string 'orchestrator'.
+   *   3. `$USER`.
+   *   4. The literal string 'orchestrator'.
    *
    * Mutually exclusive with `agentName` (the two are alternative
    * answers to "who's the actor for this claim?"). Passing both is a
@@ -217,7 +215,7 @@ export interface ClaimResult {
  *
  *   Worker claim (default):
  *     Resolve an agent name from `opts.agentName`, else $MU_AGENT_NAME,
- *     else the mux's current agent name (pane title on tmux). The name
+ *     else fails. The name
  *     MUST exist in the agents table (`tasks.owner_id` is an FK to
  *     `agents.id`). Sets `owner_id` to that agent. This is what mu-spawned
  *     workers do, and what `mu task claim --for <worker>` does for
@@ -267,7 +265,7 @@ async function claimTaskImpl(
   const agentName = opts.agentName ?? (await resolveWorkerIdentity());
   if (!agentName) {
     throw new Error(
-      "claimTask: no agent name (pass opts.agentName, run inside an mu-spawned pane with $MU_AGENT_NAME or $TMUX_PANE set, or pass --self for an anonymous claim)",
+      "claimTask: no agent name (pass opts.agentName, run inside an mu-spawned pane with $MU_AGENT_NAME set, or pass --self for an anonymous claim)",
     );
   }
 
@@ -375,16 +373,12 @@ function assertNotParked(
  *   1. $MU_AGENT_NAME env var (set by mu spawnAgent on every managed
  *      pane; surfaced from the f3d4bdd commit). Authoritative when
  *      present — you're inside a mu-spawned worker, no ambiguity.
- *   2. tmux pane title (the pane-title identity step). Works
- *      when running inside any pane mu manages OR adopted.
- *   3. $USER (when running outside tmux entirely).
- *   4. The literal 'orchestrator' as a last-resort default.
+ *   2. $USER (when running outside a mu pane entirely).
+ *   3. The literal 'orchestrator' as a last-resort default.
  *
- * Why prefer env over pane title: pane titles are a tmux-server-wide
- * resource that anything can rewrite. The env var is set per-pane at
- * spawn time and is unforgeable from outside without explicit
- * `--actor` override. Pane title is the only identity available for
- * adopted panes that didn't go through mu's spawn path.
+ * The env var is set per-pane at spawn time and is unforgeable from
+ * outside without explicit `--actor` override. Pane titles are not
+ * identity: nothing reads or writes them.
  */
 export async function resolveActorIdentity(): Promise<string> {
   const worker = await resolveWorkerIdentity();
@@ -408,34 +402,13 @@ export async function resolveActorIdentity(): Promise<string> {
  *     would turn a clear "who are you?" error into a confusing
  *     ClaimerNotRegisteredError naming the operator's unix login.
  *
- * Rungs:
- *   1. `$MU_AGENT_NAME` — injected into every pane by spawnAgent.
- *      Backend-independent, and the only rung that works on a mux with
- *      no mu-writable pane title.
- *   2. The mux backend's `currentAgentName()` — pane title on tmux.
- *      Parses 'name · status · task' back to the name token, which
- *      matters because composeAgentTitle decorates titles and the FK is
- *      keyed on the bare `agents.name`.
- *
- * Why env before title: a pane title is a mux-server-wide resource that
- * any process can rewrite, while the env var is set once at spawn and
- * is unforgeable from outside the pane. The title rung survives only
- * because ADOPTED panes never went through spawn and have nothing else.
+ * Identity is `$MU_AGENT_NAME`, injected into every pane by spawnAgent.
+ * It is backend-independent and unforgeable from outside the pane, and
+ * the only source: pane titles are not identity.
  */
 export async function resolveWorkerIdentity(): Promise<string | undefined> {
   const muAgent = process.env.MU_AGENT_NAME;
-  if (muAgent !== undefined && muAgent !== "") return muAgent;
-  // Best-effort: identity resolution must never be the thing that fails
-  // a verb. A non-interactive command on a box with no multiplexer wants an
-  // attribution string, not a NoMultiplexerError — and the caller
-  // already has $USER / 'orchestrator' rungs below this one.
-  try {
-    const paneTitle = await (await activeMux()).currentAgentName();
-    if (paneTitle !== undefined && paneTitle !== "") return paneTitle;
-  } catch {
-    // No reachable mux, or it could not answer. Fall through.
-  }
-  return undefined;
+  return muAgent !== undefined && muAgent !== "" ? muAgent : undefined;
 }
 
 async function claimSelf(db: Db, localId: string, opts: ClaimTaskOptions): Promise<ClaimResult> {

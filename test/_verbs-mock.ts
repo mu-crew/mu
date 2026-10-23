@@ -13,7 +13,6 @@ import type { TmuxExecResult, TmuxExecutor } from "../src/tmux.js";
 export interface FakePane {
   windowId: string;
   paneId: string;
-  title: string;
   command: string;
   scrollback?: string;
 }
@@ -75,7 +74,6 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       state.panes.set(paneId, {
         windowId,
         paneId,
-        title: "",
         command: args[args.length - 1] ?? "bash",
       });
       // -P -F captures pane id
@@ -104,7 +102,6 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       state.panes.set(paneId, {
         windowId,
         paneId,
-        title: "",
         command: args[args.length - 1] ?? "bash",
       });
       return ok(`${paneId}\n`);
@@ -138,22 +135,9 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       state.panes.set(paneId, {
         windowId: win.id,
         paneId,
-        title: "",
         command: args[args.length - 1] ?? "bash",
       });
       return ok(`${paneId}\n`);
-    }
-
-    if (verb === "select-pane") {
-      const tFlag = args.indexOf("-t");
-      const TFlag = args.indexOf("-T");
-      const paneId = tFlag >= 0 ? args[tFlag + 1] : undefined;
-      const title = TFlag >= 0 ? args[TFlag + 1] : undefined;
-      if (!paneId || title === undefined) return fail("bad select-pane");
-      const pane = state.panes.get(paneId);
-      if (!pane) return fail(`can't find pane: ${paneId}`);
-      pane.title = title;
-      return ok();
     }
 
     if (verb === "kill-pane") {
@@ -178,7 +162,7 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       const lines: string[] = [];
       for (const pane of state.panes.values()) {
         if (sessionWindowIds.has(pane.windowId)) {
-          lines.push(`${pane.windowId}\t${pane.paneId}\t${pane.title}\t${pane.command}`);
+          lines.push(`${pane.windowId}\t${pane.paneId}\t${pane.command}`);
         }
       }
       return ok(lines.join("\n"));
@@ -193,7 +177,7 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
     }
 
     if (verb === "display-message") {
-      // Used by paneExists() during the spawn liveness check.
+      // Used by paneAlive() during the spawn liveness check.
       // `display-message -t <pane> -p '#{pane_id}'` echoes back the pane id
       // iff the pane exists; otherwise tmux exits non-zero.
       const tFlag = args.indexOf("-t");
