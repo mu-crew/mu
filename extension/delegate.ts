@@ -16,7 +16,14 @@
  * that one serves a pi mu spawned; this one runs in a pi that is not.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultCacheDir } from "../src/state-dir.js";
@@ -28,10 +35,7 @@ export interface MuDelegateApi {
     message: { customType: string; content: string; display: boolean; details?: unknown },
     options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
   ): void | Promise<void>;
-  on(
-    event: "session_shutdown" | "message_start" | "agent_settled",
-    handler: (event: unknown, ctx: DelegateCtx) => unknown,
-  ): unknown;
+  on(event: string, handler: (event: unknown, ctx: DelegateCtx) => unknown): unknown;
   /** pi's in-process bus between extensions. */
   events: { emit(channel: string, data: unknown): void };
 }
@@ -40,6 +44,8 @@ export interface MuDelegateApi {
 export interface DelegateCtx {
   hasUI?: boolean;
   cwd?: string;
+  isIdle?(): boolean;
+  hasPendingMessages?(): boolean;
   ui?: {
     notify(message: string, type?: "info" | "warning" | "error"): void;
     setStatus?(key: string, text: string | undefined): void;
@@ -365,6 +371,63 @@ export function droppedNote(dropped: readonly DroppedAnswer[]): string {
   ].join("\n");
 }
 
+/** `MU_DELEGATE_TRACE=1` appends one JSON line per delivery step and pi
+ *  lifecycle event to `<mu cache dir>/delegate-trace.log`: for finding
+ *  where a follow-up got lost. Off (and free) by default. */
+export function delegateTraceOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !!env.MU_DELEGATE_TRACE && env.MU_DELEGATE_TRACE !== "0";
+}
+export function delegateTracePath(): string {
+  return join(defaultCacheDir(), "delegate-trace.log");
+}
+function trace(event: string, data: Record<string, unknown> = {}): void {
+  if (!delegateTraceOn()) return;
+  try {
+    mkdirSync(defaultCacheDir(), { recursive: true });
+    const line = { t: new Date().toISOString(), pid: process.pid, event, ...data };
+    appendFileSync(delegateTracePath(), `${JSON.stringify(line)}\n`);
+  } catch {
+    // tracing must never cost a delegate its answer
+  }
+}
+
+/** pi events the trace records, with what each says about delivery. */
+const TRACE_EVENTS = [
+  "session_start",
+  "session_before_switch",
+  "session_before_fork",
+  "session_before_compact",
+  "session_compact",
+  "session_compact_failed",
+  "session_before_tree",
+  "session_tree",
+  "agent_start",
+  "agent_end",
+  "agent_settled",
+  "turn_end",
+  "message_start",
+  "message_end",
+] as const;
+
+function traceFields(event: unknown, ctx: DelegateCtx | undefined): Record<string, unknown> {
+  const e = (event ?? {}) as Record<string, unknown>;
+  const m = e.message as { role?: unknown; customType?: unknown; details?: unknown } | undefined;
+  const d = m?.details as { delivery?: unknown; name?: unknown } | undefined;
+  const out: Record<string, unknown> = {};
+  if (m?.role) out.role = m.role;
+  if (m?.customType) out.customType = m.customType;
+  if (d?.delivery !== undefined) out.delivery = d.delivery;
+  if (d?.name !== undefined) out.name = d.name;
+  for (const k of ["aborted", "reason", "willRetry"]) if (e[k] !== undefined) out[k] = e[k];
+  try {
+    if (ctx?.isIdle) out.idle = ctx.isIdle();
+    if (ctx?.hasPendingMessages) out.pendingMsgs = ctx.hasPendingMessages();
+  } catch {
+    out.ctx = "stale";
+  }
+  return out;
+}
+
 /** Where a delegate's answer is recorded: a task, resolved by `mu task show`. */
 export type RecordTarget = { workstream: string; task: string };
 
@@ -498,6 +561,31 @@ export function registerDelegate(
   run: MuRunner = defaultRunner(),
 ): DelegateHandle {
   if (!delegateEnabled()) return { answerPending: () => false };
+  if (delegateTraceOn())
+    for (const ev of TRACE_EVENTS)
+      pi.on(ev, (e, ctx) => {
+        trace(ev, traceFields(e, ctx));
+      });
+  /** pi.sendMessage, traced: the call, its options, and how it returned. */
+  const send = (
+    message: Parameters<MuDelegateApi["sendMessage"]>[0],
+    options: Parameters<MuDelegateApi["sendMessage"]>[1],
+    why: string,
+  ): void | Promise<void> => {
+    const d = message.details as { delivery?: unknown; name?: unknown } | undefined;
+    const a = typeof d?.delivery === "number" ? arriving.get(d.delivery) : undefined;
+    if (a) Object.assign(a, { message, inRun: runActive && options?.triggerTurn !== false });
+    const at = { why, delivery: d?.delivery, name: d?.name, ...options };
+    trace("sendMessage", { ...at, ui: ui !== undefined, arriving: arriving.size });
+    try {
+      const r = pi.sendMessage(message, options);
+      trace("sendMessage.returned", { ...at, async: r !== undefined });
+      return r;
+    } catch (e) {
+      trace("sendMessage.threw", { ...at, error: String(e) });
+      throw e;
+    }
+  };
   const inflight = new Map<string, Inflight>();
   /** Calls past the cap check whose delegate is not yet in `inflight`. */
   let starting = 0;
@@ -517,8 +605,20 @@ export function registerDelegate(
    *  the rest is what an interrupt needs to point at the answer. */
   const arriving = new Map<
     number,
-    { queued: boolean; name: string; content?: string } & Omit<DroppedAnswer, "copy">
+    {
+      queued: boolean;
+      name: string;
+      content?: string;
+      /** The follow-up as sent, to send again if pi's queue loses it. */
+      message?: Parameters<MuDelegateApi["sendMessage"]>[0];
+      /** Sent while a run was active: it sits in pi's follow-up queue. */
+      inRun?: boolean;
+      resent?: boolean;
+    } & Omit<DroppedAnswer, "copy">
   >();
+  /** Between pi's agent_start and agent_end: a follow-up sent now is
+   *  queued behind the run instead of starting one. */
+  let runActive = false;
   let deliverySeq = 0;
   // The ctx of the latest tool call: answers settle outside any call, so
   // the footer is refreshed through the last ctx pi handed us.
@@ -594,7 +694,7 @@ export function registerDelegate(
         () => {},
         (e: unknown) => {
           void Promise.resolve(
-            pi.sendMessage(
+            send(
               {
                 customType: DELEGATE_MESSAGE_TYPE,
                 content: `Queued delegate ${q.handle} could not start: ${e instanceof Error ? e.message : String(e)}`,
@@ -602,6 +702,7 @@ export function registerDelegate(
                 details: { name: q.handle, workstream: W, outcome: null, closed: false },
               },
               { deliverAs: "followUp", triggerTurn: true },
+              "start-failed",
             ),
           ).catch(() => {});
         },
@@ -819,7 +920,7 @@ export function registerDelegate(
         ...(extras.elapsedMs !== undefined ? { elapsedMs: extras.elapsedMs } : {}),
         ...(agent?.sessionFile ? { sessionFile: agent.sessionFile } : {}),
       });
-    await pi.sendMessage(
+    await send(
       {
         customType: DELEGATE_MESSAGE_TYPE,
         content,
@@ -838,6 +939,7 @@ export function registerDelegate(
         },
       },
       { deliverAs: "followUp", triggerTurn: true },
+      "answer",
     );
   }
 
@@ -914,6 +1016,7 @@ export function registerDelegate(
       );
       const settle = async (r: MuResult) => {
         const delivery = ++deliverySeq;
+        trace("settle", { delivery, name, code: r.code });
         arriving.set(delivery, { queued: false, name });
         forget(name);
         try {
@@ -939,7 +1042,7 @@ export function registerDelegate(
           const a = arriving.get(delivery);
           if (a) a.content = content;
           await Promise.resolve(
-            pi.sendMessage(
+            send(
               {
                 customType: DELEGATE_MESSAGE_TYPE,
                 content,
@@ -947,6 +1050,7 @@ export function registerDelegate(
                 details: { name, workstream: W, outcome: null, closed: false, delivery },
               },
               { deliverAs: "followUp", triggerTurn: true },
+              "deliver-failed",
             ),
           ).then(
             () => markQueued(delivery),
@@ -1197,8 +1301,31 @@ export function registerDelegate(
   // mu cache dir, and leave one line per answer in the conversation (no
   // turn: the model sees it with the user's next prompt). An answer
   // still being delivered is not in the queue yet and arrives as usual.
+  pi.on("agent_start", () => {
+    runActive = true;
+  });
+  pi.on("agent_end", () => {
+    runActive = false;
+  });
   pi.on("agent_settled", (e) => {
-    if ((e as { aborted?: unknown }).aborted !== true) return;
+    runActive = false;
+    if ((e as { aborted?: unknown }).aborted !== true) {
+      // The run ended normally yet a follow-up queued behind it never
+      // started: something cleared pi's queue (the dequeue key, a failed
+      // compaction-queue flush) and custom messages are dropped silently.
+      // pi drains its queue before a run ends, so this answer is lost:
+      // send it once more.
+      for (const [id, a] of arriving) {
+        if (!a.queued || !a.inRun || a.resent || !a.message) continue;
+        a.resent = true;
+        a.inRun = false;
+        trace("resend", { delivery: id, name: a.name });
+        void Promise.resolve(
+          send(a.message, { deliverAs: "followUp", triggerTurn: true }, "resend"),
+        ).catch(() => arriving.delete(id));
+      }
+      return;
+    }
     const dropped: DroppedAnswer[] = [];
     for (const [id, a] of arriving) {
       if (!a.queued) continue;
@@ -1211,10 +1338,11 @@ export function registerDelegate(
         ...(a.content ? { copy: saveCopy(a.name, a.content) } : {}),
       });
     }
+    trace("dropped", { names: dropped.map((d) => d.name) });
     if (dropped.length === 0) return;
     showStatus();
     void Promise.resolve(
-      pi.sendMessage(
+      send(
         {
           customType: DELEGATE_MESSAGE_TYPE,
           content: droppedNote(dropped),
@@ -1222,6 +1350,7 @@ export function registerDelegate(
           details: { dropped },
         },
         { triggerTurn: false },
+        "dropped-note",
       ),
     ).catch(() => {});
   });
@@ -1230,6 +1359,10 @@ export function registerDelegate(
   // delegates lose their callback, so none is lost silently. The names
   // are also in the tool results, and `mu agent wait` recovers them.
   pi.on("session_shutdown", (_e, ctx) => {
+    trace("session_shutdown.state", {
+      arriving: [...arriving.values()].map((a) => ({ name: a.name, queued: a.queued })),
+      inflight: [...inflight.keys()],
+    });
     if (arriving.size > 0) {
       // Answers still being delivered or queued die with this runtime.
       arriving.clear();

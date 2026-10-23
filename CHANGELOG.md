@@ -49,6 +49,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **A delegate answer lost to the dequeue key is sent again.** pi's dequeue key
+  (alt+up) calls `session.clearQueue()`, which silently drops custom follow-ups;
+  the run then ends with `aborted: false`, so the Escape path saw nothing and the
+  answer never arrived. The extension now resends an answer that was queued behind
+  a run which ended normally without starting it. `MU_DELEGATE_TRACE=1` logs every
+  follow-up send and pi lifecycle event to `<cache dir>/delegate-trace.log`.
 - **`mu_delegate` `record` kept an empty `EVIDENCE:` header.** `recordNote` kept
   only lines that start with `EVIDENCE:`, so a refuter's multi-line evidence
   body was dropped. It now keeps everything from the last `VERDICT:` line on

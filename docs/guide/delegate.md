@@ -37,7 +37,11 @@ Delegates called in one turn run in parallel.
   one line per answer into the conversation, without starting a turn,
   pointing at a copy under `~/.cache/mu/delegate-answers/` and
   at the delegate's own pi session file. An answer that lands after
-  Escape arrives as usual.
+  Escape arrives as usual. The dequeue key (alt+up) clears the same
+  queue without aborting; the run then ends normally, so the extension
+  sends each answer lost that way once more.
+- `MU_DELEGATE_TRACE=1` logs every follow-up send and pi lifecycle
+  event to `~/.cache/mu/delegate-trace.log`, for finding a lost answer.
 - Each delegate costs a pane and a pi process. A session runs at most
   `MU_DELEGATE_MAX` at once (default 16). Further calls are queued, up
   to four times the cap: the footer reads `16 delegates running, 4 queued`,
