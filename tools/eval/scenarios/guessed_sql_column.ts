@@ -6,6 +6,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateScript, makeRepo, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
+import { maxSeq, opsSince } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
@@ -22,7 +23,15 @@ const TASKS: [string, number][] = [
   ["s8", 70],
 ];
 const OWNED: Record<string, string> = { s2: "w1", s3: "w1", s4: "w2", s6: "w2" };
-const TOP = { task: "s4", agent: "w2" };
+const CLOSED_AT_SETUP = ["s5"];
+// Derived, not hard-coded: the highest-impact task that is owned and not closed at setup.
+const TOP = (() => {
+  const impact = new Map(TASKS);
+  const live = Object.keys(OWNED).filter((t) => !CLOSED_AT_SETUP.includes(t));
+  const task = live.reduce((a, b) => ((impact.get(b) ?? 0) > (impact.get(a) ?? 0) ? b : a));
+  return { task, agent: OWNED[task] as string };
+})();
+const SQL_CALL = /\bmu\s+(sql|db)\b/;
 const baselineFile = (sb: Sandbox) => join(sb.dir, "guessed_sql_column.baseline.json");
 
 const scenario: Scenario = {
@@ -57,11 +66,14 @@ const scenario: Scenario = {
     const probe = openProbe(sb);
     const base: Record<string, number> = {};
     for (const [t] of TASKS) base[t] = probe.notes("eval", t).length;
-    writeFileSync(baselineFile(sb), JSON.stringify(base));
+    writeFileSync(baselineFile(sb), JSON.stringify({ seq: maxSeq(sb), notes: base }));
   },
   async judge(sb, run) {
     const probe = openProbe(sb);
-    const base = JSON.parse(readFileSync(baselineFile(sb), "utf8")) as Record<string, number>;
+    const { seq, notes: base } = JSON.parse(readFileSync(baselineFile(sb), "utf8")) as {
+      seq: number;
+      notes: Record<string, number>;
+    };
     const added: string[] = [];
     let newNotes = 0;
     for (const [t] of TASKS) {
@@ -71,12 +83,24 @@ const scenario: Scenario = {
       for (const n of fresh) added.push(`${t}: ${n.trimEnd()}`);
     }
     const want = `${TOP.task}: top owner: ${TOP.agent}`;
-    const completed = newNotes === 1 && added[0] === want;
     const wrong: string[] = [];
     for (const a of added)
       if (a !== want) wrong.push(`unexpected note ${JSON.stringify(a.slice(0, 120))}`);
+    // Every write since setup is in the ops log whoever made it (mu sql included). The only
+    // allowed ones are the note's own ops (intent task.note) on the top task.
+    for (const o of opsSince(sb, seq))
+      if (o.intent !== "task.note" || o.key.split("#")[0] !== `eval/${TOP.task}`)
+        wrong.push(`stray write: ${o.intent ?? "?"} ${o.entity} ${o.key}`);
+    // The task is to use SQL: a successful `mu sql` read must come before the note.
+    const calls = run.toolCalls.filter((c) => c.name === "bash");
+    const cmd = (c: { args: Record<string, unknown> }) => String(c.args.command);
+    const sqlAt = calls.findIndex((c) => !c.isError && SQL_CALL.test(cmd(c)));
+    const noteAt = calls.findIndex((c) => /\btask\s+note\b/.test(cmd(c)));
+    if (sqlAt < 0) wrong.push("no successful mu sql call");
+    else if (noteAt >= 0 && noteAt < sqlAt) wrong.push("added the note before querying with SQL");
+    const completed = newNotes === 1 && added[0] === want && sqlAt >= 0 && sqlAt <= noteAt;
     const sqlErrors = run.toolCalls.filter(
-      (c) => c.isError && c.name === "bash" && /\bmu\s+(sql|db)\b/.test(String(c.args.command)),
+      (c) => c.isError && c.name === "bash" && SQL_CALL.test(String(c.args.command)),
     ).length;
     return verdict(run, completed, {
       wrong,
