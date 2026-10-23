@@ -71,7 +71,13 @@ export const gitBackend: VcsBackend = {
     }
     const out = await run(
       "git",
-      ["log", "--reverse", "-z", "--format=%H%x00%s%x00%b%x00%aI", `${baseRef}..HEAD`],
+      [
+        "log",
+        "--reverse",
+        "-z",
+        "--format=%H%x00%s%x00%b%x00%aI",
+        `${await forkPoint(workspacePath, baseRef)}..HEAD`,
+      ],
       workspacePath,
     );
     if (out.length === 0) return [];
@@ -164,6 +170,29 @@ export const gitBackend: VcsBackend = {
     return listGitDirtyFiles(workspacePath);
   },
 };
+
+/**
+ * The workspace's current fork point. `parent_ref` is recorded once at
+ * spawn; a manual `git rebase` onto an advanced main leaves it at the
+ * old fork, so `<parent_ref>..HEAD` would list main-only commits. Every
+ * reader therefore derives the fork point: merge-base(HEAD, the project
+ * root's HEAD) when that is newer than `parentRef` (parentRef is its
+ * ancestor), else `parentRef` itself. Falls back to `parentRef` on any
+ * git failure (never a wider range than the recorded one).
+ */
+export async function forkPoint(workspacePath: string, parentRef: string): Promise<string> {
+  try {
+    const root = await resolveGitProjectRoot(workspacePath);
+    if (root === undefined) return parentRef;
+    const mainHead = await run("git", ["rev-parse", "HEAD"], root);
+    const mb = await run("git", ["merge-base", "HEAD", mainHead], workspacePath);
+    if (mb.length === 0 || mb === parentRef) return parentRef;
+    await run("git", ["merge-base", "--is-ancestor", parentRef, mb], workspacePath);
+    return mb;
+  } catch {
+    return parentRef;
+  }
+}
 
 /**
  * Return the list of dirty paths (working-tree modifications + staged

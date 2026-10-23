@@ -494,6 +494,25 @@ describe("closeAgent + workspace integration (git backend, dirty / commits-since
     expect(() => execFileSync("ls", [ws.path], { stdio: "pipe" })).toThrow();
   });
 
+  it("closeAgent auto-frees an empty clean worker after a manual rebase onto an advanced main", async () => {
+    const ws = await createWorkspace(db, {
+      agent: "worker-1",
+      workstream: "auth",
+      projectRoot,
+      backend: "git",
+    });
+    const git = (cwd: string, ...a: string[]) =>
+      execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd });
+    writeFileSync(join(projectRoot, "main-only.txt"), "m\n");
+    git(projectRoot, "add", ".");
+    git(projectRoot, "commit", "-q", "-m", "main-only advancement");
+    git(ws.path, "rebase", "main");
+
+    const { closeAgent } = await import("../src/agents.js");
+    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(r.workspaceAutoFreedClean).toBe(true);
+  });
+
   it("closeAgent REFUSES (WorkspacePreservedError) on a dirty git workspace (uncommitted changes)", async () => {
     const ws = await createWorkspace(db, {
       agent: "worker-1",

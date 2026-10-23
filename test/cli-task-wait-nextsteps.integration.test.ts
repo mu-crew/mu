@@ -161,6 +161,20 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
     });
   });
 
+  it("uses the new fork point after a manual rebase onto an advanced main", async () => {
+    const committer = await seedWorker("committer", "%1", "commit_task");
+    await seedWorker("noncommitter", "%2", "other_task");
+    const mainSha = commitFile(projectRoot, "main-only.txt", "m\n", "main-only advancement");
+    execFileSync("git", ["-C", committer.path, "rebase", "main"], { stdio: "ignore" });
+    commitFile(committer.path, "commit.txt", "committed\n", "worker commit");
+
+    const payload = await closeAndWait("commit_task", "other_task");
+
+    expect(payload.nextSteps[0]?.command).toBe(
+      `git -C ${committer.path} log --oneline ${mainSha}..HEAD`,
+    );
+  });
+
   it("offers no worktree hint when the owner has no workspace", async () => {
     insertAgent(db, { name: "bare", workstream: "test", paneId: "%4" });
     addTask(db, {

@@ -260,6 +260,8 @@ export async function isWorkspaceClean(row: WorkspaceRow): Promise<boolean> {
   if (!clean) return false;
   if (row.parentRef === null || row.parentRef.length === 0) return false;
   try {
+    // commitsSinceBase re-derives the fork point, so a manual rebase
+    // onto an advanced main does not count main's commits as the worker's.
     const commits = await backend.commitsSinceBase(row.path, row.parentRef);
     return commits.length === 0;
   } catch {
