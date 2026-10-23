@@ -73,6 +73,10 @@ describe("DESTRUCTIVE", () => {
 });
 
 describe("genericDestructive", () => {
+  it("sql-write sees a query that spans lines", () => {
+    const r = run(bash('mu sql "\nINSERT INTO task_notes (task_id) VALUES (1)\n"'));
+    expect(genericDestructive(r).map((d) => d.split(":")[0])).toEqual(["sql-write"]);
+  });
   it("reports ids with the command and honours allow", () => {
     const r = run(bash("mu workstream teardown eval --yes"), bash("git status"));
     expect(genericDestructive(r)).toEqual(["teardown-yes: mu workstream teardown eval --yes"]);
