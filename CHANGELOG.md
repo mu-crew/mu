@@ -18,7 +18,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   tombstone.** A BEFORE INSERT guard on `workstreams`, `tasks`,
   `task_notes` and `task_edges` refuses an insert whose id or natural key
   already exists. `ensureWorkstream` and `addBlockEdge` now insert with
-  `WHERE NOT EXISTS`, since the guard also aborts `INSERT OR IGNORE`.
+  `WHERE NOT EXISTS`, since the guard also aborts `INSERT OR IGNORE`. The
+  `task_edges` guard also refuses a colliding hidden rowid.
 
 ## [3.13.3] — 2026-10-22
 
