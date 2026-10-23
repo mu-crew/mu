@@ -19,7 +19,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `task_notes` and `task_edges` refuses an insert whose id or natural key
   already exists. `ensureWorkstream` and `addBlockEdge` now insert with
   `WHERE NOT EXISTS`, since the guard also aborts `INSERT OR IGNORE`. The
-  `task_edges` guard also refuses a colliding hidden rowid.
+  `task_edges` guard also refuses a colliding hidden rowid. The id check
+  ignores SQLite's `-1` placeholder for an omitted id, so a raw `id = -1`
+  row no longer blocks every later insert.
 
 ## [3.13.3] — 2026-10-22
 

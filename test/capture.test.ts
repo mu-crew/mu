@@ -686,6 +686,55 @@ describe("op capture (triggers)", () => {
       });
     }
 
+    // In a BEFORE INSERT trigger SQLite reports NEW.id = -1 for an omitted
+    // id, so the id/rowid check must not fire on -1 or one explicit -1 row
+    // would make every later insert collide.
+    const minusOne: Array<[string, string, string]> = [
+      [
+        "workstreams",
+        "INSERT INTO workstreams (id, name, created_at) VALUES (-1, 'neg', 'x')",
+        "INSERT INTO workstreams (name, created_at) VALUES ('fresh', 'x')",
+      ],
+      [
+        "tasks",
+        "INSERT INTO tasks (id, workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at) " +
+          "SELECT -1, workstream_id, 'neg', title, status, substate, impact, effort_days, created_at, updated_at FROM tasks WHERE local_id = 'a'",
+        "INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at) " +
+          "SELECT workstream_id, 'fresh', title, status, substate, impact, effort_days, created_at, updated_at FROM tasks WHERE local_id = 'a'",
+      ],
+      [
+        "task_notes",
+        "INSERT INTO task_notes (id, task_id, author, content, created_at) " +
+          "SELECT -1, id, 'n', 'neg', 'x' FROM tasks WHERE local_id = 'a'",
+        "INSERT INTO task_notes (task_id, author, content, created_at) " +
+          "SELECT id, 'n', 'fresh', 'x' FROM tasks WHERE local_id = 'a'",
+      ],
+      [
+        "task_edges",
+        "INSERT INTO task_edges (rowid, from_task_id, to_task_id, created_at) " +
+          "SELECT -1, (SELECT id FROM tasks WHERE local_id = 'a'), (SELECT id FROM tasks WHERE local_id = 'b'), 'x'",
+        "INSERT INTO task_edges (from_task_id, to_task_id, created_at) " +
+          "SELECT (SELECT id FROM tasks WHERE local_id = 'a'), (SELECT id FROM tasks WHERE local_id = 'c'), 'x'",
+      ],
+    ];
+
+    for (const [table, explicit, fresh] of minusOne) {
+      it(`${table}: an existing id/rowid -1 row does not block a fresh omitted-id insert`, () => {
+        ensureWorkstream(db, "demo");
+        seedTask("a");
+        seedTask("b");
+        seedTask("c");
+        db.prepare(explicit).run();
+        const count = (): number =>
+          (db.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number }).n;
+        const before = count();
+
+        expect(() => db.prepare(fresh).run()).not.toThrow();
+
+        expect(count()).toBe(before + 1);
+      });
+    }
+
     it("ensureWorkstream and addBlockEdge stay idempotent", () => {
       expect(ensureWorkstream(db, "demo")).toBe(true);
       expect(ensureWorkstream(db, "demo")).toBe(false);
