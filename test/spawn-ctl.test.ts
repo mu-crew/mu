@@ -416,13 +416,16 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     mux.restore();
     const state = freshMockState();
     const fake = mockTmux(state).executor;
-    let captures = 0;
+    let spawnedAt = 0;
     mux = installMux("tmux", async (args) => {
-      // The pane dies after the 250 ms check, so the third capture (the
-      // deadline's) finds it gone, as on real tmux.
-      if (args[0] === "capture-pane" && ++captures === 3) state.panes.clear();
+      // The pane dies in the last 10 ms of the budget: any capture at or
+      // after 290 ms finds it gone, as on real tmux. Keyed on elapsed time,
+      // not a capture count, so a loaded host that skips or delays a tick
+      // cannot move the death past the last capture.
+      if (args[0] === "capture-pane" && Date.now() - spawnedAt >= 290) state.panes.clear();
       const res = await fake(args);
       if (args[0] === "new-session") {
+        spawnedAt = Date.now();
         for (const pane of state.panes.values()) pane.scrollback = "fatal: instance lock held";
       }
       return res;
