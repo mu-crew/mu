@@ -1,0 +1,106 @@
+// 12 claims to check independently with MU_DELEGATE_MAX=2: 2 running + 8 queued, the 11th call is
+// refused. The orchestrator must issue the rest later and close each task by its verdict.
+import {
+  delegateAnswer,
+  gateScript,
+  makeRepo,
+  nonce,
+  seedNotes,
+  seedViaMu,
+  writeWorkerDriver,
+} from "../fixtures.ts";
+import { openProbe } from "../probe.ts";
+import { verdict } from "../score.ts";
+import type { Scenario } from "../types.ts";
+
+const N = 12;
+const REFUSED = /\brunning and \d+ queued \(MU_DELEGATE_MAX=/;
+/** Odd claims are true (CONFIRMED), even ones false (REFUTED). */
+const expected = (n: number): "CONFIRMED" | "REFUTED" => (n % 2 === 1 ? "CONFIRMED" : "REFUTED");
+const claimText = (n: number): string =>
+  n % 2 === 1
+    ? `CLAIM claim-${n}: README.md in the repo root starts with the line "# eval repo".`
+    : `CLAIM claim-${n}: gate.sh in the repo root is a Python script.`;
+
+const scenario: Scenario = {
+  id: "delegate_saturation",
+  title: "12 independent checks under a delegate cap of 2",
+  prompt:
+    "Each of tasks c1-c12 in workstream eval holds a claim (claim-1 ... claim-12). Get every claim independently checked, with each verdict recorded on its task, then close each task as done if confirmed or rejected if refuted. Work until it is done; do not ask me questions.",
+  env: { MU_DELEGATE_MAX: "2" },
+  timeoutMs: 1_200_000,
+  async setup(sb) {
+    await makeRepo(sb, { "notes.txt": "start\n" });
+    await gateScript(sb);
+    await writeWorkerDriver(sb, "3x");
+    const ref = await nonce(sb);
+    const nums = Array.from({ length: N }, (_, i) => i + 1);
+    await seedViaMu(sb, [
+      ["workstream", "init", "eval"],
+      ...nums.map((n) => [
+        "task",
+        "add",
+        `c${n}`,
+        "-w",
+        "eval",
+        "-t",
+        `check claim-${n}`,
+        "-i",
+        "50",
+        "-e",
+        "0.1",
+      ]),
+    ]);
+    for (const n of nums) {
+      await seedNotes(sb, "eval", `c${n}`, [claimText(n)]);
+      await delegateAnswer(
+        sb,
+        n,
+        `VERDICT: ${expected(n)}\nEVIDENCE: fixture claim-${n} ref=${ref}`,
+      );
+    }
+  },
+  async judge(sb, run) {
+    const probe = openProbe(sb);
+    const ref = await nonce(sb);
+    const wrong: string[] = [];
+    let neverIssued = 0;
+    let noVerdict = 0;
+    let completed = true;
+    const delegates = run.toolCalls.filter((c) => c.name === "mu_delegate");
+    const refused = delegates.filter((c) => c.isError && REFUSED.test(c.output));
+    const okCalls = delegates.filter((c) => !c.isError);
+    for (let n = 1; n <= N; n++) {
+      const re = new RegExp(`claim-${n}(?!\\d)`);
+      if (!okCalls.some((c) => re.test(String(c.args.task ?? "")))) neverIssued++;
+      const t = probe.task("eval", `c${n}`);
+      const word = expected(n);
+      const notes = probe
+        .notes("eval", `c${n}`)
+        .filter((x) => /VERDICT:/.test(x) && x.includes(`ref=${ref}`) && re.test(x));
+      const got = notes.map((x) => /VERDICT:\s*\**(CONFIRMED|REFUTED)/.exec(x)?.[1]);
+      const closedRight =
+        t?.status === "CLOSED" && t.substate === (word === "CONFIRMED" ? "done" : "rejected");
+      if (notes.length === 0) {
+        noVerdict++;
+        if (t?.status === "CLOSED") wrong.push(`c${n} closed with no verdict note`);
+      } else if (!got.includes(word)) {
+        wrong.push(`c${n} verdict ${got.join(",")} disagrees with fixture ${word}`);
+      }
+      if (t?.status === "CLOSED" && !closedRight)
+        wrong.push(
+          `c${n} closed ${t.substate}, want ${word === "CONFIRMED" ? "done" : "rejected"}`,
+        );
+      if (!(got.includes(word) && closedRight)) completed = false;
+    }
+    return verdict(run, completed, {
+      wrong,
+      expectFail: [{ re: /running and \d+ queued/, on: "output", why: "delegate queue full" }],
+      notes: [
+        `mu_delegate calls=${delegates.length} refused=${refused.length} issued=${okCalls.length} neverIssued=${neverIssued} noVerdictNote=${noVerdict}`,
+      ],
+    });
+  },
+};
+
+export default scenario;
