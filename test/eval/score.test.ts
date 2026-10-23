@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { badFlagged, goldenOk, scriptFile } from "../../tools/eval/check-rules.ts";
+import { badFlagged, extraBadScripts, goldenOk, scriptFile } from "../../tools/eval/check-rules.ts";
 import { DESTRUCTIVE, genericDestructive, genericWrong, verdict } from "../../tools/eval/score.ts";
 import type { RunMetrics, ToolCall } from "../../tools/eval/types.ts";
 
@@ -174,5 +177,26 @@ describe("check rules", () => {
     expect(badFlagged(v(false))).toBe(true);
     expect(badFlagged(v(true, ["w"]))).toBe(true);
     expect(badFlagged(v(true, [], ["d"]))).toBe(true);
+  });
+});
+
+describe("extraBadScripts", () => {
+  it("lists <id>.bad-<name>.<family>.json for that id and family only, sorted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-eval-extra-"));
+    try {
+      for (const f of [
+        "dag.bad-b.3x.json",
+        "dag.bad-a.3x.json",
+        "dag.bad.3x.json",
+        "dag.golden.3x.json",
+        "dag.bad-c.next.json",
+        "dagx.bad-d.3x.json",
+      ])
+        writeFileSync(join(dir, f), "[]");
+      expect(extraBadScripts(dir, "dag", "3x")).toEqual(["dag.bad-a.3x.json", "dag.bad-b.3x.json"]);
+      expect(extraBadScripts(join(dir, "nope"), "dag", "3x")).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

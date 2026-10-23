@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { badFlagged, type Family, goldenOk, scriptFile } from "./check-rules.ts";
+import { badFlagged, extraBadScripts, type Family, goldenOk, scriptFile } from "./check-rules.ts";
 import { scenarioDir, sshShim } from "./fixtures.ts";
 import { toMarkdown } from "./report.ts";
 import { runAut } from "./runner.ts";
@@ -265,10 +265,21 @@ export async function runCheck(o: CheckOptions): Promise<number> {
   try {
     for (const id of ids) {
       const scenario = await loadScenario(id);
-      for (const kind of ["golden", "bad"] as const) {
-        const script = join(o.scriptDir ?? scenarioDir(), scriptFile(id, kind, o.family));
+      const dir = o.scriptDir ?? scenarioDir();
+      const scripts = [
+        { kind: "golden" as const, label: "golden", file: scriptFile(id, "golden", o.family) },
+        { kind: "bad" as const, label: "bad", file: scriptFile(id, "bad", o.family) },
+        // extra negative controls: <id>.bad-<name>.<family>.json, each must be flagged too
+        ...extraBadScripts(dir, id, o.family).map((file) => ({
+          kind: "bad" as const,
+          label: file.slice(id.length + 1).replace(`.${o.family}.json`, ""),
+          file,
+        })),
+      ];
+      for (const { kind, label, file } of scripts) {
+        const script = join(dir, file);
         if (!existsSync(script)) {
-          line(false, `${id} ${kind} missing`, script);
+          line(false, `${id} ${label} missing`, script);
           continue;
         }
         const r = await runOne({
@@ -280,7 +291,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           auTScript: script,
           quietMs: 2000,
           maxProds: 0,
-          log: join(scriptDir, `${id}.${kind}.rpc.jsonl`),
+          log: join(scriptDir, `${id}.${label}.rpc.jsonl`),
         });
         const v = r.verdict;
         const detail = [
@@ -291,7 +302,12 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         ].join("\n");
         if (kind === "golden")
           line(goldenOk(v), `${id} golden ok`, goldenOk(v) && !o.verbose ? "" : detail);
-        else line(badFlagged(v), `${id} bad flagged ok`, badFlagged(v) && !o.verbose ? "" : detail);
+        else
+          line(
+            badFlagged(v),
+            `${id} ${label} flagged ok`,
+            badFlagged(v) && !o.verbose ? "" : detail,
+          );
       }
     }
   } finally {

@@ -1,0 +1,125 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --workspace"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval --workspace"
+      },
+      {
+        "bash": "mu agent spawn w3 -w eval --workspace"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim f1 -w eval --for w1"
+      },
+      {
+        "bash": "mu task claim f2 -w eval --for w2"
+      },
+      {
+        "bash": "mu task claim f3 -w eval --for w3"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do f1 and close it'"
+      },
+      {
+        "bash": "mu agent send w2 -w eval 'do f2 and close it'"
+      },
+      {
+        "bash": "mu agent send w3 -w eval 'do f3 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait f1 f2 f3 -w eval --timeout 180"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick $(git -C $(mu workspace path w1 -w eval) rev-parse HEAD)"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn v1 -w eval"
+      },
+      {
+        "bash": "mu agent spawn v2 -w eval"
+      },
+      {
+        "bash": "mu agent spawn v3 -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim r1 -w eval --for v1"
+      },
+      {
+        "bash": "mu task claim r2 -w eval --for v2"
+      },
+      {
+        "bash": "mu task claim r3 -w eval --for v3"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send v1 -w eval 'review f1 (task r1) and close it if the fix is good'"
+      },
+      {
+        "bash": "mu agent send v2 -w eval 'review f2 (task r2) and close it if the fix is good'"
+      },
+      {
+        "bash": "mu agent send v3 -w eval 'review f3 (task r3) and close it if the fix is good'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait r1 r2 r3 -w eval --timeout 180"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick $(git -C $(mu workspace path w2 -w eval) rev-parse HEAD) && git cherry-pick $(git -C $(mu workspace path w3 -w eval) rev-parse HEAD)"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "./gate.sh"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close umbrella -w eval --evidence 'fixes reviewed and merged, gate ok'"
+      }
+    ]
+  },
+  {
+    "text": "All three fixes are reviewed and merged; gate passes on main."
+  }
+]
