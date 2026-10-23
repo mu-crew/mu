@@ -48,7 +48,6 @@ export interface DelegateCtx {
   hasPendingMessages?(): boolean;
   ui?: {
     notify(message: string, type?: "info" | "warning" | "error"): void;
-    setStatus?(key: string, text: string | undefined): void;
   };
 }
 
@@ -77,8 +76,6 @@ export const DELEGATE_TOOL = "mu_delegate";
 export const DELEGATE_CANCEL_TOOL = "mu_delegate_cancel";
 export const DELEGATE_MESSAGE_TYPE = "mu-delegate";
 export const DELEGATE_WORKSTREAM = "scratch";
-/** The footer status key (`ctx.ui.setStatus`), like goal / watchloop. */
-export const DELEGATE_STATUS_KEY = "mu-delegate";
 /**
  * murmur's channel for outstanding background work, as
  * `{ source, count }`. murmur shows the count on this agent's card,
@@ -89,24 +86,6 @@ export const DELEGATE_STATUS_KEY = "mu-delegate";
  */
 export const PENDING_CHANNEL = "murmur:pending";
 
-/** Footer text: delegates running (pane up), starting (no pane yet),
- *  queued, failed, and finished whose answer has not reached this
- *  conversation yet (pending); undefined clears the entry. */
-export function delegateStatus(
-  running: number,
-  starting = 0,
-  queued = 0,
-  failed = 0,
-  pending = 0,
-): string | undefined {
-  const parts: string[] = [];
-  if (running > 0) parts.push(`${running} delegate${running === 1 ? "" : "s"} running`);
-  if (starting > 0) parts.push(`${starting} starting`);
-  if (queued > 0) parts.push(`${queued} queued`);
-  if (failed > 0) parts.push(`${failed} failed`);
-  if (pending > 0) parts.push(`${pending} result${pending === 1 ? "" : "s"} pending`);
-  return parts.length > 0 ? parts.join(", ") : undefined;
-}
 /** Default `mu agent wait --timeout` for a delegate, in seconds. */
 export const DELEGATE_TIMEOUT_S = 3600;
 /** Default cap on delegates in flight from one pi session. */
@@ -115,10 +94,6 @@ export const DELEGATE_MAX_DEFAULT = 16;
  *  fan-out (refuters per finding, checkers per claim) issues several
  *  caps' worth in one turn; past this, the model is refused. */
 export const DELEGATE_QUEUE_FACTOR = 4;
-
-/** Minimum gap between the `mu agent list` calls that prune the footer's
- *  failed-delegate count. */
-export const PRUNE_FAILED_MS = 30_000;
 
 /** `MU_DELEGATE_MAX`: a positive integer, else the default. */
 export function delegateMax(env: NodeJS.ProcessEnv = process.env): number {
@@ -580,7 +555,7 @@ export function registerDelegate(
       a.opts = [...(a.opts ?? []), options];
     }
     const at = { why, delivery: d?.delivery, name: d?.name, ...options };
-    trace("sendMessage", { ...at, ui: ui !== undefined, arriving: arriving.size });
+    trace("sendMessage", { ...at, arriving: arriving.size });
     try {
       const r = pi.sendMessage(message, options);
       trace("sendMessage.returned", { ...at, async: r !== undefined });
@@ -596,11 +571,6 @@ export function registerDelegate(
   /** Calls past the cap, FIFO, at most `DELEGATE_QUEUE_FACTOR * delegateMax()` long. */
   const queue: Queued[] = [];
   let queueSeq = 0;
-  /** Delegates that settled on an error, pane kept: counted in the footer
-   *  until the model closes or re-issues them (no call to action). */
-  const failed = new Set<string>();
-  /** When pruneFailed last listed agents (0: never). */
-  let lastPruneAt = 0;
   /** Delegates that finished whose follow-up has not entered the
    *  conversation: being delivered, or queued behind a running turn.
    *  Keyed by a per-delivery id carried in the message's details, and
@@ -630,9 +600,6 @@ export function registerDelegate(
   const seen = new Set<number>();
   let settleCheck: ReturnType<typeof setImmediate> | undefined;
   let closed = false;
-  // The ctx of the latest tool call: answers settle outside any call, so
-  // the footer is refreshed through the last ctx pi handed us.
-  let ui: DelegateCtx["ui"];
   let lastPending = 0;
   /** Running, starting and queued: every delegate whose answer is still
    *  to come back here. Failed panes have answered, so they do not count. */
@@ -645,22 +612,6 @@ export function registerDelegate(
     } catch {
       // a listener's fault must not cost a delegate its answer
     }
-  };
-  // Every change to the counts already refreshes the footer, so the
-  // report rides along rather than being a second set of call sites.
-  const showStatus = () => {
-    reportPending();
-    try {
-      ui?.setStatus?.(
-        DELEGATE_STATUS_KEY,
-        delegateStatus(inflight.size, starting, queue.length, failed.size, arriving.size),
-      );
-    } catch {
-      // stale ctx after a session switch: the footer is decoration
-    }
-  };
-  const track = (ctx: DelegateCtx | undefined) => {
-    if (ctx?.hasUI !== false && ctx?.ui) ui = ctx.ui;
   };
   /** pi accepted the follow-up for `delivery`. */
   const markSent = (delivery: number) => {
@@ -691,7 +642,7 @@ export function registerDelegate(
   const forget = (name: string) => {
     inflight.delete(name);
     drain();
-    showStatus();
+    reportPending();
   };
   /** Start queued calls while there is a free slot. A queued call's tool
    *  call has already returned, so a failed start becomes a follow-up. */
@@ -732,24 +683,6 @@ export function registerDelegate(
   const failure = (what: string, r: MuResult) =>
     new Error(`${what} failed (exit ${r.code}): ${(r.stderr || r.stdout).trim()}`);
 
-  /** A failed delegate whose pane is gone (closed from bash) leaves the
-   *  footer. Off the call's path: only a footer count rides on it. */
-  function pruneFailed(): void {
-    if (failed.size === 0) return;
-    // Only the footer count depends on this listing (~150 ms of CPU per
-    // `mu agent list`): refresh it at most once per PRUNE_FAILED_MS.
-    const now = Date.now();
-    if (now - lastPruneAt < PRUNE_FAILED_MS) return;
-    lastPruneAt = now;
-    void mu(["agent", "list", "-w", W, "--json"]).then((r) => {
-      const agents = json(r)?.agents;
-      if (!Array.isArray(agents)) return;
-      const taken = new Set(agents.map((a: unknown) => (a as { name?: unknown }).name));
-      for (const f of [...failed]) if (!taken.has(f)) failed.delete(f);
-      showStatus();
-    });
-  }
-
   /**
    * Spawn the delegate and send it the task in ONE mu call (`spawn
    * --next-free --send`): mu picks the free name under its spawn lock, so
@@ -769,7 +702,6 @@ export function registerDelegate(
     sessionFile?: string;
   }> {
     signal?.throwIfAborted();
-    pruneFailed();
     const stem = labelStem(params.label);
     // A label names the delegate (delegate-review, then delegate-review-2);
     // without one it is numbered (delegate-1, delegate-2).
@@ -903,10 +835,6 @@ export function registerDelegate(
         closed.code === 0
           ? { closed: true }
           : { closed: false, why: `close refused: ${(closed.stderr || closed.stdout).trim()}` };
-    if (outcome === "error" && !pane.closed) {
-      failed.add(name);
-      showStatus();
-    }
     // No final answer: point at the transcript, and copy what it wrote so
     // far. A blocked run is mid-flight: no partial copy, which could read
     // as its answer.
@@ -967,11 +895,11 @@ export function registerDelegate(
     const freeSlot = () => {
       if (slotHeld) {
         starting--;
-        showStatus();
+        reportPending();
       }
       slotHeld = false;
     };
-    showStatus(); // the footer moves at once, before the pane exists
+    reportPending(); // the count moves at once, before the pane exists
     try {
       const task = typeof params.task === "string" ? params.task.trim() : "";
       const brief = typeof params.brief === "string" ? params.brief.trim() : "";
@@ -1005,7 +933,7 @@ export function registerDelegate(
       };
       inflight.set(name, entry);
       freeSlot(); // now counted in inflight
-      showStatus();
+      reportPending();
       const started = Date.now();
       // The send's `runs` is pi's count before this prompt: waiting past it
       // catches the run even if it settled before this wait started.
@@ -1067,7 +995,6 @@ export function registerDelegate(
             () => {
               // Nothing will arrive: stop counting it.
               arriving.delete(delivery);
-              showStatus();
             },
           );
         }
@@ -1166,7 +1093,6 @@ export function registerDelegate(
       additionalProperties: false,
     },
     async execute(_id, params, signal, _onUpdate, ctx) {
-      track(ctx);
       const task = typeof params.task === "string" ? params.task.trim() : "";
       if (!task) throw new Error("mu_delegate needs a non-empty task");
       const t = params.timeout;
@@ -1211,7 +1137,7 @@ export function registerDelegate(
         ctx,
         ...(record ? { record } : {}),
       });
-      showStatus();
+      reportPending();
       return {
         content: [
           {
@@ -1237,14 +1163,13 @@ export function registerDelegate(
       required: ["name"],
       additionalProperties: false,
     },
-    async execute(_id, params, _signal, _onUpdate, ctx) {
-      track(ctx);
+    async execute(_id, params) {
       const name = typeof params.name === "string" ? params.name : "";
       if (!name) throw new Error("mu_delegate_cancel needs a name");
       const qi = queue.findIndex((q) => q.handle === name);
       if (qi >= 0) {
         const [q] = queue.splice(qi, 1);
-        showStatus();
+        reportPending();
         const recorded = q?.record
           ? ` ${await writeRecord(q.record, name, recordNote(recordLabel(q.params, name), name, "cancelled", undefined, 0))}`
           : "";
@@ -1272,7 +1197,6 @@ export function registerDelegate(
         entry.abort.abort();
         forget(name);
       }
-      failed.delete(name);
       let text = `Aborted ${W}/${name}.`;
       // What it wrote before the abort, and its transcript.
       const sessionFile = entry?.sessionFile;
@@ -1321,7 +1245,7 @@ export function registerDelegate(
       return;
     }
     seen.add(id);
-    if (arriving.delete(id)) showStatus();
+    arriving.delete(id);
   });
 
   /** Stop counting answers that never reached the conversation: copy
@@ -1346,7 +1270,6 @@ export function registerDelegate(
     }
     trace("dropped", { names: dropped.map((d) => d.name) });
     if (dropped.length === 0) return;
-    showStatus();
     void Promise.resolve(
       send(
         {
@@ -1390,7 +1313,6 @@ export function registerDelegate(
       send(a.message, { deliverAs: "followUp", triggerTurn: true }, "resend"),
     ).catch(() => {
       arriving.delete(next);
-      showStatus();
     });
   };
   pi.on("agent_settled", (e, ctx) => {
@@ -1417,11 +1339,8 @@ export function registerDelegate(
       arriving: [...arriving.values()].map((a) => ({ name: a.name, sent: a.sent })),
       inflight: [...inflight.keys()],
     });
-    if (arriving.size > 0) {
-      // Answers still being delivered or queued die with this runtime.
-      arriving.clear();
-      showStatus();
-    }
+    // Answers still being delivered or queued die with this runtime.
+    arriving.clear();
     if (inflight.size === 0 && queue.length === 0) return;
     const names = [...inflight.keys()];
     const sessions = [...inflight].flatMap(([n, e]) =>
@@ -1430,8 +1349,7 @@ export function registerDelegate(
     const never = queue.splice(0).map((q) => q.handle);
     for (const e of inflight.values()) e.abort.abort();
     inflight.clear();
-    showStatus();
-    ui = undefined;
+    reportPending();
     const parts: string[] = [];
     if (names.length > 0)
       parts.push(
