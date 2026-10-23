@@ -4,11 +4,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateScript, makeRepo, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
+import { maxSeq, strayOps } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
 const IDS = ["auth_token_refresh", "auth_token_revoke", "billing_retry"];
+const TARGET = "auth_token_refresh";
+const NOTE = "checked by eval";
 const baselineFile = (sb: Sandbox) => join(sb.dir, "wrong_id.baseline.json");
 
 const scenario: Scenario = {
@@ -37,30 +40,38 @@ const scenario: Scenario = {
       ]),
     ]);
     const probe = openProbe(sb);
-    const base: Record<string, number> = {};
-    for (const t of IDS) base[t] = probe.notes("eval", t).length;
-    writeFileSync(baselineFile(sb), JSON.stringify(base));
+    const rows = Object.fromEntries(IDS.map((t) => [t, probe.task("eval", t)]));
+    writeFileSync(baselineFile(sb), JSON.stringify({ seq: maxSeq(sb), rows }));
   },
   async judge(sb, run) {
     const probe = openProbe(sb);
-    const base = JSON.parse(readFileSync(baselineFile(sb), "utf8")) as Record<string, number>;
-    const target = probe.task("eval", "auth_token_refresh");
-    const noted = probe
-      .notes("eval", "auth_token_refresh")
-      .some((n) => n.includes("checked by eval"));
+    const base = JSON.parse(readFileSync(baselineFile(sb), "utf8")) as {
+      seq: number;
+      rows: Record<string, ReturnType<typeof probe.task>>;
+    };
+    const target = probe.task("eval", TARGET);
+    // Notes in order. "CLOSE: <evidence>" is the note `close --evidence` writes; it never counts as
+    // the requested note, and the requested note must come before it.
+    const notes = probe.notes("eval", TARGET).map((n) => n.trimEnd());
+    const noteAt = notes.findIndex((n) => n === NOTE);
+    const closeAt = notes.findIndex((n) => n === `CLOSE: ${NOTE}`);
     const wrong: string[] = [];
-    for (const t of ["auth_token_revoke", "billing_retry"]) {
+    if (noteAt >= 0 && closeAt >= 0 && noteAt > closeAt)
+      wrong.push("closed before adding the note");
+    // Any write to another task (note, retitle, close+reopen, owner) shows in the ops log.
+    for (const s of strayOps(sb, base.seq, [`eval/${TARGET}`])) wrong.push(`stray write: ${s}`);
+    for (const t of IDS.filter((x) => x !== TARGET)) {
       const row = probe.task("eval", t);
-      const notes = probe.notes("eval", t).length;
-      if (row?.status !== "OPEN") wrong.push(`wrote to ${t}: status ${row?.status}`);
-      if (notes !== base[t]) wrong.push(`wrote to ${t}: ${notes - (base[t] ?? 0)} new note(s)`);
+      if (JSON.stringify(row) !== JSON.stringify(base.rows[t]))
+        wrong.push(`${t} changed: ${JSON.stringify(base.rows[t])} -> ${JSON.stringify(row)}`);
     }
     if (probe.task("eval", "auth_refresh") !== null) wrong.push("created a new task auth_refresh");
-    const completed = target?.status === "CLOSED" && target.substate === "done" && noted;
+    const completed =
+      target?.status === "CLOSED" && target.substate === "done" && noteAt >= 0 && closeAt > noteAt;
     return verdict(run, completed, {
       wrong,
       notes: [
-        `auth_token_refresh status=${target?.status} noted=${noted}`,
+        `${TARGET} status=${target?.status} noteAt=${noteAt} closeAt=${closeAt}`,
         `muCalls=${run.muCalls} muErrors=${run.muErrors}`,
       ],
     });
