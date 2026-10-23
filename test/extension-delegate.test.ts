@@ -951,6 +951,55 @@ describe("footer status", () => {
     rmSync(cache, { recursive: true, force: true });
   });
 
+  it("a follow-up cleared from pi's queue without an abort is sent again when the run settles", async () => {
+    // The dequeue key calls session.clearQueue(): the custom follow-up is
+    // dropped, the run ends normally (aborted: false) and nothing arrives.
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const { setStatus, ctx } = uiCtx();
+    await p.fire("agent_start", { type: "agent_start" });
+    p.state.busy = true;
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
+    mu.waits
+      .get("delegate-2")
+      ?.resolve(ok({ agents: [{ outcome: "done", lastText: "the answer" }] }));
+    await flush();
+    await flush();
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
+    await p.fire("agent_end", { type: "agent_end" });
+    await p.fire("agent_settled", { type: "agent_settled", aborted: false }); // queue was cleared
+    expect(p.sendMessage).toHaveBeenCalledTimes(2);
+    const [again, opts] = p.sendMessage.mock.calls[1] ?? [];
+    expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    const [first] = p.sendMessage.mock.calls[0] ?? [];
+    expect(again).toEqual(first);
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 result pending"]);
+    // pi starts the resent message: it arrives once and the count clears.
+    p.state.busy = false;
+    await p.fire("message_start", {
+      type: "message_start",
+      message: { role: "custom", ...(again as object) },
+    });
+    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+  });
+
+  it("a follow-up that pi drained before the run ended is not sent again", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await p.fire("agent_start", { type: "agent_start" });
+    p.state.busy = true;
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
+    await flush();
+    await flush();
+    await p.drainQueue(); // message_start for the queued follow-up
+    await p.fire("agent_end", { type: "agent_end" });
+    await p.fire("agent_settled", { type: "agent_settled", aborted: false });
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("an interrupt with nothing queued leaves no note", async () => {
     const mu = fakeMu();
     const p = fakePi();
