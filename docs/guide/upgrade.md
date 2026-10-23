@@ -44,31 +44,12 @@ control socket. Agents started before `mu link pi` have no socket, so
 sends to them fail with `ctl missing` instead of pasting. Restart those
 agents, or force the old path with `--via mux`.
 
-## Migrate an old DB
+## Old DBs
 
 mu refuses a DB older than schema v11 with `SchemaTooOldError`, and a
 newer one with `SchemaTooNewError`. Both exit 4 and leave the file
-alone. `scripts/migrate.ts` converts a v7, v8, v9, or v10 DB into a new
-v11 file. It never writes in place.
-
-The npm package does not ship `scripts/` or `src/`, so run the recipe
-from a git checkout of mu at the version you upgraded to (`npm install`
-there first; `npx tsx` fetches tsx on first use).
-
-```bash
-git clone --branch "v$(mu --version)" https://github.com/mu-crew/mu && cd mu && npm install
-DB=${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}
-BACKUP="$HOME/mu-old-backup-$(date +%Y%m%d-%H%M%S).db"
-sqlite3 "$DB" ".backup '$BACKUP'"
-npx tsx scripts/migrate.ts "$BACKUP" --out "${DB}.v11"
-MU_DB_PATH="${DB}.v11" mu doctor --deep
-mv "$DB" "${DB}.old-kept" && mv "${DB}.v11" "$DB"
-mu doctor
-```
-
-Legacy `REJECTED` tasks become `CLOSED/rejected`, and `DEFERRED` tasks
-become `OPEN/parked`. Flags and the rules for what carries over are in
-[scripts/README.md](../../scripts/README.md).
+alone. Back up an old DB and move it aside; mu-next imports a 3.x DB
+at cut-over.
 
 ## Run mu from a checkout
 

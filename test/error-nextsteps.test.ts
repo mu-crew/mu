@@ -430,7 +430,7 @@ const cases: NextStepsCase[] = [
   {
     error: new SchemaTooOldError(10, 11),
     label: "SchemaTooOldError",
-    expectedTokens: ["mu db backup", ".old", "scripts/migrate.ts", "doctor --deep"],
+    expectedTokens: ["sqlite3", ".old"],
   },
   {
     error: new SchemaTooNewError(12, 11),

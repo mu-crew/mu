@@ -773,8 +773,8 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
         "DBs are refused with SchemaTooOldError and newer ones with",
         "SchemaTooNewError (exit 4), and there is no in-place migration.",
         "A mismatch seen here means the row changed after open (an",
-        "external SQLite client). If `<` the expected version, migrate a",
-        "copy with scripts/migrate.ts; if `>`, use the newer mu binary.",
+        "external SQLite client). If `<` the expected version, keep the",
+        "DB and use the mu that wrote it; if `>`, use the newer mu binary.",
       ];
     case "journal_mode":
       return [

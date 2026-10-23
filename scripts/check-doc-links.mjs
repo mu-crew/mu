@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
 const ROOT = resolve(process.argv[2] ?? join(import.meta.dirname, ".."));
-const ROOT_FILES = ["README.md", "AGENTS.md", "CHANGELOG.md", "scripts/README.md"];
+const ROOT_FILES = ["README.md", "AGENTS.md", "CHANGELOG.md"];
 const TREES = ["docs", "skills"];
 // The operator's untracked file; never checked, never touched.
 const EXCLUDED = new Set(["docs/ORCHESTRATOR_TREES.md"]);
