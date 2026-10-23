@@ -38,7 +38,12 @@ import {
   driftRemediation,
   formatDriftRecord,
 } from "../drift.js";
-import { checkFleetHazards, type FleetHazard, HazardFailError } from "../fleet-hazards.js";
+import {
+  checkFleetHazards,
+  checkSegmentVersion,
+  type FleetHazard,
+  HazardFailError,
+} from "../fleet-hazards.js";
 import { activeMux, type MuxHealth } from "../mux.js";
 import { pc } from "../output.js";
 import { type EdgeCycle, findEdgeCycles } from "../tasks/edges.js";
@@ -261,7 +266,10 @@ export async function cmdDoctor(
   // PREVENTABLE — each one is a condition the operator can fix before it
   // costs them data, unlike drift which is a bug report.
   console.log(pc.bold("\nfleet"));
-  const fleet = checkFleetHazards(db, { dbPath: defaultDbPath() });
+  const fleet = [
+    ...checkFleetHazards(db, { dbPath: defaultDbPath() }),
+    checkSegmentVersion(db, process.env.MU_SYNC_DIR),
+  ];
   let sawHazard = printHazards(fleet);
 
   // Sync can merge two valid edges into a cycle; its members block each
@@ -534,7 +542,10 @@ export async function cmdDoctorJson(
   }
 
   // Mixed-fleet hazards: same three checks the human path runs.
-  const hazards = checkFleetHazards(db, { dbPath: defaultDbPath() }).map((h) => ({
+  const hazards = [
+    ...checkFleetHazards(db, { dbPath: defaultDbPath() }),
+    checkSegmentVersion(db, process.env.MU_SYNC_DIR),
+  ].map((h) => ({
     name: h.name,
     severity: h.severity,
     detail: h.detail,

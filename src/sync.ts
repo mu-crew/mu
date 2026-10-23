@@ -286,12 +286,13 @@ function warn(message: string, opts?: AmbientOptions): void {
 }
 
 /** One line for an own segment holding a line of a version this build
- *  does not know. Shared by `mu sync` and the ambient warning. */
+ *  cannot read (the segment is read-only here until mu is upgraded).
+ *  Shared by `mu sync`, the ambient warning and `mu doctor`. */
 export function foreignVersionMessage(r: {
-  foreignVersionAt: number | null;
+  segmentPath: string | null;
   foreignVersion: number | null;
 }): string {
-  return `own segment has a v${r.foreignVersion ?? "?"} line at ${r.foreignVersionAt} written by a newer mu; not appending`;
+  return `segment ${r.segmentPath ?? "?"} has a v${r.foreignVersion ?? "?"} line written by a newer mu; upgrade mu on this machine`;
 }
 
 function describeDefects(peerShort: string, defects: readonly SegmentDefect[]): string {
@@ -401,9 +402,7 @@ export async function ambientFlush(
     if (result.selfRepaired !== null) {
       const d = result.selfRepaired;
       warn(
-        result.foreignVersionAt === null
-          ? `own segment truncated back to its last good line: ${d.kind} at line ${d.line} (${d.detail}) — regenerated from the ops table`
-          : `own segment: dropped damaged line ${d.line} (${d.kind}: ${d.detail})`,
+        `own segment truncated back to its last good line: ${d.kind} at line ${d.line} (${d.detail}) — regenerated from the ops table`,
         opts,
       );
     }

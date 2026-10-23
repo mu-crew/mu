@@ -317,7 +317,7 @@ describe("mu sync (CLI)", () => {
 
     const { stdout } = await runCli(["sync"], lap);
     expect(stdout).toContain(
-      `own segment has a v3 line at ${last} written by a newer mu; not appending`,
+      `segment ${path} has a v3 line written by a newer mu; upgrade mu on this machine`,
     );
     expect(readFileSync(path).equals(bytes)).toBe(true);
   });

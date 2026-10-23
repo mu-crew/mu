@@ -195,9 +195,7 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
     const d = pass.flushed.selfRepaired;
     console.log(
       pc.yellow(
-        pass.flushed.foreignVersionAt === null
-          ? `  own segment was defective past line ${d.line} (${d.kind}: ${d.detail}) — truncated to the last good line and regenerated from the ops table`
-          : `  own segment had a damaged line ${d.line} (${d.kind}: ${d.detail}) — dropped; lines of other versions kept`,
+        `  own segment was defective past line ${d.line} (${d.kind}: ${d.detail}) — truncated to the last good line and regenerated from the ops table`,
       ),
     );
   }

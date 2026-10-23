@@ -118,16 +118,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   segment may hold v1 history with v2 lines appended (same shape; the crc
   covers `v`), and the manifest stays valid over the mixed file. A line of
   any other version is an `unknown-version` defect that now carries the
-  version found. Peer ingest stops there as before. Own-segment repair no
-  longer truncates it: flush appends nothing, leaves the file
-  byte-identical, and reports `foreignVersionAt` / `foreignVersion` (also
-  in `mu sync --json`); `mu sync` and the ambient hook print "own segment
-  has a v3 line at N written by a newer mu; not appending". Repair of a
-  corrupt line before a line of another version (v3, or v1 history) keeps
-  every line at its number, so peer watermarks stay valid: the line is
-  regenerated from `ops` or replaced by a `segment.placeholder` line that
-  readers count and skip; no line of another version is ever discarded
-  or renumbered, and no manifest vouches for a file holding a foreign line. `mu sync --from <db>` refuses a source DB whose
+  version found. Peer ingest stops there as before. An own segment holding
+  any line of an unknown version is read-only to this build: flush
+  appends nothing, repairs nothing, deletes its manifest, and reports
+  `foreignVersionAt` / `foreignVersion` (also in `mu sync --json`); every
+  flush, `mu sync` and `mu doctor` print "segment <path> has a v<N> line
+  written by a newer mu; upgrade mu on this machine", and pending ops stay
+  in SQLite until the upgrade. Repair of known-version damage keeps valid
+  v1 lines byte for byte. `mu sync --from <db>` refuses a source DB whose
   `schema_version` is newer than this build (`SyncSourceTooNewError`, exit
   4). A 3.x reader stops at the first v2 line of each segment; rolling
   back means moving v2-holding segments out of `MU_SYNC_DIR` on every
