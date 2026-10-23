@@ -32,7 +32,7 @@ describe("openDb", () => {
     // No throw = parent dirs created.
   });
 
-  it("applies exactly the 13 v12 tables (task_auto added)", () => {
+  it("applies exactly the 15 v12 tables (op_ctx, op_dying added)", () => {
     const db = openDb({ path: dbPath });
     const tables = (
       db
@@ -44,6 +44,8 @@ describe("openDb", () => {
     expect(tables).toEqual([
       "agents",
       "machine_identity",
+      "op_ctx",
+      "op_dying",
       "ops",
       "schema_version",
       "sync_fingerprints",
@@ -56,7 +58,7 @@ describe("openDb", () => {
       "vcs_workspaces",
       "workstreams",
     ]);
-    expect(tables).toHaveLength(13);
+    expect(tables).toHaveLength(15);
     expect([...tables].sort()).toEqual(tables);
     // schema_version stamped to current (v12).
     const v = (
@@ -383,6 +385,8 @@ describe("openDb", () => {
     expect(tables).toEqual([
       "agents",
       "machine_identity",
+      "op_ctx",
+      "op_dying",
       "ops",
       "schema_version",
       "sync_fingerprints",

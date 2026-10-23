@@ -55,6 +55,7 @@ import {
   openDb,
   SchemaTooNewError,
   SchemaTooOldError,
+  SqliteTooOldError,
   WorkstreamNotFoundError,
 } from "../db.js";
 import { DriftDetectedError } from "../drift.js";
@@ -319,6 +320,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof ClaimerNotRegisteredError ||
     err instanceof SchemaTooOldError ||
     err instanceof SchemaTooNewError ||
+    err instanceof SqliteTooOldError ||
     err instanceof SyncSourceTooNewError ||
     err instanceof WorkstreamExistsError ||
     // Rebuild refuses to overwrite an existing target or to write onto

@@ -3,13 +3,19 @@
 // Read OR write — `mu sql` is the explicit escape hatch. Single-statement
 // path uses better-sqlite3's prepare() so we can distinguish read
 // (.all() rows) from write (.run() change count). Multi-statement path
-// uses db.exec() which handles BEGIN/COMMIT and multiple semicolon-
-// separated statements but returns nothing structured.
+// uses db.exec() which handles multiple semicolon-separated statements
+// but returns nothing structured.
 //
-// `--confirm-rows N` adds a transactional safety belt: if the actual
-// affected-row count (FK cascades included) doesn't match N, the whole
-// thing rolls back. Every write is captured as ops under one `sql.write`
-// group.
+// Every write runs inside ONE op-context scope, which owns the
+// transaction (src/op-context.ts): one `sql.write` group, atomic, and
+// the context is never committed. So the SQL may not control the
+// transaction itself: BEGIN / COMMIT / END / ROLLBACK / SAVEPOINT /
+// RELEASE are refused up front (END is COMMIT's alias; running any of
+// them would end the transaction the context lives in).
+//
+// `--confirm-rows N` adds a safety belt on top: if the actual
+// affected-row count (FK cascades included) doesn't match N, the scope
+// throws and its ROLLBACK undoes the whole thing.
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
@@ -24,15 +30,128 @@ export async function cmdSql(
   query: string,
   opts: { json?: boolean; confirmRows?: number } = {},
 ): Promise<void> {
+  refuseTransactionControl(query);
   // ONE op context for the whole invocation. Without it every captured
   // row got its own random group and a null intent, so one multi-row
   // UPDATE showed up in `mu log` as N separate "(no intent)" actions
   // and printed the raw JSON payload. With it, the whole `mu sql` call
-  // is one action.
-  withOpContext(db, { intent: "sql.write", group: "new" }, () => runSql(db, query, opts));
+  // is one action, in one transaction.
+  //
+  // A plain read skips the scope: it would take the write lock (and
+  // wait behind every writer) to stamp nothing.
+  const trimmed = query.trim();
+  let stmt: ReturnType<typeof db.prepare> | undefined;
+  try {
+    stmt = db.prepare(trimmed);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/more than one statement/i.test(msg)) throw err;
+  }
+  if (stmt?.readonly === true) {
+    runSql(db, trimmed, stmt, opts);
+    return;
+  }
+  withOpContext(db, { intent: "sql.write", group: "new" }, () => runSql(db, trimmed, stmt, opts));
 }
 
-function runSql(db: Db, query: string, opts: { json?: boolean; confirmRows?: number }): void {
+const USER_TRANSACTION_MESSAGE = "mu sql runs inside mu's transaction; remove BEGIN/COMMIT";
+
+/** Refuse any top-level statement that is transaction control. */
+function refuseTransactionControl(sql: string): void {
+  for (const keyword of topLevelKeywords(sql)) {
+    if (TRANSACTION_KEYWORDS.has(keyword)) throw new UsageError(USER_TRANSACTION_MESSAGE);
+  }
+}
+
+const TRANSACTION_KEYWORDS: ReadonlySet<string> = new Set([
+  "BEGIN",
+  "COMMIT",
+  "END",
+  "ROLLBACK",
+  "SAVEPOINT",
+  "RELEASE",
+]);
+
+/**
+ * The first keyword (upper-cased) of every top-level statement in `sql`.
+ * Skips strings, quoted identifiers and comments. A `CREATE [TEMP]
+ * TRIGGER` statement runs to the `END` that closes its body, so the
+ * `;` and `END` inside a trigger (or a `CASE … END`) are not statements
+ * of their own and cannot cause a false refusal.
+ */
+export function topLevelKeywords(sql: string): string[] {
+  const keywords: string[] = [];
+  let words: string[] = []; // words of the current statement, upper-case
+  let caseDepth = 0;
+  let inTriggerBody = false;
+  const endStatement = (): void => {
+    words = [];
+    caseDepth = 0;
+    inTriggerBody = false;
+  };
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i] as string;
+    const next = sql[i + 1];
+    if (c === "-" && next === "-") {
+      while (i < sql.length && sql[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const close = sql.indexOf("*/", i + 2);
+      i = close === -1 ? sql.length : close + 2;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`" || c === "[") {
+      const closer = c === "[" ? "]" : c;
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === closer) {
+          if (closer !== "]" && sql[i + 1] === closer) {
+            i += 2; // doubled quote
+            continue;
+          }
+          break;
+        }
+        i++;
+      }
+      i++;
+      if (words.length === 0) words.push("?"); // a statement that starts with a literal
+      continue;
+    }
+    if (/[A-Za-z_]/.test(c)) {
+      let j = i;
+      while (j < sql.length && /[A-Za-z0-9_$]/.test(sql[j] as string)) j++;
+      const word = sql.slice(i, j).toUpperCase();
+      i = j;
+      if (words.length === 0) keywords.push(word);
+      words.push(word);
+      if (words[0] === "CREATE" && words.includes("TRIGGER")) {
+        if (word === "BEGIN") inTriggerBody = true;
+        else if (inTriggerBody && word === "CASE") caseDepth++;
+        else if (inTriggerBody && word === "END") {
+          if (caseDepth > 0) caseDepth--;
+          else inTriggerBody = false;
+        }
+      }
+      continue;
+    }
+    if (c === ";") {
+      if (!inTriggerBody) endStatement();
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return keywords;
+}
+
+function runSql(
+  db: Db,
+  trimmed: string,
+  stmt: ReturnType<typeof db.prepare> | undefined,
+  opts: { json?: boolean; confirmRows?: number },
+): void {
   // Read OR write — `mu sql` is the explicit escape hatch.
   //
   // Single-statement path uses better-sqlite3's prepare() so we can
@@ -43,22 +162,9 @@ function runSql(db: Db, query: string, opts: { json?: boolean; confirmRows?: num
   // 'more than one statement' SqliteError, we fall back to exec().
   // This keeps the simple case fast and well-typed while making
   // multi-statement migrations / cleanup scripts a one-shot.
-  const trimmed = query.trim();
-  // Capture the prepared statement so the single-statement path below
-  // doesn't re-prepare (review_code_sql_double_prepare).
-  let stmt: ReturnType<typeof db.prepare> | undefined;
-  try {
-    stmt = db.prepare(trimmed);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!/more than one statement/i.test(msg)) throw err;
-  }
-
+  // `cmdSql` prepared the statement once (review_code_sql_double_prepare);
+  // undefined means "more than one statement".
   if (stmt === undefined) {
-    // Multi-statement. Note: scripts that contain their own BEGIN/COMMIT
-    // fail under --confirm-rows (sqlite refuses nested transactions);
-    // that's the price of an atomic confirm-or-rollback wrapper around
-    // an opaque blob.
     if (opts.confirmRows !== undefined) {
       const expected = opts.confirmRows;
       const { actual } = runConfirmed(db, expected, () => db.exec(trimmed));
@@ -163,9 +269,9 @@ function runSql(db: Db, query: string, opts: { json?: boolean; confirmRows?: num
 /**
  * The --confirm-rows run, shared by the single- and multi-statement
  * paths so the same statement always gets the same count. Runs `exec`
- * ONCE, with capture ON, inside one transaction; COMMITs only when the
- * count of THAT execution equals `expected`, else ROLLs BACK and throws
- * a UsageError. There is no measure-then-rerun: a nondeterministic or
+ * ONCE, with capture ON, inside the op-context scope's transaction; the
+ * scope COMMITs only when the count of THAT execution equals `expected`;
+ * otherwise this throws a UsageError and the scope ROLLs BACK. There is no measure-then-rerun: a nondeterministic or
  * state-dependent statement (`WHERE abs(random()) % 2 = 0`) could pick
  * different rows on a second run and commit a count nobody confirmed.
  *
@@ -182,38 +288,20 @@ function runSql(db: Db, query: string, opts: { json?: boolean; confirmRows?: num
  */
 function runConfirmed<T>(db: Db, expected: number, exec: () => T): { result: T; actual: number } {
   const groupId = currentOpContext(db).groupId;
-  return runInTransaction(db, () => {
-    const before = totalChanges(db);
-    const result = exec();
-    const delta = totalChanges(db) - before;
-    const actual = groupId === null ? delta : delta - captureBookkeepingChanges(db, groupId);
-    if (actual !== expected) {
-      throw new UsageError(
-        `expected ${expected} rows, would have affected ${actual} (rolled back). Re-run with --confirm-rows ${actual} if intentional.`,
-      );
-    }
-    return { result, actual };
-  });
+  const before = totalChanges(db);
+  const result = exec();
+  const delta = totalChanges(db) - before;
+  const actual = groupId === null ? delta : delta - captureBookkeepingChanges(db, groupId);
+  if (actual !== expected) {
+    throw new UsageError(
+      `expected ${expected} rows, would have affected ${actual} (rolled back). Re-run with --confirm-rows ${actual} if intentional.`,
+    );
+  }
+  return { result, actual };
 }
 
 function totalChanges(db: Db): number {
   return (db.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
-}
-
-/** BEGIN, run `fn`, COMMIT; ROLLBACK and rethrow on failure. */
-function runInTransaction<T>(db: Db, fn: () => T): T {
-  db.exec("BEGIN IMMEDIATE");
-  let result: T;
-  try {
-    result = fn();
-  } catch (e) {
-    try {
-      db.exec("ROLLBACK");
-    } catch {}
-    throw e;
-  }
-  db.exec("COMMIT");
-  return result;
 }
 
 /**

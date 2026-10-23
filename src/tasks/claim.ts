@@ -333,7 +333,7 @@ async function claimTaskImpl(
         });
         // No emitEvent: the UPDATE fired the capture trigger under
         // intent='task.claim' with actor=agentName (withOpContext above
-        // put it in _op_ctx, and the trigger copies it into ops.actor).
+        // put it in op_ctx, and the trigger copies it into ops.actor).
         // The op payload carries the new owner_id, so the prose
         // `formatClaimEvent` breadcrumb — and the tab-delimited prefix
         // that existed only because prose had to be re-parsed — are both
@@ -454,7 +454,7 @@ async function claimSelf(db: Db, localId: string, opts: ClaimTaskOptions): Promi
         // No emitEvent. This is the interesting case: the `--self` path
         // leaves tasks.owner_id NULL deliberately, so the op PAYLOAD
         // cannot name the actor — but ops.actor can and does, because
-        // withOpContext seeded _op_ctx with it. That is precisely what
+        // withOpContext seeded op_ctx with it. That is precisely what
         // `lastClaimActor` needs, and reading a column beats
         // prefix-matching prose (review_code_last_claim_actor_brittle).
         return {

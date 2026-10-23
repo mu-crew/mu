@@ -38,6 +38,7 @@ import {
   openDb,
   SchemaTooNewError,
   SchemaTooOldError,
+  SqliteTooOldError,
   WorkstreamNotFoundError,
 } from "../src/db.js";
 import {
@@ -393,6 +394,11 @@ const cases: NextStepsCase[] = [
     error: new SchemaTooNewError(12, 11),
     label: "SchemaTooNewError",
     expectedTokens: ["mu --version"],
+  },
+  {
+    error: new SqliteTooOldError("3.41.2"),
+    label: "SqliteTooOldError",
+    expectedTokens: ["sqlite_version"],
   },
 
   // src/cli/handle.ts

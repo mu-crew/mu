@@ -84,11 +84,11 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 
 | Module | Responsibility |
 | --- | --- |
-| `src/db.ts` | better-sqlite3 connection (WAL); schema v12 (13 tables, 4 views) in `applySchema`; installs capture; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
+| `src/db.ts` | better-sqlite3 connection (WAL); schema v12 (15 tables, 4 views) in `applySchema`; makes the stored capture triggers current (`installCapture`); `SqliteTooOldError` below 3.42; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
 | `src/compare.ts` | code-unit string compare; replaces `localeCompare` so ICU is never initialised |
 | `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
-| `src/capture.ts` | TEMP triggers recording each portable write as an op, and refusing natural-key changes |
-| `src/op-context.ts` | `withOpContext` (intent, actor, group); `withCaptureSuppressed` echo guard |
+| `src/capture.ts` | Triggers stored in the DB file (versioned by `capture_version`) recording each portable write as an op, refusing natural-key changes and explicit ids <= 0; `captureDoctorCheck` |
+| `src/op-context.ts` | `withOpContext` (intent, actor, group) and the `withCaptureSuppressed` echo guard; both own the transaction around the `op_ctx` row |
 | `src/apply.ts` | apply one op: per-field LWW, tombstones, substate pair repair, `reprojectDeferredOps` |
 | `src/rebuild.ts` | replay the whole log into a new DB file |
 | `src/compact.ts` | `mu db compact` (blank redundant note-tombstone payloads) and `mu db forget` (drop a torn-down workstream's ops); this machine only |

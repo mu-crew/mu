@@ -620,7 +620,7 @@ function entityForIntent(intent: LocalIntent): string {
 // existed only to put that prefix on and take it back off.
 //
 // The ops log makes all of it unnecessary. `withOpContext` seeds
-// _op_ctx.actor, the capture trigger copies it into `ops.actor`, and
+// op_ctx.actor, the capture trigger copies it into `ops.actor`, and
 // the intent is `task.claim`. So attribution is two indexed columns,
 // not a string to parse — including on the `--self` path, where
 // tasks.owner_id stays NULL by design and the payload therefore
