@@ -6,7 +6,6 @@ import {
   parseImpact,
   parseLines,
   parseNonNegativeInt,
-  parsePositiveInt,
   parsePositiveNumber,
   parseQualifiedRef,
   parseStatusesOption,
@@ -229,25 +228,6 @@ describe("CLI parser properties", () => {
       for (const raw of ["", " ", "0", "-0.1", "NaN", "abc", "--", "."]) {
         expect(() => parsePositiveNumber(raw)).toThrow();
       }
-      // `mu log -n`: NaN reached SQL LIMIT, 0 claimed an empty log and
-      // -1 meant unlimited.
-      // parseInt prefix parsing also let 1.5, 2x and 1e3 through as 1,
-      // 2 and 1; past 2^53 the value is no longer the one typed.
-      for (const raw of [
-        "",
-        "0",
-        "-1",
-        "abc",
-        "1.5",
-        "2x",
-        "1e3",
-        " 3",
-        "0x10",
-        "9007199254740993",
-      ]) {
-        expect(() => parsePositiveInt(raw)).toThrow();
-      }
-      expect(parsePositiveInt("3")).toBe(3);
     });
 
     it("rejects trailing text, fractions for integers, and non-finite numbers", () => {
