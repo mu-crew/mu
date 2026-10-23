@@ -231,7 +231,7 @@ rules hold even when you skip it:
   ends `'...'`; use a quoted heredoc ([brief](recipes/brief.md#quoting)).
 - **`mu sql`** does not pull synced ops; run any other mu command first.
 - **Never put `MU_DB_PATH` inside `MU_SYNC_DIR`**: it corrupts the DB.
-- Before undo, rebuild, teardown (dry-run without `--yes`), sync setup,
+- Before rebuild, teardown (dry-run without `--yes`), sync setup,
   a `doctor --deep` DRIFT, or `doctor` cleanup output, read
   [recipes/recovery.md](recipes/recovery.md).
 
@@ -284,7 +284,7 @@ risky job that needs several of them, start with
 | [plan](recipes/plan.md) | you turn a spec or requirements into a task DAG |
 | [worker](recipes/worker.md) | a task was claimed for you |
 | [test-health](recipes/test-health.md) | define gates, choose verification, add tests, or upkeep at milestones/budget crossings |
-| [recovery](recipes/recovery.md) | undo, rebuild, teardown, sync setup, `doctor` cleanup |
+| [recovery](recipes/recovery.md) | rebuild, teardown, sync setup, `doctor` cleanup |
 | [remote-workers](recipes/remote-workers.md) | an agent runs on another machine |
 | [waves](recipes/waves.md) | more than one worker edits the same repo at once |
 | [long-run](recipes/long-run.md) | a task or proof runs for hours, or must survive flakes |

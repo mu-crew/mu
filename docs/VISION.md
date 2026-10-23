@@ -70,13 +70,13 @@ CLI share the DB, so they cannot diverge.
 
 The `ops` table is the only change record. SQLite triggers write it in
 the same transaction as the mutation, so capture cannot be forgotten or
-drift from the data. Sync, undo, rebuild, and history are queries or
+drift from the data. Sync, rebuild, and history are queries or
 replays over that log.
 
 Reads still go to the tables. mu is not event-sourced: the tables are
 the materialized view and triggers keep them in step with the ops.
 `mu doctor` rebuilds into a temp DB and diffs, so that is verified, not
-assumed. A capture bug therefore breaks sync, undo, and rebuild at once,
+assumed. A capture bug therefore breaks sync and rebuild at once,
 which is why the drift check is load-bearing.
 
 ### 2c. Local-first, transport-agnostic
@@ -232,9 +232,9 @@ the agent choosing; mu reads none of it.
   change) is. The one extension-held list with no pane is the delegate
   queue: bounded, shown in pi's footer, cancellable, and named at
   shutdown when it is dropped.
-- **DB-undoable, not substrate-undoable.** `mu undo <group> --yes`
-  restores rows. It does not revive killed panes or freed workspace
-  directories. Reconciliation then reports ghosts and orphans.
+- **DB-only history.** The ops log records rows. It does not revive
+  killed panes or freed workspace directories. Reconciliation reports
+  ghosts and orphans.
 
 ## Key constraints
 
@@ -294,5 +294,5 @@ text.
 
 Known gaps, none promoted yet: `--evidence` grounds but does not verify,
 mutations have no declared idempotency keys, most mutations have no dry
-run (`workstream teardown`, `task delete`, and `undo` do), and the `role`
+run (`workstream teardown` and `task delete` do), and the `role`
 field is stored but not enforced.

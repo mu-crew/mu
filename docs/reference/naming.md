@@ -54,7 +54,7 @@ groups by project. `workstream init` prints a hint for a name with no
 `-`.
 
 - **One workstream per effort.** Tear it down when the effort ships;
-  the ops log keeps the history and `mu undo` restores it. A long-lived
+  the ops log keeps the history. A long-lived
   catch-all becomes a log nobody reads: `mu state` hints once a
   workstream passes 300 tasks with fewer than 10% open.
 - **Ultrathink runs** get their own: `<project>-ut-<topic>`.

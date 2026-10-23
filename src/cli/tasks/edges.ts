@@ -97,7 +97,7 @@ export async function cmdTaskUnblock(
   assertTaskInWorkstream(db, blocked, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   // Symmetric with `block`: same --by parsing on both halves of the
-  // same edge operation, so undoing a multi-blocker block is a single
+  // same edge operation, so a multi-blocker block is a single
   // invocation too.
   const blockers = parseByFlag(opts.by);
   const byList = blockers.join(",");
@@ -169,7 +169,7 @@ export async function cmdTaskDelete(
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   // Two-phase: bare = dry-run preview; --yes commits. Mirrors
-  // `mu workstream teardown` / `mu undo`. Surfaced by feedback
+  // `mu workstream teardown`. Surfaced by feedback
   // ws task fb_task_delete_no_yes
   // (impact=30): the dogfood report typed `mu task delete X --yes`
   // (mirroring workstream teardown) and got 'unknown option --yes'
@@ -178,14 +178,6 @@ export async function cmdTaskDelete(
   const dryRun = opts.yes !== true;
   const r = deleteTask(db, localId, ws, { dryRun });
   const commitNextSteps: NextStep[] = [
-    ...(r.group === null
-      ? []
-      : [
-          {
-            intent: "Undo the delete (restores the task, its edges and notes)",
-            command: `mu undo ${r.group.slice(0, 8)} --yes`,
-          },
-        ]),
     {
       intent: "List remaining tasks",
       command: `mu task list -w ${ws}`,
@@ -195,10 +187,6 @@ export async function cmdTaskDelete(
     {
       intent: "Confirm and actually delete (cascades to edges + notes)",
       command: `mu task delete ${localId} -w ${ws} --yes`,
-    },
-    {
-      intent: "After deleting, find the delete's group to undo it (DB only)",
-      command: "mu undo",
     },
     {
       intent: "Inspect the task + edges before deciding",
@@ -232,9 +220,6 @@ export async function cmdTaskDelete(
     );
     console.log("");
     console.log(pc.dim("(dry-run; rerun with --yes to actually delete)"));
-    console.log(
-      pc.dim("The delete is one op group; `mu undo <group> --yes` reverts it (DB only)."),
-    );
     printNextSteps(dryRunNextSteps);
     return;
   }

@@ -1,5 +1,5 @@
-// Substate handling on the replay paths: apply (peer ops, rebuild) and
-// undo. The contract under test is spec D8/D11: legacy statuses map onto
+// Substate handling on the replay paths: apply (peer ops, rebuild).
+// The contract under test is spec D8/D11: legacy statuses map onto
 // pairs, status-only and unknown-substate ops fall back to the default,
 // the deferred FK never fails the commit, and the SAME ops converge on
 // the SAME row whatever order they arrive in.
@@ -11,12 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Op } from "../src/apply.js";
 import { type Db, openDb } from "../src/db.js";
 import { formatHlc } from "../src/hlc.js";
-import { withOpContext } from "../src/op-context.js";
 import { applyIncomingOp } from "../src/segments.js";
-import { addTask } from "../src/tasks/edit.js";
-import { setTaskStatus } from "../src/tasks/lifecycle.js";
-import { listRecentGroups, undoGroup } from "../src/undo.js";
-import { ensureWorkstream, teardownWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
 const PEER = "9f1c8a2e-0000-4000-8000-0000000000aa";
@@ -164,74 +159,5 @@ describe("apply: substates", () => {
     // Status OPEN (4000) and substate todo (the default written by the
     // status-only op at 4000, which is newer than parked at 3000).
     for (const r of conflictResults) expect(r).toEqual({ status: "OPEN", substate: "todo" });
-  });
-});
-
-describe("undo: substates", () => {
-  let tempDir: string;
-  let db: Db;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "mu-substate-undo-"));
-    db = openDb({ path: join(tempDir, "mu.db") });
-  });
-
-  afterEach(() => {
-    try {
-      db.close();
-    } catch {
-      // already closed
-    }
-    rmFixtureDir(tempDir);
-  });
-
-  const pair = (localId: string) =>
-    db.prepare("SELECT status, substate FROM tasks WHERE local_id = ?").get(localId) as
-      | { status: string; substate: string }
-      | undefined;
-
-  const groupFor = (intent: string): string => {
-    const group = listRecentGroups(db, 50).find((g) => g.intents.includes(intent));
-    if (group === undefined) throw new Error(`no group with intent ${intent}`);
-    return group.groupId;
-  };
-
-  const setSubstate = (localId: string, substate: string, intent: string): void => {
-    withOpContext(db, { intent, group: "new" }, () => {
-      db.prepare("UPDATE tasks SET substate = ? WHERE local_id = ?").run(substate, localId);
-    });
-  };
-
-  it("restores non-default pairs when a teardown is undone, and undoes a park", async () => {
-    ensureWorkstream(db, "demo");
-    addTask(db, { workstream: "demo", localId: "a", title: "A", impact: 50, effortDays: 1 });
-    addTask(db, { workstream: "demo", localId: "b", title: "B", impact: 50, effortDays: 1 });
-    setSubstate("a", "parked", "test.park");
-    setTaskStatus(db, "b", "CLOSED", { workstream: "demo" });
-    setSubstate("b", "wontfix", "test.wontfix");
-
-    await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-absent-for-test" });
-    expect(pair("a")).toBeUndefined();
-    undoGroup(db, groupFor("workstream.teardown"));
-    expect(pair("a")).toEqual({ status: "OPEN", substate: "parked" });
-    expect(pair("b")).toEqual({ status: "CLOSED", substate: "wontfix" });
-
-    undoGroup(db, groupFor("test.park"), { force: true });
-    expect(pair("a")).toEqual({ status: "OPEN", substate: "todo" });
-  });
-
-  it("restores a tombstoned legacy DEFERRED task as OPEN/parked", async () => {
-    ensureWorkstream(db, "demo");
-    addTask(db, { workstream: "demo", localId: "a", title: "A", impact: 50, effortDays: 1 });
-    // History written by a v9 build: the create op carries DEFERRED and
-    // predates substates entirely.
-    db.prepare(
-      `UPDATE ops SET payload = json_remove(json_set(payload, '$.status', 'DEFERRED'), '$.substate')
-        WHERE entity = 'task' AND op = 'put'`,
-    ).run();
-    await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-absent-for-test" });
-
-    undoGroup(db, groupFor("workstream.teardown"));
-    expect(pair("a")).toEqual({ status: "OPEN", substate: "parked" });
   });
 });

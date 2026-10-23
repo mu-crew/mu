@@ -4,7 +4,7 @@
 // unregistered, and the old sweep killed a live crew's agent panes
 // that way (f_orch_empty_sweep_live). A shell-only pane check was not
 // enough: a `bash -c` loop reports `bash` (g_fix_teardown_busy_shell).
-// Also covers the sweep's undo hint (f_wsstate_empty_undo_hint).
+// Also covers the sweep's per-workstream group hint (f_wsstate_empty_undo_hint).
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -53,7 +53,7 @@ function tmuxFake(sessions: Sessions, killed: string[]) {
   };
 }
 
-describe("teardown --empty: live-pane guard and undo hint", () => {
+describe("teardown --empty: live-pane guard and group hint", () => {
   let dir: string;
   let dbPath: string;
   let db: Db;
@@ -149,7 +149,7 @@ describe("teardown --empty: live-pane guard and undo hint", () => {
     expect((await listEmptyWorkstreams(db)).map((w) => w.name)).toEqual(["bare"]);
   });
 
-  it("the sweep's undo hint points at per-workstream groups, not a bare `mu undo --yes`", async () => {
+  it("the sweep's hint points at the per-workstream group list", async () => {
     ensureWorkstream(db, "e1");
     ensureWorkstream(db, "e2");
     db.close();
@@ -159,7 +159,7 @@ describe("teardown --empty: live-pane guard and undo hint", () => {
     expect(r.error).toBeUndefined();
     expect(r.stdout).toContain("tornDown=2");
     expect(r.stdout).not.toContain("snapshot");
-    expect(r.stdout).not.toMatch(/mu undo --yes/);
+    expect(r.stdout).not.toContain("mu undo");
     expect(r.stdout).toContain("mu workstream list --torn-down");
 
     // Each teardown is its own group: that is why the hint lists them.

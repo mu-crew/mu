@@ -18,7 +18,7 @@
 // — possibly in a caller that never set a context, possibly in a
 // finally-block cleanup after a throw — gets mislabelled with a stale
 // intent. A wrong intent is worse than a null one, because `mu log`
-// renders it as confident prose and undo groups by it.
+// renders it as confident prose.
 //
 // `withOpContext(db, {...}, fn)` restores the previous context in a
 // `finally`, so:
@@ -60,7 +60,7 @@ export interface OpContext {
    *  `agent_logs.source`: an agent name, "user", "system". */
   actor?: string | undefined;
   /**
-   * Grouping for `mu undo`:
+   * Op grouping:
    *   - omitted   inherit the enclosing group, or start one if none.
    *   - "new"     force a fresh group even when nested.
    *   - <string>  use this exact group id.

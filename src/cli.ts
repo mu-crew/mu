@@ -41,7 +41,6 @@ import { wireSyncCommand } from "./cli/sync.js";
 import { wireTaskCommands } from "./cli/tasks.js";
 import { resolveInitialTab } from "./cli/tui-launch-focus.js";
 import { importTui } from "./cli/tui-load.js";
-import { wireUndoCommand } from "./cli/undo.js";
 import { wireWorkspaceCommands } from "./cli/workspace.js";
 import { wireWorkstreamCommands } from "./cli/workstream.js";
 import { type Db, WorkstreamNotFoundError } from "./db.js";
@@ -568,7 +567,7 @@ export function parseNonNegativeInt(value: string): number {
 }
 
 // Parses a positive integer (0 is rejected). Used where 0 would mean
-// "nothing", e.g. `mu undo -n`, whose empty list reads as an empty log.
+// "nothing", e.g. `mu log -n`, whose empty list reads as an empty log.
 export function parsePositiveInt(value: string): number {
   // Digits only, no surrounding whitespace.
   const n = /^\d+$/.test(value) ? Number(value) : Number.NaN;
@@ -585,7 +584,7 @@ export const parseLines = parseNonNegativeInt;
 //
 // See the `wire*Commands` calls below for the full namespace/utility
 // list (`workstream`, `agent`, `task`, `workspace`, `log`, `state`,
-// `sql`, `sync`, `rebuild`, `db`, `undo`, `doctor`, plus the bare `mu`
+// `sql`, `sync`, `rebuild`, `db`, `doctor`, plus the bare `mu`
 // TTY-aware default) rather than a count here, which drifts.
 //
 // Every flag is declared on the subcommand that consumes it. The one
@@ -851,7 +850,6 @@ export function buildProgram(): Command {
   wireSyncCommand(program);
   wireRebuildCommand(program);
   wireDbCommands(program);
-  wireUndoCommand(program);
   wireDoctorCommand(program);
   wireLinkCommand(program);
   applyAlphabeticalHelpSort(program);

@@ -229,7 +229,7 @@ describe("CLI parser properties", () => {
       for (const raw of ["", " ", "0", "-0.1", "NaN", "abc", "--", "."]) {
         expect(() => parsePositiveNumber(raw)).toThrow();
       }
-      // `mu undo -n`: NaN reached SQL LIMIT, 0 claimed an empty log and
+      // `mu log -n`: NaN reached SQL LIMIT, 0 claimed an empty log and
       // -1 meant unlimited.
       // parseInt prefix parsing also let 1.5, 2x and 1e3 through as 1,
       // 2 and 1; past 2^53 the value is no longer the one typed.

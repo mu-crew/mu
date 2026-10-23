@@ -10,6 +10,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Removed
+
+- **`mu undo`.** Teardown becomes soft in a later change. `mu log --group
+  <prefix>` still resolves a group prefix; an unknown one now raises
+  `GroupNotFoundError` (exit 3). The SDK drops `undoGroup`, `planUndo`,
+  `listRecentGroups`, `mostRecentGroup`, `resolveGroupId` and
+  `priorFieldValue`.
+
 ### Fixed
 
 - **ultrathink closes on no *unfixed* high finding.** A final refuter pass

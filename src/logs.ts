@@ -50,9 +50,8 @@ export interface LogRow {
    *  which name no state change. The formatter in src/log-render.ts
    *  renders from this — never from the payload text. */
   intent: string | null;
-  /** Undo group: every op of one operator action shares it. Surfaced so
-   *  `mu log` can print it and `mu log --group <id>` can filter to it
-   *  (undo discoverability). */
+  /** Op group: every op of one operator action shares it. Surfaced so
+   *  `mu log` can print it and `mu log --group <id>` can filter to it. */
   group: string;
   /** 'put' (semantic partial update) or 'del' (tombstone). The formatter
    *  needs it to tell "edge removed" from "row touched". */
@@ -229,25 +228,17 @@ const TOUCH_OP_FILTER = `NOT (
  *  agree with the shim. */
 export const MACHINE_WIDE_KEY = "";
 
-// ─── group-id prefix resolution (shared) ──────────────────────────
+// ─── group-id prefix resolution ───────────────────────────────────
 //
-// Group ids are uuids, which nobody types. `mu undo` prints 8-char
-// prefixes and accepts them, so `mu log --group` must too — otherwise the
-// documented workflow (`mu undo` to see the id → `mu log --group <id>` to
-// inspect it → `mu undo <id> --yes`) breaks in the middle, and it breaks
-// SILENTLY: an unmatched prefix returns zero rows, which reads as "this
-// group did nothing" rather than "you gave me a prefix I ignored".
-// (bug_group_id_prefix_asymmetry — found by following the workflow across
-// R9 and R10; each verb was self-consistent on its own.)
-//
-// This lives HERE, next to the ops reader, so both verbs share ONE
-// resolution rule. `src/undo.ts` delegates to it rather than keeping a
-// second copy. Same affordance git gives for abbreviated shas, and the
-// same shape as `src/tasks/id.ts`'s resolve-or-raise helpers.
+// Group ids are uuids, which nobody types. `mu log` prints 8-char
+// prefixes, so `mu log --group` accepts them. An unmatched prefix is an
+// error, not zero rows: "no entries" reads as "this group did nothing".
+// Same affordance git gives for abbreviated shas, and the same shape as
+// `src/tasks/id.ts`'s resolve-or-raise helpers.
 
 /** Raised when a group-id prefix matches more than one group.
  *  Astronomically unlikely with uuids, but silently picking one of two
- *  candidate groups to UNDO is not an acceptable failure mode. */
+ *  candidate groups is not an acceptable failure mode. */
 export class GroupIdAmbiguousError extends Error implements HasNextSteps {
   constructor(
     readonly prefix: string,
@@ -264,7 +255,7 @@ export class GroupIdAmbiguousError extends Error implements HasNextSteps {
 
   errorNextSteps(): NextStep[] {
     return [
-      { intent: "List recent groups with their ids", command: "mu undo" },
+      { intent: "List recent groups with their ids", command: "mu log -n 20" },
       {
         intent: "Retry with more characters",
         command: `mu log --group ${this.candidates[0] ?? "<full-id>"}`,
@@ -273,12 +264,23 @@ export class GroupIdAmbiguousError extends Error implements HasNextSteps {
   }
 }
 
+/** Raised when a group-id prefix matches no group. Exit 3. */
+export class GroupNotFoundError extends Error implements HasNextSteps {
+  constructor(readonly prefix: string) {
+    super(`no op group matching ${JSON.stringify(prefix)}`);
+    this.name = "GroupNotFoundError";
+  }
+
+  errorNextSteps(): NextStep[] {
+    return [{ intent: "List recent ops with their group ids", command: "mu log -n 20" }];
+  }
+}
+
 /**
  * Resolve a possibly-abbreviated group id to the full one.
  *
  * Returns null when nothing matches, so callers choose their own
- * not-found error (undo raises `UndoGroupNotFoundError`; `mu log`
- * filters to nothing but says so). Throws `GroupIdAmbiguousError` when a
+ * not-found error (`mu log` raises `GroupNotFoundError`). Throws `GroupIdAmbiguousError` when a
  * prefix matches several groups — that is a genuine conflict the
  * operator must resolve, not something to guess at.
  *
@@ -435,7 +437,7 @@ export interface ListLogsOptions {
   kind?: string;
   /** Filter by structured `ops.intent`, e.g. 'task.close'. */
   intent?: string;
-  /** Filter to one undo group (`ops.group_id`). */
+  /** Filter to one op group (`ops.group_id`). */
   group?: string;
 }
 

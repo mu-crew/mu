@@ -112,17 +112,17 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **disk↔DB reconciliation** | `mu doctor`'s report-only `disk` section. Not **reconcile** (rows vs mux) or **drift** (log vs tables). | "gc", "cleanup" |
 | **doctor** | The diagnostic command and its report. | "health check" |
 
-### Ops log, sync, and undo
+### Ops log and sync
 
 | Term | Meaning | Don't use |
 | --- | --- | --- |
 | **op** | One `ops` row, written by a trigger in the mutation's transaction. Holds only changed columns. | "event", "delta", "change" |
-| **ops log** | The `ops` table: the append-only record that sync, undo, and history read. | "event log", "journal", "WAL" |
+| **ops log** | The `ops` table: the append-only record that sync and history read. | "event log", "journal", "WAL" |
 | **log entry** | An op as rendered by `mu log`, through one formatter (`src/log-render.ts`). | "message", "event" |
 | **kind** | The operator's channel tag on a log entry (`mu log --kind`), stored as the op's `entity`. `workstream`, `task`, `edge`, and `note` are reserved. | "category", "type" |
 | **log ledger** | A convention: a custom `--kind` used as a watcher loop's durable dedupe record. | "state file" |
 | **intent** | The semantic label on an op (`task.close`), set once per SDK function via **op context**. | "verb", "action" |
-| **group** | The ops of one user action (`group_id`), undone as a unit. Any unique id prefix works. | "transaction", "batch" |
+| **group** | The ops of one user action (`group_id`), read as a unit (`mu log --group`). Any unique id prefix works. | "transaction", "batch" |
 | **op context** | The `_op_ctx` temp table that stamps intent, actor, and group onto ops. Set only via `src/op-context.ts`. | "thread local" |
 | **apply** | Land one op under the **merge rules** (`src/apply.ts`). Idempotent; mints no op. | "merge", "import", "replay" |
 | **merge rules** | Notes: **grow-only set**. Tasks, workstreams: **per-field LWW**. Edges: **LWW-element-set**. Unknown entities are ignored. | "conflict resolution", "CRDT" |
@@ -132,9 +132,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **tombstone** | An `op='del'` row. There is no tombstone table. | "deletion marker" |
 | **resurrection** | A put newer than a seen tombstone, which legitimately recreates the row. | "undelete", "revive" |
 | **provenance** | Which HLC last wrote a field, derived from the ops log by query, never stored. | "version vector" |
-| **inverse op** | The op that reverts another; an ordinary op, so undo syncs and is undoable. | "rollback" |
-| **superseded** (group) | A later group wrote the same field (other than `updated_at`), so `mu undo` refuses (exit 4) without `--force`. | "stale" |
-| **teardown** | Kill a workstream's mux session and delete its rows. `mu undo` restores rows, not panes or dirs. | "destroy", "nuke", "purge" |
+| **teardown** | Kill a workstream's mux session and delete its rows. Panes and dirs do not come back. | "destroy", "nuke", "purge" |
 | **drift** | The ops log and live tables disagree. Always a bug. | "inconsistency", "corruption" |
 | **shallow / deep check** | Drift checks in `mu doctor` and `mu doctor --deep` (full rebuild). | "fsck" |
 | **portable** | Syncable: `workstreams`, `tasks`, `task_edges`, `task_notes`. The rest is **machine-local** (`src/db.ts`). | "shared", "global" |
@@ -221,7 +219,7 @@ deprecated, always `spawning`, and never read.
 | "manager", "instance" | Vague | The specific noun |
 | "service", "broker" | Imply a daemon or middleware; mu has none | Be specific |
 | "plugin" | pi has extensions | "extension" |
-| "checkpoint", "snapshot" | mu has no savepoints | "group" (undo unit), "backup" (whole-DB copy) |
+| "checkpoint", "snapshot" | mu has no savepoints | "group" (op group), "backup" (whole-DB copy) |
 | "agent type", "agent definition", "agent template" | mu has no class system or templates; spawn flags and the prompt define an agent | "agent role", or describe the spawn |
 | "worker" (general) | Names the task-claimer role | "agent" |
 | "claimer" | | "owner" |

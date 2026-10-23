@@ -163,7 +163,7 @@ export function addNote(db: Db, taskLocalId: string, content: string, opts: AddN
 
 /** addNote without its own op context: the note joins the CALLER's
  *  group and intent. For verbs whose note is part of one action (the
- *  `--why` of `close --as` / `park`), so `mu undo` reverts both together.
+ *  `--why` of `close --as` / `park`), so both share one group.
  *  Internal — not re-exported from src/tasks.ts. */
 export function insertNote(db: Db, taskLocalId: string, content: string, opts: AddNoteOptions) {
   const task = getTask(db, taskLocalId, opts.workstream);
@@ -212,7 +212,7 @@ export interface DeleteTaskResult {
    *  found an existing task with zero edges and zero notes
    *  (`present: true, deletedEdges: 0, deletedNotes: 0`). */
   present: boolean;
-  /** The op group the delete wrote, for `mu undo <group> --yes`. Null
+  /** The op group the delete wrote. Null
    *  when nothing was deleted (dry-run or missing row). */
   group: string | null;
 }
@@ -221,7 +221,7 @@ export interface DeleteTaskOptions {
   /** When true, return the cascade preview (would-be edge / note
    *  counts) without mutating. The CLI uses this to power the bare
    *  `mu task delete <id>` two-phase pattern (mirrors
-   *  `mu workstream teardown` / `mu undo`). Surfaced
+   *  `mu workstream teardown`). Surfaced
    *  by feedback ws task
    *  fb_task_delete_no_yes (impact=30): a dogfood report typed
    *  `mu task delete X --yes` (mirroring workstream teardown) and got
@@ -305,7 +305,7 @@ function deleteTaskImpl(
     };
   }
   // No pre-mutation snapshot: v9 dropped the `snapshots` table and
-  // rollback is inverse ops over the ops log (`mu undo`).
+  // history is the ops log.
   const result = db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
   // No emitEvent: the DELETE fired the capture trigger, which wrote a
   // tombstone op (op='del', intent='task.delete').

@@ -26,7 +26,7 @@
 // v9 is a BREAKING, migration-free redesign. It DROPS v8's four
 // separate change-recording mechanisms — `agent_logs`, `snapshots`,
 // `workstream_sync`, and the five `archived_*` tables — and replaces
-// all of them with one **ops log**. Sync, undo, and history
+// all of them with one **ops log**. Sync and history
 // are queries or replays over that log (docs/VOCABULARY.md § op,
 // ops log, watermark).
 //
@@ -863,7 +863,7 @@ CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes (task_id);
 
 -- ─── The ops log (VISION.md § 2b, VOCABULARY.md § op / ops log) ──────
 --
--- The single append-only record of every change. Sync, undo, and
+-- The single append-only record of every change. Sync and
 -- history are all queries or replays over this one table.
 --
 -- Deliberately FK-free. An op must stay readable after the row (and
@@ -875,7 +875,7 @@ CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes (task_id);
 --   seq        local-only append cursor (AUTOINCREMENT never recycles)
 --   hlc        the ORDERING key across machines (VOCABULARY § HLC)
 --   machine_id which peer wrote this op
---   group_id   the undo unit: all ops of one operator action
+--   group_id   the op group: all ops of one operator action
 --   actor      who caused it (may not be a registered worker)
 --   intent     semantic label ('task.close', 'agent.spawn')
 --   entity/key what it addresses ('task', 'mu/ops-log')
@@ -903,7 +903,7 @@ CREATE TABLE IF NOT EXISTS ops (
 -- Four indexes, one per read shape that actually exists:
 --   hlc         — replay/rebuild walks the log in HLC order.
 --   entity,key  — "what happened to this task" (history + per-field merge).
---   group_id    — 'mu undo <group>' gathers one action's ops.
+--   group_id    — 'mu log --group <group>' gathers one action's ops.
 --   machine_id,entity,hlc — sync flush seeks this machine's SYNCED ops
 --                 past the segment's last hlc, so a trailing run of
 --                 machine-local ops (agent.*) costs nothing per flush.

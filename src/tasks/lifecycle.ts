@@ -286,7 +286,7 @@ function closeTaskImpl(
     }
   }
   // No pre-mutation snapshot: v9 dropped the `snapshots` table and
-  // rollback is inverse ops over the ops log (`mu undo`).
+  // history is the ops log.
   return db
     .transaction((): CloseTaskResult => {
       const track = as !== "done" && before !== undefined;
@@ -347,7 +347,7 @@ function recordReasonNote(
       ? withTitles(db, why, workstream, localId)
       : why;
   // insertNote, not addNote: the note joins the verb's group and
-  // intent instead of minting its own, so one undo reverts both.
+  // intent instead of minting its own, so both share one group.
   insertNote(db, localId, `${substate.toUpperCase()}: ${text}`, noteOpts);
 }
 

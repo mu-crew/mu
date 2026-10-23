@@ -361,7 +361,7 @@ export interface TornDownWorkstream {
    *  torn down, recreated and torn down again, and each is its own
    *  entry (the group id is the identity). */
   name: string;
-  /** The op group to pass to `mu undo`. */
+  /** The teardown's op group (`mu log --group <group>`). */
   group: string;
   /** ISO timestamp of the teardown. */
   at: string;
@@ -371,20 +371,16 @@ export interface TornDownWorkstream {
   notes: number;
   edges: number;
   /** True when a LATER put recreated this workstream, i.e. the
-   *  teardown was already undone or the name was reused. Kept in the
-   *  list rather than filtered out: "I tore this down, then undid it"
-   *  is history the operator may be looking for, and silently hiding
-   *  it would make the list disagree with `mu log`. */
+   *  name was reused. Kept in the list rather than filtered out:
+   *  silently hiding it would make the list disagree with `mu log`. */
   recreated: boolean;
 }
 
 /**
  * Every **teardown** the ops log remembers, newest first.
  *
- * The list exists because a teardown is REVERSIBLE and that is useless
- * if the group id cannot be found: `mu undo` lists only recent groups,
- * so a teardown from last month was effectively unreachable without
- * hand-written SQL over `ops`.
+ * The list exists so a teardown from last month is reachable (its op
+ * group id feeds `mu log --group`) without hand-written SQL over `ops`.
  *
  * Read straight from the log rather than from a side table — the log
  * already holds it, and a projection would be one more thing that can
@@ -577,8 +573,7 @@ export async function teardownWorkstream(
   const muxSession = opts.muxSession ?? `mu-${opts.workstream}`;
 
   // Teardown does not snapshot. v9 dropped the `snapshots` table; the
-  // teardown writes tombstone ops instead and `mu undo` replays the
-  // inverses (VISION.md § 2b).
+  // teardown writes tombstone ops instead (VISION.md § 2b).
 
   // Pre-count the cascade victims so we can report them — SQLite's
   // changes() only reports rows directly affected by the last statement,
@@ -687,7 +682,7 @@ export async function teardownWorkstream(
   // edges and notes, and each cascaded row gets its own tombstone op
   // (SQLite FK CASCADE DOES fire triggers — verified empirically, see
   // src/capture.ts). They all share this group so the whole teardown is
-  // one unit for `mu undo`.
+  // one op group.
   withOpContext(db, { intent: "workstream.teardown", group: "new" }, () =>
     db.prepare("DELETE FROM workstreams WHERE name = ?").run(opts.workstream),
   );

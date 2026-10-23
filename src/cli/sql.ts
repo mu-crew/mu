@@ -9,7 +9,7 @@
 // `--confirm-rows N` adds a transactional safety belt: if the actual
 // affected-row count (FK cascades included) doesn't match N, the whole
 // thing rolls back. Every write is captured as ops under one `sql.write`
-// group, so `mu undo` reverts a whole `mu sql` call.
+// group.
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
@@ -26,9 +26,9 @@ export async function cmdSql(
 ): Promise<void> {
   // ONE op context for the whole invocation. Without it every captured
   // row got its own random group and a null intent, so one multi-row
-  // UPDATE showed up in `mu undo` as N separate "(no intent)" actions
-  // and `mu log` fell back to printing the raw JSON payload. With it,
-  // `mu undo` reverts the whole `mu sql` call as one action.
+  // UPDATE showed up in `mu log` as N separate "(no intent)" actions
+  // and printed the raw JSON payload. With it, the whole `mu sql` call
+  // is one action.
   withOpContext(db, { intent: "sql.write", group: "new" }, () => runSql(db, query, opts));
 }
 

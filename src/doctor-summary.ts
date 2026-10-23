@@ -725,7 +725,7 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
     case "drift":
       return [
         "Drift means the ops log and the live tables disagree, and since",
-        "undo/sync/history are ALL projections of that one log, a",
+        "sync/history are ALL projections of that one log, a",
         "capture bug breaks all of them at once. This row is the shallow",
         "check (every live row must have at least one op naming its key);",
         "it cannot see an uncaptured UPDATE. Run `mu doctor --deep` for the",

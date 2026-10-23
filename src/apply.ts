@@ -48,7 +48,7 @@
 //
 //   * ONE source of truth. A side table is a denormalisation that can
 //     disagree with the log, and when it does, every downstream
-//     projection (undo, sync) inherits the disagreement. There
+//     projection (sync, rebuild) inherits the disagreement. There
 //     is no reconciliation procedure that could fix it, because nothing
 //     would know which side was right.
 //   * Idempotence for free. Re-applying an op compares HLCs against the
@@ -108,7 +108,7 @@ export interface Op {
   hlc: string;
   /** Which peer minted it. Half of the (machine_id, hlc) identity. */
   machineId: string;
-  /** One user-visible action, for `mu undo`. */
+  /** One user-visible action (the op group). */
   groupId: string;
   /** Free text: agent name, "user", "system". */
   actor?: string | null;
@@ -343,8 +343,8 @@ function parseEdgeKey(key: string): { blocker: string; blocked: string } {
  *
  *   owner_id  is an FK into the machine-local `agents` table, so
  *             OWNERSHIP DOES NOT SYNC (src/db.ts § MACHINE_LOCAL_TABLES
- *             spells out why). It is CAPTURED, for local history and
- *             undo, but applying a peer's owner_id would at best point
+ *             spells out why). It is CAPTURED, for local history,
+ *             but applying a peer's owner_id would at best point
  *             at an unrelated local agent and at worst violate the FK
  *             outright — verified: inserting a task with an owner_id
  *             absent from `agents` fails with 'FOREIGN KEY constraint
@@ -558,8 +558,8 @@ function carriedSubstate(payload: unknown): string | null {
  * peer that applies the same ops reaches the same row. That is why the
  * repair records no op: on the apply path it runs inside
  * withCaptureSuppressed, and every peer computes the same repair on its
- * own. On the undo path capture is live, and the write is recorded as
- * part of the undo group.
+ * own. Where capture is live (a local write), the repair is recorded in
+ * the writer's op group.
  *
  * `pending` is the op being applied, which the caller may not have
  * recorded yet (ingest applies before recording).
@@ -649,7 +649,7 @@ function applyWorkstreamPut(db: Db, op: Op): ApplyResult {
  *  fleet: 6359 vs 6360). Two notes identical to the millisecond still
  *  converge to one row, which is a dedupe rather than a loss.
  *
- *  Undo, migrations and reprojection re-emit a note with the created_at
+ *  Migrations and reprojection re-emit a note with the created_at
  *  it already had, so they still land on the existing row. */
 function applyNotePut(db: Db, op: Op): ApplyResult {
   const { taskKey } = parseNoteKey(op.key);
