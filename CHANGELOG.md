@@ -47,6 +47,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   falls back to the pane title; nothing reads or writes pane titles, so a
   pane adopted without the env var resolves to `$USER` / `orchestrator`.
 
+### Fixed
+
+- **`mu_delegate` `record` kept an empty `EVIDENCE:` header.** `recordNote` kept
+  only lines that start with `EVIDENCE:`, so a refuter's multi-line evidence
+  body was dropped. It now keeps everything from the last `VERDICT:` line on
+  (still capped at 4000 chars).
+
 ### Removed
 
 - **Pane titles, pane borders and mux session discovery.** Gone from the

@@ -67,7 +67,8 @@ and nothing spawns. When the answer arrives, the tool runs
 `mu task note <task> -w <ws> --author <delegate>` once:
 
 - Done: `REFUTER <label> (<delegate>, <elapsed>):`, then the last
-  `VERDICT:` line and every `EVIDENCE:` line after it. Without a
+  `VERDICT:` line and everything after it (a multi-line `EVIDENCE:`
+  body included). Without a
   VERDICT line, the answer's last 1500 chars after `NO VERDICT LINE:`.
   Capped at 4000 chars.
 - Timeout, died, empty, error, or cancelled:

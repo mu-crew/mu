@@ -78,7 +78,7 @@ const rows = await Promise.all(findings.map(async (id, i) => {
   const at = lines.findLastIndex((l) => /^[\s>*_`-]*VERDICT:/.test(l));
   const note = w.outcome !== "done" ? `REFUTER ${i + 1}: no verdict (${w.outcome ?? "no result"})`
     : `REFUTER ${i + 1} (${a}, ${el(Date.now() - t0)}):\n` + (at < 0 ? `NO VERDICT LINE: ${(w.lastText ?? "").slice(-1500)}`
-    : [lines[at], ...lines.slice(at + 1).filter((l) => /^[\s>*_`-]*EVIDENCE:/.test(l))].join("\n"));
+    : lines.slice(at).join("\n"));
   await tools.write({ path: `${dir}/note-${a}.txt`, content: note }); // answer text never touches a shell
   await sh(`mu task note ${id} -w ${ws} - < ${dir}/note-${a}.txt && rm ${dir}/note-${a}.txt`);
   if (w.outcome === "done") await sh(`mu agent close ${a} -w scratch`);

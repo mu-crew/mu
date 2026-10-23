@@ -374,12 +374,11 @@ export const RECORD_NOTE_MAX = 4000;
 export const RECORD_FALLBACK_TAIL = 1500;
 
 const VERDICT_LINE = /^[\s>*_`-]*VERDICT:/;
-const EVIDENCE_LINE = /^[\s>*_`-]*EVIDENCE:/;
 
 /**
  * The note a delegate's answer leaves on the task it judged. Pure. A done
- * answer keeps its last `VERDICT:` line and every `EVIDENCE:` line after
- * it (else its tail, marked NO VERDICT LINE); any other outcome records
+ * answer keeps everything from its last `VERDICT:` line on, so a
+ * multi-line EVIDENCE body survives (else its tail, marked NO VERDICT LINE); any other outcome records
  * the gap.
  */
 export function recordNote(
@@ -397,7 +396,7 @@ export function recordNote(
     if (VERDICT_LINE.test(lines[i] ?? "")) at = i;
   const body =
     at >= 0
-      ? [lines[at] ?? "", ...lines.slice(at + 1).filter((l) => EVIDENCE_LINE.test(l))].join("\n")
+      ? lines.slice(at).join("\n")
       : `NO VERDICT LINE: ${lastText.trimEnd().slice(-RECORD_FALLBACK_TAIL)}`;
   const note = `REFUTER ${label} (${name}, ${formatElapsed(elapsedMs)}):\n${body}`;
   const mark = "\n[truncated]";
