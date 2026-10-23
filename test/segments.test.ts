@@ -634,7 +634,7 @@ describe("segments", () => {
       const lines = linesOf(path);
       const first = lines[0];
       if (first === undefined) throw new Error("need a line");
-      lines[0] = first.replace(`{"v":${SEGMENT_FORMAT_VERSION},`, '{"v":99,');
+      lines[0] = first.replace(`{"v":${SEGMENT_FORMAT_VERSION},`, '{"v":3,');
       writeFileSync(path, `${lines.join("\n")}\n`);
 
       const peer = peersFor(b)[0];
@@ -1851,6 +1851,8 @@ describe("segments", () => {
         total: 0,
         skippedLocal: 0,
         selfRepaired: null,
+        foreignVersionAt: null,
+        foreignVersion: null,
       });
 
       const pass = await syncPass(a, null);

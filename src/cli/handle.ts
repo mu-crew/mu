@@ -86,6 +86,7 @@ import {
   SyncPeerNotFoundError,
   SyncPeerRefAmbiguousError,
   SyncSourceNotFoundError,
+  SyncSourceTooNewError,
   syncEnabled,
 } from "../sync.js";
 import {
@@ -318,6 +319,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof ClaimerNotRegisteredError ||
     err instanceof SchemaTooOldError ||
     err instanceof SchemaTooNewError ||
+    err instanceof SyncSourceTooNewError ||
     err instanceof WorkstreamExistsError ||
     // Rebuild refuses to overwrite an existing target or to write onto
     // the source DB: both are name/state collisions, not usage errors.

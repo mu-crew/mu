@@ -45,6 +45,7 @@ import type { Db } from "../db.js";
 import { muTable, type NextStep, pc, printNextSteps } from "../output.js";
 import { type IngestResult, syncDir, syncPass } from "../segments.js";
 import {
+  foreignVersionMessage,
   type IngestFromDbResult,
   ingestFromDb,
   type PeerStatus,
@@ -172,6 +173,8 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
       flushed: pass.flushed.appended,
       skippedLocal: pass.flushed.skippedLocal,
       selfRepaired: pass.flushed.selfRepaired,
+      foreignVersionAt: pass.flushed.foreignVersionAt,
+      foreignVersion: pass.flushed.foreignVersion,
       ingested: pass.ingested.map((r) => ({
         machineId: r.machineId,
         applied: r.applied,
@@ -192,9 +195,14 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
     const d = pass.flushed.selfRepaired;
     console.log(
       pc.yellow(
-        `  own segment was defective past line ${d.line} (${d.kind}: ${d.detail}) — truncated to the last good line and regenerated from the ops table`,
+        pass.flushed.foreignVersionAt === null
+          ? `  own segment was defective past line ${d.line} (${d.kind}: ${d.detail}) — truncated to the last good line and regenerated from the ops table`
+          : `  own segment had a damaged line ${d.line} (${d.kind}: ${d.detail}) — dropped; lines of other versions kept`,
       ),
     );
+  }
+  if (pass.flushed.foreignVersionAt !== null) {
+    console.log(pc.yellow(`  ${foreignVersionMessage(pass.flushed)}`));
   }
   console.log(`flushed ${pass.flushed.appended} ops · ${describeIngest(pass.ingested)}`);
   console.log(renderPeerTable(peers));

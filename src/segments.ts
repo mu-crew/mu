@@ -70,12 +70,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { crc32 } from "node:zlib";
 import { applyOp, type Op, OpEntityNotSyncedError, reprojectDeferredOps } from "./apply.js";
 import { compareStrings } from "./compare.js";
 import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { receiveHlc } from "./hlc.js";
+import {
+  decodeLine,
+  encodeSegmentLine,
+  SEGMENT_FORMAT_VERSION,
+  SEGMENT_READ_VERSIONS,
+  type SegmentDefect,
+} from "./segment-line.js";
 import {
   manifestSelfConsistent,
   readManifest,
@@ -93,49 +99,22 @@ import {
 } from "./segment-resume.js";
 import { type Sha256State, sha256Digest, sha256Initial, sha256Update } from "./sha256-resumable.js";
 
+export {
+  type DecodeResult,
+  decodeLine,
+  encodeSegmentLine,
+  SEGMENT_FORMAT_VERSION,
+  SEGMENT_READ_VERSIONS,
+  type SegmentDefect,
+  type SegmentDefectKind,
+  type SegmentLine,
+} from "./segment-line.js";
+
 export { manifestSeal, readManifest, type SegmentManifest } from "./segment-manifest.js";
 export { segmentCaughtUp } from "./segment-resume.js";
 
-/** Current segment line format. Bumped only on a breaking shape change;
- *  a reader that sees a version it does not know REFUSES the line rather
- *  than guessing at its meaning. */
-export const SEGMENT_FORMAT_VERSION = 1;
-
 /** Segment filename suffix. */
 const SEGMENT_EXT = ".jsonl";
-
-/** One serialized op, as it appears on a line of a segment. */
-export interface SegmentLine {
-  v: number;
-  hlc: string;
-  machine: string;
-  group: string;
-  intent: string | null;
-  actor: string | null;
-  entity: string;
-  key: string;
-  op: "put" | "del";
-  payload: unknown;
-  crc: string;
-}
-
-/** Why a segment line was rejected. Reported, never silently swallowed. */
-export type SegmentDefectKind =
-  | "torn-write"
-  | "manifest-mismatch"
-  | "crc-mismatch"
-  | "non-monotonic-hlc"
-  | "unknown-version"
-  | "malformed-shape"
-  | "entity-not-synced"
-  | "duplicate-op";
-
-export interface SegmentDefect {
-  kind: SegmentDefectKind;
-  /** 1-based line number within the segment. */
-  line: number;
-  detail: string;
-}
 
 // ─── sync dir + naming ────────────────────────────────────────────────
 
@@ -205,229 +184,6 @@ export function segmentPath(dir: string, machineId: string): string {
   return join(dir, `${machineId}${SEGMENT_EXT}`);
 }
 
-// ─── framing ──────────────────────────────────────────────────────────
-
-/**
- * Canonical serialization the crc is computed over.
- *
- * Field order is FIXED here rather than taken from object key order, so
- * two machines (or two Node versions) cannot disagree about the bytes and
- * produce a spurious mismatch. `payload` is embedded as its stored JSON
- * TEXT, verbatim, for the same reason: re-serializing a parsed object
- * risks key reordering and number reformatting.
- */
-function canonicalBytes(line: Omit<SegmentLine, "crc">, payloadText: string): string {
-  return [
-    String(line.v),
-    line.hlc,
-    line.machine,
-    line.group,
-    line.intent ?? "",
-    line.actor ?? "",
-    line.entity,
-    line.key,
-    line.op,
-    payloadText,
-  ].join("\u001f"); // Unit Separator: cannot occur in any of these fields
-}
-
-function computeCrc(line: Omit<SegmentLine, "crc">, payloadText: string): string {
-  return crc32(canonicalBytes(line, payloadText)).toString(16).padStart(8, "0");
-}
-
-/**
- * `ops.payload` is TEXT that is *usually* JSON but is not guaranteed to
- * be: `appendLog` has always accepted a bare prose payload (entity
- * 'message' via `mu log "text"`), and pre-1.0 rows carry plenty of it.
- * Embedding such text raw produced `"payload":Added 5 tasks, ...` — a
- * line that is not JSON at all, which every later read then reported as
- * a torn write, on every single mu invocation, forever (the segment is
- * regenerated from `ops`, so the repair re-emitted the same bad bytes).
- *
- * So: pass valid JSON through verbatim (byte-preserving, which is what
- * the crc contract needs), and encode anything else as a JSON string.
- */
-function payloadTextFor(payload: string): string {
-  try {
-    JSON.parse(payload);
-    return payload;
-  } catch {
-    return JSON.stringify(payload);
-  }
-}
-
-/** Serialize one op row to a segment line (without its trailing newline). */
-export function encodeSegmentLine(op: {
-  hlc: string;
-  machineId: string;
-  groupId: string;
-  intent: string | null;
-  actor: string | null;
-  entity: string;
-  key: string;
-  op: "put" | "del";
-  payload: string;
-}): string {
-  const base: Omit<SegmentLine, "crc"> = {
-    v: SEGMENT_FORMAT_VERSION,
-    hlc: op.hlc,
-    machine: op.machineId,
-    group: op.groupId,
-    intent: op.intent,
-    actor: op.actor,
-    entity: op.entity,
-    key: op.key,
-    op: op.op,
-    payload: null, // replaced below; kept out of the crc input shape
-  };
-  const payloadText = payloadTextFor(op.payload);
-  const crc = computeCrc(base, payloadText);
-  // Assemble by hand so `payload` is embedded as raw JSON rather than
-  // being re-encoded, keeping the bytes the crc covered.
-  return `{"v":${base.v},"hlc":${JSON.stringify(base.hlc)},"machine":${JSON.stringify(
-    base.machine,
-  )},"group":${JSON.stringify(base.group)},"intent":${JSON.stringify(
-    base.intent,
-  )},"actor":${JSON.stringify(base.actor)},"entity":${JSON.stringify(
-    base.entity,
-  )},"key":${JSON.stringify(base.key)},"op":${JSON.stringify(
-    base.op,
-  )},"payload":${payloadText},"crc":${JSON.stringify(crc)}}`;
-}
-
-/** Outcome of decoding one line. */
-type DecodeResult =
-  | { ok: true; line: SegmentLine; payloadText: string }
-  | { ok: false; kind: SegmentDefectKind; detail: string };
-
-/**
- * Decode and verify one line.
- *
- * Layers 1 and 2 both live here. Layer 1 (JSON.parse) is what actually
- * fires in practice — a truncated transfer leaves a partial line, which
- * cannot parse. Layer 2 (crc) only catches damage that leaves valid JSON,
- * i.e. bit rot inside a string or number.
- */
-function decodeLine(raw: string): DecodeResult {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    // LAYER 1: torn write. The dominant failure mode, and free.
-    //
-    // But only call it TORN when the line actually looks cut off. A
-    // complete line that does not parse has a different cause (a writer
-    // bug, or a hand edit) and a different remediation, and mislabelling
-    // it sends the reader hunting for a crash-during-write that never
-    // happened.
-    const detail = err instanceof Error ? err.message : String(err);
-    return looksComplete(raw)
-      ? { ok: false, kind: "malformed-shape", detail: `complete line is not valid JSON: ${detail}` }
-      : { ok: false, kind: "torn-write", detail };
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, kind: "malformed-shape", detail: "line is not a JSON object" };
-  }
-  const obj = parsed as Record<string, unknown>;
-
-  if (typeof obj.v !== "number") {
-    return { ok: false, kind: "malformed-shape", detail: "missing numeric 'v'" };
-  }
-  if (obj.v !== SEGMENT_FORMAT_VERSION) {
-    // Refuse rather than guess: a future version may mean different
-    // things by the same field names.
-    return {
-      ok: false,
-      kind: "unknown-version",
-      detail: `segment format v${obj.v}, this mu understands v${SEGMENT_FORMAT_VERSION}`,
-    };
-  }
-  for (const field of ["hlc", "machine", "group", "entity", "key", "op", "crc"]) {
-    if (typeof obj[field] !== "string") {
-      return { ok: false, kind: "malformed-shape", detail: `missing string '${field}'` };
-    }
-  }
-  const opKind = obj.op;
-  if (opKind !== "put" && opKind !== "del") {
-    return { ok: false, kind: "malformed-shape", detail: `bad op '${String(opKind)}'` };
-  }
-  if (!("payload" in obj)) {
-    return { ok: false, kind: "malformed-shape", detail: "missing 'payload'" };
-  }
-
-  // Recover the payload's ORIGINAL text from the raw line so the crc is
-  // computed over the same bytes the writer covered. Re-serializing the
-  // parsed value could reorder keys and would false-positive.
-  const payloadText = extractPayloadText(raw);
-  if (payloadText === null) {
-    return { ok: false, kind: "malformed-shape", detail: "could not locate payload text" };
-  }
-
-  const line: SegmentLine = {
-    v: obj.v,
-    hlc: obj.hlc as string,
-    machine: obj.machine as string,
-    group: obj.group as string,
-    intent: typeof obj.intent === "string" ? obj.intent : null,
-    actor: typeof obj.actor === "string" ? obj.actor : null,
-    entity: obj.entity as string,
-    key: obj.key as string,
-    op: opKind,
-    payload: obj.payload,
-    crc: obj.crc as string,
-  };
-
-  // LAYER 2: crc over the canonical bytes. Belt-and-braces.
-  const expected = computeCrc({ ...line, payload: null }, payloadText);
-  if (expected !== line.crc) {
-    return {
-      ok: false,
-      kind: "crc-mismatch",
-      detail: `crc ${line.crc} != computed ${expected} (bit rot?)`,
-    };
-  }
-  return { ok: true, line, payloadText: storedPayloadFor(line, payloadText) };
-}
-
-/**
- * The text to store back into `ops.payload`, undoing the wrapping
- * `payloadTextFor` applied on the way out, so a peer's ops table holds
- * the bytes the origin's does and `mu log` renders a prose message as
- * prose rather than as a quoted string.
- *
- * The inverse is exact because the wrap rule is: wrap iff the stored
- * text is NOT valid JSON. So unwrap iff the line's payload is a JSON
- * string whose contents are NOT valid JSON — anything else was passed
- * through verbatim and must stay that way.
- */
-function storedPayloadFor(line: SegmentLine, payloadText: string): string {
-  if (typeof line.payload !== "string") return payloadText;
-  try {
-    JSON.parse(line.payload);
-    return payloadText;
-  } catch {
-    return line.payload;
-  }
-}
-
-/** Whether a line carries the trailing framing `encodeSegmentLine`
- *  always writes. A transfer caught in flight cannot: it stops wherever
- *  the bytes stopped. */
-function looksComplete(raw: string): boolean {
-  return raw.trimEnd().endsWith("}") && raw.includes(',"crc":"');
-}
-
-/** Slice out the raw `"payload":<json>` text, between its key and the
- *  trailing `,"crc":`. Written by `encodeSegmentLine`, so the anchors are
- *  exact rather than heuristic. */
-function extractPayloadText(raw: string): string | null {
-  const start = raw.indexOf('"payload":');
-  if (start < 0) return null;
-  const end = raw.lastIndexOf(',"crc":');
-  if (end <= start) return null;
-  return raw.slice(start + '"payload":'.length, end);
-}
-
 // ─── flush: ops -> my segment ─────────────────────────────────────────
 
 export interface FlushResult {
@@ -456,6 +212,17 @@ export interface FlushResult {
    * to be (`mu sync`, `ambientFlush`).
    */
   selfRepaired: SegmentDefect | null;
+  /**
+   * Non-null when THIS MACHINE'S OWN segment holds a line of a version
+   * this build does not know (1-based, in the file as it now stands):
+   * written by a newer mu. That is not damage. Flush appends nothing
+   * (interleaving versions would corrupt the newer mu's history, and
+   * regeneration cannot reproduce its lines) and never truncates such a
+   * line; the pending ops stay in `ops`. `foreignVersion` is the version
+   * found. Both null otherwise.
+   */
+  foreignVersionAt: number | null;
+  foreignVersion: number | null;
   /**
    * True when ops were pending but another process held the segment
    * lock past the wait, so this call wrote nothing. The ops stay
@@ -501,7 +268,15 @@ export async function flushSegment(
   opts?: { verify?: boolean; lockWaitMs?: number },
 ): Promise<FlushResult> {
   if (dir === null)
-    return { segmentPath: null, appended: 0, total: 0, skippedLocal: 0, selfRepaired: null };
+    return {
+      segmentPath: null,
+      appended: 0,
+      total: 0,
+      skippedLocal: 0,
+      selfRepaired: null,
+      foreignVersionAt: null,
+      foreignVersion: null,
+    };
 
   const machineId = localMachineId(db);
   mkdirSync(dir, { recursive: true });
@@ -528,6 +303,8 @@ export async function flushSegment(
         total: pre.count,
         skippedLocal: pending.skippedLocal,
         selfRepaired: null,
+        foreignVersionAt: null,
+        foreignVersion: null,
       };
     }
   }
@@ -558,6 +335,8 @@ export async function flushSegment(
         total: pre?.count ?? 0,
         skippedLocal: 0,
         selfRepaired: null,
+        foreignVersionAt: null,
+        foreignVersion: null,
         lockBusy: true,
       }),
     },
@@ -591,6 +370,12 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
     // (truncate back to the last verified-good line) before appending
     // anything new, rather than stacking fresh data after the wound.
     if (existing.defect !== null) {
+      // A line of a version we do not know is not ours to discard, and
+      // a corrupt line before it must not cost it: when any foreign
+      // line exists, drop only the bad lines, keep every other line
+      // byte for byte, and append nothing.
+      const rest = classifyOwnLines(path);
+      if (rest.foreign !== null) return repairAroundForeign(path, machineId, rest);
       selfRepaired = existing.defect;
       writeFileSync(
         path,
@@ -620,6 +405,8 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
     total,
     skippedLocal: pending.skippedLocal,
     selfRepaired,
+    foreignVersionAt: null,
+    foreignVersion: null,
   };
   // Nothing changed and the manifest already says so: leave it alone,
   // so a read-only verb does not hand the sync tool a file to ship.
@@ -634,6 +421,65 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
       : null,
   );
   return result;
+}
+
+/** Every line of the own segment, classified. `kept` is each line that
+ *  is not damage: it decodes, or it is a well-formed line of a version we
+ *  do not know (`foreign`, 1-based in the ORIGINAL file). */
+function classifyOwnLines(path: string): {
+  kept: string[];
+  firstBad: SegmentDefect | null;
+  dropped: number;
+  lastOkHlc: string | null;
+  foreign: { index: number; version: number } | null;
+} {
+  const lines = segmentLines(readFileSync(path, "utf8"));
+  const kept: string[] = [];
+  let firstBad: SegmentDefect | null = null;
+  let dropped = 0;
+  let lastOkHlc: string | null = null;
+  let foreign: { index: number; version: number } | null = null;
+  lines.forEach((raw, i) => {
+    const decoded = raw.trim() === "" ? null : decodeLine(raw);
+    if (decoded?.ok === true) {
+      lastOkHlc = decoded.line.hlc;
+    } else if (decoded?.kind === "unknown-version" && decoded.version !== undefined) {
+      foreign ??= { index: kept.length, version: decoded.version };
+    } else {
+      dropped += 1;
+      firstBad ??= {
+        kind: decoded?.kind ?? "malformed-shape",
+        line: i + 1,
+        detail: decoded?.detail ?? "blank line",
+      };
+      return;
+    }
+    kept.push(raw);
+  });
+  return { kept, firstBad, dropped, lastOkHlc, foreign };
+}
+
+/** Own-segment repair when a foreign-version line is present: drop only
+ *  the damaged lines (if any), rewrite the manifest only if the file
+ *  changed, append nothing, report where the foreign line sits. */
+function repairAroundForeign(
+  path: string,
+  machineId: string,
+  rest: ReturnType<typeof classifyOwnLines>,
+): FlushResult {
+  if (rest.dropped > 0) {
+    writeFileSync(path, `${rest.kept.join("\n")}\n`, "utf8");
+    writeManifest(path, machineId, rest.kept.length, rest.lastOkHlc, null);
+  }
+  return {
+    segmentPath: path,
+    appended: 0,
+    total: rest.kept.length,
+    skippedLocal: 0,
+    selfRepaired: rest.firstBad,
+    foreignVersionAt: (rest.foreign?.index ?? 0) + 1,
+    foreignVersion: rest.foreign?.version ?? null,
+  };
 }
 
 const SYNCED_ENTITIES_SQL = SYNCED_ENTITIES.map((e) => `'${e}'`).join(", ");
@@ -746,7 +592,7 @@ function trustedTail(
   machineId: string,
 ): { count: number; lastHlc: string | null; size: number; shaState: Sha256State } | null {
   const m = readManifest(path);
-  if (m === null || m.v !== SEGMENT_FORMAT_VERSION || m.machine !== machineId) return null;
+  if (m === null || !SEGMENT_READ_VERSIONS.includes(m.v) || m.machine !== machineId) return null;
   if (!manifestSelfConsistent(m)) return null;
   const { count, lastHlc, size, mtimeMs, shaState } = m;
   let stat: ReturnType<typeof statSync>;
@@ -835,7 +681,12 @@ function readSegmentTail(path: string): {
     }
     const decoded = decodeLine(line);
     if (!decoded.ok) {
-      defect = { kind: decoded.kind, line: index + 1, detail: decoded.detail };
+      defect = {
+        kind: decoded.kind,
+        line: index + 1,
+        detail: decoded.detail,
+        ...(decoded.version === undefined ? {} : { version: decoded.version }),
+      };
       break;
     }
     lastHlc = decoded.line.hlc;
@@ -1255,7 +1106,12 @@ export function ingestSegment(
 
       const decoded = decodeLine(raw);
       if (!decoded.ok) {
-        defects.push({ kind: decoded.kind, line: lineNo, detail: decoded.detail });
+        defects.push({
+          kind: decoded.kind,
+          line: lineNo,
+          detail: decoded.detail,
+          ...(decoded.version === undefined ? {} : { version: decoded.version }),
+        });
         truncatedAt = lineNo;
         break;
       }
@@ -1458,7 +1314,15 @@ export interface SyncPassResult {
 export async function syncPass(db: Db, dir: string | null = syncDir()): Promise<SyncPassResult> {
   if (dir === null) {
     return {
-      flushed: { segmentPath: null, appended: 0, total: 0, skippedLocal: 0, selfRepaired: null },
+      flushed: {
+        segmentPath: null,
+        appended: 0,
+        total: 0,
+        skippedLocal: 0,
+        selfRepaired: null,
+        foreignVersionAt: null,
+        foreignVersion: null,
+      },
       ingested: [],
       defective: false,
     };
@@ -1476,6 +1340,9 @@ export async function syncPass(db: Db, dir: string | null = syncDir()): Promise<
   return {
     flushed,
     ingested,
-    defective: flushed.selfRepaired !== null || ingested.some((r) => r.defects.length > 0),
+    defective:
+      flushed.selfRepaired !== null ||
+      flushed.foreignVersionAt !== null ||
+      ingested.some((r) => r.defects.length > 0),
   };
 }

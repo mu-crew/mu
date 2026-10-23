@@ -53,6 +53,31 @@ echo each other's history.
 verbatim, so the crc covers those exact bytes, and JSON-encodes
 anything else, unwrapping on ingest.
 
+## Segment versions
+
+The format version is checked **per line**, never per file. A build
+writes `SEGMENT_FORMAT_VERSION` (2) and reads `SEGMENT_READ_VERSIONS`
+(1 and 2), so a segment may hold v1 history with v2 lines appended. The
+manifest (count, size, sha256, hash state) is version-blind: a mixed file
+stays valid and resume still reads only the appended bytes.
+
+A line of any other version is refused as `unknown-version`, with the
+version found in the defect:
+
+- **Peer ingest** stops at that line and leaves the watermark before it.
+- **Own segment** is not damaged, so repair never truncates it. Flush
+  appends nothing, leaves the file byte-identical and reports
+  `foreignVersionAt` / `foreignVersion`; `mu sync` prints "own segment
+  has a v3 line at N written by a newer mu; not appending". If a corrupt
+  line also sits in the file, only that line is dropped; every line of
+  another version is kept byte for byte.
+- **`mu sync --from <db>`** has no per-line version, so it refuses a
+  source whose `schema_version` is newer than this build (exit 4).
+
+A 3.x reader checks the version by exact equality and stops at the first
+v2 line of each segment. To roll back to 3.x, move every segment that
+holds v2 lines out of `MU_SYNC_DIR` on every machine.
+
 ## Robustness layers
 
 The first three checks stop ingest at the first bad record and advance

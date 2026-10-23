@@ -20,6 +20,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -300,6 +301,27 @@ describe("mu sync (CLI)", () => {
     expect(stderr).toContain("--repair");
   });
 
+  it("`mu sync` reports an own segment holding a line from a newer mu, and leaves it alone", async () => {
+    await runCli(["workstream", "init", "demo"], lap);
+    await seedTask(lap, "t1");
+    const segment = readdirSync(dir).find((f) => f.endsWith(".jsonl"));
+    if (segment === undefined) throw new Error("expected a segment");
+    const path = join(dir, segment);
+    const lines = readFileSync(path, "utf8")
+      .split("\n")
+      .filter((l) => l !== "");
+    const last = lines.length;
+    lines[last - 1] = (lines[last - 1] ?? "").replace('{"v":2,', '{"v":3,');
+    writeFileSync(path, `${lines.join("\n")}\n`, "utf8");
+    const bytes = readFileSync(path);
+
+    const { stdout } = await runCli(["sync"], lap);
+    expect(stdout).toContain(
+      `own segment has a v3 line at ${last} written by a newer mu; not appending`,
+    );
+    expect(readFileSync(path).equals(bytes)).toBe(true);
+  });
+
   it("a segment full of garbage does not fail an unrelated command", async () => {
     writeFileSync(join(dir, "99999999-9999-4999-8999-999999999999.jsonl"), "}}}not json\n");
     const { exitCode } = await runCli(["workstream", "init", "demo"], dev);
@@ -400,6 +422,16 @@ describe("mu sync (CLI)", () => {
       const { stderr, exitCode } = await runCli(["sync", "--from", join(tempDir, "nope.db")], dev);
       expect(exitCode).toBe(3);
       expect(stderr).toContain("no such file");
+    });
+
+    it("exits 4 with a one-line reason for a source DB from a newer mu", async () => {
+      await runCli(["workstream", "init", "demo"], lap);
+      const raw = new Database(lap);
+      raw.prepare("UPDATE schema_version SET version = 99 WHERE id = 1").run();
+      raw.close();
+      const { stderr, exitCode } = await runCli(["sync", "--from", lap], dev);
+      expect(exitCode).toBe(4);
+      expect(stderr).toContain("is schema v99; this mu understands up to v");
     });
 
     it("does not modify the source DB", async () => {

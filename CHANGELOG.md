@@ -111,6 +111,25 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `workstream.destroy` op renders as an unknown intent (6 such lines in peer
   segments, accepted).
 
+### Changed
+
+- **Segment lines are versioned per line; mu writes v2.**
+  `SEGMENT_FORMAT_VERSION` is 2 and `SEGMENT_READ_VERSIONS` is `[1, 2]`: a
+  segment may hold v1 history with v2 lines appended (same shape; the crc
+  covers `v`), and the manifest stays valid over the mixed file. A line of
+  any other version is an `unknown-version` defect that now carries the
+  version found. Peer ingest stops there as before. Own-segment repair no
+  longer truncates it: flush appends nothing, leaves the file
+  byte-identical, and reports `foreignVersionAt` / `foreignVersion` (also
+  in `mu sync --json`); `mu sync` and the ambient hook print "own segment
+  has a v3 line at N written by a newer mu; not appending". A corrupt line
+  before such a line is dropped alone; no line of another version is ever
+  discarded. `mu sync --from <db>` refuses a source DB whose
+  `schema_version` is newer than this build (`SyncSourceTooNewError`, exit
+  4). A 3.x reader stops at the first v2 line of each segment; rolling
+  back means moving v2-holding segments out of `MU_SYNC_DIR` on every
+  machine ([sync](docs/architecture/sync.md#segment-versions)).
+
 ### Fixed
 
 - **ultrathink closes on no *unfixed* high finding.** A final refuter pass
