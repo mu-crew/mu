@@ -377,12 +377,15 @@ describe("spawn liveness for ctl agents (tmux)", () => {
       if (args[0] === "new-session") throw frozen;
       return fake(args);
     });
-    const err = await spawnAgent(db, {
-      name: "worker-1",
-      workstream: "auth",
-      workspace: true,
-      workspaceProjectRoot: dir,
-    }).catch((e) => e);
+    let err: unknown;
+    await withEnv("MU_STATE_DIR", join(dir, "state"), async () => {
+      err = await spawnAgent(db, {
+        name: "worker-1",
+        workstream: "auth",
+        workspace: true,
+        workspaceProjectRoot: dir,
+      }).catch((e) => e);
+    });
     expect(err).toBe(frozen);
     expect(spawnRows().map((r) => r.intent)).toContain("agent.spawn_failed");
   });
