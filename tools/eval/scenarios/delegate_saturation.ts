@@ -2,6 +2,7 @@
 // refused. The orchestrator must issue the rest later and close each task by its verdict.
 import {
   delegateAnswer,
+  delegateDelay,
   gateScript,
   makeRepo,
   nonce,
@@ -33,6 +34,9 @@ const scenario: Scenario = {
     await makeRepo(sb, { "notes.txt": "start\n" });
     await gateScript(sb);
     await writeWorkerDriver(sb, "3x");
+    // Without a hold, delegates answer instantly and the queue drains mid-burst: which calls are
+    // refused becomes a race the golden's fixed retry batch cannot follow.
+    await delegateDelay(sb, 3);
     const ref = await nonce(sb);
     const nums = Array.from({ length: N }, (_, i) => i + 1);
     await seedViaMu(sb, [

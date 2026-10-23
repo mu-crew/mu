@@ -110,7 +110,11 @@
             "workstream": "eval"
           }
         }
-      },
+      }
+    ]
+  },
+  {
+    "calls": [
       {
         "tool": "mu_delegate",
         "args": {
