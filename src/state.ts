@@ -8,12 +8,12 @@
 
 import type { RuntimeState } from "./agent-state.js";
 import { type LiveAgent, type LiveAgentsView, listLiveAgents } from "./agents.js";
-import { compareStrings } from "./compare.js";
 import type { Db } from "./db.js";
 import { type DoctorSummary, loadDoctorSummary } from "./doctor-summary.js";
 import { GLYPH } from "./glyphs.js";
 import { type LogRow, listLogs } from "./logs.js";
 import { activeMux } from "./mux.js";
+import { byRoiDesc } from "./tasks/sort.js";
 import {
   listBlocked,
   listInProgress,
@@ -293,15 +293,6 @@ export function roiBucket(impact: number, effortDays: number): RoiBucket {
   if (r >= 100) return "high";
   if (r >= 50) return "mid";
   return "low";
-}
-
-/** ROI sort comparator (descending). Used by loadWorkstreamSnapshot.ready. */
-function byRoiDesc(a: TaskRow, b: TaskRow): number {
-  const ra = a.effortDays > 0 ? a.impact / a.effortDays : Number.POSITIVE_INFINITY;
-  const rb = b.effortDays > 0 ? b.impact / b.effortDays : Number.POSITIVE_INFINITY;
-  if (rb !== ra) return rb - ra;
-  if (a.effortDays !== b.effortDays) return a.effortDays - b.effortDays;
-  return compareStrings(a.name, b.name);
 }
 
 // ─── Agent helpers ─────────────────────────────────────────────────

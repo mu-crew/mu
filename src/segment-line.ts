@@ -15,6 +15,17 @@ export const SEGMENT_FORMAT_VERSION = 2;
  *  line of any other version is REFUSED rather than guessed at. */
 export const SEGMENT_READ_VERSIONS: readonly number[] = [1, 2];
 
+/** Payload fields a v1 reader (3.x) silently ignores, losing their
+ *  semantics: schema v12 added them, so only v2 lines may carry them. */
+const V2_ONLY_FIELDS: readonly string[] = ["scored", "dispatch_host", "kind", "torn_down_at"];
+
+/** The v2-only fields a payload carries at its top level, if any. */
+function v2OnlyFieldsIn(payloadText: string): string[] {
+  const parsed: unknown = JSON.parse(payloadText);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  return V2_ONLY_FIELDS.filter((f) => f in parsed);
+}
+
 /** One serialized op, as it appears on a line of a segment. */
 export interface SegmentLine {
   v: number;
@@ -129,6 +140,14 @@ export function encodeSegmentLine(
     payload: null, // replaced below; kept out of the crc input shape
   };
   const payloadText = payloadTextFor(op.payload);
+  if (version < 2) {
+    const found = v2OnlyFieldsIn(payloadText);
+    if (found.length > 0) {
+      throw new Error(
+        `refusing to write a v1 segment line carrying ${found.join(", ")}: a v1 reader would drop them silently; these fields ride v2 lines only`,
+      );
+    }
+  }
   const crc = computeCrc(base, payloadText);
   // Assemble by hand so `payload` is embedded as raw JSON rather than
   // being re-encoded, keeping the bytes the crc covered.

@@ -43,10 +43,11 @@
 // WHAT A REBUILT DB LEGITIMATELY LOSES
 // ------------------------------------
 // The ops log only contains what capture recorded, and capture has
-// triggers on the PORTABLE tables only. `agents` and `vcs_workspaces`
-// have no triggers, so they leave no ops and cannot be reconstructed.
+// triggers on the PORTABLE tables only. `agents`, `task_auto` and
+// `vcs_workspaces` have no triggers, so they leave no ops and cannot be
+// reconstructed.
 //
-// That is CORRECT, not a gap. Both tables hold values that are
+// That is CORRECT, not a gap. These tables hold values that are
 // meaningless after recovery: `agents.pane_id` names a tmux pane in a
 // server that no longer has it, and `vcs_workspaces.path` is an absolute
 // path whose working copy may be gone. Resurrecting either would produce
@@ -139,7 +140,7 @@ export interface RebuildReport {
 /** Tables that hold real state but leave no ops, so a rebuild cannot
  *  reconstruct them. Both are machine-local by nature — see the module
  *  comment for why resurrecting them would be wrong even if we could. */
-const UNREBUILDABLE_TABLES = ["agents", "vcs_workspaces"] as const;
+const UNREBUILDABLE_TABLES = ["agents", "task_auto", "vcs_workspaces"] as const;
 
 /** Entities that exist only in the log: there is no portable table to
  *  project them into, so copying the op IS applying it.

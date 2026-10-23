@@ -91,7 +91,10 @@
 
 import {
   type Db,
+  DEFAULT_EFFORT_DAYS,
+  DEFAULT_IMPACT,
   MACHINE_LOCAL_ENTITIES,
+  NOTE_KINDS,
   prepareCached,
   SYNCED_ENTITIES,
   type SyncedEntity,
@@ -439,8 +442,18 @@ function applyFieldLww(
  *  may legitimately send fields we do not know yet, and dropping them
  *  is strictly better than refusing the whole op. */
 const APPLIABLE_COLUMNS: Record<"tasks" | "workstreams", readonly string[]> = {
-  tasks: ["title", "status", "substate", "impact", "effort_days", "created_at", "updated_at"],
-  workstreams: ["created_at"],
+  tasks: [
+    "title",
+    "status",
+    "substate",
+    "impact",
+    "effort_days",
+    "scored",
+    "dispatch_host",
+    "created_at",
+    "updated_at",
+  ],
+  workstreams: ["created_at", "torn_down_at"],
 };
 
 function filterAppliable(
@@ -463,6 +476,9 @@ function applyTaskPut(db: Db, op: Op): ApplyResult {
   for (const entry of filterAppliable("tasks", decodePayload(op.payload))) {
     const [field, value] = entry;
     if (field === "substate") continue;
+    // A value the CHECK would refuse is dropped like an unknown field: a
+    // RAISE during ingest would roll back the segment and stall sync.
+    if (field === "scored" && value !== 0 && value !== 1) continue;
     if (field === "status") {
       if (typeof value !== "string") continue;
       const legacy = mapLegacyStatus(value);
@@ -496,8 +512,8 @@ function applyTaskPut(db: Db, op: Op): ApplyResult {
       db,
       `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days,
                           owner_id, created_at, updated_at)
-       VALUES (?, ?, ?, 'OPEN', 'todo', 50, 1, NULL, ?, ?)`,
-    ).run(wsId, localId, localId, now, now);
+       VALUES (?, ?, ?, 'OPEN', 'todo', ?, ?, NULL, ?, ?)`,
+    ).run(wsId, localId, localId, DEFAULT_IMPACT, DEFAULT_EFFORT_DAYS, now, now);
     const rowId = taskRowId(db, op.key);
     if (rowId === null) throw new Error(`failed to create task row for ${op.key}`);
     // Force every carried field on: the row was just created, so there
@@ -691,10 +707,15 @@ function applyNotePut(db: Db, op: Op): ApplyResult {
     return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
   }
 
+  // `kind` is absent on a v1 op (a 3.x peer): 'note'. A kind this build
+  // does not know (a newer peer) also lands as 'note', never a CHECK
+  // failure that would roll back the segment.
+  const sentKind = entries.find(([f]) => f === "kind")?.[1];
+  const kind = (NOTE_KINDS as readonly unknown[]).includes(sentKind) ? sentKind : "note";
   prepareCached(
     db,
-    "INSERT INTO task_notes (task_id, author, content, created_at) VALUES (?, ?, ?, ?)",
-  ).run(taskId, authorText, String(content), String(createdAt));
+    "INSERT INTO task_notes (task_id, author, content, created_at, kind) VALUES (?, ?, ?, ?, ?)",
+  ).run(taskId, authorText, String(content), String(createdAt), kind);
   return { changed: true, appliedFields: ["content"] };
 }
 

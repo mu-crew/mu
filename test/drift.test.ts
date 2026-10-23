@@ -85,6 +85,35 @@ describe("drift detection", () => {
       expect(record.expected).toBe("60"); // the log is canonical
     });
 
+    it.each([
+      ["tasks", "UPDATE tasks SET scored = 0 WHERE local_id = 'a'", "demo/a", "scored"],
+      [
+        "tasks",
+        "UPDATE tasks SET dispatch_host = 'h' WHERE local_id = 'a'",
+        "demo/a",
+        "dispatch_host",
+      ],
+      ["workstreams", "UPDATE workstreams SET torn_down_at = 'x'", "demo", "torn_down_at"],
+    ])("detects an uncaptured change to a v12 field (%s %s)", (table, sql, key, field) => {
+      seed();
+      uncaptured(() => {
+        db.prepare(sql).run();
+      });
+      const record = checkDrift(db).records[0];
+      expect(record).toMatchObject({ table, key, field });
+    });
+
+    it("a rebuild reproduces scored, dispatch_host, torn_down_at and note kind", () => {
+      seed();
+      updateTask(db, "b", { impact: 41 }, { workstream: "demo" });
+      db.prepare("UPDATE tasks SET dispatch_host = 'h' WHERE local_id = 'a'").run();
+      db.prepare("UPDATE workstreams SET torn_down_at = 'x'").run();
+      db.prepare(
+        "INSERT INTO task_notes (task_id, content, created_at, kind) SELECT id, 'brief', 'now', 'brief' FROM tasks WHERE local_id = 'a'",
+      ).run();
+      expect(checkDrift(db).clean).toBe(true);
+    });
+
     it("names the substate field when only the pair's substate drifted", () => {
       seed();
       uncaptured(() => {

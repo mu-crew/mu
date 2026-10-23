@@ -18,6 +18,31 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Schema v12** (additive over v11; a v11 DB is refused with
+  `SchemaTooOldError`, exit 4). New columns: `workstreams.torn_down_at`
+  (synced), `agents.cwd` and `agents.base` (machine-local), `tasks.scored`
+  (`NOT NULL DEFAULT 0`, `CHECK IN (0,1)`, synced), `tasks.dispatch_host`
+  (synced), `task_notes.kind` (`NOT NULL DEFAULT 'note'`, `CHECK` one of
+  `NOTE_KINDS`, synced). `tasks.impact` / `effort_days` stay `NOT NULL` and
+  gain SQL defaults 50 / 1. New machine-local table `task_auto`
+  (13 tables). New view `blockers(task_id, blocker_id, blocker_local_id,
+  blocker_status)`; `ready`, `blocked`, `goals` and `blockers` skip torn-down
+  workstreams, as do `resolveWorkstreamId`, `tryResolveWorkstreamId`,
+  `listWorkstreams`, `TASK_FROM_JOIN` and the dormant sweep. Apply and ingest
+  still see torn-down rows (`UNIQUE(name)`). The version stamp now commits
+  inside the DDL transaction.
+- **New fields travel on v2 segment lines only.** `encodeSegmentLine` at v1
+  refuses a payload carrying `scored`, `dispatch_host`, `kind` or
+  `torn_down_at`. Apply drops a `scored` outside {0,1} and stores an unknown
+  note `kind` (or none: a 3.x op) as `'note'`. A local `UPDATE` of
+  `task_notes.kind` raises (`WHEN applying = 0`; ingest never raises).
+  `mu doctor --deep` compares the new fields.
+- **`ready` order and `mu task next`.** Scored tasks by impact/effort desc,
+  then unscored tasks oldest first. `byRoiDesc` (the `roi` sort key, `next`,
+  `my next`, `mu state`) and `listReady` share it. `mu task add -i/-e` are
+  optional (defaults 50 / 1, unscored); giving either scores the task, and so
+  does `mu task update --impact/--effort-days`, even at the current value.
+  `TaskRow` gains `scored` and `dispatchHost`.
 - **`MuxBackend` shrinks to the mux-seam contract.** The interface is
   `available`, `ensureSession`, `killSession`, `spawnAgent`, `listPanes`,
   `paneAlive`, `killPane`, `capture`, `attachCommands`, `healthCheck`,

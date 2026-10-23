@@ -4,9 +4,10 @@
 // enables WAL + foreign keys, applies the schema idempotently, and
 // exposes the live Database handle.
 //
-// Schema (v11 — task substates on the v10 three-state lifecycle):
+// Schema (v12 — v11's task substates plus the kernel additions below):
 //   - 6 entity tables: workstreams, agents, tasks, task_edges,
 //                      task_notes, vcs_workspaces
+//   - 1 machine-local table: task_auto (per-task auto-dispatch state)
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
 //   - 2 sync tables:   sync_peers (per-peer watermarks),
@@ -14,8 +15,16 @@
 //   - 2 meta tables:   schema_version, machine_identity
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
-//   - 3 views:         ready, blocked, goals
-//   => EXPECTED_TABLES is exactly 12 entries.
+//   - 4 views:         ready, blocked, blockers, goals
+//   => EXPECTED_TABLES is exactly 13 entries.
+//
+// v12 is additive over v11: workstreams.torn_down_at (soft teardown),
+// agents.cwd / agents.base (worktree path and the commit it forked
+// from), tasks.scored / tasks.dispatch_host, task_notes.kind, the
+// task_auto table, the blockers view, and SQL defaults 50 / 1 on
+// tasks.impact / effort_days (still NOT NULL). The synced fields
+// (torn_down_at, scored, dispatch_host, kind) ride v2 segment lines only
+// (src/segment-line.ts); a v11 DB is refused, there is no ladder.
 //
 // v11 adds tasks.substate, which qualifies status (OPEN/parked,
 // CLOSED/wontfix, ...). A composite FK (status, substate) ->
@@ -40,7 +49,7 @@
 // machines.
 //
 // IMPORTANT: MIN_ACCEPTED_SCHEMA_VERSION === CURRENT_SCHEMA_VERSION
-// === 11. There is no in-place forward-bump ladder: every pre-v11 DB
+// === 12. There is no in-place forward-bump ladder: every pre-v12 DB
 // is rejected at openDb time with SchemaTooOldError (exit 4), and a DB
 // newer than this build with SchemaTooNewError (exit 4).
 
@@ -136,8 +145,8 @@ export function openDb(options: OpenDbOptions = {}): Db {
     // SQLITE_BUSY_SNAPSHOT at once if another process committed in
     // between, and busy_timeout does not retry that.
     db.pragma("busy_timeout = 5000");
-    // Detect schema version BEFORE applySchema so a real v<11 DB is not
-    // silently stamped as v11 by the CREATE-IF-NOT-EXISTS in applySchema,
+    // Detect schema version BEFORE applySchema so a real v<12 DB is not
+    // silently stamped as v12 by the CREATE-IF-NOT-EXISTS in applySchema,
     // and before `journal_mode = WAL`, which rewrites the file header:
     // a refused DB must be left byte-for-byte untouched.
     // One read transaction: a process creating this DB can commit
@@ -156,7 +165,7 @@ export function openDb(options: OpenDbOptions = {}): Db {
       throw new SchemaTooNewError(detectedVersion, CURRENT_SCHEMA_VERSION);
     }
     if (detectedVersion !== null && detectedVersion < MIN_ACCEPTED_SCHEMA_VERSION) {
-      // Loud-fail: refuse to touch a pre-v11 DB. There is no in-place
+      // Loud-fail: refuse to touch a pre-v12 DB. There is no in-place
       // migration to run, so leave the old file untouched and tell the
       // operator how to preserve it (see SchemaTooOldError.errorNextSteps).
       try {
@@ -263,15 +272,16 @@ export class WorkstreamNotFoundError extends Error implements HasNextSteps {
 }
 
 /** Resolve a workstream name to its INTEGER surrogate id. Throws
- *  WorkstreamNotFoundError on miss. Pure: no auto-create — callers
+ *  WorkstreamNotFoundError on miss; a torn-down workstream is a miss
+ *  (ingest, which must still find it, queries `workstreams` directly). Pure: no auto-create — callers
  *  that want the auto-create-or-resolve semantics use
  *  `ensureWorkstream` from src/workstream.ts (which returns void;
  *  follow up with `resolveWorkstreamId` if the id is needed).
  */
 export function resolveWorkstreamId(db: Db, workstream: string): number {
-  const row = db.prepare("SELECT id FROM workstreams WHERE name = ?").get(workstream) as
-    | { id: number }
-    | undefined;
+  const row = db
+    .prepare("SELECT id FROM workstreams WHERE name = ? AND torn_down_at IS NULL")
+    .get(workstream) as { id: number } | undefined;
   if (!row) throw new WorkstreamNotFoundError(workstream);
   return row.id;
 }
@@ -280,9 +290,9 @@ export function resolveWorkstreamId(db: Db, workstream: string): number {
  *  of throwing. Useful for read paths that want to early-return [] on
  *  a non-existent workstream (e.g. listTasks). */
 export function tryResolveWorkstreamId(db: Db, workstream: string): number | null {
-  const row = db.prepare("SELECT id FROM workstreams WHERE name = ?").get(workstream) as
-    | { id: number }
-    | undefined;
+  const row = db
+    .prepare("SELECT id FROM workstreams WHERE name = ? AND torn_down_at IS NULL")
+    .get(workstream) as { id: number } | undefined;
   return row ? row.id : null;
 }
 
@@ -436,13 +446,13 @@ function seedMachineIdentity(db: Db): void {
  * views are dropped and recreated so the latest definition always wins.
  *
  * For fresh DBs this writes the current schema shape and stamps
- * schema_version = CURRENT_SCHEMA_VERSION. For existing v11 DBs this is
+ * schema_version = CURRENT_SCHEMA_VERSION. For existing v12 DBs this is
  * a no-op for the table CREATEs (IF NOT EXISTS) but DOES recreate the
- * views. Pre-v11 DBs never reach this function — openDb's loud-fail
+ * views. Pre-v12 DBs never reach this function — openDb's loud-fail
  * hook rejects them with SchemaTooOldError first.
  *
  * There is no in-place bump ladder. MIN_ACCEPTED === CURRENT, so the
- * only two shapes that reach here are "brand new" and "already v11";
+ * only two shapes that reach here are "brand new" and "already v12";
  * any older-DB fix-up code would be dead by construction.
  */
 function applySchema(db: Db): void {
@@ -467,6 +477,12 @@ function applySchema(db: Db): void {
     for (const [status, substate, isDefault] of TASK_SUBSTATE_ROWS) {
       seed.run(status, substate, isDefault);
     }
+    // The version stamp commits with the DDL, never after it: a crash
+    // between the two would leave a v12-shaped DB stamped as nothing.
+    // INSERT OR IGNORE keeps an existing row.
+    db.prepare("INSERT OR IGNORE INTO schema_version (id, version) VALUES (1, ?)").run(
+      CURRENT_SCHEMA_VERSION,
+    );
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -477,11 +493,6 @@ function applySchema(db: Db): void {
     const msg = err instanceof Error ? err.message : String(err);
     if (!/already exists/i.test(msg)) throw err;
   }
-  // Stamp the version on a fresh DB. INSERT OR IGNORE so we don't
-  // overwrite the version on an existing v11 DB.
-  db.prepare("INSERT OR IGNORE INTO schema_version (id, version) VALUES (1, ?)").run(
-    CURRENT_SCHEMA_VERSION,
-  );
 }
 
 /** Names CURRENT_SCHEMA creates with IF NOT EXISTS, and the exact SQL
@@ -497,7 +508,7 @@ function expectedObjects(): ExpectedObjects {
   const names = (re: RegExp): string[] =>
     [...CURRENT_SCHEMA.matchAll(re)].map((m) => m[1]).filter((n) => n !== undefined);
   const views = new Map<string, string>();
-  for (const sql of [READY_VIEW_SQL, BLOCKED_VIEW_SQL, GOALS_VIEW_SQL]) {
+  for (const sql of [READY_VIEW_SQL, BLOCKED_VIEW_SQL, BLOCKERS_VIEW_SQL, GOALS_VIEW_SQL]) {
     const m = /CREATE VIEW (\w+)[^;]*/.exec(sql);
     if (m?.[1] !== undefined) views.set(m[1], m[0]);
   }
@@ -537,21 +548,32 @@ function schemaIsCurrent(db: Db): boolean {
   return TASK_SUBSTATE_ROWS.every(([status, substate]) => pairs.has(`${status}/${substate}`));
 }
 
-/** The schema version a fresh DB starts at. v11 adds tasks.substate
- *  and the task_substates lookup table on top of v10's three-state
- *  lifecycle (OPEN, IN_PROGRESS, CLOSED). See CHANGELOG.md. */
-export const CURRENT_SCHEMA_VERSION = 11;
+/** The schema version a fresh DB starts at. v12 adds the kernel columns
+ *  (torn_down_at, cwd, base, scored, dispatch_host, kind), task_auto and
+ *  the blockers view on top of v11's task substates. See CHANGELOG.md. */
+export const CURRENT_SCHEMA_VERSION = 12;
 
 /** The lowest schema version `openDb` will accept. Equal to
- *  CURRENT_SCHEMA_VERSION: openDb runs no migration, so every pre-v11 DB
+ *  CURRENT_SCHEMA_VERSION: openDb runs no migration, so every pre-v12 DB
  *  throws `SchemaTooOldError` (exit 4) and is left untouched on disk. */
-const MIN_ACCEPTED_SCHEMA_VERSION = 11;
+const MIN_ACCEPTED_SCHEMA_VERSION = 12;
+
+/** The note kinds (`task_notes.kind`). Set once at INSERT, never changed:
+ *  a local UPDATE of it raises, and a peer's update cannot match a row. */
+export const NOTE_KINDS = ["brief", "report", "verdict", "close", "note"] as const;
+export type NoteKind = (typeof NOTE_KINDS)[number];
+
+/** Impact and effort a task gets when its creator gave neither (and the
+ *  SQL DEFAULTs of `tasks.impact` / `tasks.effort_days`). Such a task is
+ *  unscored (`tasks.scored = 0`). */
+export const DEFAULT_IMPACT = 50;
+export const DEFAULT_EFFORT_DAYS = 1;
 
 /** Tables a healthy DB must contain. Single source of truth so
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 12 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 13 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agents",
   "machine_identity",
@@ -559,6 +581,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "schema_version",
   "sync_fingerprints",
   "sync_peers",
+  "task_auto",
   "task_edges",
   "task_notes",
   "task_substates",
@@ -632,6 +655,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    sync_fingerprints local cache of what the last clean ingest saw.
  *    task_substates   seeded identically on every machine from
  *                     TASK_SUBSTATE_ROWS; code, not data.
+ *    task_auto        per-task auto-dispatch state (cli, runs, last
+ *                     spawn): about THIS machine's agents.
  *    ops              see below — the carrier, not cargo.
  *
  *  `ops` is listed here deliberately rather than omitted. It is not
@@ -653,6 +678,7 @@ export const MACHINE_LOCAL_TABLES = [
   "schema_version",
   "sync_fingerprints",
   "sync_peers",
+  "task_auto",
   "task_substates",
   "vcs_workspaces",
 ] as const;
@@ -677,6 +703,7 @@ DROP VIEW IF EXISTS ready;
 CREATE VIEW ready AS
   SELECT t.*
     FROM tasks t
+    JOIN workstreams w ON w.id = t.workstream_id AND w.torn_down_at IS NULL
    WHERE t.status = 'OPEN'
      AND t.substate NOT IN ('parked', 'triage')
      AND NOT EXISTS (
@@ -693,6 +720,7 @@ DROP VIEW IF EXISTS blocked;
 CREATE VIEW blocked AS
   SELECT t.*
     FROM tasks t
+    JOIN workstreams w ON w.id = t.workstream_id AND w.torn_down_at IS NULL
    WHERE t.status = 'OPEN'
      AND EXISTS (
        SELECT 1
@@ -701,6 +729,23 @@ CREATE VIEW blocked AS
         WHERE e.to_task_id = t.id
           AND b.status <> 'CLOSED'
      );
+`;
+
+// The direct OPEN blockers of each task: one row per (task, blocker) edge
+// whose blocker is not CLOSED. `ready` is the tasks with no row here;
+// `blocked` the OPEN tasks with one.
+export const BLOCKERS_VIEW_SQL = `
+DROP VIEW IF EXISTS blockers;
+CREATE VIEW blockers AS
+  SELECT e.to_task_id  AS task_id,
+         b.id          AS blocker_id,
+         b.local_id    AS blocker_local_id,
+         b.status      AS blocker_status
+    FROM task_edges e
+    JOIN tasks      b ON b.id = e.from_task_id
+    JOIN tasks      t ON t.id = e.to_task_id
+    JOIN workstreams w ON w.id = t.workstream_id AND w.torn_down_at IS NULL
+   WHERE b.status <> 'CLOSED';
 `;
 
 // A goal is an active endpoint of the DAG — a task with no dependents
@@ -712,13 +757,14 @@ DROP VIEW IF EXISTS goals;
 CREATE VIEW goals AS
   SELECT t.*
     FROM tasks t
+    JOIN workstreams w ON w.id = t.workstream_id AND w.torn_down_at IS NULL
    WHERE t.status <> 'CLOSED'
      AND NOT EXISTS (
        SELECT 1 FROM task_edges WHERE from_task_id = t.id
      );
 `;
 
-// ─── v11 SCHEMA ───────────────────────────────────────────────────────
+// ─── v12 SCHEMA ───────────────────────────────────────────────────────
 //
 // Per docs/architecture/sdk.md § Surrogate-PK and SDK-boundary discipline.
 // Every entity table has:
@@ -769,7 +815,10 @@ CREATE TABLE IF NOT EXISTS machine_identity (
 CREATE TABLE IF NOT EXISTS workstreams (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT UNIQUE NOT NULL,
-  created_at  TEXT NOT NULL                  -- ISO 8601
+  created_at  TEXT NOT NULL,                 -- ISO 8601
+  -- Soft teardown: set = torn down. Views and user-facing reads skip such
+  -- rows; ingest still sees them (UNIQUE(name) must hold). Synced.
+  torn_down_at TEXT
 );
 
 
@@ -783,6 +832,8 @@ CREATE TABLE IF NOT EXISTS agents (
   status        TEXT NOT NULL,                    -- DEPRECATED (2.0): always 'spawning'; runtime state lives in murmur. Drop at the first v11 migration.
   role          TEXT NOT NULL DEFAULT 'full-access',
   tab           TEXT,
+  cwd           TEXT,                           -- worktree path the pane runs in (machine-local)
+  base          TEXT,                           -- commit that worktree was created from (machine-local)
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   UNIQUE (workstream_id, name),
@@ -821,8 +872,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   substate      TEXT NOT NULL,
   -- Qualifies status. No DEFAULT on purpose: a writer that forgets it
   -- must fail loudly rather than silently pick one.
-  impact        INTEGER NOT NULL,
-  effort_days   REAL NOT NULL,
+  -- NOT NULL with defaults until flag day: a peer's partial op must be
+  -- able to create the row. \`scored\` says whether they were given.
+  impact        INTEGER NOT NULL DEFAULT 50,
+  effort_days   REAL NOT NULL DEFAULT 1,
+  scored        INTEGER NOT NULL DEFAULT 0 CHECK (scored IN (0, 1)),
+  dispatch_host TEXT,                           -- host \`mu next\` dispatches this task to (synced)
   owner_id      INTEGER REFERENCES agents (id) ON DELETE SET NULL,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
@@ -856,10 +911,24 @@ CREATE TABLE IF NOT EXISTS task_notes (
   task_id    INTEGER NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
   author     TEXT,
   content    TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- Set once at INSERT (a local UPDATE raises: src/capture.ts).
+  kind       TEXT NOT NULL DEFAULT 'note'
+             CHECK (kind IN ('brief', 'report', 'verdict', 'close', 'note'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes (task_id);
+
+-- task_auto: per-task auto-dispatch state (machine-local, never synced).
+CREATE TABLE IF NOT EXISTS task_auto (
+  task_id    INTEGER PRIMARY KEY REFERENCES tasks (id) ON DELETE CASCADE,
+  cli        TEXT NOT NULL,
+  worktree   INTEGER NOT NULL DEFAULT 0 CHECK (worktree IN (0, 1)),
+  max_runs   INTEGER NOT NULL DEFAULT 1 CHECK (max_runs > 0),
+  runs       INTEGER NOT NULL DEFAULT 0,
+  last_spawn TEXT,
+  created_at TEXT NOT NULL
+);
 
 -- ─── The ops log (VISION.md § 2b, VOCABULARY.md § op / ops log) ──────
 --
@@ -959,9 +1028,11 @@ CREATE TABLE IF NOT EXISTS vcs_workspaces (
 CREATE INDEX IF NOT EXISTS idx_vcs_workspaces_workstream ON vcs_workspaces (workstream_id);
 
 -- ─── Views (replaced when stale so the latest definition wins) ────────
--- See READY_VIEW_SQL / BLOCKED_VIEW_SQL / GOALS_VIEW_SQL above for the
--- canonical DDL — interpolated here so applySchema is one db.exec().
+-- See READY_VIEW_SQL / BLOCKED_VIEW_SQL / BLOCKERS_VIEW_SQL / GOALS_VIEW_SQL
+-- above for the canonical DDL — interpolated here so applySchema is one
+-- db.exec(). Every view skips torn-down workstreams.
 ${READY_VIEW_SQL}
 ${BLOCKED_VIEW_SQL}
+${BLOCKERS_VIEW_SQL}
 ${GOALS_VIEW_SQL}
 `;

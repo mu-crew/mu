@@ -132,7 +132,8 @@ export function findDormantWorkstreams(
                    AS INTEGER)                              AS idle_days
          FROM workstreams w
          LEFT JOIN tasks t ON t.workstream_id = w.id
-        WHERE NOT EXISTS (SELECT 1 FROM agents a WHERE a.workstream_id = w.id)
+        WHERE w.torn_down_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM agents a WHERE a.workstream_id = w.id)
           AND NOT EXISTS (SELECT 1 FROM vcs_workspaces v WHERE v.workstream_id = w.id)
         GROUP BY w.id, w.name
         ORDER BY idle_days DESC, w.name`,

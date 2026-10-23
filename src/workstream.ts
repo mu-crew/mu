@@ -375,7 +375,9 @@ export function listTornDownWorkstreams(db: Db): TornDownWorkstream[] {
  */
 export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
   const names = (
-    db.prepare("SELECT name FROM workstreams ORDER BY name").all() as { name: string }[]
+    db.prepare("SELECT name FROM workstreams WHERE torn_down_at IS NULL ORDER BY name").all() as {
+      name: string;
+    }[]
   ).map((r) => r.name);
   return Promise.all(names.map((name) => summarize(db, { workstream: name })));
 }
@@ -413,6 +415,7 @@ export async function listEmptyWorkstreams(db: Db): Promise<WorkstreamSummary[]>
          LEFT JOIN tasks          t  ON t.workstream_id  = ws.id
          LEFT JOIN agents         a  ON a.workstream_id  = ws.id
          LEFT JOIN vcs_workspaces v  ON v.workstream_id  = ws.id
+        WHERE ws.torn_down_at IS NULL
         GROUP BY ws.id, ws.name
        HAVING COUNT(DISTINCT t.id)  = 0
           AND COUNT(DISTINCT a.id)  = 0
@@ -450,9 +453,9 @@ async function summarize(db: Db, opts: WorkstreamOptions): Promise<WorkstreamSum
 }
 
 function isRegistered(db: Db, workstream: string): boolean {
-  const row = db.prepare("SELECT 1 AS x FROM workstreams WHERE name = ?").get(workstream) as
-    | { x: number }
-    | undefined;
+  const row = db
+    .prepare("SELECT 1 AS x FROM workstreams WHERE name = ? AND torn_down_at IS NULL")
+    .get(workstream) as { x: number } | undefined;
   return row !== undefined;
 }
 

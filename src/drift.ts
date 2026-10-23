@@ -230,19 +230,30 @@ export function checkCheapDriftInvariant(db: Db): CheapDriftReport {
  *                      replays it verbatim.
  */
 const COMPARED: Record<string, readonly string[]> = {
-  workstreams: ["created_at"],
-  tasks: ["title", "status", "substate", "impact", "effort_days", "created_at", "updated_at"],
-  task_notes: ["author", "content", "created_at"],
+  workstreams: ["created_at", "torn_down_at"],
+  tasks: [
+    "title",
+    "status",
+    "substate",
+    "impact",
+    "effort_days",
+    "scored",
+    "dispatch_host",
+    "created_at",
+    "updated_at",
+  ],
+  task_notes: ["author", "content", "created_at", "kind"],
   task_edges: ["created_at"],
 };
 
 /** SELECTs that project each portable table to (key, ...COMPARED) so
  *  both sides can be compared by natural key. */
 const SNAPSHOT_SQL: Record<string, string> = {
-  workstreams: `SELECT w.name AS key, w.created_at
+  workstreams: `SELECT w.name AS key, w.created_at, w.torn_down_at
                   FROM workstreams w`,
   tasks: `SELECT w.name || '/' || t.local_id AS key,
-                 t.title, t.status, t.substate, t.impact, t.effort_days, t.created_at, t.updated_at
+                 t.title, t.status, t.substate, t.impact, t.effort_days, t.scored,
+                 t.dispatch_host, t.created_at, t.updated_at
             FROM tasks t JOIN workstreams w ON w.id = t.workstream_id`,
   // Notes are a GROW-ONLY SET whose local surrogate id is not portable,
   // so identity for diffing is (task, author, content, created_at) —
@@ -257,7 +268,7 @@ const SNAPSHOT_SQL: Record<string, string> = {
   task_notes: `SELECT w.name || '/' || t.local_id || char(31) ||
                       COALESCE(n.author, '') || char(31) || n.content || char(31) ||
                       n.created_at AS key,
-                      n.author, n.content, n.created_at
+                      n.author, n.content, n.created_at, n.kind
                  FROM task_notes n
                  JOIN tasks t ON t.id = n.task_id
                  JOIN workstreams w ON w.id = t.workstream_id`,

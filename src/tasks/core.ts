@@ -20,6 +20,10 @@ export interface TaskRow {
   substate: TaskSubstate;
   impact: number;
   effortDays: number;
+  /** True once impact/effort were given explicitly (not defaulted). */
+  scored: boolean;
+  /** Host `mu next` dispatches this task to, if one was set. */
+  dispatchHost: string | null;
   /** Foreign-name reference to the owning agent (NULL when unowned). */
   ownerName: string | null;
   createdAt: string;
@@ -43,6 +47,8 @@ export interface RawTaskRow {
   substate: string;
   impact: number;
   effort_days: number;
+  scored: number;
+  dispatch_host: string | null;
   /** Joined from agents.name via owner_id. NULL when unowned. */
   owner: string | null;
   created_at: string;
@@ -67,6 +73,8 @@ export const SELECT_TASK_COLS = `
   t.substate AS substate,
   t.impact AS impact,
   t.effort_days AS effort_days,
+  t.scored AS scored,
+  t.dispatch_host AS dispatch_host,
   ag.name AS owner,
   t.created_at AS created_at,
   t.updated_at AS updated_at
@@ -74,7 +82,7 @@ export const SELECT_TASK_COLS = `
 
 export const TASK_FROM_JOIN = `
   FROM tasks t
-  JOIN workstreams ws ON ws.id = t.workstream_id
+  JOIN workstreams ws ON ws.id = t.workstream_id AND ws.torn_down_at IS NULL
   LEFT JOIN agents ag ON ag.id = t.owner_id
 `;
 
@@ -93,6 +101,8 @@ export function rowFromDb(row: RawTaskRow): TaskRow {
     substate: row.substate as TaskSubstate,
     impact: row.impact,
     effortDays: row.effort_days,
+    scored: row.scored === 1,
+    dispatchHost: row.dispatch_host,
     ownerName: row.owner,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

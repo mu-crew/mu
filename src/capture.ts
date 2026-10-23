@@ -312,7 +312,7 @@ function emitOp(
  *  MACHINE_LOCAL_TABLES), but it must still be captured for local
  *  history of a claim/release. */
 const CAPTURED_COLUMNS = {
-  workstreams: ["name", "created_at"],
+  workstreams: ["name", "created_at", "torn_down_at"],
   tasks: [
     "local_id",
     "title",
@@ -320,11 +320,13 @@ const CAPTURED_COLUMNS = {
     "substate",
     "impact",
     "effort_days",
+    "scored",
+    "dispatch_host",
     "owner_id",
     "created_at",
     "updated_at",
   ],
-  task_notes: ["author", "content", "created_at"],
+  task_notes: ["author", "content", "created_at", "kind"],
   task_edges: ["created_at"],
 } as const satisfies Record<(typeof PORTABLE_TABLES)[number], readonly string[]>;
 
@@ -403,6 +405,19 @@ BEGIN
 END;`;
 }
 
+/** BEFORE UPDATE trigger: a note's kind is set once at INSERT. A change
+ *  would sync as a `{kind}`-only put that no peer can match to a row (a
+ *  note's identity is its content), so local writes refuse it. Gated on
+ *  `applying = 0`: ingest accepts what the log says, and a RAISE there
+ *  would roll back the segment and stall sync. */
+const NOTE_KIND_GUARD = `
+CREATE TEMP TRIGGER IF NOT EXISTS _cap_task_notes_kind
+BEFORE UPDATE OF kind ON task_notes
+  WHEN ${NOT_APPLYING} AND NEW.kind IS NOT OLD.kind
+BEGIN
+  SELECT RAISE(ABORT, 'mu: task_notes.kind is set once when the note is written; add a new note instead of changing it.');
+END;`;
+
 /**
  * THE DELETE SUBTLETY
  * -------------------
@@ -474,6 +489,7 @@ ${insertGuard("workstreams")}
 ${insertGuard("tasks")}
 ${insertGuard("task_notes")}
 ${insertGuard("task_edges")}
+${NOTE_KIND_GUARD}
 
 -- ─── workstreams ────────────────────────────────────────────────────
 CREATE TEMP TRIGGER IF NOT EXISTS _cap_workstreams_ins

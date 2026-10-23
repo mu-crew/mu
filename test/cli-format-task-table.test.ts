@@ -16,6 +16,8 @@ function task(over: Partial<TaskRow>): TaskRow {
     substate: "todo",
     impact: 50,
     effortDays: 1,
+    scored: true,
+    dispatchHost: null,
     ownerName: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
