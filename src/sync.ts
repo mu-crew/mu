@@ -53,7 +53,7 @@
 import { existsSync, statSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { Op } from "./apply.js";
-import { type Db, SYNCED_ENTITIES } from "./db.js";
+import { CURRENT_SCHEMA_VERSION, type Db, SYNCED_ENTITIES } from "./db.js";
 import type { NextStep } from "./output.js";
 import {
   applyIncomingOp,
@@ -109,6 +109,21 @@ export class SyncSourceNotFoundError extends Error {
   override readonly name = "SyncSourceNotFoundError";
   constructor(readonly path: string) {
     super(`--from: no such file: ${path}`);
+  }
+}
+
+/** `mu sync --from <db>` pointed at a DB written by a newer mu. Its ops
+ *  may carry fields this build would half-apply, which is exactly what a
+ *  segment line's version prevents; this path has no such line. Exit 4. */
+export class SyncSourceTooNewError extends Error {
+  override readonly name = "SyncSourceTooNewError";
+  constructor(
+    readonly path: string,
+    readonly detectedVersion: number,
+  ) {
+    super(
+      `--from: ${path} is schema v${detectedVersion}; this mu understands up to v${CURRENT_SCHEMA_VERSION}. Upgrade mu.`,
+    );
   }
 }
 
@@ -270,6 +285,15 @@ function warn(message: string, opts?: AmbientOptions): void {
   process.stderr.write(`mu: sync: ${message}\n`);
 }
 
+/** One line for an own segment holding a line of a version this build
+ *  does not know. Shared by `mu sync` and the ambient warning. */
+export function foreignVersionMessage(r: {
+  foreignVersionAt: number | null;
+  foreignVersion: number | null;
+}): string {
+  return `own segment has a v${r.foreignVersion ?? "?"} line at ${r.foreignVersionAt} written by a newer mu; not appending`;
+}
+
 function describeDefects(peerShort: string, defects: readonly SegmentDefect[]): string {
   const first = defects[0];
   const detail = first === undefined ? "unknown defect" : `${first.kind} at line ${first.line}`;
@@ -377,10 +401,13 @@ export async function ambientFlush(
     if (result.selfRepaired !== null) {
       const d = result.selfRepaired;
       warn(
-        `own segment truncated back to its last good line: ${d.kind} at line ${d.line} (${d.detail}) — regenerated from the ops table`,
+        result.foreignVersionAt === null
+          ? `own segment truncated back to its last good line: ${d.kind} at line ${d.line} (${d.detail}) — regenerated from the ops table`
+          : `own segment: dropped damaged line ${d.line} (${d.kind}: ${d.detail})`,
         opts,
       );
     }
+    if (result.foreignVersionAt !== null) warn(foreignVersionMessage(result), opts);
     return result;
   } catch (err) {
     warn(err instanceof Error ? err.message : String(err), opts);
@@ -419,6 +446,19 @@ export interface IngestFromDbResult {
   skippedLocal: number;
 }
 
+/** The source DB's `schema_version`, or null when it has none (not a mu
+ *  DB, or one old enough that the ops query below fails on its own). */
+function sourceSchemaVersion(source: Database.Database): number | null {
+  try {
+    const row = source.prepare("SELECT version FROM schema_version WHERE id = 1").get() as
+      | { version: number }
+      | undefined;
+    return row?.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Ingest straight from a peer's `mu.db`, reading its `ops` table with
  * SQLite instead of parsing a JSONL segment.
@@ -451,6 +491,10 @@ export function ingestFromDb(db: Db, path: string): IngestFromDbResult {
   const self = localMachineId(db);
   const source = new Database(path, { readonly: true, fileMustExist: true });
   try {
+    const theirs = sourceSchemaVersion(source);
+    if (theirs !== null && theirs > CURRENT_SCHEMA_VERSION) {
+      throw new SyncSourceTooNewError(path, theirs);
+    }
     const rows = source
       .prepare(
         `SELECT hlc, machine_id, group_id, actor, intent, entity, key, op, payload

@@ -101,6 +101,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | Module | Responsibility |
 | --- | --- |
 | `src/segments.ts` | JSONL segments: flush own ops, ingest peers from a watermark |
+| `src/segment-line.ts` | the segment line: per-line version rules (`SEGMENT_FORMAT_VERSION`, `SEGMENT_READ_VERSIONS`), crc framing, encode and decode |
 | `src/segment-manifest.ts` | segment `.manifest` sidecar: read, write, seal, and the self-consistency check the owner's flush runs before trusting it |
 | `src/segment-resume.ts` | byte offset + running sha256 saved with a peer's caught-up fingerprint, so ingest reads only appended bytes |
 | `src/sha256-resumable.ts` | SHA-256 with a serialisable running state, so the segment manifest hashes only appended bytes |

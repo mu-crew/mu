@@ -250,6 +250,7 @@ export {
   readManifest,
   resetWatermark,
   SEGMENT_FORMAT_VERSION,
+  SEGMENT_READ_VERSIONS,
   type SegmentDefect,
   type SegmentDefectKind,
   type SegmentLine,
@@ -293,6 +294,7 @@ export {
   SyncPeerNotFoundError,
   SyncPeerRefAmbiguousError,
   SyncSourceNotFoundError,
+  SyncSourceTooNewError,
   syncEnabled,
   transportNextSteps,
 } from "./sync.js";

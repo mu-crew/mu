@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Op } from "../src/apply.js";
-import { type Db, openDb } from "../src/db.js";
+import { CURRENT_SCHEMA_VERSION, type Db, openDb } from "../src/db.js";
 import { withCaptureSuppressed } from "../src/op-context.js";
 import {
   applyIncomingOp,
@@ -46,6 +46,7 @@ import {
   SyncPeerNotFoundError,
   SyncPeerRefAmbiguousError,
   SyncSourceNotFoundError,
+  SyncSourceTooNewError,
   syncEnabled,
   transportNextSteps,
 } from "../src/sync.js";
@@ -537,6 +538,22 @@ describe("sync", () => {
       expect(result.read).toBeGreaterThan(0);
       expect(result.changed).toBeGreaterThan(0);
       expect(taskRow(b, "t1")?.impact).toBe(95);
+    });
+
+    it("refuses a source DB whose schema_version is newer than this binary, reading no op", async () => {
+      seed(a, "t1");
+      const path = join(tempDir, "a.db");
+      a.prepare("UPDATE schema_version SET version = ? WHERE id = 1").run(
+        CURRENT_SCHEMA_VERSION + 1,
+      );
+      const before = opCount(b);
+
+      expect(() => ingestFromDb(b, path)).toThrow(SyncSourceTooNewError);
+      expect(() => ingestFromDb(b, path)).toThrow(
+        `--from: ${path} is schema v${CURRENT_SCHEMA_VERSION + 1}; this mu understands up to v${CURRENT_SCHEMA_VERSION}. Upgrade mu.`,
+      );
+      expect(opCount(b)).toBe(before);
+      expect(taskRow(b, "t1")).toBeUndefined();
     });
 
     it("is idempotent: a second read changes nothing", async () => {
