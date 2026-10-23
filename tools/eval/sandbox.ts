@@ -2,9 +2,18 @@
 // Never touches the default tmux server, herdr, or the user's real mu state.
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Sandbox, Surface } from "./types.ts";
 
@@ -30,12 +39,21 @@ export function tmuxSocketPath(dir: string, name: string): string {
   return join(dir, "tmux-tmp", `tmux-${process.getuid?.() ?? 0}`, name);
 }
 
-function resolveRealTmux(): string {
-  try {
-    return execFileSync("which", ["tmux"], { encoding: "utf8" }).trim() || "tmux";
-  } catch {
-    return "tmux";
+/** Absolute path of tmux on `pathEnv`. Throws when absent: a bare "tmux" fallback would resolve to the sandbox shim and exec itself forever. */
+export function resolveRealTmux(pathEnv: string | undefined = process.env.PATH): string {
+  for (const d of (pathEnv ?? "").split(":")) {
+    if (!isAbsolute(d)) continue;
+    const p = join(d, "tmux");
+    try {
+      accessSync(p, constants.X_OK);
+      return p;
+    } catch {
+      // not here
+    }
   }
+  throw new Error(
+    "eval sandbox: tmux not found on PATH (it is required for the private tmux server)",
+  );
 }
 
 /** tmux resolved once at import, from the caller's PATH, before any sandbox PATH exists. */
@@ -138,7 +156,7 @@ let handlersInstalled = false;
 /** Kill the server behind a socket path. Always -S <path under a sandbox>, never the default. */
 function killServer(socketPath: string): void {
   try {
-    execFileSync("tmux", ["-S", socketPath, "kill-server"], { stdio: "ignore" });
+    execFileSync(REAL_TMUX, ["-S", socketPath, "kill-server"], { stdio: "ignore" });
   } catch {
     // no server on that socket: fine
   }
