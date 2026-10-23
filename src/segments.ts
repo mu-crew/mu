@@ -1093,7 +1093,7 @@ export interface IngestResult {
   machineId: string;
   path: string;
   /** Lines consumed past the starting watermark: applied plus skipped
-   *  (refused, re-delivered, historical log-only) lines. A line that
+   *  (refused, re-delivered) lines. A line that
    *  halted ingest is not counted. */
   read: number;
   /** Ops applied (some are no-ops: already present, or lost an LWW). */
