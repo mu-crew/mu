@@ -44,8 +44,8 @@ Measured 2026-10-23 on linuxpc (16 cores, node 26, warm cache).
 | targeted slow | `npm run build && npx vitest run <files>` | — | — |
 
 Workers run fast while iterating, then targeted slow for the changed area,
-and fast on the final commit. The orchestrator runs slow once per merged
-batch. Record gates per
+and fast on the final commit. The orchestrator runs fast + slow once per
+merged batch (`npm run test` excludes lint and typecheck). Record gates per
 [test-health](skills/mu/recipes/test-health.md#gate-contract).
 `test/tui-sync-worker.integration.test.ts` needs `dist/`, hence build
 first.
@@ -95,7 +95,7 @@ first.
   on the default socket that has no workstream there, and skips the
   sweep when that DB is missing or unreadable.
 - Workers run fast while iterating and slow for their changed area (see
-  [Gates](#gates)); the orchestrator runs the full slow gate once per
+  [Gates](#gates)); the orchestrator runs fast + slow once per
   merged batch. Tests may run concurrently across workers. A test that fails
   under load but passes alone is a test-infra concurrency bug (shared
   `/tmp`, sockets, leaked subprocesses). One that also fails alone is a
@@ -201,8 +201,8 @@ Follow [skills/mu/recipes/orchestrator-loop.md](skills/mu/recipes/orchestrator-l
   Resolve source conflicts by hand, never with `--ours` or `--theirs`.
 - Fix a worker's bug in a separate commit after the cherry-pick. Do
   not amend it.
-- Gate the merged tree with the slow gate (see [Gates](#gates)) plus
-  `node dist/cli.js --help`.
+- Gate the merged tree with the fast gate and the slow gate (see
+  [Gates](#gates)) plus `node dist/cli.js --help`.
 - The installed `mu` may be older than the branch build. Confirm a
   worker received its brief (`mu agent read <w> -n 3`).
 
@@ -254,7 +254,8 @@ npm run typecheck && npm run lint && npm run test:fast
 npm run build && npx vitest run <files>
 ```
 
-The orchestrator runs `npm run build && npm run test` on each merged batch.
+The orchestrator runs the fast gate and `npm run build && npm run test` on
+each merged batch.
 
 Then check that VOCABULARY, ARCHITECTURE, and CHANGELOG reflect the
 change.
