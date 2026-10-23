@@ -948,6 +948,12 @@ describe("footer status", () => {
     rmSync(cache, { recursive: true, force: true });
   });
 
+  /** agent_settled, then the tick the extension waits before judging an answer lost. */
+  const settled = async (p: ReturnType<typeof fakePi>, aborted = false) => {
+    await p.fire("agent_settled", { type: "agent_settled", aborted });
+    await new Promise((r) => setImmediate(r));
+  };
+
   it("a follow-up cleared from pi's queue without an abort is sent again when the run settles", async () => {
     // The dequeue key calls session.clearQueue(): the custom follow-up is
     // dropped, the run ends normally (aborted: false) and nothing arrives.
@@ -963,7 +969,7 @@ describe("footer status", () => {
     await flush();
     await flush();
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
-    await p.fire("agent_settled", { type: "agent_settled", aborted: false }); // queue was cleared
+    await settled(p); // queue was cleared
     expect(p.sendMessage).toHaveBeenCalledTimes(2);
     const [again, opts] = p.sendMessage.mock.calls[1] ?? [];
     expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
@@ -1007,7 +1013,7 @@ describe("footer status", () => {
     await flush();
     await flush();
     expect(handle.answerPending()).toBe(true);
-    await p.fire("agent_settled", { type: "agent_settled", aborted: false });
+    await settled(p);
     expect(p.sendMessage).toHaveBeenCalledTimes(2);
     const [again, opts] = p.sendMessage.mock.calls[1] ?? [];
     expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
@@ -1033,8 +1039,7 @@ describe("footer status", () => {
     await flush();
     await flush();
     expect(p.sendMessage).toHaveBeenCalledTimes(n);
-    const settle = (aborted: boolean) =>
-      p.fire("agent_settled", { type: "agent_settled", aborted });
+    const settle = (aborted: boolean) => settled(p, aborted);
     for (let round = 1; round <= n; round++) {
       await settle(false); // queue was cleared
       expect(p.sendMessage).toHaveBeenCalledTimes(n + round); // exactly one resend
@@ -1067,7 +1072,7 @@ describe("footer status", () => {
     // pi defers every triggerTurn send made inside agent_settled into a list
     // that neither abort() nor clearQueue() empties, and runs all of it.
     const before = p.sendMessage.mock.calls.length;
-    await p.fire("agent_settled", { type: "agent_settled", aborted: false });
+    await settled(p);
     const deferred = p.sendMessage.mock.calls.slice(before);
     expect(deferred).toHaveLength(1);
     expect(deferred[0]?.[1]).toEqual({ deliverAs: "followUp", triggerTurn: true });
@@ -1076,7 +1081,7 @@ describe("footer status", () => {
       message: { role: "custom", ...(deferred[0]?.[0] as object) },
     });
     p.state.busy = true;
-    await p.fire("agent_settled", { type: "agent_settled", aborted: true }); // Escape in that run
+    await settled(p, true); // Escape in that run
     // Only the note follows: no further resend, and it names just the answers that will not arrive.
     expect(p.sendMessage).toHaveBeenCalledTimes(before + 2);
     const [note, opts] = p.sendMessage.mock.calls[before + 1] ?? [];
@@ -1085,6 +1090,63 @@ describe("footer status", () => {
     expect(dropped.map((d) => d.name)).toEqual(["delegate-3", "delegate-4"]);
     expect(handle.answerPending()).toBe(false);
     rmSync(cache, { recursive: true, force: true });
+  });
+
+  it("a second start of one delivery is rewritten to a one-line stub", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "BIG" }] }));
+    await flush();
+    await flush();
+    const [sent] = p.sendMessage.mock.calls[0] ?? [];
+    const again = { role: "custom", ...(sent as object) } as unknown as {
+      content: string;
+      details: Record<string, unknown>;
+    };
+    expect(again.content).toContain("BIG"); // the first start is untouched
+    const repeat = structuredClone(again);
+    await p.fire("message_start", { message: repeat });
+    expect(repeat.content).toMatch(/already handled/);
+    expect(repeat.content).not.toContain("BIG");
+    expect(repeat.details).toMatchObject({ duplicateOf: again.details.delivery });
+  });
+
+  it("a dropped answer's deferred send is defused: no turn, and a stub if it starts", async () => {
+    const cache = mkdtempSync(join(tmpdir(), "mu-dropped-"));
+    process.env.XDG_CACHE_HOME = cache;
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    p.state.busy = true;
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "BIG" }] }));
+    await flush();
+    await flush();
+    const [msg, opts] = p.sendMessage.mock.calls[0] ?? [];
+    expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    await settled(p, true); // Escape: dropped with a copy
+    // pi runs the send it deferred later, reading the options object it was handed.
+    expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: false });
+    expect((msg as { content: string }).content).toMatch(/already handled/);
+    rmSync(cache, { recursive: true, force: true });
+  });
+
+  it("no resend while pi is not idle, or while a later answer is still in flight", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    p.state.busy = true;
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
+    await flush();
+    await flush();
+    const busyCtx = { isIdle: () => false };
+    for (const h of p.handlers.get("agent_settled") ?? [])
+      await h({ type: "agent_settled", aborted: false }, busyCtx);
+    await new Promise((r) => setImmediate(r));
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("an interrupt with nothing queued leaves no note", async () => {

@@ -574,7 +574,11 @@ export function registerDelegate(
   ): void | Promise<void> => {
     const d = message.details as { delivery?: unknown; name?: unknown } | undefined;
     const a = typeof d?.delivery === "number" ? arriving.get(d.delivery) : undefined;
-    if (a) a.message = message;
+    if (a && options) {
+      options = { ...options };
+      a.message = message;
+      a.opts = [...(a.opts ?? []), options];
+    }
     const at = { why, delivery: d?.delivery, name: d?.name, ...options };
     trace("sendMessage", { ...at, ui: ui !== undefined, arriving: arriving.size });
     try {
@@ -600,22 +604,32 @@ export function registerDelegate(
   /** Delegates that finished whose follow-up has not entered the
    *  conversation: being delivered, or queued behind a running turn.
    *  Keyed by a per-delivery id carried in the message's details, and
-   *  cleared on that message's message_start. `queued` says whether
-   *  pi.sendMessage has returned, i.e. the message sits in pi's queue;
-   *  the rest is what an interrupt needs to point at the answer. */
+   *  cleared on that message's message_start. `sent` says whether
+   *  pi.sendMessage has returned: pi accepted it, which says nothing
+   *  about where it sits. The rest is what a dropped note needs. */
   const arriving = new Map<
     number,
     {
-      queued: boolean;
+      sent: boolean;
       name: string;
       content?: string;
       /** The follow-up as sent, to send again if pi's queue loses it. */
       message?: Parameters<MuDelegateApi["sendMessage"]>[0];
-      /** Sent again after pi's queue lost it; one more loss drops it. */
+      /** Sent again after pi lost it; one more loss drops it. */
       resent?: boolean;
+      /** Every options object handed to pi for it: pi reads one lazily
+       *  when it runs a send it deferred, so a dropped answer is
+       *  defused through them. */
+      opts?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" }[];
     } & Omit<DroppedAnswer, "copy">
   >();
   let deliverySeq = 0;
+  /** Deliveries that reached the conversation, or were dropped with a copy:
+   *  a later message_start for one is a duplicate, which cannot be unsent
+   *  and is shown as a stub. */
+  const seen = new Set<number>();
+  let settleCheck: ReturnType<typeof setImmediate> | undefined;
+  let closed = false;
   // The ctx of the latest tool call: answers settle outside any call, so
   // the footer is refreshed through the last ctx pi handed us.
   let ui: DelegateCtx["ui"];
@@ -648,10 +662,10 @@ export function registerDelegate(
   const track = (ctx: DelegateCtx | undefined) => {
     if (ctx?.hasUI !== false && ctx?.ui) ui = ctx.ui;
   };
-  /** The follow-up for `delivery` is in pi's queue now. */
-  const markQueued = (delivery: number) => {
+  /** pi accepted the follow-up for `delivery`. */
+  const markSent = (delivery: number) => {
     const a = arriving.get(delivery);
-    if (a) a.queued = true;
+    if (a) a.sent = true;
   };
   /** Copy a dropped answer under the mu cache dir; undefined if that fails. */
   const saveCopy = (name: string, content: string, kind = ""): string | undefined => {
@@ -1013,7 +1027,7 @@ export function registerDelegate(
       const settle = async (r: MuResult) => {
         const delivery = ++deliverySeq;
         trace("settle", { delivery, name, code: r.code });
-        arriving.set(delivery, { queued: false, name });
+        arriving.set(delivery, { sent: false, name });
         forget(name);
         try {
           await deliver(
@@ -1031,7 +1045,7 @@ export function registerDelegate(
             delivery,
             entry.record,
           );
-          markQueued(delivery);
+          markSent(delivery);
         } catch (e) {
           // A throw here would be an unhandled rejection and a lost answer.
           const content = `Delegate ${W}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${W}`;
@@ -1049,7 +1063,7 @@ export function registerDelegate(
               "deliver-failed",
             ),
           ).then(
-            () => markQueued(delivery),
+            () => markSent(delivery),
             () => {
               // Nothing will arrive: stop counting it.
               arriving.delete(delivery);
@@ -1284,17 +1298,32 @@ export function registerDelegate(
 
   // A follow-up enters the conversation at its message_start: at once
   // when pi is idle, or when the running turn drains its follow-ups.
+  // pi can start one delivery twice (a resend racing a send it deferred),
+  // and a started message cannot be recalled: the repeat is rewritten in
+  // place, before pi records it or the model sees it, into a stub.
+  const stub = (name: unknown, id: number) => ({
+    content: `Delegate ${W}/${String(name)}: this answer was already handled (delivery ${id}). Ignore this repeat; no reply needed.`,
+    details: { name, workstream: W, duplicateOf: id },
+  });
   pi.on("message_start", (e) => {
-    const m = (e as { message?: { role?: unknown; customType?: unknown; details?: unknown } })
-      .message;
+    const m = (
+      e as {
+        message?: { role?: unknown; customType?: unknown; content?: unknown; details?: unknown };
+      }
+    ).message;
     if (m?.role !== "custom" || m.customType !== DELEGATE_MESSAGE_TYPE) return;
-    const id = (m.details as { delivery?: unknown } | undefined)?.delivery;
-    if (typeof id === "number" && arriving.delete(id)) showStatus();
+    const d = m.details as { delivery?: unknown; name?: unknown } | undefined;
+    const id = d?.delivery;
+    if (typeof id !== "number") return;
+    if (seen.has(id)) {
+      trace("duplicate", { delivery: id, name: d?.name });
+      Object.assign(m, stub(d?.name, id));
+      return;
+    }
+    seen.add(id);
+    if (arriving.delete(id)) showStatus();
   });
 
-  // Escape clears pi's follow-up queue along with the run: answers that
-  // were queued in it never arrive: drop them with copies. An answer
-  // still being delivered is not in the queue yet and arrives as usual.
   /** Stop counting answers that never reached the conversation: copy
    *  each to the cache dir and leave one line per answer in it (no turn). */
   const dropAnswers = (ids: number[]) => {
@@ -1303,6 +1332,10 @@ export function registerDelegate(
       const a = arriving.get(id);
       if (!a) continue;
       arriving.delete(id);
+      seen.add(id);
+      // pi may still run a send it deferred while settling: no turn, a stub.
+      if (a.message) Object.assign(a.message, stub(a.name, id));
+      for (const o of a.opts ?? []) o.triggerTurn = false;
       dropped.push({
         name: a.name,
         ...(a.outcome ? { outcome: a.outcome } : {}),
@@ -1327,43 +1360,61 @@ export function registerDelegate(
       ),
     ).catch(() => {});
   };
-  const queuedIds = () => [...arriving].filter(([, a]) => a.queued).map(([id]) => id);
-  pi.on("agent_settled", (e) => {
+  /** After a normal settle, an answer pi accepted that never started was
+   *  cleared from pi's queue (the dequeue key, a failed compaction flush).
+   *  pi runs the sends it deferred right after this event, so only a pi
+   *  that is idle one tick later, with nothing accepted since, has
+   *  really lost it. Resend ONE; its run settles and finds the next.
+   *  Lost twice: drop it with a copy. */
+  const recoverLost = (candidates: number[], ctx: DelegateCtx) => {
+    settleCheck = undefined;
+    if (closed) return;
+    let idle = false;
+    try {
+      idle = ctx.isIdle?.() ?? true;
+    } catch {
+      // stale ctx: the next settle looks again
+    }
+    if (!idle) return;
+    // Accepted after the settle began: pi may be about to run it, and its
+    // own run settles again.
+    if ([...arriving].some(([id, a]) => a.sent && !candidates.includes(id))) return;
+    const unseen = candidates.filter((id) => arriving.get(id)?.sent);
+    dropAnswers(unseen.filter((id) => arriving.get(id)?.resent));
+    const next = unseen.find((id) => arriving.has(id));
+    const a = next === undefined ? undefined : arriving.get(next);
+    if (next === undefined || !a?.message) return;
+    a.resent = true;
+    trace("resend", { delivery: next, name: a.name });
+    void Promise.resolve(
+      send(a.message, { deliverAs: "followUp", triggerTurn: true }, "resend"),
+    ).catch(() => {
+      arriving.delete(next);
+      showStatus();
+    });
+  };
+  pi.on("agent_settled", (e, ctx) => {
+    const sent = [...arriving].filter(([, a]) => a.sent).map(([id]) => id);
+    // Escape clears pi's queue along with the run: what it held never
+    // arrives. Never resend then: copies and one note.
     if ((e as { aborted?: unknown }).aborted === true) {
-      dropAnswers(queuedIds());
+      clearImmediate(settleCheck);
+      dropAnswers(sent);
       return;
     }
-    // The run ended normally yet an answer pi accepted never started:
-    // something cleared pi's queue (the dequeue key, a failed compaction
-    // flush) and custom messages are dropped silently. pi drains its
-    // queue before it settles, whatever the run state when the answer
-    // was sent (compaction after agent_end included). An answer already
-    // resent and lost again is dropped. Resend ONE: pi runs the resend
-    // after this event, and an Escape in that run then finds the rest
-    // still pending and drops them with copies instead of running them.
-    const lost = queuedIds();
-    dropAnswers(lost.filter((id) => arriving.get(id)?.resent));
-    for (const id of lost) {
-      const a = arriving.get(id);
-      if (!a?.message || a.resent) continue;
-      a.resent = true;
-      trace("resend", { delivery: id, name: a.name });
-      void Promise.resolve(
-        send(a.message, { deliverAs: "followUp", triggerTurn: true }, "resend"),
-      ).catch(() => {
-        arriving.delete(id);
-        showStatus();
-      });
-      return;
-    }
+    if (sent.length === 0) return;
+    clearImmediate(settleCheck);
+    settleCheck = setImmediate(() => recoverLost(sent, ctx));
   });
 
   // The watchers die with this runtime (/reload, /new, quit): say which
   // delegates lose their callback, so none is lost silently. The names
   // are also in the tool results, and `mu agent wait` recovers them.
   pi.on("session_shutdown", (_e, ctx) => {
+    closed = true;
+    clearImmediate(settleCheck);
     trace("session_shutdown.state", {
-      arriving: [...arriving.values()].map((a) => ({ name: a.name, queued: a.queued })),
+      arriving: [...arriving.values()].map((a) => ({ name: a.name, sent: a.sent })),
       inflight: [...inflight.keys()],
     });
     if (arriving.size > 0) {

@@ -49,14 +49,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
-- **A delegate answer lost to the dequeue key is sent again.** pi's dequeue key
-  (alt+up) calls `session.clearQueue()`, which silently drops custom follow-ups;
-  the run then ends with `aborted: false`, so the Escape path saw nothing and the
-  answer never arrived. The extension now tracks each answer from `sendMessage` to its
-  `message_start` (so post-run compaction is covered) and, when a run ends normally
-  without it, resends it, one at a time, each after the previous one started; an
-  Escape in between drops the rest with copies as usual. `MU_DELEGATE_TRACE=1` logs every
-  follow-up send and pi lifecycle event to `<cache dir>/delegate-trace.log`.
+- **A delegate answer lost to the dequeue key is sent again, once.** pi's dequeue
+  key (alt+up) calls `session.clearQueue()`, which silently drops custom
+  follow-ups; the run then ends with `aborted: false`, so the Escape path saw
+  nothing and the answer never arrived. Each answer has a delivery id from
+  `sendMessage` to its `message_start`. After a normal settle, one tick later,
+  and only if pi is idle and no answer was accepted since, the extension resends
+  ONE unstarted answer (the next settle finds the next). Escape never resends:
+  it drops what is pending with copies and one note, and defuses those answers'
+  sends that pi deferred while settling (no turn; a stub if they start). A
+  second start of an id (pi can still do that) is rewritten in place to a
+  one-line "already handled" stub, so a repeat costs the model no answer text.
+  `MU_DELEGATE_TRACE=1` logs every follow-up send and pi lifecycle event to
+  `<cache dir>/delegate-trace.log`. Tested against pi's real `AgentSession`
+  (`test/extension-delegate-pi.integration.test.ts`).
 - **`mu_delegate` `record` kept an empty `EVIDENCE:` header.** `recordNote` kept
   only lines that start with `EVIDENCE:`, so a refuter's multi-line evidence
   body was dropped. It now keeps everything from the last `VERDICT:` line on
