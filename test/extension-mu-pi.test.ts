@@ -471,6 +471,30 @@ describe("mu pi extension", () => {
       await again.emit("session_shutdown", { reason: "quit" });
     });
 
+    it("a /reload onto a pre-incarnation Shared back-fills the fields (hello, send, status work)", async () => {
+      await fake.emit("session_start");
+      await fake.emit("session_shutdown", { reason: "reload" });
+      // Shape the surviving entry like the one older code left behind.
+      const entry = (globalThis as Record<symbol, Map<string, Record<string, unknown>>>)[
+        Symbol.for("mu.pi.ctl")
+      ]?.get(sock);
+      if (!entry) throw new Error("no shared entry");
+      delete entry.incarnation;
+      delete entry.accepted;
+      const next = fakePi();
+      muPi(next.pi);
+      await next.emit("session_start", { reason: "reload" });
+      const hello = await ctlRequest(sock, { op: "hello" });
+      const inc = incarnationOf(hello);
+      const sent = await ctlRequest(sock, { op: "send", text: "x", msgId: "up1" });
+      expect(sent).toMatchObject({ ok: true, incarnation: inc });
+      expect(await ctlRequest(sock, { op: "status", msgId: "up1" })).toMatchObject({
+        ok: true,
+        msg: { accepted: true },
+      });
+      fake = next; // afterEach shuts this one down
+    });
+
     it("send with msgId: status{msgId} confirms it with the send's runs", async () => {
       await fake.emit("session_start");
       await fake.emit("agent_start");
