@@ -28,3 +28,6 @@ coverage/
 
 # stray watch dumps (mu state --hud > watch_*)
 watch_*
+
+# eval harness results (tools/eval)
+.eval-results/
