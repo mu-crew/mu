@@ -247,7 +247,7 @@ export interface CheckOptions {
   scriptDir?: string;
 }
 
-/** Faux-AUT proof of every scenario: golden completes cleanly, bad is flagged. No model tokens. */
+/** Faux-AUT proof of every scenario: golden completes cleanly, bad is flagged. Zero cost (faux model), no real model calls. */
 export async function runCheck(o: CheckOptions): Promise<number> {
   let failures = 0;
   const line = (ok: boolean, msg: string, detail = ""): void => {
