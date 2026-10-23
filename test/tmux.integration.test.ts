@@ -170,8 +170,14 @@ describeIfTmux("tmux integration (real tmux server)", () => {
     // The smoking gun for naive send-keys: if `/` were interpreted as a
     // less/vim search command, this command would never reach bash. With
     // bracketed paste it arrives as literal text.
+    // readinessMs: 0 skips post-send verification (~7.5s: bash's command echo
+    // reads as stranded input). Verification is covered by
+    // tmux-send-readiness.integration.test.ts and tmux.test.ts.
     const marker = `MU_BP_${Date.now()}`;
-    await sendToPane(paneId, `echo "${marker} /tmp/has/slashes ?question !bang"`, { delayMs: 200 });
+    await sendToPane(paneId, `echo "${marker} /tmp/has/slashes ?question !bang"`, {
+      delayMs: 200,
+      readinessMs: 0,
+    });
 
     await pollUntil(
       () =>
@@ -199,7 +205,7 @@ describeIfTmux("tmux integration (real tmux server)", () => {
     await tmux(["copy-mode", "-t", paneId]);
 
     const marker = `COPYMODE_${Date.now()}`;
-    await sendToPane(paneId, `echo ${marker}`, { delayMs: 200 });
+    await sendToPane(paneId, `echo ${marker}`, { delayMs: 200, readinessMs: 0 });
     await pollUntil(() => capturePane(paneId).then((out) => out.includes(marker)), {
       description: "copy-mode send output appears",
     });
