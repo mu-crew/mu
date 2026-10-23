@@ -9,7 +9,6 @@ import {
   parallelSettle,
   registerCloseNudge,
   registerNudge,
-  registerRefuteNudge,
 } from "../extension/nudge.js";
 
 type Handler = (event: unknown, ctx: MuNudgeCtx) => unknown;
@@ -24,7 +23,6 @@ function answer(args: readonly string[]): MuResult {
     return json({ items: [{ name: "t1", workstreamName: "ws", status: "IN_PROGRESS" }] });
   if (noun === "task" && verb === "owned-by")
     return json({ items: [{ name: "t1", status: "IN_PROGRESS" }] });
-  if (noun === "task" && verb === "notes") return json({ items: [] });
   return json({});
 }
 
@@ -38,7 +36,7 @@ afterEach(() => {
   else process.env.MU_NUDGE = saved;
 });
 
-/** All three nudges armed behind parallelSettle; mu calls are held until released. */
+/** Both nudges armed behind parallelSettle; mu calls are held until released. */
 function setup() {
   const handlers = new Map<string, Handler[]>();
   const pi = {
@@ -57,7 +55,6 @@ function setup() {
   const settle = parallelSettle(pi);
   registerNudge(settle.api, run, SKILL);
   registerCloseNudge(settle.api, run, WORKER);
-  registerRefuteNudge(settle.api, run);
   settle.flush();
   const emit = async (event: string, extra: object = {}) => {
     let last: unknown;
@@ -74,8 +71,8 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("parallelSettle", () => {
   it("registers ONE working agent_before_settle handler, then a no-op reporter per nudge", () => {
-    // 1 merged handler + 3 reporters that only rethrow a nudge's error.
-    expect(setup().handlers.get("agent_before_settle")).toHaveLength(4);
+    // 1 merged handler + 2 reporters that only rethrow a nudge's error.
+    expect(setup().handlers.get("agent_before_settle")).toHaveLength(3);
   });
 
   it("starts every nudge's mu read at once and does not wait for the log breadcrumbs", async () => {
@@ -87,24 +84,18 @@ describe("parallelSettle", () => {
     });
     const settled = f.emit("agent_before_settle", { outcome: "completed", entries: [] });
     await flush();
-    // list + owned-by + two notes reads, all in flight before any answers.
+    // list + owned-by reads, both in flight before any answers.
     expect(f.calls.map((c) => c.slice(0, 2).join(" ")).sort()).toEqual([
       "task list",
-      "task notes",
-      "task notes",
       "task owned-by",
     ]);
     for (const release of f.held.splice(0)) release();
     const r = (await settled) as { entries: { customType: string }[]; continue?: boolean };
     // Every nudge's entry survives the merge (pi replaces entries per handler).
-    expect(r.entries.map((e) => e.customType).sort()).toEqual([
-      "mu-close-task",
-      "mu-keep-driving",
-      "mu-refute-brief",
-    ]);
+    expect(r.entries.map((e) => e.customType).sort()).toEqual(["mu-close-task", "mu-keep-driving"]);
     expect(r.continue).toBe(true);
     // The breadcrumbs were still written, just not awaited.
-    expect(f.calls.filter((c) => c[0] === "log")).toHaveLength(3);
+    expect(f.calls.filter((c) => c[0] === "log")).toHaveLength(2);
   });
 
   it("re-reads the hold after the slowest nudge: blocked drops continuations, answer drops all", async () => {

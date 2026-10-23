@@ -85,8 +85,8 @@ row reports whether `mu link pi` installed the extension.
 1. If the path already answers, another pi serves it (a nested `pi -p`
    inherited `MU_CTL_SOCK`). The extension leaves it alone and says so
    on stderr. Identity follows the bind: that pi, and one that loses
-   the `link()` race, is nested and gets no keep-driving, close or
-   refute nudge, though it inherited the agent's `MU_AGENT_NAME`.
+   the `link()` race, is nested and gets no keep-driving or close
+   nudge, though it inherited the agent's `MU_AGENT_NAME`.
    The decision lives in the process-global map, so `/reload` keeps it.
 2. Otherwise it listens on a private name in the same directory, sets
    mode 0600, and hard-links that name onto the public path. libuv

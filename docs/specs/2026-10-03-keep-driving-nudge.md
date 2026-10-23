@@ -141,7 +141,10 @@ claimed a task for a worker, ended its turn, received one
 `mu log --kind nudge` held one entry. With nothing IN_PROGRESS, no
 nudge fired.
 
-## Refute nudge (2026-10-05)
+## Refute nudge (2026-10-05, removed)
+
+> Removed in the mu-next cut (`registerRefuteNudge`, `dispatchedTasks` and
+> the `mu-refute-brief` message are gone). Kept below as history.
 
 A sibling hook in the same file (`registerRefuteNudge`), registered on
 its own: it does not need the keep-driving markers and has its own

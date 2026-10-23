@@ -50,7 +50,6 @@ import {
   parallelSettle,
   registerCloseNudge,
   registerNudge,
-  registerRefuteNudge,
   withQueuedInput,
 } from "./nudge.js";
 
@@ -431,7 +430,7 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
   // Identity follows the bind: a pi that finds MU_CTL_SOCK served by
   // another pi is nested and gets none of the agent's nudges.
   const nested = serveCtl(pi);
-  // The three nudges' settle checks run in parallel, as one handler.
+  // The two nudges' settle checks run in parallel, as one handler.
   // A delegate answer on its way resumes the agent itself; an open
   // dialog means nobody is driving. Either holds the nudges.
   const hold = withQueuedInput(() =>
@@ -440,7 +439,6 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
   const settle = parallelSettle(pi, hold);
   registerNudge(settle.api, run, undefined, nested, hold);
   registerCloseNudge(settle.api, run, process.env, nested, hold);
-  registerRefuteNudge(settle.api, run, nested, hold);
   settle.flush();
 }
 
