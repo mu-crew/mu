@@ -491,7 +491,9 @@ export async function teardownWorkstream(
   // the session, not silently report success while leaving panes
   // running.
   const mux = await activeMux();
-  const muxAliveBefore = await sessionAlive(muxSession);
+  // The probe PROPAGATES: "could not ask" is not "dead". Swallowing it
+  // here deleted DB state while panes may still run.
+  const muxAliveBefore = (await mux.listPanes(muxSession)).length > 0;
   if (muxAliveBefore) {
     await mux.killSession(muxSession);
   }

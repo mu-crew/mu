@@ -5,6 +5,7 @@
 // latter memoizes per process; `activeMux` gets its own test below with
 // an explicit reset.
 
+import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   activeMux,
@@ -292,7 +293,7 @@ describe("attachCommands + attachShellLine", () => {
     expect(steps[1]?.optional).toBe(true);
     expect(steps[1]?.reason).toBeTruthy();
     expect(attachShellLine(steps)).toBe(
-      "tmux attach-session -t mu-auth && tmux select-window -t mu-auth:worker-1",
+      "tmux attach-session -t mu-auth && { tmux select-window -t mu-auth:worker-1 || true; }",
     );
   });
 
@@ -301,13 +302,35 @@ describe("attachCommands + attachShellLine", () => {
     expect(await tmuxBackend.attachCommands({ session: "mu-auth" })).toHaveLength(1);
   });
 
-  it("joins with `;` after an optional step, so its failure does not stop what follows", () => {
-    expect(
-      attachShellLine([
-        { command: "a", args: [], optional: true, reason: "may fail" },
-        { command: "b", args: [] },
-      ]),
-    ).toBe("a ; b");
+  describe("optional steps, executed under /bin/sh", () => {
+    const run = (steps: Parameters<typeof attachShellLine>[0]): { code: number; out: string } => {
+      const r = spawnSync("/bin/sh", ["-c", attachShellLine(steps)], { encoding: "utf8" });
+      return { code: r.status ?? -1, out: r.stdout };
+    };
+    const ok = { command: "true", args: [] as string[] };
+    const bad = { command: "false", args: [] as string[] };
+    const after = { command: "printf", args: ["AFTER"] };
+
+    it("a failing optional LAST step does not fail the line", () => {
+      expect(run([ok, { ...bad, optional: true, reason: "decorative" }]).code).toBe(0);
+    });
+
+    it("a failed required step stops everything after it, optional or not", () => {
+      expect(run([bad, { ...ok, optional: true }, after])).toEqual({ code: 1, out: "" });
+      expect(run([bad, { ...bad, optional: true }, after])).toEqual({ code: 1, out: "" });
+    });
+
+    it("required ok, optional failing, required next: the next step still runs", () => {
+      expect(run([ok, { ...bad, optional: true }, after])).toEqual({ code: 0, out: "AFTER" });
+    });
+
+    it("a failing optional FIRST step does not stop what follows", () => {
+      expect(run([{ ...bad, optional: true }, after])).toEqual({ code: 0, out: "AFTER" });
+    });
+
+    it("a required failure after an optional step still fails the line", () => {
+      expect(run([{ ...bad, optional: true }, bad]).code).toBe(1);
+    });
   });
 
   it("quotes tokens that are not plain, and joins required steps with &&", () => {
