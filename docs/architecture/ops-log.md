@@ -123,9 +123,6 @@ Rebuild is not ingest:
 
 - Ingest filters to `SYNCED_ENTITIES`. Rebuild replays everything, so
   log-only entities are copied verbatim, or `mu log` comes back empty.
-- `src/legacy-ops.ts` classifies historical log-only intents whose
-  entity looks projectable. Rebuild copies them without projection;
-  flush never emits them.
 - `machine_identity` carries across whole: id, hostname and HLC clock.
   Otherwise the rebuilt DB is a different peer minting HLCs below
   every replayed op.

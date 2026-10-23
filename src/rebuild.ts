@@ -64,7 +64,6 @@ import { dirname } from "node:path";
 import { applyOp, type Op } from "./apply.js";
 import { type Db, openDb, SYNCED_ENTITIES } from "./db.js";
 import { compareHlc } from "./hlc.js";
-import { isLegacyLogOnlyIntent } from "./legacy-ops.js";
 import { withCaptureSuppressed } from "./op-context.js";
 import type { HasNextSteps, NextStep } from "./output.js";
 
@@ -120,8 +119,7 @@ export interface RebuildReport {
   opsCopied: number;
   /** Ops that projected into a portable table. Always <= opsCopied:
    *  log-only entities (message / event / broadcast), machine-local
-   *  agent / workspace ops and legacy log-only intents are copied but
-   *  have no table to land in. */
+   *  agent / workspace ops are copied but have no table to land in. */
   opsProjected: number;
   /** Ops that changed a row when applied. Lower than opsProjected
    *  whenever later ops superseded earlier ones — which is normal and
@@ -153,12 +151,8 @@ const LOG_ONLY_ENTITIES = new Set(["message", "event", "broadcast"]);
 
 /** Ops that `applyOp` knows how to project into a portable table. This
  *  is the intersection of "synced" and "has a table", which excludes
- *  'message' even though it is in SYNCED_ENTITIES.
- *
- *  Historical log-only intents can name a synced entity, so intent is
- *  also part of the classification even after its command is removed. */
-function isProjectable(entity: string, intent: string | null): boolean {
-  if (isLegacyLogOnlyIntent(intent)) return false;
+ *  'message' even though it is in SYNCED_ENTITIES. */
+function isProjectable(entity: string): boolean {
   if (LOG_ONLY_ENTITIES.has(entity)) return false;
   return (SYNCED_ENTITIES as readonly string[]).includes(entity);
 }
@@ -355,7 +349,7 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
             createdAt: row.created_at,
           });
 
-          if (!isProjectable(row.entity, row.intent)) {
+          if (!isProjectable(row.entity)) {
             logOnlyByEntity[row.entity] = (logOnlyByEntity[row.entity] ?? 0) + 1;
             continue;
           }

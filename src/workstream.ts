@@ -18,7 +18,6 @@ import { existsSync, readdirSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, defaultStateDir } from "./db.js";
-import { intentSpellings } from "./legacy-ops.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
 import type { HasNextSteps, NextStep } from "./output.js";
@@ -386,13 +385,8 @@ export interface TornDownWorkstream {
  * already holds it, and a projection would be one more thing that can
  * disagree with the log (see the `provenance` reasoning in
  * docs/VOCABULARY.md).
- *
- * Accepts both intent spellings, so teardowns predating the 1.2.0
- * rename are included.
  */
 export function listTornDownWorkstreams(db: Db): TornDownWorkstream[] {
-  const spellings = intentSpellings("workstream.teardown");
-  const placeholders = spellings.map(() => "?").join(", ");
   return db
     .prepare(
       `SELECT o.key                AS name,
@@ -410,10 +404,10 @@ export function listTornDownWorkstreams(db: Db): TornDownWorkstream[] {
          FROM ops o
         WHERE o.entity = 'workstream'
           AND o.op     = 'del'
-          AND o.intent IN (${placeholders})
+          AND o.intent = 'workstream.teardown'
         ORDER BY o.created_at DESC, o.hlc DESC`,
     )
-    .all(...spellings)
+    .all()
     .map((r) => {
       const row = r as Omit<TornDownWorkstream, "recreated"> & { recreated: number };
       return { ...row, recreated: row.recreated === 1 };

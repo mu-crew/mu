@@ -48,11 +48,7 @@ export type CaptureIntent =
   | "workstream.init"
   | "workstream.teardown"
   // Any write made through `mu sql`, on whichever portable table it hit.
-  | "sql.write"
-  // Pre-1.2.0 name for workstream.teardown. Read-only: nothing emits it
-  // any more, but ~5k ops in existing logs carry it and must keep
-  // rendering. See LEGACY_INTENT_SYNONYMS in src/legacy-ops.ts.
-  | "workstream.destroy";
+  | "sql.write";
 
 export type KnownIntent = CaptureIntent | LocalIntent;
 
@@ -179,7 +175,6 @@ const VERBS: Record<KnownIntent, string> = {
   "task.reparent": "task reparent",
   "workstream.init": "workstream init",
   "workstream.teardown": "workstream teardown",
-  "workstream.destroy": "workstream teardown",
   "sql.write": "sql write",
   "agent.spawn": "agent spawn",
   "agent.spawn_failed": "agent spawn failed",
@@ -353,7 +348,6 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
     case "workstream.init":
       return { verb: VERBS[intent], subject, detail: "" };
     case "workstream.teardown":
-    case "workstream.destroy":
       return {
         verb: VERBS[intent],
         subject,

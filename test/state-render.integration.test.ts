@@ -469,7 +469,7 @@ describe("the op formatter", () => {
       resetTmuxExecutor();
 
       // v2-retire-log-shim: the 11 task.* / workstream.init /
-      // workstream.destroy prose emits are GONE — each duplicated a
+      // workstream.teardown prose emits are GONE — each duplicated a
       // capture-trigger op that already had a real intent and key. What
       // survives is exactly the set no trigger can see: `agents` and
       // `vcs_workspaces` are machine-local, and `agent stalled` mutates

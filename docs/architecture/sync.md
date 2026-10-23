@@ -78,7 +78,6 @@ distinguishes three cases:
 | --- | --- |
 | damaged (including a blank line) | halt |
 | a known machine-local entity | reported defect, skipped |
-| a historical log-only intent (`workstream.export` prose from mu < 1.1) | skipped silently, as flush and `--from` skip it |
 | an unrecognised entity | applied as a no-op, no defect (a reader behind the writer is normal in a mixed fleet) |
 
 `mu sync` suggests `--repair` only for defects a re-read can clear.

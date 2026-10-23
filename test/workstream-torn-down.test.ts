@@ -121,17 +121,13 @@ describe("listTornDownWorkstreams", () => {
     expect(newest.recreated).toBe(false);
   });
 
-  it("includes teardowns recorded under the pre-1.2.0 intent spelling", async () => {
-    // ~5k ops in real logs say 'workstream.destroy'. The rename must not
-    // truncate the list at the release boundary.
+  it("ignores teardowns recorded under the cut pre-1.2.0 intent spelling", async () => {
     seed("demo");
     await tearDown("demo");
     db.prepare(
       "UPDATE ops SET intent = 'workstream.destroy' WHERE intent = 'workstream.teardown'",
     ).run();
 
-    const gone = listTornDownWorkstreams(db);
-    expect(gone).toHaveLength(1);
-    expect(gone[0]).toMatchObject({ name: "demo", tasks: 2, notes: 1, edges: 1 });
+    expect(listTornDownWorkstreams(db)).toEqual([]);
   });
 });

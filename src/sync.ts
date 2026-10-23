@@ -54,7 +54,6 @@ import { existsSync, statSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { Op } from "./apply.js";
 import { type Db, SYNCED_ENTITIES } from "./db.js";
-import { isLegacyLogOnlyIntent } from "./legacy-ops.js";
 import type { NextStep } from "./output.js";
 import {
   applyIncomingOp,
@@ -477,7 +476,7 @@ export function ingestFromDb(db: Db, path: string): IngestFromDbResult {
     let skippedLocal = 0;
     const run = db.transaction(() => {
       for (const row of rows) {
-        if (!synced.has(row.entity) || isLegacyLogOnlyIntent(row.intent)) {
+        if (!synced.has(row.entity)) {
           skippedLocal += 1;
           continue;
         }

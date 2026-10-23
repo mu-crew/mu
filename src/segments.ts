@@ -76,7 +76,6 @@ import { compareStrings } from "./compare.js";
 import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { receiveHlc } from "./hlc.js";
-import { isLegacyLogOnlyIntent } from "./legacy-ops.js";
 import {
   manifestSelfConsistent,
   readManifest,
@@ -641,7 +640,7 @@ const SYNCED_ENTITIES_SQL = SYNCED_ENTITIES.map((e) => `'${e}'`).join(", ");
 
 /**
  * This machine's synced ops newer than `since`, encoded as segment
- * lines, plus how many skipped ops (machine-local, legacy log-only)
+ * lines, plus how many skipped ops (machine-local)
  * lie in the range this call covered.
  *
  * The entity filter is IN THE SQL, seeking
@@ -691,7 +690,6 @@ function pendingLines(
   let lastHlc: string | null = null;
 
   for (const row of rows) {
-    if (isLegacyLogOnlyIntent(row.intent)) continue;
     lines.push(
       encodeSegmentLine({
         hlc: row.hlc,
@@ -1133,12 +1131,6 @@ export interface IngestResult {
  * lines, forever — so it is reported and SKIPPED. A non-monotonic line
  * we have NOT seen before is still real damage and still halts.
  *
- * A HISTORICAL log-only line (`isLegacyLogOnlyIntent`: a prose payload
- * under an otherwise projectable entity, written by a mu older than the
- * flush filter) is skipped silently, exactly as flush and `--from` skip
- * it. Applying it threw a JSON SyntaxError that rolled back the whole
- * segment on every invocation.
- *
  * A manifest mismatch (layer 4) is reported but does not halt: every
  * line still present is individually valid, so applying them is safe.
  *
@@ -1303,12 +1295,6 @@ export function ingestSegment(
         });
         truncatedAt = lineNo;
         break;
-      }
-
-      if (isLegacyLogOnlyIntent(decoded.line.intent)) {
-        previousHlc = op.hlc;
-        watermark = lineNo;
-        continue;
       }
 
       try {

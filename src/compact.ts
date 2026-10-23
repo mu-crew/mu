@@ -15,7 +15,6 @@
 // DB first and runs the drift check after.
 
 import type { Db } from "./db.js";
-import { intentSpellings } from "./legacy-ops.js";
 import { OPS_ENTITIES_SQL } from "./logs.js";
 
 /** Note tombstones whose payload is redundant with a put under the same key. */
@@ -83,17 +82,16 @@ export interface ForgetPlan {
 
 /** Every torn-down workstream that is not live again, largest first. */
 export function listForgetCandidates(db: Db): ForgetCandidate[] {
-  const spellings = intentSpellings("workstream.teardown");
   const names = db
     .prepare(
       `SELECT key AS name, MAX(created_at) AS at
          FROM ops
         WHERE entity = 'workstream' AND op = 'del'
-          AND intent IN (${spellings.map(() => "?").join(", ")})
+          AND intent = 'workstream.teardown'
           AND key NOT IN (SELECT name FROM workstreams)
         GROUP BY key`,
     )
-    .all(...spellings) as { name: string; at: string }[];
+    .all() as { name: string; at: string }[];
   const cost = db.prepare(
     `SELECT COUNT(*) AS n, COALESCE(SUM(length(payload)), 0) AS b FROM ops WHERE ${WORKSTREAM_OPS_WHERE}`,
   );
