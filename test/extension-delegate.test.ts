@@ -4,13 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DELEGATE_CANCEL_TOOL,
-  DELEGATE_STATUS_KEY,
   DELEGATE_TOOL,
   type DelegateCtx,
   delegateEnabled,
   delegateMax,
   delegateMessage,
-  delegateStatus,
   droppedNote,
   formatElapsed,
   labelStem,
@@ -18,7 +16,6 @@ import {
   type MuResult,
   type MuRunner,
   PENDING_CHANNEL,
-  PRUNE_FAILED_MS,
   registerDelegate,
 } from "../extension/delegate.js";
 import muPi, { type MuPiContext } from "../extension/mu-pi.js";
@@ -35,6 +32,11 @@ import {
 import { withEnv } from "./_env.js";
 
 installDelegateEnv();
+
+const pendingCounts = (p: ReturnType<typeof fakePi>) =>
+  p.emitted
+    .filter((e) => e.channel === PENDING_CHANNEL)
+    .map((e) => (e.data as { source: string; count: number }).count);
 
 describe("registration guards", () => {
   it("registers mu_delegate and mu_delegate_cancel in an unmanaged pi", () => {
@@ -486,13 +488,11 @@ describe("mu_delegate", () => {
     expect(content).toContain("last pane lines");
   });
 
-  it("an API error keeps the pane, names the error, and counts as failed in the footer", async () => {
+  it("an API error keeps the pane, names the error, and leaves nothing outstanding", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    const setStatus = vi.fn();
-    const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus } };
-    await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
+    await tool(p).execute("t", { task: "x" });
     mu.waits
       .get("delegate-2")
       ?.resolve(ok({ agents: [{ outcome: "error", lastError: "529 overloaded" }] }));
@@ -505,57 +505,7 @@ describe("mu_delegate", () => {
     expect(content).toContain("529 overloaded");
     expect(content).toContain("re-issue the call, or record the check as UNVERIFIED");
     expect(content).toContain("mu agent close delegate-2 -w scratch");
-    expect(setStatus.mock.calls.at(-1)).toEqual([DELEGATE_STATUS_KEY, "1 failed"]);
-  });
-
-  it("spawns while a failed delegate lingers list agents at most once per PRUNE_FAILED_MS", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      const mu = fakeMu({
-        on: { list: () => Promise.resolve(ok({ agents: [{ name: "delegate-2" }] })) },
-      });
-      const p = fakePi();
-      registerDelegate(p.pi, mu.run);
-      const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus: vi.fn() } };
-      await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
-      mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "error", lastError: "529" }] }));
-      await flush();
-      await flush();
-      const lists = () => mu.calls.filter((c) => c[1] === "list").length;
-      const before = lists();
-      for (const id of ["a", "b", "c"]) {
-        await tool(p).execute(id, { task: id }, undefined, undefined, ctx);
-      }
-      expect(lists() - before).toBe(1); // three spawns, one listing
-      vi.setSystemTime(Date.now() + PRUNE_FAILED_MS);
-      await tool(p).execute("d", { task: "d" }, undefined, undefined, ctx);
-      expect(lists() - before).toBe(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("a failed delegate leaves the footer once its pane is gone", async () => {
-    let listed: { name: string }[] = [{ name: "delegate-1" }];
-    const mu = fakeMu({
-      on: { list: () => Promise.resolve(ok({ agents: listed })) },
-    });
-    const p = fakePi();
-    registerDelegate(p.pi, mu.run);
-    const setStatus = vi.fn();
-    const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus } };
-    await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
-    mu.waits
-      .get("delegate-2")
-      ?.resolve(ok({ agents: [{ outcome: "error", lastError: "Connection error." }] }));
-    await flush();
-    await flush();
-    expect(setStatus.mock.calls.at(-1)?.[1]).toBe("1 failed");
-    // The model closed it from bash; the next call's listing no longer has it.
-    listed = [{ name: "delegate-1" }];
-    await tool(p).execute("u", { task: "y" }, undefined, undefined, ctx);
-    expect(setStatus.mock.calls.some((c) => c[1] === "1 delegate running")).toBe(true);
-    expect(setStatus.mock.calls.at(-1)?.[1]).not.toContain("failed");
+    expect(pendingCounts(p)).toEqual([1, 0]); // a failed pane has answered
   });
 
   it("throws (a normal tool error) when the control socket is not ok", async () => {
@@ -726,10 +676,8 @@ describe("errors and corner cases", () => {
     const ab = deferred();
     const mu = fakeMu({ on: { abort: () => ab.promise } });
     const p = fakePi();
-    const setStatus = vi.fn();
     registerDelegate(p.pi, mu.run);
-    const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus } };
-    await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
+    await tool(p).execute("t", { task: "x" });
     const cancel = tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "delegate-2" });
     await flush();
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "late" }] }));
@@ -740,20 +688,18 @@ describe("errors and corner cases", () => {
     await flush();
     await flush();
     expect(sentText(p)).toContain("late");
-    expect(setStatus.mock.calls.at(-1)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+    expect(pendingCounts(p).at(-1)).toBe(0);
   });
 
-  it("cancel whose abort fails before any answer keeps waiting (footer stays)", async () => {
+  it("cancel whose abort fails before any answer keeps waiting (still outstanding)", async () => {
     const mu = fakeMu({ on: { abort: () => Promise.resolve(fail("nope")) } });
     const p = fakePi();
-    const setStatus = vi.fn();
     registerDelegate(p.pi, mu.run);
-    const ctx = { hasUI: true, ui: { notify: vi.fn(), setStatus } };
-    await tool(p).execute("t", { task: "x" }, undefined, undefined, ctx);
+    await tool(p).execute("t", { task: "x" });
     await expect(
       tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "delegate-2" }),
     ).rejects.toThrow(/nope/);
-    expect(setStatus.mock.calls.at(-1)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
+    expect(pendingCounts(p)).toEqual([1]);
     mu.waits
       .get("delegate-2")
       ?.resolve(ok({ agents: [{ outcome: "done", lastText: "still here" }] }));
@@ -780,10 +726,7 @@ describe("errors and corner cases", () => {
 });
 
 describe("murmur pending report", () => {
-  const counts = (p: ReturnType<typeof fakePi>) =>
-    p.emitted
-      .filter((e) => e.channel === PENDING_CHANNEL)
-      .map((e) => (e.data as { source: string; count: number }).count);
+  const counts = pendingCounts;
 
   it("reports running + queued delegates, and zero before the last answer is delivered", async () => {
     process.env.MU_DELEGATE_MAX = "1";
@@ -816,6 +759,16 @@ describe("murmur pending report", () => {
     expect(atDelivery).toBe(0);
   });
 
+  it("cancelling a queued call lowers the reported count", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    const p = fakePi();
+    registerDelegate(p.pi, fakeMu().run);
+    await tool(p).execute("a", { task: "one" });
+    await tool(p).execute("b", { task: "two" }); // queued-1
+    await tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "queued-1" });
+    expect(counts(p)).toEqual([1, 2, 1]);
+  });
+
   it("reports zero when a session shutdown drops the watchers", async () => {
     const mu = fakeMu();
     const p = fakePi();
@@ -826,25 +779,20 @@ describe("murmur pending report", () => {
   });
 });
 
-describe("footer status", () => {
-  const uiCtx = () => {
-    const setStatus = vi.fn();
-    return { setStatus, ctx: { hasUI: true, ui: { notify: vi.fn(), setStatus } } };
-  };
-  const last = (f: ReturnType<typeof vi.fn>) => f.mock.calls.at(-1);
+describe("pending reports and delivery tracking", () => {
+  const uiCtx = () => ({ ctx: { hasUI: true, ui: { notify: vi.fn() } } });
 
-  it("counts running delegates and clears when the last answer arrives", async () => {
+  it("reports running delegates and zero when the last one is cancelled", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    const { setStatus, ctx } = uiCtx();
+    const { ctx } = uiCtx();
     await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
     await tool(p).execute("b", { task: "two" }, undefined, undefined, ctx);
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "2 delegates running"]);
+    expect(pendingCounts(p)).toEqual([1, 2]);
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
     await flush();
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
+    expect(pendingCounts(p)).toEqual([1, 2, 1]);
     await tool(p, DELEGATE_CANCEL_TOOL).execute(
       "c",
       { name: "delegate-3" },
@@ -852,10 +800,10 @@ describe("footer status", () => {
       undefined,
       ctx,
     );
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+    expect(pendingCounts(p)).toEqual([1, 2, 1, 0]);
   });
 
-  it("shows a call as starting the moment it is made, then running once its pane is up", async () => {
+  it("counts a call the moment it is made, before its pane is up, without double counting", async () => {
     let releaseSpawn: (r: MuResult) => void = () => {};
     const mu = fakeMu({
       on: {
@@ -867,36 +815,36 @@ describe("footer status", () => {
     });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    const { setStatus, ctx } = uiCtx();
+    const { ctx } = uiCtx();
     const call = tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
     await flush();
-    // The spawn has not returned: the footer already shows the call.
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 starting"]);
+    // The spawn has not returned: the call is already outstanding.
+    expect(pendingCounts(p)).toEqual([1]);
     releaseSpawn(
       ok({ agent: { name: "delegate-2" }, ctl: "ok", send: { ok: true, runs: 0 }, nextSteps: [] }),
     );
     await call;
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
+    expect(pendingCounts(p)).toEqual([1]); // starting -> running is not a second delegate
   });
 
-  it("a spawn that fails while starting clears the footer", async () => {
+  it("a spawn that fails while starting reports zero", async () => {
     const mu = fakeMu({
       on: { spawn: () => Promise.resolve({ code: 1, stdout: "", stderr: "boom" }) },
     });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    const { setStatus, ctx } = uiCtx();
+    const { ctx } = uiCtx();
     await expect(
       tool(p).execute("a", { task: "one" }, undefined, undefined, ctx),
     ).rejects.toThrow();
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+    expect(pendingCounts(p)).toEqual([1, 0]);
   });
 
   it("counts a finished answer as pending until it enters the conversation", async () => {
     const mu = fakeMu();
     const p = fakePi();
-    registerDelegate(p.pi, mu.run);
-    const { setStatus, ctx } = uiCtx();
+    const handle = registerDelegate(p.pi, mu.run);
+    const { ctx } = uiCtx();
     p.state.busy = true;
     await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
     await tool(p).execute("b", { task: "two" }, undefined, undefined, ctx);
@@ -905,14 +853,15 @@ describe("footer status", () => {
     await flush();
     // Sent, but pi is mid-turn: it waits in pi's follow-up queue.
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running, 1 result pending"]);
+    expect(handle.answerPending()).toBe(true);
+    expect(pendingCounts(p).at(-1)).toBe(1); // the second delegate only
     // Someone else's custom message does not clear it.
     await p.fire("message_start", {
       message: { role: "custom", customType: "other", details: { delivery: 1 } },
     });
-    expect(last(setStatus)?.[1]).toContain("1 result pending");
+    expect(handle.answerPending()).toBe(true);
     await p.drainQueue();
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 delegate running"]);
+    expect(handle.answerPending()).toBe(false);
   });
 
   it("an aborted run drops queued answers from the pending count and points at each one", async () => {
@@ -920,8 +869,8 @@ describe("footer status", () => {
     process.env.XDG_CACHE_HOME = cache;
     const mu = fakeMu();
     const p = fakePi();
-    registerDelegate(p.pi, mu.run);
-    const { setStatus, ctx } = uiCtx();
+    const handle = registerDelegate(p.pi, mu.run);
+    const { ctx } = uiCtx();
     p.state.busy = true;
     await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
     mu.waits
@@ -931,9 +880,9 @@ describe("footer status", () => {
       );
     await flush();
     await flush();
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 result pending"]);
+    expect(handle.answerPending()).toBe(true);
     await p.fire("agent_settled", { type: "agent_settled", aborted: true });
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+    expect(handle.answerPending()).toBe(false);
     // One note, no turn, one line pointing at the copy and the session.
     expect(p.sendMessage).toHaveBeenCalledTimes(2);
     const [note, opts] = p.sendMessage.mock.calls[1] ?? [];
@@ -959,8 +908,8 @@ describe("footer status", () => {
     // dropped, the run ends normally (aborted: false) and nothing arrives.
     const mu = fakeMu();
     const p = fakePi();
-    registerDelegate(p.pi, mu.run);
-    const { setStatus, ctx } = uiCtx();
+    const handle = registerDelegate(p.pi, mu.run);
+    const { ctx } = uiCtx();
     p.state.busy = true;
     await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
     mu.waits
@@ -975,14 +924,14 @@ describe("footer status", () => {
     expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
     const [first] = p.sendMessage.mock.calls[0] ?? [];
     expect(again).toEqual(first);
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 result pending"]);
+    expect(handle.answerPending()).toBe(true);
     // pi starts the resent message: it arrives once and the count clears.
     p.state.busy = false;
     await p.fire("message_start", {
       type: "message_start",
       message: { role: "custom", ...(again as object) },
     });
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
+    expect(handle.answerPending()).toBe(false);
   });
 
   it("a follow-up that pi drained before the run ended is not sent again", async () => {
@@ -1170,18 +1119,6 @@ describe("footer status", () => {
     const p = fakePi();
     registerDelegate(p.pi, fakeMu().run);
     await expect(tool(p).execute("a", { task: "x" })).resolves.toBeDefined();
-  });
-
-  it("delegateStatus words the counts", () => {
-    expect(delegateStatus(0)).toBeUndefined();
-    expect(delegateStatus(1)).toBe("1 delegate running");
-    expect(delegateStatus(3)).toBe("3 delegates running");
-    expect(delegateStatus(0, 2)).toBe("2 starting");
-    expect(delegateStatus(3, 1)).toBe("3 delegates running, 1 starting");
-    expect(delegateStatus(16, 0, 4)).toBe("16 delegates running, 4 queued");
-    expect(delegateStatus(2, 0, 0, 1)).toBe("2 delegates running, 1 failed");
-    expect(delegateStatus(0, 0, 0, 0, 1)).toBe("1 result pending");
-    expect(delegateStatus(1, 0, 0, 0, 2)).toBe("1 delegate running, 2 results pending");
   });
 });
 
