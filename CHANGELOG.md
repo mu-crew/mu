@@ -1523,7 +1523,7 @@ old paste path.
 
 **Upgrading from 2.x:** stop every `mu` process, back up the DB, migrate
 the backup with `scripts/migrate.ts`, verify, then swap. mu 3.0 refuses
-a v10 DB until you do. The recipe is in [scripts/README.md](scripts/README.md).
+a v10 DB until you do. The recipe is in `scripts/README.md` (removed).
 
 ### Breaking
 
