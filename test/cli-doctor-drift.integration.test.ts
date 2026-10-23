@@ -131,7 +131,12 @@ describe("mu doctor — drift + fleet checks", () => {
       key: "demo/a",
       field: "impact",
     });
-    expect(parsed.fleet.map((f) => f.name)).toEqual(["db-vs-sync", "db-filesystem", "name-case", "segment-version"]);
+    expect(parsed.fleet.map((f) => f.name)).toEqual([
+      "db-vs-sync",
+      "db-filesystem",
+      "name-case",
+      "segment-version",
+    ]);
     expect(parsed.remediation.length).toBeGreaterThan(0);
   });
 
