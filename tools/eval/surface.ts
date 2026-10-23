@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { Surface } from "./types.ts";
 
 export const SURFACES_DIR: string = join(homedir(), ".cache", "mu", "eval", "surfaces");
@@ -26,14 +26,26 @@ export function surfaceFromDir(name: string, root: string): Surface {
   return surface;
 }
 
+/** A surface name is one plain path segment: no separators, no "..", not hidden. */
+export function surfaceDir(name: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || name.includes("..")) {
+    throw new Error(`invalid surface name ${JSON.stringify(name)}: use letters, digits, . _ -`);
+  }
+  const dir = join(SURFACES_DIR, name);
+  if (!resolve(dir).startsWith(SURFACES_DIR + sep)) {
+    throw new Error(`invalid surface name ${JSON.stringify(name)}: escapes ${SURFACES_DIR}`);
+  }
+  return dir;
+}
+
 function run(cmd: string, args: string[], cwd: string): string {
   return execFileSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
 }
 
 /** Export <ref> of <repo> into SURFACES_DIR/<name> and build it. Reuses a built dir at the same sha. */
 export async function prepareSurface(name: string, ref: string, repo: string): Promise<Surface> {
+  const dir = surfaceDir(name);
   const sha = run("git", ["-C", repo, "rev-parse", "--verify", `${ref}^{commit}`], repo).trim();
-  const dir = join(SURFACES_DIR, name);
   const stamp = join(dir, ".ref");
   const same = existsSync(stamp) && readFileSync(stamp, "utf8").trim() === sha;
   if (!(same && existsSync(join(dir, "dist")))) {

@@ -1,4 +1,4 @@
-// One isolated sandbox per run: own HOME, own DB, own sync dir, own private tmux server.
+// One isolated sandbox per run: own HOME, own DB, own sync dir, own private tmux server (TMUX_TMPDIR inside the sandbox).
 // Never touches the default tmux server, herdr, or the user's real mu state.
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -20,6 +20,15 @@ function resolveRealPi(): string {
 
 /** pi resolved once at import, from the caller's PATH, before any sandbox PATH exists. */
 export const REAL_PI: string = resolveRealPi();
+
+/**
+ * Where tmux puts socket `name` for a sandbox. TMUX_TMPDIR is pinned inside the sandbox, so
+ * every tmux the AUT or a worker starts (bare, absolute path, -L, default socket) lands here
+ * and none can reach the user's default server.
+ */
+export function tmuxSocketPath(dir: string, name: string): string {
+  return join(dir, "t", `tmux-${process.getuid?.() ?? 0}`, name);
+}
 
 const KEEP = new Set(["PATH", "TERM", "LANG", "LC_ALL", "USER", "SHELL"]);
 
@@ -45,6 +54,7 @@ export function sandboxEnv(
   env.MU_STATE_DIR = state;
   env.MU_SYNC_DIR = join(dir, "sync");
   env.MU_TMUX_SOCKET = tmuxSocket;
+  env.TMUX_TMPDIR = join(dir, "t");
   env.MU_MUX = "tmux";
   env.PI_CODING_AGENT_DIR = join(dir, "pi-agent");
   env.GIT_AUTHOR_NAME = "eval";
@@ -111,24 +121,30 @@ export async function mu(sb: Sandbox, args: string[]): Promise<ExecResult> {
 }
 
 const live = new Set<{ dir: string; sockets: () => string[] }>();
+const SOCKET_PATH_MAX = 100;
 let handlersInstalled = false;
 
-function killServer(socket: string): void {
+/** Kill the server behind a socket path. Always -S <path under a sandbox>, never the default. */
+function killServer(socketPath: string): void {
   try {
-    execFileSync("tmux", ["-L", socket, "kill-server"], { stdio: "ignore" });
+    execFileSync("tmux", ["-S", socketPath, "kill-server"], { stdio: "ignore" });
   } catch {
     // no server on that socket: fine
   }
 }
 
-/** Sockets recorded by scenarios (one name per line) in <dir>/tmux-sockets. */
-function recordedSockets(dir: string): string[] {
+/** Every socket path of a sandbox: the run's, the sandbox default, and names scenarios recorded
+ * (one per line) in <dir>/tmux-sockets. All of them live under <dir>/t. */
+function sandboxSockets(dir: string, tmuxSocket: string): string[] {
+  const names = [tmuxSocket, "default"];
   const file = join(dir, "tmux-sockets");
-  if (!existsSync(file)) return [];
-  return readFileSync(file, "utf8")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l !== "");
+  if (existsSync(file)) {
+    for (const l of readFileSync(file, "utf8").split("\n")) {
+      const n = l.trim();
+      if (n !== "" && !n.includes("/")) names.push(n);
+    }
+  }
+  return names.map((n) => tmuxSocketPath(dir, n));
 }
 
 function installHandlers(): void {
@@ -160,6 +176,11 @@ export async function createSandbox(
   const id = `mu-eval-${process.pid}-${Date.now()}-${randomBytes(3).toString("hex")}`;
   const dir = join(tmpdir(), id);
   const tmuxSocket = id;
+  if (tmuxSocketPath(dir, tmuxSocket).length > SOCKET_PATH_MAX) {
+    throw new Error(
+      `tmux socket path too long (${tmuxSocketPath(dir, tmuxSocket).length}); set TMPDIR shorter`,
+    );
+  }
   const env = { ...sandboxEnv(dir, surface, tmuxSocket, process.env), ...opts.env };
   const binDir = join(dir, "bin");
   const repoDir = join(dir, "repo");
@@ -196,7 +217,7 @@ export async function createSandbox(
       if (!o?.keep) rmSync(dir, { recursive: true, force: true });
     },
   };
-  const entry = { dir, sockets: () => [tmuxSocket, ...recordedSockets(dir)] };
+  const entry = { dir, sockets: () => sandboxSockets(dir, tmuxSocket) };
   live.add(entry);
   installHandlers();
 
@@ -205,6 +226,7 @@ export async function createSandbox(
       sb,
       "git init -q -b main && printf '# eval repo\\n' > README.md && git add README.md && git commit -q -m init",
     );
+    mkdirSync(env.TMUX_TMPDIR ?? join(dir, "t"), { recursive: true });
     await sh(sb, `tmux -L ${tmuxSocket} -f /dev/null new-session -d -s eval-boot`);
   } catch (e) {
     await sb.close();

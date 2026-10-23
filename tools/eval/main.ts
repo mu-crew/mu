@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FauxStep } from "./faux.ts";
 import { runAut } from "./runner.ts";
-import { createSandbox, FAUX_EXT, mu, sh } from "./sandbox.ts";
+import { createSandbox, FAUX_EXT, mu, sh, tmuxSocketPath } from "./sandbox.ts";
 import { prepareSurface, surfaceFromDir } from "./surface.ts";
 import type { Sandbox, Scenario, Surface } from "./types.ts";
 
@@ -47,9 +47,9 @@ const selftestScenario: Scenario = {
   },
 };
 
-function tmuxServerGone(socket: string): boolean {
+function tmuxServerGone(socketPath: string): boolean {
   try {
-    execFileSync("tmux", ["-L", socket, "ls"], { stdio: "ignore" });
+    execFileSync("tmux", ["-S", socketPath, "ls"], { stdio: "ignore" });
     return false;
   } catch {
     return true;
@@ -134,10 +134,10 @@ async function selftest(surface: Surface): Promise<number> {
   const scriptPath = join(scriptDir, "aut.json");
   writeFileSync(scriptPath, JSON.stringify(SELFTEST_SCRIPT));
   const sb = await createSandbox(surface);
-  const sockets = [sb.tmuxSocket];
+  const sockets = [tmuxSocketPath(sb.dir, sb.tmuxSocket)];
   const dir = sb.dir;
   try {
-    check("sandbox: private tmux server is up", !tmuxServerGone(sb.tmuxSocket));
+    check("sandbox: private tmux server is up", !tmuxServerGone(sockets[0] ?? ""));
     await selftestScenario.setup(sb);
     const m = await runAut(sb, selftestScenario, {
       model: "evalfaux/aut",
