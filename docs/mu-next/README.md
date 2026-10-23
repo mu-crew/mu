@@ -169,6 +169,33 @@ closes, briefed from the pinned brief and actual report.
 `close --note` = `--evidence`, `list --all/--owner/--mine`; `-i/-e`
 stay accepted and optional (`um_flags_partly`, `pv_impact_effort_flags`).
 
+## Works outside a multiplexer
+
+mu-next must work, delegates included, when the caller is not inside
+tmux or herdr (t3code, an IDE terminal, a plain shell, CI), with no
+extra config. Probed on 3.13.3 with `$TMUX` unset: `workstream init`,
+`agent spawn`, `agent list` and task verbs work, because mu starts a
+detached tmux server on demand; `mu_delegate` registers when tmux is on
+PATH. What breaks today:
+
+- **Scope.** Missing `-w` falls back to the tmux session name, which
+  does not exist here. Covered by explicit scope (below); the error is
+  one line and names `-w`.
+- **Attach hints assume a tmux client** (`tmux switch-client`, `tmux
+  attach`). From a non-tmux caller the hint is the one command that
+  opens a client in a new terminal (`tmux -L <sock> attach -t
+  mu-<ws>:<agent>`), and the dashboard's attach (`a`) falls back to
+  scrollback when no client can be opened.
+- **Delegates must not need a pane the caller can see.** The answer
+  path is the delegate task plus `mu wait` (above), not a pane switch;
+  the pane stays attachable for anyone who wants it.
+- **No mux at all** (no tmux, no herdr): `mu doctor` and every agent
+  verb fail with one line naming the install, and task/DAG/db/sync
+  verbs keep working.
+
+Eval scenario: the full orchestrator loop and a delegate wave from a
+caller with `TMUX`, `TMUX_PANE` and `HERDR_ENV` unset.
+
 ## Scope and identity
 
 - **Explicit scope.** Verbs require `-w`; workers use their injected
