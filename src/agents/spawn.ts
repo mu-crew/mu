@@ -334,29 +334,45 @@ const CTL_POLL_INTERVAL_MS = 250;
 /** Cadence of the socket-path stat, which costs no fork. */
 const CTL_STAT_INTERVAL_MS = 50;
 
+/** Clock + sleep the ctl handshake runs on. Real by default. */
+interface HandshakeClock {
+  now(): number;
+  delay(ms: number): Promise<void>;
+}
+let handshakeClock: HandshakeClock = { now: () => Date.now(), delay: (ms) => delay(ms) };
+
+/** TEST SEAM: drive the handshake on a virtual clock so deadline timing is counted, not elapsed. */
+export function setHandshakeClockForTests(clock: HandshakeClock): void {
+  handshakeClock = clock;
+}
+
+export function resetHandshakeClockForTests(): void {
+  handshakeClock = { now: () => Date.now(), delay: (ms) => delay(ms) };
+}
+
 /**
  * Poll the control socket until the extension answers or the budget
  * runs out. Returns the last probe outcome. The socket path is stat'd
  * every ~50 ms and probed as soon as it exists, so readiness is seen
  * within ~50 ms of pi binding it. `onMiss` (the pane-alive check) keeps
  * its 250 ms cadence plus one final check at the deadline, and may
- * throw to abort (the pane died); otherwise this never throws. Uses real
- * timers, not the `sleep` seam: tests stub that to a no-op, which would
- * turn this into a busy loop.
+ * throw to abort (the pane died); otherwise this never throws. Uses the
+ * `handshakeClock` (real by default), not the `sleep` seam: tests stub
+ * that to a no-op, which would turn this into a busy loop.
  */
 async function awaitCtlHandshake(
   sock: string,
   onMiss?: () => Promise<void>,
 ): Promise<Exclude<SpawnCtl, "skipped">> {
   const budgetMs = defaultSpawnCtlMs();
-  const deadline = Date.now() + budgetMs;
+  const deadline = handshakeClock.now() + budgetMs;
   let last: Exclude<SpawnCtl, "skipped"> = "missing";
   let lastMissAt = Number.NEGATIVE_INFINITY;
   let first = true;
   for (;;) {
     if (first || existsSync(sock)) {
       first = false;
-      const remaining = deadline - Date.now();
+      const remaining = deadline - handshakeClock.now();
       const probe = await ctlProbe(
         sock,
         Math.max(1, Math.min(remaining, CTL_POLL_INTERVAL_MS * 4)),
@@ -366,14 +382,14 @@ async function awaitCtlHandshake(
     }
     // The final check at the deadline always runs, throttle or not: a pane
     // that dies in the last <250 ms keeps the scrollback onMiss captured.
-    const atDeadline = Date.now() >= deadline;
-    if (onMiss && (atDeadline || Date.now() - lastMissAt >= CTL_POLL_INTERVAL_MS)) {
-      lastMissAt = Date.now();
+    const atDeadline = handshakeClock.now() >= deadline;
+    if (onMiss && (atDeadline || handshakeClock.now() - lastMissAt >= CTL_POLL_INTERVAL_MS)) {
+      lastMissAt = handshakeClock.now();
       await onMiss();
     }
-    const left = deadline - Date.now();
+    const left = deadline - handshakeClock.now();
     if (left <= 0) return last;
-    await delay(Math.min(CTL_STAT_INTERVAL_MS, left));
+    await handshakeClock.delay(Math.min(CTL_STAT_INTERVAL_MS, left));
   }
 }
 
