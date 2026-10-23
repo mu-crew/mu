@@ -18,9 +18,8 @@
 // out of the parsed payload.
 //
 // Layering: pure and colour-free. `src/cli/format.ts` adds picocolors
-// for the terminal, and `src/cli/tui/` renders the same strings inside
-// ink. Neither owns any prose logic — one formatter, three surfaces
-// (ROADMAP: no second render layer).
+// for the terminal. It owns no prose logic — one formatter, shared by every
+// surface (ROADMAP: no second render layer).
 
 import type { LocalIntent } from "./logs.js";
 import { formatPair, resolvePair } from "./tasks/status.js";

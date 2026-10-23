@@ -587,8 +587,8 @@ export function loadDoctorChecks(
 // These map a `DoctorCheck.name` to either (a) a single-line
 // informational shell command suitable for yank/paste, or (b) a
 // short multi-line paragraph explaining the failure shape. They
-// originally lived next to the slot-9 Doctor popup
-// (src/cli/tui/popups/doctor.tsx) but moved here per
+// originally lived next to the removed card TUI's Doctor popup but
+// moved here per
 // review_tui_doctor_remediation_lives_in_popup: neither function
 // has any rendering concern (both return plain strings) and the
 // popup's `renderDrillBody` was the only render-layer caller.

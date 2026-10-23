@@ -1,6 +1,4 @@
-// mu — `mu state` (canonical state card) and TUI back-compat dispatch.
-//
-// One verb, two render modes:
+// mu — `mu state` (canonical state card).
 //
 //   mu state                    full card: agents + orphans + tracks +
 //                               ready/in-progress/blocked/recent-closed +
@@ -11,26 +9,14 @@
 //                               attention surface; SQL/raw verbs as the
 //                               escape hatch underneath).
 //
-//   mu state --tui              interactive ink dashboard: glance cards,
-//                               fullscreen popups, live tick, read-only
-//                               act-intents that yank commands for the
-//                               user to run in a shell.
-//
-// Static JSON/render modes load their full data set via
-// loadWorkstreamSnapshot. The TUI owns its own poll loop and only
-// needs the resolved workstream names at launch. --tui is mutually
-// exclusive with --json.
-//
-// All modes support variadic `-w X[,Y]...` / `-w X -w Y` and `--all`.
-// In static modes N=1 renders single-mode (legacy shape) and N≥2
-// stacks per-workstream full cards. In TUI mode N≥2
-// switches workstreams via tabs.
+// Both render modes load their data via loadWorkstreamSnapshot and
+// support variadic `-w X[,Y]...` / `-w X -w Y` and `--all`. N=1 renders
+// single-mode (legacy shape); N≥2 stacks per-workstream full cards.
 //
 // Static snapshots run full reconciliation: refresh pane titles (the
 // operator's primary signal) and reap missing panes. Mid-spawn
 // placeholders remain protected by reconcile's pending-pane skip
-// (bug_agent_spawn_workspace_fk_failure). The TUI launches first and
-// performs its own fast/slow polling after Ink renders.
+// (bug_agent_spawn_workspace_fk_failure).
 
 import type { LiveAgent } from "../agents.js";
 import {
@@ -59,16 +45,12 @@ import {
   type WorkstreamSnapshot,
 } from "../state.js";
 import { isScratchWorkstream, listWorkstreams } from "../workstream.js";
-import { TUI_HANDLE_OPTS } from "./handle.js";
-import { resolveInitialTab } from "./tui-launch-focus.js";
-import { importTui } from "./tui-load.js";
 
 // ─── Per-workstream loaded data ─────────────────────────────────────
 
 // PerWsData was the previous private shape of loadWorkstreamData.
 // Both the type and the loader now live at src/state.ts as the SDK
-// seam (WorkstreamSnapshot + loadWorkstreamSnapshot) so the new ink
-// TUI can consume them too. We keep `PerWsData` as a local alias to
+// seam (WorkstreamSnapshot + loadWorkstreamSnapshot). We keep `PerWsData` as a local alias to
 // avoid touching every renderer downstream.
 type PerWsData = WorkstreamSnapshot & { remoteWorkers: RemoteWorker[] };
 
@@ -90,15 +72,13 @@ function formatRemoteWorkersTable(rows: readonly RemoteWorker[]): string {
 //
 // N=1 (single -w value, --all on a single-workstream machine, or
 // auto-resolve) renders single-mode (legacy column shape + flat JSON).
-// N≥2 stacks per-workstream cards in static modes or opens tabbed
-// per-workstream snapshots in TUI mode.
+// N≥2 stacks per-workstream cards.
 
 export interface StateOpts {
   // Variadic on every render mode.
   workstream?: string[];
   all?: boolean;
   json?: boolean;
-  tui?: boolean;
   events?: number; // recent-events cap (default 20)
 }
 
@@ -161,13 +141,6 @@ function fullJsonShape(d: PerWsData): Record<string, unknown> {
 // ─── cmdState — dispatch ────────────────────────────────────────────
 
 export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
-  // --tui mutual-exclusion checks: enforce BEFORE the JSON / render
-  // branches so combining --tui with JSON errors loudly instead of
-  // silently winning whichever branch ran first.
-  if (opts.tui === true && opts.json === true) {
-    throw new UsageError("--tui and --json are mutually exclusive (TUI is render-only)");
-  }
-
   const workstreams = await resolveWorkstreamSet(db, opts);
 
   // workstreams.length === 0 splits into THREE distinct user errors,
@@ -211,21 +184,6 @@ export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
       "  mu --help                   # full verb list",
     ];
     throw new UsageError(lines.join("\n"));
-  }
-
-  // ── Interactive TUI branch (explicit via --tui) ──
-  // The legacy static card remains the default for `mu state` so it
-  // stays visible to LLMs, screenshots, docs, and muscle-memory users.
-  // Bare `mu` owns the TTY auto-route for humans. Mutual-exclusion with
-  // --json is enforced before any static snapshot work.
-  // Multi-workstream TUI is supported via tabs as of
-  // feat_tui_multi_workstream (workstream `tui-impl`): the resolved
-  // ws set is forwarded to <App>; Tab / Shift-Tab cycles tabs.
-  if (opts.tui === true) {
-    const { runTui } = await importTui();
-    const initialActive = await resolveInitialTab(workstreams, db);
-    await runTui(db, { workstreams: workstreams, initialActive });
-    return;
   }
 
   const eventLimit = opts.events ?? 20;
@@ -374,12 +332,6 @@ function renderFullCard(d: PerWsData): void {
   }
 }
 
-export function printBareNoWorkstreamsHint(): void {
-  console.log("");
-  console.log("Next:");
-  console.log("  Get started: mu workstream init <name>");
-}
-
 // ─── commander wiring ────────────────────────────────────────────────
 //
 // wireStateCommands is called by buildProgram() in src/cli.ts. Wired
@@ -391,25 +343,17 @@ export function wireStateCommands(program: Command): void {
   program
     .command("state")
     .description(
-      "Canonical state card: agents + orphans + tracks + ready/in-progress/blocked/recent-closed tasks + workspaces + remote workers + recent events. The agent/API-facing static state surface. Default prints the static card; pass --tui to enter the interactive ink-based dashboard. -w accepts repeat or comma-separate (or both); --all is sugar for every workstream on this machine. N≥2 stacks per-workstream cards.",
+      "Canonical state card: agents + orphans + tracks + ready/in-progress/blocked/recent-closed tasks + workspaces + remote workers + recent events. The agent/API-facing static state surface. Prints the static card. -w accepts repeat or comma-separate (or both); --all is sugar for every workstream on this machine. N≥2 stacks per-workstream cards.",
     )
     .option(
       "-w, --workstream <names...>",
       "workstream(s) to render (repeat or comma-separate; or both; defaults to $MU_SESSION or current tmux session)",
     )
     .option("--all", "include every workstream on this machine")
-    .option(
-      "--tui",
-      "interactive TUI (rounded-border dashboard with cards + popups; multi-ws via Tab/Shift-Tab tabs)",
-    )
     .option("--events <n>", "how many recent log entries (ops) to include (default 20)", parseLines)
     .option(...JSON_OPT)
     .action(function () {
       const opts = (this as Command).opts() as StateOpts;
-      return handle(
-        (db) => cmdState(db, opts),
-        this as Command,
-        opts.tui === true ? TUI_HANDLE_OPTS : undefined,
-      )();
+      return handle((db) => cmdState(db, opts), this as Command)();
     });
 }

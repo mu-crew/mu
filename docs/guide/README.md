@@ -15,7 +15,6 @@ How-to guides:
 - [Run a worker on another machine](remote.md)
 - [Recover from a broken state](recovery.md)
 - [Sync between machines](sync.md)
-- [Use the TUI dashboard](tui.md)
 - [Query and script mu](sql.md)
 - [Upgrade mu](upgrade.md)
 - [Choose a multiplexer backend](backends.md)

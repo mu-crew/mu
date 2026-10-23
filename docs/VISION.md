@@ -249,8 +249,8 @@ the agent choosing; mu reads none of it.
    them they are not the orchestrator.
 4. **Every invocation is short-lived, except two interactive readers.**
    No daemon, no resident state outside SQLite, no background process.
-   The exceptions are `mu log --tail` and the TUI (`mu state --tui`, or
-   bare `mu` on a TTY). Both are:
+   The exceptions are `mu log --tail` and the dashboard (removed in
+   mu-next; the rewrite keeps these rules). Both are:
    - owned by a human or parent script and gone when it ends;
    - free of user actions: TUI keys copy the `mu <verb>` command to
      the clipboard and exit, so every change the operator asks for is a
@@ -263,8 +263,8 @@ the agent choosing; mu reads none of it.
      The TUI's slow tick runs short-lived probes (mux liveness, VCS
      status) and ambient sync, and its handoffs (lazygit, tuicr, attach,
      clipboard) run one foreground child each; none outlives the TUI;
-   - TTY-gated: pipes, CI, `--json`, and `MU_NO_TUI=1` never enter the
-     TUI, and plain `mu state` prints the static card.
+   - TTY-gated: pipes, CI, and `--json` never enter the TUI, and plain
+     `mu state` prints the static card.
 
    The control socket is not a third exception. The pi process serves it
    and it dies with that process. Any other long-lived process needs its

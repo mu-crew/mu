@@ -110,7 +110,7 @@ export function extractDocCommands(file: string, source: string): DocCommand[] {
       .replace(/[;&]+$/, "")
       .trim();
     if (!/^mu(\s|$)/.test(text)) return;
-    if (text === "mu") return; // bare `mu` is the TUI, no verb to check
+    if (text === "mu") return; // bare `mu` prints help, no verb to check
     out.push({ file, line, text });
   };
 

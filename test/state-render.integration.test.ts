@@ -1,16 +1,13 @@
 // Tests for the unified `mu state` verb.
 //
-// `mu state` owns the static state card and the opt-in TUI:
+// `mu state` owns the static state card:
 //
 //   mu state             default: full top-to-bottom card
-//   mu state --tui       interactive ink dashboard (read-only)
 //
-// `--tui` is mutually exclusive with `--json`. All
-// modes accept variadic `-w X[,Y]...` / `-w X -w Y` and `--all`.
+// All modes accept variadic `-w X[,Y]...` / `-w X -w Y` and `--all`.
 //
-// Tests exercise: full render, mutual-exclusion error,
-// cross-workstream handling, and JSON shapes per spec. TUI specifics
-// live in the `test/tui-*.test.ts` files.
+// Tests exercise: full render, cross-workstream handling, and JSON
+// shapes per spec.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
