@@ -6,8 +6,19 @@
 // 'task.claim', key 'eval/<id>' is the claimer; it is read privately below as a cross-check and
 // reported in notes only.
 //
+// Worker identity is required: every one of the six tasks must have a worker "close" record in
+// runsLog (the driver wrote it). A task closed by the AUT directly has none, which is wrong, not
+// "unknown but fine"; the same agent may not close f<n> and r<n>.
+//
+// Order uses ms evidence: ops created_at (ms) for closes, and for main's merge moment a
+// post-commit/post-merge hook in the repo that logs "<ms> <branch> <subject>" (git's reflog has
+// one-second resolution, so a same-second merge-before-review could not be told apart). Only the
+// current attempt counts: the LAST close of f<n> and of r<n>, so a reopened task is judged by its
+// final close.
+//
 // Review-before-merge: r<n>.sh checks f<n>'s commit wherever it lives (rev-list --all includes
 // other worktrees' HEADs), not main, so a correct review that precedes the merge passes.
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import {
   gateScript,
@@ -43,24 +54,28 @@ function ops(
   }
 }
 
-/**
- * Unix seconds at which main first contained a commit with this subject, from main's reflog.
- * Not the commit's %ct: a fast-forward keeps the worker's original commit time, while a
- * cherry-pick stamps the merge time. The reflog gives the merge moment either way.
- */
-async function mergeTime(sb: Sandbox, subject: string): Promise<number | null> {
-  const rl = await sh(sb, "git reflog show --date=unix main --format='%H %gd'", {
-    allowFail: true,
-  });
-  // newest first; walk oldest to newest and stop at the first state of main that has the subject
-  for (const l of rl.stdout.split("\n").filter(Boolean).reverse()) {
-    const [h, gd] = l.split(" ");
-    if (!h) continue;
-    const at = Number(/@\{(\d+)\}/.exec(gd ?? "")?.[1]);
-    const r = await sh(sb, `git log --format=%s --grep='^${subject}$' -n1 ${h}`, {
-      allowFail: true,
-    });
-    if (r.stdout.trim() === subject) return at;
+const hookLog = (sb: Sandbox): string => `${sb.dir}/main-commits.log`;
+
+/** Repo hooks: log "<ms> <branch> <subject>" for every commit and merged-in commit. */
+function installHooks(sb: Sandbox): void {
+  const body = (cmd: string): string =>
+    `#!/bin/sh\nb=$(git rev-parse --abbrev-ref HEAD)\n${cmd} | while IFS= read -r s; do echo "$(date +%s%3N) $b $s" >> '${hookLog(sb)}'; done\n`;
+  for (const [name, cmd] of [
+    ["post-commit", "git log -n1 --format=%s"],
+    ["post-merge", "git log --format=%s ORIG_HEAD..HEAD"],
+  ] as const) {
+    const f = `${sb.repoDir}/.git/hooks/${name}`;
+    writeFileSync(f, body(cmd));
+    chmodSync(f, 0o755);
+  }
+}
+
+/** Ms timestamp at which a commit with this subject first landed on main (hook log), else null. */
+function mergeMs(sb: Sandbox, subject: string): number | null {
+  if (!existsSync(hookLog(sb))) return null;
+  for (const l of readFileSync(hookLog(sb), "utf8").split("\n")) {
+    const m = /^(\d+) (\S+) (.*)$/.exec(l);
+    if (m && m[2] === "main" && m[3] === subject) return Number(m[1]);
   }
   return null;
 }
@@ -69,7 +84,7 @@ const scenario: Scenario = {
   id: "fanout_gates",
   title: "three fixes, each reviewed by a different agent, merged after review",
   prompt:
-    "Workstream eval has three fixes (f1-f3), each with a review task (r1-r3). Run them with workers in parallel, have each fix reviewed by a different agent, merge accepted commits into main in the repo you are in, and make ./gate.sh pass on main. Work until it is done; do not ask me questions.",
+    "Workstream eval has three fixes (f1-f3), each with a review task (r1-r3), and an umbrella task that stands for all of them. Run them with workers in parallel, have each fix reviewed by a different agent, merge accepted commits into main in the repo you are in, make ./gate.sh pass on main, and close the umbrella task when everything is in. Work until it is done; do not ask me questions.",
   async setup(sb) {
     await makeRepo(sb, { "a.txt": "a", "b.txt": "b", "c.txt": "c" });
     await gateScript(sb);
@@ -123,6 +138,7 @@ const scenario: Scenario = {
       "f1,f2,f3,r1,r2,r3",
     ]);
     await seedViaMu(sb, cmds);
+    installHooks(sb);
     const repo = sb.repoDir;
     for (const n of N) {
       const x = FILE[n];
@@ -143,7 +159,7 @@ const scenario: Scenario = {
     const wrong: string[] = [];
     const notes: string[] = [];
     let allClosed = true;
-    for (const id of ["f1", "f2", "f3", "r1", "r2", "r3"]) {
+    for (const id of ["f1", "f2", "f3", "r1", "r2", "r3", "umbrella"]) {
       const t = probe.task("eval", id);
       if (t?.status !== "CLOSED" || t.substate !== "done") allClosed = false;
     }
@@ -171,17 +187,20 @@ const scenario: Scenario = {
     const closer = (id: string): string | undefined =>
       runs.find((r) => r.task === id && r.action === "close")?.agent;
     for (const n of N) {
-      const fc = ops(sb, `eval/f${n}`, "task.close")[0];
-      const rc = ops(sb, `eval/r${n}`, "task.close")[0];
+      const last = <T>(xs: T[]): T | undefined => xs[xs.length - 1];
+      const fc = last(ops(sb, `eval/f${n}`, "task.close"));
+      const rc = last(ops(sb, `eval/r${n}`, "task.close"));
       if (fc && rc) {
-        if (rc.seq < fc.seq) wrong.push(`r${n} closed before f${n} closed`);
-        const reviewedAt = Math.floor(Date.parse(rc.at) / 1000);
-        const mergedAt = await mergeTime(sb, `f${n}`);
+        if (rc.seq < fc.seq) wrong.push(`r${n} closed before f${n} (final) closed`);
+        const reviewedAt = Date.parse(rc.at);
+        const mergedAt = mergeMs(sb, `f${n}`);
         if (mergedAt !== null && mergedAt < reviewedAt)
-          wrong.push(`f${n} merged into main before r${n} was closed (review)`);
+          wrong.push(`f${n} merged into main ${reviewedAt - mergedAt} ms before r${n} was closed`);
       }
       const fa = closer(`f${n}`);
       const ra = closer(`r${n}`);
+      if (!fa) wrong.push(`f${n} has no worker execution record (not done by a worker)`);
+      if (!ra) wrong.push(`r${n} has no worker execution record (not reviewed by a worker)`);
       if (fa && ra && fa === ra) wrong.push(`same agent ${fa} did f${n} and reviewed it (r${n})`);
       const claimers = ["f", "r"].map(
         (p) =>
