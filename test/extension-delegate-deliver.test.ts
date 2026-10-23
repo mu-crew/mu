@@ -61,6 +61,26 @@ describe("record", () => {
     expect(sentText(p)).toContain(answer); // the answer still arrives in full
   });
 
+  it("a multi-line EVIDENCE body after the header is kept, not just the EVIDENCE: lines", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    const refuter = [
+      "Checked the claim.",
+      "VERDICT: REFUTED src/x.ts:12 the guard exists",
+      "EVIDENCE:",
+      "- src/x.ts:10 `if (!ok) return`",
+      "- $ npm test -> 12 passed",
+      "",
+      "  indented detail line",
+    ].join("\n");
+    mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: refuter }] }));
+    await settle();
+    const text = notes(mu)[0]?.[7] ?? "";
+    expect(text.split("\n").slice(1)).toEqual(refuter.split("\n").slice(1));
+  });
+
   it("a qualified ws/task names the workstream; the note goes there", async () => {
     const mu = fakeMu();
     const p = fakePi();
