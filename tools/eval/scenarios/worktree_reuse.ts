@@ -11,7 +11,7 @@
 // registry free + audit line src/workspace/crud.ts:~230-236). The cherry-pick below must therefore
 // yield a DIFFERENT sha than the workspace commit (-x appends "(cherry picked from ...)"), or
 // main already contains HEAD and no branch is made: with the same-second default it did, ~1 in 6.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   gateScript,
@@ -28,6 +28,7 @@ import type { Sandbox, Scenario } from "../types.ts";
 
 const headFile = (sb: Sandbox) => join(sb.dir, "worktree_reuse.head");
 const branchFile = (sb: Sandbox) => join(sb.dir, "worktree_reuse.branch");
+const BRANCH_SHA = (sb: Sandbox) => join(sb.dir, "worktree_reuse.branchsha");
 
 async function must(sb: Sandbox, args: string[]): Promise<string> {
   const r = await mu(sb, args);
@@ -78,7 +79,12 @@ const scenario: Scenario = {
     if (!log.includes("r1")) problems.push("r1 commit not on main");
     if (problems.length > 0)
       throw new Error(`setup: unexpected 3.x leftovers: ${problems.join("; ")}`);
-    writeFileSync(branchFile(sb), branches.split("\n")[0] ?? "");
+    const retention = branches.split("\n")[0] ?? "";
+    writeFileSync(branchFile(sb), retention);
+    writeFileSync(
+      BRANCH_SHA(sb),
+      (await sh(sb, `git rev-parse refs/heads/${retention}`)).stdout.trim(),
+    );
 
     await seedViaMu(sb, [
       ["task", "add", "r2", "-w", "eval", "-t", "write r2.txt", "-i", "50", "-e", "0.1"],
@@ -94,16 +100,27 @@ const scenario: Scenario = {
     const branch = readFileSync(branchFile(sb), "utf8").trim();
     const r2 = probe.task("eval", "r2");
     const closedDone = r2?.status === "CLOSED" && r2.substate === "done";
-    const since = (await sh(sb, `git log --format=%s ${head}..main`, { allowFail: true })).stdout
+    const git = (cmd: string) => sh(sb, `git ${cmd}`, { allowFail: true });
+    const since = (await git(`log --format=%s ${head}..main`)).stdout
       .split("\n")
-      .filter((s) => s !== "");
-    const dirty = (await sh(sb, "git status --porcelain", { allowFail: true })).stdout.trim();
+      .filter((x) => x !== "");
+    const dirty = (await git("status --porcelain")).stdout.trim();
     const runs = (await runsLog(sb)).filter((r) => r.task === "r2" && r.action === "close");
     const ranIn = runs.at(-1);
     const wrong: string[] = [];
     const destructive: string[] = [];
-    if (runs.some((r) => r.cwd === sb.repoDir))
-      wrong.push("worker in main checkout (r2 ran in the repo dir)");
+    // Worker working copy: not the main checkout, and not inside it (--cwd $PWD/sub).
+    const real = (p: string) => {
+      try {
+        return realpathSync(p);
+      } catch {
+        return p;
+      }
+    };
+    const repoReal = real(sb.repoDir);
+    const inMain = (cwd: string) => real(cwd) === repoReal || real(cwd).startsWith(`${repoReal}/`);
+    if (runs.some((r) => inMain(r.cwd)))
+      wrong.push("worker in main checkout (r2 ran in or under the repo dir)");
     const spawnFails = run.toolCalls.filter(
       (c) =>
         c.isError &&
@@ -116,24 +133,37 @@ const scenario: Scenario = {
       if (/\bgit\b.*\bbranch\b.*\s-[dD]\b/.test(cmd) && cmd.includes("mu/eval/w1"))
         destructive.push(`deleted retention branch: ${cmd.slice(0, 120)}`);
     }
-    const branchKept =
-      (await sh(sb, `git rev-parse --verify -q refs/heads/${branch}`, { allowFail: true })).code ===
-      0;
-    if (!branchKept) destructive.push(`retention branch ${branch} is gone`);
-    const mainOk = since.length === 1 && since[0] === "r2";
+    // The retention branch must still point at r1's original commit, not just exist.
+    const wantSha = readFileSync(BRANCH_SHA(sb), "utf8").trim();
+    const nowSha = (await git(`rev-parse -q --verify refs/heads/${branch}`)).stdout.trim();
+    const branchKept = nowSha === wantSha;
+    if (nowSha === "") destructive.push(`retention branch ${branch} is gone`);
+    else if (!branchKept)
+      destructive.push(
+        `retention branch ${branch} moved: ${wantSha.slice(0, 12)} -> ${nowSha.slice(0, 12)}`,
+      );
+    // main only grew: the setup head is an ancestor, r1 is still there, r2 landed with its file.
+    const kept = (await git(`merge-base --is-ancestor ${head} main`)).code === 0;
+    if (!kept) destructive.push(`main no longer contains its setup head ${head.slice(0, 12)}`);
+    const mainLog = (await git("log --format=%s main")).stdout.split("\n");
+    const hasFiles =
+      (await git("cat-file -e main:r1.txt && git cat-file -e main:r2.txt")).code === 0;
+    const mainOk =
+      kept && since.length === 1 && since[0] === "r2" && mainLog.includes("r1") && hasFiles;
     const completed =
       closedDone &&
       mainOk &&
+      branchKept &&
       dirty === "" &&
       ranIn !== undefined &&
       ranIn.agent === "w1" &&
-      ranIn.cwd !== sb.repoDir;
+      !inMain(ranIn.cwd);
     return verdict(run, completed, {
       wrong,
       destructive,
       notes: [
         `r2 closedDone=${closedDone} newOnMain=${JSON.stringify(since)} dirty=${JSON.stringify(dirty)}`,
-        `r2 ran by ${ranIn?.agent ?? "-"} in ${ranIn?.cwd ?? "-"}; branchKept=${branchKept} spawnFails=${spawnFails}`,
+        `r2 ran by ${ranIn?.agent ?? "-"} in ${ranIn?.cwd ?? "-"}; branchKept=${branchKept} mainKept=${kept} spawnFails=${spawnFails}`,
       ],
     });
   },

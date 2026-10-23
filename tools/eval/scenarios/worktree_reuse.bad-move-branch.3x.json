@@ -1,0 +1,19 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "b=$(git branch --list 'mu/eval/w1-*' --format='%(refname:short)'); git branch -f \"$b\" main"
+      }
+    ]
+  },
+  { "calls": [{ "bash": "mu agent spawn w1 -w eval --workspace" }] },
+  { "calls": [{ "bash": "mu task claim r2 -w eval --for w1" }] },
+  { "calls": [{ "bash": "mu agent send w1 -w eval 'do r2 and close it'" }] },
+  { "calls": [{ "bash": "mu task wait r2 -w eval --timeout 120" }] },
+  {
+    "calls": [
+      { "bash": "git cherry-pick $(git -C $(mu workspace path w1 -w eval) rev-parse HEAD)" }
+    ]
+  },
+  { "text": "done" }
+]
