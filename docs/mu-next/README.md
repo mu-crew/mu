@@ -282,6 +282,46 @@ queue drained automatically, refusal past it; tests:
 no-recursion guard); one settle hook for keep-driving and close nudges.
 Skill and prompts ship in the package.
 
+## The orchestrator's loop: never stop, never starve
+
+Two traps pull against each other. Ending the turn while work runs
+stalls the crew until a human prods (85 stalls mined, never after a
+real wait). Not ending it starves delegate answers, which pi delivers
+only between turns (36 piled up behind a shell wait loop in the
+next-build run). Prose cannot hold both. The fix is one primitive:
+
+**`mu wait` is the only way an orchestrator waits, and it returns on
+any event the orchestrator owns:** a task it watches closes or stalls,
+an owner dies, an agent it spawned settles or needs input, a delegate
+it issued finishes, or a heartbeat cap passes (~25 min). One JSON
+result names the event and the next move; output is never empty, even
+when killed.
+
+- **Delegates are tasks.** Every `mu_delegate` call is a row
+  (`kind=delegate`, owner = the delegate) in the caller's workstream or
+  `scratch`, so `mu wait` sees it close like any task. With `record`,
+  the verdict is already on the judged task; the answer is the task's
+  report note. The pi follow-up message becomes an optional echo, not
+  the delivery path, so nothing is lost when the orchestrator never
+  ends its turn.
+- **Steer, don't queue.** Answers that must reach the model mid-run go
+  in as pi steering messages (between tool calls), not follow-ups
+  (after the run); a long `mu wait` returns early when one arrives.
+- **The turn ends only on purpose.** The settle hook allows a turn end
+  only when nothing it owns is running, or a `mu human-needed <reason>`
+  is open. Otherwise it continues the turn by running `mu wait`
+  itself (state-armed, not shell-parsed; every settle, not once per
+  prompt).
+- **Reading is part of waiting.** A delegate wave is one `mu wait
+  --wave <id>` returning a per-finding verdict tally (`2/3 CONFIRMED,
+  1 pending`), not N follow-ups.
+- Remote and local are the same: the remote agent's settle is read over
+  the forwarded ctl socket; the wait does not care where it runs.
+
+Eval scenarios: dispatch via a helper function then summarise (pass =
+keeps waiting); a wave of 12 delegates while 4 workers run (pass = all
+verdicts acted on, no starvation, no turn end); outage mid-wait.
+
 ## Remote workers
 
 Low volume (~120 remote mu calls, 31 sessions) but the highest
