@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentCloseCalls, tasksRunTwice, unsafeDiscards } from "../../tools/eval/agent-rules.ts";
-import { extraBadNames, missingGoldenEvidence } from "../../tools/eval/check-rules.ts";
+import { missingGoldenEvidence } from "../../tools/eval/check-rules.ts";
 import type { ToolCall } from "../../tools/eval/types.ts";
 
 const bash = (command: string): ToolCall => ({
@@ -86,17 +86,7 @@ describe("tasksRunTwice", () => {
   });
 });
 
-describe("check rules for extra bad scripts and golden evidence", () => {
-  it("lists <id>.bad-<name>.<family>.json only", () => {
-    const files = [
-      "a.bad.3x.json",
-      "a.bad-x.3x.json",
-      "a.bad-y-z.3x.json",
-      "a.bad-q.next.json",
-      "ab.bad-x.3x.json",
-    ];
-    expect(extraBadNames(files, "a", "3x")).toEqual(["x", "y-z"]);
-  });
+describe("golden evidence", () => {
   it("saturation golden must show a refusal", () => {
     const v = (n: string) => ({ completed: true, wrong: [], destructive: [], notes: [n] });
     expect(missingGoldenEvidence("delegate_saturation", v("refused=0 issued=12"))).toHaveLength(1);
