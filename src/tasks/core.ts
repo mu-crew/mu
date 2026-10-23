@@ -149,12 +149,13 @@ export function taskIdFor(db: Db, localId: string, workstream: string): number |
  * updates, and claim/release already update `updated_at` directly in
  * their own UPDATE statements; don't double-bump from here.
  *
+ * Monotonic: `updated_at` never moves backwards, so a touch carrying an
+ * earlier `now` than the stored value (two writers, clock skew) is a no-op.
+ *
  * Always called inside the same transaction as the child-row mutation
  * so the bump rolls back together with the mutation on error.
  */
 export function touchTask(db: Db, taskId: number, now?: string): void {
-  db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(
-    now ?? new Date().toISOString(),
-    taskId,
-  );
+  const ts = now ?? new Date().toISOString();
+  db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ? AND updated_at < ?").run(ts, taskId, ts);
 }
