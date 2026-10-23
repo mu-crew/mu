@@ -1,0 +1,260 @@
+// Sandbox fixtures: git repo + gate, the scripted worker driver, the ssh shim, seeding via mu.
+// Scenario files import these; they never edit this file.
+import { randomBytes } from "node:crypto";
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { mu, sh } from "./sandbox.ts";
+import type { Sandbox } from "./types.ts";
+
+const EVAL_DIR = dirname(fileURLToPath(import.meta.url));
+
+/** tools/eval/scenarios */
+export function scenarioDir(): string {
+  return join(EVAL_DIR, "scenarios");
+}
+
+export function shq(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function write(path: string, body: string, mode?: number): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, body);
+  if (mode !== undefined) chmodSync(path, mode);
+}
+
+/** Commit `files` (path -> content) on main in sb.repoDir. */
+export async function makeRepo(sb: Sandbox, files: Record<string, string>): Promise<void> {
+  for (const [name, content] of Object.entries(files)) write(join(sb.repoDir, name), content);
+  await sh(sb, "git add -A && git commit -q --allow-empty -m 'fixture files'");
+}
+
+/** ./gate.sh: exits 0 iff every *.txt file in the repo ends in a newline. */
+export async function gateScript(sb: Sandbox): Promise<void> {
+  write(
+    join(sb.repoDir, "gate.sh"),
+    [
+      "#!/bin/sh",
+      "bad=0",
+      'for f in $(git ls-files "*.txt"); do',
+      '  [ -s "$f" ] || continue',
+      '  [ -z "$(tail -c1 "$f")" ] || { echo "no trailing newline: $f"; bad=1; }',
+      "done",
+      '[ "$bad" = 0 ] && echo "gate ok" && exit 0',
+      'echo "gate fail"; exit 1',
+      "",
+    ].join("\n"),
+    0o755,
+  );
+  await sh(sb, "git add gate.sh && git commit -q -m 'add gate'");
+}
+
+// Worker driver: what a faux worker's bash call `eval-worker` does. The SQL is verbatim from the
+// e_0 design (core columns only, stable across surfaces).
+const DRIVER = String.raw`#!/bin/bash
+W="$EVAL_WORKER_DIR"
+DB="\${MU_DB_PATH:-$EVAL_DB_PATH}"
+AGENT="\${MU_AGENT_NAME:-}"
+SQLITE() { sqlite3 -readonly -cmd ".timeout 5000" "$DB" "$1"; }
+T=$(SQLITE "SELECT t.local_id FROM tasks t JOIN agents a ON a.id=t.owner_id JOIN workstreams w ON w.id=t.workstream_id WHERE a.name='$MU_AGENT_NAME' AND w.name='$MU_WORKSTREAM' AND t.status='IN_PROGRESS' LIMIT 1")
+if [ -z "$T" ]; then
+  n=$(grep -oE 'claim-[0-9]+' "$W/last-prompt.$AGENT" 2>/dev/null | head -n1 | cut -d- -f2)
+  if [ -n "$n" ] && [ -f "$W/answers/$n.txt" ]; then
+    cat "$W/answers/$n.txt"
+  else
+    echo "VERDICT: CONFIRMED"
+    echo "EVIDENCE: eval fixture default"
+  fi
+  exit 0
+fi
+log() { echo "$(date +%s%3N) $AGENT $T $(pwd) $1" >> "$W/runs.log"; }
+if [ -e "$W/tasks/$T.die-once" ]; then
+  rm -f "$W/tasks/$T.die-once"; touch "$W/die-next.$AGENT"; log die; echo dying; exit 0
+fi
+if [ -e "$W/tasks/$T.error-once" ]; then
+  rm -f "$W/tasks/$T.error-once"; touch "$W/error-next.$AGENT"; log error; exit 0
+fi
+mode=$(cat "$W/close-mode" 2>/dev/null || echo verb)
+nonce=$(cat "$W/nonce" 2>/dev/null)
+evidence="eval: $T.sh exit 0 run=$nonce"
+if [ -e "$W/tasks/$T.done" ]; then
+  out=$(cat "$W/tasks/$T.done")
+else
+  out=""
+  if [ -f "$W/tasks/$T.sh" ]; then
+    out=$(bash "$W/tasks/$T.sh"); rc=$?
+    if [ "$rc" != 0 ]; then log fail; echo "$T.sh exit $rc"; echo "$out"; exit 0; fi
+  fi
+  printf '%s' "$out" > "$W/tasks/$T.done"
+fi
+case "$mode" in
+  verb)
+    if [ "$(SQLITE "SELECT t.status FROM tasks t JOIN workstreams w ON w.id=t.workstream_id WHERE t.local_id='$T' AND w.name='$MU_WORKSTREAM'")" = CLOSED ]; then
+      echo "$T already CLOSED"
+    else
+      "$W/close.sh" "$T" "$evidence"
+    fi
+    log close ;;
+  block)
+    echo "CLOSE: task=$T evidence=\"$evidence\""
+    echo "REPORT:"
+    echo "$out"
+    log block ;;
+  *)
+    echo "DONE: $T"
+    echo "$out"
+    log done ;;
+esac
+exit 0
+`;
+
+/** Close action per surface family: one switch point. */
+function closeScript(family: "3x" | "next"): string {
+  const verb = 'mu task close "$1" -w "$MU_WORKSTREAM" --evidence "$2"';
+  // next: same command until the v_ verbs land.
+  return `#!/bin/bash\n${family === "3x" ? verb : verb}\n`;
+}
+
+const DEFAULT_WORKER_SCRIPT = [
+  { calls: [{ bash: "eval-worker" }] },
+  { textFromLastResult: true },
+  { calls: [{ bash: "eval-worker" }] },
+  { textFromLastResult: true },
+  { calls: [{ bash: "eval-worker" }] },
+  { textFromLastResult: true },
+];
+
+export async function writeWorkerDriver(
+  sb: Sandbox,
+  family: "3x" | "next",
+  opts: { closeMode?: "verb" | "block" | "none" } = {},
+): Promise<void> {
+  const w = sb.workerDir;
+  // The template literal above keeps \${ so String.raw does not expand it; undo that escape.
+  write(join(sb.binDir, "eval-worker"), DRIVER.replace(/\\\$\{/g, "${"), 0o755);
+  write(join(w, "close.sh"), closeScript(family), 0o755);
+  write(join(w, "default.json"), JSON.stringify(DEFAULT_WORKER_SCRIPT));
+  write(join(w, "close-mode"), opts.closeMode ?? "verb");
+  write(join(w, "nonce"), randomBytes(4).toString("hex"));
+  mkdirSync(join(w, "tasks"), { recursive: true });
+  mkdirSync(join(w, "answers"), { recursive: true });
+}
+
+export async function workerTask(
+  sb: Sandbox,
+  id: string,
+  opts: { sh?: string; dieOnce?: boolean; errorOnce?: boolean },
+): Promise<void> {
+  const dir = join(sb.workerDir, "tasks");
+  if (opts.sh !== undefined) write(join(dir, `${id}.sh`), `${opts.sh}\n`);
+  if (opts.dieOnce) write(join(dir, `${id}.die-once`), "");
+  if (opts.errorOnce) write(join(dir, `${id}.error-once`), "");
+}
+
+export async function delegateAnswer(sb: Sandbox, n: number, text: string): Promise<void> {
+  write(join(sb.workerDir, "answers", `${n}.txt`), `${text}\n`);
+}
+
+export async function runsLog(
+  sb: Sandbox,
+): Promise<{ ts: number; agent: string; task: string; cwd: string; action: string }[]> {
+  const file = join(sb.workerDir, "runs.log");
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => l.trim() !== "")
+    .flatMap((l) => {
+      const p = l.split(" ");
+      const [ts, agent, task] = p;
+      const action = p[p.length - 1];
+      if (ts === undefined || agent === undefined || task === undefined || action === undefined)
+        return [];
+      return [{ ts: Number(ts), agent, task, cwd: p.slice(3, -1).join(" "), action }];
+    });
+}
+
+export async function nonce(sb: Sandbox): Promise<string> {
+  return readFileSync(join(sb.workerDir, "nonce"), "utf8").trim();
+}
+
+/** Run mu commands for setup; throws on the first failure. */
+export async function seedViaMu(sb: Sandbox, cmds: string[][]): Promise<void> {
+  for (const args of cmds) {
+    const r = await mu(sb, args);
+    if (r.code !== 0) throw new Error(`seed failed (${r.code}): mu ${args.join(" ")}\n${r.stderr}`);
+  }
+}
+
+/** One `mu task note <id> -w <ws> -` per note, text on stdin; {author} adds --author. */
+export async function seedNotes(
+  sb: Sandbox,
+  ws: string,
+  id: string,
+  notes: (string | { text: string; author: string })[],
+): Promise<void> {
+  let i = 0;
+  for (const n of notes) {
+    const o = typeof n === "string" ? { text: n, author: undefined } : n;
+    const file = join(sb.dir, `note-${id}-${i++}.txt`);
+    write(file, o.text);
+    const author = o.author === undefined ? "" : ` --author ${shq(o.author)}`;
+    await sh(sb, `mu task note ${shq(id)} -w ${shq(ws)}${author} - < ${shq(file)}`);
+  }
+}
+
+/**
+ * A fake ssh host on this machine: <dir>/bin/ssh (node, tools/eval/ssh-shim.ts) and
+ * <dir>/hosts/<host>/{home/repo,bin,shim.json}. See ssh-args.ts for the rules.
+ */
+export async function sshShim(
+  sb: Sandbox,
+  opts: { host: string; maxSessions?: number },
+): Promise<{ hostRoot: string; sessionsLog: string }> {
+  const hostRoot = join(sb.dir, "hosts", opts.host);
+  const sessionsLog = join(hostRoot, "sessions.log");
+  const hostSock = `${sb.tmuxSocket}-h-${opts.host}`;
+  mkdirSync(join(hostRoot, "home"), { recursive: true });
+  mkdirSync(join(hostRoot, "bin"), { recursive: true });
+  mkdirSync(join(hostRoot, "tmp"), { recursive: true });
+  writeFileSync(sessionsLog, "");
+  if (!existsSync(join(hostRoot, "home", "repo"))) {
+    await sh(sb, `git clone -q ${shq(sb.repoDir)} ${shq(join(hostRoot, "home", "repo"))}`);
+  }
+  const realTmux = (await sh(sb, "command -v tmux")).stdout.trim();
+  write(
+    join(hostRoot, "bin", "tmux"),
+    `#!/bin/sh\nexec ${shq(realTmux)} -L ${shq(hostSock)} -f /dev/null "$@"\n`,
+    0o755,
+  );
+  // $SHELL on the host: `$SHELL -ilc "pi"` must not reread /etc/profile and reorder PATH.
+  write(
+    join(hostRoot, "bin", "eval-shell"),
+    '#!/bin/bash\n[ $# -eq 0 ] && exec bash\nfor last; do :; done\nexec bash -c "$last"\n',
+    0o755,
+  );
+  write(
+    join(hostRoot, "shim.json"),
+    JSON.stringify({
+      host: opts.host,
+      hostRoot,
+      maxSessions: opts.maxSessions,
+      sessionsLog,
+      tmuxSocket: hostSock,
+    }),
+  );
+  appendFileSync(join(sb.dir, "tmux-sockets"), `${hostSock}\n`);
+  write(
+    join(sb.binDir, "ssh"),
+    `#!/bin/sh\nEVAL_SANDBOX_DIR=${shq(sb.dir)} exec node ${shq(join(EVAL_DIR, "ssh-shim.ts"))} "$@"\n`,
+    0o755,
+  );
+  return { hostRoot, sessionsLog };
+}
