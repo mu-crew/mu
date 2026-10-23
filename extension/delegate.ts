@@ -574,7 +574,7 @@ export function registerDelegate(
   ): void | Promise<void> => {
     const d = message.details as { delivery?: unknown; name?: unknown } | undefined;
     const a = typeof d?.delivery === "number" ? arriving.get(d.delivery) : undefined;
-    if (a) Object.assign(a, { message, inRun: runActive && options?.triggerTurn !== false });
+    if (a) a.message = message;
     const at = { why, delivery: d?.delivery, name: d?.name, ...options };
     trace("sendMessage", { ...at, ui: ui !== undefined, arriving: arriving.size });
     try {
@@ -611,14 +611,10 @@ export function registerDelegate(
       content?: string;
       /** The follow-up as sent, to send again if pi's queue loses it. */
       message?: Parameters<MuDelegateApi["sendMessage"]>[0];
-      /** Sent while a run was active: it sits in pi's follow-up queue. */
-      inRun?: boolean;
+      /** Sent again after pi's queue lost it; one more loss drops it. */
       resent?: boolean;
     } & Omit<DroppedAnswer, "copy">
   >();
-  /** Between pi's agent_start and agent_end: a follow-up sent now is
-   *  queued behind the run instead of starting one. */
-  let runActive = false;
   let deliverySeq = 0;
   // The ctx of the latest tool call: answers settle outside any call, so
   // the footer is refreshed through the last ctx pi handed us.
@@ -1297,38 +1293,15 @@ export function registerDelegate(
   });
 
   // Escape clears pi's follow-up queue along with the run: answers that
-  // were queued in it never arrive. Stop counting them, copy each to the
-  // mu cache dir, and leave one line per answer in the conversation (no
-  // turn: the model sees it with the user's next prompt). An answer
+  // were queued in it never arrive: drop them with copies. An answer
   // still being delivered is not in the queue yet and arrives as usual.
-  pi.on("agent_start", () => {
-    runActive = true;
-  });
-  pi.on("agent_end", () => {
-    runActive = false;
-  });
-  pi.on("agent_settled", (e) => {
-    runActive = false;
-    if ((e as { aborted?: unknown }).aborted !== true) {
-      // The run ended normally yet a follow-up queued behind it never
-      // started: something cleared pi's queue (the dequeue key, a failed
-      // compaction-queue flush) and custom messages are dropped silently.
-      // pi drains its queue before a run ends, so this answer is lost:
-      // send it once more.
-      for (const [id, a] of arriving) {
-        if (!a.queued || !a.inRun || a.resent || !a.message) continue;
-        a.resent = true;
-        a.inRun = false;
-        trace("resend", { delivery: id, name: a.name });
-        void Promise.resolve(
-          send(a.message, { deliverAs: "followUp", triggerTurn: true }, "resend"),
-        ).catch(() => arriving.delete(id));
-      }
-      return;
-    }
+  /** Stop counting answers that never reached the conversation: copy
+   *  each to the cache dir and leave one line per answer in it (no turn). */
+  const dropAnswers = (ids: number[]) => {
     const dropped: DroppedAnswer[] = [];
-    for (const [id, a] of arriving) {
-      if (!a.queued) continue;
+    for (const id of ids) {
+      const a = arriving.get(id);
+      if (!a) continue;
       arriving.delete(id);
       dropped.push({
         name: a.name,
@@ -1353,6 +1326,36 @@ export function registerDelegate(
         "dropped-note",
       ),
     ).catch(() => {});
+  };
+  const queuedIds = () => [...arriving].filter(([, a]) => a.queued).map(([id]) => id);
+  pi.on("agent_settled", (e) => {
+    if ((e as { aborted?: unknown }).aborted === true) {
+      dropAnswers(queuedIds());
+      return;
+    }
+    // The run ended normally yet an answer pi accepted never started:
+    // something cleared pi's queue (the dequeue key, a failed compaction
+    // flush) and custom messages are dropped silently. pi drains its
+    // queue before it settles, whatever the run state when the answer
+    // was sent (compaction after agent_end included). An answer already
+    // resent and lost again is dropped. Resend ONE: pi runs the resend
+    // after this event, and an Escape in that run then finds the rest
+    // still pending and drops them with copies instead of running them.
+    const lost = queuedIds();
+    dropAnswers(lost.filter((id) => arriving.get(id)?.resent));
+    for (const id of lost) {
+      const a = arriving.get(id);
+      if (!a?.message || a.resent) continue;
+      a.resent = true;
+      trace("resend", { delivery: id, name: a.name });
+      void Promise.resolve(
+        send(a.message, { deliverAs: "followUp", triggerTurn: true }, "resend"),
+      ).catch(() => {
+        arriving.delete(id);
+        showStatus();
+      });
+      return;
+    }
   });
 
   // The watchers die with this runtime (/reload, /new, quit): say which
