@@ -14,6 +14,7 @@
 
 import { dirname } from "node:path";
 import { listAgents, listLiveAgents } from "../agents.js";
+import { captureDoctorCheck } from "../capture.js";
 import { emitJson, resolveWorkstream } from "../cli.js";
 import { planCompact } from "../compact.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "../db.js";
@@ -191,6 +192,10 @@ export async function cmdDoctor(
         `  schema_version   : ${pc.red("unreadable")} (schema_version table missing or wrong shape)`,
       );
     }
+    const capture = captureDoctorCheck(db);
+    const paint =
+      capture.status === "ok" ? pc.green : capture.status === "warn" ? pc.yellow : pc.red;
+    console.log(`  capture          : ${paint(capture.status)} (${capture.detail})`);
     const journal = db.pragma("journal_mode", { simple: true });
     console.log(
       `  journal_mode     : ${journal === "wal" ? pc.green(String(journal)) : pc.yellow(String(journal))}`,

@@ -688,8 +688,10 @@ describe("op capture (triggers)", () => {
     }
 
     // In a BEFORE INSERT trigger SQLite reports NEW.id = -1 for an omitted
-    // id, so the id/rowid check must not fire on -1 or one explicit -1 row
-    // would make every later insert collide.
+    // id, so the BEFORE guard's id/rowid check must not fire on -1. An
+    // explicit -1 is therefore refused by the AFTER INSERT guard (which
+    // sees the real id), and a refused attempt must leave no row behind
+    // that could make a later omitted-id insert collide.
     const minusOne: Array<[string, string, string]> = [
       [
         "workstreams",
@@ -720,15 +722,17 @@ describe("op capture (triggers)", () => {
     ];
 
     for (const [table, explicit, fresh] of minusOne) {
-      it(`${table}: an existing id/rowid -1 row does not block a fresh omitted-id insert`, () => {
+      it(`${table}: an explicit -1 is refused, and an omitted-id insert still works after it`, () => {
         ensureWorkstream(db, "demo");
         seedTask("a");
         seedTask("b");
         seedTask("c");
-        db.prepare(explicit).run();
         const count = (): number =>
           (db.prepare(`SELECT count(*) AS n FROM ${table}`).get() as { n: number }).n;
         const before = count();
+
+        expect(() => db.prepare(explicit).run()).toThrow(/non-positive ids are refused/);
+        expect(count()).toBe(before);
 
         expect(() => db.prepare(fresh).run()).not.toThrow();
 
@@ -888,35 +892,38 @@ describe("op capture (triggers)", () => {
 
   // ─── per-connection isolation ────────────────────────────────────────
 
-  describe("per-connection temp schema", () => {
-    it("a second connection captures independently with its own context", () => {
+  describe("two connections on one file", () => {
+    it("a second connection is blocked while a scope is open, then captures with NULL intent", () => {
       ensureWorkstream(db, "demo");
       seedTask();
       clearOps();
       const other = openDb({ path: dbPath });
+      other.pragma("busy_timeout = 0");
       try {
-        // Suppressing on `db` must not suppress on `other` — temp
-        // tables are per-connection, which is what makes this safe
-        // across mu's one-process-per-invocation model.
+        let code: unknown;
+        // The context lives in the shared op_ctx row, inside `db`'s
+        // transaction: `other` cannot write until it ends (it used to be
+        // independent only because 3.x kept the context per connection).
         withCaptureSuppressed(db, () => {
-          withOpContext(other, { intent: "other.conn", group: "new" }, () => {
-            // Raw SQL, not updateTask: updateTask sets its own intent,
-            // which would hide whether `other`'s ambient context was the
-            // one actually consulted by the trigger.
+          try {
             other.prepare("UPDATE tasks SET impact = 42 WHERE local_id = 't1'").run();
-          });
+          } catch (e) {
+            code = (e as { code?: unknown }).code;
+          }
         });
+        expect(String(code)).toMatch(/SQLITE_BUSY/);
+        expect(ops("task")).toHaveLength(0);
+        // Retried after the scope ended: captured, with no context.
+        other.prepare("UPDATE tasks SET impact = 42 WHERE local_id = 't1'").run();
       } finally {
         other.close();
       }
       const rows = ops("task");
       expect(rows).toHaveLength(1);
-      const row = rows[0];
-      if (!row) throw new Error("unreachable");
-      expect(row.intent).toBe("other.conn");
+      expect(rows[0]?.intent).toBeNull();
     });
 
-    it("capture survives a close/reopen (triggers are reinstalled per open)", () => {
+    it("capture survives a close/reopen (the triggers are stored in the file)", () => {
       ensureWorkstream(db, "demo");
       seedTask();
       db.close();

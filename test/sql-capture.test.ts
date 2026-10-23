@@ -13,10 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { classifyError, UsageError } from "../src/cli/handle.js";
-import { cmdSql } from "../src/cli/sql.js";
+import { cmdSql, topLevelKeywords } from "../src/cli/sql.js";
 import { type Db, openDb } from "../src/db.js";
 import { renderOpLine } from "../src/log-render.js";
 import { appendLog, LogKindReservedError, listLogs } from "../src/logs.js";
+import { currentOpContext } from "../src/op-context.js";
 import { rebuildInto } from "../src/rebuild.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addTask } from "../src/tasks/edit.js";
@@ -111,10 +112,10 @@ describe("mu sql writes share one op context", () => {
   });
 });
 
-describe("mu sql --confirm-rows", () => {
-  const countTasks = (): number =>
-    (db.prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n;
+const countTasks = (): number =>
+  (db.prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n;
 
+describe("mu sql --confirm-rows", () => {
   it("counts the cascade identically for a single statement and a script", async () => {
     const single = "DELETE FROM tasks WHERE local_id = 'c'";
     // Task c plus its one cascaded edge: 2 on BOTH paths.
@@ -235,5 +236,123 @@ describe("mu log --kind refuses projectable entities", () => {
     appendLog(db, { workstream: "w", source: "user", payload: "hello" });
     const report = rebuildInto(db, { targetPath: join(dir, "rebuilt.db") });
     expect(report.logOnlyByEntity).toMatchObject({ "pr-state": 1, message: 1 });
+  });
+});
+
+// ─── transaction control is refused: the scope owns the transaction ───
+
+describe("mu sql refuses user transaction control", () => {
+  const TX = "mu sql runs inside mu's transaction; remove BEGIN/COMMIT";
+
+  it.each([
+    "BEGIN",
+    "BEGIN IMMEDIATE",
+    "COMMIT",
+    "END",
+    "END TRANSACTION",
+    "ROLLBACK",
+    "SAVEPOINT s1",
+    "RELEASE s1",
+    "begin",
+    "  -- comment first\n  COMMIT",
+    "/* c */ end",
+  ])("%j is refused, single statement", async (sql) => {
+    await expect(cmdSql(db, sql)).rejects.toThrow(UsageError);
+    await expect(cmdSql(db, sql)).rejects.toThrow(TX);
+    expect(db.inTransaction).toBe(false);
+  });
+
+  it.each([
+    "UPDATE tasks SET impact = 1; COMMIT",
+    "UPDATE tasks SET impact = 1;\nEND;",
+    "BEGIN; UPDATE tasks SET impact = 1; COMMIT;",
+    "UPDATE tasks SET impact = 1; SELECT 'x'; ROLLBACK",
+    "UPDATE tasks SET impact = 1; SAVEPOINT s; RELEASE s",
+  ])("%j is refused in a script and nothing runs", async (sql) => {
+    const seq = maxSeq();
+    const before = db.prepare("SELECT SUM(impact) AS n FROM tasks").get();
+    await expect(cmdSql(db, sql)).rejects.toThrow(TX);
+    expect(db.prepare("SELECT SUM(impact) AS n FROM tasks").get()).toEqual(before);
+    expect(opsAfter(seq)).toEqual([]);
+    expect(db.inTransaction).toBe(false);
+  });
+
+  it("a refused END does not leave the context committed", async () => {
+    await expect(cmdSql(db, "UPDATE tasks SET impact = 1; END")).rejects.toThrow(TX);
+    expect(currentOpContext(db)).toEqual({
+      groupId: null,
+      actor: null,
+      intent: null,
+      applying: false,
+    });
+  });
+
+  it("does not refuse words inside strings, identifiers, comments or CASE ... END", async () => {
+    await cmdSql(db, "SELECT 'BEGIN; COMMIT' AS \"end\" -- ROLLBACK\n");
+    await cmdSql(db, "SELECT CASE WHEN 1 THEN 'x' END");
+    await cmdSql(db, "UPDATE tasks SET title = 'commit; end' WHERE local_id = 'a'");
+    expect(
+      (db.prepare("SELECT title FROM tasks WHERE local_id = 'a'").get() as { title: string }).title,
+    ).toBe("commit; end");
+  });
+
+  it("accepts a CREATE TRIGGER whose body ends with END", async () => {
+    await cmdSql(
+      db,
+      "CREATE TEMP TRIGGER t_x AFTER INSERT ON ops BEGIN SELECT CASE WHEN 1 THEN 1 END; END; SELECT 1",
+    );
+    await cmdSql(db, "DROP TRIGGER t_x");
+  });
+
+  it("topLevelKeywords lists the first keyword of each statement", () => {
+    expect(topLevelKeywords("select 1; Update t set a=1 ;; delete from t")).toEqual([
+      "SELECT",
+      "UPDATE",
+      "DELETE",
+    ]);
+    expect(
+      topLevelKeywords("CREATE TRIGGER x AFTER INSERT ON t BEGIN SELECT 1; END; COMMIT"),
+    ).toEqual(["CREATE", "COMMIT"]);
+  });
+
+  it("a plain read does not take the write lock", async () => {
+    const other = openDb({ path: join(dir, "mu.db") });
+    other.pragma("busy_timeout = 0");
+    try {
+      other.exec("BEGIN IMMEDIATE");
+      await expect(cmdSql(db, "SELECT COUNT(*) AS n FROM tasks", { json: true })).resolves.toBe(
+        undefined,
+      );
+      other.exec("ROLLBACK");
+    } finally {
+      other.close();
+    }
+  });
+});
+
+// ─── explicit non-positive ids, through the escape hatch ──────────────
+
+describe("mu sql refuses explicit non-positive ids", () => {
+  const insertTaskWithId = (id: number): string =>
+    `INSERT INTO tasks (id, workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
+     SELECT ${id}, id, 'zz${Math.abs(id)}', 't', 'OPEN', 'todo', 5, 1, 'x', 'x' FROM workstreams WHERE name = 'w'`;
+
+  it.each([-1, 0])("INSERT INTO tasks(id) VALUES (%i) is refused and rolled back", async (id) => {
+    const seq = maxSeq();
+    await expect(cmdSql(db, insertTaskWithId(id))).rejects.toThrow(
+      /explicit non-positive ids are refused/,
+    );
+    expect(opsAfter(seq)).toEqual([]);
+    expect(countTasks()).toBe(3);
+  });
+
+  it("an omitted-id insert still works after an explicit -1 attempt", async () => {
+    await expect(cmdSql(db, insertTaskWithId(-1))).rejects.toThrow(/non-positive/);
+    await cmdSql(
+      db,
+      `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
+       SELECT id, 'ok', 't', 'OPEN', 'todo', 5, 1, 'x', 'x' FROM workstreams WHERE name = 'w'`,
+    );
+    expect(countTasks()).toBe(4);
   });
 });

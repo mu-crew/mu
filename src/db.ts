@@ -12,11 +12,12 @@
 //                                  every change — VISION.md § 2b)
 //   - 2 sync tables:   sync_peers (per-peer watermarks),
 //                      sync_fingerprints (caught-up fingerprints)
-//   - 2 meta tables:   schema_version, machine_identity
+//   - 4 meta tables:   schema_version, machine_identity,
+//                      op_ctx (op context), op_dying (delete-key stash)
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
 //   - 4 views:         ready, blocked, blockers, goals
-//   => EXPECTED_TABLES is exactly 13 entries.
+//   => EXPECTED_TABLES is exactly 15 entries.
 //
 // v12 is additive over v11: workstreams.torn_down_at (soft teardown),
 // agents.cwd / agents.base (worktree path and the commit it forked
@@ -58,7 +59,13 @@ import { mkdirSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import Database, { type Database as DatabaseType, type Statement } from "better-sqlite3";
-import { installCapture } from "./capture.js";
+import {
+  CAPTURE_VERSION,
+  CaptureTooNewError,
+  installCapture,
+  sqliteTooOld,
+  storedCaptureVersion,
+} from "./capture.js";
 import type { HasNextSteps, NextStep } from "./output.js";
 import { defaultStateDir, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
@@ -145,6 +152,13 @@ export function openDb(options: OpenDbOptions = {}): Db {
     // SQLITE_BUSY_SNAPSHOT at once if another process committed in
     // between, and busy_timeout does not retry that.
     db.pragma("busy_timeout = 5000");
+    // The capture triggers need unixepoch('subsec') (SQLite 3.42): below
+    // it every HLC would be zero-time. Refuse before touching the file.
+    const sqliteVersion = (db.prepare("SELECT sqlite_version() AS v").get() as { v: string }).v;
+    if (sqliteTooOld(sqliteVersion)) {
+      closeQuietly(db);
+      throw new SqliteTooOldError(sqliteVersion);
+    }
     // Detect schema version BEFORE applySchema so a real v<12 DB is not
     // silently stamped as v12 by the CREATE-IF-NOT-EXISTS in applySchema,
     // and before `journal_mode = WAL`, which rewrites the file header:
@@ -152,27 +166,29 @@ export function openDb(options: OpenDbOptions = {}): Db {
     // One read transaction: a process creating this DB can commit
     // between two bare reads, and "no schema_version table, then a
     // workstreams table" read as a pre-versioning v1 DB.
-    const detectedVersion = db.transaction(() => detectExistingSchemaVersion(db))();
+    const { version: detectedVersion, capture: detectedCapture } = db.transaction(() => ({
+      version: detectExistingSchemaVersion(db),
+      capture: storedCaptureVersion(db),
+    }))();
     if (detectedVersion !== null && detectedVersion > CURRENT_SCHEMA_VERSION) {
       // A newer mu wrote this DB. Its writes would fail here in
       // confusing ways (unknown columns, constraints this build does not
       // know), so refuse before applySchema touches anything.
-      try {
-        db.close();
-      } catch {
-        // best effort
-      }
+      closeQuietly(db);
       throw new SchemaTooNewError(detectedVersion, CURRENT_SCHEMA_VERSION);
+    }
+    if (detectedCapture !== null && detectedCapture > CAPTURE_VERSION) {
+      // Same for the stored triggers: a newer mu's capture rules are not
+      // ours to replace or run. (An OLDER stamp is upgraded in place by
+      // installCapture below; that is not a schema incompatibility.)
+      closeQuietly(db);
+      throw new SchemaTooNewError(detectedCapture, CAPTURE_VERSION, "capture");
     }
     if (detectedVersion !== null && detectedVersion < MIN_ACCEPTED_SCHEMA_VERSION) {
       // Loud-fail: refuse to touch a pre-v12 DB. There is no in-place
       // migration to run, so leave the old file untouched and tell the
       // operator how to preserve it (see SchemaTooOldError.errorNextSteps).
-      try {
-        db.close();
-      } catch {
-        // best effort
-      }
+      closeQuietly(db);
       throw new SchemaTooOldError(detectedVersion, MIN_ACCEPTED_SCHEMA_VERSION);
     }
     setWalMode(db);
@@ -184,18 +200,32 @@ export function openDb(options: OpenDbOptions = {}): Db {
     // connection to re-parse the schema (f_opendb_schema_write).
     if (detectedVersion !== CURRENT_SCHEMA_VERSION || !schemaIsCurrent(db)) applySchema(db);
     seedMachineIdentity(db);
-    // Install the op-capture triggers + the _op_ctx temp tables they
-    // read. Per-connection, because SQLite forbids a main-schema
-    // trigger from referencing the temp schema, so the triggers must
-    // themselves be TEMP triggers (see src/capture.ts for the full
-    // reasoning and the exact error messages). Must run AFTER
-    // seedMachineIdentity: the triggers mint HLCs from that row.
-    installCapture(db);
+    // Make the op-capture triggers stored in the file current: nothing
+    // (and no lock) when the stamp equals this build's, one transaction
+    // when older. See src/capture.ts. After seedMachineIdentity: the
+    // triggers mint HLCs from that row.
+    try {
+      installCapture(db);
+    } catch (err) {
+      closeQuietly(db);
+      if (err instanceof CaptureTooNewError) {
+        throw new SchemaTooNewError(err.stored, CAPTURE_VERSION, "capture");
+      }
+      throw err;
+    }
   } else {
     db.pragma("foreign_keys = ON");
   }
 
   return db;
+}
+
+function closeQuietly(db: Db): void {
+  try {
+    db.close();
+  } catch {
+    // best effort
+  }
 }
 
 /**
@@ -363,11 +393,40 @@ export class SchemaTooNewError extends Error implements HasNextSteps {
   constructor(
     public readonly detectedVersion: number,
     public readonly supportedVersion: number,
+    /** Which stamp was newer: the table schema, or the capture triggers. */
+    public readonly stamp: "schema" | "capture" = "schema",
   ) {
-    super(`DB is v${detectedVersion}; this mu understands up to v${supportedVersion}. Upgrade mu.`);
+    super(
+      stamp === "schema"
+        ? `DB is v${detectedVersion}; this mu understands up to v${supportedVersion}. Upgrade mu.`
+        : `DB's capture triggers are revision ${detectedVersion}; this mu understands up to ${supportedVersion}. Upgrade mu.`,
+    );
   }
   errorNextSteps(): NextStep[] {
     return [{ intent: "Check which mu is on PATH", command: "which mu && mu --version" }];
+  }
+}
+
+/**
+ * Thrown by openDb when the linked SQLite is older than 3.42: the capture
+ * triggers mint HLCs with `unixepoch('subsec')`, which older versions
+ * return NULL for. Maps to exit code 4 (conflict). Nothing was touched.
+ */
+export class SqliteTooOldError extends Error implements HasNextSteps {
+  override readonly name = "SqliteTooOldError";
+  constructor(public readonly sqliteVersion: string) {
+    super(
+      `SQLite ${sqliteVersion} is too old; mu needs >= 3.42 (unixepoch('subsec') for the op clock). The DB was not touched.`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Check the SQLite mu is using (better-sqlite3 bundles its own; reinstall mu)",
+        command:
+          "node -e \"console.log(new (require('better-sqlite3'))(':memory:').prepare('select sqlite_version() v').get())\"",
+      },
+    ];
   }
 }
 
@@ -573,10 +632,12 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 13 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 15 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agents",
   "machine_identity",
+  "op_ctx",
+  "op_dying",
   "ops",
   "schema_version",
   "sync_fingerprints",
@@ -650,6 +711,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    vcs_workspaces   holds absolute paths — /home/... vs /Users/...
  *                     on a mixed macOS/Linux fleet.
  *    machine_identity IS the per-machine identity.
+ *    op_ctx           the capture context row; defaults at rest.
+ *    op_dying         capture's delete-key stash; empty at rest.
  *    schema_version   local bookkeeping.
  *    sync_peers       local bookkeeping (per-peer watermarks).
  *    sync_fingerprints local cache of what the last clean ingest saw.
@@ -674,6 +737,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
 export const MACHINE_LOCAL_TABLES = [
   "agents",
   "machine_identity",
+  "op_ctx",
+  "op_dying",
   "ops",
   "schema_version",
   "sync_fingerprints",
@@ -785,9 +850,42 @@ const CURRENT_SCHEMA = `
 -- Single-row table tracking which schema version this DB is at. Migrations
 -- read and update this; the row is INSERT-OR-IGNOREd by applySchema with
 -- the current version on a fresh DB.
+--
+-- capture_version stamps the revision of the capture triggers stored in
+-- this file (CAPTURE_VERSION, src/capture.ts). It is separate from
+-- "version" on purpose: "version" means tables/columns are
+-- incompatible, and openDb refuses an older DB outright, while an older
+-- capture revision is upgraded in place (installCapture replaces every
+-- trigger and the stamp in one transaction). A DB created before the
+-- column existed gets it from installCapture's ALTER (DEFAULT 0).
 CREATE TABLE IF NOT EXISTS schema_version (
-  id      INTEGER PRIMARY KEY CHECK (id = 1),
-  version INTEGER NOT NULL
+  id              INTEGER PRIMARY KEY CHECK (id = 1),
+  version         INTEGER NOT NULL,
+  capture_version INTEGER NOT NULL DEFAULT 0
+);
+
+-- op_ctx: the op context the capture triggers read (src/capture.ts, the
+-- header; src/op-context.ts). One row (seeded by installCapture), written
+-- only by the context wrappers inside a transaction they own, so at rest
+-- it always holds the defaults. now_ms is the trigger scratchpad for one
+-- HLC tick.
+CREATE TABLE IF NOT EXISTS op_ctx (
+  id       INTEGER PRIMARY KEY CHECK (id = 1),
+  group_id TEXT,
+  actor    TEXT,
+  intent   TEXT,
+  applying INTEGER NOT NULL DEFAULT 0,
+  now_ms   INTEGER NOT NULL DEFAULT 0
+);
+
+-- op_dying: natural keys of workstream/task rows mid-DELETE, so cascaded
+-- children can still resolve their keys (see src/capture.ts, THE DELETE
+-- SUBTLETY). Empty at rest: an AFTER DELETE trigger removes each entry.
+CREATE TABLE IF NOT EXISTS op_dying (
+  kind TEXT NOT NULL,
+  id   INTEGER NOT NULL,
+  key  TEXT NOT NULL,
+  PRIMARY KEY (kind, id)
 );
 
 -- machine_identity: one durable identity per DB/machine, seeded by

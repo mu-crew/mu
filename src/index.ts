@@ -82,9 +82,10 @@ export {
 } from "./apply.js";
 export {
   CAPTURE_TRIGGER_DDL,
+  CAPTURE_VERSION,
   type CaptureDb,
+  captureTriggersCurrent,
   installCapture,
-  OP_CTX_DDL,
 } from "./capture.js";
 export {
   type FullDag,
@@ -109,6 +110,7 @@ export {
   type PortableTable,
   SchemaTooNewError,
   SchemaTooOldError,
+  SqliteTooOldError,
   SYNCED_ENTITIES,
   type SyncedEntity,
   WorkstreamNotFoundError,

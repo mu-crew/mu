@@ -16,35 +16,46 @@
 // `tasks` must not be ABLE to skip capture. Triggers make that
 // structural rather than a convention someone has to remember.
 //
-// WHY THE TRIGGERS ARE TEMP TRIGGERS (the load-bearing surprise)
-// -------------------------------------------------------------
-// The triggers need per-invocation context (intent / actor / group /
-// the echo guard) which lives in the `_op_ctx` TEMP table. SQLite
-// REFUSES to let a main-schema trigger reference the temp schema:
+// WHY THE TRIGGERS LIVE IN THE DB FILE (and what that costs)
+// ----------------------------------------------------------
+// The triggers are ordinary main-schema triggers, stored in the file.
+// So a plain write from ANY connection, `sqlite3` included, is captured:
+// a safety net, not a supported path (plain sqlite3 defaults to
+// foreign_keys=0, so cascades are skipped; mu writes go through the SDK).
 //
-//   sqlite> CREATE TRIGGER x AFTER INSERT ON tasks
-//        >   WHEN (SELECT applying FROM _op_ctx) = 0 ...
-//   Error: no such table: main._op_ctx
-//   -- and qualifying it explicitly fails differently:
-//   Error: trigger x cannot reference objects in database temp
+// Per-invocation context (intent / actor / group / the echo guard) lives
+// in `op_ctx`, a one-row MAIN table. 3.x kept it in a per-connection
+// TEMP table, which a main trigger cannot reference; with it in main,
+// two connections share one row, and that needs two rules:
 //
-// So the triggers themselves must live in the TEMP schema, where the
-// temp table IS visible. Verified empirically (see the probe results in
-// this task's note). Consequences, all of them fine:
+//   * ONLY the context wrappers (src/op-context.ts) write `op_ctx`, and
+//     they do it inside a transaction THEY OWN: BEGIN IMMEDIATE, set the
+//     row, run, reset it, COMMIT. The row is therefore never committed
+//     with a context in it: a concurrent writer blocks on the lock
+//     instead of being stamped with someone else's intent (or, worse,
+//     `applying = 1`, which would silently drop its ops), and a crash
+//     rolls the context back with everything else.
+//   * The triggers read `applying` with COALESCE(..., 0): a missing row
+//     captures with no context rather than capturing nothing.
 //
-//   * Triggers are (re)created per connection, by `installCapture`,
-//     which `openDb` calls on every open. There is no persistent
-//     trigger in the DB file, so no stale-DDL-in-file problem and no
-//     schema-version churn when the trigger set changes.
-//   * A connection that never runs `installCapture` captures nothing.
-//     That is only reachable inside this codebase (readonly opens), not
-//     by a normal `mu` invocation.
-//   * A TEMP trigger cannot write to a qualified `main.ops` —
-//     "qualified table names are not allowed on INSERT, UPDATE, and
-//     DELETE statements within triggers" — so the INSERTs here are
-//     UNQUALIFIED and resolve to `main` because no temp table shadows
-//     those names. `_op_ctx` / `_op_clock` / `_op_dying` are prefixed
-//     to make that shadowing impossible by accident.
+// Consequences of persistence:
+//
+//   * The trigger set is versioned. `schema_version.capture_version`
+//     stamps the revision (CAPTURE_VERSION below); `installCapture`
+//     replaces every `_cap_*` trigger and the stamp in ONE BEGIN
+//     IMMEDIATE when the stamp is older, refuses (the caller throws
+//     SchemaTooNewError) when it is newer, and does nothing, taking no
+//     lock, when equal. Change a generator => bump CAPTURE_VERSION
+//     (test/capture-persistent.test.ts pins the DDL's sha256).
+//   * Stored trigger text equals the generated text exactly (no IF NOT
+//     EXISTS, no trailing `;`), so `captureTriggersCurrent` and doctor
+//     can compare sqlite_master against the generator.
+//   * Triggers run on whatever SQLite opens the file, so they abort with
+//     a clear message below 3.42 (`unixepoch('subsec')` would mint
+//     zero-time HLCs there) instead of writing corrupt ops.
+//   * A main trigger may INSERT into a qualified-or-not main table; the
+//     `_op_dying` stash became the main table `op_dying` for the same
+//     reason as `op_ctx` (a main trigger cannot see temp tables).
 //
 // SEMANTIC PARTIAL UPDATES — ONLY CHANGED COLUMNS
 // -----------------------------------------------
@@ -65,6 +76,8 @@
 // NULL-to-a-value transition — e.g. releasing a claim
 // (`owner_id -> NULL`) would never be captured.
 
+import { createHash } from "node:crypto";
+
 // TYPE-ONLY import: db.ts imports this module, so a value import would
 // be a runtime cycle (and an import cycle here shows up as `node
 // dist/cli.js` printing nothing at all). `typeof PORTABLE_TABLES` is a
@@ -78,65 +91,77 @@ import type { PORTABLE_TABLES } from "./db.js";
  *  nothing, so this FAILS SAFE rather than failing silent. */
 const UNRESOLVED = "<unresolved>";
 
-// ─── The op context temp tables ───────────────────────────────────────
+// ─── Revision, SQLite floor, context tables ──────────────────────────
 
 /**
- * DDL for the three per-connection temp tables the triggers read.
- * Created by `installCapture` before the triggers that reference them.
+ * The revision of the trigger set stored in the file, stamped in
+ * `schema_version.capture_version`. BUMP IT whenever any generator in
+ * this file changes the SQL it emits: an older stamp makes the next
+ * writable `openDb` replace every capture trigger (one BEGIN IMMEDIATE,
+ * with the stamp), and a newer stamp makes it refuse (SchemaTooNewError)
+ * instead of running triggers it cannot vouch for.
+ * test/capture-persistent.test.ts pins the sha256 of the generated DDL,
+ * so forgetting the bump fails a test.
  *
- *   _op_ctx    the **op context** (docs/VOCABULARY.md): group_id /
- *              actor / intent / applying. Exactly ONE row, seeded with
- *              defaults so a mutation occurring outside any SDK context
- *              is still CAPTURED, just with a null intent. Fail safe,
- *              never fail silent.
- *
- *   _op_clock  a one-row scratchpad holding "now" for the current
- *              trigger firing. The HLC advance needs to compare `now`
- *              against `last_wall` and then reuse the SAME `now` to
- *              write it; calling unixepoch() twice could straddle a
- *              millisecond boundary and mint a non-monotonic pair. So
- *              the value is stashed once per op and read from here.
- *
- *   _op_dying  natural keys of rows that are mid-DELETE — see the
- *              DELETE section below. Keyed by (kind, id).
- *
- * Temp tables are per-connection and mu is one connection per
- * short-lived process, so there is no cross-process leakage and no
- * cleanup to schedule.
+ * Separate from CURRENT_SCHEMA_VERSION on purpose: that number says
+ * "tables and columns are incompatible" and refuses older DBs outright;
+ * a capture revision is upgradeable in place, so it must not be folded
+ * into it (an older schema number is refused before any trigger work).
  */
-export const OP_CTX_DDL = `
-CREATE TEMP TABLE IF NOT EXISTS _op_ctx (
-  group_id TEXT,
-  actor    TEXT,
-  intent   TEXT,
-  applying INTEGER NOT NULL DEFAULT 0
-);
-CREATE TEMP TABLE IF NOT EXISTS _op_clock (
-  now_ms INTEGER NOT NULL DEFAULT 0
-);
-CREATE TEMP TABLE IF NOT EXISTS _op_dying (
-  kind TEXT NOT NULL,
-  id   INTEGER NOT NULL,
-  key  TEXT NOT NULL,
-  PRIMARY KEY (kind, id)
-);
-`;
+export const CAPTURE_VERSION = 1;
 
-/** Seed the singleton rows. Separate from the DDL because CREATE TABLE
- *  IF NOT EXISTS is idempotent but INSERT is not. */
-const OP_CTX_SEED = `
-INSERT INTO _op_ctx (group_id, actor, intent, applying)
-  SELECT NULL, NULL, NULL, 0 WHERE NOT EXISTS (SELECT 1 FROM _op_ctx);
-INSERT INTO _op_clock (now_ms)
-  SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM _op_clock);
-`;
+/** Lowest SQLite that mints correct HLCs: `unixepoch('subsec')` arrived
+ *  in 3.42; before it the call yields NULL and every op gets a zero-time
+ *  HLC. */
+export const MIN_SQLITE = { major: 3, minor: 42 } as const;
+
+/** True when `version` ("3.41.2") is below MIN_SQLITE. Numeric per part,
+ *  never a string compare ("3.9" > "3.42" as text). */
+export function sqliteTooOld(version: string): boolean {
+  const [major = 0, minor = 0] = version.split(".").map((p) => Number.parseInt(p, 10) || 0);
+  return major < MIN_SQLITE.major || (major === MIN_SQLITE.major && minor < MIN_SQLITE.minor);
+}
+
+/** The same test, inside SQL: every EMITTING trigger runs it first, so a
+ *  connection on an old SQLite (a stray `sqlite3` binary) aborts the
+ *  write instead of minting zero-time HLCs. */
+const SQLITE_TOO_OLD_SQL = (() => {
+  const v = "sqlite_version()";
+  const afterMajor = `substr(${v}, instr(${v}, '.') + 1)`;
+  const major = `CAST(${v} AS INTEGER)`;
+  const minor = `CAST(${afterMajor} AS INTEGER)`;
+  return `(${major} < ${MIN_SQLITE.major} OR (${major} = ${MIN_SQLITE.major} AND ${minor} < ${MIN_SQLITE.minor}))`;
+})();
+
+const SQLITE_TOO_OLD_MESSAGE = `mu: SQLite >= ${MIN_SQLITE.major}.${MIN_SQLITE.minor} required (unixepoch subsec)`;
+
+// ─── The op context tables ────────────────────────────────────────────
+//
+// `op_ctx` and `op_dying` are MAIN tables created by applySchema
+// (src/db.ts), because a main trigger cannot reference the temp schema.
+//
+//   op_ctx     the **op context** (docs/VOCABULARY.md): group_id /
+//              actor / intent / applying, plus `now_ms`, a scratchpad
+//              holding "now" for the current trigger firing. The HLC
+//              advance compares `now` against `last_wall` and reuses the
+//              SAME `now` to write it; calling unixepoch() twice could
+//              straddle a millisecond boundary and mint a non-monotonic
+//              pair. Exactly ONE row, id = 1, seeded with defaults, so a
+//              mutation outside any SDK context is still CAPTURED, just
+//              with a null intent. Fail safe, never fail silent. Only
+//              src/op-context.ts writes the context columns, inside a
+//              transaction it owns; at rest they are always defaults.
+//
+//   op_dying   natural keys of rows that are mid-DELETE: see the DELETE
+//              section below. Keyed by (kind, id). Empty at rest: each
+//              stash row is removed by an AFTER DELETE trigger.
 
 // ─── Shared SQL fragments ─────────────────────────────────────────────
 
 /** Echo guard. Every trigger carries it. `applying = 1` means we are
  *  INGESTING a peer's op, where writing a fresh local op would be an
  *  echo that propagates back and never terminates. v2-sync sets it. */
-const NOT_APPLYING = "(SELECT applying FROM _op_ctx) = 0";
+const NOT_APPLYING = "COALESCE((SELECT applying FROM op_ctx WHERE id = 1), 0) = 0";
 
 /** Advance the persisted HLC by one tick, then read it back formatted.
  *  Mirrors `nextHlc` in src/hlc.ts EXACTLY — same monotonic rule (if
@@ -150,10 +175,11 @@ const NOT_APPLYING = "(SELECT applying FROM _op_ctx) = 0";
  *  HLC parses with `parseHlc` and interleaves monotonically with
  *  JS-minted ones. If the format changes in one place the other fails. */
 const ADVANCE_CLOCK = `
-  UPDATE _op_clock SET now_ms = CAST(unixepoch('subsec') * 1000 AS INTEGER);
+  SELECT RAISE(ABORT, '${SQLITE_TOO_OLD_MESSAGE}') WHERE ${SQLITE_TOO_OLD_SQL};
+  UPDATE op_ctx SET now_ms = CAST(unixepoch('subsec') * 1000 AS INTEGER) WHERE id = 1;
   UPDATE machine_identity
-     SET last_wall    = MAX(last_wall, (SELECT now_ms FROM _op_clock)),
-         last_counter = CASE WHEN (SELECT now_ms FROM _op_clock) > last_wall
+     SET last_wall    = MAX(last_wall, (SELECT now_ms FROM op_ctx WHERE id = 1)),
+         last_counter = CASE WHEN (SELECT now_ms FROM op_ctx WHERE id = 1) > last_wall
                              THEN 0 ELSE last_counter + 1 END
    WHERE id = 1;`;
 
@@ -170,9 +196,9 @@ const OP_COLS = "(hlc, machine_id, group_id, actor, intent, entity, key, op, pay
  *  which is exactly right. */
 const OP_CTX_VALUES = `
   (SELECT machine_id FROM machine_identity WHERE id = 1),
-  COALESCE((SELECT group_id FROM _op_ctx), lower(hex(randomblob(8)))),
-  (SELECT actor  FROM _op_ctx),
-  (SELECT intent FROM _op_ctx)`;
+  COALESCE((SELECT group_id FROM op_ctx WHERE id = 1), lower(hex(randomblob(8)))),
+  (SELECT actor  FROM op_ctx WHERE id = 1),
+  (SELECT intent FROM op_ctx WHERE id = 1)`;
 
 /** ISO-8601 wall time, matching what the SDK writes elsewhere.
  *  Advisory only — `hlc` is the ordering key, this is for humans. */
@@ -200,7 +226,7 @@ const CREATED_AT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
  *  workstream row is already gone (FK cascade). */
 const wsKey = (idExpr: string): string => `COALESCE(
   (SELECT w.name FROM workstreams w WHERE w.id = ${idExpr}),
-  (SELECT d.key FROM _op_dying d WHERE d.kind = 'workstream' AND d.id = ${idExpr}),
+  (SELECT d.key FROM op_dying d WHERE d.kind = 'workstream' AND d.id = ${idExpr}),
   '${UNRESOLVED}')`;
 
 /** `<workstream>/<local_id>` for a task id, falling back to the dying
@@ -208,7 +234,7 @@ const wsKey = (idExpr: string): string => `COALESCE(
 const taskKey = (idExpr: string): string => `COALESCE(
   (SELECT ${wsKey("t.workstream_id")} || '/' || t.local_id
      FROM tasks t WHERE t.id = ${idExpr}),
-  (SELECT d.key FROM _op_dying d WHERE d.kind = 'task' AND d.id = ${idExpr}),
+  (SELECT d.key FROM op_dying d WHERE d.kind = 'task' AND d.id = ${idExpr}),
   '${UNRESOLVED}')`;
 
 // ─── Per-table trigger DDL ────────────────────────────────────────────
@@ -352,20 +378,34 @@ const KEY_COLUMNS = {
   task_edges: ["from_task_id", "to_task_id"],
 } as const satisfies Record<(typeof PORTABLE_TABLES)[number], readonly string[]>;
 
+/** One stored trigger. `sql` is exactly the text SQLite keeps in
+ *  sqlite_master (`CREATE TRIGGER <name> … END`, no `;`), so the stored
+ *  trigger can be compared to the generator byte for byte. */
+export interface CaptureTrigger {
+  name: string;
+  sql: string;
+}
+
+/** `CREATE TRIGGER <name>\n<rest>\nEND`. `rest` is the timing/event/WHEN
+ *  header followed by `BEGIN … ` up to (not including) END. */
+function trigger(name: string, rest: string): CaptureTrigger {
+  return { name, sql: `CREATE TRIGGER ${name}\n${rest.trim()}\nEND` };
+}
+
 /** BEFORE UPDATE trigger refusing a natural-key change on `table`. */
-function keyGuard(table: keyof typeof KEY_COLUMNS): string {
+function keyGuard(table: keyof typeof KEY_COLUMNS): CaptureTrigger {
   const cols = KEY_COLUMNS[table];
   const msg =
     `mu: ${table}.${cols.join("/")} is part of the natural key that every op is filed under; ` +
     "changing it would desync the ops log and sync. " +
     "Add a new row (mu task add / mu workstream init) instead of moving or renaming one.";
-  return `
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_${table}_key
-BEFORE UPDATE OF ${cols.join(", ")} ON ${table}
+  return trigger(
+    `_cap_${table}_key`,
+    `BEFORE UPDATE OF ${cols.join(", ")} ON ${table}
   WHEN ${anyChanged(cols)}
 BEGIN
-  SELECT RAISE(ABORT, '${msg.replaceAll("'", "''")}');
-END;`;
+  SELECT RAISE(ABORT, '${msg.replaceAll("'", "''")}');`,
+  );
 }
 
 /** Existing-row predicate for the BEFORE INSERT guard: the row `NEW` would
@@ -392,17 +432,44 @@ const INSERT_COLLISION = {
  *  row without firing the DELETE trigger (no tombstone) and re-file it under
  *  a new key. It also aborts `INSERT OR IGNORE` (BEFORE triggers run before
  *  constraints), so mu inserts with `WHERE NOT EXISTS` instead. */
-function insertGuard(table: keyof typeof KEY_COLUMNS): string {
+function insertGuard(table: keyof typeof KEY_COLUMNS): CaptureTrigger {
   const msg =
     `mu: ${table} row already exists; replacing it would change the natural key that every op is filed under ` +
     "and leave no tombstone in the ops log. DELETE it, then INSERT, or add a new row.";
-  return `
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_${table}_insguard
-BEFORE INSERT ON ${table}
+  return trigger(
+    `_cap_${table}_insguard`,
+    `BEFORE INSERT ON ${table}
   WHEN EXISTS (${INSERT_COLLISION[table]})
 BEGIN
-  SELECT RAISE(ABORT, '${msg.replaceAll("'", "''")}');
-END;`;
+  SELECT RAISE(ABORT, '${msg.replaceAll("'", "''")}');`,
+  );
+}
+
+/** The id column each table's INSERT guard and id check read. `NEW.rowid`
+ *  for task_edges: its key is composite, so the hidden rowid is the id. */
+const ID_EXPR = {
+  workstreams: "NEW.id",
+  tasks: "NEW.id",
+  task_notes: "NEW.id",
+  task_edges: "NEW.rowid",
+} as const satisfies Record<keyof typeof KEY_COLUMNS, string>;
+
+/** AFTER INSERT trigger refusing an explicit id <= 0 (local writes only).
+ *
+ *  BEFORE triggers report -1 for an omitted id, so the BEFORE guard above
+ *  cannot tell an explicit -1 from an omission. By AFTER INSERT SQLite has
+ *  assigned the real id (always positive for an omitted one), so an id <= 0
+ *  here was named by the writer. Refusing them keeps -1 free to mean
+ *  "omitted" in the guard, and aborts the statement, rolling back the row
+ *  and the op the capture trigger just minted. */
+function positiveIdGuard(table: keyof typeof KEY_COLUMNS): CaptureTrigger {
+  return trigger(
+    `_cap_${table}_posid`,
+    `AFTER INSERT ON ${table}
+  WHEN ${NOT_APPLYING} AND ${ID_EXPR[table]} <= 0
+BEGIN
+  SELECT RAISE(ABORT, 'mu: explicit non-positive ids are refused');`,
+  );
 }
 
 /** BEFORE UPDATE trigger: a note's kind is set once at INSERT. A change
@@ -410,13 +477,13 @@ END;`;
  *  note's identity is its content), so local writes refuse it. Gated on
  *  `applying = 0`: ingest accepts what the log says, and a RAISE there
  *  would roll back the segment and stall sync. */
-const NOTE_KIND_GUARD = `
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_task_notes_kind
-BEFORE UPDATE OF kind ON task_notes
+const NOTE_KIND_GUARD = trigger(
+  "_cap_task_notes_kind",
+  `BEFORE UPDATE OF kind ON task_notes
   WHEN ${NOT_APPLYING} AND NEW.kind IS NOT OLD.kind
 BEGIN
-  SELECT RAISE(ABORT, 'mu: task_notes.kind is set once when the note is written; add a new note instead of changing it.');
-END;`;
+  SELECT RAISE(ABORT, 'mu: task_notes.kind is set once when the note is written; add a new note instead of changing it.');`,
+);
 
 /**
  * THE DELETE SUBTLETY
@@ -448,15 +515,17 @@ END;`;
  *   1. BEFORE DELETE, not AFTER. The row and its ancestors are all
  *      still present when the trigger body runs, so `OLD.*` plus a
  *      normal join resolves the key.
- *   2. The `_op_dying` stash. BEFORE DELETE fixes the FIRST level only:
+ *   2. The `op_dying` stash. BEFORE DELETE fixes the FIRST level only:
  *      cascade children still fire after their parent's row is gone.
  *      So each parent's BEFORE DELETE trigger records its own natural
- *      key into `_op_dying` before emitting, and the child key
+ *      key into `op_dying` before emitting, and the child key
  *      resolvers (`wsKey` / `taskKey`) consult the stash when the live
- *      join misses. Rows are never removed from the stash: it is a
- *      per-connection temp table on a short-lived process, ids are not
- *      reused within a transaction, and an INSERT OR REPLACE keyed on
- *      (kind, id) keeps it correct even if an id is recycled later.
+ *      join misses. SQLite fires a cascade's child AFTER DELETE triggers
+ *      before the parent's, so the parent's AFTER DELETE trigger removes
+ *      its stash row (`_cap_*_undie`): the table is empty at rest even
+ *      when a plain connection did the delete. INSERT OR REPLACE keyed
+ *      on (kind, id) covers a row whose stash outlived a crashed delete
+ *      (the rollback removes it too, so this is belt and braces).
  *
  * The alternative — having the parent trigger emit ops for its whole
  * subtree and suppressing the cascade triggers — also works and was
@@ -465,10 +534,27 @@ END;`;
  * self-maintaining.
  */
 const DYING_STASH = (kind: "workstream" | "task", keyExpr: string): string =>
-  `INSERT OR REPLACE INTO _op_dying (kind, id, key) VALUES ('${kind}', OLD.id, ${keyExpr});`;
+  `INSERT OR REPLACE INTO op_dying (kind, id, key) VALUES ('${kind}', OLD.id, ${keyExpr});`;
 
-/** All capture triggers, as one idempotent DDL string. */
-function buildTriggerDdl(): string {
+/** Emitting trigger: `timing event ON table WHEN guard [AND extra]`. */
+function emitting(
+  name: string,
+  header: string,
+  extraWhen: string | undefined,
+  body: string,
+): CaptureTrigger {
+  const when = extraWhen === undefined ? NOT_APPLYING : `${NOT_APPLYING}\n  AND (${extraWhen})`;
+  return trigger(
+    name,
+    `${header}
+  WHEN ${when}
+BEGIN
+  ${body}`,
+  );
+}
+
+/** Every capture trigger, in creation order. Pure. */
+function buildTriggers(): CaptureTrigger[] {
   const wsCols = CAPTURED_COLUMNS.workstreams;
   const taskCols = CAPTURED_COLUMNS.tasks;
   const noteCols = CAPTURED_COLUMNS.task_notes;
@@ -476,107 +562,131 @@ function buildTriggerDdl(): string {
 
   const taskKeyNew = `${wsKey("NEW.workstream_id")} || '/' || NEW.local_id`;
   const taskKeyOld = `${wsKey("OLD.workstream_id")} || '/' || OLD.local_id`;
+  const noteKeyNew = `${taskKey("NEW.task_id")} || '#' || NEW.id`;
+  const noteKeyOld = `${taskKey("OLD.task_id")} || '#' || OLD.id`;
   const edgeKeyNew = `${taskKey("NEW.from_task_id")} || '->' || ${taskKey("NEW.to_task_id")}`;
   const edgeKeyOld = `${taskKey("OLD.from_task_id")} || '->' || ${taskKey("OLD.to_task_id")}`;
 
-  return `
--- ─── natural-key guards (see KEY_COLUMNS) ───────────────────────────
-${keyGuard("workstreams")}
-${keyGuard("tasks")}
-${keyGuard("task_notes")}
-${keyGuard("task_edges")}
-${insertGuard("workstreams")}
-${insertGuard("tasks")}
-${insertGuard("task_notes")}
-${insertGuard("task_edges")}
-${NOTE_KIND_GUARD}
-
--- ─── workstreams ────────────────────────────────────────────────────
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_workstreams_ins
-AFTER INSERT ON workstreams WHEN ${NOT_APPLYING}
+  const tables = ["workstreams", "tasks", "task_notes", "task_edges"] as const;
+  return [
+    // natural-key guards (see KEY_COLUMNS)
+    ...tables.map(keyGuard),
+    ...tables.map(insertGuard),
+    ...tables.map(positiveIdGuard),
+    NOTE_KIND_GUARD,
+    // The singleton op_ctx row must survive: the HLC clock reads
+    // `now_ms` from it, and a missing row would NULL last_wall.
+    trigger(
+      "_cap_op_ctx_nodelete",
+      `BEFORE DELETE ON op_ctx
 BEGIN
-  ${emitOp("workstream", "put", "NEW.name", fullPayload(wsCols))}
-END;
+  SELECT RAISE(ABORT, 'mu: op_ctx is the op context row; it is never deleted.');`,
+    ),
 
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_workstreams_upd
-AFTER UPDATE ON workstreams WHEN ${NOT_APPLYING}
-  AND (${anyChanged(wsCols)})
-BEGIN
-  ${emitOp("workstream", "put", "NEW.name", changedPayload(wsCols))}
-END;
+    // workstreams
+    emitting(
+      "_cap_workstreams_ins",
+      "AFTER INSERT ON workstreams",
+      undefined,
+      emitOp("workstream", "put", "NEW.name", fullPayload(wsCols)),
+    ),
+    emitting(
+      "_cap_workstreams_upd",
+      "AFTER UPDATE ON workstreams",
+      anyChanged(wsCols),
+      emitOp("workstream", "put", "NEW.name", changedPayload(wsCols)),
+    ),
+    emitting(
+      "_cap_workstreams_del",
+      "BEFORE DELETE ON workstreams",
+      undefined,
+      `${DYING_STASH("workstream", "OLD.name")}
+  ${emitOp("workstream", "del", "OLD.name", "'{}'")}`,
+    ),
+    undieTrigger("workstreams", "workstream"),
 
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_workstreams_del
-BEFORE DELETE ON workstreams WHEN ${NOT_APPLYING}
-BEGIN
-  ${DYING_STASH("workstream", "OLD.name")}
-  ${emitOp("workstream", "del", "OLD.name", "'{}'")}
-END;
+    // tasks
+    emitting(
+      "_cap_tasks_ins",
+      "AFTER INSERT ON tasks",
+      undefined,
+      emitOp("task", "put", taskKeyNew, fullPayload(taskCols)),
+    ),
+    emitting(
+      "_cap_tasks_upd",
+      "AFTER UPDATE ON tasks",
+      anyChanged(taskCols),
+      emitOp("task", "put", taskKeyNew, changedPayload(taskCols)),
+    ),
+    emitting(
+      "_cap_tasks_del",
+      "BEFORE DELETE ON tasks",
+      undefined,
+      `${DYING_STASH("task", taskKeyOld)}
+  ${emitOp("task", "del", taskKeyOld, "'{}'")}`,
+    ),
+    undieTrigger("tasks", "task"),
 
--- ─── tasks ──────────────────────────────────────────────────────────
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_tasks_ins
-AFTER INSERT ON tasks WHEN ${NOT_APPLYING}
-BEGIN
-  ${emitOp("task", "put", taskKeyNew, fullPayload(taskCols))}
-END;
+    // task_notes
+    emitting(
+      "_cap_task_notes_ins",
+      "AFTER INSERT ON task_notes",
+      undefined,
+      emitOp("note", "put", noteKeyNew, fullPayload(noteCols)),
+    ),
+    emitting(
+      "_cap_task_notes_upd",
+      "AFTER UPDATE ON task_notes",
+      anyChanged(noteCols),
+      emitOp("note", "put", noteKeyNew, changedPayload(noteCols)),
+    ),
+    emitting(
+      "_cap_task_notes_del",
+      "BEFORE DELETE ON task_notes",
+      undefined,
+      emitOp("note", "del", noteKeyOld, noteTombstonePayload(noteKeyOld, noteCols)),
+    ),
 
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_tasks_upd
-AFTER UPDATE ON tasks WHEN ${NOT_APPLYING}
-  AND (${anyChanged(taskCols)})
-BEGIN
-  ${emitOp("task", "put", taskKeyNew, changedPayload(taskCols))}
-END;
-
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_tasks_del
-BEFORE DELETE ON tasks WHEN ${NOT_APPLYING}
-BEGIN
-  ${DYING_STASH("task", taskKeyOld)}
-  ${emitOp("task", "del", taskKeyOld, "'{}'")}
-END;
-
--- ─── task_notes ─────────────────────────────────────────────────────
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_task_notes_ins
-AFTER INSERT ON task_notes WHEN ${NOT_APPLYING}
-BEGIN
-  ${emitOp("note", "put", `${taskKey("NEW.task_id")} || '#' || NEW.id`, fullPayload(noteCols))}
-END;
-
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_task_notes_upd
-AFTER UPDATE ON task_notes WHEN ${NOT_APPLYING}
-  AND (${anyChanged(noteCols)})
-BEGIN
-  ${emitOp("note", "put", `${taskKey("NEW.task_id")} || '#' || NEW.id`, changedPayload(noteCols))}
-END;
-
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_task_notes_del
-BEFORE DELETE ON task_notes WHEN ${NOT_APPLYING}
-BEGIN
-  ${emitOp("note", "del", `${taskKey("OLD.task_id")} || '#' || OLD.id`, noteTombstonePayload(`${taskKey("OLD.task_id")} || '#' || OLD.id`, noteCols))}
-END;
-
--- ─── task_edges ─────────────────────────────────────────────────────
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_task_edges_ins
-AFTER INSERT ON task_edges WHEN ${NOT_APPLYING}
-BEGIN
-  ${emitOp("edge", "put", edgeKeyNew, fullPayload(edgeCols))}
-END;
-
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_task_edges_upd
-AFTER UPDATE ON task_edges WHEN ${NOT_APPLYING}
-  AND (${anyChanged(edgeCols)})
-BEGIN
-  ${emitOp("edge", "put", edgeKeyNew, changedPayload(edgeCols))}
-END;
-
-CREATE TEMP TRIGGER IF NOT EXISTS _cap_task_edges_del
-BEFORE DELETE ON task_edges WHEN ${NOT_APPLYING}
-BEGIN
-  ${emitOp("edge", "del", edgeKeyOld, "'{}'")}
-END;
-`;
+    // task_edges
+    emitting(
+      "_cap_task_edges_ins",
+      "AFTER INSERT ON task_edges",
+      undefined,
+      emitOp("edge", "put", edgeKeyNew, fullPayload(edgeCols)),
+    ),
+    emitting(
+      "_cap_task_edges_upd",
+      "AFTER UPDATE ON task_edges",
+      anyChanged(edgeCols),
+      emitOp("edge", "put", edgeKeyNew, changedPayload(edgeCols)),
+    ),
+    emitting(
+      "_cap_task_edges_del",
+      "BEFORE DELETE ON task_edges",
+      undefined,
+      emitOp("edge", "del", edgeKeyOld, "'{}'"),
+    ),
+  ];
 }
 
-/** The capture trigger DDL. Built once at module load; pure string. */
-export const CAPTURE_TRIGGER_DDL = buildTriggerDdl();
+/** AFTER DELETE: drop this row's `op_dying` stash entry. SQLite fires a
+ *  cascade's child AFTER triggers before the parent's, and every child
+ *  key was resolved in a BEFORE trigger, so nothing needs the entry any
+ *  more. Keeps `op_dying` empty at rest, whoever did the delete. */
+function undieTrigger(table: string, kind: "workstream" | "task"): CaptureTrigger {
+  return emitting(
+    `_cap_${table}_undie`,
+    `AFTER DELETE ON ${table}`,
+    undefined,
+    `DELETE FROM op_dying WHERE kind = '${kind}' AND id = OLD.id;`,
+  );
+}
+
+/** The capture triggers, built once at module load. */
+export const CAPTURE_TRIGGERS: readonly CaptureTrigger[] = buildTriggers();
+
+/** Every capture trigger as `CREATE TRIGGER …;` statements, in order. */
+export const CAPTURE_TRIGGER_DDL = CAPTURE_TRIGGERS.map((t) => `${t.sql};`).join("\n\n");
 
 /**
  * How many `total_changes()` the capture triggers themselves added while
@@ -585,10 +695,11 @@ export const CAPTURE_TRIGGER_DDL = buildTriggerDdl();
  * commits (no probe-then-rerun).
  *
  * Mirrors the trigger bodies above: every `emitOp` is exactly 3 changes
- * (the `_op_clock` UPDATE, the `machine_identity` UPDATE, the ops
- * INSERT), and every workstream/task tombstone also writes 1
- * `DYING_STASH` row. Change a trigger body and this must change too;
- * test/sql-capture.test.ts pins it with cascading deletes.
+ * (the `op_ctx.now_ms` UPDATE, the `machine_identity` UPDATE, the ops
+ * INSERT), and every workstream/task tombstone also writes 2 stash rows
+ * (`DYING_STASH` in, `undieTrigger` out). Change a trigger body and this
+ * must change too; test/sql-capture.test.ts pins it with cascading
+ * deletes.
  */
 export function captureBookkeepingChanges(db: CaptureDb, groupId: string): number {
   const row = db
@@ -598,28 +709,117 @@ export function captureBookkeepingChanges(db: CaptureDb, groupId: string): numbe
          FROM ops WHERE group_id = ?`,
     )
     .get(groupId) as { ops: number; stashed: number };
-  return 3 * row.ops + row.stashed;
+  return 3 * row.ops + 2 * row.stashed;
 }
 
 // ─── Installation ─────────────────────────────────────────────────────
 
+/** Names of the stored capture triggers (`_cap_` prefix; `_` escaped
+ *  because it is a LIKE wildcard). */
+const STORED_TRIGGERS_SQL =
+  "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name LIKE '\\_cap\\_%' ESCAPE '\\' ORDER BY name";
+
+const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+/** sha256 over `name\nsql\n` of each trigger, sorted by name. */
+function checksum(triggers: readonly CaptureTrigger[]): string {
+  const sorted = [...triggers].sort((a, b) => (a.name < b.name ? -1 : 1));
+  return sha256(sorted.map((t) => `${t.name}\n${t.sql}\n`).join(""));
+}
+
+/** Checksum of the triggers this build would install. */
+export const GENERATED_TRIGGER_CHECKSUM = checksum(CAPTURE_TRIGGERS);
+
+/** The capture revision stamped in this file: 0 when the stamp is
+ *  missing (a DB from before the column existed), null when there is no
+ *  schema_version row at all (a fresh file). */
+export function storedCaptureVersion(db: CaptureDb): number | null {
+  const cols = db.prepare("SELECT name FROM pragma_table_info('schema_version')").all() as {
+    name: string;
+  }[];
+  if (!cols.some((c) => c.name === "capture_version")) {
+    const hasTable = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'")
+      .get();
+    return hasTable === undefined ? null : 0;
+  }
+  const row = db.prepare("SELECT capture_version FROM schema_version WHERE id = 1").get() as
+    | { capture_version: number }
+    | undefined;
+  return row === undefined ? null : row.capture_version;
+}
+
+/** What `mu doctor` reports: the stamp, and the checksum of the trigger
+ *  SQL actually stored in the file next to the one this build generates. */
+export function captureTriggerChecksums(db: CaptureDb): { stored: string; generated: string } {
+  const stored = db.prepare(STORED_TRIGGERS_SQL).all() as CaptureTrigger[];
+  return { stored: checksum(stored), generated: GENERATED_TRIGGER_CHECKSUM };
+}
+
+/** True when the stored triggers are byte-for-byte what this build
+ *  generates (same names, same SQL). */
+export function captureTriggersCurrent(db: CaptureDb): boolean {
+  const { stored, generated } = captureTriggerChecksums(db);
+  return stored === generated;
+}
+
+/** Thrown by `installCapture` when the file's capture stamp is NEWER than
+ *  this build's: a later mu wrote triggers this one cannot vouch for, and
+ *  replacing them would silently downgrade every other machine's rules.
+ *  openDb turns it into SchemaTooNewError. */
+export class CaptureTooNewError extends Error {
+  override readonly name = "CaptureTooNewError";
+  constructor(public readonly stored: number) {
+    super(`capture revision ${stored} is newer than this build's ${CAPTURE_VERSION}`);
+  }
+}
+
 /**
- * Create the op-context temp tables and the capture triggers on this
- * connection. Called by `openDb` on every non-readonly open.
+ * Make the capture triggers in this file current. Called once by
+ * `openDb` on every non-readonly open, after the schema is applied.
  *
- * Everything here is idempotent (CREATE TEMP TABLE / TRIGGER IF NOT
- * EXISTS + guarded seed INSERTs) so calling it twice is harmless.
- *
- * No transaction and no 'already exists' swallow, unlike
- * `applySchema`: the temp schema is PRIVATE to this connection, so the
- * concurrent-openDb race that forced those measures on the main schema
- * cannot occur here. Two processes opening the same file each build
- * their own temp schema without contending.
+ *   stamp == CAPTURE_VERSION  nothing: no DDL, no write lock.
+ *   stamp  > CAPTURE_VERSION  CaptureTooNewError; the file is untouched.
+ *   stamp  < CAPTURE_VERSION  (or missing) drop every `_cap_*` trigger,
+ *                             create the generated set, seed `op_ctx`,
+ *                             and stamp: ONE BEGIN IMMEDIATE, so no
+ *                             connection ever sees half a trigger set
+ *                             and a crash leaves the old set and the old
+ *                             stamp together. The stamp is re-read under
+ *                             the lock: a concurrent opener that won the
+ *                             race makes this a no-op, and a newer one
+ *                             is still refused.
  */
 export function installCapture(db: CaptureDb): void {
-  db.exec(OP_CTX_DDL);
-  db.exec(OP_CTX_SEED);
-  db.exec(CAPTURE_TRIGGER_DDL);
+  if (db.inTransaction) throw new Error("installCapture must run outside a transaction");
+  const quick = storedCaptureVersion(db);
+  if (quick === CAPTURE_VERSION) return;
+  if (quick !== null && quick > CAPTURE_VERSION) throw new CaptureTooNewError(quick);
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const locked = storedCaptureVersion(db);
+    if (locked !== null && locked > CAPTURE_VERSION) throw new CaptureTooNewError(locked);
+    if (locked !== CAPTURE_VERSION) {
+      const cols = db.prepare("SELECT name FROM pragma_table_info('schema_version')").all() as {
+        name: string;
+      }[];
+      if (!cols.some((c) => c.name === "capture_version")) {
+        db.exec("ALTER TABLE schema_version ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 0");
+      }
+      const old = db.prepare(STORED_TRIGGERS_SQL).all() as { name: string }[];
+      for (const t of old) db.exec(`DROP TRIGGER IF EXISTS "${t.name}"`);
+      for (const t of CAPTURE_TRIGGERS) db.exec(t.sql);
+      db.prepare("INSERT OR IGNORE INTO op_ctx (id) VALUES (1)").run();
+      db.prepare("UPDATE schema_version SET capture_version = ? WHERE id = 1").run(CAPTURE_VERSION);
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {}
+    throw err;
+  }
 }
 
 /** The slice of better-sqlite3's Database that capture needs. Declared
@@ -627,9 +827,45 @@ export function installCapture(db: CaptureDb): void {
  *  imports THIS module — a nominal import would be a cycle, and an
  *  import cycle here silently breaks `node dist/cli.js`. */
 export interface CaptureDb {
+  readonly inTransaction: boolean;
   exec(sql: string): unknown;
   prepare(sql: string): {
     run(...params: readonly unknown[]): unknown;
     get(...params: readonly unknown[]): unknown;
+    all(...params: readonly unknown[]): unknown[];
   };
+}
+
+/** One `mu doctor` row for the capture layer: the SQLite in use (>= 3.42),
+ *  the capture revision stamped in the file, and the sha256 of the stored
+ *  trigger SQL against the generated DDL. `sqliteVersion` is injectable
+ *  for tests. Shared by `mu doctor` and the TUI's doctor card. */
+export function captureDoctorCheck(
+  db: CaptureDb,
+  sqliteVersion?: string,
+): { status: "ok" | "warn" | "fail"; detail: string } {
+  const version =
+    sqliteVersion ?? (db.prepare("SELECT sqlite_version() AS v").get() as { v: string }).v;
+  const stamp = storedCaptureVersion(db);
+  const { stored, generated } = captureTriggerChecksums(db);
+  const short = generated.slice(0, 12);
+  if (sqliteTooOld(version)) {
+    return {
+      status: "fail",
+      detail: `sqlite ${version} is below ${MIN_SQLITE.major}.${MIN_SQLITE.minor}: capture triggers abort every write`,
+    };
+  }
+  if (stamp !== CAPTURE_VERSION) {
+    return {
+      status: "fail",
+      detail: `capture ${stamp ?? "unstamped"} (code expects ${CAPTURE_VERSION}); sqlite ${version}`,
+    };
+  }
+  if (stored !== generated) {
+    return {
+      status: "fail",
+      detail: `capture ${stamp}; stored trigger checksum ${stored.slice(0, 12)} differs from generated ${short} (edited behind mu's back?); sqlite ${version}`,
+    };
+  }
+  return { status: "ok", detail: `capture ${stamp}, triggers ${short}, sqlite ${version}` };
 }

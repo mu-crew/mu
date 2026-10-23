@@ -25,7 +25,7 @@ FAIL-row failure, `6` reaped pane, `7` stall.
 
 ## Read the schema
 
-The schema has 13 tables and 4 views (`ready`, `blocked`, `blockers`,
+The schema has 15 tables and 4 views (`ready`, `blocked`, `blockers`,
 `goals`). Views skip torn-down workstreams.
 Four tables travel between machines: `workstreams`, `tasks`,
 `task_edges`, and `task_notes`. List them all:
@@ -70,6 +70,11 @@ mu sql "WITH RECURSIVE prereqs(id) AS (
 are captured as ops under one `sql.write` group per call, so `mu log --group`
 shows the whole call. `--confirm-rows N` counts rows removed by
 `ON DELETE CASCADE` too: deleting a task with one edge counts 2.
+
+The whole call runs in one transaction that mu opens, so `BEGIN`,
+`COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT` and `RELEASE` are refused; a
+failed statement rolls the call back. An `INSERT` that names an `id` of 0
+or below is refused too (omit it).
 
 `mu sql` refuses to change a natural-key column (`workstreams.name`,
 `tasks.workstream_id`, `tasks.local_id`, a note's task, or an edge's

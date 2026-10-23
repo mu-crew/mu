@@ -38,6 +38,7 @@ import { delimiter, dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { murmurAvailable, UNKNOWN_REASON } from "./agent-state.js";
 import { type AgentRow, expectsCtl } from "./agents.js";
+import { captureDoctorCheck } from "./capture.js";
 import { type CtlProbe, ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import { CTL_OPS } from "./ctl/protocol.js";
@@ -152,6 +153,18 @@ export function loadDoctorSummary(
       name: "schema_version",
       status: "fail",
       detail: "unreadable",
+    });
+  }
+
+  // ─ capture (sqlite floor, trigger revision, trigger checksum) ────
+  try {
+    const capture = captureDoctorCheck(db);
+    checks.push({ name: "capture", status: capture.status, detail: capture.detail });
+  } catch (err) {
+    checks.push({
+      name: "capture",
+      status: "fail",
+      detail: err instanceof Error ? err.message : String(err),
     });
   }
 
@@ -633,6 +646,7 @@ export function yankCommandForCheck(check: Pick<DoctorCheck, "name" | "status">)
       return 'mu sql "SELECT name FROM workstreams ORDER BY LOWER(name)"';
     case "schema":
     case "schema_version":
+    case "capture":
     case "journal_mode":
     case "foreign_keys":
       // No actionable mutation an operator should yank for
@@ -748,6 +762,15 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
         "A mismatch seen here means the row changed after open (an",
         "external SQLite client). If `<` the expected version, keep the",
         "DB and use the mu that wrote it; if `>`, use the newer mu binary.",
+      ];
+    case "capture":
+      return [
+        "Capture triggers live in the DB file and stamp every portable",
+        "write as an op. A checksum mismatch means a trigger was edited",
+        "or dropped behind mu's back; re-run any mu command on a DB",
+        "with an older capture stamp to reinstall them. Capture needs",
+        "SQLite >= 3.42; a plain `sqlite3` write is captured only if",
+        "that binary is new enough.",
       ];
     case "journal_mode":
       return [
