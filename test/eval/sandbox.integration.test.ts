@@ -1,8 +1,10 @@
 // Real tmux: no tmux invocation from inside a sandbox may reach the default server.
-import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createSandbox, sh, tmuxSocketPath } from "../../tools/eval/sandbox.ts";
+import { createSandbox, REAL_TMUX, sh, tmuxSocketPath } from "../../tools/eval/sandbox.ts";
 import type { Sandbox, Surface } from "../../tools/eval/types.ts";
 
 const surface: Surface = {
@@ -47,14 +49,35 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
         true,
       );
     }
-    // bare tmux sees only the sandbox's own (empty) default server, never the user's sessions
-    const listed = await sh(sb, "tmux list-sessions -F '#{session_name}'", { allowFail: true });
-    expect(listed.stdout.trim()).toBe("");
+    // bare tmux lists only the run's own server, never the user's sessions
+    const listed = await sh(sb, "tmux list-sessions -F '#{session_name}'");
+    expect(listed.stdout.trim()).toBe("eval-boot");
+    // the shim, not the host tmux, is what bare `tmux` resolves to
+    expect((await sh(sb, "command -v tmux")).stdout.trim()).toBe(`${sb.binDir}/tmux`);
+    // absolute-path tmux with no -L lands on the sandbox's own default server: empty, not the user's
+    const abs = await sh(sb, `${realTmux} list-sessions -F '#{session_name}'`, { allowFail: true });
+    expect(abs.stdout.trim()).toBe("");
+  });
+
+  it("tmux display -p '#{socket_path}' inside the sandbox is under the sandbox dir", async () => {
+    sb = await createSandbox(surface);
+    const sock = tmuxSocketPath(sb.dir, sb.tmuxSocket);
+    // bare tmux (shim -> run socket)
+    const bare = (await sh(sb, "tmux display -p '#{socket_path}'")).stdout.trim();
+    expect(bare).toBe(sock);
+    // host tmux by absolute path, no -L: sandbox default socket, still under the sandbox dir
+    const abs = (
+      await sh(sb, `${REAL_TMUX} start-server \\; display -p '#{socket_path}'`)
+    ).stdout.trim();
+    expect(abs.startsWith(`${sb.dir}/`), abs).toBe(true);
+    // never the user's default socket
+    expect(abs).not.toContain("/tmp/tmux-");
+    expect(bare).not.toBe(abs);
   });
 
   it("close kills the private servers (named and default-in-sandbox) and removes the dir", async () => {
     sb = await createSandbox(surface);
-    await sh(sb, "tmux start-server \\; new-session -d -s bare");
+    await sh(sb, `${REAL_TMUX} start-server \\; new-session -d -s bare`);
     const paths = [tmuxSocketPath(sb.dir, sb.tmuxSocket), tmuxSocketPath(sb.dir, "default")];
     for (const p of paths) expect(existsSync(p)).toBe(true);
     const dir = sb.dir;
@@ -65,4 +88,39 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
       expect(() => execFileSync("tmux", ["-S", p, "ls"], { stdio: "ignore" })).toThrow();
     }
   });
+
+  it.each([
+    ["an unhandled rejection", "Promise.reject(new Error('boom'))"],
+    ["an uncaught exception", "setTimeout(() => { throw new Error('boom'); }, 0)"],
+    ["a plain exit with the sandbox still open", "process.exit(0)"],
+  ])(
+    "%s still removes the sandbox dir and kills its tmux server",
+    async (_n, crash) => {
+      const dir = mkdtempSync(join(tmpdir(), "mu-eval-crash-"));
+      try {
+        const script = join(dir, "crash.ts");
+        const mod = join(import.meta.dirname, "..", "..", "tools", "eval", "sandbox.ts");
+        writeFileSync(
+          script,
+          `import { createSandbox, tmuxSocketPath } from ${JSON.stringify(mod)};
+const sb = await createSandbox(${JSON.stringify(surface)});
+console.log(JSON.stringify({ dir: sb.dir, sock: tmuxSocketPath(sb.dir, sb.tmuxSocket) }));
+${crash};
+await new Promise((r) => setTimeout(r, 5000));
+`,
+        );
+        const r = spawnSync("node", [script], { encoding: "utf8", timeout: 60_000 });
+        const info = JSON.parse(r.stdout.trim().split("\n")[0] ?? "{}") as {
+          dir: string;
+          sock: string;
+        };
+        expect(info.dir).toBeTruthy();
+        expect(existsSync(info.dir)).toBe(false);
+        expect(() => execFileSync("tmux", ["-S", info.sock, "ls"], { stdio: "ignore" })).toThrow();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    90_000,
+  );
 });

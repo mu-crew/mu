@@ -18,6 +18,8 @@ export interface RunOptions {
   tokenCap?: number;
   quietMs?: number;
   maxProds?: number;
+  /** Grace between SIGTERM to pi and the SIGKILL sweep (default 3000). */
+  graceMs?: number;
   /** Path for the raw rpc JSONL (stderr goes to <log>.stderr). */
   log?: string;
 }
@@ -147,6 +149,22 @@ export async function runAut(
       // group already gone
     }
   };
+  // Hard stops go SIGTERM first: pi's rpc mode kills its own tracked detached tool shells on
+  // SIGTERM/SIGHUP. The token sweep is the backstop once the grace is up.
+  const graceMs = opts.graceMs ?? 3000;
+  let termAt = 0;
+  const terminate = (): void => {
+    if (termAt === 0) {
+      termAt = Date.now();
+      try {
+        if (child.pid !== undefined) process.kill(child.pid, "SIGTERM");
+      } catch {
+        // already gone
+      }
+    } else if (Date.now() - termAt > graceMs) {
+      killGroup();
+    }
+  };
   const closeStdin = (): void => {
     if (stdinClosed) return;
     stdinClosed = true;
@@ -207,11 +225,11 @@ export async function runAut(
             aborted = "token-cap";
           }
           if (aborted) {
-            killGroup();
+            terminate();
             return;
           }
           if (closingSince > 0) {
-            if (now - closingSince > 10_000) killGroup();
+            if (now - closingSince > 10_000) terminate();
             return;
           }
           const quiet = now - collector.lastActivity() >= quietMs;
@@ -234,15 +252,18 @@ export async function runAut(
           // a throwing judge must reach runAut's caller, after the AUT and its tools are stopped
           failure = { error };
           clearInterval(timer);
-          killGroup();
           resolve();
         }
       })();
     }, TICK_MS);
   });
 
-  await exitPromise;
+  if (!exited) {
+    terminate();
+    await Promise.race([exitPromise, new Promise((r) => setTimeout(r, graceMs))]);
+  }
   killGroup();
+  await exitPromise;
   child.stdout.destroy();
   child.stderr.destroy();
   await Promise.all(

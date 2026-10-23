@@ -5,9 +5,27 @@ import { describe, expect, it } from "vitest";
 import { prepareSurface, SURFACES_DIR, surfaceDir } from "../../tools/eval/surface.ts";
 
 describe("surface names", () => {
-  const bad = ["..", ".", "../x", "a/b", "a/../b", "/abs", "", "x..y", ".hidden", "a\\b", "a\0b"];
+  const bad = [
+    "..",
+    ".",
+    "../x",
+    "a/b",
+    "a/../b",
+    "/abs",
+    "",
+    "x..y",
+    ".hidden",
+    "a\\b",
+    "a\0b",
+    "V3",
+    "a b",
+  ];
   it.each(bad)("surfaceDir refuses %j", (name) => {
     expect(() => surfaceDir(name)).toThrow(/invalid surface name/);
+  });
+
+  it("surfaceDir never returns the cache root itself", () => {
+    for (const n of [".", "", "./", "x/.."]) expect(() => surfaceDir(n)).toThrow();
   });
 
   it("surfaceDir accepts plain names inside the cache", () => {
