@@ -42,8 +42,7 @@
 // IMPORTANT: MIN_ACCEPTED_SCHEMA_VERSION === CURRENT_SCHEMA_VERSION
 // === 11. There is no in-place forward-bump ladder: every pre-v11 DB
 // is rejected at openDb time with SchemaTooOldError (exit 4), and a DB
-// newer than this build with SchemaTooNewError (exit 4). Migration
-// lives only in scripts/migrate.ts.
+// newer than this build with SchemaTooNewError (exit 4).
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -333,20 +332,13 @@ export class SchemaTooOldError extends Error implements HasNextSteps {
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Keep a copy of the old DB before anything else",
-        command: `mu db backup "$HOME/mu-v${this.detectedVersion}-backup.db"`,
+        intent:
+          "Keep a copy of the old DB before anything else (mu cannot open it, so use sqlite3)",
+        command: `sqlite3 "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}" ".backup '$HOME/mu-v${this.detectedVersion}-backup.db'"`,
       },
       {
         intent: "Move the old DB aside without deleting it",
         command: `mv "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}" "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}.old"`,
-      },
-      {
-        intent: `Migrate the old DB into a fresh v${this.requiredVersion} DB (run in a mu git checkout: the npm package does not ship scripts/)`,
-        command: `npx tsx scripts/migrate.ts "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}.old" --out /tmp/mu-v${this.requiredVersion}.db`,
-      },
-      {
-        intent: "Verify the fresh DB before swapping",
-        command: `MU_DB_PATH=/tmp/mu-v${this.requiredVersion}.db mu doctor --deep`,
       },
     ];
   }

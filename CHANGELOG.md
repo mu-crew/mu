@@ -25,6 +25,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   ignores SQLite's `-1` placeholder for an omitted id, so a raw `id = -1`
   row no longer blocks every later insert.
 
+### Removed
+
+- **The v7-v10 migration sidecar.** `scripts/migrate.ts`,
+  `scripts/migrate-recovery.ts`, `scripts/README.md` and
+  `test/migrate.integration.test.ts` are gone (mu-next README Cut table;
+  the cut-over import replaces them). A too-old DB is refused with
+  `SchemaTooOldError`; its next steps are now a `sqlite3 .backup` copy
+  (mu cannot open the DB, so `mu db backup` was unreachable) and moving
+  the file aside. `docs/guide/upgrade.md` drops the migration recipe.
+
 ## [3.13.3] — 2026-10-22
 
 **Test upkeep leaves a record.** An upkeep pass now ends by committing a

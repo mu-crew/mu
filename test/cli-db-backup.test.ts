@@ -1,10 +1,8 @@
 // `mu db backup` — the survivor of the old `db` export/import/replay verbs.
 //
 // R17 deleted `mu db export / import / replay` (src/db-sync.ts and
-// friends). Backup survives because the SchemaTooOldError next-steps
-// and scripts/README.md both tell operators to run it before the
-// importer — a missing verb there is a broken upgrade hint, which is
-// what this file guards.
+// friends). Backup survives as the one-file copy for scp or a safety
+// net before `mu db compact`/`forget`; this file guards that it works.
 
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1349,7 +1349,7 @@ drift.
   DROP) is gone. Keep a copy of your old DB (a plain `cp` of the file, as
   in the recipe below) and re-import it
   through **`scripts/migrate.ts`** — a sidecar you run once, by hand,
-  against a copy. See [scripts/README.md](../../scripts/README.md) for the
+  against a copy. See `scripts/README.md` for the
   exact upgrade recipe (BACK UP FIRST) and the honest list of what does
   NOT come across.
 

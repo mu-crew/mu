@@ -75,7 +75,6 @@ const DOC_FILES = [
   "skills/mu/recipes/tasks-or-calls.md",
   "skills/mu/recipes/drift-audit.md",
   "skills/mu/recipes/models.md",
-  "scripts/README.md",
 ];
 
 describe("docs name only real CLI surface", () => {

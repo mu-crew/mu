@@ -188,7 +188,6 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
 | `src/index.ts` | SDK entry point |
 | `skills/mu/` | the skill loaded into an agent's context; `mu --help` owns the verb reference |
-| `scripts/migrate.ts` | retained migration sidecar ([scripts/README.md](../scripts/README.md)) |
 | `scripts/check-doc-links.mjs` | relative-link and anchor checker for every markdown file, run by `test/doc-links.test.ts` |
 | `test/` | vitest suites; `*.integration.test.ts` touch real tmux, herdr or VCS ([sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
 
@@ -201,6 +200,6 @@ A new implementation of each is small.
 | `MuxBackend` | implementing the interface in `src/mux/`; a backend without an equivalent no-ops, and a backend-only feature is an optional method callers test for |
 | `VcsBackend` | implementing `detect`, `createWorkspace`, `freeWorkspace`, `isClean`, `commitsBehind`, `rebaseTo`, `commitsSinceBase`, `recentCommits`, `showCommit` (about 80-150 LOC) |
 | typed verb | an SDK function; a `cmd<Verb>` in `src/cli/<namespace>.ts`; one Commander block in `buildProgram()` wrapped in `handle()` and routed through `printNextSteps` |
-| schema change | bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror `CURRENT_SCHEMA`; startup stays migration-free ([scripts/README.md](../scripts/README.md)) |
+| schema change | bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror `CURRENT_SCHEMA`; startup stays migration-free |
 | syncable field | add the column to a portable table, extend the UPDATE trigger's changed-column comparison, confirm apply writes it; a full-row payload regresses merge to row-level LWW |
 | cross-machine sync | nothing: every invocation already flushes and ingests |
