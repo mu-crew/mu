@@ -12,6 +12,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **ultrathink closes on no *unfixed* high finding.** A final refuter pass
+  that finds highs which are then fixed now satisfies the stop rule.
 - **`touchTask` is monotonic.** A note or edge write whose clock read earlier
   than the stored `updated_at` no longer moves it backwards.
 - **`mu sql` `INSERT OR REPLACE` can no longer re-key a row without a
