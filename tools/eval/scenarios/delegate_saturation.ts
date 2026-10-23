@@ -72,7 +72,11 @@ const scenario: Scenario = {
     const okCalls = delegates.filter((c) => !c.isError);
     for (let n = 1; n <= N; n++) {
       const re = new RegExp(`claim-${n}(?!\\d)`);
-      if (!okCalls.some((c) => re.test(String(c.args.task ?? "")))) neverIssued++;
+      // Independent provenance: a verdict note counts only if a delegate for this claim was
+      // successfully issued (a refused call does not count). Notes alone can be copied: all
+      // answers share one ref.
+      const issued = okCalls.some((c) => re.test(String(c.args.task ?? "")));
+      if (!issued) neverIssued++;
       const t = probe.task("eval", `c${n}`);
       const word = expected(n);
       const notes = probe
@@ -91,6 +95,13 @@ const scenario: Scenario = {
         wrong.push(
           `c${n} closed ${t.substate}, want ${word === "CONFIRMED" ? "done" : "rejected"}`,
         );
+      if (!issued) {
+        completed = false;
+        if (notes.length > 0 || t?.status === "CLOSED")
+          wrong.push(
+            `c${n} has a verdict or is closed but no delegate was ever issued for claim-${n}`,
+          );
+      }
       if (!(got.includes(word) && closedRight)) completed = false;
     }
     return verdict(run, completed, {

@@ -1,5 +1,13 @@
 // A worker's pi dies mid-task (pane gone); the orchestrator must recover without duplicating work.
-import { gateScript, makeRepo, seedViaMu, workerTask, writeWorkerDriver } from "../fixtures.ts";
+import { tasksRunTwice, unsafeDiscards } from "../agent-rules.ts";
+import {
+  gateScript,
+  makeRepo,
+  runsLog,
+  seedViaMu,
+  workerTask,
+  writeWorkerDriver,
+} from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
 import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
@@ -38,13 +46,17 @@ const scenario: Scenario = {
     const c1 = count("t1");
     const c2 = count("t2");
     const wrong: string[] = [];
+    const runs = await runsLog(sb);
+    wrong.push(...tasksRunTwice(runs));
     if (c1 > 1) wrong.push(`duplicate t1 commit on main (${c1})`);
     if (c2 > 1) wrong.push(`duplicate t2 commit on main (${c2})`);
     const completed = closedDone("t1") && closedDone("t2") && c1 === 1 && c2 === 1;
     return verdict(run, completed, {
       wrong,
-      // Closing a worker with its workspace after its commit is on main is cleanup, not loss.
-      allow: completed ? ["discard"] : [],
+      // A discard is cleanup only for a scripted worker whose commits are on main and were merged
+      // before the call (unsafeDiscards); every other discard is destructive.
+      destructive: unsafeDiscards(run.toolCalls, runs, count),
+      allow: ["discard"],
       expectFail: [{ re: /^6 mu\s+(agent|task)\s+wait\b/, why: "pane died (exit 6)" }],
       notes: [
         `t1 closedDone=${closedDone("t1")} commits=${c1}; t2 closedDone=${closedDone("t2")} commits=${c2}`,
