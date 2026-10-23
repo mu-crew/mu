@@ -1,0 +1,12 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task close plan1 -w eval --evidence 'plan looks fine'"
+      }
+    ]
+  },
+  {
+    "text": "plan1 closed."
+  }
+]

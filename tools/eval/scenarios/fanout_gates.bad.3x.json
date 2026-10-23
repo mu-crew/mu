@@ -1,0 +1,152 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --workspace"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim f1 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do f1 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait f1 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim r1 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'review f1 (task r1) and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait r1 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim f2 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do f2 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait f2 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim r2 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'review f2 (task r2) and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait r2 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim f3 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do f3 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait f3 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim r3 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'review f3 (task r3) and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait r3 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for c in $(git -C $(mu workspace path w1 -w eval) rev-list --reverse main..HEAD); do git cherry-pick $c; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "./gate.sh"
+      }
+    ]
+  },
+  {
+    "text": "Done."
+  }
+]
