@@ -1,6 +1,7 @@
 // One AUT run over `pi --mode rpc`: spawn, prompt, collect metrics, enforce hard stops.
 import { execFileSync, spawn } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { MetricsCollector, splitLf } from "./events.ts";
 import { REAL_PI } from "./sandbox.ts";
@@ -49,6 +50,26 @@ function descendants(root: number): number[] {
   return out;
 }
 
+/**
+ * Every process that carries `EVAL_RUN_TOKEN=<token>` in its environment (pi and every tool it
+ * started, however far reparented or regrouped). Linux /proc; elsewhere falls back to the
+ * descendants of `root`, which is blind to orphans.
+ */
+export function ownedPids(token: string, root: number | undefined): number[] {
+  if (!existsSync("/proc/self/environ")) return root === undefined ? [] : descendants(root);
+  const needle = `EVAL_RUN_TOKEN=${token}\0`;
+  const out: number[] = [];
+  for (const name of readdirSync("/proc")) {
+    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
+    try {
+      if (readFileSync(`/proc/${name}/environ`, "latin1").includes(needle)) out.push(Number(name));
+    } catch {
+      // gone, or not ours
+    }
+  }
+  return out;
+}
+
 export async function runAut(
   sb: Sandbox,
   scenario: Scenario,
@@ -59,7 +80,8 @@ export async function runAut(
   const quietMs = opts.quietMs ?? scenario.quietMs ?? 30_000;
   const maxProds = opts.maxProds ?? scenario.maxProds ?? 1;
 
-  const env: Record<string, string> = { ...sb.env, ...scenario.env };
+  const token = randomBytes(8).toString("hex");
+  const env: Record<string, string> = { ...sb.env, ...scenario.env, EVAL_RUN_TOKEN: token };
   if (opts.auTScript) env.EVAL_FAUX_SCRIPT = opts.auTScript;
   const args = [
     "--mode",
@@ -103,17 +125,22 @@ export async function runAut(
   let stdinClosed = false;
   child.stdin.on("error", () => {});
 
-  // pi's bash tool starts commands in their own process group, so killing pi's group alone would
-  // orphan a hung tool. Collect the whole descendant tree first, then kill it and the group.
+  // pi's bash tool starts commands in their own process group, and they are reparented once pi
+  // dies, so neither the group nor a descendants snapshot finds them. Find them by the run token
+  // in their environment instead, and repeat until none are left (a dying tool may fork).
   const killGroup = (): void => {
-    if (child.pid === undefined) return;
-    for (const pid of descendants(child.pid)) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // already gone
+    for (let i = 0; i < 5; i++) {
+      const pids = ownedPids(token, child.pid);
+      if (pids.length === 0) break;
+      for (const pid of pids) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // already gone
+        }
       }
     }
+    if (child.pid === undefined) return;
     try {
       process.kill(-child.pid, "SIGKILL");
     } catch {
@@ -161,45 +188,54 @@ export async function runAut(
   let prods = 0;
   let closingSince = 0;
 
+  let failure: { error: unknown } | null = null;
   await new Promise<void>((resolve) => {
     let judging = false;
     const timer = setInterval(() => {
       void (async () => {
-        const now = Date.now();
-        if (exited) {
-          if (!aborted && closingSince === 0) aborted = "exit";
-          clearInterval(timer);
-          resolve();
-          return;
-        }
-        if (now - started > timeoutMs) {
-          aborted = "timeout";
-        } else if (collector.result({ wallMs: 0, prods, aborted: null }).usage.total > tokenCap) {
-          aborted = "token-cap";
-        }
-        if (aborted) {
-          killGroup();
-          return;
-        }
-        if (closingSince > 0) {
-          if (now - closingSince > 10_000) killGroup();
-          return;
-        }
-        const quiet = now - collector.lastActivity() >= quietMs;
-        if (!(collector.isSettled() && quiet) || judging) return;
-        judging = true;
         try {
-          const so_far = collector.result({ wallMs: now - started, prods, aborted: null });
-          const verdict = await scenario.judge(sb, so_far);
-          if (!verdict.completed && prods < maxProds) {
-            prods++;
-            send("carry on");
-          } else {
-            closingSince = Date.now();
-            closeStdin();
+          const now = Date.now();
+          if (exited) {
+            if (!aborted && closingSince === 0) aborted = "exit";
+            clearInterval(timer);
+            resolve();
+            return;
           }
-        } finally {
-          judging = false;
+          if (now - started > timeoutMs) {
+            aborted = "timeout";
+          } else if (collector.result({ wallMs: 0, prods, aborted: null }).usage.total > tokenCap) {
+            aborted = "token-cap";
+          }
+          if (aborted) {
+            killGroup();
+            return;
+          }
+          if (closingSince > 0) {
+            if (now - closingSince > 10_000) killGroup();
+            return;
+          }
+          const quiet = now - collector.lastActivity() >= quietMs;
+          if (!(collector.isSettled() && quiet) || judging) return;
+          judging = true;
+          try {
+            const so_far = collector.result({ wallMs: now - started, prods, aborted: null });
+            const verdict = await scenario.judge(sb, so_far);
+            if (!verdict.completed && prods < maxProds) {
+              prods++;
+              send("carry on");
+            } else {
+              closingSince = Date.now();
+              closeStdin();
+            }
+          } finally {
+            judging = false;
+          }
+        } catch (error) {
+          // a throwing judge must reach runAut's caller, after the AUT and its tools are stopped
+          failure = { error };
+          clearInterval(timer);
+          killGroup();
+          resolve();
         }
       })();
     }, TICK_MS);
@@ -212,5 +248,6 @@ export async function runAut(
   await Promise.all(
     [log, errLog].map((s) => (s ? new Promise<void>((r) => s.end(r)) : Promise.resolve())),
   );
+  if (failure) throw (failure as { error: unknown }).error;
   return collector.result({ wallMs: Date.now() - started, prods, aborted });
 }

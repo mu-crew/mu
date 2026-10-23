@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sandboxEnv } from "../../tools/eval/sandbox.ts";
+import { sandboxEnv, tmuxSocketPath } from "../../tools/eval/sandbox.ts";
 import type { Surface } from "../../tools/eval/types.ts";
 
 const surface: Surface = {
@@ -73,5 +73,16 @@ describe("sandboxEnv", () => {
 
   it("keeps the DB outside the sync dir", () => {
     expect(env.MU_DB_PATH?.startsWith(`${env.MU_SYNC_DIR}/`)).toBe(false);
+  });
+});
+
+describe("sandboxEnv tmux isolation", () => {
+  it("points TMUX_TMPDIR inside the sandbox, so even bare tmux never sees the default server", () => {
+    const dir = "/tmp/mu-eval-1-2-abc";
+    const env = sandboxEnv(dir, surface, "mu-eval-1-2-abc", { ...BASE, TMUX_TMPDIR: "/real/tmp" });
+    expect(env.TMUX_TMPDIR).toBe(`${dir}/t`);
+    expect(tmuxSocketPath(dir, "mu-eval-1-2-abc")).toBe(
+      `${dir}/t/tmux-${process.getuid?.() ?? 0}/mu-eval-1-2-abc`,
+    );
   });
 });
