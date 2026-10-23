@@ -243,6 +243,8 @@ export interface CheckOptions {
   preflight: boolean;
   verbose: boolean;
   root: string;
+  /** Where <id>.<kind>.<family>.json live; default: the scenarios dir. */
+  scriptDir?: string;
 }
 
 /** Faux-AUT proof of every scenario: golden completes cleanly, bad is flagged. No model tokens. */
@@ -264,9 +266,9 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     for (const id of ids) {
       const scenario = await loadScenario(id);
       for (const kind of ["golden", "bad"] as const) {
-        const script = join(scenarioDir(), scriptFile(id, kind, o.family));
+        const script = join(o.scriptDir ?? scenarioDir(), scriptFile(id, kind, o.family));
         if (!existsSync(script)) {
-          if (kind === "golden") line(false, `${id} golden missing`, script);
+          line(false, `${id} ${kind} missing`, script);
           continue;
         }
         const r = await runOne({
