@@ -368,6 +368,35 @@ BEGIN
 END;`;
 }
 
+/** Existing-row predicate for the BEFORE INSERT guard: the row `NEW` would
+ *  collide with, by surrogate id or by natural key. */
+const INSERT_COLLISION = {
+  workstreams: "SELECT 1 FROM workstreams WHERE id = NEW.id OR name = NEW.name",
+  tasks:
+    "SELECT 1 FROM tasks WHERE id = NEW.id OR (workstream_id = NEW.workstream_id AND local_id = NEW.local_id)",
+  task_notes: "SELECT 1 FROM task_notes WHERE id = NEW.id",
+  task_edges:
+    "SELECT 1 FROM task_edges WHERE from_task_id = NEW.from_task_id AND to_task_id = NEW.to_task_id",
+} as const satisfies Record<keyof typeof KEY_COLUMNS, string>;
+
+/** BEFORE INSERT trigger refusing an insert that collides with an existing
+ *  row's id or natural key. `INSERT OR REPLACE` would otherwise delete that
+ *  row without firing the DELETE trigger (no tombstone) and re-file it under
+ *  a new key. It also aborts `INSERT OR IGNORE` (BEFORE triggers run before
+ *  constraints), so mu inserts with `WHERE NOT EXISTS` instead. */
+function insertGuard(table: keyof typeof KEY_COLUMNS): string {
+  const msg =
+    `mu: ${table} row already exists; replacing it would change the natural key that every op is filed under ` +
+    "and leave no tombstone in the ops log. DELETE it, then INSERT, or add a new row.";
+  return `
+CREATE TEMP TRIGGER IF NOT EXISTS _cap_${table}_insguard
+BEFORE INSERT ON ${table}
+  WHEN EXISTS (${INSERT_COLLISION[table]})
+BEGIN
+  SELECT RAISE(ABORT, '${msg.replaceAll("'", "''")}');
+END;`;
+}
+
 /**
  * THE DELETE SUBTLETY
  * -------------------
@@ -435,6 +464,10 @@ ${keyGuard("workstreams")}
 ${keyGuard("tasks")}
 ${keyGuard("task_notes")}
 ${keyGuard("task_edges")}
+${insertGuard("workstreams")}
+${insertGuard("tasks")}
+${insertGuard("task_notes")}
+${insertGuard("task_edges")}
 
 -- ─── workstreams ────────────────────────────────────────────────────
 CREATE TEMP TRIGGER IF NOT EXISTS _cap_workstreams_ins

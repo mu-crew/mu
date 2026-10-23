@@ -615,6 +615,64 @@ describe("op capture (triggers)", () => {
       });
     }
 
+    // INSERT OR REPLACE with an existing id/key deletes the old row
+    // without firing the DELETE trigger, so the log gets no tombstone.
+    const replaces: Array<[string, string]> = [
+      [
+        "tasks id (re-key)",
+        "INSERT OR REPLACE INTO tasks (id, workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at) " +
+          "SELECT id, workstream_id, 'renamed', title, status, substate, impact, effort_days, created_at, updated_at FROM tasks WHERE local_id = 'a'",
+      ],
+      [
+        "tasks natural key",
+        "INSERT OR REPLACE INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at) " +
+          "SELECT workstream_id, local_id, 'x', status, substate, impact, effort_days, created_at, updated_at FROM tasks WHERE local_id = 'a'",
+      ],
+      [
+        "workstreams id (re-key)",
+        "INSERT OR REPLACE INTO workstreams (id, name, created_at) SELECT id, 'renamed', created_at FROM workstreams WHERE name = 'demo'",
+      ],
+      [
+        "task_notes id",
+        "INSERT OR REPLACE INTO task_notes (id, task_id, author, content, created_at) " +
+          "SELECT id, (SELECT id FROM tasks WHERE local_id = 'b'), author, content, created_at FROM task_notes",
+      ],
+      [
+        "task_edges key",
+        "INSERT OR REPLACE INTO task_edges (from_task_id, to_task_id, created_at) SELECT from_task_id, to_task_id, 'x' FROM task_edges",
+      ],
+    ];
+
+    for (const [label, sql] of replaces) {
+      it(`refuses an INSERT OR REPLACE over an existing ${label} and writes nothing`, () => {
+        ensureWorkstream(db, "demo");
+        seedTask("a");
+        seedTask("b");
+        addBlockEdge(db, "demo", "b", "a");
+        addNote(db, "a", "n", { workstream: "demo" });
+        clearOps();
+        const snapshot = (): unknown[] =>
+          ["workstreams", "tasks", "task_notes", "task_edges"].map((t) =>
+            db.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all(),
+          );
+        const before = snapshot();
+
+        expect(() => db.prepare(sql).run()).toThrow(/natural key/);
+
+        expect(ops()).toEqual([]);
+        expect(snapshot()).toEqual(before);
+      });
+    }
+
+    it("ensureWorkstream and addBlockEdge stay idempotent", () => {
+      expect(ensureWorkstream(db, "demo")).toBe(true);
+      expect(ensureWorkstream(db, "demo")).toBe(false);
+      seedTask("a");
+      seedTask("b");
+      expect(addBlockEdge(db, "demo", "b", "a").added).toBe(true);
+      expect(addBlockEdge(db, "demo", "b", "a").added).toBe(false);
+    });
+
     it("allows an UPDATE that rewrites a key column to its current value", () => {
       ensureWorkstream(db, "demo");
       seedTask("a");

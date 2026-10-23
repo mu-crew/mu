@@ -287,9 +287,10 @@ function addBlockEdgeImpl(
     .transaction(() => {
       const result = db
         .prepare(
-          "INSERT OR IGNORE INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
+          "INSERT INTO task_edges (from_task_id, to_task_id, created_at) SELECT ?, ?, ? " +
+            "WHERE NOT EXISTS (SELECT 1 FROM task_edges WHERE from_task_id = ? AND to_task_id = ?)",
         )
-        .run(blockerId, blockedId, now);
+        .run(blockerId, blockedId, now, blockerId, blockedId);
       if (result.changes > 0) {
         // Bump the BLOCKED task — its blocker set changed. The blocker
         // itself is unaffected. Aligned with reparentTask, which also

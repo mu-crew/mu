@@ -14,6 +14,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **`touchTask` is monotonic.** A note or edge write whose clock read earlier
   than the stored `updated_at` no longer moves it backwards.
+- **`mu sql` `INSERT OR REPLACE` can no longer re-key a row without a
+  tombstone.** A BEFORE INSERT guard on `workstreams`, `tasks`,
+  `task_notes` and `task_edges` refuses an insert whose id or natural key
+  already exists. `ensureWorkstream` and `addBlockEdge` now insert with
+  `WHERE NOT EXISTS`, since the guard also aborts `INSERT OR IGNORE`.
 
 ## [3.13.3] — 2026-10-22
 

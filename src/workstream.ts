@@ -266,8 +266,10 @@ export function ensureWorkstream(db: Db, name: string): boolean {
 
 function ensureWorkstreamImpl(db: Db, name: string): boolean {
   const result = db
-    .prepare("INSERT OR IGNORE INTO workstreams (name, created_at) VALUES (?, ?)")
-    .run(name, new Date().toISOString());
+    .prepare(
+      "INSERT INTO workstreams (name, created_at) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM workstreams WHERE name = ?)",
+    )
+    .run(name, new Date().toISOString(), name);
   const created = result.changes > 0;
   // No emitEvent: the workstreams INSERT fired the capture trigger
   // (intent='workstream.init', key=<name>).
