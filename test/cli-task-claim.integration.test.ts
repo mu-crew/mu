@@ -21,15 +21,13 @@
 // Real SQLite (in-temp-dir), no tmux. Drives the CLI in-process via
 // runCli so the assertions cover the whole verb pipeline.
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, getTask } from "../src/tasks.js";
-import { gitBackend } from "../src/vcs.js";
-import { createWorkspace } from "../src/workspace.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli } from "./_runCli.js";
 
@@ -60,21 +58,6 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
     const key = "MU_STATE_DIR";
     delete process.env[key];
   });
-
-  async function fakeWorkspaceBehind(
-    agent: string,
-    workstream: string,
-    behind: number,
-  ): Promise<void> {
-    const projectRoot = mkdtempSync(join(tempDir, "project-"));
-    writeFileSync(join(projectRoot, "README"), "x\n");
-    const row = await createWorkspace(db, { agent, workstream, projectRoot, backend: "none" });
-    db.prepare("UPDATE vcs_workspaces SET backend = 'git', parent_ref = ? WHERE path = ?").run(
-      `parent-${agent}`,
-      row.path,
-    );
-    vi.spyOn(gitBackend, "commitsBehind").mockImplementation(async () => behind);
-  }
 
   it("--for <ws>/<name> dispatches across workstreams; owner set", async () => {
     const { exitCode, stdout, stderr, error } = await runCli(
@@ -192,79 +175,6 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
     expect(exitCode).toBe(3);
     expect(stderr).toContain("ghostws");
     // Task untouched.
-    expect(getTask(db, "foo", "wsa")?.ownerName).toBeNull();
-    expect(getTask(db, "foo", "wsa")?.status).toBe("OPEN");
-  });
-
-  it("warns on stale --for workspace, appends refresh nextStep, and still claims by default", async () => {
-    await fakeWorkspaceBehind("worker-1", "wsb", 12);
-    const { exitCode, stdout, stderr, error } = await runCli(
-      ["task", "claim", "foo", "-w", "wsa", "--for", "wsb/worker-1"],
-      dbPath,
-    );
-    expect(error).toBeUndefined();
-    expect(exitCode).toBeNull();
-    expect(stderr).toContain("WARN: worker-1 workspace is 12 commits behind main");
-    expect(stdout).toContain("mu workspace refresh worker-1 -w wsb");
-    expect(getTask(db, "foo", "wsa")?.ownerName).toBe("worker-1");
-    expect(getTask(db, "foo", "wsa")?.status).toBe("IN_PROGRESS");
-  });
-
-  it("includes staleness in JSON output", async () => {
-    await fakeWorkspaceBehind("worker-1", "wsb", 10);
-    const { exitCode, stdout, stderr, error } = await runCli(
-      ["task", "claim", "foo", "-w", "wsa", "--for", "wsb/worker-1", "--json"],
-      dbPath,
-    );
-    expect(error).toBeUndefined();
-    expect(exitCode).toBeNull();
-    expect(stderr).toContain("WARN: worker-1 workspace is 10 commits behind main");
-    const out = JSON.parse(stdout) as {
-      staleness: {
-        agentName: string;
-        workstreamName: string;
-        commitsBehindMain: number | null;
-        isStale: boolean;
-      };
-      nextSteps: { command: string }[];
-    };
-    expect(out.staleness).toEqual({
-      agentName: "worker-1",
-      workstreamName: "wsb",
-      commitsBehindMain: 10,
-      isStale: true,
-    });
-    expect(out.nextSteps.some((s) => s.command === "mu workspace refresh worker-1 -w wsb")).toBe(
-      true,
-    );
-  });
-
-  it("--strict-staleness refuses stale --for workspace without claiming", async () => {
-    await fakeWorkspaceBehind("worker-1", "wsb", 14);
-    const { exitCode, stderr, error } = await runCli(
-      [
-        "task",
-        "claim",
-        "foo",
-        "-w",
-        "wsa",
-        "--for",
-        "wsb/worker-1",
-        "--strict-staleness",
-        "--json",
-      ],
-      dbPath,
-    );
-    expect(error).toBeUndefined();
-    expect(exitCode).toBe(4);
-    const env = JSON.parse(stderr) as {
-      error: string;
-      message: string;
-      nextSteps: { command: string }[];
-    };
-    expect(env.error).toBe("TaskClaimStaleWorkspaceError");
-    expect(env.message).toContain("14 commits behind main");
-    expect(env.nextSteps[0]?.command).toBe("mu workspace refresh worker-1 -w wsb");
     expect(getTask(db, "foo", "wsa")?.ownerName).toBeNull();
     expect(getTask(db, "foo", "wsa")?.status).toBe("OPEN");
   });

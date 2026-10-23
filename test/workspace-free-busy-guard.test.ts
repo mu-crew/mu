@@ -44,7 +44,7 @@ beforeEach(() => {
   mkdirSync(wsPath);
   db.prepare(
     `INSERT INTO vcs_workspaces (agent_id, workstream_id, backend, path, parent_ref, created_at)
-     SELECT a.id, a.workstream_id, 'none', ?, NULL, '2026-01-01T00:00:00Z' FROM agents a WHERE a.name = 'w1'`,
+     SELECT a.id, a.workstream_id, 'git', ?, NULL, '2026-01-01T00:00:00Z' FROM agents a WHERE a.name = 'w1'`,
   ).run(wsPath);
   paneLive = true;
   probeThrows = false;

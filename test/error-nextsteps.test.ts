@@ -57,7 +57,6 @@ import {
   StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
-  TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
   TaskInTriageError,
@@ -68,11 +67,7 @@ import {
   TaskTitleSlugEmptyError,
 } from "../src/tasks.js";
 import { PaneNotFoundError, TmuxError } from "../src/tmux.js";
-import {
-  WorkspaceConflictError,
-  WorkspaceDirtyError,
-  WorkspaceVcsRequiredError,
-} from "../src/vcs.js";
+import { WorkspaceVcsRequiredError } from "../src/vcs.js";
 import {
   HomeDirAsProjectRootError,
   WorkspaceExistsError,
@@ -95,13 +90,6 @@ interface NextStepsCase {
   label: string;
   expectedTokens: string[];
 }
-
-const staleWorkspace = {
-  agentName: "stale-agent",
-  workstreamName: "stale-ws",
-  commitsBehindMain: 12,
-  isStale: true,
-};
 
 const cases: NextStepsCase[] = [
   // src/tasks/errors.ts
@@ -168,11 +156,6 @@ const cases: NextStepsCase[] = [
     error: new ClaimerNotRegisteredError("pi-mu", null),
     label: "ClaimerNotRegisteredError (no pane)",
     expectedTokens: ["--self", "--for"],
-  },
-  {
-    error: new TaskClaimStaleWorkspaceError(staleWorkspace),
-    label: "TaskClaimStaleWorkspaceError",
-    expectedTokens: ["stale-agent", "stale-ws"],
   },
   { error: new CycleError("a", "b"), label: "CycleError", expectedTokens: ["a", "b"] },
   {
@@ -365,7 +348,7 @@ const cases: NextStepsCase[] = [
   {
     error: new WorkspacePathNotEmptyError("alice", "auth", "/path/to/ws"),
     label: "WorkspacePathNotEmptyError",
-    expectedTokens: ["auth", "/path/to/ws", "git worktree remove --force", "rm -rf"],
+    expectedTokens: ["status --short", "/path/to/ws", "git worktree remove --force", "rm -rf"],
   },
   {
     error: new HomeDirAsProjectRootError("alice", "auth", "/Users/alice"),
@@ -375,29 +358,9 @@ const cases: NextStepsCase[] = [
 
   // src/vcs/types.ts
   {
-    error: new WorkspaceVcsRequiredError("refresh", "/path/to/ws"),
+    error: new WorkspaceVcsRequiredError("/path/to/dir"),
     label: "WorkspaceVcsRequiredError",
-    expectedTokens: ["workspace", "<jj|sl|git>"],
-  },
-  {
-    error: new WorkspaceDirtyError("/path/to/ws", ["src/file.ts"]),
-    label: "WorkspaceDirtyError",
-    expectedTokens: ["/path/to/ws", "mu workspace free"],
-  },
-  {
-    error: new WorkspaceConflictError("/path/to/ws", "origin/main", ["src/file.ts"]),
-    label: "WorkspaceConflictError",
-    expectedTokens: [
-      "/path/to/ws",
-      "git rebase origin/main",
-      "mu workspace refresh <agent> --from 'origin/main'",
-      "mu workspace free",
-    ],
-  },
-  {
-    error: new WorkspaceConflictError("/path/to/ws", "trunk()", ["abc"], false),
-    label: "WorkspaceConflictError (jj, rebase kept)",
-    expectedTokens: ["jj op undo", "mu workspace refresh <agent> --from 'trunk()'"],
+    expectedTokens: ["--workspace-project-root", "git-repo"],
   },
 
   // src/workstream.ts / src/db.ts

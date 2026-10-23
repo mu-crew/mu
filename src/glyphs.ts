@@ -52,8 +52,8 @@ export function agentStateGlyph(state: RuntimeState): string {
 
 /**
  * Non-agent state glyphs, keyed by what they MEAN rather than what
- * they look like. A call site asks for `GLYPH.stale`, never for a
- * clock — so re-pointing the clock is a one-line edit here.
+ * they look like. A call site asks for `GLYPH.blocked`, never for a
+ * chain — so re-pointing the chain is a one-line edit here.
  *
  * `ok` / `fail` / `warn` deliberately reuse the same codepoints as the
  * agent statuses they rhyme with (`free`, `terminated`): a check-circle
@@ -67,10 +67,6 @@ export const GLYPH = {
   fail: "\uf057", // nf-fa-times_circle
   /** Needs attention but not broken (idle-but-assigned, stale warning). */
   warn: "\uf071", // nf-fa-warning
-  /** Workspace has uncommitted edits. */
-  dirty: "\uf005", // nf-fa-star
-  /** Workspace is ≥ WORKSPACE_STALE_THRESHOLD commits behind main. */
-  stale: "\uf017", // nf-fa-clock_o
   /** Task is blocked by an incoming edge. */
   blocked: "\uf0c1", // nf-fa-link (chain)
   /** Task is parked (OPEN/parked): open, but set aside on purpose. */

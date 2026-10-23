@@ -26,7 +26,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **pane** | One shell view inside a **window**. | "terminal", "shell" |
 | **pane id** | The mux's stable pane handle: tmux `%15`, herdr `w1:p1`. Not the volatile tmux pane index, which is never stored. | "pane number", "pane index" |
 | **pane title** | Equals the agent name. The fallback for **actor** identity when `$MU_AGENT_NAME` is absent. | "pane name" |
-| **substrate** | An external system mu depends on: tmux, herdr, jj, sl, git, SQLite. | "dependency" (an npm dep), "service" |
+| **substrate** | An external system mu depends on: tmux, herdr, git, SQLite. | "dependency" (an npm dep), "service" |
 | **crew** | Informal: the agents in a workstream. Prose only. | |
 
 ### Agents
@@ -99,13 +99,9 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 
 | Term | Meaning | Don't use |
 | --- | --- | --- |
-| **workspace** | A VCS-isolated checkout (jj workspace, sl or git worktree, or a copy). Never the herdr sense. | "branch", "checkout" |
+| **workspace** | A git worktree for one agent. Never the herdr sense. | "branch", "checkout" |
 | **VCS backend** / **backend** | An implementation of `VcsBackend` or `MuxBackend`. Qualify which when both are in scope. | "driver", "provider" |
-| **stale workspace** | A workspace behind the default branch (the `behind` column). mu never fetches. | "out of date", "drifting" |
-| **refresh** | Rebase an agent's workspace onto a fresh base without touching its pane. | "recycle", "reset" |
-| **workspace orphan** | A dir under `<state-dir>/workspaces/<workstream>/` with no `vcs_workspaces` row. Blocks later `--workspace` spawns. | "stray dir" |
-| **stranded** | A workspace orphan whose workstream row is gone too. Only `mu workspace orphans --all` and `mu doctor` reach it. | "abandoned" |
-| **missing workspace dir** | A `vcs_workspaces` row whose path is gone. Worse than an orphan: read surfaces still call it healthy. | "dangling row" |
+| **missing workspace dir** | A `vcs_workspaces` row whose path is gone. Read surfaces still call it healthy. | "dangling row" |
 | **dormant** | An idle workstream with no agents or workspaces: **finished** (all closed, 14 days) or **abandoned** (open tasks, 60 days). | "stale", "dead", "empty" |
 | **residue** | Bytes in `<state-dir>` that no row references and no code reads. Reported by `mu doctor`, never removed. | "garbage", "junk" |
 | **disk↔DB reconciliation** | `mu doctor`'s report-only `disk` section. Not **reconcile** (rows vs mux) or **drift** (log vs tables). | "gc", "cleanup" |

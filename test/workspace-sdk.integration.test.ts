@@ -3,14 +3,11 @@
 // listWorkspaces + getWorkspaceForAgent + workspacePath, the
 // HomeDirAsProjectRootError + cleanup-on-throw guards, the
 // WorkspaceNotFoundError surface, the closeAgent integration
-// (--discard-workspace + WorkspacePreservedError), and
-// listWorkspaceOrphans.
+// (--discard-workspace + WorkspacePreservedError).
 //
 // Split out of test/workspace.test.ts under
-// testreview_test_files_past_800loc — backends + commitsBehind live
-// in test/workspace-backends.integration.test.ts; decorateWithStaleness (+
-// memoization + concurrency cap) lives in
-// test/workspace-staleness-mem.integration.test.ts.
+// testreview_test_files_past_800loc — the git backend itself lives in
+// test/workspace-backends.integration.test.ts.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -25,8 +22,6 @@ import {
   freeWorkspace,
   getWorkspaceForAgent,
   HomeDirAsProjectRootError,
-  listAllOrphanWorkspaces,
-  listWorkspaceOrphans,
   listWorkspaces,
   WorkspaceExistsError,
   WorkspaceNotFoundError,
@@ -34,7 +29,6 @@ import {
   workspacePath,
 } from "../src/workspace.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
 
 let stateRoot: string;
 let projectRoot: string;
@@ -55,6 +49,13 @@ beforeEach(() => {
 
   projectRoot = mkdtempSync(join(tmpdir(), "mu-ws-project-"));
   writeFileSync(join(projectRoot, "README"), "hello\n");
+  execFileSync("git", ["init", "-q", "-b", "main", projectRoot], { stdio: "ignore" });
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "."], {
+    cwd: projectRoot,
+  });
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"], {
+    cwd: projectRoot,
+  });
 });
 
 afterEach(() => {
@@ -70,16 +71,16 @@ afterEach(() => {
 
 // ─── workspace SDK (registry layer on top of backends) ────────────────
 
-describe("workspace SDK (with noneBackend)", () => {
+describe("workspace SDK (git backend)", () => {
   it("createWorkspace records a row + creates the directory", async () => {
     const ws = await createWorkspace(db, {
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     expect(ws.agentName).toBe("worker-1");
-    expect(ws.backend).toBe("none");
+    expect(ws.backend).toBe("git");
     expect(ws.path).toContain(join("workspaces", "auth", "worker-1"));
     expect(getWorkspaceForAgent(db, "worker-1", "auth")?.path).toBe(ws.path);
   });
@@ -89,14 +90,14 @@ describe("workspace SDK (with noneBackend)", () => {
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     await expect(
       createWorkspace(db, {
         agent: "worker-1",
         workstream: "auth",
         projectRoot,
-        backend: "none",
+        backend: "git",
       }),
     ).rejects.toThrow(WorkspaceExistsError);
   });
@@ -117,7 +118,7 @@ describe("workspace SDK (with noneBackend)", () => {
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     db.prepare(
       `DELETE FROM vcs_workspaces WHERE agent_id = (SELECT id FROM agents WHERE name = 'worker-1')`,
@@ -131,7 +132,7 @@ describe("workspace SDK (with noneBackend)", () => {
         agent: "worker-1",
         workstream: "auth",
         projectRoot,
-        backend: "none",
+        backend: "git",
       }),
     ).rejects.toBeInstanceOf(WorkspacePathNotEmptyError);
   });
@@ -156,18 +157,18 @@ describe("workspace SDK (with noneBackend)", () => {
     ).id;
     db.prepare(
       `INSERT INTO vcs_workspaces (agent_id, workstream_id, backend, path, parent_ref, created_at)
-       VALUES (?, ?, 'none', ?, NULL, datetime('now'))`,
+       VALUES (?, ?, 'git', ?, NULL, datetime('now'))`,
     ).run(sqId, wsId, futurePath);
 
     // Trigger: createWorkspace for worker-2. backend.createWorkspace
-    // will succeed (cp -a); the INSERT will fail (UNIQUE on path);
+    // will succeed (git worktree add); the INSERT will fail (UNIQUE on path);
     // the rollback should remove the on-disk dir.
     await expect(
       createWorkspace(db, {
         agent: "worker-2",
         workstream: "auth",
         projectRoot,
-        backend: "none",
+        backend: "git",
       }),
     ).rejects.toThrow(/UNIQUE/i);
 
@@ -194,7 +195,7 @@ describe("workspace SDK (with noneBackend)", () => {
         agent: "ghost",
         workstream: "empty",
         projectRoot,
-        backend: "none",
+        backend: "git",
       });
     } catch (err) {
       caught = err;
@@ -218,13 +219,13 @@ describe("workspace SDK (with noneBackend)", () => {
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     await createWorkspace(db, {
       agent: "biller",
       workstream: "billing",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     expect(listWorkspaces(db, "auth").map((r) => r.agentName)).toEqual(["worker-1"]);
     expect(listWorkspaces(db, "billing").map((r) => r.agentName)).toEqual(["biller"]);
@@ -236,7 +237,7 @@ describe("workspace SDK (with noneBackend)", () => {
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     const r = await freeWorkspace(db, "worker-1", { workstream: "auth" });
     expect(r.removed).toBe(true);
@@ -260,7 +261,7 @@ describe("workspace SDK (with noneBackend)", () => {
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
     expect(getWorkspaceForAgent(db, "worker-1", "auth")).toBeUndefined();
@@ -271,7 +272,7 @@ describe("workspace SDK (with noneBackend)", () => {
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     db.prepare("DELETE FROM workstreams WHERE name = 'auth'").run();
     expect(listWorkspaces(db, "auth")).toEqual([]);
@@ -282,7 +283,7 @@ describe("workspace SDK (with noneBackend)", () => {
 //
 // Regression for snap_dogfood Finding 4 / workspace_create_partial_dir_on_failure.
 // Two interlocking sub-bugs:
-//   (a) projectRoot = $HOME silently kicks off a recursive cp -a of the
+//   (a) projectRoot = $HOME silently kicks off a worktree of the
 //       user's home dir, which stalls on DRM-protected files.
 //   (b) When the backend throws mid-create, the partial on-disk dir
 //       was left behind with no DB row.
@@ -295,7 +296,7 @@ describe("createWorkspace HOME-dir guard (snap_dogfood Finding 4a)", () => {
         agent: "worker-1",
         workstream: "auth",
         projectRoot: homedir(),
-        backend: "none",
+        backend: "git",
       }),
     ).rejects.toBeInstanceOf(HomeDirAsProjectRootError);
     // No DB row, no on-disk dir was even attempted.
@@ -309,7 +310,7 @@ describe("createWorkspace HOME-dir guard (snap_dogfood Finding 4a)", () => {
         agent: "worker-1",
         workstream: "auth",
         projectRoot: `${homedir()}/`,
-        backend: "none",
+        backend: "git",
       }),
     ).rejects.toBeInstanceOf(HomeDirAsProjectRootError);
     await expect(
@@ -317,7 +318,7 @@ describe("createWorkspace HOME-dir guard (snap_dogfood Finding 4a)", () => {
         agent: "worker-1",
         workstream: "auth",
         projectRoot: `${homedir()}/./`,
-        backend: "none",
+        backend: "git",
       }),
     ).rejects.toBeInstanceOf(HomeDirAsProjectRootError);
   });
@@ -332,7 +333,7 @@ describe("createWorkspace HOME-dir guard (snap_dogfood Finding 4a)", () => {
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     expect(ws.agentName).toBe("worker-1");
   });
@@ -342,49 +343,37 @@ describe("createWorkspace cleanup on backend throw (snap_dogfood Finding 4b)", (
   it("removes the partial on-disk dir when backend.createWorkspace throws after creating it", async () => {
     // Reproduction: invoke the SDK with a fresh fake backend that
     // throws AFTER putting a partial dir on disk — the snap_dogfood
-    // Finding 4b case (cp -a interrupted by DRM-protected file).
+    // Finding 4b case (git worktree add interrupted).
     //
     // We pass the fake backend via `opts.backend` (which accepts
     // either a backend name OR a `VcsBackend` object). Building a
     // standalone fake — instead of monkey-patching the exported
-    // `noneBackend` singleton — means a thrown assertion can never
+    // `gitBackend` singleton — means a thrown assertion can never
     // leak a mutated singleton into the next test that uses
-    // noneBackend.createWorkspace (e.g. the FK CASCADE tests above).
+    // gitBackend.createWorkspace (e.g. the FK CASCADE tests above).
     const wsPath = workspacePath("auth", "worker-1");
     let partialDirSeenByCleanup = false;
     const flakyBackend: VcsBackend = {
-      name: "none",
+      name: "git",
       async detect() {
         return true;
       },
       async createWorkspace(opts) {
-        // Simulate the cp-mid-stream failure: create a partial dir
+        // Simulate the mid-create failure: create a partial dir
         // first, then throw.
         mkdirSync(opts.workspacePath, { recursive: true });
         writeFileSync(join(opts.workspacePath, "partial"), "oops");
         partialDirSeenByCleanup = true;
-        throw new Error("simulated cp -a interrupted by DRM-protected file");
+        throw new Error("simulated worktree add interrupted");
       },
       async freeWorkspace() {
         return { removed: false };
-      },
-      async commitsBehind() {
-        return null;
-      },
-      async rebaseTo() {
-        throw new Error("not implemented in test backend");
       },
       async isClean() {
         return true;
       },
       async commitsSinceBase() {
         throw new Error("not implemented in test backend");
-      },
-      async recentCommits() {
-        return [];
-      },
-      async showCommit() {
-        return { text: "", truncated: false };
       },
       async listDirtyFiles() {
         return [];
@@ -397,7 +386,7 @@ describe("createWorkspace cleanup on backend throw (snap_dogfood Finding 4b)", (
         projectRoot,
         backend: flakyBackend,
       }),
-    ).rejects.toThrow(/simulated cp -a interrupted/);
+    ).rejects.toThrow(/simulated worktree add interrupted/);
     expect(partialDirSeenByCleanup).toBe(true);
     // CRITICAL: the partial dir is gone, not orphaned. Pre-fix this
     // would leave the dir behind and block subsequent
@@ -411,7 +400,7 @@ describe("createWorkspace cleanup on backend throw (snap_dogfood Finding 4b)", (
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     expect(ws.path).toBe(wsPath);
   });
@@ -436,42 +425,8 @@ describe("WorkspaceNotFoundError", () => {
 //     → still throws WorkspacePreservedError (commits would be lost)
 //   - --discard-workspace overrides ALL of the above (lossy)
 //
-// We exercise the dirty / commits-since-fork branches with the git
-// backend (the only backend whose `isClean` + `commitsSinceBase` we
-// can drive deterministically without skipping); the clean-on-none
-// branch covers the no-VCS case where `isClean` is unconditionally
-// true and there's no fork point to worry about.
-
-const GIT = (() => {
-  try {
-    execFileSync("git", ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-const gitDescribe = GIT ? describe : describe.skip;
 
 describe("closeAgent + workspace integration", () => {
-  it("closeAgent refuses a none-backend (cp -a) workspace: a copy cannot prove it is clean", async () => {
-    const ws = await createWorkspace(db, {
-      agent: "worker-1",
-      workstream: "auth",
-      projectRoot,
-      backend: "none",
-    });
-    expect(() => execFileSync("ls", [ws.path], { stdio: "pipe" })).not.toThrow();
-
-    const { closeAgent } = await import("../src/agents.js");
-    await expect(closeAgent(db, "worker-1", { workstream: "auth" })).rejects.toMatchObject({
-      name: "WorkspacePreservedError",
-    });
-
-    // Nothing was removed: the row and the copy are both still there.
-    expect(getWorkspaceForAgent(db, "worker-1", "auth")).toBeDefined();
-    expect(() => execFileSync("ls", [ws.path], { stdio: "pipe" })).not.toThrow();
-  });
-
   it("closeAgent { discardWorkspace: true } frees workspace AND deletes agent in one shot (lossy override path)", async () => {
     // worker-1 is pre-inserted by the outer beforeEach; create a workspace
     // for it then close with discard.
@@ -479,7 +434,7 @@ describe("closeAgent + workspace integration", () => {
       agent: "worker-1",
       workstream: "auth",
       projectRoot,
-      backend: "none",
+      backend: "git",
     });
     expect(() => execFileSync("ls", [ws.path], { stdio: "pipe" })).not.toThrow();
 
@@ -520,23 +475,7 @@ describe("closeAgent + workspace integration", () => {
   });
 });
 
-gitDescribe("closeAgent + workspace integration (git backend, dirty / commits-since-fork)", () => {
-  function gitInit(): void {
-    execFileSync("git", ["init", "-q", "-b", "main", projectRoot], { stdio: "ignore" });
-    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "."], {
-      cwd: projectRoot,
-    });
-    execFileSync(
-      "git",
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"],
-      { cwd: projectRoot },
-    );
-  }
-
-  beforeEach(() => {
-    gitInit();
-  });
-
+describe("closeAgent + workspace integration (git backend, dirty / commits-since-fork)", () => {
   it("closeAgent auto-frees a clean git workspace (no uncommitted changes, no commits since fork)", async () => {
     const ws = await createWorkspace(db, {
       agent: "worker-1",
@@ -627,269 +566,5 @@ gitDescribe("closeAgent + workspace integration (git backend, dirty / commits-si
     expect(r.workspaceFreed).toBe(true);
     expect(r.workspaceAutoFreedClean).toBe(false);
     expect(getWorkspaceForAgent(db, "worker-1", "auth")).toBeUndefined();
-  });
-});
-
-// ─── listWorkspaceOrphans (regression for bug_workspace_orphan_not_in_state) ───
-
-describe("listWorkspaceOrphans", () => {
-  let tempDir: string;
-  let orphanProjectRoot: string;
-  let db: Db;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "mu-orphans-"));
-    orphanProjectRoot = mkdtempSync(join(tmpdir(), "mu-orphans-project-"));
-    writeFileSync(join(orphanProjectRoot, "README"), "hello\n");
-    process.env.MU_STATE_DIR = tempDir;
-    db = openDb({ path: join(tempDir, "mu.db") });
-    ensureWorkstream(db, "auth");
-  });
-
-  afterEach(() => {
-    db.close();
-    const key = "MU_STATE_DIR";
-    delete process.env[key];
-    try {
-      rmSync(tempDir, { recursive: true, force: true });
-      rmSync(orphanProjectRoot, { recursive: true, force: true });
-    } catch {
-      // best effort
-    }
-  });
-
-  it("returns [] when the workspaces dir doesn't exist", () => {
-    expect(listWorkspaceOrphans(db, "auth")).toEqual([]);
-  });
-
-  it("returns [] when every dir on disk has a DB row", async () => {
-    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1" });
-    await createWorkspace(db, {
-      agent: "w1",
-      workstream: "auth",
-      projectRoot: orphanProjectRoot,
-      backend: "none",
-    });
-    expect(listWorkspaceOrphans(db, "auth")).toEqual([]);
-  });
-
-  it("flags a dir on disk that has no DB row", async () => {
-    // Create a real workspace, then DELETE the row to leave the dir
-    // orphaned (the bug_workspace_orphan_not_in_state shape).
-    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1" });
-    const ws = await createWorkspace(db, {
-      agent: "w1",
-      workstream: "auth",
-      projectRoot: orphanProjectRoot,
-      backend: "none",
-    });
-    db.prepare(
-      `DELETE FROM vcs_workspaces WHERE agent_id = (SELECT id FROM agents WHERE name = 'w1')`,
-    ).run();
-    const orphans = listWorkspaceOrphans(db, "auth");
-    expect(orphans.length).toBe(1);
-    expect(orphans[0]?.agentName).toBe("w1");
-    expect(orphans[0]?.workstreamName).toBe("auth");
-    expect(orphans[0]?.path).toBe(ws.path);
-  });
-
-  it("only flags dirs missing rows, not dirs that have rows", async () => {
-    insertAgent(db, { name: "live", workstream: "auth", paneId: "%1" });
-    insertAgent(db, { name: "orphaned", workstream: "auth", paneId: "%2" });
-    await createWorkspace(db, {
-      agent: "live",
-      workstream: "auth",
-      projectRoot: orphanProjectRoot,
-      backend: "none",
-    });
-    await createWorkspace(db, {
-      agent: "orphaned",
-      workstream: "auth",
-      projectRoot: orphanProjectRoot,
-      backend: "none",
-    });
-    db.prepare(
-      `DELETE FROM vcs_workspaces WHERE agent_id = (SELECT id FROM agents WHERE name = 'orphaned')`,
-    ).run();
-    const orphans = listWorkspaceOrphans(db, "auth");
-    expect(orphans.map((o) => o.agentName)).toEqual(["orphaned"]);
-  });
-});
-
-// ─── listAllOrphanWorkspaces + `mu workspace orphans --all` /
-//     -w <unknown> (regression for
-//     workspace_orphans_misses_destroyed_workstreams) ───
-
-describe("listAllOrphanWorkspaces", () => {
-  let tempDir: string;
-  let orphanProjectRoot: string;
-  let db: Db;
-  let dbPath: string;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "mu-orphans-all-"));
-    orphanProjectRoot = mkdtempSync(join(tmpdir(), "mu-orphans-all-project-"));
-    writeFileSync(join(orphanProjectRoot, "README"), "hello\n");
-    process.env.MU_STATE_DIR = tempDir;
-    dbPath = join(tempDir, "mu.db");
-    db = openDb({ path: dbPath });
-  });
-
-  afterEach(() => {
-    db.close();
-    const key = "MU_STATE_DIR";
-    delete process.env[key];
-    try {
-      rmSync(tempDir, { recursive: true, force: true });
-      rmSync(orphanProjectRoot, { recursive: true, force: true });
-    } catch {
-      // best effort
-    }
-  });
-
-  it("returns [] when no workspaces dir exists at all", () => {
-    expect(listAllOrphanWorkspaces(db)).toEqual([]);
-  });
-
-  it("flags dirs in destroyed-ws subdirs as `stranded: true`", () => {
-    // The shape from the bug report: a workstream subdir on disk with
-    // an orphan inside, but no row in `workstreams` for the parent.
-    const ghostDir = join(tempDir, "workspaces", "dogfood-snap", "_quarantine_1778249973");
-    mkdirSync(ghostDir, { recursive: true });
-    writeFileSync(join(ghostDir, "README"), "orphan\n");
-    const orphans = listAllOrphanWorkspaces(db);
-    expect(orphans.length).toBe(1);
-    expect(orphans[0]?.workstreamName).toBe("dogfood-snap");
-    expect(orphans[0]?.agentName).toBe("_quarantine_1778249973");
-    expect(orphans[0]?.stranded).toBe(true);
-    expect(orphans[0]?.path).toBe(ghostDir);
-  });
-
-  it("aggregates orphans across multiple workstreams; mixes stranded + live", async () => {
-    // Live workstream `auth` with one orphan dir AND one registered
-    // workspace; plus a fully-stranded workstream `ghost` with one
-    // orphan dir.
-    ensureWorkstream(db, "auth");
-    insertAgent(db, { name: "live", workstream: "auth", paneId: "%1" });
-    insertAgent(db, { name: "orphaned", workstream: "auth", paneId: "%2" });
-    await createWorkspace(db, {
-      agent: "live",
-      workstream: "auth",
-      projectRoot: orphanProjectRoot,
-      backend: "none",
-    });
-    await createWorkspace(db, {
-      agent: "orphaned",
-      workstream: "auth",
-      projectRoot: orphanProjectRoot,
-      backend: "none",
-    });
-    db.prepare(
-      `DELETE FROM vcs_workspaces WHERE agent_id = (SELECT id FROM agents WHERE name = 'orphaned')`,
-    ).run();
-
-    const ghostDir = join(tempDir, "workspaces", "ghost", "reviewer-1");
-    mkdirSync(ghostDir, { recursive: true });
-
-    const orphans = listAllOrphanWorkspaces(db);
-    // Two orphans total — 'live' is registered so it must NOT show up.
-    expect(orphans.length).toBe(2);
-    const byWs = new Map(orphans.map((o) => [o.workstreamName, o]));
-    expect(byWs.get("auth")?.agentName).toBe("orphaned");
-    expect(byWs.get("auth")?.stranded).toBe(false);
-    expect(byWs.get("ghost")?.agentName).toBe("reviewer-1");
-    expect(byWs.get("ghost")?.stranded).toBe(true);
-  });
-});
-
-describe("`mu workspace orphans` CLI", () => {
-  let tempDir: string;
-  let orphanProjectRoot: string;
-  let db: Db;
-  let dbPath: string;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "mu-orphans-cli-"));
-    orphanProjectRoot = mkdtempSync(join(tmpdir(), "mu-orphans-cli-project-"));
-    writeFileSync(join(orphanProjectRoot, "README"), "hello\n");
-    process.env.MU_STATE_DIR = tempDir;
-    dbPath = join(tempDir, "mu.db");
-    db = openDb({ path: dbPath });
-  });
-
-  afterEach(() => {
-    db.close();
-    const key = "MU_STATE_DIR";
-    delete process.env[key];
-    try {
-      rmSync(tempDir, { recursive: true, force: true });
-      rmSync(orphanProjectRoot, { recursive: true, force: true });
-    } catch {
-      // best effort
-    }
-  });
-
-  it("-w <unknown> exits 3 with WorkstreamNotFoundError (was: silent 'no orphans')", async () => {
-    ensureWorkstream(db, "auth");
-    db.close();
-    const r = await runCli(["workspace", "orphans", "-w", "totally-nonexistent"], dbPath);
-    expect(r.error).toBeUndefined();
-    expect(r.exitCode).toBe(3);
-    expect(r.stderr).toContain("no such workstream: totally-nonexistent");
-    // Re-open for the afterEach close().
-    db = openDb({ path: dbPath });
-  });
-
-  it("--all aggregates orphans across multiple workstreams (incl. destroyed)", async () => {
-    ensureWorkstream(db, "auth");
-    insertAgent(db, { name: "orphaned", workstream: "auth", paneId: "%1" });
-    await createWorkspace(db, {
-      agent: "orphaned",
-      workstream: "auth",
-      projectRoot: orphanProjectRoot,
-      backend: "none",
-    });
-    db.prepare(
-      `DELETE FROM vcs_workspaces WHERE agent_id = (SELECT id FROM agents WHERE name = 'orphaned')`,
-    ).run();
-    const ghostDir = join(tempDir, "workspaces", "ghost", "reviewer-1");
-    mkdirSync(ghostDir, { recursive: true });
-    db.close();
-
-    const r = await runCli(["workspace", "orphans", "--all", "--json"], dbPath);
-    expect(r.error).toBeUndefined();
-    expect(r.exitCode).toBeNull();
-    const env = JSON.parse(r.stdout) as {
-      items: Array<{
-        workstreamName: string;
-        agentName: string;
-        path: string;
-        stranded: boolean;
-      }>;
-      count: number;
-      nextSteps: unknown[];
-    };
-    expect(env.count).toBe(2);
-    expect(env.items.length).toBe(2);
-    const byWs = new Map(env.items.map((o) => [o.workstreamName, o]));
-    expect(byWs.get("auth")?.stranded).toBe(false);
-    expect(byWs.get("ghost")?.stranded).toBe(true);
-    db = openDb({ path: dbPath });
-  });
-
-  it("--all overrides -w (an unknown -w with --all does NOT error)", async () => {
-    // Document the choice: --all wins. -w is ignored, including a
-    // typo'd value that would otherwise exit 3 via the tightened
-    // single-ws path.
-    ensureWorkstream(db, "auth");
-    db.close();
-    const r = await runCli(
-      ["workspace", "orphans", "--all", "-w", "totally-nonexistent", "--json"],
-      dbPath,
-    );
-    expect(r.error).toBeUndefined();
-    expect(r.exitCode).toBeNull();
-    expect(JSON.parse(r.stdout)).toEqual({ items: [], count: 0, nextSteps: [] });
-    db = openDb({ path: dbPath });
   });
 });

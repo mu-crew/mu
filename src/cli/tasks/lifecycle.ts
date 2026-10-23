@@ -26,7 +26,7 @@ import {
   unparkTask,
   weakDecisionWarning,
 } from "../../tasks.js";
-import { backendByName, type VcsBackendName } from "../../vcs.js";
+import { backendByName } from "../../vcs.js";
 import { getWorkspaceForAgent } from "../../workspace.js";
 
 export async function cmdTaskClose(
@@ -184,24 +184,12 @@ function transition(r: {
   return `${from} → ${formatPair({ status: r.status, substate: r.substate })}`;
 }
 
-/** Commit-everything command per backend, message appended. Every
- *  form picks up untracked files, because `isClean` counts them as
- *  dirty (`git commit -am` alone would refuse with "nothing added"). */
-const COMMIT_ALL: Record<Exclude<VcsBackendName, "none">, string> = {
-  git: "git add -A && git commit -m",
-  jj: "jj commit -m",
-  sl: "sl commit --addremove -m",
-};
-
-/** The "Don't forget to commit" command for a dirty workspace. Exported
- *  for the fast-tier test that pins every backend's form. */
-export function commitHintCommand(
-  backend: Exclude<VcsBackendName, "none">,
-  actor: string,
-  workstream: string,
-  taskTitle: string,
-): string {
-  return `cd $(mu workspace path ${actor} -w ${workstream}) && ${COMMIT_ALL[backend]} ${shellSingleQuote(taskTitle)}`;
+/** The "Don't forget to commit" command for a dirty workspace. Picks up
+ *  untracked files, because `isClean` counts them as dirty (`git commit
+ *  -am` alone would refuse with "nothing added"). Exported for the
+ *  fast-tier test. */
+export function commitHintCommand(actor: string, workstream: string, taskTitle: string): string {
+  return `cd $(mu workspace path ${actor} -w ${workstream}) && git add -A && git commit -m ${shellSingleQuote(taskTitle)}`;
 }
 
 async function maybeAppendDirtyWorkspaceCommitHint(
@@ -214,13 +202,13 @@ async function maybeAppendDirtyWorkspaceCommitHint(
   if (actor.length === 0) return;
   try {
     const row = getWorkspaceForAgent(db, actor, workstream);
-    if (row === undefined || row.backend === "none") return;
+    if (row === undefined) return;
     const backend = backendByName(row.backend);
     const clean = await backend.isClean(row.path);
     if (clean) return;
     nextSteps.push({
       intent: "Don't forget to commit",
-      command: commitHintCommand(row.backend, actor, workstream, taskTitle),
+      command: commitHintCommand(actor, workstream, taskTitle),
     });
   } catch {
     // Best-effort hint only: a VCS probe failure must never make

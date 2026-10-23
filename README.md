@@ -2,10 +2,9 @@
 
 **A small control plane for a crew of AI coding agents working in
 parallel.** Agents run in multiplexer panes you can attach to. Work is a
-task DAG in SQLite. Each agent gets its own VCS workspace.
+task DAG in SQLite. Each agent gets its own git worktree.
 
-- **Parallel work that does not collide.** Per-agent workspaces (jj
-  workspaces, sl shares, or git worktrees) and a task DAG with
+- **Parallel work that does not collide.** Per-agent git worktrees and a task DAG with
   `blocks` edges keep agents out of each other's way.
 - **State that outlives a pane.** One SQLite DB holds agents, tasks,
   owners, notes, and workspaces. An append-only ops log records every
@@ -36,7 +35,7 @@ You need:
 - tmux ≥ 3.0 or [herdr](https://github.com/herdrdev/herdr). `mu doctor`
   reports which one is active.
 - pi, or another agent CLI.
-- jj, sl, or git on `PATH` for `--workspace`.
+- git on `PATH` for `--workspace`.
 
 [murmur](https://github.com/mu-crew/murmur) is optional for pi agents.
 Non-pi agents on tmux need it for state: without it their state is

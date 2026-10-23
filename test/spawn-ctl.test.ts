@@ -30,6 +30,7 @@ import { type Db, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { workspacePath } from "../src/workspace.js";
 import { withEnv } from "./_env.js";
+import { initGitRepo } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -351,7 +352,6 @@ describe("spawn liveness for ctl agents (tmux)", () => {
       name: "worker-1",
       workstream: "auth",
       workspace: true,
-      workspaceBackend: "none",
       workspaceProjectRoot: "/nonexistent/mu-no-such-root",
     }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
@@ -360,6 +360,9 @@ describe("spawn liveness for ctl agents (tmux)", () => {
   });
 
   it("a frozen error thrown after workspace pre-stage reaches the caller as itself", async () => {
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    initGitRepo(repo);
     const frozen = Object.freeze(new Error("frozen mux failure"));
     mux.restore();
     state = freshMockState();
@@ -372,8 +375,7 @@ describe("spawn liveness for ctl agents (tmux)", () => {
       name: "worker-1",
       workstream: "auth",
       workspace: true,
-      workspaceBackend: "none",
-      workspaceProjectRoot: dir,
+      workspaceProjectRoot: repo,
     }).catch((e) => e);
     expect(err).toBe(frozen);
     expect(spawnRows().map((r) => r.intent)).toContain("agent.spawn_failed");

@@ -2,14 +2,13 @@
 // the new ink-based TUI consumes alongside the static `mu state` renderer.
 // See design_sdk_seam in workstream `tui` (`mu task notes design_sdk_seam -w tui`).
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LiveAgent } from "../src/agents.js";
 import { insertAgent } from "../src/agents.js";
-import { type Db, openDb } from "../src/db.js";
+import { openDb } from "../src/db.js";
 import { GLYPH } from "../src/glyphs.js";
 import { renderOp } from "../src/log-render.js";
 import {
@@ -57,23 +56,6 @@ afterEach(() => {
   for (const d of dirs) rmFixtureDir(d);
   dirs = [];
 });
-
-function has(bin: string): boolean {
-  return spawnSync(bin, ["--version"], { stdio: "ignore" }).status === 0;
-}
-
-function git(repo: string, ...args: string[]): string {
-  const env = {
-    ...process.env,
-    GIT_AUTHOR_NAME: "tester",
-    GIT_AUTHOR_EMAIL: "tester@example.com",
-    GIT_COMMITTER_NAME: "tester",
-    GIT_COMMITTER_EMAIL: "tester@example.com",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-  };
-  return execFileSync("git", ["-C", repo, ...args], { env, encoding: "utf8" }).trim();
-}
 
 function agent(over: Partial<LiveAgent> = {}): LiveAgent {
   return {
@@ -210,10 +192,7 @@ describe("loadWorkstreamSnapshot", () => {
       taskCount: 0,
       allTasks: [],
       workspaces: [],
-      workspaceOrphans: [],
       recent: [],
-      recentCommits: [],
-      commitsBackend: null,
       doctor: null,
     };
     expect(_example.workstreamName).toBe("demo");
@@ -266,20 +245,14 @@ describe("loadWorkstreamSnapshot", () => {
       expect(fast.allTasks.map((t) => t.name).sort()).toEqual(["owned", "ready"]);
       expect(fast.tracks.length).toBeGreaterThan(0);
       expect(fast.workspaces).toEqual([]);
-      expect(fast.workspaceOrphans).toEqual([]);
       expect(fast.recent.length).toBeGreaterThan(0);
       expect(fast.view.agents).toEqual([]);
       expect(fast.view.orphans).toEqual([]);
-      expect(fast.recentCommits).toEqual([]);
-      expect(fast.commitsBackend).toBeNull();
       expect(fast.doctor).toBeNull();
 
       const slow = await loadWorkstreamSnapshotSlow(db, "demo", { withDoctor: true }, fast);
       expect(slow.view.agents).toEqual([expect.objectContaining({ name: "worker-1" })]);
       expect(slow.view.orphans).toEqual([]);
-      expect(slow.workspaces).toEqual([]);
-      expect(slow.recentCommits).toEqual([]);
-      expect(slow.commitsBackend).toBeNull();
       expect(slow.doctor?.checks.length).toBeGreaterThan(0);
 
       const combined = mergeSnapshotFastSlow(fast, slow);
@@ -299,32 +272,6 @@ describe("loadWorkstreamSnapshot", () => {
     } finally {
       resetTmuxExecutor();
       db.close();
-    }
-  });
-
-  (has("git") ? it : it.skip)("populates commitsBackend from the detected VCS", async () => {
-    const dbDir = tmp("mu-state-helper-db-");
-    const repo = tmp("mu-state-helper-repo-");
-    let db: Db | null = null;
-    const oldCwd = process.cwd();
-    try {
-      db = openDb({ path: join(dbDir, "mu.db") });
-      ensureWorkstream(db, "demo");
-      git(repo, "init", "-q", "-b", "main");
-      writeFileSync(join(repo, "README.md"), "hello\n");
-      git(repo, "add", ".");
-      git(repo, "commit", "-q", "-m", "init");
-      process.chdir(repo);
-
-      const snapshot = await loadWorkstreamSnapshot(db, "demo", {
-        withRecentCommits: { limit: 5 },
-      });
-
-      expect(snapshot.commitsBackend).toBe("git");
-      expect(snapshot.recentCommits[0]?.subject).toBe("init");
-    } finally {
-      process.chdir(oldCwd);
-      db?.close();
     }
   });
 });

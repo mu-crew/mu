@@ -251,12 +251,7 @@ export function formatTracks(tracks: readonly Track[]): string {
 
 /** Workspaces table renderer. Used by `mu workspace list` and by
  *  `mu state`'s Workspaces section — exported so cli/workspace.ts
- *  can reuse it. The `behind` column shows how many commits the row's
- *  parent_ref is behind the project's default branch HEAD; color-coded
- *  green ≤2, yellow 3–9, red ≥10. Renders "—" when the count couldn't
- *  be computed (no main resolvable, none-backend, missing parent_ref)
- *  or wasn't asked for (no decorateWithStaleness call). Surfaced by
- *  bug_workspace_stale_parent_silent_drift. */
+ *  can reuse it. */
 export function formatWorkspacesTable(rows: readonly WorkspaceRow[]): string {
   // The path column is the one that bit operators today: an absolute
   // ~/.local/state/mu/workspaces/<ws>/worker-foo path runs ~70 chars
@@ -265,10 +260,10 @@ export function formatWorkspacesTable(rows: readonly WorkspaceRow[]): string {
   // colWidths as a safety belt (tables_truncate_long_cols_audit).
   const PATH_BUDGET = 40;
   const table = muTable({
-    head: ["agent", "workstream", "backend", "path", "parent_ref", "behind", "created"].map((h) =>
+    head: ["agent", "workstream", "backend", "path", "parent_ref", "created"].map((h) =>
       pc.bold(h),
     ),
-    colWidths: [null, null, null, PATH_BUDGET, null, null, null],
+    colWidths: [null, null, null, PATH_BUDGET, null, null],
   });
   for (const r of rows) {
     table.push([
@@ -277,22 +272,10 @@ export function formatWorkspacesTable(rows: readonly WorkspaceRow[]): string {
       r.backend,
       truncateFront(r.path, PATH_BUDGET - 2),
       r.parentRef ? pc.dim(r.parentRef.slice(0, 12)) : pc.dim("—"),
-      formatBehind(r.commitsBehindMain),
       pc.dim(r.createdAt),
     ]);
   }
   return table.toString();
-}
-
-/** Color-code the commits-behind-main count. Green ≤2 (fresh), yellow
- *  3–9 (drifting), red ≥10 (stale). Undefined / null renders as a dim
- *  em-dash so the column stays well-typed even when staleness wasn't
- *  computed. */
-function formatBehind(n: number | null | undefined): string {
-  if (n === undefined || n === null) return pc.dim("—");
-  if (n <= 2) return pc.green(String(n));
-  if (n <= 9) return pc.yellow(String(n));
-  return pc.red(String(n));
 }
 
 /** One op, human-formatted. Used by `mu log` (read + tail) and by the

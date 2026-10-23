@@ -4,7 +4,7 @@
 // then compare the two, because the two can disagree in both directions
 // and nothing surfaced either one:
 //
-//   disk has, DB doesn't  ->  workspace orphan / empty parent / residue
+//   disk has, DB doesn't  ->  empty parent / residue
 //   DB has, disk doesn't  ->  a `vcs_workspaces` row pointing at nothing
 //
 // The second direction had NO surface at all before this module.
@@ -27,7 +27,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type Db, defaultDbPath, defaultStateDir } from "./db.js";
 import type { FleetHazard } from "./fleet-hazards.js";
-import { listAllOrphanWorkspaces, listWorkspaces } from "./workspace.js";
+import { listWorkspaces } from "./workspace.js";
 
 /** A held lock dir older than this is presumed abandoned. Mirrors
  *  `DEFAULT_STALE_LOCK_MS` in src/file-lock.ts — that value governs
@@ -87,11 +87,8 @@ export interface MissingWorkspaceDir {
 /**
  * `vcs_workspaces` rows whose `path` is not on disk.
  *
- * The inverse of a workspace orphan, and the more dangerous half: an
- * orphan dir merely blocks the next `--workspace` spawn with a clear
- * "path not empty", while a row pointing at a deleted directory is
- * reported as a healthy workspace by every read surface mu has. The
- * usual cause is a hand-run `rm -rf` (or a `git worktree remove`) on a
+ * A row pointing at a deleted directory is reported as a healthy
+ * workspace by every read surface mu has. The usual cause is a hand-run `rm -rf` (or a `git worktree remove`) on a
  * path that `mu workspace free` would have unregistered.
  */
 export function findMissingWorkspaceDirs(db: Db): MissingWorkspaceDir[] {
@@ -121,48 +118,6 @@ export function checkMissingWorkspaceDirs(db: Db): FleetHazard {
       "the next send or refresh against it fails inside the VCS backend rather",
       "than at the row that lied. Unregister them:",
       ...missing.map((m) => `  mu workspace free ${m.agentName} -w ${m.workstreamName}`),
-    ],
-  };
-}
-
-// ─── disk → DB: dirs with no row ──────────────────────────────────────
-
-/**
- * Workspace orphans, wired into doctor.
- *
- * `listAllOrphanWorkspaces` predates this module and was reachable only
- * from `mu workspace orphans` and the TUI card — so an operator running
- * `mu doctor` to answer "is anything wrong" was told nothing about
- * directories that will fail their next spawn. `stranded` rows (the
- * parent workstream's row is gone too) are counted separately because
- * they cannot be cleaned by any workstream-scoped verb.
- */
-export function checkWorkspaceOrphanDirs(db: Db): FleetHazard {
-  const orphans = listAllOrphanWorkspaces(db);
-  if (orphans.length === 0) {
-    return { name: "ws-dirs", severity: "ok", detail: "no orphan workspace dirs" };
-  }
-  const stranded = orphans.filter((o) => o.stranded);
-  const strandedNote = stranded.length > 0 ? `, ${stranded.length} stranded` : "";
-  return {
-    name: "ws-dirs",
-    severity: "warn",
-    detail: `${orphans.length} workspace dir(s) with no DB row${strandedNote}`,
-    remediation: [
-      "These directories have no row in vcs_workspaces:",
-      ...orphans.map((o) => `  ${o.path}${o.stranded ? "   (workstream row also gone)" : ""}`),
-      "",
-      "Each one blocks the next `--workspace` spawn for that agent name. mu will",
-      "not remove them: they may hold uncommitted work, and a stranded dir is the",
-      "only remaining copy of it. Inspect, then remove by hand (git checkouts:",
-      "from the project root, so git also drops its worktree registration):",
-      "  mu workspace orphans --all",
-      ...orphans
-        .slice(0, 3)
-        .map(
-          (o) =>
-            `  (cd <project-root> && git worktree remove --force ${o.path}) || rm -rf ${o.path}`,
-        ),
     ],
   };
 }
@@ -409,7 +364,6 @@ export function measureWorkspaceUsage(db: Db): WorkspaceUsage[] {
 export function checkDiskRecon(db: Db): FleetHazard[] {
   return [
     checkMissingWorkspaceDirs(db),
-    checkWorkspaceOrphanDirs(db),
     checkEmptyWorkstreamDirs(),
     checkStrayDbFiles(),
     checkRemovedExportsDir(),

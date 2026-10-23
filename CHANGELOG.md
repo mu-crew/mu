@@ -18,6 +18,25 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Removed
 
+- **The jj, sl and `cp -a` workspace backends, staleness, `workspace commits`
+  and orphan listing.** `src/vcs/jj.ts`, `sl.ts`, `none.ts`, `src/staleness.ts`,
+  `src/cli/staleness.ts`, `src/workspace/decorate.ts` and `orphans.ts` are gone
+  (mu-next README Cut table: 582 git workspaces, 0 jj/sl). `mu workspace
+  refresh|commits|orphans`, `mu agent spawn --workspace-backend`, and
+  `--strict-staleness` on `mu task claim` and `mu agent send` are unknown.
+  `VcsBackend` keeps `detect`, `createWorkspace`, `freeWorkspace`, `isClean`,
+  `listDirtyFiles` and `commitsSinceBase`; `VcsBackendName` is `"git"`.
+  `--workspace` outside a git repo throws `WorkspaceVcsRequiredError` (exit
+  4, new message). Refresh is a skill sentence: `git -C <cwd> fetch && git
+  -C <cwd> rebase <base>`. Also gone: the `behind` column, the stale-workspace
+  and orphan sections of `mu state` (and `workspaceOrphans`, `recentCommits`,
+  `commitsBackend` from its `--json`), the `workspaces` doctor-summary row,
+  the `ws-dirs` doctor row, `TaskClaimStaleWorkspaceError`,
+  `WorkspaceDirtyError`, `WorkspaceConflictError`, `staleness` in `mu task
+  claim` and `mu agent send --json`, and the SDK's `refreshWorkspace`,
+  `listCommitsForWorkspace`, `decorateWith*`, `*Orphan*` and `jjBackend`,
+  `slBackend`, `noneBackend`. `mu task wait`'s hint after a worker closes
+  is now `git -C <path> log --oneline <fork>..HEAD`.
 - **`mu undo`.** Teardown becomes soft in a later change. `mu log --group
   <prefix>` still resolves a group prefix; an unknown one now raises
   `GroupNotFoundError` (exit 3). The SDK drops `undoGroup`, `planUndo`,

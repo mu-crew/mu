@@ -1,4 +1,4 @@
-// mu — workspace registry CRUD and free/list/commits helpers.
+// mu — workspace registry CRUD and free/list helpers.
 
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
@@ -6,21 +6,13 @@ import { resolve } from "node:path";
 import { AgentNotFoundError } from "../agents/errors.js";
 import { type Db, tryResolveWorkstreamId } from "../db.js";
 import { emitEvent } from "../logs.js";
-import {
-  backendByName,
-  type CommitSummary,
-  detectBackend,
-  type RebaseResult,
-  type VcsBackend,
-  type VcsBackendName,
-} from "../vcs.js";
+import { backendByName, detectBackend, type VcsBackend, type VcsBackendName } from "../vcs.js";
 import {
   HomeDirAsProjectRootError,
   type RawWorkspaceRow,
   rowFromDb,
   SELECT_WS_COLS,
   WorkspaceExistsError,
-  WorkspaceNotFoundError,
   WorkspacePathNotEmptyError,
   type WorkspaceRow,
   WS_FROM_JOIN,
@@ -34,12 +26,12 @@ export interface CreateWorkspaceOptions {
    *  directory (the `mu` invocation site, which is normally what the
    *  user wants). */
   projectRoot?: string;
-  /** Override backend detection. Default: walk `detectBackend`.
-   *  Accepts either a name ("jj" / "sl" / "git" / "none") OR a
-   *  pre-built `VcsBackend` object — the object form lets tests inject
-   *  a fresh fake backend without mutating the exported singletons. */
+  /** Override backend detection. Default: `detectBackend` (git, or
+   *  WorkspaceVcsRequiredError). Accepts the name ("git") OR a pre-built
+   *  `VcsBackend` object — the object form lets tests inject a fake
+   *  backend without mutating the exported singleton. */
   backend?: VcsBackendName | VcsBackend;
-  /** Optional ref to base the workspace on. Backend-specific. */
+  /** Optional ref to base the workspace on. */
   parentRef?: string;
 }
 
@@ -90,14 +82,12 @@ export async function createWorkspace(db: Db, opts: CreateWorkspaceOptions): Pro
   if (opts.parentRef !== undefined) createOpts.parentRef = opts.parentRef;
 
   // Wrap the backend's on-disk side effect in a cleanup guard. If the
-  // backend throws mid-way (cp -a hits a DRM-protected file, git
-  // worktree add fails after creating the dir, an interrupt during a
-  // long copy), the partial dir would otherwise be left behind with
+  // backend throws mid-way (git worktree add fails after creating
+  // the dir, an interrupt), the partial dir would otherwise be left behind with
   // no DB row — exactly the failure mode from snap_dogfood Finding 4,
   // which then blocked subsequent `--workspace` spawns with
   // WorkspacePathNotEmptyError. Best-effort: if the rm itself fails,
-  // surface the original error and let the user clean up via
-  // `mu workspace orphans`.
+  // surface the original error.
   let created: Awaited<ReturnType<typeof backend.createWorkspace>>;
   try {
     created = await backend.createWorkspace(createOpts);
@@ -254,119 +244,12 @@ export async function freeWorkspace(
   };
 }
 
-export interface RefreshWorkspaceOptions {
-  agent: string;
-  workstream: string;
-  /** Optional override of the rebase target. When undefined, the
-   *  backend resolves its own default (origin/HEAD for git,
-   *  `trunk()` for jj/sl). */
-  fromRef?: string;
-}
-
-export interface RefreshWorkspaceResult extends RebaseResult {
-  /** Backend name (mirrors the row) so a JSON consumer doesn't have
-   *  to look up the workspace separately to know what kind of rebase
-   *  it just got. */
-  vcs: VcsBackendName;
-  /** The workspace's on-disk path (so the JSON shape is self-contained
-   *  for piping to a downstream `jq` script). */
-  workspacePath: string;
-}
-
-/**
- * Refresh an agent's workspace by rebasing it onto `fromRef` (or the
- * backend's default base). The agent / pane are NOT touched — only
- * the on-disk working copy moves. Writes the backend's new fork point
- * to the row's `parent_ref` so staleness, `mu workspace commits` and
- * the close-time clean check measure from the new base. Only a
- * conflict-free rebase writes it: on WorkspaceConflictError the row
- * keeps the old base, and a refresh after the conflicts are resolved
- * records the new one.
- */
-export async function refreshWorkspace(
-  db: Db,
-  opts: RefreshWorkspaceOptions,
-): Promise<RefreshWorkspaceResult> {
-  const row = getWorkspaceForAgent(db, opts.agent, opts.workstream);
-  if (!row) throw new WorkspaceNotFoundError(opts.agent);
-  const backend = backendByName(row.backend);
-  const result = await backend.rebaseTo(row.path, opts.fromRef, row.parentRef || undefined);
-  if (result.parentRef !== undefined) setWorkspaceParentRef(db, row, result.parentRef);
-  // vcs_workspaces is machine-local, so this event is the only record.
-  emitEvent(
-    db,
-    row.workstreamName,
-    "workspace.refresh",
-    `workspace refresh ${opts.agent} (backend=${row.backend}, fromRef=${result.fromRef}, replayed=${result.replayed.length})`,
-  );
-  return { ...result, vcs: row.backend, workspacePath: row.path };
-}
-
-function setWorkspaceParentRef(db: Db, row: WorkspaceRow, parentRef: string): void {
-  const wsId = tryResolveWorkstreamId(db, row.workstreamName);
-  if (wsId === null) return;
-  db.prepare(
-    `UPDATE vcs_workspaces SET parent_ref = ?
-     WHERE agent_id = (SELECT id FROM agents WHERE name = ? AND workstream_id = ?)
-       AND workstream_id = ?`,
-  ).run(parentRef, row.agentName, wsId, wsId);
-}
-
-export interface ListCommitsOptions {
-  workstream: string;
-  /** Optional override of the base ref (default: the workspace row's
-   *  parent_ref). Useful when the operator wants to ask "what's on
-   *  top of an arbitrary ref" without re-creating the workspace. */
-  since?: string;
-}
-
-export interface ListCommitsResult {
-  /** Backend name (mirrors the row). */
-  vcs: VcsBackendName;
-  /** The base ref actually used. */
-  baseRef: string;
-  /** The commits, oldest-first. Empty when the workspace is exactly
-   *  at baseRef. */
-  commits: CommitSummary[];
-  /** The workspace's on-disk path (so JSON consumers don't have to
-   *  call `mu workspace path` separately). */
-  workspacePath: string;
-}
-
-/**
- * List commits the workspace has on top of its `parent_ref` (or the
- * `--since` override), oldest-first. Promotes the dogfood-painful
- *     cd $(mu workspace path X) && git log <base>..HEAD
- * incantation into a typed verb that knows the workspace's
- * recorded fork point.
- */
-export async function listCommitsForWorkspace(
-  db: Db,
-  agent: string,
-  opts: ListCommitsOptions,
-): Promise<ListCommitsResult> {
-  const row = getWorkspaceForAgent(db, agent, opts.workstream);
-  if (!row) throw new WorkspaceNotFoundError(agent);
-  const backend = backendByName(row.backend);
-  const baseRef = opts.since ?? row.parentRef;
-  if (baseRef === null || baseRef.length === 0) {
-    if (row.backend === "none") {
-      await backend.commitsSinceBase(row.path, "");
-    }
-    throw new Error(`workspace ${agent} has no recorded parent_ref; pass --since <ref> explicitly`);
-  }
-  const commits = await backend.commitsSinceBase(row.path, baseRef);
-  return { vcs: row.backend, baseRef, commits, workspacePath: row.path };
-}
-
 /**
  * "Is this workspace safe to silently free on agent close?" — i.e.
  * does it have ZERO uncommitted changes AND ZERO commits since its
  * fork point. Used by closeAgent to auto-free clean workspaces.
  */
 export async function isWorkspaceClean(row: WorkspaceRow): Promise<boolean> {
-  // A `cp -a` copy has no history to prove it is unchanged: never clean.
-  if (row.backend === "none") return false;
   const backend = backendByName(row.backend);
   let clean: boolean;
   try {

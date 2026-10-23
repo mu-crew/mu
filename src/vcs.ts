@@ -1,8 +1,7 @@
-// mu — VCS workspace abstraction hub.
+// mu — VCS workspace abstraction hub (git worktrees only).
 //
-// Concrete backends live in the cohesive src/vcs/ cluster: one file per
-// backend plus shared types/helpers. This root file preserves the public
-// `import { ... } from "./vcs.js"` surface.
+// The backend lives in the cohesive src/vcs/ cluster. This root file
+// preserves the public `import { ... } from "./vcs.js"` surface.
 
 export {
   backendByName,
@@ -13,16 +12,7 @@ export {
   type FreeWorkspaceOptions,
   type FreeWorkspaceResult,
   gitBackend,
-  jjBackend,
-  noneBackend,
-  type ProbeReport,
-  type RebaseResult,
-  SHOW_COMMIT_MAX_CHARS,
-  type ShowCommitResult,
-  slBackend,
   type VcsBackend,
   type VcsBackendName,
-  WorkspaceConflictError,
-  WorkspaceDirtyError,
   WorkspaceVcsRequiredError,
 } from "./vcs/index.js";

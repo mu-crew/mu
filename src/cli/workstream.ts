@@ -257,7 +257,6 @@ export async function cmdTeardown(
         intent: "For each git worktree above, run",
         command: "git worktree remove --force <path>",
       },
-      { intent: "For each jj workspace above, run", command: "jj workspace forget <name>" },
       { intent: "As a last resort", command: "rm -rf <path>" },
     ]);
   }

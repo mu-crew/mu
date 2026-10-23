@@ -98,25 +98,20 @@ quoted heredoc: `mu agent send worker-1 - <<'EOF'`; see
 
 ## Give each worker a workspace
 
-`mu agent spawn --workspace` creates a jj, sl, or git worktree for the
-agent (`cp -a` outside a repo). You cherry-pick from it.
+`mu agent spawn --workspace` creates a git worktree for the agent. Outside
+a git repo it fails with exit 4. You cherry-pick from it.
 
-Refresh the workspace between tasks. The rebase keeps the agent's pi
-context:
+Refresh the worktree between tasks. The rebase keeps the agent's pi
+context. Before a `--fresh` send:
 
 ```bash
-mu workspace refresh worker-1 -w auth
+cwd=$(mu workspace path worker-1 -w auth)
+git -C "$cwd" fetch && git -C "$cwd" rebase origin/HEAD
 ```
 
-It rebases onto the remote's main (`origin/HEAD`); without a remote,
-pass `--from main`. It refuses on a dirty tree. On a conflict it exits 5:
-git and sl abort the rebase and leave the workspace as it was, while jj
-keeps the rebase with the conflicts committed in place. After you resolve,
-run refresh again so mu records the new base. To throw the workspace away
-instead, run `mu workspace free worker-1 -w auth`.
-
-Claim and send warn when the worker's workspace is 10 or more commits
-behind main. `--strict-staleness` makes that a refusal (exit 4).
+Use `origin/HEAD` as the base, or local main when you merged locally. On a
+conflict, run `git -C "$cwd" rebase --abort` and tell the human. To throw
+the workspace away instead, run `mu workspace free worker-1 -w auth`.
 
 ## Wait for the first task to close
 

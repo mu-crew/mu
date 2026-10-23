@@ -5,59 +5,18 @@ import { existsSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
-import {
-  type CommitSummary,
-  type ProbeReport,
-  SHOW_COMMIT_MAX_CHARS,
-  type ShowCommitResult,
-} from "./types.js";
+import type { CommitSummary } from "./types.js";
 
 export const exec = promisify(execFile);
 
-/** What each tool prints when cwd is simply not in its kind of repo. */
-const NOT_A_REPO = /no jj repo|not inside a repository|not a git repository/i;
-
-/** True when `err` is the tool answering "not this VCS": it is not installed
- *  (ENOENT), or it exited non-zero with its own not-a-repo message. Anything
- *  else (a config or repo-state error that also exits 1, EAGAIN, EMFILE,
- *  signal kill, timeout, maxBuffer) is an indeterminate probe failure. */
-function isCleanProbeNo(err: unknown): boolean {
-  const cause = err instanceof Error ? err.cause : undefined;
-  const { code, stderr } = (cause ?? {}) as { code?: unknown; stderr?: unknown };
-  if (code === "ENOENT") return true;
-  return typeof code === "number" && typeof stderr === "string" && NOT_A_REPO.test(stderr);
-}
-
-export async function probeVcsRootPath(
-  cmd: string,
-  args: string[],
-  cwd: string,
-  report?: ProbeReport,
-): Promise<string | null> {
+/** True iff `cmd args` run in `cwd` exits 0 with output (git not installed,
+ *  or cwd outside a repo, both read as "no"). */
+export async function probeVcsRoot(cmd: string, args: string[], cwd: string): Promise<boolean> {
   try {
-    const stdout = await run(cmd, args, cwd);
-    const root = stdout.trim();
-    return root.length > 0 ? root : null;
-  } catch (err) {
-    // Tool not installed, or tool exited non-zero because cwd is not
-    // in that backend's repo type. Both mean "not this backend". Other
-    // failures also read as "no" but are flagged in `report`.
-    if (report !== undefined && !isCleanProbeNo(err)) report.failed = true;
-    return null;
+    return (await run(cmd, args, cwd)).trim().length > 0;
+  } catch {
+    return false;
   }
-}
-
-export async function probeVcsRoot(
-  cmd: string,
-  args: string[],
-  cwd: string,
-  report?: ProbeReport,
-): Promise<boolean> {
-  return (await probeVcsRootPath(cmd, args, cwd, report)) !== null;
-}
-
-export function isSaplingDotdir(dotdir: string): boolean {
-  return /(?:^|[\\/])\.(?:sl|hg)$/.test(dotdir);
 }
 
 export async function ensureParent(path: string): Promise<void> {
@@ -84,56 +43,6 @@ export async function run(bin: string, args: readonly string[], cwd?: string): P
   }
 }
 
-/**
- * Run a VCS `show` and cap its text at SHOW_COMMIT_MAX_CHARS. Output
- * past the exec buffer (2x the cap, in bytes) kills the child with
- * ERR_CHILD_PROCESS_STDIO_MAXBUFFER. A stdout overflow keeps the stdout
- * read so far and is always reported as truncated, even when multi-byte
- * text decodes to fewer characters than the cap. A stderr overflow is a
- * failure and surfaces as an error.
- */
-export async function runShow(
-  bin: string,
-  args: readonly string[],
-  cwd?: string,
-): Promise<ShowCommitResult> {
-  let stdout: string;
-  let overflowed = false;
-  try {
-    ({ stdout } = await exec(bin, [...args], { cwd, maxBuffer: SHOW_COMMIT_MAX_CHARS * 2 }));
-  } catch (err) {
-    const partial = stdoutOverflow(err);
-    if (partial === undefined) {
-      return {
-        text: "",
-        truncated: false,
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
-    stdout = partial;
-    overflowed = true;
-  }
-  if (overflowed || stdout.length > SHOW_COMMIT_MAX_CHARS) {
-    return {
-      text: `${stdout.slice(0, SHOW_COMMIT_MAX_CHARS)}\n…(truncated at ${SHOW_COMMIT_MAX_CHARS} chars)`,
-      truncated: true,
-    };
-  }
-  return { text: stdout, truncated: false };
-}
-
-/** The partial stdout of a stdout maxBuffer overflow; undefined for any
- *  other failure (a stderr overflow included). Node names the stream
- *  only in the message: "stdout maxBuffer length exceeded". */
-function stdoutOverflow(err: unknown): string | undefined {
-  if (!(err instanceof Error)) return undefined;
-  const e = err as Error & { code?: unknown; stdout?: unknown };
-  if (e.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || typeof e.stdout !== "string") {
-    return undefined;
-  }
-  return e.message.startsWith("stdout ") ? e.stdout : undefined;
-}
-
 function relTimeFromIso(iso: string): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return "—";
@@ -156,29 +65,4 @@ export function commitSummary(
   author = "",
 ): CommitSummary {
   return { sha, subject, body, author, authorDate, relTime: relTimeFromIso(authorDate) };
-}
-
-export function saneLimit(limit: number): number {
-  if (!Number.isFinite(limit)) return 25;
-  return Math.max(0, Math.min(200, Math.floor(limit)));
-}
-
-/**
- * Parse the NUL-field / \x1e-record format used by the jj/sl
- * commitsSinceBase impls. Each record is `sha\0subject\0body\0date`
- * terminated by \x1e. Empty input → [].
- */
-export function parseNulRecords(raw: string): CommitSummary[] {
-  if (raw.length === 0) return [];
-  const records: CommitSummary[] = [];
-  for (const rec of raw.split("\x1e")) {
-    if (rec.length === 0) continue;
-    const fields = rec.split("\x00");
-    const sha = fields[0] ?? "";
-    if (sha.length === 0) continue;
-    records.push(
-      commitSummary(sha, fields[1] ?? "", fields[2] ?? "", fields[3] ?? "", fields[4] ?? ""),
-    );
-  }
-  return records;
 }

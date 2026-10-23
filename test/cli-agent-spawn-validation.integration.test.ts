@@ -22,7 +22,7 @@
 //             when the CLI was resolved via env var, so config issues
 //             are visible without `mu agent show`.
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -42,6 +42,7 @@ import { hasNextSteps } from "../src/output.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { listWorkspaces, workspacePath } from "../src/workspace.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { initGitRepo } from "./_git.js";
 import { runCli } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
@@ -203,7 +204,7 @@ describe("spawnAgent — pre-flight PATH check (Part A)", () => {
     // a typo in --cli leaves an orphan workspace dir behind.
     const stateDir = mkdtempSync(join(tmpdir(), "mu-spawn-validation-state-"));
     const projectRoot = mkdtempSync(join(tmpdir(), "mu-spawn-validation-proj-"));
-    writeFileSync(join(projectRoot, "README"), "hello\n");
+    initGitRepo(projectRoot);
     process.env.MU_STATE_DIR = stateDir;
     try {
       ensureWorkstream(db, "auth");
@@ -217,7 +218,6 @@ describe("spawnAgent — pre-flight PATH check (Part A)", () => {
           workstream: "auth",
           cli: "does-not-exist",
           workspace: true,
-          workspaceBackend: "none",
           workspaceProjectRoot: projectRoot,
         }),
       ).rejects.toBeInstanceOf(AgentSpawnCliNotFoundError);

@@ -32,6 +32,7 @@ afterAll(() => {
   }
 });
 
+import { initGitRepo } from "./_git.js";
 import { runCli } from "./_runCli.js";
 
 // ── default mode (full top-to-bottom card) ─────────────────────────
@@ -83,7 +84,7 @@ describe("mu state — default (full) mode", () => {
     const parsed = JSON.parse(stdout);
     // Spec: { workstreamName, agents, orphans, tracks, ready, blocked,
     //         inProgress, recentClosed, workspaces, recent,
-    //         recentCommits, commitsBackend } (flat).
+    //         remoteWorkers } (flat).
     expect(parsed.workstreamName).toBe("ws");
     expect(parsed.agents).toEqual([]);
     expect(parsed.orphans).toEqual([]);
@@ -106,8 +107,9 @@ describe("mu state — default (full) mode", () => {
     expect(parsed.recentClosed).toEqual([]);
     expect(parsed.workspaces).toEqual([]);
     expect(parsed.remoteWorkers).toEqual([]);
-    expect(parsed.recentCommits).toEqual([]);
-    expect(parsed.commitsBackend).toBeNull();
+    expect(parsed.recentCommits).toBeUndefined();
+    expect(parsed.commitsBackend).toBeUndefined();
+    expect(parsed.workspaceOrphans).toBeUndefined();
     // v2-retire-log-shim: `recent` shows captured ops. Both task adds
     // appear as typed ops keyed by natural key, not as prose events.
     expect(parsed.recent).toEqual(
@@ -280,8 +282,7 @@ describe("the op formatter", () => {
   });
 
   it("recognises payloads emitted by representative SDK state-changing verbs", async () => {
-    const { execFileSync } = await import("node:child_process");
-    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { mkdtempSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const {
@@ -310,15 +311,13 @@ describe("the op formatter", () => {
     } = await import("../src/tasks.js");
     const { claimTask, releaseTask } = await import("../src/tasks/claim.js");
     const { resetTmuxExecutor, setTmuxExecutor } = await import("../src/tmux.js");
-    const { createWorkspace, freeWorkspace, refreshWorkspace } = await import(
-      "../src/workspace.js"
-    );
+    const { createWorkspace, freeWorkspace } = await import("../src/workspace.js");
     const { teardownWorkstream, ensureWorkstream } = await import("../src/workstream.js");
     const { freshMockState, mockTmux } = await import("./_verbs-mock.js");
 
     const tempDir = mkdtempSync(join(tmpdir(), "mu-state-render-events-"));
-    const noneProjectRoot = mkdtempSync(join(tmpdir(), "mu-state-render-events-project-"));
-    writeFileSync(join(noneProjectRoot, "README"), "hello\n");
+    const projectRoot = mkdtempSync(join(tmpdir(), "mu-state-render-events-project-"));
+    initGitRepo(projectRoot);
     const db = openDb({ path: join(tempDir, "mu.db") });
     const previousWaitSleep = setWaitSleepForTests(async () => {});
     const previousStuckWarn = setWaitStuckWarnForTests(() => {});
@@ -410,8 +409,8 @@ describe("the op formatter", () => {
         createWorkspace(db, {
           agent: "worker-1",
           workstream: "events",
-          projectRoot: noneProjectRoot,
-          backend: "none",
+          projectRoot: projectRoot,
+          backend: "git",
         }),
       );
       await captureNewEvents(() =>
@@ -421,34 +420,14 @@ describe("the op formatter", () => {
         createWorkspace(db, {
           agent: "ghost-1",
           workstream: "events",
-          projectRoot: noneProjectRoot,
-          backend: "none",
+          projectRoot: projectRoot,
+          backend: "git",
         }),
       ).rejects.toBeInstanceOf(AgentNotFoundError);
       const workspaceCreateFailures = listLogs(db, { workstream: "events", kind: "event" }).filter(
         (r) => r.payload.startsWith("workspace create ghost-1"),
       );
       expect(workspaceCreateFailures).toEqual([]);
-
-      const gitRoot = mkdtempSync(join(tempDir, "git-project-"));
-      execFileSync("git", ["init"], { cwd: gitRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.email", "mu@test.local"], {
-        cwd: gitRoot,
-        stdio: "ignore",
-      });
-      execFileSync("git", ["config", "user.name", "mu test"], { cwd: gitRoot, stdio: "ignore" });
-      writeFileSync(join(gitRoot, "README.md"), "hello\n");
-      execFileSync("git", ["add", "README.md"], { cwd: gitRoot, stdio: "ignore" });
-      execFileSync("git", ["commit", "-m", "initial"], { cwd: gitRoot, stdio: "ignore" });
-      await createWorkspace(db, {
-        agent: "worker-1",
-        workstream: "events",
-        projectRoot: gitRoot,
-        backend: "git",
-      });
-      await captureNewEvents(() =>
-        refreshWorkspace(db, { agent: "worker-1", workstream: "events", fromRef: "HEAD" }),
-      );
 
       addTask(db, {
         localId: "stalled",
@@ -495,13 +474,7 @@ describe("the op formatter", () => {
       // survives is exactly the set no trigger can see: `agents` and
       // `vcs_workspaces` are machine-local, and `agent stalled` mutates
       // nothing.
-      const expected = [
-        "agent close",
-        "agent spawn",
-        "workspace create",
-        "workspace free",
-        "workspace refresh",
-      ];
+      const expected = ["agent close", "agent spawn", "workspace create", "workspace free"];
       expect([...captured.keys()].sort()).toEqual(expected.sort());
       // Every verb the session produced must be one the formatter
       // declares, so a new emitter cannot be added without teaching the
@@ -518,7 +491,7 @@ describe("the op formatter", () => {
       resetTmuxExecutor();
       db.close();
       rmSync(tempDir, { recursive: true, force: true });
-      rmSync(noneProjectRoot, { recursive: true, force: true });
+      rmSync(projectRoot, { recursive: true, force: true });
       if (originalStateDir === undefined) {
         const key = "MU_STATE_DIR";
         delete process.env[key];

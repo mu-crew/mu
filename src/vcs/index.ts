@@ -1,60 +1,33 @@
-// mu — VCS backend dispatcher.
+// mu — VCS backend dispatcher. Git worktrees are the only backend.
 
 import { gitBackend } from "./git.js";
-import { jjBackend } from "./jj.js";
-import { noneBackend } from "./none.js";
-import { slBackend } from "./sl.js";
-import type { ProbeReport, VcsBackend, VcsBackendName } from "./types.js";
+import type { VcsBackend, VcsBackendName } from "./types.js";
+import { WorkspaceVcsRequiredError } from "./types.js";
 
 export { gitBackend } from "./git.js";
-export { jjBackend } from "./jj.js";
-export { noneBackend } from "./none.js";
-export { slBackend } from "./sl.js";
 export {
   type CommitSummary,
   type CreateWorkspaceOptions,
   type CreateWorkspaceResult,
   type FreeWorkspaceOptions,
   type FreeWorkspaceResult,
-  type ProbeReport,
-  type RebaseResult,
-  SHOW_COMMIT_MAX_CHARS,
-  type ShowCommitResult,
   type VcsBackend,
   type VcsBackendName,
-  WorkspaceConflictError,
-  WorkspaceDirtyError,
   WorkspaceVcsRequiredError,
 } from "./types.js";
 
-/**
- * Detection precedence: jj > sl > git > none. The first backend whose
- * detect() returns true wins. `none` is always last. Detection shells
- * out to each VCS's canonical root probe (`jj root`, `sl root`, `git
- * rev-parse --show-toplevel`) so worktrees and gitdir-pointer files are
- * handled by the owning tool instead of a brittle marker-dir heuristic.
- */
-const BACKENDS: readonly VcsBackend[] = [jjBackend, slBackend, gitBackend, noneBackend];
-
-/** Return the backend that should handle projectRoot. Walks BACKENDS
- *  in precedence order; never returns undefined because noneBackend
- *  always claims. */
-export async function detectBackend(
-  projectRoot: string,
-  report?: ProbeReport,
-): Promise<VcsBackend> {
-  for (const backend of BACKENDS) {
-    if (await backend.detect(projectRoot, report)) return backend;
-  }
-  return noneBackend;
+/** Return the git backend when `projectRoot` is inside a git work tree
+ *  (detection shells out to `git rev-parse --show-toplevel`, so worktrees
+ *  and gitdir-pointer files are handled by git itself); otherwise throw
+ *  WorkspaceVcsRequiredError. */
+export async function detectBackend(projectRoot: string): Promise<VcsBackend> {
+  if (await gitBackend.detect(projectRoot)) return gitBackend;
+  throw new WorkspaceVcsRequiredError(projectRoot);
 }
 
-/** Look up a backend by name. Throws on unknown name. Used by
- *  `mu agent spawn --workspace-backend ...` to honour an explicit
- *  override. */
+/** Look up a backend by name (rows store it; "git" is the only value).
+ *  Throws on an unknown name. */
 export function backendByName(name: VcsBackendName): VcsBackend {
-  for (const backend of BACKENDS) {
-    if (backend.name === name) return backend;
-  }
+  if (name === gitBackend.name) return gitBackend;
   throw new Error(`unknown vcs backend: ${name}`);
 }

@@ -15,7 +15,10 @@ the loop and the reasons behind them.
    If no task exists, `mu task add` first (`--note 'REPRO: ...'` when
    the title is not enough). Ownership is durable and waitable; agent
    state is not. Review tasks: [adversarial-review](adversarial-review.md).
-4. Run `mu workspace refresh <w>`, then send a [brief](brief.md) with
+4. Rebase the worker's worktree (`git -C <cwd> fetch && git -C <cwd> rebase
+   <base>`; base `origin/HEAD`, or local main when merged locally; on
+   conflict `git -C <cwd> rebase --abort` and tell the human), then send
+   a [brief](brief.md) with
    `mu agent send <w> --fresh '...'` (new session + prompt in one step;
    refuses while busy). The brief ends with its final-action block.
 5. `mu task wait ... --first --on-stall exit --json`.

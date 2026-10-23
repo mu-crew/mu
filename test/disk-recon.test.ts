@@ -16,7 +16,6 @@ import {
   checkRemovedExportsDir,
   checkStaleLocks,
   checkStrayDbFiles,
-  checkWorkspaceOrphanDirs,
   findMissingWorkspaceDirs,
   findStrayDbFiles,
   formatBytes,
@@ -92,32 +91,6 @@ describe("DB → disk: rows pointing at nothing", () => {
 
   it("is ok when there are no workspace rows at all", () => {
     expect(checkMissingWorkspaceDirs(db).severity).toBe("ok");
-  });
-});
-
-describe("disk → DB: dirs with no row", () => {
-  it("reports an orphan dir and marks a stranded one", () => {
-    mkdirSync(wsDir("alpha", "worker-1"), { recursive: true });
-    // 'ghostws' has no workstreams row -> stranded.
-    mkdirSync(wsDir("ghostws", "worker-9"), { recursive: true });
-
-    const check = checkWorkspaceOrphanDirs(db);
-    expect(check.severity).toBe("warn");
-    expect(check.detail).toContain("2 workspace dir(s)");
-    expect(check.detail).toContain("1 stranded");
-    expect(check.remediation?.join("\n")).toContain("workstream row also gone");
-    // f_doctor_orphan_rm_rf_git: same recipe as `mu workspace orphans`,
-    // so a git checkout's worktree registration goes too.
-    expect(check.remediation?.join("\n")).toContain(
-      `git worktree remove --force ${wsDir("alpha", "worker-1")}) || rm -rf ${wsDir("alpha", "worker-1")}`,
-    );
-  });
-
-  it("does not report a dir that has a row", () => {
-    const path = wsDir("alpha", "worker-1");
-    mkdirSync(path, { recursive: true });
-    insertWorkspaceRow("alpha", "worker-1", path);
-    expect(checkWorkspaceOrphanDirs(db).severity).toBe("ok");
   });
 });
 

@@ -115,8 +115,7 @@ mu task wait design -w auth --first --on-stall exit
 auth/design
 any-of 1 reached CLOSED in 41094ms
 Next:
-  Cherry-pick worker-1's commit onto your branch : git cherry-pick 26278f1...
-  Refresh worker-1's workspace onto current main : mu workspace refresh worker-1 -w auth
+  Inspect worker-1's commits, then cherry-pick what you want : git -C <path> log --oneline 26278f1..HEAD
 ```
 
 The exit code tells you what happened:
@@ -149,11 +148,12 @@ Before the next task, rebase the worker's worktree onto the new main.
 The worker keeps its pi context:
 
 ```bash
-mu workspace refresh worker-1 -w auth
+cwd=$(mu workspace path worker-1 -w auth)
+git -C "$cwd" fetch && git -C "$cwd" rebase origin/HEAD
 ```
 
-The default target is the remote's main branch (`origin/HEAD`). In a
-repository without a remote, name the branch: `--from main`.
+In a repository without a remote, rebase onto local `main`. On a conflict,
+run `git -C "$cwd" rebase --abort` and resolve it by hand.
 
 ## Check the graph
 

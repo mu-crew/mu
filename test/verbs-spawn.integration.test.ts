@@ -6,7 +6,7 @@
 // the shared MockState / mockTmux harness, and the sibling
 // test/verbs-*.test.ts files for the rest of the verbs.
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -34,6 +34,7 @@ import {
 } from "../src/tmux.js";
 import { listWorkspaces, workspacePath } from "../src/workspace.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { initGitRepo } from "./_git.js";
 import {
   fail,
   freshMockState,
@@ -624,7 +625,7 @@ describe("spawn --workspace rollback on tmux failure", () => {
     stateDir = mkdtempSync(join(tmpdir(), "mu-spawn-ws-state-"));
     process.env.MU_STATE_DIR = stateDir;
     projectRoot = mkdtempSync(join(tmpdir(), "mu-spawn-ws-proj-"));
-    writeFileSync(join(projectRoot, "README"), "hello\n");
+    initGitRepo(projectRoot);
     // The workstream row must exist — prestageWorkspace inserts the
     // agent row first which calls ensureWorkstream, but it's clearer
     // (and harmless) to set it up explicitly here so the test reads
@@ -664,7 +665,6 @@ describe("spawn --workspace rollback on tmux failure", () => {
         name: "worker-1",
         workstream: "auth",
         workspace: true,
-        workspaceBackend: "none",
         workspaceProjectRoot: projectRoot,
       }),
     ).rejects.toThrow();
@@ -675,7 +675,7 @@ describe("spawn --workspace rollback on tmux failure", () => {
     expect(existsSync(expectedWsPath)).toBe(false);
   });
 
-  it("thrown error carries orphan-cleanup nextSteps when a workspace was prestaged", async () => {
+  it("thrown error carries workspace-cleanup nextSteps when a workspace was prestaged", async () => {
     const { executor } = mockTmux(state);
     setTmuxExecutor(failOnVerb(executor, "new-session"));
 
@@ -685,7 +685,6 @@ describe("spawn --workspace rollback on tmux failure", () => {
         name: "worker-1",
         workstream: "auth",
         workspace: true,
-        workspaceBackend: "none",
         workspaceProjectRoot: projectRoot,
       });
     } catch (err) {
@@ -696,7 +695,6 @@ describe("spawn --workspace rollback on tmux failure", () => {
     if (!hasNextSteps(caught)) throw new Error("unreachable");
     const steps = caught.errorNextSteps();
     const commands = steps.map((s) => s.command).join("\n");
-    expect(commands).toMatch(/mu workspace orphans -w auth/);
     expect(commands).toMatch(/mu workspace free worker-1 -w auth/);
   });
 
@@ -713,7 +711,6 @@ describe("spawn --workspace rollback on tmux failure", () => {
         name: "worker-1",
         workstream: "auth",
         workspace: true,
-        workspaceBackend: "none",
         workspaceProjectRoot: projectRoot,
       }),
     ).rejects.toThrow();
@@ -738,7 +735,6 @@ describe("spawn --workspace rollback on tmux failure", () => {
         name: "worker-1",
         workstream: "auth",
         workspace: true,
-        workspaceBackend: "none",
         workspaceProjectRoot: projectRoot,
       });
     } catch (err) {
@@ -757,7 +753,7 @@ describe("spawn --workspace rollback on tmux failure", () => {
       .map((s) => s.command)
       .join("\n");
     expect(commands).toMatch(/mu agent read worker-1/); // existing hint
-    expect(commands).toMatch(/mu workspace orphans -w auth/); // appended hint
+    expect(commands).toMatch(/mu workspace free worker-1 -w auth/); // appended hint
   });
 
   it("rollback also runs when the startup-error scan fires for a --workspace spawn", async () => {
@@ -781,7 +777,6 @@ describe("spawn --workspace rollback on tmux failure", () => {
         name: "worker-1",
         workstream: "auth",
         workspace: true,
-        workspaceBackend: "none",
         workspaceProjectRoot: projectRoot,
       });
     } catch (err) {
@@ -797,6 +792,6 @@ describe("spawn --workspace rollback on tmux failure", () => {
       .map((s) => s.command)
       .join("\n");
     expect(commands).toMatch(/mu agent spawn worker-1/); // existing diagnostic hint
-    expect(commands).toMatch(/mu workspace orphans -w auth/); // appended orphan-cleanup hint
+    expect(commands).toMatch(/mu workspace free worker-1 -w auth/); // appended orphan-cleanup hint
   });
 });

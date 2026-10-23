@@ -68,7 +68,6 @@ export {
   StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
-  TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
   TaskInTriageError,

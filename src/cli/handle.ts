@@ -97,7 +97,6 @@ import {
   StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
-  TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
   TaskInTriageError,
@@ -107,7 +106,7 @@ import {
   TaskParkStateError,
   TaskTitleSlugEmptyError,
 } from "../tasks.js";
-import { WorkspaceConflictError, WorkspaceDirtyError, WorkspaceVcsRequiredError } from "../vcs.js";
+import { WorkspaceVcsRequiredError } from "../vcs.js";
 import {
   HomeDirAsProjectRootError,
   WorkspaceExistsError,
@@ -305,7 +304,6 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof TaskParkedError ||
     err instanceof TaskInTriageError ||
     err instanceof InvalidSubstateError ||
-    err instanceof TaskClaimStaleWorkspaceError ||
     err instanceof TaskNotInWorkstreamError ||
     err instanceof AgentNotInWorkstreamError ||
     err instanceof WorkspaceOwnerBusyError ||
@@ -317,7 +315,6 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof WorkspacePreservedError ||
     err instanceof HomeDirAsProjectRootError ||
     err instanceof WorkspaceVcsRequiredError ||
-    err instanceof WorkspaceDirtyError ||
     err instanceof ClaimerNotRegisteredError ||
     err instanceof SchemaTooOldError ||
     err instanceof SchemaTooNewError ||
@@ -415,14 +412,6 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // MuxError is the base of the per-backend families (TmuxError, …),
     // so one instanceof covers every multiplexer.
     return { label: "mux", exitCode: 5 };
-  }
-  if (err instanceof WorkspaceConflictError) {
-    // Rebase produced conflicts. git/sl aborted it (workspace unchanged);
-    // jj kept it with the conflicts committed in place. Either way the
-    // operator must step in by hand. Distinct from the typed-conflict-
-    // of-state family (exit 4), which refuses before running anything.
-    // Same exit-code lane as TmuxError (manual recovery required).
-    return { label: "workspace conflict", exitCode: 5 };
   }
   if (err instanceof ReaperDetectedDuringWaitError) {
     // task_wait_reconcile_dead_panes: distinct exit code (6) so

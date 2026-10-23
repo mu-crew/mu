@@ -35,7 +35,6 @@ import {
   StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
-  TaskClaimStaleWorkspaceError,
   TaskExistsError,
   TaskIdInvalidError,
   TaskNotFoundError,
@@ -45,11 +44,7 @@ import {
   TaskTitleSlugEmptyError,
 } from "../src/tasks.js";
 import { PaneNotFoundError, TmuxError } from "../src/tmux.js";
-import {
-  WorkspaceConflictError,
-  WorkspaceDirtyError,
-  WorkspaceVcsRequiredError,
-} from "../src/vcs.js";
+import { WorkspaceVcsRequiredError } from "../src/vcs.js";
 import {
   HomeDirAsProjectRootError,
   WorkspaceExistsError,
@@ -80,16 +75,6 @@ describe("classifyError exit-code map", () => {
     [new AgentExistsError("alice"), 4, "conflict"],
     [new TaskExistsError("foo"), 4, "conflict"],
     [new TaskAlreadyOwnedError("foo", "alice"), 4, "conflict"],
-    [
-      new TaskClaimStaleWorkspaceError({
-        agentName: "alice",
-        workstreamName: "stale-ws",
-        commitsBehindMain: 12,
-        isStale: true,
-      }),
-      4,
-      "conflict",
-    ],
     [new TaskNotInWorkstreamError("foo", "wsA", "wsB"), 4, "conflict"],
     [new AgentNotInWorkstreamError("alice", "wsA", "wsB"), 4, "conflict"],
     [new CycleError("a", "b"), 4, "conflict"],
@@ -98,8 +83,7 @@ describe("classifyError exit-code map", () => {
     [new WorkspacePathNotEmptyError("alice", "ws", "/tmp/ws/alice"), 4, "conflict"],
     [new WorkspacePreservedError("alice", "/tmp/ws/alice"), 4, "conflict"],
     [new HomeDirAsProjectRootError("alice", "ws", "/Users/alice"), 4, "conflict"],
-    [new WorkspaceVcsRequiredError("refresh", "/tmp/ws/alice"), 4, "conflict"],
-    [new WorkspaceDirtyError("/tmp/ws/alice", ["src/file.ts"]), 4, "conflict"],
+    [new WorkspaceVcsRequiredError("/tmp/not-a-repo"), 4, "conflict"],
     [new ClaimerNotRegisteredError("pi-mu", "%6441"), 4, "conflict"],
     [new SchemaTooOldError(4, 5), 4, "conflict"],
     [new WorkstreamExistsError("existing-ws"), 4, "conflict"],
@@ -140,13 +124,6 @@ describe("classifyError exit-code map", () => {
     [new Database.SqliteError("UNIQUE constraint failed", "SQLITE_CONSTRAINT_UNIQUE"), 1, "error"],
     // f_doctor_fail_row_exit0: a doctor FAIL row shares drift's lane.
     [new HazardFailError(["db-vs-sync"]), 5, "doctor"],
-
-    // switch branch 8: VCS conflict during workspace refresh
-    [
-      new WorkspaceConflictError("/tmp/ws/alice", "origin/main", ["src/file.ts"]),
-      5,
-      "workspace conflict",
-    ],
 
     // switch branches 9-10: wait-specific process states
     [new ReaperDetectedDuringWaitError("wait_task", "worker-1", "ws"), 6, "reaper"],
