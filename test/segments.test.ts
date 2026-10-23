@@ -141,58 +141,6 @@ describe("segments", () => {
       .split("\n")
       .filter((l) => l.trim() !== "");
 
-  it("does not flush historical prose workstream.export ops", async () => {
-    const machineId = localMachineId(a);
-    a.prepare(
-      `INSERT INTO ops
-         (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
-       VALUES (?, ?, 'legacy-export', 'system', 'workstream.export', 'workstream',
-               'demo', 'put', 'workstream export demo (out=/tmp/x)', ?)`,
-    ).run(
-      formatHlc({ wallMs: 2_000_000_000_000, counter: 0, machineId }),
-      machineId,
-      new Date().toISOString(),
-    );
-
-    const result = await flushSegment(a, dir);
-    expect(result.appended).toBe(0);
-    expect(result.skippedLocal).toBe(1);
-    expect(readFileSync(result.segmentPath ?? "", "utf8")).toBe("");
-  });
-
-  it("ingest skips a historical prose workstream.export line instead of wedging", async () => {
-    // A segment written by mu < 1.1 (before the flush filter) carries
-    // the prose line; applying it threw a JSON SyntaxError that rolled
-    // back the whole segment on every invocation.
-    seedTask(a, "before");
-    await flushSegment(a, dir);
-    const path = segFor(a);
-    const lines = linesOf(path);
-    const last = lines[lines.length - 1];
-    if (last === undefined) throw new Error("need a line");
-    const prev = parseHlc((JSON.parse(last) as { hlc: string }).hlc);
-    const legacy = encodeSegmentLine({
-      hlc: formatHlc({ ...prev, counter: prev.counter + 1, machineId: localMachineId(a) }),
-      machineId: localMachineId(a),
-      groupId: "legacy-export",
-      intent: "workstream.export",
-      actor: "system",
-      entity: "workstream",
-      key: "demo",
-      op: "put",
-      payload: "workstream export demo (out=/tmp/x)",
-    });
-    writeFileSync(path, `${[...lines, legacy].join("\n")}\n`);
-    seedTask(a, "after");
-    await flushSegment(a, dir);
-
-    const results = ingestAll(b);
-    expect(results.flatMap((r) => r.defects)).toEqual([]);
-    expect(task(b, "before")).toBeDefined();
-    expect(task(b, "after")).toBeDefined();
-    expect(getWatermark(b, localMachineId(a))).toBe(linesOf(path).length);
-  });
-
   it("ingestSegment accepts the pre-watermarkKey PeerSegment shape (SDK compat)", async () => {
     // PeerSegment / ingestSegment are exported from src/index.ts. A
     // caller written before watermarkKey existed must still persist a

@@ -97,7 +97,6 @@ import {
   type SyncedEntity,
 } from "./db.js";
 import { compareHlc } from "./hlc.js";
-import { LEGACY_LOG_ONLY_SQL_EXCLUSION } from "./legacy-ops.js";
 import { withCaptureSuppressed } from "./op-context.js";
 import { DEFAULT_SUBSTATE, isTaskStatus, mapLegacyStatus, resolvePair } from "./tasks/status.js";
 
@@ -204,7 +203,6 @@ function fieldHlc(db: Db, op: Op, field: string): string | null {
           AND key    = @key
           AND op     = 'put'
           AND hlc   <> @self
-          AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
           AND json_type(payload, '$.' || @field) IS NOT NULL`,
   ).get({ entity: op.entity, key: op.key, self: op.hlc, field }) as
     | { hlc: string | null }
@@ -582,7 +580,6 @@ export function repairTaskPair(
     db,
     `SELECT hlc, payload FROM ops
         WHERE entity = 'task' AND key = ? AND op = 'put' AND hlc <> ?
-          AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
           AND (json_type(payload, '$.substate') IS NOT NULL
                OR json_type(payload, '$.status') IS NOT NULL)
         ORDER BY hlc DESC`,
@@ -774,7 +771,6 @@ function applyDel(db: Db, op: Op): ApplyResult {
           db,
           `SELECT payload FROM ops
               WHERE entity = 'note' AND key = @key AND op = 'put'
-                AND ${LEGACY_LOG_ONLY_SQL_EXCLUSION}
               ORDER BY hlc DESC LIMIT 1`,
         ).get({ key: op.key }) as { payload: string } | undefined;
         if (!src) return { changed: false, appliedFields: [], skipped: "absent" };

@@ -52,6 +52,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `MU_TUI_DEBUG_MOUSE` env vars, the `ink`, `react` and `react-devtools-core`
   dependencies, the `dist/tui-sync-worker.js` bundle and
   `src/project-root.ts` (its only caller was the TUI launch ladder).
+- **Legacy op handling.** `src/legacy-ops.ts` is gone. Old `workstream.export`
+  prose ops are no longer skipped by apply, rebuild, flush, ingest and
+  `--from`; they are treated like any other op (none exist in the live DB or
+  sync dir). The `workstream.destroy` spelling is no longer a synonym of
+  `workstream.teardown`: `mu log --intent workstream.teardown`, `mu workstream
+  list --torn-down` and `mu workstream forget` match only the new name, and a
+  `workstream.destroy` op renders as an unknown intent (6 such lines in peer
+  segments, accepted).
 
 ### Fixed
 

@@ -162,7 +162,7 @@ describe("logs SDK", () => {
     // and since v2-retire-log-shim `mu log` no longer filters captured
     // ops out, it is visible here too. (No intent: this DELETE bypasses
     // the SDK's withOpContext. Via `mu workstream teardown` it would
-    // carry intent='workstream.destroy'.)
+    // carry intent='workstream.teardown'.)
     expect(listLogs(db).map((r) => r.payload)).toContain("a");
     expect(listLogs(db).map((r) => r.payload)).toContain("b");
     const authRows = listLogs(db, { workstream: "auth" });
@@ -171,6 +171,13 @@ describe("logs SDK", () => {
       .prepare("SELECT COUNT(*) AS n FROM ops WHERE op = 'del' AND entity = 'workstream'")
       .get() as { n: number };
     expect(tombstones.n).toBe(1);
+  });
+
+  it("--intent matches only the exact intent (the pre-1.2.0 spelling is not a synonym)", () => {
+    const row = appendLog(db, { workstream: "auth", source: "u", payload: "x" });
+    db.prepare("UPDATE ops SET intent = 'workstream.destroy' WHERE seq = ?").run(row.seq);
+    expect(listLogs(db, { intent: "workstream.teardown" })).toEqual([]);
+    expect(listLogs(db, { intent: "workstream.destroy" }).map((r) => r.seq)).toEqual([row.seq]);
   });
 
   // ─── seq is durable across deletes (AUTOINCREMENT semantics) ────────

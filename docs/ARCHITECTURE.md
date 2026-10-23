@@ -92,7 +92,6 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/apply.ts` | apply one op: per-field LWW, tombstones, substate pair repair, `reprojectDeferredOps` |
 | `src/rebuild.ts` | replay the whole log into a new DB file |
 | `src/compact.ts` | `mu db compact` (blank redundant note-tombstone payloads) and `mu db forget` (drop a torn-down workstream's ops); this machine only |
-| `src/legacy-ops.ts` | classifier for historical log-only intents; rebuild copies them unprojected |
 | `src/drift.ts` | cheap invariant (every row has an op) and `--deep` rebuild-diff |
 | `src/logs.ts` | typed reader over `ops`; `appendLog` and `emitEvent`, the writes triggers cannot cover |
 | `src/log-render.ts` | the one op-to-prose formatter (`renderOp`), shared by CLI and TUI |
