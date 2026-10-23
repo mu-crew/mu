@@ -438,7 +438,8 @@ open and is decided by agent behaviour, not by judges reading designs.
 failures: fan-out with gates; refute with verdicts; worker dies; API
 outage then resume; wrong id; guessed flag; guessed SQL column;
 worktree name reuse; long notes thread; teardown; remote spawn;
-remote close via the CLOSE block; single-channel host under load. Each runs with a
+remote close via the CLOSE block; single-channel host under load;
+delegate queue saturation with pending checks never issued. Each runs with a
 cheap and a mid model against a candidate surface and records tokens,
 calls, correct completion, and wrong or destructive actions. Baseline:
 3.x on the same scenarios.
