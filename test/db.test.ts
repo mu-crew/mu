@@ -724,8 +724,8 @@ function insertTask(db: Db, input: InsertTaskInput): void {
 
 function ensureTestWorkstream(db: Db, name: string): void {
   db.prepare(
-    "INSERT OR IGNORE INTO workstreams (name, created_at) VALUES (?, datetime('now'))",
-  ).run(name);
+    "INSERT INTO workstreams (name, created_at) SELECT ?, datetime('now') WHERE NOT EXISTS (SELECT 1 FROM workstreams WHERE name = ?)",
+  ).run(name, name);
 }
 
 function taskIdByLocalId(db: Db, localId: string): number {
