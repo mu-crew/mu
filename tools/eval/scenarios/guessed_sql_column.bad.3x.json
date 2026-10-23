@@ -1,0 +1,18 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu sql \"SELECT local_id, impact, owner FROM tasks WHERE workstream = 'eval' ORDER BY impact DESC LIMIT 1\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu sql \"SELECT t.local_id, t.impact, a.name FROM tasks t LEFT JOIN agents a ON a.id = t.owner_id JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = 'eval' ORDER BY t.impact DESC LIMIT 1\""
+      }
+    ]
+  },
+  { "calls": [{ "bash": "mu task note s7 -w eval 'top owner: w1'" }] },
+  { "text": "done" }
+]
