@@ -474,6 +474,9 @@ function serveCtl(pi: MuPiApi): () => boolean {
   };
   g.pi = pi;
   g.handle = handle;
+  // A /reload can hand us an entry minted by older code that lacks later fields.
+  (g as Partial<Shared>).incarnation ??= randomUUID();
+  (g as Partial<Shared>).accepted ??= new Map();
   map.set(sockPath, g);
 
   const status = () => ({
