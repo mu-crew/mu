@@ -5,6 +5,12 @@
 // Leftovers asserted at the end of setup: agent name w1 free, workspace dir and registration gone,
 // branch mu/eval/w1-<sha12> present, r1's commit on main under a new sha. The AUT must run r2 with
 // a worker named w1 in its own working copy and merge it, without wrecking main or that branch.
+// 3.x behaviour reproduced: git workspaces are detached worktrees (src/vcs/git.ts:35-39);
+// `workspace free --commit` makes the retention branch only when no branch contains HEAD
+// (keepGitHeadReachable, src/vcs/git.ts:222-236; called from the free path, git.ts:143-148;
+// registry free + audit line src/workspace/crud.ts:~230-236). The cherry-pick below must therefore
+// yield a DIFFERENT sha than the workspace commit (-x appends "(cherry picked from ...)"), or
+// main already contains HEAD and no branch is made: with the same-second default it did, ~1 in 6.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -51,7 +57,7 @@ const scenario: Scenario = {
     await must(sb, ["task", "wait", "r1", "-w", "eval", "--timeout", "120"]);
     const wsPath = await must(sb, ["workspace", "path", "w1", "-w", "eval"]);
     const wsHead = (await sh(sb, `git -C ${JSON.stringify(wsPath)} rev-parse HEAD`)).stdout.trim();
-    await sh(sb, `git -C ${JSON.stringify(sb.repoDir)} cherry-pick ${wsHead}`);
+    await sh(sb, `git -C ${JSON.stringify(sb.repoDir)} cherry-pick -x ${wsHead}`);
     await must(sb, ["workspace", "free", "w1", "-w", "eval", "--commit"]);
     await must(sb, ["agent", "close", "w1", "-w", "eval"]);
 
