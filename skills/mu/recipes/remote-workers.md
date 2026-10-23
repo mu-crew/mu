@@ -148,8 +148,8 @@ A remote pass does not substitute for non-equivalent local conditions.
 
 With the channel busy, the attach ssh stopped at `Enter a passcode:`.
 Spawn succeeded, the agent showed `needs_input`, and the prompt went
-into the passcode field. This applies to non-pi CLIs and to
-`--via mux`, which paste into the pane. Confirm such an agent got the
+into the passcode field. This applies to non-pi CLIs on herdr, which are
+sent to by prompt. Confirm such an agent got the
 work (`mu agent read <name> -n 20`) before trusting it. Send nothing
 sensitive to an unconfirmed pane.
 
@@ -185,8 +185,7 @@ note and `ssh <host> 'tmux ls'`.
 ### Stopping and cleaning up
 
 - `mu agent abort <name>` stops a pi turn through the forwarded socket.
-- `mu agent kick` signals the local ssh client, not the remote agent.
-  For an unresponsive agent, `mu agent close` and respawn.
+- For an unresponsive agent, `mu agent close` and respawn.
 - mu does not remove remote worktrees:
   `ssh dev 'git -C ~/repo worktree remove ~/ws/worker-1'`.
 

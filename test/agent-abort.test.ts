@@ -150,7 +150,7 @@ describe("abortAgent", () => {
     expect(r).toMatchObject({ before: "idle", after: "idle", settled: true, aborted: false });
   });
 
-  it("never settles: timeout error with a kick next step", async () => {
+  it("never settles: timeout error with a close next step", async () => {
     seed("worker-1");
     await serve("worker-1", "busy", false);
     const err = await abortAgent(db, "worker-1", { workstream: "auth", timeoutMs: 200 }).catch(
@@ -158,16 +158,17 @@ describe("abortAgent", () => {
     );
     expect(err).toBeInstanceOf(AgentAbortTimeoutError);
     const steps = (err as AgentAbortTimeoutError).errorNextSteps().map((s) => s.command);
-    expect(steps).toContain("mu agent kick worker-1 -w auth");
+    expect(steps).toContain("mu agent close worker-1 -w auth");
   });
 
-  it("no socket: AgentCtlUnreachableError naming mu agent kick", async () => {
+  it("no socket: AgentCtlUnreachableError points at the extension link", async () => {
     seed("worker-1");
     const err = await abortAgent(db, "worker-1", { workstream: "auth" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AgentCtlUnreachableError);
     expect((err as AgentCtlUnreachableError).kind).toBe("missing");
     const steps = (err as AgentCtlUnreachableError).errorNextSteps().map((s) => s.command);
-    expect(steps).toContain("mu agent kick worker-1 -w auth");
+    expect(steps).toContain("mu link pi");
+    expect(steps.some((c) => c.includes("kick"))).toBe(false);
     const trust = (err as AgentCtlUnreachableError)
       .errorNextSteps()
       .find((s) => /trust prompt/.test(s.intent));
@@ -182,7 +183,7 @@ describe("abortAgent", () => {
     const err = new AgentCtlUnreachableError("worker-1", "auth", "/tmp/x.sock", "refused");
     const steps = err.errorNextSteps();
     expect(steps.some((s) => /trust/.test(s.intent) || /trust/.test(s.command))).toBe(false);
-    expect(steps.map((s) => s.command)).toContain("mu agent kick worker-1 -w auth");
+    expect(steps.map((s) => s.command)).toContain("mu link pi");
   });
 
   it("custom cli key running pi (its socket answers): aborts through ctl", async () => {
@@ -193,11 +194,11 @@ describe("abortAgent", () => {
     expect(r).toMatchObject({ aborted: true, settled: true });
   });
 
-  it("non-pi agent: typed error pointing at kick, nothing sent", async () => {
+  it("non-pi agent: typed error pointing at close, nothing sent", async () => {
     seed("worker-1", "claude");
     const err = await abortAgent(db, "worker-1", { workstream: "auth" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AgentAbortNeedsCtlError);
-    expect((err as Error).message).toContain("mu agent kick");
+    expect((err as Error).message).toContain("close the agent");
     expect(ops).toEqual([]);
   });
 });
@@ -237,7 +238,7 @@ describe("mu agent abort (CLI)", () => {
       dbPath,
     );
     expect(r.exitCode).toBe(5);
-    expect(r.stderr).toContain("mu agent kick worker-1");
+    expect(r.stderr).toContain("mu agent close worker-1");
   });
 
   it("exit 2 for a non-pi agent", async () => {

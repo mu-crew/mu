@@ -1,4 +1,4 @@
-// execFileCapture replaces execa in the tmux/herdr/kick/murmur executors.
+// execFileCapture replaces execa in the tmux/herdr/murmur executors.
 // Pin the behaviours callers depend on: execa-compatible output trimming,
 // numeric-or-null exit codes, no rejection, big output, timeout kill.
 

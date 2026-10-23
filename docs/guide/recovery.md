@@ -21,20 +21,8 @@ with the multiplexer:
   its `IN_PROGRESS` task returns to `OPEN`. A `mu task wait` on that
   task exits 6.
 - A pane in the session that runs an agent CLI but has no row is an
-  orphan. mu lists it with an adopt hint and does not adopt it.
-
-To register an orphan pane, or a pi you started by hand:
-
-```bash
-mu agent adopt %15 -w auth
-mu agent adopt %15 -w auth --name investigator
-```
-
-On herdr, pass its pane id instead (`mu agent adopt w1:p2 -w auth`).
-
-The pane title becomes the agent name. The pane must be in the
-`mu-<workstream>` session. An adopted pi has no control socket until
-you restart it with the `MU_CTL_SOCK` path that `adopt` prints.
+  orphan. mu lists it and does not register it. Close the pane with
+  tmux or herdr, or ignore it.
 
 ## A pi agent shows `ctl missing` or `ctl refused`
 
@@ -50,12 +38,12 @@ back to pasting.
 To send `/reload` without attaching:
 
 ```bash
-mu agent send worker-1 -w auth '/reload'             # extension serves op command
-mu agent send worker-1 -w auth '/reload' --via mux   # older: type it into the pane
+mu agent send worker-1 -w auth '/reload'   # extension serves op command
 ```
 
-The error names the right form. `/reload` keeps the pi session. A `send --fresh` or `abort` against an
-outdated extension fails with exit 4 and prints the same two fixes.
+An extension without op command cannot be reloaded by mu: respawn the
+agent. `/reload` keeps the pi session. A `send --fresh` or `abort`
+against an outdated extension fails with exit 4 and prints the fix.
 
 ## A new pi agent shows `ctl missing`
 

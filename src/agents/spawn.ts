@@ -293,7 +293,7 @@ export function nextFreeAgentName(db: Db, name: string, workstream: string): str
 /** Outcome of the spawn-time control-socket handshake. */
 export type SpawnCtl = "ok" | "missing" | "refused" | "skipped";
 
-/** A ctl probe's outcome as spawn and adopt report it. */
+/** A ctl probe's outcome as spawn reports it. */
 export function probeToSpawnCtl(kind: CtlProbe["kind"]): Exclude<SpawnCtl, "skipped"> {
   return kind === "ok" ? "ok" : kind === "missing" ? "missing" : "refused";
 }

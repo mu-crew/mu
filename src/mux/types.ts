@@ -5,7 +5,7 @@
 // Everything backend-specific lives behind `MuxBackend`:
 //
 //   - session / window / pane topology
-//   - the send protocol (bracketed paste on tmux)
+//   - the send protocol (herdr only: atomic `agent prompt`)
 //   - scrollback capture
 //   - PANE ID VALIDATION — tmux `%15` vs herdr `w1:p1`, which is why
 //     there is no global pane-id regex
@@ -138,12 +138,7 @@ export interface MuxHealth {
 }
 
 export interface SendOptions {
-  /** Override the default delay between paste and Enter, in ms. */
-  delayMs?: number;
-  /**
-   * Override the pre-send readiness budget, in ms. 0 disables the wait
-   * AND the post-send submit verification.
-   */
+  /** 0 drops herdr's `--wait` (submit and return); any other value is ignored. */
   readinessMs?: number;
   /** Called when the send could not be confirmed as submitted. */
   onUndelivered?: (warning: SendWarning) => void;
@@ -152,10 +147,8 @@ export interface SendOptions {
 /** Why a send could not be confirmed as submitted. */
 export interface SendWarning {
   paneId: string;
-  /** 'paste-vanished' — pane looked calm, but the text stayed stranded
-   *  in the input box. 'busy-at-deadline' — pane never quiesced within
-   *  the budget and the text stayed stranded. */
-  reason: "busy-at-deadline" | "paste-vanished";
+  /** 'paste-vanished' — pane looked calm, but the text never registered. */
+  reason: "paste-vanished";
   message: string;
 }
 
@@ -335,7 +328,6 @@ export interface MuxBackend {
   /** False only when the mux reports the pane (or server) gone; throws
    *  when the probe itself fails, so liveness gates fail closed. */
   paneExists(paneId: string): Promise<boolean>;
-  paneTTY(paneId: string): Promise<string>;
 
   // — identity —
   //
@@ -368,7 +360,10 @@ export interface MuxBackend {
   startAgentInPane?(opts: StartAgentInPaneOptions): Promise<void>;
 
   // — io —
-  sendToPane(paneId: string, text: string, opts?: SendOptions): Promise<void>;
+  /** herdr only: atomic `agent prompt`. tmux has no reliable paste (cut in
+   *  mu-next), so callers branch on the method's presence, never on
+   *  `mux.name`, and refuse when it is absent. */
+  sendToPane?(paneId: string, text: string, opts?: SendOptions): Promise<void>;
   capturePane(paneId: string, opts?: CaptureOptions): Promise<string>;
 
   /**

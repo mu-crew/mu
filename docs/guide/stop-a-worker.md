@@ -1,6 +1,6 @@
 # How to stop a worker
 
-Use the gentlest step that works, in this order: abort, kick, close.
+Use the gentlest step that works, in this order: abort, close.
 
 ## Abort the turn (pi agents)
 
@@ -14,35 +14,12 @@ keeps the session and its context. It works for remote agents too.
 
 - An idle agent is left alone (exit 0).
 - Exit 5 means pi was still busy after `--timeout` (default 30 s).
-  Go to the next step.
+  Close the agent.
 - A follow-up queued before the abort does not run. pi puts it back
   into the pane's editor, unsent. Send it again if you still want it.
 
 To give the agent new work after the abort, send with `--fresh`. See
 [Dispatch work to a worker](dispatch.md#pick-the-send-mode).
-
-## Kick the foreground process
-
-Use `mu agent kick` when abort failed, when the agent is not pi, or
-when pi's socket is gone:
-
-```bash
-mu agent kick worker-1 -w auth                    # SIGINT
-mu agent kick worker-1 -w auth --signal SIGTERM
-mu agent kick worker-1 -w auth --signal SIGKILL
-```
-
-mu finds the foreground process group on the pane's TTY and signals
-it. This is the fix for a worker stuck on an unbounded `find /` or a
-busy-wait loop. Typing Ctrl-C into the pane does not work, because
-the agent CLI catches it as input.
-
-- Kick refuses with `NoForegroundProcessError` when the foreground
-  process is the agent CLI itself. Close the agent instead.
-- Kick works on local panes only. On herdr it works on Linux only.
-
-To prevent the problem, scope worker prompts to the workspace. Do not
-ask for filesystem-wide `find` or `grep -r /`.
 
 ## Close the agent
 
@@ -50,7 +27,11 @@ ask for filesystem-wide `find` or `grep -r /`.
 mu agent close worker-1 -w auth
 ```
 
-Close kills the pane and deletes the agent row. A clean workspace is
+Close kills the pane and deletes the agent row. It is also the step
+for a non-pi agent, which has no socket to abort through. To prevent a
+worker stuck on an unbounded `find /` or a busy-wait loop, scope worker
+prompts to the workspace. Do not ask for filesystem-wide `find` or
+`grep -r /`. A clean workspace is
 freed with it. If the workspace has edits or commits, close refuses
 with exit 4. Then do one of these:
 

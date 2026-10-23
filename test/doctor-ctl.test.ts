@@ -310,7 +310,7 @@ describe("ctl row", () => {
       installedVersion: "3.1.0",
     });
     expect(r.agents[0]).toMatchObject({ reloadVia: "ctl" });
-    expect(r.agents[1]).toMatchObject({ reloadVia: "mux" });
+    expect(r.agents[1]).toMatchObject({ reloadVia: "respawn" });
   });
 
   it("ctl remediation: trust prompt for missing, ctl /reload when op command is served", () => {
@@ -318,7 +318,7 @@ describe("ctl row", () => {
     expect(text).toContain("/trust");
     expect(text).toContain("--approve");
     expect(text).toContain("mu agent send <a> '/reload'`");
-    expect(text).toContain("--via mux");
+    expect(text).toContain("op command");
   });
 
   it("skips non-pi agents (same rule as spawn's handshake)", async () => {

@@ -16,7 +16,6 @@ import {
   insertAgent,
   listAgents,
   listLiveAgents,
-  sendToAgent,
   spawnAgent,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
@@ -154,7 +153,7 @@ describe("listLiveAgents", () => {
 // ─── End-to-end multi-agent scenario ───────────────────────────────────
 
 describe("verbs — end-to-end", () => {
-  it("spawn 3 → list → send → close all", async () => {
+  it("spawn 3 → list → close all", async () => {
     const { executor } = mockTmux(state);
     setTmuxExecutor(executor);
 
@@ -164,9 +163,6 @@ describe("verbs — end-to-end", () => {
 
     const view1 = await listLiveAgents(db, { workstream: "demo" });
     expect(view1.agents.map((a) => a.name).sort()).toEqual(["alice", "bob", "carol"]);
-
-    await sendToAgent(db, "alice", "hello alice", { workstream: "demo", via: "mux" });
-    await sendToAgent(db, "bob", "hello bob", { workstream: "demo", via: "mux" });
 
     await closeAgent(db, "alice", { workstream: "demo" });
     await closeAgent(db, "bob", { workstream: "demo" });

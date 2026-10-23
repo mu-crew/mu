@@ -73,7 +73,6 @@ import {
   type NewSessionOptions,
   type NewSessionWithPaneOptions,
   type NewWindowOptions,
-  PaneNotFoundError,
   type SendOptions,
   type SendWarning,
   type SplitWindowOptions,
@@ -861,40 +860,6 @@ async function getPane(paneId: string): Promise<MuxPane | undefined> {
   return readPane(result.pane);
 }
 
-/**
- * Look up the TTY device path backing a pane (e.g. `/dev/pts/3`). Used
- * by `mu agent kick` to signal the foreground process group directly.
- *
- * herdr reports the pane's `shell_pid` rather than a TTY, so mu resolves
- * the device through `/proc/<pid>/fd/0`. That is Linux-only by
- * construction; on a kernel without procfs this throws a `HerdrError`
- * naming the limitation rather than returning a plausible-looking lie.
- *
- * Throws `PaneNotFoundError` when the pane has vanished.
- */
-export async function paneTTY(paneId: string): Promise<string> {
-  assertValidPaneId(paneId);
-  const result = await herdrTolerating(
-    ["pane", "process-info", "--pane", paneId],
-    ["pane_not_found", "workspace_not_found"],
-  );
-  if (result === undefined) throw new PaneNotFoundError(paneId, herdrBackend);
-  const info = result.process_info;
-  const pid = isRecord(info) ? info.shell_pid : undefined;
-  if (typeof pid !== "number") throw new PaneNotFoundError(paneId, herdrBackend);
-  const { readlink } = await import("node:fs/promises");
-  try {
-    return await readlink(`/proc/${pid}/fd/0`);
-  } catch (err) {
-    throw new HerdrError(
-      ["pane", "process-info", "--pane", paneId],
-      `cannot resolve the TTY for herdr pane ${paneId} (shell pid ${pid}) via /proc: ${String(err)}`,
-      "",
-      1,
-    );
-  }
-}
-
 // ─── Identity ──────────────────────────────────────────────────────────
 
 /** herdr's pane `label` is mu's pane title. */
@@ -950,12 +915,10 @@ export async function currentSessionName(): Promise<string | undefined> {
 
 // ─── IO ────────────────────────────────────────────────────────────────
 //
-// THE SEND PROTOCOL IS ONE CALL. Read the header of ./tmux.ts for what
-// that replaces: six steps, of which THREE (awaitPaneQuiescence,
-// the MU_SEND_DELAY_MS gap, and the confirm-the-Enter-took retry loop)
-// exist purely because a TUI rendering a modal SWALLOWS a `send-keys
-// Enter`, stranding the pasted text while `mu agent send` reports exit 0
-// (dogfood_send_after_new_dropped).
+// THE SEND PROTOCOL IS ONE CALL. A tmux paste-then-Enter can be swallowed
+// by a TUI rendering a modal, stranding the text while `mu agent send`
+// reports exit 0 (dogfood_send_after_new_dropped); tmux therefore has no
+// send (cut in mu-next).
 //
 // `herdr agent prompt` submits the text AND an encoded Enter atomically,
 // honouring the pane's live bracketed-paste mode, so the Enter cannot be
@@ -1073,7 +1036,7 @@ const PROMPT_STALLED_CODE = "agent_prompt_stalled";
 const NO_AGENT_CODES: readonly string[] = ["agent_not_found", "agent_not_recognized"];
 
 /** Default handler for an unconfirmed send: warn on stderr. Loud by
- *  design, exactly as on tmux — silence is the failure mode. */
+ *  design — silence is the failure mode. */
 function defaultUndeliveredWarning(warning: SendWarning): void {
   console.warn(`warning: ${warning.message}`);
 }
@@ -1090,22 +1053,19 @@ function defaultUndeliveredWarning(warning: SendWarning): void {
  * only when herdr says there is no agent. The happy path is one call;
  * the fallback path is two, and never polls.
  *
- * `opts.readinessMs === 0` drops `--wait`, the herdr analogue of tmux's
- * "bare protocol" opt-out: submit and return without waiting for a
- * settled state. Any other value is ignored — there is no readiness to
- * budget for. `opts.delayMs` is likewise meaningless here: the gap it
- * sizes does not exist. Neither is an error; the tmux-shaped knobs stay
- * accepted so callers need no backend branch.
+ * `opts.readinessMs === 0` drops `--wait`: submit and return without
+ * waiting for a settled state. Any other value is ignored — there is no
+ * readiness to budget for.
  *
  * No `--until`: `--wait` already defaults to the first settled idle /
  * done / blocked, which is precisely what mu's callers want, and herdr's
  * skill doc calls repeating those defaults a bug.
  *
- * DELIVERY CONTRACT, same as tmux: an unconfirmed send WARNS and keeps
+ * DELIVERY CONTRACT: an unconfirmed send WARNS and keeps
  * going, never throws. herdr returns `agent_prompt_stalled` when a
  * prompt from a non-working state produces no lifecycle change within
- * 5s — the same observable as tmux's stranded paste, so it maps onto the
- * existing `paste-vanished` reason: the pane was calm, we submitted, and
+ * 5s — a stranded paste, so it maps onto the
+ * `paste-vanished` reason: the pane was calm, we submitted, and
  * nothing happened.
  */
 export async function sendToPane(
@@ -1508,7 +1468,6 @@ export const herdrBackend: MuxBackend = Object.freeze({
   splitWindow,
   killPane,
   paneExists,
-  paneTTY,
 
   setPaneTitle,
   lockPaneTitle,

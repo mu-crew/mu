@@ -29,8 +29,7 @@ A running pi keeps the extension it loaded at start. After an upgrade,
 send `/reload` to each agent, or respawn the agent. From a shell:
 
 ```bash
-mu agent send worker-1 -w auth '/reload'             # extension serves op command
-mu agent send worker-1 -w auth '/reload' --via mux   # older extension
+mu agent send worker-1 -w auth '/reload'   # extension serves op command; older: respawn
 ```
 
 Until then, the `ctl` row of `mu doctor` warns
@@ -42,7 +41,7 @@ such as `send --fresh`, fail with exit 4.
 Before 3.2.0, mu pasted text into pi panes. Now it sends through a
 control socket. Agents started before `mu link pi` have no socket, so
 sends to them fail with `ctl missing` instead of pasting. Restart those
-agents, or force the old path with `--via mux`.
+agents.
 
 ## Old DBs
 

@@ -1,13 +1,7 @@
 // CLI-level tests for `mu agent send` warning/refusing on stale workspaces.
 //
-// MU_SEND_READINESS_MS=0 throughout: these tests are about the staleness
-// warning, not the send protocol. The readiness wait and submit
-// verification added by dogfood_send_after_new_dropped need real pane
-// captures, which the mock executor here does not provide (it returns
-// empty stdout for everything). Disabling it keeps the tmux-call
-// assertions pinned to the canonical 4-command sequence. The new
-// behaviour is covered by test/send-readiness.test.ts and
-// test/tmux-send-readiness.integration.test.ts.
+// The staleness tests send to a non-pi agent, which only herdr can do
+// (one atomic `agent prompt`), so they run against a mocked herdr.
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,23 +13,23 @@ import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from
 import { gitBackend } from "../src/vcs.js";
 import { createWorkspace } from "../src/workspace.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
 let tempDir: string;
 let dbPath: string;
 let db: Db;
-let calls: readonly string[][];
+let calls: readonly (readonly string[])[];
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "mu-send-stale-"));
   process.env.MU_STATE_DIR = join(tempDir, "state");
-  process.env.MU_SEND_READINESS_MS = "0";
   dbPath = join(tempDir, "mu.db");
   db = openDb({ path: dbPath });
   ensureWorkstream(db, "auth");
   // A non-pi CLI: these tests are about staleness, and a pi agent would
   // need a control socket (see test/agent-transport.test.ts).
-  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "claude" });
+  insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "claude" });
   const seen: string[][] = [];
   calls = seen;
   setSleepForTests(async () => {});
@@ -55,8 +49,6 @@ afterEach(() => {
   resetSleep();
   const key = "MU_STATE_DIR";
   delete process.env[key];
-  const readinessKey = "MU_SEND_READINESS_MS";
-  delete process.env[readinessKey];
 });
 
 async function fakeWorkspaceBehind(behind: number): Promise<void> {
@@ -76,6 +68,13 @@ async function fakeWorkspaceBehind(behind: number): Promise<void> {
 }
 
 describe("mu agent send workspace staleness", () => {
+  let herdr: MuxHarness;
+  beforeEach(() => {
+    herdr = installMux("herdr", [["agent prompt", "{}"]]);
+    calls = herdr.calls;
+  });
+  afterEach(() => herdr.restore());
+
   it("warns on a stale workspace, appends refresh nextStep, and still sends by default", async () => {
     await fakeWorkspaceBehind(12);
     const { exitCode, stdout, stderr, error } = await runCli(
@@ -86,14 +85,7 @@ describe("mu agent send workspace staleness", () => {
     expect(exitCode).toBeNull();
     expect(stderr).toContain("WARN: worker-1 workspace is 12 commits behind main");
     expect(stdout).toContain("mu workspace refresh worker-1 -w auth");
-    // The send itself; a display-message after it is the caller-identity
-    // probe for the agent.send op (only when $TMUX_PANE is set).
-    expect(calls.map((c) => c[0]).filter((v) => v !== "display-message")).toEqual([
-      "copy-mode",
-      "set-buffer",
-      "paste-buffer",
-      "send-keys",
-    ]);
+    expect(calls.map((c) => c.slice(0, 3).join(" "))).toEqual(["agent prompt w1:p1"]);
   });
 
   it("includes staleness in JSON output", async () => {
@@ -155,14 +147,7 @@ describe("mu agent send workspace staleness", () => {
     const out = JSON.parse(stdout) as { staleness: null; transport: string };
     expect(out.staleness).toBeNull();
     expect(out.transport).toBe("mux");
-    // The send itself; a display-message after it is the caller-identity
-    // probe for the agent.send op (only when $TMUX_PANE is set).
-    expect(calls.map((c) => c[0]).filter((v) => v !== "display-message")).toEqual([
-      "copy-mode",
-      "set-buffer",
-      "paste-buffer",
-      "send-keys",
-    ]);
+    expect(calls.map((c) => c.slice(0, 3).join(" "))).toEqual(["agent prompt w1:p1"]);
   });
 });
 
@@ -204,16 +189,6 @@ describe("mu agent send to a pi agent", () => {
     expect(env.error).toBe("AgentPaneDeadError");
     expect(env.nextSteps.some((s) => s.command === "mu link pi")).toBe(false);
     expect(calls.filter((c) => c[0] === "paste-buffer")).toEqual([]);
-  });
-
-  it("--via mux pastes explicitly", async () => {
-    const { exitCode, stdout } = await runCli(
-      ["agent", "send", "pi-1", "hello", "--via", "mux", "-w", "auth", "--json"],
-      dbPath,
-    );
-    expect(exitCode).toBeNull();
-    expect((JSON.parse(stdout) as { transport: string }).transport).toBe("mux");
-    expect(calls.map((c) => c[0])).toContain("paste-buffer");
   });
 
   it("runs /new over the control socket: fails loud without one, never pastes", async () => {

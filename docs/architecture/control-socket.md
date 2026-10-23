@@ -98,19 +98,16 @@ A pi agent whose socket does not answer raises
 with reason `ctl missing` or `ctl refused` for state. mu never pastes
 into it or asks murmur instead.
 
-The mux paste path (bracketed paste, `MU_SEND_DELAY_MS`,
-`MU_SEND_READINESS_MS`) serves only:
-
-- non-pi CLIs;
-- adopted panes without ctl;
-- an explicit `--via mux`.
+Only non-pi CLIs reach `MuxBackend.sendToPane`, which herdr alone
+implements (its atomic `agent prompt`). On tmux, a send to a non-pi
+agent raises `AgentSendUnsupportedError` (exit 4): a bracketed paste
+cannot be confirmed, so mu has none.
 
 A pi agent's `/new`, `/reload` and `/compact [instructions]` go
 through the `command` op. Any other slash command to a pi agent raises
-`AgentSlashCommandUnsupportedError` (exit 2), whose next step is the
-same text with `--via mux`. Text such as `/tmp/x.log ...` is a plain
-prompt, not a slash command. A pi agent therefore never reaches
-`capturePane` or the paste timing in `src/mux/input-timing.ts`.
+`AgentSlashCommandUnsupportedError` (exit 2). Text such as
+`/tmp/x.log ...` is a plain prompt, not a slash command. A pi agent
+therefore never reaches `capturePane` or the mux send.
 
 ## Remote agents
 

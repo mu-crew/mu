@@ -23,16 +23,15 @@ function dispatchText(task: { id: string; workstream: string }): string {
 
 /**
  * "Send work" for an agent about to get a new task. pi agents get
- * `--fresh` unless `plain` (e.g. an adopted pane whose socket is down,
- * where the restart / --via mux hints come first).
+ * `--fresh`; non-pi agents get a plain send.
  */
 export function dispatchHint(
   agent: HintAgent,
-  opts: { task?: { id: string; workstream: string }; plain?: boolean } = {},
+  opts: { task?: { id: string; workstream: string } } = {},
 ): NextStep {
   const ws = agent.workstreamName;
   const text = opts.task === undefined ? "'...'" : shellQuote(dispatchText(opts.task));
-  if (opts.plain === true || !expectsCtl(agent)) {
+  if (!expectsCtl(agent)) {
     return { intent: "Send work", command: `mu agent send ${agent.name} ${text} -w ${ws}` };
   }
   return {
@@ -41,15 +40,6 @@ export function dispatchHint(
         ? "Send the first task (fresh session + prompt in one step)"
         : `Send the task to ${agent.name} (fresh session + prompt in one step)`,
     command: `mu agent send ${agent.name} --fresh ${text} -w ${ws}`,
-  };
-}
-
-/** `mu agent abort` as the first resort for a pi agent; null otherwise. */
-export function abortHint(agent: HintAgent): NextStep | null {
-  if (!expectsCtl(agent)) return null;
-  return {
-    intent: "Prefer abort for pi agents (stops the turn through the control socket)",
-    command: `mu agent abort ${agent.name} -w ${agent.workstreamName}`,
   };
 }
 

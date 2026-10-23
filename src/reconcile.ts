@@ -5,8 +5,8 @@
 //   1. Prune ghost rows whose pane no longer exists in the mux.
 //   2. Refresh pane titles for surviving agents.
 //   3. Surface orphan panes that look like agents but have no DB row.
-//      Do NOT auto-adopt — `mu agent list` shows orphans under a separate
-//      section and the user runs `mu agent adopt` to formally claim.
+//      Never auto-register them — `mu agent list` shows orphans under a
+//      separate section; the user closes the pane or ignores it.
 //
 // `mu state`, `mu agent list`, and `mu doctor` all call this. It's the only
 // place where the registry's view of the world is reconciled against tmux's
@@ -64,7 +64,7 @@ export interface ReconcileReport {
    *  mode it's the count actually deleted. */
   prunedGhosts: number;
   /** Panes in the workstream's tmux session that look like agents but
-   *  aren't in the registry. NOT auto-adopted. */
+   *  aren't in the registry. Never auto-registered. */
   orphans: MuxPane[];
   /** Which mode this report was generated in. Lets callers switch their
    *  output text ("agents pruned" vs "would-be-pruned (suppressed)")
@@ -75,7 +75,7 @@ export interface ReconcileReport {
 /**
  * Pane commands that suggest "this is an agent, surface it as an orphan."
  * 0.1.0 scope: pi only is detected, but the orphan list will surface
- * claude/codex panes too so the user can adopt them later.
+ * claude/codex panes too so the user can see them.
  *
  * Also includes any env-overridden binary names (e.g. `MU_PI_COMMAND=pi-alt`
  * makes "pi-alt" agent-worthy) so externally-spawned panes running the

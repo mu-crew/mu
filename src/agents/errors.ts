@@ -8,7 +8,7 @@
 //   not found  → 3   (AgentNotFoundError)
 //   conflict   → 4   (AgentExistsError, AgentNameExhaustedError,
 //                     AgentNotInWorkstreamError,
-//                     PaneNotInSessionError, WorkspacePreservedError,
+//                     AgentSendUnsupportedError, WorkspacePreservedError,
 //                     AgentExtensionOutdatedError, AgentBusyError,
 //                     WorkspaceOwnerBusyError)
 //   timeout    → 5   (AgentAbortTimeoutError)
@@ -198,37 +198,6 @@ export class AgentNotInWorkstreamError extends Error implements HasNextSteps {
       {
         intent: "List agents in the requested workstream",
         command: `mu agent list -w ${this.expectedWorkstream}`,
-      },
-    ];
-  }
-}
-
-/**
- * `mu agent adopt` of a pane that exists but is not in the workstream's
- * mux session. Distinct from AgentNotInWorkstreamError: the subject is a
- * pane, not an agent, and its owning session is not known without
- * another mux query. Maps to exit code 4 (conflict).
- */
-export class PaneNotInSessionError extends Error implements HasNextSteps {
-  override readonly name = "PaneNotInSessionError";
-  constructor(
-    public readonly paneId: string,
-    public readonly workstream: string,
-    public readonly expectedSession: string,
-  ) {
-    super(
-      `pane ${paneId} is not in session ${expectedSession}; adopt only takes panes from workstream ${workstream}'s own session`,
-    );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "List the workstream's agents and orphan panes to pick one",
-        command: `mu agent list -w ${this.workstream}`,
-      },
-      {
-        intent: "Or adopt it into the workstream whose session holds the pane",
-        command: `mu agent adopt ${this.paneId} -w <workstream>`,
       },
     ];
   }
@@ -478,10 +447,6 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
     return [
       ...trust,
       { intent: "Check whether the mu pi extension is linked", command: "mu doctor" },
-      {
-        intent: "Stop a runaway tool without the socket",
-        command: `mu agent kick ${this.agentName} -w ${this.workstream}`,
-      },
       { intent: "Link the extension, then re-spawn", command: "mu link pi" },
       {
         intent: "Remote agent: forward the socket in your ssh command",
@@ -521,7 +486,7 @@ export class AgentSendIndeterminateError extends Error implements HasNextSteps {
 /**
  * A ctl verb (send, abort, ...) found the agent's control socket silent
  * AND its pane gone: the process exited (or the pane was closed behind
- * mu's back), so there is nothing to link, kick or forward. Raised
+ * mu's back), so there is nothing to link or forward. Raised
  * instead of AgentCtlUnreachableError, which is for a live pane.
  */
 export class AgentPaneDeadError extends Error implements HasNextSteps {
@@ -565,14 +530,14 @@ export class AgentAbortNeedsCtlError extends Error implements HasNextSteps {
     public readonly cli: string,
   ) {
     super(
-      `agent ${agentName} runs ${cli}, not pi: abort needs the mu pi extension; use mu agent kick`,
+      `agent ${agentName} runs ${cli}, not pi: abort needs the mu pi extension; close the agent instead`,
     );
   }
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Signal the pane's foreground process instead",
-        command: `mu agent kick ${this.agentName} -w ${this.workstream}`,
+        intent: "Close the agent (kills its pane)",
+        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
       },
     ];
   }
@@ -591,12 +556,12 @@ export class AgentAbortTimeoutError extends Error implements HasNextSteps {
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Signal the pane's foreground process group",
-        command: `mu agent kick ${this.agentName} -w ${this.workstream}`,
-      },
-      {
         intent: "Read the pane to see what it is stuck on",
         command: `mu agent read ${this.agentName} -n 30 -w ${this.workstream}`,
+      },
+      {
+        intent: "Or close the agent (kills its pane)",
+        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
       },
     ];
   }
@@ -604,7 +569,7 @@ export class AgentAbortTimeoutError extends Error implements HasNextSteps {
 
 /**
  * `mu agent send --fresh` on an agent without a control socket (non-pi
- * CLI, or forced `--via mux`): there is no one-operation new session.
+ * CLI): there is no one-operation new session.
  */
 export class AgentFreshNeedsCtlError extends Error implements HasNextSteps {
   override readonly name = "AgentFreshNeedsCtlError";
@@ -633,7 +598,7 @@ export class AgentFreshNeedsCtlError extends Error implements HasNextSteps {
  * extension code they started with. pi's `/reload` re-imports the
  * extension through the `mu link pi` shim and keeps the socket; a
  * respawn always works. An extension that serves op `command` takes
- * `/reload` over ctl; an older one needs it typed (`--via mux`).
+ * `/reload` over ctl; an older one cannot be reloaded by mu: respawn it.
  */
 export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
   override readonly name = "AgentExtensionOutdatedError";
@@ -651,18 +616,18 @@ export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
   }
   errorNextSteps(): NextStep[] {
     const w = `-w ${this.workstream}`;
-    // An extension that serves op command runs /reload over ctl itself;
-    // an older one only reloads when /reload is typed into the pane.
-    const via = this.ops?.includes("command") ? "" : " --via mux";
+    const respawn: NextStep = {
+      intent: "Respawn the agent (loses its context)",
+      command: `mu agent close ${this.agentName} ${w} && mu agent spawn ${this.agentName} ${w} ...`,
+    };
+    // Only an extension that serves op command runs /reload over ctl.
+    if (!this.ops?.includes("command")) return [respawn];
     return [
       {
         intent: "Reload pi's extensions (keeps the session and context)",
-        command: `mu agent send ${this.agentName} '/reload'${via} ${w}`,
+        command: `mu agent send ${this.agentName} '/reload' ${w}`,
       },
-      {
-        intent: "Or respawn the agent (loses its context)",
-        command: `mu agent close ${this.agentName} ${w} && mu agent spawn ${this.agentName} ${w} ...`,
-      },
+      { ...respawn, intent: "Or respawn the agent (loses its context)" },
     ];
   }
 }
@@ -737,8 +702,8 @@ export class WorkspaceOwnerBusyError extends Error implements HasNextSteps {
 /**
  * A slash command other than `/new`, `/reload`, `/compact` sent to a pi
  * agent. The control socket cannot run it (pi.sendUserMessage would
- * hand it to the model as text), and mu does not silently paste into a
- * pi pane: `--via mux` is the explicit way to type it there.
+ * hand it to the model as text), and mu has no paste into a pi pane:
+ * the operator types it in the pane.
  */
 export class AgentSlashCommandUnsupportedError extends Error implements HasNextSteps {
   override readonly name = "AgentSlashCommandUnsupportedError";
@@ -749,14 +714,14 @@ export class AgentSlashCommandUnsupportedError extends Error implements HasNextS
     public readonly supported: readonly string[],
   ) {
     super(
-      `agent ${agentName} runs pi: over the control socket mu runs only ${supported.join(", ")}; ${JSON.stringify(text.split("\n")[0])} is not one of them. Pass --via mux to type it into the pane`,
+      `agent ${agentName} runs pi: over the control socket mu runs only ${supported.join(", ")}; ${JSON.stringify(text.split("\n")[0])} is not one of them; type it in the pane yourself`,
     );
   }
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Type it into the pane on purpose (tmux paste; unconfirmed)",
-        command: `mu agent send ${this.agentName} '${this.text.split("\n")[0]}' --via mux -w ${this.workstream}`,
+        intent: "Look at the pane, then type the command in it yourself",
+        command: `mu agent read ${this.agentName} -n 20 -w ${this.workstream}`,
       },
     ];
   }
@@ -765,7 +730,7 @@ export class AgentSlashCommandUnsupportedError extends Error implements HasNextS
 /**
  * An empty message sent to a pi agent over the control socket.
  * pi.sendUserMessage("") is meaningless; a bare Enter is a pane
- * keystroke, so `--via mux` is the explicit way to press it.
+ * keystroke, which mu does not send.
  */
 export class AgentEmptySendError extends Error implements HasNextSteps {
   override readonly name = "AgentEmptySendError";
@@ -774,14 +739,40 @@ export class AgentEmptySendError extends Error implements HasNextSteps {
     public readonly workstream: string,
   ) {
     super(
-      `agent ${agentName} runs pi: an empty message cannot go over the control socket. Pass --via mux to press Enter in the pane`,
+      `agent ${agentName} runs pi: an empty message cannot go over the control socket; press Enter in the pane yourself`,
     );
   }
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Press Enter in the pane",
-        command: `mu agent send ${this.agentName} '' --via mux -w ${this.workstream}`,
+        intent: "Look at the pane, then press Enter in it yourself",
+        command: `mu agent read ${this.agentName} -n 20 -w ${this.workstream}`,
+      },
+    ];
+  }
+}
+
+/**
+ * `mu agent send` to a non-pi agent on a backend with no `sendToPane`
+ * (tmux): its bracketed paste cannot be confirmed, so mu refuses. Maps to
+ * exit code 4 (conflict).
+ */
+export class AgentSendUnsupportedError extends Error implements HasNextSteps {
+  override readonly name = "AgentSendUnsupportedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly cli: string,
+  ) {
+    super(
+      `agent ${agentName} runs ${cli}, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr) or use pi`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Close it, then respawn on herdr (MU_MUX=herdr) or with pi",
+        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
       },
     ];
   }

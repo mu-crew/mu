@@ -26,11 +26,10 @@ import {
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
   AgentSendIndeterminateError,
+  AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
-  NoForegroundProcessError,
-  PaneNotInSessionError,
   WorkspaceOwnerBusyError,
   WorkspacePreservedError,
 } from "../src/agents.js";
@@ -161,14 +160,14 @@ const cases: NextStepsCase[] = [
   {
     error: new ClaimerNotRegisteredError("pi-mu", "%6441"),
     label: "ClaimerNotRegisteredError (with pane)",
-    expectedTokens: ["%6441"],
+    expectedTokens: ["--self", "--for"],
   },
   {
     // No-pane variant has no entity to interpolate, but it still must
-    // produce the anonymous / --for / adopt recovery options.
+    // produce the anonymous / --for recovery options.
     error: new ClaimerNotRegisteredError("pi-mu", null),
     label: "ClaimerNotRegisteredError (no pane)",
-    expectedTokens: ["--self", "--for", "<pane-id>"],
+    expectedTokens: ["--self", "--for"],
   },
   {
     error: new TaskClaimStaleWorkspaceError(staleWorkspace),
@@ -195,7 +194,7 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["blocker", "wsB"],
   },
 
-  // src/agents/errors.ts + src/agents/kick.ts
+  // src/agents/errors.ts
   {
     error: new AgentSpawnCliNotFoundError("pi-meta", "pi-meta", "MU_PI_META_COMMAND"),
     label: "AgentSpawnCliNotFoundError",
@@ -218,9 +217,9 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["alice", "actual"],
   },
   {
-    error: new PaneNotInSessionError("%15", "auth", "mu-auth"),
-    label: "PaneNotInSessionError",
-    expectedTokens: ["%15", "-w auth"],
+    error: new AgentSendUnsupportedError("alice", "auth", "claude"),
+    label: "AgentSendUnsupportedError",
+    expectedTokens: ["mu agent close alice", "-w auth"],
   },
   {
     error: new AgentDiedOnSpawnError("scout-perf-1", "%42", "panic: died"),
@@ -255,12 +254,12 @@ const cases: NextStepsCase[] = [
   {
     error: new AgentAbortNeedsCtlError("alice", "auth", "claude"),
     label: "AgentAbortNeedsCtlError",
-    expectedTokens: ["mu agent kick alice"],
+    expectedTokens: ["mu agent close alice"],
   },
   {
     error: new AgentAbortTimeoutError("alice", "auth", 30000),
     label: "AgentAbortTimeoutError",
-    expectedTokens: ["mu agent kick alice"],
+    expectedTokens: ["mu agent close alice"],
   },
   {
     error: new AgentFreshNeedsCtlError("alice", "auth", "claude"),
@@ -280,27 +279,22 @@ const cases: NextStepsCase[] = [
   {
     error: new AgentSlashCommandUnsupportedError("alice", "auth", "/tree", ["/new"]),
     label: "AgentSlashCommandUnsupportedError",
-    expectedTokens: ["mu agent send alice '/tree' --via mux"],
+    expectedTokens: ["mu agent read alice"],
   },
   {
     error: new AgentEmptySendError("alice", "auth"),
     label: "AgentEmptySendError",
-    expectedTokens: ["mu agent send alice '' --via mux"],
+    expectedTokens: ["mu agent read alice"],
   },
   {
     error: new AgentExtensionOutdatedError("alice", "auth", "fresh", "3.0.0"),
     label: "AgentExtensionOutdatedError",
-    expectedTokens: ["'/reload' --via mux", "mu agent close alice", "mu agent spawn alice"],
+    expectedTokens: ["mu agent close alice", "mu agent spawn alice"],
   },
   {
     error: new WorkspacePreservedError("alice", "/path/to/ws"),
     label: "WorkspacePreservedError",
     expectedTokens: ["alice", "/path/to/ws"],
-  },
-  {
-    error: new NoForegroundProcessError("alice", "/dev/ttys001", "shell-only"),
-    label: "NoForegroundProcessError",
-    expectedTokens: ["alice"],
   },
 
   // src/mux/types.ts
@@ -518,11 +512,13 @@ function isErrorConstructorWithNextSteps(
 }
 
 describe("error-specific structured-step assertions", () => {
-  it("ClaimerNotRegisteredError pins the exact pane id when given", () => {
+  it("ClaimerNotRegisteredError names the pane in the message and offers --self / --for", () => {
     const err = new ClaimerNotRegisteredError("pi-mu", "%42");
-    const steps = err.errorNextSteps();
-    const adopt = steps.find((s) => s.command.startsWith("mu agent adopt"));
-    expect(adopt?.command).toBe("mu agent adopt %42");
+    expect(err.message).toContain("(pane %42)");
+    expect(err.errorNextSteps().map((s) => s.command)).toEqual([
+      "mu task claim <id> --self",
+      "mu task claim <id> --for <worker>",
+    ]);
   });
 
   it("TaskNotInWorkstreamError suggests the actual workstream", () => {

@@ -34,7 +34,7 @@ NDJSON; `mu log` writes print text even with `--json`. Errors are `{error,messag
   herdr workspace) and one DB partition.
 - **agent** — named process in a pane (you may be one); a **worker** is an agent claiming tasks.
 - **mux** — tmux or herdr, one per invocation. `mu doctor` names it;
-  `MU_MUX` forces it. `mu agent kick` is Linux-only on herdr.
+  `MU_MUX` forces it. tmux cannot send to non-pi agents; herdr can.
 - **control socket (ctl)** — how mu drives a pi agent: the mu pi
   extension (`mu link pi`) serves exact send, state, wait and abort
   inside pi's own TUI. `ctl missing|refused` means it does not answer.
@@ -194,7 +194,7 @@ rules hold even when you skip it:
   a prompt as two sends: the prompt can land mid-reset and vanish.
 - **`mu task wait --first --on-stall exit`**; exit 7 means read the
   owner's pane and answer it.
-- **Stop a worker gently**: `mu agent abort`, then `kick`, then `close`.
+- **Stop a worker gently**: `mu agent abort`, then `close`.
   To redirect a busy pi now: `send --interrupt` (`--steer` waits for
   the running tool).
 - **Send, don't note, a running worker**: it never sees new notes. The note is the durable copy

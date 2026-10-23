@@ -37,11 +37,6 @@ export {
   type InterruptResult,
   interruptAgent,
 } from "./agents/abort.js";
-export {
-  type AdoptAgentOptions,
-  type AdoptAgentResult,
-  adoptAgent,
-} from "./agents/adopt.js";
 export { type DelegateOutcome, delegateOutcome } from "./agents/delegate.js";
 export {
   AgentAbortNeedsCtlError,
@@ -58,26 +53,13 @@ export {
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
   AgentSendIndeterminateError,
+  AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
-  PaneNotInSessionError,
   WorkspaceOwnerBusyError,
   WorkspacePreservedError,
 } from "./agents/errors.js";
-export {
-  foregroundPgid,
-  isKickSignal,
-  type KickAgentOptions,
-  type KickAgentResult,
-  type KickProcessExecutor,
-  type KickSignal,
-  kickAgent,
-  NoForegroundProcessError,
-  parsePsTtyOutput,
-  resetKickProcessExecutor,
-  setKickProcessExecutor,
-} from "./agents/kick.js";
 export {
   type CommandResolutionResult,
   type CommandResolver,
@@ -99,7 +81,6 @@ export {
 export {
   agentCtlSocket,
   CTL_SLASH_COMMANDS,
-  chooseTransport,
   expectsCtl,
   isSlashCommand,
   parseSessionCommand,
@@ -295,7 +276,7 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
       now,
     });
   } catch (err) {
-    // UNIQUE (workstream_id, name): a concurrent spawn/adopt took the
+    // UNIQUE (workstream_id, name): a concurrent spawn took the
     // name between the caller's existence check and this insert.
     if ((err as { code?: unknown }).code === "SQLITE_CONSTRAINT_UNIQUE") {
       throw new AgentExistsError(input.name);

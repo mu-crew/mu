@@ -53,9 +53,9 @@ socket. Pick the mode by what the agent is doing:
 - `/new`, `/reload` and `/compact [instructions]` run inside pi through
   the socket and report pi's answer (for example `Nothing to compact`).
   They refuse with exit 4 while pi is busy; `--force` overrides. Any
-  other slash command exits 2; add `--via mux` to type it into the pane.
+  other slash command exits 2.
 - If the socket does not answer, the send fails with exit 1 and
-  pastes nothing. `--via mux` pastes into the pane on purpose.
+  pastes nothing.
 
 After a claim, spawn, or wait, the `Next:` block prints the right send.
 `mu agent spawn --send <text>` spawns and sends the first prompt in one
@@ -65,11 +65,13 @@ chars, and it gives up with exit 4 when no free name is near).
 
 ### Non-pi agents
 
-Agents other than pi have no control socket, so mu pastes the text
-into the pane. To start a new session, send `/new` (codex: `/clear`),
-then the prompt. If mu prints `warning: ... was NOT submitted`, the
-agent has not seen the text. Read the pane before you wait. On a slow
-tmux link, raise `MU_SEND_DELAY_MS` (default 500 ms).
+Agents other than pi have no control socket. On herdr, mu sends the
+text with herdr's atomic `agent prompt`. To start a new session, send
+`/new` (codex: `/clear`), then the prompt. If mu prints
+`warning: ... was NOT submitted`, the agent has not seen the text.
+Read the pane before you wait. On tmux, a send to a non-pi agent exits
+4 (`AgentSendUnsupportedError`): spawn it on herdr (`MU_MUX=herdr`) or
+use pi.
 
 ## Write the brief
 

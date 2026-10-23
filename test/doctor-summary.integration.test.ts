@@ -293,7 +293,7 @@ describe("yankCommandForCheck", () => {
   it("maps each known check name to a useful verb", () => {
     expect(yankCommandForCheck({ name: "murmur", status: "warn" })).toBe("murmur link pi");
     expect(yankCommandForCheck({ name: "agents", status: "warn" })).toBe("mu state");
-    expect(yankCommandForCheck({ name: "panes", status: "warn" })).toBe("mu agent adopt");
+    expect(yankCommandForCheck({ name: "panes", status: "warn" })).toBe("mu agent list");
     expect(yankCommandForCheck({ name: "workspaces", status: "warn" })).toBe(
       "mu workspace orphans",
     );

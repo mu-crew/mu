@@ -1,5 +1,5 @@
 // Run a binary and capture its output, never rejecting on a non-zero exit.
-// Shared by the tmux, herdr, kick and murmur-status executors. Uses
+// Shared by the tmux, herdr and murmur-status executors. Uses
 // node:child_process rather than execa: execa's ~110 modules cost 25-40 ms
 // of import time on every process that touches a multiplexer.
 

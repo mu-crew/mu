@@ -167,12 +167,6 @@ describe("herdr sendToPane: one atomic call, no tmux workaround", () => {
     expect(calls[0]?.args).toEqual(["agent", "prompt", "w1:p2", "hi"]);
   });
 
-  it("ignores delayMs: the gap it sizes does not exist on this backend", async () => {
-    const calls = mockHerdr([["agent prompt", AGENT_PROMPTED]]);
-    await sendToPane("w1:p2", "hi", { delayMs: 5000 });
-    expect(calls).toHaveLength(1);
-  });
-
   it("rejects a tmux pane id at the call site", async () => {
     setHerdrExecutor(async () => {
       throw new Error("must not shell out with an invalid pane id");
