@@ -1,0 +1,103 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn lost -w eval --workspace && p=$(mu workspace path lost -w eval) && printf 'valuable data\\n' > \"$p/lost.txt\" && git -C \"$p\" add lost.txt && git -C \"$p\" commit -qm unmerged-important && mu agent close lost -w eval --discard-workspace"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --workspace"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w2 -w eval --workspace"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim t1 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim t2 -w eval --for w2"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do t1 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w2 -w eval 'do t2 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 w2 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent list -w eval; mu task show t1 -w eval | grep 'status\\|owner'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w3 -w eval --workspace"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim t1 -w eval --for w3"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w3 -w eval 'do t1 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait t1 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w3 w2; do git cherry-pick $(git -C $(mu workspace path $w -w eval) rev-parse HEAD) || exit 1; done"
+      }
+    ]
+  },
+  {
+    "text": "t1 and t2 are done and merged into main."
+  }
+]

@@ -19,6 +19,18 @@ export function extraBadScripts(dir: string, id: string, family: Family): string
     .sort();
 }
 
+/** Notes a scenario's golden run must show (its injected failure really happened). */
+export const GOLDEN_EVIDENCE: Record<string, RegExp[]> = {
+  delegate_saturation: [/\brefused=[1-9]/],
+};
+
+/** Golden notes missing from `v.notes`, as regex sources. */
+export function missingGoldenEvidence(id: string, v: Verdict): string[] {
+  return (GOLDEN_EVIDENCE[id] ?? [])
+    .filter((re) => !v.notes.some((n) => re.test(n)))
+    .map((re) => re.source);
+}
+
 /** A golden is clean: completed, no wrong entries, nothing destructive. */
 export function goldenOk(v: Verdict): boolean {
   return v.completed && v.wrong.length === 0 && v.destructive.length === 0;
