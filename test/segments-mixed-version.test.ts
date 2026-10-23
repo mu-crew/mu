@@ -226,21 +226,167 @@ describe("segment versions are checked per line", () => {
     expect(readFileSync(segA().replace(/\.jsonl$/, ".manifest"), "utf8")).toBe(manifestBytes);
   });
 
-  it("a corrupt v1 line followed by a v3 line: repair drops only the corrupt line, never the v3 line", async () => {
-    seed(a, "t1", "t2", "t3");
-    const lines = await writeMixed(Number.POSITIVE_INFINITY, [1, 1, 3, 2]);
-    expect(lines.length).toBeGreaterThanOrEqual(4);
-    const corrupt = (lines[1] ?? "").replace('"crc":"', '"crc":"0');
-    const file = [lines[0], corrupt, ...lines.slice(2)];
-    writeFileSync(segA(), `${file.join("\n")}\n`);
+  const rot = (raw: string): string => raw.replace('"crc":"', '"crc":"0');
+  const versionsOf = (path: string): number[] =>
+    linesOf(path).map((l) => (JSON.parse(l) as { v: number }).v);
+  const manifestOk = (): void => {
+    expect(verifyAgainstManifest(segA()).ok).toBe(true);
+    const m = readManifest(segA());
+    if (m !== null) expect(manifestSelfConsistent(m)).toBe(true);
+  };
 
-    const flushed = await flushSegment(a, dir, { verify: true });
+  describe("repair keeps every line at its line number", () => {
+    it("a corrupt v1 line before a v3 line: the line is replaced in place by a placeholder, the v3 line keeps its number", async () => {
+      seed(a, "t1", "t2", "t3");
+      const lines = await writeMixed(Number.POSITIVE_INFINITY, [1, 1, 3, 2]);
+      expect(lines.length).toBeGreaterThanOrEqual(4);
+      writeFileSync(segA(), `${[lines[0], rot(lines[1] ?? ""), ...lines.slice(2)].join("\n")}\n`);
 
-    expect(flushed.selfRepaired).toMatchObject({ kind: "crc-mismatch", line: 2 });
-    expect(flushed).toMatchObject({ appended: 0, foreignVersionAt: 2, foreignVersion: 3 });
-    // Every line of the other version survives byte for byte, as does
-    // everything after the corrupt line; only the corrupt line is gone.
-    expect(linesOf(segA())).toEqual([lines[0], ...lines.slice(2)]);
+      const flushed = await flushSegment(a, dir, { verify: true });
+
+      expect(flushed.selfRepaired).toMatchObject({ kind: "crc-mismatch", line: 2 });
+      expect(flushed).toMatchObject({ appended: 0, foreignVersionAt: 3, foreignVersion: 3 });
+      const after = linesOf(segA());
+      expect(after).toHaveLength(lines.length);
+      expect(after[0]).toBe(lines[0]);
+      expect(after.slice(2)).toEqual(lines.slice(2));
+      // The line after the gap is foreign, so its hlc bounds nothing and
+      // the op is not regenerated: a placeholder holds the place.
+      expect(decodeLine(after[1] ?? "")).toMatchObject({
+        ok: true,
+        line: { entity: "segment.placeholder" },
+      });
+    });
+
+    it("repeated ambient flushes never append behind a foreign line after a repair", async () => {
+      seed(a, "t1", "t2", "t3");
+      const lines = await writeMixed(Number.POSITIVE_INFINITY, [1, 1, 3, 2]);
+      writeFileSync(segA(), `${[lines[0], rot(lines[1] ?? ""), ...lines.slice(2)].join("\n")}\n`);
+      const first = await flushSegment(a, dir);
+      expect(first).toMatchObject({ appended: 0, foreignVersionAt: 3, foreignVersion: 3 });
+      const repaired = readFileSync(segA());
+
+      seed(a, "pending");
+      for (const verify of [false, false, true]) {
+        const next = await flushSegment(a, dir, { verify });
+        expect(next).toMatchObject({ appended: 0, foreignVersionAt: 3, foreignVersion: 3 });
+        expect(readFileSync(segA()).equals(repaired)).toBe(true);
+      }
+    });
+
+    it("a damaged line between valid lines is regenerated from ops, at its own position", async () => {
+      seed(a, "t1", "t2", "t3");
+      const lines = await writeMixed(Number.POSITIVE_INFINITY, [1, 1, 1, 2]);
+      writeFileSync(segA(), `${[lines[0], rot(lines[1] ?? ""), ...lines.slice(2)].join("\n")}\n`);
+
+      await flushSegment(a, dir, { verify: true });
+
+      expect(linesOf(segA())[1]).toBe(reencode(lines[1] ?? "", SEGMENT_FORMAT_VERSION));
+      expect(linesOf(segA())).toHaveLength(lines.length);
+      expect(linesOf(segA())[3]).toBe(lines[3]);
+    });
+
+    it("a valid v1 suffix after a corrupt v2 line is preserved byte for byte", async () => {
+      seed(a, "t1", "t2", "t3");
+      const lines = await writeMixed(Number.POSITIVE_INFINITY);
+      const suffix = lines.slice(2).map((l) => reencode(l, 1));
+      writeFileSync(segA(), `${[lines[0], rot(lines[1] ?? ""), ...suffix].join("\n")}\n`);
+
+      const flushed = await flushSegment(a, dir, { verify: true });
+
+      expect(flushed.selfRepaired).toMatchObject({ kind: "crc-mismatch", line: 2 });
+      expect(flushed.foreignVersionAt).toBeNull();
+      expect(linesOf(segA())).toHaveLength(lines.length);
+      expect(linesOf(segA()).slice(2)).toEqual(suffix);
+      expect(
+        versionsOf(segA())
+          .slice(2)
+          .every((v) => v === 1),
+      ).toBe(true);
+      manifestOk();
+      expect(ingestSegment(b, peerOfA(), { verify: true }).defects).toEqual([]);
+    });
+
+    it("a caught-up peer is not moved past a v3 line by a repair of an earlier line", async () => {
+      seed(a, "t1", "t2");
+      await flushSegment(a, dir);
+      const before = ingestSegment(b, peerOfA()).watermark;
+      seed(a, "blocked", "after-foreign");
+      await flushSegment(a, dir);
+      const lines = linesOf(segA());
+      const mixed = [
+        lines[0],
+        rot(lines[1] ?? ""),
+        lines[2],
+        reencode(lines[before] ?? "", 3),
+        lines[before + 1],
+      ];
+      writeFileSync(segA(), `${mixed.join("\n")}\n`);
+
+      const repaired = await flushSegment(a, dir, { verify: true });
+      expect(repaired).toMatchObject({ foreignVersionAt: before + 1, foreignVersion: 3 });
+      const result = ingestSegment(b, peerOfA(), { verify: true });
+
+      expect(result.defects).toContainEqual(
+        expect.objectContaining({ kind: "unknown-version", line: before + 1, version: 3 }),
+      );
+      expect(result.watermark).toBe(before);
+      expect(hasTask(b, "blocked")).toBe(false);
+      expect(hasTask(b, "after-foreign")).toBe(false);
+    });
+
+    it("a v3 line appended after a peer caught up is not lost when an earlier line is repaired", async () => {
+      seed(a, "t1", "t2");
+      await flushSegment(a, dir);
+      const caughtUp = ingestSegment(b, peerOfA()).watermark;
+      expect(versionsOf(segA()).every((v) => v === 2)).toBe(true);
+      seed(a, "from-newer-mu");
+      await flushSegment(a, dir);
+      const lines = linesOf(segA());
+      expect(lines).toHaveLength(caughtUp + 1);
+      writeFileSync(
+        segA(),
+        `${[
+          lines[0],
+          rot(lines[1] ?? ""),
+          ...lines.slice(2, caughtUp),
+          reencode(lines[caughtUp] ?? "", 3),
+        ].join("\n")}\n`,
+      );
+
+      await flushSegment(a, dir, { verify: true });
+      for (const verify of [true, false]) {
+        const result = ingestSegment(b, peerOfA(), { verify });
+        expect(result.watermark).toBe(caughtUp);
+        expect(result.defects).toContainEqual(
+          expect.objectContaining({ kind: "unknown-version", line: caughtUp + 1, version: 3 }),
+        );
+      }
+      expect(hasTask(b, "from-newer-mu")).toBe(false);
+    });
+
+    it("a damaged line the DB cannot regenerate becomes a placeholder: counted, never applied, numbers kept", async () => {
+      seed(a, "t1", "t2", "t3");
+      const lines = await writeMixed(Number.POSITIVE_INFINITY, [1, 1, 1, 3, 2]);
+      const lostOp = decodeLine(lines[1] ?? "");
+      if (!lostOp.ok) throw new Error("setup");
+      a.prepare("DELETE FROM ops WHERE hlc = ?").run(lostOp.line.hlc);
+      writeFileSync(segA(), `${[lines[0], rot(lines[1] ?? ""), ...lines.slice(2)].join("\n")}\n`);
+
+      const flushed = await flushSegment(a, dir, { verify: true });
+
+      const after = linesOf(segA());
+      expect(after).toHaveLength(lines.length);
+      expect(after.slice(2)).toEqual(lines.slice(2));
+      expect(decodeLine(after[1] ?? "")).toMatchObject({ ok: true });
+      expect(flushed).toMatchObject({ foreignVersionAt: 4, foreignVersion: 3 });
+      // Peer: the placeholder is counted and skipped; ingest stops at the v3 line (4).
+      const result = ingestSegment(b, peerOfA(), { verify: true });
+      expect(result.defects).toEqual([
+        expect.objectContaining({ kind: "unknown-version", line: 4, version: 3 }),
+      ]);
+      expect(result.watermark).toBe(3);
+    });
   });
 
   it("a corrupt line with NO foreign line later is still truncated and regenerated", async () => {
