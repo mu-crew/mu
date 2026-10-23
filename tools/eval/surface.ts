@@ -26,12 +26,15 @@ export function surfaceFromDir(name: string, root: string): Surface {
   return surface;
 }
 
-/** A surface name is one plain path segment: no separators, no "..", not hidden. */
+/** A surface name is one plain lowercase path segment: no separators, no "..", not hidden, not empty. */
 export function surfaceDir(name: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || name.includes("..")) {
-    throw new Error(`invalid surface name ${JSON.stringify(name)}: use letters, digits, . _ -`);
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(name) || name.includes("..")) {
+    throw new Error(
+      `invalid surface name ${JSON.stringify(name)}: use lowercase letters, digits, . _ -`,
+    );
   }
   const dir = join(SURFACES_DIR, name);
+  // strict child only: dir === SURFACES_DIR would let prepareSurface delete every surface
   if (!resolve(dir).startsWith(SURFACES_DIR + sep)) {
     throw new Error(`invalid surface name ${JSON.stringify(name)}: escapes ${SURFACES_DIR}`);
   }

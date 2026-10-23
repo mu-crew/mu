@@ -1,4 +1,4 @@
-// One isolated sandbox per run: own HOME, own DB, own sync dir, own private tmux server (TMUX_TMPDIR inside the sandbox).
+// One isolated sandbox per run: own HOME, own DB, own sync dir, own private tmux server (tmux shim + TMUX_TMPDIR inside the sandbox).
 // Never touches the default tmux server, herdr, or the user's real mu state.
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -27,8 +27,19 @@ export const REAL_PI: string = resolveRealPi();
  * and none can reach the user's default server.
  */
 export function tmuxSocketPath(dir: string, name: string): string {
-  return join(dir, "t", `tmux-${process.getuid?.() ?? 0}`, name);
+  return join(dir, "tmux-tmp", `tmux-${process.getuid?.() ?? 0}`, name);
 }
+
+function resolveRealTmux(): string {
+  try {
+    return execFileSync("which", ["tmux"], { encoding: "utf8" }).trim() || "tmux";
+  } catch {
+    return "tmux";
+  }
+}
+
+/** tmux resolved once at import, from the caller's PATH, before any sandbox PATH exists. */
+export const REAL_TMUX: string = resolveRealTmux();
 
 const KEEP = new Set(["PATH", "TERM", "LANG", "LC_ALL", "USER", "SHELL"]);
 
@@ -54,7 +65,7 @@ export function sandboxEnv(
   env.MU_STATE_DIR = state;
   env.MU_SYNC_DIR = join(dir, "sync");
   env.MU_TMUX_SOCKET = tmuxSocket;
-  env.TMUX_TMPDIR = join(dir, "t");
+  env.TMUX_TMPDIR = join(dir, "tmux-tmp");
   env.MU_MUX = "tmux";
   env.PI_CODING_AGENT_DIR = join(dir, "pi-agent");
   env.GIT_AUTHOR_NAME = "eval";
@@ -121,7 +132,7 @@ export async function mu(sb: Sandbox, args: string[]): Promise<ExecResult> {
 }
 
 const live = new Set<{ dir: string; sockets: () => string[] }>();
-const SOCKET_PATH_MAX = 100;
+const SOCKET_PATH_MAX = 104; // sun_path is 108 on Linux
 let handlersInstalled = false;
 
 /** Kill the server behind a socket path. Always -S <path under a sandbox>, never the default. */
@@ -147,6 +158,15 @@ function sandboxSockets(dir: string, tmuxSocket: string): string[] {
   return names.map((n) => tmuxSocketPath(dir, n));
 }
 
+/** Sync, idempotent: kill every live sandbox's tmux servers and remove its dir. */
+function cleanupAll(): void {
+  for (const s of [...live]) {
+    live.delete(s);
+    for (const sock of s.sockets()) killServer(sock);
+    rmSync(s.dir, { recursive: true, force: true });
+  }
+}
+
 function installHandlers(): void {
   if (handlersInstalled) return;
   handlersInstalled = true;
@@ -155,13 +175,19 @@ function installHandlers(): void {
     ["SIGTERM", 143],
   ] as const) {
     process.on(sig, () => {
-      for (const s of live) {
-        for (const sock of s.sockets()) killServer(sock);
-        rmSync(s.dir, { recursive: true, force: true });
-      }
+      cleanupAll();
       process.exit(code);
     });
   }
+  // A crash anywhere (a throwing judge, a bug) must not leave a sandbox dir or tmux server behind.
+  for (const ev of ["unhandledRejection", "uncaughtException"] as const) {
+    process.on(ev, (e: unknown) => {
+      cleanupAll();
+      console.error(e instanceof Error ? (e.stack ?? e.message) : e);
+      process.exit(1);
+    });
+  }
+  process.on("exit", cleanupAll);
 }
 
 function writeShim(path: string, body: string): void {
@@ -202,6 +228,10 @@ export async function createSandbox(
     `exec env MU_NUDGE=0 ${JSON.stringify(REAL_PI)} "$@" --no-extensions -e ${JSON.stringify(surface.extension)} -e ${JSON.stringify(FAUX_EXT)} --no-skills --no-context-files --no-session --model evalfaux/worker`,
   );
 
+  // Bare tmux from the AUT or a worker joins the run's private server (an explicit later -L/-S
+  // still wins, but TMUX_TMPDIR keeps even that inside the sandbox).
+  writeShim(join(binDir, "tmux"), `exec ${JSON.stringify(REAL_TMUX)} -L ${tmuxSocket} "$@"`);
+
   const sb: Sandbox = {
     dir,
     env,
@@ -226,7 +256,7 @@ export async function createSandbox(
       sb,
       "git init -q -b main && printf '# eval repo\\n' > README.md && git add README.md && git commit -q -m init",
     );
-    mkdirSync(env.TMUX_TMPDIR ?? join(dir, "t"), { recursive: true });
+    mkdirSync(env.TMUX_TMPDIR ?? join(dir, "tmux-tmp"), { recursive: true });
     await sh(sb, `tmux -L ${tmuxSocket} -f /dev/null new-session -d -s eval-boot`);
   } catch (e) {
     await sb.close();

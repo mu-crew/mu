@@ -80,9 +80,9 @@ describe("sandboxEnv tmux isolation", () => {
   it("points TMUX_TMPDIR inside the sandbox, so even bare tmux never sees the default server", () => {
     const dir = "/tmp/mu-eval-1-2-abc";
     const env = sandboxEnv(dir, surface, "mu-eval-1-2-abc", { ...BASE, TMUX_TMPDIR: "/real/tmp" });
-    expect(env.TMUX_TMPDIR).toBe(`${dir}/t`);
+    expect(env.TMUX_TMPDIR).toBe(`${dir}/tmux-tmp`);
     expect(tmuxSocketPath(dir, "mu-eval-1-2-abc")).toBe(
-      `${dir}/t/tmux-${process.getuid?.() ?? 0}/mu-eval-1-2-abc`,
+      `${dir}/tmux-tmp/tmux-${process.getuid?.() ?? 0}/mu-eval-1-2-abc`,
     );
   });
 });
