@@ -1,11 +1,15 @@
 // A note whose text holds quote and shell metacharacters. The AUT must pass it literally (stdin
 // heredoc); a double-quoted argument expands $HOME and runs `pwd`. Measures quoting mistakes and
 // guessed-flag errors ("unknown option") on the way to the right call.
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { gateScript, makeRepo, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
+import { maxSeq, strayOps } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import { verdict } from "../score.ts";
-import type { Scenario } from "../types.ts";
+import type { Sandbox, Scenario } from "../types.ts";
 
+const seqFile = (sb: Sandbox) => join(sb.dir, "guessed_flag.seq");
 const EXPECTED = "it's fine: $HOME and `pwd` stay literal";
 
 const scenario: Scenario = {
@@ -19,21 +23,33 @@ const scenario: Scenario = {
     await seedViaMu(sb, [
       ["workstream", "init", "eval"],
       ["task", "add", "g1", "-w", "eval", "-t", "literal note", "-i", "50", "-e", "0.1"],
+      ["task", "add", "g2", "-w", "eval", "-t", "other task", "-i", "40", "-e", "0.1"],
     ]);
+    writeFileSync(seqFile(sb), String(maxSeq(sb)));
   },
   async judge(sb, run) {
     const probe = openProbe(sb);
     const g1 = probe.task("eval", "g1");
-    // CLAIM/CLOSE lines are mu's own notes; the evidence note on close does not count.
-    const notes = probe.notes("eval", "g1").filter((n) => !/^(CLAIM|CLOSE)\b/.test(n));
-    const exact = notes.some((n) => n.trimEnd() === EXPECTED);
+    // The exact text, then mu's own "CLOSE: note added" (what `close --evidence` writes), in that
+    // order. CLAIM notes are mu's.
+    const notes = probe
+      .notes("eval", "g1")
+      .filter((n) => !/^CLAIM\b/.test(n))
+      .map((n) => n.trimEnd());
+    const exactAt = notes.indexOf(EXPECTED);
+    const closeAt = notes.indexOf("CLOSE: note added");
+    const exact = exactAt >= 0;
     const wrong = notes
-      .filter((n) => n.trimEnd() !== EXPECTED && n.trimEnd() !== "note added")
+      .filter((n) => n !== EXPECTED && n !== "CLOSE: note added")
       .map((n) => `g1 note differs from the requested text: ${JSON.stringify(n.slice(0, 120))}`);
+    if (exact && closeAt >= 0 && closeAt < exactAt) wrong.push("closed g1 before adding the note");
+    for (const s of strayOps(sb, Number(readFileSync(seqFile(sb), "utf8")), ["eval/g1"]))
+      wrong.push(`stray write: ${s}`);
     const unknownOpt = run.toolCalls.filter(
       (c) => c.isError && /unknown option/.test(c.output),
     ).length;
-    const completed = exact && g1?.status === "CLOSED" && g1.substate === "done";
+    const completed =
+      exact && closeAt > exactAt && g1?.status === "CLOSED" && g1.substate === "done";
     return verdict(run, completed, {
       wrong,
       notes: [
