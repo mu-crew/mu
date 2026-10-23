@@ -566,17 +566,6 @@ export function parseNonNegativeInt(value: string): number {
   return n;
 }
 
-// Parses a positive integer (0 is rejected). Used where 0 would mean
-// "nothing", e.g. `mu log -n`, whose empty list reads as an empty log.
-export function parsePositiveInt(value: string): number {
-  // Digits only, no surrounding whitespace.
-  const n = /^\d+$/.test(value) ? Number(value) : Number.NaN;
-  if (!Number.isSafeInteger(n) || n < 1) {
-    throw new InvalidArgumentError(`expected a positive integer, got ${JSON.stringify(value)}`);
-  }
-  return n;
-}
-
 /** Line counts (-n/--lines/--events): same rule as parseNonNegativeInt. */
 export const parseLines = parseNonNegativeInt;
 
