@@ -6,6 +6,7 @@ import type { RuntimeState, StateReading } from "../src/agent-state.js";
 import { insertAgent, WorkspaceOwnerBusyError } from "../src/agents.js";
 import { cmdWorkspaceFree } from "../src/cli/workspace.js";
 import { type Db, openDb } from "../src/db.js";
+import { gitBackend } from "../src/vcs.js";
 import { freeWorkspace } from "../src/workspace.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 
@@ -37,6 +38,8 @@ function workspaceRows(): number {
 }
 
 beforeEach(() => {
+  // Fast tier spawns no git: the guard is under test, not the teardown.
+  vi.spyOn(gitBackend, "freeWorkspace").mockResolvedValue({ removed: true });
   tempDir = mkdtempSync(join(tmpdir(), "mu-free-guard-"));
   db = openDb({ path: join(tempDir, "mu.db") });
   insertAgent(db, { name: "w1", workstream: "ws", paneId: "%7" });
@@ -61,6 +64,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   mux.restore();
   db.close();
   rmSync(tempDir, { recursive: true, force: true });

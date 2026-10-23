@@ -59,7 +59,7 @@ export const gitBackend: VcsBackend = {
     }
   },
 
-  // List commits in (baseRef..HEAD), oldest-first. The format string
+  // List the worker's own commits (HEAD --not upstreamRefs), oldest-first. The format string
   // packs four NUL-delimited fields per record, then a record
   // separator '\x1e' (RECORD-SEPARATOR control char) so subjects /
   // bodies with embedded newlines or NULs survive parsing. We don't
@@ -76,7 +76,9 @@ export const gitBackend: VcsBackend = {
         "--reverse",
         "-z",
         "--format=%H%x00%s%x00%b%x00%aI",
-        `${await forkPoint(workspacePath, baseRef)}..HEAD`,
+        "HEAD",
+        "--not",
+        ...(await upstreamRefs(workspacePath, baseRef)),
       ],
       workspacePath,
     );
@@ -172,26 +174,27 @@ export const gitBackend: VcsBackend = {
 };
 
 /**
- * The workspace's current fork point. `parent_ref` is recorded once at
- * spawn; a manual `git rebase` onto an advanced main leaves it at the
- * old fork, so `<parent_ref>..HEAD` would list main-only commits. Every
- * reader therefore derives the fork point: merge-base(HEAD, the project
- * root's HEAD) when that is newer than `parentRef` (parentRef is its
- * ancestor), else `parentRef` itself. Falls back to `parentRef` on any
- * git failure (never a wider range than the recorded one).
+ * Everything already upstream of the worker: `parent_ref` (recorded once
+ * at spawn), the project root's HEAD, `origin/HEAD` when it resolves, and
+ * the root's `@{upstream}` when set. The worker's own commits are
+ * `git rev-list HEAD --not <these>`, so a manual rebase onto advanced
+ * local main or onto a fetched remote does not count the base's commits
+ * as the worker's. Refs that do not resolve are skipped; the result is
+ * deduped SHAs and always starts with `parentRef`.
  */
-export async function forkPoint(workspacePath: string, parentRef: string): Promise<string> {
-  try {
-    const root = await resolveGitProjectRoot(workspacePath);
-    if (root === undefined) return parentRef;
-    const mainHead = await run("git", ["rev-parse", "HEAD"], root);
-    const mb = await run("git", ["merge-base", "HEAD", mainHead], workspacePath);
-    if (mb.length === 0 || mb === parentRef) return parentRef;
-    await run("git", ["merge-base", "--is-ancestor", parentRef, mb], workspacePath);
-    return mb;
-  } catch {
-    return parentRef;
+export async function upstreamRefs(workspacePath: string, parentRef: string): Promise<string[]> {
+  const refs = [parentRef];
+  const root = await resolveGitProjectRoot(workspacePath);
+  if (root === undefined) return refs;
+  for (const rev of ["HEAD", "origin/HEAD", "@{upstream}"]) {
+    try {
+      const sha = await run("git", ["rev-parse", "--verify", "-q", `${rev}^{commit}`], root);
+      if (sha.length > 0 && !refs.includes(sha)) refs.push(sha);
+    } catch {
+      /* unresolved (no remote, no upstream): nothing extra to exclude */
+    }
   }
+  return refs;
 }
 
 /**

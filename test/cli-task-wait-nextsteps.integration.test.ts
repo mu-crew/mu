@@ -1,8 +1,8 @@
 // Integration coverage for `mu task wait --first --json` nextSteps
 // against real git-backed workspaces.
 //
-// The wait hint names the worker's worktree and its fork point, so the
-// orchestrator inspects `git log <fork>..HEAD` and picks what to keep.
+// The wait hint names the worker's worktree and lists its own commits
+// (`git log HEAD --not <upstream refs>`); the orchestrator picks what to keep.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -117,6 +117,13 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
     delete process.env[key];
   });
 
+  /** Run the hinted `git log --oneline ...` and return the commit subjects. */
+  function logOf(command: string | undefined): string[] {
+    if (command === undefined) throw new Error("no hint");
+    const out = execFileSync("sh", ["-c", `${command} --format=%s`], { encoding: "utf8" });
+    return out.split("\n").filter((l) => l.length > 0);
+  }
+
   async function seedWorker(agent: string, paneId: string, task: string): Promise<WorkspaceRow> {
     insertAgent(db, { name: agent, workstream: "test", paneId });
     const workspace = await createWorkspace(db, {
@@ -157,22 +164,43 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
 
     expect(payload.nextSteps[0]).toEqual({
       intent: "Inspect committer's commits, then cherry-pick what you want",
-      command: `git -C ${committer.path} log --oneline ${committer.parentRef}..HEAD`,
+      command: `git -C ${committer.path} log --oneline HEAD --not ${committer.parentRef}`,
     });
+    expect(logOf(payload.nextSteps[0]?.command)).toEqual(["worker commit"]);
   });
 
-  it("uses the new fork point after a manual rebase onto an advanced main", async () => {
+  it("lists only the worker's commits after a manual rebase onto advanced local main", async () => {
     const committer = await seedWorker("committer", "%1", "commit_task");
     await seedWorker("noncommitter", "%2", "other_task");
-    const mainSha = commitFile(projectRoot, "main-only.txt", "m\n", "main-only advancement");
+    commitFile(projectRoot, "main-only.txt", "m\n", "main-only advancement");
     execFileSync("git", ["-C", committer.path, "rebase", "main"], { stdio: "ignore" });
     commitFile(committer.path, "commit.txt", "committed\n", "worker commit");
 
     const payload = await closeAndWait("commit_task", "other_task");
 
-    expect(payload.nextSteps[0]?.command).toBe(
-      `git -C ${committer.path} log --oneline ${mainSha}..HEAD`,
-    );
+    expect(logOf(payload.nextSteps[0]?.command)).toEqual(["worker commit"]);
+  });
+
+  it("lists nothing after fetch + rebase onto an advanced remote (root checkout untouched)", async () => {
+    const bare = join(tempDir, "origin.git");
+    const clone = join(tempDir, "clone");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", bare], { stdio: "ignore" });
+    execFileSync("git", ["remote", "add", "origin", bare], { cwd: projectRoot });
+    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: projectRoot });
+    execFileSync("git", ["remote", "set-head", "origin", "main"], { cwd: projectRoot });
+    const committer = await seedWorker("committer", "%1", "commit_task");
+    await seedWorker("noncommitter", "%2", "other_task");
+    execFileSync("git", ["clone", "-q", bare, clone], { stdio: "ignore" });
+    commitFile(clone, "remote.txt", "r\n", "remote-main-only");
+    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: clone });
+    execFileSync("git", ["-C", committer.path, "fetch", "-q", "origin"]);
+    execFileSync("git", ["-C", committer.path, "rebase", "-q", "origin/HEAD"]);
+
+    const payload = await closeAndWait("commit_task", "other_task");
+    expect(logOf(payload.nextSteps[0]?.command)).toEqual([]);
+
+    commitFile(committer.path, "commit.txt", "committed\n", "worker commit");
+    expect(logOf(payload.nextSteps[0]?.command)).toEqual(["worker commit"]);
   });
 
   it("offers no worktree hint when the owner has no workspace", async () => {

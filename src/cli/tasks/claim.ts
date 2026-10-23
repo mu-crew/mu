@@ -45,7 +45,7 @@ import {
   type TaskWaitTaskState,
   waitForTasks,
 } from "../../tasks.js";
-import { forkPoint } from "../../vcs.js";
+import { upstreamRefs } from "../../vcs.js";
 import { getWorkspaceForAgent } from "../../workspace.js";
 import { dispatchHint, nextDispatchHint } from "../dispatch-hints.js";
 
@@ -501,14 +501,15 @@ export async function cmdTaskWait(
     const owner = firingRef.owner;
     if (owner !== null) {
       // The worker's worktree, when it has one: list what it committed
-      // since its fork point, and the orchestrator picks.
+      // beyond the upstream refs, and the orchestrator picks.
       const ws = getWorkspaceForAgent(db, owner, firingRef.workstreamName);
       if (ws !== undefined) {
-        // parent_ref is the spawn-time fork; a manual rebase moves it.
-        const fork = ws.parentRef ? await forkPoint(ws.path, ws.parentRef) : null;
+        // Own commits = HEAD minus everything already upstream (parent_ref
+        // is the spawn-time fork; a manual rebase moves the base).
+        const not = ws.parentRef ? await upstreamRefs(ws.path, ws.parentRef) : [];
         nextSteps.push({
           intent: `Inspect ${owner}'s commits, then cherry-pick what you want`,
-          command: `git -C ${ws.path} log --oneline${fork ? ` ${fork}..HEAD` : ""}`,
+          command: `git -C ${ws.path} log --oneline${not.length > 0 ? ` HEAD --not ${not.join(" ")}` : ""}`,
         });
       }
     }
