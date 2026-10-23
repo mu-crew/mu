@@ -85,29 +85,3 @@ export const GLYPH = {
   /** Status outside the known enum. */
   unknown: "\uf059", // nf-fa-question_circle
 } as const;
-
-// ─── Card-header digits ────────────────────────────────────────────
-//
-// Not state, but the same question ("which codepoint?") asked of the
-// same file. Superscript digits prefix a TUI card's title with its
-// toggle key (`╭─ ¹ Agents · 3 free ─...─╮`, the btop convention);
-// the help overlay renders the same glyphs so the dashboard and the
-// keymap speak one visual language.
-
-const SUPERSCRIPT = ["⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"] as const;
-
-/**
- * Map a single decimal digit (0..9) to its Unicode superscript form.
- * Throws on out-of-range inputs so callers can't silently drop a key.
- */
-export function superscriptDigit(n: number): string {
-  if (!Number.isInteger(n) || n < 0 || n > 9) {
-    throw new RangeError(`superscriptDigit: expected integer 0..9, got ${n}`);
-  }
-  const g = SUPERSCRIPT[n];
-  // Defensive narrow for noUncheckedIndexedAccess; bounds checked above.
-  if (g === undefined) {
-    throw new RangeError(`superscriptDigit: unreachable for n=${n}`);
-  }
-  return g;
-}

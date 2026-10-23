@@ -154,10 +154,9 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **qualified ref** | `<workstream>/<name>`, used instead of `-w`. | "prefixed name" |
 | **DB** / **registry** | `<state-dir>/mu.db` and its tables. | "store" |
 | **TUI** | The read-only ink dashboard. The 3.x card TUI is removed in mu-next; bare `mu` prints help until the rewrite lands. | "GUI" |
-| **dashboard** | The TUI's grid of cards. | "home screen" |
+| **dashboard** | Removed with the 3.x card TUI; the mu-next rewrite is specified in `docs/mu-next/README.md`. | "home screen" |
 | **card** | A dashboard tile with a toggle digit 0-9. | "panel", "section" |
 | **popup** | A card's full-screen drill-down (`Shift+digit`). One at a time. | "modal", "dialog" |
-| **TitledBox** | The bordered component every card and popup uses. | "box" (alone) |
 | **tick** | The TUI's data refresh (default 1s; `+`, `-`, `=` adjust). | "poll", "frame" |
 | **yank** | Copy the focused row's `mu` command to the clipboard (`y`). | "copy" |
 | **act-intent** | The action a yank stands for. The TUI never runs it. | "action proposal" |
