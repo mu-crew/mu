@@ -11,6 +11,7 @@ export {
   detectBackend,
   type FreeWorkspaceOptions,
   type FreeWorkspaceResult,
+  forkPoint,
   gitBackend,
   type VcsBackend,
   type VcsBackendName,

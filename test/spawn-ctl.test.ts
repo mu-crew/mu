@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentDiedOnSpawnError,
   AgentExistsError,
@@ -28,9 +28,9 @@ import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
+import { gitBackend } from "../src/vcs.js";
 import { workspacePath } from "../src/workspace.js";
 import { withEnv } from "./_env.js";
-import { initGitRepo } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -59,6 +59,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   mux.restore();
   resetSleep();
   resetHandshakeClockForTests();
@@ -360,9 +361,14 @@ describe("spawn liveness for ctl agents (tmux)", () => {
   });
 
   it("a frozen error thrown after workspace pre-stage reaches the caller as itself", async () => {
-    const repo = join(dir, "repo");
-    mkdirSync(repo);
-    initGitRepo(repo);
+    // Faked git seam: no real git in the fast tier.
+    vi.spyOn(gitBackend, "detect").mockResolvedValue(true);
+    vi.spyOn(gitBackend, "createWorkspace").mockImplementation(async (o) => {
+      mkdirSync(o.workspacePath, { recursive: true });
+      return { parentRef: "0".repeat(40) };
+    });
+    vi.spyOn(gitBackend, "isClean").mockResolvedValue(true);
+    vi.spyOn(gitBackend, "freeWorkspace").mockResolvedValue({ removed: true });
     const frozen = Object.freeze(new Error("frozen mux failure"));
     mux.restore();
     state = freshMockState();
@@ -375,7 +381,7 @@ describe("spawn liveness for ctl agents (tmux)", () => {
       name: "worker-1",
       workstream: "auth",
       workspace: true,
-      workspaceProjectRoot: repo,
+      workspaceProjectRoot: dir,
     }).catch((e) => e);
     expect(err).toBe(frozen);
     expect(spawnRows().map((r) => r.intent)).toContain("agent.spawn_failed");

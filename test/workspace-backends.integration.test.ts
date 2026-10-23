@@ -9,13 +9,22 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { detectBackend, gitBackend, WorkspaceVcsRequiredError } from "../src/vcs.js";
+import { detectBackend, forkPoint, gitBackend, WorkspaceVcsRequiredError } from "../src/vcs.js";
 import { ensureWorkstream } from "../src/workstream.js";
 
 let stateRoot: string;
 let projectRoot: string;
 let dbDir: string;
 let db: Db;
+
+function commitIn(cwd: string, subject: string, file: string, body?: string): void {
+  writeFileSync(join(cwd, file), `${subject}\n`);
+  execFileSync("git", ["add", "."], { cwd });
+  const msg = body === undefined ? [subject] : [subject, "-m", body];
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", ...msg], {
+    cwd,
+  });
+}
 
 function setStateDir(dir: string): void {
   process.env.MU_STATE_DIR = dir;
@@ -159,6 +168,67 @@ gitDescribe("gitBackend", () => {
     const commits = await gitBackend.commitsSinceBase(wsPath, parentRef);
     expect(commits.map((c) => c.subject)).toEqual(["one", "two"]);
     expect(commits[0]?.sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("commitsSinceBase returns sha/subject/body/authorDate and keeps multi-line bodies", async () => {
+    const wsPath = join(stateRoot, "workspaces", "auth", "worker-1");
+    const { parentRef } = await gitBackend.createWorkspace({ projectRoot, workspacePath: wsPath });
+    if (parentRef === null) throw new Error("no parentRef");
+    commitIn(wsPath, "first commit", "a.txt");
+    commitIn(wsPath, "second commit", "b.txt", "longer body line\nspanning two lines");
+    commitIn(wsPath, "subject", "c.txt", "first body line\nsecond body line\nthird body line");
+    const [first, second, third] = await gitBackend.commitsSinceBase(wsPath, parentRef);
+    if (!first || !second || !third) throw new Error("expected three commits");
+    expect(first.sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(first.sha).not.toBe(second.sha);
+    expect(first.body).toBe("");
+    // ISO-8601 with timezone, e.g. 2026-05-10T12:34:56+00:00
+    expect(first.authorDate).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(second.subject).toBe("second commit");
+    expect(second.body).toContain("longer body line");
+    expect(second.body).toContain("spanning two lines");
+    expect(third.subject).toBe("subject");
+    expect(third.body).toContain("first body line");
+    expect(third.body).toContain("third body line");
+  });
+
+  describe("after a manual rebase onto an advanced main", () => {
+    async function rebased(): Promise<{ wsPath: string; parentRef: string; mainSha: string }> {
+      const wsPath = join(stateRoot, "workspaces", "auth", "worker-1");
+      const { parentRef } = await gitBackend.createWorkspace({
+        projectRoot,
+        workspacePath: wsPath,
+      });
+      if (parentRef === null) throw new Error("no parentRef");
+      commitIn(projectRoot, "main-only advancement", "main.txt");
+      const mainSha = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: projectRoot,
+        encoding: "utf8",
+      }).trim();
+      execFileSync("git", ["-C", wsPath, "rebase", "main"], { stdio: "ignore" });
+      return { wsPath, parentRef, mainSha };
+    }
+
+    it("commitsSinceBase ignores main-only commits behind the stale parent_ref", async () => {
+      const { wsPath, parentRef } = await rebased();
+      expect(await gitBackend.commitsSinceBase(wsPath, parentRef)).toEqual([]);
+    });
+
+    it("commitsSinceBase lists only the worker's own commits", async () => {
+      const { wsPath, parentRef } = await rebased();
+      commitIn(wsPath, "worker work", "w.txt");
+      const commits = await gitBackend.commitsSinceBase(wsPath, parentRef);
+      expect(commits.map((c) => c.subject)).toEqual(["worker work"]);
+    });
+
+    it("forkPoint resolves to the new merge-base; unrebased keeps parent_ref", async () => {
+      const { wsPath, parentRef, mainSha } = await rebased();
+      expect(await forkPoint(wsPath, parentRef)).toBe(mainSha);
+      const other = join(stateRoot, "workspaces", "auth", "worker-2");
+      const r2 = await gitBackend.createWorkspace({ projectRoot, workspacePath: other });
+      commitIn(projectRoot, "later main", "later.txt");
+      expect(await forkPoint(other, r2.parentRef ?? "")).toBe(r2.parentRef);
+    });
   });
 
   it("isClean and listDirtyFiles see untracked files", async () => {
