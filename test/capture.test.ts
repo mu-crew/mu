@@ -641,6 +641,27 @@ describe("op capture (triggers)", () => {
         "task_edges key",
         "INSERT OR REPLACE INTO task_edges (from_task_id, to_task_id, created_at) SELECT from_task_id, to_task_id, 'x' FROM task_edges",
       ],
+      // The hidden rowid is a second identity: a colliding rowid with new
+      // endpoints/key deletes the old row just the same.
+      [
+        "task_edges rowid (new endpoints)",
+        "INSERT OR REPLACE INTO task_edges (rowid, from_task_id, to_task_id, created_at) " +
+          "SELECT rowid, from_task_id, (SELECT id FROM tasks WHERE local_id = 'c'), created_at FROM task_edges",
+      ],
+      [
+        "tasks rowid (new key)",
+        "INSERT OR REPLACE INTO tasks (rowid, workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at) " +
+          "SELECT rowid, workstream_id, 'renamed', title, status, substate, impact, effort_days, created_at, updated_at FROM tasks WHERE local_id = 'a'",
+      ],
+      [
+        "workstreams rowid (new name)",
+        "INSERT OR REPLACE INTO workstreams (rowid, name, created_at) SELECT rowid, 'renamed', created_at FROM workstreams WHERE name = 'demo'",
+      ],
+      [
+        "task_notes rowid",
+        "INSERT OR REPLACE INTO task_notes (rowid, task_id, author, content, created_at) " +
+          "SELECT rowid, (SELECT id FROM tasks WHERE local_id = 'b'), author, content, created_at FROM task_notes",
+      ],
     ];
 
     for (const [label, sql] of replaces) {
@@ -648,6 +669,7 @@ describe("op capture (triggers)", () => {
         ensureWorkstream(db, "demo");
         seedTask("a");
         seedTask("b");
+        seedTask("c");
         addBlockEdge(db, "demo", "b", "a");
         addNote(db, "a", "n", { workstream: "demo" });
         clearOps();

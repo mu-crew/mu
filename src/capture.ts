@@ -375,8 +375,10 @@ const INSERT_COLLISION = {
   tasks:
     "SELECT 1 FROM tasks WHERE id = NEW.id OR (workstream_id = NEW.workstream_id AND local_id = NEW.local_id)",
   task_notes: "SELECT 1 FROM task_notes WHERE id = NEW.id",
+  // task_edges has a composite key, so its hidden rowid is a second identity.
+  // (The other three tables' `id` IS the rowid.)
   task_edges:
-    "SELECT 1 FROM task_edges WHERE from_task_id = NEW.from_task_id AND to_task_id = NEW.to_task_id",
+    "SELECT 1 FROM task_edges WHERE rowid = NEW.rowid OR (from_task_id = NEW.from_task_id AND to_task_id = NEW.to_task_id)",
 } as const satisfies Record<keyof typeof KEY_COLUMNS, string>;
 
 /** BEFORE INSERT trigger refusing an insert that collides with an existing
