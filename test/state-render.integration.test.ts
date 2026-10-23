@@ -461,7 +461,9 @@ describe("the op formatter", () => {
       ensureWorkstream(db, "doomed");
       await captureNewEvents(async () => {
         setTmuxExecutor(async (args) => {
-          if (args[0] === "has-session") return { stdout: "", stderr: "missing", exitCode: 1 };
+          // A missing session, as real tmux reports it to any session probe.
+          if (args[0] === "has-session" || args[0] === "list-panes")
+            return { stdout: "", stderr: "can't find session: doomed", exitCode: 1 };
           return { stdout: "", stderr: "unexpected tmux call", exitCode: 1 };
         });
         await teardownWorkstream(db, { workstream: "doomed" });
