@@ -1,0 +1,12 @@
+[
+  { "calls": [{ "bash": "mu agent spawn w2 -w eval --workspace" }] },
+  { "calls": [{ "bash": "mu task claim r2 -w eval --for w2" }] },
+  { "calls": [{ "bash": "mu agent send w2 -w eval 'do r2 and close it'" }] },
+  { "calls": [{ "bash": "mu task wait r2 -w eval --timeout 120" }] },
+  {
+    "calls": [
+      { "bash": "git cherry-pick $(git -C $(mu workspace path w2 -w eval) rev-parse HEAD)" }
+    ]
+  },
+  { "text": "done" }
+]

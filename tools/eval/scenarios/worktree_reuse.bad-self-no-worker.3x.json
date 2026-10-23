@@ -1,0 +1,12 @@
+[
+  { "calls": [{ "bash": "mu task claim r2 -w eval --self" }] },
+  {
+    "calls": [
+      {
+        "bash": "git worktree add -q --detach ../w1 && cd ../w1 && echo r2 > r2.txt && git add r2.txt && git commit -qm r2 && cd - && git cherry-pick $(git -C ../w1 rev-parse HEAD) && git worktree remove ../w1"
+      }
+    ]
+  },
+  { "calls": [{ "bash": "mu task close r2 -w eval --evidence 'r2 committed'" }] },
+  { "text": "done" }
+]

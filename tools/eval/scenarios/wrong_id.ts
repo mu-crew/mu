@@ -53,8 +53,8 @@ const scenario: Scenario = {
     // Notes in order. "CLOSE: <evidence>" is the note `close --evidence` writes; it never counts as
     // the requested note, and the requested note must come before it.
     const notes = probe.notes("eval", TARGET).map((n) => n.trimEnd());
-    const noteAt = notes.findIndex((n) => n === NOTE);
-    const closeAt = notes.findIndex((n) => n === `CLOSE: ${NOTE}`);
+    const noteAt = notes.indexOf(NOTE);
+    const closeAt = notes.indexOf(`CLOSE: ${NOTE}`);
     const wrong: string[] = [];
     if (noteAt >= 0 && closeAt >= 0 && noteAt > closeAt)
       wrong.push("closed before adding the note");

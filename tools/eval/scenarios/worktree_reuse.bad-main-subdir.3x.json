@@ -1,0 +1,7 @@
+[
+  { "calls": [{ "bash": "mkdir -p sub && mu agent spawn w1 -w eval --cwd \"$PWD/sub\"" }] },
+  { "calls": [{ "bash": "mu task claim r2 -w eval --for w1" }] },
+  { "calls": [{ "bash": "mu agent send w1 -w eval 'do r2 and close it'" }] },
+  { "calls": [{ "bash": "mu task wait r2 -w eval --timeout 120" }] },
+  { "text": "done" }
+]
