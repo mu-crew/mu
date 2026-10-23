@@ -68,9 +68,18 @@ version found in the defect:
 - **Own segment** is not damaged, so repair never truncates it. Flush
   appends nothing, leaves the file byte-identical and reports
   `foreignVersionAt` / `foreignVersion`; `mu sync` prints "own segment
-  has a v3 line at N written by a newer mu; not appending". If a corrupt
-  line also sits in the file, only that line is dropped; every line of
-  another version is kept byte for byte.
+  has a v3 line at N written by a newer mu; not appending".
+- **Repair keeps line numbers.** A peer's watermark counts lines, so
+  deleting a damaged line would slide every later line under it (a v3 op
+  could land behind a caught-up peer's watermark and never be read).
+  When a line of another version (foreign, v1, or an earlier placeholder)
+  lies after the damage, each damaged line is re-emitted from `ops` if
+  the DB holds exactly the ops missing between its valid neighbours,
+  else replaced by a **placeholder** (`segment.placeholder`: a valid line
+  that readers count and skip). Other lines stay byte for byte. A
+  damaged tail with nothing valid after it is dropped. With a foreign
+  line present the manifest is removed, not rewritten, so the fast path
+  cannot vouch for the file and append behind it.
 - **`mu sync --from <db>`** has no per-line version, so it refuses a
   source whose `schema_version` is newer than this build (exit 4).
 

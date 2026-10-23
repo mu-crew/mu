@@ -135,6 +135,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **segment** | `<sync-dir>/<machine_id>.jsonl`: one machine's ops, single writer. | "replica", "shard" |
 | **peer** | Another machine, found by its segment; named by `machine_id` prefix. **Stale** after 24h unchanged. | "node", "remote" |
 | **watermark** | `sync_peers.last_applied_seq`: how many lines of a peer's segment file have been applied. A conflict copy has its own, keyed by its file stem. | "offset", "cursor" |
+| **placeholder line** | A valid segment line (`segment.placeholder`) that holds a damaged line's place so later lines keep their numbers. Readers count it and apply nothing. | "tombstone line" |
 | **flush** / **ingest** | Write my ops to my segment; apply peers' from their watermarks. Every invocation, when `MU_SYNC_DIR` is set. | "push", "pull" |
 | **reprojection** | After ingest, apply deferred ops whose parent arrived from another peer. | "retry queue" |
 | **mixed fleet** | Machines sharing state across different OSes or filesystems. | "cluster" |
