@@ -1,0 +1,47 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --workspace"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim rt1 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --fresh --json 'do rt1'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick $(git -C $(mu workspace path w1 -w eval) rev-parse HEAD)"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close rt1 -w eval --evidence 'done and merged'"
+      }
+    ]
+  },
+  {
+    "text": "rt1 is done and merged."
+  }
+]

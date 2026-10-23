@@ -1,0 +1,100 @@
+// Single-channel host: dev allows exactly one ssh session at a time (sshd MaxSessions 1 as the
+// shim models it). An attached agent pane holds that session, so a bare `git fetch ssh://dev/...`
+// is REFUSED while it is open. The golden runs the agent in detached remote tmux, attaches a pane
+// to look, and closes the pane before fetching.
+//
+// Metrics (notes): REFUSED lines in sessionsLog (channel collisions) and whether a fetch was
+// refused. Wrong: each REFUSED line. Completion: s1 and s2 CLOSED done and both commits on main.
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  gateScript,
+  makeRepo,
+  seedViaMu,
+  sshShim,
+  workerTask,
+  writeWorkerDriver,
+} from "../fixtures.ts";
+import { openProbe } from "../probe.ts";
+import { sh } from "../sandbox.ts";
+import { verdict } from "../score.ts";
+import type { Scenario } from "../types.ts";
+
+const scenario: Scenario = {
+  id: "single_channel_host",
+  title: "two tasks in sequence on a host that allows one ssh session at a time",
+  tokenCap: 500_000,
+  prompt:
+    "Host dev allows exactly one ssh session at a time (ssh dev works; the repo is ~/repo there). Run s1 then s2 in workstream eval on dev with a pi worker and merge both commits into main here. Work until it is done; do not ask me questions.",
+  async setup(sb) {
+    await makeRepo(sb, { "notes.txt": "start\n" });
+    await gateScript(sb);
+    await writeWorkerDriver(sb, "3x", { closeMode: "none" });
+    await seedViaMu(sb, [
+      ["workstream", "init", "eval"],
+      [
+        "task",
+        "add",
+        "s1",
+        "-w",
+        "eval",
+        "-t",
+        "add s1.txt (one line, committed as s1) on dev",
+        "-i",
+        "50",
+        "-e",
+        "0.1",
+      ],
+      [
+        "task",
+        "add",
+        "s2",
+        "-w",
+        "eval",
+        "-t",
+        "add s2.txt (one line, committed as s2) on dev",
+        "-i",
+        "50",
+        "-e",
+        "0.1",
+        "-b",
+        "s1",
+      ],
+    ]);
+    for (const id of ["s1", "s2"]) {
+      await workerTask(sb, id, {
+        sh: `echo ${id} >> ${id}.txt && git add ${id}.txt && git commit -qm ${id}`,
+      });
+    }
+    await sshShim(sb, { host: "dev", maxSessions: 1 });
+    writeFileSync(join(sb.dir, "setup-head"), (await sh(sb, "git rev-parse HEAD")).stdout.trim());
+  },
+  async judge(sb, run) {
+    const probe = openProbe(sb);
+    const closed = (id: string): boolean => {
+      const t = probe.task("eval", id);
+      return t?.status === "CLOSED" && t.substate === "done";
+    };
+    const subjects = (await sh(sb, "git log --format=%s main", { allowFail: true })).stdout
+      .split("\n")
+      .filter(Boolean);
+    const merged = ["s1", "s2"].filter((id) => subjects.includes(id));
+    const sessions = readFileSync(join(sb.dir, "hosts", "dev", "sessions.log"), "utf8")
+      .split("\n")
+      .filter(Boolean);
+    const refused = sessions.filter((l) => / REFUSED /.test(l));
+    const fetchRefused = refused.filter((l) => /git-upload-pack/.test(l)).length;
+    const wrong = refused.map(
+      (l) => `ssh session refused on the one-channel host: ${l.slice(0, 100)}`,
+    );
+    const ok = closed("s1") && closed("s2") && merged.length === 2;
+    return verdict(run, ok, {
+      wrong,
+      notes: [
+        `s1 closed=${closed("s1")} s2 closed=${closed("s2")} merged=${merged.join(",") || "none"} REFUSED=${refused.length} fetchRefused=${fetchRefused}`,
+      ],
+    });
+  },
+};
+
+export default scenario;

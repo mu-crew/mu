@@ -1,0 +1,54 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "ssh dev 'git -C ~/repo worktree add ~/ws/w1'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "eval \"$(mu agent remote-env w1 -w eval --shell)\"; mu agent spawn w1 -w eval --command \"ssh $MU_SSH_ARGS dev -t 'cd ~/ws/w1 && $MU_REMOTE_ENV \\$SHELL -ilc \\\"pi --approve\\\"'\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim rt2 -w eval --for w1 --evidence 'remote on dev'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --fresh --json 'do rt2; mu is not on this host; end with the CLOSE/REPORT block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close rt2 -w eval --evidence 'eval: rt2.sh exit 0 run=00000000'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git fetch \"ssh://dev/~/ws/w1\" HEAD && git cherry-pick FETCH_HEAD"
+      }
+    ]
+  },
+  {
+    "text": "rt2 is closed and merged."
+  }
+]
