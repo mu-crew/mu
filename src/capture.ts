@@ -369,16 +369,22 @@ END;`;
 }
 
 /** Existing-row predicate for the BEFORE INSERT guard: the row `NEW` would
- *  collide with, by surrogate id or by natural key. */
+ *  collide with, by surrogate id or by natural key.
+ *
+ *  SQLite reports NEW.id / NEW.rowid = -1 for an omitted id (the real one is
+ *  assigned after BEFORE triggers), so -1 cannot be told from an explicit -1.
+ *  The id check skips it: otherwise one raw `id = -1` row would make every
+ *  later omitted-id insert look like a collision. An explicit -1 REPLACE is
+ *  then caught only by the natural-key check. */
 const INSERT_COLLISION = {
-  workstreams: "SELECT 1 FROM workstreams WHERE id = NEW.id OR name = NEW.name",
+  workstreams: "SELECT 1 FROM workstreams WHERE (NEW.id <> -1 AND id = NEW.id) OR name = NEW.name",
   tasks:
-    "SELECT 1 FROM tasks WHERE id = NEW.id OR (workstream_id = NEW.workstream_id AND local_id = NEW.local_id)",
-  task_notes: "SELECT 1 FROM task_notes WHERE id = NEW.id",
+    "SELECT 1 FROM tasks WHERE (NEW.id <> -1 AND id = NEW.id) OR (workstream_id = NEW.workstream_id AND local_id = NEW.local_id)",
+  task_notes: "SELECT 1 FROM task_notes WHERE NEW.id <> -1 AND id = NEW.id",
   // task_edges has a composite key, so its hidden rowid is a second identity.
   // (The other three tables' `id` IS the rowid.)
   task_edges:
-    "SELECT 1 FROM task_edges WHERE rowid = NEW.rowid OR (from_task_id = NEW.from_task_id AND to_task_id = NEW.to_task_id)",
+    "SELECT 1 FROM task_edges WHERE (NEW.rowid <> -1 AND rowid = NEW.rowid) OR (from_task_id = NEW.from_task_id AND to_task_id = NEW.to_task_id)",
 } as const satisfies Record<keyof typeof KEY_COLUMNS, string>;
 
 /** BEFORE INSERT trigger refusing an insert that collides with an existing
