@@ -16,6 +16,8 @@
 import { existsSync, statfsSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { Db } from "./db.js";
+import { ownSegmentForeignLine } from "./segments.js";
+import { foreignVersionMessage } from "./sync.js";
 
 export type HazardSeverity = "ok" | "warn" | "fail";
 
@@ -339,4 +341,32 @@ export function checkFleetHazards(
     checkNetworkMount(opts.dbPath),
     checkCaseCollisions(db),
   ];
+}
+
+// ─── (d) own segment written by a newer mu ────────────────────────────
+
+/**
+ * Own segment holds a line of a version this build cannot read: it is
+ * read-only here, so this machine's new ops stay in SQLite. Not part of
+ * `checkFleetHazards`: it reads the whole segment, which the TUI's
+ * per-tick summary must not do. `mu doctor` adds it.
+ */
+export function checkSegmentVersion(db: Db, syncDir: string | undefined): FleetHazard {
+  if (syncDir === undefined || syncDir.trim() === "") {
+    return { name: "segment-version", severity: "ok", detail: "MU_SYNC_DIR not set" };
+  }
+  const found = ownSegmentForeignLine(db, syncDir);
+  if (found === null) {
+    return { name: "segment-version", severity: "ok", detail: "own segment readable by this mu" };
+  }
+  return {
+    name: "segment-version",
+    severity: "warn",
+    detail: foreignVersionMessage({ segmentPath: found.path, foreignVersion: found.version }),
+    remediation: [
+      `Line ${found.line} of the segment was written by a newer mu. This mu appends nothing`,
+      "and repairs nothing there; new ops stay in the local DB and are written",
+      "once mu is upgraded on this machine.",
+    ],
+  };
 }

@@ -143,32 +143,6 @@ export function encodeSegmentLine(
   )},"payload":${payloadText},"crc":${JSON.stringify(crc)}}`;
 }
 
-/** Entity of a placeholder line: the same-position stand-in for a line
- *  that was damaged and could not be regenerated. */
-export const SEGMENT_PLACEHOLDER_ENTITY = "segment.placeholder";
-
-/** A placeholder line. It decodes (crc and all) but carries no op: readers
- *  count it, so every later line keeps its number and peer watermarks
- *  stay valid, and skip it. Bytes are fixed: hlc, machine and group are
- *  empty. */
-export function encodePlaceholder(): string {
-  return encodeSegmentLine({
-    hlc: "",
-    machineId: "",
-    groupId: "",
-    intent: null,
-    actor: null,
-    entity: SEGMENT_PLACEHOLDER_ENTITY,
-    key: "",
-    op: "del",
-    payload: "null",
-  });
-}
-
-export function isPlaceholder(line: SegmentLine): boolean {
-  return line.entity === SEGMENT_PLACEHOLDER_ENTITY;
-}
-
 /** Outcome of decoding one line. */
 export type DecodeResult =
   | { ok: true; line: SegmentLine; payloadText: string }

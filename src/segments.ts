@@ -78,9 +78,7 @@ import { locksDir, withFileLock } from "./file-lock.js";
 import { receiveHlc } from "./hlc.js";
 import {
   decodeLine,
-  encodePlaceholder,
   encodeSegmentLine,
-  isPlaceholder,
   SEGMENT_FORMAT_VERSION,
   SEGMENT_READ_VERSIONS,
   type SegmentDefect,
@@ -108,7 +106,6 @@ export {
   decodeLine,
   encodeSegmentLine,
   SEGMENT_FORMAT_VERSION,
-  SEGMENT_PLACEHOLDER_ENTITY,
   SEGMENT_READ_VERSIONS,
   type SegmentDefect,
   type SegmentDefectKind,
@@ -219,11 +216,11 @@ export interface FlushResult {
   selfRepaired: SegmentDefect | null;
   /**
    * Non-null when THIS MACHINE'S OWN segment holds a line of a version
-   * this build does not know (1-based, in the file as it now stands):
-   * written by a newer mu. That is not damage. Flush appends nothing
-   * (interleaving versions would corrupt the newer mu's history, and
-   * regeneration cannot reproduce its lines) and never truncates such a
-   * line; the pending ops stay in `ops`. `foreignVersion` is the version
+   * this build cannot read (first such line, 1-based): written by a newer
+   * mu. The segment is then READ-ONLY to this build: flush appends
+   * nothing, repairs nothing (`selfRepaired` stays null), and deletes the
+   * manifest so the fast path cannot vouch for the file. The pending ops
+   * stay in `ops` until mu is upgraded. `foreignVersion` is the version
    * found. Both null otherwise.
    */
   foreignVersionAt: number | null;
@@ -374,30 +371,34 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
     // it again, unbounded. Distinguish them and heal our own segment
     // (truncate back to the last verified-good line) before appending
     // anything new, rather than stacking fresh data after the wound.
+    // A line of a version this build cannot read makes the whole segment
+    // READ-ONLY here: append nothing, repair nothing, and delete the
+    // manifest so the fast path cannot vouch for the file. The ops stay
+    // pending in SQLite until mu is upgraded on this machine.
+    if (existing.foreign !== null) {
+      rmSync(manifestPath(path), { force: true });
+      return {
+        segmentPath: path,
+        appended: 0,
+        total: existing.lineCount,
+        skippedLocal: 0,
+        selfRepaired: null,
+        foreignVersionAt: existing.foreign.line,
+        foreignVersion: existing.foreign.version,
+      };
+    }
     if (existing.defect !== null) {
       selfRepaired = existing.defect;
-      const entries = classifyOwnLines(path);
-      if (keepsOtherLines(entries, existing.count)) {
-        // A line this repair must not discard (another version, or an
-        // earlier placeholder) lies at or after the damage. Truncating
-        // would lose it, and deleting the bad line would renumber every
-        // line behind it under the peers' line-count watermarks. So
-        // every line keeps its position.
-        const rewritten = repairInPlace(db, path, machineId, entries);
-        if (rewritten.foreign !== null) {
-          return {
-            segmentPath: path,
-            appended: 0,
-            total: rewritten.lines.length,
-            skippedLocal: 0,
-            selfRepaired: firstBad(entries),
-            foreignVersionAt: rewritten.foreign.index + 1,
-            foreignVersion: rewritten.foreign.version,
-          };
-        }
-        selfRepaired = firstBad(entries);
-        count = rewritten.lines.length;
-        since = rewritten.lastHlc;
+      // Valid lines of another KNOWN version (v1 history) after the damage
+      // are kept byte for byte when the DB holds exactly the ops the
+      // damage removed; otherwise truncate and regenerate everything after.
+      const entries = entriesOf(path);
+      const kept = keepsOtherVersions(entries, existing.count)
+        ? repairKeepingLines(db, path, machineId, entries)
+        : null;
+      if (kept !== null) {
+        count = kept.lines;
+        since = kept.lastHlc;
       } else {
         writeFileSync(
           path,
@@ -446,118 +447,62 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
   return result;
 }
 
-/** One line of the own segment, classified. `foreign` is a well-formed
- *  line of a version this build does not know; `bad` is damage. */
-type OwnLine =
-  | { kind: "ok"; raw: string; hlc: string; version: number; placeholder: boolean }
-  | { kind: "foreign"; raw: string; version: number }
-  | { kind: "bad"; raw: string; defect: SegmentDefect };
+/** One line of the own segment, classified. `bad` is damage; a line of a
+ *  version this build cannot read never reaches here (the segment is
+ *  read-only then, see `flushLocked`). */
+type OwnLine = { kind: "ok"; raw: string; hlc: string; version: number } | { kind: "bad" };
 
-function classifyOwnLines(path: string): OwnLine[] {
-  return segmentLines(readFileSync(path, "utf8")).map((raw, i): OwnLine => {
+function entriesOf(path: string): OwnLine[] {
+  return segmentLines(readFileSync(path, "utf8")).map((raw): OwnLine => {
     const decoded = raw.trim() === "" ? null : decodeLine(raw);
-    if (decoded?.ok === true) {
-      return {
-        kind: "ok",
-        raw,
-        hlc: decoded.line.hlc,
-        version: decoded.line.v,
-        placeholder: isPlaceholder(decoded.line),
-      };
-    }
-    if (decoded?.kind === "unknown-version" && decoded.version !== undefined) {
-      return { kind: "foreign", raw, version: decoded.version };
-    }
-    return {
-      kind: "bad",
-      raw,
-      defect: {
-        kind: decoded?.kind ?? "malformed-shape",
-        line: i + 1,
-        detail: decoded?.detail ?? "blank line",
-      },
-    };
+    return decoded?.ok === true
+      ? { kind: "ok", raw, hlc: decoded.line.hlc, version: decoded.line.v }
+      : { kind: "bad" };
   });
 }
 
-function firstBad(entries: readonly OwnLine[]): SegmentDefect | null {
-  for (const e of entries) if (e.kind === "bad") return e.defect;
-  return null;
+/** True when a valid line AFTER the first defect (index `from`) is of a
+ *  version other than the one this build writes (v1 history): truncating
+ *  would rewrite it as v2, so repair tries to keep it. */
+function keepsOtherVersions(entries: readonly OwnLine[], from: number): boolean {
+  return entries.slice(from).some((e) => e.kind === "ok" && e.version !== SEGMENT_FORMAT_VERSION);
 }
 
-/** True when a line at or after the first defect (index `from`) is one
- *  repair must not lose: a foreign version, a valid line of a version
- *  other than the one this build writes, or a placeholder. */
-function keepsOtherLines(entries: readonly OwnLine[], from: number): boolean {
-  return entries
-    .slice(from)
-    .some(
-      (e) =>
-        e.kind === "foreign" ||
-        (e.kind === "ok" && (e.placeholder || e.version !== SEGMENT_FORMAT_VERSION)),
-    );
-}
-
-/** Own-segment repair that keeps every line where it is. A damaged line
- *  is re-emitted from `ops` when exactly the right ops are missing
- *  between its valid neighbours, otherwise replaced by a placeholder; a
- *  damaged TAIL (nothing valid after it) is dropped, as truncation would.
- *  Other lines are kept byte for byte.
- *
- *  A foreign line in the file means flush will not append, and the
- *  manifest is removed rather than rewritten: a manifest vouching for
- *  the file would let the fast path trust it and append behind the
- *  foreign line. With no manifest every flush scans, and sees it. */
-function repairInPlace(
+/** Repair that keeps every valid line byte for byte. Each damaged run
+ *  between two valid lines is re-emitted from `ops` when the DB holds
+ *  exactly the ops it removed; a damaged tail is dropped, as truncation
+ *  would. Returns null (nothing written) when some run cannot be
+ *  regenerated exactly: the caller then truncates and regenerates. */
+function repairKeepingLines(
   db: Db,
   path: string,
   machineId: string,
   entries: readonly OwnLine[],
-): {
-  lines: string[];
-  lastHlc: string | null;
-  foreign: { index: number; version: number } | null;
-} {
+): { lines: number; lastHlc: string | null } | null {
   let lastValid = entries.length - 1;
   while (lastValid >= 0 && entries[lastValid]?.kind === "bad") lastValid -= 1;
-  const lines: string[] = [];
+  const out: string[] = [];
   let lastHlc: string | null = null;
-  let foreign: { index: number; version: number } | null = null;
   for (let i = 0; i <= lastValid; i++) {
     const e = entries[i];
     if (e === undefined) break;
-    if (e.kind === "bad") {
-      let end = i;
-      while (entries[end + 1]?.kind === "bad") end += 1;
-      const before = entries[i - 1];
-      const after = entries[end + 1];
-      const missing =
-        (i === 0 || (before?.kind === "ok" && !before.placeholder)) &&
-        after?.kind === "ok" &&
-        !after.placeholder
-          ? opsBetween(
-              db,
-              machineId,
-              i === 0 || before?.kind !== "ok" ? null : before.hlc,
-              after.hlc,
-            )
-          : [];
-      const run = end - i + 1;
-      for (let k = 0; k < run; k++)
-        lines.push(missing.length === run ? (missing[k] ?? "") : encodePlaceholder());
-      i = end;
+    if (e.kind === "ok") {
+      lastHlc = e.hlc;
+      out.push(e.raw);
       continue;
     }
-    if (e.kind === "foreign") foreign ??= { index: lines.length, version: e.version };
-    else if (!e.placeholder) lastHlc = e.hlc;
-    lines.push(e.raw);
+    let end = i;
+    while (entries[end + 1]?.kind === "bad") end += 1;
+    const before = entries[i - 1];
+    const after = entries[end + 1];
+    if (after?.kind !== "ok" || (i > 0 && before?.kind !== "ok")) return null;
+    const missing = opsBetween(db, machineId, before?.kind === "ok" ? before.hlc : null, after.hlc);
+    if (missing.length !== end - i + 1) return null;
+    out.push(...missing);
+    i = end;
   }
-  // Only damage changes the file; a pure foreign file stays byte-identical.
-  if (firstBad(entries) !== null) {
-    writeFileSync(path, lines.length > 0 ? `${lines.join("\n")}\n` : "", "utf8");
-    if (foreign !== null) rmSync(manifestPath(path), { force: true });
-  }
-  return { lines, lastHlc, foreign };
+  writeFileSync(path, out.length > 0 ? `${out.join("\n")}\n` : "", "utf8");
+  return { lines: out.length, lastHlc };
 }
 
 const SYNCED_ENTITIES_SQL = SYNCED_ENTITIES.map((e) => `'${e}'`).join(", ");
@@ -721,9 +666,7 @@ function trustedTail(
   const last = readLastLine(path, size);
   if (last === null) return null;
   const decoded = decodeLine(last);
-  if (!decoded.ok) return null;
-  // A placeholder carries no hlc; the manifest's lastHlc is an earlier line's.
-  if (!isPlaceholder(decoded.line) && decoded.line.hlc !== lastHlc) return null;
+  if (!decoded.ok || decoded.line.hlc !== lastHlc) return null;
   return { count, lastHlc, size, shaState };
 }
 
@@ -758,6 +701,18 @@ function readLastLine(path: string, size: number): string | null {
   }
 }
 
+/** The first line of a version this build cannot read in this machine's
+ *  own segment, or null. For `mu doctor`; reads the whole file. */
+export function ownSegmentForeignLine(
+  db: Db,
+  dir: string | null = syncDir(),
+): { path: string; line: number; version: number } | null {
+  if (dir === null) return null;
+  const path = segmentPath(dir, localMachineId(db));
+  const found = readSegmentTail(path).foreign;
+  return found === null ? null : { path, ...found };
+}
+
 /** Number of GOOD lines in a segment (stopping at the first defect, as
  *  ingest does). The denominator of "how far behind am I" — exported for
  *  `mu sync`'s peer table. */
@@ -780,8 +735,13 @@ function readSegmentTail(path: string): {
   lastHlc: string | null;
   goodLines: readonly string[];
   defect: SegmentDefect | null;
+  /** First line of a version this build cannot read ANYWHERE in the
+   *  file (1-based), even past a defect; null when there is none. */
+  foreign: { line: number; version: number } | null;
+  lineCount: number;
 } {
-  if (!existsSync(path)) return { count: 0, lastHlc: null, goodLines: [], defect: null };
+  if (!existsSync(path))
+    return { count: 0, lastHlc: null, goodLines: [], defect: null, foreign: null, lineCount: 0 };
   const lines = segmentLines(readFileSync(path, "utf8"));
   let lastHlc: string | null = null;
   let count = 0;
@@ -806,10 +766,29 @@ function readSegmentTail(path: string): {
       };
       break;
     }
-    if (!isPlaceholder(decoded.line)) lastHlc = decoded.line.hlc;
+    lastHlc = decoded.line.hlc;
     count += 1;
   }
-  return { count, lastHlc, goodLines: lines.slice(0, count), defect };
+  // The scan above stops at the first defect; a foreign line behind it
+  // still makes the segment read-only, so look at the rest.
+  let foreign: { line: number; version: number } | null = null;
+  if (defect?.kind === "unknown-version" && defect.version !== undefined) {
+    foreign = { line: defect.line, version: defect.version };
+  } else if (defect !== null) {
+    for (let i = count + 1; i < lines.length && foreign === null; i++) {
+      const later = decodeLine(lines[i] ?? "");
+      if (!later.ok && later.kind === "unknown-version" && later.version !== undefined)
+        foreign = { line: i + 1, version: later.version };
+    }
+  }
+  return {
+    count,
+    lastHlc,
+    goodLines: lines.slice(0, count),
+    defect,
+    foreign,
+    lineCount: lines.length,
+  };
 }
 
 /** Split a segment into its lines exactly as every reader must: a
@@ -1193,11 +1172,12 @@ export function ingestSegment(
     base = 0;
     // Seed the monotonicity check from the last line we already accepted,
     // so a segment rewritten out of order is caught even mid-file.
-    // A placeholder carries no hlc: look past it.
-    for (let i = Math.min(start, lines.length) - 1; i >= 0 && seedHlc === null; i--) {
-      const decoded = decodeLine(lines[i] ?? "");
-      if (!decoded.ok) break;
-      if (!isPlaceholder(decoded.line)) seedHlc = decoded.line.hlc;
+    if (start > 0 && start <= lines.length) {
+      const prior = lines[start - 1];
+      if (prior !== undefined) {
+        const decoded = decodeLine(prior);
+        if (decoded.ok) seedHlc = decoded.line.hlc;
+      }
     }
   }
   const total = base + lines.length;
@@ -1230,12 +1210,6 @@ export function ingestSegment(
         });
         truncatedAt = lineNo;
         break;
-      }
-
-      if (isPlaceholder(decoded.line)) {
-        // Holds a line's place so later lines keep their numbers.
-        watermark = lineNo;
-        continue;
       }
 
       const op: Op = {

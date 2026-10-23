@@ -65,21 +65,20 @@ A line of any other version is refused as `unknown-version`, with the
 version found in the defect:
 
 - **Peer ingest** stops at that line and leaves the watermark before it.
-- **Own segment** is not damaged, so repair never truncates it. Flush
-  appends nothing, leaves the file byte-identical and reports
-  `foreignVersionAt` / `foreignVersion`; `mu sync` prints "own segment
-  has a v3 line at N written by a newer mu; not appending".
-- **Repair keeps line numbers.** A peer's watermark counts lines, so
-  deleting a damaged line would slide every later line under it (a v3 op
-  could land behind a caught-up peer's watermark and never be read).
-  When a line of another version (foreign, v1, or an earlier placeholder)
-  lies after the damage, each damaged line is re-emitted from `ops` if
-  the DB holds exactly the ops missing between its valid neighbours,
-  else replaced by a **placeholder** (`segment.placeholder`: a valid line
-  that readers count and skip). Other lines stay byte for byte. A
-  damaged tail with nothing valid after it is dropped. With a foreign
-  line present the manifest is removed, not rewritten, so the fast path
-  cannot vouch for the file and append behind it.
+- **Own segment** holding any such line is **read-only to this build**,
+  wherever the line sits (also behind a corrupt line). Flush appends
+  nothing, repairs nothing (no truncate, no rewrite), deletes the
+  segment's manifest so the fast path cannot vouch for the file, and
+  reports `foreignVersionAt` / `foreignVersion`. Every flush, `mu sync`
+  and `mu doctor` say "segment <path> has a v<N> line written by a newer
+  mu; upgrade mu on this machine". Ops pending for this machine stay in
+  SQLite and are written, in order, once mu is upgraded and reads the
+  version. Regenerating around a foreign line was tried and dropped: the
+  newer mu's lines cannot be reproduced, and a stand-in line for damage
+  next to one can lose a recoverable op for good.
+- **A segment with only known versions** keeps the truncate-and-regenerate
+  repair. Valid v1 lines after the damage are kept byte for byte when
+  `ops` holds exactly the ops the damage removed.
 - **`mu sync --from <db>`** has no per-line version, so it refuses a
   source whose `schema_version` is newer than this build (exit 4).
 
