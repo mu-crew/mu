@@ -479,6 +479,15 @@ describe("rebuildInto", () => {
       expect(report.machineLocalLost).toEqual([]);
     });
 
+    it("counts task_auto rows too (machine-local, no ops)", () => {
+      seedRealisticSource();
+      db.prepare(
+        "INSERT INTO task_auto (task_id, cli, created_at) SELECT id, 'pi', 'now' FROM tasks LIMIT 1",
+      ).run();
+      const report = rebuildInto(db, { targetPath: targetPath() });
+      expect(report.machineLocalLost).toEqual([{ table: "task_auto", rows: 1 }]);
+    });
+
     it("counts vcs_workspaces too", () => {
       seedRealisticSource();
       seedAgent();

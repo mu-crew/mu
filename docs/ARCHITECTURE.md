@@ -84,7 +84,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 
 | Module | Responsibility |
 | --- | --- |
-| `src/db.ts` | better-sqlite3 connection (WAL); schema v11 (12 tables, 3 views) in `applySchema`; installs capture; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
+| `src/db.ts` | better-sqlite3 connection (WAL); schema v12 (13 tables, 4 views) in `applySchema`; installs capture; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
 | `src/compare.ts` | code-unit string compare; replaces `localeCompare` so ICU is never initialised |
 | `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
 | `src/capture.ts` | TEMP triggers recording each portable write as an op, and refusing natural-key changes |

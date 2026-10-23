@@ -1,6 +1,6 @@
 // mu — task edit/write verbs: add task, add note, update, delete.
 
-import { type Db, resolveWorkstreamId } from "../db.js";
+import { type Db, DEFAULT_EFFORT_DAYS, DEFAULT_IMPACT, resolveWorkstreamId } from "../db.js";
 import { currentOpContext, withOpContext } from "../op-context.js";
 import { ensureWorkstream } from "../workstream.js";
 import { taskIdFor, touchTask } from "./core.js";
@@ -19,10 +19,11 @@ export interface AddTaskOptions {
   localId: string;
   workstream: string;
   title: string;
-  /** 1..100; enforced by schema CHECK. */
-  impact: number;
-  /** > 0; enforced by schema CHECK. */
-  effortDays: number;
+  /** 1..100; enforced by schema CHECK. Omitted = 50, and unless
+   *  `effortDays` is given the task is unscored. */
+  impact?: number;
+  /** > 0; enforced by schema CHECK. Omitted = 1 (see `impact`). */
+  effortDays?: number;
   /**
    * Tasks that block this one. Edges inserted as `blocker -> newTask`.
    * Each blocker must already exist AND share this task's workstream
@@ -75,16 +76,17 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
       const now = new Date().toISOString();
       const insertResult = db
         .prepare(
-          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
-         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?)`,
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, scored, created_at, updated_at)
+         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           wsId,
           opts.localId,
           opts.title,
           opts.triage === true ? "triage" : "todo",
-          opts.impact,
-          opts.effortDays,
+          opts.impact ?? DEFAULT_IMPACT,
+          opts.effortDays ?? DEFAULT_EFFORT_DAYS,
+          opts.impact !== undefined || opts.effortDays !== undefined ? 1 : 0,
           now,
           now,
         );
@@ -390,6 +392,12 @@ function updateTaskImpl(
     setters.push("effort_days = ?");
     params.push(opts.effortDays);
     changedFields.push("effortDays");
+  }
+  // Giving impact or effort scores the task, even at the value it already
+  // has (an unscored task's 50 / 1 are defaults, not a judgement).
+  if ((opts.impact !== undefined || opts.effortDays !== undefined) && !before.scored) {
+    setters.push("scored = 1");
+    changedFields.push("scored");
   }
 
   if (setters.length === 0) {

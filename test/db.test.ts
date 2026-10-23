@@ -32,7 +32,7 @@ describe("openDb", () => {
     // No throw = parent dirs created.
   });
 
-  it("applies exactly the 12 v11 tables (task_substates lookup, sync_fingerprints added)", () => {
+  it("applies exactly the 13 v12 tables (task_auto added)", () => {
     const db = openDb({ path: dbPath });
     const tables = (
       db
@@ -48,6 +48,7 @@ describe("openDb", () => {
       "schema_version",
       "sync_fingerprints",
       "sync_peers",
+      "task_auto",
       "task_edges",
       "task_notes",
       "task_substates",
@@ -55,22 +56,22 @@ describe("openDb", () => {
       "vcs_workspaces",
       "workstreams",
     ]);
-    expect(tables).toHaveLength(12);
+    expect(tables).toHaveLength(13);
     expect([...tables].sort()).toEqual(tables);
-    // schema_version stamped to current (v11).
+    // schema_version stamped to current (v12).
     const v = (
       db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as { version: number }
     ).version;
-    expect(v).toBe(11);
+    expect(v).toBe(12);
     db.close();
   });
 
-  it("a fresh DB stamps version 11 and seeds machine_identity", () => {
+  it("a fresh DB stamps version 12 and seeds machine_identity", () => {
     const db = openDb({ path: dbPath });
     const v = (
       db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as { version: number }
     ).version;
-    expect(v).toBe(11);
+    expect(v).toBe(12);
     const ids = db.prepare("SELECT machine_id FROM machine_identity").all() as {
       machine_id: string;
     }[];
@@ -208,7 +209,7 @@ describe("openDb", () => {
 
   it("refuses a v10 DB with SchemaTooOldError (openDb runs no migration)", () => {
     // The version gate runs before schema application, so a minimal
-    // version-stamped fixture proves the breaking v10 → v11 boundary.
+    // version-stamped fixture proves the breaking v10 → v12 boundary.
     {
       const raw = new Database(dbPath);
       raw.exec(
@@ -227,10 +228,10 @@ describe("openDb", () => {
     expect(thrown).toBeInstanceOf(SchemaTooOldError);
     if (!(thrown instanceof SchemaTooOldError)) throw new Error("expected SchemaTooOldError");
     expect(thrown.detectedVersion).toBe(10);
-    expect(thrown.requiredVersion).toBe(11);
+    expect(thrown.requiredVersion).toBe(12);
     // Typed-error → exit-code map: 4 (conflict).
     expect(classifyError(thrown)).toEqual({ label: "conflict", exitCode: 4 });
-    // The v10 DB is left untouched — no v11 tables were created under it.
+    // The v10 DB is left untouched — no v12 tables were created under it.
     const raw2 = new Database(dbPath);
     const names = (
       raw2.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]
@@ -289,14 +290,14 @@ describe("openDb", () => {
     db.close();
   });
 
-  it("creates the ready/blocked/goals views", () => {
+  it("creates the ready/blocked/blockers/goals views", () => {
     const db = openDb({ path: dbPath });
     const views = (
       db.prepare("SELECT name FROM sqlite_master WHERE type='view' ORDER BY name").all() as {
         name: string;
       }[]
     ).map((r) => r.name);
-    expect(views).toEqual(["blocked", "goals", "ready"]);
+    expect(views).toEqual(["blockers", "blocked", "goals", "ready"].sort());
     db.close();
   });
 
@@ -386,6 +387,7 @@ describe("openDb", () => {
       "schema_version",
       "sync_fingerprints",
       "sync_peers",
+      "task_auto",
       "task_edges",
       "task_notes",
       "task_substates",

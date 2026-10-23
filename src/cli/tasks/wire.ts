@@ -51,8 +51,12 @@ export function wireTaskCommands(program: Command): void {
       "Add a task to the graph. The id positional is optional — if omitted, derived from --title via slugify (collisions get _2, _3, … suffixes). Auto-derived ids are capped at ~40 chars with a word-boundary cut, so long titles drop trailing clauses; pass the <id> positional explicitly to override.",
     )
     .requiredOption("-t, --title <title>", "task title")
-    .requiredOption("-i, --impact <n>", "impact 1..100", parseImpact)
-    .requiredOption("-e, --effort-days <days>", "effort in days (>0)", parsePositiveNumber)
+    .option(
+      "-i, --impact <n>",
+      "impact 1..100 (default 50; giving -i or -e scores the task)",
+      parseImpact,
+    )
+    .option("-e, --effort-days <days>", "effort in days (>0; default 1)", parsePositiveNumber)
     .option(
       "-b, --blocked-by <ids...>",
       "task ids that block this one (repeat or comma-separate; or both)",
@@ -71,8 +75,8 @@ export function wireTaskCommands(program: Command): void {
     .action(function (id: string | undefined) {
       const opts = (this as Command).opts() as {
         title: string;
-        impact: number;
-        effortDays: number;
+        impact?: number;
+        effortDays?: number;
         blockedBy?: string[];
         note?: string;
         noteAuthor?: string;

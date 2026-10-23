@@ -144,8 +144,8 @@ export async function cmdTaskAdd(
   localId: string | undefined,
   opts: {
     title: string;
-    impact: number;
-    effortDays: number;
+    impact?: number;
+    effortDays?: number;
     blockedBy?: string[];
     note?: string;
     noteAuthor?: string;
@@ -192,8 +192,8 @@ export async function cmdTaskAdd(
         localId: id,
         workstream,
         title: opts.title,
-        impact: opts.impact,
-        effortDays: opts.effortDays,
+        ...(opts.impact !== undefined ? { impact: opts.impact } : {}),
+        ...(opts.effortDays !== undefined ? { effortDays: opts.effortDays } : {}),
         ...(hasBlockers ? { blockedBy } : {}),
         ...(opts.triage === true ? { triage: true } : {}),
       });

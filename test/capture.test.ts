@@ -103,6 +103,7 @@ describe("op capture (triggers)", () => {
       expect(payloadOf(row)).toEqual({
         name: "demo",
         created_at: expect.any(String) as unknown as string,
+        torn_down_at: null,
       });
     });
 

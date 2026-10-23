@@ -18,6 +18,8 @@ function row(over: {
     impact: over.impact,
     effortDays: over.effortDays,
     ownerName: null,
+    scored: true,
+    dispatchHost: null,
     createdAt: over.createdAt,
     updatedAt: over.updatedAt,
   };

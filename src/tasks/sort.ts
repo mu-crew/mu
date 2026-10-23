@@ -19,7 +19,17 @@ function roiOf(t: TaskRow): number {
   return t.effortDays > 0 ? t.impact / t.effortDays : Number.POSITIVE_INFINITY;
 }
 
+/** The `ready` order (README: "scored tasks by impact/effort desc, then
+ *  the rest oldest first"). A task whose impact/effort were only
+ *  defaulted never outranks a scored one. Scored ties: smaller effort,
+ *  then name. Unscored: oldest created_at, then name. The `roi` sort key,
+ *  `task next`, `my next` and `mu state` all use it. */
 export function byRoiDesc(a: TaskRow, b: TaskRow): number {
+  if (a.scored !== b.scored) return a.scored ? -1 : 1;
+  if (!a.scored) {
+    const byCreated = compareStrings(a.createdAt, b.createdAt);
+    return byCreated !== 0 ? byCreated : compareStrings(a.name, b.name);
+  }
   const ra = roiOf(a);
   const rb = roiOf(b);
   if (rb !== ra) return rb - ra;

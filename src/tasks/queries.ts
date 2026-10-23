@@ -44,7 +44,7 @@ export function getTaskOwner(
     .prepare(
       `SELECT a.name AS name, aws.name AS workstreamName
          FROM tasks t
-         JOIN workstreams tws ON tws.id = t.workstream_id
+         JOIN workstreams tws ON tws.id = t.workstream_id AND tws.torn_down_at IS NULL
          JOIN agents a ON a.id = t.owner_id
          JOIN workstreams aws ON aws.id = a.workstream_id
         WHERE t.local_id = ? AND tws.name = ?`,
@@ -109,7 +109,7 @@ export function listTasks(db: Db, workstream?: string, opts: ListTasksOptions = 
 // operator-facing TaskRow shape (workstream + owner as TEXT names).
 const VIEW_FROM_JOIN = (view: string) => `
   FROM ${view} v
-  JOIN workstreams ws ON ws.id = v.workstream_id
+  JOIN workstreams ws ON ws.id = v.workstream_id AND ws.torn_down_at IS NULL
   LEFT JOIN agents ag ON ag.id = v.owner_id
 `;
 const SELECT_VIEW_COLS = `
@@ -121,6 +121,8 @@ const SELECT_VIEW_COLS = `
   v.substate AS substate,
   v.impact AS impact,
   v.effort_days AS effort_days,
+  v.scored AS scored,
+  v.dispatch_host AS dispatch_host,
   ag.name AS owner,
   v.created_at AS created_at,
   v.updated_at AS updated_at
@@ -158,9 +160,16 @@ export function listReady(db: Db, workstream: string, opts: ListReadyOptions = {
     where.push(`v.substate IN (${substates.map(() => "?").join(", ")})`);
     params.push(...substates);
   }
+  // Same order as byRoiDesc (tasks/sort.ts): scored by impact/effort desc,
+  // then the unscored oldest first; local_id breaks ties.
   const rows = db
     .prepare(
-      `SELECT ${SELECT_VIEW_COLS} ${VIEW_FROM_JOIN("ready")} WHERE ${where.join(" AND ")} ORDER BY v.local_id`,
+      `SELECT ${SELECT_VIEW_COLS} ${VIEW_FROM_JOIN("ready")} WHERE ${where.join(" AND ")}
+        ORDER BY v.scored DESC,
+                 CASE WHEN v.scored = 1 THEN v.impact / v.effort_days END DESC,
+                 CASE WHEN v.scored = 1 THEN v.effort_days END ASC,
+                 CASE WHEN v.scored = 0 THEN v.created_at END ASC,
+                 v.local_id`,
     )
     .all(...params) as RawTaskRow[];
   return rows.map(rowFromDb);

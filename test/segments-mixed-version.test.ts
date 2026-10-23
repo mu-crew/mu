@@ -74,6 +74,13 @@ describe("segment versions are checked per line", () => {
   const reencode = (raw: string, version: number): string => {
     const d = decodeLine(raw);
     if (!d.ok) throw new Error(`cannot re-encode: ${d.detail}`);
+    // A real v1 writer (3.x) never wrote the schema-v12 fields.
+    let payload = d.payloadText;
+    if (version === 1) {
+      const body = JSON.parse(payload) as Record<string, unknown>;
+      for (const f of ["scored", "dispatch_host", "kind", "torn_down_at"]) delete body[f];
+      payload = JSON.stringify(body);
+    }
     return encodeSegmentLine(
       {
         hlc: d.line.hlc,
@@ -84,7 +91,7 @@ describe("segment versions are checked per line", () => {
         entity: d.line.entity,
         key: d.line.key,
         op: d.line.op,
-        payload: d.payloadText,
+        payload,
       },
       version,
     );
@@ -363,7 +370,15 @@ describe("segment versions are checked per line", () => {
 
       await flushSegment(a, dir, { verify: true });
 
-      expect(linesOf(segA())[1]).toBe(reencode(lines[1] ?? "", SEGMENT_FORMAT_VERSION));
+      // Regenerated from ops (full v12 payload, written as v2), at line 2's
+      // own position: same op, so same hlc.
+      const regenerated = decodeLine(linesOf(segA())[1] ?? "");
+      const original = decodeLine(lines[1] ?? "");
+      expect(regenerated.ok && original.ok).toBe(true);
+      if (regenerated.ok && original.ok) {
+        expect(regenerated.line.v).toBe(SEGMENT_FORMAT_VERSION);
+        expect(regenerated.line.hlc).toBe(original.line.hlc);
+      }
       expect(linesOf(segA())).toHaveLength(lines.length);
       expect(linesOf(segA())[3]).toBe(lines[3]);
     });
