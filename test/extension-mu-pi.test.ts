@@ -25,7 +25,12 @@ import muPi, {
   promptsDir,
 } from "../extension/mu-pi.js";
 import { CtlUnknownOpError, ctlProbe, ctlRequest } from "../src/ctl/client.js";
-import { CTL_OPS } from "../src/ctl/protocol.js";
+import {
+  CTL_FEATURES,
+  CTL_MSGID_MEMORY,
+  CTL_OPS,
+  INCARNATION_MISMATCH,
+} from "../src/ctl/protocol.js";
 
 type Handler = (event: unknown, ctx: MuPiContext) => unknown;
 
@@ -427,6 +432,181 @@ describe("mu pi extension", () => {
       const r = await ctlRequest(sock, { op: "interrupt", text: "x", timeoutMs: 50 });
       expect(r).toEqual({ v: 1, ok: false, error: "timeout" });
       expect(fake.sendUserMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("incarnation and msgId receipts", () => {
+    const incarnationOf = (r: unknown): string => {
+      const i = (r as { incarnation?: unknown }).incarnation;
+      if (typeof i !== "string") throw new Error("reply carries no incarnation");
+      return i;
+    };
+
+    it("every ok reply carries one stable incarnation; hello lists features, ops unchanged", async () => {
+      await fake.emit("session_start");
+      const hello = await ctlRequest(sock, { op: "hello" });
+      expect(hello).toMatchObject({ ops: [...CTL_OPS], features: [...CTL_FEATURES] });
+      expect(CTL_FEATURES).toEqual(["incarnation", "msgId"]);
+      const inc = incarnationOf(hello);
+      expect(incarnationOf(await ctlRequest(sock, { op: "status" }))).toBe(inc);
+      expect(incarnationOf(await ctlRequest(sock, { op: "send", text: "a" }))).toBe(inc);
+      expect(incarnationOf(await ctlRequest(sock, { op: "wait", afterRuns: -1 }))).toBe(inc);
+      expect(incarnationOf(await ctlRequest(sock, { op: "interrupt", text: "b" }))).toBe(inc);
+    });
+
+    it("survives a simulated /new (factory re-run) and is new after a pi restart", async () => {
+      await fake.emit("session_start");
+      const inc = incarnationOf(await ctlRequest(sock, { op: "status" }));
+      await fake.emit("session_shutdown", { reason: "new" });
+      const next = fakePi();
+      muPi(next.pi);
+      await next.emit("session_start", { reason: "new" });
+      expect(incarnationOf(await ctlRequest(sock, { op: "status" }))).toBe(inc);
+      // Quit drops the process-global entry; the next process starts a new one.
+      await next.emit("session_shutdown", { reason: "quit" });
+      const again = fakePi();
+      muPi(again.pi);
+      await again.emit("session_start");
+      expect(incarnationOf(await ctlRequest(sock, { op: "status" }))).not.toBe(inc);
+      await again.emit("session_shutdown", { reason: "quit" });
+    });
+
+    it("send with msgId: status{msgId} confirms it with the send's runs", async () => {
+      await fake.emit("session_start");
+      await fake.emit("agent_start");
+      await fake.emit("agent_settled"); // runs = 1
+      const sent = await ctlRequest(sock, { op: "send", text: "x", msgId: "m1" });
+      const st = await ctlRequest(sock, { op: "status", msgId: "m1" });
+      expect(st).toMatchObject({ ok: true, state: "idle", runs: 1 });
+      expect(st).toMatchObject({
+        msg: { id: "m1", accepted: true, runs: (sent as { runs?: number }).runs },
+      });
+      const at = (st as { msg?: { at?: number } }).msg?.at;
+      expect(typeof at).toBe("number");
+    });
+
+    it("an unknown msgId is accepted:false; a plain status has no msg", async () => {
+      await fake.emit("session_start");
+      expect(await ctlRequest(sock, { op: "status", msgId: "nope" })).toMatchObject({
+        msg: { id: "nope", accepted: false },
+      });
+      const plain = await ctlRequest(sock, { op: "status" });
+      expect(plain).not.toHaveProperty("msg");
+    });
+
+    it("a send that fails is not remembered", async () => {
+      await fake.emit("session_start");
+      fake.sendUserMessage.mockRejectedValueOnce(new Error("boom"));
+      expect(await ctlRequest(sock, { op: "send", text: "x", msgId: "bad" })).toMatchObject({
+        ok: false,
+      });
+      expect(await ctlRequest(sock, { op: "status", msgId: "bad" })).toMatchObject({
+        msg: { accepted: false },
+      });
+    });
+
+    it("remembers the last CTL_MSGID_MEMORY msgIds; the 65th evicts the first", async () => {
+      await fake.emit("session_start");
+      expect(CTL_MSGID_MEMORY).toBe(64);
+      for (let i = 0; i < CTL_MSGID_MEMORY + 1; i++) {
+        await ctlRequest(sock, { op: "send", text: "t", msgId: `id-${i}` });
+      }
+      expect(await ctlRequest(sock, { op: "status", msgId: "id-0" })).toMatchObject({
+        msg: { accepted: false },
+      });
+      expect(await ctlRequest(sock, { op: "status", msgId: "id-1" })).toMatchObject({
+        msg: { accepted: true },
+      });
+      expect(await ctlRequest(sock, { op: "status", msgId: "id-64" })).toMatchObject({
+        msg: { accepted: true },
+      });
+    });
+
+    it("rejects an invalid msgId before any side effect", async () => {
+      await fake.emit("session_start");
+      for (const bad of ["", "x".repeat(65), 7, null]) {
+        const r = await ctlRequest(sock, { op: "send", text: "t", msgId: bad as never });
+        expect(r).toMatchObject({ ok: false, error: "msgId must be a string of 1-64 characters" });
+      }
+      expect(await ctlRequest(sock, { op: "status", msgId: "x".repeat(65) })).toMatchObject({
+        ok: false,
+      });
+      expect(fake.sendUserMessage).not.toHaveBeenCalled();
+      // The limit itself is fine.
+      expect(
+        await ctlRequest(sock, { op: "send", text: "t", msgId: "x".repeat(64) }),
+      ).toMatchObject({ ok: true });
+    });
+
+    it("interrupt with msgId is remembered with its wait baseline", async () => {
+      await fake.emit("session_start");
+      const r = await ctlRequest(sock, { op: "interrupt", text: "go", msgId: "i1" });
+      expect(await ctlRequest(sock, { op: "status", msgId: "i1" })).toMatchObject({
+        msg: { accepted: true, runs: (r as { runs?: number }).runs },
+      });
+    });
+
+    it("an interrupt that times out is not remembered", async () => {
+      await fake.emit("session_start");
+      await fake.emit("agent_start");
+      fake.ctx.idle = false; // abort never settles
+      const r = await ctlRequest(sock, { op: "interrupt", text: "x", msgId: "i2", timeoutMs: 30 });
+      expect(r).toMatchObject({ ok: false, error: "timeout" });
+      expect(await ctlRequest(sock, { op: "status", msgId: "i2" })).toMatchObject({
+        msg: { accepted: false },
+      });
+    });
+
+    it("wait with a wrong incarnation refuses at once; the right one waits as before", async () => {
+      await fake.emit("session_start");
+      const inc = incarnationOf(await ctlRequest(sock, { op: "status" }));
+      // Mismatch wins even over an already-settled run and over a pending wait.
+      await fake.emit("agent_start");
+      await fake.emit("agent_settled");
+      const bad = await ctlRequest(sock, { op: "wait", afterRuns: 0, incarnation: "old-proc" });
+      expect(bad).toEqual({ v: 1, ok: false, error: INCARNATION_MISMATCH, incarnation: inc });
+      expect(INCARNATION_MISMATCH).toBe("incarnation mismatch");
+      expect(await ctlRequest(sock, { op: "wait", afterRuns: 0, incarnation: inc })).toMatchObject({
+        ok: true,
+        ended: "settled",
+      });
+    });
+  });
+
+  describe("fresh msgId receipt", () => {
+    it("is remembered once the fresh run started (reply), and not when it fails", async () => {
+      await fake.emit("session_start");
+      // A failing fresh: the trigger throws, nothing lands.
+      fake.sendUserMessage.mockRejectedValueOnce(new Error("no command"));
+      const failed = await ctlRequest(sock, { op: "fresh", text: "x", msgId: "f0" });
+      expect(failed).toMatchObject({ ok: false });
+      expect(await ctlRequest(sock, { op: "status", msgId: "f0" })).toMatchObject({
+        msg: { accepted: false },
+      });
+      // Landing: agent_start while armed settles ok, which records the receipt.
+      fake.sendUserMessage.mockImplementationOnce(async () => {
+        const cmd = fake.commands.get(FRESH_COMMAND);
+        void cmd?.handler("", {
+          ...fake.ctx,
+          reload: async () => {},
+          compact: () => {},
+          newSession: async (o) => {
+            await o?.withSession?.({
+              ...fake.ctx,
+              sendUserMessage: async () => {
+                fake.ctx.idle = false;
+                await fake.emit("agent_start");
+              },
+            });
+            return { cancelled: false };
+          },
+        });
+      });
+      const ok = await ctlRequest(sock, { op: "fresh", text: "x", msgId: "f1" });
+      expect(ok).toMatchObject({ ok: true, state: "busy" });
+      expect(await ctlRequest(sock, { op: "status", msgId: "f1" })).toMatchObject({
+        msg: { accepted: true, runs: (ok as { runs?: number }).runs },
+      });
     });
   });
 

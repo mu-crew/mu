@@ -12,8 +12,10 @@ import {
   CtlVersionError,
   ctlProbe,
   ctlRequest,
+  ctlServes,
+  newMsgId,
 } from "../src/ctl/client.js";
-import { encode, LineDecoder } from "../src/ctl/protocol.js";
+import { type CtlReply, encode, LineDecoder } from "../src/ctl/protocol.js";
 
 let dir: string;
 let servers: Server[];
@@ -290,5 +292,22 @@ describe("ctlRequest", () => {
   it("rejects when the server closes without replying", async () => {
     const p = await serve((_l, sock) => sock.end());
     await expect(ctlRequest(p, { op: "status" })).rejects.toThrow(/closed/);
+  });
+});
+
+describe("newMsgId and ctlServes", () => {
+  it("newMsgId is a fresh uuid, within the 64-char msgId limit", () => {
+    const a = newMsgId();
+    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(a.length).toBeLessThanOrEqual(64);
+    expect(newMsgId()).not.toBe(a);
+  });
+
+  it("ctlServes reads hello's features; absent or an error reply serves nothing", () => {
+    const ok = { v: 1, ok: true, features: ["incarnation"] } satisfies CtlReply;
+    expect(ctlServes(ok, "incarnation")).toBe(true);
+    expect(ctlServes(ok, "msgId")).toBe(false);
+    expect(ctlServes({ v: 1, ok: true }, "msgId")).toBe(false);
+    expect(ctlServes({ v: 1, ok: false, error: "x" }, "msgId")).toBe(false);
   });
 });

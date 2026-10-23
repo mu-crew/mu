@@ -7,6 +7,7 @@
  * nothing from mu except the protocol, and nothing from pi: the pi API is
  * typed structurally below so pi stays a peer, not a dependency.
  */
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -23,6 +24,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CTL_COMMANDS,
+  CTL_FEATURES,
+  CTL_MSGID_MAX_LENGTH,
+  CTL_MSGID_MEMORY,
   CTL_OPS,
   CTL_PROTOCOL_VERSION,
   type CtlBlocked,
@@ -30,6 +34,7 @@ import {
   type CtlReply,
   type CtlState,
   encode,
+  INCARNATION_MISMATCH,
   LineDecoder,
   UNKNOWN_OP_PREFIX,
 } from "../src/ctl/protocol.js";
@@ -200,6 +205,10 @@ type Shared = {
   /** Inode of the socket file this process bound; the only file it may unlink. */
   ino?: number;
   conns: Set<Socket>;
+  /** Minted with the entry, so once per pi process per socket; /new and /reload keep it. */
+  incarnation: string;
+  /** Last CTL_MSGID_MEMORY accepted msgIds (insertion order), with the runs the reply carried. */
+  accepted: Map<string, { runs: number; at: number }>;
   /** Held waits; called with "settle" on agent_settled, "blocked" on ui_prompt_start. */
   waiters: Set<(why: "settle" | "blocked") => void>;
   state: CtlState;
@@ -453,6 +462,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
   const existing = map.get(sockPath);
   const g: Shared = existing ?? {
     conns: new Set(),
+    incarnation: randomUUID(),
+    accepted: new Map(),
     waiters: new Set(),
     state: "idle",
     since: Date.now(),
@@ -466,6 +477,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
   map.set(sockPath, g);
 
   const status = () => ({
+    incarnation: g.incarnation,
     state: g.state,
     since: g.since,
     runs: g.runs,
@@ -473,6 +485,17 @@ function serveCtl(pi: MuPiApi): () => boolean {
     ...sessionFileOf(g.ctx),
     ...blockedField(),
   });
+
+  /** Remember an accepted msgId with the `runs` its reply carried; evicts the oldest. */
+  const remember = (id: string | undefined, runs: number): void => {
+    if (id === undefined) return;
+    g.accepted.delete(id);
+    g.accepted.set(id, { runs, at: Date.now() });
+    for (const old of g.accepted.keys()) {
+      if (g.accepted.size <= CTL_MSGID_MEMORY) break;
+      g.accepted.delete(old);
+    }
+  };
 
   const blockedField = (): { blocked?: CtlBlocked } => {
     const b = uiBlocked();
@@ -629,6 +652,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
   function fresh(req: Record<string, unknown>): Promise<Reply> | Reply {
     const text = str(req, "text");
     if (text === undefined) return fail("fresh needs a string text");
+    const id = msgIdOf(req);
+    if (id.error) return fail(id.error);
     if (g.fresh || g.command) return fail("a fresh send or command is already in progress");
     const busy = !(g.ctx?.isIdle() ?? g.state === "idle");
     if (busy && req.force !== true) return fail("busy");
@@ -639,6 +664,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
         armed: false,
         settle: (r) => {
           clearTimeout(timer);
+          // Every ok settle is a landed prompt (run started, or finished unseen).
+          if (r.ok) remember(id.id, r.runs ?? g.runs);
           resolve(r);
         },
       };
@@ -647,6 +674,15 @@ function serveCtl(pi: MuPiApi): () => boolean {
         g.pi.sendUserMessage(`/${FRESH_COMMAND}`, { expandPromptTemplates: true }),
       ).catch((e: unknown) => settleFresh(fail(e instanceof Error ? e.message : String(e))));
     });
+  }
+
+  /** The optional msgId of `req`: absent is fine; present must be a string of 1-64 characters. */
+  function msgIdOf(req: Record<string, unknown>): { id?: string; error?: string } {
+    if (!("msgId" in req)) return {};
+    const id = req.msgId;
+    if (typeof id === "string" && id.length >= 1 && id.length <= CTL_MSGID_MAX_LENGTH)
+      return { id };
+    return { error: `msgId must be a string of 1-${CTL_MSGID_MAX_LENGTH} characters` };
   }
 
   async function handle(req: Record<string, unknown>, conn: Socket): Promise<Reply> {
@@ -658,14 +694,24 @@ function serveCtl(pi: MuPiApi): () => boolean {
           agent: process.env.MU_AGENT_NAME,
           workstream: process.env.MU_WORKSTREAM,
           piVersion,
+          incarnation: g.incarnation,
           ops: [...CTL_OPS],
+          features: [...CTL_FEATURES],
           ...(EXT_VERSION !== undefined ? { extVersion: EXT_VERSION } : {}),
         };
-      case "status":
-        return { v: V, ok: true, ...status() };
+      case "status": {
+        const id = msgIdOf(req);
+        if (id.error) return fail(id.error);
+        if (id.id === undefined) return { v: V, ok: true, ...status() };
+        const got = g.accepted.get(id.id);
+        const msg = got ? { id: id.id, accepted: true, ...got } : { id: id.id, accepted: false };
+        return { v: V, ok: true, ...status(), msg };
+      }
       case "send": {
         const text = str(req, "text");
         if (text === undefined) return fail("send needs a string text");
+        const id = msgIdOf(req);
+        if (id.error) return fail(id.error);
         const mode = req.mode === "steer" ? "steer" : "followUp";
         // Measured before dispatch: `runs` is the caller's wait baseline,
         // and a run this send starts may settle before the reply is read.
@@ -673,6 +719,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
         // A message sent while idle starts a run; options are only for a busy pi.
         if (g.ctx?.isIdle() ?? g.state === "idle") await g.pi.sendUserMessage(text);
         else await g.pi.sendUserMessage(text, { deliverAs: mode });
+        remember(id.id, before.runs);
         return { v: V, ok: true, ...before };
       }
       case "fresh":
@@ -680,6 +727,9 @@ function serveCtl(pi: MuPiApi): () => boolean {
       case "command":
         return command(req);
       case "wait":
+        if ("incarnation" in req && req.incarnation !== g.incarnation) {
+          return { ...fail(INCARNATION_MISMATCH), incarnation: g.incarnation };
+        }
         return wait(
           num(req, "afterRuns"),
           num(req, "timeoutMs"),
@@ -710,6 +760,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
   async function interrupt(req: Record<string, unknown>, conn: Socket): Promise<Reply> {
     const text = str(req, "text");
     if (text === undefined) return fail("interrupt needs a string text");
+    const id = msgIdOf(req);
+    if (id.error) return fail(id.error);
     const wasBusy = !(g.ctx?.isIdle() ?? g.state === "idle");
     const { pending } = status();
     if (wasBusy) {
@@ -721,6 +773,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     }
     const before = status();
     await g.pi.sendUserMessage(text);
+    remember(id.id, before.runs);
     return { v: V, ok: true, ...before, pending, wasBusy };
   }
 

@@ -10,6 +10,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- ctl: replies carry `incarnation`; send/fresh/interrupt accept a `msgId` that
+  `status` can confirm; `wait` refuses a mismatched `incarnation`; `hello`
+  lists `features` (additive; protocol v1).
+
 ### Removed
 
 - **`mu undo`.** Teardown becomes soft in a later change. `mu log --group

@@ -27,10 +27,10 @@ reply carries `v: 1`; the client (`src/ctl/client.ts`) throws
 
 | op | does |
 | --- | --- |
-| `hello` | identity plus `ops` (served ops) and `extVersion` (the mu version the extension was built from) |
-| `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending`, and pi's `sessionFile` when it has one |
+| `hello` | identity plus `ops` (served ops), `features` (`incarnation`, `msgId`) and `extVersion` (the mu version the extension was built from) |
+| `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending`, and pi's `sessionFile` when it has one. With `msgId`, also `msg: { id, accepted, runs?, at? }`: whether that `send`/`fresh`/`interrupt` was accepted (`runs` is the baseline its reply carried) |
 | `send` | `pi.sendUserMessage`; when busy, `mode` is `steer` or `followUp` (default). Replies with the `status` fields measured before the dispatch, so `runs` is the baseline for a later `wait` |
-| `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` and pi's `sessionFile` |
+| `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` and pi's `sessionFile`. With `incarnation` that differs from the current one, replies `incarnation mismatch` (plus the current `incarnation`) at once, without waiting |
 | `abort` | `ctx.abort()` (pi's Esc) |
 | `interrupt` | busy: `ctx.abort()`, wait for `agent_settled` (up to `timeoutMs`), then `pi.sendUserMessage(text)` as a new run; idle: just the send. Replies `wasBusy`, `pending` (measured before the abort) and the `status` fields measured after the settle and before the send, so `runs` is the `wait` baseline for the new run. `timeout`: nothing sent |
 | `fresh` | new session plus prompt as one operation, through the internal `/mu-fresh` command; replies once the new run starts; refused with `busy` unless `force` |
@@ -41,6 +41,20 @@ built-in `/new`, `/reload`, `/compact`. Each internal command is an
 extension command, triggered with `expandPromptTemplates: true`, and
 its handler gets the command context that can replace or reload the
 session.
+
+Two additive fields make an ambiguous delivery checkable instead of
+resendable (protocol stays v1; an old client sees only extra reply
+fields):
+
+- `incarnation`: a string in every ok reply to `hello`, `status`,
+  `send`, `fresh`, `interrupt` and `wait`. It is minted once per pi
+  process per socket (in the process-global map), so `/new` and `/reload`
+  keep it and a pi restart changes it.
+- `msgId`: an optional string of 1-64 characters on `send`, `fresh`,
+  `interrupt` and `status`. The extension remembers the last 64 it
+  accepted, recorded only after the message was dispatched (`send`,
+  `interrupt`) or the fresh prompt landed. A longer, empty or non-string
+  `msgId` is refused before any side effect.
 
 These back `mu agent send` (`--fresh`, `--steer`, `--interrupt`, session commands), `mu agent wait`,
 `mu agent abort`, the agent state reading, and `mu_delegate`.
