@@ -9,13 +9,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { detectBackend, forkPoint, gitBackend, WorkspaceVcsRequiredError } from "../src/vcs.js";
+import { upstreamRefs } from "../src/vcs/git.js";
+import { detectBackend, gitBackend, WorkspaceVcsRequiredError } from "../src/vcs.js";
 import { ensureWorkstream } from "../src/workstream.js";
 
 let stateRoot: string;
 let projectRoot: string;
 let dbDir: string;
 let db: Db;
+let cleanup: string[] = [];
 
 function commitIn(cwd: string, subject: string, file: string, body?: string): void {
   writeFileSync(join(cwd, file), `${subject}\n`);
@@ -31,6 +33,7 @@ function setStateDir(dir: string): void {
 }
 
 beforeEach(() => {
+  cleanup = [];
   stateRoot = mkdtempSync(join(tmpdir(), "mu-ws-state-"));
   setStateDir(stateRoot);
   dbDir = mkdtempSync(join(tmpdir(), "mu-ws-db-"));
@@ -44,7 +47,7 @@ beforeEach(() => {
 
 afterEach(() => {
   db.close();
-  for (const dir of [stateRoot, dbDir, projectRoot]) {
+  for (const dir of [stateRoot, dbDir, projectRoot, ...cleanup]) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {}
@@ -221,14 +224,63 @@ gitDescribe("gitBackend", () => {
       expect(commits.map((c) => c.subject)).toEqual(["worker work"]);
     });
 
-    it("forkPoint resolves to the new merge-base; unrebased keeps parent_ref", async () => {
+    it("upstreamRefs: parent_ref plus the root's HEAD, deduped", async () => {
       const { wsPath, parentRef, mainSha } = await rebased();
-      expect(await forkPoint(wsPath, parentRef)).toBe(mainSha);
+      expect(await upstreamRefs(wsPath, parentRef)).toEqual([parentRef, mainSha]);
       const other = join(stateRoot, "workspaces", "auth", "worker-2");
       const r2 = await gitBackend.createWorkspace({ projectRoot, workspacePath: other });
       commitIn(projectRoot, "later main", "later.txt");
-      expect(await forkPoint(other, r2.parentRef ?? "")).toBe(r2.parentRef);
+      const later = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: projectRoot,
+        encoding: "utf8",
+      }).trim();
+      expect(await upstreamRefs(other, r2.parentRef ?? "")).toEqual([r2.parentRef, later]);
     });
+  });
+
+  describe("after fetch + rebase onto an advanced remote (root checkout untouched)", () => {
+    // A bare origin advanced by a second clone; the worker fetches and
+    // rebases onto the remote while the project root's HEAD stays old.
+    async function remoteAdvanced(
+      mode: "origin-head" | "upstream",
+    ): Promise<{ wsPath: string; parentRef: string; remoteSha: string }> {
+      const git = (cwd: string, ...args: string[]) =>
+        execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], {
+          cwd,
+          encoding: "utf8",
+        }).trim();
+      const bare = mkdtempSync(join(tmpdir(), "mu-ws-bare-"));
+      const clone = mkdtempSync(join(tmpdir(), "mu-ws-clone-"));
+      cleanup.push(bare, clone);
+      git(bare, "init", "-q", "--bare", "-b", "main");
+      git(projectRoot, "remote", "add", "origin", bare);
+      git(projectRoot, "push", "-q", ...(mode === "upstream" ? ["-u"] : []), "origin", "main");
+      if (mode === "origin-head") git(projectRoot, "remote", "set-head", "origin", "main");
+      const wsPath = join(stateRoot, "workspaces", "auth", "worker-1");
+      const { parentRef } = await gitBackend.createWorkspace({
+        projectRoot,
+        workspacePath: wsPath,
+      });
+      if (parentRef === null) throw new Error("no parentRef");
+      git(clone, "clone", "-q", bare, ".");
+      commitIn(clone, "remote-main-only", "remote.txt");
+      git(clone, "push", "-q", "origin", "main");
+      git(wsPath, "fetch", "-q", "origin");
+      git(wsPath, "rebase", "-q", mode === "origin-head" ? "origin/HEAD" : "origin/main");
+      return { wsPath, parentRef, remoteSha: git(wsPath, "rev-parse", "HEAD") };
+    }
+
+    it.each(["origin-head", "upstream"] as const)(
+      "%s: remote commits are not the worker's",
+      async (mode) => {
+        const { wsPath, parentRef, remoteSha } = await remoteAdvanced(mode);
+        expect(await gitBackend.commitsSinceBase(wsPath, parentRef)).toEqual([]);
+        expect(await upstreamRefs(wsPath, parentRef)).toContain(remoteSha);
+        commitIn(wsPath, "worker work", "w.txt");
+        const commits = await gitBackend.commitsSinceBase(wsPath, parentRef);
+        expect(commits.map((c) => c.subject)).toEqual(["worker work"]);
+      },
+    );
   });
 
   it("isClean and listDirtyFiles see untracked files", async () => {

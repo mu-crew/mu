@@ -115,7 +115,7 @@ mu task wait design -w auth --first --on-stall exit
 auth/design
 any-of 1 reached CLOSED in 41094ms
 Next:
-  Inspect worker-1's commits, then cherry-pick what you want : git -C <path> log --oneline 26278f1..HEAD
+  Inspect worker-1's commits, then cherry-pick what you want : git -C <path> log --oneline HEAD --not 26278f1
 ```
 
 The exit code tells you what happened:

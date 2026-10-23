@@ -4,7 +4,7 @@ import { gitBackend } from "./git.js";
 import type { VcsBackend, VcsBackendName } from "./types.js";
 import { WorkspaceVcsRequiredError } from "./types.js";
 
-export { forkPoint, gitBackend } from "./git.js";
+export { gitBackend, upstreamRefs } from "./git.js";
 export {
   type CommitSummary,
   type CreateWorkspaceOptions,

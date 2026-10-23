@@ -246,8 +246,9 @@ export async function freeWorkspace(
 
 /**
  * "Is this workspace safe to silently free on agent close?" — i.e.
- * does it have ZERO uncommitted changes AND ZERO commits since its
- * fork point. Used by closeAgent to auto-free clean workspaces.
+ * does it have ZERO uncommitted changes AND ZERO commits of its own
+ * (beyond the upstream refs). Used by closeAgent to auto-free clean
+ * workspaces.
  */
 export async function isWorkspaceClean(row: WorkspaceRow): Promise<boolean> {
   const backend = backendByName(row.backend);
@@ -260,8 +261,9 @@ export async function isWorkspaceClean(row: WorkspaceRow): Promise<boolean> {
   if (!clean) return false;
   if (row.parentRef === null || row.parentRef.length === 0) return false;
   try {
-    // commitsSinceBase re-derives the fork point, so a manual rebase
-    // onto an advanced main does not count main's commits as the worker's.
+    // commitsSinceBase excludes everything already upstream, so a manual
+    // rebase onto advanced main or a fetched remote does not count the
+    // base's commits as the worker's.
     const commits = await backend.commitsSinceBase(row.path, row.parentRef);
     return commits.length === 0;
   } catch {

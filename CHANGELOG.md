@@ -36,10 +36,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   claim` and `mu agent send --json`, and the SDK's `refreshWorkspace`,
   `listCommitsForWorkspace`, `decorateWith*`, `*Orphan*` and `jjBackend`,
   `slBackend`, `noneBackend`. `mu task wait`'s hint after a worker closes
-  is now `git -C <path> log --oneline <fork>..HEAD`. Readers derive `<fork>`
-  (`forkPoint`: merge-base with the project root's HEAD, never older than
-  `parent_ref`), so a manual `git rebase` onto an advanced main neither blocks
-  `mu agent close` of an empty clean worker nor lists main's commits.
+  is now `git -C <path> log --oneline HEAD --not <refs>`. `<refs>` is
+  everything already upstream: `parent_ref`, the project root's HEAD,
+  `origin/HEAD` when it resolves, and the root's `@{upstream}` when set. `mu
+  agent close` uses the same set for its own-commits check, so a manual `git
+  rebase` onto advanced local main, or `git fetch && git rebase origin/HEAD`,
+  neither blocks closing an empty clean worker nor lists the base's commits.
 - **`mu undo`.** Teardown becomes soft in a later change. `mu log --group
   <prefix>` still resolves a group prefix; an unknown one now raises
   `GroupNotFoundError` (exit 3). The SDK drops `undoGroup`, `planUndo`,
