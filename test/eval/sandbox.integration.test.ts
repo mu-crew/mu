@@ -2,9 +2,15 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createSandbox, REAL_TMUX, sh, tmuxSocketPath } from "../../tools/eval/sandbox.ts";
+import {
+  createSandbox,
+  REAL_TMUX,
+  resolveRealTmux,
+  sh,
+  tmuxSocketPath,
+} from "../../tools/eval/sandbox.ts";
 import type { Sandbox, Surface } from "../../tools/eval/types.ts";
 
 const surface: Surface = {
@@ -75,6 +81,11 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
     expect(bare).not.toBe(abs);
   });
 
+  it("resolveRealTmux throws promptly when tmux is not on PATH, never returns a bare name", () => {
+    expect(() => resolveRealTmux("/nonexistent:relative/dir")).toThrow(/tmux not found/);
+    expect(isAbsolute(resolveRealTmux())).toBe(true);
+  });
+
   it("close kills the private servers (named and default-in-sandbox) and removes the dir", async () => {
     sb = await createSandbox(surface);
     await sh(sb, `${REAL_TMUX} start-server \\; new-session -d -s bare`);
@@ -102,9 +113,12 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
         const mod = join(import.meta.dirname, "..", "..", "tools", "eval", "sandbox.ts");
         writeFileSync(
           script,
-          `import { createSandbox, tmuxSocketPath } from ${JSON.stringify(mod)};
+          `import { execFileSync } from "node:child_process";
+import { REAL_TMUX, createSandbox, tmuxSocketPath } from ${JSON.stringify(mod)};
 const sb = await createSandbox(${JSON.stringify(surface)});
-console.log(JSON.stringify({ dir: sb.dir, sock: tmuxSocketPath(sb.dir, sb.tmuxSocket) }));
+const sock = tmuxSocketPath(sb.dir, sb.tmuxSocket);
+const pid = Number(execFileSync(REAL_TMUX, ["-S", sock, "display", "-p", "#{pid}"], { encoding: "utf8" }));
+console.log(JSON.stringify({ dir: sb.dir, sock, pid }));
 ${crash};
 await new Promise((r) => setTimeout(r, 5000));
 `,
@@ -113,10 +127,30 @@ await new Promise((r) => setTimeout(r, 5000));
         const info = JSON.parse(r.stdout.trim().split("\n")[0] ?? "{}") as {
           dir: string;
           sock: string;
+          pid: number;
         };
         expect(info.dir).toBeTruthy();
-        expect(existsSync(info.dir)).toBe(false);
-        expect(() => execFileSync("tmux", ["-S", info.sock, "ls"], { stdio: "ignore" })).toThrow();
+        expect(info.pid).toBeGreaterThan(1);
+        try {
+          expect(existsSync(info.dir)).toBe(false);
+          // The exact server process must die (the socket vanishing proves nothing: rmSync unlinks it).
+          let alive = true;
+          for (let i = 0; i < 20 && alive; i++) {
+            try {
+              process.kill(info.pid, 0);
+              await new Promise((r) => setTimeout(r, 50));
+            } catch {
+              alive = false;
+            }
+          }
+          expect(alive, `tmux server ${info.pid} survived`).toBe(false);
+        } finally {
+          try {
+            process.kill(info.pid, "SIGKILL");
+          } catch {
+            // already dead
+          }
+        }
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
