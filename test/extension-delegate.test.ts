@@ -932,9 +932,6 @@ describe("footer status", () => {
     await flush();
     await flush();
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 result pending"]);
-    await p.fire("agent_settled", { type: "agent_settled", aborted: false });
-    expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, "1 result pending"]);
-    expect(p.sendMessage).toHaveBeenCalledTimes(1);
     await p.fire("agent_settled", { type: "agent_settled", aborted: true });
     expect(last(setStatus)).toEqual([DELEGATE_STATUS_KEY, undefined]);
     // One note, no turn, one line pointing at the copy and the session.
@@ -958,7 +955,6 @@ describe("footer status", () => {
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
     const { setStatus, ctx } = uiCtx();
-    await p.fire("agent_start", { type: "agent_start" });
     p.state.busy = true;
     await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
     mu.waits
@@ -967,7 +963,6 @@ describe("footer status", () => {
     await flush();
     await flush();
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
-    await p.fire("agent_end", { type: "agent_end" });
     await p.fire("agent_settled", { type: "agent_settled", aborted: false }); // queue was cleared
     expect(p.sendMessage).toHaveBeenCalledTimes(2);
     const [again, opts] = p.sendMessage.mock.calls[1] ?? [];
@@ -988,16 +983,90 @@ describe("footer status", () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await p.fire("agent_start", { type: "agent_start" });
     p.state.busy = true;
     await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
     await flush();
     await flush();
     await p.drainQueue(); // message_start for the queued follow-up
-    await p.fire("agent_end", { type: "agent_end" });
     await p.fire("agent_settled", { type: "agent_settled", aborted: false });
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("an answer queued after agent_end (post-run compaction) and then cleared is sent again", async () => {
+    // pi stays "streaming" through compaction after agent_end: the answer
+    // is queued, the dequeue key clears it, the run settles normally.
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await p.fire("agent_start", { type: "agent_start" });
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await p.fire("agent_end", { type: "agent_end" });
+    p.state.busy = true; // compacting
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
+    await flush();
+    await flush();
+    await p.fire("agent_settled", { type: "agent_settled", aborted: false });
+    expect(p.sendMessage).toHaveBeenCalledTimes(2);
+    expect(p.sendMessage.mock.calls[1]?.[1]).toEqual({ deliverAs: "followUp", triggerTurn: true });
+  });
+
+  it("several cleared answers are resent one at a time, each after the previous started", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    p.state.busy = true;
+    const n = 3;
+    for (let i = 0; i < n; i++)
+      await tool(p).execute(`c${i}`, { task: "t", keep: true }, undefined, undefined, uiCtx().ctx);
+    for (let i = 0; i < n; i++)
+      mu.waits
+        .get(`delegate-${i + 2}`)
+        ?.resolve(ok({ agents: [{ outcome: "done", lastText: `a${i}` }] }));
+    await flush();
+    await flush();
+    expect(p.sendMessage).toHaveBeenCalledTimes(n);
+    const settle = (aborted: boolean) =>
+      p.fire("agent_settled", { type: "agent_settled", aborted });
+    for (let round = 1; round <= n; round++) {
+      await settle(false); // queue was cleared
+      expect(p.sendMessage).toHaveBeenCalledTimes(n + round); // exactly one resend
+      const [m, o] = p.sendMessage.mock.calls[n + round - 1] ?? [];
+      expect(o).toEqual({ deliverAs: "followUp", triggerTurn: true });
+      await p.fire("message_start", {
+        message: { role: "custom", ...(m as object) },
+      }); // pi starts that one
+    }
+    await settle(false);
+    expect(p.sendMessage).toHaveBeenCalledTimes(2 * n);
+  });
+
+  it("Escape during a resend drops the answers still waiting, with copies, and resends none", async () => {
+    const cache = mkdtempSync(join(tmpdir(), "mu-dropped-"));
+    process.env.XDG_CACHE_HOME = cache;
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    p.state.busy = true;
+    const n = 3;
+    for (let i = 0; i < n; i++)
+      await tool(p).execute(`c${i}`, { task: "t", keep: true }, undefined, undefined, uiCtx().ctx);
+    for (let i = 0; i < n; i++)
+      mu.waits
+        .get(`delegate-${i + 2}`)
+        ?.resolve(ok({ agents: [{ outcome: "done", lastText: `a${i}` }] }));
+    await flush();
+    await flush();
+    await p.fire("agent_settled", { type: "agent_settled", aborted: false });
+    expect(p.sendMessage).toHaveBeenCalledTimes(n + 1); // one resend, not three
+    const [m] = p.sendMessage.mock.calls[n] ?? [];
+    await p.fire("message_start", { message: { role: "custom", ...(m as object) } });
+    await p.fire("agent_settled", { type: "agent_settled", aborted: true }); // Escape in that run
+    expect(p.sendMessage).toHaveBeenCalledTimes(n + 2); // the note only
+    const [note, opts] = p.sendMessage.mock.calls[n + 1] ?? [];
+    expect(opts).toEqual({ triggerTurn: false });
+    expect((note as { details: { dropped: unknown[] } }).details.dropped).toHaveLength(n - 1);
+    rmSync(cache, { recursive: true, force: true });
   });
 
   it("an interrupt with nothing queued leaves no note", async () => {
