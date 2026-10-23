@@ -23,6 +23,7 @@ import {
   reparentTask,
   slugifyTitleVerbose,
   TaskTitleSlugEmptyError,
+  touchTask,
 } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli } from "./_runCli.js";
@@ -137,5 +138,22 @@ describe("CLI surfaces", () => {
     const r = await runCli(["task", "tree", "a", "--down", "-w", "t"], dbPath);
     expect(r.stdout).toContain("omit --down for blockers");
     expect(r.stdout).not.toContain("--no-down");
+  });
+});
+
+describe("touchTask is monotonic", () => {
+  it("a touch with an earlier clock never moves updated_at backwards", () => {
+    add("mono", "ws");
+    const row = () =>
+      db.prepare("SELECT id, updated_at FROM tasks WHERE local_id = 'mono'").get() as {
+        id: number;
+        updated_at: string;
+      };
+    const { id } = row();
+    touchTask(db, id, "2030-01-01T00:00:00.171Z");
+    touchTask(db, id, "2030-01-01T00:00:00.168Z");
+    expect(row().updated_at).toBe("2030-01-01T00:00:00.171Z");
+    touchTask(db, id, "2030-01-01T00:00:00.200Z");
+    expect(row().updated_at).toBe("2030-01-01T00:00:00.200Z");
   });
 });
