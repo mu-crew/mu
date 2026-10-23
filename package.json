@@ -56,12 +56,13 @@
     "test:fast": "vitest run --config vitest.fast.config.ts",
     "test:watch": "vitest",
     "test:watch:fast": "vitest --config vitest.fast.config.ts",
-    "lint": "biome check src test scripts extension",
-    "lint:fix": "biome check --write src test scripts extension",
-    "format": "biome format --write src test scripts extension",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "lint": "biome check src test scripts extension tools",
+    "lint:fix": "biome check --write src test scripts extension tools",
+    "format": "biome format --write src test scripts extension tools",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tools/eval/tsconfig.json --noEmit",
     "prepare": "npm run build",
-    "test:stress": "tools/test-stress.sh"
+    "test:stress": "tools/test-stress.sh",
+    "eval": "node tools/eval/main.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
