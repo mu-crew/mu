@@ -235,6 +235,22 @@ describe("ready order", () => {
     expect(shuffled.map((t) => t.name)).toEqual(order);
   });
 
+  it("equal ROI: smaller effort first, then local_id (listReady and byRoiDesc)", () => {
+    const t = "2026-01-01T00:00:00.000Z";
+    add("z_small", { i: 10, e: 1, created: t });
+    add("b_big", { i: 40, e: 4, created: t });
+    add("a_big", { i: 40, e: 4, created: t });
+    add("m_mid", { i: 20, e: 2, created: t });
+    const expected = ["z_small", "m_mid", "a_big", "b_big"];
+    expect(listReady(db, "d").map((x) => x.name)).toEqual(expected);
+    expect(
+      [...listReady(db, "d")]
+        .reverse()
+        .sort(byRoiDesc)
+        .map((x) => x.name),
+    ).toEqual(expected);
+  });
+
   it("an unscored task never outranks a scored one, however high its defaults", () => {
     add("scored_low", { i: 1, e: 5, created: "2026-05-01T00:00:00.000Z" });
     add("unscored", { created: "2026-01-01T00:00:00.000Z" });
@@ -506,6 +522,11 @@ describe("new fields only ride v2 segment lines", () => {
     ensureWorkstream(db, "d");
     addTask(db, { workstream: "d", localId: "a", title: "a", impact: 9 });
     addNote(db, "a", "n", { workstream: "d" });
+    const taskId = (db.prepare("SELECT id FROM tasks").get() as { id: number }).id;
+    db.prepare(
+      "INSERT INTO task_notes (task_id, content, created_at, kind) VALUES (?, 'rep', 'now', 'report')",
+    ).run(taskId);
+    db.prepare("UPDATE tasks SET dispatch_host = 'host-a'").run();
     db.prepare("UPDATE workstreams SET torn_down_at = '2026-01-01T00:00:00.000Z'").run();
     await flushSegment(db, dir);
     const lines = readFileSync(segmentPath(dir, localMachineId(db)), "utf8")
@@ -522,13 +543,43 @@ describe("new fields only ride v2 segment lines", () => {
       const peer = discoverPeers(dir, localMachineId(other))[0];
       if (peer === undefined) throw new Error("expected a peer");
       expect(ingestSegment(other, peer).defects).toEqual([]);
-      expect(other.prepare("SELECT scored FROM tasks WHERE local_id = 'a'").get()).toEqual({
-        scored: 1,
-      });
+      expect(
+        other.prepare("SELECT scored, dispatch_host FROM tasks WHERE local_id = 'a'").get(),
+      ).toEqual({ scored: 1, dispatch_host: "host-a" });
       expect(other.prepare("SELECT torn_down_at FROM workstreams").get()).toEqual({
         torn_down_at: "2026-01-01T00:00:00.000Z",
       });
-      expect(other.prepare("SELECT kind FROM task_notes").get()).toEqual({ kind: "note" });
+      // A default note stays 'note'; a non-default kind survives the round trip.
+      expect(other.prepare("SELECT content, kind FROM task_notes ORDER BY id").all()).toEqual([
+        { content: "n", kind: "note" },
+        { content: "rep", kind: "report" },
+      ]);
+
+      // Second exchange: B clears every nullable/flag field and adds a verdict
+      // note; A must converge on the cleared values.
+      other.prepare("UPDATE tasks SET dispatch_host = NULL, scored = 0").run();
+      other.prepare("UPDATE workstreams SET torn_down_at = NULL").run();
+      const otherTaskId = (other.prepare("SELECT id FROM tasks").get() as { id: number }).id;
+      other
+        .prepare(
+          "INSERT INTO task_notes (task_id, content, created_at, kind) VALUES (?, 'ver', 'now', 'verdict')",
+        )
+        .run(otherTaskId);
+      await flushSegment(other, dir);
+      const back = discoverPeers(dir, localMachineId(db)).find(
+        (p) => p.machineId === localMachineId(other),
+      );
+      if (back === undefined) throw new Error("expected B's segment");
+      expect(ingestSegment(db, back).defects).toEqual([]);
+      expect(
+        db.prepare("SELECT scored, dispatch_host FROM tasks WHERE local_id = 'a'").get(),
+      ).toEqual({ scored: 0, dispatch_host: null });
+      expect(db.prepare("SELECT torn_down_at FROM workstreams").get()).toEqual({
+        torn_down_at: null,
+      });
+      expect(db.prepare("SELECT kind FROM task_notes WHERE content = 'ver'").get()).toEqual({
+        kind: "verdict",
+      });
     } finally {
       other.close();
     }
