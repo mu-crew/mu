@@ -36,12 +36,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `paneAlive` replaces `paneExists`, `capture` replaces `capturePane`;
   `MuxPane` has no `title`. `ensureSession` returns `{ created, repaired }`
   (`repaired`: the `_mu` window was re-added). `attachCommands` steps carry
-  an optional `reason`; `attachShellLine(steps)` joins them (`&&`, `;` after
-  an optional step) and replaces `attachHint`. `mu workstream init` and the
+  an optional `reason`; `attachShellLine(steps)` joins them with `&&`, an
+  optional step as `{ step || true; }` (its failure never fails the line), and replaces `attachHint`. `mu workstream init` and the
   attach next step of `mu agent spawn` omit the line when `attachCommands`
   throws (herdr: no such workspace). Mux reads keep their failure modes:
   reconcile still propagates an unreachable mux instead of pruning every
-  agent.
+  agent, and `workstream teardown` aborts on a failed liveness probe
+  instead of deleting DB state while panes may live.
 - **Identity is `$MU_AGENT_NAME` only.** `resolveWorkerIdentity` no longer
   falls back to the pane title; nothing reads or writes pane titles, so a
   pane adopted without the env var resolves to `$USER` / `orchestrator`.

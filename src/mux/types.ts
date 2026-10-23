@@ -162,20 +162,21 @@ export interface CaptureOptions {
 const PLAIN_TOKEN = /^[\w@%+=:,./-]+$/;
 
 /**
- * One copy-pasteable shell line for `steps`: `&&` between required steps,
- * `;` after an optional one (its failure must not stop what follows).
- * Callers catch what `attachCommands` throws (herdr: no such workspace)
- * and omit the line.
+ * One copy-pasteable shell line for `steps`, joined with `&&` so a
+ * failed required step stops everything after it. An `optional` step is
+ * rendered `{ step || true; }`: its own failure never fails the line
+ * and never stops what follows. Callers catch what `attachCommands`
+ * throws (herdr: no such workspace) and omit the line.
  */
 export function attachShellLine(steps: readonly MuxCommand[]): string {
-  let line = "";
-  steps.forEach((step, i) => {
-    if (i > 0) line += steps[i - 1]?.optional === true ? " ; " : " && ";
-    line += [step.command, ...step.args]
-      .map((t) => (PLAIN_TOKEN.test(t) ? t : shellQuote(t)))
-      .join(" ");
-  });
-  return line;
+  return steps
+    .map((step) => {
+      const words = [step.command, ...step.args]
+        .map((t) => (PLAIN_TOKEN.test(t) ? t : shellQuote(t)))
+        .join(" ");
+      return step.optional === true ? `{ ${words} || true; }` : words;
+    })
+    .join(" && ");
 }
 
 // ─── Errors ────────────────────────────────────────────────────────────
