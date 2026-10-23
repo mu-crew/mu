@@ -6,7 +6,7 @@ import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createSandbox,
-  REAL_TMUX,
+  realTmux,
   resolveRealTmux,
   sh,
   tmuxSocketPath,
@@ -29,6 +29,24 @@ function hasTmux(): boolean {
     return false;
   }
 }
+
+describe("sandbox without tmux", () => {
+  it("imports without tmux on PATH, and createSandbox rejects before touching disk", () => {
+    const mod = join(import.meta.dirname, "..", "..", "tools", "eval", "sandbox.ts");
+    const r = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `const m = await import(${JSON.stringify(mod)});
+try { await m.createSandbox(${JSON.stringify(surface)}); console.log("no-throw"); } catch (e) { console.log(String(e.message)); }`,
+      ],
+      { env: { PATH: "/nonexistent" }, encoding: "utf8", timeout: 20_000 },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("tmux not found on PATH");
+  });
+});
 
 describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
   let sb: Sandbox | undefined;
@@ -73,7 +91,7 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
     expect(bare).toBe(sock);
     // host tmux by absolute path, no -L: sandbox default socket, still under the sandbox dir
     const abs = (
-      await sh(sb, `${REAL_TMUX} start-server \\; display -p '#{socket_path}'`)
+      await sh(sb, `${realTmux()} start-server \\; display -p '#{socket_path}'`)
     ).stdout.trim();
     expect(abs.startsWith(`${sb.dir}/`), abs).toBe(true);
     // never the user's default socket
@@ -88,7 +106,7 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
 
   it("close kills the private servers (named and default-in-sandbox) and removes the dir", async () => {
     sb = await createSandbox(surface);
-    await sh(sb, `${REAL_TMUX} start-server \\; new-session -d -s bare`);
+    await sh(sb, `${realTmux()} start-server \\; new-session -d -s bare`);
     const paths = [tmuxSocketPath(sb.dir, sb.tmuxSocket), tmuxSocketPath(sb.dir, "default")];
     for (const p of paths) expect(existsSync(p)).toBe(true);
     const dir = sb.dir;
@@ -114,10 +132,10 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
         writeFileSync(
           script,
           `import { execFileSync } from "node:child_process";
-import { REAL_TMUX, createSandbox, tmuxSocketPath } from ${JSON.stringify(mod)};
+import { realTmux, createSandbox, tmuxSocketPath } from ${JSON.stringify(mod)};
 const sb = await createSandbox(${JSON.stringify(surface)});
 const sock = tmuxSocketPath(sb.dir, sb.tmuxSocket);
-const pid = Number(execFileSync(REAL_TMUX, ["-S", sock, "display", "-p", "#{pid}"], { encoding: "utf8" }));
+const pid = Number(execFileSync(realTmux(), ["-S", sock, "display", "-p", "#{pid}"], { encoding: "utf8" }));
 console.log(JSON.stringify({ dir: sb.dir, sock, pid }));
 ${crash};
 await new Promise((r) => setTimeout(r, 5000));
