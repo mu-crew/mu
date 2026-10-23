@@ -10,20 +10,14 @@
  * nudge`; the armed set and fired flag are per-prompt scratch. The rule
  * text lives in skills/mu/SKILL.md between the keep-driving markers.
  *
- * The refute nudge: `mu task claim <id> --for` on a task whose notes
- * carry no line starting `REFUTER `, `VERDICT:` or `REFUTE-EXEMPT:`
- * (read with `mu task notes --json`) gets ONE visible message per prompt
- * listing those tasks. It informs, never continues; `review_*` tasks
- * are exempt (their brief is the fixed reviewer template).
- *
  * Its worker-side twin, the close nudge: a mu-spawned pi worker
  * ($MU_AGENT_NAME + $MU_WORKSTREAM) that settles while it still owns an
  * IN_PROGRESS task is told once to close it or say why not. Same
  * once-per-prompt rule and `MU_NUDGE=0` opt-out.
  *
- * None fire in a nested pi (mu-pi.ts decides at bind); close and refute
- * also skip a pi with no UI (`pi -p`, json), where nobody can answer.
- * None fire while a delegate answer is on its way (it resumes the agent
+ * Neither fires in a nested pi (mu-pi.ts decides at bind); close also
+ * skips a pi with no UI (`pi -p`, json), where nobody can answer.
+ * Neither fires while a delegate answer is on its way (it resumes the agent
  * with the answer), and keep-driving and close skip an open dialog. A
  * held settle does not count as the prompt's one nudge.
  */
@@ -34,7 +28,6 @@ import { defaultRunner, type MuRunner } from "./delegate.js";
 export const NUDGE_MESSAGE_TYPE = "mu-keep-driving";
 export const NUDGE_LOG_KIND = "nudge";
 export const CLOSE_NUDGE_MESSAGE_TYPE = "mu-close-task";
-export const REFUTE_NUDGE_MESSAGE_TYPE = "mu-refute-brief";
 const MARK_START = "<!-- mu:keep-driving -->";
 const MARK_END = "<!-- /mu:keep-driving -->";
 /** Tasks named in the wait hint; the rest are counted, not listed. */
@@ -120,9 +113,8 @@ function muArgs(words: string[]): string[] | undefined {
 /**
  * The workstreams a bash command dispatches mu work into, or undefined
  * when it dispatches nothing. Dispatch = `mu agent send|spawn`, or
- * `mu task claim <id> --for` (parsed by claimOf, as the refute nudge
- * does). `""` stands for the default workstream (resolved by mu
- * itself: $MU_SESSION, then tmux).
+ * `mu task claim <id> --for` (parsed by claimOf). `""` stands for the default
+ * workstream (resolved by mu itself: $MU_SESSION, then tmux).
  */
 export function dispatchedWorkstreams(command: string): string[] | undefined {
   const found = new Set<string>();
@@ -290,21 +282,6 @@ function claimOf(args: string[]): { ws: string; id: string } | undefined {
   return { ws, id };
 }
 
-/**
- * The tasks a bash command dispatches with `mu task claim <id> --for`,
- * as `{ ws, id }`. `ws` is `""` for the default workstream; a qualified
- * `<ws>/<id>` splits. `scratch` is skipped, like dispatchedWorkstreams.
- */
-export function dispatchedTasks(command: string): { ws: string; id: string }[] {
-  const out: { ws: string; id: string }[] = [];
-  for (const words of shellSegments(command)) {
-    const args = muArgs(words);
-    const claim = args === undefined ? undefined : claimOf(args);
-    if (claim !== undefined && claim.ws !== "scratch") out.push(claim);
-  }
-  return out;
-}
-
 type ListJson = { items?: { name?: string; workstreamName?: string }[] };
 
 /**
@@ -368,7 +345,7 @@ type SettleHandler = (event: unknown, ctx: MuNudgeCtx) => unknown;
 /**
  * A view of `pi` whose `agent_before_settle` handlers run in PARALLEL
  * behind one real handler. pi awaits boundary handlers one after the
- * other, and each nudge awaits a mu subprocess, so three nudges held the
+ * other, and each nudge awaits a mu subprocess, so several nudges held the
  * settle (and every `mu agent wait` on it) for the sum of their calls.
  * The merged result appends every handler's entries to the event's
  * (pi replaces `entries` with each handler's return, so separate
@@ -595,89 +572,6 @@ export function registerCloseNudge(
         },
       ],
       continue: true,
-      yielded: () => {
-        fired = false;
-      },
-    };
-  });
-}
-
-/** A note counts as a refute decision only when a line starts with a marker. */
-const REFUTE_MARK = /^(REFUTER |VERDICT:|REFUTE-EXEMPT:)/m;
-
-/** True when the task's notes hold a refute decision; undefined if unreadable. */
-async function briefRefuted(run: MuRunner, ws: string, id: string): Promise<boolean | undefined> {
-  const r = await run(["task", "notes", id, ...(ws ? ["-w", ws] : []), "--json"]);
-  if (r.code !== 0) return undefined;
-  try {
-    const json = JSON.parse(r.stdout) as { items?: { content?: string }[] };
-    return (json.items ?? []).some((n) => REFUTE_MARK.test(n.content ?? ""));
-  } catch {
-    return undefined;
-  }
-}
-
-/** The refute-nudge text: name each task and the two ways out. */
-export function refuteNudgeText(refs: string[]): string {
-  return `[mu] dispatched ${refs.join(", ")} with an unrefuted brief: refute it (delegate, record) or note REFUTE-EXEMPT: <why>`;
-}
-
-export function registerRefuteNudge(
-  pi: MuNudgeApi,
-  run: MuRunner = defaultRunner(),
-  nested: NestedCheck = notNested,
-  hold: SettleHold = noHold,
-): void {
-  if (!nudgeEnabled()) return;
-  // It only informs, so an open dialog does not hold it; an answer on its
-  // way does, since its turn settles again and the notice can wait for it.
-  const answerDue = (ctx?: MuNudgeCtx) => hold(ctx) === "answer";
-  const armed = new Map<string, { ws: string; id: string }>();
-  let fired = false;
-
-  pi.on("input", () => {
-    armed.clear();
-    fired = false;
-  });
-
-  pi.on("tool_call", (event) => {
-    const cmd = bashCommand(event);
-    if (cmd === undefined) return;
-    for (const t of dispatchedTasks(cmd)) {
-      if (!t.id.startsWith("review_")) armed.set(`${t.ws}/${t.id}`, t);
-    }
-  });
-
-  pi.on("agent_before_settle", async (event, ctx) => {
-    if (fired || armed.size === 0 || nested() || noUI(ctx) || answerDue(ctx)) return;
-    if (outcomeOf(event) !== "completed") return;
-    fired = true;
-    // One read per armed task, all at once: the settle waits for the slowest.
-    const tasks = [...armed];
-    const refuted = await Promise.all(tasks.map(([, t]) => briefRefuted(run, t.ws, t.id)));
-    const refs = tasks.flatMap(([ref], i) => (refuted[i] === false ? [ref] : []));
-    if (refs.length === 0) return;
-    if (answerDue(ctx)) {
-      fired = false;
-      return;
-    }
-    const logWs = [...armed.values()].find((t) => t.ws !== "")?.ws;
-    breadcrumb(run, [
-      "log",
-      ...(logWs ? ["-w", logWs] : []),
-      "--kind",
-      NUDGE_LOG_KIND,
-      `refute: ${refs.join(", ")}`,
-    ]);
-    return {
-      entries: [
-        {
-          type: "custom_message",
-          customType: REFUTE_NUDGE_MESSAGE_TYPE,
-          content: refuteNudgeText(refs),
-          display: true,
-        },
-      ],
       yielded: () => {
         fired = false;
       },

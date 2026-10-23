@@ -59,7 +59,7 @@ EVIDENCE: FINDING <high|med|low> <file:line|task> <what> (check <1-7>)
 
 `record` keeps only the VERDICT line and the `EVIDENCE:` lines after
 it, so each finding must be an `EVIDENCE: FINDING` line. The note
-lands headed `REFUTER`, which the refute nudge and decision warnings
+lands headed `REFUTER`, which decision warnings
 read as a recorded verdict; on an umbrella that is harmless.
 
 ## Act

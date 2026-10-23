@@ -693,7 +693,7 @@ describe("mu pi extension", () => {
       expect(readdirSync(dirname(sock))).toEqual(["a.sock"]);
     });
 
-    /** A mu that says the parent agent owns an IN_PROGRESS task and dispatched an unrefuted one. */
+    /** A mu that says the parent agent owns an IN_PROGRESS task and dispatched another. */
     const busyMu = () =>
       vi.fn<MuRunner>(async (args) => {
         const [noun, verb] = args;
@@ -703,8 +703,6 @@ describe("mu pi extension", () => {
             stdout: JSON.stringify({ items: [{ name: "t1", status: "IN_PROGRESS" }] }),
             stderr: "",
           };
-        if (noun === "task" && verb === "notes")
-          return { code: 0, stdout: JSON.stringify({ items: [] }), stderr: "" };
         if (noun === "task" && verb === "list")
           return {
             code: 0,
@@ -732,7 +730,7 @@ describe("mu pi extension", () => {
         (r as { entries: { customType: string }[] }).entries.map((e) => e.customType),
       );
 
-    it("a nested pi (socket already live) gets no close, refute or keep-driving nudge", async () => {
+    it("a nested pi (socket already live) gets no close or keep-driving nudge", async () => {
       await fake.emit("session_start");
       const run = busyMu();
       const nested = otherPi(run);
@@ -753,7 +751,7 @@ describe("mu pi extension", () => {
       const run = busyMu();
       const agent = samePi(run);
       await agent.emit("session_start");
-      const all = ["mu-close-task", "mu-keep-driving", "mu-refute-brief"];
+      const all = ["mu-close-task", "mu-keep-driving"];
       expect(types(await prompt(agent)).sort()).toEqual(all);
       await agent.emit("session_shutdown", { reason: "reload" });
       const reloaded = samePi(run);
@@ -761,26 +759,25 @@ describe("mu pi extension", () => {
       expect(types(await prompt(reloaded)).sort()).toEqual(all);
     });
 
-    it("a pi with no MU_CTL_SOCK (orchestrator) keeps all three nudges", async () => {
+    it("a pi with no MU_CTL_SOCK (orchestrator) keeps both nudges", async () => {
       const key = "MU_CTL_SOCK";
       delete process.env[key];
       const orch = samePi(busyMu());
       await orch.emit("session_start");
-      const all = ["mu-close-task", "mu-keep-driving", "mu-refute-brief"];
+      const all = ["mu-close-task", "mu-keep-driving"];
       expect(types(await prompt(orch, { ...orch.ctx, hasUI: true })).sort()).toEqual(all);
     });
 
-    it("a plain pi (no MU_CTL_SOCK, no MU_AGENT_NAME) keeps keep-driving and refute", async () => {
+    it("a plain pi (no MU_CTL_SOCK, no MU_AGENT_NAME) keeps keep-driving", async () => {
       for (const k of ["MU_CTL_SOCK", "MU_AGENT_NAME"]) delete process.env[k];
       const run = busyMu();
       const plain = samePi(run);
       await plain.emit("session_start");
       const rs = await prompt(plain, { ...plain.ctx, hasUI: true });
-      expect(types(rs).sort()).toEqual(["mu-keep-driving", "mu-refute-brief"]);
-      expect(run).toHaveBeenCalledWith(expect.arrayContaining(["notes"]));
+      expect(types(rs).sort()).toEqual(["mu-keep-driving"]);
     });
 
-    it("no UI (pi -p, json): no close or refute nudge, keep-driving stays", async () => {
+    it("no UI (pi -p, json): no close nudge, keep-driving stays", async () => {
       const agent = samePi(busyMu());
       await agent.emit("session_start");
       const rs = await prompt(agent, { ...agent.ctx, hasUI: false, mode: "print" });

@@ -101,7 +101,7 @@ describe("dispatchedWorkstreams", () => {
     ["mu task claim --evidence 'brief; refuted' --for w1 build -w auth", ["auth"]],
     ["mu task claim build --for w1 --evidence 'a | b' -w auth", ["auth"]],
     ["mu agent send a 'x; y' -w one && mu agent send b -w two 'p'", ["one", "two"]],
-    // The same claim parse as dispatchedTasks: -f, --for=, a leading --for.
+    // The claim parse: -f, --for=, a leading --for.
     ["mu task claim t1 -f w1 -w ws", ["ws"]],
     ["mu task claim t1 --for=w1 -w ws", ["ws"]],
     ["mu task claim --for w1 ws/t1", ["ws"]],

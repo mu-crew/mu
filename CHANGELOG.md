@@ -52,6 +52,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `MU_TUI_DEBUG_MOUSE` env vars, the `ink`, `react` and `react-devtools-core`
   dependencies, the `dist/tui-sync-worker.js` bundle and
   `src/project-root.ts` (its only caller was the TUI launch ladder).
+- **The refute nudge.** `registerRefuteNudge`, `refuteNudgeText`,
+  `dispatchedTasks` and the `mu-refute-brief` message are gone; unrefuted
+  dispatches no longer get a notice. The keep-driving and close nudges stay,
+  and `MU_NUDGE=0` now turns off those two. `parallelSettle` merges two
+  handlers, not three.
 - **Legacy op handling.** `src/legacy-ops.ts` is gone. Old `workstream.export`
   prose ops are no longer skipped by apply, rebuild, flush, ingest and
   `--from`; they are treated like any other op (none exist in the live DB or
