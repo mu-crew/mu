@@ -13,6 +13,7 @@ import {
   AgentNameExhaustedError,
   AgentSpawnStartupError,
 } from "../src/agents/errors.js";
+import { resetHandshakeClockForTests, setHandshakeClockForTests } from "../src/agents/spawn.js";
 import {
   getAgent,
   insertAgent,
@@ -59,6 +60,7 @@ beforeEach(() => {
 afterEach(async () => {
   mux.restore();
   resetSleep();
+  resetHandshakeClockForTests();
   resetCommandResolverForTests();
   await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
   db.close();
@@ -416,16 +418,22 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     mux.restore();
     const state = freshMockState();
     const fake = mockTmux(state).executor;
-    let spawnedAt = 0;
+    // Virtual handshake clock: each delay advances it by exactly the
+    // requested ms, so the pane-alive checks land at 0, 250 and 300 on
+    // every run regardless of host load.
+    let t = 0;
+    setHandshakeClockForTests({
+      now: () => t,
+      delay: async (ms) => {
+        t += ms;
+      },
+    });
     mux = installMux("tmux", async (args) => {
       // The pane dies in the last 10 ms of the budget: any capture at or
-      // after 290 ms finds it gone, as on real tmux. Keyed on elapsed time,
-      // not a capture count, so a loaded host that skips or delays a tick
-      // cannot move the death past the last capture.
-      if (args[0] === "capture-pane" && Date.now() - spawnedAt >= 290) state.panes.clear();
+      // after virtual 290 ms finds it gone, as on real tmux.
+      if (args[0] === "capture-pane" && t >= 290) state.panes.clear();
       const res = await fake(args);
       if (args[0] === "new-session") {
-        spawnedAt = Date.now();
         for (const pane of state.panes.values()) pane.scrollback = "fatal: instance lock held";
       }
       return res;
