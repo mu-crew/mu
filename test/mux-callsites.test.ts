@@ -80,10 +80,17 @@ describe("best-effort call sites degrade when no mux is reachable", () => {
 
 describe("load-bearing call sites propagate NoMultiplexerError", () => {
   it("sendToAgent throws — a send that reaches no pane is a failed send", async () => {
-    seedAgent("alpha");
-    await expect(
-      sendToAgent(db, "worker-1", "hi", { workstream: "alpha", via: "mux" }),
-    ).rejects.toBeInstanceOf(NoMultiplexerError);
+    // Only herdr has sendToPane; a non-pi agent's send is the mux-load-bearing one.
+    ensureWorkstream(db, "alpha");
+    insertAgent(db, { name: "worker-1", workstream: "alpha", paneId: "w1:p1", cli: "claude" });
+    const herdr = installUnreachableMux("herdr", () => new NoMultiplexerError(["herdr"]));
+    try {
+      await expect(
+        sendToAgent(db, "worker-1", "hi", { workstream: "alpha" }),
+      ).rejects.toBeInstanceOf(NoMultiplexerError);
+    } finally {
+      herdr.restore();
+    }
   });
 
   it("readAgent throws — the scrollback IS the verb's output", async () => {

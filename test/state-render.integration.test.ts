@@ -286,16 +286,12 @@ describe("the op formatter", () => {
     const { join } = await import("node:path");
     const {
       AgentNotFoundError,
-      adoptAgent,
       closeAgent,
       insertAgent,
       resetCommandResolverForTests,
       setCommandResolverForTests,
       spawnAgent,
     } = await import("../src/agents.js");
-    const { kickAgent, resetKickProcessExecutor, setKickProcessExecutor } = await import(
-      "../src/agents/kick.js"
-    );
     const { openDb } = await import("../src/db.js");
     const { KNOWN_INTENTS, KNOWN_VERBS, renderOp } = await import("../src/log-render.js");
     const { listLogs } = await import("../src/logs.js");
@@ -372,18 +368,6 @@ describe("the op formatter", () => {
       const { executor } = mockTmux(tmuxState);
       setTmuxExecutor(executor);
       await captureNewEvents(() => spawnAgent(db, { name: "worker-1", workstream: "agents" }));
-      const orphanWindowId = `@${tmuxState.nextWindowId++}`;
-      const orphanPaneId = `%${tmuxState.nextPaneId++}`;
-      tmuxState.windows.get("mu-agents")?.push({ id: orphanWindowId, name: "orphan" });
-      tmuxState.panes.set(orphanPaneId, {
-        windowId: orphanWindowId,
-        paneId: orphanPaneId,
-        title: "orphan-1",
-        command: "pi",
-      });
-      await captureNewEvents(() =>
-        adoptAgent(db, { paneId: orphanPaneId, workstream: "agents", cli: "pi" }),
-      );
       await captureNewEvents(() => closeAgent(db, "worker-1", { workstream: "agents" }));
       resetTmuxExecutor();
 
@@ -466,23 +450,6 @@ describe("the op formatter", () => {
         refreshWorkspace(db, { agent: "worker-1", workstream: "events", fromRef: "HEAD" }),
       );
 
-      await captureNewEvents(async () => {
-        setTmuxExecutor(async (args) => {
-          if (args[0] === "display-message" && args.includes("#{pane_tty}")) {
-            return { stdout: "/dev/ttys999\n", stderr: "", exitCode: 0 };
-          }
-          return { stdout: "", stderr: "unexpected tmux call", exitCode: 1 };
-        });
-        setKickProcessExecutor(async (cmd) => {
-          if (cmd === "ps") return { stdout: "12345 12345 R+ find\n", stderr: "", exitCode: 0 };
-          if (cmd === "kill") return { stdout: "", stderr: "", exitCode: 0 };
-          return { stdout: "", stderr: "unexpected process call", exitCode: 1 };
-        });
-        await kickAgent(db, "worker-1", { workstream: "events" });
-      });
-      resetTmuxExecutor();
-      resetKickProcessExecutor();
-
       addTask(db, {
         localId: "stalled",
         workstream: "events",
@@ -529,9 +496,7 @@ describe("the op formatter", () => {
       // `vcs_workspaces` are machine-local, and `agent stalled` mutates
       // nothing.
       const expected = [
-        "agent adopt",
         "agent close",
-        "agent kick",
         "agent spawn",
         "workspace create",
         "workspace free",
@@ -551,7 +516,6 @@ describe("the op formatter", () => {
       setWaitStuckWarnForTests(previousStuckWarn);
       resetCommandResolverForTests();
       resetTmuxExecutor();
-      resetKickProcessExecutor();
       db.close();
       rmSync(tempDir, { recursive: true, force: true });
       rmSync(noneProjectRoot, { recursive: true, force: true });

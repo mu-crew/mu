@@ -16,6 +16,7 @@ import {
   AgentPaneDeadError,
   type AgentRow,
   AgentSendIndeterminateError,
+  AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
   expectsCtl,
   insertAgent,
@@ -226,32 +227,42 @@ describe("sendViaTransport", () => {
     expect(err).toBeInstanceOf(AgentPaneDeadError);
   });
 
-  it("via mux forces the paste path for a pi agent", async () => {
-    seed("worker-1");
-    const res = await sendToAgent(db, "worker-1", "hello", {
-      workstream: "auth",
-      via: "mux",
-      readinessMs: 0,
-    });
-    expect(res).toEqual({ transport: "mux" });
-    expect(pasted()).toBe(true);
-  });
-
-  it("an empty send to a pi agent over ctl is refused with a --via mux next step", async () => {
+  it("an empty send to a pi agent over ctl is refused, pointing at the pane", async () => {
     seed("worker-1");
     const err = await sendToAgent(db, "worker-1", "", { workstream: "auth" }).catch(
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(AgentEmptySendError);
-    expect((err as AgentEmptySendError).errorNextSteps()[0]?.command).toContain("--via mux");
+    expect((err as AgentEmptySendError).message).not.toContain("--via");
+    expect((err as AgentEmptySendError).errorNextSteps()[0]?.command).toBe(
+      "mu agent read worker-1 -n 20 -w auth",
+    );
     expect(pasted()).toBe(false);
   });
 
-  it("sends to a non-pi CLI through the mux", async () => {
+  it("send to a non-pi agent on tmux throws AgentSendUnsupportedError", async () => {
     seed("worker-1", "claude");
-    const res = await sendToAgent(db, "worker-1", "hi", { workstream: "auth", readinessMs: 0 });
-    expect(res.transport).toBe("mux");
-    expect(pasted()).toBe(true);
+    const err = await sendToAgent(db, "worker-1", "hi", { workstream: "auth" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentSendUnsupportedError);
+    expect((err as Error).message).toBe(
+      "agent worker-1 runs claude, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr) or use pi",
+    );
+    expect(pasted()).toBe(false);
+    expect(mux.calls.some((c) => c[0] === "send-keys" || c[0] === "set-buffer")).toBe(false);
+  });
+
+  it("send to a non-pi agent on herdr goes through the atomic agent prompt", async () => {
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "claude" });
+    const herdr = installMux("herdr", [["agent prompt", "{}"]]);
+    try {
+      const res = await sendToAgent(db, "worker-1", "hi", { workstream: "auth" });
+      expect(res).toEqual({ transport: "mux" });
+      expect(herdr.calls.some((c) => c[0] === "agent" && c[1] === "prompt")).toBe(true);
+    } finally {
+      herdr.restore();
+    }
   });
 });
 
@@ -300,7 +311,7 @@ describe("pi session commands over ctl", () => {
     );
   });
 
-  it("an extension without op command raises AgentExtensionOutdatedError (reload via mux)", async () => {
+  it("an extension without op command raises AgentExtensionOutdatedError (respawn hint)", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), (req) =>
       req.op === "hello"
@@ -312,10 +323,14 @@ describe("pi session commands over ctl", () => {
     );
     expect(err).toBeInstanceOf(AgentExtensionOutdatedError);
     expect(err).toMatchObject({ op: "command" });
+    const cmds = (err as AgentExtensionOutdatedError).errorNextSteps().map((n) => n.command);
+    expect(cmds).toEqual([
+      "mu agent close worker-1 -w auth && mu agent spawn worker-1 -w auth ...",
+    ]);
     expect(pasted()).toBe(false);
   });
 
-  it("an extension that serves op command but not fresh: reload over ctl, no --via mux", async () => {
+  it("an extension that serves op command but not fresh: reload over ctl", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), (req) =>
       req.op === "hello"
@@ -337,7 +352,7 @@ describe("pi session commands over ctl", () => {
     expect(pasted()).toBe(false);
   });
 
-  it("refuses any other slash command, naming the supported ones and --via mux", async () => {
+  it("refuses any other slash command, naming the supported ones", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));
     const err = await sendToAgent(db, "worker-1", "/tree", { workstream: "auth" }).catch(
@@ -345,7 +360,8 @@ describe("pi session commands over ctl", () => {
     );
     expect(err).toBeInstanceOf(AgentSlashCommandUnsupportedError);
     const msg = (err as Error).message;
-    for (const s of ["/new", "/reload", "/compact", "--via mux"]) expect(msg).toContain(s);
+    for (const s of ["/new", "/reload", "/compact"]) expect(msg).toContain(s);
+    expect(msg).not.toContain("--via");
     expect(received).toEqual([]);
     expect(mux.calls).toEqual([]);
   });
@@ -375,25 +391,7 @@ describe("pi session commands over ctl", () => {
     expect(mux.calls).toEqual([]);
   });
 
-  it("a non-pi agent's /new still uses the paste path", async () => {
-    seed("worker-1", "claude");
-    const res = await sendToAgent(db, "worker-1", "/new", { workstream: "auth", readinessMs: 0 });
-    expect(res.transport).toBe("mux");
-    expect(pasted()).toBe(true);
-  });
-
-  it("--via mux still types an arbitrary slash command into a pi pane", async () => {
-    seed("worker-1");
-    const res = await sendToAgent(db, "worker-1", "/tree", {
-      workstream: "auth",
-      via: "mux",
-      readinessMs: 0,
-    });
-    expect(res.transport).toBe("mux");
-    expect(pasted()).toBe(true);
-  });
-
-  it("CLI: /compact --force --json reports command; unknown slash exits 2 with the --via mux hint", async () => {
+  it("CLI: /compact --force --json reports command; unknown slash exits 2 with the read-the-pane hint", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "idle" });
     const ok = await runCli(
@@ -410,7 +408,7 @@ describe("pi session commands over ctl", () => {
     expect(bad.exitCode).toBe(2);
     const body = JSON.parse(bad.stderr) as { error: string; nextSteps: { command: string }[] };
     expect(body.error).toBe("AgentSlashCommandUnsupportedError");
-    expect(body.nextSteps[0]?.command).toBe("mu agent send worker-1 '/tree' --via mux -w auth");
+    expect(body.nextSteps[0]?.command).toBe("mu agent read worker-1 -n 20 -w auth");
   });
 });
 
@@ -524,12 +522,7 @@ describe("mu agent send transport", () => {
     }
   });
 
-  it("a mux send and a ctl reply without runs keep the pane-read hint", async () => {
-    seed("shy", "claude");
-    const mux1 = await runCli(["agent", "send", "shy", "hello", "-w", "auth", "--json"], dbPath);
-    expect(JSON.stringify(JSON.parse(mux1.stdout).nextSteps)).toContain(
-      "mu agent read shy -n 50 -w auth",
-    );
+  it("a ctl reply without runs keeps the pane-read hint", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "busy" });
     const old = await runCli(
@@ -567,14 +560,18 @@ describe("mu agent send transport", () => {
     expect(pasted()).toBe(false);
   });
 
-  it("rejects an unknown --via", async () => {
+  it("--via is no longer an option; a send to a non-pi agent on tmux exits 4", async () => {
     seed("worker-1");
-    const { exitCode, stderr } = await runCli(
-      ["agent", "send", "worker-1", "hello", "--via", "ssh", "-w", "auth"],
+    const via = await runCli(
+      ["agent", "send", "worker-1", "hello", "--via", "mux", "-w", "auth"],
       dbPath,
     );
-    expect(exitCode).not.toBeNull();
-    expect(stderr).toContain("--via must be ctl or mux");
+    expect(via.exitCode).not.toBeNull();
+    expect(via.stderr).toMatch(/unknown option/);
+    seed("shy", "claude");
+    const r = await runCli(["agent", "send", "shy", "hello", "-w", "auth", "--json"], dbPath);
+    expect(r.exitCode).toBe(4);
+    expect(JSON.parse(r.stderr).error).toBe("AgentSendUnsupportedError");
   });
 });
 
@@ -622,14 +619,14 @@ describe("send --fresh", () => {
     expect(err).toBeInstanceOf(AgentExtensionOutdatedError);
     expect(err).toMatchObject({ op: "fresh", extVersion: "3.0.0" });
     const cmds = (err as AgentExtensionOutdatedError).errorNextSteps().map((n) => n.command);
+    // oldExtension does not serve op command: /reload over ctl is unavailable.
     expect(cmds).toEqual([
-      "mu agent send worker-1 '/reload' --via mux -w auth",
       "mu agent close worker-1 -w auth && mu agent spawn worker-1 -w auth ...",
     ]);
     expect(pasted()).toBe(false);
   });
 
-  it("CLI: the outdated-extension error exits 4 with both next steps in --json", async () => {
+  it("CLI: the outdated-extension error exits 4 with the respawn step in --json", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), oldExtension);
     const r = await runCli(
@@ -639,17 +636,13 @@ describe("send --fresh", () => {
     expect(r.exitCode).toBe(4);
     const body = JSON.parse(r.stderr) as { error: string; nextSteps: { command: string }[] };
     expect(body.error).toBe("AgentExtensionOutdatedError");
-    expect(body.nextSteps.map((n) => n.command).join("\n")).toContain("'/reload' --via mux");
+    expect(body.nextSteps.map((n) => n.command).join("\n")).toContain("mu agent spawn worker-1");
   });
 
-  it("refuses non-pi agents and --via mux without pasting", async () => {
+  it("refuses --fresh to a non-pi agent without pasting", async () => {
     seed("worker-1", "claude");
-    seed("worker-2");
     await expect(
       sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true }),
-    ).rejects.toBeInstanceOf(AgentFreshNeedsCtlError);
-    await expect(
-      sendToAgent(db, "worker-2", "x", { workstream: "auth", fresh: true, via: "mux" }),
     ).rejects.toBeInstanceOf(AgentFreshNeedsCtlError);
     expect(pasted()).toBe(false);
   });

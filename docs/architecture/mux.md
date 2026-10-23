@@ -65,7 +65,7 @@ Each call site has decided what "no reachable multiplexer" means:
 
 | | On `NoMultiplexerError` | Examples |
 | --- | --- | --- |
-| **Load-bearing** | propagate; `handle()` maps it to exit 5 | spawn, send, read, kill, adopt, kick, reconcile, session create and destroy |
+| **Load-bearing** | propagate; `handle()` maps it to exit 5 | spawn, send, read, kill, reconcile, session create and destroy |
 | **Best-effort** | `try`/`catch`, degrade | actor identity, pane titles, pane borders, workstream listings, liveness polls, TUI attach |
 
 `resolveWorkerIdentity()` in `src/tasks/claim.ts` is the canonical
@@ -138,7 +138,7 @@ returning. `src/reconcile.ts` is the only implementation, and
    exists.
 2. **Surface orphans.** List panes in the workstream's session that
    have no row but whose title looks like an agent name. mu never
-   adopts them; the user runs `mu agent adopt <pane> [--name X]`.
+   registers them; the user closes the pane or ignores it.
 
 The mux is the source of truth for which panes exist.
 
@@ -161,7 +161,5 @@ Runtime state is read on demand and never persisted.
   `ctl refused`, `murmur not installed`, `murmur pi extension not
   linked`, `murmur has no row`, `remote snapshot stale`, `herdr reports
   no state`, or `pane gone`.
-- `src/mux/input-timing.ts` reads pane text only to decide when tmux
-  input can be submitted on the paste path. It does not report state.
 - `agents.status` is deprecated. Inserts write `spawning` to satisfy the
   schema; nothing reads it as runtime state.

@@ -43,10 +43,10 @@ import {
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentSendIndeterminateError,
+  AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
-  PaneNotInSessionError,
   WorkspaceOwnerBusyError,
   WorkspacePreservedError,
 } from "../agents.js";
@@ -250,11 +250,11 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof UsageError ||
     // `mu log --kind task|note|...`: a tag naming a projectable entity.
     err instanceof LogKindReservedError ||
-    // abort on a non-pi agent: the operator picked the wrong verb (kick).
+    // abort on a non-pi agent: there is no control socket to carry it.
     err instanceof AgentAbortNeedsCtlError ||
     // send --fresh on an agent with no control socket: wrong recipe.
     err instanceof AgentFreshNeedsCtlError ||
-    // an empty send or unsupported slash command to a pi agent: --via mux is the recipe.
+    // an empty send or unsupported slash command to a pi agent: ctl cannot carry it.
     err instanceof AgentEmptySendError ||
     err instanceof AgentSlashCommandUnsupportedError ||
     err instanceof WorkstreamNameInvalidError ||
@@ -309,7 +309,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof TaskNotInWorkstreamError ||
     err instanceof AgentNotInWorkstreamError ||
     err instanceof WorkspaceOwnerBusyError ||
-    err instanceof PaneNotInSessionError ||
+    err instanceof AgentSendUnsupportedError ||
     err instanceof CycleError ||
     err instanceof CrossWorkstreamEdgeError ||
     err instanceof WorkspaceExistsError ||
@@ -405,7 +405,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     return { label: "conflict", exitCode: 4 };
   }
   if (err instanceof AgentAbortTimeoutError) {
-    // Same lane as the wait verbs' timeout: still busy, try again or kick.
+    // Same lane as the wait verbs' timeout: still busy, try again.
     return { label: "timeout", exitCode: 5 };
   }
   if (err instanceof NoMultiplexerError) {

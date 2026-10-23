@@ -13,7 +13,6 @@ import {
   newWindow,
   paneExists,
   resetTmuxExecutor,
-  sendToPane,
   sessionExists,
   setPaneTitle,
   splitWindow,
@@ -153,64 +152,6 @@ describeIfTmux("tmux integration (real tmux server)", () => {
     );
     const content = await capturePane(paneId);
     expect(content).toContain("MU_INTEGRATION_MARKER");
-  });
-
-  // The big one: bracketed-paste actually delivers special chars literally.
-  it("sendToPane delivers special characters literally to bash (not parsed as paths)", async () => {
-    // Use bash -i so we have a real prompt that processes input.
-    const paneId = await newWindow({
-      session,
-      name: "shell",
-      command: "bash --norc --noprofile",
-    });
-    await pollUntil(() => capturePane(paneId).then((out) => out.trim().includes("bash")), {
-      description: "bash prompt appears",
-    });
-
-    // The smoking gun for naive send-keys: if `/` were interpreted as a
-    // less/vim search command, this command would never reach bash. With
-    // bracketed paste it arrives as literal text.
-    // readinessMs: 0 skips post-send verification (~7.5s: bash's command echo
-    // reads as stranded input). Verification is covered by
-    // tmux-send-readiness.integration.test.ts and tmux.test.ts.
-    const marker = `MU_BP_${Date.now()}`;
-    await sendToPane(paneId, `echo "${marker} /tmp/has/slashes ?question !bang"`, {
-      delayMs: 200,
-      readinessMs: 0,
-    });
-
-    await pollUntil(
-      () =>
-        capturePane(paneId).then((out) =>
-          out.includes(`${marker} /tmp/has/slashes ?question !bang`),
-        ),
-      { description: "bracketed-paste command output appears" },
-    );
-    const output = await capturePane(paneId);
-    expect(output).toContain(`${marker} /tmp/has/slashes ?question !bang`);
-  });
-
-  it("sendToPane is safe to call when pane is in copy mode", async () => {
-    const paneId = await newWindow({
-      session,
-      name: "shell",
-      command: "bash --norc --noprofile",
-    });
-    await pollUntil(() => capturePane(paneId).then((out) => out.trim().includes("bash")), {
-      description: "bash prompt appears",
-    });
-
-    // Force copy-mode on the pane to verify the copy-mode -q step exits it.
-    const { tmux } = await import("../src/tmux.js");
-    await tmux(["copy-mode", "-t", paneId]);
-
-    const marker = `COPYMODE_${Date.now()}`;
-    await sendToPane(paneId, `echo ${marker}`, { delayMs: 200, readinessMs: 0 });
-    await pollUntil(() => capturePane(paneId).then((out) => out.includes(marker)), {
-      description: "copy-mode send output appears",
-    });
-    const output = await capturePane(paneId);
-    expect(output).toContain(marker);
   });
 });
 

@@ -89,8 +89,10 @@ describe("agent.send op", () => {
     expect(op && renderOp(op)).toMatchObject({ verb: "agent send", subject: "worker-1" });
   });
 
-  it("mux paste (non-pi): mode=plain transport=mux, no state", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "claude" });
+  it("herdr prompt (non-pi): mode=plain transport=mux, no state", async () => {
+    mux.restore();
+    mux = installMux("herdr", [["agent prompt", "{}"]]);
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "claude" });
     const r = await runCli(["agent", "send", "worker-1", "go", "-w", "auth"], dbPath);
     expect(r.exitCode).toBeNull();
     expect(sendOps().map((o) => o.payload)).toEqual([
@@ -99,7 +101,9 @@ describe("agent.send op", () => {
   });
 
   it("counts UTF-8 bytes, not UTF-16 code units", async () => {
-    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "claude" });
+    mux.restore();
+    mux = installMux("herdr", [["agent prompt", "{}"]]);
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "claude" });
     // "é" is 2 bytes and "🚀" is 4 bytes in UTF-8 (String.length: 1 and 2).
     const r = await runCli(["agent", "send", "worker-1", "é🚀", "--json", "-w", "auth"], dbPath);
     expect(r.exitCode).toBeNull();

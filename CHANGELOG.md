@@ -47,6 +47,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `SchemaTooOldError`; its next steps are now a `sqlite3 .backup` copy
   (mu cannot open the DB, so `mu db backup` was unreachable) and moving
   the file aside. `docs/guide/upgrade.md` drops the migration recipe.
+- **`mu agent kick`, `mu agent adopt` and the tmux paste send.** `mu agent
+  send --via`, `src/agents/kick.ts`, `src/agents/adopt.ts`,
+  `src/mux/input-timing.ts`, `MU_SEND_DELAY_MS`, `MU_SEND_READINESS_MS`,
+  `MuxBackend.paneTTY` and `PaneNotInSessionError` are gone (mu-next README
+  Cut table: 0, 2, 2 real uses). `MuxBackend.sendToPane` is now optional and
+  herdr-only (its atomic `agent prompt`). A send to a non-pi agent on tmux
+  throws the new `AgentSendUnsupportedError` (exit 4) instead of pasting.
+  `mu agent abort` and `send --interrupt` hints now point at `mu agent
+  close`; an outdated extension that lacks op `command` gets only the
+  respawn step; `ClaimerNotRegisteredError` drops its adopt step; the
+  doctor `ctl` row's `reloadVia` is `"ctl"` or `"respawn"`. Old
+  `agent.adopt` / `agent.kick` log rows still render.
 
 ## [3.13.3] — 2026-10-22
 

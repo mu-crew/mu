@@ -26,7 +26,6 @@ import {
   setPaneTitle,
   splitWindow,
 } from "../src/mux/herdr.js";
-import { PaneNotFoundError } from "../src/mux/types.js";
 import { withEnv } from "./_env.js";
 import { installMux, type MuxExecResult, type MuxExecutor, type MuxHarness } from "./_mux.js";
 import {
@@ -503,15 +502,6 @@ describe("herdr panes", () => {
     const calls = mockHerdr([["", OK]]);
     expect(await paneExists("%15")).toBe(false);
     expect(calls.calls).toHaveLength(0);
-  });
-
-  it("paneTTY throws PaneNotFoundError when the pane is gone", async () => {
-    mockHerdr([["pane process-info", serverError(PANE_NOT_FOUND)]]);
-    await expect(herdrBackend.paneTTY("w1:p9")).rejects.toBeInstanceOf(PaneNotFoundError);
-    // Named by the backend, with herdr's remediation, not "mux pane not found".
-    const err = await herdrBackend.paneTTY("w1:p9").catch((e: unknown) => e);
-    expect((err as Error).message).toBe("herdr pane not found: w1:p9");
-    expect((err as PaneNotFoundError).errorNextSteps()[0]?.command).toBe("herdr pane get w1:p9");
   });
 
   it("a pane's detected agent kind is its command, so reconcile can spot herdr orphans", async () => {

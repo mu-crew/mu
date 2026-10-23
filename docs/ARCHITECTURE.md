@@ -57,8 +57,8 @@ herdr, and murmur for other CLIs on tmux:
 each spawned pi. Send, `--fresh`, wait, abort and state for pi agents
 go through it, exactly, with no screen reading and no fallback to
 pasting. Remote agents use an ssh socket forward printed by
-`mu agent remote-env`. The tmux bracketed-paste path serves the
-[cases listed there](architecture/control-socket.md#no-silent-fallback).
+`mu agent remote-env`. Non-pi agents are sent to only on herdr
+([architecture/control-socket.md](architecture/control-socket.md#no-silent-fallback)).
 
 **Sync.** With `MU_SYNC_DIR` set, every `mu` invocation ingests peer
 JSONL segments before the verb and flushes its own ops after it,
@@ -119,22 +119,19 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/agents.ts` | CRUD, send, read, list, close, liveness, reaper; `composeAgentTitle` |
 | `src/agents/spawn.ts` | spawn: CLI resolution, pane create or reuse, liveness, readiness, ctl handshake, rollback |
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
-| `src/agents/transport.ts` | send routing: ctl for pi agents, mux paste otherwise, no fallback; `expectsCtl` |
+| `src/agents/transport.ts` | send routing: ctl for pi agents; herdr `sendToPane` for others; tmux refuses (`AgentSendUnsupportedError`); no fallback; `expectsCtl` |
 | `src/agents/abort.ts` | stop a pi turn through the control socket; abort + send (`--interrupt`) |
 | `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `error` / `died` / `timeout` / `pending` |
 | `src/agents/wait.ts` | block until task-less agents leave `busy` |
-| `src/agents/adopt.ts` | register an existing pane as an agent |
-| `src/agents/kick.ts` | `mu agent kick`: signal a wedged pane's foreground process group |
 | `src/agents/errors.ts` | typed agent errors |
-| `src/exec-file.ts` | `execFileCapture`: child_process runner shared by the tmux, herdr, kick and murmur executors (no execa) |
+| `src/exec-file.ts` | `execFileCapture`: child_process runner shared by the tmux, herdr and murmur executors (no execa) |
 | `src/agent-state.ts` | runtime state from ctl, herdr or murmur; `unknown` with a reason |
 | `src/reconcile.ts` | ghost prune and orphan surfacing |
 | `src/mux/index.ts` | cluster barrel that `src/mux.ts` re-exports |
 | `src/mux/types.ts` | `MuxBackend` interface; `MuxError`, `PaneNotFoundError`, `NoMultiplexerError` |
 | `src/mux/detect.ts` | `MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH` ladder; `activeMux()` |
-| `src/mux/tmux.ts` | tmux backend: the `tmux()` wrapper, bracketed-paste send, pane validation |
+| `src/mux/tmux.ts` | tmux backend: the `tmux()` wrapper, pane validation; no send |
 | `src/mux/herdr.ts` | herdr backend: JSON socket API, atomic send, native pane status, `startAgentInPane` |
-| `src/mux/input-timing.ts` | when tmux paste input can be submitted; not a state source |
 | `src/tmux.ts` | tmux-only re-exports: `MU_TMUX_SOCKET` seam, `sleep` / `setSleepForTests` |
 | `src/ctl/path.ts` | `ctlSocketPath`, `remoteCtlSocketPath`, `MU_CTL_SOCK` |
 | `src/ctl/protocol.ts` | protocol v1 types, `CTL_OPS`, line framing; imports nothing from mu |

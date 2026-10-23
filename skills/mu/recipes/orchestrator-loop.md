@@ -129,7 +129,7 @@ keep the note as the durable copy. pi:
 
 ## Stopping a worker
 
-`mu agent abort <w>` first for pi, then `mu agent kick` (pi
-unresponsive, or non-pi), then `mu agent close`.
+`mu agent abort <w>` first for pi, then `mu agent close` (pi
+unresponsive, or non-pi).
 
 Done when every task is closed, or a decision only a human can make blocks all progress (SKILL.md § Orchestrator rules).

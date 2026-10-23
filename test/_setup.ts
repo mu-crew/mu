@@ -6,7 +6,7 @@
 // developer (or the orchestrator agent) runs `npm test` from a
 // shell that exports SDK-level env overrides — e.g.
 // `MU_PI_COMMAND=pi-meta` (Meta-internal pi wrapper),
-// `MU_IDLE_THRESHOLD_MS=60000`, `MU_SEND_DELAY_MS=200`, etc. —
+// `MU_IDLE_THRESHOLD_MS=60000`, `MU_SPAWN_LIVENESS_MS=0`, etc. —
 // those values silently change SDK behaviour underneath every test.
 //
 // Concrete failure that motivated this: 5 cli-agent-spawn-validation

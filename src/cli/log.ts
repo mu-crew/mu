@@ -198,7 +198,7 @@ async function cmdLogTail(db: Db, baseOpts: ListLogsOptions, cliOpts: LogReadOpt
 }
 
 /** Tail interval default + safety floor. Mirrors defaultSpawnLivenessMs
- *  (src/agents.ts) and defaultSendDelayMs (src/tmux.ts). Naive
+ *  (src/agents.ts). Naive
  *  `Number(env)` was a DOS-by-typo: an env value of '' parses as 0
  *  and any non-numeric value as NaN, both of which Node's setTimeout
  *  treats as 1ms — hammering SQLite at ~500 Hz on the next mu log

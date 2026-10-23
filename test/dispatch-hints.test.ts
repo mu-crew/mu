@@ -9,12 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
-import {
-  abortHint,
-  dispatchHint,
-  nextDispatchHint,
-  plainSendHints,
-} from "../src/cli/dispatch-hints.js";
+import { dispatchHint, nextDispatchHint, plainSendHints } from "../src/cli/dispatch-hints.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -83,7 +78,6 @@ describe("dispatchHint", () => {
       intent: "Send work",
       command: "mu agent send worker-2 '...' -w auth",
     });
-    expect(dispatchHint(pi, { plain: true }).command).not.toContain("--fresh");
   });
 
   it("with a task: the prompt names the task and its notes", () => {
@@ -92,9 +86,7 @@ describe("dispatchHint", () => {
     );
   });
 
-  it("abort and next-dispatch hints are pi-only", () => {
-    expect(abortHint(pi)?.command).toBe("mu agent abort worker-1 -w auth");
-    expect(abortHint(claude)).toBeNull();
+  it("the next-dispatch hint is pi-only", () => {
     expect(nextDispatchHint(pi, "auth")?.command).toContain(
       "mu task claim <id> --for worker-1 -w auth && mu agent send worker-1 --fresh",
     );

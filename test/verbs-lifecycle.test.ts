@@ -46,24 +46,6 @@ afterEach(() => {
 // ─── sendToAgent ───────────────────────────────────────────────────────
 
 describe("sendToAgent", () => {
-  it("sends through the canonical bracketed-paste protocol", async () => {
-    const { executor, calls } = mockTmux(state);
-    setTmuxExecutor(executor);
-    const agent = await spawnAgent(db, { name: "alice", workstream: "auth" });
-    calls.length = 0; // ignore spawn calls
-    // readinessMs: 0 keeps this focused on the core protocol; the
-    // readiness/verify wrapper (dogfood_send_after_new_dropped) has its
-    // own coverage.
-    await sendToAgent(db, "alice", "hello", { workstream: "auth", readinessMs: 0, via: "mux" });
-    // Should have emitted the 4-step send protocol.
-    // display-message is the best-effort actor lookup for the agent.send log row.
-    const verbs = calls.map((c) => c[0]).filter((v) => v !== "display-message");
-    expect(verbs).toEqual(["copy-mode", "set-buffer", "paste-buffer", "send-keys"]);
-    // Targeted at alice's pane id.
-    const sendCall = calls.find((c) => c[0] === "send-keys");
-    expect(sendCall).toContain(agent.paneId);
-  });
-
   it("throws AgentNotFoundError for unknown agent (no tmux calls)", async () => {
     const { executor, calls } = mockTmux(state);
     setTmuxExecutor(executor);

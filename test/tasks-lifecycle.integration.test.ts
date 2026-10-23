@@ -97,8 +97,7 @@ describe("claimTask", () => {
   });
 
   it("bare claim falls back to the pane title for adopted panes", async () => {
-    // Adopted panes predate the env injection, so the fallback is the
-    // only identity they have. Deleting it would break `mu agent adopt`.
+    // Panes without the env injection have only the title as identity.
     await withCleanIdentityEnv(async () => {
       setTmuxExecutor(async (args) => {
         if (args[0] === "display-message" && args.includes("#{pane_title}")) {
@@ -198,7 +197,7 @@ describe("claimTask", () => {
     expect(getTask(db, "auth", "test")?.status).toBe("OPEN");
   });
 
-  it("ClaimerNotRegisteredError carries three structured next-steps via errorNextSteps()", async () => {
+  it("ClaimerNotRegisteredError carries two structured next-steps via errorNextSteps()", async () => {
     try {
       await claimTask(db, "auth", { agentName: "ghost", workstream: "test" });
       throw new Error("expected throw");
@@ -210,15 +209,14 @@ describe("claimTask", () => {
       expect(msg).toContain("ghost");
       expect(msg).toContain("not a registered mu agent");
       const steps = (err as ClaimerNotRegisteredError).errorNextSteps();
-      expect(steps).toHaveLength(3);
+      expect(steps).toHaveLength(2);
       // --self is first (most-common-resolution-first).
       expect(steps[0]?.command).toContain("--self");
       expect(steps[1]?.command).toContain("--for");
-      expect(steps[2]?.command).toContain("mu agent adopt");
     }
   });
 
-  it("ClaimerNotRegisteredError errorNextSteps() pins the actual pane id when name came from $TMUX_PANE", async () => {
+  it("ClaimerNotRegisteredError names the actual pane id when the name came from $TMUX_PANE", async () => {
     const executor: TmuxExecutor = async (args) => {
       if (args[0] === "display-message" && args.includes("#{pane_title}")) {
         return { stdout: "unregistered\n", stderr: "", exitCode: 0 };
@@ -233,8 +231,8 @@ describe("claimTask", () => {
       } catch (err) {
         expect(err).toBeInstanceOf(ClaimerNotRegisteredError);
         const steps = (err as ClaimerNotRegisteredError).errorNextSteps();
-        const adopt = steps.find((s) => s.command.startsWith("mu agent adopt"));
-        expect(adopt?.command).toBe("mu agent adopt %99");
+        expect((err as Error).message).toContain("(pane %99)");
+        expect(steps.some((s) => s.command.includes("adopt"))).toBe(false);
       }
     });
   });

@@ -215,7 +215,7 @@ export function loadDoctorSummary(
       checks.push({
         name: "panes",
         status: "warn",
-        detail: `${orphanPanes} orphan pane${orphanPanes === 1 ? "" : "s"}; run \`mu agent adopt\``,
+        detail: `${orphanPanes} orphan pane${orphanPanes === 1 ? "" : "s"}; close the pane or ignore it`,
       });
     }
     const orphanWorkspaces = snapshot.workspaceOrphans.length;
@@ -435,8 +435,8 @@ export interface AgentCtlReport {
   /** ok probes: protocol ops (CTL_OPS) the extension's hello does not list. */
   missingOps?: string[];
   /** Outdated probes: how `/reload` reaches it. "ctl" when the extension
-   *  serves op command, else "mux" (`--via mux`, typed into the pane). */
-  reloadVia?: "ctl" | "mux";
+   *  serves op command, else "respawn" (mu cannot reload it). */
+  reloadVia?: "ctl" | "respawn";
 }
 
 /**
@@ -522,7 +522,7 @@ export async function ctlSocketsDoctorCheck(
         ...(older || missingOps.length > 0
           ? {
               outdated: true,
-              reloadVia: probe.kind === "ok" && probe.ops?.includes("command") ? "ctl" : "mux",
+              reloadVia: probe.kind === "ok" && probe.ops?.includes("command") ? "ctl" : "respawn",
             }
           : {}),
         ...(missingOps.length > 0 ? { missingOps } : {}),
@@ -629,8 +629,8 @@ export function yankCommandForCheck(check: Pick<DoctorCheck, "name" | "status">)
       // detailed agent list remains in the doctor detail text.
       return "mu state";
     case "panes":
-      // Orphan tmux panes — the standard adoption recipe.
-      return "mu agent adopt";
+      // Orphan panes: the listing names them; closing is the operator's call.
+      return "mu agent list";
     case "workspaces":
       // Diagnostic: list orphan workspace dirs with their cleanup
       // command. An orphan has no row, so `mu workspace free` cannot
@@ -695,8 +695,8 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
         "answering. `version`: protocol mismatch; upgrade mu or pi.",
         "Run `mu link pi`, then respawn the agent. `extension X older than",
         "installed Y` or `lacks ops`: the agent's pi loaded an older mu",
-        "build; reload it with `mu agent send <a> '/reload'` (add",
-        "`--via mux` when the extension lacks op command) or respawn it.",
+        "build; reload it with `mu agent send <a> '/reload'` (needs an",
+        "extension that serves op command) or respawn it.",
       ];
     case "agents":
       return [
@@ -708,9 +708,8 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
     case "panes":
       return [
         "An 'orphan pane' is a live tmux pane in the workstream's",
-        "session that mu doesn't know about. Adopt it via",
-        "`mu agent adopt <pane-id>` to register it as a managed agent,",
-        "or kill it manually if it's not yours.",
+        "session that mu doesn't know about. Close the pane with",
+        "tmux/herdr, or ignore it if it's not yours.",
       ];
     case "workspaces":
       return [

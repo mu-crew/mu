@@ -114,7 +114,7 @@ The crew survives detach and reattach.
 
 The multiplexer is a backend chosen by detection
 (`MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH`), like the VCS backend.
-Topology, the paste protocol, scrollback capture, pane-id validation,
+Topology, herdr's atomic send, scrollback capture, pane-id validation,
 and identity fallback live behind `MuxBackend` in `src/mux/`. There are
 two implementations. A third needs its own friction evidence.
 
@@ -126,10 +126,10 @@ mu never infers agent state from pane text. Each state source reports it:
 | --- | --- | --- |
 | pi (any backend, local or remote over `ssh -L`) | control socket, exact | control socket |
 | other CLI on herdr | mux | herdr |
-| other CLI on tmux | mux (bracketed paste) | murmur |
+| other CLI on tmux | none: send refused | murmur |
 
 With no source, state is `unknown` with a reason. A pi agent whose
-socket does not answer fails loudly; mu never falls back to pasting.
+socket does not answer fails loudly; mu never falls back to pasting. mu has no tmux paste.
 murmur is optional for pi agents.
 
 `MU_PI_COMMAND="pi-alt --some-flag"` swaps the pi command for every

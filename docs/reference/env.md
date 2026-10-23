@@ -38,16 +38,6 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_SPAWN_LIVENESS_MS` | tmux only. Wait this long, then check the pane is alive and its scrollback has no startup error (auth failure, `command not found`). Failure rolls back the row and throws `AgentDiedOnSpawnError` or `AgentSpawnStartupError`. A pi agent skips the wait: the pane is checked on each ctl handshake tick and scanned when it ends. | `1500` |
 | `MU_SPAWN_LOCK_TIMEOUT_MS` | How long a spawn waits for the per-workstream spawn lock. | `15000` |
 
-## Send and state (tmux path)
-
-These apply to the tmux paste path only. For when that path runs, see
-[No silent fallback](../architecture/control-socket.md#no-silent-fallback).
-
-| Name | Effect | Default |
-| --- | --- | --- |
-| `MU_SEND_READINESS_MS` | Before pasting, wait out a pane's modal or re-init; after Enter, confirm it landed. `0` sends fire-and-forget. A busy pane is not waited on. | `15000` |
-| `MU_SEND_DELAY_MS` | Delay between the bracketed paste and Enter. | `500` |
-
 ## Agents and timing
 
 | Name | Effect | Default |

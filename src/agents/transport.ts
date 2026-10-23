@@ -3,8 +3,9 @@
 // A pi agent (speaksMuCtl) is reached through its control socket, served
 // by the mu pi extension inside the pane's own pi. `/new`, `/reload` and
 // `/compact` become the ctl `command` op; any other slash command is
-// refused (pi.sendUserMessage would hand it to the model as text). Only
-// non-pi agents and an explicit `--via mux` reach the mux paste path. No
+// refused (pi.sendUserMessage would hand it to the model as text).
+// A non-pi agent goes to `mux.sendToPane` when the backend has one (herdr's
+// atomic `agent prompt`), else AgentSendUnsupportedError (tmux). No
 // silent fallback: a pi agent whose socket does not answer is an
 // AgentCtlUnreachableError, never a paste.
 
@@ -37,6 +38,7 @@ import {
   AgentFreshNeedsCtlError,
   AgentPaneDeadError,
   AgentSendIndeterminateError,
+  AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
 } from "./errors.js";
 import { resolveCliCommand, speaksMuCtl } from "./spawn.js";
@@ -64,8 +66,6 @@ export type SendResult = {
 export type TransportSendOptions = SendOptions & {
   /** How a busy pi queues the message. Default followUp. ctl only. */
   mode?: "steer" | "followUp";
-  /** Force a transport instead of choosing by agent and text. */
-  via?: Transport;
   /** Control socket path. Default: agentCtlSocket(db, agent). */
   socket?: string;
   /** Start a new pi session and send the text into it, as one ctl op. */
@@ -94,11 +94,6 @@ export function expectsCtl(
   sock: string = ctlSocketPath(agent.workstreamName, agent.name),
 ): boolean {
   return speaksMuCtl(agent.cli, resolveCliCommand(agent.cli)) || existsSync(sock);
-}
-
-/** The transport a send to `agent` uses when not forced. */
-export function chooseTransport(agent: AgentRow, sock?: string): Transport {
-  return expectsCtl(agent, sock) ? "ctl" : "mux";
 }
 
 /** The slash commands a pi agent runs over ctl, as typed. */
@@ -236,15 +231,15 @@ export async function sendViaTransport(
   opts: TransportSendOptions & { socket: string },
 ): Promise<SendResult> {
   const sock = opts.socket;
-  if (opts.fresh && (opts.via === "mux" || !expectsCtl(agent, sock))) {
-    throw new AgentFreshNeedsCtlError(agent.name, agent.workstreamName, agent.cli);
-  }
-  const transport = opts.fresh ? "ctl" : (opts.via ?? chooseTransport(agent, sock));
-  if (transport === "mux") {
-    // The paste path: non-pi CLIs, adopted panes, and an explicit --via mux.
+  if (!expectsCtl(agent, sock)) {
+    if (opts.fresh) throw new AgentFreshNeedsCtlError(agent.name, agent.workstreamName, agent.cli);
     // Load-bearing: a send that cannot reach a pane is a failed send.
-    await (await activeMux()).sendToPane(agent.paneId, text, opts);
-    return { transport };
+    const mux = await activeMux();
+    if (!mux.sendToPane) {
+      throw new AgentSendUnsupportedError(agent.name, agent.workstreamName, agent.cli);
+    }
+    await mux.sendToPane(agent.paneId, text, opts);
+    return { transport: "mux" };
   }
   if (text === "") throw new AgentEmptySendError(agent.name, agent.workstreamName);
   if (!opts.fresh) {
@@ -273,7 +268,7 @@ export async function sendViaTransport(
     throw new Error(`control socket refused the send: ${reply.error}`);
   }
   return {
-    transport,
+    transport: "ctl",
     ...(reply.state !== undefined ? { state: reply.state } : {}),
     ...(reply.runs !== undefined ? { runs: reply.runs } : {}),
     ...(reply.since !== undefined ? { since: reply.since } : {}),

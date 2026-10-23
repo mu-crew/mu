@@ -30,7 +30,7 @@ mu picks the backend from the first rule that matches:
 | Attach | `tmux attach -t mu-<ws>` | `herdr workspace focus <id>`, then `herdr` outside a herdr pane |
 | pi agent state | control socket | control socket |
 | Other agents' state | murmur | herdr |
-| Send to non-pi agents | bracketed paste, then Enter | one atomic `agent prompt` |
+| Send to non-pi agents | refused (exit 4) | one atomic `agent prompt` |
 | Spawn | one command | bare pane, then `agent start` |
 | Pane borders, layout | set by mu | left to herdr |
 | Test isolation | `MU_TMUX_SOCKET` | `MU_HERDR_SESSION` |
@@ -40,8 +40,6 @@ Where each agent's state comes from, per backend:
 
 ## Know herdr's limits
 
-- `mu agent kick` works on Linux only. It reads the TTY from
-  `/proc/<pid>/fd/0`, which macOS does not have.
 - `mu agent read --lines` cannot recover rows that scrolled off a pane
   on the alternate screen.
 - herdr starts the agent binary itself (`herdr agent start --kind

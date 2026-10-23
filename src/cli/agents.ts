@@ -1,5 +1,5 @@
 // mu — every `mu agent ...` verb + spawn / send / read / list / show /
-// close / adopt + the top-level `mu me` agent-self
+// close + the top-level `mu me` agent-self
 // verb (default + `tasks` / `next` subcommands).
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
@@ -13,28 +13,21 @@
 import { dirname } from "node:path";
 import { agentKey, blockedReason, ctlRuntimeState, readAgentStates } from "../agent-state.js";
 import {
-  type AdoptAgentOptions,
-  type AdoptAgentResult,
   AgentCtlUnreachableError,
   AgentNotFoundError,
   type AgentStatusSnapshot,
   type AgentWatch,
   abortAgent,
-  adoptAgent,
   agentCtlSocket,
   closeAgent,
   delegateOutcome,
   expectsCtl,
   getAgent,
   interruptAgent,
-  isKickSignal,
   isSlashCommand,
-  type KickSignal,
-  kickAgent,
   listLiveAgents,
   parseSessionCommand,
   readAgent,
-  refreshAgentTitle,
   resolveCliCommand,
   resolveCliCommandWithSource,
   type SpawnedAgent,
@@ -65,7 +58,7 @@ import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.j
 import { listTasksByOwner } from "../tasks.js";
 import { detectBackend, type VcsBackendName } from "../vcs.js";
 import { getWorkspaceForAgent } from "../workspace.js";
-import { abortHint, dispatchHint, plainSendHints } from "./dispatch-hints.js";
+import { dispatchHint, plainSendHints } from "./dispatch-hints.js";
 import { checkWorkspaceStalenessForDispatch } from "./staleness.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
@@ -338,11 +331,6 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
   }
 }
 
-function parseVia(raw: string | undefined): Transport | undefined {
-  if (raw === undefined || raw === "ctl" || raw === "mux") return raw;
-  throw new UsageError(`--via must be ctl or mux (got ${JSON.stringify(raw)})`);
-}
-
 export async function cmdSend(
   db: Db,
   rawName: string,
@@ -352,20 +340,17 @@ export async function cmdSend(
     json?: boolean;
     strictStaleness?: boolean;
     steer?: boolean;
-    via?: string;
     fresh?: boolean;
     force?: boolean;
     interrupt?: boolean;
     timeout?: number;
   } = {},
 ): Promise<void> {
-  const via = parseVia(opts.via);
   const text = rawText === STDIN_ARG ? await readStdinText("send text") : rawText;
   if (opts.interrupt) {
     for (const [on, flag] of [
       [opts.fresh, "--fresh"],
       [opts.steer, "--steer"],
-      [via === "mux", "--via mux"],
       [opts.force, "--force"],
     ] as const) {
       if (on) throw new UsageError(`--interrupt and ${flag} are mutually exclusive`);
@@ -398,7 +383,6 @@ export async function cmdSend(
   const sent = await sendToAgent(db, name, text, {
     workstream: ws,
     ...(opts.steer ? { mode: "steer" as const } : {}),
-    ...(via !== undefined ? { via } : {}),
     ...(opts.fresh ? { fresh: true } : {}),
     ...(opts.force ? { force: true } : {}),
     onUndelivered: (w) => {
@@ -467,7 +451,7 @@ export async function cmdSend(
   } else {
     const how =
       sent.transport === "mux"
-        ? "via mux paste"
+        ? "via mux"
         : opts.fresh
           ? "via ctl, fresh session"
           : sent.command !== undefined
@@ -582,11 +566,7 @@ export async function cmdList(
     console.log("");
     console.log(pc.yellow(`Orphan panes (${view.orphans.length})`));
     console.log(pc.dim("  Panes that look like agents but aren't in the registry."));
-    console.log(
-      pc.dim(
-        `  Run \`mu agent adopt <pane-id>\` to register one as a managed agent (e.g. \`mu agent adopt ${view.orphans[0]?.paneId ?? "%15"}\`).`,
-      ),
-    );
+    console.log(pc.dim("  Kill one with tmux/herdr or ignore it."));
     for (const orphan of view.orphans) {
       console.log(
         `  ${pc.dim(orphan.paneId)} title=${pc.bold(orphan.title)} cli=${orphan.command}`,
@@ -739,156 +719,6 @@ export async function cmdClose(
     : "";
   console.log(`Closed ${pc.bold(name)}${wsBit}`);
   printNextSteps(next);
-}
-
-interface AdoptCliOpts {
-  workstream?: string;
-  name?: string;
-  cli?: string;
-  role?: string;
-  json?: boolean;
-}
-
-export async function cmdAdopt(db: Db, paneOrTitle: string, opts: AdoptCliOpts): Promise<void> {
-  const ws = await resolveWorkstream(opts.workstream);
-
-  // Allow `mu agent adopt <pane-id>` (the backend's id form: tmux '%15',
-  // herdr 'w1:p2') OR `mu agent adopt <pane-title>` (a string that looks
-  // like an agent name; we look it up in the workstream's mux session).
-  // Pane-id form is preferred for scripting; pane-title form is the
-  // ergonomic form for interactive use.
-  // Load-bearing: resolving the pane IS the verb's input.
-  const mux = await activeMux();
-  let paneId: string;
-  if (mux.isValidPaneId(paneOrTitle)) {
-    paneId = paneOrTitle;
-  } else {
-    const session = `mu-${ws}`;
-    const panes = await mux.listPanesInSession(session);
-    const match = panes.find((p) => p.title === paneOrTitle);
-    if (!match) {
-      throw new UsageError(
-        `no pane with title '${paneOrTitle}' in session ${session} (try \`mu agent list -w ${ws}\` and pass the pane id)`,
-      );
-    }
-    paneId = match.paneId;
-  }
-
-  const adoptOpts: AdoptAgentOptions = {
-    paneId,
-    workstream: ws,
-    name: opts.name,
-    cli: opts.cli,
-    role: opts.role,
-  };
-  const result: AdoptAgentResult = await adoptAgent(db, adoptOpts);
-  // Refresh title with composed state. Adopt may have set it to just
-  // the agent name; this re-renders with status emoji etc.
-  await refreshAgentTitle(db, result.agent.name, ws);
-
-  // Window-scoped border for the adopted pane's window. (cmdInit set
-  // it on _mu but adopted panes can be in any window.) Self-checks
-  // MU_BANNER_QUIET; best-effort.
-  await mux.enableMuPaneBordersForPane(paneId).catch(() => {});
-
-  const nextSteps: NextStep[] = [];
-  // An adopted pi pane was started without MU_CTL_SOCK, so sends to it
-  // fail loud. Say how to fix that before anything else.
-  const ctlDown = result.ctl === "missing" || result.ctl === "refused";
-  if (ctlDown) {
-    nextSteps.push(
-      {
-        intent: "Restart pi in that pane with the control socket",
-        command: `MU_CTL_SOCK=${result.ctlSocket} pi`,
-      },
-      {
-        intent: "Or paste into the pane explicitly",
-        command: `mu agent send ${result.agent.name} "..." --via mux -w ${ws}`,
-      },
-    );
-  }
-  nextSteps.push(
-    dispatchHint(result.agent, { plain: ctlDown }),
-    { intent: "Read pane", command: `mu agent read ${result.agent.name} -w ${ws}` },
-    { intent: "Verify in agent list", command: `mu agent list -w ${ws}` },
-  );
-
-  if (opts.json) {
-    emitJson({
-      adopted: !result.alreadyAdopted,
-      alreadyAdopted: result.alreadyAdopted,
-      agent: result.agent,
-      previousTitle: result.previousTitle,
-      paneTitleSetTo: result.paneTitleSetTo,
-      ctl: result.ctl,
-      ctlSocket: result.ctlSocket,
-      nextSteps,
-    });
-    return;
-  }
-  if (ctlDown) {
-    console.error(
-      pc.yellow(
-        `warning: adopted pi agent ${result.agent.name} has no control socket (ctl: ${result.ctl}) at ${result.ctlSocket}; \`mu agent send\` will fail until pi runs with MU_CTL_SOCK set (or use --via mux)`,
-      ),
-    );
-  }
-
-  if (result.alreadyAdopted) {
-    console.log(pc.dim(`already adopted: ${result.agent.name} (pane ${result.agent.paneId})`));
-    printNextSteps(nextSteps);
-    return;
-  }
-  console.log(
-    `Adopted ${pc.bold(result.agent.name)} ${pc.dim(`(pane ${result.agent.paneId}, workstream ${result.agent.workstreamName})`)}`,
-  );
-  if (result.previousTitle !== null && result.previousTitle !== result.paneTitleSetTo) {
-    console.log(pc.dim(`  pane title: '${result.previousTitle}' -> '${result.paneTitleSetTo}'`));
-  }
-  printNextSteps(nextSteps);
-}
-
-export async function cmdKick(
-  db: Db,
-  rawName: string,
-  opts: { workstream?: string; signal?: string; json?: boolean } = {},
-): Promise<void> {
-  const { name } = await resolveEntityRef(db, rawName, opts, "agent");
-  assertAgentInWorkstream(db, name, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
-  const sigRaw = opts.signal ?? "SIGINT";
-  if (!isKickSignal(sigRaw)) {
-    throw new UsageError(
-      `--signal must be one of SIGINT, SIGTERM, SIGKILL (got ${JSON.stringify(sigRaw)})`,
-    );
-  }
-  const signal: KickSignal = sigRaw;
-  const result = await kickAgent(db, name, { workstream: ws, signal });
-  const agentRow = getAgent(db, name, ws);
-  const abort = agentRow === undefined ? null : abortHint(agentRow);
-  const nextSteps: NextStep[] = [
-    ...(abort === null ? [] : [abort]),
-    {
-      intent: "Read the pane to confirm the tool aborted",
-      command: `mu agent read ${name} -n 30 -w ${ws}`,
-    },
-    {
-      intent: "Send follow-up steering once the prompt returns",
-      command: `mu agent send ${name} '...' -w ${ws}`,
-    },
-    {
-      intent: "Escalate (graceful → polite → hammer)",
-      command: `mu agent kick ${name} --signal SIGTERM -w ${ws}`,
-    },
-  ];
-  if (opts.json) {
-    emitJson({ ...result, nextSteps });
-    return;
-  }
-  console.log(
-    `Kicked ${pc.bold(name)} ${pc.dim(`(signal=${result.signal}, pgid=${result.signaledPgid}, comm=${result.foregroundComm}, tty=${result.tty})`)}`,
-  );
-  printNextSteps(nextSteps);
 }
 
 export async function cmdAbort(
@@ -1262,7 +1092,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("send <name> <text>")
     .description(
-      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback); '/new', '/reload' and '/compact [instructions]' run inside pi over the socket (refused while busy unless --force), any other slash command is refused (--via mux types it into the pane). Non-pi CLIs: pasted into the pane (atomic on herdr; bracketed-paste on tmux). --fresh (pi only): start a new session and send the text into it as one operation; returns once the prompt's run has started, so an immediate next send cannot be lost. Use it instead of sending '/new' then the prompt. Text `-` reads stdin: single-quote short text; pipe prose (apostrophes, $, backticks) as a quoted heredoc: mu agent send <name> - <<'EOF'",
+      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback); '/new', '/reload' and '/compact [instructions]' run inside pi over the socket (refused while busy unless --force), any other slash command is refused. Non-pi CLIs: herdr only (atomic `agent prompt`); on tmux the send is refused. --fresh (pi only): start a new session and send the text into it as one operation; returns once the prompt's run has started, so an immediate next send cannot be lost. Use it instead of sending '/new' then the prompt. Text `-` reads stdin: single-quote short text; pipe prose (apostrophes, $, backticks) as a quoted heredoc: mu agent send <name> - <<'EOF'",
     )
     .option(
       "--strict-staleness",
@@ -1281,7 +1111,6 @@ export function wireAgentCommands(program: Command): void {
       "with --interrupt: max seconds to wait for pi to settle (default 30)",
       parsePositiveNumber,
     )
-    .option("--via <transport>", "force the transport: ctl or mux (mux = paste into the pane)")
     .option(
       "--fresh",
       "pi only: new session + this prompt, one operation (refused with exit 4 while pi is busy)",
@@ -1298,7 +1127,6 @@ export function wireAgentCommands(program: Command): void {
         json?: boolean;
         strictStaleness?: boolean;
         steer?: boolean;
-        via?: string;
         fresh?: boolean;
         force?: boolean;
         interrupt?: boolean;
@@ -1370,32 +1198,11 @@ export function wireAgentCommands(program: Command): void {
       return handle((db) => cmdClose(db, name, opts), this as Command)();
     });
 
-  agent
-    .command("kick <name>")
-    .description(
-      "Signal the foreground process group of an agent's pane TTY (escape hatch for a worker wedged on an unbounded `find` / busy-wait loop). For a pi agent try `mu agent abort` first: it stops the turn through the control socket. Default --signal SIGINT (graceful, matches Ctrl-C). Refuses when the foreground is the wrapping CLI itself — use `mu agent close` to close the agent.",
-    )
-    .option(
-      "--signal <sig>",
-      "signal to send: SIGINT (default; graceful), SIGTERM (polite), SIGKILL (hammer)",
-      "SIGINT",
-    )
-    .option(...WORKSTREAM_OPT)
-    .option(...JSON_OPT)
-    .action(function (name: string) {
-      const opts = (this as Command).opts() as {
-        workstream?: string;
-        signal?: string;
-        json?: boolean;
-      };
-      return handle((db) => cmdKick(db, name, opts), this as Command)();
-    });
-
   // `mu agent abort` — stop a pi agent's turn through its control socket.
   agent
     .command("abort <name>")
     .description(
-      "Stop a pi agent's current turn through its control socket (what Esc does in the pane), then wait until pi settles. Kills the running tool. A follow-up queued before the abort does not run: pi puts it back into the pane's editor unsent. Idle agents are left alone (exit 0). Exit 5 when still busy after --timeout; then use `mu agent kick`. Works for remote agents through the forwarded socket. Non-pi agents have no socket: use `mu agent kick`.",
+      "Stop a pi agent's current turn through its control socket (what Esc does in the pane), then wait until pi settles. Kills the running tool. A follow-up queued before the abort does not run: pi puts it back into the pane's editor unsent. Idle agents are left alone (exit 0). Exit 5 when still busy after --timeout; then use `mu agent close`. Works for remote agents through the forwarded socket. Non-pi agents have no socket: use `mu agent close`.",
     )
     .option(
       "--timeout <seconds>",
@@ -1449,33 +1256,6 @@ export function wireAgentCommands(program: Command): void {
       return handle(
         (db) =>
           cmdAgentWait(db, names, {
-            ...opts,
-            workstream: normalizeInheritedWorkstream(opts.workstream),
-          }),
-        this as Command,
-      )();
-    });
-
-  // `mu agent adopt` — register an existing mux pane as a managed agent.
-  // Lives under `mu agent` like every other agent-lifecycle verb
-  // (mu_adopt_should_be_mu_agent_adopt_for).
-  agent
-    .command("adopt <pane-or-title>")
-    .description(
-      "Register an existing mux pane as a managed mu agent (the inverse of `mu agent list`'s 'orphan' state). Pane id form (tmux '%15', herdr 'w1:p2') or pane title form 'worker-2'.",
-    )
-    .option("--name <name>", "agent name (defaults to the pane's current title)")
-    .option("--cli <cli>", "agent CLI key (default: pi)")
-    .option("--role <role>", "full-access | read-only", "full-access")
-    .option(...WORKSTREAM_OPT)
-    .option(...JSON_OPT)
-    .action(function (paneOrTitle: string) {
-      const opts = (this as Command).optsWithGlobals() as Omit<AdoptCliOpts, "workstream"> & {
-        workstream?: string | string[];
-      };
-      return handle(
-        (db) =>
-          cmdAdopt(db, paneOrTitle, {
             ...opts,
             workstream: normalizeInheritedWorkstream(opts.workstream),
           }),

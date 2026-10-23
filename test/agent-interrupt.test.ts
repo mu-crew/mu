@@ -146,12 +146,12 @@ describe("mu agent send --interrupt", () => {
     expect(ops[0]).toMatchObject({ op: "interrupt", timeoutMs: 2000 });
   });
 
-  it("settle timeout: exit 5, kick hint", async () => {
+  it("settle timeout: exit 5, close hint", async () => {
     seed();
     await serve({ hasInterrupt: true, settles: false });
     const r = await send("--interrupt", "--timeout", "0.1", "x");
     expect(r.exitCode).toBe(5);
-    expect(r.stderr).toContain("mu agent kick worker-1");
+    expect(r.stderr).toContain("mu agent close worker-1");
   });
 
   it("old extension (no interrupt op): falls back to abort, settle, then send; never pastes", async () => {
@@ -185,7 +185,6 @@ describe("mu agent send --interrupt", () => {
   it.each([
     [["--fresh"], /--interrupt and --fresh are mutually exclusive/],
     [["--steer"], /--interrupt and --steer are mutually exclusive/],
-    [["--via", "mux"], /--interrupt and --via mux are mutually exclusive/],
   ])("exclusive with %j: exit 2, nothing sent", async (flags, msg) => {
     seed();
     await serve({ hasInterrupt: true });
@@ -231,11 +230,11 @@ describe("mu agent send --interrupt", () => {
     expect(r.stderr).toMatch(/--timeout only applies with --interrupt/);
   });
 
-  it("non-pi agent: exit 2 pointing at kick, never pastes", async () => {
+  it("non-pi agent: exit 2 pointing at close, never pastes", async () => {
     seed("claude");
     const r = await send("--interrupt", "x");
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain("mu agent kick");
+    expect(r.stderr).toContain("mu agent close");
     expect(pasted()).toBe(false);
   });
 });

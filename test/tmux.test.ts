@@ -8,7 +8,6 @@ import { AGENT_STATE_GLYPH, GLYPH } from "../src/glyphs.js";
 import {
   assertValidPaneId,
   capturePane,
-  defaultSendDelayMs,
   enableMuPaneBorders,
   enableMuPaneBordersForPane,
   enableMuPaneBordersForSession,
@@ -23,14 +22,11 @@ import {
   newSessionWithPane,
   newWindow,
   PANE_ID_RE,
-  PaneNotFoundError,
   paneExists,
-  paneTTY,
   parseAgentNameFromTitle,
   resetSleep,
   resetTmuxExecutor,
   selectLayout,
-  sendToPane,
   sessionExists,
   setPaneTitle,
   setSleepForTests,
@@ -157,46 +153,6 @@ describe("tmux() wrapper", () => {
     setTmuxExecutor(executor);
     await tmux(["a", "b", "c"]);
     expect(calls).toEqual([{ args: ["a", "b", "c"] }]);
-  });
-});
-
-// ─── defaultSendDelayMs ───────────────────────────────────────────────
-
-describe("defaultSendDelayMs", () => {
-  // env var deletion: must use `delete process.env[key]` (computed-key form);
-  // assigning `undefined` would coerce to the literal string "undefined".
-  function withEnv(value: string | undefined, fn: () => void): void {
-    const key = "MU_SEND_DELAY_MS";
-    const original = process.env[key];
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
-    try {
-      fn();
-    } finally {
-      if (original === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = original;
-      }
-    }
-  }
-
-  it("defaults to 500 when env unset", () => {
-    withEnv(undefined, () => expect(defaultSendDelayMs()).toBe(500));
-  });
-
-  it("respects MU_SEND_DELAY_MS env var", () => {
-    withEnv("100", () => expect(defaultSendDelayMs()).toBe(100));
-    withEnv("0", () => expect(defaultSendDelayMs()).toBe(0));
-    withEnv("2000", () => expect(defaultSendDelayMs()).toBe(2000));
-  });
-
-  it("falls back to 500 on garbage", () => {
-    withEnv("not-a-number", () => expect(defaultSendDelayMs()).toBe(500));
-    withEnv("-1", () => expect(defaultSendDelayMs()).toBe(500));
   });
 });
 
@@ -757,51 +713,6 @@ describe("paneExists", () => {
   });
 });
 
-describe("paneTTY", () => {
-  it("returns the trimmed tty path on success", async () => {
-    const { executor, calls } = harness(() => ok("/dev/ttys012\n"));
-    setTmuxExecutor(executor);
-    expect(await paneTTY("%15")).toBe("/dev/ttys012");
-    expect(calls[0]?.args).toEqual(["display-message", "-t", "%15", "-p", "#{pane_tty}"]);
-  });
-
-  it("throws PaneNotFoundError when tmux says the pane is gone", async () => {
-    const { executor } = harness(() => fail("can't find pane: %15"));
-    setTmuxExecutor(executor);
-    await expect(paneTTY("%15")).rejects.toBeInstanceOf(PaneNotFoundError);
-  });
-
-  it("throws PaneNotFoundError when the tmux socket does not exist", async () => {
-    const { executor } = harness(() =>
-      fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
-    );
-    setTmuxExecutor(executor);
-    await expect(paneTTY("%15")).rejects.toBeInstanceOf(PaneNotFoundError);
-  });
-
-  it("throws PaneNotFoundError when display-message returns empty stdout", async () => {
-    // tmux's display-message can exit 0 with empty output for some
-    // bogus targets — paneTTY shouldn't return an empty string and
-    // let downstream `ps -t ''` blow up.
-    const { executor } = harness(() => ok("\n"));
-    setTmuxExecutor(executor);
-    await expect(paneTTY("%15")).rejects.toBeInstanceOf(PaneNotFoundError);
-  });
-
-  it("propagates other tmux failures as TmuxError", async () => {
-    const { executor } = harness(() => fail("server unreachable"));
-    setTmuxExecutor(executor);
-    await expect(paneTTY("%15")).rejects.toBeInstanceOf(TmuxError);
-  });
-
-  it("rejects invalid pane ids before calling tmux", async () => {
-    const { executor, calls } = harness(() => ok("/dev/ttys012\n"));
-    setTmuxExecutor(executor);
-    await expect(paneTTY("garbage")).rejects.toThrow(/invalid tmux pane id/);
-    expect(calls).toEqual([]);
-  });
-});
-
 describe("lockPaneTitle", () => {
   it("sets pane-scoped allow-set-title off", async () => {
     const { executor, calls } = harness(() => ok());
@@ -896,216 +807,6 @@ describe("selectLayout", () => {
     setTmuxExecutor(executor);
     await selectLayout(":Backend", "even-horizontal");
     expect(calls[0]?.args).toEqual(["select-layout", "-t", ":Backend", "even-horizontal"]);
-  });
-});
-
-// ─── Send protocol (the canonical bracketed-paste sequence) ───────────
-//
-// dogfood_send_after_new_dropped added a pre-send readiness wait and a
-// post-send submit verification around the core 4 tmux commands. Both
-// need real captures, so the tests that pin the CORE SEQUENCE opt out
-// with readinessMs: 0 (which also skips verification, since there is
-// nothing to re-submit into a mock). The new behaviour has its own
-// describe block below plus real-tmux coverage in
-// test/tmux-send-readiness.integration.test.ts.
-
-describe("sendToPane", () => {
-  it("emits the 5-step bracketed-paste sequence in order", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await sendToPane("%15", "hello world", { readinessMs: 0 });
-
-    expect(calls).toHaveLength(4);
-    // 1. copy-mode -q
-    expect(calls[0]?.args).toEqual(["copy-mode", "-q", "-t", "%15"]);
-    // 2. set-buffer with unique name
-    const [setBufferCmd, setBufferB, setBufferName, ...setBufferRest] = calls[1]?.args ?? [];
-    expect(setBufferCmd).toBe("set-buffer");
-    expect(setBufferB).toBe("-b");
-    expect(setBufferName).toMatch(/^mu-send-\d+-\d+-\d+$/);
-    expect(setBufferRest).toEqual(["hello world"]);
-    // 3. paste-buffer with -p (bracketed) -d (delete) -r (preserve LF)
-    const pasteArgs = calls[2]?.args ?? [];
-    expect(pasteArgs[0]).toBe("paste-buffer");
-    expect(pasteArgs).toContain("-p");
-    expect(pasteArgs).toContain("-d");
-    expect(pasteArgs).toContain("-r");
-    expect(pasteArgs).toContain("-b");
-    expect(pasteArgs).toContain(setBufferName);
-    expect(pasteArgs).toContain("-t");
-    expect(pasteArgs).toContain("%15");
-    // 4. send-keys Enter
-    expect(calls[3]?.args).toEqual(["send-keys", "-t", "%15", "Enter"]);
-  });
-
-  it("fails fast on a dead pane instead of polling the readiness budget", async () => {
-    // A vanished pane never quiesces. Before the fix the capture failure
-    // counted as "busy" and the send slept out the full budget (15s by
-    // default) before failing at copy-mode.
-    const { executor, calls } = harness(() => fail("can't find pane: %15"));
-    setTmuxExecutor(executor);
-    let slept = 0;
-    setSleepForTests(async (ms) => {
-      slept += ms;
-    });
-    await expect(sendToPane("%15", "hello", { readinessMs: 15_000 })).rejects.toThrow(
-      /can't find pane/,
-    );
-    expect(slept).toBe(0);
-    expect(calls.map((c) => c.args[0])).toEqual(["capture-pane"]);
-  });
-
-  it("fails fast on a dead pane when the server has zero sessions ('no current target')", async () => {
-    // With `exit-empty off` the server outlives its last session, and
-    // capture-pane on a dead pane says "no current target" instead of
-    // "can't find pane". It is the same gone pane.
-    const { executor, calls } = harness(() => fail("no current target"));
-    setTmuxExecutor(executor);
-    let slept = 0;
-    setSleepForTests(async (ms) => {
-      slept += ms;
-    });
-    await expect(sendToPane("%15", "hello", { readinessMs: 15_000 })).rejects.toThrow(
-      /no current target/,
-    );
-    expect(slept).toBe(0);
-    expect(calls.map((c) => c.args[0])).toEqual(["capture-pane"]);
-  });
-
-  it("waits out a Codex 'model: loading' screen before pasting", async () => {
-    let captures = 0;
-    const { executor, calls } = harness((args) => {
-      if (args[0] === "capture-pane") {
-        captures++;
-        return ok(captures <= 4 ? " model: loading\n" : "> \n");
-      }
-      return ok();
-    });
-    setTmuxExecutor(executor);
-    await sendToPane("%15", "hello", { readinessMs: 15_000, delayMs: 0 });
-    const firstPaste = calls.findIndex((c) => c.args[0] === "paste-buffer");
-    const firstEnter = calls.findIndex(
-      (c) => c.args[0] === "send-keys" && c.args.includes("Enter"),
-    );
-    expect(firstPaste).toBeGreaterThan(-1);
-    expect(firstEnter).toBeGreaterThan(firstPaste);
-    // Paste only after loading cleared (4 loading captures + 3 calm ones).
-    const capturesBefore = calls.slice(0, firstPaste).filter((c) => c.args[0] === "capture-pane");
-    expect(capturesBefore.length).toBeGreaterThanOrEqual(7);
-  });
-
-  it("waits on 'model: loading' even when the banner shows a ~/Working cwd", async () => {
-    let captures = 0;
-    const { executor, calls } = harness((args) => {
-      if (args[0] === "capture-pane") {
-        captures++;
-        return ok(captures <= 4 ? " directory: ~/Working\n model: loading\n" : "> \n");
-      }
-      return ok();
-    });
-    setTmuxExecutor(executor);
-    await sendToPane("%15", "hello", { readinessMs: 15_000, delayMs: 0 });
-    const firstPaste = calls.findIndex((c) => c.args[0] === "paste-buffer");
-    const before = calls.slice(0, firstPaste).filter((c) => c.args[0] === "capture-pane");
-    expect(before.length).toBeGreaterThanOrEqual(7);
-  });
-
-  it("keeps polling on a transient capture failure", async () => {
-    let captures = 0;
-    const { executor } = harness((args) => {
-      if (args[0] === "capture-pane") {
-        captures++;
-        return captures === 1 ? fail("server busy") : ok("$ \n");
-      }
-      return ok();
-    });
-    setTmuxExecutor(executor);
-    await sendToPane("%15", "", { readinessMs: 15_000 });
-    expect(captures).toBeGreaterThan(1);
-  });
-
-  it("empty text sends only a bare Enter (no paste-buffer)", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await sendToPane("%15", "", { readinessMs: 0 });
-    const verbs = calls.map((c) => c.args[0]);
-    expect(verbs).not.toContain("set-buffer");
-    expect(verbs).not.toContain("paste-buffer");
-    expect(calls.at(-1)?.args).toEqual(["send-keys", "-t", "%15", "Enter"]);
-  });
-
-  it("uses a unique buffer name per call", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await sendToPane("%15", "first");
-    await sendToPane("%15", "second");
-    const buf1 = calls[1]?.args[2];
-    const buf2 = calls[5]?.args[2];
-    expect(buf1).not.toBe(buf2);
-  });
-
-  it("waits the requested delay between paste and Enter", async () => {
-    const { executor } = harness(() => ok());
-    setTmuxExecutor(executor);
-    let observedMs: number | undefined;
-    setSleepForTests(async (ms) => {
-      observedMs = ms;
-    });
-    await sendToPane("%15", "hi", { delayMs: 250 });
-    expect(observedMs).toBe(250);
-  });
-
-  it("uses defaultSendDelayMs when delayMs not provided", async () => {
-    const { executor } = harness(() => ok());
-    setTmuxExecutor(executor);
-    let observedMs: number | undefined;
-    setSleepForTests(async (ms) => {
-      observedMs = ms;
-    });
-    await sendToPane("%15", "hi");
-    expect(observedMs).toBe(500);
-  });
-
-  it("skips sleep entirely when delayMs is 0", async () => {
-    const { executor } = harness(() => ok());
-    setTmuxExecutor(executor);
-    let sleepCalled = false;
-    setSleepForTests(async () => {
-      sleepCalled = true;
-    });
-    // readinessMs: 0 too — the readiness poll has its own sleep, and
-    // this test is about the paste->Enter delay specifically.
-    await sendToPane("%15", "hi", { delayMs: 0, readinessMs: 0 });
-    expect(sleepCalled).toBe(false);
-  });
-
-  it("rejects invalid pane ids before any tmux call", async () => {
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    await expect(sendToPane("garbage", "hi")).rejects.toThrow(/invalid tmux pane id/);
-    expect(calls).toEqual([]);
-  });
-
-  it("attempts buffer cleanup when paste fails", async () => {
-    const { executor, calls } = harness((args) => {
-      if (args[0] === "paste-buffer") return fail("paste failed");
-      return ok();
-    });
-    setTmuxExecutor(executor);
-    await expect(sendToPane("%15", "hi")).rejects.toBeInstanceOf(TmuxError);
-    const deleteBufferCall = calls.find((c) => c.args[0] === "delete-buffer");
-    expect(deleteBufferCall).toBeDefined();
-  });
-
-  it("preserves special characters literally in set-buffer arg", async () => {
-    // The whole point: a string containing /, ?, !, $, etc. must be passed
-    // verbatim to set-buffer so paste-buffer -p delivers it as literal text.
-    const { executor, calls } = harness(() => ok());
-    setTmuxExecutor(executor);
-    const tricky = "find / -name '*.rs' | xargs grep '?TODO' && echo $HOME!";
-    await sendToPane("%15", tricky);
-    const setBufferCall = calls.find((c) => c.args[0] === "set-buffer");
-    expect(setBufferCall?.args[3]).toBe(tricky);
   });
 });
 

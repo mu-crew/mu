@@ -48,13 +48,12 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **agent state** | `busy`, `needs_input`, `needs_permission`, or `unknown`, from the **state source**. Not persisted; see [Agent state values](#agent-state-values). | "agent status", "lifecycle state" |
 | **state source** | The **control socket** for pi agents; else herdr's `paneStatus()` or, on tmux, murmur. A silent pi socket gives `unknown` (`ctl missing`, `ctl refused`). | "scraper" |
 | **control socket** / **ctl** | The per-agent unix socket (`$MU_CTL_SOCK`) the mu pi extension serves inside pi. **ctl state** is `ok`, `missing`, or `refused`. | "rpc", "daemon" |
-| **session command** | `/new`, `/reload`, or `/compact [instructions]` sent to a pi agent. mu runs it inside pi through the ctl `command` op, never as a paste. Any other slash command to a pi agent is refused; `--via mux` types it into the pane. | "slash paste" |
+| **session command** | `/new`, `/reload`, or `/compact [instructions]` sent to a pi agent. mu runs it inside pi through the ctl `command` op, never as a paste. Any other slash command to a pi agent is refused. | "slash paste" |
 | **outdated extension** | A running pi whose loaded extension is older than mu (exit 4 on a missing op). pi's `/reload` fixes it. | |
 | **lastText** | A pi run's final assistant message, returned verbatim by `wait`. mu never interprets it. | "result", "output" (alone) |
 | **ghost** | An `agents` row whose `pane_id` no longer exists. Pruned by **reconcile**. | "dead agent", "stale row" |
 | **reaper** | The part of reconcile that releases a ghost's tasks to `OPEN`. Makes `mu task wait` exit 6. | "garbage collector", "janitor" |
 | **needs attention** | An `IN_PROGRESS` task whose owner has been `needs_input` for `--stuck-after` seconds. Check with `mu agent read <owner>`. | "stuck", "stalled" (kept only in the `stuck` JSON field and exit-7 `STALL_DETECTED`) |
-| **adopt** | Register an existing pane in the workstream's mux session as an agent (`mu agent adopt`). | "import", "absorb" |
 | **reconcile** | Re-derive registry rows from the mux. Runs in `mu agent list` and `mu doctor`. | "sync", "refresh" |
 | **extension** | The pi extension shipped in the mu package. | "plugin" |
 | **skill** | The bundled `SKILL.md` that teaches the LLM. | "system prompt" |
@@ -181,8 +180,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
   └──────────────────────────────────────────────────────────────┘
 ```
 
-Actor resolution reads `$MU_AGENT_NAME`, then the **pane title**
-(adopted panes have only a title). On tmux, read `#{pane_title}`, not
+Actor resolution reads `$MU_AGENT_NAME`, then the **pane title**. On tmux, read `#{pane_title}`, not
 `#W`: they differ when agents share a window.
 
 ## Agent state values

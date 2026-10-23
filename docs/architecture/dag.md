@@ -103,8 +103,8 @@ a two-rung ladder:
    window name, because one window can hold several agents. On herdr
    the name is registered with the mux and looked up by pane id.
 
-The fallback exists for **adopted** panes (`mu agent adopt`), which
-predate the env injection and carry only a title. The agent does not
+The fallback exists for panes that predate the env injection and
+carry only a title. The agent does not
 need to know its own name.
 
 ## Scoped subtree views

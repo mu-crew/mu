@@ -70,5 +70,4 @@ workers. Collect the work by fetching from the remote checkout:
 git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
 ```
 
-`mu agent kick` does not reach a remote process. Use `mu agent abort`,
-or close the pane.
+Use `mu agent abort` to stop a remote pi turn, or close the pane.
