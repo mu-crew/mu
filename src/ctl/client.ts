@@ -2,9 +2,11 @@
  * Client for the per-agent control socket served by the mu pi extension.
  * One request per connection: connect, write one line, read one line, end.
  */
+import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
 import {
   CTL_PROTOCOL_VERSION,
+  type CtlFeature,
   type CtlReply,
   type CtlRequest,
   type CtlStatus,
@@ -153,6 +155,16 @@ export function ctlRequest(
     conn.on("error", (e) => finish(ambiguous(e)));
     conn.on("close", () => finish(ambiguous(new Error("control socket closed without a reply"))));
   });
+}
+
+/** A fresh msgId for a send/fresh/interrupt: 36 characters, within the extension's limit. */
+export function newMsgId(): string {
+  return randomUUID();
+}
+
+/** Whether a hello reply lists `feature`. An older extension lists none. */
+export function ctlServes(hello: CtlReply, feature: CtlFeature): boolean {
+  return hello.ok && (hello.features?.includes(feature) ?? false);
 }
 
 /** A Node system error's `code` (ENOENT, ECONNREFUSED, ...), if any. */

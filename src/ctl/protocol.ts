@@ -18,23 +18,36 @@ export type CtlBlocked = { kind: string; title?: string; since: number };
 
 export type CtlRequest =
   | { op: "hello" }
-  | { op: "status" }
-  | { op: "send"; text: string; mode?: "steer" | "followUp" }
+  /** With msgId, also reply `msg`: whether this extension accepted that send/fresh/interrupt. */
+  | { op: "status"; msgId?: string }
+  /**
+   * `msgId` (send, fresh, interrupt; a string of 1-CTL_MSGID_MAX_LENGTH
+   * characters) lets the caller ask `status` later whether the request
+   * was accepted, when no reply arrived.
+   */
+  | { op: "send"; text: string; mode?: "steer" | "followUp"; msgId?: string }
   /**
    * Resolve once a run past afterRuns settles. With returnOnBlocked, also
    * resolve (ended "blocked", runs unchanged) when a dialog is open or
    * opens. Older extensions ignore the flag and hold until the settle.
    */
-  | { op: "wait"; afterRuns?: number; timeoutMs?: number; returnOnBlocked?: boolean }
+  | {
+      op: "wait";
+      afterRuns?: number;
+      timeoutMs?: number;
+      returnOnBlocked?: boolean;
+      /** Refused at once (INCARNATION_MISMATCH) when it is not the extension's current one. */
+      incarnation?: string;
+    }
   | { op: "abort" }
   /**
    * Make a busy pi act on `text` now: abort the running turn, wait for
    * agent_settled (up to timeoutMs), then send `text` as a new run. Idle:
    * just send. Replies `timeout` and sends nothing when pi does not settle.
    */
-  | { op: "interrupt"; text: string; timeoutMs?: number }
+  | { op: "interrupt"; text: string; timeoutMs?: number; msgId?: string }
   /** New session + prompt as one operation. Refused with error "busy" unless force. */
-  | { op: "fresh"; text: string; force?: boolean }
+  | { op: "fresh"; text: string; force?: boolean; msgId?: string }
   /**
    * Run one of pi's session commands inside pi (sendUserMessage cannot run
    * built-in slash commands). Refused with error "busy" unless force.
@@ -61,6 +74,21 @@ export const CTL_OPS = [
   "command",
 ] as const satisfies readonly CtlRequest["op"][];
 
+/**
+ * Optional capabilities, listed in the `hello` reply's `features`. Ops stay
+ * as they are: a feature is a field an old client never sends and ignores.
+ */
+export const CTL_FEATURES = ["incarnation", "msgId"] as const;
+export type CtlFeature = (typeof CTL_FEATURES)[number];
+
+/** How many accepted msgIds the extension remembers (oldest evicted). */
+export const CTL_MSGID_MEMORY = 64;
+/** Longest msgId the extension accepts. */
+export const CTL_MSGID_MAX_LENGTH = 64;
+
+/** Error text of a `wait` that named another pi process's incarnation. */
+export const INCARNATION_MISMATCH = "incarnation mismatch";
+
 export type CtlStatus = {
   state: CtlState;
   since: number;
@@ -79,6 +107,16 @@ export type CtlReply =
         piVersion?: string;
         /** hello only: the ops this extension serves. Absent: predates reporting. */
         ops?: string[];
+        /** hello only: the optional features this extension serves. Absent: none. */
+        features?: string[];
+        /**
+         * hello, status, send, fresh, interrupt, wait: minted once per pi
+         * process per socket; stable across /new and /reload, new after pi
+         * restarts. Absent from older extensions.
+         */
+        incarnation?: string;
+        /** status with msgId only: whether that msgId was accepted, and the reply's `runs`/time if so. */
+        msg?: { id: string; accepted: boolean; runs?: number; at?: number };
         /** hello only: the mu package version the extension was built from. */
         extVersion?: string;
         /** wait only: "blocked" when a dialog ended the wait before a settle (returnOnBlocked). */
@@ -95,7 +133,14 @@ export type CtlReply =
          */
         wasBusy?: boolean;
       })
-  | { v: 1; ok: false; error: string; ops?: string[] };
+  | {
+      v: 1;
+      ok: false;
+      error: string;
+      ops?: string[];
+      /** With INCARNATION_MISMATCH: the extension's current incarnation. */
+      incarnation?: string;
+    };
 
 /** Error text of a reply to an op the extension does not serve. */
 export const UNKNOWN_OP_PREFIX = "unknown op: ";
