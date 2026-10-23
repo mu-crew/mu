@@ -2,191 +2,38 @@
 
 import type { HasNextSteps, NextStep } from "../output.js";
 
-export type VcsBackendName = "jj" | "sl" | "git" | "none";
-
-/** Out-parameter for `detect()`: set `failed` when a root probe could not
- *  answer (spawn error, signal, timeout) as opposed to cleanly saying "not
- *  this VCS". A caller that caches the detected backend must not cache
- *  when `failed` is set: the probe may have hidden a higher-precedence
- *  backend. */
-export interface ProbeReport {
-  failed: boolean;
-}
-
-// ─── Refresh / rebase result + typed errors ──────────────────────────
-//
-// rebaseTo is the backend-side of `mu workspace refresh`. The errors
-// live in this module (not src/workspace.ts) because they're thrown
-// from inside the backend impls; workspace.ts imports vcs.ts, and the
-// root vcs hub re-exports these concrete definitions.
-
-export interface RebaseResult {
-  /** The ref the workspace was actually rebased onto (resolved
-   *  symbolic-or-revset → concrete name). For git that is the
-   *  resolveGitMainRef() symbolic ref; for jj/sl it's the literal
-   *  `trunk()` revset (or whatever the operator passed via fromRef). */
-  fromRef: string;
-  /** Concrete commit id of the workspace's new fork point: fromRef's
-   *  commit, or the previous fork point when that already descends from
-   *  it (parent_ref never moves backward). The caller writes it to
-   *  `vcs_workspaces.parent_ref` so staleness, `mu workspace commits`
-   *  and the close-time clean check measure from the new base. Omitted
-   *  when the backend cannot resolve a single commit (e.g. a jj revset
-   *  naming several); the caller then keeps the old value. */
-  parentRef?: string;
-  /** Commit subjects (or descriptions) that got replayed, oldest-first.
-   *  Empty when the workspace was already at fromRef (no-op). */
-  replayed: string[];
-  /** Files / commits that conflicted during the rebase. Always
-   *  empty for a successful rebase — a non-empty conflicts list
-   *  means we threw WorkspaceConflictError before returning. The
-   *  field exists so the error's serialised payload can carry it. */
-  conflicts: string[];
-}
+export type VcsBackendName = "git";
 
 export interface CommitSummary {
-  /** Full commit / change id. */
+  /** Full commit id. */
   sha: string;
-  /** First-line description / subject. */
+  /** First-line subject. */
   subject: string;
   /** Remainder of the commit message (may be empty). */
   body: string;
-  /** Author display name, when the backend exposes one. */
+  /** Author display name. */
   author: string;
-  /** ISO-8601 author / commit timestamp. */
+  /** ISO-8601 author timestamp. */
   authorDate: string;
   /** Compact relative author time (e.g. "3m", "2d"). */
   relTime: string;
 }
 
-export interface ShowCommitResult {
-  /** Captured VCS show output (possibly truncated). Empty string on error. */
-  text: string;
-  /** True when stdout exceeded SHOW_COMMIT_MAX_CHARS and was clipped. */
-  truncated: boolean;
-  /** Human-readable error message; omitted on success. */
-  error?: string;
-}
-
-/** Cap captured `show` output so giant merge commits can't eat the TUI. */
-export const SHOW_COMMIT_MAX_CHARS = 100_000;
-
 /**
- * Thrown by `rebaseTo` / `commitsSinceBase` on the `none` backend
- * (cp -a snapshots have no notion of a rebase target / fork point).
- * Maps to exit code 4.
+ * Thrown when `--workspace` is asked of a project root that is not a git
+ * repo: git worktrees are the only workspace kind. Maps to exit code 4.
  */
 export class WorkspaceVcsRequiredError extends Error implements HasNextSteps {
   override readonly name = "WorkspaceVcsRequiredError";
-  constructor(
-    public readonly verb: string,
-    public readonly workspacePath: string,
-  ) {
-    super(
-      `vcs none: \`mu workspace ${verb}\` requires a real VCS (jj/sl/git); ${workspacePath} is a cp -a snapshot`,
-    );
+  constructor(public readonly projectRoot: string) {
+    super(`--workspace requires a git repository; ${projectRoot} is not inside one`);
   }
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Free the snapshot and re-spawn with a real VCS backend",
-        command:
-          "mu workspace free <agent>  &&  mu agent spawn <agent> --workspace --workspace-backend <jj|sl|git>",
+        intent: "Run from inside a git repo, or name one",
+        command: "mu agent spawn <agent> --workspace --workspace-project-root <git-repo>",
       },
-    ];
-  }
-}
-
-/**
- * Thrown by `rebaseTo` when the workspace has uncommitted changes
- * the rebase would clobber. Carries the dirty file list so the operator
- * can decide between commit/stash/--force. Maps to exit code 4.
- */
-export class WorkspaceDirtyError extends Error implements HasNextSteps {
-  override readonly name = "WorkspaceDirtyError";
-  /** The verb that refused. Only `rebaseTo` refuses this way today,
-   *  but the field keeps the message + nextSteps self-describing. */
-  public readonly verb: string;
-  constructor(
-    public readonly workspacePath: string,
-    public readonly files: readonly string[],
-    verb = "rebase",
-  ) {
-    super(
-      `workspace dirty (${files.length} uncommitted file(s)): ${workspacePath}; refusing to ${verb}`,
-    );
-    this.verb = verb;
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Inspect the dirty files",
-        command: `(cd ${this.workspacePath} && git status -s)  # or jj st / sl st`,
-      },
-      {
-        intent: `Commit them first, then retry ${this.verb}`,
-        command: `(cd ${this.workspacePath} && git add -A && git commit -m WIP)`,
-      },
-      {
-        intent: "Or stash them first (git only)",
-        command: `(cd ${this.workspacePath} && git stash)`,
-      },
-      {
-        intent: "Or DISCARD the workspace entirely (the lossy escape)",
-        command: "mu workspace free <agent>",
-      },
-    ];
-  }
-}
-
-/**
- * Thrown by `rebaseTo` when the rebase produced conflicts. Carries the
- * conflicting paths (git/sl) or commits (jj). Maps to exit code 5.
- *
- * git and sl abort the rebase before throwing, so the workspace is back
- * at its pre-rebase state (`aborted` is true). jj cannot abort: the
- * rebase is done and the conflicts are committed in place (`aborted` is
- * false). Either way the row's parent_ref is unchanged, so the hint
- * ends with re-running refresh: once the conflicts are resolved, that
- * rebase is clean and records the base the disk is on.
- */
-export class WorkspaceConflictError extends Error implements HasNextSteps {
-  override readonly name = "WorkspaceConflictError";
-  constructor(
-    public readonly workspacePath: string,
-    public readonly fromRef: string,
-    public readonly conflicts: readonly string[],
-    /** True when the backend aborted the rebase and the workspace is unchanged. */
-    public readonly aborted = true,
-  ) {
-    super(
-      `rebase onto ${fromRef} produced ${conflicts.length} conflict(s)${aborted ? "; rebase aborted, workspace unchanged" : "; conflicts left in place"}: ${workspacePath}`,
-    );
-  }
-  errorNextSteps(): NextStep[] {
-    const resync = {
-      intent: "After resolving, record the new base (a clean refresh updates the fork point)",
-      command: `mu workspace refresh <agent> --from '${this.fromRef}'`,
-    };
-    if (this.aborted) {
-      return [
-        {
-          intent: "The rebase was aborted. Rebase by hand in the workspace and resolve",
-          command: `cd ${this.workspacePath}  # then: git rebase ${this.fromRef}  (sl: sl rebase -d '${this.fromRef}')`,
-        },
-        resync,
-        {
-          intent: "Or DISCARD the workspace entirely (the lossy escape)",
-          command: "mu workspace free <agent>",
-        },
-      ];
-    }
-    return [
-      {
-        intent: "Resolve the conflicted commits in place",
-        command: `cd ${this.workspacePath}  # then: jj resolve; or undo the rebase: jj op undo`,
-      },
-      resync,
     ];
   }
 }
@@ -196,26 +43,22 @@ export interface CreateWorkspaceOptions {
   projectRoot: string;
   /** Where to place the new workspace. Absolute path; must NOT exist. */
   workspacePath: string;
-  /** Optional commit / branch / changeset id to base off. Backend-specific:
-   *  git uses it as a `git worktree add`'s ref, jj as a revset, sl as a
-   *  rev. Undefined = current head. */
+  /** Optional commit / branch id to base off (`git worktree add`'s ref).
+   *  Undefined = current head. */
   parentRef?: string;
 }
 
 export interface CreateWorkspaceResult {
   /** The actual ref the workspace points at (resolved to a stable id
    *  when possible). Stored on the row; useful for `mu workspace list`
-   *  and for `--commit` flows. May be null for backends that don't
-   *  expose a meaningful parent (e.g. `none`). */
+   *  and for `--commit` flows. */
   parentRef: string | null;
 }
 
 export interface FreeWorkspaceOptions {
   workspacePath: string;
   /** If true, attempt to commit any pending changes BEFORE removal.
-   *  Backend-specific: jj auto-commits via `jj describe + jj new`, git
-   *  needs an explicit commit on the worktree, sl needs `sl commit`,
-   *  none has nothing to commit. If pending changes exist and `commit`
+   *  git needs an explicit commit on the worktree. If pending changes exist and `commit`
    *  is false, the on-disk directory still gets removed and changes are
    *  lost — the verb prints a clear warning. */
   commit: boolean;
@@ -236,147 +79,30 @@ export interface FreeWorkspaceResult {
 export interface VcsBackend {
   readonly name: VcsBackendName;
 
-  /** True iff this backend should handle `projectRoot`. Implementations
-   *  check for the relevant marker dir (`.jj`, `.sl`, `.git`); `none`
-   *  always returns true and is consulted last. `report.failed` is set
-   *  when a root probe was indeterminate (see `ProbeReport`). */
-  detect(projectRoot: string, report?: ProbeReport): Promise<boolean>;
+  /** True iff `projectRoot` is inside a git work tree. */
+  detect(projectRoot: string): Promise<boolean>;
 
   createWorkspace(opts: CreateWorkspaceOptions): Promise<CreateWorkspaceResult>;
 
   freeWorkspace(opts: FreeWorkspaceOptions): Promise<FreeWorkspaceResult>;
 
   /**
-   * Count commits that the project's default branch ("main") has but
-   * `ref` does not — i.e. how many commits `ref` is BEHIND main.
-   *
-   * Used by `mu workspace list` and `mu state` to surface staleness
-   * (bug_workspace_stale_parent_silent_drift). Cheap, pure-observation:
-   * NO automatic fetch. We compare against whatever main resolves to in
-   * the workspace's LOCAL refs cache. The user can `git fetch` (or
-   * equivalent) themselves if they want a fresher number.
-   *
-   * Returns null when:
-   *  - main / trunk cannot be resolved (no origin/HEAD, no origin/main,
-   *    no origin/master, no trunk() bookmark, etc.)
-   *  - the underlying VCS command fails for any reason (detached worktree,
-   *    missing refs, the `none` backend which has no notion of "main")
-   *
-   * Callers treat null as "unknown — render — — and don't warn".
-   *
-   * `mainRefCache`, when given, is shared across the rows of one
-   * decorate call so a backend that must resolve "main" per repo (git's
-   * origin/HEAD probe) does it once per repo, not once per workspace.
-   * Backends that resolve main inside the count command ignore it.
-   */
-  commitsBehind(
-    workspacePath: string,
-    ref: string,
-    mainRefCache?: Map<string, Promise<string | undefined>>,
-  ): Promise<number | null>;
-
-  /**
-   * Rebase the workspace onto `fromRef` (or the backend's tracked
-   * base when undefined: `origin/HEAD` for git, `trunk()` for jj/sl).
-   * Returns the resolved ref + replayed commits + conflicts list.
-   *
-   * Backend-specific behaviour:
-   *   - git: refuses on dirty WC (WorkspaceDirtyError); fetches first;
-   *     `git rebase <ref>`. On conflict, aborts the rebase and throws
-   *     WorkspaceConflictError (aborted); the workspace is unchanged.
-   *     Any other rebase failure is rethrown.
-   *   - jj:  always-snapshotted, so dirty is never an issue. After
-   *     `jj rebase -d <ref>` the conflict-set is queried via
-   *     `jj log -r 'conflict()'`. Conflicts surface as
-   *     WorkspaceConflictError without an abort (jj's conflict markers
-   *     persist as commits; the operator resolves in-place).
-   *   - sl:  like git. Refuses on dirty WC (WorkspaceDirtyError);
-   *     `sl rebase -d <ref>`; conflicts via `sl resolve --list`, then
-   *     aborts and throws WorkspaceConflictError (aborted). Any other
-   *     rebase failure is rethrown.
-   *   - none: throws WorkspaceVcsRequiredError unconditionally.
-   *
-   * Surfaced by fb_workspace_recycle_verb: dogfood between waves
-   * needed `close → free → spawn` to refresh a worker against new
-   * main; that killed the worker's LLM context. `refresh` updates
-   * the on-disk dir without touching the agent or pane.
-   */
-  rebaseTo(
-    workspacePath: string,
-    fromRef?: string,
-    /** The row's current parent_ref. Kept as the result's parentRef
-     *  when it already descends from fromRef and is under the head. */
-    previousParentRef?: string,
-  ): Promise<RebaseResult>;
-
-  /**
-   * Cheap "is the working copy clean?" probe used by close-auto-free
-   * (allow_mu_agent_close_without_discard). Definition: ZERO uncommitted
-   * changes (no working-tree modifications, no staged changes, no
-   * untracked-not-ignored files). Pure observation; no fetch, no commit.
-   *
-   * Backend-specific:
-   *   - git: empty `git status --porcelain` output.
-   *   - jj:  jj is auto-snapshotted, so the @ commit IS the WC; clean
-   *          here means @ has no diff from its parent (empty `jj diff
-   *          -r @ --summary`). A description-only difference still
-   *          counts as clean.
-   *   - sl:  empty `sl status` output.
-   *   - none: meaningless (cp -a snapshot has no notion of
-   *          "committed" vs "uncommitted"); always returns true so the
-   *          close-auto-free path treats every none-workspace as
-   *          eligible for silent free (no commits can be lost; the only
-   *          loss is local file edits, which the operator implicitly
-   *          accepts by closing the agent).
-   *
-   * Returns false on any backend command failure — be conservative
-   * (we'd rather refuse a close than auto-free a workspace whose
-   * cleanliness we couldn't verify).
+   * Cheap "is the working copy clean?" probe used by close-auto-free:
+   * empty `git status --porcelain` (no working-tree modifications, no
+   * staged changes, no untracked-not-ignored files). Pure observation.
+   * Returns false on any command failure: refuse a close rather than
+   * auto-free a workspace whose cleanliness could not be verified.
    */
   isClean(workspacePath: string): Promise<boolean>;
 
   /**
-   * List commits the workspace has on top of `baseRef`, oldest-first.
-   * Used by `mu workspace commits` (fb_workspace_commits_verb) to
-   * promote the dogfood-painful
-   *     cd $(mu workspace path X) && git log <base>..HEAD
-   * incantation into a typed verb that knows the workspace's
-   * parent_ref. The CommitSummary fields survive subjects/bodies with
-   * embedded newlines (NUL-delimited record format on the wire).
-   *
-   * `none` throws WorkspaceVcsRequiredError. Returns `[]` when the
-   * workspace is exactly at baseRef (no commits since fork). Throws
-   * on backend command failure (unknown ref, missing repo).
+   * Commits the workspace has on top of `baseRef`, oldest-first. Used by
+   * close's refuse-unmerged check. `[]` when the workspace is exactly at
+   * baseRef. Throws on command failure (unknown ref, missing repo).
    */
   commitsSinceBase(workspacePath: string, baseRef: string): Promise<CommitSummary[]>;
 
-  /** Last N commits on the project root, newest-first. Used by the
-   *  TUI Commits card / popup. Unlike commitsSinceBase, this is NOT
-   *  a per-workspace since-fork query. */
-  recentCommits(projectRoot: string, limit: number): Promise<CommitSummary[]>;
-
-  /** Show one commit / change from the project root, capped for TUI
-   *  rendering. Backend-specific equivalent of `git show <sha>`. */
-  showCommit(projectRoot: string, sha: string): Promise<ShowCommitResult>;
-
-  /**
-   * Return the list of dirty (uncommitted / unstaged / untracked-not-
-   * ignored) paths in the workspace. Empty array = clean.
-   *
-   * Used by `mu workspace list`'s dirty decoration and by the
-   * dirty-check `rebaseTo` does internally before a refresh.
-   *
-   * Backend semantics:
-   *   - git: `git status --porcelain` (working-tree + staged +
-   *     untracked-not-ignored, mirroring the rebaseTo path).
-   *   - sl:  `sl status` parsed for non-empty output.
-   *   - jj:  always-snapshotted, so no concept of "dirty" — returns [].
-   *   - none: cp -a snapshots have no VCS, so we can't decide "dirty";
-   *     returns [] so the caller doesn't refuse for an unanswerable
-   *     question.
-   *
-   * Throws on backend command failure (the operator should see a
-   * real error, not a silent "clean").
-   */
+  /** Dirty (uncommitted / unstaged / untracked-not-ignored) paths in the
+   *  workspace; empty = clean. Throws on command failure. */
   listDirtyFiles(workspacePath: string): Promise<string[]>;
 }

@@ -12,10 +12,11 @@ runs in its own `--workspace`; this recipe decides what each one gets.
 3. **Pipeline the merge.** Cherry-pick each task as it closes and
    verify pinned merge batches ([orchestrator-loop § Merging](orchestrator-loop.md#merging));
    batching gates does not mean waiting for the whole wave.
-4. **Refresh before each dispatch.** `mu workspace refresh <agent>`
-   rebases onto the tracked main (git: `origin/HEAD`, so unpushed local
-   merges are missed; pass `--from <local-branch>` to include them) and
-   keeps the agent's context; run it before every `--fresh` send.
+4. **Refresh before each dispatch.** Before a `--fresh` send,
+   `git -C <cwd> fetch && git -C <cwd> rebase <base>` (base: `origin/HEAD`,
+   or local main when merged locally); on conflict
+   `git -C <cwd> rebase --abort` and tell the human. The rebase keeps the
+   agent's context.
 
 Done when every task in the wave is `CLOSED/done`, merged, and the
 merged tree passes the slow gate and fast if needed, per the repo contract.

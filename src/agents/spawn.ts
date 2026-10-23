@@ -33,7 +33,6 @@ import { resolveActorIdentity } from "../tasks/claim.js";
 // multiplexer operation, so it stays on the tmux module rather than
 // joining the MuxBackend contract.
 import { sleep } from "../tmux.js";
-import type { VcsBackendName } from "../vcs.js";
 import { createWorkspace, freeWorkspace, workspacePath } from "../workspace.js";
 import { ensureWorkstreamSession, isScratchWorkstream } from "../workstream.js";
 import {
@@ -236,14 +235,12 @@ export interface SpawnAgentOptions {
   cwd?: string;
   /** Override the tmux session name. Defaults to `mu-<workstream>`. */
   tmuxSession?: string;
-  /** Auto-create a VCS workspace for this agent before spawning the
-   *  pane and use the workspace path as cwd. Backend defaults to
-   *  detection (jj > sl > git > none). */
+  /** Auto-create a git worktree for this agent before spawning the
+   *  pane and use its path as cwd. A project root outside a git repo
+   *  throws WorkspaceVcsRequiredError. */
   workspace?: boolean;
-  /** Force a specific VCS backend (only meaningful with `workspace: true`). */
-  workspaceBackend?: VcsBackendName;
   /** Optional ref to base the workspace on (only meaningful with
-   *  `workspace: true`). Backend-specific. */
+   *  `workspace: true`). */
   workspaceFrom?: string;
   /** Project root the workspace branches from (only meaningful with
    *  `workspace: true`). Defaults to `process.cwd()`. */
@@ -745,7 +742,6 @@ async function prestageWorkspace(db: Db, opts: SpawnAgentOptions, cli: string): 
       agent: opts.name,
       workstream: opts.workstream,
     };
-    if (opts.workspaceBackend !== undefined) wsOpts.backend = opts.workspaceBackend;
     if (opts.workspaceFrom !== undefined) wsOpts.parentRef = opts.workspaceFrom;
     if (opts.workspaceProjectRoot !== undefined) wsOpts.projectRoot = opts.workspaceProjectRoot;
     const ws = await createWorkspace(db, wsOpts);
@@ -854,7 +850,7 @@ async function rollbackSpawn(
 
 /**
  * After a failed spawn that prestaged a workspace, augment the thrown
- * error with orphan-cleanup hints (`mu workspace orphans` +
+ * error with cleanup hints (`ls` of the workspace dir +
  * `mu workspace free`). rollbackSpawn is best-effort — if the
  * freeWorkspace call inside it failed (rmdir blocked, vcs backend
  * refusing to remove a workspace with uncommitted state, etc.), the
@@ -875,8 +871,8 @@ function attachOrphanCleanupHint(err: unknown, agent: string, workstream: string
     typeof target.errorNextSteps === "function" ? target.errorNextSteps.bind(target) : null;
   const orphanHints: NextStep[] = [
     {
-      intent: "Check for an orphan workspace dir (rollback is best-effort; may have failed)",
-      command: `mu workspace orphans -w ${workstream}`,
+      intent: "Check for a leftover workspace dir (rollback is best-effort; may have failed)",
+      command: `ls ${dirname(workspacePath(workstream, agent))}`,
     },
     {
       intent: "Free the workspace if it survived the rollback (idempotent on missing)",

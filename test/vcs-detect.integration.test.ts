@@ -1,5 +1,4 @@
-// Tests for VcsBackend.detect + detectBackend precedence via each
-// backend's canonical root command. Regression coverage for git
+// Tests for VcsBackend.detect + detectBackend via git's root command. Regression coverage for git
 // worktrees: .git is a FILE there, so marker-dir heuristics miss them.
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -7,7 +6,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { detectBackend, gitBackend, jjBackend, noneBackend, slBackend } from "../src/vcs.js";
+import { detectBackend, gitBackend, WorkspaceVcsRequiredError } from "../src/vcs.js";
 import { rmFixtureDir } from "./_fs.js";
 
 let dirs: string[] = [];
@@ -50,15 +49,11 @@ function initGitRepo(prefix = "mu-vcs-detect-git-"): string {
 }
 
 const gitDescribe = has("git") ? describe : describe.skip;
-const jjDescribe = has("jj") ? describe : describe.skip;
-const slDescribe = has("sl") ? describe : describe.skip;
 
 gitDescribe("VCS detection — git", () => {
-  it("detects a plain git repo and rejects jj/sl", async () => {
+  it("detects a plain git repo", async () => {
     const repo = initGitRepo();
     expect(await gitBackend.detect(repo)).toBe(true);
-    expect(await jjBackend.detect(repo)).toBe(false);
-    expect(await slBackend.detect(repo)).toBe(false);
     expect((await detectBackend(repo)).name).toBe("git");
   });
 
@@ -75,53 +70,10 @@ gitDescribe("VCS detection — git", () => {
   });
 });
 
-jjDescribe("VCS detection — jj", () => {
-  it("detects a plain jj repo", async () => {
-    const repo = tmp("mu-vcs-detect-jj-");
-    execFileSync("jj", ["git", "init", "--no-colocate", repo], { stdio: "ignore" });
-
-    expect(await jjBackend.detect(repo)).toBe(true);
-    expect(await slBackend.detect(repo)).toBe(false);
-    expect(await gitBackend.detect(repo)).toBe(false);
-  });
-
-  it("detectBackend returns jj for a jj-colocated-on-git repo", async () => {
-    const repo = tmp("mu-vcs-detect-jj-colocated-");
-    execFileSync("jj", ["git", "init", "--colocate", repo], { stdio: "ignore" });
-
-    expect(await jjBackend.detect(repo)).toBe(true);
-    expect(await gitBackend.detect(repo)).toBe(true);
-    expect((await detectBackend(repo)).name).toBe("jj");
-  });
-});
-
-slDescribe("VCS detection — sl", () => {
-  it("detects a plain sl repo", async () => {
-    const repo = tmp("mu-vcs-detect-sl-");
-    execFileSync("sl", ["init", "--git", repo], { stdio: "ignore" });
-
-    expect(await slBackend.detect(repo)).toBe(true);
-    expect(await jjBackend.detect(repo)).toBe(false);
-    expect(await gitBackend.detect(repo)).toBe(false);
-    expect((await detectBackend(repo)).name).toBe("sl");
-  });
-
-  it("detects a mercurial-compat .hg repo via sl root", async () => {
-    const repo = tmp("mu-vcs-detect-hg-");
-    execFileSync("sl", ["init", repo], { stdio: "ignore" });
-
-    expect(await slBackend.detect(repo)).toBe(true);
-    expect((await detectBackend(repo)).name).toBe("sl");
-  });
-});
-
 describe("VCS detection — empty directory", () => {
-  it("falls through to none", async () => {
+  it("is not git: detectBackend throws WorkspaceVcsRequiredError", async () => {
     const dir = tmp("mu-vcs-detect-empty-");
-    expect(await jjBackend.detect(dir)).toBe(false);
-    expect(await slBackend.detect(dir)).toBe(false);
     expect(await gitBackend.detect(dir)).toBe(false);
-    expect(await noneBackend.detect(dir)).toBe(true);
-    expect((await detectBackend(dir)).name).toBe("none");
+    await expect(detectBackend(dir)).rejects.toBeInstanceOf(WorkspaceVcsRequiredError);
   });
 });

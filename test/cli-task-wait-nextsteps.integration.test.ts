@@ -1,13 +1,8 @@
 // Integration coverage for `mu task wait --first --json` nextSteps
 // against real git-backed workspaces.
 //
-// Regression: the wait hint used to defer to
-//   git cherry-pick $(cd $(mu workspace path X) && git log -1 --format=%H)
-// If X closed without committing, `git log -1` returned the workspace's
-// fork point (base), so orchestration automation appeared to succeed while
-// pulling in nothing. These tests pin the safe behaviour: since-fork commits
-// are resolved by mu, rendered as inspectable shas/ranges, and no-commit
-// workers get a manual-rescue hint instead of a cherry-pick recipe.
+// The wait hint names the worker's worktree and its fork point, so the
+// orchestrator inspects `git log <fork>..HEAD` and picks what to keep.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -153,46 +148,33 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
     return JSON.parse(r.stdout) as WaitJsonPayload;
   }
 
-  it("pins the committer's exact sha instead of shelling out to git log -1", async () => {
+  it("points at the worker's worktree log from its fork point", async () => {
     const committer = await seedWorker("committer", "%1", "commit_task");
     await seedWorker("noncommitter", "%2", "other_task");
-    const sha = commitFile(committer.path, "commit.txt", "committed\n", "worker commit");
+    commitFile(committer.path, "commit.txt", "committed\n", "worker commit");
 
     const payload = await closeAndWait("commit_task", "other_task");
 
     expect(payload.nextSteps[0]).toEqual({
-      intent: "Cherry-pick committer's commit onto your branch",
-      command: `git cherry-pick ${sha}`,
+      intent: "Inspect committer's commits, then cherry-pick what you want",
+      command: `git -C ${committer.path} log --oneline ${committer.parentRef}..HEAD`,
     });
-    expect(payload.nextSteps[0]?.command).not.toContain("$(");
-    expect(payload.nextSteps[0]?.command).not.toContain("git log -1");
   });
 
-  it("surfaces a manual rescue step when the worker closed without committing", async () => {
-    const noncommitter = await seedWorker("noncommitter", "%2", "no_commit_task");
-    await seedWorker("committer", "%1", "other_task");
-    writeFileSync(join(noncommitter.path, "dirty.txt"), "uncommitted\n");
-
-    const payload = await closeAndWait("no_commit_task", "other_task");
-
-    expect(payload.nextSteps[0]?.intent).toMatch(/closed without committing/i);
-    expect(payload.nextSteps[0]?.command).not.toContain("git cherry-pick");
-    expect(payload.nextSteps[0]?.command).toContain("git status");
-  });
-
-  it("pins an oldest-through-tip range when the worker produced multiple commits", async () => {
-    const multicommitter = await seedWorker("multicommitter", "%3", "multi_commit_task");
-    await seedWorker("noncommitter", "%2", "other_task");
-    const first = commitFile(multicommitter.path, "one.txt", "one\n", "first worker commit");
-    const last = commitFile(multicommitter.path, "two.txt", "two\n", "second worker commit");
-
-    const payload = await closeAndWait("multi_commit_task", "other_task");
-
-    expect(payload.nextSteps[0]).toEqual({
-      intent: "Cherry-pick multicommitter's 2 commits onto your branch",
-      command: `git cherry-pick ${first}^..${last}`,
+  it("offers no worktree hint when the owner has no workspace", async () => {
+    insertAgent(db, { name: "bare", workstream: "test", paneId: "%4" });
+    addTask(db, {
+      localId: "bare_task",
+      workstream: "test",
+      title: "t",
+      impact: 50,
+      effortDays: 1,
     });
-    expect(payload.nextSteps[0]?.command).not.toContain("$(");
-    expect(payload.nextSteps[0]?.command).not.toContain("git log -1");
+    await claimTask(db, "bare_task", { agentName: "bare", workstream: "test" });
+    await seedWorker("other", "%5", "other_task");
+
+    const payload = await closeAndWait("bare_task", "other_task");
+
+    expect(payload.nextSteps.some((s) => s.command.includes("log --oneline"))).toBe(false);
   });
 });

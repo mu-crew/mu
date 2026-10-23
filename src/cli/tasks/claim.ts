@@ -45,10 +45,8 @@ import {
   type TaskWaitTaskState,
   waitForTasks,
 } from "../../tasks.js";
-import { type CommitSummary, WorkspaceVcsRequiredError } from "../../vcs.js";
-import { listCommitsForWorkspace, WorkspaceNotFoundError } from "../../workspace.js";
+import { getWorkspaceForAgent } from "../../workspace.js";
 import { dispatchHint, nextDispatchHint } from "../dispatch-hints.js";
-import { checkWorkspaceStalenessForDispatch } from "../staleness.js";
 
 export async function cmdTaskRelease(
   db: Db,
@@ -101,7 +99,6 @@ export async function cmdClaim(
     evidence?: string;
     workstream?: string;
     json?: boolean;
-    strictStaleness?: boolean;
     force?: boolean;
   },
 ): Promise<void> {
@@ -156,12 +153,6 @@ export async function cmdClaim(
   // `--for` dispatch: the CLAIM note is the dispatcher's, not the
   // worker's (the SDK defaults it to the claimer).
   if (opts.evidence && forName !== undefined) sdkOpts.author = await resolveActorIdentity();
-  const stalenessCheck =
-    forName !== undefined
-      ? await checkWorkspaceStalenessForDispatch(db, forName, forWorkstream ?? ws, {
-          strict: opts.strictStaleness === true,
-        })
-      : { staleness: null, warned: false, nextStep: null };
   const result = await claimTask(db, localId, sdkOpts);
   // Title push for the new owner. Anonymous claims (--self) leave
   // owner=null — nothing to refresh. Refresh in the agent's OWN
@@ -208,11 +199,8 @@ export async function cmdClaim(
     },
     { intent: "Release if blocked", command: `mu task release ${localId} -w ${ws}` },
   );
-  if (stalenessCheck.warned && stalenessCheck.nextStep !== null) {
-    nextSteps.push(stalenessCheck.nextStep);
-  }
   if (opts.json) {
-    emitJson({ ...result, staleness: stalenessCheck.staleness, nextSteps });
+    emitJson({ ...result, nextSteps });
     return;
   }
   if (result.ownerName === null) {
@@ -237,55 +225,6 @@ function qualifiedId(ref: { workstreamName: string; name: string }): string {
 /** A CLOSED ref whose substate says the work was not done. */
 function isUndelivered(ref: TaskWaitTaskState): boolean {
   return ref.status === "CLOSED" && ref.substate !== "done";
-}
-
-function cherryPickCommandForCommits(commits: readonly CommitSummary[]): string | null {
-  const first = commits[0];
-  if (first === undefined) return null;
-  const last = commits[commits.length - 1];
-  if (last === undefined) return null;
-  if (commits.length === 1) return `git cherry-pick ${first.sha}`;
-  return `git cherry-pick ${first.sha}^..${last.sha}`;
-}
-
-function noCommitsRescueStep(owner: string, workstream: string): NextStep {
-  return {
-    intent: `Worker ${owner} closed without committing — apply by hand`,
-    command: `cd $(mu workspace path ${owner} -w ${workstream}) && git status   # rescue diff with git diff / git apply`,
-  };
-}
-
-async function nextStepForFiringOwner(
-  db: Db,
-  owner: string,
-  workstream: string,
-): Promise<NextStep> {
-  try {
-    const r = await listCommitsForWorkspace(db, owner, { workstream });
-    const command = cherryPickCommandForCommits(r.commits);
-    if (command === null) return noCommitsRescueStep(owner, workstream);
-    return {
-      intent:
-        r.commits.length === 1
-          ? `Cherry-pick ${owner}'s commit onto your branch`
-          : `Cherry-pick ${owner}'s ${r.commits.length} commits onto your branch`,
-      command,
-    };
-  } catch (err) {
-    if (err instanceof WorkspaceNotFoundError) {
-      return noCommitsRescueStep(owner, workstream);
-    }
-    if (err instanceof WorkspaceVcsRequiredError) {
-      return {
-        intent: `Worker ${owner} closed in a non-VCS workspace — inspect files by hand`,
-        command: `cd $(mu workspace path ${owner} -w ${workstream}) && ls -la   # cp -a snapshot; inspect files manually`,
-      };
-    }
-    return {
-      intent: `Unable to determine ${owner}'s workspace commits — inspect workspace manually`,
-      command: `mu workspace commits ${owner} -w ${workstream} --json   # if this fails, inspect $(mu workspace path ${owner} -w ${workstream})`,
-    };
-  }
 }
 
 /** Resolve a single `<ws>/<name>` or bare id into a TaskWaitRef.
@@ -560,22 +499,21 @@ export async function cmdTaskWait(
   } else if (!result.timedOut && firingRef !== null) {
     const owner = firingRef.owner;
     if (owner !== null) {
-      // Best-effort workspace lookup: prefer an inspectable,
-      // sha-pinned cherry-pick range over the old deferred
-      // `git log -1` shell substitution. If the worker closed without
-      // commits (or the workspace can't answer commits-since-fork),
-      // surface a manual-rescue hint instead of a silently-empty pick.
-      nextSteps.push(await nextStepForFiringOwner(db, owner, firingRef.workstreamName));
+      // The worker's worktree, when it has one: list what it committed
+      // since its fork point, and the orchestrator picks.
+      const ws = getWorkspaceForAgent(db, owner, firingRef.workstreamName);
+      if (ws !== undefined) {
+        nextSteps.push({
+          intent: `Inspect ${owner}'s commits, then cherry-pick what you want`,
+          command: `git -C ${ws.path} log --oneline${ws.parentRef ? ` ${ws.parentRef}..HEAD` : ""}`,
+        });
+      }
     }
     nextSteps.push({
       intent: "Verify the cherry-pick",
       command: "<your project verify command — e.g. npm run test, cargo test, uv run pytest>",
     });
     if (owner !== null) {
-      nextSteps.push({
-        intent: `Refresh ${owner}'s workspace onto current main for the next dispatch`,
-        command: `mu workspace refresh ${owner} -w ${firingRef.workstreamName}`,
-      });
       const ownerRow = getAgent(db, owner, firingRef.workstreamName);
       const dispatch =
         ownerRow === undefined ? null : nextDispatchHint(ownerRow, firingRef.workstreamName);

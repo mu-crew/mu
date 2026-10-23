@@ -420,10 +420,6 @@ export function wireTaskCommands(program: Command): void {
       "override the actor name used for the log (only valid with --self; defaults to pane title or $USER)",
     )
     .option("--force", "claim even when the task is parked or in triage (OPEN/parked, OPEN/triage)")
-    .option(
-      "--strict-staleness",
-      "refuse --for dispatch when the target agent's workspace is stale (default: warn and proceed)",
-    )
     .option(...WORKSTREAM_OPT)
     .option(...EVIDENCE_OPT)
     .option(...JSON_OPT)
@@ -435,7 +431,6 @@ export function wireTaskCommands(program: Command): void {
         evidence?: string;
         workstream?: string;
         json?: boolean;
-        strictStaleness?: boolean;
         force?: boolean;
       };
       return handle((db) => cmdClaim(db, taskId, opts), this as Command)();

@@ -114,19 +114,18 @@ so only one is ready at a time.
 If an agent may edit, build, or test while another is active in the same
 repo, spawn with `--workspace` (`workspace: true` on `mu_delegate`).
 Two builds in one checkout corrupt each other; keep the main checkout
-for orchestration. Never make your own `git worktree`, `jj workspace`
-or copy for a local agent: mu cannot refresh, list, diff or free what
-it did not create, so it leaks. Remote agents are the exception
+for orchestration. Never make your own `git worktree` or copy for a
+local agent: mu cannot list, diff or free what it did not create, so it
+leaks. Remote agents are the exception
 ([remote-workers](recipes/remote-workers.md)).
 
-Workspaces auto-detect jj, sl, or git (else `cp -a`). `mu agent close`
+Workspaces are git worktrees (exit 4 outside a repo). `mu agent close`
 frees one **only if clean**; otherwise it fails with
-`WorkspacePreservedError`. A `cp -a` copy is never clean. Cherry-pick what
-to keep, and pass `--discard-workspace` only to throw the rest away.
-Before each `--fresh` send, `mu workspace refresh <agent>` rebases onto
-main and keeps LLM context ([waves](recipes/waves.md) when workers share
-files). Claim and send warn at ≥10 commits behind
-(`--strict-staleness` refuses).
+`WorkspacePreservedError`. Cherry-pick what to keep, and pass
+`--discard-workspace` only to throw the rest away. Before a `--fresh` send,
+`git -C <cwd> fetch && git -C <cwd> rebase <base>` (base: `origin/HEAD`, or
+local main when merged locally); on conflict `git -C <cwd> rebase --abort`
+and tell the human ([waves](recipes/waves.md) when workers share files).
 
 ### Remote agents
 

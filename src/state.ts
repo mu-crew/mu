@@ -24,21 +24,7 @@ import {
   type TaskRow,
 } from "./tasks.js";
 import { getParallelTracks, type Track } from "./tracks.js";
-import {
-  type CommitSummary,
-  detectBackend,
-  type ProbeReport,
-  type VcsBackend,
-  type VcsBackendName,
-} from "./vcs.js";
-import {
-  decorateWithDirty,
-  decorateWithStaleness,
-  listWorkspaceOrphans,
-  listWorkspaces,
-  type WorkspaceOrphan,
-  type WorkspaceRow,
-} from "./workspace.js";
+import { listWorkspaces, type WorkspaceRow } from "./workspace.js";
 
 // ─── WorkstreamSnapshot ───────────────────────────────────────────
 
@@ -74,15 +60,7 @@ export interface WorkstreamSnapshot {
    *  popup reads its exhaustive list directly from SQLite while open. */
   allTasks: TaskRow[];
   workspaces: WorkspaceRow[];
-  workspaceOrphans: WorkspaceOrphan[];
   recent: LogRow[];
-  /** Last N commits from the project root (process.cwd()), populated
-   *  when `loadWorkstreamSnapshot` is called with withRecentCommits.
-   *  This is intentionally NOT a per-agent workspace log. */
-  recentCommits: CommitSummary[];
-  /** Backend that produced recentCommits. Null when recent commits were
-   *  not requested or no VCS backend was detected. */
-  commitsBackend?: VcsBackendName | null;
   /** Populated when `loadWorkstreamSnapshot` is called with
    *  `withDoctor: true`. Used by the TUI's slot-9 Doctor card to
    *  render a glanceable health badge on the dashboard
@@ -95,11 +73,6 @@ export interface WorkstreamSnapshot {
 export interface LoadWorkstreamSnapshotOptions {
   /** Recent-events cap (default 200). */
   eventLimit?: number;
-  /** When true, slow snapshot loading also populates `WorkspaceRow.dirty`
-   *  via decorateWithDirty (one `git status --porcelain` shellout per row,
-   *  capped at DECORATE_CONCURRENCY). The TUI caches this slow-tier value
-   *  and merges it into every fast SQL tick. */
-  withDirty?: boolean;
   /** When true, slow snapshot loading also populates
    *  `WorkstreamSnapshot.doctor` via `loadDoctorSummary`. The summary is
    *  cheap SQL, but it reports tmux/workspace drift from slow-tier fields,
@@ -107,20 +80,10 @@ export interface LoadWorkstreamSnapshotOptions {
   withDoctor?: boolean;
   /** Optional full task list for the TUI all-tasks popup. */
   withAllTasks?: true;
-  /** Optional recent-project-commits slice for the TUI Commits card /
-   *  popup. Uses process.cwd() as the project root on purpose: the TUI
-   *  is launched from the project checkout, while worker workspaces live
-   *  elsewhere under the mu state dir. */
-  withRecentCommits?: { limit: number };
 }
 
 export interface WorkstreamSnapshotSlowFields {
   view: LiveAgentsView;
-  /** Workspace rows decorated with slow-tier VCS observations
-   *  (`commitsBehindMain`, and `dirty` when requested). */
-  workspaces: WorkspaceRow[];
-  recentCommits: CommitSummary[];
-  commitsBackend?: VcsBackendName | null;
   doctor: DoctorSummary | null;
 }
 
@@ -223,21 +186,18 @@ export async function loadWorkstreamSnapshotFast(
     ).n,
     allTasks: opts.withAllTasks === true ? listTasks(db, workstream) : [],
     workspaces: listWorkspaces(db, workstream),
-    workspaceOrphans: listWorkspaceOrphans(db, workstream),
     // v2-retire-log-shim: this used to filter `kind: "event"` — the
     // prose breadcrumbs. Those are gone, so the Recent card reads every
     // op for the workstream. Payloads are raw JSON for captured ops
     // until v2-log-verb renders them from `intent`; the card stays
     // populated in the meantime rather than going silently empty.
     recent: listLogs(db, { workstream, limit: eventLimit }),
-    recentCommits: [],
-    commitsBackend: null,
     doctor: null,
   };
 }
 
 /**
- * Slow snapshot tier: fields backed by tmux / VCS subprocess probes (plus
+ * Slow snapshot tier: fields backed by tmux subprocess probes (plus
  * doctor, which reports over those slow-tier observations). Returns only the
  * fields the fast snapshot deliberately leaves empty or undecorated.
  *
@@ -252,18 +212,7 @@ export async function loadWorkstreamSnapshotSlow(
   baseSnapshot?: WorkstreamSnapshot,
 ): Promise<WorkstreamSnapshotSlowFields> {
   const view = await listLiveAgents(db, { workstream });
-  // commitsBehindMain is a VCS subprocess probe, so it belongs to this
-  // tier; the fast tier's listWorkspaces rows never carry it.
-  let workspaces = await decorateWithStaleness(listWorkspaces(db, workstream));
-  if (opts.withDirty === true) workspaces = await decorateWithDirty(workspaces);
-  const commits = await loadRecentCommits(opts.withRecentCommits);
-  const slow: WorkstreamSnapshotSlowFields = {
-    view,
-    workspaces,
-    recentCommits: commits.items,
-    commitsBackend: commits.backend,
-    doctor: null,
-  };
+  const slow: WorkstreamSnapshotSlowFields = { view, doctor: null };
   if (opts.withDoctor === true) {
     const mux = await activeMux();
     slow.doctor = loadDoctorSummary(
@@ -284,9 +233,6 @@ export function mergeSnapshotFastSlow(
   return {
     ...fast,
     view: slow.view,
-    workspaces: mergeWorkspaceSlowFields(fast.workspaces, slow.workspaces),
-    recentCommits: slow.recentCommits,
-    commitsBackend: slow.commitsBackend ?? null,
     doctor: slow.doctor,
   };
 }
@@ -327,58 +273,9 @@ function minimalSnapshot(workstream: string): WorkstreamSnapshot {
     taskCount: 0,
     allTasks: [],
     workspaces: [],
-    workspaceOrphans: [],
     recent: [],
-    recentCommits: [],
-    commitsBackend: null,
     doctor: null,
   };
-}
-
-function mergeWorkspaceSlowFields(
-  fastRows: readonly WorkspaceRow[],
-  slowRows: readonly WorkspaceRow[],
-): WorkspaceRow[] {
-  const slowByAgent = new Map(slowRows.map((row) => [row.agentName, row]));
-  return fastRows.map((fast) => {
-    const slow = slowByAgent.get(fast.agentName);
-    if (slow === undefined) return fast;
-    return {
-      ...fast,
-      commitsBehindMain: slow.commitsBehindMain ?? fast.commitsBehindMain,
-      dirty: slow.dirty,
-    };
-  });
-}
-
-/** Backends detected for `withRecentCommits`, per project root. Detection
- *  spawns up to 4 processes (jj, sl x2, git) and the answer cannot change
- *  while the TUI polls the same cwd every 10 s. `none` is not cached so a
- *  later `git init` is still noticed; nor is a detection during which a
- *  root probe failed indeterminately. Only this path reads the cache; the
- *  one-shot `mu state` never asks for commits. */
-const recentCommitsBackends = new Map<string, VcsBackend>();
-
-/** Test hook: forget cached backends. */
-export function resetRecentCommitsBackendCacheForTests(): void {
-  recentCommitsBackends.clear();
-}
-
-async function loadRecentCommits(
-  opt: LoadWorkstreamSnapshotOptions["withRecentCommits"],
-): Promise<{ backend: VcsBackendName | null; items: CommitSummary[] }> {
-  if (opt === undefined) return { backend: null, items: [] };
-  const projectRoot = process.cwd();
-  let backend = recentCommitsBackends.get(projectRoot);
-  if (backend === undefined) {
-    const report: ProbeReport = { failed: false };
-    backend = await detectBackend(projectRoot, report);
-    // A probe that failed (rather than cleanly answering "not this VCS")
-    // may have hidden a higher-precedence backend; re-detect next tick.
-    if (backend.name !== "none" && !report.failed) recentCommitsBackends.set(projectRoot, backend);
-  }
-  if (backend.name === "none") return { backend: null, items: [] };
-  return { backend: backend.name, items: await backend.recentCommits(projectRoot, opt.limit) };
 }
 
 // ─── ROI helpers ───────────────────────────────────────────────────

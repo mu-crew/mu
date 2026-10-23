@@ -56,10 +56,9 @@ import type { Db } from "../db.js";
 import { activeMux, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
 import { listTasksByOwner } from "../tasks.js";
-import { detectBackend, type VcsBackendName } from "../vcs.js";
+import { detectBackend } from "../vcs.js";
 import { getWorkspaceForAgent } from "../workspace.js";
 import { dispatchHint, plainSendHints } from "./dispatch-hints.js";
-import { checkWorkspaceStalenessForDispatch } from "./staleness.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
 interface SpawnOpts {
@@ -70,7 +69,6 @@ interface SpawnOpts {
   cwd?: string;
   workstream?: string;
   workspace?: boolean;
-  workspaceBackend?: VcsBackendName;
   workspaceFrom?: string;
   workspaceProjectRoot?: string;
   /** commander's `--no-ctl` negation: false skips the ctl handshake. */
@@ -81,27 +79,19 @@ interface SpawnOpts {
   send?: string;
   json?: boolean;
 }
-// Preflight: when --workspace is set, resolve+announce the backend
-// and projectRoot BEFORE the long-running git-worktree-add /
-// jj-workspace-add / cp -a, so the operator can ctrl-c if the
-// detected backend is wrong (e.g. cp -a falling through to a
-// 60GB project tree because --workspace-project-root pointed at a
-// non-VCS dir; surfaced by bug_agent_spawn_workspace_aborts_without_status).
-// Skipped on --json so machine consumers get a single structured
-// output, not preflight chatter.
+// Preflight: when --workspace is set, resolve+announce the project root
+// BEFORE the long-running `git worktree add`, so the operator can ctrl-c
+// if --workspace-project-root points somewhere unintended. A non-git root
+// throws WorkspaceVcsRequiredError here. Skipped on --json so machine
+// consumers get a single structured output, not preflight chatter.
 async function maybePrintWorkspacePreflight(opts: SpawnOpts): Promise<void> {
-  if (!opts.workspace || opts.json) return;
+  if (!opts.workspace) return;
   const projectRoot = opts.workspaceProjectRoot ?? process.cwd();
-  const backend: VcsBackendName = opts.workspaceBackend ?? (await detectBackend(projectRoot)).name;
-  const warn =
-    backend === "none"
-      ? pc.yellow(
-          " — WARNING: 'none' backend will cp -a the entire projectRoot. Verify --workspace-project-root.",
-        )
-      : "";
+  const backend = await detectBackend(projectRoot);
+  if (opts.json) return;
   console.log(
     pc.dim(
-      `[mu] workspace preflight: backend=${pc.bold(backend)} projectRoot=${pc.bold(projectRoot)}${warn}`,
+      `[mu] workspace preflight: backend=${pc.bold(backend.name)} projectRoot=${pc.bold(projectRoot)}`,
     ),
   );
 }
@@ -127,7 +117,6 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     ...(opts.role !== undefined ? { role: opts.role } : {}),
     ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
     ...(opts.workspace !== undefined ? { workspace: opts.workspace } : {}),
-    ...(opts.workspaceBackend !== undefined ? { workspaceBackend: opts.workspaceBackend } : {}),
     ...(opts.workspaceFrom !== undefined ? { workspaceFrom: opts.workspaceFrom } : {}),
     ...(opts.workspaceProjectRoot !== undefined
       ? { workspaceProjectRoot: opts.workspaceProjectRoot }
@@ -338,7 +327,6 @@ export async function cmdSend(
   opts: {
     workstream?: string;
     json?: boolean;
-    strictStaleness?: boolean;
     steer?: boolean;
     fresh?: boolean;
     force?: boolean;
@@ -372,9 +360,6 @@ export async function cmdSend(
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
-  const stalenessCheck = await checkWorkspaceStalenessForDispatch(db, name, ws, {
-    strict: opts.strictStaleness === true,
-  });
   // dogfood_send_after_new_dropped: capture the undelivered warning
   // rather than letting it print raw, so it lands in the JSON payload
   // too. `exit 0` must not be able to mean "silently dropped".
@@ -419,9 +404,6 @@ export async function cmdSend(
       ),
     );
   }
-  if (stalenessCheck.warned && stalenessCheck.nextStep !== null) {
-    nextSteps.push(stalenessCheck.nextStep);
-  }
   if (undelivered !== undefined) {
     nextSteps.unshift({
       intent: "VERIFY the prompt landed before waiting on it",
@@ -441,7 +423,6 @@ export async function cmdSend(
       ...(undelivered !== undefined
         ? { undelivered: { reason: undelivered.reason, message: undelivered.message } }
         : {}),
-      staleness: stalenessCheck.staleness,
       nextSteps,
     });
     return;
@@ -469,14 +450,11 @@ async function cmdSendInterrupt(
   db: Db,
   rawName: string,
   text: string,
-  opts: { workstream?: string; json?: boolean; strictStaleness?: boolean; timeout?: number },
+  opts: { workstream?: string; json?: boolean; timeout?: number },
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
-  const stalenessCheck = await checkWorkspaceStalenessForDispatch(db, name, ws, {
-    strict: opts.strictStaleness === true,
-  });
   const r = await interruptAgent(db, name, text, {
     workstream: ws,
     ...(opts.timeout === undefined ? {} : { timeoutMs: Math.round(opts.timeout * 1000) }),
@@ -495,9 +473,6 @@ async function cmdSendInterrupt(
       command: `mu agent read ${name} -n 30 -w ${ws}`,
     });
   }
-  if (stalenessCheck.warned && stalenessCheck.nextStep !== null) {
-    nextSteps.push(stalenessCheck.nextStep);
-  }
   if (opts.json) {
     emitJson({
       agentName: name,
@@ -505,7 +480,6 @@ async function cmdSendInterrupt(
       transport: "ctl",
       interrupt: true,
       ...r,
-      staleness: stalenessCheck.staleness,
       nextSteps,
     });
     return;
@@ -1045,11 +1019,7 @@ export function wireAgentCommands(program: Command): void {
     .option("--tab <tab>", "mux window/tab name to group under (defaults to agent name)")
     .option("--role <role>", "full-access | read-only", "full-access")
     .option("--cwd <cwd>", "initial working directory (ignored when --workspace is set)")
-    .option("--workspace", "auto-create a VCS workspace for this agent and use its path as cwd")
-    .option(
-      "--workspace-backend <name>",
-      "force a specific VCS backend for --workspace (jj | sl | git | none)",
-    )
+    .option("--workspace", "auto-create a git worktree for this agent and use its path as cwd")
     .option(
       "--workspace-from <ref>",
       "base the workspace on a specific commit / branch / changeset",
@@ -1080,7 +1050,6 @@ export function wireAgentCommands(program: Command): void {
         cwd?: string;
         workstream?: string;
         workspace?: boolean;
-        workspaceBackend?: VcsBackendName;
         workspaceFrom?: string;
         workspaceProjectRoot?: string;
         ctl?: boolean;
@@ -1093,10 +1062,6 @@ export function wireAgentCommands(program: Command): void {
     .command("send <name> <text>")
     .description(
       "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback); '/new', '/reload' and '/compact [instructions]' run inside pi over the socket (refused while busy unless --force), any other slash command is refused. Non-pi CLIs: herdr only (atomic `agent prompt`); on tmux the send is refused. --fresh (pi only): start a new session and send the text into it as one operation; returns once the prompt's run has started, so an immediate next send cannot be lost. Use it instead of sending '/new' then the prompt. Text `-` reads stdin: single-quote short text; pipe prose (apostrophes, $, backticks) as a quoted heredoc: mu agent send <name> - <<'EOF'",
-    )
-    .option(
-      "--strict-staleness",
-      "refuse send when the target agent's workspace is stale (default: warn and proceed)",
     )
     .option(
       "--steer",
@@ -1125,7 +1090,6 @@ export function wireAgentCommands(program: Command): void {
       const opts = (this as Command).opts() as {
         workstream?: string;
         json?: boolean;
-        strictStaleness?: boolean;
         steer?: boolean;
         fresh?: boolean;
         force?: boolean;

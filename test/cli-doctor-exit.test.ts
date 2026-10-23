@@ -9,7 +9,7 @@
 // Fast tier: in-process runCli, per-test temp DB and state dir, mocked
 // tmux (so the mux health probe and reconcile never reach a real server).
 
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -61,10 +61,10 @@ describe("mu doctor exit code", () => {
   });
 
   it("exits 0 when only a WARN row fires", async () => {
-    // An orphan workspace dir is a `warn` in the disk section.
-    mkdirSync(join(tempDir, "workspaces", "demo", "ghost"), { recursive: true });
+    // A stray DB copy is a `warn` in the disk section.
+    writeFileSync(join(tempDir, "mu.db.old"), "x");
     const r = await runCli(["doctor"], dbPath);
-    expect(r.stdout).toContain("ws-dirs");
+    expect(r.stdout).toContain("db-copies");
     expect(r.exitCode, r.stderr).toBeNull();
   });
 

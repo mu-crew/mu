@@ -16,7 +16,6 @@
 //     out of the WorkstreamSnapshot — `loadWorkstreamSnapshot`
 //     already runs `listLiveAgents(...)` once per tick, which populates
 //     `report.prunedGhosts`.
-//   - Reads `workspaceOrphans` straight out of the snapshot too.
 //   - NO subprocess shellouts. The `tmux -V` check from the textual
 //     `mu doctor` is intentionally OMITTED here — the TUI is
 //     already running inside a terminal so tmux's binary presence
@@ -216,16 +215,6 @@ export function loadDoctorSummary(
         name: "panes",
         status: "warn",
         detail: `${orphanPanes} orphan pane${orphanPanes === 1 ? "" : "s"}; close the pane or ignore it`,
-      });
-    }
-    const orphanWorkspaces = snapshot.workspaceOrphans.length;
-    if (orphanWorkspaces === 0) {
-      checks.push({ name: "workspaces", status: "ok", detail: "no orphan dirs" });
-    } else {
-      checks.push({
-        name: "workspaces",
-        status: "warn",
-        detail: `${orphanWorkspaces} orphan dir${orphanWorkspaces === 1 ? "" : "s"}; run \`mu workspace orphans\``,
       });
     }
   }
@@ -606,7 +595,7 @@ export function loadDoctorChecks(
 /**
  * Map a check row to the most useful informational command the
  * operator might paste. Read-only by construction: `mu agent list`,
- * `mu workspace orphans`, `mu doctor` are all SELECT-shape verbs;
+ * `mu doctor` are all SELECT-shape verbs;
  * `# ...` lines are visibly inert. Per the slot-9 popup spec KEY
  * MAP block this is INFORMATIONAL, never a mutating recipe — so
  * even when the check is `fail`, we yank the diagnostic verb the
@@ -631,11 +620,6 @@ export function yankCommandForCheck(check: Pick<DoctorCheck, "name" | "status">)
     case "panes":
       // Orphan panes: the listing names them; closing is the operator's call.
       return "mu agent list";
-    case "workspaces":
-      // Diagnostic: list orphan workspace dirs with their cleanup
-      // command. An orphan has no row, so `mu workspace free` cannot
-      // remove it; the operator deletes it by hand.
-      return "mu workspace orphans";
     case "drift":
       // The full rebuild-and-diff. Read-only: it writes only to a temp
       // DB and never touches live state.
@@ -710,16 +694,6 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
         "An 'orphan pane' is a live tmux pane in the workstream's",
         "session that mu doesn't know about. Close the pane with",
         "tmux/herdr, or ignore it if it's not yours.",
-      ];
-    case "workspaces":
-      return [
-        "An 'orphan workspace dir' is a per-agent VCS workspace dir under",
-        "the workstream with no vcs_workspaces row, so `mu workspace free`",
-        "cannot remove it. mu never deletes it for you: it may hold the only",
-        "copy of uncommitted work. Run `mu workspace orphans -w <ws>` to list",
-        "them with a cleanup command, inspect each, then remove it by hand",
-        "(`git worktree remove --force <path>` from the project root for a",
-        "git checkout, else `rm -rf <path>`).",
       ];
     case "drift":
       return [

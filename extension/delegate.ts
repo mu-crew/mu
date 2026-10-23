@@ -1021,7 +1021,7 @@ export function registerDelegate(
         workspace: {
           type: "boolean",
           description:
-            "For tasks that edit files: its own VCS checkout (jj workspace / git worktree / sl share) branched from the current commit. The result and follow-up name the path; changes stay there until you merge them. This isolates repository edits only: the subagent runs as you, with your files, environment and network.",
+            "For tasks that edit files: its own git worktree branched from the current commit. The result and follow-up name the path; changes stay there until you merge them. This isolates repository edits only: the subagent runs as you, with your files, environment and network.",
         },
         cli: {
           type: "string",

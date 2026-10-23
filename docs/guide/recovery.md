@@ -93,18 +93,15 @@ command.
 
 | Row | Means |
 | --- | ----- |
-| `ws-rows` | a workspace row whose directory is gone; the next send fails in the VCS |
-| `ws-dirs` | a workspace directory with no row; it blocks the next `--workspace` spawn with that name |
+| `ws-rows` | a workspace row whose directory is gone; the next send fails inside git |
 | `ws-empty` | a workstream directory with no checkouts |
 | `db-copies` | stray `mu.db*` files that nothing reads, including the `pre-compact` / `pre-forget` backups |
 | `exports` | output left by the removed export verb |
 | `locks` | lock directories older than one hour, from a spawn or flush that died |
 
-To list workspace orphans with cleanup commands, run
-`mu workspace orphans -w auth`. An orphan has no row, so
-`mu workspace free` cannot remove it. Remove a git-backed orphan with
-`git worktree remove --force <path>` from the project root, and any
-other with `rm -rf <path>`.
+An orphan workspace directory has no row, so `mu workspace free` cannot
+remove it. Inspect it, then remove it with `git worktree remove --force
+<path>` from the project root, or `rm -rf <path>` when it is not a worktree.
 
 ## Rename a workstream
 

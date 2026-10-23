@@ -83,7 +83,7 @@ commit or checkout is touched.
 
 ```bash
 mu doctor --disk                    # bytes per workspace checkout
-mu workspace orphans -w auth        # directories with no DB row
+mu doctor                           # the disk section lists directories with no DB row
 mu workspace free worker-1 -w auth  # delete one workspace
 ```
 

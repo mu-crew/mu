@@ -17,7 +17,7 @@ A verb's path:
 2. `handle()` opens the DB, runs ambient sync ingest
    ([sync.md](sync.md#the-ambient-hook)), and calls the SDK function.
 3. The SDK function opens `db.transaction(fn)()` for multi-statement
-   writes. Agent ops call the mux (and jj, sl or git for workspaces);
+   writes. Agent ops call the mux (and git for workspaces);
    task ops are pure SQL. Read paths reconcile against the mux.
 4. Capture triggers record ops in the same transaction
    ([ops-log.md](ops-log.md)). Machine-local changes go through
@@ -137,8 +137,7 @@ so `mu doctor` can show them readably.
 Fast tier (`npm run test:fast`) excludes `*.integration.test.ts` and
 `*.smoke.test.ts`. It uses real SQLite in per-test temp DBs and a
 mocked mux (`installMux()` from `test/_mux.ts`). Integration tests use
-real tmux or herdr, and real git, jj or sl in `os.tmpdir()`; jj and sl
-tests skip when the binary is missing. Conventions live in
+real tmux or herdr, and real git in `os.tmpdir()`. Conventions live in
 [AGENTS.md](../../AGENTS.md) and `test/README.md`.
 
 | Area | What the tests pin |

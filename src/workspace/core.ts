@@ -12,21 +12,6 @@ export interface WorkspaceRow {
   path: string;
   parentRef: string | null;
   createdAt: string;
-  /** How many commits the workspace's parent_ref is behind the project's
-   *  default branch HEAD, as of the last time the workspace's local refs
-   *  cache was updated. Undefined when not yet computed (the listWorkspaces
-   *  fast path leaves it unset; call decorateWithStaleness to populate).
-   *  Null when staleness was queried but cannot be computed (no main found,
-   *  none-backend, missing parent_ref, command failure). */
-  commitsBehindMain?: number | null;
-  /** True when the workspace has uncommitted / unstaged / untracked-not-
-   *  ignored files, as observed by the backend's `listDirtyFiles`.
-   *  Undefined when not yet computed (the listWorkspaces fast path leaves
-   *  it unset; call decorateWithDirty to populate). Null when the dirty
-   *  check could not be performed (backend command failure). For jj /
-   *  none backends — which have no operator-visible "dirty" concept —
-   *  this is always false (their listDirtyFiles returns []). */
-  dirty?: boolean | null;
 }
 
 export interface RawWorkspaceRow {
@@ -81,7 +66,7 @@ export class WorkspaceExistsError extends Error implements HasNextSteps {
       },
       {
         intent: "Then re-spawn the agent with a fresh workspace",
-        command: `mu agent spawn ${this.agent} --workspace --workspace-backend <jj|sl|git|none> --workspace-from <ref>`,
+        command: `mu agent spawn ${this.agent} --workspace --workspace-from <ref>`,
       },
     ];
   }
@@ -126,14 +111,14 @@ export class WorkspacePathNotEmptyError extends Error implements HasNextSteps {
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "List every orphan workspace dir in this workstream",
-        command: `mu workspace orphans -w ${this.workstream}`,
+        intent: "Check it for uncommitted work",
+        command: `git -C ${this.workspacePath} status --short`,
       },
       {
         // No row points at the dir (createWorkspace throws
         // WorkspaceExistsError first when one does), so `mu workspace
-        // free` has nothing to free. Same recipe as `mu workspace orphans`.
-        intent: "Inspect it, then remove it by hand (git: also drops the worktree registration)",
+        // free` has nothing to free.
+        intent: "Then remove it by hand (git: also drops the worktree registration)",
         command: `(cd <project-root> && git worktree remove --force ${this.workspacePath}) || rm -rf ${this.workspacePath}`,
       },
     ];
@@ -178,18 +163,4 @@ export class HomeDirAsProjectRootError extends Error implements HasNextSteps {
  */
 export function workspacePath(workstream: string, agent: string): string {
   return join(defaultStateDir(), "workspaces", workstream, agent);
-}
-
-/** Root dir for a workstream's workspaces — the parent of all
- *  per-agent workspace dirs. Used by listWorkspaceOrphans to scan
- *  the filesystem. */
-export function workspacesRoot(workstream: string): string {
-  return join(defaultStateDir(), "workspaces", workstream);
-}
-
-export interface WorkspaceStaleness {
-  agentName: string;
-  workstreamName: string;
-  commitsBehindMain: number | null;
-  isStale: boolean;
 }

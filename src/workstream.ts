@@ -601,8 +601,7 @@ export async function teardownWorkstream(
   // deletes vcs_workspaces rows but leaves the on-disk worktrees
   // (and the git worktree registry entries) behind — the bug from
   // mufeedback note #195. Per backend, the right cleanup is
-  // 'git worktree remove --force' / 'jj workspace forget' / etc.,
-  // not 'rm -rf'. We surface failures so the user can recover; we
+  // 'git worktree remove --force', not 'rm -rf'. We surface failures so the user can recover; we
   // do NOT abort the teardown on workspace failure (the workstream
   // semantics are 'tear it all down', not 'partial cleanup').
   let freedWorkspaces = 0;

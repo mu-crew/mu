@@ -208,8 +208,7 @@ the agent choosing; mu reads none of it.
 
 - **Visible crews.** Spawn agents once and send them work all day. Each
   sits in a pane you can attach to.
-- **Isolation.** Each agent gets a jj workspace, sl clone, git worktree,
-  or `cp -a` copy, detected automatically and freed by `mu agent close`.
+- **Isolation.** Each agent gets a git worktree, freed by `mu agent close`.
 - **Wakeups without a daemon.** `mu log --tail` and event-driven
   `mu agent wait` replace polling.
 - **Crash recovery.** The reaper reopens a dead agent's IN_PROGRESS

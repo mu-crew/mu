@@ -35,9 +35,7 @@ import {
   withRoiAll,
 } from "../cli.js";
 import { type Db, tryResolveWorkstreamId, WorkstreamNotFoundError } from "../db.js";
-import { GLYPH } from "../glyphs.js";
 import { muTable, pc } from "../output.js";
-import { isWorkspaceStale, WORKSPACE_STALE_THRESHOLD } from "../staleness.js";
 import {
   listRemoteWorkers,
   loadWorkstreamSnapshot,
@@ -131,10 +129,7 @@ function fullJsonShape(d: PerWsData): Record<string, unknown> {
     recentClosed: withRoiAll(d.recentClosed),
     workspaces: d.workspaces,
     remoteWorkers: d.remoteWorkers,
-    workspaceOrphans: d.workspaceOrphans,
     recent: d.recent,
-    recentCommits: d.recentCommits,
-    commitsBackend: d.commitsBackend ?? null,
   };
 }
 
@@ -238,7 +233,6 @@ function renderFullMode(perWs: PerWsData[]): void {
 
 function renderFullCard(d: PerWsData): void {
   const { workstreamName, view, tracks, ready, inProgress, blocked, recentClosed, recent } = d;
-  const staleWorkspaces = d.workspaces.filter((w) => isWorkspaceStale(w.commitsBehindMain));
 
   console.log(pc.bold(`State of mu-${workstreamName}`));
   console.log("");
@@ -286,42 +280,16 @@ function renderFullCard(d: PerWsData): void {
   console.log(pc.bold(`Recent closed (${recentClosed.length})`));
   console.log(recentClosed.length === 0 ? pc.dim("  (none)") : formatTaskListTable(recentClosed));
   console.log("");
-  // Workspaces: warn line + tip when ANY row is ≥ WORKSPACE_STALE_THRESHOLD
-  // commits behind main. Per bug_workspace_stale_parent_silent_drift.
-  const workspacesHeader =
-    staleWorkspaces.length > 0
-      ? `${pc.bold(`Workspaces (${d.workspaces.length})`)} ${pc.yellow(`${GLYPH.warn} (${staleWorkspaces.length} stale ≥${WORKSPACE_STALE_THRESHOLD} commits behind):`)}`
-      : pc.bold(`Workspaces (${d.workspaces.length})`);
-  console.log(workspacesHeader);
+  console.log(pc.bold(`Workspaces (${d.workspaces.length})`));
   if (d.workspaces.length === 0) {
     console.log(pc.dim("  (none)"));
   } else {
     console.log(formatWorkspacesTable(d.workspaces));
   }
-  if (staleWorkspaces.length > 0) {
-    const example = staleWorkspaces[0]?.agentName ?? "<agent>";
-    console.log(
-      pc.yellow(
-        `${GLYPH.warn} Tip: Refresh stale workspaces to land patches against current main: mu workspace refresh ${example}`,
-      ),
-    );
-  }
   if (d.remoteWorkers.length > 0) {
     console.log("");
     console.log(pc.bold(`Remote workers (${d.remoteWorkers.length})`));
     console.log(formatRemoteWorkersTable(d.remoteWorkers));
-  }
-  if (d.workspaceOrphans.length > 0) {
-    console.log("");
-    console.log(
-      pc.yellow(
-        `Workspace orphans (${d.workspaceOrphans.length}, on disk but no DB row — will block --workspace spawns):`,
-      ),
-    );
-    for (const o of d.workspaceOrphans) {
-      console.log(`  ${pc.bold(o.agentName)}  ${pc.dim(o.path)}`);
-    }
-    console.log(pc.dim(`  Run \`mu workspace orphans -w ${workstreamName}\` for cleanup hints.`));
   }
   console.log("");
   console.log(pc.bold(`Recent activity (last ${recent.length} ops)`));

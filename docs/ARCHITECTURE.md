@@ -22,7 +22,7 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
 │  (capture, apply, sync, drift)                                  │
 └───────────────┬──────────────────┬──────────────────┬───────────┘
                 ▼                  ▼                  ▼
-   SQLite (~/.local/state/mu/mu.db) · tmux/herdr panes · jj/sl/git
+   SQLite (~/.local/state/mu/mu.db) · tmux/herdr panes · git worktrees
                    pi agents: control socket per agent
 ```
 
@@ -154,10 +154,9 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/tracks.ts` | union-find tracks with diamond merge |
 | `src/dag.ts` | `loadFullDag`, `renderForest`, `renderTaskTree` for `mu task tree` and the DAG popup |
 | `src/workstream.ts` | ensure, list, summarize, destroy |
-| `src/vcs/*.ts` | `VcsBackend` with git, jj, sl and none; detection `jj` → `sl` → `git` → none |
-| `src/workspace/*.ts` | per-agent workspace registry: CRUD, staleness and dirty decoration, orphans |
-| `src/staleness.ts` | `WORKSPACE_STALE_THRESHOLD` and `isWorkspaceStale` |
-| `src/state.ts` | `mu state` seam: fast SQL tier, slow subprocess tier, merge; parses `REMOTE:` notes |
+| `src/vcs/*.ts` | `VcsBackend` (git only): `detect` or `WorkspaceVcsRequiredError`, worktree create/free, clean and dirty probes, `commitsSinceBase` |
+| `src/workspace/*.ts` | per-agent workspace registry: CRUD and the close-time clean check |
+| `src/state.ts` | `mu state` seam: fast SQL tier, slow mux tier, merge; parses `REMOTE:` notes |
 
 ### CLI, output and packaging
 
@@ -185,7 +184,7 @@ A new implementation of each is small.
 | Seam | Add one by |
 | --- | --- |
 | `MuxBackend` | implementing the interface in `src/mux/`; a backend without an equivalent no-ops, and a backend-only feature is an optional method callers test for |
-| `VcsBackend` | implementing `detect`, `createWorkspace`, `freeWorkspace`, `isClean`, `commitsBehind`, `rebaseTo`, `commitsSinceBase`, `recentCommits`, `showCommit` (about 80-150 LOC) |
+| `VcsBackend` | git is the only implementation; the interface is `detect`, `createWorkspace`, `freeWorkspace`, `isClean`, `commitsSinceBase`, `listDirtyFiles` |
 | typed verb | an SDK function; a `cmd<Verb>` in `src/cli/<namespace>.ts`; one Commander block in `buildProgram()` wrapped in `handle()` and routed through `printNextSteps` |
 | schema change | bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror `CURRENT_SCHEMA`; startup stays migration-free |
 | syncable field | add the column to a portable table, extend the UPDATE trigger's changed-column comparison, confirm apply writes it; a full-row payload regresses merge to row-level LWW |

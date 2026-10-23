@@ -39,10 +39,7 @@ function emptySnapshot(over: Partial<WorkstreamSnapshot> = {}): WorkstreamSnapsh
     taskCount: 0,
     allTasks: [],
     workspaces: [],
-    workspaceOrphans: [],
     recent: [],
-    recentCommits: [],
-    commitsBackend: null,
     doctor: null,
     ...over,
   };
@@ -224,17 +221,17 @@ describe("loadDoctorSummary", () => {
     expect(names.has("foreign_keys")).toBe(true);
   });
 
-  it("when snapshot is provided, adds agents/panes/workspaces rows", () => {
+  it("when snapshot is provided, adds agents/panes rows", () => {
     const s = loadDoctorSummary(db, emptySnapshot());
     const names = new Set(s.checks.map((c) => c.name));
     expect(names.has("agents")).toBe(true);
     expect(names.has("panes")).toBe(true);
-    expect(names.has("workspaces")).toBe(true);
-    // Base + fleet/drift rows + 3 snapshot-derived. Asserted as "the
+    expect(names.has("workspaces")).toBe(false);
+    // Base + fleet/drift rows + 2 snapshot-derived. Asserted as "the
     // snapshot rows were ADDED to whatever the base set is" rather than
     // a magic total.
     const base = loadDoctorSummary(db, null).checks.length;
-    expect(s.checks.length).toBe(base + 3);
+    expect(s.checks.length).toBe(base + 2);
   });
 
   it("ghosts > 0 → agents row is warn with ghost count in detail", () => {
@@ -259,28 +256,16 @@ describe("loadDoctorSummary", () => {
     expect(sOne.checks.find((c) => c.name === "agents")?.detail).toMatch(/1 ghost pane;/);
   });
 
-  it("workspace orphan dirs surface as a workspaces warn row", () => {
-    const snap = emptySnapshot({
-      workspaceOrphans: [
-        // shape per WorkspaceOrphan; only the array length matters
-        // for the warn detection (cast loosely so we don't drag in
-        // the full row schema for the test).
-        { agentName: "lost-1", path: "/tmp/lost", dbExists: false } as never,
-      ],
-    });
-    const s = loadDoctorSummary(db, snap);
-    const ws = s.checks.find((c) => c.name === "workspaces");
-    expect(ws?.status).toBe("warn");
-    expect(ws?.detail).toMatch(/1 orphan dir/);
-  });
-
   it("problemCount tracks the number of warn+fail rows", () => {
     const snap = emptySnapshot({
-      view: { ...EMPTY_VIEW, report: { ...EMPTY_VIEW.report, prunedGhosts: 1 } },
-      workspaceOrphans: [{ agentName: "x", path: "/tmp/x", dbExists: false } as never],
+      view: {
+        ...EMPTY_VIEW,
+        orphans: [{ paneId: "%9", title: "x", command: "sh" } as never],
+        report: { ...EMPTY_VIEW.report, prunedGhosts: 1 },
+      },
     });
     const s = loadDoctorSummary(db, snap);
-    // agents (warn) + workspaces (warn) = 2; everything else ok.
+    // agents (warn) + panes (warn) = 2; everything else ok.
     expect(s.problemCount).toBe(2);
   });
 });
@@ -294,9 +279,6 @@ describe("yankCommandForCheck", () => {
     expect(yankCommandForCheck({ name: "murmur", status: "warn" })).toBe("murmur link pi");
     expect(yankCommandForCheck({ name: "agents", status: "warn" })).toBe("mu state");
     expect(yankCommandForCheck({ name: "panes", status: "warn" })).toBe("mu agent list");
-    expect(yankCommandForCheck({ name: "workspaces", status: "warn" })).toBe(
-      "mu workspace orphans",
-    );
   });
 
   it("schema-shape checks yank a `# ...` comment line (no actionable mutation)", () => {
@@ -322,7 +304,6 @@ describe("remediationParagraph", () => {
       "murmur",
       "agents",
       "panes",
-      "workspaces",
       "schema",
       "schema_version",
       "journal_mode",

@@ -18,7 +18,7 @@ import {
   type TmuxExecResult,
   type TmuxExecutor,
 } from "../src/tmux.js";
-import { noneBackend, type VcsBackend } from "../src/vcs.js";
+import { gitBackend, type VcsBackend } from "../src/vcs.js";
 import {
   ensureWorkstream,
   isValidWorkstreamName,
@@ -525,20 +525,20 @@ describe("teardownWorkstream", () => {
 
     // Two registry rows in the same workstream: one whose on-disk
     // path exists (backend will actually remove it), one whose path
-    // is already gone (backend free is a no-op). Use `none` because
-    // its freeWorkspace is just rmDirSync — no real VCS needed.
+    // is already gone (backend free is a no-op). A plain dir that is no
+    // git worktree takes gitBackend's rmDirSync fallback — no real repo needed.
     const now = new Date().toISOString();
     insertVcsWorkspaceRow(db, {
       agent: "alive",
       workstream: "split",
-      backend: noneBackend.name,
+      backend: gitBackend.name,
       path: presentPath,
       createdAt: now,
     });
     insertVcsWorkspaceRow(db, {
       agent: "ghost",
       workstream: "split",
-      backend: noneBackend.name,
+      backend: gitBackend.name,
       path: missingPath,
       createdAt: now,
     });
@@ -568,21 +568,20 @@ describe("teardownWorkstream", () => {
     insertAgent(db, { name: "stuck", workstream: "fail", paneId: "%201" });
 
     // Real-world analogue: `git worktree remove` refuses because of
-    // uncommitted changes, or `jj workspace forget` fails on a
-    // permission error. We don't need a real VCS to exercise the
+    // uncommitted changes or a permission error. We don't need a real VCS to exercise the
     // failure shape — inject a backend whose freeWorkspace just throws.
     const ghostPath = join(tmpDir, "ws-ghost"); // never on disk; doesn't matter
     const now = new Date().toISOString();
     insertVcsWorkspaceRow(db, {
       agent: "stuck",
       workstream: "fail",
-      backend: noneBackend.name,
+      backend: gitBackend.name,
       path: ghostPath,
       createdAt: now,
     });
 
     const explodingBackend: VcsBackend = {
-      ...noneBackend,
+      ...gitBackend,
       async freeWorkspace() {
         throw new Error("git worktree remove --force refused: uncommitted changes");
       },
@@ -597,7 +596,7 @@ describe("teardownWorkstream", () => {
     expect(result.failedWorkspaces).toEqual([
       {
         agent: "stuck",
-        backend: noneBackend.name,
+        backend: gitBackend.name,
         path: ghostPath,
         error: expect.stringContaining("git worktree remove --force refused"),
       },
@@ -630,7 +629,7 @@ describe("teardownWorkstream", () => {
 
     // Both rows reference the same registered backend name; the
     // injected resolver returns a per-agent backend that either
-    // succeeds (delegates to noneBackend.freeWorkspace, which rmDirSync's
+    // succeeds (delegates to gitBackend.freeWorkspace, which rmDirSync's
     // an existing tempdir) or throws.
     const goodPath = join(tmpDir, "ws-good");
     const badPath = join(tmpDir, "ws-bad");
@@ -641,25 +640,25 @@ describe("teardownWorkstream", () => {
     insertVcsWorkspaceRow(db, {
       agent: "good",
       workstream: "mixed",
-      backend: noneBackend.name,
+      backend: gitBackend.name,
       path: goodPath,
       createdAt: now,
     });
     insertVcsWorkspaceRow(db, {
       agent: "bad",
       workstream: "mixed",
-      backend: noneBackend.name,
+      backend: gitBackend.name,
       path: badPath,
       createdAt: now,
     });
 
     const partitioningBackend: VcsBackend = {
-      ...noneBackend,
+      ...gitBackend,
       async freeWorkspace(opts) {
         if (opts.workspacePath === badPath) {
           throw new Error(`mock backend refused to free ${opts.workspacePath}`);
         }
-        return noneBackend.freeWorkspace(opts);
+        return gitBackend.freeWorkspace(opts);
       },
     };
     const result = await teardownWorkstream(db, {
@@ -672,7 +671,7 @@ describe("teardownWorkstream", () => {
     expect(result.failedWorkspaces).toHaveLength(1);
     expect(result.failedWorkspaces[0]).toEqual({
       agent: "bad",
-      backend: noneBackend.name,
+      backend: gitBackend.name,
       path: badPath,
       error: expect.stringContaining("mock backend refused"),
     });
