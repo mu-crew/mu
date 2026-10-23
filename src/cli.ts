@@ -59,7 +59,6 @@ import { resolveMuxSessionWorkstreamName } from "./workstream.js";
 
 export {
   colorPair,
-  colorStatus,
   formatAgentsTable,
   formatReadyTable,
   formatTaskListTable,

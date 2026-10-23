@@ -120,7 +120,6 @@ peer's segment and of every conflict copy of it.
 | `MU_SYNC_DIR` unset | one `if` on one env var; no filesystem touch | the single-machine case pays nothing (measured: baseline; about 3ms with one peer) |
 | `mu sql` | opts out (`handle(..., { ambientSync: false })`) | an ingest changing a row count mid-inspection reads as a mu bug |
 | `mu sync` | opts out and runs the pass itself | otherwise the report prints "ingested 0" right after ingesting |
-| the TUI | slow tick only (10s), one pass per beat across tabs, `quiet: true` | the fast tick can go to 100ms; the TUI owns the screen, so problems show on the Doctor card |
 
 ## Out-of-order arrival
 

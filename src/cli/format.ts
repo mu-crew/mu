@@ -67,36 +67,6 @@ export function colorPair(pair: TaskPair): string {
   }
 }
 
-/** Colour a bare status. Only for callers with no substate in hand
- *  (e.g. the TUI status-filter toggles); task rows use colorPair. */
-export function colorStatus(status: TaskRow["status"]): string {
-  switch (status) {
-    case "OPEN":
-      return pc.cyan(status);
-    case "IN_PROGRESS":
-      return pc.yellow(status);
-    case "CLOSED":
-      return pc.green(status);
-  }
-}
-
-/** Ink colour equivalent of colorPair(). The TUI must not embed
- * picocolors ANSI strings inside <Text>; rows pass this value to Ink's
- * color prop instead. */
-export type InkColor = "cyan" | "yellow" | "green" | "gray" | "red";
-
-/** Ink colour for a task's pair; same mapping as colorPair(). */
-export function inkColorForPair(pair: TaskPair): InkColor {
-  switch (pair.status) {
-    case "OPEN":
-      return pair.substate === "parked" || pair.substate === "triage" ? "gray" : "cyan";
-    case "IN_PROGRESS":
-      return "yellow";
-    case "CLOSED":
-      return pair.substate === "done" ? "green" : "red";
-  }
-}
-
 // ─── Width / truncation helpers ───────────────────────────────────────
 
 /**
