@@ -11,7 +11,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { badFlagged, extraBadScripts, type Family, goldenOk, scriptFile } from "./check-rules.ts";
+import {
+  badFlagged,
+  extraBadScripts,
+  type Family,
+  goldenOk,
+  missingGoldenEvidence,
+  scriptFile,
+} from "./check-rules.ts";
 import { scenarioDir, sshShim } from "./fixtures.ts";
 import { toMarkdown } from "./report.ts";
 import { runAut } from "./runner.ts";
@@ -300,14 +307,19 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           ...v.notes.map((n) => `note: ${n}`),
           `completed=${v.completed} aborted=${r.metrics.aborted} lastError=${r.metrics.lastError ?? ""}`,
         ].join("\n");
-        if (kind === "golden")
-          line(goldenOk(v), `${id} golden ok`, goldenOk(v) && !o.verbose ? "" : detail);
-        else
+        if (kind === "golden") {
+          const missing = missingGoldenEvidence(id, v).map(
+            (m) => `missing golden evidence: /${m}/`,
+          );
+          const ok = goldenOk(v) && missing.length === 0;
+          line(ok, `${id} golden ok`, ok && !o.verbose ? "" : [...missing, detail].join("\n"));
+        } else {
           line(
             badFlagged(v),
             `${id} ${label} flagged ok`,
             badFlagged(v) && !o.verbose ? "" : detail,
           );
+        }
       }
     }
   } finally {
