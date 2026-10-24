@@ -501,6 +501,18 @@ function applyTaskPut(db: Db, op: Op): ApplyResult {
     if (tomb !== null && !wins(op.hlc, tomb)) {
       return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
     }
+    // The parent workstream's delete is a tombstone for everything
+    // beneath it: rebuild replays in HLC order, so a workstream `del`
+    // newer than this put cascades the task away. Creating it here would
+    // leave live state (and a re-created parent row) that rebuild never
+    // produces. Refused by the same comparison as the task's own tombstone.
+    const wsTomb = prepareCached(
+      db,
+      "SELECT MAX(hlc) AS hlc FROM ops WHERE entity = 'workstream' AND key = ? AND op = 'del'",
+    ).get(workstream) as { hlc: string | null } | undefined;
+    if (wsTomb?.hlc != null && !wins(op.hlc, wsTomb.hlc)) {
+      return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
+    }
     // Create the row, then let per-field LWW fill it in. The insert uses
     // placeholder values for NOT NULL columns so a partial payload
     // cannot fail the insert; every field the op actually carries is

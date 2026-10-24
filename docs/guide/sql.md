@@ -66,7 +66,9 @@ mu sql "WITH RECURSIVE prereqs(id) AS (
         SELECT t.local_id, t.title, t.status FROM prereqs JOIN tasks t ON t.id = prereqs.id"
 ```
 
-`mu sql` runs writes too and prints the number of rows changed. Writes
+`mu sql` syncs like every other verb (when `MU_SYNC_DIR` is set): it
+ingests peer ops before the query and flushes its own writes after, even
+when the statement fails. `mu sql` runs writes too and prints the number of rows changed. Writes
 are captured as ops under one `sql.write` group per call, so `mu log --group`
 shows the whole call. `--confirm-rows N` counts rows removed by
 `ON DELETE CASCADE` too: deleting a task with one edge counts 2.

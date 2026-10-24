@@ -46,6 +46,24 @@ export class HazardFailError extends Error {
   }
 }
 
+/**
+ * Raised by `handle()` before the DB is opened when it would live inside
+ * MU_SYNC_DIR. Exit 4 (conflict): the two settings contradict each other
+ * and only the operator can pick which one moves. Nothing was written.
+ * `mu doctor` still reports the same condition as a `db-vs-sync` row.
+ */
+export class DbInsideSyncDirError extends Error {
+  override readonly name = "DbInsideSyncDirError";
+  constructor(
+    readonly dbPath: string,
+    readonly syncDir: string,
+  ) {
+    super(
+      `DB ${dbPath} is inside MU_SYNC_DIR ${syncDir}: move it out (WAL files do not sync safely)`,
+    );
+  }
+}
+
 // ─── (a) DB inside the sync dir ───────────────────────────────────────
 
 /**

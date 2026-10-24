@@ -147,6 +147,7 @@ export {
   checkFleetHazards,
   checkNetworkMount,
   classifyFsType,
+  DbInsideSyncDirError,
   type FleetHazard,
   type FsProbe,
   findCaseCollisions,

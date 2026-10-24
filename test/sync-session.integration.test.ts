@@ -42,6 +42,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmFixtureDir } from "./_fs.js";
+import { opCount as opCountOf } from "./_ro.js";
 import { runCli } from "./_runCli.js";
 
 const SYNC_DIR_KEY = "MU_SYNC_DIR";
@@ -111,12 +112,8 @@ describe("mu sync — a multi-round two-machine session", () => {
       .sort();
   };
 
-  /** `mu sql` is the only read that does NOT ingest, which makes it the
-   *  only safe probe: counting cannot change the count. */
-  const opCount = async (db: string): Promise<number> => {
-    const { stdout } = await runCli(["sql", "SELECT COUNT(*) AS n FROM ops", "--json"], db);
-    return (JSON.parse(stdout) as Array<{ n: number }>)[0]?.n ?? 0;
-  };
+  /** No verb is a safe probe (all ingest), so read the file directly. */
+  const opCount = async (db: string): Promise<number> => opCountOf(db);
 
   /**
    * The convergence oracle: every PORTABLE table's content, canonicalised.
