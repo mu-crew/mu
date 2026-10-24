@@ -60,9 +60,10 @@ agents.
 
 ## Old DBs
 
-mu refuses a DB older than schema v12 with `SchemaTooOldError`, and a
-newer one with `SchemaTooNewError`. Both exit 4 and leave the file
-alone. Back up an old DB and move it aside; mu-next imports a 3.x DB
+A schema v12 DB upgrades to v13 on its first open, in one
+transaction: it either completes or leaves the file as it was. mu
+refuses a DB older than v12 with `SchemaTooOldError`, and a newer one
+with `SchemaTooNewError`. Both exit 4 and leave the file alone. Back up an old DB and move it aside; mu-next imports a 3.x DB
 at cut-over.
 
 ## Run mu from a checkout

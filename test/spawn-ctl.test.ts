@@ -27,7 +27,9 @@ import {
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, defaultStateDir, openDb } from "../src/db.js";
+import { addTask } from "../src/tasks/edit.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
+import { ensureWorkstream } from "../src/workstream.js";
 import { worktreePath } from "../src/worktree.js";
 import { INC, withHello } from "./_ctl-ext.js";
 import { withEnv } from "./_env.js";
@@ -168,6 +170,110 @@ describe("spawn records the command it ran (agents.command / command_source)", (
       command: "pi-meta --no-solo",
     });
     expect(raw("worker-1")).toEqual({ command: "pi-meta --no-solo", src: "explicit" });
+  });
+});
+
+// agents.spawner: who called spawn, read from the PARENT's env before the
+// child's env replaces it. Never guessed from task ownership.
+describe("spawn records its spawner (agents.spawner)", () => {
+  const KEYS = ["MU_MANAGED_AGENT", "MU_WORKSTREAM", "MU_AGENT_NAME", "PI_SESSION_ID"] as const;
+  const saveEnv = new Map<string, string | undefined>();
+  beforeEach(() => {
+    for (const k of KEYS) {
+      saveEnv.set(k, process.env[k]);
+      delete process.env[k]; // the harness running these tests may itself be a managed pi
+    }
+    process.env.MU_SPAWN_CTL_MS = "0";
+  });
+  afterEach(() => {
+    for (const [k, v] of saveEnv) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  const rawSpawner = (name: string, ws = "auth") =>
+    (
+      db
+        .prepare(
+          "SELECT spawner FROM agents WHERE name = ? AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)",
+        )
+        .get(name, ws) as { spawner: string | null }
+    ).spawner;
+  const asManaged = (ws: string, name: string): void => {
+    process.env.MU_MANAGED_AGENT = "1";
+    process.env.MU_WORKSTREAM = ws;
+    process.env.MU_AGENT_NAME = name;
+  };
+
+  it("a managed caller is '<workstream>/<agent>', in the stored row and the returned one", async () => {
+    asManaged("orch-ws", "orch");
+    const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(rawSpawner("worker-1")).toBe("orch-ws/orch"); // the parent's workstream, not the child's
+    expect(agent.spawner).toBe("orch-ws/orch");
+    expect(getAgent(db, "worker-1", "auth")?.spawner).toBe("orch-ws/orch");
+  });
+
+  it("same-named parents in different workstreams stay distinct", async () => {
+    asManaged("ws-a", "orch");
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    asManaged("ws-b", "orch");
+    await spawnAgent(db, { name: "worker-2", workstream: "auth" });
+    expect([rawSpawner("worker-1"), rawSpawner("worker-2")]).toEqual(["ws-a/orch", "ws-b/orch"]);
+  });
+
+  it("a pi session that is not a managed agent is 'pi:<PI_SESSION_ID>'", async () => {
+    process.env.PI_SESSION_ID = "01abc-session";
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(rawSpawner("worker-1")).toBe("pi:01abc-session");
+  });
+
+  it("the managed identity wins over the pi session; a stale MU_AGENT_NAME without MU_MANAGED_AGENT does not count", async () => {
+    asManaged("orch-ws", "orch");
+    process.env.PI_SESSION_ID = "01abc-session";
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    delete process.env.MU_MANAGED_AGENT;
+    await spawnAgent(db, { name: "worker-2", workstream: "auth" });
+    expect([rawSpawner("worker-1"), rawSpawner("worker-2")]).toEqual([
+      "orch-ws/orch",
+      "pi:01abc-session",
+    ]);
+  });
+
+  it("no identity at all is NULL, and a task the caller owns changes nothing", async () => {
+    ensureWorkstream(db, "auth");
+    addTask(db, { workstream: "auth", localId: "t1", title: "t1" });
+    insertAgent(db, { name: "orch", workstream: "auth", paneId: "%99" });
+    db.prepare("UPDATE tasks SET owner_id = (SELECT id FROM agents WHERE name = 'orch')").run();
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(rawSpawner("worker-1")).toBeNull();
+    expect(rawSpawner("orch")).toBeNull(); // rows written without a spawner stay NULL
+  });
+
+  it("spawn leaves the child's own env as the six identity keys: the parent's session is not forwarded", async () => {
+    process.env.PI_SESSION_ID = "01abc-session";
+    asManaged("orch-ws", "orch");
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    const envs = newSessionArgs().flatMap((a, i, args) => (args[i - 1] === "-e" ? [a] : []));
+    expect(envs.some((e) => e.startsWith("PI_SESSION_ID"))).toBe(false);
+    expect(envs).toContain("MU_AGENT_NAME=worker-1");
+    expect(envs).toContain("MU_WORKSTREAM=auth");
+  });
+
+  it("insertAgent stores spawner, host and collected_head as given, NULL otherwise", () => {
+    const a = insertAgent(db, {
+      name: "w1",
+      workstream: "auth",
+      paneId: "%1",
+      spawner: "x/y",
+      host: "devbox",
+      collectedHead: "abc123",
+    });
+    expect(a).toMatchObject({ spawner: "x/y", host: "devbox", collectedHead: "abc123" });
+    expect(insertAgent(db, { name: "w2", workstream: "auth", paneId: "%2" })).toMatchObject({
+      spawner: null,
+      host: null,
+      collectedHead: null,
+    });
   });
 });
 

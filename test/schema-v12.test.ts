@@ -101,9 +101,9 @@ const taskRow = (ws: string, id: string) =>
     .get(ws, id) as Record<string, unknown> | undefined;
 
 describe("v12 shape", () => {
-  it("stamps v12 and refuses a v11 DB untouched", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(12);
-    expect(db.prepare("SELECT version FROM schema_version").get()).toEqual({ version: 12 });
+  it("stamps v13 (v12 upgrades in place; see loop-storage.test.ts) and refuses a v11 DB untouched", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(13);
+    expect(db.prepare("SELECT version FROM schema_version").get()).toEqual({ version: 13 });
     const p = join(tempDir, "v11.db");
     const raw = new Database(p);
     raw.exec(
@@ -159,7 +159,7 @@ describe("v12 shape", () => {
       db = openDb({ path: dbPath });
       expect(cols("agents").get("command")).toMatchObject({ type: "TEXT", notnull: 0 });
       expect(cols("agents").get("command_source")).toMatchObject({ type: "TEXT", notnull: 0 });
-      expect(db.prepare("SELECT version FROM schema_version").get()).toEqual({ version: 12 });
+      expect(db.prepare("SELECT version FROM schema_version").get()).toEqual({ version: 13 });
       const a = getAgent(db, "a1", "w");
       expect(a).toMatchObject({ name: "a1", paneId: "%1", command: null, commandSource: null });
     });
@@ -216,7 +216,7 @@ describe("v12 shape", () => {
 
   it("task_auto is a machine-local table with its defaults", () => {
     expect(EXPECTED_TABLES).toContain("task_auto");
-    expect(EXPECTED_TABLES).toHaveLength(15);
+    expect(EXPECTED_TABLES).toHaveLength(19);
     expect(MACHINE_LOCAL_TABLES).toContain("task_auto");
     const c = cols("task_auto");
     expect([...c.keys()]).toEqual([

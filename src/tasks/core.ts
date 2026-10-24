@@ -6,6 +6,7 @@
 // from this file or sibling files, never from the hub they're re-exported
 // through.
 
+import type { TaskKind } from "../db.js";
 import { type Db, tryResolveLiveWorkstreamId } from "../db.js";
 import type { TaskStatus, TaskSubstate } from "./status.js";
 
@@ -24,6 +25,10 @@ export interface TaskRow {
   scored: boolean;
   /** Host `mu next` dispatches this task to, if one was set. */
   dispatchHost: string | null;
+  /** `work` (default), `delegate` or `human`. */
+  kind: TaskKind;
+  /** Label grouping the delegate calls of one fan-out; null when none. */
+  wave: string | null;
   /** Foreign-name reference to the owning agent (NULL when unowned). */
   ownerName: string | null;
   createdAt: string;
@@ -49,6 +54,8 @@ export interface RawTaskRow {
   effort_days: number;
   scored: number;
   dispatch_host: string | null;
+  kind: string;
+  wave: string | null;
   /** Joined from agents.name via owner_id. NULL when unowned. */
   owner: string | null;
   created_at: string;
@@ -75,6 +82,8 @@ export const SELECT_TASK_COLS = `
   t.effort_days AS effort_days,
   t.scored AS scored,
   t.dispatch_host AS dispatch_host,
+  t.kind AS kind,
+  t.wave AS wave,
   ag.name AS owner,
   t.created_at AS created_at,
   t.updated_at AS updated_at
@@ -103,6 +112,8 @@ export function rowFromDb(row: RawTaskRow): TaskRow {
     effortDays: row.effort_days,
     scored: row.scored === 1,
     dispatchHost: row.dispatch_host,
+    kind: row.kind as TaskKind,
+    wave: row.wave,
     ownerName: row.owner,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

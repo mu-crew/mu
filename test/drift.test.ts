@@ -93,6 +93,8 @@ describe("drift detection", () => {
         "demo/a",
         "dispatch_host",
       ],
+      ["tasks", "UPDATE tasks SET kind = 'delegate' WHERE local_id = 'a'", "demo/a", "kind"],
+      ["tasks", "UPDATE tasks SET wave = 'r1' WHERE local_id = 'a'", "demo/a", "wave"],
       ["workstreams", "UPDATE workstreams SET torn_down_at = 'x'", "demo", "torn_down_at"],
     ])("detects an uncaptured change to a v12 field (%s %s)", (table, sql, key, field) => {
       seed();

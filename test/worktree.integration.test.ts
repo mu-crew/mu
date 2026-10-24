@@ -232,6 +232,28 @@ gitDescribe("spawn --worktree", () => {
   const spawn = (name = "worker-1", extra: Record<string, unknown> = {}) =>
     spawnAgent(db, { name, workstream: "auth", worktree: true, root, ...extra });
 
+  it("records the spawner on the placeholder row and keeps it through finalize (staged UPDATE branch)", async () => {
+    const saved = [
+      process.env.MU_MANAGED_AGENT,
+      process.env.MU_WORKSTREAM,
+      process.env.MU_AGENT_NAME,
+    ];
+    process.env.MU_MANAGED_AGENT = "1";
+    process.env.MU_WORKSTREAM = "orch-ws";
+    process.env.MU_AGENT_NAME = "orch";
+    try {
+      const agent = await spawn();
+      expect(agent.spawner).toBe("orch-ws/orch");
+      expect(getAgent(db, "worker-1", "auth")?.spawner).toBe("orch-ws/orch");
+    } finally {
+      const keys = ["MU_MANAGED_AGENT", "MU_WORKSTREAM", "MU_AGENT_NAME"];
+      keys.forEach((k, i) => {
+        if (saved[i] === undefined) delete process.env[k];
+        else process.env[k] = saved[i];
+      });
+    }
+  });
+
   it("records cwd and base, registers the worktree, and starts the pane in it", async () => {
     const agent = await spawn();
     const path = worktreePath("auth", "worker-1");

@@ -108,7 +108,7 @@ const UNRESOLVED = "<unresolved>";
  * a capture revision is upgradeable in place, so it must not be folded
  * into it (an older schema number is refused before any trigger work).
  */
-export const CAPTURE_VERSION = 2;
+export const CAPTURE_VERSION = 3;
 
 /** Lowest SQLite that mints correct HLCs: `unixepoch('subsec')` arrived
  *  in 3.42; before it the call yields NULL and every op gets a zero-time
@@ -241,22 +241,24 @@ const taskKey = (idExpr: string): string => `COALESCE(
 
 /** Build the changed-columns-only payload expression for an UPDATE.
  *
- *  Nests one CASE per column around a `json_insert` so a column lands
- *  in the payload only when it actually changed:
+ *  One row per column that changed, folded into an object:
  *
- *    CASE WHEN NEW.impact IS NOT OLD.impact
- *         THEN json_insert(<inner>, '$.impact', NEW.impact)
- *         ELSE <inner> END
+ *    (SELECT json_group_object(k, v) FROM (
+ *       SELECT 'impact' AS k, NEW.impact AS v WHERE NEW.impact IS NOT OLD.impact
+ *       UNION ALL SELECT 'title', NEW.title WHERE NEW.title IS NOT OLD.title ...))
  *
- *  With six columns and one change that yields a 1-key object. */
+ *  With six columns and one change that yields a 1-key object, keys in
+ *  column order. The text grows linearly with the column count: an earlier
+ *  form nested one CASE around the previous expression, which repeated it
+ *  twice per column, so each added column doubled every UPDATE trigger
+ *  (two columns took _cap_tasks_upd from 274 KB to 1.09 MB, and every `mu`
+ *  process parses it on open). */
 function changedPayload(cols: readonly string[]): string {
-  let expr = "'{}'";
-  for (const col of cols) {
-    expr = `CASE WHEN NEW.${col} IS NOT OLD.${col}
-                 THEN json_insert(${expr}, '$.${col}', NEW.${col})
-                 ELSE ${expr} END`;
-  }
-  return expr;
+  const rows = cols.map(
+    (col, i) =>
+      `${i === 0 ? "SELECT" : "UNION ALL SELECT"} '${col}'${i === 0 ? " AS k" : ""}, NEW.${col}${i === 0 ? " AS v" : ""} WHERE NEW.${col} IS NOT OLD.${col}`,
+  );
+  return `(SELECT json_group_object(k, v) FROM (${rows.join("\n      ")}))`;
 }
 
 /** Whole-row payload for an INSERT: an insert changes every column by
@@ -348,6 +350,8 @@ const CAPTURED_COLUMNS = {
     "effort_days",
     "scored",
     "dispatch_host",
+    "kind",
+    "wave",
     "owner_id",
     "created_at",
     "updated_at",
@@ -870,21 +874,7 @@ export function installCapture(db: CaptureDb): void {
 
   db.exec("BEGIN IMMEDIATE");
   try {
-    const locked = storedCaptureVersion(db);
-    if (locked !== null && locked > CAPTURE_VERSION) throw new CaptureTooNewError(locked);
-    if (locked !== CAPTURE_VERSION) {
-      const cols = db.prepare("SELECT name FROM pragma_table_info('schema_version')").all() as {
-        name: string;
-      }[];
-      if (!cols.some((c) => c.name === "capture_version")) {
-        db.exec("ALTER TABLE schema_version ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 0");
-      }
-      const old = db.prepare(STORED_TRIGGERS_SQL).all() as { name: string }[];
-      for (const t of old) db.exec(`DROP TRIGGER IF EXISTS "${t.name}"`);
-      for (const t of CAPTURE_TRIGGERS) db.exec(t.sql);
-      db.prepare("INSERT OR IGNORE INTO op_ctx (id) VALUES (1)").run();
-      db.prepare("UPDATE schema_version SET capture_version = ? WHERE id = 1").run(CAPTURE_VERSION);
-    }
+    installCaptureLocked(db);
     db.exec("COMMIT");
   } catch (err) {
     try {
@@ -892,6 +882,32 @@ export function installCapture(db: CaptureDb): void {
     } catch {}
     throw err;
   }
+}
+
+/**
+ * The body of `installCapture` for a caller that already holds the write
+ * lock inside its own transaction (db.ts `upgradeSchema`, which commits
+ * the schema columns, the triggers and both stamps together). Re-reads the
+ * stamp: equal is a no-op, newer throws CaptureTooNewError, older (or
+ * missing) replaces every `_cap_*` trigger, seeds `op_ctx` and stamps.
+ * Never begins, commits or rolls back.
+ */
+export function installCaptureLocked(db: CaptureDb): void {
+  if (!db.inTransaction) throw new Error("installCaptureLocked must run inside a transaction");
+  const locked = storedCaptureVersion(db);
+  if (locked !== null && locked > CAPTURE_VERSION) throw new CaptureTooNewError(locked);
+  if (locked === CAPTURE_VERSION) return;
+  const cols = db.prepare("SELECT name FROM pragma_table_info('schema_version')").all() as {
+    name: string;
+  }[];
+  if (!cols.some((c) => c.name === "capture_version")) {
+    db.exec("ALTER TABLE schema_version ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 0");
+  }
+  const old = db.prepare(STORED_TRIGGERS_SQL).all() as { name: string }[];
+  for (const t of old) db.exec(`DROP TRIGGER IF EXISTS "${t.name}"`);
+  for (const t of CAPTURE_TRIGGERS) db.exec(t.sql);
+  db.prepare("INSERT OR IGNORE INTO op_ctx (id) VALUES (1)").run();
+  db.prepare("UPDATE schema_version SET capture_version = ? WHERE id = 1").run(CAPTURE_VERSION);
 }
 
 /** The slice of better-sqlite3's Database that capture needs. Declared

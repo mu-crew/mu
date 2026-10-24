@@ -49,9 +49,11 @@
 // surrogate id, which is exactly why keys don't collide across
 // machines.
 //
-// IMPORTANT: MIN_ACCEPTED_SCHEMA_VERSION === CURRENT_SCHEMA_VERSION
-// === 12. There is no in-place forward-bump ladder: every pre-v12 DB
-// is rejected at openDb time with SchemaTooOldError (exit 4), and a DB
+// IMPORTANT: v12 was never published, so there is no migration ladder.
+// openDb accepts MIN_ACCEPTED_SCHEMA_VERSION (12) through
+// CURRENT_SCHEMA_VERSION (13) and upgrades a v12 DB in ONE transaction
+// (upgradeSchema: columns, tables, triggers and both stamps together).
+// Every pre-v12 DB is rejected with SchemaTooOldError (exit 4), and a DB
 // newer than this build with SchemaTooNewError (exit 4).
 
 import { randomUUID } from "node:crypto";
@@ -62,7 +64,7 @@ import Database, { type Database as DatabaseType, type Statement } from "better-
 import {
   CAPTURE_VERSION,
   CaptureTooNewError,
-  installCapture,
+  installCaptureLocked,
   sqliteTooOld,
   storedCaptureVersion,
 } from "./capture.js";
@@ -159,9 +161,9 @@ export function openDb(options: OpenDbOptions = {}): Db {
       closeQuietly(db);
       throw new SqliteTooOldError(sqliteVersion);
     }
-    // Detect schema version BEFORE applySchema so a real v<12 DB is not
-    // silently stamped as v12 by the CREATE-IF-NOT-EXISTS in applySchema,
-    // and before `journal_mode = WAL`, which rewrites the file header:
+    // Detect schema version BEFORE any DDL so a real v<12 DB is not
+    // silently stamped by the CREATE-IF-NOT-EXISTS in the schema, and
+    // before `journal_mode = WAL`, which rewrites the file header:
     // a refused DB must be left byte-for-byte untouched.
     // One read transaction: a process creating this DB can commit
     // between two bare reads, and "no schema_version table, then a
@@ -170,47 +172,26 @@ export function openDb(options: OpenDbOptions = {}): Db {
       version: detectExistingSchemaVersion(db),
       capture: storedCaptureVersion(db),
     }))();
-    if (detectedVersion !== null && detectedVersion > CURRENT_SCHEMA_VERSION) {
-      // A newer mu wrote this DB. Its writes would fail here in
-      // confusing ways (unknown columns, constraints this build does not
-      // know), so refuse before applySchema touches anything.
-      closeQuietly(db);
-      throw new SchemaTooNewError(detectedVersion, CURRENT_SCHEMA_VERSION);
-    }
-    if (detectedCapture !== null && detectedCapture > CAPTURE_VERSION) {
-      // Same for the stored triggers: a newer mu's capture rules are not
-      // ours to replace or run. (An OLDER stamp is upgraded in place by
-      // installCapture below; that is not a schema incompatibility.)
-      closeQuietly(db);
-      throw new SchemaTooNewError(detectedCapture, CAPTURE_VERSION, "capture");
-    }
-    if (detectedVersion !== null && detectedVersion < MIN_ACCEPTED_SCHEMA_VERSION) {
-      // Loud-fail: refuse to touch a pre-v12 DB. There is no in-place
-      // migration to run, so leave the old file untouched and tell the
-      // operator how to preserve it (see SchemaTooOldError.errorNextSteps).
-      closeQuietly(db);
-      throw new SchemaTooOldError(detectedVersion, MIN_ACCEPTED_SCHEMA_VERSION);
-    }
-    setWalMode(db);
-    db.pragma("foreign_keys = ON");
-    // Skip the DDL write transaction when the DB already matches this
-    // build. applySchema takes the write lock and rewrites the views,
-    // which bumps the schema cookie on every open: every `mu` call,
-    // reads included, queued behind any writer and forced every other
-    // connection to re-parse the schema (f_opendb_schema_write).
-    if (detectedVersion !== CURRENT_SCHEMA_VERSION || !schemaIsCurrent(db)) applySchema(db);
-    seedMachineIdentity(db);
-    // Make the op-capture triggers stored in the file current: nothing
-    // (and no lock) when the stamp equals this build's, one transaction
-    // when older. See src/capture.ts. After seedMachineIdentity: the
-    // triggers mint HLCs from that row.
     try {
-      installCapture(db);
+      refuseUnusableStamps(detectedVersion, detectedCapture);
+      setWalMode(db);
+      db.pragma("foreign_keys = ON");
+      // Skip the DDL write transaction when the DB already matches this
+      // build (schema, capture stamp and stored triggers): the upgrade
+      // takes the write lock and rewrites the views, which bumps the
+      // schema cookie on every open, so every `mu` call, reads included,
+      // queued behind any writer and forced every other connection to
+      // re-parse the schema (f_opendb_schema_write).
+      if (
+        detectedVersion !== CURRENT_SCHEMA_VERSION ||
+        detectedCapture !== CAPTURE_VERSION ||
+        !schemaIsCurrent(db)
+      ) {
+        upgradeSchema(db);
+      }
+      seedMachineIdentity(db);
     } catch (err) {
       closeQuietly(db);
-      if (err instanceof CaptureTooNewError) {
-        throw new SchemaTooNewError(err.stored, CAPTURE_VERSION, "capture");
-      }
       throw err;
     }
   } else {
@@ -546,67 +527,93 @@ function seedMachineIdentity(db: Db): void {
   ).run(randomUUID(), hostname(), new Date().toISOString());
 }
 
+/** Refuse a file this build must not touch, from the stamps read before
+ *  any write: a newer schema or capture revision (a later mu wrote it) or
+ *  a schema older than MIN_ACCEPTED_SCHEMA_VERSION. */
+function refuseUnusableStamps(version: number | null, capture: number | null): void {
+  if (version !== null && version > CURRENT_SCHEMA_VERSION) {
+    // A newer mu wrote this DB. Its writes would fail here in confusing
+    // ways (unknown columns, constraints this build does not know).
+    throw new SchemaTooNewError(version, CURRENT_SCHEMA_VERSION);
+  }
+  if (capture !== null && capture > CAPTURE_VERSION) {
+    // Same for the stored triggers: a newer mu's capture rules are not
+    // ours to replace or run. (An OLDER stamp is upgraded in place.)
+    throw new SchemaTooNewError(capture, CAPTURE_VERSION, "capture");
+  }
+  if (version !== null && version < MIN_ACCEPTED_SCHEMA_VERSION) {
+    // Loud-fail: leave the old file untouched and tell the operator how
+    // to preserve it (see SchemaTooOldError.errorNextSteps).
+    throw new SchemaTooOldError(version, MIN_ACCEPTED_SCHEMA_VERSION);
+  }
+}
+
 /**
- * Apply the schema. Idempotent: tables use CREATE TABLE IF NOT EXISTS;
- * views are dropped and recreated so the latest definition always wins.
+ * Bring the file to this build in ONE transaction: the schema DDL, the
+ * added columns, the schema stamp, the machine identity, the capture
+ * triggers and the capture stamp commit together or not at all. Another
+ * connection therefore never sees new columns under old capture rules,
+ * and a failure anywhere leaves the old columns, triggers and stamps as
+ * they were.
  *
- * For fresh DBs this writes the current schema shape and stamps
- * schema_version = CURRENT_SCHEMA_VERSION. For existing v12 DBs this is
- * a no-op for the table CREATEs (IF NOT EXISTS) but DOES recreate the
- * views. Pre-v12 DBs never reach this function — openDb's loud-fail
- * hook rejects them with SchemaTooOldError first.
+ * Idempotent: tables use CREATE TABLE IF NOT EXISTS; views are dropped and
+ * recreated so the latest definition wins; a column a v12 DB lacks is
+ * added by ALTER (ADDED_COLUMNS). `BEGIN IMMEDIATE` takes the write lock
+ * first (paired with busy_timeout in openDb), so two processes opening
+ * one fresh DB cannot interleave a DROP VIEW between the other's DROP and
+ * CREATE. Both stamps are re-read under that lock: a concurrent opener
+ * that already upgraded makes this a no-op, and a newer mu that stamped
+ * the file meanwhile is refused with the file untouched.
  *
- * There is no in-place bump ladder. MIN_ACCEPTED === CURRENT, so the
- * only two shapes that reach here are "brand new" and "already v12";
- * any older-DB fix-up code would be dead by construction.
+ * Exported for the upgrade tests, which wrap `db` to inject a failure.
  */
-function applySchema(db: Db): void {
-  // Apply the schema DDL atomically. CURRENT_SCHEMA includes
-  // `DROP VIEW IF EXISTS goals; CREATE VIEW goals …` (views can't be
-  // CREATE-IF-NOT-EXISTS + redefined in one step), so without a
-  // transaction two processes opening the same fresh DB concurrently
-  // can interleave one's DROP between the other's DROP and CREATE and
-  // hit 'view goals already exists'. An IMMEDIATE transaction takes the
-  // write lock up front (paired with busy_timeout in openDb) so the
-  // whole DDL block is all-or-nothing per process.
-  // bug_parallel_spawn_races_drop_agents (schema leg).
+export function upgradeSchema(db: Db): void {
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.exec(CURRENT_SCHEMA);
-    // Columns a v12 DB written before they existed still lacks.
-    for (const [table, column, ddl] of ADDED_COLUMNS) {
-      if (!hasColumn(db, table, column))
-        db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
-    }
-    // vcs_workspaces (machine-local) is superseded by `worktrees`: carry its
-    // rows over, then drop it, in this one transaction. Idempotent;
-    // schemaIsCurrent reports a DB that still has it as not current.
-    migrateLegacyWorkspaces(db);
-    db.exec("DROP TABLE IF EXISTS vcs_workspaces");
-    // Seed the legal (status, substate) pairs from code. INSERT OR
-    // IGNORE keeps it idempotent; the table is machine-local and never
-    // synced, so every machine derives it from the same constant.
-    const seed = db.prepare(
-      "INSERT OR IGNORE INTO task_substates (status, substate, is_default) VALUES (?, ?, ?)",
-    );
-    for (const [status, substate, isDefault] of TASK_SUBSTATE_ROWS) {
-      seed.run(status, substate, isDefault);
-    }
-    // The version stamp commits with the DDL, never after it: a crash
-    // between the two would leave a v12-shaped DB stamped as nothing.
-    // INSERT OR IGNORE keeps an existing row.
-    db.prepare("INSERT OR IGNORE INTO schema_version (id, version) VALUES (1, ?)").run(
-      CURRENT_SCHEMA_VERSION,
-    );
+    const version = detectExistingSchemaVersion(db);
+    refuseUnusableStamps(version, storedCaptureVersion(db));
+    if (version !== CURRENT_SCHEMA_VERSION || !schemaIsCurrent(db)) applySchemaDdl(db);
+    // Stamp after the DDL, in the same transaction. A fresh DB gets its
+    // row here; an older one (v12) is raised to this build.
+    db.prepare(
+      `INSERT INTO schema_version (id, version) VALUES (1, ?)
+         ON CONFLICT (id) DO UPDATE SET version = excluded.version`,
+    ).run(CURRENT_SCHEMA_VERSION);
+    // The triggers mint HLCs from this row.
+    seedMachineIdentity(db);
+    installCaptureLocked(db);
     db.exec("COMMIT");
   } catch (err) {
-    db.exec("ROLLBACK");
-    // A concurrent process already applied the (idempotent) schema —
-    // the views/tables now exist. Re-throwing would fail the spawn for
-    // a benign race, so swallow the 'already exists' class and proceed;
-    // any other error is a real problem and rethrows.
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!/already exists/i.test(msg)) throw err;
+    try {
+      db.exec("ROLLBACK");
+    } catch {}
+    if (err instanceof CaptureTooNewError) {
+      throw new SchemaTooNewError(err.stored, CAPTURE_VERSION, "capture");
+    }
+    throw err;
+  }
+}
+
+/** The DDL half of upgradeSchema; the caller owns the transaction. */
+function applySchemaDdl(db: Db): void {
+  db.exec(CURRENT_SCHEMA);
+  // Columns a v12 DB written before they existed still lacks.
+  for (const [table, column, ddl] of ADDED_COLUMNS) {
+    if (!hasColumn(db, table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+  // vcs_workspaces (machine-local) is superseded by `worktrees`: carry its
+  // rows over, then drop it, in this one transaction. Idempotent;
+  // schemaIsCurrent reports a DB that still has it as not current.
+  migrateLegacyWorkspaces(db);
+  db.exec("DROP TABLE IF EXISTS vcs_workspaces");
+  // Seed the legal (status, substate) pairs from code. INSERT OR
+  // IGNORE keeps it idempotent; the table is machine-local and never
+  // synced, so every machine derives it from the same constant.
+  const seed = db.prepare(
+    "INSERT OR IGNORE INTO task_substates (status, substate, is_default) VALUES (?, ?, ?)",
+  );
+  for (const [status, substate, isDefault] of TASK_SUBSTATE_ROWS) {
+    seed.run(status, substate, isDefault);
   }
 }
 
@@ -686,6 +693,28 @@ function expectedObjects(): ExpectedObjects {
   return expectedCache;
 }
 
+/** The task kinds (`tasks.kind`): `work` is the default, `delegate` a
+ *  task-backed delegate call, `human` one only a person can close. Synced
+ *  per field; a value this build does not know is dropped by the fold, so
+ *  a newer peer's kind never trips the CHECK during ingest. */
+export const TASK_KINDS = ["work", "delegate", "human"] as const;
+export type TaskKind = (typeof TASK_KINDS)[number];
+
+const sqlList = (xs: readonly string[]): string => xs.map((x) => `'${x}'`).join(", ");
+const TASK_KIND_DDL = `TEXT NOT NULL DEFAULT 'work' CHECK (kind IN (${sqlList(TASK_KINDS)}))`;
+
+/** The states of a delegate call (`delegate_calls.state`). */
+export const DELEGATE_CALL_STATES = [
+  "queued",
+  "starting",
+  "running",
+  "recording",
+  "done",
+  "failed",
+  "refused",
+  "cancelled",
+] as const;
+
 /**
  * Columns added to a table after a v12 DB may already exist, as
  * `[table, column, DDL]`. `CREATE TABLE IF NOT EXISTS` leaves an existing
@@ -697,6 +726,13 @@ function expectedObjects(): ExpectedObjects {
 const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: string])[] = [
   ["agents", "command", "TEXT"],
   ["agents", "command_source", "TEXT"],
+  // Schema 13: the loop's storage. kind/wave are portable (synced);
+  // spawner/host/collected_head are machine-local agent metadata.
+  ["tasks", "kind", TASK_KIND_DDL],
+  ["tasks", "wave", "TEXT"],
+  ["agents", "spawner", "TEXT"],
+  ["agents", "host", "TEXT"],
+  ["agents", "collected_head", "TEXT"],
 ];
 
 function hasColumn(db: Db, table: string, column: string): boolean {
@@ -738,12 +774,15 @@ function schemaIsCurrent(db: Db): boolean {
 
 /** The schema version a fresh DB starts at. v12 adds the kernel columns
  *  (torn_down_at, cwd, base, scored, dispatch_host, kind), task_auto and
- *  the blockers view on top of v11's task substates. See CHANGELOG.md. */
-export const CURRENT_SCHEMA_VERSION = 12;
+ *  the blockers view on top of v11's task substates; v13 adds the loop's
+ *  storage (tasks.kind/wave, agents.spawner/host/collected_head and four
+ *  machine-local tables). See CHANGELOG.md. */
+export const CURRENT_SCHEMA_VERSION = 13;
 
-/** The lowest schema version `openDb` will accept. Equal to
- *  CURRENT_SCHEMA_VERSION: openDb runs no migration, so every pre-v12 DB
- *  throws `SchemaTooOldError` (exit 4) and is left untouched on disk. */
+/** The lowest schema version `openDb` will accept. v12 was never
+ *  published, so it upgrades in place (upgradeSchema) with no ladder;
+ *  anything older throws `SchemaTooOldError` (exit 4) and is left
+ *  untouched on disk. */
 const MIN_ACCEPTED_SCHEMA_VERSION = 12;
 
 /** The note kinds (`task_notes.kind`). Set once at INSERT, never changed:
@@ -761,9 +800,12 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 15 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 19 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
+  "agent_settles",
   "agents",
+  "delegate_calls",
+  "host_profiles",
   "machine_identity",
   "op_ctx",
   "op_dying",
@@ -776,6 +818,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "task_notes",
   "task_substates",
   "tasks",
+  "wait_cursors",
   "workstreams",
   "worktrees",
 ];
@@ -849,6 +892,11 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *                     TASK_SUBSTATE_ROWS; code, not data.
  *    task_auto        per-task auto-dispatch state (cli, runs, last
  *                     spawn): about THIS machine's agents.
+ *    delegate_calls   one row per task-backed delegate call: the caller,
+ *                     call_id and pane-side state of THIS machine.
+ *    wait_cursors     per caller and ref, the last wait result consumed.
+ *    agent_settles    settled runs already applied (settle replay).
+ *    host_profiles    ssh-free command templates per remote host.
  *    ops              see below — the carrier, not cargo.
  *
  *  `ops` is listed here deliberately rather than omitted. It is not
@@ -864,7 +912,10 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *  OWNERSHIP DOES NOT SYNC. The deleted db-sync.ts reached the same
  *  conclusion via an `includeOwners` flag; here it is structural. */
 export const MACHINE_LOCAL_TABLES = [
+  "agent_settles",
   "agents",
+  "delegate_calls",
+  "host_profiles",
   "machine_identity",
   "op_ctx",
   "op_dying",
@@ -874,6 +925,7 @@ export const MACHINE_LOCAL_TABLES = [
   "sync_peers",
   "task_auto",
   "task_substates",
+  "wait_cursors",
   "worktrees",
 ] as const;
 
@@ -1063,6 +1115,9 @@ CREATE TABLE IF NOT EXISTS agents (
   base          TEXT,                           -- commit that worktree was created from (machine-local)
   command       TEXT,                           -- the resolved command the pane runs (machine-local); NULL: row predates it
   command_source TEXT,                          -- 'explicit' | 'env' | 'cli-key': where command came from (machine-local)
+  spawner       TEXT,                           -- who spawned it: '<workstream>/<agent>' or 'pi:<session>' (machine-local); NULL: unknown
+  host          TEXT,                           -- the remote host profile it runs on (machine-local); NULL: local
+  collected_head TEXT,                          -- HEAD last collected from a remote worktree (machine-local)
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   UNIQUE (workstream_id, name),
@@ -1107,6 +1162,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   effort_days   REAL NOT NULL DEFAULT 1,
   scored        INTEGER NOT NULL DEFAULT 0 CHECK (scored IN (0, 1)),
   dispatch_host TEXT,                           -- host \`mu next\` dispatches this task to (synced)
+  kind          TEXT NOT NULL DEFAULT 'work'    -- work | delegate | human (synced)
+                CHECK (kind IN (${sqlList(TASK_KINDS)})),
+  wave          TEXT,                           -- label grouping one fan-out of delegate calls (synced)
   owner_id      INTEGER REFERENCES agents (id) ON DELETE SET NULL,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
@@ -1157,6 +1215,54 @@ CREATE TABLE IF NOT EXISTS task_auto (
   runs       INTEGER NOT NULL DEFAULT 0,
   last_spawn TEXT,
   created_at TEXT NOT NULL
+);
+
+-- delegate_calls: one row per task-backed delegate call (machine-local).
+-- The brief stays in task_notes; this holds only the call's own state.
+CREATE TABLE IF NOT EXISTS delegate_calls (
+  task_id          INTEGER PRIMARY KEY REFERENCES tasks (id) ON DELETE CASCADE,
+  caller           TEXT NOT NULL,
+  call_id          TEXT NOT NULL UNIQUE,
+  state            TEXT NOT NULL
+                   CHECK (state IN (${sqlList(DELEGATE_CALL_STATES)})),
+  record_workstream TEXT,
+  record_task      TEXT,
+  record_label     TEXT,
+  error            TEXT,
+  updated_at       TEXT NOT NULL
+);
+
+-- wait_cursors: per caller and ref, the last consumed incarnation and
+-- runs (machine-local), so a settled run is reported once.
+CREATE TABLE IF NOT EXISTS wait_cursors (
+  caller      TEXT NOT NULL,
+  ref         TEXT NOT NULL,
+  incarnation TEXT,
+  runs        INTEGER,
+  PRIMARY KEY (caller, ref)
+);
+
+-- agent_settles: one row per (agent, incarnation, runs) already applied
+-- (machine-local). No foreign keys on purpose: the evidence that a settled
+-- run took effect must outlive the agent and the task. agents.id is
+-- AUTOINCREMENT, so a deleted agent's id is never reused.
+CREATE TABLE IF NOT EXISTS agent_settles (
+  agent_id    INTEGER NOT NULL,
+  incarnation TEXT NOT NULL,
+  runs        INTEGER NOT NULL,
+  task_id     INTEGER,
+  PRIMARY KEY (agent_id, incarnation, runs)
+);
+
+-- host_profiles: ssh-free command templates for a remote host
+-- (machine-local; mu never connects, it expands these).
+CREATE TABLE IF NOT EXISTS host_profiles (
+  name         TEXT PRIMARY KEY,
+  shell        TEXT NOT NULL,
+  exec         TEXT NOT NULL,
+  fetch        TEXT NOT NULL,
+  repo         TEXT NOT NULL,
+  max_sessions INTEGER CHECK (max_sessions > 0)
 );
 
 -- ─── The ops log (VISION.md § 2b, VOCABULARY.md § op / ops log) ──────

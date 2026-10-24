@@ -16,8 +16,15 @@ export const SEGMENT_FORMAT_VERSION = 2;
 export const SEGMENT_READ_VERSIONS: readonly number[] = [1, 2];
 
 /** Payload fields a v1 reader (3.x) silently ignores, losing their
- *  semantics: schema v12 added them, so only v2 lines may carry them. */
-const V2_ONLY_FIELDS: readonly string[] = ["scored", "dispatch_host", "kind", "torn_down_at"];
+ *  semantics: schema v12 added them (`wave` and the task `kind` came with
+ *  schema 13, which is still segment v2), so only v2 lines may carry them. */
+const V2_ONLY_FIELDS: readonly string[] = [
+  "scored",
+  "dispatch_host",
+  "kind",
+  "wave",
+  "torn_down_at",
+];
 
 /** The v2-only fields a payload carries at its top level, if any. */
 function v2OnlyFieldsIn(payloadText: string): string[] {

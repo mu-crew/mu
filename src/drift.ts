@@ -239,6 +239,8 @@ const COMPARED: Record<string, readonly string[]> = {
     "effort_days",
     "scored",
     "dispatch_host",
+    "kind",
+    "wave",
     "created_at",
     "updated_at",
   ],
@@ -253,7 +255,7 @@ const SNAPSHOT_SQL: Record<string, string> = {
                   FROM workstreams w`,
   tasks: `SELECT w.name || '/' || t.local_id AS key,
                  t.title, t.status, t.substate, t.impact, t.effort_days, t.scored,
-                 t.dispatch_host, t.created_at, t.updated_at
+                 t.dispatch_host, t.kind, t.wave, t.created_at, t.updated_at
             FROM tasks t JOIN workstreams w ON w.id = t.workstream_id`,
   // Notes are a GROW-ONLY SET whose local surrogate id is not portable,
   // so identity for diffing is (task, author, content, created_at) —

@@ -33,7 +33,7 @@ import {
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
-const PINNED_CHECKSUM = "f18c0dee0774d77043b1d598848709242ce0e9c7bb6e567486585fca9509d8f3";
+const PINNED_CHECKSUM = "63c46e0f02899a0bb5f0a86c2c8f70b000ed98c3cf49896060ead81e4ff638f4";
 
 let dir: string;
 let path: string;
@@ -554,7 +554,7 @@ describe("capture version stamp", () => {
   it("pins the generated DDL: changing a generator requires a CAPTURE_VERSION bump", () => {
     // If this fails you changed trigger SQL. Bump CAPTURE_VERSION in
     // src/capture.ts, then update the pin below.
-    expect(CAPTURE_VERSION).toBe(2);
+    expect(CAPTURE_VERSION).toBe(3);
     expect(GENERATED_TRIGGER_CHECKSUM).toBe(PINNED_CHECKSUM);
   });
 

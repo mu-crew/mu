@@ -142,14 +142,20 @@ first.
 
 ### Update the schema
 
-The schema is v11 (`CURRENT_SCHEMA_VERSION` in `src/db.ts`), applied by
-`applySchema(db)` as idempotent CREATE-IF-NOT-EXISTS. `openDb` refuses
-older DBs (`SchemaTooOldError`) and newer ones (`SchemaTooNewError`),
-both exit 4. There is no migration ladder.
+The schema is v13 (`CURRENT_SCHEMA_VERSION` in `src/db.ts`). `openDb`
+runs `upgradeSchema(db)`: the idempotent CREATE-IF-NOT-EXISTS DDL, any
+missing `ADDED_COLUMNS`, the schema stamp, and the capture triggers with
+their stamp, in ONE transaction. It accepts v12 (never published, no
+ladder) and refuses older DBs (`SchemaTooOldError`) and newer ones
+(`SchemaTooNewError`), both exit 4.
 
 1. Bump `CURRENT_SCHEMA_VERSION` and mirror the shape in
-   `CURRENT_SCHEMA`. Prefer additive or idempotent-drop changes. Write
-   a one-shot migration script only when neither works.
+   `CURRENT_SCHEMA`. A column an existing DB lacks also goes in
+   `ADDED_COLUMNS` (plain nullable or defaulted: SQLite adds nothing else
+   in place). Changing `CAPTURED_COLUMNS` or a trigger generator means
+   bumping `CAPTURE_VERSION` and the pinned checksum in
+   `test/capture-persistent.test.ts`. Test the upgrade on a populated
+   file (`test/fixtures/v12-populated.db.gz`, `test/loop-storage.test.ts`).
 2. Classify every new table in `PORTABLE_TABLES` or
    `MACHINE_LOCAL_TABLES`. `test/entities.test.ts` fails otherwise.
 3. Update `test/db.test.ts` and CHANGELOG `### Changed`.

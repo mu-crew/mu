@@ -491,13 +491,18 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     }
   }
 
+  // Who is spawning: read from the PARENT's env, before the child's env
+  // below replaces it, and recorded by both row writes (placeholder insert
+  // and finalize). Never guessed from task ownership.
+  const spawner = spawnerFromEnv();
+
   // Worktree pre-stage. See `prestageWorktree` for the ordering
   // rationale. Yields the worktree (its path is the pane's cwd) or
   // undefined when --worktree wasn't requested.
   let staged: StagedWorktree | undefined;
   if (opts.worktree) {
     try {
-      staged = await prestageWorktree(db, opts, cli);
+      staged = await prestageWorktree(db, opts, cli, spawner);
     } catch (err) {
       emitSpawnFailed(db, opts, "worktree", err);
       throw err;
@@ -648,6 +653,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         staged,
         command,
         commandSource,
+        spawner,
       });
       ownsRow = true;
       return { pid, row };
@@ -774,6 +780,7 @@ async function prestageWorktree(
   db: Db,
   opts: SpawnAgentOptions,
   cli: string,
+  spawner: string | null,
 ): Promise<StagedWorktree> {
   const path = worktreePath(opts.workstream, opts.name);
   const dir = opts.root ?? process.cwd();
@@ -794,6 +801,7 @@ async function prestageWorktree(
     role: opts.role,
     tab: opts.tab ?? null,
     cwd: path,
+    spawner,
   });
   try {
     await reclaimWorktreePath(db, { agent: opts.name, workstream: opts.workstream, path });
@@ -822,6 +830,19 @@ async function prestageWorktree(
 }
 
 /**
+ * Who is calling spawn, for `agents.spawner`: `<MU_WORKSTREAM>/<MU_AGENT_NAME>`
+ * for a managed agent (the pair, since a bare name repeats across
+ * workstreams), else `pi:<PI_SESSION_ID>` for a pi session, else null.
+ * Reads the env, not a shell: it works the same however spawn was invoked.
+ */
+export function spawnerFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
+  const { MU_MANAGED_AGENT: managed, MU_WORKSTREAM: ws, MU_AGENT_NAME: name } = env;
+  if (managed === "1" && ws && name) return `${ws}/${name}`;
+  const session = env.PI_SESSION_ID;
+  return session ? `pi:${session}` : null;
+}
+
+/**
  * Stage 2 of spawn (after the real pane exists): patch the placeholder
  * row to the real pane id, cwd and base (worktree), or insert a fresh
  * agent row (no worktree). Throws if the patch UPDATE silently affects no
@@ -838,9 +859,10 @@ function finalizeAgentRow(
     staged: StagedWorktree | undefined;
     command: string;
     commandSource: CommandSource;
+    spawner: string | null;
   },
 ): AgentRow {
-  const { opts, cli, paneId, cwd, staged, command, commandSource } = args;
+  const { opts, cli, paneId, cwd, staged, command, commandSource, spawner } = args;
   if (staged === undefined) {
     return insertAgent(db, {
       name: opts.name,
@@ -852,13 +874,14 @@ function finalizeAgentRow(
       cwd,
       command,
       commandSource,
+      spawner,
     });
   }
   // Scope the patch to the spawn's workstream so a same-named worker
   // in another workstream isn't repointed at this pane
   // (bug_v5_name_clash_silent_misroute).
   db.prepare(
-    `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, updated_at = ?
+    `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, updated_at = ?
       WHERE name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
   ).run(
@@ -867,6 +890,7 @@ function finalizeAgentRow(
     staged.base,
     command,
     commandSource,
+    spawner,
     new Date().toISOString(),
     opts.name,
     opts.workstream,

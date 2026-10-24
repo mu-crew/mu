@@ -15,6 +15,8 @@
 //             timestamp is the ISO time of the HLC that began the life,
 //             never "now": the same log folds to the same row on any
 //             machine, at any time.
+//   kind/wave  per-field LWW like the rest; kind is one of TASK_KINDS (an
+//             unknown value is dropped, default 'work'), wave is nullable.
 //   substate  not LWW: the newest live op that writes one, resolved
 //             against the folded status (a concurrent close and park fall
 //             back to the status default).
@@ -32,7 +34,13 @@
 // unknown field. A RAISE during ingest would roll back the segment and
 // stall sync forever; the log is accepted as it is.
 
-import { DEFAULT_EFFORT_DAYS, DEFAULT_IMPACT, NOTE_KINDS } from "./db.js";
+import {
+  DEFAULT_EFFORT_DAYS,
+  DEFAULT_IMPACT,
+  NOTE_KINDS,
+  TASK_KINDS,
+  type TaskKind,
+} from "./db.js";
 import { compareHlc, parseHlc } from "./hlc.js";
 import {
   DEFAULT_SUBSTATE,
@@ -179,6 +187,8 @@ export interface TaskState {
   effortDays: number;
   scored: number;
   dispatchHost: string | null;
+  kind: TaskKind;
+  wave: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -216,6 +226,12 @@ const impactOf = (v: Scalar): number | undefined =>
 const effortOf = (v: Scalar): number | undefined =>
   typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
 const scoredOf = (v: Scalar): number | undefined => (v === 0 || v === 1 ? v : undefined);
+/** A task kind this build knows; any other value is dropped like an
+ *  unknown field, so a newer peer's kind never trips the CHECK in ingest. */
+const kindOf = (v: Scalar): TaskKind | undefined =>
+  typeof v === "string" && (TASK_KINDS as readonly string[]).includes(v)
+    ? (v as TaskKind)
+    : undefined;
 
 /**
  * The task's row, or null when it is dead (no put newer than `horizon`,
@@ -242,6 +258,8 @@ export function foldTask(
     effortDays: lww(puts, "effort_days", effortOf)?.value ?? DEFAULT_EFFORT_DAYS,
     scored: lww(puts, "scored", scoredOf)?.value ?? 0,
     dispatchHost: lww(puts, "dispatch_host", strOrNull)?.value ?? null,
+    kind: lww(puts, "kind", kindOf)?.value ?? "work",
+    wave: lww(puts, "wave", strOrNull)?.value ?? null,
     createdAt: lww(puts, "created_at", str)?.value ?? born,
     updatedAt: lww(puts, "updated_at", str)?.value ?? born,
   };
