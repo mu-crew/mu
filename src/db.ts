@@ -527,8 +527,10 @@ function applySchema(db: Db): void {
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec(CURRENT_SCHEMA);
-    // vcs_workspaces (machine-local) is superseded by `worktrees`. Idempotent;
+    // vcs_workspaces (machine-local) is superseded by `worktrees`: carry its
+    // rows over, then drop it, in this one transaction. Idempotent;
     // schemaIsCurrent reports a DB that still has it as not current.
+    migrateLegacyWorkspaces(db);
     db.exec("DROP TABLE IF EXISTS vcs_workspaces");
     // Seed the legal (status, substate) pairs from code. INSERT OR
     // IGNORE keeps it idempotent; the table is machine-local and never
@@ -554,6 +556,57 @@ function applySchema(db: Db): void {
     // any other error is a real problem and rethrows.
     const msg = err instanceof Error ? err.message : String(err);
     if (!/already exists/i.test(msg)) throw err;
+  }
+}
+
+/**
+ * Carry the legacy `vcs_workspaces` rows of `source` (a schema name: `main`
+ * for the in-place upgrade, or an ATTACHed 3.x / pre-worktree DB for the
+ * import) into the `worktrees` registry, and point the owning agent's
+ * `cwd`/`base` at the workspace. Without the registry row a dirty legacy
+ * workspace would close without the guard and its base would be lost.
+ *
+ * Only git rows carry (the one backend left). `root` is "" (unknown): the
+ * close rule finds the owning repo from the worktree's own git pointer.
+ * Idempotent (`INSERT OR IGNORE`, `cwd IS NULL`); a source without the
+ * table is a no-op. Does not open a transaction: the caller owns it.
+ */
+export function migrateLegacyWorkspaces(db: Db, source = "main"): void {
+  if (!/^[A-Za-z_]\w*$/.test(source)) throw new Error(`bad schema name: ${source}`);
+  const has = db
+    .prepare(
+      `SELECT 1 FROM ${source}.sqlite_master WHERE type = 'table' AND name = 'vcs_workspaces'`,
+    )
+    .get();
+  if (has === undefined) return;
+  const rows = db
+    .prepare(
+      `SELECT v.path AS path, a.name AS agent, w.name AS workstream,
+              COALESCE(v.parent_ref, '') AS base, v.created_at AS createdAt
+         FROM ${source}.vcs_workspaces v
+         JOIN ${source}.agents a ON a.id = v.agent_id
+         JOIN ${source}.workstreams w ON w.id = v.workstream_id
+        WHERE v.backend = 'git'`,
+    )
+    .all() as {
+    path: string;
+    agent: string;
+    workstream: string;
+    base: string;
+    createdAt: string;
+  }[];
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO main.worktrees (path, agent, workstream, root, base, created_at)
+     VALUES (?, ?, ?, '', ?, ?)`,
+  );
+  const point = db.prepare(
+    `UPDATE main.agents SET cwd = ?, base = ?
+      WHERE name = ? AND cwd IS NULL
+        AND workstream_id = (SELECT id FROM main.workstreams WHERE name = ?)`,
+  );
+  for (const r of rows) {
+    insert.run(r.path, r.agent, r.workstream, r.base, r.createdAt);
+    point.run(r.path, r.base === "" ? null : r.base, r.agent, r.workstream);
   }
 }
 
