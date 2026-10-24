@@ -197,13 +197,20 @@ export interface IdFromTitleResult {
  * `_3`, …) does not flip `truncated` — the underlying slug's lossiness
  * is what the CLI hint cares about.
  */
-export function idFromTitleVerbose(db: Db, workstream: string, title: string): IdFromTitleResult {
+export function idFromTitleVerbose(
+  db: Db,
+  workstream: string,
+  title: string,
+  /** Ids to treat as taken besides the DB's (explicit ids of the same batch). */
+  reserved?: ReadonlySet<string>,
+): IdFromTitleResult {
   const { slug: base, truncated, originalSlug } = slugifyTitleVerbose(title);
-  if (getTask(db, base, workstream) === undefined) return { id: base, truncated, originalSlug };
+  const free = (id: string): boolean =>
+    reserved?.has(id) !== true && getTask(db, id, workstream) === undefined;
+  if (free(base)) return { id: base, truncated, originalSlug };
   for (let i = 2; i < 1000; i++) {
     const candidate = `${base}_${i}`.slice(0, SLUG_HARD_CAP);
-    if (getTask(db, candidate, workstream) === undefined)
-      return { id: candidate, truncated, originalSlug };
+    if (free(candidate)) return { id: candidate, truncated, originalSlug };
   }
   throw new Error(`could not derive a unique id from title in workstream ${workstream}: ${title}`);
 }

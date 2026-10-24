@@ -53,7 +53,7 @@ export function wireTaskCommands(program: Command): void {
     .description(
       "Add tasks atomically. No id: derived from -t (cut at ~40 chars, collisions get _2…). Several ids need one -t each; --note, score and edges apply to all. --blocks <umbrella> makes the umbrella wait for them.",
     )
-    .requiredOption("-t, --title <title...>", "task title (repeat: one per id)", collect)
+    .requiredOption("-t, --title <title>", "task title (repeat: one per id)", collect)
     .option(
       "-i, --impact <n>",
       "impact 1..100 (default 50; giving -i or -e scores the task)",

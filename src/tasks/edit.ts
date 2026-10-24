@@ -18,7 +18,7 @@ import {
   TaskIdInvalidError,
   TaskNotFoundError,
 } from "./errors.js";
-import { isValidTaskId } from "./id.js";
+import { type IdFromTitleResult, idFromTitleVerbose, isValidTaskId } from "./id.js";
 import { getTask } from "./queries.js";
 
 export interface AddTaskOptions {
@@ -151,6 +151,9 @@ export interface AddTasksOptions {
 export interface AddTasksResult {
   /** Local ids, in input order. */
   ids: string[];
+  /** Per task, in input order: the id and, for a derived one, whether the
+   *  slug was cut (`truncated`) and its un-cut form. */
+  derived: IdFromTitleResult[];
   /** False only for an empty batch. */
   changed: boolean;
 }
@@ -161,17 +164,32 @@ export interface AddTasksResult {
  * group and ONE transaction. A duplicate id, invalid id, missing or
  * cross-workstream blocker/umbrella or a cycle rolls back every row, edge
  * and note of the batch.
+ *
+ * An entry without `id` gets one derived from its title: the slug, then
+ * `_2`, `_3`, … the first suffix free in the DB, among the batch's
+ * explicit ids and among the ids already derived. The probe runs inside
+ * the transaction, so it cannot race another writer.
  */
 export function addTasks(
   db: Db,
-  input: readonly { id: string; title: string; note?: string }[],
+  input: readonly { id?: string; title: string; note?: string }[],
   opts: AddTasksOptions,
 ): AddTasksResult {
-  if (input.length === 0) return { ids: [], changed: false };
+  if (input.length === 0) return { ids: [], derived: [], changed: false };
   return withOpContext(db, { intent: "task.add", actor: opts.noteAuthor, group: "new" }, () =>
     db
       .transaction((): AddTasksResult => {
-        for (const t of input) {
+        const explicit = new Set(input.flatMap((t) => (t.id !== undefined ? [t.id] : [])));
+        const done: { id: string }[] = [];
+        const derived: IdFromTitleResult[] = [];
+        for (const entry of input) {
+          const d: IdFromTitleResult =
+            entry.id !== undefined
+              ? { id: entry.id, truncated: false, originalSlug: entry.id }
+              : idFromTitleVerbose(db, opts.workstream, entry.title, explicit);
+          derived.push(d);
+          const t = { ...entry, id: d.id };
+          done.push(t);
           addTaskImpl(db, {
             localId: t.id,
             workstream: opts.workstream,
@@ -188,9 +206,9 @@ export function addTasks(
           }
         }
         if (opts.blocks !== undefined && opts.blocks.length > 0) {
-          addBlocksEdges(db, input, opts.blocks, opts.workstream);
+          addBlocksEdges(db, done, opts.blocks, opts.workstream);
         }
-        return { ids: input.map((t) => t.id), changed: true };
+        return { ids: done.map((t) => t.id), derived, changed: true };
       })
       .immediate(),
   );

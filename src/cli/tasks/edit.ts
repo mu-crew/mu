@@ -36,7 +36,6 @@ import {
   addTasks,
   getTask,
   getTaskEdgesWithStatus,
-  idFromTitleVerbose,
   listNotes,
   resolveActorIdentity,
   type TaskEdgeWithStatus,
@@ -141,23 +140,6 @@ function emitWarnings(warnings: readonly string[], json: boolean | undefined): v
   for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
 }
 
-/** Ids for a batch of titles: explicit ids as given; otherwise each
- *  title's slug, suffixed `_2`, `_3`, … against the DB AND this batch. */
-function deriveBatchIds(
-  db: Db,
-  workstream: string,
-  titles: readonly string[],
-): { id: string; truncated: boolean; originalSlug: string }[] {
-  const used = new Set<string>();
-  return titles.map((title) => {
-    const d = idFromTitleVerbose(db, workstream, title);
-    let id = d.id;
-    for (let i = 2; used.has(id); i++) id = `${d.id.slice(0, 60)}_${i}`;
-    used.add(id);
-    return { ...d, id };
-  });
-}
-
 export async function cmdTaskAdd(
   db: Db,
   localIds: readonly string[],
@@ -191,10 +173,6 @@ export async function cmdTaskAdd(
   // truncation fields only when meaningful
   // (task_add_slugify_silently_truncates_ids).
   const autoDerived = localIds.length === 0;
-  const derivations = autoDerived
-    ? deriveBatchIds(db, workstream, titles)
-    : localIds.map((id) => ({ id, truncated: false, originalSlug: id }));
-  const ids = derivations.map((d) => d.id);
   const blockedBy = parseCsvFlag(opts.blockedBy, "-b/--blocked-by");
   const blocks = parseCsvFlag(opts.blocks, "--blocks");
   const hasBlockers = blockedBy.length > 0;
@@ -211,11 +189,11 @@ export async function cmdTaskAdd(
   const initialNoteAuthor =
     noteText !== undefined ? (opts.noteAuthor ?? (await resolveActorIdentity())) : undefined;
   // One group, one transaction: every task, brief and edge, or none.
-  addTasks(
+  const { ids, derived: derivations } = addTasks(
     db,
-    ids.map((id, i) => ({
-      id,
-      title: titles[i] ?? "",
+    titles.map((title, i) => ({
+      ...(autoDerived ? {} : { id: localIds[i] ?? "" }),
+      title,
       ...(noteText !== undefined ? { note: noteText } : {}),
     })),
     {

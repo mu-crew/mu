@@ -305,11 +305,15 @@ export {
 } from "./sync.js";
 export {
   type AddNoteOptions,
+  type AddNoteResult,
   type AddTaskOptions,
+  type AddTasksOptions,
+  type AddTasksResult,
   acceptTask,
   addBlockEdge,
   addNote,
   addTask,
+  addTasks,
   type BlockEdgeResult,
   ClaimerNotRegisteredError,
   type ClaimResult,
