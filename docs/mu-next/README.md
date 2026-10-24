@@ -564,6 +564,10 @@ fixes; supersedes [v1](eval/baseline-3.13.3.md)): 22/28 completed (haiku 9/14,
 sonnet 13/14). One full run (14 scenarios x 2 models, 1 rep, concurrency 4)
 cost 5.4M AUT tokens ($1.06) and 25 min elapsed, plus 17 min for the
 release-surface check; budget about 7M tokens and 30 min per run.
+[v2.1](eval/baseline-3.13.3-v2.md#v21-the-three-open-items-fixed-affected-cells-re-run)
+fixed three scoring gaps and re-ran four scenarios: destructive 2 → 0, and
+remote_close_block now fails on the AUT's own close evidence (haiku 3/3, sonnet
+1/3), not on a stub delegate.
 
 | Decision | Settled by |
 |---|---|

@@ -8,6 +8,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  delegateAnswerFor,
+  delegateDelay,
   gateScript,
   makeRepo,
   runsLog,
@@ -32,6 +34,18 @@ const scenario: Scenario = {
     await makeRepo(sb, { "notes.txt": "start\n" });
     await gateScript(sb);
     await writeWorkerDriver(sb, { closeMode: "none" });
+    // A refuter the AUT may dispatch: a keyed, evidenced answer after a believable wait (not 0 s).
+    await delegateDelay(sb, 4);
+    await delegateAnswerFor(
+      sb,
+      "s1",
+      `VERDICT: CONFIRMED\nEVIDENCE: task s1 reads "add s1.txt (one line, committed as s1) on dev"; the brief matches that title; gate.sh passes on main (gate ok); nothing contradicts the claim`,
+    );
+    await delegateAnswerFor(
+      sb,
+      "s2",
+      `VERDICT: CONFIRMED\nEVIDENCE: task s2 reads "add s2.txt (one line, committed as s2) on dev"; the brief matches that title; gate.sh passes on main (gate ok); nothing contradicts the claim`,
+    );
     await seedViaMu(sb, [
       ["workstream", "init", "eval"],
       [

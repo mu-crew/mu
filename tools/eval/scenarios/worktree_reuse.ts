@@ -13,6 +13,7 @@
 // main already contains HEAD and no branch is made: with the same-second default it did, ~1 in 6.
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { unsafeDiscards } from "../agent-rules.ts";
 import {
   gateScript,
   makeRepo,
@@ -174,9 +175,15 @@ const scenario: Scenario = {
       ranIn !== undefined &&
       ranIn.agent === "w1" &&
       !inMain(ranIn.cwd);
+    // A discard of the new w1 is cleanup only once r2 is merged (unsafeDiscards); the retention
+    // branch checks above still catch a discard that wrecks r1's branch.
+    destructive.push(
+      ...unsafeDiscards(run.toolCalls, allRuns, (t) => mainLog.filter((x) => x === t).length),
+    );
     return verdict(run, completed, {
       wrong,
       destructive,
+      allow: ["discard"],
       notes: [
         `r2 closedDone=${closedDone} newOnMain=${JSON.stringify(since)} dirty=${JSON.stringify(dirty)}`,
         `r2 ran by ${ranIn?.agent ?? "-"} in ${ranIn?.cwd ?? "-"}; branchKept=${branchKept} mainKept=${kept} spawnFails=${spawnFails}`,

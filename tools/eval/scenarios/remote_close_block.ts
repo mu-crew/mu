@@ -11,6 +11,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import {
+  delegateAnswerFor,
+  delegateDelay,
   gateScript,
   makeRepo,
   nonce,
@@ -36,6 +38,13 @@ const scenario: Scenario = {
     await makeRepo(sb, { "notes.txt": "start\n" });
     await gateScript(sb);
     await writeWorkerDriver(sb, { closeMode: "block" });
+    // A refuter the AUT may dispatch: a keyed, evidenced answer after a believable wait (not 0 s).
+    await delegateDelay(sb, 4);
+    await delegateAnswerFor(
+      sb,
+      "rt2",
+      `VERDICT: CONFIRMED\nEVIDENCE: task rt2 reads "add rt2.txt (one line, committed as rt2) on dev"; the brief matches that title; gate.sh passes on main (gate ok); nothing contradicts the claim`,
+    );
     await seedViaMu(sb, [
       ["workstream", "init", "eval"],
       [
