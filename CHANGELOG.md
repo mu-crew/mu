@@ -147,8 +147,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   from work it must not overwrite (`WorktreePathNotEmptyError`, one line).
   The reaper (`reconcile`) only deletes the agent row; it never touches a
   worktree or the registry. A failed spawn removes the worktree it made.
-  `vcs_workspaces` is dropped: `openDb` treats a DB that still has it as not
-  current, and `applySchema` drops it in its one transaction. The schema
+  `vcs_workspaces` is migrated and dropped: `openDb` treats a DB that still
+  has it as not current, and `applySchema` copies every git row into
+  `worktrees` (path, agent, workstream, base = `parent_ref`, `created_at`;
+  `root` unknown, found from the worktree's own git pointer) and fills the
+  agent's `cwd`/`base`, then drops it, all in its one transaction, so a dirty
+  legacy workspace is still refused on close. `migrateLegacyWorkspaces(db,
+  schema)` takes an ATTACHed source for the import.
+  `spawn --worktree` bases on the caller's checkout: HEAD (or `--from`) is
+  resolved in the git toplevel of `--root`/the caller's cwd, a linked checkout
+  included; only the registry records the owning main checkout. The schema
   stays v12 (additive and idempotent, no bump). `EXPECTED_TABLES` is still 15
   (`worktrees` for `vcs_workspaces`).
 - **Spawn injects exactly six identity variables**: `MU_MANAGED_AGENT`,

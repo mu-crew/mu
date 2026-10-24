@@ -100,8 +100,8 @@ quoted heredoc: `mu agent send worker-1 - <<'EOF'`; see
 
 `mu agent spawn --worktree` creates a git worktree for the agent and starts
 its pane there: the worker's cwd is its worktree. Outside a git repo it
-fails with exit 4. `--from <ref>` picks the starting commit, `--root <repo>`
-the repo. You cherry-pick from it.
+fails with exit 4. `--from <ref>` picks the starting commit and `--root <repo>`
+the repo; both default to the HEAD of the checkout you run in (a linked one included). You cherry-pick from it.
 
 Refresh the worktree between tasks. The rebase keeps the agent's pi
 context. Before a `--fresh` send:

@@ -34,7 +34,7 @@ import { resolveActorIdentity } from "../tasks/claim.js";
 // multiplexer operation, so it stays on the tmux module rather than
 // joining the MuxBackend contract.
 import { sleep } from "../tmux.js";
-import { gitToplevel, owningRoot } from "../vcs/git.js";
+import { git, gitToplevel, owningRoot } from "../vcs/git.js";
 import { isScratchWorkstream } from "../workstream.js";
 import {
   createWorktree,
@@ -759,9 +759,13 @@ async function prestageWorktree(
   const dir = opts.root ?? process.cwd();
   const top = await gitToplevel(dir);
   if (top === undefined) throw new WorktreeVcsRequiredError(dir);
-  // The main checkout, even when the caller runs inside one of mu's own
-  // worktrees (which may be removed before this one).
+  // The registry records the main checkout, even when the caller runs
+  // inside a linked one (which may be removed before this worktree)...
   const root = (await owningRoot(top)) ?? top;
+  // ...but the start revision is the CALLER's: HEAD (or --from) resolved in
+  // the checkout it works in, not in the main one. Objects and refs are
+  // shared, so the pinned sha is valid from `root`.
+  const from = await git(["rev-parse", "--verify", `${opts.from ?? "HEAD"}^{commit}`], top);
   insertAgent(db, {
     name: opts.name,
     workstream: opts.workstream,
@@ -776,7 +780,7 @@ async function prestageWorktree(
     const { base } = await createWorktree({
       root,
       path,
-      ...(opts.from !== undefined ? { from: opts.from } : {}),
+      from,
     });
     registerWorktree(db, {
       path,

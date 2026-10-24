@@ -84,7 +84,7 @@ are re-export hubs.
 
 | Module | Responsibility |
 | --- | --- |
-| `src/db.ts` | better-sqlite3 connection (WAL); schema v12 (15 tables, 4 views) in `applySchema`; makes the stored capture triggers current (`installCapture`); `SqliteTooOldError` below 3.42; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
+| `src/db.ts` | better-sqlite3 connection (WAL); schema v12 (15 tables, 4 views) in `applySchema`; makes the stored capture triggers current (`installCapture`); `SqliteTooOldError` below 3.42; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; `migrateLegacyWorkspaces` carries old `vcs_workspaces` rows into `worktrees`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
 | `src/compare.ts` | code-unit string compare; replaces `localeCompare` so ICU is never initialised |
 | `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
 | `src/capture.ts` | Triggers stored in the DB file (versioned by `capture_version`) recording each portable write as an op, refusing natural-key changes and explicit ids <= 0; `captureDoctorCheck` |
