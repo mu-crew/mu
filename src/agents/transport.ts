@@ -17,19 +17,23 @@ import {
   CtlUnknownOpError,
   CtlVersionError,
   ctlRequest,
+  ctlServes,
   errCode,
+  newMsgId,
 } from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
 import {
   CTL_COMMANDS,
   type CtlCommandName,
+  type CtlFeature,
   type CtlReply,
   type CtlRequest,
   type CtlState,
 } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
-import { activeMux, type SendOptions } from "../mux.js";
+import { activeMux, attachShellLine, type SendOptions } from "../mux.js";
+import { shellWord } from "../shell-quote.js";
 import {
   AgentBusyError,
   AgentCtlUnreachableError,
@@ -61,6 +65,12 @@ export type SendResult = {
   sessionFile?: string;
   /** Set when the text ran as a pi session command over ctl. */
   command?: CtlCommandName;
+  /** ctl send/fresh/interrupt: the id this send carried; `mu agent check` asks about it later. */
+  msgId?: string;
+  /** ctl only: the pi process's incarnation, the `--inc` for `mu agent wait`. */
+  incarnation?: string;
+  /** Set when the reply never arrived and a `status {msgId}` probe confirmed the send landed. */
+  receipt?: "confirmed-after-timeout";
 };
 
 export type TransportSendOptions = SendOptions & {
@@ -122,13 +132,58 @@ export function isSlashCommand(text: string): boolean {
 }
 
 /**
+ * The recovery inputs of an outdated-extension error that only mu can
+ * compute: the mux's own /reload line (when its backend can type one) and
+ * the agent's spawn command, rebuilt from its row. Each is omitted when it
+ * cannot be filled exactly (a hint mu cannot fill is not printed).
+ */
+export async function outdatedRecovery(
+  agent: AgentRow,
+): Promise<{ muxReload?: string; respawn?: string }> {
+  let muxReload: string | undefined;
+  try {
+    const mux = await activeMux();
+    if (mux.reloadCommands) muxReload = attachShellLine(mux.reloadCommands(agent.paneId));
+  } catch {
+    // no reachable mux: the respawn step still stands
+  }
+  const respawn = respawnCommand(agent);
+  return {
+    ...(muxReload !== undefined ? { muxReload } : {}),
+    ...(respawn !== undefined ? { respawn } : {}),
+  };
+}
+
+/**
+ * The `mu agent spawn` line that recreates `agent`, or undefined for a row
+ * older than the stored command. An explicit --command is replayed
+ * verbatim; an env or cli-key command is replayed as --cli only (the same
+ * resolution happens again). A worktree agent respawns with --worktree.
+ */
+export function respawnCommand(agent: AgentRow): string | undefined {
+  if (agent.command === null || agent.commandSource === null) return undefined;
+  const parts = [
+    "mu agent spawn",
+    shellWord(agent.name),
+    "-w",
+    shellWord(agent.workstreamName),
+    "--cli",
+    shellWord(agent.cli),
+  ];
+  if (agent.commandSource === "explicit") parts.push("--command", shellWord(agent.command));
+  if (agent.role !== "full-access") parts.push("--role", shellWord(agent.role));
+  if (agent.tab !== null) parts.push("--tab", shellWord(agent.tab));
+  if (agent.base !== null) parts.push("--worktree");
+  else if (agent.cwd !== null) parts.push("--cwd", shellWord(agent.cwd));
+  return parts.join(" ");
+}
+
+/**
  * Map a CtlUnknownOpError to AgentExtensionOutdatedError, asking the
  * socket's `hello` (best effort) for the extension's build version.
- * Checked after the refusal rather than before every op: an unknown op
- * is a no-op in the extension, so the happy path pays no extra trip.
  */
 export async function extensionOutdated(
-  agent: Pick<AgentRow, "name" | "workstreamName">,
+  agent: AgentRow,
   sock: string,
   e: CtlUnknownOpError,
 ): Promise<AgentExtensionOutdatedError> {
@@ -139,7 +194,39 @@ export async function extensionOutdated(
   } catch {
     // The refusal already proved the socket answers; the version is a nicety.
   }
-  return new AgentExtensionOutdatedError(agent.name, agent.workstreamName, e.op, extVersion, e.ops);
+  return new AgentExtensionOutdatedError(
+    agent.name,
+    agent.workstreamName,
+    e.op,
+    extVersion,
+    e.ops,
+    await outdatedRecovery(agent),
+  );
+}
+
+/**
+ * Before a verb relies on `feature` (msgId for send/fresh/interrupt,
+ * incarnation for `wait --inc`): ask the extension's `hello` which features
+ * it serves. A pi that loaded an older mu build lacks them: refuse before
+ * anything is written, with the reload/respawn ladder. One hello per verb
+ * per agent; the reply is returned for the caller.
+ */
+export async function requireFeature(
+  agent: AgentRow,
+  sock: string,
+  feature: CtlFeature,
+): Promise<void> {
+  const hello = await ctlRequestFor(agent, sock, { op: "hello" });
+  if (!hello.ok) throw new Error(`control socket refused hello: ${hello.error}`);
+  if (ctlServes(hello, feature)) return;
+  throw new AgentExtensionOutdatedError(
+    agent.name,
+    agent.workstreamName,
+    feature,
+    hello.extVersion,
+    hello.ops,
+    { ...(await outdatedRecovery(agent)), feature: true },
+  );
 }
 
 /**
@@ -149,7 +236,7 @@ export async function extensionOutdated(
  * (missing on ENOENT, else refused).
  */
 export async function ctlRequestFor(
-  agent: Pick<AgentRow, "name" | "workstreamName" | "paneId">,
+  agent: AgentRow,
   sock: string,
   req: CtlRequest,
 ): Promise<CtlReply> {
@@ -162,9 +249,11 @@ export async function ctlRequestFor(
 
 /** The error ctlRequestFor raises for a failed ctl request (see there). */
 export async function ctlFailure(
-  agent: Pick<AgentRow, "name" | "workstreamName" | "paneId">,
+  agent: AgentRow,
   sock: string,
   e: unknown,
+  /** The msgId the failed request carried: lets an ambiguous delivery name its receipt. */
+  msgId?: string,
 ): Promise<unknown> {
   if (e instanceof CtlVersionError) return e;
   if (e instanceof CtlUnknownOpError) return extensionOutdated(agent, sock, e);
@@ -173,7 +262,13 @@ export async function ctlFailure(
     return new AgentPaneDeadError(agent.name, agent.workstreamName, agent.paneId);
   }
   if (e instanceof CtlDeliveryUnknownError) {
-    return new AgentSendIndeterminateError(agent.name, agent.workstreamName, e.op, e.cause.message);
+    return new AgentSendIndeterminateError(
+      agent.name,
+      agent.workstreamName,
+      e.op,
+      e.cause.message,
+      msgId,
+    );
   }
   return new AgentCtlUnreachableError(
     agent.name,
@@ -181,6 +276,72 @@ export async function ctlFailure(
     sock,
     errCode(e) === "ENOENT" ? "missing" : "refused",
   );
+}
+
+/** The one `status {msgId}` probe a failed send gets, and `mu agent check`. */
+const MSG_PROBE_MS = 5000;
+
+export type MessageCheck =
+  | { state: "accepted"; id: string; runs?: number; at?: number; incarnation?: string }
+  | { state: "not-accepted"; id: string }
+  | { state: "unreachable"; id: string; reason: string };
+
+/**
+ * Ask the extension whether it accepted the send/fresh/interrupt that
+ * carried `msgId`: one `status {msgId}` request. Never throws: a socket
+ * that is silent, missing, or an extension that does not answer with a
+ * `msg` is `unreachable`, which is not the same as `not-accepted`.
+ */
+export async function checkMessage(
+  sock: string,
+  msgId: string,
+  timeoutMs: number = MSG_PROBE_MS,
+): Promise<MessageCheck> {
+  try {
+    const r = await ctlRequest(sock, { op: "status", msgId }, { timeoutMs });
+    if (!r.ok) return { state: "unreachable", id: msgId, reason: r.error };
+    if (r.msg === undefined) {
+      return { state: "unreachable", id: msgId, reason: "the extension does not report receipts" };
+    }
+    if (!r.msg.accepted) return { state: "not-accepted", id: msgId };
+    return {
+      state: "accepted",
+      id: msgId,
+      ...(r.msg.runs !== undefined ? { runs: r.msg.runs } : {}),
+      ...(r.msg.at !== undefined ? { at: r.msg.at } : {}),
+      ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
+    };
+  } catch (e) {
+    return { state: "unreachable", id: msgId, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * A side-effecting ctl request carrying a fresh msgId. When the reply
+ * never arrives (written, then silence) it asks `status {msgId}` ONCE:
+ * accepted => the send landed (`receipt`); anything else =>
+ * AgentSendIndeterminateError naming the msgId. It never resends.
+ */
+export async function ctlSendWithReceipt(
+  agent: AgentRow,
+  sock: string,
+  req: Extract<CtlRequest, { msgId?: string }>,
+): Promise<{
+  reply?: Extract<CtlReply, { ok: true }> | { ok: false; error: string };
+  msgId: string;
+  confirmed?: Extract<MessageCheck, { state: "accepted" }>;
+}> {
+  const msgId = newMsgId();
+  try {
+    return { reply: await ctlRequest(sock, { ...req, msgId }), msgId };
+  } catch (e) {
+    if (!(e instanceof CtlDeliveryUnknownError)) {
+      throw await ctlFailure(agent, sock, e, msgId);
+    }
+    const check = await checkMessage(sock, msgId);
+    if (check.state === "accepted") return { msgId, confirmed: check };
+    throw await ctlFailure(agent, sock, e, msgId);
+  }
 }
 
 /** True only when the mux positively reports the pane gone (a mux error is "unknown"). */
@@ -254,21 +415,38 @@ export async function sendViaTransport(
       );
     }
   }
-  const reply = await ctlRequestFor(
+  // Receipts need an extension that remembers msgIds: refuse before writing.
+  await requireFeature(agent, sock, "msgId");
+  const sent = await ctlSendWithReceipt(
     agent,
     sock,
     opts.fresh
       ? { op: "fresh", text, ...(opts.force ? { force: true } : {}) }
       : { op: "send", text, mode: opts.mode ?? "followUp" },
   );
-  if (!reply.ok) {
+  const { reply, msgId } = sent;
+  if (reply !== undefined && !reply.ok) {
     if (opts.fresh && reply.error === "busy") {
       throw new AgentBusyError(agent.name, agent.workstreamName);
     }
     throw new Error(`control socket refused the send: ${reply.error}`);
   }
+  if (reply === undefined) {
+    // No reply, but status {msgId} says it landed: the run count is the
+    // one the reply would have carried; state and since are unknown.
+    const c = sent.confirmed;
+    return {
+      transport: "ctl",
+      msgId,
+      receipt: "confirmed-after-timeout",
+      ...(c?.runs !== undefined ? { runs: c.runs } : {}),
+      ...(c?.incarnation !== undefined ? { incarnation: c.incarnation } : {}),
+    };
+  }
   return {
     transport: "ctl",
+    msgId,
+    ...(reply.incarnation !== undefined ? { incarnation: reply.incarnation } : {}),
     ...(reply.state !== undefined ? { state: reply.state } : {}),
     ...(reply.runs !== undefined ? { runs: reply.runs } : {}),
     ...(reply.since !== undefined ? { since: reply.since } : {}),

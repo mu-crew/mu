@@ -14,6 +14,7 @@ import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { helloReply, INC } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
@@ -32,7 +33,12 @@ beforeEach(() => {
   servers = [];
   ops = [];
   setSleepForTests(async () => {});
-  mux = installMux("tmux", async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+  // The pane is alive: a silent socket then reads as delivery-unknown, not a dead agent.
+  mux = installMux("tmux", async (args) => ({
+    stdout: args[0] === "display-message" ? "%1\n" : "",
+    stderr: "",
+    exitCode: 0,
+  }));
 });
 
 afterEach(async () => {
@@ -44,10 +50,20 @@ afterEach(async () => {
 });
 
 /**
- * Fake extension, busy at runs 3. `hasInterrupt` false plays an extension
- * that predates the op. `settles` false: an abort never settles.
+ * Fake extension, busy at runs 3. `hello` overrides the hello reply (an
+ * extension without the msgId feature, say). `settles` false: an abort
+ * never settles. `silent` swallows the interrupt (written, no reply) while
+ * `accepts` says what `status {msgId}` answers afterwards.
  */
-async function serve(opts: { hasInterrupt: boolean; busy?: boolean; settles?: boolean }) {
+async function serve(
+  opts: {
+    busy?: boolean;
+    settles?: boolean;
+    hello?: Record<string, unknown>;
+    silent?: boolean;
+    accepts?: boolean;
+  } = {},
+) {
   let state: "busy" | "idle" = opts.busy === false ? "idle" : "busy";
   let runs = 3;
   const settles = opts.settles !== false;
@@ -59,11 +75,26 @@ async function serve(opts: { hasInterrupt: boolean; busy?: boolean; settles?: bo
     sock.on("error", () => {});
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
-        const req = JSON.parse(line) as { op: string; afterRuns?: number; timeoutMs?: number };
+        const req = JSON.parse(line) as {
+          op: string;
+          afterRuns?: number;
+          timeoutMs?: number;
+          msgId?: string;
+        };
         ops.push(req);
-        const status = () => ({ state, since: 0, runs, pending: true });
+        const status = () => ({ incarnation: INC, state, since: 0, runs, pending: true });
         const reply = (r: object) => sock.end(encode({ v: 1, ...r }));
-        if (req.op === "interrupt" && opts.hasInterrupt) {
+        if (req.op === "hello") reply(helloReply(opts.hello));
+        else if (req.op === "interrupt" && opts.silent) sock.destroy();
+        else if (req.op === "status" && req.msgId !== undefined) {
+          reply({
+            ok: true,
+            ...status(),
+            msg: opts.accepts
+              ? { id: req.msgId, accepted: true, runs, at: 1 }
+              : { id: req.msgId, accepted: false },
+          });
+        } else if (req.op === "interrupt") {
           const wasBusy = state === "busy";
           if (wasBusy && !settles) {
             setTimeout(() => reply({ ok: false, error: "timeout" }), req.timeoutMs ?? 0);
@@ -100,29 +131,33 @@ function seed(cli = "pi"): void {
 const send = (...args: string[]) =>
   runCli(["agent", "send", "worker-1", ...args, "-w", "auth", "--json"], dbPath);
 
-const opNames = () => ops.map((o) => o.op);
+const opNames = () => ops.filter((o) => o.op !== "hello").map((o) => o.op);
+const sent = () => ops.filter((o) => o.op !== "hello");
 const pasted = () => mux.calls.some((c) => c[0] === "paste-buffer");
 
 describe("mu agent send --interrupt", () => {
   it("busy: one interrupt op; reports was busy, pending, and the post-abort wait baseline", async () => {
     seed();
-    await serve({ hasInterrupt: true });
+    await serve();
     const r = await send("--interrupt", "stop, do X");
     expect(r.exitCode).toBeNull();
-    expect(ops).toEqual([{ op: "interrupt", text: "stop, do X", timeoutMs: 30_000 }]);
+    expect(sent()).toEqual([
+      { op: "interrupt", text: "stop, do X", timeoutMs: 30_000, msgId: expect.any(String) },
+    ]);
     const body = JSON.parse(r.stdout) as Record<string, unknown> & {
       nextSteps: Array<{ command: string }>;
     };
     expect(body).toMatchObject({ transport: "ctl", wasBusy: true, pending: true, runs: 4 });
+    expect(body).toMatchObject({ incarnation: INC, msgId: expect.any(String) });
     expect(body.nextSteps.map((s) => s.command)).toContain(
-      "mu agent wait worker-1 --after-runs 4 --json -w auth",
+      `mu agent wait worker-1 -w auth --after-runs 4 --inc ${INC} --json`,
     );
     expect(pasted()).toBe(false);
   });
 
   it("human output says queued messages went back to the editor", async () => {
     seed();
-    await serve({ hasInterrupt: true });
+    await serve();
     const r = await runCli(
       ["agent", "send", "worker-1", "--interrupt", "go", "-w", "auth"],
       dbPath,
@@ -133,7 +168,7 @@ describe("mu agent send --interrupt", () => {
 
   it("idle: just sends", async () => {
     seed();
-    await serve({ hasInterrupt: true, busy: false });
+    await serve({ busy: false });
     const r = await send("--interrupt", "hi");
     expect(r.exitCode).toBeNull();
     expect(JSON.parse(r.stdout)).toMatchObject({ wasBusy: false, runs: 3 });
@@ -141,45 +176,57 @@ describe("mu agent send --interrupt", () => {
 
   it("--timeout reaches the op in ms", async () => {
     seed();
-    await serve({ hasInterrupt: true, busy: false });
+    await serve({ busy: false });
     await send("--interrupt", "--timeout", "2", "hi");
-    expect(ops[0]).toMatchObject({ op: "interrupt", timeoutMs: 2000 });
+    expect(sent()[0]).toMatchObject({ op: "interrupt", timeoutMs: 2000 });
   });
 
   it("settle timeout: exit 5, close hint", async () => {
     seed();
-    await serve({ hasInterrupt: true, settles: false });
+    await serve({ settles: false });
     const r = await send("--interrupt", "--timeout", "0.1", "x");
     expect(r.exitCode).toBe(5);
     expect(r.stderr).toContain("mu agent close worker-1");
   });
 
-  it("old extension (no interrupt op): falls back to abort, settle, then send; never pastes", async () => {
+  it("an extension without the msgId feature: refused before anything is aborted or sent", async () => {
     seed();
-    await serve({ hasInterrupt: false });
+    await serve({ hello: helloReply({ features: [] }) });
+    const r = await send("--interrupt", "stop");
+    expect(r.exitCode).toBe(4);
+    expect(JSON.parse(r.stderr)).toMatchObject({ error: "AgentExtensionOutdatedError" });
+    expect(opNames()).toEqual([]);
+    expect(pasted()).toBe(false);
+  });
+
+  it("no reply, but status {msgId} says it landed: success with receipt confirmed-after-timeout, one interrupt only", async () => {
+    seed();
+    await serve({ silent: true, accepts: true });
     const r = await send("--interrupt", "stop");
     expect(r.exitCode).toBeNull();
-    expect(opNames()).toEqual(["interrupt", "status", "abort", "wait", "send"]);
-    expect(ops.at(-1)).toMatchObject({ op: "send", text: "stop" });
-    expect(JSON.parse(r.stdout)).toMatchObject({ wasBusy: true, pending: true, runs: 4 });
-    expect(pasted()).toBe(false);
+    expect(JSON.parse(r.stdout)).toMatchObject({
+      transport: "ctl",
+      receipt: "confirmed-after-timeout",
+      incarnation: INC,
+    });
+    expect(opNames()).toEqual(["interrupt", "status"]);
   });
 
-  it("old extension, idle: falls back to a plain send", async () => {
+  it("no reply and not accepted: AgentSendIndeterminateError (exit 1) carrying the msgId; never resent", async () => {
     seed();
-    await serve({ hasInterrupt: false, busy: false });
-    const r = await send("--interrupt", "hi");
-    expect(opNames()).toEqual(["interrupt", "status", "send"]);
-    expect(JSON.parse(r.stdout)).toMatchObject({ wasBusy: false, runs: 3 });
-  });
-
-  it("old extension, settle timeout: exit 5 and the text is not sent", async () => {
-    seed();
-    await serve({ hasInterrupt: false, settles: false });
-    const r = await send("--interrupt", "--timeout", "0.1", "x");
-    expect(r.exitCode).toBe(5);
-    expect(opNames()).not.toContain("send");
-    expect(pasted()).toBe(false);
+    await serve({ silent: true, accepts: false });
+    const r = await send("--interrupt", "stop");
+    expect(r.exitCode).toBe(1);
+    const env = JSON.parse(r.stderr) as {
+      error: string;
+      message: string;
+      nextSteps: { command: string }[];
+    };
+    expect(env.error).toBe("AgentSendIndeterminateError");
+    const id = (ops.find((o) => o.op === "interrupt") as { msgId: string }).msgId;
+    expect(env.message).toContain(id);
+    expect(env.nextSteps.map((n) => n.command)).toEqual([`mu agent check worker-1 ${id} -w auth`]);
+    expect(opNames()).toEqual(["interrupt", "status"]);
   });
 
   it.each([
@@ -187,7 +234,7 @@ describe("mu agent send --interrupt", () => {
     [["--steer"], /--interrupt and --steer are mutually exclusive/],
   ])("exclusive with %j: exit 2, nothing sent", async (flags, msg) => {
     seed();
-    await serve({ hasInterrupt: true });
+    await serve();
     const r = await send("--interrupt", ...flags, "x");
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(msg);
@@ -197,7 +244,7 @@ describe("mu agent send --interrupt", () => {
 
   it("slash-command text: exit 2", async () => {
     seed();
-    await serve({ hasInterrupt: true });
+    await serve();
     const r = await send("--interrupt", "/new");
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(/--interrupt sends a prompt, not a slash command/);
@@ -206,7 +253,7 @@ describe("mu agent send --interrupt", () => {
 
   it("empty text: exit 2, and nothing is aborted", async () => {
     seed();
-    await serve({ hasInterrupt: true });
+    await serve();
     const r = await send("--interrupt", "");
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(/--interrupt needs a non-empty prompt/);
@@ -215,7 +262,7 @@ describe("mu agent send --interrupt", () => {
 
   it("SDK interruptAgent refuses empty text before any ctl op", async () => {
     seed();
-    await serve({ hasInterrupt: true });
+    await serve();
     await expect(interruptAgent(db, "worker-1", "", { workstream: "auth" })).rejects.toBeInstanceOf(
       AgentEmptySendError,
     );
@@ -224,7 +271,7 @@ describe("mu agent send --interrupt", () => {
 
   it("--timeout without --interrupt: exit 2", async () => {
     seed();
-    await serve({ hasInterrupt: true });
+    await serve();
     const r = await send("--timeout", "3", "x");
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(/--timeout only applies with --interrupt/);

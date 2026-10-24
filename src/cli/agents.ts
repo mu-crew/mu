@@ -15,10 +15,13 @@ import { agentKey, blockedReason, ctlRuntimeState, readAgentStates } from "../ag
 import {
   AgentCtlUnreachableError,
   AgentNotFoundError,
+  AgentRestartedError,
+  AgentSendIndeterminateError,
   type AgentStatusSnapshot,
   type AgentWatch,
   abortAgent,
   agentCtlSocket,
+  checkMessage,
   closeAgent,
   delegateOutcome,
   expectsCtl,
@@ -28,6 +31,7 @@ import {
   listLiveAgents,
   parseSessionCommand,
   readAgent,
+  requireFeature,
   resolveCliCommand,
   resolveCliCommandWithSource,
   type SpawnedAgent,
@@ -51,12 +55,12 @@ import {
   UsageError,
 } from "../cli.js";
 import { ctlProbe, ctlRequest } from "../ctl/client.js";
-import type { CtlBlocked } from "../ctl/protocol.js";
+import { type CtlBlocked, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
 import { listTasksByOwner } from "../tasks.js";
-import { dispatchHint, plainSendHints } from "./dispatch-hints.js";
+import { dispatchHint, plainSendHints, waitHint } from "./dispatch-hints.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
 interface SpawnOpts {
@@ -178,12 +182,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     ...(!sent?.ok
       ? [dispatchHint(agent)]
       : sent.runs !== undefined
-        ? [
-            {
-              intent: "Wait for the response (returns its final text)",
-              command: `mu agent wait ${name} --after-runs ${sent.runs} --json -w ${workstream}`,
-            },
-          ]
+        ? [waitHint({ name, workstreamName: workstream }, sent.runs, sent.incarnation)]
         : []),
     { intent: "Read pane", command: `mu agent read ${name} -w ${workstream}` },
     { intent: "Watch live events", command: `mu log -w ${workstream} --tail` },
@@ -263,11 +262,14 @@ type SpawnSend =
       transport: Transport;
       state?: string;
       runs?: number;
+      /** The send's receipt id (`mu agent check`) and pi's incarnation (`wait --inc`). */
+      msgId?: string;
+      incarnation?: string;
       /** pi's session file, where the delegate's transcript is written. */
       sessionFile?: string;
       delivered: boolean;
     }
-  | { ok: false; error: string; message: string; exitCode: number };
+  | { ok: false; error: string; message: string; exitCode: number; msgId?: string };
 
 /**
  * Send the first prompt to a just-spawned agent, so a caller that would
@@ -282,6 +284,10 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
     error: err instanceof Error ? err.name : "Error",
     message: err instanceof Error ? err.message : String(err),
     exitCode: classifyError(err).exitCode,
+    // A delivery-unknown send names its receipt: `mu agent check <agent> <msgId>`.
+    ...(err instanceof AgentSendIndeterminateError && err.msgId !== undefined
+      ? { msgId: err.msgId }
+      : {}),
   });
   if (agent.ctl === "missing" || agent.ctl === "refused")
     return fail(
@@ -301,6 +307,8 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
       transport: sent.transport,
       ...(sent.state !== undefined ? { state: sent.state } : {}),
       ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
+      ...(sent.msgId !== undefined ? { msgId: sent.msgId } : {}),
+      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
       ...(sent.sessionFile !== undefined ? { sessionFile: sent.sessionFile } : {}),
       delivered: !undelivered,
     };
@@ -367,10 +375,7 @@ export async function cmdSend(
   // returns the run's final text, so no pane read is needed.
   const nextSteps: NextStep[] = [
     sent.transport === "ctl" && sent.runs !== undefined
-      ? {
-          intent: "Wait for the response (returns its final text)",
-          command: `mu agent wait ${name} --after-runs ${sent.runs} --json -w ${ws}`,
-        }
+      ? waitHint({ name, workstreamName: ws }, sent.runs, sent.incarnation)
       : { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
     { intent: "Watch live events", command: `mu log -w ${ws} --tail` },
   ];
@@ -408,6 +413,9 @@ export async function cmdSend(
       ...(sent.command !== undefined ? { command: sent.command } : {}),
       ...(sent.state !== undefined ? { state: sent.state } : {}),
       ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
+      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
+      ...(sent.msgId !== undefined ? { msgId: sent.msgId } : {}),
+      ...(sent.receipt !== undefined ? { receipt: sent.receipt } : {}),
       delivered: undelivered === undefined,
       ...(undelivered !== undefined
         ? { undelivered: { reason: undelivered.reason, message: undelivered.message } }
@@ -429,7 +437,9 @@ export async function cmdSend(
             : sent.runs !== undefined
               ? `via ctl, pi was ${sent.state ?? "?"}, runs ${sent.runs}`
               : `via ctl, pi ${sent.state ?? "?"}`;
-    console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (${how})`));
+    const receipt =
+      sent.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
+    console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (${how}${receipt})`));
   }
   printNextSteps(nextSteps);
 }
@@ -450,10 +460,7 @@ async function cmdSendInterrupt(
   });
   const nextSteps: NextStep[] = [
     r.runs !== undefined
-      ? {
-          intent: "Wait for the response (returns its final text)",
-          command: `mu agent wait ${name} --after-runs ${r.runs} --json -w ${ws}`,
-        }
+      ? waitHint({ name, workstreamName: ws }, r.runs, r.incarnation)
       : { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
   ];
   if (r.pending) {
@@ -475,7 +482,10 @@ async function cmdSendInterrupt(
   }
   const what = r.wasBusy ? "interrupted a busy run" : "pi was idle";
   const runs = r.runs !== undefined ? `, runs ${r.runs}` : "";
-  console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (via ctl, ${what}${runs})`));
+  const receipt = r.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
+  console.log(
+    pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (via ctl, ${what}${runs}${receipt})`),
+  );
   if (r.pending) console.log(pc.yellow("queued messages went back to the pane's editor unsent"));
   printNextSteps(nextSteps);
 }
@@ -693,6 +703,38 @@ export async function cmdClose(
   printNextSteps(next);
 }
 
+/**
+ * `mu agent check <agent> <msgId>`: one `status {msgId}` probe. Exit 0
+ * `accepted runs=<n> at=<iso>`; 3 `not-accepted` (the extension never took
+ * it: resending is safe); 1 `unreachable` (no answer: still unknown).
+ */
+export async function cmdAgentCheck(
+  db: Db,
+  rawName: string,
+  msgId: string,
+  opts: { workstream?: string; json?: boolean } = {},
+): Promise<void> {
+  const { name } = await resolveEntityRef(db, rawName, opts, "agent");
+  assertAgentInWorkstream(db, name, opts.workstream);
+  const ws = await resolveWorkstream(opts.workstream);
+  const agent = getAgent(db, name, ws);
+  if (agent === undefined) throw new AgentNotFoundError(name, ws);
+  const check = await checkMessage(agentCtlSocket(db, agent), msgId);
+  const exit = check.state === "accepted" ? 0 : check.state === "not-accepted" ? 3 : 1;
+  if (opts.json) {
+    emitJson({ agentName: name, ...check });
+  } else if (check.state === "accepted") {
+    const at = check.at === undefined ? "?" : new Date(check.at).toISOString();
+    console.log(`accepted runs=${check.runs ?? "?"} at=${at}`);
+  } else if (check.state === "not-accepted") {
+    console.log("not-accepted");
+  } else {
+    console.log("unreachable");
+    console.error(pc.dim(check.reason));
+  }
+  if (exit !== 0) throw new CliExitError(exit);
+}
+
 export async function cmdAbort(
   db: Db,
   rawName: string,
@@ -750,6 +792,8 @@ export async function cmdAgentWait(
     first?: boolean;
     timeout?: number;
     afterRuns?: number;
+    /** pi's incarnation from `send --json`: refuse to wait on another pi process. */
+    inc?: string;
     workstream?: string;
     json?: boolean;
   },
@@ -782,6 +826,26 @@ export async function cmdAgentWait(
           `--after-runs needs a pi agent (control socket); ${ref.workstreamName}/${ref.name} runs ${agent.cli}. Drop --after-runs to wait on its pane state.`,
         );
       }
+    }
+  }
+
+  // --inc pins the pi process the run belongs to: it needs an extension that
+  // reports incarnations (else AgentExtensionOutdatedError with the reload
+  // ladder), and it only makes sense for pi agents.
+  if (opts.inc !== undefined) {
+    if (rawNames.length > 1) {
+      throw new UsageError("--inc names one pi process: wait on one agent at a time");
+    }
+    for (const ref of refs) {
+      const agent = getAgent(db, ref.name, ref.workstreamName);
+      if (agent === undefined) continue;
+      const sock = agentCtlSocket(db, agent);
+      if (!expectsCtl(agent, sock)) {
+        throw new UsageError(
+          `--inc needs a pi agent (control socket); ${ref.workstreamName}/${ref.name} runs ${agent.cli}. Drop --inc.`,
+        );
+      }
+      await requireFeature(agent, sock, "incarnation");
     }
   }
 
@@ -847,25 +911,50 @@ export async function cmdAgentWait(
     }
     // returnOnBlocked: a dialog opening mid-run ends the wait (exit 7)
     // instead of holding it to --timeout. Older extensions ignore it.
-    const req = { op: "wait", afterRuns, returnOnBlocked: true } as const;
+    const req = {
+      op: "wait",
+      afterRuns,
+      returnOnBlocked: true,
+      ...(opts.inc !== undefined ? { incarnation: opts.inc } : {}),
+    } as const;
+    const restarted = (actual?: string): AgentRestartedError =>
+      new AgentRestartedError(ref.name, ref.workstreamName, opts.inc ?? "", actual);
     const settled = ctlRequest(sock, req, { signal }).then(
-      (reply): AgentStatusSnapshot =>
-        reply.ok && reply.ended === "blocked" && reply.blocked !== undefined
-          ? { status: "needs_permission", blocked: reply.blocked }
-          : reply.ok && reply.state !== undefined
-            ? {
-                status: ctlRuntimeState(reply.state),
-                ...(reply.lastText !== undefined ? { lastText: reply.lastText } : {}),
-                ...(reply.lastError !== undefined ? { lastError: reply.lastError } : {}),
-                ...(reply.sessionFile !== undefined ? { sessionFile: reply.sessionFile } : {}),
-              }
-            : { status: "unknown", unknownReason: reply.ok ? "ctl wait: no state" : reply.error },
+      (reply): AgentStatusSnapshot => {
+        // A refused incarnation is fatal, never "unknown": the run is gone.
+        if (!reply.ok && reply.error === INCARNATION_MISMATCH) throw restarted(reply.incarnation);
+        if (reply.ok && reply.ended === "blocked" && reply.blocked !== undefined) {
+          return { status: "needs_permission", blocked: reply.blocked };
+        }
+        if (reply.ok && reply.state !== undefined) {
+          return {
+            status: ctlRuntimeState(reply.state),
+            ...(reply.lastText !== undefined ? { lastText: reply.lastText } : {}),
+            ...(reply.lastError !== undefined ? { lastError: reply.lastError } : {}),
+            ...(reply.sessionFile !== undefined ? { sessionFile: reply.sessionFile } : {}),
+          };
+        }
+        return {
+          status: "unknown",
+          unknownReason: reply.ok ? "ctl wait: no state" : reply.error,
+        };
+      },
       // The connection dropped. A socket that still answers (pi's /new
       // restarts the session) hands back to polling; one that does not
-      // means the pi that served it is gone.
+      // means the pi that served it is gone. With --inc an answering
+      // process must also BE that incarnation: another one means the agent
+      // restarted and the run is gone (fatal, never polled).
       async (): Promise<AgentStatusSnapshot> => {
         if (signal.aborted) return { status: "unknown" };
         const again = await ctlProbe(sock);
+        if (
+          opts.inc !== undefined &&
+          again.kind === "ok" &&
+          again.incarnation !== undefined &&
+          again.incarnation !== opts.inc
+        ) {
+          throw restarted(again.incarnation);
+        }
         return again.kind === "ok"
           ? { status: "unknown", unknownReason: "ctl wait interrupted" }
           : { status: null };
@@ -1101,6 +1190,28 @@ export function wireAgentCommands(program: Command): void {
     });
 
   agent
+    .command("check <name> <msgId>")
+    .description(
+      "Ask whether a send landed: one status probe for its msgId (from `send --json`, or a delivery-unknown error). Prints `accepted runs=<n> at=<iso>` (exit 0), `not-accepted` (exit 3: it never landed, resending is safe) or `unreachable` (exit 1: still unknown).",
+    )
+    .option(...WORKSTREAM_OPT)
+    .option(...JSON_OPT)
+    .action(function (name: string, msgId: string) {
+      const opts = (this as Command).optsWithGlobals() as {
+        workstream?: string | string[];
+        json?: boolean;
+      };
+      return handle(
+        (db) =>
+          cmdAgentCheck(db, name, msgId, {
+            ...opts,
+            workstream: normalizeInheritedWorkstream(opts.workstream),
+          }),
+        this as Command,
+      )();
+    });
+
+  agent
     .command("read <name>")
     .description("Read an agent's pane scrollback")
     .option("-n, --lines <n>", "show last N lines (default: full scrollback)", parseLines)
@@ -1207,6 +1318,10 @@ export function wireAgentCommands(program: Command): void {
       "pi agents only: fire on the first run settled past N (the `runs` that `mu agent send --json` printed), even one that settled before this wait started. One N applies to every named agent",
       parseNonNegativeInt,
     )
+    .option(
+      "--inc <incarnation>",
+      "pi agents only: the `incarnation` that `mu agent send --json` printed. Refuses (exit 4) when the agent restarted since: its run is gone",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (names: string[]) {
@@ -1215,6 +1330,7 @@ export function wireAgentCommands(program: Command): void {
         first?: boolean;
         timeout?: number;
         afterRuns?: number;
+        inc?: string;
         workstream?: string | string[];
         json?: boolean;
       };

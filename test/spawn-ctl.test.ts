@@ -29,6 +29,7 @@ import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, defaultStateDir, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { worktreePath } from "../src/worktree.js";
+import { INC, withHello } from "./_ctl-ext.js";
 import { withEnv } from "./_env.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
@@ -83,8 +84,13 @@ async function serveExtension(path: string): Promise<void> {
     const dec = new LineDecoder();
     sock.setEncoding("utf8");
     sock.on("data", (chunk: string) => {
-      for (const _line of dec.push(chunk)) {
-        sock.end(encode({ v: 1, ok: true, state: "idle", since: 1, runs: 0, pending: false }));
+      for (const line of dec.push(chunk)) {
+        const req = JSON.parse(line) as { op: string };
+        sock.end(
+          encode(
+            withHello(req, { v: 1, ok: true, state: "idle", since: 1, runs: 0, pending: false }),
+          ),
+        );
       }
     });
     sock.on("error", () => {});
@@ -655,8 +661,17 @@ describe("mu agent spawn (CLI)", () => {
       send: { ok: boolean; runs?: number; transport: string; sentBytes: number };
       nextSteps: { command: string }[];
     };
-    expect(out.send).toMatchObject({ ok: true, runs: 0, transport: "ctl", sentBytes: 5 });
-    expect(out.nextSteps[0]?.command).toBe("mu agent wait worker-1 --after-runs 0 --json -w auth");
+    expect(out.send).toMatchObject({
+      ok: true,
+      runs: 0,
+      transport: "ctl",
+      sentBytes: 5,
+      incarnation: INC,
+      msgId: expect.any(String),
+    });
+    expect(out.nextSteps[0]?.command).toBe(
+      `mu agent wait worker-1 -w auth --after-runs 0 --inc ${INC} --json`,
+    );
   });
 
   it("--send to a pi whose socket never answered keeps the pane and exits non-zero", async () => {

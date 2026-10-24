@@ -941,6 +941,13 @@ function defaultUndeliveredWarning(warning: SendWarning): void {
  * `paste-vanished` reason: the pane was calm, we submitted, and
  * nothing happened.
  */
+/** The shell steps that type `/reload` into the pane through herdr. */
+export function reloadCommands(paneId: string): readonly MuxCommand[] {
+  return [
+    { command: "herdr", args: [...herdrGlobalFlags(), "agent", "prompt", paneId, "/reload"] },
+  ];
+}
+
 export async function sendToPane(
   paneId: string,
   text: string,
@@ -1294,6 +1301,7 @@ export const herdrBackend: MuxBackend = Object.freeze({
 
   attachCommands,
 
+  reloadCommands,
   paneStatus,
   sendToPane,
   currentSessionName,

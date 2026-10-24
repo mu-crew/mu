@@ -13,6 +13,28 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 ### Added
 
 - Eval harness (`tools/eval/`) and 3.x baseline (`docs/mu-next/eval/baseline-3.13.3-v2.md`; v1 superseded: delegate token, discard parse, send-before-claim, origin and PATH artifacts fixed).
+- **`mu agent send` returns a receipt; `wait --inc` refuses a restart; `mu agent check`.**
+  A ctl `send`, `--fresh` and `--interrupt` carry a fresh `msgId` and return
+  `msgId`, `incarnation` and `runs` (`--json`); the `Next:` line is
+  `mu agent wait <a> -w <ws> --after-runs <n> --inc <i> --json`. A request
+  written with no reply gets one `status {msgId}` probe: accepted is a
+  success with `receipt: "confirmed-after-timeout"`, otherwise
+  `AgentSendIndeterminateError` (exit 1, carries `msgId`, Next
+  `mu agent check`); it never resends. New verb `mu agent check <agent>
+  <msgId>` (`accepted runs=<n> at=<iso>` 0, `not-accepted` 3,
+  `unreachable` 1; `--json`). `mu agent wait --inc <i>` raises
+  `AgentRestartedError` (exit 4) on a mismatch reply or a reconnect that
+  finds another incarnation (`waitForAgents` now propagates a rejected
+  watch); `abort`'s wait carries the incarnation too. Before it relies on
+  `msgId` or `incarnation`, the CLI asks `hello` (once per verb): a pi that
+  loaded an older mu is refused with `AgentExtensionOutdatedError`, whose
+  steps are ctl `/reload` (slash commands themselves are exempt), the mux
+  reload line (`MuxBackend.reloadCommands`, herdr), then close + the spawn
+  line rebuilt from the agent row. Machine-local `agents.command` and
+  `agents.command_source` (in v12) record how a pane was started. The
+  extension-less interrupt fallback (abort, wait, send composed by the CLI)
+  is removed. `spawn --send` reports `msgId` and `incarnation`.
+- Eval harness (`tools/eval/`) and 3.x baseline (`docs/mu-next/eval/baseline-3.13.3.md`).
 - ctl: replies carry `incarnation`; send/fresh/interrupt accept a `msgId` that
   `status` can confirm; `wait` refuses a mismatched `incarnation`; `hello`
   lists `features` (additive; protocol v1).

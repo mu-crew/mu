@@ -3,13 +3,19 @@
 // A real unix-socket server stands in for the mu pi extension; the mux
 // is the fake tmux harness.
 
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
-import { dispatchHint, nextDispatchHint, plainSendHints } from "../src/cli/dispatch-hints.js";
+import {
+  dispatchHint,
+  nextDispatchHint,
+  plainSendHints,
+  waitHint,
+} from "../src/cli/dispatch-hints.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -17,6 +23,7 @@ import { StallDetectedDuringWaitError } from "../src/tasks/errors.js";
 import { addTask } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { withHello } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
@@ -56,8 +63,9 @@ async function serve(agent: string, state: "busy" | "idle", runs: number): Promi
     sock.setEncoding("utf8");
     sock.on("error", () => {});
     sock.on("data", (chunk: string) => {
-      for (const _line of dec.push(chunk)) {
-        sock.end(encode({ v: 1, ok: true, state, since: 1, runs, pending: false }));
+      for (const line of dec.push(chunk)) {
+        const req = JSON.parse(line) as { op: string };
+        sock.end(encode(withHello(req, { v: 1, ok: true, state, since: 1, runs, pending: false })));
       }
     });
   });
@@ -247,5 +255,74 @@ describe("mu agent send hints", () => {
     await serve("worker-1", "idle", 0);
     const steps = await send();
     expect(steps.some((s) => /busy since/.test(s.intent))).toBe(false);
+  });
+});
+
+// ─── the wait hint after a send (README: reference hint) ─────────────────
+
+/** Words of `line` as a POSIX shell parses them (via `sh`, printing each argv word). */
+function shWords(line: string): string[] {
+  const out = execFileSync("sh", ["-c", `printf '%s\\0' ${line}`], { encoding: "utf8" });
+  return out.split("\0").slice(0, -1);
+}
+
+describe("waitHint: executable as printed", () => {
+  it("is `mu agent wait <a> -w <ws> --after-runs <n> --inc <i> --json`", () => {
+    expect(waitHint({ name: "worker-1", workstreamName: "auth" }, 4, "7f0a-1").command).toBe(
+      "mu agent wait worker-1 -w auth --after-runs 4 --inc 7f0a-1 --json",
+    );
+  });
+
+  it("without an incarnation (an older extension) the --inc words are omitted, not blank", () => {
+    expect(waitHint({ name: "w", workstreamName: "auth" }, 0).command).toBe(
+      "mu agent wait w -w auth --after-runs 0 --json",
+    );
+  });
+
+  it.each([
+    ["plain", "worker-1", "auth", "3c1f9e0a-aaaa-4bbb-8ccc-0123456789ab"],
+    ["an id that needs quoting", "worker-1", "auth", "inc with space; rm -rf /"],
+    ["an apostrophe in the id", "worker-1", "auth", "it's"],
+    ["a shell-hostile workstream", "w", "a b$c", "i"],
+    ["a shell-hostile agent name", "a b;c", "auth", "i"],
+  ])(
+    "%s: the shell parses it into exactly the intended words (sh, not a regex)",
+    (_n, name, ws, inc) => {
+      const cmd = waitHint({ name, workstreamName: ws }, 12, inc).command;
+      expect(cmd).not.toMatch(/<|\.\.\./);
+      expect(shWords(cmd.replace(/^mu /, "mu "))).toEqual([
+        "mu",
+        "agent",
+        "wait",
+        name,
+        "-w",
+        ws,
+        "--after-runs",
+        "12",
+        "--inc",
+        inc,
+        "--json",
+      ]);
+      // and `sh -n` agrees it is well formed
+      execFileSync("sh", ["-n", "-c", cmd]);
+    },
+  );
+
+  it("every send path prints it: plain, --fresh, --interrupt (CLI, real hint text)", async () => {
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "pi" });
+    await serve("worker-1", "idle", 4);
+    for (const flags of [[], ["--fresh"], ["--interrupt"]]) {
+      const r = await runCli(
+        ["agent", "send", "worker-1", ...flags, "go", "-w", "auth", "--json"],
+        dbPath,
+      );
+      expect(r.exitCode, flags.join(" ")).toBeNull();
+      const steps = (JSON.parse(r.stdout) as { nextSteps: Step[] }).nextSteps;
+      const wait = steps.find((s) => s.command.startsWith("mu agent wait"));
+      expect(wait?.command, flags.join(" ")).toMatch(
+        /^mu agent wait worker-1 -w auth --after-runs \d+ --inc \S+ --json$/,
+      );
+      expect(shWords(wait?.command ?? "")[0]).toBe("mu");
+    }
   });
 });

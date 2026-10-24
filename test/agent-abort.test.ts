@@ -10,11 +10,12 @@ import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
   AgentCtlUnreachableError,
+  AgentRestartedError,
   abortAgent,
   insertAgent,
 } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
-import { encode, LineDecoder } from "../src/ctl/protocol.js";
+import { encode, INCARNATION_MISMATCH, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
@@ -24,6 +25,7 @@ let dir: string;
 let dbPath: string;
 let db: Db;
 let servers: Server[];
+let waitReqs: { op: string; incarnation?: string }[];
 let ops: string[];
 let mux: MuxHarness;
 
@@ -34,6 +36,7 @@ beforeEach(() => {
   ensureWorkstream(db, "auth");
   servers = [];
   ops = [];
+  waitReqs = [];
   // The pane is alive: a silent socket is then "unreachable", not "dead".
   mux = installMux("tmux", async () => ({ stdout: "%1\n", stderr: "", exitCode: 0 }));
 });
@@ -55,7 +58,10 @@ async function serve(
   settles = true,
   afterAbort: "busy" | "idle" = "idle",
   abortWasBusy?: boolean,
+  /** The incarnation the fake reports; `restartAfterAbort` swaps it when the abort lands. */
+  restartAfterAbort?: string,
 ): Promise<void> {
+  let inc = "inc-abort-1";
   let state = initial;
   let runs = 3;
   const path = ctlSocketPath("auth", agent, dir);
@@ -66,9 +72,15 @@ async function serve(
     sock.on("error", () => {});
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
-        const req = JSON.parse(line) as { op: string; afterRuns?: number; timeoutMs?: number };
+        const req = JSON.parse(line) as {
+          op: string;
+          afterRuns?: number;
+          timeoutMs?: number;
+          incarnation?: string;
+        };
         ops.push(req.op);
-        const status = { state, since: 0, runs, pending: false };
+        waitReqs.push(req);
+        const status = { incarnation: inc, state, since: 0, runs, pending: false };
         if (req.op === "status") sock.end(encode({ v: 1, ok: true, ...status }));
         else if (req.op === "abort") {
           sock.end(
@@ -83,8 +95,14 @@ async function serve(
             state = afterAbort;
             runs++;
           }
+          if (restartAfterAbort !== undefined) inc = restartAfterAbort;
         } else if (req.op === "wait") {
-          if (runs > (req.afterRuns ?? runs) && (state === "idle" || afterAbort === "busy")) {
+          if (req.incarnation !== undefined && req.incarnation !== inc) {
+            sock.end(encode({ v: 1, ok: false, error: INCARNATION_MISMATCH, incarnation: inc }));
+          } else if (
+            runs > (req.afterRuns ?? runs) &&
+            (state === "idle" || afterAbort === "busy")
+          ) {
             sock.end(encode({ v: 1, ok: true, ...status }));
           } else {
             setTimeout(
@@ -111,6 +129,21 @@ describe("abortAgent", () => {
     const r = await abortAgent(db, "worker-1", { workstream: "auth" });
     expect(ops).toEqual(["status", "abort", "wait"]);
     expect(r).toMatchObject({ before: "busy", after: "idle", settled: true, aborted: true });
+  });
+
+  it("the abort's own wait carries the incarnation its status named", async () => {
+    seed("worker-1");
+    await serve("worker-1", "busy");
+    await abortAgent(db, "worker-1", { workstream: "auth" });
+    expect(waitReqs.find((r) => r.op === "wait")).toMatchObject({ incarnation: "inc-abort-1" });
+  });
+
+  it("pi restarted between the abort and its wait: AgentRestartedError, not a false 'settled'", async () => {
+    seed("worker-1");
+    await serve("worker-1", "busy", true, "idle", undefined, "inc-abort-2");
+    const err = await abortAgent(db, "worker-1", { workstream: "auth" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentRestartedError);
+    expect((err as Error).message).toContain("inc-abort-1 → inc-abort-2");
   });
 
   const abortRows = () =>
