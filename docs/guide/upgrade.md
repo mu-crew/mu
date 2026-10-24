@@ -29,7 +29,8 @@ mu pi migrate --apply         # move mu-owned files aside; nothing is deleted
 Then restart pi agents or send them `/reload`.
 
 Only a file mu can prove it generated is moved, into a `disabled/`
-folder pi does not read: the exact shim `link pi` wrote, or a skill
+folder pi does not read: a file byte for byte equal to the shim `link pi` generated (only its
+generated import URL may differ), or a skill
 link into this install's `skills/mu` (or a skill copy identical to a
 released one). Anything else (your own `mu.ts`, an edited copy, a link
 to somewhere else, even one named `mu`) is reported with its path and

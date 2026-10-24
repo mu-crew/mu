@@ -24,10 +24,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **`mu pi migrate [--apply]`.** A leftover `mu link pi` shim would load a
   second extension next to the package, so this moves only files it can
-  prove mu generated, into a `disabled/` folder pi does not read: the exact
-  shim `link pi` wrote at `~/.pi/agent/extensions/mu.ts` (or a file whose
-  first line is `// mu:shim` and that imports mu's `dist/extension/mu-pi.js`),
-  and a symlink at `~/.agents/skills/mu` into this install's `skills/mu` (or a
+  prove mu generated, into a `disabled/` folder pi does not read: a file at
+  `~/.pi/agent/extensions/mu.ts` that is byte for byte the shim template every
+  released `link pi` (3.2 to 3.13) wrote, with only its generated
+  `file://…/dist/extension/mu-pi.js` import URL free to differ (no marker or
+  import match: a commented import is not a shim), and a symlink at `~/.agents/skills/mu` into this install's `skills/mu` (or a
   copy identical to a released skill, by digest). Never a match on a marker
   or a `name: mu` anywhere else: a user's own `mu.ts` or `mu` skill is
   reported with its path and left alone. Report-only without `--apply`;
