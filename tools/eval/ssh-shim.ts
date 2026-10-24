@@ -85,7 +85,10 @@ async function main(argv: string[]): Promise<number> {
   const cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as HostConfig;
   const command = inv.command === null ? null : rewriteCommand(inv.command, cfg.hostRoot);
   const logLine = (what: string): void =>
-    appendFileSync(cfg.sessionsLog, `${Date.now()} ${what} ${command ?? ""}\n`);
+    appendFileSync(
+      cfg.sessionsLog,
+      `${Date.now()} ${what} pane=${process.env.TMUX_PANE ?? "-"} ${command ?? ""}\n`,
+    );
 
   const sessions = join(cfg.hostRoot, ".sessions");
   if (!(await takeSlot(sessions, cfg.maxSessions))) {

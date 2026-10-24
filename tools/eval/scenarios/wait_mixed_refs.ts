@@ -12,6 +12,10 @@
 // the fixture truth plus the DB, runs.log and the call record, never to the AUT's claims:
 //  - each line right; report written after the workers finished; the unknown-ref call failed fast
 //    (< 5s, not a hang); `timeout-exit` is 5, not the pipe's status; no worker task closed by the AUT;
+//  - each ref class was really waited on: a successful wait call naming mx-fast (CLOSED already, answers
+//    at once), mx-race (issued after its worker was sent: the settle races the registration) and the
+//    TASK gate (with mx-slow), whose output shows the ref CLOSED and which returned only after that
+//    ref's worker run finished; a `sleep N` (N >= 3) is never a stand-in for a wait;
 //  - NATIVE (family-aware): one wait verb for task+agent refs (a single `mu wait` call naming both),
 //    mu's exit status embedded in the output (visible through a pipe), authoritative until-text /
 //    until-idle conditions. 3.x has none (separate task/agent verbs, status lost in a pipe): N/A
@@ -27,7 +31,14 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { commandOf, isWaitCall, native, prodWrong, waitWindows } from "../lifecycle.ts";
+import {
+  commandOf,
+  isWaitCall,
+  native,
+  prodWrong,
+  waitedClosed,
+  waitWindows,
+} from "../lifecycle.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, fileMoment, orderWrong } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
@@ -134,8 +145,28 @@ const scenario: Scenario = {
       if ((c.durationMs ?? 0) > 5000)
         wrong.push(`wait on an unknown ref took ${c.durationMs}ms (must fail fast)`);
     }
-    // native guarantees
+    // each ref class waited on, successfully, with the result in that call's own output
     const waits = waitWindows(run);
+    const closedAt = (id: string): number => closeMoment(sb, "eval", id)?.ms ?? 0;
+    for (const [ref, at] of [
+      ["mx-fast", 0],
+      ["mx-race", closedAt("mx-race")],
+      ["gate", closedAt("gate")],
+      ["mx-slow", closedAt("mx-slow")],
+    ] as const) {
+      if (!waitedClosed(run, ref, at)) {
+        completed = false;
+        wrong.push(
+          `no successful wait call returned ${ref} CLOSED (returning after its worker closed it)`,
+        );
+      }
+    }
+    for (const c of run.toolCalls) {
+      const s = /\bsleep\s+(\d+)\b/.exec(commandOf(c));
+      if (s && Number(s[1]) >= 3)
+        wrong.push(`a sleep stands in for a wait: ${commandOf(c).slice(0, 80)}`);
+    }
+    // native guarantees
     const oneVerb = run.toolCalls.some(
       (c) =>
         /(^|[\s;&|])mu\s+wait\b/.test(commandOf(c)) &&
@@ -159,6 +190,7 @@ const scenario: Scenario = {
     wrong.push(...prodWrong(run), ...nat.flatMap((x) => x.wrong));
     return verdict(run, completed, {
       wrong,
+      na: nat.flatMap((x) => x.na),
       expectFail: [
         { re: /^3 .*nosuch-ref/, why: "unknown ref refused (exit 3)" },
         { re: /^5 .*--timeout 2\b/, why: "the deliberate 2s timeout (exit 5)" },

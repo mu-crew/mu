@@ -2,7 +2,7 @@
 // orchestrator must come out knowing where things stand and carry on WITHOUT redoing work.
 //
 // Fixture: i1 (a worker task, 12s) and i2 (3s). A private watcher (written to <bin>/eval-interrupter
-// in setup, detached) finds the first `cli.js [task] wait` process of THIS sandbox, waits 3s, sends
+// in setup, detached) finds the first `cli.js [task|agent] wait` process of THIS sandbox, waits 3s, sends
 // it SIGTERM once and logs "<ms> <pid> TERM <cmdline>" to <workers>/interrupt.log. Not SIGKILL:
 // nothing can catch that.
 //
@@ -26,7 +26,15 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { commandOf, isWaitCall, lastJson, native, prodWrong, waitWindows } from "../lifecycle.ts";
+import {
+  commandOf,
+  isWaitCall,
+  lastJson,
+  native,
+  prodWrong,
+  snapshotStates,
+  waitWindows,
+} from "../lifecycle.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, fileMoment, orderWrong } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
@@ -36,11 +44,11 @@ import type { Scenario } from "../types.ts";
 const IDS = ["i1", "i2"];
 
 const INTERRUPTER = String.raw`#!/bin/bash
-# SIGTERM the first "cli.js [task] wait" process of this sandbox, 3s after it appears; log it.
+# SIGTERM the first "cli.js [task|agent] wait" process of this sandbox, 3s after it appears; log it.
 D="$EVAL_SANDBOX"
 for _ in $(seq 1 2400); do
   [ -d "$D" ] || exit 0
-  for pid in $(pgrep -f 'cli.js (task )?wait ' 2>/dev/null); do
+  for pid in $(pgrep -f 'cli.js (task |agent )?wait ' 2>/dev/null); do
     grep -aq "MU_DB_PATH=$MU_DB_PATH" "/proc/$pid/environ" 2>/dev/null || continue
     cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
     sleep 3
@@ -99,6 +107,7 @@ const scenario: Scenario = {
     const runs = await runsLog(sb);
     const wrong: string[] = [];
     const notes: string[] = [];
+    const na: string[] = [];
     let completed = true;
     let killed = "";
     try {
@@ -160,36 +169,40 @@ const scenario: Scenario = {
     if (call) {
       const snap = lastJson(call.output);
       const text = call.output;
-      const states = snap ? JSON.stringify(snap) : "";
-      const ok =
-        snap !== null &&
-        Object.keys(snap).length > 0 &&
-        /\bi1\b/.test(states) &&
-        /\bi2\b/.test(states) &&
-        /\bmu\s+(task\s+|agent\s+)?wait\b/.test(text.replace(states, ""));
+      // real task states: i1 and i2 each with a status, and i1 (its worker runs 12s) not CLOSED
+      // when the snapshot was taken; plus a resume command that is a wait naming both tasks.
+      const st = snap ? snapshotStates(snap) : new Map<string, string>();
+      const i1Close = closeMoment(sb, "eval", "i1")?.ms ?? 0;
+      const stateOk =
+        IDS.every((id) => /^[A-Z_]+$/.test(st.get(id) ?? "")) &&
+        (i1Close <= hit || st.get("i1") !== "CLOSED");
+      const resume = /\bmu\s+(?:(?:task|agent)\s+)?wait\b[^"'\n]*\bi1\b[^"'\n]*\bi2\b/.test(text);
+      const ok = snap !== null && Object.keys(snap).length > 0 && stateOk && resume;
       const bare = BARE.test(commandOf(call)) && isWaitCall(call);
-      if (bare) {
+      // A bare wait must print the snapshot itself. A wrapper that builds it is a manual workaround:
+      // right on state (checked above), but never the guarantee: N/A on 3.x, wrong on next.
+      if (!bare && !ok) {
+        wrong.push(
+          `the interrupted wrapper lost the state (no parseable snapshot with the real states of i1 and i2 and a resume wait command): ${text.slice(0, 80)}`,
+        );
+      } else {
         const r = native(
           sb,
           "direct wait prints a parseable snapshot + resume command on SIGTERM",
-          ok,
-          `${text.length} bytes of output`,
+          bare && ok,
+          bare
+            ? `${text.length} bytes of output`
+            : "built by the AUT's own wrapper, not by the wait",
         );
         wrong.push(...r.wrong);
         notes.push(...r.notes);
-      } else if (!ok) {
-        wrong.push(
-          `the interrupted wrapper lost the state (no parseable snapshot with i1, i2 and a resume command): ${text.slice(0, 80)}`,
-        );
-      } else {
-        notes.push(
-          "manual workaround: the AUT's own wrapper built the snapshot (not a built-in guarantee)",
-        );
+        na.push(...r.na);
       }
     }
     wrong.push(...prodWrong(run));
     return verdict(run, completed, {
       wrong,
+      na,
       expectFail: [{ re: /^143 .*\bwait\b/, why: "wait SIGTERMed by the fixture" }],
       notes: [
         `interrupt=${killed.split(" ").slice(1, 3).join(" ")} sends=${sends.length} muCalls=${run.muCalls}`,
