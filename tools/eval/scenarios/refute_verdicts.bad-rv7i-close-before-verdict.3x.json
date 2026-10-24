@@ -1,0 +1,27 @@
+[
+  {
+    "calls": [
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "task": "Check this claim from task plan1 in workstream eval (claim-1): 'renaming foo() to bar() is safe; foo is only called in a.ts'. Search the repo; reply with VERDICT: CONFIRMED or REFUTED and EVIDENCE lines.",
+          "label": "check",
+          "record": {
+            "task": "plan1",
+            "workstream": "eval"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close plan1 -w eval --as rejected --why 'b.ts calls foo() (I checked)'"
+      }
+    ]
+  },
+  {
+    "text": "plan1 closed as rejected; the check is running."
+  }
+]

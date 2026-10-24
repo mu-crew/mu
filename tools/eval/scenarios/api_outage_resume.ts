@@ -10,6 +10,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
@@ -84,9 +85,22 @@ const scenario: Scenario = {
         }
       }
     }
+    // (c) every task is closed by a worker whose commit is on main; an errored task by the very
+    // worker that errored (it was re-prompted), not by the AUT redoing it.
+    let provenance = true;
+    for (const t of IDS) {
+      const closer = runs.find((r) => r.task === t && r.action === "close");
+      const errored = runs.find((r) => r.task === t && r.action === "error");
+      const proof = await workerCommitOnMain(sb, t, runs);
+      if (!closer) wrong.push(`${t} has no worker close record (not done by a worker)`);
+      else if (errored && closer.agent !== errored.agent)
+        wrong.push(`${t} closed by ${closer.agent}, not ${errored.agent} (re-prompted)`);
+      if (!proof.ok) wrong.push(proof.why);
+      if (!closer || !proof.ok || (errored && closer.agent !== errored.agent)) provenance = false;
+    }
     for (const t of IDS)
       if (count(t) > 1) wrong.push(`duplicate ${t} commit on main (${count(t)})`);
-    const completed = IDS.every((t) => closedDone(t) && count(t) === 1);
+    const completed = IDS.every((t) => closedDone(t) && count(t) === 1) && provenance;
     return verdict(run, completed, {
       wrong,
       // A discard is cleanup only for a scripted worker whose commits are on main and were merged

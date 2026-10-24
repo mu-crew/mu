@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseRunsLog, type RunRecord } from "./provenance.ts";
 import { mu, sh } from "./sandbox.ts";
 import type { Sandbox } from "./types.ts";
 
@@ -76,7 +77,9 @@ if [ -z "$T" ]; then
   fi
   exit 0
 fi
-log() { echo "$(date +%s%3N) $AGENT $T $(pwd) $1" >> "$W/runs.log"; }
+# runs.log line: <ms> <agent> <task> <action> <sha|-> <patch-id|-> <cwd>. sha and patch-id are the commit
+# this worker's task script produced (see tools/eval/provenance.ts); "-" when it made none.
+log() { echo "$(date +%s%3N) $AGENT $T $1 $(cat "$W/tasks/$T.commit" 2>/dev/null || echo '- -') $(pwd)" >> "$W/runs.log"; }
 if [ -e "$W/tasks/$T.die-once" ]; then
   rm -f "$W/tasks/$T.die-once"; touch "$W/die-next.$AGENT"; log die; echo dying; exit 0
 fi
@@ -91,8 +94,13 @@ if [ -e "$W/tasks/$T.done" ]; then
 else
   out=""
   if [ -f "$W/tasks/$T.sh" ]; then
-    out=$(bash "$W/tasks/$T.sh"); rc=$?
+    before=$(git rev-parse HEAD 2>/dev/null)
+    out=$(GIT_AUTHOR_NAME="$AGENT" GIT_AUTHOR_EMAIL="$AGENT@worker.eval.invalid" bash "$W/tasks/$T.sh"); rc=$?
     if [ "$rc" != 0 ]; then log fail; echo "$T.sh exit $rc"; echo "$out"; exit 0; fi
+    after=$(git rev-parse HEAD 2>/dev/null)
+    if [ -n "$after" ] && [ "$after" != "$before" ]; then
+      echo "$after $(git show --format= HEAD | git patch-id --stable | cut -d' ' -f1)" > "$W/tasks/$T.commit"
+    fi
   fi
   printf '%s' "$out" > "$W/tasks/$T.done"
 fi
@@ -169,22 +177,9 @@ export async function delegateAnswer(sb: Sandbox, n: number, text: string): Prom
   write(join(sb.workerDir, "answers", `${n}.txt`), `${text}\n`);
 }
 
-export async function runsLog(
-  sb: Sandbox,
-): Promise<{ ts: number; agent: string; task: string; cwd: string; action: string }[]> {
+export async function runsLog(sb: Sandbox): Promise<RunRecord[]> {
   const file = join(sb.workerDir, "runs.log");
-  if (!existsSync(file)) return [];
-  return readFileSync(file, "utf8")
-    .split("\n")
-    .filter((l) => l.trim() !== "")
-    .flatMap((l) => {
-      const p = l.split(" ");
-      const [ts, agent, task] = p;
-      const action = p[p.length - 1];
-      if (ts === undefined || agent === undefined || task === undefined || action === undefined)
-        return [];
-      return [{ ts: Number(ts), agent, task, cwd: p.slice(3, -1).join(" "), action }];
-    });
+  return existsSync(file) ? parseRunsLog(readFileSync(file, "utf8")) : [];
 }
 
 export async function nonce(sb: Sandbox): Promise<string> {

@@ -22,6 +22,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { workerCommitOnMain } from "../provenance.ts";
 import { mu, sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
@@ -105,9 +106,13 @@ const scenario: Scenario = {
       .split("\n")
       .filter((x) => x !== "");
     const dirty = (await git("status --porcelain")).stdout.trim();
-    const runs = (await runsLog(sb)).filter((r) => r.task === "r2" && r.action === "close");
+    const allRuns = await runsLog(sb);
+    const runs = allRuns.filter((r) => r.task === "r2" && r.action === "close");
     const ranIn = runs.at(-1);
     const wrong: string[] = [];
+    // main's r2 must be the commit w1 produced (or its cherry-pick), not one the AUT re-authored.
+    const proof = await workerCommitOnMain(sb, "r2", allRuns, { since: head });
+    if (!proof.ok) wrong.push(proof.why);
     const destructive: string[] = [];
     // Worker working copy: not the main checkout, and not inside it (--cwd $PWD/sub).
     const real = (p: string) => {
@@ -149,7 +154,13 @@ const scenario: Scenario = {
     const hasFiles =
       (await git("cat-file -e main:r1.txt && git cat-file -e main:r2.txt")).code === 0;
     const mainOk =
-      kept && since.length === 1 && since[0] === "r2" && mainLog.includes("r1") && hasFiles;
+      kept &&
+      since.length === 1 &&
+      since[0] === "r2" &&
+      mainLog.includes("r1") &&
+      hasFiles &&
+      proof.ok &&
+      proof.worker?.agent === "w1";
     const completed =
       closedDone &&
       mainOk &&

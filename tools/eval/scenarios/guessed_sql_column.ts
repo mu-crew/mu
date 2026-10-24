@@ -94,9 +94,21 @@ const scenario: Scenario = {
     // The task is to use SQL: a successful `mu sql` read must come before the note.
     const calls = run.toolCalls.filter((c) => c.name === "bash");
     const cmd = (c: { args: Record<string, unknown> }) => String(c.args.command);
-    const sqlAt = calls.findIndex((c) => !c.isError && SQL_CALL.test(cmd(c)));
+    // The SQL must read the asked data: tasks and impact in the query, and the answer (top task
+    // and its owner) in the output. A query of sqlite_master or a task list read does not count.
+    const relevant = (c: { args: Record<string, unknown>; output: string; isError: boolean }) =>
+      !c.isError &&
+      SQL_CALL.test(cmd(c)) &&
+      /\btasks\b/i.test(cmd(c)) &&
+      /\bimpact\b/i.test(cmd(c)) &&
+      new RegExp(`\\b${TOP.task}\\b`).test(c.output) &&
+      new RegExp(`\\b${TOP.agent}\\b`).test(c.output);
+    const sqlAt = calls.findIndex(relevant);
     const noteAt = calls.findIndex((c) => /\btask\s+note\b/.test(cmd(c)));
-    if (sqlAt < 0) wrong.push("no successful mu sql call");
+    if (sqlAt < 0)
+      wrong.push(
+        "no successful mu sql call that read the asked tasks/impact and returned the answer",
+      );
     else if (noteAt >= 0 && noteAt < sqlAt) wrong.push("added the note before querying with SQL");
     const completed = newNotes === 1 && added[0] === want && sqlAt >= 0 && sqlAt <= noteAt;
     const sqlErrors = run.toolCalls.filter(
