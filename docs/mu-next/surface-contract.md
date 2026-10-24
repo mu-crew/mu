@@ -113,7 +113,7 @@ Later additive local tables: `wait_registrations`, `spawn_receipts`
 What this unit changed, and what stays for later owners.
 
 - Reworded as current vs planned: delegates (no task today), `lastText`
-  (not interpreted today), role (advisory), release (reopens
+  (only `mu_delegate` `record` parses it today; applying a CLOSE block is planned), role (advisory), release (reopens
   IN_PROGRESS), dispatch host, revision, remote metadata (`REMOTE:`
   notes today).
 - Removed: card, popup, toast, tick, help overlay, footer,

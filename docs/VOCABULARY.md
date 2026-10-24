@@ -49,7 +49,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **control socket** / **ctl** | The per-agent unix socket (`$MU_CTL_SOCK`) the mu pi extension serves inside pi. **ctl state** is `ok`, `missing`, or `refused`. | "rpc", "daemon" |
 | **session command** | `/new`, `/reload`, or `/compact [instructions]` sent to a pi agent. mu runs it inside pi through the ctl `command` op, never as a paste. Any other slash command to a pi agent is refused. | "slash paste" |
 | **outdated extension** | A running pi whose loaded extension is older than mu (exit 4 on a missing op). pi's `/reload` fixes it. | |
-| **lastText** | A pi run's final assistant message, returned verbatim by `wait`. Today mu never interprets it; planned, only a valid **CLOSE block** at its end is applied. | "result", "output" (alone) |
+| **lastText** | A pi run's final assistant message, returned verbatim by `wait`. Today `mu_delegate` `record` scans it for the last `VERDICT:` line and writes that tail (capped at 4000 chars) as a task note; mu applies no close or status change from it. Planned: only a valid **CLOSE block** at its end is applied. | "result", "output" (alone) |
 | **ghost** | An `agents` row whose `pane_id` no longer exists. Pruned by **reconcile**. | "dead agent", "stale row" |
 | **reaper** | The part of reconcile that releases a ghost's tasks to `OPEN`. Makes `mu task wait` exit 6. | "garbage collector", "janitor" |
 | **needs attention** | An `IN_PROGRESS` task whose owner has been `needs_input` for `--stuck-after` seconds. Check with `mu agent read <owner>`. | "stuck", "stalled" (kept only in the `stuck` JSON field and exit-7 `STALL_DETECTED`) |
