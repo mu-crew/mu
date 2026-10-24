@@ -6,7 +6,7 @@
 // from this file or sibling files, never from the hub they're re-exported
 // through.
 
-import type { TaskKind } from "../db.js";
+import type { NoteKind, TaskKind } from "../db.js";
 import { type Db, tryResolveLiveWorkstreamId } from "../db.js";
 import type { TaskStatus, TaskSubstate } from "./status.js";
 
@@ -36,6 +36,11 @@ export interface TaskRow {
 }
 
 export interface TaskNoteRow {
+  /** 1-based position among the task's notes (by insertion). Task-bound and
+   *  local to this DB: peers may store different integer ids, so it is a
+   *  selector for `--from` / `--note` here, never an identity to sync. */
+  n: number;
+  kind: NoteKind;
   author: string | null;
   content: string;
   createdAt: string;
@@ -63,6 +68,8 @@ export interface RawTaskRow {
 }
 
 export interface RawTaskNoteRow {
+  ord: number;
+  kind: string;
   author: string | null;
   content: string;
   created_at: string;
@@ -96,6 +103,8 @@ export const TASK_FROM_JOIN = `
 `;
 
 export const SELECT_NOTE_COLS = `
+  (SELECT COUNT(*) FROM task_notes m WHERE m.task_id = n.task_id AND m.id <= n.id) AS ord,
+  n.kind AS kind,
   n.author AS author,
   n.content AS content,
   n.created_at AS created_at
@@ -122,6 +131,8 @@ export function rowFromDb(row: RawTaskRow): TaskRow {
 
 export function noteFromDb(row: RawTaskNoteRow): TaskNoteRow {
   return {
+    n: row.ord,
+    kind: row.kind as NoteKind,
     author: row.author,
     content: row.content,
     createdAt: row.created_at,

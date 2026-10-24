@@ -77,6 +77,7 @@ export {
   TaskHasOpenBlockersError,
   TaskIdInvalidError,
   TaskInTriageError,
+  TaskNoteRangeError,
   TaskNotFoundError,
   TaskNotInWorkstreamError,
   TaskParkedError,
@@ -115,6 +116,7 @@ export {
 } from "./tasks/lifecycle.js";
 export {
   getTask,
+  getTaskNote,
   getTaskOwner,
   type ListNotesOptions,
   type ListReadyOptions,
@@ -128,6 +130,9 @@ export {
   listTasks,
   listTasksByOwner,
   listTasksByOwnerCrossWorkstream,
+  ORDINARY_TAIL,
+  type SelectedNotes,
+  selectTaskNotes,
 } from "./tasks/queries.js";
 export {
   DEFAULT_SUBSTATE,

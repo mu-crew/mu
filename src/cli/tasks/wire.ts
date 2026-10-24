@@ -240,11 +240,22 @@ export function wireTaskCommands(program: Command): void {
 
   task
     .command("show <id>")
-    .description("Show a task: row + edges (blockers/dependents) + notes")
+    .description(
+      "Show a task: row + edges (blockers/dependents) + the default notes view (see `task notes`). --note <n> prints one note whole.",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
+    .option(
+      "--note <n>",
+      "print note <n> of this task whole (n as shown in `task notes`)",
+      parsePositiveNumber,
+    )
     .action(function (id: string) {
-      const opts = (this as Command).opts() as { json?: boolean; workstream?: string };
+      const opts = (this as Command).opts() as {
+        json?: boolean;
+        workstream?: string;
+        note?: number;
+      };
       return handle((db) => cmdTaskShow(db, id, opts), this as Command)();
     });
 
@@ -268,8 +279,10 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("notes <id>")
     .description(
-      "List the notes attached to a task (oldest first). Filters: --tail N (last N), --since <iso> (after timestamp), --since-claim (since most recent claim event).",
+      "Notes of a task, one line each, oldest first: the brief, the report, every verdict, then the last 3 ordinary notes after the report; `more=N next=…` names the rest. --all / --from <n> page the whole history; --tail N, --since <iso>, --since-claim filter it.",
     )
+    .option("--all", "every note, from the first (the default view leaves some out)")
+    .option("--from <n>", "every note from note <n> on", parsePositiveNumber)
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .option("--tail <n>", "print only the last N notes (alias --last)", parsePositiveNumber)
@@ -287,6 +300,8 @@ export function wireTaskCommands(program: Command): void {
         last?: number;
         since?: string;
         sinceClaim?: boolean;
+        all?: boolean;
+        from?: number;
       };
       // --last is an alias for --tail; collapse before passing to the verb.
       // If both are provided, prefer the explicit --tail.
@@ -297,7 +312,11 @@ export function wireTaskCommands(program: Command): void {
         tail?: number;
         since?: string;
         sinceClaim?: boolean;
+        all?: boolean;
+        from?: number;
       } = {};
+      if (opts.all !== undefined) merged.all = opts.all;
+      if (opts.from !== undefined) merged.from = opts.from;
       if (opts.json !== undefined) merged.json = opts.json;
       if (opts.workstream !== undefined) merged.workstream = opts.workstream;
       if (tail !== undefined) merged.tail = tail;

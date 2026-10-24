@@ -15,6 +15,7 @@ import {
   type TaskRow,
   taskIdFor,
 } from "./core.js";
+import { TaskNoteRangeError } from "./errors.js";
 import type { TaskStatus, TaskSubstate } from "./status.js";
 
 export function getTask(db: Db, localId: string, workstream: string): TaskRow | undefined {
@@ -313,6 +314,137 @@ export function listNotes(
     return opts.tail === 0 ? [] : mapped.slice(-opts.tail);
   }
   return mapped;
+}
+
+/** What `selectTaskNotes` returns: the notes to show (oldest first, full
+ *  content), how many were left out, and which of them are pinned. */
+export interface SelectedNotes {
+  notes: TaskNoteRow[];
+  /** Notes of the task not in `notes`. */
+  more: number;
+  /** All notes the task has. */
+  total: number;
+  /** `n` of every note that is content, never cut: the brief, the report (or
+   *  the closer's fallback) and the verdicts. Everything else is ordinary. */
+  pinned: number[];
+}
+
+/** Ordinary notes the default view keeps after the report. */
+export const ORDINARY_TAIL = 3;
+
+/**
+ * The default notes view, chosen from metadata alone (no content is read for
+ * a note that is not shown): the first `brief`, the last `report`, every
+ * `verdict`, then the last {@link ORDINARY_TAIL} ordinary notes newer than the
+ * report. With no `report` the closer's last `note` stands in for it: the
+ * author of the last `close` note (NULL matches NULL), so late instructions
+ * from anyone else stay ordinary. Decided at read time; nothing is rewritten.
+ *
+ * `all` or `from` return exactly the notes with `n >= from` (`all` is
+ * `from: 1`), whole. A `from` that is not one of the task's notes throws
+ * {@link TaskNoteRangeError}. Content is never cut here: the CLI byte cap is a
+ * rendering concern.
+ */
+export function selectTaskNotes(
+  db: Db,
+  taskLocalId: string,
+  opts: { workstream: string; all?: boolean; from?: number },
+): SelectedNotes {
+  const taskId = taskIdFor(db, taskLocalId, opts.workstream);
+  if (taskId === null) return { notes: [], more: 0, total: 0, pinned: [] };
+  const meta = db
+    .prepare("SELECT id, kind, author FROM task_notes WHERE task_id = ? ORDER BY id")
+    .all(taskId) as { id: number; kind: string; author: string | null }[];
+  const total = meta.length;
+  const from = opts.from ?? (opts.all === true ? 1 : undefined);
+  if (from !== undefined && (!Number.isInteger(from) || from < 1 || from > total)) {
+    throw new TaskNoteRangeError(taskLocalId, from, total);
+  }
+
+  const kindOf = (i: number): string => meta[i]?.kind ?? "note";
+  const lastOf = (kind: string, pred: (i: number) => boolean = () => true): number => {
+    for (let i = total - 1; i >= 0; i--) if (kindOf(i) === kind && pred(i)) return i;
+    return -1;
+  };
+  const pinned = new Set<number>();
+  const brief = meta.findIndex((m) => m.kind === "brief");
+  if (brief >= 0) pinned.add(brief);
+  for (let i = 0; i < total; i++) if (kindOf(i) === "verdict") pinned.add(i);
+  let report = lastOf("report");
+  if (report < 0) {
+    const close = lastOf("close");
+    if (close >= 0) {
+      const closer = meta[close]?.author ?? null;
+      report = lastOf("note", (i) => (meta[i]?.author ?? null) === closer);
+    }
+  }
+  if (report >= 0) pinned.add(report);
+
+  const chosen = new Set<number>();
+  if (from !== undefined) {
+    for (let i = from - 1; i < total; i++) chosen.add(i);
+  } else {
+    for (const i of pinned) chosen.add(i);
+    const ordinary: number[] = [];
+    for (let i = report + 1; i < total; i++) if (!pinned.has(i)) ordinary.push(i);
+    for (const i of ordinary.slice(-ORDINARY_TAIL)) chosen.add(i);
+  }
+
+  const order = [...chosen].sort((a, b) => a - b);
+  const byId = new Map<number, RawTaskNoteRow>();
+  const ids = order.map((i) => meta[i]?.id ?? -1);
+  // One content read for the notes shown, in bounded chunks (SQLite's
+  // variable limit), never for the ones left out.
+  for (let at = 0; at < ids.length; at += 500) {
+    const chunk = ids.slice(at, at + 500);
+    const rows = db
+      .prepare(
+        `SELECT n.id AS id, n.kind AS kind, n.author AS author, n.content AS content, n.created_at AS created_at
+           FROM task_notes n WHERE n.id IN (${chunk.map(() => "?").join(",")})`,
+      )
+      .all(...chunk) as (RawTaskNoteRow & { id: number })[];
+    for (const r of rows) byId.set(r.id, r);
+  }
+  const notes: TaskNoteRow[] = [];
+  for (const i of order) {
+    const raw = byId.get(meta[i]?.id ?? -1);
+    if (raw) notes.push(noteFromDb({ ...raw, ord: i + 1 }));
+  }
+  return {
+    notes,
+    more: total - notes.length,
+    total,
+    pinned: [...pinned].sort((a, b) => a - b).map((i) => i + 1),
+  };
+}
+
+/** One whole note by its `n` (1..total of this task). Throws {@link TaskNoteRangeError} on a miss. */
+export function getTaskNote(
+  db: Db,
+  taskLocalId: string,
+  workstream: string,
+  n: number,
+): TaskNoteRow {
+  const taskId = taskIdFor(db, taskLocalId, workstream);
+  const total =
+    taskId === null
+      ? 0
+      : (
+          db.prepare("SELECT COUNT(*) AS c FROM task_notes WHERE task_id = ?").get(taskId) as {
+            c: number;
+          }
+        ).c;
+  if (taskId === null || !Number.isInteger(n) || n < 1 || n > total) {
+    throw new TaskNoteRangeError(taskLocalId, n, total);
+  }
+  const raw = db
+    .prepare(
+      `SELECT n.kind AS kind, n.author AS author, n.content AS content, n.created_at AS created_at
+         FROM task_notes n WHERE n.task_id = ? ORDER BY n.id LIMIT 1 OFFSET ?`,
+    )
+    .get(taskId, n - 1) as Omit<RawTaskNoteRow, "ord"> | undefined;
+  if (!raw) throw new TaskNoteRangeError(taskLocalId, n, total);
+  return noteFromDb({ ...raw, ord: n });
 }
 
 /**

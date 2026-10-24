@@ -230,24 +230,34 @@ describe("mu task notes — filters", () => {
       expect(r.stderr).toMatch(/mutually exclusive|--since-claim/);
     });
 
-    it("--json emits the {items, count} collection envelope with note contents", async () => {
+    it("--json emits {items, count, more} with SQL-named note records (n, kind, created_at)", async () => {
       await seedNotes(2, "envelope");
       const r = await runCliJson(["task", "notes", "tnotes", "-w", "test", "--json"], dbPath);
       expect(r.error).toBeUndefined();
       const out = r.data as {
-        items: Array<{ author: string | null; content: string; createdAt: string }>;
+        items: Array<{
+          n: number;
+          kind: string;
+          author: string | null;
+          content: string;
+          created_at: string;
+        }>;
         count: number;
       };
-      expect(Object.keys(out).sort()).toEqual(["count", "items"]);
+      expect(Object.keys(out).sort()).toEqual(["count", "items", "more"]);
+      expect(out.items.map((n) => [n.n, n.kind])).toEqual([
+        [1, "note"],
+        [2, "note"],
+      ]);
       expect(out.count).toBe(2);
       expect(out.items.map((n) => n.content)).toEqual(["envelope 1", "envelope 2"]);
       expect(out.items.map((n) => n.author)).toEqual(["tester", "tester"]);
       for (const note of out.items) {
-        expect(Date.parse(note.createdAt)).not.toBeNaN();
+        expect(Date.parse(note.created_at)).not.toBeNaN();
       }
     });
 
-    it("default behaviour (no filters) is unchanged", async () => {
+    it("default view (no filters) shows a short history whole, oldest first", async () => {
       await seedNotes(3);
       const r = await runCliJson(["task", "notes", "tnotes", "-w", "test", "--json"], dbPath);
       expect(r.error).toBeUndefined();
@@ -257,6 +267,26 @@ describe("mu task notes — filters", () => {
       };
       expect(out.count).toBe(3);
       expect(out.items.map((n) => n.content)).toEqual(["note 1", "note 2", "note 3"]);
+    });
+
+    it("default view of a long thread shows the last 3 and names the way back; --all recovers all", async () => {
+      await seedNotes(8);
+      const d = await runCliJson(["task", "notes", "tnotes", "-w", "test", "--json"], dbPath);
+      const out = d.data as {
+        items: { n: number; content: string }[];
+        more: number;
+        retrieve: string;
+      };
+      expect(out.items.map((n) => n.content)).toEqual(["note 6", "note 7", "note 8"]);
+      expect(out.more).toBe(5);
+      expect(out.retrieve).toBe("mu task notes tnotes -w test --all");
+      const all = await runCliJson(
+        ["task", "notes", "tnotes", "-w", "test", "--all", "--json"],
+        dbPath,
+      );
+      const full = all.data as { items: { content: string }[]; more: number };
+      expect(full.items).toHaveLength(8);
+      expect(full.more).toBe(0);
     });
 
     it("--tail composes with --since (since first, then tail)", async () => {

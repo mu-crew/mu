@@ -147,7 +147,7 @@ are re-export hubs.
 | Module | Responsibility |
 | --- | --- |
 | `src/tasks/core.ts`, `id.ts` | row shapes, id resolution, qualified ids |
-| `src/tasks/queries.ts`, `sort.ts` | list, next, owned-by; ROI, recency, age and id sorts |
+| `src/tasks/queries.ts`, `sort.ts` | list, next, owned-by; `selectTaskNotes` (default notes view), `listNotes` (full history); ROI, recency, age and id sorts |
 | `src/tasks/edit.ts`, `edges.ts` | add and edit; block, unblock, reparent, delete with cycle check |
 | `src/tasks/claim.ts` | atomic claim and release; `resolveWorkerIdentity` |
 | `src/tasks/lifecycle.ts`, `status.ts` | close, open and cascade; `TaskStatus` |

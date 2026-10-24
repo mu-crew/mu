@@ -107,6 +107,7 @@ import {
   TaskHasOpenBlockersError,
   TaskIdInvalidError,
   TaskInTriageError,
+  TaskNoteRangeError,
   TaskNotFoundError,
   TaskNotInWorkstreamError,
   TaskParkedError,
@@ -322,6 +323,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   if (
     err instanceof AgentNotFoundError ||
     err instanceof TaskNotFoundError ||
+    err instanceof TaskNoteRangeError ||
     err instanceof WorkstreamNotFoundError
   ) {
     // WorkstreamNotFoundError originates inside resolveWorkstreamId
