@@ -23,14 +23,14 @@
   {
     "calls": [
       {
-        "bash": "mu agent send w1 -w eval --fresh --json 'do rt2; mu is not on this host; end with the CLOSE/REPORT block'"
+        "bash": "mu task close rt2 -w eval --evidence 'remote worker on dev will finish rt2'"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu task close rt2 -w eval --evidence 'remote worker on dev will finish rt2'"
+        "bash": "mu agent send w1 -w eval --fresh --json 'do rt2; mu is not on this host; end with the CLOSE/REPORT block'"
       }
     ]
   },
