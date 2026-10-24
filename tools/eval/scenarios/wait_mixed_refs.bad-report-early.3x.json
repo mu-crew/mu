@@ -48,7 +48,7 @@
   {
     "calls": [
       {
-        "bash": "mu task wait mx-slow -w eval --timeout 2 | tail -5; echo \"mu-exit=${PIPESTATUS[0]}\" > /tmp/mx-exit.txt; cat /tmp/mx-exit.txt"
+        "bash": "mu task wait mx-slow -w eval --timeout 2 | tail -5; echo \"mu-exit=${PIPESTATUS[0]}\" > $EVAL_WORKER_DIR/mx-exit.txt; cat $EVAL_WORKER_DIR/mx-exit.txt"
       }
     ]
   },

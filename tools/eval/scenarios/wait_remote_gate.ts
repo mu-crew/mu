@@ -10,6 +10,7 @@
 //  - no REFUSED session (channel accounting: nothing opened a session while the gate held it);
 //  - the gate really ran (gate-result.txt on dev, a remote-gate session in sessions.log) and
 //    gate-report.txt carries exactly its nonce line, written after the gate finished;
+//  - a mu wait naming gate (exit 0/6, not a timeout) was running when gate-result.txt was written, and no sleep >= 3s stands in for it;
 //  - g1 ran once in a worker on dev, its commit is on main as that worker's commit, and the AUT
 //    closed g1 after the worker's run;
 //  - the remote-gate session came from the pane of the mu agent named gate (sessions.log records
@@ -27,7 +28,7 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { commandOf, prodWrong } from "../lifecycle.ts";
+import { commandOf, prodWrong, waitWindows } from "../lifecycle.ts";
 import { openProbe } from "../probe.ts";
 import {
   closeMoment,
@@ -143,6 +144,31 @@ const scenario: Scenario = {
     for (const c of run.toolCalls) {
       if (/\bssh\b/.test(commandOf(c)) && (c.durationMs ?? 0) > 5000)
         wrong.push(`an ssh call held the host for ${c.durationMs}ms: ${commandOf(c).slice(0, 80)}`);
+    }
+    // the gate's end was observed through mu: a wait call naming gate, ended by the pane (exit 0, or 6
+    // for a dying non-pi pane; a timeout is 5), whose window contains the moment gate-result.txt was
+    // written. A fixed sleep long enough for the fixture is the wait this scenario measures.
+    const waited = gateDone
+      ? waitWindows(run).some(
+          ({ call, start, end }) =>
+            [0, 6].includes(call.exitCode ?? 0) &&
+            /(^|[\s;&|])gate(?![\w-])/.test(
+              commandOf(call)
+                .replace(/'[^']*'/g, "''")
+                .replace(/^[\s\S]*?\bmu\s+(?:(?:task|agent)\s+)?wait\b/, ""),
+            ) &&
+            start <= (gateDone?.ms ?? 0) &&
+            (gateDone?.ms ?? 0) <= end,
+        )
+      : false;
+    if (gateDone && !waited) {
+      completed = false;
+      wrong.push("no mu wait call naming gate was running when the gate finished on dev");
+    }
+    for (const c of run.toolCalls) {
+      const s = /\bsleep\s+(\d+)\b/.exec(commandOf(c).replace(/'[^']*'/g, "''"));
+      if (s && Number(s[1]) >= 3)
+        wrong.push(`a sleep stands in for a wait: ${commandOf(c).slice(0, 80)}`);
     }
     wrong.push(...prodWrong(run));
     return verdict(run, completed, {

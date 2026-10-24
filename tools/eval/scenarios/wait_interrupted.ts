@@ -1,8 +1,8 @@
 // A `mu task wait` is killed with SIGTERM mid-run (the harness's own timeout, a user abort). The
 // orchestrator must come out knowing where things stand and carry on WITHOUT redoing work.
 //
-// Fixture: i1 (a worker task, 12s) and i2 (3s). A private watcher (written to <bin>/eval-interrupter
-// in setup, detached) finds the first `cli.js [task|agent] wait` process of THIS sandbox, waits 3s, sends
+// Fixture: i1 (a worker task, 12s) and i2 (3s, so it is CLOSED when the SIGTERM lands). A private watcher (written to <bin>/eval-interrupter
+// in setup, detached) finds the first `cli.js [task|agent] wait` process of THIS sandbox, waits 5s, sends
 // it SIGTERM once and logs "<ms> <pid> TERM <cmdline>" to <workers>/interrupt.log. Not SIGKILL:
 // nothing can catch that.
 //
@@ -44,14 +44,14 @@ import type { Scenario } from "../types.ts";
 const IDS = ["i1", "i2"];
 
 const INTERRUPTER = String.raw`#!/bin/bash
-# SIGTERM the first "cli.js [task|agent] wait" process of this sandbox, 3s after it appears; log it.
+# SIGTERM the first "cli.js [task|agent] wait" process of this sandbox, 5s after it appears; log it.
 D="$EVAL_SANDBOX"
 for _ in $(seq 1 2400); do
   [ -d "$D" ] || exit 0
   for pid in $(pgrep -f 'cli.js (task |agent )?wait ' 2>/dev/null); do
     grep -aq "MU_DB_PATH=$MU_DB_PATH" "/proc/$pid/environ" 2>/dev/null || continue
     cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
-    sleep 3
+    sleep 5
     if [ "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" = "$cmd" ]; then
       kill -TERM "$pid" && echo "$(date +%s%3N) $pid TERM $cmd" >> "$EVAL_WORKER_DIR/interrupt.log"
     else
@@ -169,16 +169,25 @@ const scenario: Scenario = {
     if (call) {
       const snap = lastJson(call.output);
       const text = call.output;
-      // real task states: i1 and i2 each with a status, and i1 (its worker runs 12s) not CLOSED
-      // when the snapshot was taken; plus a resume command that is a wait naming both tasks.
+      // real task states: each task's status in the snapshot must match the DB at the interrupt
+      // (i2's 3s worker closed it before the SIGTERM; i1's 12s worker has not), and the command
+      // must itself read mu state after the kill (an unquoted `mu task list|show` / wait call): a
+      // hard-coded echo of plausible states is neither.
       const st = snap ? snapshotStates(snap) : new Map<string, string>();
-      const i1Close = closeMoment(sb, "eval", "i1")?.ms ?? 0;
-      const stateOk =
-        IDS.every((id) => /^[A-Z_]+$/.test(st.get(id) ?? "")) &&
-        (i1Close <= hit || st.get("i1") !== "CLOSED");
+      const stateOk = IDS.every((id) => {
+        const s = st.get(id) ?? "";
+        const at = closeMoment(sb, "eval", id)?.ms ?? Number.POSITIVE_INFINITY;
+        if (!/^[A-Z_]+$/.test(s)) return false;
+        if (at <= hit) return s === "CLOSED";
+        return at > hit + 1500 ? s !== "CLOSED" : true;
+      });
+      const reads = /\bmu\s+(?:task\s+(?:list|show|notes)|(?:task\s+|agent\s+)?wait)\b/.test(
+        commandOf(call).replace(/'[^']*'/g, "''"),
+      );
       const resume = /\bmu\s+(?:(?:task|agent)\s+)?wait\b[^"'\n]*\bi1\b[^"'\n]*\bi2\b/.test(text);
-      const ok = snap !== null && Object.keys(snap).length > 0 && stateOk && resume;
       const bare = BARE.test(commandOf(call)) && isWaitCall(call);
+      const ok =
+        snap !== null && Object.keys(snap).length > 0 && stateOk && resume && (reads || bare);
       // A bare wait must print the snapshot itself. A wrapper that builds it is a manual workaround:
       // right on state (checked above), but never the guarantee: N/A on 3.x, wrong on next.
       if (!bare && !ok) {

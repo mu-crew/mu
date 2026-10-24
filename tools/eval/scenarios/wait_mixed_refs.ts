@@ -27,6 +27,7 @@ import {
   makeRepo,
   nonce,
   runsLog,
+  sandboxFamily,
   seedViaMu,
   workerTask,
   writeWorkerDriver,
@@ -45,6 +46,8 @@ import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
+const POLL_STATE = /\bmu\s+(?:task\s+(?:show|list|notes|next|ready)|agent\s+(?:list|show))\b/;
+const POLL_ANY = /\bmu\s+(?:task\s+(?:show|list|notes|next|ready)|agent\s+(?:list|show|read))\b/;
 const WORKERS = ["mx-slow", "gate", "mx-race"];
 
 const scenario: Scenario = {
@@ -162,9 +165,36 @@ const scenario: Scenario = {
       }
     }
     for (const c of run.toolCalls) {
-      const s = /\bsleep\s+(\d+)\b/.exec(commandOf(c));
+      const cmd = commandOf(c).replace(/'[^']*'/g, "''");
+      const s = /\bsleep\s+(\d+)\b/.exec(cmd);
       if (s && Number(s[1]) >= 3)
         wrong.push(`a sleep stands in for a wait: ${commandOf(c).slice(0, 80)}`);
+      // a loop that sleeps and polls state a wait covers (task/agent state anywhere; pane text only
+      // where the surface has an authoritative until-text condition, i.e. not 3.x)
+      const loop = /\b(?:for|while|until)\b[\s\S]*\bsleep\b[\s\S]*\bdone\b/.exec(cmd)?.[0];
+      const polled = sandboxFamily(sb) === "3x" ? POLL_STATE : POLL_ANY;
+      if (loop && polled.test(loop))
+        wrong.push(`a sleep loop polls what mu wait covers: ${commandOf(c).slice(0, 80)}`);
+    }
+    // the pipe-exit subcase is measured, not guessed: a real 2s wait on mx-slow behind a pipe whose
+    // status was taken from it (PIPESTATUS/pipefail on 3.x, the embedded exit on next) and shows 5.
+    const piped = run.toolCalls.some((c) => {
+      const cmd = commandOf(c).replace(/'[^']*'/g, "''");
+      return (
+        isWaitCall(c) &&
+        /\bmx-slow\b/.test(cmd) &&
+        /--timeout[ =]2\b/.test(cmd) &&
+        /\|\s*\w/.test(cmd.replace(/\|\|/g, "")) &&
+        (/PIPESTATUS|pipefail/.test(cmd) || /"exit"\s*:\s*5\b/.test(c.output)) &&
+        /(?:exit|status|rc)\W{0,3}5\b/i.test(c.output) &&
+        (c.durationMs ?? 0) >= 1500
+      );
+    });
+    if (!piped) {
+      completed = false;
+      wrong.push(
+        "timeout-exit was never measured: no 2s wait on mx-slow behind a pipe, status taken from it",
+      );
     }
     // native guarantees
     const oneVerb = run.toolCalls.some(

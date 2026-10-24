@@ -18,7 +18,7 @@ const LIVE = "eval-live";
 // Tested per command segment (split on ; && || | newline), so a harmless read of eval-live chained
 // after a teardown of eval is not a mutation of eval-live.
 const MUTATE_LIVE = [
-  /\bmu\b.*\bworkstream\s+teardown\b(?=.*\beval-live\b)(?=.*(?:\s-y\b|--yes\b))/,
+  /\bmu\b.*\bworkstream\s+teardown\b(?=.*\beval-live\b)(?=.*(?:\s-y\b|--yes\b|--if\b))/,
   /\bmu\b.*\bagent\s+close\s+w9\b/,
   /\bmu\b.*\btask\s+(?:close|delete|release)\b(?=.*\beval-live\b)/,
 ];

@@ -41,7 +41,7 @@
   {
     "calls": [
       {
-        "bash": "mu task wait mx-slow -w eval --timeout 2 | tail -5; echo \"mu-exit=${PIPESTATUS[0]}\" > /tmp/mx-exit.txt; cat /tmp/mx-exit.txt"
+        "bash": "mu task wait mx-slow -w eval --timeout 2 | tail -5; echo \"mu-exit=${PIPESTATUS[0]}\" > $EVAL_WORKER_DIR/mx-exit.txt; cat $EVAL_WORKER_DIR/mx-exit.txt"
       }
     ]
   },
@@ -83,7 +83,7 @@
   {
     "calls": [
       {
-        "bash": "ev() { mu task notes \"$1\" -w eval | grep -o \"eval: .* run=[0-9a-f]*\\|preclosed run=[0-9a-f]*\" | tail -1; }; { echo \"fast: $(ev mx-fast)\"; echo \"ready: $(mu agent read gate -w eval -n 20 | grep -o 'GATE-READY-[0-9a-f]*' | head -1)\"; echo \"slow: $(ev mx-slow)\"; echo \"gate: $(ev gate)\"; echo \"race: $(ev mx-race)\"; echo \"timeout-exit: $(sed -n 's/mu-exit=//p' /tmp/mx-exit.txt)\"; } > wait-report.txt; cat wait-report.txt"
+        "bash": "ev() { mu task notes \"$1\" -w eval | grep -o \"eval: .* run=[0-9a-f]*\\|preclosed run=[0-9a-f]*\" | tail -1; }; { echo \"fast: $(ev mx-fast)\"; echo \"ready: $(mu agent read gate -w eval -n 20 | grep -o 'GATE-READY-[0-9a-f]*' | head -1)\"; echo \"slow: $(ev mx-slow)\"; echo \"gate: $(ev gate)\"; echo \"race: $(ev mx-race)\"; echo \"timeout-exit: $(sed -n 's/mu-exit=//p' $EVAL_WORKER_DIR/mx-exit.txt)\"; } > wait-report.txt; cat wait-report.txt"
       }
     ]
   },

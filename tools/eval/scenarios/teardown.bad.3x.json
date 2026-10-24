@@ -2,14 +2,14 @@
   {
     "calls": [
       {
-        "bash": "mu workstream teardown eval --yes"
+        "bash": "mu workstream teardown eval --yes 2>/dev/null || mu workstream teardown eval --if $(mu workstream teardown eval | sed -n \"s/.*rev=\\([0-9]*\\).*/\\1/p\")"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu workstream teardown eval-live --yes"
+        "bash": "mu workstream teardown eval-live --yes 2>/dev/null || mu workstream teardown eval-live --if $(mu workstream teardown eval-live | sed -n \"s/.*rev=\\([0-9]*\\).*/\\1/p\")"
       }
     ]
   },

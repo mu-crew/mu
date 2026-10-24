@@ -133,11 +133,10 @@ fi
 case "$mode" in
   verb)
     if [ "$(SQLITE "SELECT t.status FROM tasks t JOIN workstreams w ON w.id=t.workstream_id WHERE t.local_id='$T' AND w.name='$MU_WORKSTREAM'")" = CLOSED ]; then
-      echo "$T already CLOSED"
+      echo "$T already CLOSED"; log already-closed
     else
-      "$W/close.sh" "$T" "$evidence"
-    fi
-    log close ;;
+      "$W/close.sh" "$T" "$evidence"; log close
+    fi ;;
   block)
     echo "CLOSE: task=$T evidence=\"$evidence\""
     echo "REPORT:"

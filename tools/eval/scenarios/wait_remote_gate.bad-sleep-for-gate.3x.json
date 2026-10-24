@@ -1,0 +1,96 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn gate -w eval --command \"ssh dev -t remote-gate\" --no-ctl"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "sleep 12"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "ssh dev 'git -C ~/repo worktree add ~/ws/w1'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "eval \"$(mu agent remote-env w1 -w eval --shell)\"; ssh dev \"tmux new-session -d -s mu-w1 -c ~/ws/w1 '$MU_REMOTE_ENV \\$SHELL -ilc \\\"pi --approve\\\"'\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "eval \"$(mu agent remote-env w1 -w eval --shell)\"; mu agent spawn w1 -w eval --command \"ssh $MU_SSH_ARGS dev -t 'tmux attach -t mu-w1'\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim g1 -w eval --for w1 --evidence 'remote on dev'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --fresh --json 'do g1; mu is not on this host'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close g1 -w eval --evidence 'g1 worker finished on dev (DONE: g1)'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent close w1 -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git fetch \"ssh://dev/~/ws/w1\" HEAD && git cherry-pick FETCH_HEAD"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "ssh dev cat gate-result.txt > gate-report.txt"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "ssh dev 'tmux kill-session -t mu-w1; git -C ~/repo worktree remove ~/ws/w1'"
+      }
+    ]
+  },
+  {
+    "text": "The gate finished, g1 ran on dev and is merged, and the report is written."
+  }
+]
