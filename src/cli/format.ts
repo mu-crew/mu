@@ -309,7 +309,7 @@ export function formatWorkstreamsTable(rows: WorkstreamSummary[]): string {
 }
 
 /**
- * Past teardowns, newest first.
+ * Torn-down workstreams (soft rows, then old hard teardowns), newest first.
  *
  * `group` leads after the name because it is the only ACTIONABLE
  * column — it feeds `mu log --group <group>` — and it is shown
@@ -317,8 +317,10 @@ export function formatWorkstreamsTable(rows: WorkstreamSummary[]): string {
  */
 export function formatTornDownWorkstreamsTable(rows: readonly TornDownWorkstream[]): string {
   const table = muTable({
-    head: ["name", "group", "torn down", "tasks", "edges", "notes", ""].map((h) => pc.bold(h)),
-    colWidths: [32, null, null, null, null, null, null],
+    head: ["name", "group", "torn down", "tasks", "edges", "notes", "rows", ""].map((h) =>
+      pc.bold(h),
+    ),
+    colWidths: [32, null, null, null, null, null, null, null],
   });
   for (const r of rows) {
     // relTimeAgo takes an ELAPSED duration, not a timestamp.
@@ -330,6 +332,7 @@ export function formatTornDownWorkstreamsTable(rows: readonly TornDownWorkstream
       String(r.tasks),
       String(r.edges),
       String(r.notes),
+      r.kind === "soft" ? "kept" : pc.dim("deleted"),
       r.recreated ? pc.dim("← recreated since") : "",
     ]);
   }

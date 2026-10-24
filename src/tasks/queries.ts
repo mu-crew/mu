@@ -1,7 +1,7 @@
 // mu — task read/query primitives.
 
 import type { Db } from "../db.js";
-import { tryResolveWorkstreamId } from "../db.js";
+import { tryResolveLiveWorkstreamId } from "../db.js";
 import { lastClaimEventAt } from "../logs.js";
 import {
   noteFromDb,
@@ -18,7 +18,7 @@ import {
 import type { TaskStatus, TaskSubstate } from "./status.js";
 
 export function getTask(db: Db, localId: string, workstream: string): TaskRow | undefined {
-  const wsId = tryResolveWorkstreamId(db, workstream);
+  const wsId = tryResolveLiveWorkstreamId(db, workstream);
   if (wsId === null) return undefined;
   const row = db
     .prepare(
@@ -81,7 +81,7 @@ export function listTasks(db: Db, workstream?: string, opts: ListTasksOptions = 
   const where: string[] = [];
   const params: unknown[] = [];
   if (workstream !== undefined) {
-    const wsId = tryResolveWorkstreamId(db, workstream);
+    const wsId = tryResolveLiveWorkstreamId(db, workstream);
     if (wsId === null) return [];
     where.push("t.workstream_id = ?");
     params.push(wsId);
@@ -141,7 +141,7 @@ export interface ListReadyOptions {
 }
 
 export function listReady(db: Db, workstream: string, opts: ListReadyOptions = {}): TaskRow[] {
-  const wsId = tryResolveWorkstreamId(db, workstream);
+  const wsId = tryResolveLiveWorkstreamId(db, workstream);
   if (wsId === null) return [];
   const statuses =
     opts.status === undefined
@@ -176,7 +176,7 @@ export function listReady(db: Db, workstream: string, opts: ListReadyOptions = {
 }
 
 export function listBlocked(db: Db, workstream: string): TaskRow[] {
-  const wsId = tryResolveWorkstreamId(db, workstream);
+  const wsId = tryResolveLiveWorkstreamId(db, workstream);
   if (wsId === null) return [];
   const rows = db
     .prepare(
@@ -187,7 +187,7 @@ export function listBlocked(db: Db, workstream: string): TaskRow[] {
 }
 
 export function listGoals(db: Db, workstream: string): TaskRow[] {
-  const wsId = tryResolveWorkstreamId(db, workstream);
+  const wsId = tryResolveLiveWorkstreamId(db, workstream);
   if (wsId === null) return [];
   const rows = db
     .prepare(
@@ -202,7 +202,7 @@ export function listGoals(db: Db, workstream: string): TaskRow[] {
  *  named SDK helper so CLI renderers don't re-derive the row-shape
  *  conversion (review_code_raw_task_state_duplicate). */
 export function listInProgress(db: Db, workstream: string): TaskRow[] {
-  const wsId = tryResolveWorkstreamId(db, workstream);
+  const wsId = tryResolveLiveWorkstreamId(db, workstream);
   if (wsId === null) return [];
   const rows = db
     .prepare(
@@ -221,7 +221,7 @@ export function listInProgress(db: Db, workstream: string): TaskRow[] {
  *  raw-row type that was duplicating RawTaskRow
  *  (review_code_raw_task_state_duplicate). */
 export function listRecentClosed(db: Db, workstream: string, limit = 5): TaskRow[] {
-  const wsId = tryResolveWorkstreamId(db, workstream);
+  const wsId = tryResolveLiveWorkstreamId(db, workstream);
   if (wsId === null) return [];
   const rows = db
     .prepare(
@@ -334,7 +334,7 @@ export function listTasksByOwner(
   // Filter on the joined ag.name so the operator-facing owner string
   // still drives the lookup; FK is now via owner_id.
   const filter = opts.includeClosed ? "" : "AND t.status <> 'CLOSED'";
-  const wsId = tryResolveWorkstreamId(db, workstream);
+  const wsId = tryResolveLiveWorkstreamId(db, workstream);
   if (wsId === null) return [];
   const sql = `SELECT ${SELECT_TASK_COLS} ${TASK_FROM_JOIN}
                WHERE ag.name = ? AND t.workstream_id = ? ${filter}

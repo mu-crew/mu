@@ -32,7 +32,7 @@ import {
   UsageError,
   withRoiAll,
 } from "../cli.js";
-import { type Db, tryResolveWorkstreamId, WorkstreamNotFoundError } from "../db.js";
+import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../db.js";
 import { muTable, pc } from "../output.js";
 import {
   listRemoteWorkers,
@@ -98,7 +98,7 @@ async function resolveWorkstreamSet(db: Db, opts: StateOpts): Promise<string[]> 
       // Strict validation: every entry must exist. A typo'd name
       // would silently render a half card.
       for (const n of deduped) {
-        if (tryResolveWorkstreamId(db, n) === null) throw new WorkstreamNotFoundError(n);
+        if (tryResolveLiveWorkstreamId(db, n) === null) throw new WorkstreamNotFoundError(n);
       }
       return deduped;
     }

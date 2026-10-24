@@ -38,6 +38,7 @@ import {
   SchemaTooOldError,
   SqliteTooOldError,
   WorkstreamNotFoundError,
+  WorkstreamTornDownError,
 } from "../src/db.js";
 import {
   HerdrCommandOverrideError,
@@ -70,8 +71,10 @@ import {
 import { PaneNotFoundError, TmuxError } from "../src/tmux.js";
 import {
   WorkstreamExistsError,
+  WorkstreamHasAgentsError,
   WorkstreamNameInvalidError,
   WorkstreamNameReservedError,
+  WorkstreamRevisionMismatchError,
 } from "../src/workstream.js";
 import {
   WorktreeDirtyError,
@@ -360,6 +363,21 @@ const cases: NextStepsCase[] = [
     error: new WorkstreamNotFoundError("ghost"),
     label: "WorkstreamNotFoundError",
     expectedTokens: ["ghost"],
+  },
+  {
+    error: new WorkstreamTornDownError("old-ws", "2026-01-01T00:00:00.000Z"),
+    label: "WorkstreamTornDownError",
+    expectedTokens: ["init old-ws"],
+  },
+  {
+    error: new WorkstreamRevisionMismatchError("ws", 1, 2),
+    label: "WorkstreamRevisionMismatchError",
+    expectedTokens: ["teardown ws"],
+  },
+  {
+    error: new WorkstreamHasAgentsError("ws", 2),
+    label: "WorkstreamHasAgentsError",
+    expectedTokens: ["teardown ws"],
   },
   {
     error: new WorkstreamExistsError("existing-ws"),

@@ -24,7 +24,7 @@ import {
   resolveWorkstream,
   UsageError,
 } from "../../cli.js";
-import { type Db, tryResolveWorkstreamId, WorkstreamNotFoundError } from "../../db.js";
+import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../../db.js";
 import { GLYPH } from "../../glyphs.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
 import { reconcile } from "../../reconcile.js";
@@ -123,7 +123,7 @@ export async function cmdClaim(
       // Pre-flight: workstream must exist (typed error so the operator
       // sees the canonical exit-3 mapping instead of a bare
       // ClaimerNotRegisteredError pointing at the wrong cause).
-      if (tryResolveWorkstreamId(db, forWorkstream) === null) {
+      if (tryResolveLiveWorkstreamId(db, forWorkstream) === null) {
         throw new WorkstreamNotFoundError(forWorkstream);
       }
       // Pre-flight: agent must exist in that workstream. Without this
@@ -131,7 +131,7 @@ export async function cmdClaim(
       // shape) which doesn't carry the qualifying workstream context
       // — AgentNotFoundError(name, workstream) is the right shape for
       // the cross-ws path.
-      const wsId = tryResolveWorkstreamId(db, forWorkstream);
+      const wsId = tryResolveLiveWorkstreamId(db, forWorkstream);
       if (wsId !== null) {
         const row = db
           .prepare("SELECT 1 FROM agents WHERE name = ? AND workstream_id = ?")

@@ -15,20 +15,30 @@ See [Stop a worker](stop-a-worker.md).
 ## Tear down a workstream
 
 ```bash
-mu workstream teardown auth          # dry run: prints what goes
-mu workstream teardown auth --yes    # kills the session, deletes the rows
+mu workstream teardown auth             # preview: counts and rev=<n>; writes nothing
+mu workstream teardown auth --if <n>    # apply that preview
 ```
 
-Teardown kills the tmux session first, then deletes the agents, tasks,
-edges, notes, and clean worktrees. A worktree with uncommitted work is
-kept and reported; close it with `mu agent close <agent> --discard`.
-Running it again is a no-op.
+Teardown is soft. It kills the tmux session first, then removes clean
+worktrees and deletes the agent rows, then marks the workstream torn
+down. Its tasks, edges, and notes stay but every view and `-w auth` verb
+hides them (exit 3, "workstream auth is torn down"). A worktree with
+uncommitted work is kept and reported; close it with
+`mu agent close <agent> --discard`. Running it again is a no-op.
+
+`--if <n>` refuses (exit 4) when the workstream changed since the
+preview: a new op, agent, or worktree. Preview again and read it.
+
+To reuse the name, run `mu workstream init auth`. It previews what it
+will permanently delete (`will permanently delete torn-down auth: N tasks,
+M notes; rev=<n>`); `mu workstream init auth --if <n>` deletes the old
+rows and creates the new workstream.
 
 To sweep every workstream that has no tasks, agents, or worktrees:
 
 ```bash
-mu workstream teardown --empty
-mu workstream teardown --empty --yes
+mu workstream teardown --empty            # preview: the list and one rev=<n>
+mu workstream teardown --empty --if <n>
 ```
 
 The sweep skips `scratch`, whose idle session is kept open on purpose.
@@ -38,22 +48,22 @@ such sessions; tear one down by name once you know it is unused.
 
 ## Find a past teardown
 
-Teardown writes tombstone ops, so the ops log keeps what was removed.
-
 ```bash
 mu workstream list --torn-down
 mu log --group 7a40e6cc
 ```
 
-The list shows one row per teardown, newest first. A `--empty` sweep
-writes one row per workstream. `← recreated since` means the name is in
-use again.
+The list shows every torn-down workstream (`rows: kept`), newest first,
+and the older teardowns an earlier mu wrote as deletes (`rows: deleted`;
+`← recreated since` means the name is in use again). A `--empty` sweep
+writes one op group per workstream.
 
 ## Keep mu.db small
 
-Teardown keeps its history, and that history is most of
-`mu.db`. `mu doctor` names the largest torn-down workstreams once they
-are worth reclaiming.
+Teardown keeps its rows and history, and that is most of
+`mu.db`. `mu doctor` names the largest workstreams that earlier teardowns
+deleted once they are worth reclaiming. A soft-torn-down workstream is
+reclaimed by reusing its name (`init --if`), then tearing down again.
 
 ```bash
 mu db compact                        # dry run: redundant note tombstones
@@ -78,7 +88,7 @@ The `housekeeping` section of `mu doctor` lists two kinds:
 | abandoned | unclosed tasks, idle 60 days or more | read the open tasks first |
 
 It skips your current workstream, `scratch`, and any workstream with a
-live agent or a worktree. Teardown removes the plan, not the code: no
+live agent or a worktree. Teardown hides the plan, not the code: no
 commit or checkout is touched.
 
 ## Free disk space

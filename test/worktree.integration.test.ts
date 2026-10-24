@@ -21,7 +21,7 @@ import {
 } from "../src/agents.js";
 import { type Db, migrateLegacyWorkspaces, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
-import { ensureWorkstream, teardownWorkstream } from "../src/workstream.js";
+import { ensureWorkstream } from "../src/workstream.js";
 import {
   createWorktree,
   getWorktreeAt,
@@ -35,6 +35,7 @@ import {
 } from "../src/worktree.js";
 import { commitFileIn, gitIn, initGitRepo } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
+import { softTeardown } from "./_teardown.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 import { seedWorktree } from "./_worktree.js";
 
@@ -474,7 +475,7 @@ gitDescribe("workstream teardown", () => {
     const head = commitFileIn(unmerged.path, "w.txt", "own work");
     writeFileSync(join(dirty.path, "u.txt"), "precious");
 
-    const r = await teardownWorkstream(db, { workstream: "auth" });
+    const r = await softTeardown(db, "auth");
 
     expect(r.freedWorktrees).toBe(2);
     expect(r.keptBranches).toEqual([`mu/auth/own-1-${head.slice(0, 12)}`]);
@@ -490,7 +491,7 @@ gitDescribe("workstream teardown", () => {
   it("counts a registered worktree whose dir is already gone apart", async () => {
     const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
     rmSync(wt.path, { recursive: true, force: true });
-    const r = await teardownWorkstream(db, { workstream: "auth" });
+    const r = await softTeardown(db, "auth");
     expect(r.alreadyGoneWorktrees).toBe(1);
     expect(r.freedWorktrees).toBe(0);
     expect(listWorktrees(db)).toEqual([]);

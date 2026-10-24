@@ -77,8 +77,14 @@ describe("root-position -w forwards to the verb's -w", () => {
         ["list-panes", { stdout: "", stderr: "can't find session", exitCode: 1 }],
       ]);
       try {
+        const preview = await runCli(
+          ["--workstream=wsb", "workstream", "teardown", "--json"],
+          dbPath,
+        );
+        expect(JSON.parse(preview.stdout)).toMatchObject({ workstreamName: "wsb", dryRun: true });
+        const { revision } = JSON.parse(preview.stdout) as { revision: number };
         const r = await runCli(
-          ["--workstream=wsb", "workstream", "teardown", "--yes", "--json"],
+          ["--workstream=wsb", "workstream", "teardown", "--if", String(revision), "--json"],
           dbPath,
         );
         expect(r.error).toBeUndefined();
@@ -88,7 +94,9 @@ describe("root-position -w forwards to the verb's -w", () => {
       }
     });
     const db = openDb({ path: dbPath });
-    const left = db.prepare("SELECT name FROM workstreams ORDER BY name").all() as {
+    const left = db
+      .prepare("SELECT name FROM workstreams WHERE torn_down_at IS NULL ORDER BY name")
+      .all() as {
       name: string;
     }[];
     db.close();
@@ -96,7 +104,7 @@ describe("root-position -w forwards to the verb's -w", () => {
   });
 
   it("teardown: root -w and a disagreeing positional is a usage error", async () => {
-    const r = await runCli(["-w", "wsa", "workstream", "teardown", "wsb", "--yes"], dbPath);
+    const r = await runCli(["-w", "wsa", "workstream", "teardown", "wsb", "--if", "1"], dbPath);
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(/given twice/);
   });

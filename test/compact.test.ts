@@ -11,8 +11,9 @@ import { compact, forget, listForgetCandidates, planCompact, planForget } from "
 import { type Db, openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
-import { ensureWorkstream, teardownWorkstream } from "../src/workstream.js";
+import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
+import { legacyHardTeardown } from "./_teardown.js";
 
 let dir: string;
 let db: Db;
@@ -54,7 +55,7 @@ const notesIn = (ws: string) =>
 describe("note tombstones", () => {
   it("capture writes {} when a put under the key is in the log", async () => {
     seed("demo", ["first", "second"]);
-    await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-absent-for-test" });
+    legacyHardTeardown(db, "demo");
     const tombs = noteTombstones();
     expect(tombs).toHaveLength(2);
     expect(tombs.every((t) => t.payload === "{}")).toBe(true);
@@ -65,7 +66,7 @@ describe("note tombstones", () => {
     seed("demo", ["only"]);
     // A reprojection moved the note's put to another key.
     db.prepare("UPDATE ops SET key = key || '-old' WHERE entity = 'note' AND op = 'put'").run();
-    await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-absent-for-test" });
+    legacyHardTeardown(db, "demo");
     const [t] = noteTombstones();
     expect(JSON.parse(t?.payload ?? "{}")).toMatchObject({ content: "only" });
   });
@@ -74,7 +75,7 @@ describe("note tombstones", () => {
 describe("compact", () => {
   it("blanks only tombstones a put already explains; drift unaffected", async () => {
     seed("demo", ["first", "second"]);
-    await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-absent-for-test" });
+    legacyHardTeardown(db, "demo");
     // Simulate history written before capture slimmed tombstones.
     db.prepare(
       `UPDATE ops SET payload = json_object('content', 'x', 'author', 'w', 'created_at', 'z')
@@ -92,7 +93,7 @@ describe("compact", () => {
   it("leaves a self-describing tombstone with no matching put alone", async () => {
     seed("demo", ["only"]);
     db.prepare("UPDATE ops SET key = key || '-old' WHERE entity = 'note' AND op = 'put'").run();
-    await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-absent-for-test" });
+    legacyHardTeardown(db, "demo");
     expect(planCompact(db).tombstones).toBe(0);
   });
 });
@@ -102,8 +103,8 @@ describe("forget", () => {
     seed("small", ["x"]);
     seed("big", ["a".repeat(500), "b".repeat(500)]);
     seed("kept", ["live"]);
-    await teardownWorkstream(db, { workstream: "small", muxSession: "mu-absent-for-test" });
-    await teardownWorkstream(db, { workstream: "big", muxSession: "mu-absent-for-test" });
+    legacyHardTeardown(db, "small");
+    legacyHardTeardown(db, "big");
     expect(listForgetCandidates(db).map((c) => c.name)).toEqual(["big", "small"]);
   });
 
@@ -119,7 +120,7 @@ describe("forget", () => {
 
   it("a torn-down then recreated workstream is live, not a candidate", async () => {
     seed("again", ["x"]);
-    await teardownWorkstream(db, { workstream: "again", muxSession: "mu-absent-for-test" });
+    legacyHardTeardown(db, "again");
     ensureWorkstream(db, "again");
     expect(planForget(db, ["again"]).refused).toEqual([{ name: "again", why: "live" }]);
   });
@@ -128,8 +129,8 @@ describe("forget", () => {
     seed("gone", ["x"]);
     seed("gone-too", ["y"]); // a prefix sibling: must survive
     seed("kept", ["z"]);
-    await teardownWorkstream(db, { workstream: "gone", muxSession: "mu-absent-for-test" });
-    await teardownWorkstream(db, { workstream: "gone-too", muxSession: "mu-absent-for-test" });
+    legacyHardTeardown(db, "gone");
+    legacyHardTeardown(db, "gone-too");
     const r = forget(db, planForget(db, ["gone"]));
     expect(r.ops).toBeGreaterThan(0);
     const keys = (db.prepare("SELECT DISTINCT key FROM ops").all() as { key: string }[]).map(
@@ -145,7 +146,7 @@ describe("forget", () => {
   it("counts only its own key range: '0', '-' and '_' siblings are not swept in", async () => {
     for (const ws of ["a", "a0", "a-b", "a_b", "ab"]) {
       seed(ws, ["x"]);
-      await teardownWorkstream(db, { workstream: ws, muxSession: "mu-absent-for-test" });
+      legacyHardTeardown(db, ws);
     }
     const count = (ws: string) =>
       (
@@ -166,7 +167,7 @@ describe("forget", () => {
       "big",
       Array.from({ length: 40 }, (_, i) => `${i}${"x".repeat(20_000)}`),
     );
-    await teardownWorkstream(db, { workstream: "big", muxSession: "mu-absent-for-test" });
+    legacyHardTeardown(db, "big");
     db.pragma("wal_checkpoint(TRUNCATE)");
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
@@ -183,7 +184,7 @@ describe("forget", () => {
       "big",
       Array.from({ length: 40 }, (_, i) => `${i}${"x".repeat(20_000)}`),
     );
-    await teardownWorkstream(db, { workstream: "big", muxSession: "mu-absent-for-test" });
+    legacyHardTeardown(db, "big");
     db.pragma("wal_checkpoint(TRUNCATE)");
     // Fail the checkpoint fast instead of waiting out openDb's 5s busy_timeout.
     db.pragma("busy_timeout = 0");

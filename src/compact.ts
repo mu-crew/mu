@@ -59,7 +59,7 @@ export function compact(db: Db): CompactPlan {
  *  after it drops siblings such as '<ws>-2'. A bare `substr(key, …)` test, or
  *  an OR around the range, scanned all of ops per candidate. The entity list
  *  is read from the data so legacy and future entities are covered. */
-const WORKSTREAM_OPS_WHERE = `(entity IN (${OPS_ENTITIES_SQL}) AND key >= @ws AND key < @ws || '0'
+export const WORKSTREAM_OPS_WHERE = `(entity IN (${OPS_ENTITIES_SQL}) AND key >= @ws AND key < @ws || '0'
   AND (key = @ws OR substr(key, 1, length(@ws) + 1) = @ws || '/'))`;
 
 export interface ForgetCandidate {

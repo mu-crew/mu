@@ -19,6 +19,7 @@ import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from
 import { ensureWorkstream, listEmptyWorkstreams } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
+import { previewRevision } from "./_teardown.js";
 import { fail, freshMockState, type MockState, mockTmux, ok } from "./_verbs-mock.js";
 
 let tempDir: string;
@@ -179,13 +180,21 @@ describe("teardown --empty leaves the kept-alive scratch session", () => {
     expect((await listEmptyWorkstreams(db)).map((w) => w.name)).toEqual(["bare"]);
     db.close();
 
-    const sweep = await runCli(["workstream", "teardown", "--empty", "--yes", "--json"], dbPath);
+    const sweepRev = await previewRevision(dbPath, ["--empty"]);
+    const sweep = await runCli(
+      ["workstream", "teardown", "--empty", "--if", String(sweepRev), "--json"],
+      dbPath,
+    );
     expect(sweep.error).toBeUndefined();
     expect(JSON.parse(sweep.stdout)).toMatchObject({ tornDown: 1, failed: [] });
     expect(killed).toEqual(["mu-bare"]);
     expect(sessions.has("mu-scratch")).toBe(true);
 
-    const named = await runCli(["workstream", "teardown", "scratch", "--yes", "--json"], dbPath);
+    const namedRev = await previewRevision(dbPath, ["scratch"]);
+    const named = await runCli(
+      ["workstream", "teardown", "scratch", "--if", String(namedRev), "--json"],
+      dbPath,
+    );
     expect(named.error).toBeUndefined();
     expect(killed).toEqual(["mu-bare", "mu-scratch"]);
     expect(sessions.has("mu-scratch")).toBe(false);

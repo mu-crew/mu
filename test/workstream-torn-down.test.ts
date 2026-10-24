@@ -1,13 +1,12 @@
 // Fast-tier unit tests for `listTornDownWorkstreams` — the reader
 // behind `mu workstream list --torn-down`.
 //
-// The list exists so a teardown from last month is reachable (its group
-// id feeds `mu log --group`) without hand-written SQL over `ops`.
-//
-// It reads the ops log rather than a side table, so the cases that
-// matter are the ones where the log holds more than "one name, one
-// row": a name torn down twice, and a name recreated
-// after its teardown.
+// Two kinds of entry: a SOFT teardown (the row is still here with
+// torn_down_at set; counts are what is kept) and a pre-cut-over HARD
+// teardown found in the ops log (a `workstream` del op under intent
+// workstream.teardown; old teardowns stay final; counts are what it
+// removed). The list exists so a teardown from last month is reachable
+// (its group id feeds `mu log --group`) without hand-written SQL.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,12 +15,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask } from "../src/tasks.js";
-import {
-  ensureWorkstream,
-  listTornDownWorkstreams,
-  teardownWorkstream,
-} from "../src/workstream.js";
+import { ensureWorkstream, listTornDownWorkstreams } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
+import { legacyHardTeardown, softTeardown } from "./_teardown.js";
 
 describe("listTornDownWorkstreams", () => {
   let dir: string;
@@ -49,8 +45,11 @@ describe("listTornDownWorkstreams", () => {
     addNote(db, "a", "context", { workstream: name, author: "worker-1" });
   };
 
-  const tearDown = async (name: string): Promise<void> => {
-    await teardownWorkstream(db, { workstream: name, muxSession: "mu-absent-for-test" });
+  const hard = async (name: string): Promise<void> => {
+    legacyHardTeardown(db, name);
+  };
+  const soft = async (name: string): Promise<void> => {
+    await softTeardown(db, name, { muxSession: "mu-absent-for-test" });
   };
 
   it("is empty on a fresh DB, and stays empty for a live workstream", async () => {
@@ -59,9 +58,9 @@ describe("listTornDownWorkstreams", () => {
     expect(listTornDownWorkstreams(db)).toEqual([]);
   });
 
-  it("reports the group id and what the teardown removed", async () => {
+  it("a hard (pre-cut-over) entry reports the group id and what the teardown removed", async () => {
     seed("demo");
-    await tearDown("demo");
+    await hard("demo");
 
     const gone = listTornDownWorkstreams(db);
     expect(gone).toHaveLength(1);
@@ -70,7 +69,13 @@ describe("listTornDownWorkstreams", () => {
     expect(entry.name).toBe("demo");
     // The counts are the point of the row: they say what is at stake
     // without a second query per line.
-    expect(entry).toMatchObject({ tasks: 2, notes: 1, edges: 1, recreated: false });
+    expect(entry).toMatchObject({
+      tasks: 2,
+      notes: 1,
+      edges: 1,
+      recreated: false,
+      kind: "hard",
+    });
     expect(entry.group).toMatch(/^[0-9a-f-]{36}$/);
     // The group id resolves to the teardown's ops.
     const ops = db.prepare("SELECT COUNT(*) AS n FROM ops WHERE group_id = ?").get(entry.group) as {
@@ -81,7 +86,7 @@ describe("listTornDownWorkstreams", () => {
 
   it("marks an entry recreated once the name is back", async () => {
     seed("demo");
-    await tearDown("demo");
+    await hard("demo");
     const [before] = listTornDownWorkstreams(db);
     if (before === undefined) throw new Error("expected one entry");
     expect(before.recreated).toBe(false);
@@ -101,10 +106,10 @@ describe("listTornDownWorkstreams", () => {
     // 'demo', recreating it and tearing it down again is two distinct
     // recoverable points, and collapsing them by name would hide one.
     seed("demo");
-    await tearDown("demo");
+    await hard("demo");
     seed("demo");
     addNote(db, "b", "second life", { workstream: "demo", author: "worker-2" });
-    await tearDown("demo");
+    await hard("demo");
 
     const gone = listTornDownWorkstreams(db);
     expect(gone).toHaveLength(2);
@@ -123,11 +128,42 @@ describe("listTornDownWorkstreams", () => {
 
   it("ignores teardowns recorded under the cut pre-1.2.0 intent spelling", async () => {
     seed("demo");
-    await tearDown("demo");
+    await hard("demo");
     db.prepare(
       "UPDATE ops SET intent = 'workstream.destroy' WHERE intent = 'workstream.teardown'",
     ).run();
 
     expect(listTornDownWorkstreams(db)).toEqual([]);
+  });
+
+  it("a soft teardown is listed from its row: kept counts, the teardown put's group, kind soft", async () => {
+    seed("demo");
+    await soft("demo");
+
+    const [entry] = listTornDownWorkstreams(db);
+    if (entry === undefined) throw new Error("expected one entry");
+    expect(entry).toMatchObject({ name: "demo", tasks: 2, notes: 1, edges: 1, kind: "soft" });
+    const row = db.prepare("SELECT torn_down_at FROM workstreams WHERE name = 'demo'").get() as {
+      torn_down_at: string;
+    };
+    expect(entry.at).toBe(row.torn_down_at);
+    const op = db
+      .prepare(
+        "SELECT group_id, intent FROM ops WHERE entity = 'workstream' AND key = 'demo' ORDER BY seq DESC LIMIT 1",
+      )
+      .get() as { group_id: string; intent: string };
+    expect(op.intent).toBe("workstream.teardown");
+    expect(entry.group).toBe(op.group_id);
+  });
+
+  it("lists soft and hard entries together, newest first", async () => {
+    seed("old");
+    await hard("old");
+    seed("new");
+    await soft("new");
+    expect(listTornDownWorkstreams(db).map((e) => [e.name, e.kind])).toEqual([
+      ["new", "soft"],
+      ["old", "hard"],
+    ]);
   });
 });

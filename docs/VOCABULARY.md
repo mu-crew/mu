@@ -127,14 +127,15 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **tombstone** | An `op='del'` row. There is no tombstone table. | "deletion marker" |
 | **resurrection** | A put newer than a seen tombstone, which legitimately recreates the row. | "undelete", "revive" |
 | **provenance** | Which HLC last wrote a field, derived from the ops log by query, never stored. | "version vector" |
-| **teardown** | Kill a workstream's mux session and delete its rows. Panes and dirs do not come back. | "destroy", "nuke", "purge" |
+| **teardown** | Soft: kill a workstream's mux session, free clean worktrees, delete its machine-local agent rows, set `torn_down_at`. Tasks, edges and notes stay, hidden. Previewed first, applied with `--if <rev>`. Panes do not come back. Reusing the name (`init --if`) hard-deletes the old rows. | "destroy", "nuke", "purge" |
 | **drift** | The ops log and live tables disagree. Always a bug. | "inconsistency", "corruption" |
 | **shallow / deep check** | Drift checks in `mu doctor` and `mu doctor --deep` (full rebuild). | "fsck" |
 | **scored** | `tasks.scored`: impact/effort were given (`-i`/`-e`, `update`), not defaulted (50 / 1). `ready` order: scored by impact/effort desc, then unscored oldest first. | "prioritised" |
 | **dispatch host** | `tasks.dispatch_host` (synced): the host the task is dispatched to. | "target machine" |
 | **local-write guard** | A persistent trigger gated on `applying = 0`: claim CAS, close needs evidence, close to `done` refuses open blockers. Ingest and import are never blocked; `mu doctor` warns about the states they accept. | "constraint", "validation" |
 | **note kind** | `task_notes.kind`: `brief`, `report`, `verdict`, `close` or `note`. Set once at insert; a local change raises. | "note type", "tag" |
-| **torn down** | `workstreams.torn_down_at` set (soft teardown). Views and reads skip it; ingest still sees the row. | "archived", "deleted" |
+| **torn down** | `workstreams.torn_down_at` set (soft teardown). Views and reads skip it (exit 3 "is torn down"); ingest still sees the row. Teardowns an earlier mu wrote as deletes stay final and are listed from the ops log. | "archived", "deleted" |
+| **revision** | `rev=<n>`: a number a preview prints and `--if <n>` must repeat. It hashes the newest op touching the workstream plus its agents (name, pane) and worktrees, so any change since the preview makes the destructive verb refuse (exit 4). | "etag", "version" |
 | **portable** | Syncable: `workstreams`, `tasks`, `task_edges`, `task_notes`. The rest is **machine-local** (`src/db.ts`). | "shared", "global" |
 | **HLC** | Hybrid logical clock `(wall_ms, counter, machine_id)`; orders every op. Never regresses. | "timestamp", "version" |
 | **machine_id** | Per-state-dir uuid naming this DB's **peer** and **segment**. | "device id", "host id" |

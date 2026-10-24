@@ -33,6 +33,7 @@ afterAll(() => {
 });
 
 import { runCli } from "./_runCli.js";
+import { softTeardown } from "./_teardown.js";
 
 // ── default mode (full top-to-bottom card) ─────────────────────────
 
@@ -307,7 +308,7 @@ describe("the op formatter", () => {
     } = await import("../src/tasks.js");
     const { claimTask, releaseTask } = await import("../src/tasks/claim.js");
     const { resetTmuxExecutor, setTmuxExecutor } = await import("../src/tmux.js");
-    const { teardownWorkstream, ensureWorkstream } = await import("../src/workstream.js");
+    const { ensureWorkstream } = await import("../src/workstream.js");
     const { freshMockState, mockTmux } = await import("./_verbs-mock.js");
 
     const tempDir = mkdtempSync(join(tmpdir(), "mu-state-render-events-"));
@@ -436,7 +437,7 @@ describe("the op formatter", () => {
             return { stdout: "", stderr: "can't find session: doomed", exitCode: 1 };
           return { stdout: "", stderr: "unexpected tmux call", exitCode: 1 };
         });
-        await teardownWorkstream(db, { workstream: "doomed" });
+        await softTeardown(db, "doomed");
       });
       resetTmuxExecutor();
 

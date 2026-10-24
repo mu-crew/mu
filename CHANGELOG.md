@@ -19,6 +19,27 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **`workstream teardown` is soft and needs a preview revision.** Without
+  a flag it prints counts and `rev=<n>` and writes nothing. `--if <n>` kills
+  the session first, frees worktrees by the close rule (a dirty one is kept,
+  never deleted), deletes the machine-local agent rows and sets
+  `torn_down_at`, in one op group (`workstream.teardown`). Tasks, edges and
+  notes stay and are hidden: every view, `list`, `state` and `-w` verb says
+  `workstream <ws> is torn down (at <iso>)` (exit 3,
+  `WorkstreamTornDownError`). `--if` refuses with exit 4 (`workstream <ws>
+  changed since preview (rev <old> → <new>); preview again`) when an op,
+  agent or worktree changed since; the revision hashes the newest op plus
+  agent names/panes and worktree paths. `--yes` is removed (replaced by
+  `--if`); `--empty` previews with one sweep revision and `--empty --if <n>`
+  applies. `init` of a torn-down name previews (`will permanently delete
+  torn-down <ws>: N tasks, M notes; rev=<n>`); `init --if <n>` deletes the
+  old rows and creates the new workstream in one op group, and refuses while
+  this machine still has agent rows in it. `list --torn-down` shows soft rows
+  plus older teardowns found in the ops log (those stay final). A peer's
+  `torn_down_at` applies by LWW and its later task puts still apply.
+  `teardownWorkstream` now requires `ifRevision`; its result reports kept
+  `tasks`/`notes`/`edges`.
+
 - **Local-write guards in the DB** (`CAPTURE_VERSION` 2). Three persistent
   triggers, each `WHEN applying = 0`: claim CAS (`owner_id` cannot move from
   one agent to another), close needs evidence (a `kind = 'close'` note in the

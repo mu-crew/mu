@@ -15,6 +15,7 @@ import { ensureWorkstream, listEmptyWorkstreams } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
+import { previewRevision } from "./_teardown.js";
 
 /** Sessions → the foreground command of each of their panes. */
 type Sessions = Record<string, string[]>;
@@ -92,11 +93,13 @@ describe("teardown --empty: live-pane guard and group hint", () => {
     db.close();
     const dry = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
     expect(dry.error).toBeUndefined();
-    expect(
-      (JSON.parse(dry.stdout) as { items: { name: string }[] }).items.map((w) => w.name),
-    ).toEqual(["bare"]);
+    const preview = JSON.parse(dry.stdout) as { items: { name: string }[]; revision: number };
+    expect(preview.items.map((w) => w.name)).toEqual(["bare"]);
 
-    const r = await runCli(["workstream", "teardown", "--empty", "--yes", "--json"], dbPath);
+    const r = await runCli(
+      ["workstream", "teardown", "--empty", "--if", String(preview.revision), "--json"],
+      dbPath,
+    );
     expect(r.error).toBeUndefined();
     expect(JSON.parse(r.stdout)).toMatchObject({ tornDown: 1, failed: [] });
     expect(killed).toEqual([]);
@@ -135,7 +138,8 @@ describe("teardown --empty: live-pane guard and group hint", () => {
     db.close();
     mux = installMux("tmux", tmuxFake({}, []));
 
-    const r = await runCli(["workstream", "teardown", "--empty", "--yes"], dbPath);
+    const rev = await previewRevision(dbPath, ["--empty"]);
+    const r = await runCli(["workstream", "teardown", "--empty", "--if", String(rev)], dbPath);
     expect(r.error).toBeUndefined();
     expect(r.stdout).toContain("tornDown=2");
     expect(r.stdout).not.toContain("snapshot");

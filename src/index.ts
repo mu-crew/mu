@@ -112,6 +112,7 @@ export {
   SYNCED_ENTITIES,
   type SyncedEntity,
   WorkstreamNotFoundError,
+  WorkstreamTornDownError,
 } from "./db.js";
 export {
   countProblems,
@@ -433,11 +434,14 @@ export {
   type TeardownResult,
   teardownWorkstream,
   WorkstreamExistsError,
+  WorkstreamHasAgentsError,
   WorkstreamNameInvalidError,
   WorkstreamNameReservedError,
   type WorkstreamOptions,
+  WorkstreamRevisionMismatchError,
   type WorkstreamSummary,
   type WorktreeFailure,
+  workstreamRevision,
 } from "./workstream.js";
 export {
   createWorktree,

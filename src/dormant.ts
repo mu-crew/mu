@@ -212,8 +212,8 @@ export function checkDormantWorkstreams(
         (d) => `  ${d.name.padEnd(24)} ${days(d.idleDays).padStart(5)} idle, ${d.tasks} closed`,
       ),
       "",
-      "Teardown writes tombstone ops; `mu workstream list --torn-down` finds the group later.",
-      ...finished.slice(0, 3).map((d) => `  mu workstream teardown ${d.name} --yes`),
+      "Teardown is soft (rows stay, hidden); preview prints `rev=<n>`, apply with `--if <n>`.",
+      ...finished.slice(0, 3).map((d) => `  mu workstream teardown ${d.name}`),
     );
   }
   if (abandoned.length > 0) {
@@ -235,8 +235,8 @@ export function checkDormantWorkstreams(
       // worktrees when they exist (`freedWorktrees` in teardownWorkstream).
       // The exclusion in findDormantWorkstreams is what makes this sentence
       // safe, so the two must not drift apart.
-      "Removes the task rows and notes — the plan, not the code (no checkout",
-      "is touched). The risk is",
+      "Hides the task rows and notes — the plan, not the code (no checkout",
+      "is touched); reusing the name later deletes them. The risk is",
       "losing sight of what was left to do, so read it first:",
       ...abandoned.slice(0, 3).map((d) => `  mu task list -w ${d.name} --status OPEN,IN_PROGRESS`),
     );

@@ -121,7 +121,7 @@ Exit codes: `0` met, `5` timeout, `6` pane died, `7` blocked on a dialog. Non-pi
 Pass `keep: true`, or spawn a named agent in `scratch`. It is created
 on first spawn, needs no tasks, and cannot be `init`ed. Its `mu-scratch`
 session stays open after the last agent closes; remove it with
-`mu workstream teardown scratch --yes`.
+`mu workstream teardown scratch` (preview), then `--if <rev>`.
 
 ```bash
 mu agent spawn helper -w scratch

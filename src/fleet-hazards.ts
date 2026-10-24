@@ -371,7 +371,7 @@ export function checkCaseCollisions(db: Db): FleetHazard {
       "name, and tear down the old one:",
       "  mu db backup <file>",
       "  mu workstream init <new-name>",
-      "  mu workstream teardown <old-name> --yes",
+      "  mu workstream teardown <old-name>      # preview; then apply with --if <rev>",
     ],
   };
 }

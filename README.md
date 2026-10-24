@@ -58,7 +58,7 @@ mu agent spawn worker-1 --worktree
 mu task claim design_auth --for worker-1
 mu agent send worker-1 --fresh 'Do task design_auth. Close it with evidence.'
 mu task wait design_auth --first --on-stall exit   # exit 7 = worker needs you
-mu workstream teardown --yes                        # without --yes: dry run
+mu workstream teardown                              # preview (rev=<n>); apply with --if <n>
 ```
 
 For one helper, ask pi to delegate (`mu_delegate` ships with `mu link
