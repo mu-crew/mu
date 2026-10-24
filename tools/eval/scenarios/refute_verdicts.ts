@@ -32,7 +32,7 @@ const scenario: Scenario = {
       "b.ts": "import { foo } from './a';\nfoo();\n",
     });
     await gateScript(sb);
-    await writeWorkerDriver(sb, "3x");
+    await writeWorkerDriver(sb);
     await delegateAnswer(
       sb,
       1,

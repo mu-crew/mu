@@ -7,3 +7,18 @@ Black-box rig: a surface is a directory with a built mu, mu runs as a subprocess
 - One scenario: `run` arrives with the scenario tasks. A scenario is a `Scenario` in `scenarios/<id>.ts`; `runAut(sandbox, scenario, opts)` runs it.
 - Faux steps: `{calls}`, `{text}`, `{error}`, `{die}`, `{textFromLastResult}` (see `faux-steps.ts`).
 - Provenance (`provenance.ts`): judges prove who did the work and in what order, not just the end state. `runs.log` lines are `<ms> <agent> <task> <action> <sha|-> <patch-id|-> <cwd>`; main's commit must be that worker's sha (or a cherry-pick with its patch-id), remote steps need a run under `<hostRoot>/home`, and order comes from ops/runs/hook timestamps.
+
+## Surface family and candidate scenario roots
+
+A `--surface <spec>` is `<dir|name>[:<3x|next>[:<scenario-root>]]`. A bare name is a built surface under `~/.cache/mu/eval/surfaces`; `check`, `run` and `matrix` all resolve it the same way. Family and root belong to the surface, so one matrix can pair a baseline with candidates. `--family` and `--scenario-root` only fill specs that leave them out; the defaults are `3x` and `tools/eval/scenarios`.
+
+- The family is exactly `3x` or `next`. The sandbox sets `EVAL_SURFACE_FAMILY` from it, and `writeWorkerDriver` reads it: workers close with the verb on `3x` and print the `CLOSE:` block on `next` (an explicit `closeMode` wins). The judges do not change with the family.
+- A scenario root holds `<id>.golden.<family>.json`, `<id>.bad.<family>.json`, `<id>.bad-<x>.<family>.json`, and optional `<id>.ts` overrides (which import `../../fixtures.ts`). An id missing from the root falls back to the default scenario. It must not be inside the surfaces cache (`prepare` deletes there). Keep candidate roots under `tools/eval/candidates/<decision>-<a|b|c>/` (gitignored).
+
+```bash
+R=tools/eval/candidates/dec-a
+node tools/eval/main.ts check --surface "$PWD" --scenarios _smoke --include-underscore          # 3x, default root
+node tools/eval/main.ts check --surface dec-a --family next --scenario-root $R                 # cached name
+node tools/eval/main.ts matrix --surface 3x --surface "dec-a:next:$R" \
+  --model haiku-5-5 --model sonnet-5-5 --scenarios delegate_saturation --out results.jsonl
+```

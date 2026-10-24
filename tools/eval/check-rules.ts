@@ -1,8 +1,8 @@
 // Pure rules of `main.ts check`: script file names and what a golden / bad run must show.
 import { existsSync, readdirSync } from "node:fs";
-import type { Verdict } from "./types.ts";
+import type { Family, Verdict } from "./types.ts";
 
-export type Family = "3x" | "next";
+export type { Family };
 
 /** <id>.golden.<family>.json or <id>.bad.<family>.json */
 export function scriptFile(id: string, kind: "golden" | "bad", family: Family): string {

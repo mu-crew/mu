@@ -20,18 +20,30 @@ import {
 import type { FauxStep } from "./faux.ts";
 import { runAut } from "./runner.ts";
 import { createSandbox, FAUX_EXT, mu, sh, tmuxSocketPath } from "./sandbox.ts";
-import { prepareSurface, surfaceFromDir } from "./surface.ts";
-import type { Sandbox, Scenario, Surface } from "./types.ts";
+import { parseFamily, prepareSurface, surfaceFromDir } from "./surface.ts";
+import type { Family, Sandbox, Scenario, Surface } from "./types.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const DEFAULT_PROVIDER_EXT = join(homedir(), ".pi", "agent", "extensions", "modelbridge.ts");
 const USAGE = `usage: node tools/eval/main.ts <command>
   prepare <name> <ref>
   selftest [--surface <dir>]
-  run <scenario> --surface <dir|name> --model <m> [--provider-ext p] [--keep] [--out f]
-  matrix --surface <dir|name>... --model <m>... [--scenarios a,b] [--reps 1] [--concurrency 4] [--budget-tokens N] --out <results.jsonl>
+  run <scenario> --surface <spec> --model <m> [--family 3x|next] [--scenario-root <dir>] [--provider-ext p] [--keep] [--out f]
+  matrix --surface <spec>... --model <m>... [--family 3x|next] [--scenario-root <dir>] [--scenarios a,b] [--reps 1] [--concurrency 4] [--budget-tokens N] --out <results.jsonl>
   report <results.jsonl> [--out file.md]
-  check [--surface <dir>] [--scenarios a,b] [--family 3x|next] [--include-underscore] [--no-preflight] [--verbose]`;
+  check [--surface <spec>] [--scenarios a,b] [--family 3x|next] [--scenario-root <dir>] [--include-underscore] [--no-preflight] [--verbose]
+<spec> = <dir|name>[:<3x|next>[:<scenario-root>]]. A name is a surface under ~/.cache/mu/eval/surfaces. Family and scenario root are per
+surface; --family/--scenario-root only fill specs that leave them out (defaults: 3x, tools/eval/scenarios). A scenario root holds
+<id>.<golden|bad|bad-x>.<family>.json and optional <id>.ts overrides, and must be outside ~/.cache/mu/eval/surfaces.`;
+
+/** The --family / --scenario-root flags: defaults for every --surface spec that leaves them out. */
+function surfaceDefaults(args: string[]): { family?: Family; scenarioRoot?: string } {
+  const family = flag(args, "--family");
+  return {
+    family: family === undefined ? undefined : parseFamily(family),
+    scenarioRoot: flag(args, "--scenario-root"),
+  };
+}
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -221,8 +233,8 @@ async function main(argv: string[]): Promise<number> {
       const surfaceArg = flag(rest, "--surface");
       const model = flag(rest, "--model");
       if (!id || !surfaceArg || !model) throw new Error(USAGE);
-      const surface = resolveSurface(surfaceArg);
-      const scenario = await loadScenario(id);
+      const surface = resolveSurface(surfaceArg, surfaceDefaults(rest));
+      const scenario = await loadScenario(id, surface.scenarioRoot);
       const r = await runOne({
         surface,
         scenario,
@@ -246,7 +258,8 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "matrix": {
-      const surfaces = flagAll(rest, "--surface").map(resolveSurface);
+      const defaults = surfaceDefaults(rest);
+      const surfaces = flagAll(rest, "--surface").map((s) => resolveSurface(s, defaults));
       const models = flagAll(rest, "--model");
       const out = flag(rest, "--out");
       if (surfaces.length === 0 || models.length === 0 || !out) throw new Error(USAGE);
@@ -254,7 +267,9 @@ async function main(argv: string[]): Promise<number> {
       await runMatrix({
         surfaces,
         models,
-        scenarios: only ? only.split(",") : scenarioIds(false),
+        scenarios: only
+          ? only.split(",")
+          : scenarioIds(false, ...surfaces.map((s) => s.scenarioRoot)),
         reps: Number(flag(rest, "--reps") ?? 1),
         concurrency: Number(flag(rest, "--concurrency") ?? 4),
         budgetTokens: Number(flag(rest, "--budget-tokens") ?? 42_000_000),
@@ -271,14 +286,13 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "check": {
-      const family = flag(rest, "--family") ?? "3x";
-      if (family !== "3x" && family !== "next") throw new Error(`--family must be 3x or next`);
       const only = flag(rest, "--scenarios");
+      const surface = resolveSurface(flag(rest, "--surface") ?? REPO_ROOT, surfaceDefaults(rest));
       return runCheck({
-        surface: surfaceFromDir("checkout", flag(rest, "--surface") ?? REPO_ROOT),
+        surface,
         scenarios: only ? only.split(",") : null,
         includeUnderscore: rest.includes("--include-underscore"),
-        family,
+        family: surface.family ?? "3x",
         preflight: !rest.includes("--no-preflight"),
         verbose: rest.includes("--verbose"),
         root: REPO_ROOT,

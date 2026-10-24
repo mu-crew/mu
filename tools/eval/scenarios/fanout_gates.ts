@@ -89,7 +89,7 @@ const scenario: Scenario = {
   async setup(sb) {
     await makeRepo(sb, { "a.txt": "a", "b.txt": "b", "c.txt": "c" });
     await gateScript(sb);
-    await writeWorkerDriver(sb, "3x");
+    await writeWorkerDriver(sb);
     const cmds: string[][] = [["workstream", "init", "eval"]];
     for (const n of N) {
       cmds.push([

@@ -31,3 +31,6 @@ watch_*
 
 # eval harness results (tools/eval)
 .eval-results/
+
+# eval candidate scenario roots (tournament private .next proofs)
+tools/eval/candidates/

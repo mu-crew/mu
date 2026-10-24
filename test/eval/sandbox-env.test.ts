@@ -86,3 +86,14 @@ describe("sandboxEnv tmux isolation", () => {
     );
   });
 });
+
+describe("sandboxEnv family", () => {
+  it("sets EVAL_SURFACE_FAMILY from the surface, default 3x, never from the caller's env", () => {
+    const dir = "/tmp/mu-eval-1-2-abc";
+    const base = { ...BASE, EVAL_SURFACE_FAMILY: "next" };
+    expect(sandboxEnv(dir, surface, "x", base).EVAL_SURFACE_FAMILY).toBe("3x");
+    expect(sandboxEnv(dir, { ...surface, family: "next" }, "x", base).EVAL_SURFACE_FAMILY).toBe(
+      "next",
+    );
+  });
+});

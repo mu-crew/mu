@@ -34,7 +34,7 @@ const scenario: Scenario = {
   async setup(sb) {
     await makeRepo(sb, { "notes.txt": "start\n" });
     await gateScript(sb);
-    await writeWorkerDriver(sb, "3x");
+    await writeWorkerDriver(sb);
     // Without a hold, delegates answer instantly and the queue drains mid-burst: which calls are
     // refused becomes a race the golden's fixed retry batch cannot follow.
     await delegateDelay(sb, 3);
