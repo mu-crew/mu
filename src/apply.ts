@@ -250,6 +250,31 @@ function wins(candidate: string, incumbent: string | null): boolean {
   return compareHlc(candidate, incumbent) > 0;
 }
 
+/** Newest `del` for one natural key, or null. */
+function maxDelHlc(db: Db, entity: string, key: string): string | null {
+  const row = prepareCached(
+    db,
+    "SELECT MAX(hlc) AS hlc FROM ops WHERE entity = ? AND key = ? AND op = 'del'",
+  ).get(entity, key) as { hlc: string | null } | undefined;
+  return row?.hlc ?? null;
+}
+
+/**
+ * The newest tombstone that covers a task: its own `del` or its
+ * workstream's (rebuild replays in HLC order, so a workstream `del`
+ * cascades every task, note and edge beneath it). A put OLDER than this
+ * is dead whatever the arrival order: rebuild would have wiped it. Every
+ * put path asks this one question, so apply is a function of the SET of
+ * ops, never of their arrival order.
+ */
+function taskHorizon(db: Db, taskKey: string): string | null {
+  const own = maxDelHlc(db, "task", taskKey);
+  const parent = maxDelHlc(db, "workstream", parseTaskKey(taskKey).workstream);
+  if (own === null) return parent;
+  if (parent === null) return own;
+  return compareHlc(own, parent) >= 0 ? own : parent;
+}
+
 // ─── Payload decoding ─────────────────────────────────────────────────
 
 /** A payload field and its value. `value` may legitimately be null —
@@ -464,8 +489,13 @@ function filterAppliable(
   return entries.filter(([field]) => allowed.includes(field));
 }
 
-function applyTaskPut(db: Db, op: Op): ApplyResult {
-  const { workstream, localId } = parseTaskKey(op.key);
+/** The applicable (column, value) pairs of a task put, plus the substate
+ *  it carries (see applyTaskPut). Shared by the live put and by the
+ *  reconcile replay below, so the two cannot disagree on what a put writes. */
+function taskPutEntries(op: Op): {
+  entries: PayloadEntry[];
+  pending: { hlc: string; substate: string | null };
+} {
   // Decode the pair out of the payload. `substate` is not applied by
   // per-field LWW: repairTaskPair derives it from the log (see there),
   // with this op passed in because the caller may not have recorded it
@@ -488,31 +518,26 @@ function applyTaskPut(db: Db, op: Op): ApplyResult {
     }
     entries.push(entry);
   }
-  const pending = { hlc: op.hlc, substate: carriedSubstate(JSON.parse(op.payload)) };
+  return { entries, pending: { hlc: op.hlc, substate: carriedSubstate(JSON.parse(op.payload)) } };
+}
+
+function applyTaskPut(db: Db, op: Op): ApplyResult {
+  const { workstream, localId } = parseTaskKey(op.key);
+  const { entries, pending } = taskPutEntries(op);
+
+  // A put older than a tombstone covering this task (its own `del`, or
+  // its workstream's: rebuild replays in HLC order, so that delete would
+  // have cascaded it away) is dead on arrival, row or no row. Applying it
+  // to a row that a newer put created would leak the dead life's fields.
+  const horizon = taskHorizon(db, op.key);
+  if (horizon !== null && !wins(op.hlc, horizon)) {
+    return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
+  }
 
   const existing = taskRowId(db, op.key);
   if (existing === null) {
-    // Row absent. Either it was never created here, or it was deleted.
-    // A tombstone NEWER than this put means the delete wins and the row
-    // stays gone; an OLDER tombstone means this is a legitimate
-    // resurrection. Identical comparison either way — that is the point
-    // of tombstones being ordinary ops.
-    const tomb = tombstoneHlc(db, op);
-    if (tomb !== null && !wins(op.hlc, tomb)) {
-      return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
-    }
-    // The parent workstream's delete is a tombstone for everything
-    // beneath it: rebuild replays in HLC order, so a workstream `del`
-    // newer than this put cascades the task away. Creating it here would
-    // leave live state (and a re-created parent row) that rebuild never
-    // produces. Refused by the same comparison as the task's own tombstone.
-    const wsTomb = prepareCached(
-      db,
-      "SELECT MAX(hlc) AS hlc FROM ops WHERE entity = 'workstream' AND key = ? AND op = 'del'",
-    ).get(workstream) as { hlc: string | null } | undefined;
-    if (wsTomb?.hlc != null && !wins(op.hlc, wsTomb.hlc)) {
-      return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
-    }
+    // Row absent and not older than any tombstone: a first create or a
+    // legitimate resurrection.
     // Create the row, then let per-field LWW fill it in. The insert uses
     // placeholder values for NOT NULL columns so a partial payload
     // cannot fail the insert; every field the op actually carries is
@@ -636,11 +661,13 @@ function applyWorkstreamPut(db: Db, op: Op): ApplyResult {
   const existing = prepareCached(db, "SELECT id FROM workstreams WHERE name = ?").get(name) as
     | { id: number }
     | undefined;
+  // Older than a delete of this workstream: dead even when a newer put
+  // re-created the row, or its fields would leak into the new life.
+  const tomb = tombstoneHlc(db, op);
+  if (tomb !== null && !wins(op.hlc, tomb)) {
+    return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
+  }
   if (!existing) {
-    const tomb = tombstoneHlc(db, op);
-    if (tomb !== null && !wins(op.hlc, tomb)) {
-      return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
-    }
     const id = ensureWorkstreamRow(db, name);
     const applied = applyFieldLww(db, op, "workstreams", id, entries);
     return { changed: true, appliedFields: applied };
@@ -678,6 +705,11 @@ function applyWorkstreamPut(db: Db, op: Op): ApplyResult {
  *  it already had, so they still land on the existing row. */
 function applyNotePut(db: Db, op: Op): ApplyResult {
   const { taskKey } = parseNoteKey(op.key);
+  // Older than a delete of its task or workstream: rebuild wiped it.
+  const horizon = taskHorizon(db, taskKey);
+  if (horizon !== null && !wins(op.hlc, horizon)) {
+    return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
+  }
   const taskId = taskRowId(db, taskKey);
   if (taskId === null) {
     // Parent task not here — either its op has not arrived yet, or it
@@ -737,6 +769,14 @@ function applyNotePut(db: Db, op: Op): ApplyResult {
  *  and the reverse converges to absent, in either arrival order. */
 function applyEdgePut(db: Db, op: Op): ApplyResult {
   const { blocker, blocked } = parseEdgeKey(op.key);
+  // Older than a delete of either endpoint (or its workstream): rebuild
+  // wiped it.
+  for (const end of [blocker, blocked]) {
+    const horizon = taskHorizon(db, end);
+    if (horizon !== null && !wins(op.hlc, horizon)) {
+      return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
+    }
+  }
   const fromId = taskRowId(db, blocker);
   const toId = taskRowId(db, blocked);
   if (fromId === null || toId === null) {
@@ -761,10 +801,123 @@ function applyEdgePut(db: Db, op: Op): ApplyResult {
   return { changed: true, appliedFields: ["created_at"] };
 }
 
-/** A tombstone. Applies iff it is newer than every put for this key —
- *  the mirror image of the put path's tombstone check, which is why
- *  there is no special casing between them. */
+/**
+ * A tombstone for a workstream or task: wipe the subtree, then replay the
+ * puts NEWER than the tombstone that already arrived. That is what
+ * rebuild does (HLC order: the delete cascades, later puts re-create), so
+ * the result no longer depends on whether those puts arrived first.
+ *
+ * Without newer puts it is a plain delete. With newer puts but nothing
+ * older to wipe it is a no-op: the row, if any, comes only from them.
+ */
+function applyContainerDel(db: Db, op: Op): ApplyResult {
+  const scope = op.entity === "workstream" ? wsScope(op.key) : taskScope(op.key);
+  const survivors = putsInScope(db, scope, op.hlc, ">");
+  const del = (): boolean =>
+    op.entity === "workstream"
+      ? prepareCached(db, "DELETE FROM workstreams WHERE name = ?").run(op.key).changes > 0
+      : prepareCached(
+          db,
+          `DELETE FROM tasks WHERE id = (SELECT t.id FROM tasks t
+              JOIN workstreams w ON w.id = t.workstream_id
+             WHERE w.name = @workstream AND t.local_id = @localId)`,
+        ).run(parseTaskKey(op.key)).changes > 0;
+  if (survivors.length === 0) {
+    // FK CASCADE removes the tasks, notes and edges beneath it.
+    const changed = del();
+    return { changed, appliedFields: [], ...(changed ? {} : { skipped: "absent" as const }) };
+  }
+  if (putsInScope(db, scope, op.hlc, "<", 1).length === 0) {
+    return { changed: false, appliedFields: [], skipped: "older-than-current" };
+  }
+  if (op.entity === "workstream" && survivors.some((o) => o.entity === "workstream")) {
+    // The workstream was restored by a newer put. Keep its row (machine-
+    // local agents hang off it), but drop the tasks of the dead life and
+    // the field the dead puts may have set; the survivors write it back.
+    prepareCached(
+      db,
+      "DELETE FROM tasks WHERE workstream_id = (SELECT id FROM workstreams WHERE name = ?)",
+    ).run(op.key);
+    prepareCached(db, "UPDATE workstreams SET torn_down_at = NULL WHERE name = ?").run(op.key);
+  } else {
+    del();
+  }
+  for (const survivor of survivors) applyPut(db, survivor);
+  return { changed: true, appliedFields: [] };
+}
+
+interface Scope {
+  /** Op keys that fall in the scope, per entity. */
+  entity: "workstream" | "task";
+  key: string;
+  /** Key-range prefix of the tasks and notes beneath it. */
+  prefix: string;
+  /** Edge-key substrings: blocker side starts with `prefix`, blocked side
+   *  contains `->prefix`. */
+  edgeFrom: string;
+  edgeTo: string;
+}
+
+const wsScope = (name: string): Scope => ({
+  entity: "workstream",
+  key: name,
+  prefix: `${name}/`,
+  edgeFrom: `${name}/`,
+  edgeTo: `->${name}/`,
+});
+const taskScope = (key: string): Scope => ({
+  entity: "task",
+  key,
+  prefix: key,
+  edgeFrom: `${key}->`,
+  edgeTo: `->${key}`,
+});
+
+/** Put ops in a tombstone's scope (the workstream or task and everything
+ *  beneath it) on one side of `hlc`, in HLC order. Edges are matched by
+ *  substring, which over-selects harmlessly: replaying an edge put that
+ *  is already projected, or tombstoned, changes nothing. */
+function putsInScope(db: Db, scope: Scope, hlc: string, side: "<" | ">", limit = -1): Op[] {
+  const sql = (selector: string) =>
+    `SELECT hlc, machine_id, group_id, actor, intent, entity, key, op, payload FROM ops
+      WHERE op = 'put' AND hlc ${side} @hlc AND ${selector}`;
+  // Tasks of a workstream sit in the key range [ws/, ws0); a task's notes
+  // in [task#, task$). Both ranges use the (entity, key) index.
+  const hi = (p: string) =>
+    `${p.slice(0, -1)}${String.fromCharCode(p.charCodeAt(p.length - 1) + 1)}`;
+  const parts: string[] = [];
+  const params: Record<string, string> = { hlc };
+  if (scope.entity === "workstream") {
+    parts.push(sql("entity = 'workstream' AND key = @key"));
+    parts.push(sql("entity = 'task' AND key >= @lo AND key < @hi"));
+    parts.push(sql("entity = 'note' AND key >= @lo AND key < @hi"));
+    params.key = scope.key;
+    params.lo = scope.prefix;
+    params.hi = hi(scope.prefix);
+  } else {
+    parts.push(sql("entity = 'task' AND key = @key"));
+    parts.push(sql("entity = 'note' AND key >= @nlo AND key < @nhi"));
+    params.key = scope.key;
+    params.nlo = `${scope.key}#`;
+    params.nhi = `${scope.key}$`;
+  }
+  // A task is named in full, so its blocked side must END the key (`->w/a`
+  // must not match `->w/ab`); a workstream prefix `w/` can sit mid-key.
+  const toMatch =
+    scope.entity === "task" ? "substr(key, -length(@to)) = @to" : "instr(key, @to) > 0";
+  parts.push(sql(`entity = 'edge' AND (substr(key, 1, length(@from)) = @from OR ${toMatch})`));
+  params.from = scope.edgeFrom;
+  params.to = scope.edgeTo;
+  const rows = db.prepare(`${parts.join(" UNION ALL ")} LIMIT ${limit}`).all(params) as OpRow[];
+  return rows.map(rowToOp).sort((a, b) => compareHlc(a.hlc, b.hlc));
+}
+
+/** A tombstone. Workstream and task deletes reset their subtree (see
+ *  applyContainerDel). Note and edge deletes apply iff newer than every
+ *  put for the key, the mirror image of the put path's tombstone check,
+ *  which is why there is no special casing between them. */
 function applyDel(db: Db, op: Op): ApplyResult {
+  if (op.entity === "workstream" || op.entity === "task") return applyContainerDel(db, op);
   const newestPut = anyHlc(db, op, "put");
   if (newestPut !== null && !wins(op.hlc, newestPut)) {
     // A put NEWER than this delete already happened: the row is alive
@@ -774,21 +927,6 @@ function applyDel(db: Db, op: Op): ApplyResult {
   }
 
   switch (op.entity) {
-    case "workstream": {
-      // FK CASCADE removes the tasks, notes and edges beneath it.
-      const r = prepareCached(db, "DELETE FROM workstreams WHERE name = ?").run(op.key);
-      return {
-        changed: r.changes > 0,
-        appliedFields: [],
-        ...(r.changes > 0 ? {} : { skipped: "absent" as const }),
-      };
-    }
-    case "task": {
-      const rowId = taskRowId(db, op.key);
-      if (rowId === null) return { changed: false, appliedFields: [], skipped: "absent" };
-      prepareCached(db, "DELETE FROM tasks WHERE id = ?").run(rowId);
-      return { changed: true, appliedFields: [] };
-    }
     case "note": {
       const { taskKey } = parseNoteKey(op.key);
       const taskId = taskRowId(db, taskKey);
@@ -890,34 +1028,35 @@ export function applyOp(db: Db, op: Op): ApplyResult {
   // (and for `mu rebuild`) without blocking every op behind it.
   if (!isSyncedEntity(op.entity)) return { changed: false, appliedFields: [] };
 
-  return withCaptureSuppressed(db, () => {
-    if (op.op === "del") return applyDel(db, op);
+  return withCaptureSuppressed(db, () => (op.op === "del" ? applyDel(db, op) : applyPut(db, op)));
+}
 
-    switch (op.entity) {
-      case "workstream":
-        return applyWorkstreamPut(db, op);
-      case "task":
-        // Own transaction (a savepoint when nested): the per-field
-        // UPDATEs pass through an invalid (status, substate) pair, and
-        // the deferred FK only tolerates that inside a transaction. In
-        // autocommit it would check each UPDATE on its own.
-        return db.transaction(() => applyTaskPut(db, op)).immediate();
-      case "note":
-        return applyNotePut(db, op);
-      case "edge":
-        return applyEdgePut(db, op);
-      case "message":
-        // Log lines live in `ops` only; there is no portable table to
-        // project them into. Recording the op IS applying it, and that
-        // is the caller's step.
-        return { changed: false, appliedFields: [] };
-      default:
-        // Unreachable: the union is closed and every member is handled
-        // above. Kept as a total return rather than a throw so an
-        // unrecognised entity can never wedge an ingest.
-        return { changed: false, appliedFields: [] };
-    }
-  });
+/** The put half of the seam, also the replay step of applyContainerDel. */
+function applyPut(db: Db, op: Op): ApplyResult {
+  switch (op.entity) {
+    case "workstream":
+      return applyWorkstreamPut(db, op);
+    case "task":
+      // Own transaction (a savepoint when nested): the per-field
+      // UPDATEs pass through an invalid (status, substate) pair, and
+      // the deferred FK only tolerates that inside a transaction. In
+      // autocommit it would check each UPDATE on its own.
+      return db.transaction(() => applyTaskPut(db, op)).immediate();
+    case "note":
+      return applyNotePut(db, op);
+    case "edge":
+      return applyEdgePut(db, op);
+    case "message":
+      // Log lines live in `ops` only; there is no portable table to
+      // project them into. Recording the op IS applying it, and that
+      // is the caller's step.
+      return { changed: false, appliedFields: [] };
+    default:
+      // Unreachable: the union is closed and every member is handled
+      // above. Kept as a total return rather than a throw so an
+      // unrecognised entity can never wedge an ingest.
+      return { changed: false, appliedFields: [] };
+  }
 }
 
 // ─── Deferred projection: the out-of-order arrival repair ─────────────

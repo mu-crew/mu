@@ -136,6 +136,7 @@ describe("mu doctor — drift + fleet checks", () => {
       "db-filesystem",
       "name-case",
       "segment-version",
+      "unpublished-ops",
     ]);
     expect(parsed.remediation.length).toBeGreaterThan(0);
   });

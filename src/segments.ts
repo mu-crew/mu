@@ -713,6 +713,20 @@ export function ownSegmentForeignLine(
   return found === null ? null : { path, ...found };
 }
 
+/** Own synced ops newer than the last op in this machine's segment: what
+ *  a flush would append now. Read-only, so `mu doctor` can report a
+ *  backlog (a flush that lost the lock race leaves one). */
+export function countUnpublishedOps(db: Db, dir: string): number {
+  const machineId = localMachineId(db);
+  const { lastHlc } = readSegmentTail(segmentPath(dir, machineId));
+  const row = prepareCached(
+    db,
+    `SELECT COUNT(*) AS n FROM ops INDEXED BY idx_ops_machine_entity_hlc
+      WHERE machine_id = @machineId AND entity IN (${SYNCED_ENTITIES_SQL}) AND hlc > @from`,
+  ).get({ machineId, from: lastHlc ?? "" }) as { n: number };
+  return row.n;
+}
+
 /** Number of GOOD lines in a segment (stopping at the first defect, as
  *  ingest does). The denominator of "how far behind am I" — exported for
  *  `mu sync`'s peer table. */
