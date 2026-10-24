@@ -30,7 +30,7 @@ import {
 import type { Db, NoteKind } from "../../db.js";
 import { lastClaimActor } from "../../logs.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
-import { encodeEnvelope, okEnvelope } from "../../output-contract.js";
+import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../../output-contract.js";
 import { taskRevision } from "../../revision.js";
 import {
   addNote,
@@ -140,40 +140,58 @@ function buildNotesPage(
   const ref = `${taskId} -w ${ws}`;
   const nextFor = (first: number): string =>
     first === 1 ? `mu task notes ${ref} --all` : `mu task notes ${ref} --from ${first}`;
-  const size = (ordinary: readonly ShownNote[], footer: boolean): number => {
-    // Worst case footer: every note left out, the longest `--from`.
-    const more = opts.total;
-    const next = nextFor(opts.total);
-    if (opts.json) {
-      const fields = footer ? { more, retrieve: next } : { more: 0 };
-      const items = ordinary.map((s) => noteItem(ref, s));
-      return Buffer.byteLength(encodeEnvelope(okEnvelope(opts.wrap(items, fields)))) + 1;
-    }
-    const lines = ordinary.map((s) => noteLine(ref, s));
-    if (footer) lines.push(`more=${more} next=${next}`);
-    return Buffer.byteLength(lines.join("\n")) + 1;
+  const isPinned = (s: ShownNote): boolean => opts.pinned.has(s.note.n);
+  const pinnedShown: ShownNote[] = notes
+    .filter((n) => opts.pinned.has(n.n))
+    .map((note) => ({ note }));
+
+  // What the output says is left out, from what is actually shown.
+  const omission = (shown: readonly ShownNote[]): { more: number; next: string | null } => {
+    const shownN = new Set(shown.map((s) => s.note.n));
+    const left = opts.explicit
+      ? notes.filter((n) => !shownN.has(n.n)).map((n) => n.n)
+      : Array.from({ length: opts.total }, (_, i) => i + 1).filter((i) => !shownN.has(i));
+    const first = left[0];
+    return { more: left.length, next: first === undefined ? null : nextFor(first) };
   };
-  const selectionOmits = !opts.explicit && opts.total > notes.length;
-  const plan = planNotes(notes, opts.pinned, opts.fill, size, { selectionOmits });
-  const shownN = new Set(plan.shown.map((s) => s.note.n));
-  let firstOmitted: number | null = null;
-  let more = 0;
-  if (!opts.explicit) {
-    for (let i = 1; i <= opts.total; i++) {
-      if (!shownN.has(i)) {
-        firstOmitted ??= i;
-        more++;
-      }
+  const render = (
+    shown: readonly ShownNote[],
+  ): { items: Record<string, unknown>[]; lines: string[]; more: number; next: string | null } => {
+    const { more, next } = omission(shown);
+    const lines = shown.map((s) => noteLine(ref, s));
+    if (next !== null) lines.push(`more=${more} next=${next}`);
+    return { items: shown.map((s) => noteItem(ref, s)), lines, more, next };
+  };
+  // The cap, measured on the FINAL output (every metadata field as emitted),
+  // pinned records set aside. Exact, not predicted: serialize, then shrink.
+  const emitted = (shown: readonly ShownNote[]): number => {
+    const { more, next } = omission(shown);
+    const ordinary = shown.filter((s) => !isPinned(s));
+    if (!opts.json) {
+      const lines = ordinary.map((s) => noteLine(ref, s));
+      if (next !== null) lines.push(`more=${more} next=${next}`);
+      return Buffer.byteLength(lines.join("\n")) + 1;
     }
-  } else {
-    firstOmitted = plan.omitted[0] ?? null;
-    more = plan.omitted.length;
+    const fields = next === null ? { more: 0 } : { more, retrieve: next };
+    const items = ordinary.map((s) => noteItem(ref, s));
+    return Buffer.byteLength(encodeEnvelope(okEnvelope(opts.wrap(items, fields)))) + 1;
+  };
+  // The planner's probes are the same serialization, not an estimate: the
+  // pinned notes are always shown, so a probe is pinned plus the ordinary run.
+  const plan = planNotes(notes, opts.pinned, opts.fill, (ordinary) =>
+    emitted([...pinnedShown, ...ordinary]),
+  );
+  const final = [...plan.shown];
+  // Drop the oldest ordinary note (default view) or the last (a page, so what
+  // is left out stays a suffix `--from` reaches). The last one stays: a page
+  // makes progress, and a stub is bounded.
+  while (emitted(final) > RESULT_BYTES) {
+    const ordinary = final.filter((s) => !isPinned(s));
+    const victim = opts.fill === "newest" ? ordinary[0] : ordinary[ordinary.length - 1];
+    if (ordinary.length <= 1 || victim === undefined) break;
+    final.splice(final.indexOf(victim), 1);
   }
-  const next = firstOmitted === null ? null : nextFor(firstOmitted);
-  const items = plan.shown.map((s) => noteItem(ref, s));
-  const lines = plan.shown.map((s) => noteLine(ref, s));
-  if (next !== null) lines.push(`more=${more} next=${next}`);
-  return { items, more, next, lines };
+  return render(final);
 }
 
 function noteLine(ref: string, s: ShownNote): string {

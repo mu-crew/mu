@@ -509,27 +509,25 @@ export interface PlannedNotes {
 }
 
 /**
- * Apply the byte cap. It is measured on what is EMITTED: `size(ordinary,
- * footer)` returns the bytes of the whole output (text lines or JSON
- * envelope, record keys and the `more=…` footer included) with the pinned
- * notes set aside, because pinned notes (the brief, report and verdicts) are
- * content: always whole, never charged, never dropped. `footer` says whether
- * the output carries the `more` / `retrieve` footer (sized at its worst case
- * when notes are dropped here). A note that alone exceeds `budget` becomes a
+ * Apply the byte cap. It is measured on what is EMITTED: `size(ordinary)`
+ * serializes the whole output for that set of ordinary notes (text lines or
+ * JSON envelope, record keys and the `more` footer included) and returns its
+ * bytes with the pinned notes set aside, because pinned notes (the brief,
+ * report and verdicts) are content: always whole, never charged, never
+ * dropped. A note that alone exceeds `budget` becomes a
  * stub, so a page always makes progress and `show --note` has something to
  * name. Filling runs newest-first when `fill` is "newest" (the default view:
  * the oldest ordinary notes are dropped) and oldest-first when it is "page"
  * (`--all` / `--from`: what is left out is a suffix a further `--from`
  * reaches); it stops at the first ordinary note that does not fit, so the
- * shown ordinary notes are one contiguous run. `selectionOmits`: the selection
- * itself already left notes out, so the footer is there whatever the cap does.
+ * shown ordinary notes are one contiguous run.
  */
 export function planNotes(
   notes: readonly TaskNoteRow[],
   pinned: ReadonlySet<number>,
   fill: "newest" | "page",
-  size: (ordinary: readonly ShownNote[], footer: boolean) => number,
-  opts: { selectionOmits?: boolean; budget?: number } = {},
+  size: (ordinary: readonly ShownNote[]) => number,
+  opts: { budget?: number } = {},
 ): PlannedNotes {
   const budget = opts.budget ?? RESULT_BYTES;
   const ordinary = notes.filter((n) => !pinned.has(n.n));
@@ -542,23 +540,17 @@ export function planNotes(
         return cutBytes === undefined ? { note } : { note, cutBytes };
       });
   const whole = (n: TaskNoteRow): number => Buffer.byteLength(noteRecord(n)) + 1;
-  if (
-    size(
-      ordinary.map((note) => ({ note })),
-      opts.selectionOmits === true,
-    ) <= budget
-  ) {
+  if (size(ordinary.map((note) => ({ note }))) <= budget) {
     for (const n of ordinary) keep.set(n.n, undefined);
   } else {
     let full = false;
     for (const n of fill === "newest" ? [...ordinary].reverse() : ordinary) {
       if (full) continue;
       const plain: ShownNote = { note: n };
-      const entry: ShownNote =
-        size([plain], true) > budget ? { note: n, cutBytes: whole(n) } : plain;
+      const entry: ShownNote = size([plain]) > budget ? { note: n, cutBytes: whole(n) } : plain;
       const shownNow = toShown();
       const probe = fill === "newest" ? [entry, ...shownNow] : [...shownNow, entry];
-      if (shownNow.length > 0 && size(probe, true) > budget) {
+      if (shownNow.length > 0 && size(probe) > budget) {
         full = true;
         continue;
       }
