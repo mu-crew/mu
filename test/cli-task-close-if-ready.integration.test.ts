@@ -200,7 +200,7 @@ describe("mu task close --if-ready", () => {
     expect(JSON.parse(r.stdout)).toMatchObject({ changed: true, status: "CLOSED" });
   });
 
-  it("--if-ready without --evidence and no open blockers: CloseNeedsEvidenceError (exit 4), nothing written", async () => {
+  it("--if-ready without --evidence and no open blockers: usage refusal (exit 2, one line), nothing written", async () => {
     const seed = openDb({ path: dbPath });
     addTask(seed, {
       localId: "umbrella",
@@ -212,8 +212,9 @@ describe("mu task close --if-ready", () => {
     seed.close();
 
     const r = await runCli(["task", "close", "umbrella", "-w", "test", "--if-ready"], dbPath);
-    expect(r.exitCode).toBe(4);
+    expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("--evidence");
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
   });
 
   it("human card prints the skip reason + still-blocking ids", async () => {

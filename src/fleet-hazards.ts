@@ -432,7 +432,7 @@ export function checkCloseGuards(db: Db): FleetHazard[] {
       "closed-evidence",
       noEvidence,
       "CLOSED task(s) with no close note",
-      "A peer merged the close without its evidence note. Add one with `mu task note <id>`, or reopen and re-close with --evidence.",
+      'A peer merged the close without its evidence note. Per listed task: `mu task open <ws>/<id>`, then `mu task close <ws>/<id> --evidence "<command + result>"` (close its open blockers first).',
     ),
   ];
 }

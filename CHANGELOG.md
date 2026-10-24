@@ -22,8 +22,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   triggers, each `WHEN applying = 0`: claim CAS (`owner_id` cannot move from
   one agent to another), close needs evidence (a `kind = 'close'` note in the
   same op group, matched by exact note key), and close to `done` refuses open
-  blockers. `mu task close` now **requires `--evidence`** for `done` (exit 2
-  before any write; a retry of an already-done close needs none); other
+  blockers. `mu task close` now **requires `--evidence`** for `done` (exit 2, one stderr line naming the command, also under
+  `--if-ready` when it would close; before any write; a retry of an already-done close needs none); other
   substates need `--why`, which is their evidence, and may close over open
   blockers. `closeTask` writes its close notes (kind `close`) before the
   status update in one op group, so a close is one more op (the note).
@@ -32,7 +32,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   suggests "close anyway". Ingest, import and rebuild are never blocked;
   `mu doctor` warns (`closed-blockers`, `closed-evidence`, up to 10 ids each,
   in `--json` as `closeGuards`) about CLOSED tasks the guards would have
-  refused.
+  refused; its repair is `mu task open` then `mu task close --evidence`
+  (`mu task note` cannot write a close note). `mu sql` maps a guard's refusal
+  to the same typed conflict (exit 4, `<id> -w <ws>` placeholders in Next).
 - **Schema v12** (additive over v11; a v11 DB is refused with
   `SchemaTooOldError`, exit 4). New columns: `workstreams.torn_down_at`
   (synced), `agents.cwd` and `agents.base` (machine-local), `tasks.scored`

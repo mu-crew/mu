@@ -19,6 +19,7 @@ import {
   type CloseSubstate,
   closeTask,
   getTask,
+  getTaskEdgesWithStatus,
   openTask,
   parkTask,
   resolveActorIdentity,
@@ -74,15 +75,22 @@ export async function cmdTaskClose(
   // none; with --if-ready the SDK decides (a skip writes nothing).
   const closeAs = sdkOpts.as ?? (taskRow?.status === "CLOSED" ? taskRow.substate : "done");
   const retry = taskRow?.status === "CLOSED" && taskRow.substate === closeAs;
+  // The --if-ready skip (a blocker not CLOSED) is the one case left to the SDK.
+  const wouldSkip =
+    opts.ifReady === true &&
+    taskRow !== undefined &&
+    getTaskEdgesWithStatus(db, localId, ws).blockers.some((e) => e.status !== "CLOSED");
   if (
     taskRow &&
     !retry &&
-    !opts.ifReady &&
+    !wouldSkip &&
     closeAs === "done" &&
     (opts.evidence ?? "").trim() === ""
   ) {
+    // One line, command included: no --help after it.
     throw new UsageError(
-      `closing ${localId} as done needs --evidence "<command + result>" (what you ran and saw)`,
+      `closing ${localId} as done needs evidence: mu task close ${localId} -w ${ws} --evidence "<command + result>"`,
+      { showHelp: false },
     );
   }
   // Read before the close: the warning is about the finding as it was.
