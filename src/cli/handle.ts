@@ -81,6 +81,7 @@ import {
 } from "../output.js";
 import { type Envelope, encodeEnvelope } from "../output-contract.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
+import { RevisionMismatchError } from "../revision.js";
 import { syncDir } from "../segments.js";
 import {
   ambientFlush,
@@ -91,6 +92,7 @@ import {
   SyncSourceTooNewError,
   syncEnabled,
 } from "../sync.js";
+import { candidateTaskIds } from "../tasks/id.js";
 import {
   ClaimerNotRegisteredError,
   CloseNeedsEvidenceError,
@@ -361,6 +363,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof DbInsideSyncDirError ||
     err instanceof WorkstreamExistsError ||
     err instanceof WorkstreamRevisionMismatchError ||
+    err instanceof RevisionMismatchError ||
     err instanceof WorkstreamHasAgentsError ||
     err instanceof WorkstreamPanesLiveError ||
     err instanceof WorkstreamSessionLiveError ||
@@ -569,6 +572,14 @@ function emitError(err: unknown): number {
     // list, kept until the per-verb `next` plans replace it.
     const extra: Record<string, unknown> = { nextSteps: steps };
     if (usageCmd) extra.usage = usageLines(usageCmd);
+    // A stale `--if` names both revisions; a wrong task id its near ids.
+    if (err instanceof RevisionMismatchError) {
+      extra.expected_rev = err.expectedRev;
+      extra.current_rev = err.currentRev;
+    }
+    if (err instanceof TaskNotFoundError && err.candidateIds.length > 0) {
+      extra.candidate_ids = err.candidateIds;
+    }
     // A send whose delivery is unknown still names its receipt, structurally.
     if (err instanceof AgentSendIndeterminateError && err.msgId !== undefined) {
       extra.msgId = err.msgId;
@@ -662,6 +673,13 @@ export function handle(
       if (ambient) await ambientIngest(db);
       await fn(db);
     } catch (err) {
+      // Read-only suggestions for a wrong task id, from the partition the
+      // exact lookup missed in. Best effort: a hint never masks the miss.
+      if (err instanceof TaskNotFoundError && err.workstream !== undefined && db !== undefined) {
+        try {
+          err.candidateIds = candidateTaskIds(db, err.workstream, err.taskId);
+        } catch {}
+      }
       exitCode = emitError(err);
     } finally {
       activeCommand = undefined;

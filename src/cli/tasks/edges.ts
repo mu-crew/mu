@@ -17,6 +17,8 @@ import {
 } from "../../cli.js";
 import type { Db } from "../../db.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
+import { withTaskFence } from "../../revision.js";
+import { candidateTaskIds } from "../../tasks/id.js";
 import { addBlockEdge, deleteTask, removeBlockEdge, reparentTask } from "../../tasks.js";
 
 /** Canonicalise the `-b/--by` value into a non-empty blocker list.
@@ -44,7 +46,7 @@ export function parseByFlag(by: string | readonly string[]): string[] {
 export async function cmdTaskBlock(
   db: Db,
   rawBlocked: string,
-  opts: { by: string | readonly string[]; workstream?: string; json?: boolean },
+  opts: { by: string | readonly string[]; workstream?: string; json?: boolean; if?: number },
 ): Promise<void> {
   const { name: blocked } = await resolveEntityRef(db, rawBlocked, opts, "task");
   assertTaskInWorkstream(db, blocked, opts.workstream);
@@ -54,11 +56,15 @@ export async function cmdTaskBlock(
   // Sequential, fail-fast: the first bad blocker throws its typed
   // error (not-found / cycle / cross-workstream) and earlier edges
   // stay added. Same semantics as running the single-blocker form N
-  // times, which is what this replaces.
-  const results = blockers.map((blocker) => ({
-    blockerName: blocker,
-    ...addBlockEdge(db, ws, blocked, blocker),
-  }));
+  // times, which is what this replaces. With --if the whole batch sits
+  // behind ONE revision check in one transaction (a batch cannot
+  // invalidate its own fence), so a failure rolls every edge back.
+  const results = withTaskFence(db, ws, blocked, opts.if, () =>
+    blockers.map((blocker) => ({
+      blockerName: blocker,
+      ...addBlockEdge(db, ws, blocked, blocker),
+    })),
+  );
   const added = results.filter((r) => r.added).length;
   const nextSteps: NextStep[] = [
     { intent: "Show the dependency tree", command: `mu task tree ${blocked} -w ${ws}` },
@@ -91,7 +97,7 @@ export async function cmdTaskBlock(
 export async function cmdTaskUnblock(
   db: Db,
   rawBlocked: string,
-  opts: { by: string | readonly string[]; workstream?: string; json?: boolean },
+  opts: { by: string | readonly string[]; workstream?: string; json?: boolean; if?: number },
 ): Promise<void> {
   const { name: blocked } = await resolveEntityRef(db, rawBlocked, opts, "task");
   assertTaskInWorkstream(db, blocked, opts.workstream);
@@ -101,10 +107,12 @@ export async function cmdTaskUnblock(
   // invocation too.
   const blockers = parseByFlag(opts.by);
   const byList = blockers.join(",");
-  const results = blockers.map((blocker) => ({
-    blockerName: blocker,
-    ...removeBlockEdge(db, ws, blocked, blocker),
-  }));
+  const results = withTaskFence(db, ws, blocked, opts.if, () =>
+    blockers.map((blocker) => ({
+      blockerName: blocker,
+      ...removeBlockEdge(db, ws, blocked, blocker),
+    })),
+  );
   const removed = results.filter((r) => r.removed).length;
   const nextSteps: NextStep[] = [
     { intent: "Show what now blocks this task", command: `mu task tree ${blocked} -w ${ws}` },
@@ -136,7 +144,7 @@ export async function cmdTaskUnblock(
 export async function cmdTaskReparent(
   db: Db,
   rawId: string,
-  opts: { blockedBy: string[]; workstream?: string; json?: boolean },
+  opts: { blockedBy: string[]; workstream?: string; json?: boolean; if?: number },
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
@@ -145,7 +153,9 @@ export async function cmdTaskReparent(
   // sentinel here (unlike --by, where zero blockers is meaningless),
   // so [] stays legal. A BLANK ' ' still throws from parseCsvFlag.
   const blockers = parseCsvFlag(opts.blockedBy, "-b/--blocked-by");
-  const r = reparentTask(db, localId, blockers, { workstream: ws });
+  const r = withTaskFence(db, ws, localId, opts.if, () =>
+    reparentTask(db, localId, blockers, { workstream: ws }),
+  );
   const nextSteps: NextStep[] = [
     { intent: "Show the new dependency tree", command: `mu task tree ${localId} -w ${ws}` },
     { intent: "Show the task", command: `mu task show ${localId} -w ${ws}` },
@@ -163,7 +173,7 @@ export async function cmdTaskReparent(
 export async function cmdTaskDelete(
   db: Db,
   rawId: string,
-  opts: { workstream?: string; json?: boolean; yes?: boolean } = {},
+  opts: { workstream?: string; json?: boolean; yes?: boolean; if?: number } = {},
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
@@ -175,8 +185,13 @@ export async function cmdTaskDelete(
   // (mirroring workstream teardown) and got 'unknown option --yes'
   // because the verb took no confirmation flag at all; two failed
   // deletes left long-named tasks lingering until noticed.
-  const dryRun = opts.yes !== true;
-  const r = deleteTask(db, localId, ws, { dryRun });
+  // --if <rev> (the preview's revision) applies the delete and refuses a
+  // task that changed since; --yes still applies unfenced.
+  const dryRun = opts.yes !== true && opts.if === undefined;
+  const r = deleteTask(db, localId, ws, {
+    dryRun,
+    ...(opts.if !== undefined ? { ifRevision: opts.if } : {}),
+  });
   const commitNextSteps: NextStep[] = [
     {
       intent: "List remaining tasks",
@@ -186,7 +201,7 @@ export async function cmdTaskDelete(
   const dryRunNextSteps: NextStep[] = [
     {
       intent: "Confirm and actually delete (cascades to edges + notes)",
-      command: `mu task delete ${localId} -w ${ws} --yes`,
+      command: `mu task delete ${localId} -w ${ws} --if ${r.revision}`,
     },
     {
       intent: "Inspect the task + edges before deciding",
@@ -198,11 +213,19 @@ export async function cmdTaskDelete(
   // --yes). The `present: false` discriminator keeps this distinct
   // from a dry-run that found an existing task with no edges/notes.
   if (!r.present) {
+    // Read-only near ids of THIS workstream; nothing resolves through them.
+    const candidates = candidateTaskIds(db, ws, localId);
     if (opts.json) {
-      emitJson({ taskName: localId, ...r, nextSteps: commitNextSteps });
+      emitJson({
+        taskName: localId,
+        ...r,
+        ...(candidates.length > 0 ? { candidate_ids: candidates } : {}),
+        nextSteps: commitNextSteps,
+      });
       return;
     }
     console.log(pc.dim(`no task named ${localId} (already deleted?)`));
+    if (candidates.length > 0) console.log(pc.dim(`  similar: ${candidates.join(", ")}`));
     return;
   }
 
@@ -219,7 +242,7 @@ export async function cmdTaskDelete(
         : `Would delete ${pc.bold(localId)} ${pc.dim(`(edges: ${r.deletedEdges}, notes: ${r.deletedNotes})`)}`,
     );
     console.log("");
-    console.log(pc.dim("(dry-run; rerun with --yes to actually delete)"));
+    console.log(pc.dim(`(dry-run; rerun with --if ${r.revision} (or --yes) to actually delete)`));
     printNextSteps(dryRunNextSteps);
     return;
   }

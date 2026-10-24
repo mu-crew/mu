@@ -15,6 +15,7 @@ import {
   normalizeInheritedWorkstream,
   parseImpact,
   parseLines,
+  parseNonNegativeInt,
   parsePositiveNumber,
   parseSeconds,
   TASK_SORT_KEYS,
@@ -423,6 +424,11 @@ export function wireTaskCommands(program: Command): void {
       "--reopen",
       "force status to OPEN regardless of current status (escape hatch for un-closing a CLOSED owned task in one verb)",
     )
+    .option(
+      "--if <rev>",
+      "apply only if the task is still at this revision (from `mu task show --json` .task.revision or a preview); stale refuses with exit 4",
+      parseNonNegativeInt,
+    )
     .option(...WORKSTREAM_OPT)
     .option(...EVIDENCE_OPT)
     .option(...JSON_OPT)
@@ -432,6 +438,7 @@ export function wireTaskCommands(program: Command): void {
         evidence?: string;
         workstream?: string;
         json?: boolean;
+        if?: number;
       };
       return handle((db) => cmdTaskRelease(db, id, opts), this as Command)();
     });
@@ -455,6 +462,11 @@ export function wireTaskCommands(program: Command): void {
       "override the actor name used for the log (only valid with --self; defaults to $MU_AGENT_NAME or $USER)",
     )
     .option("--force", "claim even when the task is parked or in triage (OPEN/parked, OPEN/triage)")
+    .option(
+      "--if <rev>",
+      "apply only if the task is still at this revision (from `mu task show --json` .task.revision or a preview); stale refuses with exit 4",
+      parseNonNegativeInt,
+    )
     .option(...WORKSTREAM_OPT)
     .option(...EVIDENCE_OPT)
     .option(...JSON_OPT)
@@ -467,6 +479,7 @@ export function wireTaskCommands(program: Command): void {
         workstream?: string;
         json?: boolean;
         force?: boolean;
+        if?: number;
       };
       return handle((db) => cmdClaim(db, taskId, opts), this as Command)();
     });
@@ -480,6 +493,11 @@ export function wireTaskCommands(program: Command): void {
       "-b, --by <blockers...>",
       "the task(s) that should block <blocked> (repeat or comma-separate)",
     )
+    .option(
+      "--if <rev>",
+      "apply only if the task is still at this revision (from `mu task show --json` .task.revision or a preview); stale refuses with exit 4",
+      parseNonNegativeInt,
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (blocked: string) {
@@ -487,6 +505,7 @@ export function wireTaskCommands(program: Command): void {
         by: string | string[];
         workstream?: string;
         json?: boolean;
+        if?: number;
       };
       return handle((db) => cmdTaskBlock(db, blocked, opts), this as Command)();
     });
@@ -500,6 +519,11 @@ export function wireTaskCommands(program: Command): void {
       "-b, --by <blockers...>",
       "the task(s) whose blocker edge to remove (repeat or comma-separate)",
     )
+    .option(
+      "--if <rev>",
+      "apply only if the task is still at this revision (from `mu task show --json` .task.revision or a preview); stale refuses with exit 4",
+      parseNonNegativeInt,
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (blocked: string) {
@@ -507,6 +531,7 @@ export function wireTaskCommands(program: Command): void {
         by: string | string[];
         workstream?: string;
         json?: boolean;
+        if?: number;
       };
       return handle((db) => cmdTaskUnblock(db, blocked, opts), this as Command)();
     });
@@ -514,9 +539,14 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("delete <id>")
     .description(
-      "Delete a task (cascades edges + notes via FK). Two-phase: bare = dry-run preview; --yes commits. Idempotent on missing.",
+      "Delete a task (cascades edges + notes via FK). Two-phase: bare = dry-run preview with `rev`; --if <rev> commits (refused if the task changed since); --yes commits unfenced. Idempotent on missing.",
     )
     .option("-y, --yes", "actually delete (without --yes prints a dry-run preview)")
+    .option(
+      "--if <rev>",
+      "apply only if the task is still at this revision (from `mu task show --json` .task.revision or a preview); stale refuses with exit 4",
+      parseNonNegativeInt,
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (id: string) {
@@ -524,6 +554,7 @@ export function wireTaskCommands(program: Command): void {
         workstream?: string;
         json?: boolean;
         yes?: boolean;
+        if?: number;
       };
       return handle((db) => cmdTaskDelete(db, id, opts), this as Command)();
     });
@@ -558,6 +589,11 @@ export function wireTaskCommands(program: Command): void {
       "-b, --blocked-by <ids...>",
       "tasks that block <id> (repeat or comma-separate; or both; pass an empty string to clear)",
     )
+    .option(
+      "--if <rev>",
+      "apply only if the task is still at this revision (from `mu task show --json` .task.revision or a preview); stale refuses with exit 4",
+      parseNonNegativeInt,
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (id: string) {
@@ -565,6 +601,7 @@ export function wireTaskCommands(program: Command): void {
         blockedBy: string[];
         workstream?: string;
         json?: boolean;
+        if?: number;
       };
       return handle((db) => cmdTaskReparent(db, id, opts), this as Command)();
     });

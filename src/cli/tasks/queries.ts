@@ -30,6 +30,7 @@ import {
 } from "../../cli.js";
 import type { Db } from "../../db.js";
 import { pc, printNextSteps } from "../../output.js";
+import { taskRevisions } from "../../revision.js";
 import {
   listReady,
   listTasks,
@@ -101,7 +102,9 @@ export async function cmdTaskList(
   const sortKey: TaskSortKey = opts.sort === undefined ? "id" : parseSortOption(opts.sort);
   const tasks = sortTasks(listTasks(db, workstream, listOpts), sortKey);
   if (opts.json) {
-    emitJsonCollection(withRoiAll(tasks));
+    // `revision` is what `--if <rev>` on the guarded verbs repeats.
+    const revs = taskRevisions(db, workstream);
+    emitJsonCollection(withRoiAll(tasks).map((t) => ({ ...t, revision: revs.get(t.name) ?? 0 })));
     return;
   }
   console.log(pc.bold(`mu-${workstream}`));

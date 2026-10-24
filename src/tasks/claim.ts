@@ -18,6 +18,7 @@
 import { GUARD_ALREADY_OWNED } from "../capture.js";
 import type { Db } from "../db.js";
 import { withOpContext } from "../op-context.js";
+import { assertTaskRevision } from "../revision.js";
 import {
   ClaimerNotRegisteredError,
   TaskAlreadyOwnedError,
@@ -41,6 +42,9 @@ export interface ReleaseResult {
 }
 
 export interface ReleaseTaskOptions extends AttributedEvidence {
+  /** `--if <rev>`: the task's revision from `mu task show`. A stale one
+   *  throws `RevisionMismatchError` before any write. */
+  ifRevision?: number;
   /** Workstream context for the task (v5: tasks.local_id is
    *  per-workstream unique). */
   workstream: string;
@@ -76,7 +80,8 @@ export function releaseTask(db: Db, localId: string, opts: ReleaseTaskOptions): 
 
 function releaseTaskImpl(db: Db, localId: string, opts: ReleaseTaskOptions): ReleaseResult {
   const before = getTask(db, localId, opts.workstream);
-  if (!before) throw new TaskNotFoundError(localId);
+  if (!before) throw new TaskNotFoundError(localId, opts.workstream);
+  assertTaskRevision(db, before.workstreamName, localId, opts.ifRevision);
 
   // Default: auto-flip IN_PROGRESS → OPEN so the released task isn't
   // left in the structurally weird owner=NULL/IN_PROGRESS limbo.
@@ -128,6 +133,10 @@ function releaseTaskImpl(db: Db, localId: string, opts: ReleaseTaskOptions): Rel
 // ─── claimTask (verb) ──────────────────────────────────────────────────
 
 export interface ClaimTaskOptions extends AttributedEvidence {
+  /** `--if <rev>`: the task's revision from `mu task show`. A stale one
+   *  throws `RevisionMismatchError` inside the claim transaction, before
+   *  any write. */
+  ifRevision?: number;
   /** Workstream context for both the task and the claiming agent.
    *  v5: agents.name and tasks.local_id are per-workstream unique;
    *  the task lookup AND the agent FK lookup scope to this
@@ -301,7 +310,8 @@ async function claimTaskImpl(
         // Resolve the task within opts.workstream. This locks the
         // (workstream, local_id) pair for the rest of the transaction.
         const before = getTask(db, localId, opts.workstream);
-        if (!before) throw new TaskNotFoundError(localId);
+        if (!before) throw new TaskNotFoundError(localId, opts.workstream);
+        assertTaskRevision(db, before.workstreamName, localId, opts.ifRevision);
         assertNotParked(before, opts);
 
         const now = new Date().toISOString();
@@ -430,7 +440,8 @@ async function claimSelf(db: Db, localId: string, opts: ClaimTaskOptions): Promi
         // Scope by the operator's workstream so a same-named task
         // elsewhere can't be self-claimed by accident.
         const before = getTask(db, localId, opts.workstream);
-        if (!before) throw new TaskNotFoundError(localId);
+        if (!before) throw new TaskNotFoundError(localId, opts.workstream);
+        assertTaskRevision(db, before.workstreamName, localId, opts.ifRevision);
         assertNotParked(before, opts);
 
         // Anonymous claim: owner stays NULL, status flips OPEN -> IN_PROGRESS.

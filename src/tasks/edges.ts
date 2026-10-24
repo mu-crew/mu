@@ -261,13 +261,13 @@ function addBlockEdgeImpl(
     throw new CycleError(blocker, blocked);
   }
   const blockedRow = getTask(db, blocked, workstream);
-  if (!blockedRow) throw new TaskNotFoundError(blocked);
+  if (!blockedRow) throw new TaskNotFoundError(blocked, workstream);
   // Resolve the blocker in the dependent's workstream first, then
   // globally so a cross-workstream blocker surfaces
   // CrossWorkstreamEdgeError (clearer than TaskNotFoundError). Cycle
   // check + same-workstream guard run after.
   const blockerRow = lookupTaskAnyWorkstream(db, blocker, blockedRow.workstreamName);
-  if (!blockerRow) throw new TaskNotFoundError(blocker);
+  if (!blockerRow) throw new TaskNotFoundError(blocker, blockedRow.workstreamName);
   if (blockedRow.workstreamName !== blockerRow.workstreamName) {
     throw new CrossWorkstreamEdgeError(
       blocker,
@@ -403,7 +403,7 @@ function reparentTaskImpl(
   scope: { workstream: string },
 ): ReparentTaskResult {
   const task = getTask(db, taskLocalId, scope.workstream);
-  if (!task) throw new TaskNotFoundError(taskLocalId);
+  if (!task) throw new TaskNotFoundError(taskLocalId, scope.workstream);
   const taskSurrogateId = taskIdFor(db, task.name, task.workstreamName);
   if (taskSurrogateId === null) throw new TaskNotFoundError(taskLocalId);
 
@@ -420,7 +420,7 @@ function reparentTaskImpl(
       throw new CycleError(blockerLocalId, taskLocalId);
     }
     const blocker = lookupTaskAnyWorkstream(db, blockerLocalId, task.workstreamName);
-    if (!blocker) throw new TaskNotFoundError(blockerLocalId);
+    if (!blocker) throw new TaskNotFoundError(blockerLocalId, task.workstreamName);
     if (blocker.workstreamName !== task.workstreamName) {
       throw new CrossWorkstreamEdgeError(
         blockerLocalId,

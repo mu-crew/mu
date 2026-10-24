@@ -238,3 +238,54 @@ export function sanitiseTaskId(input: string): string {
     .slice(0, SLUG_HARD_CAP);
   return s.length === 0 ? "task" : s;
 }
+
+/** Ids compared without case and separators: `Fix-Auth` ≡ `fix_auth`. */
+const fold = (id: string): string => id.toLowerCase().replace(/[-_\s]/g, "");
+
+/** Edit distance, capped: enough to tell a typo from a different id. */
+function within(a: string, b: string, max: number): boolean {
+  if (Math.abs(a.length - b.length) > max) return false;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(
+        (prev[j] ?? 0) + 1,
+        (row[j - 1] ?? 0) + 1,
+        (prev[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = row;
+  }
+  return (prev[b.length] ?? max + 1) <= max;
+}
+
+/**
+ * Task ids of ONE workstream that a wrong `id` probably meant: same after
+ * folding case and `-`/`_`, one containing the other (≥ 3 chars), or a typo
+ * away (≤ 2 edits, ≥ 4 chars). Read only, compared in JS (no LIKE, so `_`
+ * is just a character) and never another workstream's ids. A suggestion
+ * for the operator: no verb resolves an id through it.
+ */
+export function candidateTaskIds(db: Db, workstream: string, id: string, limit = 5): string[] {
+  const want = fold(id);
+  if (want === "") return [];
+  const rows = db
+    .prepare(
+      `SELECT t.local_id AS id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+        WHERE w.name = ? ORDER BY t.local_id`,
+    )
+    .all(workstream) as { id: string }[];
+  const hits: string[] = [];
+  for (const { id: have } of rows) {
+    if (have === id) continue;
+    const f = fold(have);
+    const near =
+      f === want ||
+      (want.length >= 3 && f.length >= 3 && (f.includes(want) || want.includes(f))) ||
+      (want.length >= 4 && f.length >= 4 && within(f, want, 2));
+    if (near) hits.push(have);
+    if (hits.length === limit) break;
+  }
+  return hits;
+}

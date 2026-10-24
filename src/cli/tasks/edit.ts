@@ -31,6 +31,7 @@ import {
 import type { Db, NoteKind } from "../../db.js";
 import { lastClaimActor } from "../../logs.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
+import { taskRevision } from "../../revision.js";
 import {
   addNote,
   addTasks,
@@ -398,7 +399,7 @@ export async function cmdTaskShow(
   // operator's workstream up front so the lookup scopes correctly.
   const ws = await resolveWorkstream(opts.workstream);
   const task = getTask(db, localId, ws);
-  if (!task) throw new TaskNotFoundError(localId);
+  if (!task) throw new TaskNotFoundError(localId, ws);
   const edges = getTaskEdgesWithStatus(db, localId, task.workstreamName);
   const notes = listNotes(db, localId, task.workstreamName);
 
@@ -416,7 +417,10 @@ export async function cmdTaskShow(
     // (task_show_blocked_by_renders_closed: prior shape was bare
     // string[], which discarded the gating-vs-satisfied distinction.)
     emitJson({
-      task: withRoiAll([task])[0],
+      task: {
+        ...withRoiAll([task])[0],
+        revision: taskRevision(db, task.workstreamName, task.name),
+      },
       blockers: edges.blockers,
       dependents: edges.dependents,
       notes,
@@ -442,6 +446,7 @@ export async function cmdTaskShow(
   console.log(`  effort     : ${task.effortDays}  ${pc.dim(`(ROI ${roi})`)}`);
   console.log(`  created    : ${pc.dim(task.createdAt)}`);
   console.log(`  updated    : ${pc.dim(task.updatedAt)}`);
+  console.log(`  rev        : ${pc.dim(String(taskRevision(db, task.workstreamName, task.name)))}`);
 
   console.log("");
   console.log(pc.bold("Edges"));

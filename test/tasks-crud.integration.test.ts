@@ -693,6 +693,7 @@ describe("deleteTask", () => {
       dryRun: true,
       present: true,
       group: null,
+      revision: expect.any(Number),
     });
     // DB unchanged — b still there, edges still wired, notes intact.
     expect(getTask(db, "b", "auth")).toBeDefined();

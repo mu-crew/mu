@@ -8,6 +8,7 @@ import {
   resolveWorkstreamId,
 } from "../db.js";
 import { currentOpContext, withOpContext } from "../op-context.js";
+import { assertTaskRevision, taskRevision } from "../revision.js";
 import { ensureWorkstream } from "../workstream.js";
 import { taskIdFor, touchTask } from "./core.js";
 import { cycleErrorFor, dedupeBlockersById, wouldCreateCycle } from "./edges.js";
@@ -388,9 +389,16 @@ export interface DeleteTaskResult {
   /** The op group the delete wrote. Null
    *  when nothing was deleted (dry-run or missing row). */
   group: string | null;
+  /** The task's revision when it was found (`taskRevision`): a preview
+   *  prints it, `--if <rev>` repeats it. Absent for a missing task. */
+  revision?: number;
 }
 
 export interface DeleteTaskOptions {
+  /** The preview revision (`taskRevision`). A commit whose task changed
+   *  since throws `RevisionMismatchError` before any write; checked in the
+   *  delete's own transaction. Ignored by a dry-run and by a missing task. */
+  ifRevision?: number;
   /** When true, return the cascade preview (would-be edge / note
    *  counts) without mutating. The CLI uses this to power the bare
    *  `mu task delete <id>` two-phase pattern (mirrors
@@ -467,6 +475,7 @@ function deleteTaskImpl(
       n: number;
     }
   ).n;
+  const revision = taskRevision(db, before.workstreamName, localId);
   if (dryRun) {
     return {
       deleted: false,
@@ -475,8 +484,16 @@ function deleteTaskImpl(
       dryRun: true,
       present: true,
       group: null,
+      revision,
     };
   }
+  assertTaskRevision(
+    db,
+    before.workstreamName,
+    localId,
+    opts.ifRevision,
+    `mu task delete ${localId} -w ${before.workstreamName}`,
+  );
   // No pre-mutation snapshot: v9 dropped the `snapshots` table and
   // history is the ops log.
   const result = db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
@@ -491,6 +508,7 @@ function deleteTaskImpl(
     present: true,
     // deleteTask opened a fresh group around this call.
     group: deleted ? currentOpContext(db).groupId : null,
+    revision,
   };
 }
 
