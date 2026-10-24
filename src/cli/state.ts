@@ -2,7 +2,7 @@
 //
 //   mu state                    full card: agents + orphans + tracks +
 //                               ready/in-progress/blocked/recent-closed +
-//                               workspaces + recent events. Top-to-bottom,
+//                               recent events. Top-to-bottom,
 //                               every section gets its full table. JSON-
 //                               first by design (per Ilya's council
 //                               critique: state cards as the default
@@ -15,7 +15,7 @@
 //
 // Static snapshots run full reconciliation: reap missing panes. Mid-spawn
 // placeholders remain protected by reconcile's pending-pane skip
-// (bug_agent_spawn_workspace_fk_failure).
+// (see PENDING_PANE_PREFIX).
 
 import type { LiveAgent } from "../agents.js";
 import {
@@ -23,7 +23,6 @@ import {
   formatAgentsTable,
   formatTaskListTable,
   formatTracks,
-  formatWorkspacesTable,
   handle,
   JSON_OPT,
   parseCsvFlag,
@@ -126,7 +125,6 @@ function fullJsonShape(d: PerWsData): Record<string, unknown> {
     inProgress: withRoiAll(d.inProgress),
     blocked: withRoiAll(d.blocked),
     recentClosed: withRoiAll(d.recentClosed),
-    workspaces: d.workspaces,
     remoteWorkers: d.remoteWorkers,
     recent: d.recent,
   };
@@ -276,13 +274,6 @@ function renderFullCard(d: PerWsData): void {
   console.log("");
   console.log(pc.bold(`Recent closed (${recentClosed.length})`));
   console.log(recentClosed.length === 0 ? pc.dim("  (none)") : formatTaskListTable(recentClosed));
-  console.log("");
-  console.log(pc.bold(`Workspaces (${d.workspaces.length})`));
-  if (d.workspaces.length === 0) {
-    console.log(pc.dim("  (none)"));
-  } else {
-    console.log(formatWorkspacesTable(d.workspaces));
-  }
   if (d.remoteWorkers.length > 0) {
     console.log("");
     console.log(pc.bold(`Remote workers (${d.remoteWorkers.length})`));
@@ -308,7 +299,7 @@ export function wireStateCommands(program: Command): void {
   program
     .command("state")
     .description(
-      "Canonical state card: agents + orphans + tracks + ready/in-progress/blocked/recent-closed tasks + workspaces + remote workers + recent events. The agent/API-facing static state surface. Prints the static card. -w accepts repeat or comma-separate (or both); --all is sugar for every workstream on this machine. N≥2 stacks per-workstream cards.",
+      "Canonical state card: agents + orphans + tracks + ready/in-progress/blocked/recent-closed tasks + remote workers + recent events. The agent/API-facing static state surface. Prints the static card. -w accepts repeat or comma-separate (or both); --all is sugar for every workstream on this machine. N≥2 stacks per-workstream cards.",
     )
     .option(
       "-w, --workstream <names...>",

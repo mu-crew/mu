@@ -3,7 +3,7 @@
 //
 // WHY ONE FILE
 // Glyphs were previously inlined at each render site: "✓" in the
-// Recent card, "✓" again in the Workspaces card, "✓" a third time in
+// Recent card, "✓" again in the Worktrees card, "✓" a third time in
 // the doctor card, "⛓" in Blocked, "⚠" in two CLI formatters. Three
 // spellings of "ok" drifted apart once already (the busy gear vs
 // murmur's play glyph), and each inline literal is a place the next
@@ -57,7 +57,7 @@ export function agentStateGlyph(state: RuntimeState): string {
  *
  * `ok` / `fail` / `warn` deliberately reuse the same codepoints as the
  * agent statuses they rhyme with (`free`, `terminated`): a check-circle
- * means "fine" whether the row is an agent, a workspace or a doctor
+ * means "fine" whether the row is an agent, a worktree or a doctor
  * check.
  */
 export const GLYPH = {

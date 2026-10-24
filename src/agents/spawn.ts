@@ -1,10 +1,11 @@
 // mu — spawnAgent + supporting helpers (resolveCliCommand,
 // awaitSpawnLiveness, defaultSpawnLivenessMs,
-// prestageWorkspace, finalizeAgentRow, rollbackSpawn).
+// prestageWorktree, finalizeAgentRow, rollbackSpawn).
 //
 // spawnAgent's flow is documented inline. The interesting bit is the
-// `--workspace` cycle (workspace row FKs agent.name; agent row needs
-// pane_id which needs workspace path as cwd) — see prestageWorkspace.
+// `--worktree` cycle (the pane starts IN the worktree, so the worktree
+// exists before the pane, while the agent name must already be claimed) —
+// see prestageWorktree.
 //
 // Extracted from src/agents.ts as part of refactor_split_large_src_files.
 
@@ -24,7 +25,7 @@ import {
 } from "../agents.js";
 import { type CtlProbe, ctlProbe } from "../ctl/client.js";
 import { CTL_SOCK_ENV, ctlSocketPath } from "../ctl/path.js";
-import type { Db } from "../db.js";
+import { type Db, defaultDbPath, defaultStateDir } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode, type NextStep } from "../output.js";
@@ -33,8 +34,17 @@ import { resolveActorIdentity } from "../tasks/claim.js";
 // multiplexer operation, so it stays on the tmux module rather than
 // joining the MuxBackend contract.
 import { sleep } from "../tmux.js";
-import { createWorkspace, freeWorkspace, workspacePath } from "../workspace.js";
+import { gitToplevel, owningRoot } from "../vcs/git.js";
 import { isScratchWorkstream } from "../workstream.js";
+import {
+  createWorktree,
+  forgetWorktree,
+  reclaimWorktreePath,
+  registerWorktree,
+  removeWorktree,
+  WorktreeVcsRequiredError,
+  worktreePath,
+} from "../worktree.js";
 import {
   AgentDiedOnSpawnError,
   AgentExistsError,
@@ -130,7 +140,7 @@ export function resolveCliCommandWithSource(cli: string): {
 // the pane died with `command not found` and the existing 1.5s
 // liveness check sometimes missed it (shells stay alive past a failed
 // exec). Pre-flight the PATH resolution so a typo never:
-//   1. creates an orphan workspace dir
+//   1. creates an orphan worktree
 //   2. creates an orphan tmux pane
 //   3. inserts a half-spawned DB row
 // The check fires AFTER `resolveCliCommand` so `MU_<UPPER>_COMMAND`
@@ -207,7 +217,7 @@ export function resetCommandResolverForTests(): void {
 /**
  * Verify the first token of `command` resolves to a binary on PATH.
  * Public so tests can call it directly; spawnAgent calls it before
- * prestageWorkspace so a bad --cli never creates an orphan workspace.
+ * the worktree is created so a bad --cli never creates an orphan worktree.
  */
 export async function checkCommandResolvable(command: string): Promise<CommandResolutionResult> {
   return activeCommandResolver(command);
@@ -229,22 +239,22 @@ export interface SpawnAgentOptions {
   /** "full-access" (default) or "read-only". The schema stores it; today
    *  the role isn't enforced (deferred to a future capabilities pass). */
   role?: string;
-  /** Initial working directory for the spawned pane (`tmux -c <path>`).
-   *  When `workspace: true` is passed, this is ignored — the workspace
-   *  path is used instead. */
+  /** Initial working directory of the pane, recorded as `agents.cwd`.
+   *  Defaults to the caller's cwd. Ignored when `worktree: true`: the
+   *  worktree path is the cwd then. */
   cwd?: string;
   /** Override the tmux session name. Defaults to `mu-<workstream>`. */
   tmuxSession?: string;
-  /** Auto-create a git worktree for this agent before spawning the
-   *  pane and use its path as cwd. A project root outside a git repo
-   *  throws WorkspaceVcsRequiredError. */
-  workspace?: boolean;
-  /** Optional ref to base the workspace on (only meaningful with
-   *  `workspace: true`). */
-  workspaceFrom?: string;
-  /** Project root the workspace branches from (only meaningful with
-   *  `workspace: true`). Defaults to `process.cwd()`. */
-  workspaceProjectRoot?: string;
+  /** Run the agent in its own `git worktree add --detach` at
+   *  `<state dir>/worktrees/<workstream>/<name>`; its path is the cwd and
+   *  its base commit is recorded as `agents.base`. A root outside a git
+   *  repo throws WorktreeVcsRequiredError. */
+  worktree?: boolean;
+  /** Commit / branch the worktree starts at (only with `worktree: true`). */
+  from?: string;
+  /** Repo the worktree is added to (only with `worktree: true`). Defaults
+   *  to the git toplevel of the caller's cwd. */
+  root?: string;
   /** Run the control-socket handshake for pi agents (default true).
    *  `false` skips it and reports `ctl: "skipped"`. */
   ctl?: boolean;
@@ -264,15 +274,15 @@ const NEXT_FREE_LOOKUPS = 1000;
  * trailing `-<n>` counts up (`delegate-1` → `delegate-2`), and a name
  * without one gets `-2`, `-3`, … (`delegate-review` → `delegate-review-2`).
  * The stem is cut so a candidate stays within the 32-char name limit.
- * A name whose workspace dir is still on disk counts as taken: a dead
- * agent's checkout outlives its row (kept as evidence), and spawning
- * that name with --workspace would fail on the dir instead of moving on.
+ * A name whose worktree dir is still on disk counts as taken: a dead
+ * agent's worktree outlives its row (kept as evidence), and spawning
+ * that name with --worktree would refuse on the dir instead of moving on.
  * Throws AgentNameExhaustedError after NEXT_FREE_LOOKUPS taken names,
  * or when no valid candidate is left (the suffix alone outgrows it).
  */
 export function nextFreeAgentName(db: Db, name: string, workstream: string): string {
   const free = (n: string) =>
-    getAgent(db, n, workstream) === undefined && !existsSync(workspacePath(workstream, n));
+    getAgent(db, n, workstream) === undefined && !existsSync(worktreePath(workstream, n));
   if (free(name)) return name;
   const m = /^(.*)-(\d+)$/.exec(name);
   const [stem, first] = m ? [m[1] ?? "", BigInt(m[2] ?? "1")] : [name, 1n];
@@ -395,12 +405,12 @@ async function awaitCtlHandshake(
  *
  * Phases:
  *   1. Validate name + uniqueness.
- *   2. If --workspace: prestageWorkspace() (placeholder agent row +
- *      workspace dir + workspace row).
- *   3. mux.spawnAgent() in the workspace path (or opts.cwd); the scratch
- *      session is ensured first.
- *   4. finalizeAgentRow() — patch placeholder pane_id to real (workspace
- *      path), or insert a fresh agent row (no-workspace path).
+ *   2. If --worktree: prestageWorktree() (placeholder agent row +
+ *      worktree dir + registry row).
+ *   3. mux.spawnAgent() in the worktree (or opts.cwd, default the
+ *      caller's cwd); the scratch session is ensured first.
+ *   4. finalizeAgentRow() — patch the placeholder to the real pane id,
+ *      cwd and base (worktree path), or insert a fresh agent row.
  *   5. Liveness: awaitSpawnLiveness() (fixed sleep, then pane + scan
  *      check), or for a tmux pi agent the ctl handshake with a pane
  *      check per tick and the scan at the end. A backend with
@@ -408,7 +418,7 @@ async function awaitCtlHandshake(
  *   6. ctl handshake for herdr pi agents (outside the rollback).
  *
  * Failure between any of (3)–(5) calls rollbackSpawn() to undo the
- * pane + row + workspace. The caller-visible error is preserved.
+ * pane + row + worktree. The caller-visible error is preserved.
  */
 export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<SpawnedAgent> {
   if (opts.nextFree === true) {
@@ -453,7 +463,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // Pre-flight PATH resolution. Catches `--cli does-not-exist` (and
   // typos in `MU_<UPPER>_COMMAND` overrides) before any side effect.
   // See `checkCommandResolvable` / `AgentSpawnCliNotFoundError` for
-  // the rationale; in short: prevents orphan workspace dirs + orphan
+  // the rationale; in short: prevents orphan worktrees + orphan
   // panes + half-spawned DB rows on a typo.
   //
   // We do NOT pre-flight an explicit `--command "..."` value: the
@@ -469,18 +479,21 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     }
   }
 
-  // Workspace pre-stage. See `prestageWorkspace` for the FK-ordering
-  // rationale. Returns the workspace path (used as the pane's cwd) or
-  // undefined when --workspace wasn't requested.
-  let workspacePathStr: string | undefined;
-  if (opts.workspace) {
+  // Worktree pre-stage. See `prestageWorktree` for the ordering
+  // rationale. Yields the worktree (its path is the pane's cwd) or
+  // undefined when --worktree wasn't requested.
+  let staged: StagedWorktree | undefined;
+  if (opts.worktree) {
     try {
-      workspacePathStr = await prestageWorkspace(db, opts, cli);
+      staged = await prestageWorktree(db, opts, cli);
     } catch (err) {
-      emitSpawnFailed(db, opts, "workspace", err);
+      emitSpawnFailed(db, opts, "worktree", err);
       throw err;
     }
   }
+  // Without a worktree the pane starts in --cwd, else the caller's cwd,
+  // and the row records it.
+  const paneCwd = staged?.path ?? resolve(opts.cwd ?? process.cwd());
 
   // Inject identity env vars into the pane so anything running inside
   // (pi extensions, claim-protocol scripts, status segments) can branch
@@ -504,17 +517,18 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // a test DB in a temp dir keeps its sockets there too.
   const ctlSocket = ctlSocketPath(opts.workstream, opts.name, dirname(db.name));
   mkdirSync(dirname(ctlSocket), { recursive: true, mode: 0o700 });
+  // Exactly these six (plus SSH_AUTH_SOCK below). tmux panes inherit the
+  // tmux server's env, not ours: pin the DB and state dir this spawn used,
+  // absolute and always (the default ones too), so the worker's `mu` hits
+  // the same taskgraph from any cwd.
   const paneEnv: Record<string, string> = {
     MU_MANAGED_AGENT: "1",
     MU_AGENT_NAME: opts.name,
     MU_WORKSTREAM: opts.workstream,
     [CTL_SOCK_ENV]: ctlSocket,
+    MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
+    MU_STATE_DIR: resolve(defaultStateDir()),
   };
-  // tmux panes inherit the tmux server's env, not ours: pin the DB (and
-  // state dir) this spawn used, resolved against our cwd, so the worker's
-  // `mu` hits the same taskgraph. Local spawns only.
-  if (db.name !== "" && db.name !== ":memory:") paneEnv.MU_DB_PATH = resolve(db.name);
-  if (process.env.MU_STATE_DIR) paneEnv.MU_STATE_DIR = resolve(process.env.MU_STATE_DIR);
   // mu sessions are created detached and may never be attached, so tmux's
   // update-environment never refreshes them and a pane would inherit a
   // stale SSH_AUTH_SOCK. Forward the caller's. File-type check only (is it
@@ -528,15 +542,15 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     }
   }
 
-  const hasWorkspace = workspacePathStr !== undefined;
+  const hasWorktree = staged !== undefined;
 
   // Single outer try wrapping every step that can throw AFTER the
-  // workspace has been prestaged: pane create/reuse,
+  // worktree has been prestaged: pane create/reuse,
   // agent-row finalize, liveness check. Earlier shape had pane creation
   // outside the try, so a tmux failure (e.g. no
   // workstream session and tmux refusing to create one) left the
-  // prestaged workspace dir + placeholder agent row behind as an
-  // orphan — task agent_spawn_abort_leaves_orphan_workspace.
+  // prestaged worktree + placeholder agent row behind as an
+  // orphan.
   //
   // paneId is undefined until spawnAgent creates the pane; rollbackSpawn
   // skips killPane in that case. The inner try/catches that previously
@@ -547,7 +561,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   let agent: AgentRow;
   // Whether the agent row is this spawn's to delete on rollback. A
   // spawn that lost a same-name race must not delete the winner's row.
-  let ownsRow = hasWorkspace;
+  let ownsRow = hasWorktree;
   const wantsCtl = opts.ctl !== false && speaksMuCtl(cli, command) && defaultSpawnCtlMs() !== 0;
   let ctl: SpawnCtl | undefined;
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
@@ -575,8 +589,8 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     const created = await withSpawnLock(session, async () => {
       // Re-check under the lock: a parallel spawn of the same name may
       // have inserted its row since the fast-path check. (With a
-      // workspace, the placeholder row already claimed the name.)
-      if (!hasWorkspace && getAgent(db, opts.name, opts.workstream) !== undefined) {
+      // worktree, the placeholder row already claimed the name.)
+      if (!hasWorktree && getAgent(db, opts.name, opts.workstream) !== undefined) {
         throw new AgentExistsError(opts.name);
       }
       // The name is ours: no live agent owns a socket at this path.
@@ -598,7 +612,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         cli,
         command,
         commandSource,
-        cwd: workspacePathStr ?? opts.cwd,
+        cwd: paneCwd,
         env: paneEnv,
         onPaneCreated: onCreated,
       });
@@ -614,7 +628,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       paneId = pid;
       readiness = done;
       phase = "finalize";
-      const row = finalizeAgentRow(db, { opts, cli, paneId: pid, hasWorkspace });
+      const row = finalizeAgentRow(db, { opts, cli, paneId: pid, cwd: paneCwd, staged });
       ownsRow = true;
       return { pid, row };
     });
@@ -676,7 +690,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // mask the original error.
     emitSpawnFailed(db, opts, phase, err);
     try {
-      await rollbackSpawn(db, opts.name, paneId, hasWorkspace, ownsRow, opts.workstream);
+      await rollbackSpawn(db, opts.name, paneId, staged, ownsRow, opts.workstream);
     } catch (cleanupErr) {
       if (err instanceof Error && err.cause === undefined) {
         try {
@@ -686,7 +700,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         }
       }
     }
-    if (hasWorkspace) attachOrphanCleanupHint(err, opts.name, opts.workstream);
+    if (staged !== undefined) attachOrphanCleanupHint(err, opts.name, opts.workstream, staged.path);
     throw err;
   }
   // Control-socket handshake when the tmux path above did not run it.
@@ -713,25 +727,41 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   return { ...agent, ctl, ctlSocket, ...(trustDialog ? { trustDialog: true as const } : {}) };
 }
 
+/** A worktree spawn has made and registered. */
+interface StagedWorktree {
+  path: string;
+  base: string;
+  root: string;
+}
+
 /**
- * Stage 1 of `--workspace` spawn: insert the agent row with a placeholder
- * pane id, then create the VCS workspace (whose row FKs the agent name).
+ * Stage 1 of `--worktree` spawn: claim the name with a placeholder agent
+ * row, then make the worktree the pane will start in.
  *
- * Why placeholder-first? `vcs_workspaces.agent` FK + ON DELETE CASCADE
- * means the workspace row needs an agents row to exist before we insert
- * it; but we can't insert agents without a pane_id (NOT NULL), and we
- * can't create the pane until we know the workspace's on-disk path
- * (used as cwd). The placeholder unblocks the cycle.
+ * Why placeholder-first? The pane starts IN the worktree, so the worktree
+ * must exist before the pane, yet the name has to be claimed against a
+ * parallel spawn of the same name while it is made. The agent row needs a
+ * pane_id (NOT NULL), so a placeholder claims the name and the real pane
+ * id is patched in later (see `PENDING_PANE_PREFIX`).
  *
- * The placeholder is a publicly-visible quirk — see `PENDING_PANE_PREFIX`
- * and the consumers it documents (reconcile's pending-pane prune skip). The deeper fix (eliminate the placeholder
- * by reordering ws-dir → pane → atomic dual-insert) is filed as a
- * separate refactor; this shape is the established equilibrium.
+ * A leftover worktree at the path is reclaimed only if it is mu's own
+ * clean, unused one (`reclaimWorktreePath`); anything else refuses.
  *
- * Throws after best-effort rollback (deleteAgent) if workspace creation
- * fails. Returns the workspace's on-disk path.
+ * Throws after best-effort rollback (the placeholder row, a half-made
+ * worktree) when creation fails.
  */
-async function prestageWorkspace(db: Db, opts: SpawnAgentOptions, cli: string): Promise<string> {
+async function prestageWorktree(
+  db: Db,
+  opts: SpawnAgentOptions,
+  cli: string,
+): Promise<StagedWorktree> {
+  const path = worktreePath(opts.workstream, opts.name);
+  const dir = opts.root ?? process.cwd();
+  const top = await gitToplevel(dir);
+  if (top === undefined) throw new WorktreeVcsRequiredError(dir);
+  // The main checkout, even when the caller runs inside one of mu's own
+  // worktrees (which may be removed before this one).
+  const root = (await owningRoot(top)) ?? top;
   insertAgent(db, {
     name: opts.name,
     workstream: opts.workstream,
@@ -739,40 +769,53 @@ async function prestageWorkspace(db: Db, opts: SpawnAgentOptions, cli: string): 
     paneId: pendingPaneIdFor(opts.name),
     role: opts.role,
     tab: opts.tab ?? null,
+    cwd: path,
   });
   try {
-    const wsOpts: Parameters<typeof createWorkspace>[1] = {
+    await reclaimWorktreePath(db, { agent: opts.name, workstream: opts.workstream, path });
+    const { base } = await createWorktree({
+      root,
+      path,
+      ...(opts.from !== undefined ? { from: opts.from } : {}),
+    });
+    registerWorktree(db, {
+      path,
       agent: opts.name,
       workstream: opts.workstream,
-    };
-    if (opts.workspaceFrom !== undefined) wsOpts.parentRef = opts.workspaceFrom;
-    if (opts.workspaceProjectRoot !== undefined) wsOpts.projectRoot = opts.workspaceProjectRoot;
-    const ws = await createWorkspace(db, wsOpts);
-    return ws.path;
+      root,
+      base,
+      createdAt: new Date().toISOString(),
+    });
+    return { path, base, root };
   } catch (err) {
     try {
       deleteAgent(db, opts.name, opts.workstream);
     } catch {
-      // best-effort: never mask the workspace error
+      // best-effort: never mask the worktree error
     }
     throw err;
   }
 }
 
 /**
- * Stage 2 of spawn (after the real pane exists): either patch the
- * placeholder row to the real pane id (workspace path), or insert a
- * fresh agent row (no-workspace path). Throws if the patch UPDATE
- * silently affects no row (the placeholder row vanished mid-spawn —
- * historically the bug_agent_spawn_workspace_fk_failure class, now
- * patched by reconcile's pending-pane prune skip).
+ * Stage 2 of spawn (after the real pane exists): patch the placeholder
+ * row to the real pane id, cwd and base (worktree), or insert a fresh
+ * agent row (no worktree). Throws if the patch UPDATE silently affects no
+ * row (the placeholder vanished mid-spawn; reconcile's pending-pane
+ * prune skip guards against that).
  */
 function finalizeAgentRow(
   db: Db,
-  args: { opts: SpawnAgentOptions; cli: string; paneId: string; hasWorkspace: boolean },
+  args: {
+    opts: SpawnAgentOptions;
+    cli: string;
+    paneId: string;
+    cwd: string;
+    staged: StagedWorktree | undefined;
+  },
 ): AgentRow {
-  const { opts, cli, paneId, hasWorkspace } = args;
-  if (!hasWorkspace) {
+  const { opts, cli, paneId, cwd, staged } = args;
+  if (staged === undefined) {
     return insertAgent(db, {
       name: opts.name,
       workstream: opts.workstream,
@@ -780,18 +823,19 @@ function finalizeAgentRow(
       paneId,
       role: opts.role,
       tab: opts.tab ?? null,
+      cwd,
     });
   }
   // Scope the patch to the spawn's workstream so a same-named worker
   // in another workstream isn't repointed at this pane
   // (bug_v5_name_clash_silent_misroute).
   db.prepare(
-    `UPDATE agents SET pane_id = ?, updated_at = ?
+    `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, updated_at = ?
       WHERE name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
-  ).run(paneId, new Date().toISOString(), opts.name, opts.workstream);
+  ).run(paneId, staged.path, staged.base, new Date().toISOString(), opts.name, opts.workstream);
   const row = getAgent(db, opts.name, opts.workstream);
-  if (!row) throw new Error(`spawnAgent: agent vanished after workspace stage: ${opts.name}`);
+  if (!row) throw new Error(`spawnAgent: agent vanished after worktree stage: ${opts.name}`);
   return row;
 }
 
@@ -800,17 +844,18 @@ function finalizeAgentRow(
  * swallows its own errors so a partial-cleanup substrate (already-killed
  * pane, no agent row) never masks the original failure.
  *
- * `paneId` is `undefined` when spawnAgent itself threw before
- * returning a pane id — there's nothing to kill. `hasWorkspace` is
- * `true` when prestageWorkspace succeeded; freeWorkspace is idempotent
- * on a missing workspace so calling it after a same-cycle failure is
- * safe. deleteAgent is also idempotent (no-op on a missing row).
+ * `paneId` is `undefined` when spawnAgent itself threw before returning a
+ * pane id — there's nothing to kill. `staged` is set when prestageWorktree
+ * succeeded: the worktree this spawn just made is removed (force: it has
+ * never run anything) and its registry row forgotten; if the removal
+ * fails the registry row stays, so `mu agent close <name> --discard` can
+ * finish it. deleteAgent is idempotent (no-op on a missing row).
  *
  * `ownsRow` is false when the spawn failed before inserting its own row
  * (e.g. it lost a same-name race); the row then belongs to another
  * agent and is left alone.
  */
-type SpawnPhase = "workspace" | "pane" | "finalize" | "liveness";
+type SpawnPhase = "worktree" | "pane" | "finalize" | "liveness";
 
 /** Terminal record for a failed spawn. Best-effort; never throws. */
 function emitSpawnFailed(db: Db, opts: SpawnAgentOptions, phase: SpawnPhase, err: unknown): void {
@@ -831,7 +876,7 @@ async function rollbackSpawn(
   db: Db,
   name: string,
   paneId: string | undefined,
-  hasWorkspace: boolean,
+  staged: StagedWorktree | undefined,
   ownsRow: boolean,
   workstream: string,
 ): Promise<void> {
@@ -842,22 +887,22 @@ async function rollbackSpawn(
       .then((mux) => mux.killPane(paneId))
       .catch(() => {});
   }
-  if (hasWorkspace) {
-    // Scope cleanup to the spawn's workstream so a same-named worker
-    // elsewhere isn't torn down by accident
-    // (bug_v5_name_clash_silent_misroute).
-    await freeWorkspace(db, name, { workstream }).catch(() => {});
+  if (staged !== undefined) {
+    try {
+      await removeWorktree(staged.root, staged.path, { force: true });
+      forgetWorktree(db, staged.path);
+    } catch {
+      // the registry row stays: `mu agent close <name> --discard` finishes it
+    }
   }
   if (ownsRow) deleteAgent(db, name, workstream);
 }
 
 /**
- * After a failed spawn that prestaged a workspace, augment the thrown
- * error with cleanup hints (`ls` of the workspace dir +
- * `mu workspace free`). rollbackSpawn is best-effort — if the
- * freeWorkspace call inside it failed (rmdir blocked, vcs backend
- * refusing to remove a workspace with uncommitted state, etc.), the
- * dir survives and the operator needs to know how to clean it up.
+ * After a failed spawn that prestaged a worktree, augment the thrown
+ * error with cleanup hints. rollbackSpawn is best-effort — if the removal
+ * failed, the worktree survives and the operator needs to know how to
+ * clean it up.
  *
  * Uses the duck-typed `errorNextSteps()` convention (see
  * `hasNextSteps()` in src/output.ts) so this works whether the inner
@@ -867,19 +912,24 @@ async function rollbackSpawn(
  * preserved and listed first; the orphan-cleanup hints are appended
  * so the diagnostic-first ordering of typed errors is kept.
  */
-function attachOrphanCleanupHint(err: unknown, agent: string, workstream: string): void {
+function attachOrphanCleanupHint(
+  err: unknown,
+  agent: string,
+  workstream: string,
+  path: string,
+): void {
   if (typeof err !== "object" || err === null) return;
   const target = err as { errorNextSteps?: () => NextStep[] };
   const existing =
     typeof target.errorNextSteps === "function" ? target.errorNextSteps.bind(target) : null;
   const orphanHints: NextStep[] = [
     {
-      intent: "Check for a leftover workspace dir (rollback is best-effort; may have failed)",
-      command: `ls ${dirname(workspacePath(workstream, agent))}`,
+      intent: "Check for a leftover worktree (rollback is best-effort; may have failed)",
+      command: `ls ${dirname(path)}`,
     },
     {
-      intent: "Free the workspace if it survived the rollback (idempotent on missing)",
-      command: `mu workspace free ${agent} -w ${workstream}`,
+      intent: "Remove it if it survived the rollback (the registry still names it)",
+      command: `mu agent close ${agent} -w ${workstream} --discard`,
     },
   ];
   // Best-effort: a frozen or non-extensible error must still reach the

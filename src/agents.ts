@@ -56,8 +56,6 @@ export {
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
-  WorkspaceOwnerBusyError,
-  WorkspacePreservedError,
 } from "./agents/errors.js";
 export {
   type CommandResolutionResult,
@@ -99,7 +97,7 @@ export {
   waitForAgents,
 } from "./agents/wait.js";
 
-import { AgentExistsError, AgentNotFoundError, WorkspacePreservedError } from "./agents/errors.js";
+import { AgentExistsError, AgentNotFoundError } from "./agents/errors.js";
 import {
   agentCtlSocket,
   recordSend,
@@ -110,11 +108,14 @@ import {
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
 import { resolveActorIdentity } from "./tasks/claim.js";
-import { freeWorkspace, getWorkspaceForAgent, isWorkspaceClean } from "./workspace.js";
-// (freeWorkspace is used by the spawn rollback paths below, not by closeAgent.
-// Closing an agent is intentionally a separate concern from freeing its workspace;
-// see the closeAgent docstring.)
 import { ensureWorkstream, isScratchWorkstream } from "./workstream.js";
+import {
+  assertReleasable,
+  getWorktreeAt,
+  getWorktreeFor,
+  type ReleasedWorktree,
+  releaseWorktree,
+} from "./worktree.js";
 
 export interface AgentRow {
   name: string;
@@ -125,6 +126,10 @@ export interface AgentRow {
   role: string;
   /** Window name; null when the agent has its own window named after itself. */
   tab: string | null;
+  /** Directory the pane started in (its worktree under `--worktree`); null for a row older than v12. */
+  cwd: string | null;
+  /** Commit the worktree was created at; null without `--worktree`. */
+  base: string | null;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** ISO 8601 timestamp. */
@@ -199,6 +204,8 @@ export interface InsertAgentInput {
   /** Defaults to "full-access" via schema DEFAULT. */
   role?: string;
   tab?: string | null;
+  cwd?: string | null;
+  base?: string | null;
 }
 
 interface RawAgentRow {
@@ -209,6 +216,8 @@ interface RawAgentRow {
   pane_id: string;
   role: string;
   tab: string | null;
+  cwd: string | null;
+  base: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -223,6 +232,8 @@ const SELECT_AGENT_COLS = `
   a.pane_id AS pane_id,
   a.role AS role,
   a.tab AS tab,
+  a.cwd AS cwd,
+  a.base AS base,
   a.created_at AS created_at,
   a.updated_at AS updated_at
 `;
@@ -237,6 +248,8 @@ function rowFromDb(row: RawAgentRow): AgentRow {
     paneId: row.pane_id,
     role: row.role,
     tab: row.tab,
+    cwd: row.cwd,
+    base: row.base,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -262,9 +275,9 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
   const now = new Date().toISOString();
   try {
     db.prepare(
-      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, created_at, updated_at)
+      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, created_at, updated_at)
        VALUES (@name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
-               COALESCE(@role, 'full-access'), @tab, @now, @now)`,
+               COALESCE(@role, 'full-access'), @tab, @cwd, @base, @now, @now)`,
     ).run({
       name: input.name,
       workstreamId,
@@ -272,6 +285,8 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
       paneId: input.paneId,
       role: input.role ?? null,
       tab: input.tab ?? null,
+      cwd: input.cwd ?? null,
+      base: input.base ?? null,
       now,
     });
   } catch (err) {
@@ -337,31 +352,26 @@ export function listAgents(db: Db, opts: { workstream?: string } = {}): AgentRow
 }
 
 /**
- * Placeholder pane-id prefix used during the `--workspace` pre-stage in
+ * Placeholder pane-id prefix used during the `--worktree` pre-stage in
  * spawnAgent (src/agents/spawn.ts).
  *
- * The placeholder unblocks the FK-ordering cycle:
- *   - vcs_workspaces.agent FK requires an agents row
- *   - agents.pane_id is NOT NULL
- *   - pane creation needs the workspace path as cwd
- * So we insert the agent with a placeholder pane_id, then create the
- * workspace, then the real pane, then patch pane_id.
+ * The worktree is created before the pane exists (the pane starts in it),
+ * and the name must be claimed against a parallel spawn of the same name
+ * while that happens. So spawn inserts the agent row with a placeholder
+ * pane_id, creates the worktree, then the real pane, then patches pane_id.
  *
- * Because no real tmux pane has this prefix, a naive mutating reconcile
- * pass would treat the placeholder row as a ghost and prune it
- * (→ FK-failure on the workspace insert mid-spawn). Reconcile now guards
- * against it explicitly via isPendingPaneId().
- *
- * Bug surfaced as bug_agent_spawn_workspace_fk_failure.
+ * Because no real pane has this prefix, a naive mutating reconcile pass
+ * would treat the placeholder row as a ghost and prune it mid-spawn.
+ * Reconcile guards against it explicitly via isPendingPaneId().
  */
 export const PENDING_PANE_PREFIX = "%pending-";
 
-/** Build the placeholder pane id for an agent during workspace pre-stage. */
+/** Build the placeholder pane id for an agent during worktree pre-stage. */
 export function pendingPaneIdFor(agentName: string): string {
   return `${PENDING_PANE_PREFIX}${agentName}`;
 }
 
-/** True iff `paneId` is a `--workspace` pre-stage placeholder (not yet patched
+/** True iff `paneId` is a `--worktree` pre-stage placeholder (not yet patched
  *  to the real tmux pane id). */
 export function isPendingPaneId(paneId: string): boolean {
   return paneId.startsWith(PENDING_PANE_PREFIX);
@@ -534,66 +544,30 @@ export async function readAgent(
 
 export interface CloseAgentOptions {
   /**
-   * Lossy override: when true, free the agent's workspace BEFORE
-   * deleting the agent regardless of whether it's clean. (We control
-   * the order rather than relying on FK cascade, which leaves the
-   * on-disk dir orphaned.) Any pending changes / commits since fork
-   * are gone unless the caller frees with `--commit` separately first.
-   *
-   * When false (default), behaviour depends on workspace state:
-   *   - clean (no uncommitted changes AND no commits since fork):
-   *     silently auto-free. allow_mu_agent_close_without_discard.
-   *   - dirty (uncommitted changes OR commits since fork): throw
-   *     WorkspacePreservedError so the caller decides explicitly.
-   * Surfaced as a real bug in the multi-agent dogfood teardown.
+   * Throw the agent's worktree away even when it has uncommitted work.
+   * Lossy; never makes a branch. Without it a dirty worktree refuses
+   * (WorktreeDirtyError) before anything is killed.
    */
-  discardWorkspace?: boolean;
+  discard?: boolean;
 }
 
 export interface CloseAgentResult {
   killedPane: boolean;
   deletedRow: boolean;
-  /** True iff the agent had an associated workspace AND we proactively
-   *  freed it — either because the caller passed `discardWorkspace:
-   *  true` (lossy) or because the workspace was clean and we
-   *  auto-freed (allow_mu_agent_close_without_discard). False on the
-   *  no-workspace path (nothing to free) and on the refused path (we
-   *  threw before doing anything). */
-  workspaceFreed: boolean;
-  /** True iff `workspaceFreed` was triggered by the clean-workspace
-   *  auto-free path (no uncommitted changes AND no commits since
-   *  fork) rather than the explicit `discardWorkspace: true` override.
-   *  Lets the CLI render an accurate message ("auto-freed (clean)"
-   *  vs "workspace discarded") and gives JSON consumers a stable
-   *  signal. False on every other path. */
-  workspaceAutoFreedClean: boolean;
+  /** What the close rule did to the agent's worktree; null when it had none. */
+  worktree: ReleasedWorktree | null;
 }
 
 /**
- * Close an agent: kill its tmux pane and remove its DB row. Idempotent:
- *   - if the agent doesn't exist in the DB, returns a no-op result
- *   - if the tmux pane is already gone, killPane swallows the error
+ * Close an agent: kill its pane, apply the worktree close rule, remove its
+ * DB row. Idempotent: an unknown agent is a no-op, a gone pane is fine.
  *
- * Workspace handling: closing an agent and freeing its workspace are
- * separate concerns (agent lifecycle vs disk artifacts). Three cases:
- *
- *   - No workspace: close proceeds normally.
- *   - Workspace exists AND is CLEAN (no uncommitted changes, no
- *     commits since fork): silently auto-free (so a workspace that
- *     contains nothing worth preserving doesn't make the operator
- *     type --discard-workspace just to clean it up). Surfaced by
- *     allow_mu_agent_close_without_discard — a misconfigured-spawn
- *     teardown was needlessly forced through the lossy flag.
- *   - Workspace exists AND has either uncommitted changes OR commits
- *     since fork: REFUSE with WorkspacePreservedError so the operator
- *     decides explicitly. Two resolutions:
- *       1. `freeWorkspace(db, name)` first, then `closeAgent(db, name)`.
- *          Preserves the option to `--commit` pending changes.
- *       2. `closeAgent(db, name, { discardWorkspace: true })`.
- *          One-shot; lossy.
- *
- * The CLI surfaces these as the two actionable nextSteps on the
- * `WorkspacePreservedError` thrown by the refuse path.
+ * The worktree rule (src/worktree.ts `releaseWorktree`): dirty refuses
+ * unless `discard`; clean and merged is removed; clean with unmerged
+ * commits keeps a branch `mu/<ws>/<agent>-<sha12>` and is removed. The
+ * refusal happens BEFORE the pane is killed. With no agent row but a
+ * registered worktree (an earlier close or rollback left it) the same rule
+ * runs on the leftover, so `agent close <name>` is the one way out.
  */
 export async function closeAgent(
   db: Db,
@@ -602,63 +576,37 @@ export async function closeAgent(
 ): Promise<CloseAgentResult> {
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) {
-    return {
-      killedPane: false,
-      deletedRow: false,
-      workspaceFreed: false,
-      workspaceAutoFreedClean: false,
-    };
+    const orphan = getWorktreeFor(db, opts.workstream, name);
+    if (orphan === undefined) return { killedPane: false, deletedRow: false, worktree: null };
+    const worktree = await releaseWorktree(db, orphan, { discard: opts.discard === true });
+    emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, worktree));
+    return { killedPane: false, deletedRow: false, worktree };
   }
-  const ws = getWorkspaceForAgent(db, name, agent.workstreamName);
-  // allow_mu_agent_close_without_discard: silently auto-free a clean
-  // workspace (no uncommitted changes AND no commits since fork) so
-  // the user doesn't have to type --discard-workspace for a workspace
-  // that contains nothing worth preserving. Only refuse when there's
-  // actually something to lose. The flag stays as the lossy override
-  // for non-clean workspaces.
-  let autoFreeClean = false;
-  if (ws !== undefined && opts.discardWorkspace !== true) {
-    autoFreeClean = await isWorkspaceClean(ws);
-    if (!autoFreeClean) {
-      throw new WorkspacePreservedError(name, ws.path);
-    }
-  }
-  // No pre-mutation snapshot: v9 dropped the `snapshots` table and
-  // history is the ops log.
-  // Free the workspace BEFORE the agent (so the on-disk dir is
-  // removed cleanly, not orphaned by FK cascade). freeWorkspace is
-  // idempotent on missing rows.
-  let workspaceFreed = false;
-  if (ws !== undefined && (opts.discardWorkspace === true || autoFreeClean)) {
-    await freeWorkspace(db, name, { commit: false, workstream: agent.workstreamName });
-    workspaceFreed = true;
-  }
+  const row = agent.cwd === null ? undefined : getWorktreeAt(db, agent.cwd);
+  if (row !== undefined) await assertReleasable(row, { discard: opts.discard === true });
   await activeMux()
     .then((mux) => mux.killPane(agent.paneId))
     .catch(() => {
       /* idempotent — pane may already be gone, or the mux with it */
     });
+  // Re-checks the state: a write after the pre-check still refuses, with
+  // the agent row kept so the close can be retried.
+  const worktree =
+    row === undefined ? null : await releaseWorktree(db, row, { discard: opts.discard === true });
   const deletedRow = deleteAgent(db, name, agent.workstreamName);
   // Machine-local table (`agents`): no trigger, so this emit is the
   // only record.
-  emitEvent(
-    db,
-    agent.workstreamName,
-    "agent.close",
-    `agent close ${name} (pane=${agent.paneId}${
-      workspaceFreed
-        ? autoFreeClean
-          ? ", workspace auto-freed (clean)"
-          : ", workspace discarded"
-        : ""
-    })`,
-  );
-  return {
-    killedPane: true,
-    deletedRow,
-    workspaceFreed,
-    workspaceAutoFreedClean: workspaceFreed && autoFreeClean,
-  };
+  emitEvent(db, agent.workstreamName, "agent.close", closeLine(name, agent.paneId, worktree));
+  return { killedPane: true, deletedRow, worktree };
+}
+
+function closeLine(name: string, paneId: string | undefined, wt: ReleasedWorktree | null): string {
+  const bits = [paneId === undefined ? undefined : `pane=${paneId}`];
+  if (wt !== null) {
+    bits.push(`worktree ${wt.action}${wt.branch === undefined ? "" : ` as ${wt.branch}`}`);
+  }
+  const detail = bits.filter((b) => b !== undefined).join(", ");
+  return `agent close ${name}${detail === "" ? "" : ` (${detail})`}`;
 }
 
 export interface ListLiveAgentsOptions {
@@ -674,7 +622,7 @@ export interface ListLiveAgentsOptions {
    *
    * Mid-spawn placeholders (pane id `%pending-<name>`) are protected
    * directly in reconcile's prune loop, independent of mode
-   * (bug_agent_spawn_workspace_fk_failure).
+   * (see PENDING_PANE_PREFIX).
    *
    * BREAKING: this replaces the previous `dryRun?: boolean`
    * option. Migration: `dryRun: true` → `mode: "report-only"`;

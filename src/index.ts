@@ -69,8 +69,6 @@ export {
   setCommandResolverForTests,
   spawnAgent,
   type Transport,
-  WorkspaceOwnerBusyError,
-  WorkspacePreservedError,
 } from "./agents.js";
 export {
   type ApplyResult,
@@ -427,36 +425,37 @@ export {
 } from "./tmux.js";
 export { getParallelTracks, type Track } from "./tracks.js";
 export {
-  backendByName,
-  detectBackend,
-  gitBackend,
-  type VcsBackend,
-  type VcsBackendName,
-  WorkspaceVcsRequiredError,
-} from "./vcs.js";
-export {
-  createWorkspace,
-  freeWorkspace,
-  getWorkspaceForAgent,
-  HomeDirAsProjectRootError,
-  listWorkspaces,
-  WorkspaceExistsError,
-  WorkspaceNotFoundError,
-  WorkspacePathNotEmptyError,
-  type WorkspaceRow,
-  workspacePath,
-} from "./workspace.js";
-export {
   ensureWorkstream,
   isValidWorkstreamName,
   listWorkstreams,
   summarizeWorkstream,
   type TeardownResult,
   teardownWorkstream,
-  type WorkspaceFailure,
   WorkstreamExistsError,
   WorkstreamNameInvalidError,
   WorkstreamNameReservedError,
   type WorkstreamOptions,
   type WorkstreamSummary,
+  type WorktreeFailure,
 } from "./workstream.js";
+export {
+  createWorktree,
+  forgetWorktree,
+  getWorktreeAt,
+  getWorktreeFor,
+  listWorktrees,
+  type ReleasedWorktree,
+  reclaimWorktreePath,
+  registerWorktree,
+  releaseWorktree,
+  removeWorktree,
+  upstreamRefs,
+  WorktreeDirtyError,
+  WorktreePathNotEmptyError,
+  type WorktreeRow,
+  type WorktreeState,
+  WorktreeVcsRequiredError,
+  worktreePath,
+  worktreeState,
+  worktreesRoot,
+} from "./worktree.js";

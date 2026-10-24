@@ -337,7 +337,6 @@ describe("--json output on read verbs", () => {
       inProgress: Array<{ name: string; ownerName: string | null; status: string }>;
       blocked: Array<{ name: string; title: string; status: string }>;
       recentClosed: Array<{ name: string; title: string; status: string }>;
-      workspaces: unknown[];
       recent: Array<{ kind: string; payload: string; workstreamName: string }>;
     };
 
@@ -374,7 +373,7 @@ describe("--json output on read verbs", () => {
         }),
       ]),
     );
-    expect(parsed.workspaces).toEqual([]);
+    expect((parsed as { workspaces?: unknown }).workspaces).toBeUndefined();
     // v2-retire-log-shim: `recent` reads captured ops now, not prose
     // events. The close of `done` is a typed op keyed by natural key.
     expect(parsed.recent).toEqual(

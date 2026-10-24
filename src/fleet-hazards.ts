@@ -255,7 +255,7 @@ export interface CaseCollision {
  * the same fleet reaches different states depending on which machine
  * applies an op first. Concretely: `workstreams.name` is UNIQUE and IS
  * the tmux session name, so on a Mac 'Foo' and 'foo' are one session and
- * one directory but two DB rows — and every workspace path derived from
+ * one directory but two DB rows — and every worktree path derived from
  * the name aliases onto one directory.
  *
  * Detected in the DB rather than at write time on purpose: the rows may
@@ -311,7 +311,7 @@ export function checkCaseCollisions(db: Db): FleetHazard {
       "",
       "They coexist on Linux (ext4 is case-sensitive) but COLLIDE on macOS (APFS",
       "is case-insensitive) and on Windows (NTFS). Because a workstream name IS a",
-      "tmux session name and seeds every workspace path, a Mac in the fleet sees",
+      "tmux session name and seeds every worktree path, a Mac in the fleet sees",
       "one session and one directory where Linux sees two — so the fleet reaches",
       "different states depending on which machine applies an op first.",
       "",

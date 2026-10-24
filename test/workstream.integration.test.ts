@@ -5,7 +5,7 @@
 // tmux session is torn down before DB rows so a tmux failure leaves the
 // registry intact.
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,7 +18,6 @@ import {
   type TmuxExecResult,
   type TmuxExecutor,
 } from "../src/tmux.js";
-import { gitBackend, type VcsBackend } from "../src/vcs.js";
 import {
   ensureWorkstream,
   isValidWorkstreamName,
@@ -27,27 +26,6 @@ import {
   teardownWorkstream,
   WorkstreamNameInvalidError,
 } from "../src/workstream.js";
-
-// ─── v5 vcs_workspaces test helper ───
-function insertVcsWorkspaceRow(
-  db: Db,
-  args: { agent: string; workstream: string; backend: string; path: string; createdAt: string },
-): void {
-  const wsId = (
-    db.prepare("SELECT id FROM workstreams WHERE name = ?").get(args.workstream) as {
-      id: number;
-    }
-  ).id;
-  const agId = (
-    db
-      .prepare("SELECT id FROM agents WHERE name = ? AND workstream_id = ?")
-      .get(args.agent, wsId) as { id: number }
-  ).id;
-  db.prepare(
-    `INSERT INTO vcs_workspaces (agent_id, workstream_id, backend, path, parent_ref, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(agId, wsId, args.backend, args.path, null, args.createdAt);
-}
 
 // ─── Mock tmux harness ─────────────────────────────────────────────────
 
@@ -265,7 +243,7 @@ describe("summarizeWorkstream", () => {
       taskCount: 3,
       edgeCount: 2,
       noteCount: 2,
-      workspaceCount: 0,
+      worktreeCount: 0,
       registered: true,
     });
   });
@@ -350,9 +328,10 @@ describe("teardownWorkstream", () => {
       deletedTasks: 3,
       deletedNotes: 2,
       deletedEdges: 2,
-      freedWorkspaces: 0,
-      alreadyGoneWorkspaces: 0,
-      failedWorkspaces: [],
+      freedWorktrees: 0,
+      alreadyGoneWorktrees: 0,
+      keptBranches: [],
+      failedWorktrees: [],
     });
 
     expect(state.killed).toEqual(["mu-auth"]);
@@ -405,9 +384,10 @@ describe("teardownWorkstream", () => {
       deletedTasks: 0,
       deletedNotes: 0,
       deletedEdges: 0,
-      freedWorkspaces: 0,
-      alreadyGoneWorkspaces: 0,
-      failedWorkspaces: [],
+      freedWorktrees: 0,
+      alreadyGoneWorktrees: 0,
+      keptBranches: [],
+      failedWorktrees: [],
     });
   });
 
@@ -433,9 +413,10 @@ describe("teardownWorkstream", () => {
       deletedTasks: 0,
       deletedNotes: 0,
       deletedEdges: 0,
-      freedWorkspaces: 0,
-      alreadyGoneWorkspaces: 0,
-      failedWorkspaces: [],
+      freedWorktrees: 0,
+      alreadyGoneWorktrees: 0,
+      keptBranches: [],
+      failedWorktrees: [],
     });
     expect(state.killed).toEqual(["mu-empty"]);
   });
@@ -453,9 +434,10 @@ describe("teardownWorkstream", () => {
       deletedTasks: 0,
       deletedNotes: 0,
       deletedEdges: 0,
-      freedWorkspaces: 0,
-      alreadyGoneWorkspaces: 0,
-      failedWorkspaces: [],
+      freedWorktrees: 0,
+      alreadyGoneWorktrees: 0,
+      keptBranches: [],
+      failedWorktrees: [],
     });
   });
 
@@ -495,7 +477,7 @@ describe("teardownWorkstream", () => {
     expect(summary.muxAlive).toBe(false);
     expect(summary.agentCount).toBe(0);
     expect(summary.taskCount).toBe(0);
-    expect(summary.workspaceCount).toBe(0);
+    expect(summary.worktreeCount).toBe(0);
   });
 
   it("summarize reports `registered: false` for a tmux-only workstream mu never observed", async () => {
@@ -504,180 +486,6 @@ describe("teardownWorkstream", () => {
     const summary = await summarizeWorkstream(db, { workstream: "tmuxonly" });
     expect(summary.registered).toBe(false);
     expect(summary.muxAlive).toBe(true);
-  });
-
-  // Regression for review_code_destroy_freed_workspaces_double_count:
-  // freedWorkspaces was incremented in BOTH the `removed:true` and the
-  // `removed:false` (already-gone-on-disk) branches, so the destroy
-  // report claimed credit for cleanups it never did. Now the two cases
-  // are split: actually-removed paths bump `freedWorkspaces`,
-  // already-gone paths bump `alreadyGoneWorkspaces`.
-  it("splits freedWorkspaces (real removal) from alreadyGoneWorkspaces (no-op on disk)", async () => {
-    setTmuxExecutor(mockTmux(state).executor);
-    ensureWorkstream(db, "split");
-    insertAgent(db, { name: "alive", workstream: "split", paneId: "%101" });
-    insertAgent(db, { name: "ghost", workstream: "split", paneId: "%102" });
-
-    const presentPath = join(tmpDir, "ws-present");
-    const missingPath = join(tmpDir, "ws-missing"); // never created on disk
-    mkdirSync(presentPath, { recursive: true });
-
-    // Two registry rows in the same workstream: one whose on-disk
-    // path exists (backend will actually remove it), one whose path
-    // is already gone (backend free is a no-op). A plain dir that is no
-    // git worktree takes gitBackend's rmDirSync fallback — no real repo needed.
-    const now = new Date().toISOString();
-    insertVcsWorkspaceRow(db, {
-      agent: "alive",
-      workstream: "split",
-      backend: gitBackend.name,
-      path: presentPath,
-      createdAt: now,
-    });
-    insertVcsWorkspaceRow(db, {
-      agent: "ghost",
-      workstream: "split",
-      backend: gitBackend.name,
-      path: missingPath,
-      createdAt: now,
-    });
-
-    const result = await teardownWorkstream(db, { workstream: "split" });
-
-    expect(result.freedWorkspaces).toBe(1);
-    expect(result.alreadyGoneWorkspaces).toBe(1);
-    expect(result.failedWorkspaces).toEqual([]);
-    expect(existsSync(presentPath)).toBe(false);
-    expect(existsSync(missingPath)).toBe(false);
-  });
-
-  // Regression for review_test_destroy_failed_workspaces_uncovered:
-  // every prior teardownWorkstream test asserted `failedWorkspaces: []`,
-  // so the failure-accumulation path (the try/catch around
-  // backend.freeWorkspace in src/workstream.ts) had zero coverage. A
-  // future refactor that dropped the try/catch — turning a single bad
-  // worktree into an aborted destroy with half-cleaned state — would
-  // pass every existing test. These two cases pin down the v0.2
-  // contract: a backend throw is captured into `failedWorkspaces` (not
-  // re-raised), the destroy still proceeds, and the FK cascade still
-  // wipes the registry rows.
-  it("records a backend throw as a failedWorkspaces entry and still completes the destroy", async () => {
-    setTmuxExecutor(mockTmux(state).executor);
-    ensureWorkstream(db, "fail");
-    insertAgent(db, { name: "stuck", workstream: "fail", paneId: "%201" });
-
-    // Real-world analogue: `git worktree remove` refuses because of
-    // uncommitted changes or a permission error. We don't need a real VCS to exercise the
-    // failure shape — inject a backend whose freeWorkspace just throws.
-    const ghostPath = join(tmpDir, "ws-ghost"); // never on disk; doesn't matter
-    const now = new Date().toISOString();
-    insertVcsWorkspaceRow(db, {
-      agent: "stuck",
-      workstream: "fail",
-      backend: gitBackend.name,
-      path: ghostPath,
-      createdAt: now,
-    });
-
-    const explodingBackend: VcsBackend = {
-      ...gitBackend,
-      async freeWorkspace() {
-        throw new Error("git worktree remove --force refused: uncommitted changes");
-      },
-    };
-    const result = await teardownWorkstream(db, {
-      workstream: "fail",
-      resolveBackend: () => explodingBackend,
-    });
-
-    expect(result.freedWorkspaces).toBe(0);
-    expect(result.alreadyGoneWorkspaces).toBe(0);
-    expect(result.failedWorkspaces).toEqual([
-      {
-        agent: "stuck",
-        backend: gitBackend.name,
-        path: ghostPath,
-        error: expect.stringContaining("git worktree remove --force refused"),
-      },
-    ]);
-
-    // Destroy must NOT have aborted on the throw — the FK CASCADE on
-    // workstreams→vcs_workspaces still ran, the registry row is gone,
-    // and the agent row is gone. A regression that re-raised would fail
-    // these assertions.
-    const wsRows = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM vcs_workspaces v
-           JOIN workstreams ws ON ws.id = v.workstream_id
-          WHERE ws.name = 'fail'`,
-      )
-      .get() as { n: number };
-    expect(wsRows.n).toBe(0);
-    expect(listAgents(db, { workstream: "fail" })).toEqual([]);
-    const wsCount = db
-      .prepare("SELECT COUNT(*) AS n FROM workstreams WHERE name = 'fail'")
-      .get() as { n: number };
-    expect(wsCount.n).toBe(0);
-  });
-
-  it("partitions mixed success/failure correctly (one freed, one failed)", async () => {
-    setTmuxExecutor(mockTmux(state).executor);
-    ensureWorkstream(db, "mixed");
-    insertAgent(db, { name: "good", workstream: "mixed", paneId: "%301" });
-    insertAgent(db, { name: "bad", workstream: "mixed", paneId: "%302" });
-
-    // Both rows reference the same registered backend name; the
-    // injected resolver returns a per-agent backend that either
-    // succeeds (delegates to gitBackend.freeWorkspace, which rmDirSync's
-    // an existing tempdir) or throws.
-    const goodPath = join(tmpDir, "ws-good");
-    const badPath = join(tmpDir, "ws-bad");
-    mkdirSync(goodPath, { recursive: true });
-    mkdirSync(badPath, { recursive: true });
-
-    const now = new Date().toISOString();
-    insertVcsWorkspaceRow(db, {
-      agent: "good",
-      workstream: "mixed",
-      backend: gitBackend.name,
-      path: goodPath,
-      createdAt: now,
-    });
-    insertVcsWorkspaceRow(db, {
-      agent: "bad",
-      workstream: "mixed",
-      backend: gitBackend.name,
-      path: badPath,
-      createdAt: now,
-    });
-
-    const partitioningBackend: VcsBackend = {
-      ...gitBackend,
-      async freeWorkspace(opts) {
-        if (opts.workspacePath === badPath) {
-          throw new Error(`mock backend refused to free ${opts.workspacePath}`);
-        }
-        return gitBackend.freeWorkspace(opts);
-      },
-    };
-    const result = await teardownWorkstream(db, {
-      workstream: "mixed",
-      resolveBackend: () => partitioningBackend,
-    });
-
-    expect(result.freedWorkspaces).toBe(1);
-    expect(result.alreadyGoneWorkspaces).toBe(0);
-    expect(result.failedWorkspaces).toHaveLength(1);
-    expect(result.failedWorkspaces[0]).toEqual({
-      agent: "bad",
-      backend: gitBackend.name,
-      path: badPath,
-      error: expect.stringContaining("mock backend refused"),
-    });
-    // Good path actually rm'd; bad path remains on disk for the user
-    // to clean (the WARNING block in cli/workstream.ts directs them).
-    expect(existsSync(goodPath)).toBe(false);
-    expect(existsSync(badPath)).toBe(true);
   });
 });
 

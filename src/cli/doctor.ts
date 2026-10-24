@@ -8,7 +8,7 @@
 //   - disk: state-dir vs DB reconciliation (both directions) + residue
 //
 // Read-only (the reconcile pass uses mode: "report-only" so polling doesn't
-// race in-flight spawns; see bug_agent_spawn_workspace_fk_failure).
+// race in-flight spawns; see PENDING_PANE_PREFIX).
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
@@ -18,7 +18,7 @@ import { captureDoctorCheck } from "../capture.js";
 import { emitJson, resolveWorkstream } from "../cli.js";
 import { planCompact } from "../compact.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "../db.js";
-import { checkDiskRecon, formatBytes, measureWorkspaceUsage } from "../disk-recon.js";
+import { checkDiskRecon, formatBytes, measureWorktreeUsage } from "../disk-recon.js";
 import {
   ctlExtensionDoctorCheck,
   ctlSocketsDoctorCheck,
@@ -244,7 +244,7 @@ export async function cmdDoctor(
     // mu doctor is diagnostic — mode: "report-only" so it never
     // deletes rows AND never writes to the DB / tmux titles just for
     // being polled (would race in-flight spawns; see
-    // bug_agent_spawn_workspace_fk_failure).
+    // PENDING_PANE_PREFIX).
     try {
       const view = await listLiveAgents(db, { workstream: ws, mode: "report-only" });
       const ghosts = view.report.prunedGhosts;
@@ -326,16 +326,16 @@ export async function cmdDoctor(
   //
   // The only section that reads the filesystem. Default tier is readdir
   // + stat (~1ms); recursive byte accounting is --disk, because its cost
-  // scales with the checkouts rather than with mu's state.
+  // scales with the worktrees rather than with mu's state.
   console.log(pc.bold("\ndisk"));
   const disk = checkDiskRecon(db);
   if (printHazards(disk)) sawHazard = true;
   if (opts.disk === true) {
-    const usage = measureWorkspaceUsage(db);
+    const usage = measureWorktreeUsage(db);
     const total = usage.reduce((n, u) => n + u.bytes, 0);
     const reclaimable = usage.filter((u) => u.orphan).reduce((n, u) => n + u.bytes, 0);
     console.log(
-      `\n  ${"workspace bytes".padEnd(16)} : ${formatBytes(total)} across ${usage.length} checkout(s)${
+      `\n  ${"worktree bytes".padEnd(16)} : ${formatBytes(total)} across ${usage.length} worktree(s)${
         reclaimable > 0 ? pc.yellow(` — ${formatBytes(reclaimable)} in orphan dirs`) : ""
       }`,
     );
@@ -347,7 +347,7 @@ export async function cmdDoctor(
     }
   } else {
     console.log(
-      pc.dim("  (run `mu doctor --disk` for per-workspace byte usage — walks every checkout)"),
+      pc.dim("  (run `mu doctor --disk` for per-worktree byte usage — walks every worktree)"),
     );
   }
 
@@ -596,7 +596,7 @@ export async function cmdDoctorJson(
       thresholds: { finishedIdleDays: FINISHED_IDLE_DAYS, abandonedIdleDays: ABANDONED_IDLE_DAYS },
     },
   };
-  const workspaceUsage = opts.disk === true ? measureWorkspaceUsage(db) : null;
+  const worktreeUsage = opts.disk === true ? measureWorktreeUsage(db) : null;
 
   // Drift: shallow by default, full rebuild diff under --deep. Same
   // tiering as the human path, for the same measured reason.
@@ -636,7 +636,7 @@ export async function cmdDoctorJson(
     closeGuards,
     dagCycles,
     disk,
-    workspaceUsage,
+    worktreeUsage,
     drift,
     size: opsSizeHint(db) ?? null,
     remediation: drift.ok === true ? [] : driftRemediation(),
@@ -720,7 +720,7 @@ export function wireDoctorCommand(program: Command): void {
     )
     .option(
       "--disk",
-      "also measure per-workspace disk usage (walks every checkout; the disk↔DB reconciliation itself always runs)",
+      "also measure per-worktree disk usage (walks every worktree; the disk↔DB reconciliation itself always runs)",
     )
     .action(function () {
       const opts = (this as Command).opts() as { json?: boolean; deep?: boolean; disk?: boolean };

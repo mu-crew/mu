@@ -7,7 +7,7 @@ task DAG in SQLite. Each agent gets its own git worktree.
 - **Parallel work that does not collide.** Per-agent git worktrees and a task DAG with
   `blocks` edges keep agents out of each other's way.
 - **State that outlives a pane.** One SQLite DB holds agents, tasks,
-  owners, notes, and workspaces. An append-only ops log records every
+  owners, notes, and worktrees. An append-only ops log records every
   change, so `mu log --group <group>` shows one action and `mu rebuild`
   replays the whole history.
 - **Exact control of pi agents.** mu's pi extension serves a control
@@ -35,7 +35,7 @@ You need:
 - tmux ≥ 3.0 or [herdr](https://github.com/herdrdev/herdr). `mu doctor`
   reports which one is active.
 - pi, or another agent CLI.
-- git on `PATH` for `--workspace`.
+- git on `PATH` for `--worktree`.
 
 [murmur](https://github.com/mu-crew/murmur) is optional for pi agents.
 Non-pi agents on tmux need it for state: without it their state is
@@ -54,7 +54,7 @@ mu workstream init auth
 export MU_SESSION=auth   # init does not attach you; or pass -w auth to each verb
 mu task add design_auth --title "Design auth" --impact 80 --effort-days 2
 mu task add build_auth  --title "Build auth"  --impact 80 --effort-days 5 --blocked-by design_auth
-mu agent spawn worker-1 --workspace
+mu agent spawn worker-1 --worktree
 mu task claim design_auth --for worker-1
 mu agent send worker-1 --fresh 'Do task design_auth. Close it with evidence.'
 mu task wait design_auth --first --on-stall exit   # exit 7 = worker needs you

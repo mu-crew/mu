@@ -47,8 +47,8 @@ NDJSON; `mu log` writes print text even with `--json`. Errors are `{error,messag
 - **track** — tasks connected by `block` edges (`mu task block B --by A`
   puts B on A's track). Spawn one agent per ready task, not per track:
   an umbrella puts all its units on one track.
-- **workspace** — per-agent VCS copy under
-  `<state-dir>/workspaces/<workstream>/<agent>/`.
+- **worktree** — per-agent git worktree under
+  `<state-dir>/worktrees/<workstream>/<agent>/`; it is the agent's cwd.
 
 Recipe words, the same in every recipe:
 
@@ -60,7 +60,7 @@ Recipe words, the same in every recipe:
   repo-defined verification and its upkeep ([test-health](recipes/test-health.md#gate-contract));
   a **review gate** (`review_x` blocked by `x`) decides whether `x` counts.
 - **wave** — the units dispatched from one main revision; refresh
-  workspaces before the next.
+  worktrees before the next.
 - **finding** — one reported problem, recorded as an `OPEN/triage` task.
 - **verdict** — a check's answer: `VERDICT: <id> CONFIRMED | REFUTED |
   UNVERIFIED <one line>` plus `EVIDENCE:` lines (or ACCEPT | REJECT for
@@ -90,7 +90,7 @@ task lands its verdict there: `record: { task: "<ws>/<id>" }` on `mu_delegate`, 
 - `mu agent wait <names...> --first` waits for busy → idle instead of a
   `sleep` loop; exit 0 met, 5 timeout, 6 pane died.
 - For a watcher (PR, CI, a log), follow [recipes/watcher.md](recipes/watcher.md).
-- One agent per independent unit; `--workspace` for any helper that may edit,
+- One agent per independent unit; `--worktree` for any helper that may edit,
   build, or test the shared repo.
 
 A pi helper showing `unknown (ctl missing)` right after spawn (spawn
@@ -109,20 +109,20 @@ unit blocks makes the whole job one track. Parallelism is the ready
 set: tasks that edit the same files get a `block` edge between them,
 so only one is ready at a time.
 
-### Workspaces prevent trampling
+### Worktrees prevent trampling
 
 If an agent may edit, build, or test while another is active in the same
-repo, spawn with `--workspace` (`workspace: true` on `mu_delegate`).
+repo, spawn with `--worktree` (`workspace: true` on `mu_delegate`).
 Two builds in one checkout corrupt each other; keep the main checkout
 for orchestration. Never make your own `git worktree` or copy for a
 local agent: mu cannot list, diff or free what it did not create, so it
 leaks. Remote agents are the exception
 ([remote-workers](recipes/remote-workers.md)).
 
-Workspaces are git worktrees (exit 4 outside a repo). `mu agent close`
-frees one **only if clean**; otherwise it fails with
-`WorkspacePreservedError`. Cherry-pick what to keep, and pass
-`--discard-workspace` only to throw the rest away. Before a `--fresh` send,
+Worktrees are git worktrees (exit 4 outside a repo). `mu agent close`
+refuses a **dirty** one (`WorktreeDirtyError`) before it kills the pane;
+unmerged commits are kept on `mu/<ws>/<agent>-<sha>`. Cherry-pick what to
+keep, and pass `--discard` only to throw uncommitted edits away. Before a `--fresh` send,
 `git -C <cwd> fetch && git -C <cwd> rebase <base>` (base: `origin/HEAD`, or
 local main when merged locally); on conflict `git -C <cwd> rebase --abort`
 and tell the human ([waves](recipes/waves.md) when workers share files).

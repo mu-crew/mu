@@ -223,13 +223,10 @@ describe("machine-local lifecycle ops", () => {
       "agent.send",
       "agent.abort",
       "agent.stall",
-      "workspace.create",
-      "workspace.free",
-      "workspace.refresh",
     ];
     for (const intent of locals) {
       const entity = intent.slice(0, intent.indexOf("."));
-      expect(["agent", "workspace"], `${intent} should be machine-local`).toContain(entity);
+      expect(["agent"], `${intent} should be machine-local`).toContain(entity);
       // And the formatter must know it, or mu log would show it raw.
       expect(KNOWN_INTENTS, `${intent} must be renderable`).toContain(intent);
     }

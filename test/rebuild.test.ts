@@ -450,14 +450,14 @@ describe("rebuildInto", () => {
       ).run(now, now);
     };
 
-    it("agents/vcs_workspaces are EMPTY in the rebuilt DB", () => {
+    it("agents/worktrees are EMPTY in the rebuilt DB", () => {
       seedRealisticSource();
       seedAgent();
       const path = targetPath();
       rebuildInto(db, { targetPath: path });
 
       withTarget(path, (conn) => {
-        for (const table of ["agents", "vcs_workspaces"]) {
+        for (const table of ["agents", "worktrees"]) {
           const n = (conn.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
           expect(n, `${table} should be empty after rebuild`).toBe(0);
         }
@@ -488,19 +488,18 @@ describe("rebuildInto", () => {
       expect(report.machineLocalLost).toEqual([{ table: "task_auto", rows: 1 }]);
     });
 
-    it("counts vcs_workspaces too", () => {
+    it("counts worktrees too", () => {
       seedRealisticSource();
       seedAgent();
-      const agent = db.prepare("SELECT id FROM agents WHERE name = 'w1'").get() as { id: number };
       db.prepare(
-        `INSERT INTO vcs_workspaces (agent_id, workstream_id, path, backend, created_at)
-         VALUES (?, (SELECT id FROM workstreams WHERE name = 'demo'), '/tmp/ws', 'git', ?)`,
-      ).run(agent.id, new Date().toISOString());
+        `INSERT INTO worktrees (path, agent, workstream, root, base, created_at)
+         VALUES ('/tmp/ws', 'w1', 'demo', '/repo', 'abc', ?)`,
+      ).run(new Date().toISOString());
 
       const report = rebuildInto(db, { targetPath: targetPath() });
       expect(report.machineLocalLost).toEqual([
         { table: "agents", rows: 1 },
-        { table: "vcs_workspaces", rows: 1 },
+        { table: "worktrees", rows: 1 },
       ]);
     });
   });

@@ -32,10 +32,11 @@ const sh = async (c) => {
   if (r.exit_code !== 0) throw new Error(`${c}: ${r.output}`);
   return r.output;
 };
+const agents = JSON.parse(await sh(`mu agent list -w ${ws} --json`)).agents;
 const ready = JSON.parse(await sh(`mu task next -w ${ws} -n 0 --json`)).items.slice(0, workers.length);
 await Promise.allSettled(ready.map(async (t, i) => {
   await sh(`mu task claim ${t.name} -w ${ws} --for ${workers[i]} --evidence 'driver dispatch'`);
-  const cwd = (await sh(`mu workspace path ${workers[i]} -w ${ws}`)).trim();
+  const cwd = agents.find((a) => a.name === workers[i]).cwd;
   await sh(`git -C ${cwd} fetch && git -C ${cwd} rebase origin/HEAD`);
   await sh(`mu agent send ${workers[i]} -w ${ws} --fresh 'Work on ${t.name}. Read: mu task notes ${t.name} -w ${ws}'`);
 }));

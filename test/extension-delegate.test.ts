@@ -245,13 +245,13 @@ describe("mu_delegate", () => {
     expect(mu.calls.some((c) => c[1] === "spawn")).toBe(false);
   });
 
-  it("workspace: true spawns with --workspace (no --cwd) and reports the checkout path", async () => {
+  it("workspace: true spawns with --worktree (no --cwd) and reports the worktree path", async () => {
     const mu = fakeMu({ workspace: "/ws/scratch/delegate-2" });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
     const res = await tool(p).execute("t", { task: "x", workspace: true, cwd: "/ignored" });
     const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
-    expect(spawn).toContain("--workspace");
+    expect(spawn).toContain("--worktree");
     expect(spawn).not.toContain("--cwd");
     expect(res.content[0]?.text).toContain("Workspace: /ws/scratch/delegate-2");
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "edited" }] }));

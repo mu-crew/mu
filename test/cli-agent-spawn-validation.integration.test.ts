@@ -10,8 +10,8 @@
 // failed exec). Three fixes:
 //
 //   PART A — pre-spawn PATH check via `checkCommandResolvable`. Throws
-//             `AgentSpawnCliNotFoundError` BEFORE prestageWorkspace so
-//             a typo never creates an orphan workspace dir.
+//             `AgentSpawnCliNotFoundError` BEFORE the worktree is
+//             created so a typo never creates an orphan worktree.
 //   PART B — extra patterns added to the existing scrollback scanner
 //             (`command not found`, `No such file or directory`) to
 //             catch the post-spawn variant that slips past PART A
@@ -40,8 +40,8 @@ import {
 import { type Db, openDb } from "../src/db.js";
 import { hasNextSteps } from "../src/output.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
-import { listWorkspaces, workspacePath } from "../src/workspace.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { listWorktrees, worktreePath } from "../src/worktree.js";
 import { initGitRepo } from "./_git.js";
 import { runCli } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -191,17 +191,17 @@ describe("spawnAgent — pre-flight PATH check (Part A)", () => {
     expect(caught.binary).toBe("does-not-exist");
     expect(caught.envVarChecked).toBe("MU_DOES_NOT_EXIST_COMMAND");
 
-    // Pre-flight runs BEFORE prestageWorkspace and BEFORE any tmux
+    // Pre-flight runs BEFORE the worktree and BEFORE any tmux
     // call. The mock tmux executor must have seen zero calls.
     expect(calls).toEqual([]);
     // No DB row was inserted.
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 
-  it("does NOT orphan a workspace when the pre-flight check fails", async () => {
-    // Real workspace-creating spawn path — exercises the rationale:
-    // the pre-flight has to fire BEFORE prestageWorkspace, otherwise
-    // a typo in --cli leaves an orphan workspace dir behind.
+  it("does NOT orphan a worktree when the pre-flight check fails", async () => {
+    // Real worktree-creating spawn path — exercises the rationale:
+    // the pre-flight has to fire BEFORE the worktree is created, otherwise
+    // a typo in --cli leaves an orphan worktree behind.
     const stateDir = mkdtempSync(join(tmpdir(), "mu-spawn-validation-state-"));
     const projectRoot = mkdtempSync(join(tmpdir(), "mu-spawn-validation-proj-"));
     initGitRepo(projectRoot);
@@ -217,14 +217,14 @@ describe("spawnAgent — pre-flight PATH check (Part A)", () => {
           name: "worker-1",
           workstream: "auth",
           cli: "does-not-exist",
-          workspace: true,
-          workspaceProjectRoot: projectRoot,
+          worktree: true,
+          root: projectRoot,
         }),
       ).rejects.toBeInstanceOf(AgentSpawnCliNotFoundError);
 
-      // No workspace row, no workspace dir.
-      expect(listWorkspaces(db, "auth")).toEqual([]);
-      expect(existsSync(workspacePath("auth", "worker-1"))).toBe(false);
+      // No registry row, no worktree dir.
+      expect(listWorktrees(db, "auth")).toEqual([]);
+      expect(existsSync(worktreePath("auth", "worker-1"))).toBe(false);
     } finally {
       const key = "MU_STATE_DIR";
       delete process.env[key];

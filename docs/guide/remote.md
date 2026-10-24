@@ -15,7 +15,7 @@ On the remote host:
    extension.
 2. Allow unix-socket forwards in the host's sshd:
    `AllowStreamLocalForwarding yes`.
-3. Create the worker's checkout yourself. `--workspace` works only
+3. Create the worker's checkout yourself. `--worktree` works only
    for local agents:
 
    ```bash

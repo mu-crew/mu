@@ -31,7 +31,7 @@
 // WHY NOT `teardown --empty`
 // --------------------------
 // That verb already exists and is deliberately narrower: ZERO tasks,
-// agents and workspaces — test litter. Every workstream here has real
+// agents and worktrees — test litter. Every workstream here has real
 // history, so `--empty` never matches one. This check reports; it never
 // sweeps. Same posture as src/disk-recon.ts: each finding names its own
 // command and mu runs none of them.
@@ -110,10 +110,10 @@ interface DormantRow {
  *     `isScratchWorkstream`). Its whole contract is "off-the-cuff
  *     helpers, no ceremony", so a report that it has been quiet for a
  *     fortnight is telling the operator the feature works.
- *   - workstreams with live agents or registered workspaces. Those are
+ *   - workstreams with live agents or registered worktrees. Those are
  *     not dormant regardless of task dates: something is running, or a
  *     checkout is on disk holding uncommitted work. `mu doctor`'s disk
- *     section owns the workspace story.
+ *     section owns the worktree story.
  *
  * One indexed GROUP BY over `tasks`; no filesystem and no mux calls, so
  * it is cheap enough for the default doctor tier.
@@ -134,7 +134,7 @@ export function findDormantWorkstreams(
          LEFT JOIN tasks t ON t.workstream_id = w.id
         WHERE w.torn_down_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM agents a WHERE a.workstream_id = w.id)
-          AND NOT EXISTS (SELECT 1 FROM vcs_workspaces v WHERE v.workstream_id = w.id)
+          AND NOT EXISTS (SELECT 1 FROM worktrees v WHERE v.workstream = w.name)
         GROUP BY w.id, w.name
         ORDER BY idle_days DESC, w.name`,
     )
@@ -231,8 +231,8 @@ export function checkDormantWorkstreams(
       // when what teardown removes here is the PLAN — task rows and notes.
       //
       // "no checkout is touched" is true only because this list EXCLUDES
-      // workstreams with registered workspaces; teardown does free real
-      // checkouts when they exist (`freedWorkspaces` in teardownWorkstream).
+      // workstreams with registered worktrees; teardown does free real
+      // worktrees when they exist (`freedWorktrees` in teardownWorkstream).
       // The exclusion in findDormantWorkstreams is what makes this sentence
       // safe, so the two must not drift apart.
       "Removes the task rows and notes — the plan, not the code (no checkout",

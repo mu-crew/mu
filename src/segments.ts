@@ -238,7 +238,7 @@ export interface FlushResult {
  * Append this machine's not-yet-flushed ops to its own segment.
  *
  * FILTERING IS LOAD-BEARING. Only ops whose entity is in
- * `SYNCED_ENTITIES` are written. Machine-local ops (agent.*, workspace.*)
+ * `SYNCED_ENTITIES` are written. Machine-local ops (agent.*)
  * are captured and DO appear in `mu log`, but they must never reach a
  * segment: they carry pane ids and absolute paths that are meaningless,
  * and frequently wrong, on another machine. "Not synced" is not "not

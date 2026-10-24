@@ -1,5 +1,5 @@
 // Integration coverage for `mu task wait --first --json` nextSteps
-// against real git-backed workspaces.
+// against real git worktrees.
 //
 // The wait hint names the worker's worktree and lists its own commits
 // (`git log HEAD --not <upstream refs>`); the orchestrator picks what to keep.
@@ -13,9 +13,10 @@ import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, claimTask, closeTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
-import { createWorkspace, type WorkspaceRow } from "../src/workspace.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import type { WorktreeRow } from "../src/worktree.js";
 import { runCli } from "./_runCli.js";
+import { seedWorktree } from "./_worktree.js";
 
 const GIT = (() => {
   try {
@@ -44,28 +45,23 @@ function initGitRepo(root: string): void {
   });
 }
 
-function commitFile(
-  workspacePath: string,
-  filename: string,
-  body: string,
-  subject: string,
-): string {
-  writeFileSync(join(workspacePath, filename), body);
+function commitFile(worktreePath: string, filename: string, body: string, subject: string): string {
+  writeFileSync(join(worktreePath, filename), body);
   execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "."], {
-    cwd: workspacePath,
+    cwd: worktreePath,
   });
   execFileSync(
     "git",
     ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", subject],
-    { cwd: workspacePath },
+    { cwd: worktreePath },
   );
   return execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: workspacePath,
+    cwd: worktreePath,
     encoding: "utf8",
   }).trim();
 }
 
-gitDescribe("mu task wait nextSteps — git workspace commits", () => {
+gitDescribe("mu task wait nextSteps — git worktree commits", () => {
   let tempDir: string;
   let stateRoot: string;
   let dbPath: string;
@@ -84,7 +80,7 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
 
     // `mu task wait` reconciles before its immediate success snapshot.
     // Keep the fake agents alive through that reconcile without touching
-    // a real tmux server; git workspaces remain real on disk.
+    // a real tmux server; git worktrees remain real on disk.
     setTmuxExecutor(async (args) => {
       if (args[0] === "list-panes" && args[1] === "-s") {
         return {
@@ -124,13 +120,12 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
     return out.split("\n").filter((l) => l.length > 0);
   }
 
-  async function seedWorker(agent: string, paneId: string, task: string): Promise<WorkspaceRow> {
-    insertAgent(db, { name: agent, workstream: "test", paneId });
-    const workspace = await createWorkspace(db, {
-      agent,
+  async function seedWorker(agent: string, paneId: string, task: string): Promise<WorktreeRow> {
+    const worktree = await seedWorktree(db, {
+      root: projectRoot,
       workstream: "test",
-      projectRoot,
-      backend: "git",
+      agent,
+      paneId,
     });
     addTask(db, {
       localId: task,
@@ -140,7 +135,7 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
       effortDays: 1,
     });
     await claimTask(db, task, { agentName: agent, workstream: "test" });
-    return workspace;
+    return worktree;
   }
 
   async function closeAndWait(firingTask: string, otherTask: string): Promise<WaitJsonPayload> {
@@ -164,7 +159,7 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
 
     expect(payload.nextSteps[0]).toEqual({
       intent: "Inspect committer's commits, then cherry-pick what you want",
-      command: `git -C ${committer.path} log --oneline HEAD --not ${committer.parentRef}`,
+      command: `git -C ${committer.path} log --oneline HEAD --not ${committer.base}`,
     });
     expect(logOf(payload.nextSteps[0]?.command)).toEqual(["worker commit"]);
   });
@@ -203,7 +198,7 @@ gitDescribe("mu task wait nextSteps — git workspace commits", () => {
     expect(logOf(payload.nextSteps[0]?.command)).toEqual(["worker commit"]);
   });
 
-  it("offers no worktree hint when the owner has no workspace", async () => {
+  it("offers no worktree hint when the owner has no worktree", async () => {
     insertAgent(db, { name: "bare", workstream: "test", paneId: "%4" });
     addTask(db, {
       localId: "bare_task",

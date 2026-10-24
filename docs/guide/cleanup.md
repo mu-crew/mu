@@ -6,11 +6,11 @@
 mu agent close worker-1 -w auth
 ```
 
-A clean workspace is freed with the agent. If the workspace has edits
-or commits, close refuses with exit 4. Run
-`mu workspace free worker-1 -w auth --commit` first, or pass
-`--discard-workspace` to lose the changes. See
-[Stop a worker](stop-a-worker.md).
+Close removes the agent's worktree with it. A worktree with uncommitted
+edits makes close refuse with exit 4 before anything is killed: commit
+them, or pass `--discard` to lose them. Clean commits that are not merged
+are kept on a branch `mu/<workstream>/<agent>-<sha>`, named in the output.
+See [Stop a worker](stop-a-worker.md).
 
 ## Tear down a workstream
 
@@ -20,9 +20,11 @@ mu workstream teardown auth --yes    # kills the session, deletes the rows
 ```
 
 Teardown kills the tmux session first, then deletes the agents, tasks,
-edges, notes, and workspaces. Running it again is a no-op.
+edges, notes, and clean worktrees. A worktree with uncommitted work is
+kept and reported; close it with `mu agent close <agent> --discard`.
+Running it again is a no-op.
 
-To sweep every workstream that has no tasks, agents, or workspaces:
+To sweep every workstream that has no tasks, agents, or worktrees:
 
 ```bash
 mu workstream teardown --empty
@@ -76,15 +78,15 @@ The `housekeeping` section of `mu doctor` lists two kinds:
 | abandoned | unclosed tasks, idle 60 days or more | read the open tasks first |
 
 It skips your current workstream, `scratch`, and any workstream with a
-live agent or a workspace. Teardown removes the plan, not the code: no
+live agent or a worktree. Teardown removes the plan, not the code: no
 commit or checkout is touched.
 
 ## Free disk space
 
 ```bash
-mu doctor --disk                    # bytes per workspace checkout
-mu doctor                           # the disk section lists directories with no DB row
-mu workspace free worker-1 -w auth  # delete one workspace
+mu doctor --disk                           # bytes per worktree
+mu doctor                                  # the disk section lists directories with no DB row
+mu agent close worker-1 -w auth --discard  # delete one worktree
 ```
 
 ## Keep a copy of the graph

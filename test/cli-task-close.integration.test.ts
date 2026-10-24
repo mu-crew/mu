@@ -1,7 +1,7 @@
 // CLI tests for `mu task close` success-path Next: hints.
 //
 // fb_close_post_emit_commit_hint: when a worker closes a task from a
-// dirty per-agent workspace, the close succeeds AND the Next: block
+// dirty per-agent worktree, the close succeeds AND the Next: block
 // reminds them to commit before the orchestrator starts the next wave.
 
 import { execFileSync } from "node:child_process";
@@ -12,10 +12,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { openDb } from "../src/db.js";
 import { addTask } from "../src/tasks.js";
-import { createWorkspace, type WorkspaceRow } from "../src/workspace.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import type { WorktreeRow } from "../src/worktree.js";
 import { withEnv } from "./_env.js";
 import { runCli } from "./_runCli.js";
+import { seedWorktree } from "./_worktree.js";
 
 const GIT = (() => {
   try {
@@ -43,7 +44,7 @@ function initGitRepo(root: string): void {
   });
 }
 
-gitDescribe("mu task close dirty-workspace commit hint", () => {
+gitDescribe("mu task close dirty-worktree commit hint", () => {
   let tempDir: string;
   let stateRoot: string;
   let dbPath: string;
@@ -64,10 +65,9 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  async function seedDb(opts: { withWorkspace: boolean }): Promise<WorkspaceRow | undefined> {
+  async function seedDb(opts: { withWorktree: boolean }): Promise<WorktreeRow | undefined> {
     const db = openDb({ path: dbPath });
     ensureWorkstream(db, "test");
-    insertAgent(db, { name: "worker-1", workstream: "test", paneId: "%1" });
     addTask(db, {
       localId: "dirty_human",
       workstream: "test",
@@ -82,24 +82,25 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
       impact: 50,
       effortDays: 1,
     });
-    let workspace: WorkspaceRow | undefined;
-    if (opts.withWorkspace) {
-      workspace = await createWorkspace(db, {
-        agent: "worker-1",
+    let worktree: WorktreeRow | undefined;
+    if (opts.withWorktree) {
+      worktree = await seedWorktree(db, {
+        root: projectRoot,
         workstream: "test",
-        projectRoot,
-        backend: "git",
+        agent: "worker-1",
       });
+    } else {
+      insertAgent(db, { name: "worker-1", workstream: "test", paneId: "%1" });
     }
     db.close();
-    return workspace;
+    return worktree;
   }
 
-  it("adds the commit hint to human stdout and --json nextSteps when the actor's workspace is dirty", async () => {
-    const workspace = await seedDb({ withWorkspace: true });
-    expect(workspace).toBeDefined();
-    if (workspace === undefined) return;
-    writeFileSync(join(workspace.path, "dirty.txt"), "remember to commit me\n");
+  it("adds the commit hint to human stdout and --json nextSteps when the actor's worktree is dirty", async () => {
+    const worktree = await seedDb({ withWorktree: true });
+    expect(worktree).toBeDefined();
+    if (worktree === undefined) return;
+    writeFileSync(join(worktree.path, "dirty.txt"), "remember to commit me\n");
 
     await withEnv("MU_AGENT_NAME", "worker-1", async () => {
       const human = await runCli(
@@ -110,7 +111,7 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
       expect(human.exitCode).toBeNull();
       expect(human.stdout).toContain("Don't forget to commit");
       expect(human.stdout).toContain(
-        "cd $(mu workspace path worker-1 -w test) && git add -A && git commit -m 'Implement Helpful Thing'",
+        `git -C '${worktree.path}' add -A && git -C '${worktree.path}' commit -m 'Implement Helpful Thing'`,
       );
 
       const json = await runCli(
@@ -122,14 +123,13 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
       const payload = JSON.parse(json.stdout) as JsonClosePayload;
       expect(payload.nextSteps).toContainEqual({
         intent: "Don't forget to commit",
-        command:
-          "cd $(mu workspace path worker-1 -w test) && git add -A && git commit -m 'Emit JSON Hint'",
+        command: `git -C '${worktree.path}' add -A && git -C '${worktree.path}' commit -m 'Emit JSON Hint'`,
       });
     });
   });
 
-  it("does not add the commit hint when the actor's workspace is clean", async () => {
-    await seedDb({ withWorkspace: true });
+  it("does not add the commit hint when the actor's worktree is clean", async () => {
+    await seedDb({ withWorktree: true });
 
     await withEnv("MU_AGENT_NAME", "worker-1", async () => {
       const json = await runCli(
@@ -143,8 +143,8 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
     });
   });
 
-  it("does not add the commit hint when the actor has no workspace", async () => {
-    await seedDb({ withWorkspace: false });
+  it("does not add the commit hint when the actor has no worktree", async () => {
+    await seedDb({ withWorktree: false });
 
     await withEnv("MU_AGENT_NAME", "worker-1", async () => {
       const json = await runCli(

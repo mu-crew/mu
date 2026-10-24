@@ -7,12 +7,12 @@ when done in the wrong order.
 - **`workstream teardown`** writes tombstone ops; `workstream list
   --torn-down` lists past teardowns and their group ids. Dry-run first.
 - **`mu rebuild <file>`** writes a new DB from the ops log, without
-  agents or workspaces; re-spawn after the swap. Recovery is
+  agents or worktrees; re-spawn after the swap. Recovery is
   `mu rebuild`, not `mu db backup`.
 - **Sync:** set `MU_SYNC_DIR` on each machine to a shared folder
   (Syncthing). Every command flushes and ingests ops, merged per field.
   mu never runs ssh or rsync; `mu sync` prints the line.
-  `--repair <peer>` is always safe. Agents, workspaces, and task
+  `--repair <peer>` is always safe. Agents, worktrees, and task
   ownership never travel.
 - **`mu db forget <ws...>`** deletes torn-down workstreams' ops for
   good; `mu db compact` only blanks redundant tombstones. Both

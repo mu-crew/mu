@@ -87,7 +87,7 @@ The state dir is `MU_STATE_DIR`, else `$XDG_STATE_HOME/mu`, else
 | Path | Contents |
 | --- | --- |
 | `<state-dir>/mu.db` | The SQLite DB for every workstream |
-| `<state-dir>/workspaces/<workstream>/<agent>/` | Per-agent VCS workspace, created by `mu agent spawn --workspace` |
+| `<state-dir>/worktrees/<workstream>/<agent>/` | Per-agent git worktree, created by `mu agent spawn --worktree` |
 | `<sync-dir>/<machine_id>.jsonl` | This machine's segment; `<sync-dir>` is `MU_SYNC_DIR` |
 | `<sync-dir>/<machine_id>.manifest` | `{count, last_hlc, sha256}` for segment verification |
 

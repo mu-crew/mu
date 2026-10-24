@@ -1,5 +1,5 @@
 // Tests for `mu workstream teardown --empty` — sweep every empty
-// workstream (zero tasks, agents, vcs_workspaces).
+// workstream (zero tasks, agents, worktrees).
 //
 // Coverage map (mirrors workstream_destroy_empty_sweep design note):
 //
@@ -90,7 +90,7 @@ function mockTmux(state: MockState): TmuxExecutor {
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "mu-destroy-empty-"));
-  // Snapshots / exports / workspaces all default under MU_STATE_DIR;
+  // Snapshots / exports / worktrees all default under MU_STATE_DIR;
   // pin to tempDir so the sweep's artifacts don't pollute
   // the host's state.
   process.env.MU_STATE_DIR = tempDir;

@@ -30,17 +30,16 @@ mu agent close worker-1 -w auth
 Close kills the pane and deletes the agent row. It is also the step
 for a non-pi agent, which has no socket to abort through. To prevent a
 worker stuck on an unbounded `find /` or a busy-wait loop, scope worker
-prompts to the workspace. Do not ask for filesystem-wide `find` or
-`grep -r /`. A clean workspace is
-freed with it. If the workspace has edits or commits, close refuses
-with exit 4. Then do one of these:
+prompts to the worktree. Do not ask for filesystem-wide `find` or
+`grep -r /`. A clean worktree is removed with it, and unmerged commits
+are kept on a new branch `mu/<workstream>/<agent>-<sha>` that the close
+prints. If the worktree has uncommitted edits, close refuses with exit 4
+before it kills the pane. Then do one of these:
 
-- Run `mu workspace free worker-1 -w auth --commit` to commit pending
-  changes and free the workspace, then close. For git, if the commits
-  are on no branch, mu keeps them on a new branch
-  `mu/<workstream>/<agent>-<sha>`.
-- Run `mu agent close worker-1 -w auth --discard-workspace` to free
-  and close in one step. You lose the changes.
+- Commit the edits in the worktree (`git -C <cwd> add -A && git -C <cwd>
+  commit`), then close again.
+- Run `mu agent close worker-1 -w auth --discard` to close and drop the
+  edits in one step. You lose them, and no branch is made.
 
 If the worker owned a task, its pane is gone, so the reaper returns
 the task to `OPEN` on the next reconcile. A `mu task wait` on that task

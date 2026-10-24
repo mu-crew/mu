@@ -96,22 +96,24 @@ quoted heredoc: `mu agent send worker-1 - <<'EOF'`; see
 [brief](../../skills/mu/recipes/brief.md#quoting). To see only what the worker wrote after the claim, run
 `mu task notes build -w auth --since-claim`.
 
-## Give each worker a workspace
+## Give each worker a worktree
 
-`mu agent spawn --workspace` creates a git worktree for the agent. Outside
-a git repo it fails with exit 4. You cherry-pick from it.
+`mu agent spawn --worktree` creates a git worktree for the agent and starts
+its pane there: the worker's cwd is its worktree. Outside a git repo it
+fails with exit 4. `--from <ref>` picks the starting commit, `--root <repo>`
+the repo. You cherry-pick from it.
 
 Refresh the worktree between tasks. The rebase keeps the agent's pi
 context. Before a `--fresh` send:
 
 ```bash
-cwd=$(mu workspace path worker-1 -w auth)
+cwd=$(mu agent list -w auth --json | jq -r '.agents[] | select(.name == "worker-1") | .cwd')
 git -C "$cwd" fetch && git -C "$cwd" rebase origin/HEAD
 ```
 
 Use `origin/HEAD` as the base, or local main when you merged locally. On a
 conflict, run `git -C "$cwd" rebase --abort` and tell the human. To throw
-the workspace away instead, run `mu workspace free worker-1 -w auth`.
+the worktree away instead, run `mu agent close worker-1 -w auth --discard`.
 
 ## Wait for the first task to close
 

@@ -567,7 +567,7 @@ describe("sync", () => {
 
     it("never ships machine-local ops", async () => {
       seed(a, "t1");
-      // agents / workspaces have no capture triggers, so the honest
+      // agents / worktrees have no capture triggers, so the honest
       // assertion is that only synced entities arrive.
       ingestFromDb(b, join(tempDir, "a.db"));
       const entities = (db: Db): string[] =>

@@ -21,7 +21,6 @@ import { muTable, pc, renderBoxTable } from "../output.js";
 import { formatPair, type TaskPair } from "../tasks/status.js";
 import type { TaskRow } from "../tasks.js";
 import type { Track } from "../tracks.js";
-import type { WorkspaceRow } from "../workspace.js";
 import type { TornDownWorkstream, WorkstreamSummary } from "../workstream.js";
 
 // ─── Status colours / icons ────────────────────────────────────────────
@@ -94,7 +93,7 @@ export function truncate(s: string, max: number): string {
 /** Front-truncate `s` to fit `max` columns, prepending an ellipsis when
  *  truncated. Used for paths where the trailing `<workstream>/<agent>`
  *  suffix is the only useful bit (the leading `~/.local/state/mu/...`
- *  prefix is identical for every row). Surfaced live by `mu workspace
+ *  prefix is identical for every row). Surfaced live by `mu agent
  *  list` blowing the terminal width on the `path` column
  *  (tables_truncate_long_cols_audit). */
 export function truncateFront(s: string, max: number): string {
@@ -134,6 +133,10 @@ export function relTimeAgo(ms: number): string {
 
 // ─── Table renderers ──────────────────────────────────────────────────
 
+/** Width of the cwd column: a worktree path is ~70 chars; front-truncate so
+ *  the useful trailing `<ws>/<agent>` suffix survives. */
+const CWD_BUDGET = 40;
+
 export function formatAgentsTable(agents: readonly LiveAgent[]): string {
   if (agents.length === 0) return pc.dim("  (no agents)");
   // Cap the variable-width columns so a long tmux window name (or a
@@ -148,8 +151,9 @@ export function formatAgentsTable(agents: readonly LiveAgent[]): string {
       pc.bold("state"),
       pc.bold("window"),
       pc.bold("role"),
+      pc.bold("cwd"),
     ],
-    colWidths: [null, null, null, null, 32, 14],
+    colWidths: [null, null, null, null, 32, 14, CWD_BUDGET],
     style: { head: [] },
   });
   for (const a of agents) {
@@ -171,6 +175,7 @@ export function formatAgentsTable(agents: readonly LiveAgent[]): string {
         : a.state,
       a.tab ?? a.name,
       a.role === "read-only" ? pc.yellow("read-only") : "",
+      a.cwd === null ? pc.dim("—") : truncateFront(a.cwd, CWD_BUDGET - 2),
     ]);
   }
   const needsMurmur = agents.some(
@@ -247,35 +252,6 @@ export function formatTracks(tracks: readonly Track[]): string {
     );
   });
   return lines.join("\n");
-}
-
-/** Workspaces table renderer. Used by `mu workspace list` and by
- *  `mu state`'s Workspaces section — exported so cli/workspace.ts
- *  can reuse it. */
-export function formatWorkspacesTable(rows: readonly WorkspaceRow[]): string {
-  // The path column is the one that bit operators today: an absolute
-  // ~/.local/state/mu/workspaces/<ws>/worker-foo path runs ~70 chars
-  // and pushed the table to ~200 cols. Front-truncate so the useful
-  // trailing `<ws>/<agent>` suffix survives, then cap the column with
-  // colWidths as a safety belt (tables_truncate_long_cols_audit).
-  const PATH_BUDGET = 40;
-  const table = muTable({
-    head: ["agent", "workstream", "backend", "path", "parent_ref", "created"].map((h) =>
-      pc.bold(h),
-    ),
-    colWidths: [null, null, null, PATH_BUDGET, null, null],
-  });
-  for (const r of rows) {
-    table.push([
-      r.agentName,
-      r.workstreamName,
-      r.backend,
-      truncateFront(r.path, PATH_BUDGET - 2),
-      r.parentRef ? pc.dim(r.parentRef.slice(0, 12)) : pc.dim("—"),
-      pc.dim(r.createdAt),
-    ]);
-  }
-  return table.toString();
 }
 
 /** One op, human-formatted. Used by `mu log` (read + tail) and by the

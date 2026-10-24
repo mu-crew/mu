@@ -44,7 +44,7 @@ keeps it.
   one turn instead of one turn each; each answer names its delegate and
   ends with its `VERDICT: <id>` block, so a batch still maps back. Read
   every verdict in the batch before deciding any.
-- **Workers with workspaces** build and test: about one per CPU core,
+- **Workers with worktrees** build and test: about one per CPU core,
   fewer when targeted slow checks contend for resources. A remote host has
   its own session cap ([remote-workers](remote-workers.md)).
 - **Stream dispatch.** Keep the pool full: dispatch the next unit
@@ -81,7 +81,7 @@ per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
 - **Pin the batch tree.** Run full slow once, plus fast if slow excludes it,
   under [the gate contract](test-health.md#gate-contract). Keep the tested
   checkout unchanged during the run; independent workers continue in their
-  workspaces. Later merges form the next batch, not an extension of this pass.
+  worktrees. Later merges form the next batch, not an extension of this pass.
   Remote hosts: [run the merged gate there](remote-workers.md#run-the-merged-gate-on-the-host).
 - **Bisect a failed batch.** Isolate the offending commit/interaction, fix it,
   and gate the corrected merged tree before shipping.
@@ -101,7 +101,7 @@ per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
 
 ## Build cache
 
-Keep build targets private per workspace and auth/profile lane. Share dependency
+Keep build targets private per worktree and auth/profile lane. Share dependency
 downloads and use an existing compiler cache when available; measure cold/warm
 cost and contention. Keep normal-auth, test-auth and release artifacts distinct,
 with explicit executable paths for consumers. A shared writable Cargo target

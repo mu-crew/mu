@@ -206,7 +206,7 @@ export function renderBoxTable(
  * `wordWrap: false` (cells wider than their column truncate with `…`
  * instead of wrapping to a second visual row), per-column max widths
  * applied only where the caller asks (`null` = auto), and a default
- * borderless style mirroring the state/workspace/workstream tables.
+ * borderless style mirroring the state/agent/workstream tables.
  *
  * Callers should pre-truncate values they care about via the
  * `truncate()` / `truncateFront()` helpers in cli.ts (the proactive
@@ -214,7 +214,7 @@ export function renderBoxTable(
  * miss. This is load-bearing for renderers with fixed row budgets:
  * a single wrapped cell silently blows out the promised section height.
  *
- * Surfaced live by `mu workspace list` blowing the terminal width on
+ * Surfaced live by a worktree table blowing the terminal width on
  * the `path` column (tables_truncate_long_cols_audit). Don't try to
  * cap every column — apply `colWidths` only on the column(s) the
  * operator is least likely to read in full and most likely to be

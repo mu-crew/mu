@@ -67,12 +67,12 @@ Only `design` is ready. `build` appears when `design` closes.
 Spawn a pi agent with its own git worktree:
 
 ```bash
-mu agent spawn worker-1 -w auth --workspace
+mu agent spawn worker-1 -w auth --worktree
 ```
 
 ```
-Spawned worker-1 (pi) in window worker-1 of mu-auth, pane %15 with auto-workspace
-  workspace: ~/.local/state/mu/workspaces/auth/worker-1 (git)
+Spawned worker-1 (pi) in window worker-1 of mu-auth, pane %15 with its own worktree
+  cwd: ~/.local/state/mu/worktrees/auth/worker-1
 ```
 
 The worker runs in a new window of the `mu-auth` session. To watch
@@ -148,7 +148,7 @@ Before the next task, rebase the worker's worktree onto the new main.
 The worker keeps its pi context:
 
 ```bash
-cwd=$(mu workspace path worker-1 -w auth)
+cwd=$(mu agent list -w auth --json | jq -r '.agents[] | select(.name == "worker-1") | .cwd')
 git -C "$cwd" fetch && git -C "$cwd" rebase origin/HEAD
 ```
 
@@ -166,15 +166,16 @@ claim, send, wait, and merge steps.
 
 ## Close the worker
 
-When you are done, free the worktree and close the agent:
+When you are done, close the agent:
 
 ```bash
-mu workspace free worker-1 -w auth
 mu agent close worker-1 -w auth
 ```
 
-`mu agent close` refuses while the worktree has commits or edits that
-mu has not freed. That protects work you have not merged.
+Close removes the worktree. It refuses while the worktree has uncommitted
+edits, which protects work you have not committed. If the worker made
+commits you have not merged, close keeps them on a branch
+`mu/auth/worker-1-<sha>` and prints its name.
 
 ## Next steps
 

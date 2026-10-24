@@ -8,9 +8,8 @@
 //   not found  → 3   (AgentNotFoundError)
 //   conflict   → 4   (AgentExistsError, AgentNameExhaustedError,
 //                     AgentNotInWorkstreamError,
-//                     AgentSendUnsupportedError, WorkspacePreservedError,
-//                     AgentExtensionOutdatedError, AgentBusyError,
-//                     WorkspaceOwnerBusyError)
+//                     AgentSendUnsupportedError,
+//                     AgentExtensionOutdatedError, AgentBusyError)
 //   timeout    → 5   (AgentAbortTimeoutError)
 //   failure    → 1   (AgentSpawnCliNotFoundError, AgentDiedOnSpawnError,
 //                     AgentSpawnStartupError, AgentCtlUnreachableError)
@@ -23,7 +22,7 @@
 // fit the matched line.
 //
 // AgentSpawnCliNotFoundError is the pre-flight cousin of the two
-// post-spawn-detect errors above: thrown BEFORE prestageWorkspace when
+// post-spawn-detect errors above: thrown BEFORE the worktree is created when
 // the resolved `--cli` command's first token doesn't exist on PATH.
 // Distinct from AgentSpawnStartupError so the operator can tell
 // 'I never had a working CLI' from 'CLI started but parked at an error'.
@@ -37,8 +36,8 @@ import { defaultSpawnLivenessMs, isExecFailureLine } from "./spawn.js";
  * Pre-flight failure: the command mu would have spawned in the new
  * pane doesn't resolve to a binary on PATH (and isn't an absolute /
  * relative path that exists + is executable). Thrown by `spawnAgent`
- * BEFORE `prestageWorkspace` so a typo in `--cli` never leaves an
- * orphan workspace dir behind.
+ * BEFORE the worktree is created so a typo in `--cli` never leaves
+ * an orphan worktree behind.
  *
  * Source: feedback ws task `fb_agent_spawn_no_validation`. Live
  * dogfood report: `mu agent spawn worker-1 --cli pi-meta` on a host
@@ -46,7 +45,7 @@ import { defaultSpawnLivenessMs, isExecFailureLine } from "./spawn.js";
  * (pi-meta)` and the pane immediately died with `command not found`;
  * the existing 1.5s liveness check sometimes missed it (the shell
  * stays alive after the failed exec). Pre-flighting the PATH lookup
- * surfaces the typo before any side effects (workspace, pane, DB row).
+ * surfaces the typo before any side effects (worktree, pane, DB row).
  *
  * Distinct from `AgentSpawnStartupError` (pane alive but parked at an
  * error prompt) and `AgentDiedOnSpawnError` (pane vanished within the
@@ -148,7 +147,7 @@ export class AgentNotFoundError extends Error implements HasNextSteps {
     public readonly agentName: string,
     /** Optional workstream context. When set, the message is enriched
      *  with `(in workstream <ws>)` so the verb that hit the miss
-     *  (e.g. `mu workspace path <agent> -w <ws>`) doesn't leave the
+     *  (e.g. `mu agent close <agent> -w <ws>`) doesn't leave the
      *  operator guessing which scope was searched. Optional so existing
      *  call sites that only know the agent name keep their original
      *  one-line message. */
@@ -360,54 +359,6 @@ export class AgentSpawnStartupError extends Error implements HasNextSteps {
           "export ANTHROPIC_API_KEY=...   # or AWS_BEARER_TOKEN_BEDROCK, OPENAI_API_KEY, ...",
       },
       disable,
-    ];
-  }
-}
-
-/**
- * Thrown when `closeAgent` is called on an agent that has an associated
- * workspace AND the caller didn't explicitly opt into discarding it.
- *
- * Background: the FK on `vcs_workspaces.agent` cascades on agent
- * delete, so a naive `closeAgent` drops the workspace registry row
- * but leaves the on-disk dir orphaned (mu can't see it via
- * `mu workspace list / free / path` afterwards). Surfaced during
- * the multi-agent dogfood teardown when three workspaces went
- * orphaned silently.
- *
- * The fix: refuse close if a workspace exists; force the caller to
- * decide. Two actionable resolutions:
- *   - `mu workspace free <agent>` first, then close cleanly.
- *   - `mu agent close <agent> --discard-workspace` to free the
- *     workspace AND close the agent in one shot (lossy: pending
- *     changes in the workspace are gone).
- *
- * Maps to exit code 4 (conflict) via the cli.ts handler.
- */
-export class WorkspacePreservedError extends Error implements HasNextSteps {
-  override readonly name = "WorkspacePreservedError";
-  constructor(
-    public readonly agentName: string,
-    public readonly workspacePath: string,
-  ) {
-    super(
-      `agent ${agentName} has a workspace at ${workspacePath}; refusing to close (would orphan the on-disk dir)`,
-    );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Free the workspace first (preserves agent for next step)",
-        command: `mu workspace free ${this.agentName}  (--commit to commit pending changes first)`,
-      },
-      {
-        intent: "Or close + discard the workspace in one shot (lossy)",
-        command: `mu agent close ${this.agentName} --discard-workspace`,
-      },
-      {
-        intent: "Or just inspect what's in the workspace",
-        command: `cd ${this.workspacePath}`,
-      },
     ];
   }
 }
@@ -657,44 +608,6 @@ export class AgentBusyError extends Error implements HasNextSteps {
         command: `mu agent abort ${this.agentName} -w ${this.workstream}`,
       },
       { intent: "Or abandon the turn in one step", command: retry },
-    ];
-  }
-}
-
-/**
- * `mu workspace free` refused: the owning agent is mid-turn, waiting on
- * a permission, or unreadable with a live pane. Freeing would pull the
- * checkout out from under it. CLI-only guard; `agent close` and spawn
- * rollback call the SDK directly and are unaffected.
- */
-export class WorkspaceOwnerBusyError extends Error implements HasNextSteps {
-  override readonly name = "WorkspaceOwnerBusyError";
-  constructor(
-    public readonly agentName: string,
-    public readonly workstream: string,
-    public readonly state: string,
-    public readonly detail?: string,
-  ) {
-    super(
-      detail
-        ? `agent ${agentName} is ${state} (${detail}): refusing to free its workspace`
-        : `agent ${agentName} is ${state}: freeing its workspace would pull it out from under it`,
-    );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Stop the turn first, then retry",
-        command: `mu agent abort ${this.agentName} -w ${this.workstream}`,
-      },
-      {
-        intent: "Or wait until the agent is idle",
-        command: `mu agent wait ${this.agentName} -w ${this.workstream}`,
-      },
-      {
-        intent: "Or free anyway (pending changes are lost without --commit)",
-        command: `mu workspace free ${this.agentName} --force -w ${this.workstream}`,
-      },
     ];
   }
 }

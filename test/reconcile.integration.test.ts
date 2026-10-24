@@ -385,7 +385,7 @@ describe("reconcile — mode: 'report-only' does not mutate (snap_undo_reconcile
     //   2. destroy kills the pane
     //   3. a restore brings back the snapshot's agents row
     //   4. post-restore reconcile sees pane is dead
-    //   5. WITHOUT report-only: prunes the agents row + cascades vcs_workspaces away
+    //   5. WITHOUT report-only: prunes the agents row (the worktrees registry row stays)
     //   6. WITH    report-only: counts the would-be-prune; row stays
     insertAgent(db, { name: "dog-1", workstream: "auth", paneId: "%2919" });
     // Pane is gone in tmux (the destroy killed it).

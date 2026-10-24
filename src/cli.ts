@@ -37,7 +37,6 @@ import { wireSqlCommand } from "./cli/sql.js";
 import { wireStateCommands } from "./cli/state.js";
 import { wireSyncCommand } from "./cli/sync.js";
 import { wireTaskCommands } from "./cli/tasks.js";
-import { wireWorkspaceCommands } from "./cli/workspace.js";
 import { wireWorkstreamCommands } from "./cli/workstream.js";
 import type { Db } from "./db.js";
 import { isTaskSortKey, TASK_SORT_KEYS, type TaskSortKey } from "./tasks/sort.js";
@@ -64,7 +63,6 @@ export {
   formatTaskListTable,
   formatTornDownWorkstreamsTable,
   formatTracks,
-  formatWorkspacesTable,
   formatWorkstreamsTable,
   IDLE_GLYPH,
   printLogRow,
@@ -141,7 +139,7 @@ export async function resolveOptionalWorkstream(): Promise<string | null> {
 // ─── Qualified entity refs (cross-workstream verb args) ────────────────
 //
 // Every verb that takes an entity name (mu task show <id>, mu agent
-// send <name>, mu workspace path <agent>) accepts EITHER:
+// send <name>, mu agent close <agent>) accepts EITHER:
 //   - bare `<name>`           → resolves via current workstream context
 //   - qualified `<ws>/<name>` → resolves directly, no -w needed
 // Implemented as a parse-at-CLI-entry helper so the SDK signatures
@@ -187,9 +185,6 @@ export function applyQualifiedRef(raw: string, opts: { workstream?: string }): s
 const ENTITY_TABLES = {
   task: { table: "tasks", keyCol: "local_id" },
   agent: { table: "agents", keyCol: "name" },
-  // workspace: lookup is by agent name (vcs_workspaces has agent_id
-  // FK; the operator-facing key is the agent name in `agents`).
-  workspace: { table: "agents", keyCol: "name" },
 } as const;
 
 export type EntityKind = keyof typeof ENTITY_TABLES;
@@ -567,7 +562,7 @@ export const parseLines = parseNonNegativeInt;
 // ─── Program definition ───────────────────────────────────────────────
 //
 // See the `wire*Commands` calls below for the full namespace/utility
-// list (`workstream`, `agent`, `task`, `workspace`, `log`, `state`,
+// list (`workstream`, `agent`, `task`, `log`, `state`,
 // `sql`, `sync`, `rebuild`, `db`, `doctor`, plus the bare `mu`
 // TTY-aware default) rather than a count here, which drifts.
 //
@@ -781,7 +776,6 @@ export function buildProgram(): Command {
   wireWorkstreamCommands(program);
   wireAgentCommands(program);
   wireSelfCommands(program);
-  wireWorkspaceCommands(program);
   wireTaskCommands(program);
   wireLogCommand(program);
   wireStateCommands(program);
@@ -874,14 +868,14 @@ function applyExitOverride(cmd: Command): void {
 
 // ─── Entry point ───────────────────────────────────────────────────────
 
-/** Bare verb-namespace invocations (`mu workspace`, `mu task`, …)
+/** Bare verb-namespace invocations (`mu agent`, `mu task`, …)
  *  used to print nothing and exit 0 because commander, given a parent
  *  with subcommands and no .action(), produces an empty render. We
  *  fix this BEFORE parseAsync rather than via .action() on each
  *  namespace because attaching .action() makes commander treat
  *  `mu task bogus` as a positional arg to `task` instead of routing
  *  it to the "unknown subcommand" lane (which other tests + emitError
- *  depend on). Surfaced by `bare_verb_namespaces_mu_workspace_task`.
+ *  depend on). Surfaced by `bare_verb_namespaces_mu_workspace_task` (when `workspace` was a namespace).
  *
  *  Triggers when:
  *    - argv after the program name is exactly one token

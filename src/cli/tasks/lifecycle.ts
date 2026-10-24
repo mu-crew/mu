@@ -26,8 +26,8 @@ import {
   unparkTask,
   weakDecisionWarning,
 } from "../../tasks.js";
-import { backendByName } from "../../vcs.js";
-import { getWorkspaceForAgent } from "../../workspace.js";
+import { dirtyFiles } from "../../vcs/git.js";
+import { getWorktreeFor } from "../../worktree.js";
 import { UsageError } from "../handle.js";
 
 export async function cmdTaskClose(
@@ -62,7 +62,7 @@ export async function cmdTaskClose(
   // attributed to the closing worker (mu-spawned worker via
   // MU_AGENT_NAME, adopted pane via title, otherwise $USER /
   // 'orchestrator') and so the success Next: hints can inspect that
-  // actor's workspace without resolving identity a second time.
+  // actor's worktree without resolving identity a second time.
   if (opts.evidence !== undefined && opts.evidence !== "") {
     sdkOpts.author = actor;
   }
@@ -146,7 +146,7 @@ export async function cmdTaskClose(
     { intent: "See full state", command: `mu state -w ${ws}` },
   ];
   if (r.changed && r.status === "CLOSED") {
-    await maybeAppendDirtyWorkspaceCommitHint(db, nextSteps, actor, ws, taskRow?.title ?? localId);
+    await maybeAppendDirtyWorktreeCommitHint(db, nextSteps, actor, ws, taskRow?.title ?? localId);
   }
   if (opts.json) {
     emitJson({ taskName: localId, ...r, warnings, nextSteps });
@@ -203,15 +203,16 @@ function transition(r: {
   return `${from} → ${formatPair({ status: r.status, substate: r.substate })}`;
 }
 
-/** The "Don't forget to commit" command for a dirty workspace. Picks up
- *  untracked files, because `isClean` counts them as dirty (`git commit
- *  -am` alone would refuse with "nothing added"). Exported for the
+/** The "Don't forget to commit" command for a dirty worktree. Picks up
+ *  untracked files (`git commit -am` alone would refuse with "nothing
+ *  added"), and names the path so it works from any cwd. Exported for the
  *  fast-tier test. */
-export function commitHintCommand(actor: string, workstream: string, taskTitle: string): string {
-  return `cd $(mu workspace path ${actor} -w ${workstream}) && git add -A && git commit -m ${shellSingleQuote(taskTitle)}`;
+export function commitHintCommand(worktree: string, taskTitle: string): string {
+  const dir = shellSingleQuote(worktree);
+  return `git -C ${dir} add -A && git -C ${dir} commit -m ${shellSingleQuote(taskTitle)}`;
 }
 
-async function maybeAppendDirtyWorkspaceCommitHint(
+async function maybeAppendDirtyWorktreeCommitHint(
   db: Db,
   nextSteps: NextStep[],
   actor: string,
@@ -220,14 +221,12 @@ async function maybeAppendDirtyWorkspaceCommitHint(
 ): Promise<void> {
   if (actor.length === 0) return;
   try {
-    const row = getWorkspaceForAgent(db, actor, workstream);
+    const row = getWorktreeFor(db, workstream, actor);
     if (row === undefined) return;
-    const backend = backendByName(row.backend);
-    const clean = await backend.isClean(row.path);
-    if (clean) return;
+    if ((await dirtyFiles(row.path)).length === 0) return;
     nextSteps.push({
       intent: "Don't forget to commit",
-      command: commitHintCommand(actor, workstream, taskTitle),
+      command: commitHintCommand(row.path, taskTitle),
     });
   } catch {
     // Best-effort hint only: a VCS probe failure must never make

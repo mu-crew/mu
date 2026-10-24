@@ -30,8 +30,6 @@ import {
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
-  WorkspaceOwnerBusyError,
-  WorkspacePreservedError,
 } from "../src/agents.js";
 import { NameAmbiguousError } from "../src/cli.js";
 import {
@@ -70,18 +68,16 @@ import {
   TaskTitleSlugEmptyError,
 } from "../src/tasks.js";
 import { PaneNotFoundError, TmuxError } from "../src/tmux.js";
-import { WorkspaceVcsRequiredError } from "../src/vcs.js";
-import {
-  HomeDirAsProjectRootError,
-  WorkspaceExistsError,
-  WorkspaceNotFoundError,
-  WorkspacePathNotEmptyError,
-} from "../src/workspace.js";
 import {
   WorkstreamExistsError,
   WorkstreamNameInvalidError,
   WorkstreamNameReservedError,
 } from "../src/workstream.js";
+import {
+  WorktreeDirtyError,
+  WorktreePathNotEmptyError,
+  WorktreeVcsRequiredError,
+} from "../src/worktree.js";
 
 interface NextStepLike {
   intent: string;
@@ -268,11 +264,6 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["mu agent abort alice", "--fresh --force"],
   },
   {
-    error: new WorkspaceOwnerBusyError("alice", "auth", "busy"),
-    label: "WorkspaceOwnerBusyError",
-    expectedTokens: ["mu agent abort alice", "mu workspace free alice --force"],
-  },
-  {
     error: new AgentSlashCommandUnsupportedError("alice", "auth", "/tree", ["/new"]),
     label: "AgentSlashCommandUnsupportedError",
     expectedTokens: ["mu agent read alice"],
@@ -286,11 +277,6 @@ const cases: NextStepsCase[] = [
     error: new AgentExtensionOutdatedError("alice", "auth", "fresh", "3.0.0"),
     label: "AgentExtensionOutdatedError",
     expectedTokens: ["mu agent close alice", "mu agent spawn alice"],
-  },
-  {
-    error: new WorkspacePreservedError("alice", "/path/to/ws"),
-    label: "WorkspacePreservedError",
-    expectedTokens: ["alice", "/path/to/ws"],
   },
 
   // src/mux/types.ts
@@ -347,33 +333,21 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["workspace list", "w1 --group"],
   },
 
-  // src/workspace/core.ts
+  // src/worktree.ts
   {
-    error: new WorkspaceExistsError("alice"),
-    label: "WorkspaceExistsError",
-    expectedTokens: ["alice"],
+    error: new WorktreeDirtyError("alice", "auth", "/path/to/ws", ["a.txt"]),
+    label: "WorktreeDirtyError",
+    expectedTokens: ["status --short", "/path/to/ws", "mu agent close alice -w auth --discard"],
   },
   {
-    error: new WorkspaceNotFoundError("alice"),
-    label: "WorkspaceNotFoundError",
-    expectedTokens: ["alice"],
+    error: new WorktreePathNotEmptyError("alice", "auth", "/path/to/ws", "uncommitted work"),
+    label: "WorktreePathNotEmptyError",
+    expectedTokens: ["mu agent close alice -w auth", "--discard", "--next-free"],
   },
   {
-    error: new WorkspacePathNotEmptyError("alice", "auth", "/path/to/ws"),
-    label: "WorkspacePathNotEmptyError",
-    expectedTokens: ["status --short", "/path/to/ws", "git worktree remove --force", "rm -rf"],
-  },
-  {
-    error: new HomeDirAsProjectRootError("alice", "auth", "/Users/alice"),
-    label: "HomeDirAsProjectRootError",
-    expectedTokens: ["alice", "auth", "<your-project>"],
-  },
-
-  // src/vcs/types.ts
-  {
-    error: new WorkspaceVcsRequiredError("/path/to/dir"),
-    label: "WorkspaceVcsRequiredError",
-    expectedTokens: ["--workspace-project-root", "git-repo"],
+    error: new WorktreeVcsRequiredError("/path/to/dir"),
+    label: "WorktreeVcsRequiredError",
+    expectedTokens: ["--root", "git-repo"],
   },
 
   // src/workstream.ts / src/db.ts
@@ -457,8 +431,7 @@ describe("typed errors all carry actionable errorNextSteps()", () => {
     const modules = await Promise.all([
       import("../src/agents.js"),
       import("../src/tasks.js"),
-      import("../src/vcs.js"),
-      import("../src/workspace.js"),
+      import("../src/worktree.js"),
       import("../src/db.js"),
       import("../src/workstream.js"),
       import("../src/mux.js"),

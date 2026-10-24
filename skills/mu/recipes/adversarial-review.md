@@ -31,7 +31,7 @@ PR or diff from several angles, use [review-panel](review-panel.md).
    ready.
 4. **Spawn a fresh reviewer.** A new agent, or `--fresh` on an idle one,
    so it has none of the author's reasoning, at the worker's tier or
-   higher and from another family ([models](models.md#checkers)). Give it the worker's workspace path
+   higher and from another family ([models](models.md#checkers)). Give it the worker's worktree path
    and commits read-only by instruction; it edits nothing.
 5. **Claim `review_x` for the reviewer**, send the brief (below), wait.
 6. **Act on the verdict:**
@@ -58,7 +58,7 @@ accepted commits are merged and the batch passes the merged-tree gates
 
 ## Reviewer brief
 
-Send this with the task id, workspace path, commit range, gate records and
+Send this with the task id, worktree path, commit range, gate records and
 [test-health](test-health.md) pointer:
 
 ```text
@@ -77,7 +77,7 @@ where it fails the acceptance criteria in `mu task notes <x>`.
 - If you could not check something (tool failed, no access), say
   UNVERIFIED for it. Unverified is not a pass and not a fail.
 - Your only writes are `mu task add` (findings), the verdict note, and
-  the close; leave the workspace as you found it.
+  the close; leave the worktree as you found it.
 
 Write the verdict note (FILES/COMMANDS/FINDINGS/VERIFIED), then close
 (long reasons: a heredoc variable, brief.md § Quoting):

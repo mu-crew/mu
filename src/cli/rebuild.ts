@@ -93,7 +93,7 @@ export async function cmdRebuild(
     );
     console.log(
       pc.dim(
-        "  That is expected: pane ids and absolute workspace paths are meaningless after a rebuild.",
+        "  That is expected: pane ids and absolute worktree paths are meaningless after a rebuild.",
       ),
     );
     console.log(pc.dim("  Re-spawn agents once you have swapped the DB in."));

@@ -17,6 +17,8 @@ function agent(name: string, state: LiveAgent["state"], idle: boolean): LiveAgen
     paneId: "%1",
     role: "worker",
     tab: null,
+    cwd: null,
+    base: null,
     createdAt: longAgo,
     updatedAt: longAgo,
     state,

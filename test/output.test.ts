@@ -224,7 +224,7 @@ describe("muTable (cli-table3 wrapper with the mu-standard truncation safety bel
     // visual row, NOT two wrapped rows. wordWrap:false + colWidths is
     // what cli-table3 needs to do this; the rest of the codebase relies
     // on it (e.g. fixed-row state renderers would silently blow out
-    // under word-wrap). Surfaced live by `mu workspace list` blowing the
+    // under word-wrap). Surfaced live by a worktree table blowing the
     // terminal width on the path column
     // (tables_truncate_long_cols_audit).
     const t = muTable({

@@ -44,12 +44,12 @@
 // ------------------------------------
 // The ops log only contains what capture recorded, and capture has
 // triggers on the PORTABLE tables only. `agents`, `task_auto` and
-// `vcs_workspaces` have no triggers, so they leave no ops and cannot be
+// `worktrees` have no triggers, so they leave no ops and cannot be
 // reconstructed.
 //
 // That is CORRECT, not a gap. These tables hold values that are
 // meaningless after recovery: `agents.pane_id` names a tmux pane in a
-// server that no longer has it, and `vcs_workspaces.path` is an absolute
+// server that no longer has it, and `worktrees.path` is an absolute
 // path whose working copy may be gone. Resurrecting either would produce
 // rows that lie about reality, and `mu doctor` would immediately flag
 // them as ghosts.
@@ -120,7 +120,7 @@ export interface RebuildReport {
   opsCopied: number;
   /** Ops that projected into a portable table. Always <= opsCopied:
    *  log-only entities (message / event / broadcast), machine-local
-   *  agent / workspace ops are copied but have no table to land in. */
+   *  agent ops are copied but have no table to land in. */
   opsProjected: number;
   /** Ops that changed a row when applied. Lower than opsProjected
    *  whenever later ops superseded earlier ones — which is normal and
@@ -140,7 +140,7 @@ export interface RebuildReport {
 /** Tables that hold real state but leave no ops, so a rebuild cannot
  *  reconstruct them. Both are machine-local by nature — see the module
  *  comment for why resurrecting them would be wrong even if we could. */
-const UNREBUILDABLE_TABLES = ["agents", "task_auto", "vcs_workspaces"] as const;
+const UNREBUILDABLE_TABLES = ["agents", "task_auto", "worktrees"] as const;
 
 /** Entities that exist only in the log: there is no portable table to
  *  project them into, so copying the op IS applying it.

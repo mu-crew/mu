@@ -26,5 +26,5 @@ you only between tool calls. Commit before you close: the orchestrator cherry-pi
 review or audit task records each problem per
 [findings § Record](findings.md#record).
 
-Done when your changes are committed in the workspace, the task note holds FILES, COMMANDS (with exit codes), VERIFIED and applicable gate records, and `mu task close` succeeded as your last action. Skipping close makes the orchestrator's
+Done when your changes are committed (your cwd is your worktree: never `cd` to it), the task note holds FILES, COMMANDS (with exit codes), VERIFIED and applicable gate records, and `mu task close` succeeded as your last action. Skipping close makes the orchestrator's
 wait hang. Won't do it: `close --as wontfix --why "..."`.

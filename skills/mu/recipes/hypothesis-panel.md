@@ -22,7 +22,7 @@ form independent theories; separate agents then try to kill them.
    ```
 
 3. **Test each hypothesis.** An experiment that changes code (force the
-   race, revert the commit) needs a workspace: `mu task accept` the
+   race, revert the commit) needs a worktree: `mu task accept` the
    hypothesis and dispatch it as a task. One that only reads (feed the
    data, grep the logs) is a delegate call with `record` on the
    hypothesis ([tasks-or-calls § Delegate call](tasks-or-calls.md#delegate-call)).

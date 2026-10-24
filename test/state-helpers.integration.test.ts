@@ -68,6 +68,8 @@ function agent(over: Partial<LiveAgent> = {}): LiveAgent {
     since: null,
     role: "full-access",
     tab: null,
+    cwd: null,
+    base: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...over,
@@ -191,7 +193,6 @@ describe("loadWorkstreamSnapshot", () => {
       triage: [],
       taskCount: 0,
       allTasks: [],
-      workspaces: [],
       recent: [],
       doctor: null,
     };
@@ -243,7 +244,6 @@ describe("loadWorkstreamSnapshot", () => {
       expect(fast.inProgress.map((t) => t.name)).toEqual(["owned"]);
       expect(fast.allTasks.map((t) => t.name).sort()).toEqual(["owned", "ready"]);
       expect(fast.tracks.length).toBeGreaterThan(0);
-      expect(fast.workspaces).toEqual([]);
       expect(fast.recent.length).toBeGreaterThan(0);
       expect(fast.view.agents).toEqual([]);
       expect(fast.view.orphans).toEqual([]);

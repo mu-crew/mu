@@ -94,14 +94,15 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **review gate** | A review task blocked by a work task, deciding whether its commits count. | "gate command" |
 | **merge batch** | Accepted commits combined into one pinned tree for full merge verification, without a crew-wide barrier. | "wave" (when only verification is batched) |
 
-### Workspaces and housekeeping
+### Worktrees and housekeeping
 
 | Term | Meaning | Don't use |
 | --- | --- | --- |
-| **workspace** | A git worktree for one agent. Never the herdr sense. | "branch", "checkout" |
-| **VCS backend** / **backend** | An implementation of `VcsBackend` or `MuxBackend`. Qualify which when both are in scope. | "driver", "provider" |
-| **missing workspace dir** | A `vcs_workspaces` row whose path is gone. Read surfaces still call it healthy. | "dangling row" |
-| **dormant** | An idle workstream with no agents or workspaces: **finished** (all closed, 14 days) or **abandoned** (open tasks, 60 days). | "stale", "dead", "empty" |
+| **worktree** | A git worktree for one agent (`spawn --worktree`): `git worktree add --detach`, the agent's cwd. Closed by the one rule: dirty refuses, merged is removed, unmerged commits keep a branch. Git only. | "workspace", "checkout" |
+| **worktree registry** | The machine-local `worktrees` table (path, agent, workstream, root, base, last collected head). Outlives the agent row; only closing the worktree removes it. | "workspace row" |
+| **backend** | An implementation of `MuxBackend` (tmux, herdr). | "driver", "provider" |
+| **missing worktree dir** | A `worktrees` row whose path is gone. Read surfaces still call it healthy. | "dangling row" |
+| **dormant** | An idle workstream with no agents or worktrees: **finished** (all closed, 14 days) or **abandoned** (open tasks, 60 days). | "stale", "dead", "empty" |
 | **residue** | Bytes in `<state-dir>` that no row references and no code reads. Reported by `mu doctor`, never removed. | "garbage", "junk" |
 | **disk↔DB reconciliation** | `mu doctor`'s report-only `disk` section. Not **reconcile** (rows vs mux) or **drift** (log vs tables). | "gc", "cleanup" |
 | **doctor** | The diagnostic command and its report. | "health check" |
@@ -205,7 +206,7 @@ deprecated, always `spawning`, and never read.
 | --- | --- | --- |
 | "subagent" | Means a hidden child in other tools; mu has none | "agent", "delegate", or "hidden subagent" when contrasting |
 | "session" | pi, tmux, and herdr each have one | "workstream", "mux session", "tmux session" |
-| "workspace" (mux sense) | Collides with the VCS workspace | "mux session"; "herdr workspace" only about herdr's CLI |
+| "workspace" | The retired word for a worktree; in the mux sense only "herdr workspace", about herdr's CLI | "worktree"; "mux session" |
 | "project" | Means a `.pi/` project root | "workstream" |
 | "context" | LLM, project, and fork context | Be specific: "task context" |
 | "tab" | tmux has windows (herdr calls them tabs) | "window"; `--tab` is the flag |

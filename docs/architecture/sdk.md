@@ -17,7 +17,7 @@ A verb's path:
 2. `handle()` opens the DB, runs ambient sync ingest
    ([sync.md](sync.md#the-ambient-hook)), and calls the SDK function.
 3. The SDK function opens `db.transaction(fn)()` for multi-statement
-   writes. Agent ops call the mux (and git for workspaces);
+   writes. Agent ops call the mux (and git for worktrees);
    task ops are pure SQL. Read paths reconcile against the mux.
 4. Capture triggers record ops in the same transaction
    ([ops-log.md](ops-log.md)). Machine-local changes go through
@@ -123,7 +123,7 @@ codes:
 | 0 | success |
 | 1 | generic error |
 | 2 | usage error (Commander's default) |
-| 3 | not found (agent, task, workspace) |
+| 3 | not found (agent, task) |
 | 4 | conflict (name collision, double claim, dirty tree, schema too old or new, outdated extension) |
 | 5 | substrate unavailable or unsafe (no multiplexer, mux or VCS failure, DB locked, ops-log drift, a `mu doctor` FAIL row, timeout) |
 | 6 | `mu task wait`: the reaper reopened a watched task (its pane died) |

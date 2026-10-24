@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentDiedOnSpawnError,
@@ -26,14 +26,17 @@ import {
 } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
-import { type Db, openDb } from "../src/db.js";
+import { type Db, defaultStateDir, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
-import { gitBackend } from "../src/vcs.js";
-import { workspacePath } from "../src/workspace.js";
+import { worktreePath } from "../src/worktree.js";
 import { withEnv } from "./_env.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
+
+/** MU_* vars the harness itself sets (and the clean-env check ignores). */
+const isTestKnob = (k: string) =>
+  k === "MU_SPAWN_CTL_MS" || k === "MU_SPAWN_LIVENESS_MS" || k === "MU_TMUX_SOCKET";
 
 const ENV_KEYS = ["MU_SPAWN_CTL_MS", "MU_SPAWN_LIVENESS_MS"] as const;
 
@@ -129,14 +132,59 @@ describe("spawn control socket", () => {
     expect(agent.ctl).toBe("skipped");
   });
 
-  it("pins MU_DB_PATH to the absolute db path and forwards MU_STATE_DIR", async () => {
+  it("injects exactly the six identity keys, with no MU_* var set in the caller", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    // The caller has no MU_* var of its own: the injected values come from mu, not from inheritance.
+    const stripped = Object.entries(process.env).filter(
+      ([k]) => k.startsWith("MU_") && !isTestKnob(k),
+    );
+    for (const [k] of stripped) delete process.env[k];
+    try {
+      await withEnv("SSH_AUTH_SOCK", undefined, async () => {
+        await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+      });
+      const args = newSessionArgs();
+      const env = Object.fromEntries(
+        args.flatMap((a, i) =>
+          args[i - 1] === "-e" ? [a.split(/=(.*)/s).slice(0, 2) as [string, string]] : [],
+        ),
+      );
+      expect(Object.keys(env).sort()).toEqual([
+        "MU_AGENT_NAME",
+        "MU_CTL_SOCK",
+        "MU_DB_PATH",
+        "MU_MANAGED_AGENT",
+        "MU_STATE_DIR",
+        "MU_WORKSTREAM",
+      ]);
+      expect(env).toMatchObject({
+        MU_MANAGED_AGENT: "1",
+        MU_AGENT_NAME: "worker-1",
+        MU_WORKSTREAM: "auth",
+        MU_CTL_SOCK: sockFor("worker-1"),
+        MU_DB_PATH: dbPath,
+        MU_STATE_DIR: defaultStateDir(),
+      });
+      expect(isAbsolute(env.MU_STATE_DIR ?? "")).toBe(true);
+    } finally {
+      for (const [k, v] of stripped) process.env[k] = v;
+    }
+  });
+
+  it("pins the default DB and state dir too: MU_DB_PATH is absolute even for an in-memory db", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    db.close();
+    db = openDb({ path: ":memory:" });
+    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(newSessionArgs()).toContain(`MU_DB_PATH=${join(defaultStateDir(), "mu.db")}`);
+  });
+
+  it("resolves a relative MU_STATE_DIR against the caller's cwd", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";
     await withEnv("MU_STATE_DIR", "rel-state", async () => {
       await spawnAgent(db, { name: "worker-1", workstream: "auth" });
     });
-    const args = newSessionArgs();
-    expect(args).toContain(`MU_DB_PATH=${dbPath}`);
-    expect(args).toContain(`MU_STATE_DIR=${join(process.cwd(), "rel-state")}`);
+    expect(newSessionArgs()).toContain(`MU_STATE_DIR=${join(process.cwd(), "rel-state")}`);
   });
 
   describe("SSH_AUTH_SOCK forwarding", () => {
@@ -192,14 +240,6 @@ describe("spawn control socket", () => {
       process.chdir(cwd);
     }
     expect(newSessionArgs()).toContain(`MU_DB_PATH=${join(realpathSync(dir), "mu.db")}`);
-  });
-
-  it("omits MU_DB_PATH for an in-memory db", async () => {
-    process.env.MU_SPAWN_CTL_MS = "0";
-    db.close();
-    db = openDb({ path: ":memory:" });
-    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
-    expect(newSessionArgs().some((a) => a.startsWith("MU_DB_PATH="))).toBe(false);
   });
 
   it("injects MU_CTL_SOCK for non-pi CLIs too, without a handshake", async () => {
@@ -347,47 +387,17 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     expect(spawnRows()[0]?.payload).toContain("phase=finalize");
   });
 
-  it("a workspace pre-stage failure logs agent.spawn_failed (phase=workspace)", async () => {
+  it("a worktree pre-stage failure logs agent.spawn_failed (phase=worktree)", async () => {
     installLivePanes({ extension: true });
     const err = await spawnAgent(db, {
       name: "worker-1",
       workstream: "auth",
-      workspace: true,
-      workspaceProjectRoot: "/nonexistent/mu-no-such-root",
+      worktree: true,
+      root: "/nonexistent/mu-no-such-root",
     }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
-    expect(spawnRows()[0]?.payload).toContain("phase=workspace");
+    expect(spawnRows()[0]?.payload).toContain("phase=worktree");
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
-  });
-
-  it("a frozen error thrown after workspace pre-stage reaches the caller as itself", async () => {
-    // Faked git seam: no real git in the fast tier.
-    vi.spyOn(gitBackend, "detect").mockResolvedValue(true);
-    vi.spyOn(gitBackend, "createWorkspace").mockImplementation(async (o) => {
-      mkdirSync(o.workspacePath, { recursive: true });
-      return { parentRef: "0".repeat(40) };
-    });
-    vi.spyOn(gitBackend, "isClean").mockResolvedValue(true);
-    vi.spyOn(gitBackend, "freeWorkspace").mockResolvedValue({ removed: true });
-    const frozen = Object.freeze(new Error("frozen mux failure"));
-    mux.restore();
-    state = freshMockState();
-    const fake = mockTmux(state).executor;
-    mux = installMux("tmux", async (args) => {
-      if (args[0] === "new-session") throw frozen;
-      return fake(args);
-    });
-    let err: unknown;
-    await withEnv("MU_STATE_DIR", join(dir, "state"), async () => {
-      err = await spawnAgent(db, {
-        name: "worker-1",
-        workstream: "auth",
-        workspace: true,
-        workspaceProjectRoot: dir,
-      }).catch((e) => e);
-    });
-    expect(err).toBe(frozen);
-    expect(spawnRows().map((r) => r.intent)).toContain("agent.spawn_failed");
   });
 
   it("a socket that appears late is probed within the stat interval, not the pane-check interval", async () => {
@@ -675,11 +685,11 @@ describe("nextFreeAgentName", () => {
     expect(nextFreeAgentName(db, "delegate-1", "other")).toBe("delegate-1");
   });
 
-  it("skips a name whose workspace dir outlived its agent", async () => {
+  it("skips a name whose worktree dir outlived its agent", async () => {
     await withEnv("MU_STATE_DIR", join(dir, "state"), async () => {
       // A dead delegate's checkout: no agent row, the dir kept as evidence.
-      mkdirSync(workspacePath("scratch", "delegate-review"), { recursive: true });
-      mkdirSync(workspacePath("scratch", "delegate-review-2"), { recursive: true });
+      mkdirSync(worktreePath("scratch", "delegate-review"), { recursive: true });
+      mkdirSync(worktreePath("scratch", "delegate-review-2"), { recursive: true });
       expect(nextFreeAgentName(db, "delegate-review", "scratch")).toBe("delegate-review-3");
       // Another workstream's dir does not count.
       expect(nextFreeAgentName(db, "delegate-review", "auth")).toBe("delegate-review");

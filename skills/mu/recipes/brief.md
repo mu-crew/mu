@@ -37,7 +37,7 @@ not in the brief, or one pointer away, does not exist for it.
 ## Shape
 
 ```text
-Task <id> in <ws>. Workspace: <path>.
+Task <id> in <ws>.
 Read: mu task notes <id> -w <ws>   (and the umbrella's, if any)
 
 GOAL: <one sentence>
