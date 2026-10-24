@@ -209,7 +209,7 @@ export async function cmdTaskAdd(
   );
   const tasks = ids.map((id) => {
     const t = getTask(db, id, workstream);
-    if (!t) throw new TaskNotFoundError(id);
+    if (!t) throw new TaskNotFoundError(id, workstream);
     return t;
   });
   const task = tasks[0];
@@ -542,7 +542,7 @@ export async function cmdTaskNotes(
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   const task = getTask(db, localId, ws);
-  if (!task) throw new TaskNotFoundError(localId);
+  if (!task) throw new TaskNotFoundError(localId, ws);
   const filterOpts: {
     tail?: number;
     since?: string;

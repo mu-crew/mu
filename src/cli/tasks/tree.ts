@@ -41,7 +41,7 @@ export async function cmdTaskTree(db: Db, rawId: string, opts: TreeOpts): Promis
   const { name: rootId, workstream: ws } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, rootId, ws);
   const root = getTask(db, rootId, ws);
-  if (!root) throw new TaskNotFoundError(rootId);
+  if (!root) throw new TaskNotFoundError(rootId, ws);
   const down = opts.down ?? false;
   const seen = new Set<string>([rootId]);
 

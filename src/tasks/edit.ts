@@ -339,10 +339,10 @@ export function insertNote(
 ): AddNoteResult {
   const task = getTask(db, taskLocalId, opts.workstream);
   if (!task) {
-    throw new TaskNotFoundError(taskLocalId);
+    throw new TaskNotFoundError(taskLocalId, opts.workstream);
   }
   const taskId = taskIdFor(db, task.name, task.workstreamName);
-  if (taskId === null) throw new TaskNotFoundError(taskLocalId);
+  if (taskId === null) throw new TaskNotFoundError(taskLocalId, task.workstreamName);
   const now = new Date().toISOString();
   db.transaction(() => {
     const r = db
@@ -559,9 +559,9 @@ function updateTaskImpl(
   scope: UpdateTaskScopeOption,
 ): UpdateTaskResult {
   const before = getTask(db, localId, scope.workstream);
-  if (!before) throw new TaskNotFoundError(localId);
+  if (!before) throw new TaskNotFoundError(localId, scope.workstream);
   const taskId = taskIdFor(db, before.name, before.workstreamName);
-  if (taskId === null) throw new TaskNotFoundError(localId);
+  if (taskId === null) throw new TaskNotFoundError(localId, before.workstreamName);
 
   const setters: string[] = [];
   const params: unknown[] = [];

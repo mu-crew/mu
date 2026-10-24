@@ -140,7 +140,7 @@ function setTaskStatusImpl(
   const substate = opts.substate ?? DEFAULT_SUBSTATE[status];
   if (!isValidPair(status, substate)) throw new InvalidSubstateError(status, substate);
   const before = getTask(db, localId, opts.workstream);
-  if (!before) throw new TaskNotFoundError(localId);
+  if (!before) throw new TaskNotFoundError(localId, opts.workstream);
   const base = {
     previousStatus: before.status,
     status,
@@ -539,7 +539,7 @@ export function parkTask(db: Db, localId: string, opts: ParkTaskOptions): SetSta
     db
       .transaction((): SetStatusResult => {
         const before = getTask(db, localId, opts.workstream);
-        if (!before) throw new TaskNotFoundError(localId);
+        if (!before) throw new TaskNotFoundError(localId, opts.workstream);
         if (before.status !== "OPEN") {
           throw new TaskParkStateError(localId, before.status, before.workstreamName);
         }
@@ -571,7 +571,7 @@ export function acceptTask(
     db
       .transaction((): SetStatusResult => {
         const before = getTask(db, localId, opts.workstream);
-        if (!before) throw new TaskNotFoundError(localId);
+        if (!before) throw new TaskNotFoundError(localId, opts.workstream);
         if (before.status !== "OPEN" || before.substate !== "triage") {
           return {
             previousStatus: before.status,
@@ -599,7 +599,7 @@ export function unparkTask(
     db
       .transaction((): SetStatusResult => {
         const before = getTask(db, localId, opts.workstream);
-        if (!before) throw new TaskNotFoundError(localId);
+        if (!before) throw new TaskNotFoundError(localId, opts.workstream);
         if (before.status !== "OPEN" || before.substate !== "parked") {
           return {
             previousStatus: before.status,

@@ -24,9 +24,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **Task guards: `--if <rev>` and `candidate_ids`.** `mu task delete`, `block`,
   `unblock`, `reparent`, `claim` and `release` accept `--if <rev>`, the task's
-  revision (newest op under its exact task, note and edge keys; never LIKE, so
-  `a_b` and `axb` do not collide; read after sync ingest, inside the verb's
-  transaction). A stale one exits 4 with one line naming the fresh preview and
+  revision (derived from current state, never a counter: a hash of the task
+  row, its owner, every incoming and outgoing edge and its note count, so a
+  peer's synced edge, blocker delete or note moves it too; exact lookups, never
+  LIKE, so `a_b` and `axb` do not collide; read after sync ingest, inside the
+  verb's transaction). A stale one exits 4 with one line naming the fresh preview and
   writes nothing; `--json` carries top-level `expected_rev` / `current_rev`.
   `task show --json` has `task.revision`, `task list --json` a `revision` per
   item. A `task delete` preview prints `rev` and hints `--if <rev>`; `--yes`
@@ -34,7 +36,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   one transaction (a failing batch rolls back); without `--if` it keeps its
   sequential partial success. A wrong task id adds read-only `candidate_ids`
   from the given workstream only (case/`-`/`_`-folded, substring or a typo
-  away), also on the unknown-id `delete` no-op; nothing writes through a
+  away), also on the unknown-id `delete` and `unblock` no-ops and on `note`,
+  `notes`, `update`, `tree` and `close` misses; nothing writes through a
   candidate. Unknown `unblock`/`delete` ids stay no-ops. SDK: `taskRevision`,
   `RevisionMismatchError`, `ifRevision` on `deleteTask`/`claimTask`/`releaseTask`.
   Agent-side guards are a separate unit.
