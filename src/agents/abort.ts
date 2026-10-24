@@ -6,11 +6,11 @@
 // abort at all: the verb is idempotent.
 //
 // interruptAgent (`mu agent send --interrupt`) is abort + send as one
-// ctl op; against an extension that predates it, abortAgent then send.
+// ctl op with a msgId receipt; an extension without msgId is refused up
+// front (AgentExtensionOutdatedError), never half-served.
 
 import { getAgent } from "../agents.js";
-import { CtlUnknownOpError, ctlRequest } from "../ctl/client.js";
-import type { CtlState } from "../ctl/protocol.js";
+import { type CtlState, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { resolveActorIdentity } from "../tasks/claim.js";
@@ -19,13 +19,15 @@ import {
   AgentAbortTimeoutError,
   AgentEmptySendError,
   AgentNotFoundError,
+  AgentRestartedError,
 } from "./errors.js";
 import {
   agentCtlSocket,
-  ctlFailure,
+  ctlSendWithReceipt,
   expectsCtl,
   recordSend,
   ctlRequestFor as request,
+  requireFeature,
 } from "./transport.js";
 
 export const DEFAULT_ABORT_TIMEOUT_MS = 30_000;
@@ -95,8 +97,18 @@ export async function abortAgent(
     );
   }
 
-  const w = await request(agent, sock, { op: "wait", afterRuns: st.runs ?? 0, timeoutMs });
+  // The incarnation the status named: a pi that restarted since is another
+  // process, whose run count means nothing here.
+  const w = await request(agent, sock, {
+    op: "wait",
+    afterRuns: st.runs ?? 0,
+    timeoutMs,
+    ...(st.incarnation !== undefined ? { incarnation: st.incarnation } : {}),
+  });
   if (!w.ok) {
+    if (w.error === INCARNATION_MISMATCH && st.incarnation !== undefined) {
+      throw new AgentRestartedError(name, opts.workstream, st.incarnation, w.incarnation);
+    }
     if (w.error === "timeout") throw new AgentAbortTimeoutError(name, opts.workstream, timeoutMs);
     throw new Error(`control socket refused the wait: ${w.error}`);
   }
@@ -121,8 +133,12 @@ export type InterruptResult = {
    * `mu agent wait --after-runs` baseline for the run the text starts.
    */
   runs?: number;
-  /** The extension predates the interrupt op: mu ran abort, then send. */
-  fallback: boolean;
+  /** The id the interrupt carried: `mu agent check <agent> <msgId>` asks whether it landed. */
+  msgId: string;
+  /** pi's incarnation: the `--inc` for `mu agent wait`. */
+  incarnation?: string;
+  /** Set when the reply never arrived and `status {msgId}` confirmed the interrupt landed. */
+  receipt?: "confirmed-after-timeout";
 };
 
 /**
@@ -163,20 +179,20 @@ async function interruptAgentImpl(
   const sock = opts.socket ?? agentCtlSocket(db, agent);
   if (!expectsCtl(agent, sock)) throw new AgentAbortNeedsCtlError(name, opts.workstream, agent.cli);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS;
-  let r: Awaited<ReturnType<typeof ctlRequest>>;
-  try {
-    r = await ctlRequest(sock, { op: "interrupt", text, timeoutMs });
-  } catch (e) {
-    if (!(e instanceof CtlUnknownOpError)) throw await ctlFailure(agent, sock, e);
-    // An extension loaded before the op: same steps, composed here.
-    const ab = await abortAgent(db, name, { ...opts, socket: sock });
-    const sent = await request(agent, sock, { op: "send", text });
-    if (!sent.ok) throw new Error(`control socket refused the send: ${sent.error}`);
+  await requireFeature(agent, sock, "msgId");
+  const sent = await ctlSendWithReceipt(agent, sock, { op: "interrupt", text, timeoutMs });
+  const { reply: r, msgId } = sent;
+  if (r === undefined) {
+    // Written, no reply, but status {msgId} says pi took it: wasBusy and
+    // pending are unknown, so they read false.
+    const c = sent.confirmed;
     return {
-      wasBusy: ab.aborted,
-      pending: ab.pending,
-      ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
-      fallback: true,
+      wasBusy: false,
+      pending: false,
+      msgId,
+      receipt: "confirmed-after-timeout",
+      ...(c?.runs !== undefined ? { runs: c.runs } : {}),
+      ...(c?.incarnation !== undefined ? { incarnation: c.incarnation } : {}),
     };
   }
   if (!r.ok) {
@@ -186,7 +202,8 @@ async function interruptAgentImpl(
   return {
     wasBusy: r.wasBusy ?? false,
     pending: r.pending ?? false,
+    msgId,
     ...(r.runs !== undefined ? { runs: r.runs } : {}),
-    fallback: false,
+    ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
   };
 }

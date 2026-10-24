@@ -419,16 +419,53 @@ export class AgentSendIndeterminateError extends Error implements HasNextSteps {
     public readonly workstream: string,
     public readonly op: string,
     public readonly reason: string,
+    /** The receipt id the send carried: `mu agent check <agent> <msgId>` asks whether it landed. */
+    public readonly msgId?: string,
   ) {
     super(
-      `agent ${agentName}: ${op} was written to its control socket but no reply arrived (${reason}); delivery unknown`,
+      `agent ${agentName}: ${op} was written to its control socket but no reply arrived (${reason}); delivery unknown${msgId === undefined ? "" : `, msgId ${msgId}`}. Never resend blindly`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    if (this.msgId !== undefined) {
+      return [
+        {
+          intent: "Ask whether it landed (a receipt check; never resend first)",
+          command: `mu agent check ${this.agentName} ${this.msgId} -w ${this.workstream}`,
+        },
+      ];
+    }
+    return [
+      {
+        intent: "Precaution before resending: pi may already have received it, so check first",
+        command: `mu agent read ${this.agentName} -w ${this.workstream} -n 20`,
+      },
+    ];
+  }
+}
+
+/**
+ * `mu agent wait --inc <i>` found another pi process behind the socket:
+ * the agent restarted, and the run the caller waits on died with the old
+ * process. Waiting more cannot recover it.
+ */
+export class AgentRestartedError extends Error implements HasNextSteps {
+  override readonly name = "AgentRestartedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly expected: string,
+    public readonly actual?: string,
+  ) {
+    super(
+      `agent ${agentName} restarted (incarnation ${expected} → ${actual ?? "unknown"}); its earlier run is gone: re-send the brief`,
     );
   }
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Precaution before resending: pi may already have received it, so check first",
-        command: `mu agent read ${this.agentName} -w ${this.workstream} -n 20`,
+        intent: "Re-send the brief to the restarted agent (fresh session)",
+        command: `mu agent send ${this.agentName} --fresh '...' -w ${this.workstream}`,
       },
     ];
   }
@@ -585,30 +622,53 @@ export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
+    /** The op it answered "unknown op" to, or the feature (msgId, incarnation) its hello lacks. */
     public readonly op: string,
     public readonly extVersion?: string,
-    /** Ops the extension serves (from its "unknown op" reply); absent from old extensions. */
+    /** Ops the extension serves (from its "unknown op" reply or hello); absent from old extensions. */
     public readonly ops?: readonly string[],
+    /** The recovery inputs only the caller can compute (the mux and the agent row). */
+    public readonly recovery: {
+      /** A shell line that types /reload into the pane through the mux (herdr). */
+      muxReload?: string;
+      /** The agent's original spawn command, rebuilt from its row. */
+      respawn?: string;
+      /** `op` is a feature of the hello reply, not an op. */
+      feature?: boolean;
+    } = {},
   ) {
     super(
-      `agent ${agentName}'s mu pi extension (${extVersion ?? "version unknown"}) predates op ${op}: its pi loaded an older mu build; reload or respawn it`,
+      `agent ${agentName}'s mu pi extension (${extVersion ?? "version unknown"}) predates ${recovery.feature === true ? "feature" : "op"} ${op}: its pi loaded an older mu build; reload or respawn it`,
     );
   }
+  /** The ladder (README, Ctl versioning): ctl /reload, else the mux reload, else respawn. */
   errorNextSteps(): NextStep[] {
     const w = `-w ${this.workstream}`;
+    const close = `mu agent close ${this.agentName} ${w}`;
     const respawn: NextStep = {
       intent: "Respawn the agent (loses its context)",
-      command: `mu agent close ${this.agentName} ${w} && mu agent spawn ${this.agentName} ${w} ...`,
+      command: this.recovery.respawn === undefined ? close : `${close} && ${this.recovery.respawn}`,
     };
     // Only an extension that serves op command runs /reload over ctl.
-    if (!this.ops?.includes("command")) return [respawn];
-    return [
-      {
-        intent: "Reload pi's extensions (keeps the session and context)",
-        command: `mu agent send ${this.agentName} '/reload' ${w}`,
-      },
-      { ...respawn, intent: "Or respawn the agent (loses its context)" },
-    ];
+    if (this.ops?.includes("command")) {
+      return [
+        {
+          intent: "Reload pi's extensions (keeps the session and context)",
+          command: `mu agent send ${this.agentName} /reload ${w}`,
+        },
+        { ...respawn, intent: "Or respawn the agent (loses its context)" },
+      ];
+    }
+    if (this.recovery.muxReload !== undefined) {
+      return [
+        {
+          intent: "Reload pi's extensions through the multiplexer (keeps the session)",
+          command: this.recovery.muxReload,
+        },
+        { ...respawn, intent: "Or respawn the agent (loses its context)" },
+      ];
+    }
+    return [respawn];
   }
 }
 

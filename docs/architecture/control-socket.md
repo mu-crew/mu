@@ -56,16 +56,39 @@ fields):
   `interrupt`) or the fresh prompt landed. A longer, empty or non-string
   `msgId` is refused before any side effect.
 
+The CLI side: every ctl `send`, `fresh` and `interrupt` carries a fresh
+`msgId` (`newMsgId`) and returns `msgId`, `incarnation` and `runs`
+(`SendResult`). A request that was written and got no reply gets ONE
+`status {msgId}` probe (5 s): accepted is a success with
+`receipt: "confirmed-after-timeout"`; anything else is
+`AgentSendIndeterminateError` (exit 1) carrying the `msgId`, whose Next
+is `mu agent check <a> <msgId>`. It never resends. `mu agent wait --inc`
+sends `incarnation` with its `wait`; an `incarnation mismatch` reply, or a
+reconnect after a dropped wait that finds another incarnation, raises
+`AgentRestartedError` (exit 4) out of `waitForAgents` (a rejected watch
+is fatal, never "unknown, poll it"). `abortAgent`'s own wait carries the
+status's incarnation too.
+
 These back `mu agent send` (`--fresh`, `--steer`, `--interrupt`, session commands), `mu agent wait`,
 `mu agent abort`, the agent state reading, and `mu_delegate`.
 
 ## Version skew
 
-An op the extension does not serve returns `unknown op: <op>` with its
-`ops` list. `mu agent send --interrupt` then composes `abort`, `wait`
-and `send` itself. Any other op raises `AgentExtensionOutdatedError` (exit 4), whose
-next steps are `/reload` through the mux (an extension that lacks the
-`command` op cannot run it over ctl) or a respawn. `mu doctor`
+A new CLI asks `hello` before it relies on a feature: `send`, `--fresh`
+and `--interrupt` need `msgId`, `wait --inc` needs `incarnation`
+(`requireFeature`, one hello per verb, never cached on disk). A pi that
+loaded an older mu lacks them and the verb refuses before writing, with
+`AgentExtensionOutdatedError` (exit 4). Slash commands (`/new`, `/reload`,
+`/compact`) are exempt: they carry no receipt. An op the extension does
+not serve returns `unknown op: <op>` with its `ops` list and raises the
+same error. Its next steps, in order: `mu agent send <a> /reload` when
+the extension serves `command`; else the mux's own reload line when the
+backend can type one (`MuxBackend.reloadCommands`, herdr's `agent
+prompt <pane> /reload`; tmux has none, so the step is omitted); else
+`mu agent close <a>` then the spawn line rebuilt from the agent row
+(`agents.command` and `command_source`, machine-local: an explicit
+`--command` is replayed verbatim, an env or cli-key command as `--cli`;
+a row older than the columns has no spawn line and omits it). `mu doctor`
 probes every pi agent's socket (the `ctl` row) and flags an
 `extVersion` older than the installed mu or a missing op. Its extension
 row reports whether `mu link pi` installed the extension.

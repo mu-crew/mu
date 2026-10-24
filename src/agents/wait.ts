@@ -95,6 +95,9 @@ export interface AgentWatch {
   /** The run count the watch waits past (ctl `afterRuns`): a re-wait with
    *  `--after-runs <this>` still catches a run that settles in between. */
   afterRuns?: number;
+  /** Resolves when the run ends. A REJECTION is fatal and propagates out of
+   *  the wait (an agent that restarted: its run is gone). It is never read
+   *  as "no settle seen". */
   settled: Promise<AgentStatusSnapshot>;
 }
 
@@ -193,6 +196,8 @@ export async function waitForAgents(
   // Event-driven agents: their settle wakes the loop instead of a poll.
   const abort = new AbortController();
   const watched = new Set<number>();
+  // A watch that rejected: the wait cannot go on (see AgentWatch.settled).
+  let fatal: { error: unknown } | undefined;
   let wake: () => void = () => {};
   let woken = new Promise<void>((resolve) => {
     wake = resolve;
@@ -233,10 +238,18 @@ export async function waitForAgents(
           }
           wake();
         },
-        () => {},
+        (error: unknown) => {
+          fatal ??= { error };
+          wake();
+        },
       );
     });
   }
+  const rethrow = (): void => {
+    if (fatal === undefined) return;
+    abort.abort();
+    throw fatal.error;
+  };
   const finish = (timedOut: boolean): AgentWaitResult => {
     abort.abort();
     return { agents: state, timedOut };
@@ -287,6 +300,7 @@ export async function waitForAgents(
   // Initial pass — seeds wasBusy for agents already busy; an agent that
   // is already idle here just sits pending (it must go busy first).
   await tick();
+  rethrow();
   if (state.every((agent) => agent.status === "unknown")) opts.onInitialUnknown?.(state);
   if (conditionMet()) return finish(false);
 
@@ -310,7 +324,9 @@ export async function waitForAgents(
     await Promise.race(sleeps);
     if (timer) clearTimeout(timer);
     rearm();
+    rethrow();
     await tick();
+    rethrow();
     if (conditionMet()) return finish(false);
   }
 }

@@ -16,6 +16,7 @@ import { renderOp } from "../src/log-render.js";
 import { listLogs } from "../src/logs.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { withHello } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
@@ -57,7 +58,7 @@ async function serve(): Promise<void> {
         const req = JSON.parse(line) as { op: string };
         const status = { state: "busy", since: SINCE, runs: 3, pending: false };
         const extra = req.op === "interrupt" ? { wasBusy: true } : {};
-        sock.end(encode({ v: 1, ok: true, ...status, ...extra }));
+        sock.end(encode(withHello(req, { v: 1, ok: true, ...status, ...extra })));
       }
     });
   });

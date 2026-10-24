@@ -327,6 +327,11 @@ export interface MuxBackend {
    *  mu-next), so callers branch on the method's presence, never on
    *  `mux.name`, and refuse when it is absent. */
   sendToPane?(paneId: string, text: string, opts?: SendOptions): Promise<void>;
+  /** The argv steps that type pi's `/reload` into `paneId` from outside, for
+   *  an agent whose extension cannot take `/reload` over ctl. herdr only
+   *  (its `agent prompt`); tmux has no reliable paste, so it omits this and
+   *  callers branch on presence. */
+  reloadCommands?(paneId: string): readonly MuxCommand[];
 
   /**
    * Name of the session the CALLER is running inside, or undefined when

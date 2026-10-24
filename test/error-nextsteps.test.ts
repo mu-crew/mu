@@ -26,6 +26,7 @@ import {
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
   AgentPaneStillAliveError,
+  AgentRestartedError,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
@@ -280,9 +281,16 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["mu agent read alice"],
   },
   {
-    error: new AgentExtensionOutdatedError("alice", "auth", "fresh", "3.0.0"),
+    error: new AgentExtensionOutdatedError("alice", "auth", "fresh", "3.0.0", undefined, {
+      respawn: "mu agent spawn alice -w auth --cli pi",
+    }),
     label: "AgentExtensionOutdatedError",
     expectedTokens: ["mu agent close alice", "mu agent spawn alice"],
+  },
+  {
+    error: new AgentRestartedError("alice", "auth", "inc-1", "inc-2"),
+    label: "AgentRestartedError",
+    expectedTokens: ["send alice --fresh"],
   },
 
   // src/mux/types.ts

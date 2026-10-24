@@ -328,6 +328,57 @@ describe("waitForAgents", () => {
       });
     });
 
+    // The restart rule (k_ctl_cli): a watch whose settle REJECTS is fatal.
+    // It is never read as "no settle seen, poll it" and never swallowed.
+    it("a rejected settle propagates out of the wait and aborts the other watches", async () => {
+      let signal: AbortSignal | undefined;
+      const boom = new Error("agent worker-1 restarted (incarnation a → b)");
+      await expect(
+        waitForAgents(db, [ref], {
+          pollMs: 1,
+          timeoutMs: 5_000,
+          readStatuses: async () => new Map(),
+          watch: async (_r, sig) => {
+            signal = sig;
+            return { initial: { status: "busy" }, settled: Promise.reject(boom) };
+          },
+        }),
+      ).rejects.toBe(boom);
+      expect(signal?.aborted).toBe(true);
+    });
+
+    it("a rejection that lands later, while another agent is still being waited on, still ends the wait", async () => {
+      const boom = new Error("restarted");
+      let reject: (e: Error) => void = () => {};
+      const settled = new Promise<AgentStatusSnapshot>((_ok, no) => {
+        reject = no;
+      });
+      const p = waitForAgents(db, [ref, { workstreamName: ws, name: "worker-2" }], {
+        pollMs: 1,
+        timeoutMs: 5_000,
+        readStatuses: async () => new Map(),
+        watch: async (r) =>
+          r.name === "worker-1"
+            ? { initial: { status: "busy" }, settled }
+            : { initial: { status: "busy" }, settled: new Promise<AgentStatusSnapshot>(() => {}) },
+      });
+      setTimeout(() => reject(boom), 5);
+      await expect(p).rejects.toBe(boom);
+    });
+
+    it("a resolved watch is unchanged by the rejection path", async () => {
+      const res = await waitForAgents(db, [ref], {
+        pollMs: 1,
+        timeoutMs: 5_000,
+        readStatuses: async () => new Map(),
+        watch: async () => ({
+          initial: { status: "busy" },
+          settled: Promise.resolve({ status: "needs_input" as const, lastText: "ok" }),
+        }),
+      });
+      expect(res.agents[0]).toMatchObject({ fired: true, lastText: "ok" });
+    });
+
     it("times out and aborts the watch signal", async () => {
       let signal: AbortSignal | undefined;
       const res = await waitForAgents(db, [ref], {

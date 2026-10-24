@@ -56,6 +56,16 @@ socket. Pick the mode by what the agent is doing:
   other slash command exits 2.
 - If the socket does not answer, the send fails with exit 1 and
   pastes nothing.
+- A send prints `msgId` and `incarnation` (`--json`), and its `Next:`
+  line is the exact wait: `mu agent wait <a> -w <ws> --after-runs <n>
+  --inc <i> --json`. `--inc` refuses (exit 4) when the agent restarted:
+  its run is gone, so re-send the brief.
+- A send written to the socket but never answered is checked, not
+  repeated: mu asks once for the `msgId` and either reports success
+  (`receipt: confirmed-after-timeout`) or exits 1 naming
+  `mu agent check <a> <msgId>`. That verb prints `accepted runs=<n>
+  at=<iso>` (0), `not-accepted` (3, resending is safe) or `unreachable`
+  (1, still unknown). Never resend before it says `not-accepted`.
 
 After a claim, spawn, or wait, the `Next:` block prints the right send.
 `mu agent spawn --send <text>` spawns and sends the first prompt in one

@@ -30,6 +30,8 @@ export type CtlProbe =
       ops?: string[];
       /** From hello: the mu version the extension was built from. */
       extVersion?: string;
+      /** The pi process's incarnation (status reply, else hello's); absent from older extensions. */
+      incarnation?: string;
     }
   | { kind: "missing" }
   | { kind: "refused"; error: string }
@@ -203,6 +205,9 @@ export async function ctlProbe(
       status: { state, since, runs, pending, ...(blocked !== undefined ? { blocked } : {}) },
       ...(hello?.ok && hello.ops !== undefined ? { ops: hello.ops } : {}),
       ...(hello?.ok && hello.extVersion !== undefined ? { extVersion: hello.extVersion } : {}),
+      ...(st.incarnation !== undefined || (hello?.ok && hello.incarnation !== undefined)
+        ? { incarnation: st.incarnation ?? (hello?.ok ? hello.incarnation : undefined) }
+        : {}),
     };
   } catch (e) {
     if (e instanceof CtlVersionError) return { kind: "version", got: e.got };

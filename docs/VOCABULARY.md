@@ -128,6 +128,8 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **resurrection** | A put newer than a seen tombstone, which legitimately recreates the row. | "undelete", "revive" |
 | **provenance** | Which HLC last wrote a field, derived from the ops log by query, never stored. | "version vector" |
 | **teardown** | Soft: kill a workstream's mux session, delete its machine-local agent rows whose pane is dead (a live pane keeps its row, orphaned; worktrees are never removed), set `torn_down_at`. Tasks, edges and notes stay, hidden. Previewed first, applied with `--if <rev>`. Panes do not come back. Reusing the name (`init --if`) hard-deletes the old rows. | "destroy", "nuke", "purge" |
+| **incarnation** | A pi process's id on its control socket: minted once per process, kept across `/new` and `/reload`, new after a restart. `send` returns it; `wait --inc` refuses another one. | "session id", "pid" |
+| **msgId / receipt** | The id a ctl `send`, `--fresh` or `--interrupt` carries. `status {msgId}` (`mu agent check`) says whether the extension accepted it: the receipt for a send that got no reply. Never a reason to resend. | "ack", "nonce" |
 | **drift** | The ops log and live tables disagree. Always a bug. | "inconsistency", "corruption" |
 | **shallow / deep check** | Drift checks in `mu doctor` and `mu doctor --deep` (full rebuild). | "fsck" |
 | **scored** | `tasks.scored`: impact/effort were given (`-i`/`-e`, `update`), not defaulted (50 / 1). `ready` order: scored by impact/effort desc, then unscored oldest first. | "prioritised" |

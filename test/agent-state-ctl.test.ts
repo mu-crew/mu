@@ -17,12 +17,13 @@ import {
 import { getAgent, insertAgent, listLiveAgents } from "../src/agents.js";
 import { formatAgentsTable } from "../src/cli/format.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
-import { encode, LineDecoder } from "../src/ctl/protocol.js";
+import { encode, INCARNATION_MISMATCH, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { StallDetectedDuringWaitError } from "../src/tasks/errors.js";
 import { addTask, claimTask, setWaitStuckWarnForTests, waitForTasks } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
+import { helloReply, INC } from "./_ctl-ext.js";
 import { runCli } from "./_runCli.js";
 
 const WS = "cs";
@@ -74,6 +75,8 @@ interface FakeExt {
   unblock: () => void;
   /** Drop every held wait connection; the server keeps answering. */
   dropWaits: () => void;
+  /** pi restarts: a NEW incarnation answers on the same socket and every held wait drops. */
+  restart: (incarnation: string) => void;
   close: () => Promise<void>;
 }
 
@@ -89,6 +92,7 @@ async function fakeExtension(
   let blocked: { kind: string; title?: string; since: number } | undefined;
   let lastText: string | undefined;
   let lastError: string | undefined;
+  let inc = INC;
   const settled = () => ({
     ...(lastText === undefined ? {} : { lastText }),
     ...(lastError === undefined ? {} : { lastError }),
@@ -96,6 +100,7 @@ async function fakeExtension(
   const status = () => ({
     v: 1,
     ok: true,
+    incarnation: inc,
     state,
     since,
     runs,
@@ -118,7 +123,15 @@ async function fakeExtension(
           returnOnBlocked?: boolean;
         };
         ops.push(req.op);
-        if (req.op === "wait") {
+        if (req.op === "hello") {
+          sock.end(encode(helloReply({ incarnation: inc })));
+        } else if (
+          req.op === "wait" &&
+          (req as { incarnation?: string }).incarnation !== undefined &&
+          (req as { incarnation?: string }).incarnation !== inc
+        ) {
+          sock.end(encode({ v: 1, ok: false, error: INCARNATION_MISMATCH, incarnation: inc }));
+        } else if (req.op === "wait") {
           const onBlocked = req.returnOnBlocked === true;
           if (req.afterRuns !== undefined && runs > req.afterRuns && state === "idle") {
             sock.end(encode({ ...status(), ...settled() }));
@@ -148,6 +161,11 @@ async function fakeExtension(
       blocked = undefined;
     },
     dropWaits: () => {
+      for (const w of waiters.splice(0)) w.sock.destroy();
+    },
+    restart: (incarnation: string) => {
+      inc = incarnation;
+      runs = 0;
       for (const w of waiters.splice(0)) w.sock.destroy();
     },
     settle: (text?: string, error?: string) => {
@@ -584,5 +602,136 @@ describe("mu task wait --stuck-after for a pi owner", () => {
   it("stuckAfterMs 0 disables the ctl threshold too", async () => {
     await fakeExtension({ state: "idle", since: Date.now() - 600_000, runs: 1 });
     expect(await waitOnPia({ stuckAfterMs: 0 })).toBe(false);
+  });
+});
+
+describe("mu agent wait --inc: a restarted agent is refused, never waited on", () => {
+  const waitArgs = (...extra: string[]) => [
+    "agent",
+    "wait",
+    "pia",
+    "-w",
+    WS,
+    "--timeout",
+    "5",
+    "--json",
+    ...extra,
+  ];
+
+  it("the matching incarnation waits normally and the request carries it", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    const pending = runCli(waitArgs("--after-runs", "0", "--inc", INC), dbPath);
+    for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    ext.settle("done");
+    const res = await pending;
+    expect(res.exitCode).toBeNull();
+    expect(JSON.parse(res.stdout).agents[0]).toMatchObject({ fired: true, lastText: "done" });
+  });
+
+  it("a mismatch reply is AgentRestartedError: exit 4, old and new incarnation named, one stderr line", async () => {
+    await fakeExtension({ state: "idle", since: 1, runs: 3 });
+    const res = await runCli(waitArgs("--after-runs", "2", "--inc", "inc-OLD"), dbPath);
+    expect(res.exitCode).toBe(4);
+    const env = JSON.parse(res.stderr) as { error: string; message: string };
+    expect(env.error).toBe("AgentRestartedError");
+    expect(env.message).toBe(
+      `agent pia restarted (incarnation inc-OLD → ${INC}); its earlier run is gone: re-send the brief`,
+    );
+  });
+
+  it("human mode: the message is the first stderr line, then its one Next step", async () => {
+    await fakeExtension({ state: "idle", since: 1, runs: 3 });
+    const res = await runCli(
+      ["agent", "wait", "pia", "-w", WS, "--timeout", "5", "--after-runs", "2", "--inc", "inc-OLD"],
+      dbPath,
+    );
+    expect(res.exitCode).toBe(4);
+    const sgr = new RegExp(`${String.fromCharCode(27)}\\[[\\d;]*m`, "g");
+    const lines = res.stderr
+      .replace(sgr, "")
+      .split("\n")
+      .filter((l) => l.trim() !== "");
+    expect(lines[0]).toBe(
+      `conflict: agent pia restarted (incarnation inc-OLD → ${INC}); its earlier run is gone: re-send the brief`,
+    );
+    expect(lines).toHaveLength(3); // message, "Next:", one command
+  });
+
+  it("pi restarts MID-wait: the held wait drops, the reconnect finds another incarnation: fatal, not polled", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    const pending = runCli(waitArgs("--after-runs", "0", "--inc", INC), dbPath);
+    for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    ext.restart("inc-NEW");
+    const res = await pending;
+    expect(res.exitCode).toBe(4);
+    expect(JSON.parse(res.stderr).message).toContain(`${INC} → inc-NEW`);
+  });
+
+  it("the SAME incarnation answering after a drop (a /new) still falls back to polling", async () => {
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    const pending = runCli(waitArgs("--after-runs", "0", "--inc", INC), dbPath);
+    for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    ext.dropWaits();
+    ext.settle("after the drop");
+    const res = await pending;
+    expect(res.exitCode).toBeNull();
+    expect(JSON.parse(res.stdout).agents[0]).toMatchObject({ fired: true });
+  });
+
+  it("without --inc nothing changes: a restarted pi is still waited on", async () => {
+    const ext = await fakeExtension({ state: "idle", since: 1, runs: 3 });
+    ext.restart("inc-NEW");
+    ext.settle("fresh answer");
+    const res = await runCli(waitArgs("--after-runs", "0"), dbPath);
+    expect(res.exitCode).toBeNull();
+    expect(JSON.parse(res.stdout).agents[0]).toMatchObject({ fired: true });
+  });
+
+  it("an extension without the incarnation feature: AgentExtensionOutdatedError before waiting", async () => {
+    const path = ctlSocketPath(WS, "pia", dir);
+    mkdirSync(dirname(path), { recursive: true });
+    const server = createServer((sock) => {
+      const dec = new LineDecoder();
+      sock.setEncoding("utf8");
+      sock.on("error", () => {});
+      sock.on("data", (chunk: string) => {
+        for (const line of dec.push(chunk)) {
+          const req = JSON.parse(line) as { op: string };
+          sock.end(
+            encode(
+              req.op === "hello"
+                ? helloReply({ features: ["msgId"], ops: ["hello", "status", "wait"] })
+                : { v: 1, ok: true, state: "idle", since: 1, runs: 0, pending: false },
+            ),
+          );
+        }
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(path, () => r()));
+    const res = await runCli(waitArgs("--inc", "x"), dbPath);
+    expect(res.exitCode).toBe(4);
+    expect(JSON.parse(res.stderr)).toMatchObject({ error: "AgentExtensionOutdatedError" });
+  });
+
+  it("--inc needs a pi agent and one agent: usage errors", async () => {
+    insertAgent(db, { name: "shy", workstream: WS, paneId: "%2", cli: "claude" });
+    const noPi = await runCli(
+      ["agent", "wait", "shy", "-w", WS, "--timeout", "1", "--inc", "x"],
+      dbPath,
+    );
+    expect(noPi.exitCode).toBe(2);
+    expect(noPi.stderr).toContain("--inc needs a pi agent");
+    const two = await runCli(
+      ["agent", "wait", "pia", "shy", "-w", WS, "--timeout", "1", "--inc", "x"],
+      dbPath,
+    );
+    expect(two.exitCode).toBe(2);
   });
 });

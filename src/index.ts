@@ -31,6 +31,7 @@ export {
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
   AgentPaneStillAliveError,
+  AgentRestartedError,
   type AgentRow,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,

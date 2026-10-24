@@ -20,6 +20,7 @@ import {
   AgentSlashCommandUnsupportedError,
   expectsCtl,
   insertAgent,
+  respawnCommand,
   sendToAgent,
   sendViaTransport,
 } from "../src/agents.js";
@@ -29,6 +30,7 @@ import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { helloReply, INC, withHello } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
@@ -38,6 +40,7 @@ let db: Db;
 let mux: MuxHarness;
 let servers: Server[];
 let received: Record<string, unknown>[];
+let hellos: Record<string, unknown>[];
 let paneAlive: boolean;
 
 beforeEach(() => {
@@ -48,6 +51,7 @@ beforeEach(() => {
   ensureWorkstream(db, "auth");
   servers = [];
   received = [];
+  hellos = [];
   setSleepForTests(async () => {});
   paneAlive = true;
   mux = installMux("tmux", async (args) => ({
@@ -85,8 +89,16 @@ async function serveExtension(
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
         const req = JSON.parse(line) as Record<string, unknown>;
-        received.push(req);
-        sock.end(encode(typeof reply === "function" ? reply(req) : reply));
+        // hello is the served-ops check, not the request under test.
+        if (req.op !== "hello") received.push(req);
+        else hellos.push(req);
+        sock.end(
+          encode(
+            typeof reply === "function"
+              ? reply(req)
+              : withHello(req, reply as Record<string, unknown>),
+          ),
+        );
       }
     });
     sock.on("error", () => {});
@@ -136,8 +148,15 @@ describe("sendViaTransport", () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));
     const res = await sendToAgent(db, "worker-1", "hello", { workstream: "auth" });
-    expect(res).toEqual({ transport: "ctl", state: "busy" });
-    expect(received).toEqual([{ op: "send", text: "hello", mode: "followUp" }]);
+    expect(res).toEqual({
+      transport: "ctl",
+      state: "busy",
+      incarnation: INC,
+      msgId: expect.any(String),
+    });
+    expect(received).toEqual([{ op: "send", text: "hello", mode: "followUp", msgId: res.msgId }]);
+    expect(res.msgId).toHaveLength(36);
+    expect(hellos).toHaveLength(1); // one served-ops check per send
     expect(pasted()).toBe(false);
   });
 
@@ -190,24 +209,105 @@ describe("sendViaTransport", () => {
     expect(err).toBeInstanceOf(AgentCtlUnreachableError);
   });
 
-  it("a send closed without a reply is AgentSendIndeterminateError, no paste", async () => {
-    seed("worker-1");
+  /**
+   * An extension that answers hello and status{msgId}, but swallows the
+   * request under test (written, then the connection closes: delivery
+   * unknown). `accepts` is what `status {msgId}` then says.
+   */
+  async function serveSilentOn(op: string, accepts: boolean): Promise<void> {
     const path = sockFor("worker-1");
     mkdirSync(dirname(path), { recursive: true });
     const server = createServer((sock) => {
-      sock.on("data", () => sock.end());
+      const dec = new LineDecoder();
+      sock.setEncoding("utf8");
       sock.on("error", () => {});
+      sock.on("data", (chunk: string) => {
+        for (const line of dec.push(chunk)) {
+          const req = JSON.parse(line) as Record<string, unknown>;
+          if (req.op === "hello") {
+            hellos.push(req);
+            sock.end(encode(helloReply()));
+            continue;
+          }
+          received.push(req);
+          if (req.op === op) sock.destroy();
+          else if (req.op === "status" && typeof req.msgId === "string") {
+            sock.end(
+              encode({
+                v: 1,
+                ok: true,
+                incarnation: INC,
+                state: "busy",
+                since: 1,
+                runs: 5,
+                pending: false,
+                msg: accepts
+                  ? { id: req.msgId, accepted: true, runs: 5, at: 1 }
+                  : { id: req.msgId, accepted: false },
+              }),
+            );
+          } else sock.end(encode({ v: 1, ok: false, error: "unexpected" }));
+        }
+      });
     });
     servers.push(server);
     await new Promise<void>((r) => server.listen(path, () => r()));
+  }
+
+  it("a send closed without a reply, not accepted: AgentSendIndeterminateError carrying the msgId; ONE status probe, never a resend", async () => {
+    seed("worker-1");
+    await serveSilentOn("send", false);
     const err = await sendToAgent(db, "worker-1", "hello", { workstream: "auth" }).catch(
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(AgentSendIndeterminateError);
+    const id = (received[0] as { msgId: string }).msgId;
+    expect((err as AgentSendIndeterminateError).msgId).toBe(id);
+    expect((err as Error).message).toContain(id);
     expect((err as AgentSendIndeterminateError).errorNextSteps().map((s) => s.command)).toEqual([
-      "mu agent read worker-1 -w auth -n 20",
+      `mu agent check worker-1 ${id} -w auth`,
     ]);
+    expect(received.map((r) => r.op)).toEqual(["send", "status"]);
+    expect(received[1]).toEqual({ op: "status", msgId: id });
     expect(pasted()).toBe(false);
+  });
+
+  it("a send closed without a reply, but status {msgId} says accepted: success with receipt confirmed-after-timeout", async () => {
+    seed("worker-1");
+    await serveSilentOn("send", true);
+    const res = await sendToAgent(db, "worker-1", "hello", { workstream: "auth" });
+    expect(res).toMatchObject({
+      transport: "ctl",
+      receipt: "confirmed-after-timeout",
+      runs: 5,
+      incarnation: INC,
+      msgId: expect.any(String),
+    });
+    expect(received.map((r) => r.op)).toEqual(["send", "status"]);
+  });
+
+  it.each([
+    ["fresh", { fresh: true }],
+    ["send", { mode: "steer" as const }],
+  ])("%s: same receipt path (confirmed, then not accepted)", async (op, extra) => {
+    seed("worker-1");
+    await serveSilentOn(op, true);
+    const ok = await sendToAgent(db, "worker-1", "go", { workstream: "auth", ...extra });
+    expect(ok.receipt).toBe("confirmed-after-timeout");
+    expect(received.map((r) => r.op)).toEqual([op, "status"]);
+  });
+
+  it("the CLI: indeterminate exits 1 and --json carries msgId; confirmed prints the wait hint with --inc", async () => {
+    seed("worker-1");
+    await serveSilentOn("send", false);
+    const bad = await runCli(
+      ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(bad.exitCode).toBe(1);
+    const env = JSON.parse(bad.stderr) as { error: string; message: string };
+    expect(env.error).toBe("AgentSendIndeterminateError");
+    expect(env.message).toContain((received[0] as { msgId: string }).msgId);
   });
 
   it("an indeterminate send on a vanished pane is still AgentPaneDeadError", async () => {
@@ -311,7 +411,7 @@ describe("pi session commands over ctl", () => {
     );
   });
 
-  it("an extension without op command raises AgentExtensionOutdatedError (respawn hint)", async () => {
+  it("an extension without op command raises AgentExtensionOutdatedError on /reload (slash commands skip the msgId check)", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), (req) =>
       req.op === "hello"
@@ -324,31 +424,30 @@ describe("pi session commands over ctl", () => {
     expect(err).toBeInstanceOf(AgentExtensionOutdatedError);
     expect(err).toMatchObject({ op: "command" });
     const cmds = (err as AgentExtensionOutdatedError).errorNextSteps().map((n) => n.command);
-    expect(cmds).toEqual([
-      "mu agent close worker-1 -w auth && mu agent spawn worker-1 -w auth ...",
-    ]);
+    // a seeded row has no stored command: the respawn line is omitted, not guessed
+    expect(cmds).toEqual(["mu agent close worker-1 -w auth"]);
     expect(pasted()).toBe(false);
   });
 
-  it("an extension that serves op command but not fresh: reload over ctl", async () => {
+  it("an extension that serves op command but lacks the msgId feature: refused before writing; Next is /reload over ctl, then respawn", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), (req) =>
       req.op === "hello"
-        ? { v: 1, ok: true, extVersion: "3.2.1" }
-        : {
-            v: 1,
-            ok: false,
-            error: `unknown op: ${String(req.op)}`,
-            ops: ["hello", "send", "command"],
-          },
+        ? helloReply({ features: [], ops: ["hello", "send", "command"], extVersion: "3.2.1" })
+        : { v: 1, ok: true, state: "idle" },
     );
     const err = await sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true }).catch(
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(AgentExtensionOutdatedError);
-    expect(err).toMatchObject({ op: "fresh", ops: ["hello", "send", "command"] });
+    expect(err).toMatchObject({ op: "msgId", extVersion: "3.2.1" });
+    expect((err as Error).message).toContain("predates feature msgId");
     const cmds = (err as AgentExtensionOutdatedError).errorNextSteps().map((n) => n.command);
-    expect(cmds[0]).toBe("mu agent send worker-1 '/reload' -w auth");
+    expect(cmds).toEqual([
+      "mu agent send worker-1 /reload -w auth",
+      "mu agent close worker-1 -w auth",
+    ]);
+    expect(received).toEqual([]); // nothing was written
     expect(pasted()).toBe(false);
   });
 
@@ -370,7 +469,14 @@ describe("pi session commands over ctl", () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));
     await sendToAgent(db, "worker-1", "/tmp/x.log has the trace", { workstream: "auth" });
-    expect(received).toEqual([{ op: "send", text: "/tmp/x.log has the trace", mode: "followUp" }]);
+    expect(received).toEqual([
+      {
+        op: "send",
+        text: "/tmp/x.log has the trace",
+        mode: "followUp",
+        msgId: expect.any(String),
+      },
+    ]);
   });
 
   // The point of Task 20: a pi agent never reaches pane scraping or paste timing.
@@ -424,7 +530,7 @@ describe("mu agent send transport", () => {
     } finally {
       setStdinReaderForTests(null);
     }
-    expect(received).toEqual([{ op: "fresh", text: brief }]);
+    expect(received).toEqual([{ op: "fresh", text: brief, msgId: expect.any(String) }]);
   });
 
   it("agent.send is attributed to $MU_AGENT_NAME, not system", async () => {
@@ -450,7 +556,12 @@ describe("mu agent send transport", () => {
       dbPath,
     );
     expect(exitCode).toBeNull();
-    expect(JSON.parse(stdout)).toMatchObject({ transport: "ctl", state: "busy" });
+    expect(JSON.parse(stdout)).toMatchObject({
+      transport: "ctl",
+      state: "busy",
+      incarnation: INC,
+      msgId: received[0]?.msgId,
+    });
     expect(received[0]).toMatchObject({ mode: "steer" });
   });
 
@@ -492,7 +603,7 @@ describe("mu agent send transport", () => {
     const cmds = (JSON.parse(stdout) as { nextSteps: Array<{ command: string }> }).nextSteps.map(
       (s) => s.command,
     );
-    expect(cmds[0]).toBe("mu agent wait worker-1 --after-runs 4 --json -w auth");
+    expect(cmds[0]).toBe(`mu agent wait worker-1 -w auth --after-runs 4 --inc ${INC} --json`);
     expect(cmds.some((c) => c.startsWith("mu agent read"))).toBe(false);
   });
 
@@ -514,7 +625,9 @@ describe("mu agent send transport", () => {
       const cmds = (JSON.parse(stdout) as { nextSteps: Array<{ command: string }> }).nextSteps.map(
         (s) => s.command,
       );
-      expect(cmds[0], flag).toBe("mu agent wait worker-1 --after-runs 7 --json -w auth");
+      expect(cmds[0], flag).toBe(
+        `mu agent wait worker-1 -w auth --after-runs 7 --inc ${INC} --json`,
+      );
       expect(
         cmds.some((c) => c.startsWith("mu agent read")),
         flag,
@@ -581,7 +694,7 @@ describe("send --fresh", () => {
     await serveExtension(sockFor("worker-1"));
     const res = await sendToAgent(db, "worker-1", "/do-thing", { workstream: "auth", fresh: true });
     expect(res.transport).toBe("ctl");
-    expect(received).toEqual([{ op: "fresh", text: "/do-thing" }]);
+    expect(received).toEqual([{ op: "fresh", text: "/do-thing", msgId: res.msgId }]);
     expect(pasted()).toBe(false);
   });
 
@@ -589,7 +702,7 @@ describe("send --fresh", () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));
     await sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true, force: true });
-    expect(received).toEqual([{ op: "fresh", text: "x", force: true }]);
+    expect(received).toEqual([{ op: "fresh", text: "x", force: true, msgId: expect.any(String) }]);
   });
 
   it("maps a busy refusal to AgentBusyError with abort / --force next steps", async () => {
@@ -604,30 +717,93 @@ describe("send --fresh", () => {
     expect(cmds.join("\n")).toContain("--fresh --force");
   });
 
-  // The incident: a pi started before --fresh merged answers "unknown op".
+  // The incident: a pi started before msgId/fresh merged. Its hello lists no
+  // features and no command op.
   const oldExtension = (req: Record<string, unknown>) =>
     req.op === "hello"
-      ? { v: 1, ok: true, agent: "worker-1", extVersion: "3.0.0" }
+      ? { v: 1, ok: true, agent: "worker-1", extVersion: "3.0.0", ops: ["hello", "send"] }
       : { v: 1, ok: false, error: `unknown op: ${String(req.op)}`, ops: ["hello", "send"] };
 
-  it("an extension without op fresh raises AgentExtensionOutdatedError: /reload or respawn", async () => {
-    seed("worker-1");
+  it("no ctl command op, no mux reload (tmux): the ladder is close, then the respawn line rebuilt from the row", async () => {
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%1",
+      cli: "pi-meta",
+      command: "pi-meta --no-solo",
+      commandSource: "explicit",
+      cwd: "/work/x",
+    });
     await serveExtension(sockFor("worker-1"), oldExtension);
     const err = await sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true }).catch(
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(AgentExtensionOutdatedError);
-    expect(err).toMatchObject({ op: "fresh", extVersion: "3.0.0" });
+    expect(err).toMatchObject({ op: "msgId", extVersion: "3.0.0" });
     const cmds = (err as AgentExtensionOutdatedError).errorNextSteps().map((n) => n.command);
-    // oldExtension does not serve op command: /reload over ctl is unavailable.
     expect(cmds).toEqual([
-      "mu agent close worker-1 -w auth && mu agent spawn worker-1 -w auth ...",
+      "mu agent close worker-1 -w auth && mu agent spawn worker-1 -w auth --cli pi-meta --command 'pi-meta --no-solo' --cwd /work/x",
     ]);
     expect(pasted()).toBe(false);
   });
 
-  it("CLI: the outdated-extension error exits 4 with the respawn step in --json", async () => {
-    seed("worker-1");
+  it("a row with a command but no recorded source is not guessed: no respawn line", () => {
+    const row = insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%1",
+      command: "pi",
+      commandSource: null,
+    });
+    expect(respawnCommand(row)).toBeUndefined();
+  });
+
+  it("an env- or cli-key command is replayed as --cli only; a worktree agent respawns with --worktree", async () => {
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%1",
+      cli: "pi",
+      command: "/opt/pi",
+      commandSource: "env",
+      cwd: "/wt/auth/worker-1",
+      base: "abc123",
+    });
+    await serveExtension(sockFor("worker-1"), oldExtension);
+    const err = await sendToAgent(db, "worker-1", "x", { workstream: "auth" }).catch(
+      (e: unknown) => e,
+    );
+    const cmds = (err as AgentExtensionOutdatedError).errorNextSteps().map((n) => n.command);
+    expect(cmds).toEqual([
+      "mu agent close worker-1 -w auth && mu agent spawn worker-1 -w auth --cli pi --worktree",
+    ]);
+  });
+
+  it("herdr: the mux reload line (agent prompt /reload) sits between ctl /reload and respawn", async () => {
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "pi" });
+    const herdr = installMux("herdr", [["agent prompt", "{}"]]);
+    try {
+      await serveExtension(sockFor("worker-1"), oldExtension);
+      const err = await sendToAgent(db, "worker-1", "x", { workstream: "auth" }).catch(
+        (e: unknown) => e,
+      );
+      const cmds = (err as AgentExtensionOutdatedError).errorNextSteps().map((n) => n.command);
+      expect(cmds).toEqual(["herdr agent prompt w1:p1 /reload", "mu agent close worker-1 -w auth"]);
+    } finally {
+      herdr.restore();
+    }
+  });
+
+  it("CLI: the outdated-extension error exits 4 with the ladder in --json", async () => {
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%1",
+      cli: "pi",
+      command: "pi",
+      commandSource: "cli-key",
+      cwd: "/work/x",
+    });
     await serveExtension(sockFor("worker-1"), oldExtension);
     const r = await runCli(
       ["agent", "send", "worker-1", "go", "--fresh", "-w", "auth", "--json"],

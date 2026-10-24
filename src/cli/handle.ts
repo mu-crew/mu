@@ -43,6 +43,7 @@ import {
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneStillAliveError,
+  AgentRestartedError,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
@@ -418,6 +419,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   }
   if (err instanceof AgentPaneStillAliveError) {
     // The pane outlived the kill: a state conflict the operator resolves.
+    return { label: "conflict", exitCode: 4 };
+  }
+  if (err instanceof AgentRestartedError) {
+    // The run being waited on died with the old pi process: state conflict.
     return { label: "conflict", exitCode: 4 };
   }
   if (err instanceof AgentBusyError) {

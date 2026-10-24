@@ -11,7 +11,7 @@
 import { type AgentRow, expectsCtl } from "../agents.js";
 import type { CtlStatus } from "../ctl/protocol.js";
 import type { NextStep } from "../output.js";
-import { shellQuote } from "../shell-quote.js";
+import { shellQuote, shellWord } from "../shell-quote.js";
 import { relTime } from "./format.js";
 
 export type HintAgent = Pick<AgentRow, "name" | "cli" | "workstreamName">;
@@ -19,6 +19,25 @@ export type HintAgent = Pick<AgentRow, "name" | "cli" | "workstreamName">;
 /** The prompt that hands a claimed task to its owner. */
 function dispatchText(task: { id: string; workstream: string }): string {
   return `Claim done: work on ${task.id}. Read: mu task notes ${task.id} -w ${task.workstream}`;
+}
+
+/**
+ * The one hint after a send: wait for exactly the run it started. `runs` is
+ * the baseline the send measured; `incarnation` pins the pi process, so a
+ * restart is refused instead of waited on. `--json` is part of it: the text
+ * mode prints no answer, `lastText` is in the JSON. Every word is POSIX
+ * quoted; the line parses as printed.
+ */
+export function waitHint(
+  agent: Pick<HintAgent, "name" | "workstreamName">,
+  runs: number,
+  incarnation?: string,
+): NextStep {
+  const inc = incarnation === undefined ? "" : ` --inc ${shellWord(incarnation)}`;
+  return {
+    intent: "Wait for the response (returns its final text)",
+    command: `mu agent wait ${shellWord(agent.name)} -w ${shellWord(agent.workstreamName)} --after-runs ${runs}${inc} --json`,
+  };
 }
 
 /**
