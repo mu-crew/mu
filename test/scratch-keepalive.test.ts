@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { herdrBackend } from "../src/mux/herdr.js";
+import { muxByName, setMuxForTests } from "../src/mux.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream, listEmptyWorkstreams } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
@@ -29,6 +30,8 @@ let state: MockState;
 let mux: MuxHarness | undefined;
 
 beforeEach(() => {
+  // Pin tmux: with TMUX/TMUX_PANE unset, detection would probe the real box.
+  setMuxForTests(muxByName("tmux"));
   tempDir = mkdtempSync(join(tmpdir(), "mu-scratch-keepalive-"));
   dbPath = join(tempDir, "mu.db");
   db = openDb({ path: dbPath });
@@ -41,6 +44,7 @@ beforeEach(() => {
 afterEach(() => {
   mux?.restore();
   mux = undefined;
+  setMuxForTests(undefined);
   try {
     db.close();
   } catch {
