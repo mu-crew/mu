@@ -1,9 +1,15 @@
 [
   {
     "calls": [
-      { "bash": "mu agent spawn w1 -w eval --workspace" },
-      { "bash": "mu agent spawn w2 -w eval --workspace" },
-      { "bash": "mu agent spawn w3 -w eval --workspace" }
+      {
+        "bash": "mu agent spawn w1 -w eval --workspace 2>/dev/null || mu agent spawn w1 -w eval --worktree"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval --workspace 2>/dev/null || mu agent spawn w2 -w eval --worktree"
+      },
+      {
+        "bash": "mu agent spawn w3 -w eval --workspace 2>/dev/null || mu agent spawn w3 -w eval --worktree"
+      }
     ]
   },
   {
