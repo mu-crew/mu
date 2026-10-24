@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
+import { muxByName, setMuxForTests } from "../src/mux.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
@@ -72,6 +73,8 @@ let db: Db;
 let state: MockState;
 
 beforeEach(() => {
+  // Pin tmux: with TMUX/TMUX_PANE unset, detection would probe the real box.
+  setMuxForTests(muxByName("tmux"));
   tempDir = mkdtempSync(join(tmpdir(), "mu-spawn-name-hint-"));
   db = openDb({ path: join(tempDir, "mu.db") });
   state = freshMockState();
@@ -86,6 +89,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setMuxForTests(undefined);
   db.close();
   rmSync(tempDir, { recursive: true, force: true });
   resetTmuxExecutor();

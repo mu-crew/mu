@@ -15,6 +15,7 @@ import {
 } from "../src/agents/wait.js";
 import { spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
+import { muxByName, setMuxForTests } from "../src/mux.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
@@ -25,6 +26,8 @@ describe("waitForAgents", () => {
   const ws = "scratch";
 
   beforeEach(async () => {
+    // Pin tmux: with TMUX/TMUX_PANE unset, detection would probe the real box.
+    setMuxForTests(muxByName("tmux"));
     dir = mkdtempSync(join(tmpdir(), "mu-agentwait-"));
     db = openDb({ path: join(dir, "mu.db") });
     mock = freshMockState();
@@ -38,6 +41,7 @@ describe("waitForAgents", () => {
   });
 
   afterEach(() => {
+    setMuxForTests(undefined);
     const key = "MU_SPAWN_LIVENESS_MS";
     delete process.env[key];
     setAgentWaitSleepForTests(undefined);
