@@ -511,6 +511,11 @@ cheap and a mid model against a candidate surface and records tokens,
 calls, correct completion, and wrong or destructive actions. Baseline:
 3.x on the same scenarios.
 
+3.13.3 baseline ([report](eval/baseline-3.13.3.md)): 23/28 completed
+(haiku 11/14, sonnet 12/14). One full run (14 scenarios x 2 models, 1 rep,
+concurrency 4) cost 6.3M AUT tokens ($1.09) and 27 min elapsed, plus 15 min
+for the release-surface check; budget about 7M tokens and 30 min per run.
+
 | Decision | Settled by |
 |---|---|
 | verb names, flags, grammar | tournament, eval-judged |
