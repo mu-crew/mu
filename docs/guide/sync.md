@@ -23,7 +23,8 @@ mu task close auth_fix -w app --evidence "shipped in #412"
 Never put `MU_DB_PATH` inside `MU_SYNC_DIR`. A live SQLite DB is three
 files (`mu.db`, `-wal`, `-shm`). A file syncer copies them out of
 order and can bring back a stale `-wal`, which corrupts the DB with no
-error. `mu doctor` fails the `db-vs-sync` row when you do this.
+error. Every `mu` verb refuses to run (exit 4, before it opens or
+writes anything) when the DB path is inside `MU_SYNC_DIR`.
 
 Also keep the DB off NFS, SMB, and sshfs. `mu doctor` warns in the
 `db-filesystem` row.

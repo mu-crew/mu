@@ -138,6 +138,10 @@ every verb.
 - **Flush on the error path too.** A verb may commit ops before
   throwing. Those ops are canonical, so withholding them would make
   this machine's history depend on the exit code.
+- **Refuse a DB inside `MU_SYNC_DIR`, before `openDb`.** `handle()`
+  throws `DbInsideSyncDirError` (exit 4) for every verb, ambient or not,
+  so nothing is created or written. The check is path-based and runs
+  without the DB file existing.
 
 `src/sync.ts` holds `ambientIngest`, `ambientFlush`, `ambientSyncPass`,
 `peerStatuses`, `ingestFromDb` (`mu sync --from <path>`) and
@@ -150,8 +154,10 @@ peer's segment and of every conflict copy of it.
 | Surface | Behaviour | Why |
 | --- | --- | --- |
 | `MU_SYNC_DIR` unset | one `if` on one env var; no filesystem touch | the single-machine case pays nothing (measured: baseline; about 3ms with one peer) |
-| `mu sql` | opts out (`handle(..., { ambientSync: false })`) | an ingest changing a row count mid-inspection reads as a mu bug |
-| `mu sync` | opts out and runs the pass itself | otherwise the report prints "ingested 0" right after ingesting |
+| `mu sync` | the only verb that opts out (`handle(..., { ambientSync: false })`); runs the pass itself, flush then ingest | otherwise the report prints "ingested 0" right after ingesting |
+
+`mu sql` is not a carve-out: it ingests before the query, so a read sees
+fresh state and nothing lands mid-query, and flushes its writes after.
 
 ## Out-of-order arrival
 
@@ -185,6 +191,6 @@ all no-ops when `MU_SYNC_DIR` is unset:
 
 | Check | Severity |
 | --- | --- |
-| `MU_DB_PATH` inside `MU_SYNC_DIR` | fail |
+| `MU_DB_PATH` inside `MU_SYNC_DIR` | fail (every verb also refuses earlier, exit 4) |
 | DB on a network mount | warn |
 | two workstream names differing only by case | warn |

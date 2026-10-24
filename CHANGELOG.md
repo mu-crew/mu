@@ -36,6 +36,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   refused; its repair is `mu task open` then `mu task close --evidence`
   (`mu task note` cannot write a close note). `mu sql` maps a guard's refusal
   to the same typed conflict (exit 4, `<id> -w <ws>` placeholders in Next).
+- **Sync contract.** `mu sql` now ingests peer ops before the query and
+  flushes its writes after, including when the statement throws (it was the
+  one verb that opted out, so its writes sat unflushed until the next verb).
+  Only `mu sync` keeps `ambientSync: false`. Every verb now refuses to run when
+  the DB path is inside `MU_SYNC_DIR`: `DbInsideSyncDirError`, exit 4, thrown by
+  `handle()` before `openDb` so nothing is created or written (the doctor
+  `db-vs-sync` row stays). Ingest of a task put no longer re-creates a parent
+  workstream whose delete is newer than the put (live state now matches
+  `rebuild`; fixes a phantom workstream and permanent `doctor --deep` drift).
 - **Schema v12** (additive over v11; a v11 DB is refused with
   `SchemaTooOldError`, exit 4). New columns: `workstreams.torn_down_at`
   (synced), `agents.cwd` and `agents.base` (machine-local), `tasks.scored`

@@ -1,8 +1,9 @@
 // `mu doctor` exit codes and state counts, end to end through runCli.
 //
-// f_doctor_fail_row_exit0: a `fail` row (the DB inside MU_SYNC_DIR) used
-// to print FAIL and exit 0; it now exits 5 after printing the report,
-// in both the human and --json forms. WARN rows still exit 0.
+// f_doctor_fail_row_exit0: a `fail` row used to print FAIL and exit 0; it
+// now exits 5 after printing the report. The one `fail` row today, the DB
+// inside MU_SYNC_DIR, is refused earlier by handle() (exit 4, k_sync_contract),
+// so the doctor row is only reachable through the SDK. WARN rows still exit 0.
 // f_doctor_ops_rows_count: `ops rows` counted only the workstream
 // entity's own ops (key = <ws>), not its tasks' (<ws>/<id>).
 //
@@ -68,24 +69,21 @@ describe("mu doctor exit code", () => {
     expect(r.exitCode, r.stderr).toBeNull();
   });
 
-  it("exits 5 after printing the report when the DB is inside MU_SYNC_DIR", async () => {
+  it("exits 4 before any report when the DB is inside MU_SYNC_DIR", async () => {
     process.env[SYNC_KEY] = tempDir;
     const r = await runCli(["doctor"], dbPath);
-    expect(r.exitCode).toBe(5);
-    // The whole report is printed before the failure.
-    expect(r.stdout).toContain("INSIDE MU_SYNC_DIR");
-    expect(r.stdout).toContain("ops log");
-    expect(r.stderr).toContain("db-vs-sync");
+    expect(r.exitCode).toBe(4);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("is inside MU_SYNC_DIR");
   });
 
-  it("--json emits the payload, then exits 5 on a FAIL row", async () => {
+  it("--json: the same refusal is an error envelope on stderr, exit 4", async () => {
     process.env[SYNC_KEY] = tempDir;
     const r = await runCli(["doctor", "--json"], dbPath);
-    expect(r.exitCode).toBe(5);
-    const parsed = JSON.parse(r.stdout.trim().split("\n")[0] ?? "") as {
-      fleet: { name: string; severity: string }[];
-    };
-    expect(parsed.fleet.find((h) => h.name === "db-vs-sync")?.severity).toBe("fail");
+    expect(r.exitCode).toBe(4);
+    expect(r.stdout).toBe("");
+    const env = JSON.parse(r.stderr.trim()) as { error: string; exitCode: number };
+    expect(env).toMatchObject({ error: "DbInsideSyncDirError", exitCode: 4 });
   });
 });
 

@@ -107,7 +107,7 @@ are re-export hubs.
 | `src/sha256-resumable.ts` | SHA-256 with a serialisable running state, so the segment manifest hashes only appended bytes |
 | `src/sync.ts` | peer status, the ambient hook, `--from`, `--repair` |
 | `src/file-lock.ts` | cross-process advisory lock through atomic `fs.mkdir` |
-| `src/fleet-hazards.ts` | mixed-fleet checks: DB inside `MU_SYNC_DIR`, network mount, case collisions, own segment written by a newer mu |
+| `src/fleet-hazards.ts` | mixed-fleet checks: DB inside `MU_SYNC_DIR` (plus `DbInsideSyncDirError`, which `handle()` throws before `openDb`), network mount, case collisions, own segment written by a newer mu |
 | `src/dormant.ts` | doctor housekeeping: `finished` (all closed, idle 14 days) vs `abandoned` (idle 60 days, open tasks) workstreams; idle derived from `MAX(tasks.updated_at)` |
 | `src/disk-recon.ts` | report-only state-dir vs DB reconciliation (rows without dirs, dirs without rows, residue); `--disk` measures bytes |
 | `src/doctor-summary.ts` | cheap doctor slice for the TUI; ctl, extension and skill checks; remediation text |

@@ -152,20 +152,18 @@ describe("mu doctor — drift + fleet checks", () => {
     expect(parsed.drift.hint).toContain("--deep");
   });
 
-  it("FAILS loudly when MU_DB_PATH is inside MU_SYNC_DIR", async () => {
+  it("REFUSES when MU_DB_PATH is inside MU_SYNC_DIR (before doctor runs)", async () => {
     await seed();
     const key = "MU_SYNC_DIR";
     const previous = process.env[key];
     process.env[key] = tempDir; // dbPath is inside tempDir
     try {
-      const { stdout, exitCode } = await runCli(["doctor"], dbPath);
-      // A FAIL row exits 5 (after the report), like drift.
-      expect(exitCode).toBe(5);
-      expect(stdout).toContain("db-vs-sync");
-      expect(stdout).toContain("INSIDE MU_SYNC_DIR");
-      expect(stdout).toContain("WILL corrupt");
-      // The explanation must be present, not just the verdict.
-      expect(stdout).toContain("-wal");
+      const { stdout, stderr, exitCode } = await runCli(["doctor"], dbPath);
+      // handle() refuses before openDb: exit 4, no report.
+      expect(exitCode).toBe(4);
+      expect(stdout).toBe("");
+      expect(stderr).toContain(`DB ${dbPath} is inside MU_SYNC_DIR ${tempDir}`);
+      expect(stderr).toContain("WAL files do not sync safely");
     } finally {
       if (previous === undefined) delete process.env[key];
       else process.env[key] = previous;

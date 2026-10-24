@@ -50,6 +50,7 @@ import {
 } from "../agents.js";
 import {
   type Db,
+  defaultDbPath,
   openDb,
   SchemaTooNewError,
   SchemaTooOldError,
@@ -57,7 +58,7 @@ import {
   WorkstreamNotFoundError,
 } from "../db.js";
 import { DriftDetectedError } from "../drift.js";
-import { HazardFailError } from "../fleet-hazards.js";
+import { checkDbInsideSyncDir, DbInsideSyncDirError, HazardFailError } from "../fleet-hazards.js";
 import { LinkConflictError } from "../link.js";
 import { GroupIdAmbiguousError, GroupNotFoundError, LogKindReservedError } from "../logs.js";
 import {
@@ -79,6 +80,7 @@ import {
   type UsageJson,
 } from "../output.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
+import { syncDir } from "../segments.js";
 import {
   ambientFlush,
   ambientIngest,
@@ -325,6 +327,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SchemaTooNewError ||
     err instanceof SqliteTooOldError ||
     err instanceof SyncSourceTooNewError ||
+    err instanceof DbInsideSyncDirError ||
     err instanceof WorkstreamExistsError ||
     // Rebuild refuses to overwrite an existing target or to write onto
     // the source DB: both are name/state collisions, not usage errors.
@@ -528,13 +531,26 @@ function emitError(err: unknown): number {
 
 export interface HandleOptions {
   /**
-   * Opt OUT of the ambient sync hook. Exactly one verb sets this today:
-   * `mu sql`, the escape hatch whose no-surprise-mutations property is
-   * load-bearing. An operator running `mu sql "SELECT ..."` to inspect
-   * state must see the state as it is, not as it becomes once a peer's
-   * segment lands mid-query.
+   * Opt OUT of the ambient sync hook. Exactly one verb sets this: `mu
+   * sync`, which IS the pass (flush, then ingest, so its report counts
+   * what it did rather than "ingested 0" after the hook ate everything).
+   * Every other verb, `mu sql` included, ingests before and flushes
+   * after. The DB-inside-MU_SYNC_DIR refusal does not honour this flag.
    */
   ambientSync?: false;
+}
+
+/** Refuse to open a DB that lives inside MU_SYNC_DIR. Runs before
+ *  `openDb` for every verb, ambient or not, so nothing is created or
+ *  written and `mu sync` cannot bypass it. Path-based: it fires even when
+ *  the DB file does not exist yet. */
+function refuseDbInsideSyncDir(): void {
+  const dir = syncDir();
+  if (dir === null) return;
+  const dbPath = defaultDbPath();
+  if (checkDbInsideSyncDir(dbPath, dir).severity === "fail") {
+    throw new DbInsideSyncDirError(dbPath, dir);
+  }
 }
 
 /** Wrap an async handler so typed errors become specific exit codes.
@@ -571,6 +587,7 @@ export function handle(
     // var read, no promise allocated, no filesystem touched.
     const ambient = opts?.ambientSync !== false && syncEnabled();
     try {
+      refuseDbInsideSyncDir();
       db = openDb();
       if (ambient) await ambientIngest(db);
       await fn(db);

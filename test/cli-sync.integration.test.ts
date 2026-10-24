@@ -24,6 +24,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
+import { opCount as opCountOf } from "./_ro.js";
 import { runCli } from "./_runCli.js";
 
 const SYNC_DIR_KEY = "MU_SYNC_DIR";
@@ -61,14 +62,9 @@ describe("mu sync (CLI)", () => {
     return JSON.parse(stdout) as { task: { name: string; status: string; impact: number } };
   };
 
-  const opCount = async (db: string): Promise<number> => {
-    // Deliberately via `mu sql`, which does NOT ingest — see the test
-    // below. That makes it a safe probe: reading the count cannot change
-    // the count.
-    const { stdout } = await runCli(["sql", "SELECT COUNT(*) AS n FROM ops", "--json"], db);
-    const rows = JSON.parse(stdout) as Array<{ n: number }>;
-    return rows[0]?.n ?? 0;
-  };
+  // Reads the file directly (read-only): every verb, `mu sql` included,
+  // ingests, so no verb is a probe that leaves the count alone.
+  const opCount = async (db: string): Promise<number> => opCountOf(db);
 
   // ─── the workflow that justifies the whole ops-log rewrite ────────
 
@@ -256,9 +252,9 @@ describe("mu sync (CLI)", () => {
     });
   });
 
-  // ─── `mu sql` does NOT ingest ─────────────────────────────────────
+  // ─── `mu sql` ingests like every other verb ───────────────────────
 
-  it("`mu sql` does NOT ingest (its no-mutation guarantee is load-bearing)", async () => {
+  it("`mu sql` ingests peer ops BEFORE it runs, then flushes its own", async () => {
     await runCli(["workstream", "init", "demo"], lap);
     await seedTask(lap, "t1");
     // Give the devserver a DB with a machine identity but nothing else.
@@ -267,15 +263,9 @@ describe("mu sync (CLI)", () => {
     process.env[SYNC_DIR_KEY] = dir;
 
     const before = await opCount(dev);
-    // Several `mu sql` invocations, with a real peer segment sitting
-    // right there waiting to be ingested.
-    await runCli(["sql", "SELECT COUNT(*) AS n FROM tasks"], dev);
-    await runCli(["sql", "SELECT COUNT(*) AS n FROM workstreams"], dev);
-    expect(await opCount(dev)).toBe(before);
-
-    // ...and any other verb DOES ingest, proving the carve-out is
-    // specific to `mu sql` rather than sync being broken.
-    await runCli(["task", "list", "-w", "demo"], dev);
+    const r = await runCli(["sql", "SELECT local_id FROM tasks", "--json"], dev);
+    // The read saw the peer's task: ingest ran first.
+    expect(JSON.parse(r.stdout)).toEqual([{ local_id: "t1" }]);
     expect(await opCount(dev)).toBeGreaterThan(before);
   });
 
@@ -500,12 +490,12 @@ describe("mu sync (CLI)", () => {
   // ─── doctor wiring ────────────────────────────────────────────────
 
   describe("mu doctor", () => {
-    it("FAILS when MU_DB_PATH is inside MU_SYNC_DIR — THE footgun", async () => {
+    it("REFUSES when MU_DB_PATH is inside MU_SYNC_DIR — THE footgun", async () => {
       const inside = join(dir, "mu.db");
-      const { stdout, exitCode } = await runCli(["doctor"], inside);
-      expect(exitCode).toBe(5);
-      expect(stdout).toContain("db-vs-sync");
-      expect(stdout).toContain("INSIDE MU_SYNC_DIR");
+      const { stderr, exitCode } = await runCli(["doctor"], inside);
+      expect(exitCode).toBe(4);
+      expect(stderr).toContain("is inside MU_SYNC_DIR");
+      expect(existsSync(inside)).toBe(false);
     });
 
     it("is ok when the DB is outside the sync dir", async () => {

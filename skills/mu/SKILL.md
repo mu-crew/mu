@@ -228,8 +228,7 @@ rules hold even when you skip it:
   mu recorded.
 - **Prose in notes, prompts, `--why` or `--evidence`**: an apostrophe
   ends `'...'`; use a quoted heredoc ([brief](recipes/brief.md#quoting)).
-- **`mu sql`** does not pull synced ops; run any other mu command first.
-- **Never put `MU_DB_PATH` inside `MU_SYNC_DIR`**: it corrupts the DB.
+- **Never put `MU_DB_PATH` inside `MU_SYNC_DIR`**: it corrupts the DB (every verb refuses, exit 4).
 - Before rebuild, teardown (dry-run without `--yes`), sync setup,
   a `doctor --deep` DRIFT, or `doctor` cleanup output, read
   [recipes/recovery.md](recipes/recovery.md).

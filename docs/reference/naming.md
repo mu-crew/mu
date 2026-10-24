@@ -92,8 +92,8 @@ The state dir is `MU_STATE_DIR`, else `$XDG_STATE_HOME/mu`, else
 | `<sync-dir>/<machine_id>.manifest` | `{count, last_hlc, sha256}` for segment verification |
 
 Never put `MU_DB_PATH` inside `MU_SYNC_DIR`: syncing a live SQLite
-file and its `-wal` and `-shm` sidecars corrupts it. `mu doctor` checks
-for this.
+file and its `-wal` and `-shm` sidecars corrupts it. Every verb
+refuses to run (exit 4) when it happens.
 
 The cache dir is `$XDG_CACHE_HOME/mu`, else `~/.cache/mu`. Anything in
 it can be deleted at any time.
