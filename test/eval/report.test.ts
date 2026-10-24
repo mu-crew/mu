@@ -31,6 +31,7 @@ function result(over: {
       aborted: over.aborted ?? null,
       lastError: null,
       finalText: "",
+      events: [],
     },
     verdict: {
       completed: over.completed,

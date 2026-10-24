@@ -52,6 +52,29 @@ export interface Usage {
 
 export type Aborted = null | "timeout" | "token-cap" | "exit";
 
+/** One observed moment of the AUT's life, stamped when the harness read it from the rpc stream. */
+export type LifecycleKind =
+  | "prompt" // the harness sent the scenario prompt or a prod
+  | "agent_start"
+  | "agent_end" // the AUT's run ended: a turn end
+  | "agent_settled"
+  | "tool_start"
+  | "tool_end"
+  | "delegate_msg" // a custom message (mu-delegate delivery) entered the conversation
+  | "assistant_text"; // an assistant message with text and no tool call: a stop attempt
+
+export interface LifecycleEvent {
+  /** Epoch ms at which the harness read the event. */
+  t: number;
+  kind: LifecycleKind;
+  /** tool_start/tool_end: the toolCallId (matches ToolCall.id). */
+  id?: string;
+  /** tool_start/tool_end: tool name; delegate_msg: the custom message type. */
+  name?: string;
+  /** delegate_msg / assistant_text: the message text. */
+  text?: string;
+}
+
 export interface RunMetrics {
   usage: Usage;
   turns: number;
@@ -63,6 +86,8 @@ export interface RunMetrics {
   aborted: Aborted;
   lastError: string | null;
   finalText: string;
+  /** Timestamped lifecycle record. Observed only: the observer never repairs or injects. */
+  events: LifecycleEvent[];
 }
 
 export interface Verdict {
@@ -81,6 +106,8 @@ export interface Scenario {
   tokenCap?: number;
   quietMs?: number;
   maxProds?: number;
+  /** `check` run mode of this scenario (default quietMs 2000, maxProds 0): prod-enabled when a bad needs a prod to recover. */
+  check?: { quietMs?: number; maxProds?: number };
   setup(sb: Sandbox): Promise<void>;
   judge(sb: Sandbox, run: RunMetrics): Promise<Verdict>;
 }
