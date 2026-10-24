@@ -65,9 +65,22 @@ W="$EVAL_WORKER_DIR"
 DB="\${MU_DB_PATH:-$EVAL_DB_PATH}"
 AGENT="\${MU_AGENT_NAME:-}"
 SQLITE() { sqlite3 -readonly -cmd ".timeout 5000" "$DB" "$1"; }
-T=$(SQLITE "SELECT t.local_id FROM tasks t JOIN agents a ON a.id=t.owner_id JOIN workstreams w ON w.id=t.workstream_id WHERE a.name='$MU_AGENT_NAME' AND w.name='$MU_WORKSTREAM' AND t.status='IN_PROGRESS' LIMIT 1")
+claimed() { SQLITE "SELECT t.local_id FROM tasks t JOIN agents a ON a.id=t.owner_id JOIN workstreams w ON w.id=t.workstream_id WHERE a.name='$MU_AGENT_NAME' AND w.name='$MU_WORKSTREAM' AND t.status='IN_PROGRESS' LIMIT 1"; }
+# A delegate (spawned by mu_delegate as delegate-<label>) answers a check and owns no task. Which claim
+# it is asked about: the claim-N token in its prompt, else the c<N>/claim-<N> label in its name.
+n=$(grep -oE 'claim-[0-9]+' "$W/last-prompt.$AGENT" 2>/dev/null | head -n1 | cut -d- -f2)
+[ -n "$n" ] || n=$(echo "$AGENT" | sed -nE 's/^delegate-(claim-|c)([0-9]+)(-[0-9]+)?$/\2/p')
+T=$(claimed)
+# A worker prompted before its task is claimed (3.x cannot claim for an agent not yet spawned, so
+# spawn --send always comes first) waits for the claim like a real pi would wait on its queue,
+# instead of answering with delegate text.
+if [ -z "$T" ] && [ -z "$n" ] && [ "\${AGENT#delegate-}" = "$AGENT" ] && ! grep -q " $AGENT " "$W/runs.log" 2>/dev/null; then
+  for _ in $(seq 1 "$(cat "$W/claim-wait" 2>/dev/null || echo 30)"); do
+    T=$(claimed); [ -n "$T" ] && break; sleep 1
+  done
+  [ -n "$T" ] || { echo "No task is claimed for me, so there is nothing to do."; exit 0; }
+fi
 if [ -z "$T" ]; then
-  n=$(grep -oE 'claim-[0-9]+' "$W/last-prompt.$AGENT" 2>/dev/null | head -n1 | cut -d- -f2)
   sleep "$(cat "$W/delegate-delay" 2>/dev/null || echo 0)"
   if [ -n "$n" ] && [ -f "$W/answers/$n.txt" ]; then
     cat "$W/answers/$n.txt"
