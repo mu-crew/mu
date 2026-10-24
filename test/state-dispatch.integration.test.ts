@@ -30,6 +30,7 @@ afterAll(() => {
 });
 
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
+import { withEnv } from "./_env.js";
 import { runCli } from "./_runCli.js";
 
 describe("cmdState dispatch", () => {
@@ -148,57 +149,27 @@ describe("cmdState empty-workstream paths", () => {
   //     MU_DB_PATH=/tmp/empty.db mu state --all
   // when no mu-* tmux sessions exist.
 
-  it("bare `mu state` with workstreams listed errors with the list + suggestions, exit 2", async () => {
-    // Set up a couple of workstreams. Note: mu workstream init creates
-    // a tmux session named mu-<name>; if the runner's $MU_SESSION env
-    // happens to match one of the host's existing tmux sessions, the
-    // auto-resolve might pick THAT instead of returning null. Test asserts
-    // behaviour-as-shipped: as long as the error message structure is
-    // correct when no auto-resolve is possible, the assertion passes.
+  it("bare `mu state` with workstreams on the machine is a one-line error naming -w and --all, exit 2", async () => {
     await runCli(["workstream", "init", "alpha"], dbPath);
     await runCli(["workstream", "init", "beta"], dbPath);
-    // Force MU_SESSION unset so resolveOptionalWorkstream returns null
-    // (env override handled by runCli when supported; otherwise this
-    // test relies on MU_SESSION already being unset in CI).
-    const muSessionKey = "MU_SESSION";
-    const saved = process.env[muSessionKey];
-    delete process.env[muSessionKey];
-    try {
-      const { stderr, exitCode } = await runCli(["state"], dbPath);
-      // Accept either the new error path (we're not in a matching
-      // tmux session) OR the legacy auto-resolve success path (the
-      // host has a stale matching tmux session). Either way the
-      // command should not silently produce '(no workstreams)'.
-      if (exitCode === 2) {
-        expect(stderr).toContain("could not auto-resolve");
-        expect(stderr).toContain("--all");
-      }
-      // If exitCode is null, we successfully auto-resolved into one
-      // of the workstreams (test-suite-friendly fallback).
-    } finally {
-      if (saved !== undefined) process.env[muSessionKey] = saved;
-    }
+    // A decoy $MU_SESSION must not auto-resolve into one of them.
+    await withEnv("MU_SESSION", "alpha", async () => {
+      const { stdout, stderr, exitCode } = await runCli(["state"], dbPath);
+      expect(exitCode).toBe(2);
+      expect(stdout).toBe("");
+      expect(stderr).toMatch(/no workstream: pass -w <name> or --all/);
+      expect(stderr).toContain("-w alpha");
+      expect(stderr.trim().split("\n")).toHaveLength(1);
+    });
   });
 
-  it("`mu state --json` is back-compat: when auto-resolve yields nothing, emit empty array (NOT the helpful error)", async () => {
-    // Same test-host caveat as above. If auto-resolve fails AND
-    // --json is set, the command emits a JSON empty array on stdout,
-    // NOT a stderr error and exit 2.
+  it("`mu state --json` with no scope is the same error, not an empty success", async () => {
     await runCli(["workstream", "init", "alpha"], dbPath);
-    const muSessionKey = "MU_SESSION";
-    const saved = process.env[muSessionKey];
-    delete process.env[muSessionKey];
-    try {
+    await withEnv("MU_SESSION", "alpha", async () => {
       const { stdout, stderr, exitCode } = await runCli(["state", "--json"], dbPath);
-      expect(exitCode).toBeNull();
-      const parsed = JSON.parse(stdout);
-      // Either auto-resolved single-ws shape or no-auto-resolve empty
-      // array shape; both are valid on a host with live mu tmux sessions.
-      if (Array.isArray(parsed.workstreams)) expect(parsed.workstreams).toEqual([]);
-      else expect(parsed.workstreamName).toBeTypeOf("string");
-      expect(stderr).toBe("");
-    } finally {
-      if (saved !== undefined) process.env[muSessionKey] = saved;
-    }
+      expect(exitCode).toBe(2);
+      expect(stdout).toBe("");
+      expect(stderr).toMatch(/no workstream: pass -w <name> or --all/);
+    });
   });
 });

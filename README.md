@@ -50,15 +50,14 @@ To update or run from a checkout, see
 Run this inside tmux or herdr:
 
 ```bash
-mu workstream init auth
-export MU_SESSION=auth   # init does not attach you; or pass -w auth to each verb
-mu task add design_auth --title "Design auth" --impact 80 --effort-days 2
-mu task add build_auth  --title "Build auth"  --impact 80 --effort-days 5 --blocked-by design_auth
-mu agent spawn worker-1 --worktree
-mu task claim design_auth --for worker-1
-mu agent send worker-1 --fresh 'Do task design_auth. Close it with evidence.'
-mu task wait design_auth --first --on-stall exit   # exit 7 = worker needs you
-mu workstream teardown                              # preview (rev=<n>); apply with --if <n>
+mu workstream init auth                             # every verb below names it with -w
+mu task add design_auth -w auth --title "Design auth" --impact 80 --effort-days 2
+mu task add build_auth  -w auth --title "Build auth"  --impact 80 --effort-days 5 --blocked-by design_auth
+mu agent spawn worker-1 -w auth --worktree
+mu task claim design_auth -w auth --for worker-1
+mu agent send worker-1 -w auth --fresh 'Do task design_auth. Close it with evidence.'
+mu task wait design_auth -w auth --first --on-stall exit   # exit 7 = worker needs you
+mu workstream teardown auth                         # preview (rev=<n>); apply with --if <n>
 ```
 
 For one helper, ask pi to delegate (`mu_delegate` ships with `mu link

@@ -70,6 +70,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **task DAG** / **graph** | The directed acyclic graph of tasks. | "task list", "tree" |
 | **edge** | The single edge type: `A blocks B` means A must close before B starts. | "dependency" (prose only) |
 | **subtree** / **scope** | Tasks reachable from a root via blocks-edges. | "subgraph" |
+| **explicit scope** / **injected scope** | The workstream a verb acts on: `-w <name>` or a qualified `<ws>/<name>` ref (explicit), else the `MU_WORKSTREAM` spawn gives a managed worker (injected, only with `MU_MANAGED_AGENT=1`). Nothing else routes a verb: not `MU_SESSION`, not the mux session name, which only appears as a suggestion in the one-line error. | "ambient workstream", "current workstream", "default workstream" |
 | **track** | An independent subtree found by parallel-track detection. | "branch", "lane" |
 | **diamond merge** | Merging two tracks that share a prerequisite into one. | "join" |
 | **ready** | An `OPEN/todo` task with no open blockers (the `ready` view). | "unblocked", "available" |

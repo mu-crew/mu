@@ -24,11 +24,12 @@ import {
   formatTaskListTable,
   formatTracks,
   handle,
+  injectedWorkstream,
   JSON_OPT,
-  parseCsvFlag,
+  missingWorkstreamError,
   parseLines,
+  parseWorkstreamList,
   printLogRow,
-  resolveOptionalWorkstream,
   UsageError,
   withRoiAll,
 } from "../cli.js";
@@ -64,10 +65,11 @@ function formatRemoteWorkersTable(rows: readonly RemoteWorker[]): string {
 // auto-resolve):
 //   -w X         | -w X,Y     | -w X -w Y      explicit set (variadic + parseCsvFlag)
 //   --all                                       every workstream on this machine
-//   (none)                                      auto-resolve from $MU_SESSION/tmux (single ws)
+//   (none)                                      a managed worker's injected workstream,
+//                                               else a one-line error: never a guess
 //
 // N=1 (single -w value, --all on a single-workstream machine, or
-// auto-resolve) renders single-mode (legacy column shape + flat JSON).
+// the injected scope) renders single-mode (legacy column shape + flat JSON).
 // N≥2 stacks per-workstream cards.
 
 export interface StateOpts {
@@ -89,25 +91,25 @@ async function resolveWorkstreamSet(db: Db, opts: StateOpts): Promise<string[]> 
     return all.map((w) => w.name);
   }
   if (explicitW) {
-    // parseCsvFlag canonicalises repeat / comma / mixed forms into a
-    // flat string[] (trimming fragments, dropping empty ones, and
-    // rejecting blank whitespace-only ones as a usage error).
-    const names = parseCsvFlag(opts.workstream, "-w/--workstream");
-    const deduped = Array.from(new Set(names));
-    if (deduped.length > 0) {
-      // Strict validation: every entry must exist. A typo'd name
-      // would silently render a half card.
-      for (const n of deduped) {
-        if (tryResolveLiveWorkstreamId(db, n) === null) throw new WorkstreamNotFoundError(n);
-      }
-      return deduped;
+    // parseWorkstreamList canonicalises repeat / comma / mixed forms into
+    // a flat string[]: structurally empty fragments are dropped, blank or
+    // padded ones are a usage error (never trimmed into another name).
+    const deduped = Array.from(new Set(parseWorkstreamList(opts.workstream ?? [])));
+    // Strict validation: every entry must exist. A typo'd name
+    // would silently render a half card.
+    for (const n of deduped) {
+      if (tryResolveLiveWorkstreamId(db, n) === null) throw new WorkstreamNotFoundError(n);
     }
+    if (deduped.length > 0) return deduped;
   }
-  // No explicit -w (or it canonicalised away to nothing): auto-resolve
-  // a single workstream from $MU_SESSION / tmux session.
-  const single = await resolveOptionalWorkstream();
-  if (single === null) return [];
-  return [single];
+  const injected = injectedWorkstream();
+  if (injected !== undefined) return [injected];
+  const all = await listWorkstreams(db);
+  const first = all[0]?.name;
+  throw await missingWorkstreamError({
+    orAll: true,
+    ...(first ? { extra: `e.g. -w ${first}` } : {}),
+  });
 }
 
 // ─── JSON shape ─────────────────────────────────────────────────────
@@ -135,47 +137,15 @@ function fullJsonShape(d: PerWsData): Record<string, unknown> {
 export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
   const workstreams = await resolveWorkstreamSet(db, opts);
 
-  // workstreams.length === 0 splits into THREE distinct user errors,
-  // each with its own helpful message:
-  //   (a) --all on a machine with zero workstreams (truly empty universe)
-  //   (b) bare `mu state` outside a tmux session, with workstreams
-  //       on the machine but no way to auto-pick one (the most
-  //       common confusing case; bug_bare_mu_state_no_ws)
-  //   (c) bare `mu state --json`: same as (b) but JSON consumer; emit
-  //       {workstreams:[]} for back-compat
+  // Only `--all` on a machine with no workstreams gets here: every other
+  // path either resolved a scope or threw the one-line missing-scope error.
   if (workstreams.length === 0) {
     if (opts.json === true) {
       emitJson({ workstreams: [] });
       return;
     }
-    const explicitAll = opts.all === true;
-    if (explicitAll) {
-      // (a) --all + truly empty machine
-      console.log(pc.dim("(no workstreams) try `mu workstream init <name>`"));
-      return;
-    }
-    // (b) bare `mu state` with no auto-resolution path. Surface the
-    // available workstreams so the user can pick one without a
-    // separate `mu workstream list` round-trip.
-    const all = await listWorkstreams(db);
-    if (all.length === 0) {
-      console.log(pc.dim("(no workstreams) try `mu workstream init <name>`"));
-      return;
-    }
-    const lines = [
-      "`mu state` could not auto-resolve a workstream.",
-      "",
-      "You're not inside a tmux session whose name matches a workstream,",
-      "and `$MU_SESSION` is unset.",
-      "",
-      `Workstreams on this machine: ${all.map((w) => w.name).join(", ")}`,
-      "",
-      "Try:",
-      `  mu state -w ${all[0]?.name ?? "<name>"}     # pick one`,
-      "  mu state --all              # render every workstream",
-      "  mu --help                   # full verb list",
-    ];
-    throw new UsageError(lines.join("\n"));
+    console.log(pc.dim("(no workstreams) try `mu workstream init <name>`"));
+    return;
   }
 
   const eventLimit = opts.events ?? 20;
@@ -303,7 +273,7 @@ export function wireStateCommands(program: Command): void {
     )
     .option(
       "-w, --workstream <names...>",
-      "workstream(s) to render (repeat or comma-separate; or both; defaults to $MU_SESSION or current tmux session)",
+      "workstream(s) to render (repeat or comma-separate; or both). Required unless --all or run as a spawned worker",
     )
     .option("--all", "include every workstream on this machine")
     .option("--events <n>", "how many recent log entries (ops) to include (default 20)", parseLines)

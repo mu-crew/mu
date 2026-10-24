@@ -109,12 +109,28 @@ describe("root-position -w forwards to the verb's -w", () => {
     expect(r.stderr).toMatch(/given twice/);
   });
 
+  it("a decoy $MU_SESSION never scopes a root-less verb", async () => {
+    await withEnv("MU_SESSION", "wsa", async () => {
+      const r = await runCli(["task", "list", "--json"], dbPath);
+      expect(r.exitCode).toBe(2);
+      expect(r.stdout).toBe("");
+    });
+  });
+
   it("state honours root --workstream over $MU_SESSION", async () => {
     await withEnv("MU_SESSION", "wsa", async () => {
       const r = await runCli(["--workstream=nonexist", "state", "--json"], dbPath);
       expect(r.exitCode).toBe(3);
       expect(r.stderr).toMatch(/no such workstream: nonexist/);
     });
+  });
+
+  it("rejects a padded or blank root -w as a usage error, not a trimmed workstream", async () => {
+    for (const bad of [" wsa", "wsa ", "", " "]) {
+      const r = await runCli(["-w", bad, "task", "list"], dbPath);
+      expect(r.exitCode, JSON.stringify(bad)).toBe(2);
+      expect(r.stdout).toBe("");
+    }
   });
 
   it("rejects -w on both sides of the verb", async () => {

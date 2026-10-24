@@ -13,7 +13,6 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_STATE_DIR` | State directory. Also holds `compile-cache/` (V8 code cache for the CLI; `NODE_DISABLE_COMPILE_CACHE=1` turns it off). | `$XDG_STATE_HOME/mu` |
 | `XDG_STATE_HOME` | XDG state base; mu appends `mu/`. An empty or relative value is ignored. | `~/.local/state` |
 | `XDG_CACHE_HOME` | XDG cache base; mu appends `mu/`. Holds only disposable copies. An empty or relative value is ignored. | `~/.cache` |
-| `MU_SESSION` | Active workstream when `-w` is absent. Beats `MU_WORKSTREAM`. | current `mu-<name>` mux session |
 | `MU_SYNC_DIR` | Folder holding one segment per machine. This is the whole sync setup; there is no peer list. | unset: sync off |
 
 ## Multiplexer
@@ -22,7 +21,7 @@ milliseconds; `0` disables a wait unless noted.
 | --- | --- | --- |
 | `MU_MUX` | Force `tmux` or `herdr`, skipping mux detection. An unknown value fails the invocation. | detected |
 | `HERDR_ENV` | Read only. `1` (set by herdr in its panes) selects herdr; outranks `$TMUX`. | |
-| `TMUX`, `TMUX_PANE` | Read only. Either one (set by tmux in its panes) selects tmux. `$TMUX` gates reading the current session name, which resolves the workstream when `-w` and `MU_SESSION` are absent. `$TMUX_PANE` identifies the calling agent for `mu me`. | |
+| `TMUX`, `TMUX_PANE` | Read only. Either one (set by tmux in its panes) selects tmux. `$TMUX` gates reading the current session name, used only as the suggestion in the missing-`-w` error: it never routes a verb. `$TMUX_PANE` identifies the calling agent for `mu me` only when no `MU_AGENT_NAME` is injected. | |
 | `HERDR_WORKSPACE_ID` | Read only. Set by herdr in its panes; pane listing with no target reads this workspace first. | |
 | `HERDR_PANE_ID` | Read only. Set by herdr in its panes. | |
 | `MU_TMUX_SOCKET` | Test isolation. Runs every tmux call on a private server (`-L <name>`) with `-f /dev/null`, so `~/.tmux.conf` is not loaded. tmux only. | unset: tmux's default server |
@@ -49,7 +48,7 @@ milliseconds; `0` disables a wait unless noted.
 | Name | Value |
 | --- | --- |
 | `MU_AGENT_NAME` | The agent's name; first rung of actor identity. |
-| `MU_WORKSTREAM` | The agent's workstream. With `MU_MANAGED_AGENT=1` it also resolves the workstream when `-w` and `MU_SESSION` are absent (no tmux lookup); without it, ignored. |
+| `MU_WORKSTREAM` | The agent's workstream. With `MU_MANAGED_AGENT=1` it is the scope of every verb that has no `-w` (no tmux lookup); without it, ignored. `MU_SESSION` is not read: a verb with no `-w` and no injected scope fails with `no workstream: pass -w <name>`. |
 | `MU_CTL_SOCK` | The agent's control socket path, derived from state dir, workstream, and agent. The mu pi extension serves it. |
 | `MU_MANAGED_AGENT` | `1`. Hides `mu_delegate` inside agents, so a helper cannot spawn helpers. |
 

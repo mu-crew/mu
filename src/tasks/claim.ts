@@ -133,12 +133,12 @@ export interface ClaimTaskOptions extends AttributedEvidence {
    *  the task lookup AND the agent FK lookup scope to this
    *  workstream so a same-named task or worker elsewhere can't be
    *  silently picked. The CLI always passes this from the resolved
-   *  -w / $MU_SESSION. */
+   *  -w or the injected worker scope. */
   workstream: string;
   /**
    * Override the agent name. If omitted, resolved from the ambient
-   * environment via `resolveWorkerIdentity()`: `$MU_AGENT_NAME` first,
-   * then the current pane's title.
+   * environment via `resolveWorkerIdentity()`: `$MU_AGENT_NAME` only
+   * (spawn injects it; pane titles are not identity).
    *
    * Mutually exclusive with `self: true`.
    */

@@ -72,6 +72,24 @@ describe("root-position -w + optsWithGlobals subcommands (finding_optswithglobal
     expect(subPos.stdout).toBe(rootPos.stdout);
   });
 
+  it("rejects a padded root -w for an optsWithGlobals verb instead of trimming it", async () => {
+    const res = await runCli(["-w", " wsa", "task", "owned-by", "worker-1", "--json"], dbPath);
+    expect(res.exitCode).toBe(2);
+    expect(res.stdout).toBe("");
+  });
+
+  it("task owned-by with no scope is a one-line error, even with a decoy $MU_SESSION", async () => {
+    const key = "MU_SESSION";
+    process.env[key] = "wsa";
+    try {
+      const res = await runCli(["task", "owned-by", "worker-1", "--json"], dbPath);
+      expect(res.exitCode).toBe(2);
+      expect(res.stdout).toBe("");
+    } finally {
+      delete process.env[key];
+    }
+  });
+
   it("rejects multiple workstreams at root position for a single-workstream verb", async () => {
     ensureWorkstream(db, "wsb");
     const res = await runCli(

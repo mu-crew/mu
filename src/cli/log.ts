@@ -8,8 +8,16 @@
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
-import { getAgentByPane } from "../agents.js";
-import { emitJson, emitJsonCollection, printLogRow, resolveOptionalWorkstream } from "../cli.js";
+import {
+  emitJson,
+  emitJsonCollection,
+  injectedIdentity,
+  injectedWorkstream,
+  missingWorkstreamError,
+  printLogRow,
+  resolveWorkstream,
+  UsageError,
+} from "../cli.js";
 import type { Db } from "../db.js";
 import { renderOpLine } from "../log-render.js";
 import {
@@ -63,39 +71,23 @@ export async function cmdLog(
 
 /**
  * Resolve who/where this log entry belongs to:
- *   --as <name>      explicit override; workstream still resolved below
- *   $TMUX_PANE       agent name + workstream from the agent row
- *   else             source = 'user', workstream from -w / $MU_SESSION /
- *                    tmux session, or null if none of those resolve
+ *   --as <name>      explicit source; scope still comes from -w / identity
+ *   injected worker  source = $MU_AGENT_NAME, workstream = $MU_WORKSTREAM
+ *                    (spawn-injected; $TMUX_PANE is never consulted)
+ *   else             source = 'user'; scope is -w, or the missing-scope error
+ * An explicit `-w` always wins the workstream.
  */
-async function resolveLogContext(
-  db: Db,
-  opts: { as?: string; workstream?: string },
-): Promise<{ source: string; workstream: string | null }> {
-  if (opts.as) {
-    const workstream = opts.workstream ?? (await resolveOptionalWorkstream());
-    return { source: opts.as, workstream };
-  }
-  const paneId = process.env.TMUX_PANE;
-  if (paneId) {
-    const agent = getAgentByPane(db, paneId);
-    if (agent) {
-      // Pane branch is intentionally asymmetric: when no -w is given, the
-      // agent's own workstream wins over $MU_SESSION / tmux session, since
-      // the agent row is the more authoritative binding. Don't "fix" this
-      // to call resolveOptionalWorkstream() like the other branches.
-      return {
-        source: agent.name,
-        workstream: opts.workstream ?? agent.workstreamName,
-      };
-    }
-  }
-  const workstream = opts.workstream ?? (await resolveOptionalWorkstream());
-  return { source: "user", workstream };
+async function resolveLogContext(opts: {
+  as?: string;
+  workstream?: string;
+}): Promise<{ source: string; workstream: string }> {
+  const identity = injectedIdentity();
+  const workstream = await resolveWorkstream(opts.workstream);
+  return { source: opts.as ?? identity?.name ?? "user", workstream };
 }
 
 async function cmdLogWrite(db: Db, text: string, opts: LogWriteOpts): Promise<void> {
-  const ctx = await resolveLogContext(db, opts);
+  const ctx = await resolveLogContext(opts);
   const row = appendLog(db, {
     workstream: ctx.workstream,
     source: ctx.source,
@@ -159,17 +151,23 @@ async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
 }
 
 /**
- * Resolve the `--workstream` filter for log reads:
+ * Resolve the workstream filter for log reads:
  *   --all            → undefined (every workstream + machine-wide)
- *   --workstream X   → X
- *   $MU_SESSION etc. → the current workstream (default behaviour)
- *   none             → undefined (be permissive in read mode)
+ *   -w X             → X
+ *   injected worker  → its own workstream
+ *   none             → the one-line missing-scope error (never a global read)
  */
 async function logReadWorkstream(opts: LogReadOpts): Promise<string | undefined> {
-  if (opts.allWorkstreams) return undefined;
-  if (opts.workstream) return opts.workstream;
-  const ws = await resolveOptionalWorkstream();
-  return ws ?? undefined;
+  if (opts.allWorkstreams) {
+    if (opts.workstream !== undefined) {
+      throw new UsageError("--all and -w/--workstream are mutually exclusive");
+    }
+    return undefined;
+  }
+  if (opts.workstream === undefined && injectedWorkstream() === undefined) {
+    throw await missingWorkstreamError({ orAll: true });
+  }
+  return resolveWorkstream(opts.workstream);
 }
 
 async function cmdLogTail(db: Db, baseOpts: ListLogsOptions, cliOpts: LogReadOpts): Promise<void> {
@@ -234,7 +232,7 @@ export function wireLogCommand(program: Command): void {
     .description(
       "Write a log entry (with text) or read the log (without). --tail blocks and prints new entries as they land.",
     )
-    .option("--as <name>", "override the source name (default: agent via $TMUX_PANE, else 'user')")
+    .option("--as <name>", "override the source name (default: $MU_AGENT_NAME, else 'user')")
     .option(
       "--kind <kind>",
       "operator-chosen channel tag: sets it on write, filters to it on read (log-ledger pattern); workstream, task, edge and note are reserved",

@@ -408,7 +408,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("claim <id>")
     .description(
-      "Claim a task. Default: derive agent from $TMUX_PANE's title (must be a registered worker). " +
+      "Claim a task. Default: the claiming agent is $MU_AGENT_NAME (injected at spawn; must be a registered worker). " +
         "Use --for <worker> to dispatch. Use --self for orchestrator-direct work (anonymous claim, owner=NULL, actor recorded in agent_logs).",
     )
     .option(
@@ -541,7 +541,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("wait <ids...>")
     .description(
-      "Block until the listed tasks reach --status (default CLOSED). Each <id> may be bare (resolves via -w / $MU_SESSION / tmux) or qualified `<workstream>/<name>` (cross-workstream waits don't need -w). Default: every task must reach the target. --any / --first exit on the first one that does; --first additionally prints the firing ref's qualified id to stdout. A worker needing attention terminates the wait with exit 7 (--on-stall exit, the default). Exit 0 = condition met; 5 = timeout; 6 = a watched task was reaper-flipped IN_PROGRESS→OPEN (target=CLOSED only); 7 = a worker needs attention (target=CLOSED, unless --on-stall warn).",
+      "Block until the listed tasks reach --status (default CLOSED). Each <id> may be bare (needs -w, or the worker's injected workstream) or qualified `<workstream>/<name>` (cross-workstream waits don't need -w). Default: every task must reach the target. --any / --first exit on the first one that does; --first additionally prints the firing ref's qualified id to stdout. A worker needing attention terminates the wait with exit 7 (--on-stall exit, the default). Exit 0 = condition met; 5 = timeout; 6 = a watched task was reaper-flipped IN_PROGRESS→OPEN (target=CLOSED only); 7 = a worker needs attention (target=CLOSED, unless --on-stall warn).",
     )
     .option(
       "--status <status>",
