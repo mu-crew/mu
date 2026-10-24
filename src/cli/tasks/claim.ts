@@ -259,7 +259,11 @@ async function resolveWaitRef(
   if (getTask(db, parsed.name, workstreamName) === undefined) {
     // Use the raw form (qualified or bare) so the error message
     // matches what the operator typed.
-    throw new TaskNotFoundError(parsed.workstream !== undefined ? raw : parsed.name);
+    throw new TaskNotFoundError(
+      parsed.workstream !== undefined ? raw : parsed.name,
+      workstreamName,
+      parsed.name,
+    );
   }
   return { workstreamName, name: parsed.name };
 }

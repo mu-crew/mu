@@ -18,6 +18,7 @@ import {
   RevisionMismatchError,
   taskRevision,
   taskRevisions,
+  withTaskFence,
 } from "../src/revision.js";
 import { applyIncomingOp } from "../src/segments.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
@@ -70,7 +71,14 @@ describe("taskRevision", () => {
     addNote(db, "t", "same id elsewhere", { workstream: "other" });
     addNote(db, "t", "same id in a prefix sibling", { workstream: "demo-2" });
     expect(rev("a_b")).toBe(r);
-    expect(rev("t", "other")).toBeGreaterThan(rev("t"));
+    // Same id elsewhere is a different partition: its revision is its own,
+    // and it moved with its own note, not with demo's. (Never compare
+    // revisions by magnitude: they are hash-derived, not monotonic.)
+    const other = rev("t", "other");
+    expect(other).not.toBe(0);
+    addNote(db, "t", "demo only", { workstream: "demo" });
+    expect(rev("t", "other")).toBe(other);
+    expect(rev("t")).not.toBe(r);
   });
 
   it("moves on EVERY step: a note, a field update, a claim, either end of an edge", async () => {
@@ -92,6 +100,137 @@ describe("taskRevision", () => {
     // u is on the far end of t's blocker edge: it moved once, with the edge.
     expect(rev("u")).not.toBe(uBefore);
     expect(rev("axb")).toBe(rev("axb"));
+  });
+
+  it("every task-row column and the owner is its own contribution (updated_at frozen)", () => {
+    const wsId = (
+      db.prepare("SELECT id FROM workstreams WHERE name='demo'").get() as { id: number }
+    ).id;
+    const agentId = (db.prepare("SELECT id FROM agents WHERE name='w1'").get() as { id: number })
+      .id;
+    const frozen = (
+      db
+        .prepare("SELECT updated_at FROM tasks WHERE local_id='t' AND workstream_id=?")
+        .get(wsId) as { updated_at: string }
+    ).updated_at;
+    const changes: [string, string, unknown[]][] = [
+      ["title", "title = ?", ["renamed"]],
+      ["impact", "impact = ?", [51]],
+      ["effort_days", "effort_days = ?", [2.5]],
+      ["scored", "scored = ?", [0]],
+      ["dispatch_host", "dispatch_host = ?", ["box"]],
+      ["kind", "kind = ?", ["human"]],
+      ["wave", "wave = ?", ["w9"]],
+      ["created_at", "created_at = ?", ["2001-01-01T00:00:00.000Z"]],
+      ["status+substate", "status = ?, substate = ?", ["IN_PROGRESS", "active"]],
+      ["substate only", "substate = ?", ["parked"]],
+      ["owner", "owner_id = ?", [agentId]],
+    ];
+    for (const [label, set, args] of changes) {
+      // restore a known base (still frozen), then change exactly one thing
+      db.prepare(
+        "UPDATE tasks SET title='t', impact=50, effort_days=1, scored=1, dispatch_host=NULL, kind='work', wave=NULL, created_at=?, status='OPEN', substate='todo', owner_id=NULL, updated_at=? WHERE local_id='t' AND workstream_id=?",
+      ).run("2000-01-01T00:00:00.000Z", frozen, wsId);
+      const base = rev("t");
+      db.prepare(`UPDATE tasks SET ${set} WHERE local_id='t' AND workstream_id=?`).run(
+        ...args,
+        wsId,
+      );
+      expect(
+        (
+          db
+            .prepare("SELECT updated_at FROM tasks WHERE local_id='t' AND workstream_id=?")
+            .get(wsId) as { updated_at: string }
+        ).updated_at,
+        label,
+      ).toBe(frozen);
+      expect(rev("t"), label).not.toBe(base);
+    }
+    // updated_at alone moves it too
+    const base = rev("t");
+    db.prepare("UPDATE tasks SET updated_at = ? WHERE local_id='t' AND workstream_id=?").run(
+      "2002-02-02T00:00:00.000Z",
+      wsId,
+    );
+    expect(rev("t")).not.toBe(base);
+  });
+
+  it("owner-only: a task's owner moves its revision and a stale --if claim/delete is refused", () => {
+    const agentId = (db.prepare("SELECT id FROM agents WHERE name='w1'").get() as { id: number })
+      .id;
+    const before = rev("u");
+    db.prepare(
+      "UPDATE tasks SET owner_id = ? WHERE local_id='u' AND workstream_id=(SELECT id FROM workstreams WHERE name='demo')",
+    ).run(agentId);
+    expect(rev("u")).not.toBe(before);
+    expect(() => deleteTask(db, "u", "demo", { ifRevision: before })).toThrow(
+      RevisionMismatchError,
+    );
+    expect(getTask(db, "u", "demo")).toBeDefined();
+  });
+
+  it("edge order never matters, direction does: the hash input is canonical", () => {
+    const wsId = (
+      db.prepare("SELECT id FROM workstreams WHERE name='demo'").get() as { id: number }
+    ).id;
+    const idOf = (id: string): number =>
+      (
+        db.prepare("SELECT id FROM tasks WHERE local_id=? AND workstream_id=?").get(id, wsId) as {
+          id: number;
+        }
+      ).id;
+    const edge = (from: string, to: string): void => {
+      db.prepare(
+        "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
+      ).run(idOf(from), idOf(to), "2030-01-01T00:00:00.000Z");
+    };
+    const clear = (): void => void db.prepare("DELETE FROM task_edges").run();
+    // t blocked by u and blocker, t blocking a_b and axb: inserted in two orders
+    edge("u", "t");
+    edge("blocker", "t");
+    edge("t", "a_b");
+    edge("t", "axb");
+    const forward = rev("t");
+    clear();
+    edge("t", "axb");
+    edge("t", "a_b");
+    edge("blocker", "t");
+    edge("u", "t");
+    expect(rev("t")).toBe(forward);
+    // direction is part of the input: the same peers on the other sides differ
+    clear();
+    edge("t", "u");
+    edge("t", "blocker");
+    edge("a_b", "t");
+    edge("axb", "t");
+    expect(rev("t")).not.toBe(forward);
+  });
+
+  it("the same state gives the same revision on a machine whose rows were created in another order", () => {
+    // Row ids (and so the order SQLite returns edges in) differ per machine.
+    const other = openDb({ path: join(dir, "peer.db") });
+    try {
+      ensureWorkstream(other, "demo");
+      for (const id of ["blocker", "axb", "a_b", "u", "t"]) {
+        addTask(other, { workstream: "demo", localId: id, title: id, impact: 50, effortDays: 1 });
+      }
+      for (const d of [db, other]) {
+        for (const [blocked, by] of [
+          ["t", "u"],
+          ["t", "blocker"],
+          ["a_b", "t"],
+          ["axb", "t"],
+        ] as const) {
+          addBlockEdge(d, "demo", blocked, by);
+        }
+        d.prepare(
+          "UPDATE tasks SET created_at = '2000-01-01T00:00:00.000Z', updated_at = '2000-01-01T00:00:00.000Z'",
+        ).run();
+      }
+      expect(taskRevision(other, "demo", "t")).toBe(rev("t"));
+    } finally {
+      other.close();
+    }
   });
 
   it("is derived from state: the same state gives the same revision, whatever got it there", () => {
@@ -254,6 +393,65 @@ describe("SDK fences refuse before any write", () => {
     expect(getTask(db, "t", "demo")?.ownerName).toBe("w1");
     releaseTask(db, "t", { workstream: "demo", ifRevision: rev("t") });
     expect(getTask(db, "t", "demo")?.ownerName).toBeNull();
+  });
+});
+
+describe("the fence reads and writes in ONE transaction", () => {
+  // A check before BEGIN IMMEDIATE leaves a window for a concurrent writer
+  // between compare and write. Observe, per prepared statement, whether the
+  // connection was inside a transaction.
+  const traced = (): { proxy: Db; log: { sql: string; tx: boolean }[] } => {
+    const log: { sql: string; tx: boolean }[] = [];
+    const proxy = new Proxy(db, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop, target);
+        if (prop === "prepare") {
+          return (sql: string) => {
+            log.push({ sql, tx: target.inTransaction });
+            return target.prepare(sql);
+          };
+        }
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    return { proxy, log };
+  };
+  const readsOfTasks = (log: { sql: string; tx: boolean }[]) =>
+    log.filter(
+      (l) => /FROM tasks t\s+JOIN workstreams w/.test(l.sql) || /SELECT 1 FROM tasks t/.test(l.sql),
+    );
+
+  it("withTaskFence: the existence check and the revision derivation run inside the write transaction", () => {
+    const { proxy, log } = traced();
+    let ran = false;
+    withTaskFence(proxy, "demo", "t", rev("t"), () => {
+      ran = true;
+    });
+    expect(ran).toBe(true);
+    const reads = readsOfTasks(log);
+    expect(reads.length).toBeGreaterThanOrEqual(2);
+    expect(reads.every((l) => l.tx)).toBe(true);
+  });
+
+  it("withTaskFence: a stale revision is refused inside the transaction and fn never runs", () => {
+    let ran = false;
+    expect(() =>
+      withTaskFence(db, "demo", "t", rev("t") + 1, () => {
+        ran = true;
+      }),
+    ).toThrow(RevisionMismatchError);
+    expect(ran).toBe(false);
+    expect(db.inTransaction).toBe(false);
+  });
+
+  it("claimTask --if: the revision is read inside the claim transaction", async () => {
+    const { proxy, log } = traced();
+    await claimTask(proxy, "t", { workstream: "demo", agentName: "w1", ifRevision: rev("t") });
+    const reads = log.filter(
+      (l) => /FROM tasks t\s+JOIN workstreams w/.test(l.sql) && /owner/.test(l.sql),
+    );
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every((l) => l.tx)).toBe(true);
   });
 });
 
@@ -606,5 +804,56 @@ describe("candidate_ids: read-only, exact partition", () => {
     expect(r.exitCode).toBe(3);
     expect(r.stderr).toContain("mu task show fix_auth -w demo");
     expect(r.stderr).not.toMatch(/mu (task (delete|block|close)|sql)/);
+  });
+
+  const expectMissWritesNothing = async (argv: string[], ops: number, edges: number) => {
+    const r = await runCliJson([...argv, "--json"], path);
+    expect(r.exitCode, argv.join(" ")).toBe(3);
+    expect(r.doc.candidate_ids, argv.join(" ")).toEqual(["fix_auth"]);
+    expect(opCount(), argv.join(" ")).toBe(ops);
+    expect(edgeCount(), argv.join(" ")).toBe(edges);
+  };
+
+  it("task wait: bare and qualified wrong ids name the candidates of the given workstream", async () => {
+    const ops = opCount();
+    await expectMissWritesNothing(
+      ["task", "wait", "fix-auth", "-w", "demo", "--timeout", "1"],
+      ops,
+      0,
+    );
+    await expectMissWritesNothing(["task", "wait", "demo/fix-auth", "--timeout", "1"], ops, 0);
+    // qualified into another workstream: that workstream's candidates, not demo's
+    const o = await runCliJson(
+      ["task", "wait", "other/fix-auth", "--timeout", "1", "--json"],
+      path,
+    );
+    expect(o.exitCode).toBe(3);
+    expect(o.doc.candidate_ids).toEqual(["fix_auth_other"]);
+  });
+
+  it("task add --blocks / --blocked-by with a wrong id: candidates, and the batch rolls back", async () => {
+    const ops = opCount();
+    for (const flag of ["--blocks", "--blocked-by"]) {
+      await expectMissWritesNothing(
+        [
+          "task",
+          "add",
+          "new_task",
+          "--title",
+          "New task",
+          "--impact",
+          "50",
+          "--effort-days",
+          "1",
+          flag,
+          "fix-auth",
+          "-w",
+          "demo",
+        ],
+        ops,
+        0,
+      );
+      expect(getTask(db, "new_task", "demo")).toBeUndefined();
+    }
   });
 });

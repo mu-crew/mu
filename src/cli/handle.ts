@@ -677,7 +677,7 @@ export function handle(
       // exact lookup missed in. Best effort: a hint never masks the miss.
       if (err instanceof TaskNotFoundError && err.workstream !== undefined && db !== undefined) {
         try {
-          err.candidateIds = candidateTaskIds(db, err.workstream, err.taskId);
+          err.candidateIds = candidateTaskIds(db, err.workstream, err.lookupId);
         } catch {}
       }
       exitCode = emitError(err);
