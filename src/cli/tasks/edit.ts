@@ -135,7 +135,9 @@ export function suspiciousNoteWarnings(text: string): string[] {
   return [];
 }
 
-function emitWarnings(warnings: readonly string[]): void {
+/** Human mode: yellow stderr lines. `--json` carries them in the document's `warnings`. */
+function emitWarnings(warnings: readonly string[], json: boolean | undefined): void {
+  if (json) return;
   for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
 }
 
@@ -183,7 +185,7 @@ export async function cmdTaskAdd(
         ? unescapeNoteText(opts.note)
         : undefined;
   const warnings = noteText !== undefined ? suspiciousNoteWarnings(noteText) : [];
-  emitWarnings(warnings);
+  emitWarnings(warnings, opts.json);
   const initialNoteAuthor =
     noteText !== undefined ? (opts.noteAuthor ?? (await resolveActorIdentity())) : undefined;
   const { task, note } = db
@@ -327,7 +329,7 @@ export async function cmdTaskNote(
   const author = opts.author ?? (await resolveActorIdentity());
   const text = content === STDIN_ARG ? await readStdinText("note text") : unescapeNoteText(content);
   const warnings = suspiciousNoteWarnings(text);
-  emitWarnings(warnings);
+  emitWarnings(warnings, opts.json);
   const note = addNote(db, localId, text, { author, workstream: ws });
   const nextSteps: NextStep[] = [
     { intent: "Show all notes on this task", command: `mu task notes ${localId} -w ${ws}` },

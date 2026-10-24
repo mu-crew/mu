@@ -29,7 +29,7 @@ import {
 import type { Db } from "../db.js";
 import { formatBytes } from "../disk-recon.js";
 import { checkDrift, DriftDetectedError } from "../drift.js";
-import { muTable, pc, printNextSteps } from "../output.js";
+import { isJsonMode, muTable, pc, printNextSteps } from "../output.js";
 import { UsageError } from "./handle.js";
 
 export function cmdDbBackup(db: Db, file: string, opts: { json?: boolean } = {}): void {
@@ -84,9 +84,12 @@ function vacuumAndCheck(
   const after = dbBytes(db);
   const report = checkDrift(db);
   if (!report.clean) {
-    console.error(
-      pc.red(`drift after the rewrite (${report.totalDrift}); the backup is ${backup}`),
-    );
+    // Under --json the thrown DriftDetectedError is the one document.
+    if (!isJsonMode()) {
+      console.error(
+        pc.red(`drift after the rewrite (${report.totalDrift}); the backup is ${backup}`),
+      );
+    }
     throw new DriftDetectedError(report.totalDrift, report.records);
   }
   return { before, after, checkpointed };

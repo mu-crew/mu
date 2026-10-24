@@ -819,7 +819,10 @@ export function buildProgram(): Command {
       (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
     )
     .option(...JSON_OPT)
-    .hook("preAction", forwardRootWorkstream)
+    .hook("preAction", (root, leaf) => {
+      forwardRootJson(root, leaf);
+      forwardRootWorkstream(root, leaf);
+    })
     .action(() => {
       program.outputHelp();
     });
@@ -844,6 +847,18 @@ export function buildProgram(): Command {
   // failing subcommand's --help (human) or `usage` JSON (--json).
   applyExitOverride(program);
   return program;
+}
+
+/** preAction hook: hand a root-position `--json` to the verb's own `--json`,
+ *  so `mu --json task list` prints the same envelope as `mu task list --json`.
+ *  Without it enablePositionalOptions binds the flag to the root and the
+ *  success path prints a human table (errors read argv, so they already
+ *  honoured it). Help and `--version` stay raw text: they are not verbs. */
+function forwardRootJson(root: Command, leaf: Command): void {
+  if (leaf === root || root.opts().json !== true) return;
+  if (leaf.options.some((o) => o.attributeName() === "json")) {
+    leaf.setOptionValueWithSource("json", true, "cli");
+  }
 }
 
 /** preAction hook: hand a root-position `-w` to the verb's own `-w`, so

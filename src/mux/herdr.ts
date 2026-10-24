@@ -55,7 +55,7 @@
 // halves.
 
 import { execFileCapture } from "../exec-file.js";
-import type { NextStep } from "../output.js";
+import { isJsonMode, type NextStep } from "../output.js";
 import { sleep } from "./tmux.js";
 import {
   type AttachTarget,
@@ -911,6 +911,7 @@ const NO_AGENT_CODES: readonly string[] = ["agent_not_found", "agent_not_recogni
 /** Default handler for an unconfirmed send: warn on stderr. Loud by
  *  design — silence is the failure mode. */
 function defaultUndeliveredWarning(warning: SendWarning): void {
+  if (isJsonMode()) return; // the verb's document carries `delivered:false`
   console.warn(`warning: ${warning.message}`);
 }
 

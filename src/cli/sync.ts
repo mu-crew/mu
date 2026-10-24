@@ -159,7 +159,7 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
 
   const pass = await syncPass(db, dir);
   const peers = peerStatuses(db, dir);
-  if (pass.flushed.lockBusy === true) {
+  if (pass.flushed.lockBusy === true && opts.json !== true) {
     process.stderr.write(
       "mu: sync: own segment is locked by another mu process; local ops stay pending and the next flush appends them\n",
     );
@@ -173,6 +173,7 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
       flushed: pass.flushed.appended,
       skippedLocal: pass.flushed.skippedLocal,
       selfRepaired: pass.flushed.selfRepaired,
+      lockBusy: pass.flushed.lockBusy === true,
       foreignVersionAt: pass.flushed.foreignVersionAt,
       foreignVersion: pass.flushed.foreignVersion,
       ingested: pass.ingested.map((r) => ({

@@ -28,6 +28,7 @@
 import type { StateReading } from "../agent-state.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
+import { isJsonMode } from "../output.js";
 import { StallDetectedDuringWaitError, stallWaitHint, TaskNotFoundError } from "./errors.js";
 import { getTask, getTaskOwner } from "./queries.js";
 import { DEFAULT_SUBSTATE, type TaskStatus, type TaskSubstate } from "./status.js";
@@ -65,6 +66,8 @@ export const DEFAULT_STUCK_AFTER_MS = 120_000;
  *  covers an orchestrator `send` racing the settle. */
 export const DEFAULT_CTL_STUCK_AFTER_MS = 5_000;
 const defaultStuckWarn: (msg: string) => void = (msg) => {
+  // --json: the stall is in the document (`stuck`, nextSteps); stderr stays empty.
+  if (isJsonMode()) return;
   process.stderr.write(msg);
 };
 let currentStuckWarn: (msg: string) => void = defaultStuckWarn;
