@@ -44,6 +44,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- Test health, kernel milestone: slow tests sped up without dropping assertions (fast 19.6 s -> 13.5 s, slow 3m14s -> 2m32s; counts unchanged); `docs/ARCHITECTURE.md` module map and `docs/test-health/2026-10-24-kernel.md`.
+
 - **`workstream teardown` is soft and needs a preview revision.** Without
   a flag it prints counts and `rev=<n>` and writes nothing. `--if <n>` kills
   the session first, deletes the machine-local agent rows and sets
