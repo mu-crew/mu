@@ -22,6 +22,7 @@ import {
 } from "./agent-state.js";
 import { type Db, resolveWorkstreamId, tornDownAtOf, tryResolveWorkstreamId } from "./db.js";
 import { emitEvent } from "./logs.js";
+import type { CommandSource } from "./mux/types.js";
 import { withOpContext } from "./op-context.js";
 import { type ReconcileMode, type ReconcileReport, reconcile } from "./reconcile.js";
 import { addNote } from "./tasks.js";
@@ -131,6 +132,10 @@ export interface AgentRow {
   cwd: string | null;
   /** Commit the worktree was created at; null without `--worktree`. */
   base: string | null;
+  /** The command the pane was started with (machine-local); null for a row older than this column. */
+  command: string | null;
+  /** Where `command` came from; null with it. */
+  commandSource: CommandSource | null;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** ISO 8601 timestamp. */
@@ -207,6 +212,10 @@ export interface InsertAgentInput {
   tab?: string | null;
   cwd?: string | null;
   base?: string | null;
+  /** The resolved command and where it came from, kept so an outdated
+   *  extension can be respawned exactly. */
+  command?: string | null;
+  commandSource?: CommandSource | null;
 }
 
 interface RawAgentRow {
@@ -219,6 +228,8 @@ interface RawAgentRow {
   tab: string | null;
   cwd: string | null;
   base: string | null;
+  command: string | null;
+  command_source: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -235,6 +246,8 @@ const SELECT_AGENT_COLS = `
   a.tab AS tab,
   a.cwd AS cwd,
   a.base AS base,
+  a.command AS command,
+  a.command_source AS command_source,
   a.created_at AS created_at,
   a.updated_at AS updated_at
 `;
@@ -251,6 +264,13 @@ function rowFromDb(row: RawAgentRow): AgentRow {
     tab: row.tab,
     cwd: row.cwd,
     base: row.base,
+    command: row.command,
+    commandSource:
+      row.command_source === "explicit" ||
+      row.command_source === "env" ||
+      row.command_source === "cli-key"
+        ? row.command_source
+        : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -278,9 +298,9 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
   const now = new Date().toISOString();
   try {
     db.prepare(
-      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, created_at, updated_at)
+      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, created_at, updated_at)
        VALUES (@name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
-               COALESCE(@role, 'full-access'), @tab, @cwd, @base, @now, @now)`,
+               COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource, @now, @now)`,
     ).run({
       name: input.name,
       workstreamId,
@@ -290,6 +310,8 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
       tab: input.tab ?? null,
       cwd: input.cwd ?? null,
       base: input.base ?? null,
+      command: input.command ?? null,
+      commandSource: input.commandSource ?? null,
       now,
     });
   } catch (err) {

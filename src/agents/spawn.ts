@@ -33,6 +33,7 @@ import {
   WorkstreamTornDownError,
 } from "../db.js";
 import { emitEvent } from "../logs.js";
+import type { CommandSource } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode, type NextStep } from "../output.js";
 import { resolveActorIdentity } from "../tasks/claim.js";
@@ -639,7 +640,15 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       paneId = pid;
       readiness = done;
       phase = "finalize";
-      const row = finalizeAgentRow(db, { opts, cli, paneId: pid, cwd: paneCwd, staged });
+      const row = finalizeAgentRow(db, {
+        opts,
+        cli,
+        paneId: pid,
+        cwd: paneCwd,
+        staged,
+        command,
+        commandSource,
+      });
       ownsRow = true;
       return { pid, row };
     });
@@ -827,9 +836,11 @@ function finalizeAgentRow(
     paneId: string;
     cwd: string;
     staged: StagedWorktree | undefined;
+    command: string;
+    commandSource: CommandSource;
   },
 ): AgentRow {
-  const { opts, cli, paneId, cwd, staged } = args;
+  const { opts, cli, paneId, cwd, staged, command, commandSource } = args;
   if (staged === undefined) {
     return insertAgent(db, {
       name: opts.name,
@@ -839,16 +850,27 @@ function finalizeAgentRow(
       role: opts.role,
       tab: opts.tab ?? null,
       cwd,
+      command,
+      commandSource,
     });
   }
   // Scope the patch to the spawn's workstream so a same-named worker
   // in another workstream isn't repointed at this pane
   // (bug_v5_name_clash_silent_misroute).
   db.prepare(
-    `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, updated_at = ?
+    `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, updated_at = ?
       WHERE name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
-  ).run(paneId, staged.path, staged.base, new Date().toISOString(), opts.name, opts.workstream);
+  ).run(
+    paneId,
+    staged.path,
+    staged.base,
+    command,
+    commandSource,
+    new Date().toISOString(),
+    opts.name,
+    opts.workstream,
+  );
   const row = getAgent(db, opts.name, opts.workstream);
   if (!row) throw new Error(`spawnAgent: agent vanished after worktree stage: ${opts.name}`);
   return row;

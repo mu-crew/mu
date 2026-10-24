@@ -19,6 +19,8 @@ function agent(name: string, state: LiveAgent["state"], idle: boolean): LiveAgen
     tab: null,
     cwd: null,
     base: null,
+    command: null,
+    commandSource: null,
     createdAt: longAgo,
     updatedAt: longAgo,
     state,

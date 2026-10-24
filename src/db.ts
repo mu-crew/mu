@@ -1035,6 +1035,8 @@ CREATE TABLE IF NOT EXISTS agents (
   tab           TEXT,
   cwd           TEXT,                           -- worktree path the pane runs in (machine-local)
   base          TEXT,                           -- commit that worktree was created from (machine-local)
+  command       TEXT,                           -- the resolved command the pane runs (machine-local); NULL: row predates it
+  command_source TEXT,                          -- 'explicit' | 'env' | 'cli-key': where command came from (machine-local)
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   UNIQUE (workstream_id, name),
