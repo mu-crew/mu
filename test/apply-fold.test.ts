@@ -15,6 +15,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Statement } from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Op, projectLog } from "../src/apply.js";
 import { type Db, openDb } from "../src/db.js";
@@ -44,7 +45,7 @@ afterAll(() => {
 });
 
 /** Empty every portable table and the log, unobserved by capture. */
-const wipers = new WeakMap<Db, ReturnType<Db["prepare"]>[]>();
+const wipers = new WeakMap<Db, Statement[]>();
 function wipe(db: Db): void {
   // Prepared once per DB: compiling the cascade/trigger programs of a bare
   // db.exec("DELETE FROM workstreams") costs ~3ms, 11s over the 500 cases.

@@ -28,6 +28,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Statement } from "better-sqlite3";
 import { Command } from "commander";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Op } from "../src/apply.js";
@@ -286,7 +287,7 @@ describe("apply is order-independent: live == rebuild for EVERY arrival order", 
   // in test/apply-fold.test.ts, so the log holds only the order under test.
   let permDb: Db | undefined;
   let permDir: string | undefined;
-  let permWipe: ReturnType<Db["prepare"]>[] | undefined;
+  let permWipe: Statement[] | undefined;
   afterAll(() => {
     permDb?.close();
     if (permDir) rmFixtureDir(permDir);
