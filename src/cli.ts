@@ -49,7 +49,11 @@ import {
   type TaskStatus,
 } from "./tasks.js";
 import { resolveMuxSessionWorkstreamName } from "./workstream.js";
-import { parseWorkstreamFragments, workstreamNameProblem } from "./workstream-scope.js";
+import {
+  parseWorkstreamFragments,
+  qualifiedRefProblem,
+  workstreamNameProblem,
+} from "./workstream-scope.js";
 
 // ─── Re-exports for downstream cli/* modules ──────────────────────────
 //
@@ -98,7 +102,8 @@ export {
 export function injectedWorkstream(): string | undefined {
   if (process.env.MU_MANAGED_AGENT !== "1") return undefined;
   const ws = process.env.MU_WORKSTREAM;
-  return ws !== undefined && ws !== "" ? ws : undefined;
+  if (ws === undefined || ws === "") return undefined;
+  return checkWorkstreamName(ws, "$MU_WORKSTREAM");
 }
 
 /** The managed worker this process runs as (spawn-injected), or undefined. */
@@ -197,7 +202,7 @@ export function parseQualifiedRef(raw: string): ParsedRef {
 /** The `<ws>` of a qualified ref goes through the same validator as `-w`:
  *  ` own/t` or `/t` is an error, never trimmed into `own`. */
 export function checkQualifiedPrefix(raw: string, workstream: string): string {
-  const problem = workstreamNameProblem(workstream, `qualified ref ${JSON.stringify(raw)}:`);
+  const problem = qualifiedRefProblem(raw) ?? workstreamNameProblem(workstream);
   if (problem !== undefined) throw new UsageError(problem, { showHelp: false });
   return workstream;
 }
@@ -213,7 +218,7 @@ export function applyQualifiedRef(raw: string, opts: { workstream?: string }): s
   checkQualifiedPrefix(raw, parsed.workstream);
   if (opts.workstream !== undefined && opts.workstream !== parsed.workstream) {
     throw new UsageError(
-      `qualified ref ${JSON.stringify(raw)} (workstream=${parsed.workstream}) conflicts with --workstream ${opts.workstream}`,
+      `qualified ref ${JSON.stringify(raw)} (workstream=${JSON.stringify(parsed.workstream)}) conflicts with --workstream ${JSON.stringify(opts.workstream)}`,
       { showHelp: false },
     );
   }

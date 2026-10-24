@@ -66,8 +66,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   never trims) serves every path: CLI `-w`, the `<ws>` of a qualified ref
   (` own/t` and `/t` are errors), `task wait` (an explicit `-w` is checked
   even when every ref is qualified), `mu_delegate`'s `record`, and the
-  nudge parser. Scope errors are one line with no help dump, from the root
-  `-w` hook too. Identity: `mu me`, `me tasks`, `me next`
+  nudge parser. A scope value holding whitespace, a comma or a slash is
+  one name pasted wrong, so it is refused (`-w 'own, decoy'` included);
+  `--for <ws>/<agent>` and `$MU_WORKSTREAM` go through it too. Scope errors
+  (conflicts included) are one line with no help dump, from the root
+  `-w` hook too; one table test feeds the same bad values to every entry
+  point. Identity: `mu me`, `me tasks`, `me next`
   and `mu log` source/partition read `MU_AGENT_NAME`/`MU_WORKSTREAM` first
   (no `$TMUX_PANE` needed; a managed identity with no agent row is an
   error, never a pane guess); `$TMUX_PANE` is the fallback only without an

@@ -23,7 +23,11 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseWorkstreamFragments, workstreamNameProblem } from "../src/workstream-scope.js";
+import {
+  parseWorkstreamFragments,
+  qualifiedRefProblem,
+  workstreamNameProblem,
+} from "../src/workstream-scope.js";
 import { defaultRunner, type MuRunner } from "./delegate.js";
 
 export const NUDGE_MESSAGE_TYPE = "mu-keep-driving";
@@ -139,8 +143,9 @@ function scanArgs(
   args: string[],
   from: number,
   stopAtPositional = false,
-): { ws: string[]; seen: Set<string>; positionals: string[]; end: number } {
+): { ws: string[]; seen: Set<string>; positionals: string[]; end: number; forValue?: string } {
   const ws: string[] = [];
+  let forValue: string | undefined;
   const seen = new Set<string>();
   const positionals: string[] = [];
   let k = from;
@@ -163,11 +168,19 @@ function scanArgs(
       ws.push(eq !== -1 ? w.slice(eq + 1) : (args[++k] ?? ""));
     } else if (!w.startsWith("--") && w.startsWith("-w")) {
       ws.push(w.slice(2));
+    } else if (opt === "--for" || opt === "-f") {
+      seen.add("--for");
+      forValue = eq !== -1 ? w.slice(eq + 1) : (args[++k] ?? "");
+    } else if (!w.startsWith("--") && w.startsWith("-f")) {
+      seen.add("--for");
+      forValue = w.slice(2);
     } else if (VALUE_OPTS.has(opt) && eq === -1) {
       k++;
     }
   }
-  return { ws, seen, positionals, end: k };
+  return forValue === undefined
+    ? { ws, seen, positionals, end: k }
+    : { ws, seen, positionals, end: k, forValue };
 }
 
 /**
@@ -228,12 +241,18 @@ export function dispatchedWorkstreams(
     const isClaim = args[0] === "task" && args[1] === "claim";
     const isAgent = args[0] === "agent" && (args[1] === "send" || args[1] === "spawn");
     if (!isClaim && !isAgent) continue;
-    const { ws, seen, positionals } = scanArgs(args, 2);
-    if (isClaim && !seen.has("--for") && !seen.has("-f")) continue;
+    const { ws, seen, positionals, forValue } = scanArgs(args, 2);
+    if (isClaim && !seen.has("--for")) continue;
     const ref = positionals[0];
     if (isClaim && ref === undefined) continue;
     const slash = ref?.indexOf("/") ?? -1;
+    // `agent spawn` takes a bare name: the CLI refuses a qualified one.
+    if (slash >= 0 && args[1] === "spawn") continue;
     const prefix = slash >= 0 ? ref?.slice(0, slash) : undefined;
+    if (ref !== undefined && qualifiedRefProblem(ref) !== undefined) continue;
+    // The `--for` agent's own prefix is validated; the dispatch is still
+    // the TASK's partition.
+    if (forValue !== undefined && qualifiedRefProblem(forValue) !== undefined) continue;
     const dispatched = scopeOf(rootOpts.ws, ws, prefix, injected);
     if (dispatched !== undefined && dispatched !== "scratch") found.add(dispatched);
   }

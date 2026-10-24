@@ -269,7 +269,7 @@ describe("CLI parser properties", () => {
     });
 
     // A workstream prefix is validated like -w: never padded, never blank.
-    const wsPart = refPart.filter((s) => s === s.trim());
+    const wsPart = refPart.filter((s) => s !== "" && !/[\s,/]/u.test(s));
 
     it("applyQualifiedRef rejects a blank or padded prefix, never trims it", () => {
       fc.assert(
@@ -287,7 +287,7 @@ describe("CLI parser properties", () => {
 
     it("applyQualifiedRef fills missing workstream", () => {
       fc.assert(
-        fc.property(wsPart, refPart, (ws, name) => {
+        fc.property(wsPart, wsPart, (ws, name) => {
           const opts: { workstream?: string } = {};
           expect(applyQualifiedRef(`${ws}/${name}`, opts)).toBe(name);
           expect(opts.workstream).toBe(ws);
@@ -297,7 +297,7 @@ describe("CLI parser properties", () => {
 
     it("applyQualifiedRef rejects conflicting explicit workstream", () => {
       fc.assert(
-        fc.property(wsPart, wsPart, refPart, (ws, other, name) => {
+        fc.property(wsPart, wsPart, wsPart, (ws, other, name) => {
           fc.pre(ws !== other);
           expect(() => applyQualifiedRef(`${ws}/${name}`, { workstream: other })).toThrow(
             /conflicts/,
