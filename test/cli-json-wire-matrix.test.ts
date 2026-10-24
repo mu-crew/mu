@@ -203,6 +203,37 @@ describe("error and warning paths stay in the one document", () => {
     expect((await run(["--json", "nonsense"])).doc).toMatchObject({ ok: false, exit: 2 });
   });
 
+  it("agent close: the preview and the --if apply are each one document, stderr empty", async () => {
+    const preview = await run(["agent", "close", "worker-1", "-w", "probe", "--json"]);
+    expect(preview.doc.ok).toBe(true);
+    const data = preview.doc.data as { revision: number; dryRun: boolean };
+    expect(data.dryRun).toBe(true);
+    expect(Number.isSafeInteger(data.revision)).toBe(true);
+    const stale = await run([
+      "agent",
+      "close",
+      "worker-1",
+      "-w",
+      "probe",
+      "--if",
+      String(data.revision + 1),
+      "--json",
+    ]);
+    expect(stale.r.exitCode).toBe(4);
+    expect(stale.doc).toMatchObject({ ok: false, exit: 4, current_rev: data.revision });
+    const apply = await run([
+      "agent",
+      "close",
+      "worker-1",
+      "-w",
+      "probe",
+      "--if",
+      String(data.revision),
+      "--json",
+    ]);
+    expect(apply.doc).toMatchObject({ ok: true, data: { killedPane: true, deletedRow: true } });
+  });
+
   it("agent remote-env --shell --json is refused as one usage document, not shell text", async () => {
     const { r, doc } = await run([
       "agent",

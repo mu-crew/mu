@@ -3,7 +3,8 @@
 ## Close one agent
 
 ```bash
-mu agent close worker-1 -w auth
+mu agent close worker-1 -w auth           # preview: writes nothing, prints rev=<n>
+mu agent close worker-1 -w auth --if <n>  # apply that preview
 ```
 
 Close removes the agent's worktree with it. A worktree with uncommitted
@@ -103,7 +104,8 @@ commit or checkout is touched.
 ```bash
 mu doctor --disk                           # bytes per worktree
 mu doctor                                  # the disk section lists directories with no DB row
-mu agent close worker-1 -w auth --discard  # delete one worktree
+mu agent close worker-1 -w auth --discard           # preview deleting one worktree
+mu agent close worker-1 -w auth --discard --if <n>  # apply it
 ```
 
 ## Keep a copy of the graph

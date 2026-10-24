@@ -35,6 +35,7 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_SPAWN_CTL_MS` | Budget for the control-socket handshake with a new pi agent, polled every 250ms. On timeout spawn still exits 0, reports `ctl: missing` or `ctl: refused`, and warns. `--no-ctl` skips it per spawn. | `30000` |
 | `MU_SPAWN_LIVENESS_MS` | tmux only. Wait this long, then check the pane is alive and its scrollback has no startup error (auth failure, `command not found`). Failure rolls back the row and throws `AgentDiedOnSpawnError` or `AgentSpawnStartupError`. A pi agent skips the wait: the pane is checked on each ctl handshake tick and scanned when it ends. | `1500` |
 | `MU_SPAWN_LOCK_TIMEOUT_MS` | How long a spawn waits for the per-workstream spawn lock. | `15000` |
+| `MU_AGENT_LOCK_TIMEOUT_MS` | How long `agent close` and `--worktree` staging wait for the per-agent lock before exit 4 (`AgentLockBusyError`, nothing done). | `15000` |
 
 ## Agents and timing
 

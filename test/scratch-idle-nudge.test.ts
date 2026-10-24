@@ -11,6 +11,7 @@ const longAgo = new Date(Date.now() - 3_600_000).toISOString();
 
 function agent(name: string, state: LiveAgent["state"], idle: boolean): LiveAgent {
   return {
+    incarnation: 1,
     name,
     workstreamName: "scratch",
     cli: "pi",

@@ -59,6 +59,7 @@ afterEach(() => {
 
 function agent(over: Partial<LiveAgent> = {}): LiveAgent {
   return {
+    incarnation: 1,
     name: "worker-1",
     workstreamName: "ws",
     cli: "pi",

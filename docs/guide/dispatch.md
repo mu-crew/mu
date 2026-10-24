@@ -124,7 +124,8 @@ git -C "$cwd" fetch && git -C "$cwd" rebase origin/HEAD
 
 Use `origin/HEAD` as the base, or local main when you merged locally. On a
 conflict, run `git -C "$cwd" rebase --abort` and tell the human. To throw
-the worktree away instead, run `mu agent close worker-1 -w auth --discard`.
+the worktree away instead, preview `mu agent close worker-1 -w auth --discard`
+and apply it with `--if <n>`.
 
 ## Wait for the first task to close
 

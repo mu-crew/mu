@@ -27,6 +27,7 @@ import {
   getWorktreeAt,
   listWorktrees,
   reclaimWorktreePath,
+  registerWorktree,
   WorktreeDirtyError,
   WorktreePathNotEmptyError,
   WorktreeVcsRequiredError,
@@ -228,6 +229,55 @@ gitDescribe("agent close: the worktree rule", () => {
   });
 });
 
+gitDescribe("agent close preview: the worktree", () => {
+  const preview = async (name: string, ...extra: string[]) => {
+    const { runCliJson } = await import("./_runCli.js");
+    return runCliJson(
+      ["agent", "close", name, "-w", "auth", ...extra, "--json"],
+      join(tmp, "mu.db"),
+    );
+  };
+
+  it("a dirty worktree is reported, kills nothing, and offers no apply (--discard is never suggested)", async () => {
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    writeFileSync(join(wt.path, "u.txt"), "x");
+    const r = await preview("worker-1");
+    expect(r.data).toMatchObject({
+      kind: "agent",
+      refusesDirty: true,
+      worktree: { path: wt.path, state: "dirty" },
+    });
+    expect(r.data.nextSteps).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+    expect(existsSync(wt.path)).toBe(true);
+  });
+
+  it("--discard previews the lossy close and its apply carries --discard and --if", async () => {
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    writeFileSync(join(wt.path, "u.txt"), "x");
+    const r = await preview("worker-1", "--discard");
+    expect(r.data.refusesDirty).toBe(false);
+    expect(r.data.nextSteps[0].command).toBe(
+      `mu agent close worker-1 -w auth --discard --if ${r.data.revision}`,
+    );
+    expect(existsSync(wt.path)).toBe(true); // still a preview
+  });
+
+  it("an orphan worktree (no agent row) previews with its own revision; a stale --if keeps it", async () => {
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    deleteAgent(db, "worker-1", "auth");
+    const r = await preview("worker-1");
+    expect(r.data.kind).toBe("orphan-worktree");
+    expect(r.data.revision).toBeGreaterThan(0);
+    const stale = await preview("worker-1", "--if", String(r.data.revision + 1));
+    expect(stale.doc).toMatchObject({ ok: false, exit: 4 });
+    expect(existsSync(wt.path)).toBe(true);
+    const applied = await preview("worker-1", "--if", String(r.data.revision));
+    expect(applied.doc.ok).toBe(true);
+    expect(existsSync(wt.path)).toBe(false);
+  });
+});
+
 gitDescribe("spawn --worktree", () => {
   const spawn = (name = "worker-1", extra: Record<string, unknown> = {}) =>
     spawnAgent(db, { name, workstream: "auth", worktree: true, root, ...extra });
@@ -382,6 +432,83 @@ gitDescribe("spawn --worktree", () => {
       expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
       expect(listWorktrees(db)).toEqual([]);
       expect(existsSync(worktreePath("auth", "worker-1"))).toBe(false);
+    });
+
+    it("never deletes a replacement registered under the name while the spawn was failing", async () => {
+      // pane creation fails; meanwhile the placeholder was replaced by another agent
+      mux.restore();
+      mux = installMux("tmux", async (args) => {
+        if (args[0] !== "new-session") return mockTmux(tmuxState).executor(args);
+        deleteAgent(db, "worker-1", "auth");
+        insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%77" });
+        return { stdout: "", stderr: "mock: new-session refused", exitCode: 1 };
+      });
+      await expect(spawn()).rejects.toThrow();
+      expect(getAgent(db, "worker-1", "auth")?.paneId).toBe("%77");
+      // and the worktree path now belongs to the replacement's staging: kept registered
+      expect(listWorktrees(db)).toHaveLength(1);
+    });
+
+    it("a worktree creation that fails after the placeholder was replaced never deletes the replacement", async () => {
+      // A stale registry row at the path is forgotten during staging: the trigger stands in
+      // for the other process replacing the placeholder at that moment. Creation then fails
+      // (the worktrees dir is a file), and the placeholder rollback must leave the new row.
+      const path = worktreePath("auth", "worker-1");
+      execFileSync("mkdir", ["-p", stateDir]);
+      writeFileSync(join(stateDir, "worktrees"), "not a dir");
+      registerWorktree(db, {
+        path,
+        agent: "worker-1",
+        workstream: "auth",
+        root,
+        base: "a",
+        createdAt: "t",
+      });
+      ensureWorkstream(db, "auth");
+      const wsId = (
+        db.prepare("SELECT id FROM workstreams WHERE name = 'auth'").get() as { id: number }
+      ).id;
+      db.exec(`CREATE TEMP TRIGGER swap AFTER DELETE ON worktrees BEGIN
+        DELETE FROM agents WHERE name = 'worker-1';
+        INSERT INTO agents (name, workstream_id, pane_id, status, created_at, updated_at)
+          VALUES ('worker-1', ${wsId}, '%77', 'spawning', 't', 't');
+      END`);
+      await expect(spawn()).rejects.toThrow();
+      expect(getAgent(db, "worker-1", "auth")?.paneId).toBe("%77");
+    });
+
+    it("finalize does not patch a replacement that is itself a pending placeholder", async () => {
+      const inner = mockTmux(tmuxState).executor;
+      mux.restore();
+      mux = installMux("tmux", async (args) => {
+        const r = await inner(args);
+        if (args[0] === "new-session" || args[0] === "new-window") {
+          deleteAgent(db, "worker-1", "auth");
+          insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%pending-worker-1" });
+        }
+        return r;
+      });
+      await expect(spawn()).rejects.toThrow(/vanished/);
+      const kept = getAgent(db, "worker-1", "auth");
+      expect(kept?.paneId).toBe("%pending-worker-1");
+      expect(kept?.cwd).toBeNull();
+    });
+
+    it("finalize patches only the placeholder it inserted: a replaced row is not repointed", async () => {
+      const inner = mockTmux(tmuxState).executor;
+      mux.restore();
+      mux = installMux("tmux", async (args) => {
+        const r = await inner(args);
+        if (args[0] === "new-session" || args[0] === "new-window") {
+          deleteAgent(db, "worker-1", "auth");
+          insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%77" });
+        }
+        return r;
+      });
+      await expect(spawn()).rejects.toThrow(/vanished/);
+      const kept = getAgent(db, "worker-1", "auth");
+      expect(kept?.paneId).toBe("%77");
+      expect(kept?.cwd).toBeNull(); // not patched with this spawn's worktree
     });
 
     it("a failed removal keeps the registry row; `agent close --discard` then finishes it", async () => {

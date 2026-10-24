@@ -82,7 +82,7 @@ const rows = await Promise.all(findings.map(async (id, i) => {
     : lines.slice(at).join("\n"));
   await tools.write({ path: `${dir}/note-${a}.txt`, content: note }); // answer text never touches a shell
   await sh(`mu task note ${id} -w ${ws} - < ${dir}/note-${a}.txt && rm ${dir}/note-${a}.txt`);
-  if (w.outcome === "done") await sh(`mu agent close ${a} -w scratch`);
+  if (w.outcome === "done") await sh(`mu agent close ${a} -w scratch --if "$(mu agent close ${a} -w scratch --json | jq .data.revision)"`);
   return `${id}\t${note.split("\n")[1] ?? note}`;
 }));
 return rows.join("\n");

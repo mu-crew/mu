@@ -79,7 +79,7 @@ export class WorktreeDirtyError extends Error implements HasNextSteps {
         command: `git -C ${this.path} add -A && git -C ${this.path} commit -m <message>`,
       },
       {
-        intent: "Or close and throw the changes away (lossy)",
+        intent: "Or preview throwing the changes away (lossy; the preview prints the --if apply)",
         command: `mu agent close ${this.agent} -w ${this.workstream} --discard`,
       },
     ];
@@ -105,11 +105,11 @@ export class WorktreePathNotEmptyError extends Error implements HasNextSteps {
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Keep it: close it (an unmerged commit keeps a branch; dirty refuses)",
+        intent: "Keep it: preview closing it (an unmerged commit keeps a branch; dirty refuses)",
         command: `mu agent close ${this.agent} -w ${this.workstream}`,
       },
       {
-        intent: "Or throw it away",
+        intent: "Or preview throwing it away (lossy)",
         command: `mu agent close ${this.agent} -w ${this.workstream} --discard`,
       },
       {

@@ -21,6 +21,7 @@ import {
   type AgentWatch,
   abortAgent,
   agentCtlSocket,
+  type ClosePreview,
   checkMessage,
   closeAgent,
   delegateOutcome,
@@ -30,6 +31,7 @@ import {
   isSlashCommand,
   listLiveAgents,
   parseSessionCommand,
+  previewClose,
   readAgent,
   requireFeature,
   resolveCliCommand,
@@ -190,7 +192,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     { intent: "Read pane", command: `mu agent read ${name} -w ${workstream}` },
     { intent: "Watch live events", command: `mu log -w ${workstream} --tail` },
     {
-      intent: "Close (drops registry row, kills pane)",
+      intent: "Preview closing it (prints the --if apply that kills the pane)",
       command: `mu agent close ${name} -w ${workstream}`,
     },
   ];
@@ -666,14 +668,36 @@ export async function cmdMe(
 export async function cmdClose(
   db: Db,
   rawName: string,
-  opts: { workstream?: string; json?: boolean; discard?: boolean } = {},
+  opts: { workstream?: string; json?: boolean; discard?: boolean; if?: number } = {},
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
+  const discard = opts.discard === true;
+  // Bare close is the preview: it reads, it never kills. `--if <rev>` applies.
+  if (opts.if === undefined) {
+    const p = await previewClose(db, name, { workstream: ws, discard });
+    const next: NextStep[] =
+      p.kind === "none" || p.refusesDirty
+        ? []
+        : [
+            {
+              intent: "Apply this close",
+              command: `mu agent close ${name} -w ${ws}${discard ? " --discard" : ""} --if ${p.revision}`,
+            },
+          ];
+    if (opts.json) {
+      emitJson({ ...p, dryRun: true, nextSteps: next });
+      return;
+    }
+    printClosePreview(p);
+    printNextSteps(next);
+    return;
+  }
   const result = await closeAgent(db, name, {
     workstream: ws,
-    ...(opts.discard === true ? { discard: true } : {}),
+    ifRevision: opts.if,
+    ...(discard ? { discard: true } : {}),
   });
   const next: NextStep[] = [];
   const kept = result.worktree?.branch;
@@ -685,7 +709,7 @@ export async function cmdClose(
   }
   next.push({
     intent: "Re-spawn under the same name",
-    command: `mu agent spawn ${name} -w <workstream>`,
+    command: `mu agent spawn ${name} -w ${ws}`,
   });
   if (opts.json) {
     emitJson({ agentName: name, ...result, nextSteps: next });
@@ -712,6 +736,29 @@ export async function cmdClose(
     );
   }
   printNextSteps(next);
+}
+
+function printClosePreview(p: ClosePreview): void {
+  if (p.kind === "none") {
+    console.log(pc.dim(`no agent named ${p.agentName} (already closed?)`));
+    return;
+  }
+  console.log(
+    p.kind === "agent"
+      ? `Close ${pc.bold(p.agentName)}? pane ${p.paneId} will be killed and its row removed (rev ${p.revision})`
+      : `${pc.bold(p.agentName)} has no agent row, only a registered worktree (rev ${p.revision})`,
+  );
+  for (const t of p.ownedTasks) {
+    console.log(`  owns ${t.ref} (${t.status}${t.reverts ? ": goes back to OPEN" : ""})`);
+  }
+  if (p.worktree !== null) {
+    console.log(`  worktree ${p.worktree.path}: ${p.worktree.state}`);
+    if (p.refusesDirty) {
+      console.log(
+        pc.yellow("  uncommitted work: close refuses. Commit it, or preview with --discard"),
+      );
+    }
+  }
 }
 
 /**
@@ -1290,12 +1337,13 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("close <name>")
     .description(
-      "Kill an agent's pane and remove its registry row. Its worktree goes with it: removed when clean, a branch mu/<ws>/<agent>-<sha> keeps unmerged commits; a dirty worktree refuses before anything is killed.",
+      "Close an agent. Without --if it only previews (revision, owned tasks, worktree state) and prints the apply command; with --if <rev> it kills the pane and removes its registry row (refused if the agent changed since the preview). Its worktree goes with it: removed when clean, a branch mu/<ws>/<agent>-<sha> keeps unmerged commits; a dirty worktree refuses before anything is killed.",
     )
     .option(
       "--discard",
       "close even with uncommitted work in the worktree (lossy: it is thrown away)",
     )
+    .option("--if <rev>", "apply the preview with this revision", parseNonNegativeInt)
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string) {
@@ -1303,6 +1351,7 @@ export function wireAgentCommands(program: Command): void {
         workstream?: string;
         json?: boolean;
         discard?: boolean;
+        if?: number;
       };
       return handle((db) => cmdClose(db, name, opts), this as Command)();
     });

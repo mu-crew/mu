@@ -127,7 +127,8 @@ session stays open after the last agent closes; remove it with
 mu agent spawn helper -w scratch
 mu agent send helper -w scratch 'Watch CI on PR 1234 and tell me when it is green'
 mu agent read helper -w scratch -n 50
-mu agent close helper -w scratch
+mu agent close helper -w scratch            # preview; prints rev=<n>
+mu agent close helper -w scratch --if <n>   # close it
 ```
 
 A watcher's chat context does not survive compaction. Log each tick

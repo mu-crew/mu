@@ -44,7 +44,7 @@ mu task note <id> -w <ws> - <<'EOF'
 REFUTER 1 (refuter-1, 4m 05s):
 <the VERDICT line and EVIDENCE lines, verbatim>
 EOF
-mu agent close refuter-1 -w scratch
+mu agent close refuter-1 -w scratch --if "$(mu agent close refuter-1 -w scratch --json | jq .data.revision)"
 ```
 
 A wait that times out or dies leaves `REFUTER 1: no verdict (<outcome>)`.

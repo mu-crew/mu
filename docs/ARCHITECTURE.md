@@ -107,7 +107,7 @@ are re-export hubs.
 | `src/segment-resume.ts` | byte offset + running sha256 saved with a peer's caught-up fingerprint, so ingest reads only appended bytes |
 | `src/sha256-resumable.ts` | SHA-256 with a serialisable running state, so the segment manifest hashes only appended bytes |
 | `src/sync.ts` | peer status, the ambient hook, `--from`, `--repair` |
-| `src/file-lock.ts` | cross-process advisory lock through atomic `fs.mkdir` |
+| `src/file-lock.ts` | cross-process advisory lock through atomic `fs.mkdir`; `strict` steals only from a dead holder; release by token |
 | `src/fleet-hazards.ts` | mixed-fleet checks: DB inside `MU_SYNC_DIR` (plus `DbInsideSyncDirError`, which `handle()` throws before `openDb`), network mount, case collisions, own segment written by a newer mu |
 | `src/dormant.ts` | doctor housekeeping: `finished` (all closed, idle 14 days) vs `abandoned` (idle 60 days, open tasks) workstreams; idle derived from `MAX(tasks.updated_at)` |
 | `src/disk-recon.ts` | report-only state-dir vs DB reconciliation (rows without dirs, dirs without rows, residue); `--disk` measures bytes |
@@ -117,9 +117,11 @@ are re-export hubs.
 
 | Module | Responsibility |
 | --- | --- |
-| `src/agents.ts` | CRUD, send, read, list, close, liveness, reaper |
+| `src/agents.ts` | CRUD (incarnation CAS), send, read, list, liveness, reaper; hub re-exporting close |
 | `src/agents/spawn.ts` | spawn: CLI resolution, `mux.spawnAgent`, liveness, readiness, ctl handshake, rollback |
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
+| `src/agents/lock.ts` | per-agent lock (`withAgentLock`): fail-closed and strict; taken by close and `--worktree` staging/rollback |
+| `src/agents/close.ts` | `previewClose`, `closeAgent`: preview, `--if` fence, replacement check, incarnation CAS on the delete |
 | `src/agents/transport.ts` | send routing: ctl for pi agents; herdr `sendToPane` for others; tmux refuses (`AgentSendUnsupportedError`); no fallback; `expectsCtl` |
 | `src/agents/abort.ts` | stop a pi turn through the control socket; abort + send (`--interrupt`) |
 | `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `error` / `died` / `timeout` / `pending` |
@@ -155,7 +157,7 @@ are re-export hubs.
 | `src/tracks.ts` | union-find tracks with diamond merge |
 | `src/dag.ts` | `loadFullDag`, `renderForest`, `renderTaskTree` for `mu task tree` |
 | `src/workstream-scope.ts` | the one never-trimming validator for a workstream name typed as scope (`-w`, a ref prefix, a record's `workstream`); shared by the CLI and the pi extension |
-| `src/revision.ts` | task revision (`taskRevision`: derived on read from the task row, owner, both edge directions and note count; no counter, no LIKE), `RevisionMismatchError`, `withTaskFence` (one `--if` check around a whole invocation); agents are planned |
+| `src/revision.ts` | task revision (`taskRevision`: derived on read from the task row, owner, both edge directions and note count; no counter, no LIKE), `agentRevision` (derived from the agent incarnation, row, owned tasks and worktree rows), `RevisionMismatchError`, `withTaskFence` (one `--if` check around a whole invocation) |
 | `src/workstream.ts` | ensure, list, summarize, revision, soft teardown, reuse of a torn-down name |
 | `src/vcs/git.ts` | git primitives (plain functions, git only): toplevel, `worktree add --detach` / remove, dirty files, the upstream ref set, `isAncestor`, `createBranch` |
 | `src/worktree.ts` | per-agent worktrees: `createWorktree`, `removeWorktree`, `worktreeState`, the machine-local `worktrees` registry (outlives the agent; the reaper never touches it), the one close rule (`releaseWorktree`), name reuse (`reclaimWorktreePath`); `WorktreeDirtyError`, `WorktreePathNotEmptyError`, `WorktreeVcsRequiredError` |

@@ -20,8 +20,9 @@
 // segment flush does, because an unlocked append can interleave partial
 // lines or race another flush's self-repair truncate.
 
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { defaultStateDir } from "./db.js";
 
 /** Sub-directory of the state dir holding lock directories. */
@@ -45,6 +46,12 @@ export interface FileLockOptions<T = unknown> {
    *  the deadline, or the lock dir cannot be created). Absent, `fn` runs
    *  unlocked. */
   onUnavailable?: () => T;
+  /** Strict ownership: an aged lock is stolen only when the process that
+   *  took it is gone (pid probe on this host), never because it is old. A
+   *  holder doing slow work (git cleanup, a pane kill) keeps its lock for
+   *  as long as it lives. A lock whose holder is alive blocks until the
+   *  deadline, so pair it with `onUnavailable` to fail closed. */
+  strict?: boolean;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -61,15 +68,29 @@ function resolveTimeout(opts?: FileLockOptions<unknown>): number {
   return opts?.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS;
 }
 
+/** True unless `pid` is certainly gone (ESRCH). EPERM means it exists. */
+function pidMayBeAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
 /** Best-effort staleness probe. A vanished lock returns false so the
- *  caller simply retries the mkdir. */
-async function isStale(path: string, staleMs: number): Promise<boolean> {
+ *  caller simply retries the mkdir. Strict: also needs a dead holder (a
+ *  lock with no readable holder record is only as old as its directory). */
+async function isStale(path: string, staleMs: number, strict: boolean): Promise<boolean> {
   try {
     const s = await stat(path);
-    return Date.now() - s.mtimeMs > staleMs;
+    if (Date.now() - s.mtimeMs <= staleMs) return false;
   } catch {
     return false;
   }
+  if (!strict) return true;
+  const meta = await readFileLockMeta(path);
+  return meta === null || !pidMayBeAlive(meta.pid);
 }
 
 /**
@@ -93,7 +114,7 @@ export async function withFileLock<T>(
   let held = false;
 
   try {
-    await mkdir(locksDir(), { recursive: true });
+    await mkdir(dirname(lockPath), { recursive: true });
   } catch {
     // Cannot even create the locks dir: run unlocked rather than refuse.
     return await unlocked();
@@ -106,7 +127,7 @@ export async function withFileLock<T>(
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "EEXIST") return await unlocked();
-      if (await isStale(lockPath, staleMs)) {
+      if (await isStale(lockPath, staleMs, opts?.strict === true)) {
         await rm(lockPath, { recursive: true, force: true }).catch(() => {});
         continue;
       }
@@ -115,25 +136,35 @@ export async function withFileLock<T>(
     }
   }
 
-  await writeFile(
+  // Our token: release removes the lock only if it is still ours. A lock
+  // stolen from us (aged out, legacy mode) now belongs to its new holder.
+  const token = randomBytes(8).toString("hex");
+  const wrote = await writeFile(
     join(lockPath, "meta.json"),
-    JSON.stringify({ pid: process.pid, label, acquiredAt: new Date().toISOString() }),
-  ).catch(() => {});
+    JSON.stringify({ pid: process.pid, label, acquiredAt: new Date().toISOString(), token }),
+  ).then(
+    () => true,
+    () => false,
+  );
 
   try {
     return await fn();
   } finally {
-    await rm(lockPath, { recursive: true, force: true }).catch(() => {});
+    // Wrote no record: nothing to compare, remove as before. Wrote one and
+    // it is gone or another's: the lock was stolen, and is not ours to remove.
+    if (!wrote || (await readFileLockMeta(lockPath))?.token === token) {
+      await rm(lockPath, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }
 
 /** Read a held lock's metadata, or null. Exposed for tests. */
 export async function readFileLockMeta(
   lockPath: string,
-): Promise<{ pid: number; label: string; acquiredAt: string } | null> {
+): Promise<{ pid: number; label: string; acquiredAt: string; token?: string } | null> {
   try {
     const raw = await readFile(join(lockPath, "meta.json"), "utf8");
-    return JSON.parse(raw) as { pid: number; label: string; acquiredAt: string };
+    return JSON.parse(raw) as { pid: number; label: string; acquiredAt: string; token?: string };
   } catch {
     return null;
   }

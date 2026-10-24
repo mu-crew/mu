@@ -26,11 +26,14 @@ export {
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  type AgentIdentity,
+  AgentLockBusyError,
   AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
   AgentPaneStillAliveError,
+  AgentReplacedError,
   AgentRestartedError,
   type AgentRow,
   AgentSendIndeterminateError,
@@ -41,6 +44,7 @@ export {
   abortAgent,
   type CloseAgentOptions,
   type CloseAgentResult,
+  type ClosePreview,
   type CommandResolutionResult,
   type CommandResolver,
   checkCommandResolvable,
@@ -60,6 +64,7 @@ export {
   type LiveAgentsView,
   listAgents,
   listLiveAgents,
+  previewClose,
   readAgent,
   resetCommandResolverForTests,
   resolveCliCommand,
@@ -71,6 +76,7 @@ export {
   setCommandResolverForTests,
   spawnAgent,
   type Transport,
+  withAgentLock,
 } from "./agents.js";
 export {
   type ApplyResult,
@@ -243,6 +249,7 @@ export {
   reconcile,
 } from "./reconcile.js";
 export {
+  agentRevision,
   assertRevision,
   RevisionMismatchError,
   taskRevision,

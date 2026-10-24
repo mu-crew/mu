@@ -120,7 +120,7 @@ leaks. Remote agents are the exception
 ([remote-workers](recipes/remote-workers.md)).
 
 Worktrees are git worktrees (exit 4 outside a repo). `mu agent close`
-refuses a **dirty** one (`WorktreeDirtyError`) before it kills the pane;
+only previews until given `--if <rev>`, and refuses a **dirty** one (`WorktreeDirtyError`) before it kills the pane;
 unmerged commits are kept on `mu/<ws>/<agent>-<sha>`. Cherry-pick what to
 keep, and pass `--discard` only to throw uncommitted edits away. Before a `--fresh` send,
 `git -C <cwd> fetch && git -C <cwd> rebase <base>` (base: `origin/HEAD`, or

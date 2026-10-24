@@ -16,8 +16,9 @@
 // The revision is a 48-bit integer taken from SHA-256, so it fits a JSON
 // number and `--if <int>`. An absent task is revision 0.
 //
-// Scope: tasks only. `workstreamRevision` (src/workstream.ts) keeps fencing
-// teardown; agents get their own revision later.
+// Agents have one too (`agentRevision`, below), derived the same way. The
+// rest of the fence is in src/agents.ts (`closeAgent`) and src/agents/lock.ts.
+// `workstreamRevision` (src/workstream.ts) keeps fencing teardown.
 
 import { createHash } from "node:crypto";
 import type { Db } from "./db.js";
@@ -199,4 +200,46 @@ export function withTaskFence<T>(
       return fn();
     })
     .immediate();
+}
+
+/** The revision of one agent (`agent close --if`), 0 when nothing of that name
+ *  exists. Derived on read, like the task one: a hash of the registry
+ *  incarnation (the row's AUTOINCREMENT id, never reused, so a name that is
+ *  deleted and created again can never match an old preview, even with the
+ *  same pane id), every column of the row (pane, cwd, host, spawner, ...), EVERY
+ *  task it owns in any workstream with its status (claim and release write
+ *  `tasks.owner_id`, not the agent row), and the registered worktree rows of
+ *  that (workstream, name). With no agent row but a registered worktree (an
+ *  orphan: a failed spawn or an earlier close left it) the hash is of those
+ *  rows alone, so an orphan has a revision of its own and a replaced registry
+ *  row moves it. Read only. */
+export function agentRevision(db: Db, workstream: string, name: string): number {
+  const agent = db
+    .prepare(
+      `SELECT a.id, a.pane_id, a.cli, a.role, a.tab, a.cwd, a.base, a.command, a.command_source,
+              a.spawner, a.host, a.collected_head, a.created_at
+         FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+        WHERE w.name = ? AND a.name = ?`,
+    )
+    .get(workstream, name) as ({ id: number } & Record<string, unknown>) | undefined;
+  const owned = agent
+    ? (db
+        .prepare(
+          `SELECT w.name || '/' || t.local_id AS ref, t.status, t.substate
+             FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+            WHERE t.owner_id = ? ORDER BY w.name, t.local_id`,
+        )
+        .all(agent.id) as unknown[])
+    : [];
+  const worktrees = db
+    .prepare(
+      `SELECT path, root, base, last_collected_head, created_at FROM worktrees
+        WHERE workstream = ? AND agent = ? ORDER BY path`,
+    )
+    .all(workstream, name) as unknown[];
+  if (agent === undefined && worktrees.length === 0) return 0;
+  const digest = createHash("sha256")
+    .update(JSON.stringify([agent ?? null, owned, worktrees]))
+    .digest();
+  return digest.readUIntBE(0, 6);
 }

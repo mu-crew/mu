@@ -113,7 +113,7 @@ export class AgentExistsError extends Error implements HasNextSteps {
         command: `mu agent spawn ${this.agentName} -w <other-workstream>`,
       },
       {
-        intent: "Or close the existing agent in this workstream and re-spawn",
+        intent: "Or preview closing the existing agent in this workstream, then re-spawn",
         command: `mu agent close ${this.agentName}  &&  mu agent spawn ${this.agentName}`,
       },
       { intent: "Or pick a different name", command: "mu agent spawn <new-name>" },
@@ -489,13 +489,67 @@ export class AgentPaneStillAliveError extends Error implements HasNextSteps {
     public readonly state: true | "unknown",
   ) {
     super(
-      `agent ${agentName}: pane ${paneId} ${state === true ? "is still alive after the kill" : "could not be checked"}; its row is kept. Close the pane in your multiplexer, then: mu agent close ${agentName} -w ${workstream}`,
+      `agent ${agentName}: pane ${paneId} ${state === true ? "is still alive after the kill" : "could not be checked"}; its row is kept. Close the pane in your multiplexer, then preview: mu agent close ${agentName} -w ${workstream}`,
     );
   }
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Retry once the pane is gone",
+        intent: "Once the pane is gone, preview the close (it prints the --if apply)",
+        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
+      },
+    ];
+  }
+}
+
+/**
+ * `agent close` found the agent replaced while it worked: the name now
+ * belongs to another incarnation (a respawn, or the same pane id reused),
+ * so nothing more was done to it. Whatever the close already did to the
+ * ORIGINAL (a pane kill) stands; the replacement's row, socket, worktree
+ * and tasks are untouched. Exit 4.
+ */
+export class AgentReplacedError extends Error implements HasNextSteps {
+  override readonly name = "AgentReplacedError";
+  readonly inlineNext = true;
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+  ) {
+    super(
+      `agent ${agentName} was replaced while it was being closed; the replacement was left alone. Preview it: mu agent close ${agentName} -w ${workstream}`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Preview the agent that holds the name now",
+        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
+      },
+    ];
+  }
+}
+
+/**
+ * Another mu process holds this agent's lock (a close, or a `--worktree`
+ * spawn staging the name) and did not release it in time. Nothing was
+ * done: a destructive agent step never runs unlocked. Exit 4.
+ */
+export class AgentLockBusyError extends Error implements HasNextSteps {
+  override readonly name = "AgentLockBusyError";
+  readonly inlineNext = true;
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+  ) {
+    super(
+      `agent ${agentName} is being changed by another mu process (its lock is held); nothing was done. Retry: mu agent close ${agentName} -w ${workstream}`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Retry once the other command finishes",
         command: `mu agent close ${this.agentName} -w ${this.workstream}`,
       },
     ];
@@ -526,7 +580,7 @@ export class AgentPaneDeadError extends Error implements HasNextSteps {
         command: `mu log -w ${this.workstream}`,
       },
       {
-        intent: "Drop the dead registry row, then respawn",
+        intent: "Preview dropping the dead registry row (it prints the --if apply), then respawn",
         command: `mu agent close ${this.agentName} -w ${this.workstream}`,
       },
       {
@@ -555,7 +609,7 @@ export class AgentAbortNeedsCtlError extends Error implements HasNextSteps {
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Close the agent (kills its pane)",
+        intent: "Preview closing the agent (it prints the --if apply that kills its pane)",
         command: `mu agent close ${this.agentName} -w ${this.workstream}`,
       },
     ];
@@ -579,7 +633,7 @@ export class AgentAbortTimeoutError extends Error implements HasNextSteps {
         command: `mu agent read ${this.agentName} -n 30 -w ${this.workstream}`,
       },
       {
-        intent: "Or close the agent (kills its pane)",
+        intent: "Or preview closing the agent (it prints the --if apply that kills its pane)",
         command: `mu agent close ${this.agentName} -w ${this.workstream}`,
       },
     ];
@@ -775,7 +829,8 @@ export class AgentSendUnsupportedError extends Error implements HasNextSteps {
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Close it, then respawn on herdr (MU_MUX=herdr) or with pi",
+        intent:
+          "Preview closing it (the --if apply follows), then respawn on herdr (MU_MUX=herdr) or with pi",
         command: `mu agent close ${this.agentName} -w ${this.workstream}`,
       },
     ];
