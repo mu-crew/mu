@@ -782,9 +782,12 @@ describe("nextFreeAgentName", () => {
 
   it("gives up typed after a bounded number of taken names", () => {
     insertAgent(db, { name: "w-1", workstream: "auth", paneId: "%0" });
-    for (let i = 2; i <= 1001; i++) {
-      insertAgent(db, { name: `w-${i}`, workstream: "auth", paneId: `%${i}` });
-    }
+    // One transaction: 1000 separate commits otherwise (~0.5s).
+    db.transaction(() => {
+      for (let i = 2; i <= 1001; i++) {
+        insertAgent(db, { name: `w-${i}`, workstream: "auth", paneId: `%${i}` });
+      }
+    })();
     expect(() => nextFreeAgentName(db, "w-1", "auth")).toThrow(AgentNameExhaustedError);
   });
 });
