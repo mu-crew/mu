@@ -23,7 +23,7 @@
   {
     "calls": [
       {
-        "bash": "mu workstream teardown eval --yes"
+        "bash": "mu workstream teardown eval --yes 2>/dev/null || mu workstream teardown eval --if $(mu workstream teardown eval | sed -n \"s/.*rev=\\([0-9]*\\).*/\\1/p\")"
       }
     ]
   },

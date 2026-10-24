@@ -161,6 +161,20 @@ export function wave(N: number, id: string): Scenario {
         else workerEnd = Math.max(workerEnd, r.ts);
         if (!(t?.status === "CLOSED" && t.substate === "done" && r)) completed = false;
       }
+      // k1-k4 are the workers' work: the orchestrator closing one itself (the driver logs
+      // already-closed when the task was closed under it) is a close nobody earned.
+      for (const k of K) {
+        const r = runs.find((x) => x.task === k && x.action === "already-closed");
+        if (r)
+          wrong.push(
+            `${k} was closed by the orchestrator before its worker finished (${r.agent} found it already CLOSED)`,
+          );
+        const c = closeMoment(sb, "eval", k);
+        // block mode (next): the orchestrator closes, and only after the worker's report
+        const blocked = runs.find((x) => x.task === k && x.action === "block");
+        if (c && blocked && c.ms < blocked.ts)
+          wrong.push(`${k} was closed before its worker reported`);
+      }
       // never stop: no agent_end from the first dispatch of ANY kind (delegate, agent send, spawn
       // --send) until the last pending verdict or worker is done.
       const end = completed ? Math.max(workerEnd, doneAt) : Number.POSITIVE_INFINITY;

@@ -1,0 +1,86 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval"
+      },
+      {
+        "bash": "mu agent spawn w3 -w eval"
+      },
+      {
+        "bash": "mu agent spawn gate -w eval --command gate-cmd"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim mx-slow -w eval --for w1"
+      },
+      {
+        "bash": "mu task claim gate -w eval --for w2"
+      },
+      {
+        "bash": "mu task claim mx-race -w eval --for w3"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do mx-slow and close it'"
+      },
+      {
+        "bash": "mu agent send w2 -w eval 'do gate and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w3 -w eval 'do mx-race and close it'; mu task wait mx-race -w eval --timeout 60"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait nosuch-ref -w eval --timeout 600"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait mx-fast -w eval --first --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for i in $(seq 1 60); do mu agent read gate -w eval -n 20 | grep -q 'GATE-READY-' && break; sleep 1; done; mu agent read gate -w eval -n 20 | grep -o 'GATE-READY-[0-9a-f]*' | head -1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait mx-slow gate -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "ev() { mu task notes \"$1\" -w eval | grep -o \"eval: .* run=[0-9a-f]*\\|preclosed run=[0-9a-f]*\" | tail -1; }; { echo \"fast: $(ev mx-fast)\"; echo \"ready: $(mu agent read gate -w eval -n 20 | grep -o 'GATE-READY-[0-9a-f]*' | head -1)\"; echo \"slow: $(ev mx-slow)\"; echo \"gate: $(ev gate)\"; echo \"race: $(ev mx-race)\"; echo \"timeout-exit: 5\"; } > wait-report.txt; cat wait-report.txt"
+      }
+    ]
+  },
+  {
+    "text": "The wait report is written."
+  }
+]

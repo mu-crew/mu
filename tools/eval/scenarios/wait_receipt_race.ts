@@ -16,7 +16,7 @@
 //  - one initial `agent send` per worker, one carry-on (no --fresh) per stalled/lost worker (r1, r2,
 //    r4), none to r3 or r6, one send to r5's replacement: a resend of delivered work, a reset, or a
 //    carry-on to a healthy worker is wrong; each carry-on was sent after the fault was observed;
-//  - r6 (and r5's wait) really went through a wait call that returned the ref CLOSED;
+//  - every r1-r6 really went through a wait call that returned the ref CLOSED after its worker closed it, and no sleep >= 3s stands in for a wait;
 //  - the decoy d1 is untouched: IN_PROGRESS, owner `other`, never released, closed or reopened;
 //  - the AUT never stopped while work ran (prods == 0).
 //  - NATIVE (family-aware): `send` answers with a receipt (msgId / incarnation), and the wait names the
@@ -155,10 +155,18 @@ const scenario: Scenario = {
           `${id}: carry-on sent before the stall at ${faultAt} was observed by a wait/read`,
         );
     }
-    // r6 finishes at once: its wait is registered after the close, and must still return it CLOSED
-    if (!waitedClosed(run, "r6")) {
-      completed = false;
-      wrong.push("no successful wait call returned r6 CLOSED (the settle raced the registration)");
+    // every task was really waited on: a successful wait call naming it returned it CLOSED at or after
+    // its worker closed it (r5: after the replacement's close; r1/r2/r4: after the carry-on's), and
+    // r6 finishes at once so its wait is registered after the close (the settle races the registration)
+    for (const id of IDS) {
+      if (!waitedClosed(run, id, closeMoment(sb, "eval", id)?.ms ?? 0)) {
+        completed = false;
+        wrong.push(`no successful wait call returned ${id} CLOSED after its worker closed it`);
+      }
+    }
+    for (const { cmd } of cmds) {
+      const s = /\bsleep\s+(\d+)\b/.exec(cmd.replace(/'[^']*'/g, "''"));
+      if (s && Number(s[1]) >= 3) wrong.push(`a sleep stands in for a wait: ${cmd.slice(0, 80)}`);
     }
     // the decoy
     const d1 = probe.task("eval", "d1");

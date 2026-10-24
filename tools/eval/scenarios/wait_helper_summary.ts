@@ -82,6 +82,12 @@ const scenario: Scenario = {
       if (!quoted) wrong.push(`summary.md lacks ${id}'s worker evidence (run=${n})`);
       if (!(done && r && quoted)) completed = false;
     }
+    // "two workers": h1 and h2 were run by different agents (runs.log), not both by one.
+    const agents = IDS.map((id) => runs.find((r) => r.task === id && r.action !== "lost")?.agent);
+    if (agents.some((a) => a === undefined) || new Set(agents).size !== IDS.length) {
+      completed = false;
+      wrong.push(`h1 and h2 must run on two workers, got ${agents.join(" and ")}`);
+    }
     // the summary is written after both workers finished and closed
     const file = fileMoment(join(sb.repoDir, "summary.md"));
     const done = { label: "both workers finished", ms: Math.max(lastRun, lastClose) };
