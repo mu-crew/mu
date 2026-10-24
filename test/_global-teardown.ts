@@ -50,9 +50,9 @@
 // when set. Production code never sets the var; this file is the only
 // caller.
 
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { existsSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import Database from "better-sqlite3";
 import { execa } from "execa";
 
@@ -324,7 +324,25 @@ async function sweepLeakedDefaultSocketSessions(phase: "setup" | "teardown"): Pr
 
 // ─── Hooks ─────────────────────────────────────────────────────────
 
-export async function setup(): Promise<void> {
+/**
+ * vitest 5 creates `<tmpdir>/<nanoid(21)>` for the root Vitest instance
+ * (`vitest._tmpDir`) and fills `<it>/ssr` with a transformed copy of every
+ * module the forks pool loads (6-17 MB per run). Project-level tmp dirs are
+ * removed on close; this root one never is. On a tmpfs /tmp the leak adds up
+ * to an OOM. vitest exposes no option for it, so globalSetup remembers the
+ * path and teardown removes it. Both vitest configs share this file.
+ */
+let vitestTmpDir: string | null = null;
+
+export function leakedVitestTmpDir(project: unknown, tmp: string = tmpdir()): string | null {
+  const dir = (project as { vitest?: { _tmpDir?: unknown } } | null)?.vitest?._tmpDir;
+  if (typeof dir !== "string" || !isAbsolute(dir)) return null;
+  // Only ever remove a direct child of the temp dir.
+  return dirname(dir) === tmp ? dir : null;
+}
+
+export async function setup(project?: unknown): Promise<void> {
+  vitestTmpDir = leakedVitestTmpDir(project);
   // Layer 3 first: stand up the private tmux server. If this succeeds
   // every subsequent test invocation routes through `-L <socket>` and
   // can't see the user's tmux. If it FAILS we fall back gracefully.
@@ -335,6 +353,7 @@ export async function setup(): Promise<void> {
 }
 
 export async function teardown(): Promise<void> {
+  if (vitestTmpDir) rmSync(vitestTmpDir, { recursive: true, force: true });
   // Layer 3: nuke the entire private server in one call. After this,
   // every session/window/pane the suite ever touched is gone.
   await killPrivateTmuxServer();

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,14 +8,18 @@ import type { TaskStatus } from "../src/tasks/status.js";
 import { addBlockEdge, addTask, closeTask, setTaskStatus } from "../src/tasks.js";
 
 let openDbs: Db[] = [];
+let dirs: string[] = [];
 
 afterEach(() => {
   for (const db of openDbs) db.close();
   openDbs = [];
+  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  dirs = [];
 });
 
 function fixtureDb(): Db {
   const dir = mkdtempSync(join(tmpdir(), "mu-dag-"));
+  dirs.push(dir);
   const db = openDb({ path: join(dir, "mu.db") });
   openDbs.push(db);
   return db;
