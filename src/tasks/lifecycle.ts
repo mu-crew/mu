@@ -14,7 +14,7 @@ import type { Db, NoteKind } from "../db.js";
 import { withOpContext } from "../op-context.js";
 import { taskIdFor } from "./core.js";
 import { getTaskEdgesWithStatus } from "./edges.js";
-import { addNote, insertNote } from "./edit.js";
+import { addNote, insertNote, writerContext } from "./edit.js";
 import {
   CloseNeedsEvidenceError,
   InvalidSubstateError,
@@ -243,6 +243,14 @@ export interface CloseTaskOptions extends EvidenceOption {
   /** Closing substate; default "done" (or, for an already-CLOSED task,
    *  its current substate). Any CLOSED/* satisfies edges. */
   as?: CloseSubstate;
+  /** The worker's report, stored verbatim as a `report` note BEFORE the
+   *  close notes and the status put, in the same op group. NOT evidence:
+   *  a `done` close still needs `evidence`. Skipped on a no-op close. */
+  report?: string;
+  /** 'new' (default): the close is its own op group. 'inherit': report,
+   *  close notes and status put join the CALLER's group, actor and intent
+   *  (no new op context), so a caller's group holds the whole close. */
+  group?: "new" | "inherit";
   /** Required (non-empty) unless `as` is "done"; stored as a
    *  `<AS>: <why>` note (kind 'close') in the same op group. */
   why?: string;
@@ -281,7 +289,7 @@ export function closeTask(
   if (as !== "done" && (opts.why === undefined || opts.why.trim() === "")) {
     throw new SubstateReasonRequiredError("close", as, localId);
   }
-  return withOpContext(db, { intent: "task.close", actor: opts.author, group: "new" }, () =>
+  return withOpContext(db, writerContext(db, "task.close", opts.author, opts.group), () =>
     closeTaskImpl(db, localId, opts),
   );
 }
@@ -338,6 +346,14 @@ function closeTaskImpl(
       // UPDATE runs. They join the verb's group via insertNote. A close
       // that turns out to be a no-op writes none (`alreadyThere`).
       if (before && !alreadyThere) {
+        if (opts.report !== undefined && opts.report.trim() !== "") {
+          const reportOpts: { author?: string; workstream: string; kind: "report" } = {
+            workstream: before.workstreamName,
+            kind: "report",
+          };
+          if (opts.author !== undefined && opts.author !== "") reportOpts.author = opts.author;
+          insertNote(db, localId, opts.report, reportOpts, false);
+        }
         // touch=false: the status UPDATE below bumps updated_at in this group.
         recordReasonNote(
           db,

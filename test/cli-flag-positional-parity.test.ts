@@ -27,6 +27,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setStdinReaderForTests } from "../src/cli/stdin.js";
 import { openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli, runCliJson } from "./_runCli.js";
@@ -241,11 +242,43 @@ describe("flag-vs-positional parity sweep (dogfood-*)", () => {
       expect(notes.stdout).toMatch(/from the positional/);
     });
 
-    it("both forms at once is a usage error", async () => {
+    it.each([["-m"], ["--message"], ["--note"], ["--text"]])(
+      "`task note <id> %s '...'` appends the note",
+      async (flag) => {
+        await seedTasks("a");
+        const r = await runCli(["task", "note", "a", flag, `via ${flag}`, "-w", "ws"], dbPath);
+        expect(r.error).toBeUndefined();
+        expect(r.exitCode).toBeNull();
+        const notes = await runCliJson(["task", "notes", "a", "-w", "ws", "--json"], dbPath);
+        expect(notes.stdout).toContain(`via ${flag}`);
+      },
+    );
+
+    it.each([
+      [["pos", "--text", "flag"], /note text given twice.*--text/],
+      [["pos", "-m", "flag"], /note text given twice.*-m\/--message/],
+      [["--message", "x", "--note", "y"], /note text given twice.*--message.*--note/],
+      [["--text", "x", "-m", "y"], /note text given twice/],
+    ])("two sources %j is a usage error naming both and writes nothing", async (args, re) => {
       await seedTasks("a");
-      const r = await runCli(["task", "note", "a", "pos", "--text", "flag", "-w", "ws"], dbPath);
+      const r = await runCli(["task", "note", "a", ...args, "-w", "ws"], dbPath);
       expect(r.exitCode).toBe(2);
-      expect(r.stderr).toMatch(/note text given twice/);
+      expect(r.stderr).toMatch(re);
+      const notes = await runCliJson(["task", "notes", "a", "-w", "ws", "--json"], dbPath);
+      expect((notes.data as { items: unknown[] }).items).toEqual([]);
+    });
+
+    it("`-m -` reads stdin like the positional", async () => {
+      await seedTasks("a");
+      setStdinReaderForTests(async () => "from stdin\n");
+      try {
+        const r = await runCli(["task", "note", "a", "-m", "-", "-w", "ws"], dbPath);
+        expect(r.exitCode).toBeNull();
+      } finally {
+        setStdinReaderForTests(null);
+      }
+      const notes = await runCliJson(["task", "notes", "a", "-w", "ws", "--json"], dbPath);
+      expect(notes.stdout).toContain("from stdin");
     });
 
     it("neither form is a targeted usage error naming BOTH shapes", async () => {

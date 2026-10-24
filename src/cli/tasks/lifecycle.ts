@@ -33,8 +33,10 @@ import { UsageError } from "../handle.js";
 export async function cmdTaskClose(
   db: Db,
   rawId: string,
-  opts: {
+  rawOpts: {
     evidence?: string;
+    note?: string;
+    report?: string;
     ifReady?: boolean;
     as?: string;
     why?: string;
@@ -42,12 +44,21 @@ export async function cmdTaskClose(
     json?: boolean;
   } = {},
 ): Promise<void> {
+  // `--note` is the guessed spelling of `--evidence`: one source only.
+  if (rawOpts.note !== undefined && rawOpts.evidence !== undefined) {
+    throw new UsageError("--note is an alias of --evidence: pass one of them", { showHelp: false });
+  }
+  const opts = { ...rawOpts, evidence: rawOpts.evidence ?? rawOpts.note };
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   const actor = await resolveActorIdentity();
   const sdkOpts: Parameters<typeof closeTask>[2] = { workstream: ws };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
+  if (opts.report !== undefined && opts.report.trim() !== "") {
+    sdkOpts.report = opts.report;
+    sdkOpts.author = actor;
+  }
   if (opts.ifReady) sdkOpts.ifReady = true;
   // closeTask validates the substate (InvalidSubstateError) and the
   // required --why (SubstateReasonRequiredError) before any write; the

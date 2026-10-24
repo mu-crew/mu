@@ -1,6 +1,6 @@
 // mu — `mu task` create/read/edit verbs (add / show / notes / note / update).
 //
-// add → addTask, with auto-id derivation when localId omitted.
+// add → addTasks (one or a batch), with auto-id derivation when ids are omitted.
 // show → row + edges + notes (+ lastClaimActor when owner=NULL).
 // notes / note → list + append on task_notes.
 // update → scalar edits (title/impact/effortDays).
@@ -28,12 +28,12 @@ import {
   UsageError,
   withRoiAll,
 } from "../../cli.js";
-import type { Db } from "../../db.js";
+import type { Db, NoteKind } from "../../db.js";
 import { lastClaimActor } from "../../logs.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
 import {
   addNote,
-  addTask,
+  addTasks,
   getTask,
   getTaskEdgesWithStatus,
   idFromTitleVerbose,
@@ -141,14 +141,32 @@ function emitWarnings(warnings: readonly string[], json: boolean | undefined): v
   for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
 }
 
+/** Ids for a batch of titles: explicit ids as given; otherwise each
+ *  title's slug, suffixed `_2`, `_3`, … against the DB AND this batch. */
+function deriveBatchIds(
+  db: Db,
+  workstream: string,
+  titles: readonly string[],
+): { id: string; truncated: boolean; originalSlug: string }[] {
+  const used = new Set<string>();
+  return titles.map((title) => {
+    const d = idFromTitleVerbose(db, workstream, title);
+    let id = d.id;
+    for (let i = 2; used.has(id); i++) id = `${d.id.slice(0, 60)}_${i}`;
+    used.add(id);
+    return { ...d, id };
+  });
+}
+
 export async function cmdTaskAdd(
   db: Db,
-  localId: string | undefined,
+  localIds: readonly string[],
   opts: {
-    title: string;
+    title: string[];
     impact?: number;
     effortDays?: number;
     blockedBy?: string[];
+    blocks?: string[];
     note?: string;
     noteAuthor?: string;
     triage?: boolean;
@@ -157,24 +175,28 @@ export async function cmdTaskAdd(
   },
 ): Promise<void> {
   const workstream = await resolveWorkstream(opts.workstream);
-  // Derive the id from the title if the user didn't provide one. The
-  // CLI's `<id>` positional is now optional; idFromTitleVerbose handles
-  // collisions with `_2`, `_3`, … suffixes AND surfaces a `truncated`
-  // flag so we can warn the user when the SLUG_SOFT_CAP word-boundary
-  // cut dropped clauses (slugifytitle_silently_drops_clauses).
-  // `autoDerived` distinguishes the explicit-<id> branch from the
-  // auto-derived branch so `--json` can selectively expose the
-  // truncation telemetry only when it's meaningful
-  // (task_add_slugify_silently_truncates_ids).
-  const autoDerived = localId === undefined;
-  let derivation: { id: string; truncated: boolean; originalSlug: string };
-  if (localId !== undefined) {
-    derivation = { id: localId, truncated: false, originalSlug: localId };
-  } else {
-    derivation = idFromTitleVerbose(db, workstream, opts.title);
+  const titles = opts.title;
+  if (localIds.length > 0 && titles.length !== localIds.length) {
+    // A stray word is nearly always an apostrophe that ended '...' early
+    // (the commander "too many arguments" case this used to be).
+    throw new UsageError(
+      `${localIds.length} id(s) (${localIds.join(" ")}) need ${localIds.length} -t/--title, got ${titles.length}. If text was split by an apostrophe inside '...', pass long text with a quoted heredoc: --note - <<'EOF'`,
+      { showHelp: false },
+    );
   }
-  const id = derivation.id;
+  // Ids come from the positionals, or are derived from each title via
+  // slugify (collisions get _2, _3, … suffixes) and carry the truncation
+  // telemetry (slugifytitle_silently_drops_clauses). `autoDerived`
+  // distinguishes the explicit-id branch so `--json` exposes the
+  // truncation fields only when meaningful
+  // (task_add_slugify_silently_truncates_ids).
+  const autoDerived = localIds.length === 0;
+  const derivations = autoDerived
+    ? deriveBatchIds(db, workstream, titles)
+    : localIds.map((id) => ({ id, truncated: false, originalSlug: id }));
+  const ids = derivations.map((d) => d.id);
   const blockedBy = parseCsvFlag(opts.blockedBy, "-b/--blocked-by");
+  const blocks = parseCsvFlag(opts.blocks, "--blocks");
   const hasBlockers = blockedBy.length > 0;
   // `--note -` reads stdin verbatim (no \\n unescaping: a heredoc has
   // real newlines). Read before the transaction; it is async.
@@ -188,27 +210,33 @@ export async function cmdTaskAdd(
   emitWarnings(warnings, opts.json);
   const initialNoteAuthor =
     noteText !== undefined ? (opts.noteAuthor ?? (await resolveActorIdentity())) : undefined;
-  const { task, note } = db
-    .transaction(() => {
-      const createdTask = addTask(db, {
-        localId: id,
-        workstream,
-        title: opts.title,
-        ...(opts.impact !== undefined ? { impact: opts.impact } : {}),
-        ...(opts.effortDays !== undefined ? { effortDays: opts.effortDays } : {}),
-        ...(hasBlockers ? { blockedBy } : {}),
-        ...(opts.triage === true ? { triage: true } : {}),
-      });
-      const createdNote =
-        noteText !== undefined
-          ? addNote(db, createdTask.name, noteText, {
-              author: initialNoteAuthor,
-              workstream,
-            })
-          : null;
-      return { task: createdTask, note: createdNote };
-    })
-    .immediate();
+  // One group, one transaction: every task, brief and edge, or none.
+  addTasks(
+    db,
+    ids.map((id, i) => ({
+      id,
+      title: titles[i] ?? "",
+      ...(noteText !== undefined ? { note: noteText } : {}),
+    })),
+    {
+      workstream,
+      ...(hasBlockers ? { blockedBy } : {}),
+      ...(blocks.length > 0 ? { blocks } : {}),
+      ...(opts.triage === true ? { triage: true } : {}),
+      ...(opts.impact !== undefined ? { impact: opts.impact } : {}),
+      ...(opts.effortDays !== undefined ? { effortDays: opts.effortDays } : {}),
+      ...(initialNoteAuthor !== undefined ? { noteAuthor: initialNoteAuthor } : {}),
+    },
+  );
+  const tasks = ids.map((id) => {
+    const t = getTask(db, id, workstream);
+    if (!t) throw new TaskNotFoundError(id);
+    return t;
+  });
+  const task = tasks[0];
+  if (task === undefined) throw new UsageError("task add: nothing to add", { showHelp: true });
+  const note = noteText !== undefined ? (listNotes(db, task.name, workstream)[0] ?? null) : null;
+  const derivation = derivations[0] ?? { id: task.name, truncated: false, originalSlug: task.name };
   const nextSteps: NextStep[] = [
     { intent: "Show this task", command: `mu task show ${task.name} -w ${workstream}` },
     ...(note === null
@@ -254,7 +282,9 @@ export async function cmdTaskAdd(
         : {};
     emitJson({
       task: withRoiAll([task])[0],
-      blockers: blockedBy ?? [],
+      ...(tasks.length > 1 ? { tasks: withRoiAll(tasks) } : {}),
+      blockers: blockedBy,
+      ...(blocks.length > 0 ? { blocks } : {}),
       ...(note !== null ? { note } : {}),
       nextSteps,
       ...truncationFields,
@@ -268,44 +298,53 @@ export async function cmdTaskAdd(
   // title's meaning, with a one-paste fix (pass <id> positional).
   // Suppressed when the operator passed an explicit id (truncated is
   // false in that branch) since they already chose the id by hand.
-  if (derivation.truncated) {
+  derivations.forEach((d, i) => {
+    if (!d.truncated) return;
     process.stderr.write(
-      `hint: id '${task.name}' truncated from a longer slug; pass <id> positional to override (mu task add <id> --title ... ).\n`,
+      `hint: id '${tasks[i]?.name}' truncated from a longer slug; pass <id> positional to override (mu task add <id> --title ... ).\n`,
+    );
+  });
+  const idHint = autoDerived ? pc.dim(" (id derived from title)") : "";
+  for (const t of tasks) {
+    console.log(
+      `Added task ${pc.bold(t.name)}${idHint} ${pc.dim(
+        `(workstream=${workstream}, impact=${t.impact}, effort=${t.effortDays})`,
+      )}`,
     );
   }
-  const idHint = localId === undefined ? pc.dim(" (id derived from title)") : "";
-  console.log(
-    `Added task ${pc.bold(task.name)}${idHint} ${pc.dim(
-      `(workstream=${workstream}, impact=${task.impact}, effort=${task.effortDays})`,
-    )}`,
-  );
   if (note !== null) {
     console.log(
       pc.dim(`  initial note: ${note.content.length} chars by ${note.author ?? "<orchestrator>"}`),
     );
   }
   if (hasBlockers) console.log(pc.dim(`  blocked by: ${blockedBy.join(", ")}`));
+  if (blocks.length > 0) console.log(pc.dim(`  blocks: ${blocks.join(", ")}`));
   printNextSteps(nextSteps);
 }
 
-/** Reconcile `mu task note <id> [text]` positional text with the
- *  `--text` flag alias.
+/** Reconcile `mu task note <id> [text]`'s positional text with its flag
+ *  aliases (`-m/--message`, `--note`, `--text`): exactly one source.
  *
- *  dogfood-note-arg-shape: `mu task add --note <text>` is a FLAG, so
- *  one invocation later the flag form is what operators reach for on
- *  `mu task note`, which only accepted a positional and dumped help.
- *  `--text` is now an additive alias; the positional is unchanged.
- *  Exactly one must be supplied. */
-export function resolveNoteText(positional: string | undefined, flag: string | undefined): string {
-  if (positional !== undefined && flag !== undefined) {
+ *  dogfood-note-arg-shape: `mu task add --note <text>` is a FLAG, so the
+ *  flag form is what operators and models reach for on `mu task note`. */
+export function resolveNoteText(
+  positional: string | undefined,
+  flags: Readonly<Record<string, string | undefined>>,
+): string {
+  const given: [string, string][] = [];
+  if (positional !== undefined) given.push(["the positional text", positional]);
+  for (const [name, value] of Object.entries(flags)) {
+    if (value !== undefined) given.push([name, value]);
+  }
+  if (given.length > 1) {
     throw new UsageError(
-      'note text given twice: pass it positionally (mu task note <id> "...") OR via --text, not both',
+      `note text given twice (${given.map(([n]) => n).join(" and ")}): pass it once, positionally or via -m/--message/--note/--text`,
     );
   }
-  const text = positional ?? flag;
+  const text = given[0]?.[1];
   if (text === undefined) {
     throw new UsageError(
-      'note text required: mu task note <id> "..." (or the --text "..." flag alias)',
+      'note text required: mu task note <id> "..." (or -m/--message/--note/--text "...")',
     );
   }
   return text;
@@ -315,8 +354,19 @@ export async function cmdTaskNote(
   db: Db,
   rawId: string,
   content: string,
-  opts: { workstream?: string; json?: boolean; author?: string } = {},
+  opts: {
+    workstream?: string;
+    json?: boolean;
+    author?: string;
+    report?: boolean;
+    kind?: NoteKind;
+  } = {},
 ): Promise<void> {
+  if (opts.report === true && opts.kind !== undefined) {
+    throw new UsageError("--report and --kind both set the note kind: pass one", {
+      showHelp: false,
+    });
+  }
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
@@ -330,7 +380,8 @@ export async function cmdTaskNote(
   const text = content === STDIN_ARG ? await readStdinText("note text") : unescapeNoteText(content);
   const warnings = suspiciousNoteWarnings(text);
   emitWarnings(warnings, opts.json);
-  const note = addNote(db, localId, text, { author, workstream: ws });
+  const kind: NoteKind = opts.report === true ? "report" : (opts.kind ?? "note");
+  const note = addNote(db, localId, text, { author, workstream: ws, kind });
   const nextSteps: NextStep[] = [
     { intent: "Show all notes on this task", command: `mu task notes ${localId} -w ${ws}` },
     { intent: "Show full task state", command: `mu task show ${localId} -w ${ws}` },
