@@ -187,7 +187,8 @@ describe("listReady / listBlocked / listGoals", () => {
 
   it("goals view excludes CLOSED tasks (a finished leaf is no longer a goal)", () => {
     expect(listGoals(db, "test").map((t) => t.name)).toEqual(["launch"]);
-    closeTask(db, "launch", { workstream: "test" });
+    // wontfix, not done: launch still has open blockers (the done guard refuses).
+    closeTask(db, "launch", { workstream: "test", as: "wontfix", why: "dropped" });
     expect(listGoals(db, "test")).toEqual([]);
   });
 });
@@ -247,7 +248,7 @@ describe("listTasksByOwner", () => {
     insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1" });
     await claimTask(db, "live", { agentName: "w1", workstream: "auth" });
     await claimTask(db, "done", { agentName: "w1", workstream: "auth" });
-    closeTask(db, "done", { workstream: "auth" }); // closeTask preserves owner intentionally
+    closeTask(db, "done", { workstream: "auth", evidence: "test" }); // closeTask preserves owner intentionally
 
     const defaultOwned = listTasksByOwner(db, "auth", "w1").map((t) => t.name);
     expect(defaultOwned).toEqual(["live"]);
@@ -268,7 +269,7 @@ describe("listTasks --status filter", () => {
     addTask(db, { localId: "ip1", workstream: "auth", title: "z", impact: 50, effortDays: 1 });
     addTask(db, { localId: "done1", workstream: "auth", title: "w", impact: 50, effortDays: 1 });
     setTaskStatus(db, "ip1", "IN_PROGRESS", { workstream: "auth" });
-    closeTask(db, "done1", { workstream: "auth" });
+    closeTask(db, "done1", { workstream: "auth", evidence: "test" });
   });
 
   it("returns all tasks when status omitted (existing behaviour)", () => {

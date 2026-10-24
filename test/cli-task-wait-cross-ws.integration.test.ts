@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { setWaitSleepForTests } from "../src/tasks/wait.js";
-import { addTask, setTaskStatus } from "../src/tasks.js";
+import { addTask, closeTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli } from "./_runCli.js";
 
@@ -60,7 +60,7 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
     addTask(db, { localId: "foo", workstream: "wsa", title: "Foo", impact: 50, effortDays: 1 });
     addTask(db, { localId: "bar", workstream: "wsb", title: "Bar", impact: 50, effortDays: 1 });
     // wsa/foo is already CLOSED → wait should return immediately.
-    setTaskStatus(db, "foo", "CLOSED", { workstream: "wsa" });
+    closeTask(db, "foo", { workstream: "wsa", evidence: "test" });
 
     const { exitCode, stdout, stderr, error } = await runCli(
       ["task", "wait", "wsa/foo", "wsb/bar", "--first", "--timeout", "5", "--json"],
@@ -84,7 +84,7 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
   it("--first prints qualified id to stdout (pipeable into the next step)", async () => {
     addTask(db, { localId: "foo", workstream: "wsa", title: "Foo", impact: 50, effortDays: 1 });
     addTask(db, { localId: "bar", workstream: "wsb", title: "Bar", impact: 50, effortDays: 1 });
-    setTaskStatus(db, "bar", "CLOSED", { workstream: "wsb" });
+    closeTask(db, "bar", { workstream: "wsb", evidence: "test" });
 
     const { exitCode, stdout, error } = await runCli(
       ["task", "wait", "wsa/foo", "wsb/bar", "--first", "--timeout", "5"],
@@ -101,8 +101,8 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
   it("mixed bare + qualified: bare uses -w, qualified uses its prefix", async () => {
     addTask(db, { localId: "foo", workstream: "wsa", title: "Foo", impact: 50, effortDays: 1 });
     addTask(db, { localId: "bar", workstream: "wsb", title: "Bar", impact: 50, effortDays: 1 });
-    setTaskStatus(db, "foo", "CLOSED", { workstream: "wsa" });
-    setTaskStatus(db, "bar", "CLOSED", { workstream: "wsb" });
+    closeTask(db, "foo", { workstream: "wsa", evidence: "test" });
+    closeTask(db, "bar", { workstream: "wsb", evidence: "test" });
 
     // foo is bare (resolves via -w wsa); wsb/bar is qualified.
     const { exitCode, stdout, stderr, error } = await runCli(
@@ -124,8 +124,8 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
   it("--json on --all success: firing=null; all=[every ref]; timedOut=[]", async () => {
     addTask(db, { localId: "foo", workstream: "wsa", title: "Foo", impact: 50, effortDays: 1 });
     addTask(db, { localId: "bar", workstream: "wsb", title: "Bar", impact: 50, effortDays: 1 });
-    setTaskStatus(db, "foo", "CLOSED", { workstream: "wsa" });
-    setTaskStatus(db, "bar", "CLOSED", { workstream: "wsb" });
+    closeTask(db, "foo", { workstream: "wsa", evidence: "test" });
+    closeTask(db, "bar", { workstream: "wsb", evidence: "test" });
 
     const { exitCode, stdout, error } = await runCli(
       ["task", "wait", "wsa/foo", "wsb/bar", "--timeout", "5", "--json"],
@@ -150,7 +150,7 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
     addTask(db, { localId: "foo", workstream: "wsa", title: "Foo", impact: 50, effortDays: 1 });
     addTask(db, { localId: "bar", workstream: "wsb", title: "Bar", impact: 50, effortDays: 1 });
     // foo CLOSED, bar OPEN → --all times out with partial progress.
-    setTaskStatus(db, "foo", "CLOSED", { workstream: "wsa" });
+    closeTask(db, "foo", { workstream: "wsa", evidence: "test" });
 
     const { exitCode, stdout, error } = await runCli(
       ["task", "wait", "wsa/foo", "wsb/bar", "--timeout", "1", "--json"],
@@ -210,7 +210,7 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
 
   it("single-ws (no qualified refs) keeps today's bare-id output shape", async () => {
     addTask(db, { localId: "foo", workstream: "wsa", title: "Foo", impact: 50, effortDays: 1 });
-    setTaskStatus(db, "foo", "CLOSED", { workstream: "wsa" });
+    closeTask(db, "foo", { workstream: "wsa", evidence: "test" });
 
     const { exitCode, stdout, error } = await runCli(
       ["task", "wait", "foo", "-w", "wsa", "--timeout", "5"],

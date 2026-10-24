@@ -61,6 +61,7 @@ export {
 // regardless of which sub-file the symbol lives in.
 export {
   ClaimerNotRegisteredError,
+  CloseNeedsEvidenceError,
   CrossWorkstreamEdgeError,
   CycleError,
   InvalidSubstateError,
@@ -69,6 +70,7 @@ export {
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskExistsError,
+  TaskHasOpenBlockersError,
   TaskIdInvalidError,
   TaskInTriageError,
   TaskNotFoundError,

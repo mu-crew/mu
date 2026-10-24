@@ -433,6 +433,54 @@ export class SubstateReasonRequiredError extends Error implements HasNextSteps {
 }
 
 /**
+ * Thrown when a close lands without a `kind = 'close'` note in its op
+ * group: the local-write guard `_cap_tasks_close_evidence` (src/capture.ts)
+ * refused it. Raised by `closeTask` only; ingest never sees it.
+ */
+export class CloseNeedsEvidenceError extends Error implements HasNextSteps {
+  override readonly name = "CloseNeedsEvidenceError";
+  constructor(
+    public readonly taskId: string,
+    public readonly workstream: string,
+  ) {
+    super(`closing ${taskId} needs evidence (--evidence "<command + result>")`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Retry with what you observed",
+        command: `mu task close ${this.taskId} -w ${this.workstream} --evidence "<command + result>"`,
+      },
+    ];
+  }
+}
+
+/**
+ * Thrown when a close to `done` finds a blocker still OPEN or
+ * IN_PROGRESS (guard `_cap_tasks_close_blockers`). Classifying the task
+ * as wontfix / duplicate / rejected / superseded is exempt: those do not
+ * claim the work happened.
+ */
+export class TaskHasOpenBlockersError extends Error implements HasNextSteps {
+  override readonly name = "TaskHasOpenBlockersError";
+  constructor(
+    public readonly taskId: string,
+    public readonly workstream: string,
+    public readonly blockerIds: readonly string[],
+  ) {
+    super(`task ${taskId} has open blockers: ${blockerIds.join(", ")}`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "See the open blockers",
+        command: `mu task tree ${this.taskId} -w ${this.workstream}`,
+      },
+    ];
+  }
+}
+
+/**
  * Thrown by `parkTask` on an IN_PROGRESS or CLOSED task. Park is one
  * transition (OPEN/todo → OPEN/parked); the owner releases, or the task
  * is reopened, first.

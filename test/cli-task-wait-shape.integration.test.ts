@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
-import { addTask, setTaskStatus } from "../src/tasks.js";
+import { addTask, closeTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli } from "./_runCli.js";
@@ -47,7 +47,7 @@ describe("mu task wait — --any vs --first output shape", () => {
     addTask(db, { localId: "a", workstream: "test", title: "A", impact: 50, effortDays: 1 });
     addTask(db, { localId: "b", workstream: "test", title: "B", impact: 50, effortDays: 1 });
     // Only `a` reaches the target so "first/any" has a single firing ref.
-    setTaskStatus(db, "a", "CLOSED", { workstream: "test" });
+    closeTask(db, "a", { workstream: "test", evidence: "test" });
   });
 
   afterEach(() => {

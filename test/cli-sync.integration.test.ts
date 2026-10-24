@@ -95,7 +95,7 @@ describe("mu sync (CLI)", () => {
 
     // Diverge, with no coordination.
     await runCli(["task", "update", "t1", "--impact", "95", "-w", "demo"], lap);
-    await runCli(["task", "close", "t1", "-w", "demo"], dev);
+    await runCli(["task", "close", "t1", "-w", "demo", "--evidence", "test"], dev);
 
     await runCli(["sync"], lap);
     await runCli(["sync"], dev);
@@ -518,7 +518,7 @@ describe("mu sync (CLI)", () => {
       await runCli(["workstream", "init", "demo"], lap);
       await seedTask(lap, "t1");
       await runCli(["sync"], dev);
-      await runCli(["task", "close", "t1", "-w", "demo"], dev);
+      await runCli(["task", "close", "t1", "-w", "demo", "--evidence", "test"], dev);
       await runCli(["sync"], lap);
 
       for (const db of [lap, dev]) {

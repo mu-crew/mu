@@ -158,7 +158,7 @@ describe("--json output on read verbs", () => {
     // Close 'a' so 'b' becomes ready; close 'b' so 'c' becomes ready;
     // close 'c' so nothing is ready.
     const db2 = openDb({ path: dbPath });
-    db2.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done'").run();
+    for (const id of ["a", "b", "c"]) closeTask(db2, id, { workstream: "auth", evidence: "test" });
     db2.close();
     const { stdout } = await runCli(["task", "next", "-w", "auth", "-n", "0", "--json"], dbPath);
     expect(JSON.parse(stdout.trim())).toEqual({ items: [], count: 0 });
@@ -456,7 +456,10 @@ describe("--json output on read verbs", () => {
     expect(bad.stderr).toMatch(/auth/);
 
     // Same check on close: correct ok, wrong errors.
-    const closeOk = await runCli(["task", "close", "infra_task", "-w", "infra"], dbPath);
+    const closeOk = await runCli(
+      ["task", "close", "infra_task", "-w", "infra", "--evidence", "test"],
+      dbPath,
+    );
     expect(closeOk.stderr).toBe("");
     const closeBad = await runCli(["task", "open", "infra_task", "-w", "auth"], dbPath);
     expect(closeBad.stderr).toMatch(/conflict:/);
@@ -591,7 +594,7 @@ describe("task list --status", () => {
     // Mark 'a' as CLOSED and 'b' as IN_PROGRESS so all three statuses
     // are represented.
     const db2 = openDb({ path: dbPath });
-    db2.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='a'").run();
+    closeTask(db2, "a", { workstream: "auth", evidence: "test" });
     db2
       .prepare("UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active' WHERE local_id='b'")
       .run();

@@ -16,6 +16,7 @@ import { lastClaimActor, listLogs } from "../src/logs.js";
 import {
   addTask,
   ClaimerNotRegisteredError,
+  CloseNeedsEvidenceError,
   claimTask,
   closeTask,
   getTask,
@@ -130,7 +131,7 @@ describe("claimTask", () => {
   });
 
   it("does NOT flip status when CLOSED", async () => {
-    db.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='auth'").run();
+    closeTask(db, "auth", { workstream: "test", evidence: "test" });
     const result = await claimTask(db, "auth", { agentName: "alice", workstream: "test" });
     expect(result.status).toBe("CLOSED");
   });
@@ -378,7 +379,7 @@ describe("setTaskStatus / closeTask / openTask", () => {
   });
 
   it("closeTask flips OPEN → CLOSED and reports the change", () => {
-    const r = closeTask(db, "design", { workstream: "auth" });
+    const r = closeTask(db, "design", { workstream: "auth", evidence: "test" });
     expect(r).toEqual({
       previousStatus: "OPEN",
       status: "CLOSED",
@@ -391,14 +392,14 @@ describe("setTaskStatus / closeTask / openTask", () => {
   });
 
   it("closeTask is idempotent on an already-CLOSED task", () => {
-    closeTask(db, "design", { workstream: "auth" });
-    const r = closeTask(db, "design", { workstream: "auth" });
+    closeTask(db, "design", { workstream: "auth", evidence: "test" });
+    const r = closeTask(db, "design", { workstream: "auth", evidence: "test" });
     expect(r.changed).toBe(false);
     expect(r.status).toBe("CLOSED");
   });
 
   it("openTask flips CLOSED → OPEN and is idempotent on already-OPEN", () => {
-    closeTask(db, "design", { workstream: "auth" });
+    closeTask(db, "design", { workstream: "auth", evidence: "test" });
     const r1 = openTask(db, "design", { workstream: "auth" });
     expect(r1).toEqual({
       previousStatus: "CLOSED",
@@ -413,7 +414,7 @@ describe("setTaskStatus / closeTask / openTask", () => {
 
   it("openTask leaves owner intact (use releaseTask to clear owner)", async () => {
     await claimTask(db, "design", { agentName: "worker-1", workstream: "auth" });
-    closeTask(db, "design", { workstream: "auth" });
+    closeTask(db, "design", { workstream: "auth", evidence: "test" });
     openTask(db, "design", { workstream: "auth" });
     expect(getTask(db, "design", "auth")?.ownerName).toBe("worker-1");
   });
@@ -434,7 +435,9 @@ describe("setTaskStatus / closeTask / openTask", () => {
     expect(() => setTaskStatus(db, "ghost", "CLOSED", { workstream: "auth" })).toThrow(
       TaskNotFoundError,
     );
-    expect(() => closeTask(db, "ghost", { workstream: "auth" })).toThrow(TaskNotFoundError);
+    expect(() => closeTask(db, "ghost", { workstream: "auth", evidence: "test" })).toThrow(
+      TaskNotFoundError,
+    );
     expect(() => openTask(db, "ghost", { workstream: "auth" })).toThrow(TaskNotFoundError);
   });
 
@@ -445,7 +448,7 @@ describe("setTaskStatus / closeTask / openTask", () => {
     while (Date.now() === start) {
       /* spin */
     }
-    closeTask(db, "design", { workstream: "auth" });
+    closeTask(db, "design", { workstream: "auth", evidence: "test" });
     const after = getTask(db, "design", "auth")?.updatedAt;
     expect(after).not.toBe(before);
   });
@@ -496,7 +499,7 @@ describe("releaseTask", () => {
 
   it("--reopen on a CLOSED owned task forces OPEN (the un-close escape hatch)", async () => {
     await claimTask(db, "design", { agentName: "worker-1", workstream: "auth" });
-    closeTask(db, "design", { workstream: "auth" });
+    closeTask(db, "design", { workstream: "auth", evidence: "test" });
     // Owner is preserved across closeTask, status=CLOSED.
     expect(getTask(db, "design", "auth")?.status).toBe("CLOSED");
     const r = releaseTask(db, "design", { reopen: true, workstream: "auth" });
@@ -509,7 +512,7 @@ describe("releaseTask", () => {
 
   it("bare release on a CLOSED owned task clears owner but preserves status", async () => {
     await claimTask(db, "design", { agentName: "worker-1", workstream: "auth" });
-    closeTask(db, "design", { workstream: "auth" });
+    closeTask(db, "design", { workstream: "auth", evidence: "test" });
     const r = releaseTask(db, "design", { workstream: "auth" });
     expect(r.changed).toBe(true);
     expect(r.previousStatus).toBe("CLOSED");
@@ -531,7 +534,7 @@ describe("releaseTask", () => {
   });
 
   it("--reopen on a CLOSED unowned task DOES flip back to OPEN (changed=true)", () => {
-    closeTask(db, "design", { workstream: "auth" });
+    closeTask(db, "design", { workstream: "auth", evidence: "test" });
     const r = releaseTask(db, "design", { reopen: true, workstream: "auth" });
     expect(r.changed).toBe(true);
     expect(r.status).toBe("OPEN");
@@ -601,13 +604,14 @@ describe("evidence on lifecycle verbs", () => {
     expect(noteContents()).toContain("CLOSE: tests pass: npm test exit 0");
   });
 
-  it("closeTask without --evidence writes no evidence note", () => {
-    closeTask(db, "design", { workstream: "auth" });
+  it("a non-done closeTask without --evidence writes no CLOSE note (its --why note is the evidence)", () => {
+    closeTask(db, "design", { workstream: "auth", as: "wontfix", why: "not needed" });
     expect(noteContents().some((c) => c.startsWith("CLOSE:"))).toBe(false);
+    expect(noteContents()).toContain("WONTFIX: not needed");
   });
 
   it("closeTask records a typed task.close op (no prose duplicate)", () => {
-    closeTask(db, "design", { workstream: "auth" });
+    closeTask(db, "design", { workstream: "auth", evidence: "test" });
     const ops = db
       .prepare("SELECT intent, entity, key FROM ops WHERE intent = 'task.close'")
       .all() as Array<{ intent: string; entity: string; key: string }>;
@@ -621,7 +625,7 @@ describe("evidence on lifecycle verbs", () => {
   });
 
   it("openTask --evidence records an OPEN note", () => {
-    closeTask(db, "design", { workstream: "auth" });
+    closeTask(db, "design", { workstream: "auth", evidence: "test" });
     openTask(db, "design", { evidence: "reopened: deploy rollback", workstream: "auth" });
     expect(noteContents()).toContain("OPEN: reopened: deploy rollback");
   });
@@ -684,13 +688,15 @@ describe("evidence on lifecycle verbs", () => {
     expect(notes[0]?.author).toBe("worker-1");
   });
 
-  it("closeTask without --evidence does NOT insert a synthetic note", () => {
-    closeTask(db, "design", { workstream: "auth" });
+  it("closeTask to done without --evidence is refused and inserts no note", () => {
+    expect(() => closeTask(db, "design", { workstream: "auth" })).toThrow(CloseNeedsEvidenceError);
     expect(listNotes(db, "design", "auth")).toHaveLength(0);
   });
 
-  it("closeTask with empty-string --evidence does NOT insert a synthetic note", () => {
-    closeTask(db, "design", { evidence: "", workstream: "auth" });
+  it("closeTask with empty-string --evidence is refused like none", () => {
+    expect(() => closeTask(db, "design", { evidence: "", workstream: "auth" })).toThrow(
+      CloseNeedsEvidenceError,
+    );
     expect(listNotes(db, "design", "auth")).toHaveLength(0);
   });
 

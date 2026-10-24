@@ -166,7 +166,7 @@ describe("mu log --json", () => {
     await seedSession();
     const r = await runCli(["log", "-w", "demo", "--json"], dbPath);
     const items = (JSON.parse(r.stdout.trim()) as { items: LogJson[] }).items;
-    const close = items.find((i) => i.intent === "task.close");
+    const close = items.find((i) => i.intent === "task.close" && i.kind === "task");
     expect(close).toBeDefined();
     // Structured, so scripts switch on intent rather than parsing prose...
     expect(close?.intent).toBe("task.close");

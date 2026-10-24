@@ -138,7 +138,7 @@ describe("mu task substates CLI", () => {
   });
 
   it("empty next names the parked count and how to list them", async () => {
-    for (const t of ["a", "b", "d"]) await cli("close", t);
+    for (const t of ["a", "b", "d"]) await cli("close", t, "--evidence", "test");
     await cli("park", "c", "--why", "later");
     await cli("park", "e", "--why", "later");
     const r = await cli("next");
@@ -149,7 +149,7 @@ describe("mu task substates CLI", () => {
   });
 
   it("empty next without parked tasks stays bare", async () => {
-    for (const t of ["a", "b", "c", "d", "e"]) await cli("close", t);
+    for (const t of ["a", "b", "c", "d", "e"]) await cli("close", t, "--evidence", "test");
     const out = plain((await cli("next")).stdout);
     expect(out).toContain("(no ready tasks)");
     expect(out).not.toContain("parked");

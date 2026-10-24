@@ -28,7 +28,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { setWaitSleepForTests } from "../src/tasks/wait.js";
-import { addTask, claimTask, getTask, setTaskStatus } from "../src/tasks.js";
+import { addTask, claimTask, closeTask, getTask } from "../src/tasks.js";
 import { killPane, killSession, paneAlive, resetTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { pollUntil } from "./_env.js";
@@ -193,7 +193,7 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
     // path). Avoid fixed timers: under stress they can fire before
     // the CLI reaches waitForTasks.
     runDuringFirstWaitSleep(() => {
-      setTaskStatus(db, "review", "CLOSED", { workstream });
+      closeTask(db, "review", { workstream, evidence: "test" });
     });
 
     const { exitCode, stderr, error } = await runCli(
@@ -334,7 +334,7 @@ describeIfTmux("mu task wait — cross-workstream reaper isolation", () => {
     setWaitSleepForTests(async (ms) => {
       sleeps += 1;
       if (sleeps === 1) await killPane(beta.paneId);
-      if (sleeps === 2) setTaskStatus(db, "alphatask", "CLOSED", { workstream: wsA });
+      if (sleeps === 2) closeTask(db, "alphatask", { workstream: wsA, evidence: "test" });
       await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 25)));
     });
 

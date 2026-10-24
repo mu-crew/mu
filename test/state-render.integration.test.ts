@@ -396,7 +396,9 @@ describe("the op formatter", () => {
       );
       await captureNewEvents(() => releaseTask(db, "base", { workstream: "events" }));
       await captureNewEvents(() => openTask(db, "base", { workstream: "events" }));
-      await captureNewEvents(() => closeTask(db, "base", { workstream: "events" }));
+      await captureNewEvents(() =>
+        closeTask(db, "base", { workstream: "events", evidence: "test" }),
+      );
       await captureNewEvents(() => openTask(db, "base", { workstream: "events" }));
       await captureNewEvents(() =>
         deleteTask(db, "blocked", "events", {

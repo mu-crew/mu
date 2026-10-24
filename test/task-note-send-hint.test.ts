@@ -79,7 +79,7 @@ describe("mu task note send hint", () => {
 
   it("CLOSED task: no send hint", async () => {
     await claim();
-    await runCli(["task", "close", "t1", "-w", "auth"], dbPath);
+    await runCli(["task", "close", "t1", "-w", "auth", "--evidence", "test"], dbPath);
     expect(sendHint(steps((await note("orchestrator")).stdout))).toBeUndefined();
   });
 });

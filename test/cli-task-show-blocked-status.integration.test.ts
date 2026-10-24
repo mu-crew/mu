@@ -81,8 +81,8 @@ describe("mu task show — blockers/dependents grouped by status", () => {
       effortDays: 1,
       blockedBy: ["done_a", "done_b"],
     });
-    closeTask(db, "done_a", { workstream: "wsx" });
-    closeTask(db, "done_b", { workstream: "wsx" });
+    closeTask(db, "done_a", { workstream: "wsx", evidence: "test" });
+    closeTask(db, "done_b", { workstream: "wsx", evidence: "test" });
 
     const { stdout, exitCode } = await runCli(["task", "show", "target", "-w", "wsx"], dbPath);
     expect(exitCode).toBeNull();
@@ -97,7 +97,7 @@ describe("mu task show — blockers/dependents grouped by status", () => {
     addTask(db, { localId: "open_x", workstream: "wsx", title: "X", impact: 50, effortDays: 1 });
     addTask(db, { localId: "inprog_y", workstream: "wsx", title: "Y", impact: 50, effortDays: 1 });
     addTask(db, { localId: "done_w", workstream: "wsx", title: "W", impact: 50, effortDays: 1 });
-    closeTask(db, "done_w", { workstream: "wsx" });
+    closeTask(db, "done_w", { workstream: "wsx", evidence: "test" });
     setTaskStatus(db, "inprog_y", "IN_PROGRESS", { workstream: "wsx" });
     addTask(db, {
       localId: "target",
@@ -146,13 +146,14 @@ describe("mu task show — blockers/dependents grouped by status", () => {
       effortDays: 1,
       blockedBy: ["root"],
     });
-    closeTask(db, "closed_dep", { workstream: "wsx" });
+    // wontfix: a done close would be refused while `root` is open.
+    closeTask(db, "closed_dep", { workstream: "wsx", as: "wontfix", why: "n/a" });
 
     const { stdout, exitCode } = await runCli(["task", "show", "root", "-w", "wsx"], dbPath);
     expect(exitCode).toBeNull();
     const plain = stripAnsi(stdout);
     expect(plain).toMatch(/blocks {5}: open_dep \[OPEN\]/);
-    expect(plain).toMatch(/no longer {2}: closed_dep \[CLOSED\]/);
+    expect(plain).toMatch(/no longer {2}: closed_dep \[CLOSED\/wontfix\]/);
   });
 
   it("--json: blockers/dependents are arrays of {name, status, substate} objects", async () => {
@@ -166,7 +167,7 @@ describe("mu task show — blockers/dependents grouped by status", () => {
       effortDays: 1,
       blockedBy: ["b_open", "b_done"],
     });
-    closeTask(db, "b_done", { workstream: "wsx" });
+    closeTask(db, "b_done", { workstream: "wsx", evidence: "test" });
     addTask(db, {
       localId: "downstream",
       workstream: "wsx",

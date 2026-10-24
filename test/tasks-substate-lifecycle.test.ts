@@ -77,7 +77,7 @@ describe("closeTask --as / --why", () => {
   it("defaults to CLOSED/done and reports no unblocked dependents", () => {
     add("a");
     add("b", ["a"]);
-    const r = closeTask(db, "a", { workstream: WS });
+    const r = closeTask(db, "a", { workstream: WS, evidence: "test" });
     expect(pair("a")).toBe("CLOSED/done");
     if ("skipped" in r) throw new Error("unexpected skip");
     expect(r.substate).toBe("done");
@@ -141,7 +141,7 @@ describe("closeTask --as / --why", () => {
 
   it("re-closing with a different --as changes the substate; the same --as is a no-op", () => {
     add("a");
-    closeTask(db, "a", { workstream: WS });
+    closeTask(db, "a", { workstream: WS, evidence: "test" });
     const r = closeTask(db, "a", { workstream: WS, as: "superseded", why: "by b" });
     if ("skipped" in r) throw new Error("unexpected skip");
     expect(r.changed).toBe(true);
@@ -155,7 +155,7 @@ describe("closeTask --as / --why", () => {
     add("x");
     add("umbrella", ["x"]);
     closeTask(db, "x", { workstream: WS, as: "duplicate", why: "dup" });
-    const r = closeTask(db, "umbrella", { workstream: WS, ifReady: true });
+    const r = closeTask(db, "umbrella", { workstream: WS, ifReady: true, evidence: "test" });
     expect("skipped" in r).toBe(false);
     expect(pair("umbrella")).toBe("CLOSED/done");
   });
@@ -214,7 +214,7 @@ describe("parkTask / unparkTask", () => {
 
   it("refuses CLOSED with an open next step", () => {
     add("a");
-    closeTask(db, "a", { workstream: WS });
+    closeTask(db, "a", { workstream: WS, evidence: "test" });
     let err: unknown;
     try {
       parkTask(db, "a", { workstream: WS, why: "later" });

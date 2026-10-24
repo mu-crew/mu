@@ -248,7 +248,7 @@ describe("op capture (triggers)", () => {
       ensureWorkstream(db, "demo");
       seedTask();
       clearOps();
-      closeTask(db, "t1", { workstream: "demo" });
+      closeTask(db, "t1", { workstream: "demo", evidence: "test" });
       const rows = ops("task");
       expect(rows).toHaveLength(1);
       const row = rows[0];
@@ -279,9 +279,9 @@ describe("op capture (triggers)", () => {
     it("an idempotent re-close (already CLOSED) produces no op", () => {
       ensureWorkstream(db, "demo");
       seedTask();
-      closeTask(db, "t1", { workstream: "demo" });
+      closeTask(db, "t1", { workstream: "demo", evidence: "test" });
       clearOps();
-      closeTask(db, "t1", { workstream: "demo" });
+      closeTask(db, "t1", { workstream: "demo", evidence: "test" });
       expect(ops()).toHaveLength(0);
     });
 
@@ -377,7 +377,7 @@ describe("op capture (triggers)", () => {
       clearOps();
 
       // Machine A: close it. Machine B: re-price it.
-      closeTask(db, "t1", { workstream: "demo" });
+      closeTask(db, "t1", { workstream: "demo", evidence: "test" });
       const closeOp = ops("task").at(-1);
       clearOps();
       updateTask(db, "t1", { impact: 91 }, { workstream: "demo" });
@@ -468,7 +468,7 @@ describe("op capture (triggers)", () => {
       seedTask("root");
       clearOps();
 
-      const result = closeTask(db, "root", { workstream: "demo" });
+      const result = closeTask(db, "root", { workstream: "demo", evidence: "test" });
       expect(result.changed).toBe(true);
 
       const rows = ops("task");
@@ -862,7 +862,7 @@ describe("op capture (triggers)", () => {
         ["task.note", () => addNote(db, "a", "n", { workstream: "demo" })],
         ["task.block", () => addBlockEdge(db, "demo", "b", "a")],
         ["task.unblock", () => removeBlockEdge(db, "demo", "b", "a")],
-        ["task.close", () => closeTask(db, "a", { workstream: "demo" })],
+        ["task.close", () => closeTask(db, "a", { workstream: "demo", evidence: "test" })],
         ["task.open", () => openTask(db, "a", { workstream: "demo" })],
         ["task.delete", () => deleteTask(db, "fresh", "demo")],
       ];

@@ -1,6 +1,12 @@
 // mu — task edit/write verbs: add task, add note, update, delete.
 
-import { type Db, DEFAULT_EFFORT_DAYS, DEFAULT_IMPACT, resolveWorkstreamId } from "../db.js";
+import {
+  type Db,
+  DEFAULT_EFFORT_DAYS,
+  DEFAULT_IMPACT,
+  type NoteKind,
+  resolveWorkstreamId,
+} from "../db.js";
 import { currentOpContext, withOpContext } from "../op-context.js";
 import { ensureWorkstream } from "../workstream.js";
 import { taskIdFor, touchTask } from "./core.js";
@@ -155,6 +161,9 @@ export interface AddNoteOptions {
   /** Workstream context (operator-facing name). v5: tasks.local_id is
    *  per-workstream unique, so this is required to disambiguate. */
   workstream: string;
+  /** Note kind (`task_notes.kind`), set once at INSERT. Default 'note'.
+   *  `closeTask` files its reason/evidence notes as 'close'. */
+  kind?: NoteKind;
 }
 
 export function addNote(db: Db, taskLocalId: string, content: string, opts: AddNoteOptions) {
@@ -167,7 +176,15 @@ export function addNote(db: Db, taskLocalId: string, content: string, opts: AddN
  *  group and intent. For verbs whose note is part of one action (the
  *  `--why` of `close --as` / `park`), so both share one group.
  *  Internal — not re-exported from src/tasks.ts. */
-export function insertNote(db: Db, taskLocalId: string, content: string, opts: AddNoteOptions) {
+export function insertNote(
+  db: Db,
+  taskLocalId: string,
+  content: string,
+  opts: AddNoteOptions,
+  /** False when the caller's own UPDATE bumps `updated_at` in the same
+   *  group: a second `task` put there would duplicate the change. */
+  touch = true,
+) {
   const task = getTask(db, taskLocalId, opts.workstream);
   if (!task) {
     throw new TaskNotFoundError(taskLocalId);
@@ -177,11 +194,13 @@ export function insertNote(db: Db, taskLocalId: string, content: string, opts: A
   const now = new Date().toISOString();
   db.transaction(() => {
     const r = db
-      .prepare("INSERT INTO task_notes (task_id, author, content, created_at) VALUES (?, ?, ?, ?)")
-      .run(taskId, opts.author ?? null, content, now);
+      .prepare(
+        "INSERT INTO task_notes (task_id, author, content, created_at, kind) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(taskId, opts.author ?? null, content, now, opts.kind ?? "note");
     // Bump the parent task so `mu task list --sort recency` surfaces
     // freshly-noted tasks (task_updatedat_not_bumped_by_reparent).
-    touchTask(db, taskId, now);
+    if (touch) touchTask(db, taskId, now);
     return r;
   }).immediate();
   // No emitEvent: the task_notes INSERT fired the capture trigger

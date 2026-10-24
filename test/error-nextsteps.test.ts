@@ -51,6 +51,7 @@ import { MuxError, NoMultiplexerError, tmuxBackend } from "../src/mux.js";
 import { hasNextSteps } from "../src/output.js";
 import {
   ClaimerNotRegisteredError,
+  CloseNeedsEvidenceError,
   CrossWorkstreamEdgeError,
   CycleError,
   InvalidSubstateError,
@@ -59,6 +60,7 @@ import {
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskExistsError,
+  TaskHasOpenBlockersError,
   TaskIdInvalidError,
   TaskInTriageError,
   TaskNotFoundError,
@@ -115,6 +117,16 @@ const cases: NextStepsCase[] = [
     error: new TaskAlreadyOwnedError("foo", "alice"),
     label: "TaskAlreadyOwnedError",
     expectedTokens: ["foo", "alice"],
+  },
+  {
+    error: new CloseNeedsEvidenceError("foo", "ws"),
+    label: "CloseNeedsEvidenceError",
+    expectedTokens: ["mu task close foo -w ws", "--evidence"],
+  },
+  {
+    error: new TaskHasOpenBlockersError("foo", "ws", ["a", "b"]),
+    label: "TaskHasOpenBlockersError",
+    expectedTokens: ["mu task tree foo -w ws"],
   },
   {
     error: new SubstateReasonRequiredError("park", "parked", "foo"),

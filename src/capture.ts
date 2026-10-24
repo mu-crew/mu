@@ -108,7 +108,7 @@ const UNRESOLVED = "<unresolved>";
  * a capture revision is upgradeable in place, so it must not be folded
  * into it (an older schema number is refused before any trigger work).
  */
-export const CAPTURE_VERSION = 1;
+export const CAPTURE_VERSION = 2;
 
 /** Lowest SQLite that mints correct HLCs: `unixepoch('subsec')` arrived
  *  in 3.42; before it the call yields NULL and every op gets a zero-time
@@ -485,6 +485,77 @@ BEGIN
   SELECT RAISE(ABORT, 'mu: task_notes.kind is set once when the note is written; add a new note instead of changing it.');`,
 );
 
+// ─── Local-write guards (README Kernel § Schema) ──────────────────────
+//
+// Three rules hold for LOCAL writes only: a claim cannot steal an owned
+// task, a close needs evidence, a close to `done` refuses open
+// blockers. Each is gated on `applying = 0`, because ingest and import
+// accept what the log says: peers can merge into states no local write
+// allows (a close and its evidence are separate ops), and a RAISE during
+// ingest would roll back the segment and stall sync forever. `mu doctor`
+// reports such states instead.
+//
+// The RAISE texts are exported: the SDK maps them to typed errors
+// (TaskAlreadyOwnedError, CloseNeedsEvidenceError,
+// TaskHasOpenBlockersError) by exact message.
+
+/** `owner_id` moved from one agent to another without a release. */
+export const GUARD_ALREADY_OWNED = "mu: task already owned; release it first";
+/** A task went CLOSED with no `kind = 'close'` note in the same op group. */
+export const GUARD_NEEDS_EVIDENCE = 'mu: close needs evidence (--evidence "<command + result>")';
+/** A task went CLOSED/done while a blocker is still OPEN or IN_PROGRESS. */
+export const GUARD_OPEN_BLOCKERS = "mu: task has open blockers";
+
+/** WHEN fragment: this UPDATE closes the task (OPEN/IN_PROGRESS -> CLOSED,
+ *  or a CLOSED task reclassified to another substate). */
+const CLOSES_TASK =
+  "NEW.status = 'CLOSED' AND (OLD.status <> 'CLOSED' OR NEW.substate IS NOT OLD.substate)";
+
+/** The three guards. Pure; spliced into buildTriggers. */
+function localGuards(): CaptureTrigger[] {
+  const raise = (msg: string): string => `SELECT RAISE(ABORT, '${msg.replaceAll("'", "''")}');`;
+  // Evidence = a surviving `close` note of THIS task, filed in the
+  // current op group. Identity is an exact compare of the note's op key
+  // (`<task key>#<note id>`); a LIKE over the key would let task `a_b`
+  // be satisfied by `axb`'s note, since `_` is a wildcard and ids allow it.
+  const hasEvidence = `EXISTS (
+      SELECT 1 FROM task_notes n
+        JOIN ops o ON o.entity = 'note' AND o.op = 'put'
+                  AND o.key = ${taskKey("NEW.id")} || '#' || n.id
+       WHERE n.task_id = NEW.id AND n.kind = 'close'
+         AND o.group_id = (SELECT group_id FROM op_ctx WHERE id = 1)
+    )`;
+  return [
+    trigger(
+      "_cap_tasks_claim_cas",
+      `BEFORE UPDATE OF owner_id ON tasks
+  WHEN ${NOT_APPLYING}
+   AND OLD.owner_id IS NOT NULL AND NEW.owner_id IS NOT NULL AND NEW.owner_id IS NOT OLD.owner_id
+BEGIN
+  ${raise(GUARD_ALREADY_OWNED)}`,
+    ),
+    trigger(
+      "_cap_tasks_close_evidence",
+      `BEFORE UPDATE OF status, substate ON tasks
+  WHEN ${NOT_APPLYING}
+   AND ${CLOSES_TASK}
+   AND NOT ${hasEvidence}
+BEGIN
+  ${raise(GUARD_NEEDS_EVIDENCE)}`,
+    ),
+    trigger(
+      "_cap_tasks_close_blockers",
+      `BEFORE UPDATE OF status, substate ON tasks
+  WHEN ${NOT_APPLYING}
+   AND ${CLOSES_TASK}
+   AND NEW.substate = 'done'
+   AND EXISTS (SELECT 1 FROM blockers WHERE task_id = NEW.id)
+BEGIN
+  ${raise(GUARD_OPEN_BLOCKERS)}`,
+    ),
+  ];
+}
+
 /**
  * THE DELETE SUBTLETY
  * -------------------
@@ -574,6 +645,7 @@ function buildTriggers(): CaptureTrigger[] {
     ...tables.map(insertGuard),
     ...tables.map(positiveIdGuard),
     NOTE_KIND_GUARD,
+    ...localGuards(),
     // The singleton op_ctx row must survive: the HLC clock reads
     // `now_ms` from it, and a missing row would NULL last_wall.
     trigger(

@@ -33,7 +33,7 @@ import {
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
-const PINNED_CHECKSUM = "73401d742f783ef2673c970e7a7c3daab6ac264bbcafb3e4b9cd54099f35a173";
+const PINNED_CHECKSUM = "f18c0dee0774d77043b1d598848709242ce0e9c7bb6e567486585fca9509d8f3";
 
 let dir: string;
 let path: string;
@@ -107,7 +107,9 @@ describe("a connection that never ran mu setup", () => {
       raw.prepare("DELETE FROM ops").run();
       insertTask(raw, "plain");
       raw
-        .prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id = 'plain'")
+        .prepare(
+          "UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active' WHERE local_id = 'plain'",
+        )
         .run();
     } finally {
       raw.close();
@@ -552,7 +554,7 @@ describe("capture version stamp", () => {
   it("pins the generated DDL: changing a generator requires a CAPTURE_VERSION bump", () => {
     // If this fails you changed trigger SQL. Bump CAPTURE_VERSION in
     // src/capture.ts, then update the pin below.
-    expect(CAPTURE_VERSION).toBe(1);
+    expect(CAPTURE_VERSION).toBe(2);
     expect(GENERATED_TRIGGER_CHECKSUM).toBe(PINNED_CHECKSUM);
   });
 

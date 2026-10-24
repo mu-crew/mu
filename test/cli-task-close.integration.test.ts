@@ -102,7 +102,10 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
     writeFileSync(join(workspace.path, "dirty.txt"), "remember to commit me\n");
 
     await withEnv("MU_AGENT_NAME", "worker-1", async () => {
-      const human = await runCli(["task", "close", "dirty_human", "-w", "test"], dbPath);
+      const human = await runCli(
+        ["task", "close", "dirty_human", "-w", "test", "--evidence", "test"],
+        dbPath,
+      );
       expect(human.error).toBeUndefined();
       expect(human.exitCode).toBeNull();
       expect(human.stdout).toContain("Don't forget to commit");
@@ -110,7 +113,10 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
         "cd $(mu workspace path worker-1 -w test) && git add -A && git commit -m 'Implement Helpful Thing'",
       );
 
-      const json = await runCli(["task", "close", "dirty_json", "-w", "test", "--json"], dbPath);
+      const json = await runCli(
+        ["task", "close", "dirty_json", "-w", "test", "--evidence", "test", "--json"],
+        dbPath,
+      );
       expect(json.error).toBeUndefined();
       expect(json.exitCode).toBeNull();
       const payload = JSON.parse(json.stdout) as JsonClosePayload;
@@ -126,7 +132,10 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
     await seedDb({ withWorkspace: true });
 
     await withEnv("MU_AGENT_NAME", "worker-1", async () => {
-      const json = await runCli(["task", "close", "dirty_json", "-w", "test", "--json"], dbPath);
+      const json = await runCli(
+        ["task", "close", "dirty_json", "-w", "test", "--evidence", "test", "--json"],
+        dbPath,
+      );
       expect(json.error).toBeUndefined();
       const payload = JSON.parse(json.stdout) as JsonClosePayload;
       expect(payload.nextSteps.map((s) => s.intent)).not.toContain("Don't forget to commit");
@@ -138,7 +147,10 @@ gitDescribe("mu task close dirty-workspace commit hint", () => {
     await seedDb({ withWorkspace: false });
 
     await withEnv("MU_AGENT_NAME", "worker-1", async () => {
-      const json = await runCli(["task", "close", "dirty_json", "-w", "test", "--json"], dbPath);
+      const json = await runCli(
+        ["task", "close", "dirty_json", "-w", "test", "--evidence", "test", "--json"],
+        dbPath,
+      );
       expect(json.error).toBeUndefined();
       const payload = JSON.parse(json.stdout) as JsonClosePayload;
       expect(payload.nextSteps.map((s) => s.intent)).not.toContain("Don't forget to commit");

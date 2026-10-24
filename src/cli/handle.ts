@@ -92,6 +92,7 @@ import {
 } from "../sync.js";
 import {
   ClaimerNotRegisteredError,
+  CloseNeedsEvidenceError,
   CrossWorkstreamEdgeError,
   CycleError,
   InvalidSubstateError,
@@ -100,6 +101,7 @@ import {
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskExistsError,
+  TaskHasOpenBlockersError,
   TaskIdInvalidError,
   TaskInTriageError,
   TaskNotFoundError,
@@ -299,6 +301,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||
     err instanceof TaskAlreadyOwnedError ||
+    err instanceof TaskHasOpenBlockersError ||
+    err instanceof CloseNeedsEvidenceError ||
     // Substate refusals (ts_4): a missing --why, a park from the wrong
     // phase, a claim on a parked task, a pair outside TASK_SUBSTATES.
     err instanceof SubstateReasonRequiredError ||

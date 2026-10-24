@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
-import { addTask } from "../src/tasks.js";
+import { addTask, closeTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli } from "./_runCli.js";
 
@@ -32,9 +32,7 @@ describe("mu task list --status (multi-value)", () => {
     db.prepare(
       "UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active' WHERE local_id='ip'",
     ).run();
-    db.prepare(
-      "UPDATE tasks SET status = 'CLOSED', substate = 'done'      WHERE local_id='cl'",
-    ).run();
+    closeTask(db, "cl", { workstream: "auth", evidence: "test" });
   });
 
   afterEach(() => {

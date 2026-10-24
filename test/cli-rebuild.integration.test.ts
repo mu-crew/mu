@@ -36,7 +36,7 @@ describe("mu rebuild", () => {
     await runCli(["task", "add", "b", "-t", "B", "-i", "40", "-e", "2", "-w", "demo"], dbPath);
     await runCli(["task", "block", "b", "--by", "a", "-w", "demo"], dbPath);
     await runCli(["task", "note", "a", "context", "-w", "demo"], dbPath);
-    await runCli(["task", "close", "a", "-w", "demo"], dbPath);
+    await runCli(["task", "close", "a", "-w", "demo", "--evidence", "test"], dbPath);
   };
 
   it("rebuilds and reports the shape, then the rebuilt DB is usable", async () => {

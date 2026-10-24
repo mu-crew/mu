@@ -15,6 +15,7 @@
 //
 // Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
+import { GUARD_ALREADY_OWNED } from "../capture.js";
 import type { Db } from "../db.js";
 import { withOpContext } from "../op-context.js";
 import {
@@ -304,9 +305,11 @@ async function claimTaskImpl(
         assertNotParked(before, opts);
 
         const now = new Date().toISOString();
-        const result = db
-          .prepare(
-            `UPDATE tasks
+        let result: { changes: number };
+        try {
+          result = db
+            .prepare(
+              `UPDATE tasks
             SET owner_id = ?,
                 status = CASE WHEN status = 'OPEN' THEN 'IN_PROGRESS' ELSE status END,
                 -- SQLite evaluates every SET expression against the OLD
@@ -316,8 +319,15 @@ async function claimTaskImpl(
           WHERE local_id = ?
             AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)
             AND (owner_id IS NULL OR owner_id = ?)`,
-          )
-          .run(claimerRow.id, now, localId, opts.workstream, claimerRow.id);
+            )
+            .run(claimerRow.id, now, localId, opts.workstream, claimerRow.id);
+        } catch (err) {
+          // The DB-side CAS (`_cap_tasks_claim_cas`) backs the WHERE above.
+          if (err instanceof Error && err.message === GUARD_ALREADY_OWNED) {
+            throw new TaskAlreadyOwnedError(localId, before.ownerName ?? "<unknown>");
+          }
+          throw err;
+        }
 
         if (result.changes === 0) {
           throw new TaskAlreadyOwnedError(localId, before.ownerName ?? "<unknown>");

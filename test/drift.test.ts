@@ -345,7 +345,7 @@ describe("drift detection", () => {
     it("clean after close, update, block and unblock", () => {
       seed();
       updateTask(db, "b", { impact: 95, title: "B renamed" }, { workstream: "demo" });
-      closeTask(db, "a", { workstream: "demo" });
+      closeTask(db, "a", { workstream: "demo", evidence: "test" });
       removeBlockEdge(db, "demo", "b", "a");
       addBlockEdge(db, "demo", "b", "a");
       expect(checkDrift(db)).toMatchObject({ clean: true });
@@ -379,7 +379,7 @@ describe("drift detection", () => {
         });
         if (i % 3 === 0) updateTask(db, `t${i}`, { impact: 80 }, { workstream: "demo" });
         if (i % 5 === 0) addNote(db, `t${i}`, `n${i}`, { workstream: "demo", author: "w" });
-        if (i % 7 === 0) closeTask(db, `t${i}`, { workstream: "demo" });
+        if (i % 7 === 0) closeTask(db, `t${i}`, { workstream: "demo", evidence: "test" });
       }
       const report = checkDrift(db);
       expect(report.clean).toBe(true);

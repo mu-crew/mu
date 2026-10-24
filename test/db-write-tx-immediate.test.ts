@@ -90,7 +90,7 @@ describe("write transactions take the write lock up front", () => {
     addTask(a, { localId: "build", workstream: "auth", title: "Build", impact: 50, effortDays: 1 });
 
     const r = withCompetingWrite(() => {
-      closeTask(a, "build", { workstream: "auth" });
+      closeTask(a, "build", { workstream: "auth", evidence: "test" });
     });
 
     expect(r.competitor).toBe("refused");

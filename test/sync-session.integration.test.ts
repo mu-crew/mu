@@ -312,7 +312,7 @@ describe("mu sync — a multi-round two-machine session", () => {
     await record();
 
     // ── round 4: closed here, reopened there ──────────────────────────
-    await runCli(["task", "close", "lap-1", "-w", WS], lap);
+    await runCli(["task", "close", "lap-1", "-w", WS, "--evidence", "test"], lap);
     await exchange(lap, dev);
     expect((await view(dev, "lap-1")).task.status).toBe("CLOSED");
     await runCli(["task", "open", "lap-1", "-w", WS], dev);

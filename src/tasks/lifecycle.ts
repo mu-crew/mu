@@ -9,14 +9,17 @@
 //
 // Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
-import type { Db } from "../db.js";
+import { GUARD_NEEDS_EVIDENCE, GUARD_OPEN_BLOCKERS } from "../capture.js";
+import type { Db, NoteKind } from "../db.js";
 import { withOpContext } from "../op-context.js";
 import { taskIdFor } from "./core.js";
 import { getTaskEdgesWithStatus } from "./edges.js";
 import { addNote, insertNote } from "./edit.js";
 import {
+  CloseNeedsEvidenceError,
   InvalidSubstateError,
   SubstateReasonRequiredError,
+  TaskHasOpenBlockersError,
   TaskNotFoundError,
   TaskParkStateError,
 } from "./errors.js";
@@ -150,16 +153,43 @@ function setTaskStatusImpl(
   // v5: tasks.local_id is per-workstream unique. Scope to the row's
   // workstream so the UPDATE doesn't accidentally touch a same-named
   // task in another workstream.
-  db.prepare(
-    `UPDATE tasks SET status = ?, substate = ?, updated_at = ?
-      WHERE local_id = ?
-        AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
-  ).run(status, substate, new Date().toISOString(), localId, before.workstreamName);
+  try {
+    db.prepare(
+      `UPDATE tasks SET status = ?, substate = ?, updated_at = ?
+        WHERE local_id = ?
+          AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
+    ).run(status, substate, new Date().toISOString(), localId, before.workstreamName);
+  } catch (err) {
+    throw mapCloseGuard(db, err, localId, before.workstreamName);
+  }
   // No emitEvent: the UPDATE fired the capture trigger, whose intent is
   // the specific verb (task.close / task.open, or task.set-<status> for
   // a bare status set) and whose payload names the new status. Evidence,
   // when passed, lands as a task note — itself a captured op.
   return { ...base, changed: true };
+}
+
+/** Turn the local-write close guards' RAISE (src/capture.ts) into typed
+ *  errors; anything else is returned unchanged for the caller to throw.
+ *  Matches the exact message better-sqlite3 carries. */
+function mapCloseGuard(db: Db, err: unknown, localId: string, workstream: string): unknown {
+  const msg = err instanceof Error ? err.message : "";
+  if (msg === GUARD_NEEDS_EVIDENCE) return new CloseNeedsEvidenceError(localId, workstream);
+  if (msg === GUARD_OPEN_BLOCKERS) {
+    const ids = openBlockerIds(db, localId, workstream);
+    return new TaskHasOpenBlockersError(localId, workstream, ids);
+  }
+  return err;
+}
+
+/** Local ids of the task's direct blockers that are not CLOSED, sorted. */
+function openBlockerIds(db: Db, localId: string, workstream: string): string[] {
+  const id = taskIdFor(db, localId, workstream);
+  if (id === null) return [];
+  const rows = db
+    .prepare("SELECT blocker_local_id AS name FROM blockers WHERE task_id = ? ORDER BY 1")
+    .all(id) as { name: string }[];
+  return rows.map((r) => r.name);
 }
 
 /** Result of `closeTask` when called with `ifReady: true` and the
@@ -214,8 +244,11 @@ export interface CloseTaskOptions extends EvidenceOption {
    *  its current substate). Any CLOSED/* satisfies edges. */
   as?: CloseSubstate;
   /** Required (non-empty) unless `as` is "done"; stored as a
-   *  `<AS>: <why>` note in the same op group. */
+   *  `<AS>: <why>` note (kind 'close') in the same op group. */
   why?: string;
+  // `evidence` (from EvidenceOption): required for `as: "done"` (a close
+  // to done without it throws CloseNeedsEvidenceError before any write);
+  // optional otherwise, where the `why` note is the close's evidence.
 }
 
 /** Result of a close that ran (not skipped). */
@@ -264,6 +297,8 @@ function closeTaskImpl(
   // instead of rewriting wontfix/rejected/duplicate to done.
   const as: CloseSubstate =
     opts.as ?? (before?.status === "CLOSED" ? (before.substate as CloseSubstate) : "done");
+  const alreadyThere = before?.status === "CLOSED" && before.substate === as;
+  const evidence = (opts.evidence ?? "").trim() === "" ? undefined : opts.evidence;
   if (opts.ifReady && before) {
     // Inspect direct blockers only — the umbrella convention is one
     // hop (umbrella -[blocked-by]→ each wave task). If any direct
@@ -285,23 +320,49 @@ function closeTaskImpl(
       };
     }
   }
+  // A close to done attests the work happened: it needs evidence. Checked
+  // before any write (and after the --if-ready skip, which writes nothing),
+  // so the typed error leaves nothing behind. A no-op retry of an
+  // already-done close attests nothing new and needs none.
+  if (before && !alreadyThere && as === "done" && evidence === undefined) {
+    throw new CloseNeedsEvidenceError(localId, before.workstreamName);
+  }
   // No pre-mutation snapshot: v9 dropped the `snapshots` table and
   // history is the ops log.
   return db
     .transaction((): CloseTaskResult => {
       const track = as !== "done" && before !== undefined;
       const readyBefore = track ? readyDependents(db, localId, before.workstreamName) : [];
-      const r = setTaskStatus(db, localId, "CLOSED", {
-        workstream: opts.workstream,
-        substate: as,
-        ...(opts.evidence !== undefined ? { evidence: opts.evidence } : {}),
-      });
+      // Notes FIRST: the close-evidence guard (src/capture.ts) wants a
+      // `kind = 'close'` note in this op group by the time the status
+      // UPDATE runs. They join the verb's group via insertNote. A close
+      // that turns out to be a no-op writes none (`alreadyThere`).
+      if (before && !alreadyThere) {
+        // touch=false: the status UPDATE below bumps updated_at in this group.
+        recordReasonNote(
+          db,
+          localId,
+          before.workstreamName,
+          as,
+          opts.why,
+          opts.author,
+          "close",
+          false,
+        );
+        // mufeedback task_close_evidence_does_not_append_the: evidence must
+        // reach `mu task notes <id>` / `mu task show <id>`, not just the log.
+        // Since v2-retire-log-shim the note is the ONLY home for it.
+        if (evidence !== undefined) {
+          const noteOpts: { author?: string; workstream: string; kind: "close" } = {
+            workstream: before.workstreamName,
+            kind: "close",
+          };
+          if (opts.author !== undefined && opts.author !== "") noteOpts.author = opts.author;
+          insertNote(db, localId, `CLOSE: ${evidence}`, noteOpts, false);
+        }
+      }
+      const r = setTaskStatus(db, localId, "CLOSED", { workstream: opts.workstream, substate: as });
       if (!r.changed || !before) return { ...r, unblocked: [] };
-      recordReasonNote(db, localId, before.workstreamName, as, opts.why, opts.author);
-      // mufeedback task_close_evidence_does_not_append_the: evidence must
-      // reach `mu task notes <id>` / `mu task show <id>`, not just the log.
-      // Since v2-retire-log-shim the note is the ONLY home for it.
-      recordEvidenceNote(db, localId, before.workstreamName, "CLOSE", opts);
       const unblocked = track
         ? readyDependents(db, localId, before.workstreamName).filter(
             (n) => !readyBefore.includes(n),
@@ -338,9 +399,11 @@ function recordReasonNote(
   substate: TaskSubstate,
   why: string | undefined,
   author: string | undefined,
+  kind: NoteKind = "note",
+  touch = true,
 ): void {
   if (why === undefined || why.trim() === "") return;
-  const noteOpts: { author?: string; workstream: string } = { workstream };
+  const noteOpts: { author?: string; workstream: string; kind: NoteKind } = { workstream, kind };
   if (author !== undefined && author !== "") noteOpts.author = author;
   const text =
     substate === "rejected" || substate === "superseded"
@@ -348,7 +411,7 @@ function recordReasonNote(
       : why;
   // insertNote, not addNote: the note joins the verb's group and
   // intent instead of minting its own, so both share one group.
-  insertNote(db, localId, `${substate.toUpperCase()}: ${text}`, noteOpts);
+  insertNote(db, localId, `${substate.toUpperCase()}: ${text}`, noteOpts, touch);
 }
 
 /** A token shaped like a task id, not inside a word, path, or file

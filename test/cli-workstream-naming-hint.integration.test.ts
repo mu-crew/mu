@@ -66,7 +66,7 @@ describe("mu state one-per-effort hint", () => {
         impact: 10,
         effortDays: 1,
       });
-      if (i >= open) closeTask(db, `t${i}`, { workstream: "big-ws" });
+      if (i >= open) closeTask(db, `t${i}`, { workstream: "big-ws", evidence: "test" });
     }
     db.close();
   }

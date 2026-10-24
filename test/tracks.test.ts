@@ -42,7 +42,7 @@ describe("getParallelTracks — trivial cases", () => {
   it("ignores CLOSED goals", () => {
     addTask(db, { localId: "a", workstream: "test", title: "A", impact: 50, effortDays: 1 });
     addTask(db, { localId: "b", workstream: "test", title: "B", impact: 50, effortDays: 1 });
-    closeTask(db, "a", { workstream: "test" });
+    closeTask(db, "a", { workstream: "test", evidence: "test" });
     const tracks = getParallelTracks(db, "test");
     expect(tracks).toHaveLength(1);
     expect(tracks[0]?.roots.map((r) => r.name)).toEqual(["b"]);
@@ -366,7 +366,8 @@ describe("getParallelTracks — MVP acceptance graph (10 tasks, 1 diamond)", () 
     // schema's `goals` view ("tasks with no outgoing edges"). With the
     // only goal CLOSED, getParallelTracks returns nothing — a
     // graph-modeling smell the orchestrator should surface to the user.
-    closeTask(db, "launch", { workstream: "test" });
+    // wontfix, not done: launch still has open blockers (the done guard refuses).
+    closeTask(db, "launch", { workstream: "test", as: "wontfix", why: "dropped" });
     expect(getParallelTracks(db, "test")).toEqual([]);
   });
 
@@ -429,7 +430,7 @@ describe("getParallelTracks — MVP acceptance graph (10 tasks, 1 diamond)", () 
       "docs",
       "deploy",
     ]) {
-      closeTask(db, id, { workstream: "test" });
+      closeTask(db, id, { workstream: "test", evidence: "test" });
     }
     const tracks = getParallelTracks(db, "test");
     expect(tracks).toHaveLength(1);
