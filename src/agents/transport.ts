@@ -215,10 +215,10 @@ export async function requireFeature(
   agent: AgentRow,
   sock: string,
   feature: CtlFeature,
-): Promise<void> {
+): Promise<string | undefined> {
   const hello = await ctlRequestFor(agent, sock, { op: "hello" });
   if (!hello.ok) throw new Error(`control socket refused hello: ${hello.error}`);
-  if (ctlServes(hello, feature)) return;
+  if (ctlServes(hello, feature)) return hello.incarnation;
   throw new AgentExtensionOutdatedError(
     agent.name,
     agent.workstreamName,
@@ -254,6 +254,7 @@ export async function ctlFailure(
   e: unknown,
   /** The msgId the failed request carried: lets an ambiguous delivery name its receipt. */
   msgId?: string,
+  incarnation?: string,
 ): Promise<unknown> {
   if (e instanceof CtlVersionError) return e;
   if (e instanceof CtlUnknownOpError) return extensionOutdated(agent, sock, e);
@@ -268,6 +269,7 @@ export async function ctlFailure(
       e.op,
       e.cause.message,
       msgId,
+      incarnation,
     );
   }
   return new AgentCtlUnreachableError(
@@ -326,6 +328,8 @@ export async function ctlSendWithReceipt(
   agent: AgentRow,
   sock: string,
   req: Extract<CtlRequest, { msgId?: string }>,
+  /** The incarnation the preflight hello named: the error carries it when delivery stays unknown. */
+  incarnation?: string,
 ): Promise<{
   reply?: Extract<CtlReply, { ok: true }> | { ok: false; error: string };
   msgId: string;
@@ -336,11 +340,11 @@ export async function ctlSendWithReceipt(
     return { reply: await ctlRequest(sock, { ...req, msgId }), msgId };
   } catch (e) {
     if (!(e instanceof CtlDeliveryUnknownError)) {
-      throw await ctlFailure(agent, sock, e, msgId);
+      throw await ctlFailure(agent, sock, e, msgId, incarnation);
     }
     const check = await checkMessage(sock, msgId);
     if (check.state === "accepted") return { msgId, confirmed: check };
-    throw await ctlFailure(agent, sock, e, msgId);
+    throw await ctlFailure(agent, sock, e, msgId, incarnation);
   }
 }
 
@@ -416,13 +420,14 @@ export async function sendViaTransport(
     }
   }
   // Receipts need an extension that remembers msgIds: refuse before writing.
-  await requireFeature(agent, sock, "msgId");
+  const inc = await requireFeature(agent, sock, "msgId");
   const sent = await ctlSendWithReceipt(
     agent,
     sock,
     opts.fresh
       ? { op: "fresh", text, ...(opts.force ? { force: true } : {}) }
       : { op: "send", text, mode: opts.mode ?? "followUp" },
+    inc,
   );
   const { reply, msgId } = sent;
   if (reply !== undefined && !reply.ok) {

@@ -15,7 +15,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - Eval harness (`tools/eval/`) and 3.x baseline (`docs/mu-next/eval/baseline-3.13.3-v2.md`; v1 superseded: delegate token, discard parse, send-before-claim, origin and PATH artifacts fixed).
 - **`mu agent send` returns a receipt; `wait --inc` refuses a restart; `mu agent check`.**
   A ctl `send`, `--fresh` and `--interrupt` carry a fresh `msgId` and return
-  `msgId`, `incarnation` and `runs` (`--json`); the `Next:` line is
+  `msgId`, `incarnation`, `delivery` (`delivered`; `unknown` in the error JSON
+  of a send with no reply, as structured fields beside `error`) and `runs`
+  (`--json`); a successful send prints exactly ONE hint (the plain-send
+  busy/`--fresh` nudges and the log hint are gone); the `Next:` line is
   `mu agent wait <a> -w <ws> --after-runs <n> --inc <i> --json`. A request
   written with no reply gets one `status {msgId}` probe: accepted is a
   success with `receipt: "confirmed-after-timeout"`, otherwise

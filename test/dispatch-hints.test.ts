@@ -8,14 +8,10 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
-import {
-  dispatchHint,
-  nextDispatchHint,
-  plainSendHints,
-  waitHint,
-} from "../src/cli/dispatch-hints.js";
+import { dispatchHint, nextDispatchHint, waitHint } from "../src/cli/dispatch-hints.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -101,36 +97,6 @@ describe("dispatchHint", () => {
     expect(nextDispatchHint(claude, "auth")).toBeNull();
   });
 
-  it("plain send: busy → busy-since + --interrupt; idle after a run → --fresh nudge; first run → none", () => {
-    const now = 1_000_000;
-    const busy = plainSendHints(pi, { state: "busy", runs: 2, since: now - 125_000 }, now);
-    expect(busy).toEqual([
-      {
-        intent: "busy since 2m: sees this after the current run ends; to act now: --interrupt",
-        command: "mu agent send worker-1 --interrupt '...' -w auth",
-      },
-    ]);
-    expect(plainSendHints(pi, { state: "idle", runs: 2 })[0]?.intent).toMatch(/--fresh next time/);
-    expect(plainSendHints(pi, { state: "idle", runs: 0 })).toEqual([]);
-  });
-
-  it("steer send: busy → after the current tool call + --interrupt; idle → none", () => {
-    const now = 1_000_000;
-    const busy = plainSendHints(pi, { state: "busy", runs: 2, since: now - 5_000 }, now, "steer");
-    expect(busy.map((s) => s.intent)).toEqual([
-      "busy since 5s: sees this after the current tool call; to act now: --interrupt",
-    ]);
-    expect(plainSendHints(pi, { state: "idle", runs: 2 }, now, "steer")).toEqual([]);
-  });
-
-  it("no hint names --steer as an interrupt", () => {
-    const all = [
-      ...plainSendHints(pi, { state: "busy", runs: 2, since: 0 }, 1),
-      ...plainSendHints(pi, { state: "busy", runs: 2, since: 0 }, 1, "steer"),
-    ];
-    expect(all.some((s) => /--steer/.test(s.intent + s.command))).toBe(false);
-  });
-
   it("stall error names abort first-resort only for a ctl owner", () => {
     const withCtl = new StallDetectedDuringWaitError("t", "worker-1", "auth", 300, true);
     const without = new StallDetectedDuringWaitError("t", "worker-2", "auth", 300);
@@ -203,58 +169,54 @@ describe("mu task claim --for", () => {
   });
 });
 
-describe("mu agent send hints", () => {
+describe("mu agent send hints: exactly ONE, the wait", () => {
   function seed(): void {
     insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "pi" });
   }
-  async function send(...extra: string[]): Promise<Step[]> {
+  const WAIT = (runs: number) =>
+    `mu agent wait worker-1 -w auth --after-runs ${runs} --inc inc-test-1 --json`;
+
+  // Every state a send can meet (idle after a run, busy, first run) and every
+  // mode: the hint list is the wait and nothing else, text and JSON.
+  it.each([
+    ["plain, idle after a settled run", [], "idle", 3],
+    ["plain, busy", [], "busy", 3],
+    ["plain, idle on its first run", [], "idle", 0],
+    ["--steer, idle", ["--steer"], "idle", 3],
+    ["--steer, busy", ["--steer"], "busy", 3],
+    ["--fresh", ["--fresh"], "idle", 3],
+  ] as const)("%s: JSON nextSteps is exactly the one wait hint", async (_n, flags, state, runs) => {
+    seed();
+    await serve("worker-1", state, runs);
     const r = await runCli(
-      ["agent", "send", "worker-1", "go", ...extra, "-w", "auth", "--json"],
+      ["agent", "send", "worker-1", "go", ...flags, "-w", "auth", "--json"],
       dbPath,
     );
     expect(r.error).toBeUndefined();
-    return (JSON.parse(r.stdout) as { nextSteps: Step[] }).nextSteps;
-  }
-
-  it("plain send to an idle pi after a settled run: --fresh nudge", async () => {
-    seed();
-    await serve("worker-1", "idle", 3);
-    const steps = await send();
-    expect(steps.some((s) => /--fresh next time/.test(s.intent))).toBe(true);
+    const body = JSON.parse(r.stdout) as { nextSteps: Step[]; msgId: string };
+    expect(body.nextSteps).toEqual([
+      {
+        intent: `Wait for the response to ${body.msgId} (returns its final text)`,
+        command: WAIT(runs),
+      },
+    ]);
   });
 
-  it("--steer to an idle pi: no nudge, no busy hint", async () => {
-    seed();
-    await serve("worker-1", "idle", 3);
-    const steps = await send("--steer");
-    expect(steps.some((s) => s.command.includes("--fresh"))).toBe(false);
-    expect(steps.some((s) => /busy since/.test(s.intent))).toBe(false);
-  });
-
-  it("plain send to a busy pi: busy-since hint naming --interrupt, no --fresh nudge", async () => {
+  it("text output ends with exactly one hint: Next: plus the wait line, nothing after", async () => {
     seed();
     await serve("worker-1", "busy", 3);
-    const steps = await send();
-    const hint = steps.find((s) => /busy since/.test(s.intent));
-    expect(hint?.intent).toMatch(/after the current run ends; to act now: --interrupt$/);
-    expect(hint?.command).toBe("mu agent send worker-1 --interrupt '...' -w auth");
-    expect(steps.some((s) => s.command.includes("--fresh"))).toBe(false);
-  });
-
-  it("--steer to a busy pi: busy-since hint, after the current tool call", async () => {
-    seed();
-    await serve("worker-1", "busy", 3);
-    const steps = await send("--steer");
-    expect(steps.find((s) => /busy since/.test(s.intent))?.intent).toMatch(
-      /after the current tool call; to act now: --interrupt$/,
+    const r = await runCli(["agent", "send", "worker-1", "go", "-w", "auth"], dbPath);
+    expect(r.exitCode).toBeNull();
+    const lines = stripVTControlCharacters(r.stdout).trimEnd().split("\n");
+    const i = lines.indexOf("Next:");
+    expect(i).toBeGreaterThan(0);
+    expect(lines.slice(i + 1)).toHaveLength(1);
+    expect(lines[lines.length - 1]).toMatch(
+      / : mu agent wait worker-1 -w auth --after-runs 3 --inc inc-test-1 --json$/,
     );
-  });
-
-  it("plain send to an idle pi on its first run: no busy hint", async () => {
-    seed();
-    await serve("worker-1", "idle", 0);
-    const steps = await send();
-    expect(steps.some((s) => /busy since/.test(s.intent))).toBe(false);
+    expect(r.stdout).not.toContain("--interrupt");
+    expect(r.stdout).not.toContain("--fresh");
+    expect(r.stdout).not.toContain("mu log");
   });
 });
 

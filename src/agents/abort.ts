@@ -179,8 +179,8 @@ async function interruptAgentImpl(
   const sock = opts.socket ?? agentCtlSocket(db, agent);
   if (!expectsCtl(agent, sock)) throw new AgentAbortNeedsCtlError(name, opts.workstream, agent.cli);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS;
-  await requireFeature(agent, sock, "msgId");
-  const sent = await ctlSendWithReceipt(agent, sock, { op: "interrupt", text, timeoutMs });
+  const inc = await requireFeature(agent, sock, "msgId");
+  const sent = await ctlSendWithReceipt(agent, sock, { op: "interrupt", text, timeoutMs }, inc);
   const { reply: r, msgId } = sent;
   if (r === undefined) {
     // Written, no reply, but status {msgId} says pi took it: wasBusy and

@@ -60,7 +60,7 @@ import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
 import { listTasksByOwner } from "../tasks.js";
-import { dispatchHint, plainSendHints, waitHint } from "./dispatch-hints.js";
+import { dispatchHint, waitHint } from "./dispatch-hints.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
 interface SpawnOpts {
@@ -182,7 +182,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     ...(!sent?.ok
       ? [dispatchHint(agent)]
       : sent.runs !== undefined
-        ? [waitHint({ name, workstreamName: workstream }, sent.runs, sent.incarnation)]
+        ? [waitHint({ name, workstreamName: workstream }, sent.runs, sent.incarnation, sent.msgId)]
         : []),
     { intent: "Read pane", command: `mu agent read ${name} -w ${workstream}` },
     { intent: "Watch live events", command: `mu log -w ${workstream} --tail` },
@@ -265,11 +265,20 @@ type SpawnSend =
       /** The send's receipt id (`mu agent check`) and pi's incarnation (`wait --inc`). */
       msgId?: string;
       incarnation?: string;
+      delivery?: "delivered";
       /** pi's session file, where the delegate's transcript is written. */
       sessionFile?: string;
       delivered: boolean;
     }
-  | { ok: false; error: string; message: string; exitCode: number; msgId?: string };
+  | {
+      ok: false;
+      error: string;
+      message: string;
+      exitCode: number;
+      msgId?: string;
+      incarnation?: string;
+      delivery?: "unknown";
+    };
 
 /**
  * Send the first prompt to a just-spawned agent, so a caller that would
@@ -286,7 +295,11 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
     exitCode: classifyError(err).exitCode,
     // A delivery-unknown send names its receipt: `mu agent check <agent> <msgId>`.
     ...(err instanceof AgentSendIndeterminateError && err.msgId !== undefined
-      ? { msgId: err.msgId }
+      ? {
+          msgId: err.msgId,
+          delivery: "unknown" as const,
+          ...(err.incarnation !== undefined ? { incarnation: err.incarnation } : {}),
+        }
       : {}),
   });
   if (agent.ctl === "missing" || agent.ctl === "refused")
@@ -307,7 +320,7 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
       transport: sent.transport,
       ...(sent.state !== undefined ? { state: sent.state } : {}),
       ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
-      ...(sent.msgId !== undefined ? { msgId: sent.msgId } : {}),
+      ...(sent.msgId !== undefined ? { msgId: sent.msgId, delivery: "delivered" as const } : {}),
       ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
       ...(sent.sessionFile !== undefined ? { sessionFile: sent.sessionFile } : {}),
       delivered: !undelivered,
@@ -361,7 +374,6 @@ export async function cmdSend(
   // rather than letting it print raw, so it lands in the JSON payload
   // too. `exit 0` must not be able to mean "silently dropped".
   let undelivered: SendWarning | undefined;
-  const agentRow = getAgent(db, name, ws);
   const sent = await sendToAgent(db, name, text, {
     workstream: ws,
     ...(opts.steer ? { mode: "steer" as const } : {}),
@@ -371,33 +383,13 @@ export async function cmdSend(
       undelivered = w;
     },
   });
-  // A ctl reply with runs gives the exact wait baseline: the wait
-  // returns the run's final text, so no pane read is needed.
+  // ONE next hint. A ctl reply with runs gives the exact wait baseline: the
+  // wait returns the run's final text, so no pane read is needed.
   const nextSteps: NextStep[] = [
     sent.transport === "ctl" && sent.runs !== undefined
-      ? waitHint({ name, workstreamName: ws }, sent.runs, sent.incarnation)
+      ? waitHint({ name, workstreamName: ws }, sent.runs, sent.incarnation, sent.msgId)
       : { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
-    { intent: "Watch live events", command: `mu log -w ${ws} --tail` },
   ];
-  // A plain ctl send: the reply carries pi's status from before the
-  // dispatch, so the hints can tell a queued follow-up (busy) from a new
-  // task landing in an old context (idle after a settled run). An older
-  // extension replies without runs and its state is post-dispatch: no hints.
-  const plainCtl = sent.transport === "ctl" && !opts.fresh && sent.command === undefined;
-  if (agentRow !== undefined && plainCtl && sent.state !== undefined && sent.runs !== undefined) {
-    nextSteps.push(
-      ...plainSendHints(
-        agentRow,
-        {
-          state: sent.state,
-          runs: sent.runs,
-          ...(sent.since !== undefined ? { since: sent.since } : {}),
-        },
-        Date.now(),
-        opts.steer ? "steer" : "followUp",
-      ),
-    );
-  }
   if (undelivered !== undefined) {
     nextSteps.unshift({
       intent: "VERIFY the prompt landed before waiting on it",
@@ -414,7 +406,7 @@ export async function cmdSend(
       ...(sent.state !== undefined ? { state: sent.state } : {}),
       ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
       ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
-      ...(sent.msgId !== undefined ? { msgId: sent.msgId } : {}),
+      ...(sent.msgId !== undefined ? { msgId: sent.msgId, delivery: "delivered" } : {}),
       ...(sent.receipt !== undefined ? { receipt: sent.receipt } : {}),
       delivered: undelivered === undefined,
       ...(undelivered !== undefined
@@ -460,7 +452,7 @@ async function cmdSendInterrupt(
   });
   const nextSteps: NextStep[] = [
     r.runs !== undefined
-      ? waitHint({ name, workstreamName: ws }, r.runs, r.incarnation)
+      ? waitHint({ name, workstreamName: ws }, r.runs, r.incarnation, r.msgId)
       : { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
   ];
   if (r.pending) {
@@ -476,6 +468,7 @@ async function cmdSendInterrupt(
       transport: "ctl",
       interrupt: true,
       ...r,
+      ...(r.msgId !== undefined ? { delivery: "delivered" } : {}),
       nextSteps,
     });
     return;

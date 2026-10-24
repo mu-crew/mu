@@ -533,6 +533,12 @@ function emitError(err: unknown): number {
       exitCode,
     };
     if (usage) envelope.usage = usage;
+    // A send whose delivery is unknown still names its receipt, structurally.
+    if (err instanceof AgentSendIndeterminateError && err.msgId !== undefined) {
+      envelope.msgId = err.msgId;
+      if (err.incarnation !== undefined) envelope.incarnation = err.incarnation;
+      envelope.delivery = "unknown";
+    }
     process.stderr.write(`${JSON.stringify(envelope)}\n`);
     return exitCode;
   }
