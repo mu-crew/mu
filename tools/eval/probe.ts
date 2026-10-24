@@ -114,11 +114,18 @@ export function openProbe(sb: Sandbox): Probe {
       );
     },
     workstreams() {
-      return withDb((db) =>
-        (db.prepare("SELECT name FROM workstreams ORDER BY name").all() as { name: string }[]).map(
-          (r) => r.name,
-        ),
-      );
+      // Live workstreams: a soft-torn-down row (torn_down_at set, newer schemas) is gone for the user.
+      return withDb((db) => {
+        const soft = (
+          db.prepare("PRAGMA table_info(workstreams)").all() as { name: string }[]
+        ).some((c) => c.name === "torn_down_at");
+        const where = soft ? " WHERE torn_down_at IS NULL" : "";
+        return (
+          db.prepare(`SELECT name FROM workstreams${where} ORDER BY name`).all() as {
+            name: string;
+          }[]
+        ).map((r) => r.name);
+      });
     },
     opsCount(where) {
       const conds: string[] = [];
