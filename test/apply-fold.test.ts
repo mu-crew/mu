@@ -44,9 +44,18 @@ afterAll(() => {
 });
 
 /** Empty every portable table and the log, unobserved by capture. */
+const wipers = new WeakMap<Db, ReturnType<Db["prepare"]>[]>();
 function wipe(db: Db): void {
+  // Prepared once per DB: compiling the cascade/trigger programs of a bare
+  // db.exec("DELETE FROM workstreams") costs ~3ms, 11s over the 500 cases.
+  let stmts = wipers.get(db);
+  if (!stmts) {
+    stmts = [db.prepare("DELETE FROM workstreams"), db.prepare("DELETE FROM ops")];
+    wipers.set(db, stmts);
+  }
+  const run = stmts;
   withCaptureSuppressed(db, () => {
-    db.exec("DELETE FROM workstreams; DELETE FROM ops;");
+    for (const s of run) s.run();
   });
 }
 

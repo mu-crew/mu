@@ -63,10 +63,13 @@ describe("cycle path", () => {
         layers[l]?.push(id);
       }
     }
-    for (let l = 0; l < 6; l++)
-      for (const from of layers[l] ?? [])
-        for (const to of layers[l + 1] ?? []) addBlockEdge(db, WS, to, from);
-    for (const first of layers[0] ?? []) addBlockEdge(db, WS, first, "c"); // c blocks layer 0
+    // One transaction for the ~300 setup edges: each is its own commit otherwise (~1.5s).
+    db.transaction(() => {
+      for (let l = 0; l < 6; l++)
+        for (const from of layers[l] ?? [])
+          for (const to of layers[l + 1] ?? []) addBlockEdge(db, WS, to, from);
+      for (const first of layers[0] ?? []) addBlockEdge(db, WS, first, "c"); // c blocks layer 0
+    })();
     const t0 = Date.now();
     let err: unknown;
     try {

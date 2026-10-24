@@ -191,7 +191,9 @@ describe("mu sql --confirm-rows", () => {
     const sql = `UPDATE tasks SET impact = impact + 1 WHERE abs(random()) % 2 = 0${suffix}`;
     let ok = 0;
     let refused = 0;
-    for (let attempt = 0; attempt < 200; attempt++) {
+    // A double run commits an unconfirmed count in most attempts, so a few
+    // of each outcome are enough; 200 is the cap, not the cost.
+    for (let attempt = 0; attempt < 200 && (ok < 5 || refused < 5); attempt++) {
       const before = sum();
       const seq = maxSeq();
       try {
@@ -207,7 +209,7 @@ describe("mu sql --confirm-rows", () => {
       expect(opsAfter(seq)).toHaveLength(10);
       ok++;
     }
-    // C(20,10)/2^20 is ~18%: both outcomes occur in 200 tries.
+    // C(20,10)/2^20 is ~18%: both outcomes occur well within 200 tries.
     expect(ok).toBeGreaterThan(0);
     expect(refused).toBeGreaterThan(0);
   });

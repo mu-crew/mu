@@ -209,7 +209,7 @@ describe("mu task wait --on-stall warn|exit", () => {
         "--on-stall",
         "exit",
         "--timeout",
-        "1",
+        "0.3",
       ],
       dbPath,
     );
@@ -235,7 +235,7 @@ describe("mu task wait --on-stall warn|exit", () => {
         "--on-stall",
         "exit",
         "--timeout",
-        "1",
+        "0.3",
       ],
       dbPath,
     );
@@ -304,7 +304,7 @@ describe("mu task wait --on-stall warn|exit", () => {
         "--on-stall",
         "warn",
         "--timeout",
-        "1",
+        "0.3",
       ],
       dbPath,
     );
@@ -337,7 +337,7 @@ describe("mu task wait --on-stall warn|exit", () => {
         "--on-stall",
         "warn",
         "--timeout",
-        "1",
+        "0.3",
         "--json",
       ],
       dbPath,
@@ -376,7 +376,7 @@ describe("mu task wait --on-stall warn|exit", () => {
         "--on-stall",
         "warn",
         "--timeout",
-        "1",
+        "0.3",
         "--json",
       ],
       dbPath,
@@ -436,7 +436,7 @@ describe("mu task wait --on-stall warn|exit", () => {
     await serveCtl("pat", Date.now() - 10_000);
 
     const { exitCode } = await runCli(
-      ["task", "wait", "pi_slow", "-w", workstream, "--stuck-after", "60", "--timeout", "1"],
+      ["task", "wait", "pi_slow", "-w", workstream, "--stuck-after", "60", "--timeout", "0.3"],
       dbPath,
     );
 
@@ -485,7 +485,7 @@ describe("mu task wait --on-stall warn|exit", () => {
         "--on-stall",
         "warn",
         "--timeout",
-        "3",
+        "1.2",
       ],
       dbPath,
     );
