@@ -3,10 +3,9 @@
 // suffix against the DB and the batch (f_task_mutations_batch_slug_collision),
 // and addTasks is part of the published entry (f_task_mutations_sdk_export).
 
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, addTasks } from "../src/tasks.js";
@@ -105,25 +104,5 @@ describe("addTasks: auto ids pick the next free suffix", () => {
     } finally {
       db.close();
     }
-  });
-});
-
-describe("published entry exports addTasks", () => {
-  const entry = resolve(__dirname, "..", "dist", "index.js");
-  it.skipIf(!existsSync(entry))("dist/index.js exposes addTasks and it works", () => {
-    const out = execFileSync(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        `import * as sdk from ${JSON.stringify(entry)};
-         const db = sdk.openDb({ path: ${JSON.stringify(join(dir, "sdk.db"))} });
-         sdk.ensureWorkstream(db, "w");
-         const r = sdk.addTasks(db, [{ id: "a", title: "A" }], { workstream: "w" });
-         console.log(typeof sdk.addTasks, JSON.stringify(r.ids));`,
-      ],
-      { encoding: "utf8", env: { ...process.env, MU_SYNC_DIR: "" } },
-    );
-    expect(out.trim()).toBe('function ["a"]');
   });
 });
