@@ -8,14 +8,16 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MU_SHIM_MARKER, migratePi } from "../src/pi-migrate.js";
+import { migratePi } from "../src/pi-migrate.js";
 
 const root = join(import.meta.dirname, "..");
 const built = join(root, "dist", "extension", "mu-pi.js");
@@ -95,9 +97,13 @@ describe.skipIf(!ready)("pi package (real pi resolver + loader)", () => {
 
   it("a legacy shim doubles the factories until `mu pi migrate --apply`", () => {
     const shim = join(agentDir, "extensions", "mu.ts");
+    const template = readFileSync(join(root, "test", "fixtures", "link-shim-v3.txt"), "utf8");
     writeFileSync(
       shim,
-      `${MU_SHIM_MARKER}\nconst { default: extension } = await import(${JSON.stringify(`file://${built}`)});\nexport default extension;\n`,
+      template.replace(
+        JSON.stringify("file:///opt/mu/dist/extension/mu-pi.js"),
+        JSON.stringify(pathToFileURL(built).href),
+      ),
     );
     expect(load().factories).toHaveLength(2);
 
