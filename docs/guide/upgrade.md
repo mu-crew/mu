@@ -4,7 +4,7 @@
 
 ```bash
 npm i -g @mu-crew/mu@latest
-pi update --extensions
+pi update --extensions    # only if the package is already registered in pi
 mu doctor
 ```
 
@@ -15,19 +15,25 @@ prompts, all from the declared `pi` manifest. There is no relink step.
 
 Before the package, the old `link pi` verb wrote a shim at
 `~/.pi/agent/extensions/mu.ts` and a skill link at
-`~/.agents/skills/mu`. Left in place, the shim loads a second copy of
-the extension next to the package. Retire them once, by hand:
+`~/.agents/skills/mu`. `pi update` registers nothing for that install,
+and a shim left in place loads a second copy of the extension next to
+the package. In this order:
 
 ```bash
-mu pi migrate           # report only
-mu pi migrate --apply   # move mu-owned files aside; nothing is deleted
+npm i -g @mu-crew/mu@latest
+pi install npm:@mu-crew/mu    # once: registers the package
+mu pi migrate                 # report only
+mu pi migrate --apply         # move mu-owned files aside; nothing is deleted
 ```
 
-Only a file mu generated (the `// mu:shim` header, or a symlink to a
-skill named `mu`) is moved, into a `disabled/` folder pi does not read.
-A copied extension, a real skill directory, or a link to somewhere else
-is reported and left for you. `MU_PI_HOME` changes the home directory
-both start from. Then restart pi agents.
+Then restart pi agents or send them `/reload`.
+
+Only a file mu can prove it generated is moved, into a `disabled/`
+folder pi does not read: the exact shim `link pi` wrote, or a skill
+link into this install's `skills/mu` (or a skill copy identical to a
+released one). Anything else (your own `mu.ts`, an edited copy, a link
+to somewhere else, even one named `mu`) is reported with its path and
+left for you. `MU_PI_HOME` changes the home directory both start from.
 
 For agents other than pi, see [README § Install](../../README.md#install).
 
