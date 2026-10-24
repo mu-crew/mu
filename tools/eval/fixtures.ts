@@ -13,11 +13,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRunsLog, type RunRecord } from "./provenance.ts";
 import { mu, sh } from "./sandbox.ts";
-import type { Sandbox } from "./types.ts";
+import type { Family, Sandbox } from "./types.ts";
 
 const EVAL_DIR = dirname(fileURLToPath(import.meta.url));
 
-/** tools/eval/scenarios */
+/** tools/eval/scenarios: the default scenario root. */
 export function scenarioDir(): string {
   return join(EVAL_DIR, "scenarios");
 }
@@ -125,12 +125,7 @@ esac
 exit 0
 `;
 
-/** Close action per surface family: one switch point. */
-function closeScript(family: "3x" | "next"): string {
-  const verb = 'mu task close "$1" -w "$MU_WORKSTREAM" --evidence "$2"';
-  // next: same command until the v_ verbs land.
-  return `#!/bin/bash\n${family === "3x" ? verb : verb}\n`;
-}
+const CLOSE_SCRIPT = '#!/bin/bash\nmu task close "$1" -w "$MU_WORKSTREAM" --evidence "$2"\n';
 
 const DEFAULT_WORKER_SCRIPT = [
   { calls: [{ bash: "eval-worker" }] },
@@ -141,17 +136,30 @@ const DEFAULT_WORKER_SCRIPT = [
   { textFromLastResult: true },
 ];
 
+/** The surface family of this sandbox (EVAL_SURFACE_FAMILY, set from Surface.family; default 3x). */
+export function sandboxFamily(sb: Sandbox): Family {
+  const f = sb.env.EVAL_SURFACE_FAMILY;
+  if (f === undefined || f === "3x") return "3x";
+  if (f === "next") return "next";
+  throw new Error(`EVAL_SURFACE_FAMILY must be 3x or next, got ${JSON.stringify(f)}`);
+}
+
+/**
+ * Scripted worker driver. The family comes from the sandbox (never from the scenario): on 3x the
+ * worker closes its task with the verb, on next it prints the CLOSE/REPORT block. An explicit
+ * closeMode wins.
+ */
 export async function writeWorkerDriver(
   sb: Sandbox,
-  family: "3x" | "next",
   opts: { closeMode?: "verb" | "block" | "none" } = {},
 ): Promise<void> {
   const w = sb.workerDir;
+  const closeMode = opts.closeMode ?? (sandboxFamily(sb) === "next" ? "block" : "verb");
   // The template literal above keeps \${ so String.raw does not expand it; undo that escape.
   write(join(sb.binDir, "eval-worker"), DRIVER.replace(/\\\$\{/g, "${"), 0o755);
-  write(join(w, "close.sh"), closeScript(family), 0o755);
+  write(join(w, "close.sh"), CLOSE_SCRIPT, 0o755);
   write(join(w, "default.json"), JSON.stringify(DEFAULT_WORKER_SCRIPT));
-  write(join(w, "close-mode"), opts.closeMode ?? "verb");
+  write(join(w, "close-mode"), closeMode);
   write(join(w, "nonce"), randomBytes(4).toString("hex"));
   mkdirSync(join(w, "tasks"), { recursive: true });
   mkdirSync(join(w, "answers"), { recursive: true });

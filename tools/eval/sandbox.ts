@@ -69,7 +69,7 @@ const KEEP = new Set(["PATH", "TERM", "LANG", "LC_ALL", "USER", "SHELL"]);
 /** Pure: the whitelisted environment of a sandbox. Never inherits MU_*, TMUX*, HERDR_*, PI_*. */
 export function sandboxEnv(
   dir: string,
-  _surface: Surface,
+  surface: Surface,
   tmuxSocket: string,
   base: NodeJS.ProcessEnv,
 ): Record<string, string> {
@@ -96,6 +96,7 @@ export function sandboxEnv(
   env.GIT_COMMITTER_NAME = "eval";
   env.GIT_COMMITTER_EMAIL = "eval@example.invalid";
   env.EVAL_WORKER_DIR = join(dir, "workers");
+  env.EVAL_SURFACE_FAMILY = surface.family ?? "3x";
   env.PATH = `${join(dir, "bin")}:${base.PATH ?? ""}`;
   return env;
 }

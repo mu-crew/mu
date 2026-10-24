@@ -32,7 +32,7 @@ const scenario: Scenario = {
   async setup(sb) {
     await makeRepo(sb, { "notes.txt": "start\n" });
     await gateScript(sb);
-    await writeWorkerDriver(sb, "3x", { closeMode: "none" });
+    await writeWorkerDriver(sb, { closeMode: "none" });
     await seedViaMu(sb, [
       ["workstream", "init", "eval"],
       [

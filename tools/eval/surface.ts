@@ -1,9 +1,9 @@
 // A surface is a directory holding a built mu (dist/ + skills/mu). mu is only ever a subprocess.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import type { Surface } from "./types.ts";
+import type { Family, Surface } from "./types.ts";
 
 export const SURFACES_DIR: string = join(homedir(), ".cache", "mu", "eval", "surfaces");
 
@@ -39,6 +39,49 @@ export function surfaceDir(name: string): string {
     throw new Error(`invalid surface name ${JSON.stringify(name)}: escapes ${SURFACES_DIR}`);
   }
   return dir;
+}
+
+/**
+ * A scenario root must exist and live outside SURFACES_DIR: prepareSurface rm -rf's the dirs in
+ * there, which would take candidate scripts with it. Returns the absolute path.
+ */
+export function checkScenarioRoot(root: string): string {
+  const abs = resolve(root);
+  const inside = (p: string, c: string): boolean => p === c || p.startsWith(c + sep);
+  const refuse = (): never => {
+    throw new Error(
+      `scenario root ${abs} is inside ${SURFACES_DIR}, which prepare deletes; use e.g. tools/eval/candidates/<decision>-<a|b|c>`,
+    );
+  };
+  if (inside(abs, SURFACES_DIR)) refuse();
+  if (!existsSync(abs)) throw new Error(`scenario root ${abs} does not exist`);
+  // a symlink out of the cache into it is the same trap
+  const cache = existsSync(SURFACES_DIR) ? realpathSync(SURFACES_DIR) : SURFACES_DIR;
+  if (inside(realpathSync(abs), cache)) refuse();
+  return abs;
+}
+
+export function parseFamily(v: string, what = "--family"): Family {
+  if (v === "3x" || v === "next") return v;
+  throw new Error(`${what} must be 3x or next, got ${JSON.stringify(v)}`);
+}
+
+/** `<dir|name>[:<3x|next>[:<scenario-root>]]` -> target, family, root (each undefined when absent). */
+export function parseSurfaceSpec(spec: string): {
+  target: string;
+  family?: Family;
+  scenarioRoot?: string;
+} {
+  const [target = "", family, root, ...extra] = spec.split(":");
+  if (target === "" || extra.length > 0 || (root !== undefined && root === "")) {
+    throw new Error(`bad --surface ${JSON.stringify(spec)}: want <dir|name>[:<3x|next>[:<root>]]`);
+  }
+  return {
+    target,
+    family:
+      family === undefined || family === "" ? undefined : parseFamily(family, "surface family"),
+    scenarioRoot: root === undefined ? undefined : checkScenarioRoot(root),
+  };
 }
 
 function run(cmd: string, args: string[], cwd: string): string {

@@ -1,9 +1,16 @@
 // Shared types for the eval harness. Black box: nothing here imports src/ or extension/.
 
+/** Command dialect of a surface: the released 3.x verbs, or the mu-next verbs. Exactly these two. */
+export type Family = "3x" | "next";
+
 /** A mu build under test: a directory holding dist/ and skills/. */
 export interface Surface {
   name: string;
   root: string;
+  /** Command dialect; reaches scenarios as EVAL_SURFACE_FAMILY in the sandbox env. Default "3x". */
+  family?: Family;
+  /** Where this surface's `<id>.<kind>.<family>.json` scripts and optional scenario overrides live; never inside SURFACES_DIR. Default tools/eval/scenarios. */
+  scenarioRoot?: string;
   /** <root>/dist/cli.js */
   cli: string;
   /** <root>/dist/extension/mu-pi.js */

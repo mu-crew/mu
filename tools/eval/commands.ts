@@ -14,7 +14,6 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   badFlagged,
   extraBadScripts,
-  type Family,
   goldenOk,
   missingGoldenEvidence,
   scriptFile,
@@ -23,32 +22,57 @@ import { scenarioDir, sshShim } from "./fixtures.ts";
 import { toMarkdown } from "./report.ts";
 import { runAut } from "./runner.ts";
 import { createSandbox, FAUX_EXT, sh } from "./sandbox.ts";
-import { SURFACES_DIR, surfaceFromDir } from "./surface.ts";
-import type { RunResult, Scenario, Surface, Verdict } from "./types.ts";
+import { checkScenarioRoot, parseSurfaceSpec, SURFACES_DIR, surfaceFromDir } from "./surface.ts";
+import type { Family, RunResult, Scenario, Surface, Verdict } from "./types.ts";
 
 export const EVAL_MODEL_FAUX = "evalfaux/aut";
 
-/** A surface given as a directory path, or a name under SURFACES_DIR. */
-export function resolveSurface(arg: string): Surface {
-  const asDir = resolve(arg);
-  if (arg.includes("/") || existsSync(join(asDir, "dist"))) {
-    return surfaceFromDir(basename(asDir) || arg, asDir);
+/**
+ * A surface given as a directory path, or a name under SURFACES_DIR, optionally followed by
+ * `:<3x|next>[:<scenario-root>]`. `defaults` fill what the spec leaves out (the --family and
+ * --scenario-root flags); with neither, the surface is 3x on the default scenario root.
+ */
+export function resolveSurface(
+  arg: string,
+  defaults: { family?: Family; scenarioRoot?: string } = {},
+): Surface {
+  const spec = parseSurfaceSpec(arg);
+  const asDir = resolve(spec.target);
+  const base =
+    spec.target.includes("/") || existsSync(join(asDir, "dist"))
+      ? surfaceFromDir(basename(asDir) || spec.target, asDir)
+      : surfaceFromDir(spec.target, join(SURFACES_DIR, spec.target));
+  const family = spec.family ?? defaults.family;
+  const root =
+    spec.scenarioRoot ??
+    (defaults.scenarioRoot === undefined ? undefined : checkScenarioRoot(defaults.scenarioRoot));
+  return {
+    ...base,
+    ...(family === undefined ? {} : { family }),
+    ...(root === undefined ? {} : { scenarioRoot: root }),
+  };
+}
+
+/** Scenario ids in the default dir and in each extra root (underscore ones only with includeUnderscore), sorted. */
+export function scenarioIds(
+  includeUnderscore: boolean,
+  ...roots: (string | undefined)[]
+): string[] {
+  const ids = new Set<string>();
+  for (const dir of [scenarioDir(), ...roots]) {
+    if (dir === undefined || !existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (/^[A-Za-z0-9_-]+\.ts$/.test(f)) ids.add(f.slice(0, -3));
+    }
   }
-  return surfaceFromDir(arg, join(SURFACES_DIR, arg));
+  return [...ids].filter((id) => includeUnderscore || !id.startsWith("_")).sort();
 }
 
-/** Scenario ids on disk (underscore-prefixed ones only with includeUnderscore), sorted. */
-export function scenarioIds(includeUnderscore: boolean): string[] {
-  return readdirSync(scenarioDir())
-    .filter((f) => /^[A-Za-z0-9_-]+\.ts$/.test(f))
-    .map((f) => f.slice(0, -3))
-    .filter((id) => includeUnderscore || !id.startsWith("_"))
-    .sort();
-}
-
-export async function loadScenario(id: string): Promise<Scenario> {
-  const file = join(scenarioDir(), `${id}.ts`);
-  if (!existsSync(file)) throw new Error(`no scenario ${id} (looked for ${file})`);
+/** <root>/<id>.ts when a root is given and has it, else the default scenario. A root override imports tools/eval siblings as ../../fixtures.ts. */
+export async function loadScenario(id: string, root?: string): Promise<Scenario> {
+  const own = root === undefined ? undefined : join(root, `${id}.ts`);
+  const file = own !== undefined && existsSync(own) ? own : join(scenarioDir(), `${id}.ts`);
+  if (!existsSync(file)) throw new Error(`no scenario ${id} (looked for ${own ?? file})`);
   const mod = (await import(file)) as { default?: Scenario };
   if (!mod.default) throw new Error(`scenario ${id}: no default export`);
   return mod.default;
@@ -159,8 +183,8 @@ export async function runMatrix(o: MatrixOptions): Promise<RunResult[]> {
   const stamp = timestamp();
   const queue: RunOne[] = [];
   for (const id of o.scenarios) {
-    const scenario = await loadScenario(id);
     for (const surface of o.surfaces) {
+      const scenario = await loadScenario(id, surface.scenarioRoot);
       for (const model of o.models) {
         for (let rep = 1; rep <= o.reps; rep++) {
           queue.push({
@@ -250,7 +274,7 @@ export interface CheckOptions {
   preflight: boolean;
   verbose: boolean;
   root: string;
-  /** Where <id>.<kind>.<family>.json live; default: the scenarios dir. */
+  /** Where <id>.<kind>.<family>.json live; test override. Default: surface.scenarioRoot, else the scenarios dir. */
   scriptDir?: string;
 }
 
@@ -263,16 +287,17 @@ export async function runCheck(o: CheckOptions): Promise<number> {
       `${msg}${ok ? "" : " FAILED"}${detail ? `\n    ${detail.split("\n").join("\n    ")}` : ""}`,
     );
   };
+  const surface: Surface = { ...o.surface, family: o.family };
   if (o.preflight) {
-    const fails = await sshPreflight(o.surface);
+    const fails = await sshPreflight(surface);
     line(fails.length === 0, "preflight ssh shim ok", fails.join("\n"));
   }
-  const ids = o.scenarios ?? scenarioIds(o.includeUnderscore);
+  const ids = o.scenarios ?? scenarioIds(o.includeUnderscore, surface.scenarioRoot);
   const scriptDir = mkdtempSync(join(tmpdir(), "mu-eval-check-"));
   try {
     for (const id of ids) {
-      const scenario = await loadScenario(id);
-      const dir = o.scriptDir ?? scenarioDir();
+      const scenario = await loadScenario(id, surface.scenarioRoot);
+      const dir = o.scriptDir ?? surface.scenarioRoot ?? scenarioDir();
       const scripts = [
         { kind: "golden" as const, label: "golden", file: scriptFile(id, "golden", o.family) },
         { kind: "bad" as const, label: "bad", file: scriptFile(id, "bad", o.family) },
@@ -290,7 +315,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           continue;
         }
         const r = await runOne({
-          surface: o.surface,
+          surface,
           scenario,
           model: EVAL_MODEL_FAUX,
           providerExt: FAUX_EXT,
