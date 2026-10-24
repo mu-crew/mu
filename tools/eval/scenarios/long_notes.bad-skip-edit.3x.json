@@ -1,0 +1,19 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task notes big -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close big -w eval --evidence 'followed the brief'"
+      }
+    ]
+  },
+  {
+    "text": "Done."
+  }
+]

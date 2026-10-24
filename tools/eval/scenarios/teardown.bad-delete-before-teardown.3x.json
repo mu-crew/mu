@@ -1,0 +1,26 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task delete t1 -w eval --yes"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task delete t2 -w eval --yes"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu workstream teardown eval --yes"
+      }
+    ]
+  },
+  {
+    "text": "eval is gone."
+  }
+]

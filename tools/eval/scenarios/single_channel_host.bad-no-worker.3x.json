@@ -1,0 +1,12 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "for s in s1 s2; do echo $s >> $s.txt && git add $s.txt && git commit -qm $s && mu task close $s -w eval --evidence \"$s done\" || exit 1; done"
+      }
+    ]
+  },
+  {
+    "text": "s1 and s2 done."
+  }
+]
