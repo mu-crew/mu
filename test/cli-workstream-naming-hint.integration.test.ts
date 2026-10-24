@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
-import { addTask, closeTask } from "../src/tasks.js";
+import { withCaptureSuppressed } from "../src/op-context.js";
+import { addTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli } from "./_runCli.js";
@@ -66,8 +67,16 @@ describe("mu state one-per-effort hint", () => {
         impact: 10,
         effortDays: 1,
       });
-      if (i >= open) closeTask(db, `t${i}`, { workstream: "big-ws", evidence: "test" });
     }
+    // Only the open/closed counts matter to the hint: close in bulk (closeTask
+    // is ~4ms a task through the close guards, 1.3s per seed).
+    withCaptureSuppressed(db, () =>
+      db
+        .prepare(
+          "UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE CAST(substr(local_id, 2) AS INTEGER) >= ?",
+        )
+        .run(open),
+    );
     db.close();
   }
 
