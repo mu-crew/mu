@@ -10,7 +10,7 @@ Black-box rig: a surface is a directory with a built mu, mu runs as a subprocess
 
 ## Surface family and candidate scenario roots
 
-A `--surface <spec>` is `<dir|name>[:<3x|next>[:<scenario-root>]]`. A bare name is a built surface under `~/.cache/mu/eval/surfaces`; `check`, `run` and `matrix` all resolve it the same way. Family and root belong to the surface, so one matrix can pair a baseline with candidates. `--family` and `--scenario-root` only fill specs that leave them out; the defaults are `3x` and `tools/eval/scenarios`.
+A `--surface <spec>` is `<dir|name>[:<3x|next>[:<scenario-root>]]`. A bare name is a built surface under `~/.cache/mu/eval/surfaces`; `check`, `run` and `matrix` all resolve it the same way. Family and root belong to the surface, so one matrix can pair a baseline with candidates. `--family` and `--scenario-root` only fill specs that leave them out; the defaults are `3x` and `tools/eval/scenarios`. Results and run logs key on a surface id, `<name>:<family>:<hash of dir+root>`, so one built dir under two specs stays two report rows; `matrix` refuses the same spec twice.
 
 - The family is exactly `3x` or `next`. The sandbox sets `EVAL_SURFACE_FAMILY` from it, and `writeWorkerDriver` reads it: workers close with the verb on `3x` and print the `CLOSE:` block on `next` (an explicit `closeMode` wins). The judges do not change with the family.
 - A scenario root holds `<id>.golden.<family>.json`, `<id>.bad.<family>.json`, `<id>.bad-<x>.<family>.json`, and optional `<id>.ts` overrides (which import `../../fixtures.ts`). An id missing from the root falls back to the default scenario. It must not be inside the surfaces cache (`prepare` deletes there). Keep candidate roots under `tools/eval/candidates/<decision>-<a|b|c>/` (gitignored).
