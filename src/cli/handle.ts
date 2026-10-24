@@ -125,6 +125,13 @@ import {
 
 export class UsageError extends Error {
   override readonly name = "UsageError";
+  /** `false`: the message already names the fix, so emitError prints it
+   *  alone (exit 2) instead of following it with the verb's --help. */
+  readonly showHelp: boolean;
+  constructor(message: string, opts: { showHelp?: boolean } = {}) {
+    super(message);
+    this.showHelp = opts.showHelp ?? true;
+  }
 }
 
 /**
@@ -200,7 +207,7 @@ function classifyCommanderError(err: CommanderError): { label: string; exitCode:
  */
 function isUsageClassError(err: unknown): boolean {
   if (err instanceof CommanderError) return true;
-  if (err instanceof UsageError) return true;
+  if (err instanceof UsageError) return err.showHelp;
   if (
     err instanceof WorkstreamNameInvalidError ||
     err instanceof WorkstreamNameReservedError ||

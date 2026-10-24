@@ -120,13 +120,22 @@ export class TaskNotInWorkstreamError extends Error implements HasNextSteps {
 
 export class TaskAlreadyOwnedError extends Error implements HasNextSteps {
   override readonly name = "TaskAlreadyOwnedError";
+  /** `taskId` / `currentOwner` are omitted when a raw `mu sql` write tripped
+   *  the guard: the SQL may not name one task, so the hints carry placeholders. */
   constructor(
-    public readonly taskId: string,
-    public readonly currentOwner: string,
+    public readonly taskId = "<id>",
+    public readonly currentOwner = "<owner>",
   ) {
-    super(`task ${taskId} is already owned by ${currentOwner}`);
+    super(
+      taskId === "<id>"
+        ? "a claim in this SQL would take an owned task; release it first: mu task release <id> -w <ws>"
+        : `task ${taskId} is already owned by ${currentOwner}`,
+    );
   }
   errorNextSteps(): NextStep[] {
+    if (this.taskId === "<id>") {
+      return [{ intent: "Release the claim, then retry", command: "mu task release <id> -w <ws>" }];
+    }
     return [
       {
         intent: "See the current owner's task list",
@@ -439,11 +448,17 @@ export class SubstateReasonRequiredError extends Error implements HasNextSteps {
  */
 export class CloseNeedsEvidenceError extends Error implements HasNextSteps {
   override readonly name = "CloseNeedsEvidenceError";
+  /** Ids are omitted when a raw `mu sql` write tripped the guard: the SQL
+   *  may not name one task, so the message and hint carry placeholders. */
   constructor(
-    public readonly taskId: string,
-    public readonly workstream: string,
+    public readonly taskId = "<id>",
+    public readonly workstream = "<ws>",
   ) {
-    super(`closing ${taskId} needs evidence (--evidence "<command + result>")`);
+    super(
+      taskId === "<id>"
+        ? 'a close in this SQL has no close note; close with: mu task close <id> -w <ws> --evidence "<command + result>"'
+        : `closing ${taskId} needs evidence (--evidence "<command + result>")`,
+    );
   }
   errorNextSteps(): NextStep[] {
     return [
@@ -463,12 +478,18 @@ export class CloseNeedsEvidenceError extends Error implements HasNextSteps {
  */
 export class TaskHasOpenBlockersError extends Error implements HasNextSteps {
   override readonly name = "TaskHasOpenBlockersError";
+  /** Ids are omitted when a raw `mu sql` write tripped the guard: the SQL
+   *  may not name one task, so the message and hint carry placeholders. */
   constructor(
-    public readonly taskId: string,
-    public readonly workstream: string,
-    public readonly blockerIds: readonly string[],
+    public readonly taskId = "<id>",
+    public readonly workstream = "<ws>",
+    public readonly blockerIds: readonly string[] = [],
   ) {
-    super(`task ${taskId} has open blockers: ${blockerIds.join(", ")}`);
+    super(
+      taskId === "<id>"
+        ? "a task in this SQL closed as done with open blockers; inspect with: mu task tree <id> -w <ws>"
+        : `task ${taskId} has open blockers: ${blockerIds.join(", ")}`,
+    );
   }
   errorNextSteps(): NextStep[] {
     return [

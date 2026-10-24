@@ -21,11 +21,21 @@
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
-import { captureBookkeepingChanges } from "../capture.js";
+import {
+  captureBookkeepingChanges,
+  GUARD_ALREADY_OWNED,
+  GUARD_NEEDS_EVIDENCE,
+  GUARD_OPEN_BLOCKERS,
+} from "../capture.js";
 import { emitJson, UsageError } from "../cli.js";
 import type { Db } from "../db.js";
 import { currentOpContext, withOpContext } from "../op-context.js";
 import { muTable, pc } from "../output.js";
+import {
+  CloseNeedsEvidenceError,
+  TaskAlreadyOwnedError,
+  TaskHasOpenBlockersError,
+} from "../tasks.js";
 
 export async function cmdSql(
   db: Db,
@@ -52,7 +62,23 @@ export async function cmdSql(
     runSql(db, trimmed, stmt, opts);
     return;
   }
-  withOpContext(db, { intent: "sql.write", group: "new" }, () => runSql(db, trimmed, stmt, opts));
+  try {
+    withOpContext(db, { intent: "sql.write", group: "new" }, () => runSql(db, trimmed, stmt, opts));
+  } catch (err) {
+    // The scope has rolled back by now. A local-write guard's RAISE (src/capture.ts)
+    // becomes the same typed conflict (exit 4) the typed verbs throw.
+    throw guardError(err);
+  }
+}
+
+/** The typed conflict for a guard's RAISE, matched by its exact message
+ *  (as `mapCloseGuard` in src/tasks/lifecycle.ts does); anything else unchanged. */
+function guardError(err: unknown): unknown {
+  const msg = err instanceof Error ? err.message : "";
+  if (msg === GUARD_NEEDS_EVIDENCE) return new CloseNeedsEvidenceError();
+  if (msg === GUARD_OPEN_BLOCKERS) return new TaskHasOpenBlockersError();
+  if (msg === GUARD_ALREADY_OWNED) return new TaskAlreadyOwnedError();
+  return err;
 }
 
 const USER_TRANSACTION_MESSAGE = "mu sql runs inside mu's transaction; remove BEGIN/COMMIT";
