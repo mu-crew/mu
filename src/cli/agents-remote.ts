@@ -101,6 +101,9 @@ export async function cmdRemoteEnv(
   agent: string,
   opts: { workstream?: string; remoteSock?: string; shell?: boolean; json?: boolean },
 ): Promise<void> {
+  if (opts.shell && opts.json) {
+    throw new UsageError("--shell and --json are mutually exclusive: --shell prints eval text");
+  }
   const ws = await resolveWorkstream(opts.workstream);
   const r = buildRemoteEnv(db, agent, ws, opts.remoteSock);
   if (opts.shell) {

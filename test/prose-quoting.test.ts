@@ -144,10 +144,9 @@ describe("a note that is only `-`, empty or whitespace is loud", () => {
   // How it happens: an older mu (no stdin form) stored `-` literally, a
   // variable was empty, or stdin itself held only `-`. The checks run on
   // the text after the stdin step, i.e. on what would be stored.
-  const BARE_DASH = /warning: note text is a bare "-"/;
   const EMPTY = /warning: note text is empty or whitespace only/;
 
-  it("task note with empty or whitespace text warns on stderr and in --json", async () => {
+  it("task note with empty or whitespace text warns on stderr (human) and in the document (--json)", async () => {
     await runCli(["task", "add", "a", "-t", "A", "-i", "5", "-e", "1", "-w", "ws"], dbPath);
     const empty = await runCli(["task", "note", "a", "", "-w", "ws"], dbPath);
     expect(empty.exitCode).toBeNull();
@@ -156,6 +155,7 @@ describe("a note that is only `-`, empty or whitespace is loud", () => {
     expect((JSON.parse(ws.stdout) as { warnings?: string[] }).warnings?.[0]).toMatch(
       /empty or whitespace/,
     );
+    expect(ws.stderr).toBe("");
     const ok = await runCli(["task", "note", "a", "fine", "-w", "ws", "--json"], dbPath);
     expect(ok.stderr).not.toMatch(/warning:/);
     expect(JSON.parse(ok.stdout)).not.toHaveProperty("warnings");
@@ -166,7 +166,7 @@ describe("a note that is only `-`, empty or whitespace is loud", () => {
     await runCli(["task", "add", "a", "-t", "A", "-i", "5", "-e", "1", "-w", "ws"], dbPath);
     const r = await runCli(["task", "note", "a", "-", "-w", "ws", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
-    expect(r.stderr).toMatch(BARE_DASH);
+    expect(r.stderr).toBe(""); // --json: the warning is in the document only
     expect((JSON.parse(r.stdout) as { warnings?: string[] }).warnings?.[0]).toMatch(/bare "-"/);
     expect(await noteContents("a")).toEqual(["-"]);
   });
@@ -177,8 +177,8 @@ describe("a note that is only `-`, empty or whitespace is loud", () => {
       ["task", "add", "a", "-t", "A", "-i", "5", "-e", "1", "-w", "ws", "--note", "-", "--json"],
       dbPath,
     );
-    expect(r.stderr).toMatch(BARE_DASH);
-    expect((JSON.parse(r.stdout) as { warnings?: string[] }).warnings).toHaveLength(1);
+    expect(r.stderr).toBe("");
+    expect((JSON.parse(r.stdout) as { warnings?: string[] }).warnings?.[0]).toMatch(/bare "-"/);
     const b = await runCli(
       ["task", "add", "b", "-t", "B", "-i", "5", "-e", "1", "-w", "ws", "--note", " "],
       dbPath,

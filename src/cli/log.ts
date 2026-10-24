@@ -9,6 +9,7 @@
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
 import {
+  emitJson,
   emitJsonCollection,
   emitJsonRow,
   injectedIdentity,
@@ -51,6 +52,7 @@ export interface LogWriteOpts {
   workstream?: string;
   as?: string;
   kind?: string;
+  json?: boolean;
 }
 
 /**
@@ -94,6 +96,10 @@ async function cmdLogWrite(db: Db, text: string, opts: LogWriteOpts): Promise<vo
     kind: opts.kind ?? "message",
     payload: text,
   });
+  if (opts.json) {
+    emitJson(withRendered(row));
+    return;
+  }
   console.log(
     pc.dim(
       `seq ${row.seq}  workstream=${row.workstreamName ?? "—"}  source=${row.source}  kind=${row.kind}`,

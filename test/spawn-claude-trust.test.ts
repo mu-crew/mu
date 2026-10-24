@@ -94,7 +94,10 @@ describe("claude trust dialog", () => {
     };
     expect(out.send).toMatchObject({ ok: false, error: "TrustDialogPending" });
     expect(out.nextSteps[0]?.command).toContain("mu agent send w-1");
-    expect(r.stderr).toContain("folder-trust dialog");
+    expect(r.stderr).toBe(""); // --json: the warning rides in the document
+    expect((JSON.parse(r.stdout) as { warnings: string[] }).warnings.join("\n")).toContain(
+      "folder-trust dialog",
+    );
     expect(sent).toEqual([]);
     expect(getAgent(db, "w-1", "auth")).toBeDefined();
   });

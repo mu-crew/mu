@@ -68,6 +68,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   New pure `src/output-contract.ts` (`encodeEnvelope`, `capRecords`: UTF-8
   byte budget, cut on a record boundary, first and pinned records never cut);
   test helpers `runCliJson` (unwraps `data`) and `runCliWire` (raw).
+  Round 2: root-position `mu --json <verb>` now prints the envelope on
+  success too (it only worked on errors); `mu log <text> --json` prints the
+  written row (with `rendered`) as one envelope; under `--json` the warnings
+  that went to stderr (`agent spawn` ctl-missing / trust dialog, whitespace
+  or bare `-` notes, `agent wait` state unknown, `mu sync` lock busy, ambient
+  sync asides, `task wait` stall line, herdr unconfirmed send, `db` drift
+  line) are in the document's `warnings` (spawn, `task note`,
+  `task add`, `task close`/`accept`) or dropped where the document already
+  carries the fact (`unknownReason`, `stuck`, `delivered`); `agent remote-env
+  --shell --json` is a usage error (exit 2), never shell text. One
+  table-driven test (`test/cli-json-wire-matrix.test.ts`) walks every
+  registered verb in leaf and root position.
 - **Scope is explicit: `-w`, a qualified ref, or a worker's injected identity.**
   `$MU_SESSION` is no longer read and the mux session name never routes a
   verb. A verb with no scope fails with one line, no help dump, exit 2:

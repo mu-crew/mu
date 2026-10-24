@@ -126,20 +126,23 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   // A pi agent whose control socket never answered still spawned (the
   // pane is usable by hand), but say so loudly on stderr: every exact
   // send / wait on it will fail until the extension answers.
+  // Under --json the warnings ride in the one document (`warnings`), never stderr.
+  const warnings: string[] = [];
   if (agent.ctl === "missing" || agent.ctl === "refused") {
     const warn = new AgentCtlUnreachableError(name, workstream, agent.ctlSocket, agent.ctl);
-    console.error(pc.yellow(`warning: ${warn.message}`));
-    printNextStepsTo(warn.errorNextSteps(), "stderr");
+    warnings.push(warn.message);
+    if (!opts.json) {
+      console.error(pc.yellow(`warning: ${warn.message}`));
+      printNextStepsTo(warn.errorNextSteps(), "stderr");
+    }
   }
   // Claude parks at a trust dialog whose default is "No, exit": the Enter
   // that ends a send would quit it. Keep the pane, skip the send, say why.
   const trustSkip = agent.trustDialog === true && sendText !== undefined;
   if (agent.trustDialog === true) {
-    console.error(
-      pc.yellow(
-        `warning: ${name} is showing Claude's folder-trust dialog (default "No, exit")${trustSkip ? "; --send skipped" : ""}`,
-      ),
-    );
+    const trustWarning = `${name} is showing Claude's folder-trust dialog (default "No, exit")${trustSkip ? "; --send skipped" : ""}`;
+    warnings.push(trustWarning);
+    if (!opts.json) console.error(pc.yellow(`warning: ${trustWarning}`));
   }
   const trustNext: NextStep[] =
     agent.trustDialog === true
@@ -215,6 +218,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
       ctl: agent.ctl,
       ctlSocket: agent.ctlSocket,
       ...(sent !== undefined ? { send: sent } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
       nextSteps,
     };
     // A failed --send is ONE failure document: the spawn evidence (the pane is
@@ -989,6 +993,8 @@ export async function cmdAgentWait(
     readStatuses,
     watch,
     onInitialUnknown: (agents) => {
+      // --json carries the same reasons per agent (`unknownReason`) in the document.
+      if (opts.json) return;
       const names = agents.map((agent) => `${agent.workstreamName}/${agent.name}`).join(", ");
       const reasons = [...new Set(agents.map((agent) => agent.unknownReason ?? "no reason"))].join(
         ", ",

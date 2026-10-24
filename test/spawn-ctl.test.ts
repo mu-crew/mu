@@ -656,14 +656,17 @@ describe("mu agent spawn (CLI)", () => {
     });
   });
 
-  it("exits 0 with a stderr warning naming mu link pi when ctl is missing", async () => {
+  it("exits 0 with the warning in the document (stderr empty) when ctl is missing", async () => {
     db.close();
     const r = await runCli(["agent", "spawn", "worker-1", "-w", "auth", "--json"], dbPath);
     db = openDb({ path: dbPath });
     expect(r.exitCode ?? 0).toBe(0);
     expect((JSON.parse(r.stdout) as { ctl: string }).ctl).toBe("missing");
-    expect(r.stderr).toContain("mu link pi");
-    expect(r.stderr).toContain("mu doctor");
+    // --json: stderr stays empty; the warning rides in the document.
+    expect(r.stderr).toBe("");
+    expect((JSON.parse(r.stdout) as { warnings: string[] }).warnings.join("\n")).toContain(
+      "no control socket",
+    );
     expect(getAgent(db, "worker-1", "auth")).toBeDefined();
   });
 

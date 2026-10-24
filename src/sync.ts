@@ -54,7 +54,7 @@ import { existsSync, statSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { Op } from "./apply.js";
 import { CURRENT_SCHEMA_VERSION, type Db, SYNCED_ENTITIES } from "./db.js";
-import type { NextStep } from "./output.js";
+import { isJsonMode, type NextStep } from "./output.js";
 import {
   applyIncomingOp,
   discoverPeers,
@@ -280,6 +280,8 @@ export interface AmbientFlushOptions extends AmbientOptions {
  *  unmistakably mu's own aside and not the verb's output. */
 function warn(message: string, opts?: AmbientOptions): void {
   if (opts?.quiet === true) return;
+  // --json: stderr stays empty; the ops stay pending and `mu doctor` reports the backlog.
+  if (isJsonMode()) return;
   // Deliberately stderr: stdout is the verb's contract (and may be JSON).
   process.stderr.write(`mu: sync: ${message}\n`);
 }
