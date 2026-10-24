@@ -21,7 +21,6 @@ import {
   assertTaskInWorkstream,
   colorPair,
   emitJson,
-  emitJsonCollection,
   parseCsvFlag,
   resolveEntityRef,
   resolveWorkstream,
@@ -37,14 +36,17 @@ import {
   addTasks,
   getTask,
   getTaskEdgesWithStatus,
+  getTaskNote,
   listNotes,
   resolveActorIdentity,
+  selectTaskNotes,
   type TaskEdgeWithStatus,
   type TaskNoteRow,
   TaskNotFoundError,
   type UpdateTaskOptions,
   updateTask,
 } from "../../tasks.js";
+import { noteRecord, planNotes } from "../format.js";
 import { readStdinText, STDIN_ARG } from "../stdin.js";
 
 /**
@@ -80,12 +82,84 @@ export function unescapeNoteText(s: string): string {
   });
 }
 
-export function printNote(n: TaskNoteRow): void {
-  const author = n.author ?? "<orchestrator>";
-  console.log(`  ${pc.dim(n.createdAt)}  ${pc.bold(author)}`);
-  for (const line of n.content.split("\n")) {
-    console.log(`    ${line}`);
+/** Kinds a filtered `notes` view still never cuts (the default view also pins the closer's fallback). */
+const PINNED_KINDS: ReadonlySet<string> = new Set(["brief", "report", "verdict"]);
+
+/** The notes view of one task, ready to print or to put in the JSON envelope. */
+interface NotesPage {
+  /** The records shown (oldest first), JSON-shaped. */
+  items: Record<string, unknown>[];
+  /** Notes left out (by the selection or by the byte cap). */
+  more: number;
+  /** The exact command that recovers them; null when nothing is left out. */
+  next: string | null;
+  lines: string[];
+}
+
+/**
+ * Cap a selection into a page. `omitted` counts what the selection left out
+ * before the byte cap (default view only; an explicit `--from` asked for its
+ * suffix, so only the cap's cuts count). The way back is `--from <n>` for the
+ * smallest `n` not shown, or `--all` when that is note 1.
+ */
+function buildNotesPage(
+  taskId: string,
+  ws: string,
+  notes: readonly TaskNoteRow[],
+  opts: { pinned: ReadonlySet<number>; total: number; fill: "newest" | "page"; explicit: boolean },
+): NotesPage {
+  const ref = `${taskId} -w ${ws}`;
+  const plan = planNotes(notes, opts.pinned, (n) => `mu task show ${ref} --note ${n.n}`, opts.fill);
+  const shownN = new Set(plan.shown.map((s) => s.note.n));
+  let firstOmitted: number | null = null;
+  let more = 0;
+  if (!opts.explicit) {
+    for (let i = 1; i <= opts.total; i++) {
+      if (!shownN.has(i)) {
+        firstOmitted ??= i;
+        more++;
+      }
+    }
+  } else {
+    firstOmitted = plan.omitted[0] ?? null;
+    more = plan.omitted.length;
   }
+  const next =
+    firstOmitted === null
+      ? null
+      : firstOmitted === 1
+        ? `mu task notes ${ref} --all`
+        : `mu task notes ${ref} --from ${firstOmitted}`;
+  const items: Record<string, unknown>[] = [];
+  const lines: string[] = [];
+  for (const { note, cutBytes } of plan.shown) {
+    const cmd = `mu task show ${ref} --note ${note.n}`;
+    lines.push(
+      cutBytes === undefined ? noteRecord(note) : noteRecord(note, { cutBytes, command: cmd }),
+    );
+    const rec: Record<string, unknown> = {
+      n: note.n,
+      kind: note.kind,
+      author: note.author,
+      created_at: note.createdAt,
+      content:
+        cutBytes === undefined ? note.content : `${[...note.content].slice(0, 120).join("")}…`,
+    };
+    if (cutBytes !== undefined) {
+      rec.cut = cutBytes;
+      rec.retrieve = cmd;
+    }
+    items.push(rec);
+  }
+  if (next !== null) lines.push(`more=${more} next=${next}`);
+  return { items, more, next, lines };
+}
+
+/** `more` and `retrieve`: the notes left out and the command that recovers them (key-prefixed in `show`). */
+function pageFields(page: NotesPage, prefix = ""): Record<string, unknown> {
+  return page.next === null
+    ? { [`${prefix}more`]: 0 }
+    : { [`${prefix}more`]: page.more, [`${prefix}retrieve`]: page.next };
 }
 
 /** Split a list of edge neighbours into (still-gating, satisfied)
@@ -391,7 +465,7 @@ export async function cmdTaskNote(
 export async function cmdTaskShow(
   db: Db,
   rawId: string,
-  opts: { json?: boolean; workstream?: string } = {},
+  opts: { json?: boolean; workstream?: string; note?: number } = {},
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
@@ -401,7 +475,32 @@ export async function cmdTaskShow(
   const task = getTask(db, localId, ws);
   if (!task) throw new TaskNotFoundError(localId, ws);
   const edges = getTaskEdgesWithStatus(db, localId, task.workstreamName);
-  const notes = listNotes(db, localId, task.workstreamName);
+  const view =
+    opts.note !== undefined
+      ? null
+      : selectTaskNotes(db, localId, { workstream: task.workstreamName });
+  if (opts.note !== undefined) {
+    // One note, whole: no cap, exact membership of this task's own notes.
+    const note = getTaskNote(db, localId, task.workstreamName, opts.note);
+    if (opts.json) {
+      emitJson({
+        n: note.n,
+        kind: note.kind,
+        author: note.author,
+        created_at: note.createdAt,
+        content: note.content,
+      });
+      return;
+    }
+    console.log(noteRecord(note));
+    return;
+  }
+  const page = buildNotesPage(localId, task.workstreamName, view?.notes ?? [], {
+    pinned: new Set(view?.pinned ?? []),
+    total: view?.total ?? 0,
+    fill: "newest",
+    explicit: false,
+  });
 
   // When owner IS NULL but the task is IN_PROGRESS (or recently was),
   // the actor is in agent_logs. Surface it so 'who's working on this'
@@ -423,7 +522,8 @@ export async function cmdTaskShow(
       },
       blockers: edges.blockers,
       dependents: edges.dependents,
-      notes,
+      notes: page.items,
+      ...pageFields(page, "notes_"),
       lastClaimActor: lastActor,
     });
     return;
@@ -471,11 +571,11 @@ export async function cmdTaskShow(
   }
 
   console.log("");
-  console.log(pc.bold(`Notes (${notes.length})`));
-  if (notes.length === 0) {
+  console.log(pc.bold(`Notes (${view?.total ?? 0})`));
+  if ((view?.total ?? 0) === 0) {
     console.log(pc.dim("  (no notes)"));
   } else {
-    for (const n of notes) printNote(n);
+    for (const line of page.lines) console.log(line);
   }
   // Only the non-default substates get a hint: they are the ones whose
   // way out is not obvious from the status alone.
@@ -504,8 +604,19 @@ export async function cmdTaskNotes(
     tail?: number;
     since?: string;
     sinceClaim?: boolean;
+    all?: boolean;
+    from?: number;
   } = {},
 ): Promise<void> {
+  const filtered = opts.tail !== undefined || opts.since !== undefined || opts.sinceClaim === true;
+  if ((opts.all === true || opts.from !== undefined) && filtered) {
+    throw new UsageError(
+      "--all/--from pick a page of the whole history; they do not combine with --tail/--since/--since-claim",
+    );
+  }
+  if (opts.all === true && opts.from !== undefined) {
+    throw new UsageError("--all is --from 1; pass one of them");
+  }
   // Mutex: --since and --since-claim both define a cutoff; allowing
   // both would force one to silently win, which is a footgun. The SDK
   // documents "since wins" for safety, but the CLI is strict so the
@@ -543,24 +654,53 @@ export async function cmdTaskNotes(
   const ws = await resolveWorkstream(opts.workstream);
   const task = getTask(db, localId, ws);
   if (!task) throw new TaskNotFoundError(localId, ws);
-  const filterOpts: {
-    tail?: number;
-    since?: string;
-    sinceClaim?: boolean;
-  } = {};
-  if (opts.tail !== undefined) filterOpts.tail = opts.tail;
-  if (opts.since !== undefined) filterOpts.since = opts.since;
-  if (opts.sinceClaim === true) filterOpts.sinceClaim = true;
-  const notes = listNotes(db, localId, task.workstreamName, filterOpts);
+  let page: NotesPage;
+  let total: number;
+  if (opts.all === true || opts.from !== undefined) {
+    const sel = selectTaskNotes(db, localId, {
+      workstream: task.workstreamName,
+      ...(opts.all === true ? { all: true } : {}),
+      ...(opts.from !== undefined ? { from: opts.from } : {}),
+    });
+    total = sel.total;
+    page = buildNotesPage(localId, task.workstreamName, sel.notes, {
+      pinned: new Set(sel.pinned),
+      total,
+      fill: "page",
+      explicit: true,
+    });
+  } else if (filtered) {
+    const filterOpts: { tail?: number; since?: string; sinceClaim?: boolean } = {};
+    if (opts.tail !== undefined) filterOpts.tail = opts.tail;
+    if (opts.since !== undefined) filterOpts.since = opts.since;
+    if (opts.sinceClaim === true) filterOpts.sinceClaim = true;
+    const notes = listNotes(db, localId, task.workstreamName, filterOpts);
+    total = notes.length;
+    page = buildNotesPage(localId, task.workstreamName, notes, {
+      pinned: new Set(notes.filter((n) => PINNED_KINDS.has(n.kind)).map((n) => n.n)),
+      total,
+      fill: "page",
+      explicit: true,
+    });
+  } else {
+    const sel = selectTaskNotes(db, localId, { workstream: task.workstreamName });
+    total = sel.total;
+    page = buildNotesPage(localId, task.workstreamName, sel.notes, {
+      pinned: new Set(sel.pinned),
+      total,
+      fill: "newest",
+      explicit: false,
+    });
+  }
   if (opts.json) {
-    emitJsonCollection(notes);
+    emitJson({ items: page.items, count: page.items.length, ...pageFields(page) });
     return;
   }
-  if (notes.length === 0) {
+  if (total === 0) {
     console.log(pc.dim(`(no notes on ${localId})`));
     return;
   }
-  for (const n of notes) printNote(n);
+  for (const line of page.lines) console.log(line);
 }
 
 export async function cmdTaskUpdate(

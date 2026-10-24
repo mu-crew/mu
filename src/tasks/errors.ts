@@ -629,3 +629,20 @@ export class InvalidSubstateError extends Error implements HasNextSteps {
     }));
   }
 }
+
+/** A note selector (`--from <n>` / `--note <n>`) that is not one of the task's
+ *  own notes `1..total`. Exact membership: there is no fuzzy match. */
+export class TaskNoteRangeError extends Error {
+  override readonly name = "TaskNoteRangeError";
+  constructor(
+    public readonly taskId: string,
+    public readonly n: number,
+    public readonly total: number,
+  ) {
+    super(
+      total === 0
+        ? `${taskId} has no notes; note ${n} does not exist`
+        : `note ${n} is not one of ${taskId}'s notes (1..${total})`,
+    );
+  }
+}

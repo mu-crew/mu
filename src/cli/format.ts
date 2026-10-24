@@ -18,8 +18,9 @@ import { agentStateGlyph, GLYPH } from "../glyphs.js";
 import { parseOpKey, renderOp } from "../log-render.js";
 import type { LogRow } from "../logs.js";
 import { muTable, pc, renderBoxTable } from "../output.js";
+import { RESULT_BYTES } from "../output-contract.js";
 import { formatPair, type TaskPair } from "../tasks/status.js";
-import type { TaskRow } from "../tasks.js";
+import type { TaskNoteRow, TaskRow } from "../tasks.js";
 import type { Track } from "../tracks.js";
 import type { TornDownWorkstream, WorkstreamSummary } from "../workstream.js";
 
@@ -439,4 +440,96 @@ export function formatTaskListTable(
     head.map((h) => pc.bold(h)),
     rows,
   );
+}
+
+// ─── Note records ──────────────────────────────────────────────────────
+
+/** Escape so one note is one line: `\\`, newline, tab and CR become two-character
+ *  escapes (the inverse of `unescapeNoteText`), so a raw tab or newline in
+ *  a record is always a separator. */
+export function escapeNoteText(s: string): string {
+  return s.replace(/[\\\n\t\r]/g, (c) =>
+    c === "\\" ? "\\\\" : c === "\n" ? "\\n" : c === "\t" ? "\\t" : "\\r",
+  );
+}
+
+/** Characters of an oversize ordinary note kept as a preview in its stub. */
+const NOTE_PREVIEW_CHARS = 120;
+
+/** One note, one line, TAB-separated: `kind  n  by=…  at=…  <escaped text>`.
+ *  `cutBytes` marks a stub: the text is a preview and `next=` names the
+ *  command that prints the note whole. */
+export function noteRecord(
+  n: TaskNoteRow,
+  retrieve?: { cutBytes: number; command: string },
+): string {
+  const head = [
+    n.kind,
+    String(n.n),
+    `by=${escapeNoteText(n.author ?? "<orchestrator>")}`,
+    `at=${n.createdAt}`,
+  ];
+  if (retrieve === undefined) return [...head, escapeNoteText(n.content)].join("\t");
+  const preview = `${[...n.content].slice(0, NOTE_PREVIEW_CHARS).join("")}…`;
+  return [
+    ...head,
+    escapeNoteText(preview),
+    `cut=${retrieve.cutBytes}`,
+    `next=${retrieve.command}`,
+  ].join("\t");
+}
+
+export interface PlannedNotes {
+  /** Notes to print, oldest first; `cutBytes` set on an oversize ordinary stub. */
+  shown: { note: TaskNoteRow; cutBytes?: number }[];
+  /** `n` of every note left out, ascending. */
+  omitted: number[];
+}
+
+/**
+ * Apply the ordinary-note byte budget. `pinned` notes (the brief, report and
+ * verdicts) are content: always kept whole, never charged. Ordinary notes get
+ * `budget` UTF-8 bytes of their own, escaping, TAB separators and newline
+ * counted. One bigger than the whole budget becomes a short stub, so a page
+ * always makes progress and `show --note` has something to name. Filling runs
+ * newest-first when `fill` is "newest" (the default view) and oldest-first
+ * when it is "page" (`--all` / `--from`: what is left out is then a suffix a
+ * further `--from` reaches); it stops at the first ordinary note that does not
+ * fit, so the shown ordinary notes are one contiguous run.
+ */
+export function planNotes(
+  notes: readonly TaskNoteRow[],
+  pinned: ReadonlySet<number>,
+  stubCommand: (n: TaskNoteRow) => string,
+  fill: "newest" | "page",
+  budget: number = RESULT_BYTES,
+): PlannedNotes {
+  const keep = new Map<number, number | undefined>();
+  let used = 0;
+  let full = false;
+  for (const n of fill === "newest" ? [...notes].reverse() : notes) {
+    if (pinned.has(n.n)) {
+      keep.set(n.n, undefined);
+      continue;
+    }
+    if (full) continue;
+    const size = Buffer.byteLength(noteRecord(n)) + 1;
+    const oversize = size > budget;
+    const cost = oversize
+      ? Buffer.byteLength(noteRecord(n, { cutBytes: size, command: stubCommand(n) })) + 1
+      : size;
+    if (used > 0 && used + cost > budget) {
+      full = true;
+      continue;
+    }
+    keep.set(n.n, oversize ? size : undefined);
+    used += cost;
+  }
+  const shown = notes
+    .filter((n) => keep.has(n.n))
+    .map((note) => {
+      const cutBytes = keep.get(note.n);
+      return cutBytes === undefined ? { note } : { note, cutBytes };
+    });
+  return { shown, omitted: notes.filter((n) => !keep.has(n.n)).map((n) => n.n) };
 }

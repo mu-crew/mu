@@ -22,6 +22,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Notes default view.** `mu task notes <id>` and the notes of `mu task show`
+  print one escaped TAB-separated record per line (`kind n by= at= text`):
+  the first `brief`, the last `report` (else the closer's last note, found
+  from the `close` note's author at read time), every `verdict`, then the
+  last 3 ordinary notes newer than the report. Those three kinds are never
+  cut; the other notes get their own 4 KB (UTF-8 bytes); one bigger than
+  that is a stub with `cut=` and `next=mu task show <id> --note <n>`. A
+  trimmed view ends `more=N next=…` (`--all`, or `--from <n>`, pages the
+  whole history whole). `n` is the note's 1-based number in its task, local
+  to this DB. `--note <n>` on `show` prints one note whole; `n` outside
+  `1..total` exits 3. `--tail/--since/--since-claim` keep their meaning.
+  `--json`: notes records use SQL names (`n kind author created_at content`),
+  plus `more`/`retrieve` (`notes_more`/`notes_retrieve` in `show`). SDK:
+  `selectTaskNotes`; `listNotes` stays the full history.
 - **Task guards: `--if <rev>` and `candidate_ids`.** `mu task delete`, `block`,
   `unblock`, `reparent`, `claim` and `release` accept `--if <rev>`, the task's
   revision (derived from current state, never a counter: a hash of the task
