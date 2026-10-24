@@ -3,7 +3,7 @@
 mu is one SQLite file, a crew of agents in multiplexer panes, a task
 DAG, and one append-only op log that everything else derives from.
 Callers sit on top, a shared TypeScript core in the middle, and SQLite,
-the multiplexer and the VCS at the base. The CLI verbs and the SDK are
+the multiplexer and git at the base. The CLI verbs and the SDK are
 thin facades over the same core.
 
 Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
@@ -18,7 +18,7 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
                 ▼                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  mu core (shared TS modules)                                    │
-│  agents/ mux/ ctl/ · tasks/ tracks · vcs/ worktree · ops log  │
+│  agents/ mux/ ctl/ · tasks/ tracks · worktree · ops log         │
 │  (capture, apply, sync, drift)                                  │
 └───────────────┬──────────────────┬──────────────────┬───────────┘
                 ▼                  ▼                  ▼
@@ -84,7 +84,7 @@ are re-export hubs.
 
 | Module | Responsibility |
 | --- | --- |
-| `src/db.ts` | better-sqlite3 connection (WAL); schema v12 (15 tables, 4 views) in `applySchema`; makes the stored capture triggers current (`installCapture`); `SqliteTooOldError` below 3.42; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; `migrateLegacyWorkspaces` carries old `vcs_workspaces` rows into `worktrees`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
+| `src/db.ts` | better-sqlite3 connection (WAL); schema v12 in `applySchema`: 15 tables (`schema_version`, `machine_identity`, `op_ctx`, `op_dying`, `ops`, `workstreams`, `agents`, `worktrees`, `tasks`, `task_edges`, `task_notes`, `task_substates`, `task_auto`, `sync_peers`, `sync_fingerprints`) and 4 views (`ready`, `blocked`, `blockers`, `goals`); makes the stored capture triggers current (`installCapture`); `SqliteTooOldError` below 3.42; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; `migrateLegacyWorkspaces` carries rows of the dropped `vcs_workspaces` table into `worktrees`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
 | `src/compare.ts` | code-unit string compare; replaces `localeCompare` so ICU is never initialised |
 | `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
 | `src/capture.ts` | Triggers stored in the DB file (versioned by `capture_version`) recording each portable write as an op, refusing natural-key changes and explicit ids <= 0; `captureDoctorCheck` |
@@ -95,7 +95,7 @@ are re-export hubs.
 | `src/compact.ts` | `mu db compact` (blank redundant note-tombstone payloads) and `mu db forget` (drop a torn-down workstream's ops); this machine only |
 | `src/drift.ts` | cheap invariant (every row has an op) and `--deep` rebuild-diff |
 | `src/logs.ts` | typed reader over `ops`; `appendLog` and `emitEvent`, the writes triggers cannot cover |
-| `src/log-render.ts` | the one op-to-prose formatter (`renderOp`), shared by CLI and TUI |
+| `src/log-render.ts` | the one op-to-prose formatter (`renderOp`), shared by the CLI renderers |
 
 ### Sync and doctor checks
 
@@ -111,7 +111,7 @@ are re-export hubs.
 | `src/fleet-hazards.ts` | mixed-fleet checks: DB inside `MU_SYNC_DIR` (plus `DbInsideSyncDirError`, which `handle()` throws before `openDb`), network mount, case collisions, own segment written by a newer mu |
 | `src/dormant.ts` | doctor housekeeping: `finished` (all closed, idle 14 days) vs `abandoned` (idle 60 days, open tasks) workstreams; idle derived from `MAX(tasks.updated_at)` |
 | `src/disk-recon.ts` | report-only state-dir vs DB reconciliation (rows without dirs, dirs without rows, residue); `--disk` measures bytes |
-| `src/doctor-summary.ts` | cheap doctor slice for the TUI; ctl, extension and skill checks; remediation text |
+| `src/doctor-summary.ts` | cheap doctor slice for `mu state`; ctl, extension and skill checks; remediation text |
 
 ### Agents, multiplexer and control socket
 
@@ -153,7 +153,7 @@ are re-export hubs.
 | `src/tasks/lifecycle.ts`, `status.ts` | close, open and cascade; `TaskStatus` |
 | `src/tasks/wait.ts`, `errors.ts` | `waitForTasks`; typed task errors |
 | `src/tracks.ts` | union-find tracks with diamond merge |
-| `src/dag.ts` | `loadFullDag`, `renderForest`, `renderTaskTree` for `mu task tree` and the DAG popup |
+| `src/dag.ts` | `loadFullDag`, `renderForest`, `renderTaskTree` for `mu task tree` |
 | `src/workstream.ts` | ensure, list, summarize, revision, soft teardown, reuse of a torn-down name |
 | `src/vcs/git.ts` | git primitives (plain functions, git only): toplevel, `worktree add --detach` / remove, dirty files, the upstream ref set, `isAncestor`, `createBranch` |
 | `src/worktree.ts` | per-agent worktrees: `createWorktree`, `removeWorktree`, `worktreeState`, the machine-local `worktrees` registry (outlives the agent; the reaper never touches it), the one close rule (`releaseWorktree`), name reuse (`reclaimWorktreePath`); `WorktreeDirtyError`, `WorktreePathNotEmptyError`, `WorktreeVcsRequiredError` |

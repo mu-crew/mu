@@ -128,5 +128,4 @@ stall sync forever. `mu doctor` lists such tasks instead (warn).
 reachable from a task. Scoping is a `WHERE` clause, which makes
 recursive delegation work: a sub-orchestrator inspects its slice
 without an LLM inferring the scope. `src/dag.ts` (`loadFullDag`,
-`renderForest`, `renderTaskTree`) serves both `mu task tree` and the
-TUI DAG popup.
+`renderForest`, `renderTaskTree`) serves `mu task tree`.

@@ -167,7 +167,7 @@ Two fixture traps:
 
 Treat a test that passes alone and fails under load as a concurrency
 bug first. Drive wait and reaper tests from poll-loop seams, not fixed
-timers, and wait for stable Ink output instead of sleeping.
+timers.
 
 ## Distribution
 
