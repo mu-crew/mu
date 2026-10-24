@@ -528,6 +528,7 @@ export function withPositionalWorkstream<T extends { workstream?: string }>(
   if (opts.workstream !== undefined && opts.workstream !== name) {
     throw new UsageError(
       `workstream given twice and they disagree: positional ${JSON.stringify(name)} vs -w ${JSON.stringify(opts.workstream)}; pass it once`,
+      { showHelp: false },
     );
   }
   return { ...opts, workstream: name };

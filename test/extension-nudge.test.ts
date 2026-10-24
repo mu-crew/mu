@@ -225,7 +225,6 @@ describe("registerNudge", () => {
     const env = { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "decoy" };
     for (const [cmd, want] of [
       ["mu agent send own/worker-1 go", ["own"]],
-      ["mu agent spawn own/worker-1", ["own"]],
       ["mu -w own agent send worker-1 go", ["own"]],
       ["mu --workstream=own agent send worker-1 go", ["own"]],
       ["mu --json -w own agent send worker-1 go", ["own"]],

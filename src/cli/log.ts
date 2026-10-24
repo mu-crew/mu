@@ -160,7 +160,9 @@ async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
 async function logReadWorkstream(opts: LogReadOpts): Promise<string | undefined> {
   if (opts.allWorkstreams) {
     if (opts.workstream !== undefined) {
-      throw new UsageError("--all and -w/--workstream are mutually exclusive");
+      throw new UsageError("--all and -w/--workstream are mutually exclusive", {
+        showHelp: false,
+      });
     }
     return undefined;
   }

@@ -27,7 +27,7 @@ import {
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultCacheDir } from "../src/state-dir.js";
-import { workstreamNameProblem } from "../src/workstream-scope.js";
+import { qualifiedRefProblem, workstreamNameProblem } from "../src/workstream-scope.js";
 
 /** The slice of pi's ExtensionAPI the delegate side uses. */
 export interface MuDelegateApi {
@@ -789,7 +789,9 @@ export function registerDelegate(
         : scope(typeof rawWs === "string" ? rawWs : String(rawWs), "record.workstream");
     const slash = task.indexOf("/");
     if (slash >= 0) {
-      const prefix = scope(task.slice(0, slash), "record.task workstream prefix");
+      const refProblem = qualifiedRefProblem(task);
+      if (refProblem !== undefined) throw new Error(`mu_delegate: ${refProblem} Nothing spawned.`);
+      const prefix = task.slice(0, slash);
       if (ws && ws !== prefix) {
         throw new Error(
           `mu_delegate: record.task ${task} conflicts with record.workstream ${ws}. Nothing spawned.`,

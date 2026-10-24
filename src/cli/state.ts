@@ -84,7 +84,7 @@ async function resolveWorkstreamSet(db: Db, opts: StateOpts): Promise<string[]> 
   const explicitW = opts.workstream !== undefined && opts.workstream.length > 0;
   const explicitAll = opts.all === true;
   if (explicitAll && explicitW) {
-    throw new UsageError("--all and -w/--workstream are mutually exclusive");
+    throw new UsageError("--all and -w/--workstream are mutually exclusive", { showHelp: false });
   }
   if (explicitAll) {
     const all = await listWorkstreams(db);

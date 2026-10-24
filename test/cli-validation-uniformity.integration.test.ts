@@ -151,11 +151,12 @@ describe("audit_cli_validation_uniformity", () => {
       expect(selfOpt).toBeDefined();
     });
 
-    it("--all / -w mutex on `mu state`: exit 2 + help block", async () => {
+    it("--all / -w mutex on `mu state`: exit 2, one line (a scope error)", async () => {
       const human = await runCli(["state", "--all", "-w", "probe-ws"], dbPath);
       expect(human.exitCode).toBe(2);
       expect(human.stderr).toMatch(/error:.*--all and -w\/--workstream are mutually exclusive/);
-      expect(human.stderr).toMatch(/Usage: mu state/);
+      expect(human.stderr).not.toMatch(/Usage:/);
+      expect(human.stderr.trim().split("\n")).toHaveLength(1);
     });
   });
 
