@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -64,7 +65,32 @@ export function realTmux(): string {
   return realTmuxPath;
 }
 
-const KEEP = new Set(["PATH", "TERM", "LANG", "LC_ALL", "USER", "SHELL"]);
+const KEEP = new Set(["TERM", "LANG", "LC_ALL", "USER", "SHELL"]);
+
+/** System directories only: the host's mise, ~/.local/bin and ~/.pi/agent/bin entries (and the tools and docs they hold) stay out of the AUT's PATH. */
+export function systemPathDirs(pathEnv: string | undefined): string[] {
+  return (pathEnv ?? "").split(":").filter((d) => /^\/(usr|bin|sbin|opt)(\/|$)/.test(d));
+}
+
+/** Tools the scenarios and the faux workers need that live outside the system dirs (mise installs): linked into the sandbox bin. */
+const TOOLS = ["node", "sqlite3", "git", "ssh"];
+
+function linkTools(binDir: string, pathEnv: string | undefined): void {
+  const system = new Set(systemPathDirs(pathEnv));
+  for (const tool of TOOLS) {
+    for (const d of (pathEnv ?? "").split(":")) {
+      if (!isAbsolute(d)) continue;
+      const p = join(d, tool);
+      try {
+        accessSync(p, constants.X_OK);
+      } catch {
+        continue;
+      }
+      if (!system.has(d) && !existsSync(join(binDir, tool))) symlinkSync(p, join(binDir, tool));
+      break;
+    }
+  }
+}
 
 /** Pure: the whitelisted environment of a sandbox. Never inherits MU_*, TMUX*, HERDR_*, PI_*. */
 export function sandboxEnv(
@@ -97,7 +123,7 @@ export function sandboxEnv(
   env.GIT_COMMITTER_EMAIL = "eval@example.invalid";
   env.EVAL_WORKER_DIR = join(dir, "workers");
   env.EVAL_SURFACE_FAMILY = surface.family ?? "3x";
-  env.PATH = `${join(dir, "bin")}:${base.PATH ?? ""}`;
+  env.PATH = [join(dir, "bin"), ...systemPathDirs(base.PATH)].join(":");
   return env;
 }
 
@@ -246,6 +272,7 @@ export async function createSandbox(
     `${JSON.stringify({ retry: { enabled: false } })}\n`,
   );
 
+  linkTools(binDir, process.env.PATH);
   writeShim(join(binDir, "mu"), `exec node ${JSON.stringify(surface.cli)} "$@"`);
   // Workers and delegates are scripted: faux model, no mu nudges (they would only rerun the script).
   writeShim(
@@ -281,6 +308,9 @@ export async function createSandbox(
       sb,
       "git init -q -b main && printf '# eval repo\\n' > README.md && git add README.md && git commit -q -m init",
     );
+    // `mu workspace refresh` rebases onto origin/HEAD, which a repo with no remote lacks. Point it at
+    // local main: always current, no second copy of the repo to keep in step.
+    await sh(sb, "git symbolic-ref refs/remotes/origin/HEAD refs/heads/main");
     mkdirSync(env.TMUX_TMPDIR ?? join(dir, "tmux-tmp"), { recursive: true });
     await sh(sb, `tmux -L ${tmuxSocket} -f /dev/null new-session -d -s eval-boot`);
   } catch (e) {
