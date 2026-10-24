@@ -1,7 +1,7 @@
 // Remote spawn: run a task with a pi worker on the ssh host "dev", bring the commit back, merge it,
 // clean up the remote working copy. The ssh host is the eval ssh shim (a directory on this machine).
 //
-// Wrong: a worker that ran locally (runs.log cwd outside <hostRoot>/home, or any extra local
+// Wrong: a remote worker dir left behind (even clean and merged), a worker that ran locally (runs.log cwd outside <hostRoot>/home, or any extra local
 // worktree), a remote working copy left dirty, a missing or locally authored commit.
 // closeMode "none": a remote worker cannot reach the orchestrator DB, so the AUT closes rt1.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -108,6 +108,13 @@ const scenario: Scenario = {
         : "";
       if (dirty !== "") wrong.push(`remote working copy left dirty: ${p}`);
       else if (!merged) wrong.push(`remote working copy left with unmerged work: ${p}`);
+    }
+    // Positive cleanup state: every remote dir a worker ran in (runs.log cwd) is gone and no longer
+    // a registered worktree. A clean, merged leftover is still not cleaned up.
+    for (const cwd of new Set(remoteRuns.map((r) => r.cwd))) {
+      if (cwd === remoteRepo) continue;
+      if (existsSync(cwd)) wrong.push(`remote worker dir not removed: ${cwd}`);
+      else if (list.includes(cwd)) wrong.push(`remote worktree still registered: ${cwd}`);
     }
     const sessions = existsSync(join(hostRoot(sb), "sessions.log"))
       ? readFileSync(join(hostRoot(sb), "sessions.log"), "utf8")
