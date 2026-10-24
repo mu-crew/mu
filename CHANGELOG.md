@@ -232,6 +232,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   only lines that start with `EVIDENCE:`, so a refuter's multi-line evidence
   body was dropped. It now keeps everything from the last `VERDICT:` line on
   (still capped at 4000 chars).
+- **Test runs no longer leak `/tmp/<id>/ssr`.** vitest 5 never removes the root
+  Vitest instance's tmp dir (`<tmpdir>/<nanoid>`, 6-17 MB of transformed
+  modules per run), which filled a tmpfs `/tmp`. `test/_global-teardown.ts`
+  (shared by both vitest configs) now removes it in teardown.
+  `test/dag.integration.test.ts` also removes its `mu-dag-*` temp dirs.
 
 ### Removed
 
