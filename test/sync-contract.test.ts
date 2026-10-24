@@ -286,6 +286,7 @@ describe("apply is order-independent: live == rebuild for EVERY arrival order", 
   // in test/apply-fold.test.ts, so the log holds only the order under test.
   let permDb: Db | undefined;
   let permDir: string | undefined;
+  let permWipe: ReturnType<Db["prepare"]>[] | undefined;
   afterAll(() => {
     permDb?.close();
     if (permDir) rmFixtureDir(permDir);
@@ -296,9 +297,11 @@ describe("apply is order-independent: live == rebuild for EVERY arrival order", 
       permDb = openDb({ path: join(permDir, "perm.db") });
     }
     const db = permDb;
+    // better-sqlite3 caches nothing: db.prepare recompiles the cascade (~3ms).
+    permWipe ??= [db.prepare("DELETE FROM workstreams"), db.prepare("DELETE FROM ops")];
+    const wipe = permWipe;
     withCaptureSuppressed(db, () => {
-      db.prepare("DELETE FROM workstreams").run();
-      db.prepare("DELETE FROM ops").run();
+      for (const st of wipe) st.run();
     });
     for (const o of ops) applyIncomingOp(db, o);
     const drift = checkDrift(db);

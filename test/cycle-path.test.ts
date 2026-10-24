@@ -63,12 +63,17 @@ describe("cycle path", () => {
         layers[l]?.push(id);
       }
     }
-    // One transaction for the ~300 setup edges: each is its own commit otherwise (~1.5s).
+    // Raw inserts in one transaction: addBlockEdge runs a cycle check per edge
+    // (~4ms each, 1.3s for ~300), and only the path search under test matters.
+    const ins = db.prepare(
+      "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
+    );
+    const id = (n: string): number => taskIdFor(db, n, WS) as number;
     db.transaction(() => {
       for (let l = 0; l < 6; l++)
         for (const from of layers[l] ?? [])
-          for (const to of layers[l + 1] ?? []) addBlockEdge(db, WS, to, from);
-      for (const first of layers[0] ?? []) addBlockEdge(db, WS, first, "c"); // c blocks layer 0
+          for (const to of layers[l + 1] ?? []) ins.run(id(from), id(to), "x");
+      for (const first of layers[0] ?? []) ins.run(id("c"), id(first), "x"); // c blocks layer 0
     })();
     const t0 = Date.now();
     let err: unknown;
