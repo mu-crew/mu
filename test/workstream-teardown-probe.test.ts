@@ -85,8 +85,15 @@ describe.each(["tmux", "herdr"] as const)("teardownWorkstream probe failure (%s)
       backend === "tmux"
         ? installMux("tmux", [
             ["list-panes", { stdout: "", exitCode: 1, stderr: "can't find session" }],
+            ["display-message", { stdout: "", exitCode: 1, stderr: "can't find pane" }],
           ])
-        : installMux("herdr", [["workspace list", JSON.stringify({ result: { workspaces: [] } })]]);
+        : installMux("herdr", [
+            ["workspace list", JSON.stringify({ result: { workspaces: [] } })],
+            [
+              "pane get",
+              JSON.stringify({ error: { code: "pane_not_found", message: "pane not found" } }),
+            ],
+          ]);
 
     const r = await softTeardown(db, "ws");
 

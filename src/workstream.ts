@@ -6,18 +6,18 @@
 // mux session and every DB row tagged with the workstream name).
 //
 // `teardownWorkstream` is SOFT and needs a preview revision (`--if <rev>`):
-// it kills the session, frees worktrees by the close rule, deletes the
+// it kills the session, deletes the
 // machine-local agent rows and sets `workstreams.torn_down_at`. Tasks,
 // edges and notes stay. It is idempotent on every leg:
 //   - mux session already gone         → nothing to kill
-//   - no agents/worktrees for this name → nothing to delete
+//   - no agents for this name          → nothing to delete
 //   - workstream never existed at all  → returns all-zero counts
 //
 // Both summarize and teardown take an optional `muxSession` override so
 // tests (and the rare workstream whose mux session was created with a
 // non-default name) work without env-var gymnastics.
 
-import { existsSync, readdirSync, rmdirSync } from "node:fs";
+import { readdirSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { crc32 } from "node:zlib";
 import { WORKSTREAM_OPS_WHERE } from "./compact.js";
@@ -26,7 +26,7 @@ import { type Db, tornDownAtOf } from "./db.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
 import type { HasNextSteps, NextStep } from "./output.js";
-import { listWorktrees, releaseWorktree, worktreesRoot } from "./worktree.js";
+import { listWorktrees } from "./worktree.js";
 
 /**
  * Allowed workstream-name shape: lowercase alpha first, then alnum,
@@ -192,9 +192,11 @@ export class WorkstreamNameReservedError extends Error implements HasNextSteps {
 
 /** A destructive verb was given a preview revision that no longer matches:
  *  the workstream (its ops, agents or worktrees) changed since the preview.
- *  Exit 4, nothing was done. */
+ *  Exit 4, nothing was done. One stderr line: the message names the
+ *  preview command (`inlineNext`). */
 export class WorkstreamRevisionMismatchError extends Error implements HasNextSteps {
   override readonly name = "WorkstreamRevisionMismatchError";
+  readonly inlineNext = true;
   constructor(
     public readonly workstream: string,
     public readonly expected: number,
@@ -203,7 +205,7 @@ export class WorkstreamRevisionMismatchError extends Error implements HasNextSte
     public readonly previewCommand: string = `mu workstream teardown ${workstream}`,
   ) {
     super(
-      `workstream ${workstream} changed since preview (rev ${expected} → ${actual}); preview again`,
+      `workstream ${workstream} changed since preview (rev ${expected} → ${actual}); preview again: ${previewCommand}`,
     );
   }
   errorNextSteps(): NextStep[] {
@@ -216,12 +218,57 @@ export class WorkstreamRevisionMismatchError extends Error implements HasNextSte
  *  A peer's teardown can reach a machine that still runs its agents. Exit 4. */
 export class WorkstreamHasAgentsError extends Error implements HasNextSteps {
   override readonly name = "WorkstreamHasAgentsError";
+  readonly inlineNext = true;
   constructor(
     public readonly workstream: string,
     public readonly agents: number,
   ) {
     super(
-      `torn-down workstream ${workstream} still has ${agents} local agent row${agents === 1 ? "" : "s"}; tear it down here first so their panes are closed`,
+      `torn-down workstream ${workstream} still has ${agents} local agent row${agents === 1 ? "" : "s"}; close their panes first: mu workstream teardown ${workstream}`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      { intent: "Preview the local cleanup", command: `mu workstream teardown ${this.workstream}` },
+    ];
+  }
+}
+
+/** A teardown found registered panes still alive outside its session
+ *  (moved by hand): killing the session would not stop them, and deleting
+ *  their rows would orphan them. Exit 4, nothing was done. */
+export class WorkstreamPanesLiveError extends Error implements HasNextSteps {
+  override readonly name = "WorkstreamPanesLiveError";
+  readonly inlineNext = true;
+  constructor(
+    public readonly workstream: string,
+    public readonly agents: readonly string[],
+  ) {
+    super(
+      `workstream ${workstream} has live panes outside its session (${agents.join(", ")}); close them first: mu agent close ${agents[0]} -w ${workstream}`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Close the stray agent",
+        command: `mu agent close ${this.agents[0]} -w ${this.workstream}`,
+      },
+    ];
+  }
+}
+
+/** `workstream init --if` over a torn-down name found its mux session still
+ *  alive: the old rows are not deleted while panes may run. Exit 4. */
+export class WorkstreamSessionLiveError extends Error implements HasNextSteps {
+  override readonly name = "WorkstreamSessionLiveError";
+  readonly inlineNext = true;
+  constructor(
+    public readonly workstream: string,
+    public readonly session: string,
+  ) {
+    super(
+      `torn-down workstream ${workstream} still has a live mux session ${session}; kill it first: mu workstream teardown ${workstream}`,
     );
   }
   errorNextSteps(): NextStep[] {
@@ -265,11 +312,12 @@ export function workstreamRevision(db: Db, name: string): number {
   return crc32(`${maxSeq}\n${agents.join(",")}\n${worktrees.join(",")}`);
 }
 
-/** The revision of a sweep: the sorted per-workstream revisions of its
- *  members, so a member added, removed or changed since the preview changes
- *  it. */
-export function sweepRevision(db: Db, names: readonly string[]): number {
-  const parts = [...names].sort().map((n) => `${n}:${workstreamRevision(db, n)}`);
+/** The revision of a sweep, from its members' revisions (name → revision):
+ *  a member added, removed or changed since the preview changes it. */
+export function sweepRevision(members: ReadonlyMap<string, number>): number {
+  const parts = [...members]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([n, r]) => `${n}:${r}`);
   return crc32(parts.join("\n"));
 }
 
@@ -345,25 +393,9 @@ export interface TeardownResult {
   tasks: number;
   notes: number;
   edges: number;
-  /** Worktrees this teardown removed (clean and merged, or with their
-   *  unmerged commits kept on a branch: see `keptBranches`). */
-  freedWorktrees: number;
-  /** Worktrees whose registry row existed but whose dir was already gone
-   *  (manual rm -rf or an interrupted earlier teardown). Nothing was done
-   *  on disk; tracked apart so the report does not claim the work. */
-  alreadyGoneWorktrees: number;
-  /** Branches made to keep unmerged commits of removed worktrees. */
-  keptBranches: string[];
-  /** Worktrees left in place, with the reason: dirty (uncommitted work is
-   *  never deleted by teardown) or git failed. Their registry rows stay, so
-   *  `mu agent close <agent> --discard` can finish them. */
-  failedWorktrees: WorktreeFailure[];
-}
-
-export interface WorktreeFailure {
-  agent: string;
-  path: string;
-  error: string;
+  /** Worktrees left alone: teardown never removes one. Their registry rows
+   *  stay; `mu agent close <agent> -w <ws>` applies the close rule to one. */
+  keptWorktrees: { agent: string; path: string }[];
 }
 
 export interface WorkstreamOptions {
@@ -563,16 +595,16 @@ function isRegistered(db: Db, workstream: string): boolean {
 }
 
 /**
- * Tear down a workstream (soft): kill its mux session, free its worktrees
- * by the close rule, delete its machine-local agent rows and set
- * `torn_down_at`. Tasks, edges and notes STAY (a later `init --if` is what
+ * Tear down a workstream (soft): kill its mux session, delete its
+ * machine-local agent rows and set `torn_down_at`. Worktrees are never
+ * removed. Tasks, edges and notes STAY (a later `init --if` is what
  * hard-deletes them, after a preview). Needs the preview revision.
  *
  * ORDER IS THE GUARANTEE. Nothing is written before the session is known
  * dead: the revision check reads only; the mux probe PROPAGATES ("could
- * not ask" is not "dead"); the kill comes before any DB change; worktrees
- * are removed only by the shared close rule (dirty ones are kept and
- * reported); the DB commit is last, one op group. A failure at any step
+ * not ask" is not "dead"); a registered pane outside the session is asked
+ * about by id and blocks the teardown while it lives; the kill comes before
+ * any DB change; the DB commit is last, one op group. A failure at any step
  * leaves the workstream live and the command re-runnable.
  *
  * Idempotent: an unknown or already-torn-down name has nothing to do.
@@ -602,48 +634,24 @@ export async function teardownWorkstream(
   const mux = await activeMux();
   // The probe PROPAGATES: "could not ask" is not "dead". Swallowing it
   // here would change DB state while panes may still run.
-  const muxAliveBefore = (await mux.listPanes(muxSession)).length > 0;
+  const sessionPanes = new Set((await mux.listPanes(muxSession)).map((p) => p.paneId));
+  // The session kill covers the panes in it. A registered pane that is NOT
+  // in it (moved to another session by hand) survives the kill, so it is
+  // asked about by its own id; failing to ask propagates too.
+  const strays: string[] = [];
+  for (const a of agentsBefore) {
+    if (sessionPanes.has(a.paneId)) continue;
+    if (await mux.paneAlive(a.paneId)) strays.push(a.name);
+  }
+  if (strays.length > 0) throw new WorkstreamPanesLiveError(opts.workstream, strays);
+  const muxAliveBefore = sessionPanes.size > 0;
   if (muxAliveBefore) {
     await mux.killSession(muxSession);
   }
 
-  // Worktrees SECOND, with the same close rule as `agent close`
-  // (src/worktree.ts): clean ones are removed (unmerged commits keep a
-  // branch), dirty ones are NEVER deleted, they are reported and their
-  // registry rows stay so `agent close --discard` can finish them. A
-  // worktree failure does not abort the teardown (the workstream
-  // semantics are 'tear it all down', not 'partial cleanup').
-  let freedWorktrees = 0;
-  let alreadyGoneWorktrees = 0;
-  const keptBranches: string[] = [];
-  const failedWorktrees: WorktreeFailure[] = [];
-  for (const wt of worktreesBefore) {
-    try {
-      const released = await releaseWorktree(db, wt);
-      if (released.action === "gone") alreadyGoneWorktrees += 1;
-      else freedWorktrees += 1;
-      if (released.branch !== undefined) keptBranches.push(released.branch);
-    } catch (err) {
-      failedWorktrees.push({
-        agent: wt.agent,
-        path: wt.path,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  // After every per-agent worktree is removed, the parent
-  // <state>/worktrees/<workstream>/ directory is empty — reap it too.
-  // Best-effort: rmdir refuses if non-empty (a kept dirty worktree), which
-  // is the right outcome (don't silently rm -rf user data).
-  const parentDir = join(worktreesRoot(), opts.workstream);
-  if (existsSync(parentDir)) {
-    try {
-      if (readdirSync(parentDir).length === 0) rmdirSync(parentDir);
-    } catch {
-      // Non-empty or otherwise unreapable: failedWorktrees says what remains.
-    }
-  }
+  // Worktrees are NOT touched: teardown never removes one (the registry's
+  // close rule belongs to `mu agent close`). They stay registered and on
+  // disk; the result lists them.
 
   // Unlink each agent's control socket (ssh -L forwards leave theirs
   // behind) BEFORE the DELETE: the agent rows are how a retry finds the
@@ -664,20 +672,17 @@ export async function teardownWorkstream(
   // The DB commit, last, in ONE op group (intent workstream.teardown):
   // delete the machine-local agent rows, then set torn_down_at (one
   // captured put). Nothing cascades from either: tasks, edges and notes
-  // stay. An agent that appeared after the revision check (its pane may be
-  // alive) aborts the commit instead of being deleted unseen.
+  // stay. The whole revision is read again INSIDE the transaction: an op,
+  // agent or worktree that appeared since the preview (a sweep member
+  // changed while an earlier one was being killed, a racing spawn) aborts
+  // the commit instead of being swept up unseen.
   const tornDownAt = new Date().toISOString();
   withOpContext(db, { intent: "workstream.teardown", group: "new" }, () =>
     db
       .transaction(() => {
-        const now = listAgentPanes(db, opts.workstream).map((a) => `${a.name}@${a.paneId}`);
-        const then = agentsBefore.map((a) => `${a.name}@${a.paneId}`);
-        if (now.length !== then.length || now.some((x, i) => x !== then[i])) {
-          throw new WorkstreamRevisionMismatchError(
-            opts.workstream,
-            opts.ifRevision,
-            workstreamRevision(db, opts.workstream),
-          );
+        const now = workstreamRevision(db, opts.workstream);
+        if (now !== opts.ifRevision) {
+          throw new WorkstreamRevisionMismatchError(opts.workstream, opts.ifRevision, now);
         }
         db.prepare(
           "DELETE FROM agents WHERE workstream_id = (SELECT id FROM workstreams WHERE name = ?)",
@@ -697,10 +702,7 @@ export async function teardownWorkstream(
     tasks: tasksBefore,
     notes: notesBefore,
     edges: edgesBefore,
-    freedWorktrees,
-    alreadyGoneWorktrees,
-    keptBranches,
-    failedWorktrees,
+    keptWorktrees: worktreesBefore.map((w) => ({ agent: w.agent, path: w.path })),
   };
 }
 
@@ -730,11 +732,24 @@ export function previewReinit(db: Db, name: string): ReinitPreview | null {
  * Reuse a torn-down name: hard-delete the old row (the FK cascade removes
  * its tasks, edges and notes, each captured as today's tombstones) and
  * create the new one, in ONE op group (intent workstream.init). Needs the
- * preview revision. Refuses while this machine still has agent rows in the
- * old workstream: a peer's teardown can reach a machine whose panes live.
+ * preview revision. Refuses while the old mux session is alive (the probe
+ * runs first and propagates) or while this machine still has agent rows in
+ * the old workstream: a peer's teardown can reach a machine whose panes live.
  */
-export function reinitWorkstream(db: Db, name: string, ifRevision: number): void {
+export async function reinitWorkstream(
+  db: Db,
+  name: string,
+  ifRevision: number,
+  muxSession = `mu-${name}`,
+): Promise<void> {
   assertValidWorkstreamName(name);
+  // The mux is asked FIRST and the probe propagates: "could not ask" is not
+  // "dead", and nothing is deleted while panes may run (the teardown rule).
+  if (tornDownAtOf(db, name) !== null) {
+    if ((await (await activeMux()).listPanes(muxSession)).length > 0) {
+      throw new WorkstreamSessionLiveError(name, muxSession);
+    }
+  }
   withOpContext(db, { intent: "workstream.init", group: "new" }, () =>
     db
       .transaction(() => {

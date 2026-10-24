@@ -19,12 +19,14 @@ mu workstream teardown auth             # preview: counts and rev=<n>; writes no
 mu workstream teardown auth --if <n>    # apply that preview
 ```
 
-Teardown is soft. It kills the tmux session first, then removes clean
-worktrees and deletes the agent rows, then marks the workstream torn
-down. Its tasks, edges, and notes stay but every view and `-w auth` verb
-hides them (exit 3, "workstream auth is torn down"). A worktree with
-uncommitted work is kept and reported; close it with
-`mu agent close <agent> --discard`. Running it again is a no-op.
+Teardown is soft. It kills the tmux session first, then deletes the
+agent rows and marks the workstream torn down. It refuses (exit 4) while
+a registered pane is still alive outside the session. Its tasks, edges,
+and notes stay but every view and `-w auth` verb hides them (exit 3,
+"workstream auth is torn down"). Teardown never removes a worktree: each
+stays on disk and registered, and the output names
+`mu agent close <agent> -w auth` for it (dirty refuses; `--discard` is
+lossy). Running it again is a no-op.
 
 `--if <n>` refuses (exit 4) when the workstream changed since the
 preview: a new op, agent, or worktree. Preview again and read it.
@@ -32,7 +34,8 @@ preview: a new op, agent, or worktree. Preview again and read it.
 To reuse the name, run `mu workstream init auth`. It previews what it
 will permanently delete (`will permanently delete torn-down auth: N tasks,
 M notes; rev=<n>`); `mu workstream init auth --if <n>` deletes the old
-rows and creates the new workstream.
+rows and creates the new workstream. It refuses (exit 4) while the old
+tmux session is alive, and when the mux cannot be asked.
 
 To sweep every workstream that has no tasks, agents, or worktrees:
 

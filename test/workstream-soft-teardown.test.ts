@@ -50,7 +50,10 @@ let mux: MuxHarness | undefined;
 
 /** A tmux with no sessions (every probe: "can't find session"). */
 const noSessions = () =>
-  installMux("tmux", [["list-panes", { stdout: "", exitCode: 1, stderr: "can't find session" }]]);
+  installMux("tmux", [
+    ["list-panes", { stdout: "", exitCode: 1, stderr: "can't find session" }],
+    ["display-message", { stdout: "", exitCode: 1, stderr: "can't find pane" }],
+  ]);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mu-soft-teardown-"));
@@ -476,7 +479,7 @@ describe("init over a torn-down name", () => {
        VALUES ((SELECT id FROM workstreams WHERE name = 'ws'), 'w1', 'pi', '%1', 'spawning', 'full-access', 'now', 'now')`,
     ).run();
     const rev = workstreamRevision(db, "ws");
-    expect(() => reinitWorkstream(db, "ws", rev)).toThrow(/local agent row/);
+    await expect(reinitWorkstream(db, "ws", rev)).rejects.toThrow(/local agent row/);
     const r = await run("workstream", "init", "ws", "--if", String(rev));
     expect(r.exitCode).toBe(4);
     expect((db.prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n).toBe(2);
@@ -578,7 +581,7 @@ describe("sync", () => {
     mkdirSync(sync, { recursive: true });
     seed("ws");
     await softTeardown(db, "ws");
-    reinitWorkstream(db, "ws", workstreamRevision(db, "ws"));
+    await reinitWorkstream(db, "ws", workstreamRevision(db, "ws"));
     await flushSegment(db, sync);
 
     const other = openDb({ path: join(dir, "peer.db") });

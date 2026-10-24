@@ -115,7 +115,9 @@ import {
   WorkstreamHasAgentsError,
   WorkstreamNameInvalidError,
   WorkstreamNameReservedError,
+  WorkstreamPanesLiveError,
   WorkstreamRevisionMismatchError,
+  WorkstreamSessionLiveError,
 } from "../workstream.js";
 import {
   WorktreeDirtyError,
@@ -333,6 +335,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof WorkstreamExistsError ||
     err instanceof WorkstreamRevisionMismatchError ||
     err instanceof WorkstreamHasAgentsError ||
+    err instanceof WorkstreamPanesLiveError ||
+    err instanceof WorkstreamSessionLiveError ||
     // Rebuild refuses to overwrite an existing target or to write onto
     // the source DB: both are name/state collisions, not usage errors.
     err instanceof RebuildTargetExistsError ||
@@ -524,7 +528,7 @@ function emitError(err: unknown): number {
   }
 
   console.error(pc.red(`${label}: ${cleanMessage}`));
-  if (steps.length > 0) {
+  if (steps.length > 0 && !(hasNextSteps(err) && err.inlineNext === true)) {
     printNextStepsTo(steps, "stderr");
   }
   if (usageCmd) {

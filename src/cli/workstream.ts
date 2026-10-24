@@ -71,7 +71,7 @@ export async function cmdInit(
     ]);
     return;
   }
-  if (reuse !== null && opts.if !== undefined) reinitWorkstream(db, name, opts.if);
+  if (reuse !== null && opts.if !== undefined) await reinitWorkstream(db, name, opts.if);
   const dbCreated = ensureWorkstream(db, name) || reuse !== null;
   // Load-bearing: `workstream init` IS session creation.
   const mux = await activeMux();
@@ -201,9 +201,9 @@ export async function cmdTeardown(
   const workstream = await resolveWorkstream(opts.workstream);
   const summary = await summarizeWorkstream(db, { workstream });
   const tornDownAt = tornDownAtOf(db, workstream);
-  const hasLocalState = summary.muxAlive || summary.agentCount > 0 || summary.worktreeCount > 0;
+  const hasLocalState = summary.muxAlive || summary.agentCount > 0;
   // Already torn down with nothing local left: a no-op. A torn-down name
-  // that still has agents, worktrees or a session here (a peer tore it down)
+  // that still has agents or a session here (a peer tore it down)
   // IS worth finishing locally, so it falls through.
   // Empty-but-registered workstreams (a row in `workstreams` with no
   // agents/tasks/etc.) ARE worth tearing down — otherwise the bare
@@ -264,7 +264,7 @@ export async function cmdTeardown(
       `  tasks        : ${summary.taskCount}  (edges: ${summary.edgeCount}, notes: ${summary.noteCount}; kept)`,
     );
     console.log(
-      `  worktrees    : ${summary.worktreeCount}${summary.worktreeCount > 0 ? pc.dim(" (clean ones are removed; dirty ones are kept)") : ""}`,
+      `  worktrees    : ${summary.worktreeCount}${summary.worktreeCount > 0 ? pc.dim(" (kept: teardown never removes one)") : ""}`,
     );
     console.log(`  rev=${revision}`);
     console.log("");
@@ -290,32 +290,21 @@ export async function cmdTeardown(
   console.log(
     `  tasks        : ${summary.taskCount}  (edges: ${summary.edgeCount}, notes: ${summary.noteCount}; kept)`,
   );
-  console.log(`  worktrees    : ${summary.worktreeCount}`);
+  console.log(`  worktrees    : ${summary.worktreeCount} (kept)`);
   console.log("");
   console.log(
-    `Tore down ${pc.bold(workstream)}: killed mux=${result.killedMux}, agents=${result.deletedAgents}, worktrees=${result.freedWorktrees}/${summary.worktreeCount}${result.alreadyGoneWorktrees > 0 ? ` (${result.alreadyGoneWorktrees} already gone on disk)` : ""}; kept tasks=${result.tasks}, edges=${result.edges}, notes=${result.notes}`,
+    `Tore down ${pc.bold(workstream)}: killed mux=${result.killedMux}, agents=${result.deletedAgents}; kept tasks=${result.tasks}, edges=${result.edges}, notes=${result.notes}, worktrees=${result.keptWorktrees.length}`,
   );
-  for (const branch of result.keptBranches) {
-    console.log(`  kept unmerged commits on branch ${pc.bold(branch)}`);
-  }
-  if (result.failedWorktrees.length > 0) {
+  if (result.keptWorktrees.length > 0) {
     console.log("");
-    console.log(
-      pc.yellow(
-        `WARNING: ${result.failedWorktrees.length} worktree(s) were kept (uncommitted work is never deleted by teardown); their registry rows remain:`,
-      ),
+    console.log(pc.yellow("Worktrees are never removed by teardown; they are still registered:"));
+    for (const w of result.keptWorktrees) console.log(`  - ${w.agent}: ${w.path}`);
+    printNextSteps(
+      result.keptWorktrees.map((w) => ({
+        intent: `Close ${w.agent}'s worktree by the close rule (dirty refuses; --discard is lossy)`,
+        command: `mu agent close ${w.agent} -w ${workstream}`,
+      })),
     );
-    for (const f of result.failedWorktrees) {
-      console.log(`  - ${f.agent}: ${f.path}`);
-      console.log(`    ${f.error}`);
-    }
-    printNextSteps([
-      { intent: "Look at a kept worktree", command: "git -C <path> status --short" },
-      {
-        intent: "Throw one away (lossy)",
-        command: `mu agent close <agent> -w ${workstream} --discard`,
-      },
-    ]);
   }
 }
 
@@ -331,7 +320,7 @@ export async function cmdTeardown(
 // (`mu workstream list --torn-down` lists the groups). Without `--if` it
 // previews the set and prints the sweep revision; `--empty --if <rev>`
 // recomputes the revision (a member added, removed or changed refuses the
-// sweep), then tears each down with its own freshly read revision.
+// sweep), then tears each down with the revision it had in that snapshot.
 // Per-workstream teardown errors are accumulated into a `failed` array
 // so a single bad pane doesn't abort the rest of the cleanup. See
 // workstream_destroy_empty_sweep.
@@ -340,8 +329,6 @@ interface EmptyTeardownResult {
   workstreamName: string;
   killedMux: boolean;
   deletedAgents: number;
-  freedWorktrees: number;
-  alreadyGoneWorktrees: number;
 }
 
 interface EmptyDestroyFailure {
@@ -376,10 +363,12 @@ async function cmdTeardownEmpty(
     );
   }
   const empties = await listEmptyWorkstreams(db);
-  const revision = sweepRevision(
-    db,
-    empties.map((e) => e.name),
-  );
+  // One snapshot: the sweep revision is the hash of exactly these member
+  // revisions, and the apply below passes each member ITS snapshot revision,
+  // never a fresh one (a fresh read would bless a change made since the
+  // preview).
+  const snapshot = new Map(empties.map((e) => [e.name, workstreamRevision(db, e.name)]));
+  const revision = sweepRevision(snapshot);
 
   if (opts.if === undefined) {
     if (opts.json) {
@@ -440,18 +429,17 @@ async function cmdTeardownEmpty(
   const failed: EmptyDestroyFailure[] = [];
   for (const ws of empties) {
     try {
-      // The sweep is the one place mu computes and passes a revision
-      // itself: the set was just checked against the previewed revision.
+      // The member's snapshot revision, checked again inside its own
+      // commit transaction: a change made while an earlier member was being
+      // torn down refuses this one.
       const result = await teardownWorkstream(db, {
         workstream: ws.name,
-        ifRevision: workstreamRevision(db, ws.name),
+        ifRevision: snapshot.get(ws.name) ?? 0,
       });
       results.push({
         workstreamName: ws.name,
         killedMux: result.killedMux,
         deletedAgents: result.deletedAgents,
-        freedWorktrees: result.freedWorktrees,
-        alreadyGoneWorktrees: result.alreadyGoneWorktrees,
       });
     } catch (err) {
       // Best-effort sweep: log the failure and keep going. Every
@@ -566,7 +554,7 @@ export function wireWorkstreamCommands(program: Command): void {
   workstream
     .command("teardown [name]")
     .description(
-      "Tear down a workstream (soft): kill its mux session, free clean worktrees, delete its agent rows and mark it torn down; its tasks, edges and notes are kept. The target may be given positionally (matching `workstream init <name>`) or via -w. Without --if prints a preview with `rev=<n>`; apply with --if <n> (refused if the workstream changed since). With --empty, previews or sweeps every empty workstream (zero tasks/agents/worktrees) except scratch.",
+      "Tear down a workstream (soft): kill its mux session, delete its agent rows and mark it torn down; its tasks, edges and notes are kept; worktrees are never removed (use `mu agent close`). A live pane moved out of the session blocks it. The target may be given positionally (matching `workstream init <name>`) or via -w. Without --if prints a preview with `rev=<n>`; apply with --if <n> (refused if the workstream changed since). With --empty, previews or sweeps every empty workstream (zero tasks/agents/worktrees) except scratch.",
     )
     .option(...WORKSTREAM_OPT)
     .option("--if <rev>", "apply the preview with this revision", parseNonNegativeInt)

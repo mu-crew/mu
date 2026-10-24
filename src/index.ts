@@ -438,9 +438,10 @@ export {
   WorkstreamNameInvalidError,
   WorkstreamNameReservedError,
   type WorkstreamOptions,
+  WorkstreamPanesLiveError,
   WorkstreamRevisionMismatchError,
+  WorkstreamSessionLiveError,
   type WorkstreamSummary,
-  type WorktreeFailure,
   workstreamRevision,
 } from "./workstream.js";
 export {

@@ -21,8 +21,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **`workstream teardown` is soft and needs a preview revision.** Without
   a flag it prints counts and `rev=<n>` and writes nothing. `--if <n>` kills
-  the session first, frees worktrees by the close rule (a dirty one is kept,
-  never deleted), deletes the machine-local agent rows and sets
+  the session first, deletes the machine-local agent rows and sets
   `torn_down_at`, in one op group (`workstream.teardown`). Tasks, edges and
   notes stay and are hidden: every view, `list`, `state` and `-w` verb says
   `workstream <ws> is torn down (at <iso>)` (exit 3,
@@ -38,7 +37,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   plus older teardowns found in the ops log (those stay final). A peer's
   `torn_down_at` applies by LWW and its later task puts still apply.
   `teardownWorkstream` now requires `ifRevision`; its result reports kept
-  `tasks`/`notes`/`edges`.
+  `tasks`/`notes`/`edges`/`keptWorktrees`. Teardown **never removes a
+  worktree** (rows and directories stay; `mu agent close <agent>` applies the
+  close rule). It asks the mux about every registered pane id, not only the
+  session, and refuses (`WorkstreamPanesLiveError`, exit 4) while one outside
+  `mu-<ws>` lives; `init --if` over a torn-down name probes the session first
+  and refuses (`WorkstreamSessionLiveError`, exit 4) when it is alive or the
+  probe fails. The commit re-reads the whole revision inside its transaction,
+  and `--empty --if` applies each member's previewed revision (a member that
+  changed mid-sweep is reported in `failed`). The revision, torn-down, has-agents
+  and live-pane refusals are one stderr line that names the command
+  (`--json` keeps `nextSteps`).
 
 - **Local-write guards in the DB** (`CAPTURE_VERSION` 2). Three persistent
   triggers, each `WHEN applying = 0`: claim CAS (`owner_id` cannot move from

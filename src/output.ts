@@ -265,6 +265,9 @@ export interface ErrorJson {
  */
 export interface HasNextSteps {
   errorNextSteps(): NextStep[];
+  /** True when the message already names the command: the human path prints
+   *  the message alone (one line); `--json` keeps `nextSteps`. */
+  readonly inlineNext?: boolean;
 }
 
 /**
