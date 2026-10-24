@@ -35,6 +35,7 @@ function run(...toolCalls: ToolCall[]): RunMetrics {
     aborted: null,
     lastError: null,
     finalText: "",
+    events: [],
   };
 }
 

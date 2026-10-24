@@ -1,5 +1,5 @@
 // pi JSONL event stream (rpc mode) -> RunMetrics. Pure: no I/O.
-import type { Aborted, RunMetrics, ToolCall, Usage } from "./types.ts";
+import type { Aborted, LifecycleEvent, RunMetrics, ToolCall, Usage } from "./types.ts";
 
 /** A mu call is a bash command that runs `mu ...`, or the mu_delegate tool. */
 const MU_CMD = /(^|[\s;&|(`$])mu\s/;
@@ -49,6 +49,7 @@ export class MetricsCollector {
   private finalText = "";
   private settled = false;
   private activity: number;
+  private events: LifecycleEvent[] = [];
 
   private readonly now: () => number;
 
@@ -65,9 +66,17 @@ export class MetricsCollector {
     switch (type) {
       case "agent_start":
         this.settled = false;
+        this.mark("agent_start");
+        break;
+      case "agent_end":
+        this.mark("agent_end");
         break;
       case "agent_settled":
         this.settled = true;
+        this.mark("agent_settled");
+        break;
+      case "message_start":
+        this.onMessageStart(event.message);
         break;
       case "turn_end":
         this.turns++;
@@ -84,8 +93,25 @@ export class MetricsCollector {
     }
   }
 
+  private mark(kind: LifecycleEvent["kind"], rest: Partial<LifecycleEvent> = {}): void {
+    this.events.push({ t: this.now(), kind, ...rest });
+  }
+
+  /** A custom message (a delegate's delivery) entering the conversation. */
+  private onMessageStart(message: unknown): void {
+    if (!isRec(message) || message.role !== "custom") return;
+    this.mark("delegate_msg", {
+      name: String(message.customType ?? ""),
+      text: textOf(message.content),
+    });
+  }
+
   private onMessageEnd(message: unknown): void {
     if (!isRec(message) || message.role !== "assistant") return;
+    const blocks = Array.isArray(message.content) ? message.content : [];
+    const calls = blocks.some((b) => isRec(b) && b.type === "toolCall");
+    if (!calls && textOf(message.content) !== "")
+      this.mark("assistant_text", { text: textOf(message.content) });
     const u = message.usage;
     if (isRec(u)) {
       this.usage.input += num(u.input);
@@ -113,11 +139,13 @@ export class MetricsCollector {
     };
     this.calls.push(call);
     this.byId.set(id, call);
+    this.mark("tool_start", { id, name: call.name });
   }
 
   private onToolEnd(event: Rec): void {
     const call = this.byId.get(String(event.toolCallId ?? ""));
     if (!call) return;
+    this.mark("tool_end", { id: call.id, name: call.name });
     call.isError = event.isError === true;
     call.output = isRec(event.result) ? textOf(event.result.content) : "";
     call.durationMs = typeof event.durationMs === "number" ? event.durationMs : null;
@@ -128,6 +156,7 @@ export class MetricsCollector {
 
   /** The caller just sent a prompt: not settled until pi says so, and the quiet clock restarts. */
   markPrompted(): void {
+    this.mark("prompt");
     this.settled = false;
     this.activity = this.now();
   }
@@ -154,6 +183,7 @@ export class MetricsCollector {
       aborted: extra.aborted,
       lastError: this.lastError,
       finalText: this.finalText,
+      events: this.events.map((e) => ({ ...e })),
     };
   }
 }

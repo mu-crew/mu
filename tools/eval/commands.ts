@@ -330,8 +330,8 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           providerExt: FAUX_EXT,
           rep: 1,
           auTScript: script,
-          quietMs: 2000,
-          maxProds: 0,
+          quietMs: scenario.check?.quietMs ?? 2000,
+          maxProds: scenario.check?.maxProds ?? 0,
           log: join(scriptDir, `${id}.${label}.rpc.jsonl`),
         });
         const v = r.verdict;
