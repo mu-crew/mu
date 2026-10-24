@@ -504,7 +504,7 @@ describe("mu agent wait on a pi agent", () => {
 
   it("exits 5 on timeout while pi stays busy", async () => {
     await fakeExtension({ state: "busy", since: 1, runs: 0 });
-    const res = await runCli(["agent", "wait", "pia", "-w", WS, "--timeout", "1"], dbPath);
+    const res = await runCli(["agent", "wait", "pia", "-w", WS, "--timeout", "0.3"], dbPath);
     expect(process.exitCode).toBe(5);
     process.exitCode = undefined;
     expect(res.stdout).toContain("Timed out");
