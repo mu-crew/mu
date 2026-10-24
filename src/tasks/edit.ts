@@ -101,7 +101,7 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
 
       if (opts.blockedBy && opts.blockedBy.length > 0) {
         const requestedBlockers = opts.blockedBy.map((blocker) => {
-          const row = lookupEdgeTask(db, wsId, blocker);
+          const row = lookupEdgeTask(db, wsId, blocker, opts.workstream);
           if (row.workstream !== opts.workstream) {
             throw new CrossWorkstreamEdgeError(
               blocker,
@@ -227,7 +227,7 @@ function addBlocksEdges(
   const wsId = resolveWorkstreamId(db, workstream);
   const umbrellas = new Map<number, string>();
   for (const local of blocks) {
-    const row = lookupEdgeTask(db, wsId, local);
+    const row = lookupEdgeTask(db, wsId, local, workstream);
     if (row.workstream !== workstream) {
       throw new CrossWorkstreamEdgeError(input[0]?.id ?? local, workstream, local, row.workstream);
     }
@@ -257,7 +257,12 @@ function addBlocksEdges(
  *  same-ws preference, two tasks of the same local_id (one in this ws,
  *  one elsewhere) could silently bind to the wrong row
  *  (bug_v5_name_clash_silent_misroute). */
-function lookupEdgeTask(db: Db, wsId: number, localId: string): { id: number; workstream: string } {
+function lookupEdgeTask(
+  db: Db,
+  wsId: number,
+  localId: string,
+  workstream: string,
+): { id: number; workstream: string } {
   const row = (db
     .prepare(
       `SELECT t.id AS id, ws.name AS workstream FROM tasks t
@@ -272,7 +277,7 @@ function lookupEdgeTask(db: Db, wsId: number, localId: string): { id: number; wo
           WHERE t.local_id = ? LIMIT 1`,
       )
       .get(localId)) as { id: number; workstream: string } | undefined;
-  if (!row) throw new TaskNotFoundError(localId);
+  if (!row) throw new TaskNotFoundError(localId, workstream);
   return row;
 }
 

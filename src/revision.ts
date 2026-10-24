@@ -56,6 +56,8 @@ export function assertRevision(
   throw new RevisionMismatchError(ctx.subject, expected, current, ctx.previewCommand);
 }
 
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 interface TaskStateRow {
   id: number;
   local_id: string;
@@ -129,8 +131,15 @@ function derive(db: Db, workstream: string, only?: string): Map<string, number> 
   const out = new Map<string, number>();
   for (const [rowId, { row, blockers, dependents }] of byRow) {
     const { id: _rowid, ...fields } = row;
+    // Canonical edge order (endpoint id, then kind), so the hash never
+    // depends on the order SQLite returned the rows in.
+    const edgeList: [string, string][] = [
+      ...blockers.map((k): [string, string] => [k, "blocker"]),
+      ...dependents.map((k): [string, string] => [k, "dependent"]),
+    ];
+    edgeList.sort((x, y) => cmp(x[0], y[0]) || cmp(x[1], y[1]));
     const digest = createHash("sha256")
-      .update(JSON.stringify([fields, blockers.sort(), dependents.sort(), notes.get(rowId) ?? 0]))
+      .update(JSON.stringify([fields, edgeList, notes.get(rowId) ?? 0]))
       .digest();
     out.set(row.local_id, digest.readUIntBE(0, 6));
   }

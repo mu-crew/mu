@@ -30,6 +30,9 @@ export class TaskNotFoundError extends Error implements HasNextSteps {
   constructor(
     public readonly taskId: string,
     public readonly workstream?: string,
+    /** The id the candidates are matched against, when `taskId` is the
+     *  operator's qualified spelling (`ws/id`). Defaults to `taskId`. */
+    public readonly lookupId: string = taskId,
   ) {
     super(`no such task: ${taskId}`);
   }

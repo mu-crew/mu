@@ -25,7 +25,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **Task guards: `--if <rev>` and `candidate_ids`.** `mu task delete`, `block`,
   `unblock`, `reparent`, `claim` and `release` accept `--if <rev>`, the task's
   revision (derived from current state, never a counter: a hash of the task
-  row, its owner, every incoming and outgoing edge and its note count, so a
+  row, its owner, every incoming and outgoing edge (hashed in canonical order) and its note count, so a
   peer's synced edge, blocker delete or note moves it too; exact lookups, never
   LIKE, so `a_b` and `axb` do not collide; read after sync ingest, inside the
   verb's transaction). A stale one exits 4 with one line naming the fresh preview and
@@ -37,7 +37,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   sequential partial success. A wrong task id adds read-only `candidate_ids`
   from the given workstream only (case/`-`/`_`-folded, substring or a typo
   away), also on the unknown-id `delete` and `unblock` no-ops and on `note`,
-  `notes`, `update`, `tree` and `close` misses; nothing writes through a
+  `notes`, `update`, `tree`, `close` and `wait` misses and on `task add
+  --blocks`/`--blocked-by` misses; nothing writes through a
   candidate. Unknown `unblock`/`delete` ids stay no-ops. SDK: `taskRevision`,
   `RevisionMismatchError`, `ifRevision` on `deleteTask`/`claimTask`/`releaseTask`.
   Agent-side guards are a separate unit.
