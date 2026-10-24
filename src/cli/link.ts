@@ -1,14 +1,16 @@
 // mu — `mu link pi`: thin wrapper over src/link.ts.
 //
-// Touches no DB: linking is a filesystem install, so it runs outside
-// handle() (which opens the DB and runs ambient sync) and routes errors
+// Touches no DB, so it does not run through handle() (which opens the DB,
+// creating it on a fresh install, and runs ambient sync). It honours the
+// one part of the sync contract that is about the environment, not the
+// DB: the refusal when MU_DB_PATH sits inside MU_SYNC_DIR. Errors go
 // through the same emitError pipeline via emitParseError.
 
 import type { Command } from "commander";
 import { emitJson, JSON_OPT, UsageError } from "../cli.js";
 import { linkPi, linkSkill } from "../link.js";
 import { type NextStep, pc, printNextSteps } from "../output.js";
-import { emitParseError } from "./handle.js";
+import { emitParseError, refuseDbInsideSyncDir } from "./handle.js";
 
 export interface LinkCmdOptions {
   json?: boolean;
@@ -73,6 +75,7 @@ export function wireLinkCommand(program: Command): void {
     .action(function (target: string) {
       const cmd = this as Command;
       try {
+        refuseDbInsideSyncDir();
         cmdLink(target, cmd.opts() as LinkCmdOptions);
       } catch (err) {
         process.exit(emitParseError(err, cmd));

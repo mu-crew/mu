@@ -542,9 +542,10 @@ export interface HandleOptions {
 
 /** Refuse to open a DB that lives inside MU_SYNC_DIR. Runs before
  *  `openDb` for every verb, ambient or not, so nothing is created or
- *  written and `mu sync` cannot bypass it. Path-based: it fires even when
- *  the DB file does not exist yet. */
-function refuseDbInsideSyncDir(): void {
+ *  written and `mu sync` cannot bypass it. Path-based, symlinks resolved:
+ *  it fires even when the DB file does not exist yet. `mu link` (which
+ *  opens no DB, so it is outside handle()) calls it too. */
+export function refuseDbInsideSyncDir(): void {
   const dir = syncDir();
   if (dir === null) return;
   const dbPath = defaultDbPath();

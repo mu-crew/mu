@@ -6,10 +6,26 @@
 //      opened or written.
 //   3. A task put older than its workstream's delete cannot resurrect the
 //      parent (live apply and rebuild agree).
+//   4. Apply is order-independent: every arrival order of one op set gives
+//      the same rows as an HLC-order rebuild.
+//   5. A busy segment lock is reported, never silent; `mu doctor` counts
+//      the unpublished ops.
+//   6. The DB-inside-MU_SYNC_DIR refusal sees through symlinks and covers
+//      `mu link`.
 //
 // Fast tier: in-process runCli, per-test temp DBs and sync dir.
 
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -18,9 +34,12 @@ import type { Op } from "../src/apply.js";
 import { handle } from "../src/cli/handle.js";
 import { openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
+import { checkUnpublishedOps } from "../src/fleet-hazards.js";
 import { formatHlc } from "../src/hlc.js";
-import { applyIncomingOp } from "../src/segments.js";
+import { applyIncomingOp, flushSegment, localMachineId } from "../src/segments.js";
+import { ambientFlush } from "../src/sync.js";
 import { addTask } from "../src/tasks.js";
+import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { readRows } from "./_ro.js";
 import { runCli } from "./_runCli.js";
@@ -161,6 +180,7 @@ describe("a task put older than its workstream delete does not resurrect the par
     kind: "put" | "del",
     key: string,
     machineId = A,
+    payload?: Record<string, unknown>,
   ): Op => ({
     hlc: formatHlc({ wallMs: BASE + wall, counter: 0, machineId }),
     machineId,
@@ -170,7 +190,7 @@ describe("a task put older than its workstream delete does not resurrect the par
     entity,
     key,
     op: kind,
-    payload: kind === "put" ? JSON.stringify(putPayload(entity)) : "{}",
+    payload: kind === "put" ? JSON.stringify(payload ?? putPayload(entity)) : "{}",
   });
 
   const apply = (ops: Op[]) => {
@@ -222,5 +242,291 @@ describe("a task put older than its workstream delete does not resurrect the par
     } finally {
       db.close();
     }
+  });
+});
+
+// ─── (1) order-independent apply ──────────────────────────────────────
+
+describe("apply is order-independent: live == rebuild for EVERY arrival order", () => {
+  const A = "9f1c8a2e-0000-4000-8000-0000000000aa";
+  const B = "9f1c8a2e-0000-4000-8000-0000000000bb";
+  const BASE = 2_000_000_000_000;
+  const STAMP = "2033-05-18T03:33:20.000Z";
+  let seq = 0;
+  const op = (
+    wall: number,
+    entity: "workstream" | "task",
+    kind: "put" | "del",
+    key: string,
+    machineId: string,
+    payload: Record<string, unknown> = { created_at: STAMP, updated_at: STAMP, title: "T" },
+  ): Op => ({
+    hlc: formatHlc({ wallMs: BASE + wall, counter: 0, machineId }),
+    machineId,
+    groupId: `g-${++seq}`,
+    actor: "peer",
+    intent: null,
+    entity,
+    key,
+    op: kind,
+    payload: kind === "put" ? JSON.stringify(payload) : "{}",
+  });
+
+  const permutations = <T>(xs: readonly T[]): T[][] =>
+    xs.length <= 1
+      ? [[...xs]]
+      : xs.flatMap((x, i) =>
+          permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((rest) => [x, ...rest]),
+        );
+
+  const stateOf = (ops: Op[]) => {
+    const db = openDb({ path: join(tempDir, `perm-${++seq}.db`) });
+    try {
+      for (const o of ops) applyIncomingOp(db, o);
+      const drift = checkDrift(db);
+      return {
+        clean: drift.clean,
+        drift: drift.records,
+        workstreams: db.prepare("SELECT name, created_at FROM workstreams ORDER BY name").all(),
+        tasks: db
+          .prepare(
+            `SELECT w.name AS ws, t.local_id, t.title, t.impact FROM tasks t
+               JOIN workstreams w ON w.id = t.workstream_id ORDER BY 1, 2`,
+          )
+          .all(),
+      };
+    } finally {
+      db.close();
+    }
+  };
+
+  const sets: Record<string, { ops: Op[]; tasks: unknown[]; workstreams: number }> = {
+    "restore: ws put, task put, ws del, ws put (the refuter's four ops)": {
+      ops: [
+        op(1, "workstream", "put", "w", A, { created_at: STAMP }),
+        op(2, "task", "put", "w/a", B),
+        op(3, "workstream", "del", "w", A),
+        op(5, "workstream", "put", "w", B, { created_at: STAMP }),
+      ],
+      tasks: [],
+      workstreams: 1,
+    },
+    "fold-in: ws put, task put, ws del, task del": {
+      ops: [
+        op(1, "workstream", "put", "w", A, { created_at: STAMP }),
+        op(2, "task", "put", "w/a", B),
+        op(3, "workstream", "del", "w", A),
+        op(4, "task", "del", "w/a", B),
+      ],
+      tasks: [],
+      workstreams: 0,
+    },
+    "task del between two puts: only the newer put's fields survive": {
+      ops: [
+        op(1, "workstream", "put", "w", A, { created_at: STAMP }),
+        op(2, "task", "put", "w/a", B, {
+          title: "X",
+          impact: 70,
+          created_at: STAMP,
+          updated_at: STAMP,
+        }),
+        op(3, "task", "del", "w/a", A),
+        op(4, "task", "put", "w/a", B, { impact: 80, created_at: STAMP, updated_at: STAMP }),
+      ],
+      tasks: [{ ws: "w", local_id: "a", title: "a", impact: 80 }],
+      workstreams: 1,
+    },
+    "older task put from the first life does not leak into the restored workstream": {
+      ops: [
+        op(1, "workstream", "put", "w", A, { created_at: STAMP }),
+        op(2, "task", "put", "w/a", B, {
+          title: "old",
+          impact: 70,
+          created_at: STAMP,
+          updated_at: STAMP,
+        }),
+        op(3, "workstream", "del", "w", A),
+        op(4, "workstream", "put", "w", A, { created_at: STAMP }),
+        op(5, "task", "put", "w/a", B, { impact: 80, created_at: STAMP, updated_at: STAMP }),
+      ],
+      tasks: [{ ws: "w", local_id: "a", title: "a", impact: 80 }],
+      workstreams: 1,
+    },
+  };
+
+  for (const [name, set] of Object.entries(sets)) {
+    it(`${name}: every order agrees with rebuild and with each other`, () => {
+      const orders = permutations(set.ops);
+      expect(orders).toHaveLength(set.ops.length === 4 ? 24 : 120);
+      const bad: string[] = [];
+      let first: unknown;
+      for (const order of orders) {
+        const label = order
+          .map((o) => `${o.entity[0]}${o.op[0]}${Number(o.hlc.slice(0, 13)) - BASE}`)
+          .join(" ");
+        const s = stateOf(order);
+        if (!s.clean) bad.push(`${label}: drift ${JSON.stringify(s.drift)}`);
+        const view = { workstreams: s.workstreams, tasks: s.tasks };
+        first ??= view;
+        if (JSON.stringify(view) !== JSON.stringify(first)) {
+          bad.push(`${label}: ${JSON.stringify(view)} != ${JSON.stringify(first)}`);
+        }
+      }
+      expect(bad).toEqual([]);
+      const view = first as { workstreams: unknown[]; tasks: unknown[] };
+      expect(view.tasks).toEqual(set.tasks);
+      expect(view.workstreams).toHaveLength(set.workstreams);
+    });
+  }
+});
+
+// ─── (2) a busy segment lock is reported ──────────────────────────────
+
+describe("a busy segment lock is never silent", () => {
+  const holdSegmentLock = (stateDir: string, db: ReturnType<typeof openDb>): void => {
+    const lockName = createHash("sha256")
+      .update(`${syncDir}\u001f${localMachineId(db)}`)
+      .digest("hex")
+      .slice(0, 16);
+    const lockPath = join(stateDir, "locks", `segment-${lockName}.lock`);
+    mkdirSync(lockPath, { recursive: true });
+    writeFileSync(
+      join(lockPath, "meta.json"),
+      JSON.stringify({ pid: process.pid + 1, label: "other", acquiredAt: "" }),
+    );
+  };
+
+  it("ambientFlush says the ops publish on the next flush, and still returns lockBusy", async () => {
+    const db = openDb({ path: lap });
+    try {
+      addTask(db, { localId: "p", workstream: "demo", title: "P", impact: 50, effortDays: 1 });
+      const stateDir = join(tempDir, "state");
+      const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        holdSegmentLock(stateDir, db);
+        const r = await ambientFlush(db, { lockWaitMs: 0 });
+        expect(r?.lockBusy).toBe(true);
+      });
+      const written = err.mock.calls.map((c) => String(c[0])).join("");
+      expect(written).toContain(
+        "sync: segment locked by another mu; this op publishes on the next flush",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("quiet callers (the TUI tick) stay quiet", async () => {
+    const db = openDb({ path: lap });
+    try {
+      addTask(db, { localId: "p", workstream: "demo", title: "P", impact: 50, effortDays: 1 });
+      const stateDir = join(tempDir, "state");
+      const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        holdSegmentLock(stateDir, db);
+        await ambientFlush(db, { lockWaitMs: 0, quiet: true });
+      });
+      expect(err).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("mu doctor's unpublished-ops check counts ops missing from the own segment", async () => {
+    const db = openDb({ path: lap });
+    try {
+      addTask(db, { localId: "p", workstream: "demo", title: "P", impact: 50, effortDays: 1 });
+      expect(checkUnpublishedOps(db, undefined).severity).toBe("ok");
+      const pending = checkUnpublishedOps(db, syncDir);
+      expect(pending.severity).toBe("warn");
+      expect(pending.name).toBe("unpublished-ops");
+      expect(pending.detail).toMatch(/\d+ own op/);
+      await flushSegment(db, syncDir);
+      expect(checkUnpublishedOps(db, syncDir).severity).toBe("ok");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// ─── (3) the refusal sees through symlinks ────────────────────────────
+
+describe("the DB-inside-MU_SYNC_DIR refusal canonicalises both sides", () => {
+  const refused = async (db: string): Promise<void> => {
+    const r = await runCli(["sql", "SELECT 1"], db);
+    expect(r.exitCode, r.stderr).toBe(4);
+    expect(r.stderr).toContain("is inside MU_SYNC_DIR");
+    expect(existsSync(join(syncDir, "mu.db"))).toBe(false);
+    expect(segments()).toEqual([]);
+  };
+
+  it("a symlinked DB directory that points into the sync dir", async () => {
+    symlinkSync(syncDir, join(tempDir, "outside"));
+    await refused(join(tempDir, "outside", "mu.db"));
+  });
+
+  it("a symlinked MU_SYNC_DIR (the DB path is the real one)", async () => {
+    const link = join(tempDir, "link");
+    symlinkSync(syncDir, link);
+    process.env[SYNC_KEY] = link;
+    await refused(join(syncDir, "mu.db"));
+  });
+
+  it("a not-yet-existing subdirectory below a symlinked parent", async () => {
+    symlinkSync(syncDir, join(tempDir, "outside"));
+    await refused(join(tempDir, "outside", "fresh", "mu.db"));
+    expect(existsSync(join(syncDir, "fresh"))).toBe(false);
+  });
+
+  it("an existing DB file that is itself a symlink into the sync dir", async () => {
+    mkdirSync(join(tempDir, "local"));
+    const target = join(syncDir, "mu.db");
+    writeFileSync(target, "");
+    symlinkSync(target, join(tempDir, "local", "mu.db"));
+    const r = await runCli(["sql", "SELECT 1"], join(tempDir, "local", "mu.db"));
+    expect(r.exitCode, r.stderr).toBe(4);
+    expect(lstatSync(target).size).toBe(0);
+  });
+
+  it("a dangling symlink whose target would be created inside the sync dir", async () => {
+    mkdirSync(join(tempDir, "local"));
+    symlinkSync(join(syncDir, "mu.db"), join(tempDir, "local", "mu.db"));
+    const r = await runCli(["sql", "SELECT 1"], join(tempDir, "local", "mu.db"));
+    expect(r.exitCode, r.stderr).toBe(4);
+    expect(existsSync(join(syncDir, "mu.db"))).toBe(false);
+  });
+
+  it("a symlinked directory that points elsewhere is not refused", async () => {
+    const elsewhere = join(tempDir, "elsewhere");
+    mkdirSync(elsewhere);
+    symlinkSync(elsewhere, join(tempDir, "alias"));
+    const r = await runCli(["sql", "SELECT 1"], join(tempDir, "alias", "mu.db"));
+    expect(r.exitCode, r.stderr).toBeNull();
+  });
+});
+
+// ─── (4) mu link sits behind the same refusal ─────────────────────────
+
+describe("mu link refuses a DB inside MU_SYNC_DIR", () => {
+  it("exit 4, and nothing is installed", async () => {
+    const home = join(tempDir, "pihome");
+    mkdirSync(home);
+    await withEnv("MU_PI_HOME", home, async () => {
+      const r = await runCli(["link", "pi", "--skill-only"], join(syncDir, "mu.db"));
+      expect(r.exitCode, r.stderr).toBe(4);
+      expect(r.stderr).toContain("is inside MU_SYNC_DIR");
+      expect(existsSync(join(home, ".agents"))).toBe(false);
+    });
+  });
+
+  it("still installs when the DB is outside, and opens no DB", async () => {
+    const home = join(tempDir, "pihome");
+    mkdirSync(home);
+    await withEnv("MU_PI_HOME", home, async () => {
+      const r = await runCli(["link", "pi", "--skill-only"], lap);
+      expect(r.exitCode, r.stderr).toBeNull();
+      expect(existsSync(join(home, ".agents", "skills", "mu"))).toBe(true);
+      expect(existsSync(lap)).toBe(false);
+    });
   });
 });

@@ -13,10 +13,10 @@
 // The checks that need MU_SYNC_DIR read it if set and no-op otherwise,
 // so a single-machine install pays nothing.
 
-import { existsSync, statfsSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { existsSync, lstatSync, readlinkSync, realpathSync, statfsSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Db } from "./db.js";
-import { ownSegmentForeignLine } from "./segments.js";
+import { countUnpublishedOps, ownSegmentForeignLine } from "./segments.js";
 import { foreignVersionMessage } from "./sync.js";
 
 export type HazardSeverity = "ok" | "warn" | "fail";
@@ -67,16 +67,49 @@ export class DbInsideSyncDirError extends Error {
 // ─── (a) DB inside the sync dir ───────────────────────────────────────
 
 /**
+ * `path` with every EXISTING component resolved through symlinks, and the
+ * not-yet-existing tail appended verbatim. Nothing is created. A first
+ * run (no DB file, maybe no directory) therefore still canonicalises via
+ * its nearest existing ancestor, so a symlinked parent cannot hide a
+ * location inside the sync dir.
+ */
+export function canonicalPath(path: string, hops = 0): string {
+  const abs = resolve(path);
+  const tail: string[] = [];
+  let cur = abs;
+  for (;;) {
+    try {
+      return join(realpathSync(cur), ...tail);
+    } catch {
+      // A dangling link: opening it creates its target, so follow it.
+      try {
+        if (hops < 32 && lstatSync(cur).isSymbolicLink()) {
+          return join(canonicalPath(resolve(dirname(cur), readlinkSync(cur)), hops + 1), ...tail);
+        }
+      } catch {
+        // not a link either: plain missing
+      }
+      // Missing: resolve the parent and re-append.
+      const parent = dirname(cur);
+      if (parent === cur) return abs;
+      tail.unshift(basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/**
  * True iff `child` is inside `parent` (or is `parent`).
  *
- * Path-based, deliberately: the check must fire even when the DB file
- * does not exist yet, so it cannot rely on stat/inode identity. Both
- * sides are resolved to absolute form first, and a separator is appended
- * so `/sync-data` does not read as the parent of `/sync-database`.
+ * Both sides are canonicalised (symlinks resolved through the nearest
+ * existing ancestor) and the check stays path-based: it must fire even
+ * when the DB file does not exist yet, so it cannot rely on inode
+ * identity. A separator is appended so `/sync-data` does not read as the
+ * parent of `/sync-database`.
  */
 export function isPathInside(child: string, parent: string): boolean {
-  const c = resolve(child);
-  const p = resolve(parent);
+  const c = canonicalPath(child);
+  const p = canonicalPath(parent);
   if (c === p) return true;
   return c.startsWith(p.endsWith(sep) ? p : p + sep);
 }
@@ -453,4 +486,32 @@ export function checkCloseGuards(db: Db): FleetHazard[] {
       'A peer merged the close without its evidence note. Per listed task: `mu task open <ws>/<id>`, then `mu task close <ws>/<id> --evidence "<command + result>"` (close its open blockers first).',
     ),
   ];
+}
+
+// ─── (f) own ops not yet in the own segment ───────────────────────────
+
+/**
+ * Own synced ops that never reached this machine's segment: a flush gave
+ * up on a busy lock (it prints one line and exits 0), the segment is
+ * read-only (newer mu), or the sync dir was unwritable. Peers cannot see
+ * these ops until a flush appends them. Not in `checkFleetHazards`: it
+ * reads the segment tail, which the TUI's per-tick summary must not do.
+ */
+export function checkUnpublishedOps(db: Db, syncDir: string | undefined): FleetHazard {
+  if (syncDir === undefined || syncDir.trim() === "") {
+    return { name: "unpublished-ops", severity: "ok", detail: "MU_SYNC_DIR not set" };
+  }
+  const n = countUnpublishedOps(db, syncDir);
+  if (n === 0) {
+    return { name: "unpublished-ops", severity: "ok", detail: "every own op is in the segment" };
+  }
+  return {
+    name: "unpublished-ops",
+    severity: "warn",
+    detail: `${n} own op(s) not yet in this machine's segment; peers cannot see them`,
+    remediation: [
+      "Run `mu sync`: it flushes the backlog. If it reports the segment as locked,",
+      "another mu process holds the lock (a stale one is broken after 30s).",
+    ],
+  };
 }

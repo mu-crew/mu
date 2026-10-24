@@ -43,6 +43,7 @@ import {
   checkCloseGuards,
   checkFleetHazards,
   checkSegmentVersion,
+  checkUnpublishedOps,
   type FleetHazard,
   HazardFailError,
 } from "../fleet-hazards.js";
@@ -275,6 +276,7 @@ export async function cmdDoctor(
   const fleet = [
     ...checkFleetHazards(db, { dbPath: defaultDbPath() }),
     checkSegmentVersion(db, process.env.MU_SYNC_DIR),
+    checkUnpublishedOps(db, process.env.MU_SYNC_DIR),
   ];
   let sawHazard = printHazards(fleet);
 
@@ -556,6 +558,7 @@ export async function cmdDoctorJson(
   const hazards = [
     ...checkFleetHazards(db, { dbPath: defaultDbPath() }),
     checkSegmentVersion(db, process.env.MU_SYNC_DIR),
+    checkUnpublishedOps(db, process.env.MU_SYNC_DIR),
   ].map((h) => ({
     name: h.name,
     severity: h.severity,

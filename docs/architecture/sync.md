@@ -140,8 +140,14 @@ every verb.
   this machine's history depend on the exit code.
 - **Refuse a DB inside `MU_SYNC_DIR`, before `openDb`.** `handle()`
   throws `DbInsideSyncDirError` (exit 4) for every verb, ambient or not,
-  so nothing is created or written. The check is path-based and runs
-  without the DB file existing.
+  so nothing is created or written. The check is path-based, resolves
+  symlinks on both sides (through the nearest existing ancestor, so a
+  first run is covered; a dangling link is followed), and runs without
+  the DB file existing. `mu link` opens no DB but calls the same check.
+- **A busy segment lock is never silent.** When the flush cannot take the
+  lock within 2 s it writes nothing, prints `mu: sync: segment locked by
+  another mu; this op publishes on the next flush` and the verb still
+  exits 0. `mu doctor` reports the backlog as `unpublished-ops`.
 
 `src/sync.ts` holds `ambientIngest`, `ambientFlush`, `ambientSyncPass`,
 `peerStatuses`, `ingestFromDb` (`mu sync --from <path>`) and
@@ -154,10 +160,30 @@ peer's segment and of every conflict copy of it.
 | Surface | Behaviour | Why |
 | --- | --- | --- |
 | `MU_SYNC_DIR` unset | one `if` on one env var; no filesystem touch | the single-machine case pays nothing (measured: baseline; about 3ms with one peer) |
+| `mu link` | outside `handle()`: opens no DB (a fresh install would create one), so no ingest or flush; it still refuses a DB inside `MU_SYNC_DIR` | a pure filesystem install |
 | `mu sync` | the only verb that opts out (`handle(..., { ambientSync: false })`); runs the pass itself, flush then ingest | otherwise the report prints "ingested 0" right after ingesting |
 
 `mu sql` is not a carve-out: it ingests before the query, so a read sees
 fresh state and nothing lands mid-query, and flushes its writes after.
+
+## Order-independent apply
+
+Convergence means live state equals an HLC-order `rebuild` for every
+arrival order of the same op set. `src/apply.ts` gets there with two
+symmetric rules:
+
+- **A put older than a tombstone covering it is dead, row or no row.**
+  The tombstone is the key's own `del` or its workstream's (`taskHorizon`).
+  Every put path asks it, including the update of a row a newer put
+  created, so a dead life's fields cannot leak into the restored row.
+- **A workstream or task `del` wipes its subtree, then replays the puts
+  newer than it** (`applyContainerDel`). That is what rebuild does, so it
+  no longer matters whether those puts arrived before the delete. With
+  nothing older to wipe the delete is a no-op; a workstream restored by a
+  newer put keeps its row (machine-local agents hang off it).
+
+`test/sync-contract.test.ts` shuffles op sets through every arrival order
+and asserts the same rows and a clean `checkDrift` for each.
 
 ## Out-of-order arrival
 
@@ -186,7 +212,8 @@ days later.
 
 ## Mixed-fleet hazards
 
-`src/fleet-hazards.ts` adds three checks to the default `mu doctor`,
+`src/fleet-hazards.ts` adds three checks to the default `mu doctor`
+(and `mu doctor` adds `segment-version` and `unpublished-ops`),
 all no-ops when `MU_SYNC_DIR` is unset:
 
 | Check | Severity |

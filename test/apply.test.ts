@@ -396,13 +396,20 @@ describe("applyOp", () => {
       expect(task("demo/t1")).toBeUndefined();
     });
 
-    it("put then OLDER del -> del LOSES, row stays alive", () => {
+    it("put then OLDER del -> row stays alive, but only the newer put's fields survive", () => {
+      // The delete sits BETWEEN the seed and the newer put in HLC order.
+      // Rebuild replays seed, del, put, so the row the put re-creates
+      // carries only the put's fields. Live apply must land on the same
+      // row whichever arrived first (a del that "loses" outright left the
+      // seed's title behind: live != rebuild).
       seedLocalTask("t1");
       ingest(put(5000));
       const r = ingest(del(1000));
-      expect(r).toMatchObject({ changed: false, skipped: "older-than-current" });
+      expect(r.changed).toBe(true);
       expect(task("demo/t1")).toBeDefined();
       expect(task("demo/t1")?.impact).toBe(77);
+      // The seed's title ("title t1") belongs to the life the del ended.
+      expect(task("demo/t1")?.title).toBe("t1");
     });
 
     it("del then OLDER put -> put LOSES, row stays deleted", () => {

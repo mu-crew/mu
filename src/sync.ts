@@ -388,8 +388,9 @@ export async function ambientIngest(db: Db, opts?: AmbientOptions): Promise<Ambi
  * two concurrent mu processes cannot interleave partial lines. A flush
  * with nothing to append skips the lock, so read-only verbs never queue.
  * A flush that cannot take the lock within AMBIENT_FLUSH_LOCK_WAIT_MS
- * writes nothing (`lockBusy`) and the verb carries on silently: its ops
- * stay pending in `ops` and the next invocation's flush appends them.
+ * writes nothing (`lockBusy`) and the verb carries on (exit 0) after one
+ * stderr line: its ops stay pending in `ops` and the next invocation's
+ * flush appends them. `mu doctor` reports the backlog (`unpublished-ops`).
  */
 export async function ambientFlush(
   db: Db,
@@ -407,6 +408,9 @@ export async function ambientFlush(
       );
     }
     if (result.foreignVersionAt !== null) warn(foreignVersionMessage(result), opts);
+    if (result.lockBusy === true) {
+      warn("segment locked by another mu; this op publishes on the next flush", opts);
+    }
     return result;
   } catch (err) {
     warn(err instanceof Error ? err.message : String(err), opts);
