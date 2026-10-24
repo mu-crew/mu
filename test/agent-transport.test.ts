@@ -310,6 +310,43 @@ describe("sendViaTransport", () => {
     expect(env.message).toContain((received[0] as { msgId: string }).msgId);
   });
 
+  // No path may send a side-effecting request twice (reviewer mutant 6: a
+  // retry inside ctlRequestFor). Counted on the wire, per op, for every
+  // verb that writes: send, fresh, command (/new, /reload, /compact).
+  it.each([
+    ["plain send", "hello", {}, "send"],
+    ["--steer", "hello", { mode: "steer" as const }, "send"],
+    ["--fresh", "hello", { fresh: true }, "fresh"],
+    ["/new", "/new", {}, "command"],
+    ["/compact x", "/compact x", {}, "command"],
+  ])(
+    "%s that gets no reply is written exactly ONCE (never retried)",
+    async (_n, text, extra, op) => {
+      seed("worker-1");
+      await serveSilentOn(op, false);
+      const err = await sendToAgent(db, "worker-1", text, { workstream: "auth", ...extra }).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(AgentSendIndeterminateError);
+      expect(received.filter((r) => r.op === op)).toHaveLength(1);
+      // the only other traffic is the single receipt probe (a session command carries no msgId)
+      expect(received.filter((r) => r.op === "status").length).toBeLessThanOrEqual(1);
+      expect(received.filter((r) => r.op !== op && r.op !== "status")).toEqual([]);
+    },
+  );
+
+  it("a session command's indeterminate error carries no msgId and points at reading the pane", async () => {
+    seed("worker-1");
+    await serveSilentOn("command", false);
+    const err = await sendToAgent(db, "worker-1", "/compact", { workstream: "auth" }).catch(
+      (e: unknown) => e,
+    );
+    expect((err as AgentSendIndeterminateError).msgId).toBeUndefined();
+    expect((err as AgentSendIndeterminateError).errorNextSteps().map((s) => s.command)).toEqual([
+      "mu agent read worker-1 -w auth -n 20",
+    ]);
+  });
+
   it("an indeterminate send on a vanished pane is still AgentPaneDeadError", async () => {
     seed("worker-1");
     paneAlive = false;

@@ -244,6 +244,20 @@ gitDescribe("spawn --worktree", () => {
     expect(call?.[call.indexOf("-c") + 1]).toBe(path);
   });
 
+  it("records the command and its source on the worktree path too (the finalize UPDATE)", async () => {
+    const agent = await spawn("worker-1", { cli: "helper", command: "pi-meta --x" });
+    const row = db
+      .prepare("SELECT command, command_source AS src FROM agents WHERE name = 'worker-1'")
+      .get();
+    expect(row).toEqual({ command: "pi-meta --x", src: "explicit" });
+    expect(agent).toMatchObject({ command: "pi-meta --x", commandSource: "explicit" });
+    const plain = await spawn("worker-2");
+    expect(plain).toMatchObject({ command: "pi", commandSource: "cli-key" });
+    expect(
+      db.prepare("SELECT command, command_source AS src FROM agents WHERE name = 'worker-2'").get(),
+    ).toEqual({ command: "pi", src: "cli-key" });
+  });
+
   it("--from starts at that ref", async () => {
     const first = gitIn(root, "rev-parse", "HEAD");
     commitFileIn(root, "later.txt", "later");
