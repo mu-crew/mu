@@ -1,3 +1,5 @@
+> Superseded by [v2](baseline-3.13.3-v2.md): this run's scoring had five harness artifacts (delegate token, discard parse, send before claim, fixture origin, host PATH).
+
 | Scenario | Surface | Model | Completed | Mean tokens | Mean mu calls | Mean mu errors | Wrong | Destructive | Prods | Aborted |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | api_outage_resume | 3.13.3 | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 190389 | 10.0 | 0.0 | 0 | 2 | 0 | 0 |
