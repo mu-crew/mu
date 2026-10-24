@@ -23,10 +23,27 @@ import { TASK_SUBSTATES, type TaskStatus, type TaskSubstate } from "./status.js"
 
 export class TaskNotFoundError extends Error implements HasNextSteps {
   override readonly name = "TaskNotFoundError";
-  constructor(public readonly taskId: string) {
+  /** Near ids from the SAME workstream (`candidateTaskIds`), read-only
+   *  suggestions: filled by `handle()` after the miss, never used to write. */
+  candidateIds: readonly string[] = [];
+  /** `workstream` is the partition the exact lookup missed in, when known. */
+  constructor(
+    public readonly taskId: string,
+    public readonly workstream?: string,
+  ) {
     super(`no such task: ${taskId}`);
   }
   errorNextSteps(): NextStep[] {
+    if (this.workstream !== undefined) {
+      const ws = this.workstream;
+      return [
+        ...this.candidateIds.map((id) => ({
+          intent: `Did you mean ${id}? (read-only)`,
+          command: `mu task show ${id} -w ${ws}`,
+        })),
+        { intent: "List tasks in workstream", command: `mu task list -w ${ws}` },
+      ];
+    }
     // v5: tasks.workstream (TEXT) was replaced by tasks.workstream_id
     // (FK → workstreams.id). The pre-v5 recipe SELECTed a column that
     // no longer exists and crashed at runtime — and this is THE first

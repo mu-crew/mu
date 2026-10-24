@@ -22,6 +22,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Task guards: `--if <rev>` and `candidate_ids`.** `mu task delete`, `block`,
+  `unblock`, `reparent`, `claim` and `release` accept `--if <rev>`, the task's
+  revision (newest op under its exact task, note and edge keys; never LIKE, so
+  `a_b` and `axb` do not collide; read after sync ingest, inside the verb's
+  transaction). A stale one exits 4 with one line naming the fresh preview and
+  writes nothing; `--json` carries top-level `expected_rev` / `current_rev`.
+  `task show --json` has `task.revision`, `task list --json` a `revision` per
+  item. A `task delete` preview prints `rev` and hints `--if <rev>`; `--yes`
+  still applies. A multi-blocker `block`/`unblock` under `--if` is one fence and
+  one transaction (a failing batch rolls back); without `--if` it keeps its
+  sequential partial success. A wrong task id adds read-only `candidate_ids`
+  from the given workstream only (case/`-`/`_`-folded, substring or a typo
+  away), also on the unknown-id `delete` no-op; nothing writes through a
+  candidate. Unknown `unblock`/`delete` ids stay no-ops. SDK: `taskRevision`,
+  `RevisionMismatchError`, `ifRevision` on `deleteTask`/`claimTask`/`releaseTask`.
+  Agent-side guards are a separate unit.
+
 - **Task mutations: batch add, `--blocks`, note aliases, insert-only note
   kinds.** `mu task add [ids...] -t <title> [-t …]` creates several tasks in
   one op group and transaction (one `-t` per id, or ids derived from the

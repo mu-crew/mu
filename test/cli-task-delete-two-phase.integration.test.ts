@@ -79,9 +79,10 @@ describe("mu task delete (two-phase)", () => {
       dryRun: true,
       present: true,
     });
-    expect(payload.nextSteps.some((s) => s.command === "mu task delete b -w test --yes")).toBe(
-      true,
-    );
+    // The apply hint carries the preview revision (README: destructive moves carry --if).
+    expect(
+      payload.nextSteps.some((s) => /^mu task delete b -w test --if \d+$/.test(s.command)),
+    ).toBe(true);
     // Verify nothing changed.
     const check = openDb({ path: dbPath });
     expect(getTask(check, "b", "test")).toBeDefined();
@@ -161,7 +162,7 @@ describe("mu task delete (two-phase)", () => {
     expect(r.stdout).toContain("Would delete");
     expect(r.stdout).toContain("b");
     expect(r.stdout).toContain("dry-run");
-    expect(r.stdout).toContain("--yes");
+    expect(r.stdout).toMatch(/--if \d+/);
   });
 
   it("human card on `--yes` prints `Deleted`", async () => {

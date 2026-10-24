@@ -243,6 +243,12 @@ export {
   reconcile,
 } from "./reconcile.js";
 export {
+  assertRevision,
+  RevisionMismatchError,
+  taskRevision,
+  taskRevisions,
+} from "./revision.js";
+export {
   applyIncomingOp,
   discoverPeers,
   type FlushResult,

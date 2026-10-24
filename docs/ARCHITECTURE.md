@@ -155,6 +155,7 @@ are re-export hubs.
 | `src/tracks.ts` | union-find tracks with diamond merge |
 | `src/dag.ts` | `loadFullDag`, `renderForest`, `renderTaskTree` for `mu task tree` |
 | `src/workstream-scope.ts` | the one never-trimming validator for a workstream name typed as scope (`-w`, a ref prefix, a record's `workstream`); shared by the CLI and the pi extension |
+| `src/revision.ts` | task revision (`taskRevision`: newest op seq under the task's exact task, note and edge keys; no LIKE), `RevisionMismatchError`, `withTaskFence` (one `--if` check around a whole invocation); agents are planned |
 | `src/workstream.ts` | ensure, list, summarize, revision, soft teardown, reuse of a torn-down name |
 | `src/vcs/git.ts` | git primitives (plain functions, git only): toplevel, `worktree add --detach` / remove, dirty files, the upstream ref set, `isAncestor`, `createBranch` |
 | `src/worktree.ts` | per-agent worktrees: `createWorktree`, `removeWorktree`, `worktreeState`, the machine-local `worktrees` registry (outlives the agent; the reaper never touches it), the one close rule (`releaseWorktree`), name reuse (`reclaimWorktreePath`); `WorktreeDirtyError`, `WorktreePathNotEmptyError`, `WorktreeVcsRequiredError` |

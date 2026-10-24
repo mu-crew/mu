@@ -53,7 +53,13 @@ import { dispatchHint, nextDispatchHint } from "../dispatch-hints.js";
 export async function cmdTaskRelease(
   db: Db,
   rawId: string,
-  opts: { reopen?: boolean; evidence?: string; workstream?: string; json?: boolean },
+  opts: {
+    reopen?: boolean;
+    evidence?: string;
+    workstream?: string;
+    json?: boolean;
+    if?: number;
+  },
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
@@ -62,6 +68,7 @@ export async function cmdTaskRelease(
     reopen: opts.reopen ?? false,
     workstream: ws,
   };
+  if (opts.if !== undefined) sdkOpts.ifRevision = opts.if;
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
   const r = releaseTask(db, localId, sdkOpts);
@@ -99,6 +106,7 @@ export async function cmdClaim(
     workstream?: string;
     json?: boolean;
     force?: boolean;
+    if?: number;
   },
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
@@ -145,6 +153,7 @@ export async function cmdClaim(
   const sdkOpts: Parameters<typeof claimTask>[2] = { workstream: ws };
   if (forName !== undefined) sdkOpts.agentName = forName;
   if (opts.force) sdkOpts.force = true;
+  if (opts.if !== undefined) sdkOpts.ifRevision = opts.if;
   if (forWorkstream !== undefined) sdkOpts.agentWorkstream = forWorkstream;
   if (opts.self) sdkOpts.self = true;
   if (opts.actor !== undefined) sdkOpts.actor = opts.actor;
