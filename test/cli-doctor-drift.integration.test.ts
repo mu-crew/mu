@@ -137,6 +137,7 @@ describe("mu doctor — drift + fleet checks", () => {
       "name-case",
       "segment-version",
       "unpublished-ops",
+      "orphaned-agents",
     ]);
     expect(parsed.remediation.length).toBeGreaterThan(0);
   });

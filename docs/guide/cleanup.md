@@ -21,7 +21,11 @@ mu workstream teardown auth --if <n>    # apply that preview
 
 Teardown is soft. It kills the tmux session first, then deletes the
 agent rows and marks the workstream torn down. It refuses (exit 4) while
-a registered pane is still alive outside the session. Its tasks, edges,
+a registered pane is still alive outside the session. A pane that comes
+alive after the kill (moved while it ran) keeps its agent row, and the
+output says `KEPT`; `mu agent close <agent> -w auth` removes the row once
+the pane is gone, and refuses (exit 4) while it lives. `mu doctor` lists
+such rows as `orphaned-agents`. Its tasks, edges,
 and notes stay but every view and `-w auth` verb hides them (exit 3,
 "workstream auth is torn down"). Teardown never removes a worktree: each
 stays on disk and registered, and the output names

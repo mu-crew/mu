@@ -25,6 +25,7 @@ import {
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
+  AgentPaneStillAliveError,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
@@ -377,9 +378,14 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["teardown ws"],
   },
   {
-    error: new WorkstreamHasAgentsError("ws", 2),
+    error: new WorkstreamHasAgentsError("ws", ["w1", "w2"]),
     label: "WorkstreamHasAgentsError",
-    expectedTokens: ["teardown ws"],
+    expectedTokens: ["agent close w1 -w ws"],
+  },
+  {
+    error: new AgentPaneStillAliveError("alice", "auth", "%3", true),
+    label: "AgentPaneStillAliveError",
+    expectedTokens: ["agent close alice -w auth"],
   },
   {
     error: new WorkstreamPanesLiveError("ws", ["w1"]),

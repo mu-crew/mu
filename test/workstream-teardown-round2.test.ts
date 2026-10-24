@@ -7,19 +7,22 @@
 //   worktree_retention   teardown removes no worktree and leaves its row
 //   error_lines          the refusals are ONE stderr line
 
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { insertAgent } from "../src/agents.js";
+import { AgentPaneStillAliveError, closeAgent, insertAgent } from "../src/agents.js";
 import { cmdTeardown } from "../src/cli/workstream.js";
+import { ctlSocketPath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
+import { checkOrphanedAgents } from "../src/fleet-hazards.js";
 import { MuxError } from "../src/mux.js";
 import { addTask } from "../src/tasks/edit.js";
 import {
   ensureWorkstream,
   reinitWorkstream,
   sweepRevision,
+  WorkstreamHasAgentsError,
   WorkstreamPanesLiveError,
   WorkstreamRevisionMismatchError,
   WorkstreamSessionLiveError,
@@ -169,10 +172,11 @@ describe("moved_panes: liveness is the registered pane id, not session membershi
     expect(tornDownAt("ws")).not.toBeNull();
   });
 
-  it("a pane inside the session is covered by the kill and is not probed by id", async () => {
-    use(tmux({ session: { ...OK, stdout: "@1\t%3\tpi\n" }, paneProbe: DENIED }));
+  it("a pane inside the session is probed AFTER the kill; dead means its row goes", async () => {
+    use(tmux({ session: { ...OK, stdout: "@1\t%3\tpi\n" }, alive: [] }));
     const r = await softTeardown(db, "ws");
     expect(r.killedMux).toBe(true);
+    expect(r.orphanedAgents).toEqual([]);
     expect(agentNames()).toEqual([]);
   });
 
@@ -376,5 +380,178 @@ describe("error_lines: each refusal is one stderr line (--json keeps nextSteps)"
       nextSteps: { command: string }[];
     };
     expect(env.nextSteps.map((n) => n.command)).toEqual(["mu workstream teardown ws"]);
+  });
+});
+
+// ─── round 3: the row rule ─────────────────────────────────────────────
+//
+//   a row is deleted only when its recorded pane is known dead, asked by
+//   pane id AFTER the kill and per row; otherwise it is kept (orphaned).
+//   `agent close` acts on rows of torn-down workstreams, or refuses loudly.
+
+/** tmux where `%pane` is alive only AFTER the session kill (moved during it). */
+function movedDuringKill(pane: string, sessionPanes = "@1\t%1\t_mu\n"): MuxExecutor {
+  let killed = false;
+  return async (args) => {
+    if (args[0] === "list-panes") return { ...OK, stdout: sessionPanes };
+    if (args[0] === "kill-session") {
+      killed = true;
+      return OK;
+    }
+    if (args[0] === "display-message") {
+      return args[2] === pane && killed ? { ...OK, stdout: `${pane}\n` } : GONE_PANE;
+    }
+    return { stdout: "", stderr: `unmocked: ${args.join(" ")}`, exitCode: 1 };
+  };
+}
+const sockFile = (agent: string): string => {
+  const p = ctlSocketPath("ws", agent, dir);
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, "");
+  return p;
+};
+
+describe("move_during_kill: a pane that comes alive after the session kill keeps its row", () => {
+  it("the moved pane's row, socket and agent survive; the workstream is still marked torn down; the dead one goes", async () => {
+    seed("ws");
+    insertAgent(db, { name: "racer", workstream: "ws", paneId: "%5" });
+    insertAgent(db, { name: "gone", workstream: "ws", paneId: "%6" });
+    const racerSock = sockFile("racer");
+    const goneSock = sockFile("gone");
+    use(movedDuringKill("%5"));
+    const r = await softTeardown(db, "ws");
+    expect(r.killedMux).toBe(true);
+    expect(r.deletedAgents).toBe(1);
+    expect(r.orphanedAgents).toEqual([{ name: "racer", paneId: "%5", reason: "alive" }]);
+    expect(agentNames()).toEqual(["racer"]);
+    expect(existsSync(racerSock)).toBe(true);
+    expect(existsSync(goneSock)).toBe(false);
+    expect(tornDownAt("ws")).not.toBeNull();
+  });
+
+  it("a probe that fails after the kill keeps the row too (unknown is not dead)", async () => {
+    seed("ws");
+    insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1" });
+    let killed = false;
+    use(async (args) => {
+      if (args[0] === "list-panes") return LIVE_SESSION;
+      if (args[0] === "kill-session") {
+        killed = true;
+        return OK;
+      }
+      if (args[0] === "display-message") return killed ? DENIED : GONE_PANE;
+      return { stdout: "", stderr: "unmocked", exitCode: 1 };
+    });
+    const r = await softTeardown(db, "ws");
+    expect(r.orphanedAgents).toEqual([{ name: "w1", paneId: "%1", reason: "unknown" }]);
+    expect(agentNames()).toEqual(["w1"]);
+  });
+
+  it("the CLI reports the kept row in one block and names `mu agent close`", async () => {
+    seed("ws");
+    insertAgent(db, { name: "racer", workstream: "ws", paneId: "%5" });
+    use(movedDuringKill("%5"));
+    const rev = workstreamRevision(db, "ws");
+    const r = await run("workstream", "teardown", "ws", "--if", String(rev));
+    expect(r.exitCode).toBeNull();
+    expect(r.stdout).toContain("KEPT 1 agent row(s)");
+    expect(r.stdout).toContain("racer (%5)");
+    expect(r.stdout).toContain("mu agent close racer -w ws");
+  });
+
+  it("doctor warns about the kept row", async () => {
+    seed("ws");
+    insertAgent(db, { name: "racer", workstream: "ws", paneId: "%5" });
+    use(movedDuringKill("%5"));
+    expect(checkOrphanedAgents(db).severity).toBe("ok");
+    await softTeardown(db, "ws");
+    const h = checkOrphanedAgents(db);
+    expect(h).toMatchObject({ name: "orphaned-agents", severity: "warn" });
+    expect(h.detail).toContain("ws/racer (%5)");
+    expect((h.remediation ?? []).join("\n")).toContain("mu agent close");
+  });
+});
+
+describe("peer_close: `agent close` acts on rows of a torn-down workstream, or refuses loudly", () => {
+  const peerTorn = (): void => {
+    seed("ws");
+    insertAgent(db, { name: "mw", workstream: "ws", paneId: "%2" });
+    tearDownLocally("ws"); // a peer's torn_down_at reached this machine
+  };
+  const alive =
+    (pane: string): MuxExecutor =>
+    async (args) => {
+      if (args[0] === "kill-pane") return OK; // the move/kill did not stop it
+      if (args[0] === "display-message")
+        return args[2] === pane ? { ...OK, stdout: `${pane}\n` } : GONE_PANE;
+      return { stdout: "", stderr: "unmocked", exitCode: 1 };
+    };
+
+  it("a live pane: refuses (AgentPaneStillAliveError), keeps the row", async () => {
+    peerTorn();
+    use(alive("%2"));
+    await expect(closeAgent(db, "mw", { workstream: "ws" })).rejects.toBeInstanceOf(
+      AgentPaneStillAliveError,
+    );
+    expect(agentNames()).toEqual(["mw"]);
+  });
+
+  it("an unanswerable probe in a torn-down workstream refuses too", async () => {
+    peerTorn();
+    use(async (args) => (args[0] === "kill-pane" ? OK : DENIED));
+    await expect(closeAgent(db, "mw", { workstream: "ws" })).rejects.toBeInstanceOf(
+      AgentPaneStillAliveError,
+    );
+    expect(agentNames()).toEqual(["mw"]);
+  });
+
+  it("a dead pane: the row is deleted (it was invisible before)", async () => {
+    peerTorn();
+    use(tmux({}));
+    const r = await closeAgent(db, "mw", { workstream: "ws" });
+    expect(r.deletedRow).toBe(true);
+    expect(agentNames()).toEqual([]);
+  });
+
+  it("the worktree is NOT released while the recorded pane lives", async () => {
+    peerTorn();
+    // directory already gone: the close rule would release it, so only the live pane stops it
+    const path = join(dir, "worktrees", "ws", "mw");
+    registerWorktree(db, {
+      path,
+      agent: "mw",
+      workstream: "ws",
+      root: dir,
+      base: "abc",
+      createdAt: "t",
+    });
+    db.prepare("UPDATE agents SET cwd = ? WHERE name = 'mw'").run(path);
+    use(alive("%2"));
+    await expect(closeAgent(db, "mw", { workstream: "ws" })).rejects.toBeInstanceOf(
+      AgentPaneStillAliveError,
+    );
+    expect(listWorktrees(db).map((w) => w.path)).toEqual([path]);
+  });
+
+  it("the CLI close: exit 4 in one line for a live pane; exit 0 once it is gone", async () => {
+    peerTorn();
+    use(alive("%2"));
+    const refused = await run("agent", "close", "mw", "-w", "ws");
+    expect(refused.exitCode).toBe(4);
+    expect(stderrLines(refused.stderr)).toHaveLength(1);
+    expect(agentNames()).toEqual(["mw"]);
+    use(tmux({}));
+    const ok = await run("agent", "close", "mw", "-w", "ws");
+    expect(ok.exitCode).toBeNull();
+    expect(agentNames()).toEqual([]);
+  });
+
+  it("init over the rows names the exact command (and the refusal is the recovery's own)", async () => {
+    peerTorn();
+    const rev = workstreamRevision(db, "ws");
+    use(tmux({}));
+    const err = await reinitWorkstream(db, "ws", rev).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WorkstreamHasAgentsError);
+    expect((err as Error).message).toContain("mu agent close mw -w ws");
   });
 });

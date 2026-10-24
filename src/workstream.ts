@@ -221,15 +221,18 @@ export class WorkstreamHasAgentsError extends Error implements HasNextSteps {
   readonly inlineNext = true;
   constructor(
     public readonly workstream: string,
-    public readonly agents: number,
+    public readonly agents: readonly string[],
   ) {
     super(
-      `torn-down workstream ${workstream} still has ${agents} local agent row${agents === 1 ? "" : "s"}; close their panes first: mu workstream teardown ${workstream}`,
+      `torn-down workstream ${workstream} still has ${agents.length} local agent row${agents.length === 1 ? "" : "s"} (${agents.join(", ")}); close each once its pane is gone: mu agent close ${agents[0]} -w ${workstream}`,
     );
   }
   errorNextSteps(): NextStep[] {
     return [
-      { intent: "Preview the local cleanup", command: `mu workstream teardown ${this.workstream}` },
+      {
+        intent: "Close the agent (kills its pane; keeps the row while the pane lives)",
+        command: `mu agent close ${this.agents[0]} -w ${this.workstream}`,
+      },
     ];
   }
 }
@@ -385,8 +388,12 @@ export interface WorkstreamSummary {
 export interface TeardownResult {
   /** True iff killing the mux session actually killed something. */
   killedMux: boolean;
-  /** Number of machine-local `agents` rows deleted. */
+  /** Number of machine-local `agents` rows deleted (their panes are gone). */
   deletedAgents: number;
+  /** Rows KEPT because their recorded pane was alive (or could not be asked)
+   *  after the kill: orphaned, in a torn-down workstream.
+   *  `mu agent close <name> -w <ws>` removes one. */
+  orphanedAgents: { name: string; paneId: string; reason: "alive" | "unknown" }[];
   /** Rows that STAY (the teardown is soft): tasks, and their notes and
    *  edges. Reported so the output says what a later `init --if` would
    *  hard-delete. */
@@ -653,13 +660,33 @@ export async function teardownWorkstream(
   // close rule belongs to `mu agent close`). They stay registered and on
   // disk; the result lists them.
 
-  // Unlink each agent's control socket (ssh -L forwards leave theirs
+  // THE ROW RULE: a row is deleted only when its recorded pane is known
+  // dead, asked by pane id AFTER the kill (a pane moved out of the session
+  // while it was being killed survives it), and nothing is unlinked or
+  // deleted for a row before that answer. Alive or unknown keeps the row
+  // (orphaned: it lives in a torn-down workstream) and the result says so.
+  // A dead pane stays dead (tmux never reuses an id), so the answer holds
+  // through the transaction below.
+  const dead: { name: string; paneId: string }[] = [];
+  const orphaned: TeardownResult["orphanedAgents"] = [];
+  for (const a of agentsBefore) {
+    let reason: "alive" | "unknown" | undefined;
+    try {
+      if (await mux.paneAlive(a.paneId)) reason = "alive";
+    } catch {
+      reason = "unknown";
+    }
+    if (reason === undefined) dead.push(a);
+    else orphaned.push({ name: a.name, paneId: a.paneId, reason });
+  }
+
+  // Unlink each DEAD agent's control socket (ssh -L forwards leave theirs
   // behind) BEFORE the DELETE: the agent rows are how a retry finds the
   // sockets, so an interrupted unlink must leave them in place. Then reap
   // sock/<ws>/ only if empty, never recursively: hashed long paths
   // share sock/h/ across workstreams, so a workstream named "h" must
-  // not take the others' sockets with it.
-  for (const a of agentsBefore) unlinkCtlSocket(db, a.name, opts.workstream);
+  // not take the others' sockets with it. A kept row keeps its socket.
+  for (const a of dead) unlinkCtlSocket(db, a.name, opts.workstream);
   if (!db.memory) {
     const sockDir = join(dirname(db.name), "sock", opts.workstream);
     try {
@@ -670,12 +697,12 @@ export async function teardownWorkstream(
   }
 
   // The DB commit, last, in ONE op group (intent workstream.teardown):
-  // delete the machine-local agent rows, then set torn_down_at (one
-  // captured put). Nothing cascades from either: tasks, edges and notes
-  // stay. The whole revision is read again INSIDE the transaction: an op,
-  // agent or worktree that appeared since the preview (a sweep member
-  // changed while an earlier one was being killed, a racing spawn) aborts
-  // the commit instead of being swept up unseen.
+  // delete the dead agents' rows, then set torn_down_at (one captured
+  // put). Nothing cascades from either: tasks, edges and notes stay. The
+  // whole revision is read again INSIDE the transaction: an op, agent or
+  // worktree that appeared since the preview (a sweep member changed while
+  // an earlier one was being killed, a racing spawn) aborts the commit
+  // instead of being swept up unseen.
   const tornDownAt = new Date().toISOString();
   withOpContext(db, { intent: "workstream.teardown", group: "new" }, () =>
     db
@@ -684,9 +711,11 @@ export async function teardownWorkstream(
         if (now !== opts.ifRevision) {
           throw new WorkstreamRevisionMismatchError(opts.workstream, opts.ifRevision, now);
         }
-        db.prepare(
-          "DELETE FROM agents WHERE workstream_id = (SELECT id FROM workstreams WHERE name = ?)",
-        ).run(opts.workstream);
+        const del = db.prepare(
+          `DELETE FROM agents WHERE name = ? AND pane_id = ?
+             AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
+        );
+        for (const a of dead) del.run(a.name, a.paneId, opts.workstream);
         db.prepare(
           "UPDATE workstreams SET torn_down_at = ? WHERE name = ? AND torn_down_at IS NULL",
         ).run(tornDownAt, opts.workstream);
@@ -698,7 +727,8 @@ export async function teardownWorkstream(
 
   return {
     killedMux: muxAliveBefore,
-    deletedAgents: agentsBefore.length,
+    deletedAgents: dead.length,
+    orphanedAgents: orphaned,
     tasks: tasksBefore,
     notes: notesBefore,
     edges: edgesBefore,
@@ -763,8 +793,8 @@ export async function reinitWorkstream(
             `mu workstream init ${name}`,
           );
         }
-        const agents = countAgents(db, name);
-        if (agents > 0) throw new WorkstreamHasAgentsError(name, agents);
+        const agents = listAgentPanes(db, name).map((a) => a.name);
+        if (agents.length > 0) throw new WorkstreamHasAgentsError(name, agents);
         db.prepare("DELETE FROM workstreams WHERE name = ?").run(name);
         ensureWorkstreamImpl(db, name);
       })

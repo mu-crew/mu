@@ -435,6 +435,35 @@ export class AgentSendIndeterminateError extends Error implements HasNextSteps {
 }
 
 /**
+ * `agent close` killed the pane and it is STILL alive (moved out from under
+ * the kill, or the mux refused), or the mux could not be asked in a torn-down
+ * workstream. The row stays: no row is deleted while its pane may run.
+ * Exit 4; the message names the retry.
+ */
+export class AgentPaneStillAliveError extends Error implements HasNextSteps {
+  override readonly name = "AgentPaneStillAliveError";
+  readonly inlineNext = true;
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly paneId: string,
+    public readonly state: true | "unknown",
+  ) {
+    super(
+      `agent ${agentName}: pane ${paneId} ${state === true ? "is still alive after the kill" : "could not be checked"}; its row is kept. Close the pane in your multiplexer, then: mu agent close ${agentName} -w ${workstream}`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Retry once the pane is gone",
+        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
+      },
+    ];
+  }
+}
+
+/**
  * A ctl verb (send, abort, ...) found the agent's control socket silent
  * AND its pane gone: the process exited (or the pane was closed behind
  * mu's back), so there is nothing to link or forward. Raised

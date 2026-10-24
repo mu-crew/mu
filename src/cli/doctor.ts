@@ -42,6 +42,7 @@ import {
 import {
   checkCloseGuards,
   checkFleetHazards,
+  checkOrphanedAgents,
   checkSegmentVersion,
   checkUnpublishedOps,
   type FleetHazard,
@@ -277,6 +278,7 @@ export async function cmdDoctor(
     ...checkFleetHazards(db, { dbPath: defaultDbPath() }),
     checkSegmentVersion(db, process.env.MU_SYNC_DIR),
     checkUnpublishedOps(db, process.env.MU_SYNC_DIR),
+    checkOrphanedAgents(db),
   ];
   let sawHazard = printHazards(fleet);
 
@@ -559,6 +561,7 @@ export async function cmdDoctorJson(
     ...checkFleetHazards(db, { dbPath: defaultDbPath() }),
     checkSegmentVersion(db, process.env.MU_SYNC_DIR),
     checkUnpublishedOps(db, process.env.MU_SYNC_DIR),
+    checkOrphanedAgents(db),
   ].map((h) => ({
     name: h.name,
     severity: h.severity,
