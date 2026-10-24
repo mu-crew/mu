@@ -530,7 +530,10 @@ describe("mu pi migrate refuses a DB inside MU_SYNC_DIR", () => {
   const shim = () => join(tempDir, "pihome", ".pi", "agent", "extensions", "mu.ts");
   function seedShim(): void {
     mkdirSync(join(tempDir, "pihome", ".pi", "agent", "extensions"), { recursive: true });
-    writeFileSync(shim(), "// mu:shim\nexport default function () {}\n");
+    writeFileSync(
+      shim(),
+      '// mu:shim\nconst { default: e } = await import("file:///x/dist/extension/mu-pi.js");\nexport default e;\n',
+    );
   }
 
   it("exit 4, and nothing is moved", async () => {

@@ -23,11 +23,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 ### Added
 
 - **`mu pi migrate [--apply]`.** A leftover `mu link pi` shim would load a
-  second extension next to the package, so this moves only mu-generated
-  files (a `// mu:shim` file at `~/.pi/agent/extensions/mu.ts`, a symlink at
-  `~/.agents/skills/mu` to a skill named `mu`) into a `disabled/` folder pi
-  does not read. Copies, real directories and foreign links are reported and
-  left alone. Report-only without `--apply`; prints restart guidance.
+  second extension next to the package, so this moves only files it can
+  prove mu generated, into a `disabled/` folder pi does not read: the exact
+  shim `link pi` wrote at `~/.pi/agent/extensions/mu.ts` (or a file whose
+  first line is `// mu:shim` and that imports mu's `dist/extension/mu-pi.js`),
+  and a symlink at `~/.agents/skills/mu` into this install's `skills/mu` (or a
+  copy identical to a released skill, by digest). Never a match on a marker
+  or a `name: mu` anywhere else: a user's own `mu.ts` or `mu` skill is
+  reported with its path and left alone. Report-only without `--apply`;
+  prints restart guidance. The upgrade guide installs the package first
+  (`pi install npm:@mu-crew/mu`), then migrates, then reloads.
 
 - Eval harness (`tools/eval/`) and 3.x baseline (`docs/mu-next/eval/baseline-3.13.3-v2.md`; v1 superseded: delegate token, discard parse, send-before-claim, origin and PATH artifacts fixed; v2.1: discard scoring in fanout_gates/worktree_reuse, keyed delegate answers, TMPDIR and an in-sandbox skill copy, `--force` scoring). The scripted scenarios run on both surfaces: spawn falls back from `--workspace` to `--worktree`, so `check` is green on the checkout and on 3.13.3.
 

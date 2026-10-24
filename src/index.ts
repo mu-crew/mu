@@ -224,6 +224,7 @@ export {
   type MigrateState,
   MU_SHIM_MARKER,
   migratePi,
+  skillDirDigest,
 } from "./pi-migrate.js";
 export {
   type MachineLocalLoss,
