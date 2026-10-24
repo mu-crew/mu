@@ -22,7 +22,7 @@ import { addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, installNoMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson, runCliWire } from "./_runCli.js";
 
 const ENV_KEYS = [
   "TMUX",
@@ -412,23 +412,28 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
     [["agent", "wait", "self-1", "-w", "own"]],
     [["agent", "spawn", "w9", "-w", "own"]],
   ])("%j: one line naming the install, exit 5", async (argv) => {
-    const r = await runCli(argv, dbPath);
+    const r = await runCliWire(argv, dbPath);
     expect(r.exitCode, `${r.stdout}${r.stderr}`).toBe(5);
-    expect(r.stdout).toBe("");
-    const lines = plain(r.stderr).trim().split("\n");
-    expect(lines, r.stderr).toHaveLength(1);
+    // Under --json the one line is the failure document on STDOUT (stderr
+    // stays empty); otherwise it is the human line on stderr.
+    const json = argv.includes("--json");
+    expect(json ? r.stderr : r.stdout).toBe("");
+    const lines = plain(json ? r.stdout : r.stderr)
+      .trim()
+      .split("\n");
+    expect(lines, `${r.stdout}${r.stderr}`).toHaveLength(1);
     expect(lines[0]).toMatch(
-      argv.includes("--json")
-        ? /"error":"NoMultiplexerError".*install tmux/
+      json
+        ? /"ok":false,"error":"NoMultiplexerError".*install tmux.*"exit":5/
         : /^no multiplexer: .*install tmux/,
     );
   });
 
   it("--json keeps the nextSteps in the envelope", async () => {
-    const r = await runCli(["agent", "list", "-w", "own", "--json"], dbPath);
+    const r = await runCliJson(["agent", "list", "-w", "own", "--json"], dbPath);
     expect(r.exitCode).toBe(5);
-    const env = JSON.parse(r.stderr.trim()) as { nextSteps: unknown[] };
-    expect(env.nextSteps).toHaveLength(1);
+    expect(r.doc).toMatchObject({ ok: false, next: null, exit: 5 });
+    expect((r.doc as unknown as { nextSteps: unknown[] }).nextSteps).toHaveLength(1);
   });
 
   it("doctor prints its report, then exits 5 naming the install", async () => {
@@ -439,22 +444,22 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
     expect(plain(r.stderr)).toMatch(/no multiplexer: .*install tmux/);
   });
 
-  it("doctor --json still emits the integrity facts, then the error envelope with exit 5", async () => {
-    const r = await runCli(["doctor", "--json"], dbPath);
+  it("doctor --json is ONE failure document: the integrity facts in data, error and exit 5 beside them", async () => {
+    const r = await runCliWire(["doctor", "--json"], dbPath);
     expect(r.exitCode, r.stderr).toBe(5);
-    const report = JSON.parse(r.stdout.trim()) as {
-      environment: { mux: { ok: boolean } };
-      db: unknown;
-    };
-    expect(report.environment.mux.ok).toBe(false);
-    expect(report.db).toBeDefined();
-    const env = JSON.parse(r.stderr.trim().split("\n")[0] ?? "") as {
+    expect(r.stderr).toBe("");
+    expect(r.stdout.trim().split("\n")).toHaveLength(1);
+    const env = JSON.parse(r.stdout) as {
+      ok: boolean;
       error: string;
-      exitCode: number;
+      exit: number;
       message: string;
+      data: { environment: { mux: { ok: boolean } }; db: unknown };
     };
-    expect(env).toMatchObject({ error: "NoMultiplexerError", exitCode: 5 });
+    expect(env).toMatchObject({ ok: false, error: "NoMultiplexerError", exit: 5 });
     expect(env.message).toMatch(/install tmux/);
+    expect(env.data.environment.mux.ok).toBe(false);
+    expect(env.data.db).toBeDefined();
   });
 });
 

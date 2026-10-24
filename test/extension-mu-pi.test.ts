@@ -700,14 +700,20 @@ describe("mu pi extension", () => {
         if (noun === "task" && verb === "owned-by")
           return {
             code: 0,
-            stdout: JSON.stringify({ items: [{ name: "t1", status: "IN_PROGRESS" }] }),
+            stdout: JSON.stringify({
+              ok: true,
+              data: { items: [{ name: "t1", status: "IN_PROGRESS" }] },
+              next: null,
+            }),
             stderr: "",
           };
         if (noun === "task" && verb === "list")
           return {
             code: 0,
             stdout: JSON.stringify({
-              items: [{ name: "t1", workstreamName: "ws", status: "IN_PROGRESS" }],
+              ok: true,
+              data: { items: [{ name: "t1", workstreamName: "ws", status: "IN_PROGRESS" }] },
+              next: null,
             }),
             stderr: "",
           };

@@ -49,6 +49,25 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **`--json` prints ONE envelope document on stdout, errors included.**
+  Success is `{"ok":true,"data":<old payload>,"next":null}`; failure is
+  `{"ok":false,"error","message","next":null,"exit":<n>}` on **stdout** with the
+  same non-zero exit (stderr stays empty, no ANSI), so `2>/dev/null` loses
+  nothing. The old `exitCode` is `exit`; the legacy `nextSteps` list stays
+  (inside `data`, and beside the error fields) until per-verb `next` plans
+  land. A usage error's `usage` is at most 3 short lines (synopsis, options,
+  subcommands), not a JSON help tree. A verb that fails after producing
+  evidence prints one failure document with that evidence in `data`:
+  `doctor` (drift, hazard FAIL, no multiplexer: the report is `data`, no
+  second document), `agent spawn --send` (the spawn and the nested
+  `send.ok:false`; the `msgId`/`incarnation`/`delivery` receipt of an
+  indeterminate send stays structured beside `error`), `agent check` (the
+  verdict is `data`). `mu log --tail --json` stays raw NDJSON, one op per
+  line. Wait exit codes and `timedOut` payloads are unchanged (owned by the
+  unified wait). The `mu_delegate` and nudge extensions read the envelope.
+  New pure `src/output-contract.ts` (`encodeEnvelope`, `capRecords`: UTF-8
+  byte budget, cut on a record boundary, first and pinned records never cut);
+  test helpers `runCliJson` (unwraps `data`) and `runCliWire` (raw).
 - **Scope is explicit: `-w`, a qualified ref, or a worker's injected identity.**
   `$MU_SESSION` is no longer read and the mux session name never routes a
   verb. A verb with no scope fails with one line, no help dump, exit 2:

@@ -30,8 +30,12 @@ function fakePi() {
 const owned = (tasks: [string, string][]): MuResult => ({
   code: 0,
   stdout: JSON.stringify({
-    items: tasks.map(([name, status]) => ({ name, status })),
-    count: tasks.length,
+    ok: true,
+    data: {
+      items: tasks.map(([name, status]) => ({ name, status })),
+      count: tasks.length,
+    },
+    next: null,
   }),
   stderr: "",
 });

@@ -35,9 +35,26 @@ export function installDelegateEnv(): void {
   });
 }
 
+/** A mu success: an object is the envelope's `data` (`{ok:true,data,next}`, as
+ *  `mu --json` prints it); a string is plain text, as `mu agent read` prints. */
 export const ok = (stdout: unknown): MuResult => ({
   code: 0,
-  stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout),
+  stdout:
+    typeof stdout === "string" ? stdout : JSON.stringify({ ok: true, data: stdout, next: null }),
+  stderr: "",
+});
+
+/** A mu failure under --json: ONE document on stdout, `data` its partial evidence. */
+export const failed = (code: number, error: string, message: string, data?: unknown): MuResult => ({
+  code,
+  stdout: JSON.stringify({
+    ok: false,
+    error,
+    message,
+    next: null,
+    exit: code,
+    ...(data !== undefined ? { data } : {}),
+  }),
   stderr: "",
 });
 
@@ -82,16 +99,12 @@ export function fakeMu(
     if (!args.includes("--send") || base.ctl !== "ok") return ok(base);
     const sendArgs = ["agent", "send", name, String(text), "-w", "scratch", "--json"];
     const s = (await opts.on?.send?.(sendArgs)) ?? ok({ transport: "ctl", runs: 0 });
-    if (s.code !== 0)
-      return {
-        code: s.code,
-        stdout: JSON.stringify({
-          ...base,
-          send: { ok: false, message: s.stderr, ...(s.stdout ? { error: s.stdout } : {}) },
-        }),
-        stderr: s.stderr,
-      };
-    return ok({ ...base, send: { ok: true, ...(JSON.parse(s.stdout) as object) } });
+    if (s.code !== 0) {
+      const send = { ok: false, message: s.stderr, ...(s.stdout ? { error: s.stdout } : {}) };
+      return failed(s.code, s.stdout || "Error", s.stderr, { ...base, send });
+    }
+    const sent = (JSON.parse(s.stdout) as { data: object }).data;
+    return ok({ ...base, send: { ok: true, ...sent } });
   };
   const run: MuRunner = (args, signal) => {
     calls.push([...args]);

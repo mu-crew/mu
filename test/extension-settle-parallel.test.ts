@@ -15,7 +15,11 @@ type Handler = (event: unknown, ctx: MuNudgeCtx) => unknown;
 
 const SKILL = "<!-- mu:keep-driving -->\nKeep driving.\n<!-- /mu:keep-driving -->";
 const WORKER = { MU_AGENT_NAME: "w1", MU_WORKSTREAM: "ws" };
-const json = (v: unknown): MuResult => ({ code: 0, stdout: JSON.stringify(v), stderr: "" });
+const json = (v: unknown): MuResult => ({
+  code: 0,
+  stdout: JSON.stringify({ ok: true, data: v, next: null }),
+  stderr: "",
+});
 
 function answer(args: readonly string[]): MuResult {
   const [noun, verb] = args;

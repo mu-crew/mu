@@ -76,7 +76,7 @@ describeIfReady("parallel spawn race (real cross-process)", () => {
     const { stdout } = await execFileP("node", [CLI, "agent", "list", "-w", workstream, "--json"], {
       env: { ...process.env, MU_DB_PATH: dbPath },
     });
-    const parsed = JSON.parse(stdout) as { agents: unknown[] };
+    const parsed = (JSON.parse(stdout) as { data: { agents: unknown[] } }).data;
     return parsed.agents.length;
   }
 

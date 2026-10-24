@@ -53,6 +53,7 @@ import { pc } from "../output.js";
 import { type EdgeCycle, findEdgeCycles } from "../tasks/edges.js";
 import { summarizeWorkstream } from "../workstream.js";
 import { forgetHint } from "./db.js";
+import { failureWithData } from "./handle.js";
 
 /** Column width for the `label : value` environment block. Wide enough
  *  for the longest label any backend contributes — `$HERDR_WORKSPACE_ID`
@@ -634,7 +635,7 @@ export async function cmdDoctorJson(
     if (!cheap.clean) driftFailure = new DriftDetectedError(cheap.totalUnexplained, []);
   }
 
-  emitJson({
+  const report = {
     environment: env,
     db: dbReport,
     workstream: { currentName: currentWorkstream },
@@ -648,14 +649,15 @@ export async function cmdDoctorJson(
     drift,
     size: opsSizeHint(db) ?? null,
     remediation: drift.ok === true ? [] : driftRemediation(),
-  });
-  // Emit the payload FIRST, then fail: a --json consumer needs the
-  // machine-readable report even when the exit code is non-zero.
-  if (driftFailure !== null) throw driftFailure;
+  };
+  // ONE document per invocation: a clean report is the success envelope; a
+  // failing one is the failure envelope with the same report in `data`, so a
+  // --json consumer still gets the integrity facts beside the non-zero exit.
   const failed = failedHazardNames([...hazards, ...disk]);
-  if (failed.length > 0) throw new HazardFailError(failed);
-  const noMux = noMuxFailure(health);
-  if (noMux !== null) throw noMux;
+  const failure =
+    driftFailure ?? (failed.length > 0 ? new HazardFailError(failed) : noMuxFailure(health));
+  if (failure !== null) throw failureWithData(failure, report);
+  emitJson(report);
 }
 
 // agents/tasks counts come from summarizeWorkstream() (src/workstream.ts) —

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { withCaptureSuppressed } from "../src/op-context.js";
 import { rmFixtureDir } from "./_fs.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson, runCliWire } from "./_runCli.js";
 
 describe("mu doctor — drift + fleet checks", () => {
   let tempDir: string;
@@ -105,15 +105,25 @@ describe("mu doctor — drift + fleet checks", () => {
     expect((await runCli(["doctor", "--deep"], dbPath)).exitCode).toBe(5);
   });
 
-  it("--json emits the drift payload BEFORE failing", async () => {
+  it("--json on drift is ONE failure document that still carries the report", async () => {
     await seed();
     plant("UPDATE tasks SET impact = 7 WHERE local_id = 'a'");
 
-    const { stdout, exitCode } = await runCli(["doctor", "--deep", "--json"], dbPath);
+    const { stdout, stderr, exitCode } = await runCliWire(["doctor", "--deep", "--json"], dbPath);
     expect(exitCode).toBe(5);
     // A --json consumer needs the machine-readable report even on a
-    // non-zero exit, so the payload must be on stdout regardless.
-    const parsed = JSON.parse(stdout.trim()) as {
+    // non-zero exit: it rides in the failure document's `data`, and
+    // stdout is exactly that one document.
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toHaveLength(1);
+    const doc = JSON.parse(stdout.trim()) as {
+      ok: boolean;
+      error: string;
+      exit: number;
+      data: unknown;
+    };
+    expect(doc).toMatchObject({ ok: false, error: "DriftDetectedError", exit: 5 });
+    const parsed = doc.data as {
       drift: {
         mode: string;
         ok: boolean;
@@ -144,11 +154,9 @@ describe("mu doctor — drift + fleet checks", () => {
 
   it("--json shallow mode reports its own tier and hint", async () => {
     await seed();
-    const { stdout, exitCode } = await runCli(["doctor", "--json"], dbPath);
+    const { data, exitCode } = await runCliJson(["doctor", "--json"], dbPath);
     expect(exitCode).toBeNull();
-    const parsed = JSON.parse(stdout.trim()) as {
-      drift: { mode: string; ok: boolean; hint: string };
-    };
+    const parsed = data as { drift: { mode: string; ok: boolean; hint: string } };
     expect(parsed.drift.mode).toBe("shallow");
     expect(parsed.drift.ok).toBe(true);
     expect(parsed.drift.hint).toContain("--deep");

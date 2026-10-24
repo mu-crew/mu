@@ -241,22 +241,6 @@ export function muTable(opts: {
 }
 
 /**
- * The typed-error wire format for `--json` output. Errors that carry
- * actionable resolutions (most of them) implement `errorNextSteps()`;
- * the handler in cli.ts wraps them in this shape and emits to stderr.
- */
-export interface ErrorJson {
-  /** Class name (e.g. "ClaimerNotRegisteredError"). */
-  error: string;
-  /** Human-readable message (the same one printed to stderr in non-JSON mode). */
-  message: string;
-  /** Actionable resolutions. May be empty. */
-  nextSteps: NextStep[];
-  /** Process exit code that will follow. */
-  exitCode: number;
-}
-
-/**
  * Marker interface for typed errors that carry actionable resolutions.
  * The handler checks this with a duck-typed `typeof err.errorNextSteps
  * === "function"` rather than instanceof so cross-realm errors (e.g.
@@ -273,7 +257,7 @@ export interface HasNextSteps {
 /**
  * Detect whether the current invocation requested `--json`. Used by the
  * error handler to decide between human-prose stderr and structured
- * JSON stderr. Reads `process.argv` directly because commander has
+ * a JSON document on stdout. Reads `process.argv` directly because commander has
  * already consumed it by the time the handler runs, and threading it
  * through every verb wrapper would be invasive.
  *
@@ -300,41 +284,12 @@ export function hasNextSteps(err: unknown): err is HasNextSteps {
 //
 // Every operator-error path (commander-thrown CommanderError, handler-
 // thrown UsageError, typed *Invalid* errors) gets the same surface:
-// (1) the error line, (2) the failing subcommand's --help. The human
-// path prints commander's own helpInformation() (so future commander
-// version bumps automatically pick up any rendering improvements);
-// the --json path renders a structured shape so a script orchestrator
-// can introspect the verb without re-shelling for --help.
-//
-// Why structured-not-string for JSON: the entire point of --json is
-// that consumers never have to free-text-parse mu output. Embedding a
-// multi-kilobyte rendered help blob in the JSON envelope defeats that
-// — every option is already structured on the Command object.
+// (1) the error line, (2) the failing subcommand's accepted syntax. The
+// human path prints commander's own helpInformation(); the --json path
+// carries at most three short lines (never the whole help as JSON), so
+// the one error document stays small.
 
-/** Structured rendition of a verb's --help, for JSON error envelopes. */
-export interface UsageJson {
-  /** Full canonical name including parent commands (e.g. "mu task add"). */
-  command: string;
-  /** The single-line synopsis (e.g. "mu task add [options] [id]"). */
-  synopsis: string;
-  /** Verb description (the one-paragraph prose under the synopsis). */
-  description: string;
-  /** Positional arguments in declared order. */
-  args: Array<{ name: string; required: boolean; variadic: boolean; description: string }>;
-  /** Options in declared order. `mandatory: true` iff the option was
-   *  declared via `.requiredOption()` (i.e. the operator MUST pass it).
-   *  `valueRequired: true` for `<value>`-style options whose value is
-   *  required when the flag IS passed. The two are independent. */
-  options: Array<{
-    flags: string;
-    description: string;
-    mandatory: boolean;
-    valueRequired: boolean;
-  }>;
-}
-
-/** Walk parent chain so subcommand renderings include the full path
- *  ("mu task add" not just "add"). */
+/** Walk parent chain so renderings include the full path ("mu task add"). */
 function commandFullName(cmd: Command): string {
   const parts: string[] = [];
   let cur: Command | null = cmd;
@@ -345,25 +300,19 @@ function commandFullName(cmd: Command): string {
   return parts.join(" ");
 }
 
-/** Extract the structured usage shape for `--json` error envelopes. */
-export function renderUsageJson(cmd: Command): UsageJson {
-  return {
-    command: commandFullName(cmd),
-    synopsis: `${commandFullName(cmd)} ${cmd.usage()}`,
-    description: cmd.description(),
-    args: cmd.registeredArguments.map((a) => ({
-      name: a.name(),
-      required: a.required,
-      variadic: a.variadic,
-      description: a.description ?? "",
-    })),
-    options: cmd.options.map((o) => ({
-      flags: o.flags,
-      description: o.description ?? "",
-      mandatory: o.mandatory ?? false,
-      valueRequired: o.required ?? false,
-    })),
-  };
+const USAGE_LINE_MAX = 200;
+
+/** The failing verb's accepted syntax in at most 3 lines: synopsis, options,
+ *  subcommands. Options list long flags only; a long list ends in "…". */
+export function usageLines(cmd: Command): string[] {
+  const clip = (s: string) =>
+    s.length > USAGE_LINE_MAX ? `${s.slice(0, USAGE_LINE_MAX - 1)}…` : s;
+  const lines = [`${commandFullName(cmd)} ${cmd.usage()}`];
+  const flags = cmd.options.filter((o) => !o.hidden).map((o) => o.flags);
+  if (flags.length > 0) lines.push(clip(`options: ${flags.join(", ")}`));
+  const subs = cmd.commands.map((c) => c.name());
+  if (subs.length > 0) lines.push(clip(`commands: ${subs.join(", ")}`));
+  return lines;
 }
 
 /** Render the human --help block (commander's own `helpInformation()`)

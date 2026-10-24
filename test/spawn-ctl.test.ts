@@ -32,7 +32,7 @@ import { worktreePath } from "../src/worktree.js";
 import { INC, withHello } from "./_ctl-ext.js";
 import { withEnv } from "./_env.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliWire } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
 /** MU_* vars the harness itself sets (and the clean-env check ignores). */
@@ -732,6 +732,28 @@ describe("mu agent spawn (CLI)", () => {
     expect(out.ctl).toBe("missing");
     expect(out.send).toMatchObject({ ok: false, error: "AgentCtlUnreachableError" });
     expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+  });
+
+  it("--send failure --json is ONE failure document: spawn evidence in data, nested send.ok false", async () => {
+    db.close();
+    const r = await runCliWire(
+      ["agent", "spawn", "worker-2", "-w", "auth", "--send", "hello", "--json"],
+      dbPath,
+    );
+    db = openDb({ path: dbPath });
+    expect(r.exitCode).toBe(1);
+    // stdout is exactly one document (the spawn's own stderr warning is not JSON).
+    expect(r.stdout.trim().split("\n")).toHaveLength(1);
+    const doc = JSON.parse(r.stdout) as {
+      ok: boolean;
+      error: string;
+      exit: number;
+      data: { agent: { name: string }; ctl: string; send: { ok: boolean } };
+    };
+    expect(doc).toMatchObject({ ok: false, error: "AgentCtlUnreachableError", exit: 1 });
+    expect(doc.data.agent.name).toBe("worker-2");
+    expect(doc.data.ctl).toBe("missing");
+    expect(doc.data.send.ok).toBe(false);
   });
 });
 

@@ -307,3 +307,30 @@ describe("isJsonMode (detects --json on the invocation)", () => {
     expect(isJsonMode()).toBe(false);
   });
 });
+
+describe("usageLines (the --json error's accepted syntax, at most 3 lines)", () => {
+  it("lists the synopsis, then the options, then the subcommands", async () => {
+    const { Command } = await import("commander");
+    const { usageLines } = await import("../src/output.js");
+    const root = new Command("mu");
+    const task = root.command("task").description("tasks");
+    task.command("add");
+    task.command("list").option("--json", "j").option("-w, --workstream <name>", "ws");
+    expect(usageLines(task.commands[1] as InstanceType<typeof Command>)).toEqual([
+      "mu task list [options]",
+      "options: --json, -w, --workstream <name>",
+    ]);
+    const lines = usageLines(task);
+    expect(lines).toEqual(["mu task [options] [command]", "commands: add, list"]);
+  });
+
+  it("clips a very long option list to one short line", async () => {
+    const { Command } = await import("commander");
+    const { usageLines } = await import("../src/output.js");
+    const c = new Command("big");
+    for (let i = 0; i < 60; i++) c.option(`--option-number-${i} <v>`, "x");
+    const lines = usageLines(c);
+    expect(lines.length).toBeLessThanOrEqual(3);
+    for (const l of lines) expect(l.length).toBeLessThanOrEqual(200);
+  });
+});

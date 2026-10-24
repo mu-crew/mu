@@ -204,7 +204,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     // no hint
   }
   if (opts.json) {
-    emitJson({
+    const payload = {
       agent,
       resolvedCommand,
       commandOverridden,
@@ -216,9 +216,23 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
       ctlSocket: agent.ctlSocket,
       ...(sent !== undefined ? { send: sent } : {}),
       nextSteps,
-    });
-    if (sent !== undefined && !sent.ok && sent.exitCode !== 0)
-      throw new CliExitError(sent.exitCode);
+    };
+    // A failed --send is ONE failure document: the spawn evidence (the pane is
+    // up) rides in `data` with the nested `send.ok:false`, and the delivery
+    // receipt (msgId / incarnation / delivery) stays structured beside it.
+    if (sent !== undefined && !sent.ok && sent.exitCode !== 0) {
+      throw new CliExitError(sent.exitCode, {
+        error: sent.error,
+        message: sent.message,
+        data: payload,
+        extra: {
+          ...(sent.msgId !== undefined ? { msgId: sent.msgId } : {}),
+          ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
+          ...(sent.delivery !== undefined ? { delivery: sent.delivery } : {}),
+        },
+      });
+    }
+    emitJson(payload);
     return;
   }
   const wsBit = opts.worktree ? pc.dim(" with its own worktree") : "";
@@ -715,6 +729,18 @@ export async function cmdAgentCheck(
   const check = await checkMessage(agentCtlSocket(db, agent), msgId);
   const exit = check.state === "accepted" ? 0 : check.state === "not-accepted" ? 3 : 1;
   if (opts.json) {
+    // A check that is not "accepted" fails with ONE document: the verdict
+    // rides in `data`, the reason is the message.
+    if (exit !== 0) {
+      throw new CliExitError(exit, {
+        error: check.state === "unreachable" ? "AgentCtlUnreachableError" : "MessageNotAccepted",
+        message:
+          check.state === "unreachable"
+            ? check.reason
+            : `${name}: message ${msgId} was not accepted; resending is safe`,
+        data: { agentName: name, ...check },
+      });
+    }
     emitJson({ agentName: name, ...check });
   } else if (check.state === "accepted") {
     const at = check.at === undefined ? "?" : new Date(check.at).toISOString();

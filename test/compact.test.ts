@@ -12,6 +12,7 @@ import { type Db, openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { envelopeData } from "./_envelope.js";
 import { rmFixtureDir } from "./_fs.js";
 import { legacyHardTeardown } from "./_teardown.js";
 
@@ -172,7 +173,7 @@ describe("forget", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       cmdDbForget(db, ["big"], { yes: true, json: true });
-      const out = JSON.parse(String(log.mock.calls[0]?.[0])) as { before: number; after: number };
+      const out = envelopeData<{ before: number; after: number }>(log.mock.calls[0]?.[0]);
       expect(out.after).toBeLessThan(out.before / 2);
     } finally {
       log.mockRestore();
@@ -194,11 +195,9 @@ describe("forget", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       cmdDbForget(db, ["big"], { yes: true, json: true });
-      const out = JSON.parse(String(log.mock.calls[0]?.[0])) as {
-        before: number;
-        after: number;
-        checkpointed: boolean;
-      };
+      const out = envelopeData<{ before: number; after: number; checkpointed: boolean }>(
+        log.mock.calls[0]?.[0],
+      );
       expect(out.checkpointed).toBe(false);
       expect(out.after).toBeLessThan(out.before / 2);
     } finally {

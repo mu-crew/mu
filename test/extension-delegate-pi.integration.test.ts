@@ -37,7 +37,11 @@ const until = async (fn: () => boolean) => {
   }
   throw new Error("condition never reached");
 };
-const ok = (data: unknown) => ({ code: 0, stdout: JSON.stringify(data), stderr: "" });
+const ok = (data: unknown) => ({
+  code: 0,
+  stdout: typeof data === "string" ? data : JSON.stringify({ ok: true, data, next: null }),
+  stderr: "",
+});
 
 /** The slice of pi's AgentSession these tests use. */
 type PiSession = {

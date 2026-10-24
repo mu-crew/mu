@@ -147,6 +147,21 @@ export function defaultRunner(): MuRunner {
     });
 }
 
+/** A `mu --json` stdout as one object: the envelope's `data` on success, its
+ *  partial `data` plus `error`/`message` on failure; undefined when it is not
+ *  an envelope. */
+export function parseEnvelope(stdout: string): Record<string, unknown> | undefined {
+  try {
+    const v = JSON.parse(stdout) as Record<string, unknown> | null;
+    if (typeof v !== "object" || v === null || typeof v.ok !== "boolean") return undefined;
+    const data =
+      typeof v.data === "object" && v.data !== null ? (v.data as Record<string, unknown>) : {};
+    return v.ok ? data : { ...data, error: v.error, message: v.message };
+  } catch {
+    return undefined;
+  }
+}
+
 /** One agent row of `mu agent wait --json`, as far as the tool reads it. */
 export type WaitAgent = {
   outcome?: string;
@@ -673,16 +688,17 @@ export function registerDelegate(
   }
 
   const mu = run;
-  const json = (r: MuResult): Record<string, unknown> | undefined => {
-    try {
-      const v: unknown = JSON.parse(r.stdout);
-      return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined;
-    } catch {
-      return undefined;
-    }
+  // mu prints ONE envelope: `{ok:true,data,next}` or `{ok:false,error,message,
+  // next,exit,data?}`. A success yields its `data`; a failure yields its
+  // partial `data` (a spawn whose --send failed) plus `error` and `message`.
+  const json = (r: MuResult): Record<string, unknown> | undefined => parseEnvelope(r.stdout);
+  /** One line on why a call failed: the envelope's message, else the raw text. */
+  const why = (r: MuResult): string => {
+    const m = json(r)?.message;
+    return (typeof m === "string" ? m : r.stderr || r.stdout).trim();
   };
   const failure = (what: string, r: MuResult) =>
-    new Error(`${what} failed (exit ${r.code}): ${(r.stderr || r.stdout).trim()}`);
+    new Error(`${what} failed (exit ${r.code}): ${why(r)}`);
 
   /**
    * Spawn the delegate and send it the task in ONE mu call (`spawn
@@ -735,9 +751,9 @@ export function registerDelegate(
       | undefined;
     if (sent?.ok !== true && sent?.error === "AgentSendIndeterminateError") {
       // The prompt may already be running: keep the pane, never auto-retry.
-      const why = typeof sent.message === "string" ? sent.message : "no reply";
+      const reason = typeof sent.message === "string" ? sent.message : "no reply";
       throw new Error(
-        `mu agent send to ${W}/${name}: delivery unknown (${why}). Pane kept; do NOT resend blindly. Check with: mu agent read ${name} -w ${W} -n 20 (or attach), then close it with: mu agent close ${name} -w ${W}`,
+        `mu agent send to ${W}/${name}: delivery unknown (${reason}). Pane kept; do NOT resend blindly. Check with: mu agent read ${name} -w ${W} -n 20 (or attach), then close it with: mu agent close ${name} -w ${W}`,
       );
     }
     if (sent?.ok !== true) {
@@ -745,8 +761,8 @@ export function registerDelegate(
       const c = await mu(["agent", "close", name, "-w", W]);
       const pane =
         c.code === 0 ? "Pane closed." : `Pane kept; close it with: mu agent close ${name} -w ${W}`;
-      const why = typeof sent?.message === "string" ? sent.message : (r.stderr || r.stdout).trim();
-      throw new Error(`mu agent send to ${W}/${name} failed (exit ${r.code}): ${why}. ${pane}`);
+      const reason = typeof sent?.message === "string" ? sent.message : why(r);
+      throw new Error(`mu agent send to ${W}/${name} failed (exit ${r.code}): ${reason}. ${pane}`);
     }
     const steps = Array.isArray(out.nextSteps) ? out.nextSteps : [];
     const attach = steps
@@ -815,10 +831,8 @@ export function registerDelegate(
     const out = json(shown);
     const t = out?.task as { name?: unknown; workstreamName?: unknown } | undefined;
     if (shown.code !== 0 || typeof t?.name !== "string" || typeof t.workstreamName !== "string") {
-      const why =
-        typeof out?.message === "string" ? out.message : (shown.stderr || shown.stdout).trim();
       throw new Error(
-        `mu_delegate: record task ${ws ? `${ws}/` : ""}${task} not found (exit ${shown.code}): ${why}. Nothing spawned.`,
+        `mu_delegate: record task ${ws ? `${ws}/` : ""}${task} not found (exit ${shown.code}): ${why(shown)}. Nothing spawned.`,
       );
     }
     return { workstream: t.workstreamName, task: t.name };
@@ -830,7 +844,7 @@ export function registerDelegate(
     try {
       const r = await mu(["task", "note", rec.task, "-w", rec.workstream, "--author", name, text]);
       if (r.code === 0) return `Recorded on ${where} as a note.`;
-      return `Recording on ${where} failed (exit ${r.code}): ${(r.stderr || r.stdout).trim()}. Record it yourself.`;
+      return `Recording on ${where} failed (exit ${r.code}): ${why(r)}. Record it yourself.`;
     } catch (e) {
       return `Recording on ${where} failed: ${e instanceof Error ? e.message : String(e)}. Record it yourself.`;
     }
@@ -870,7 +884,7 @@ export function registerDelegate(
       pane =
         closed.code === 0
           ? { closed: true }
-          : { closed: false, why: `close refused: ${(closed.stderr || closed.stdout).trim()}` };
+          : { closed: false, why: `close refused: ${why(closed)}` };
     // No final answer: point at the transcript, and copy what it wrote so
     // far. A blocked run is mid-flight: no partial copy, which could read
     // as its answer.
@@ -1246,10 +1260,7 @@ export function registerDelegate(
       if (params.keep === true) text += " Pane kept.";
       else {
         const c = await mu(["agent", "close", name, "-w", W]);
-        text +=
-          c.code === 0
-            ? " Pane closed."
-            : ` Pane kept: close refused: ${(c.stderr || c.stdout).trim()}`;
+        text += c.code === 0 ? " Pane closed." : ` Pane kept: close refused: ${why(c)}`;
       }
       if (evidence.length > 0) text += `\n${evidence.join("\n")}`;
       return { content: [{ type: "text", text }], details: { name, workstream: W } };

@@ -30,7 +30,7 @@ soft teardown with a preview revision, ctl `msgId`/incarnation/`runs`,
 `mu agent check`, per-line segment versions, the `MuxBackend` seam
 (`spawnAgent(opts: SpawnAgentPaneOptions)`). Not shipped: everything in
 the tables below. Today `mu wait --json` and `task note -m` exit 2, JSON
-errors go to stderr as `error`/`nextSteps`/`exitCode`, `task wait` is a
+errors go to stdout in the envelope (shipped; `next` is always null, the legacy `nextSteps` ride beside it), `task wait` is a
 separate all-of wait whose timeout exits 5, and delegate answers arrive
 as pi follow-ups.
 
@@ -89,7 +89,7 @@ such as this page.
 
 | Unit | Delivers | Key names |
 | --- | --- | --- |
-| `v_output_core` | envelope, stdout errors, caps, extension envelope consumers | `src/output-contract.ts`: `Envelope<T>`, `NextPlan`, `encodeEnvelope`, `capRecords` |
+| `v_output_core` (**shipped**; see [ARCHITECTURE](../ARCHITECTURE.md)) | envelope, stdout errors, `capRecords` primitive, extension envelope consumers. Left: `next` plans (`v_hints`), text records and cap enforcement per reader (`v_notes`, `v_task_reads`), wait `data.exit`/timeout exit (`v_wait_core`), test migration (`v_output_tests`) | `src/output-contract.ts`: `Envelope<T>`, `NextPlan`, `encodeEnvelope`, `capRecords` |
 | `v_loop_storage` | schema 13: `tasks.kind/wave`; `agents.spawner/host/collected_head`; local tables | `delegate_calls`, `wait_cursors`, `agent_settles`, `host_profiles` |
 | `v_agent_surface` | task-bound spawn, replay, `wait_registrations`, `spawn_receipts` | `buildTaskBrief(db,ws,id,identity)`, `registerOwnedWait`, `attempt_key` |
 | `v_task_mutations`, `v_notes` | aliases, report writers, pinned note view | `selectTaskNotes(db,id,opts)`, `kind` assignment at insert |
