@@ -1,0 +1,66 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim i1 -w eval --for w1"
+      },
+      {
+        "bash": "mu task claim i2 -w eval --for w2"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do i1 and close it'"
+      },
+      {
+        "bash": "mu agent send w2 -w eval 'do i2 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait i1 i2 -w eval --timeout 120 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do i1 and close it'"
+      },
+      {
+        "bash": "mu agent send w2 -w eval 'do i2 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait i1 i2 -w eval --timeout 120 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for t in i1 i2; do ev=$(mu task notes $t -w eval | grep -o \"eval: .* run=[0-9a-f]*\" | tail -1); echo \"$t: $ev\"; done > result.txt; cat result.txt"
+      }
+    ]
+  },
+  {
+    "text": "i1 and i2 were done by their workers; result.txt has their evidence."
+  }
+]

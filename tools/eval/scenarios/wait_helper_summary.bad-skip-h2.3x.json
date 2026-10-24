@@ -1,0 +1,36 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim h1 -w eval --for w1 && mu agent send w1 -w eval \"do h1 and close it\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait h1 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "ev=$(mu task notes h1 -w eval | grep -o \"eval: .* run=[0-9a-f]*\" | tail -1); echo \"h1: $ev\" > summary.md"
+      }
+    ]
+  },
+  {
+    "text": "h1 and h2 were done by their workers; summary.md has their evidence."
+  }
+]

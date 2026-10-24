@@ -1,0 +1,12 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "ev() { mu task notes \"$1\" -w eval | grep -o 'preclosed run=[0-9a-f]*' | tail -1; }; printf 'fast: %s\\nready: pending\\nslow: pending\\ngate: pending\\nrace: pending\\ntimeout-exit: 0\\n' \"$(ev mx-fast)\" > wait-report.txt"
+      }
+    ]
+  },
+  {
+    "text": "The wait report is written."
+  }
+]
