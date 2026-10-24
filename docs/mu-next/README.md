@@ -11,6 +11,13 @@ SQLite that a crew uses all day without friction. Deleting code only
 helps when what replaces it is cheaper for the agent. Built on the
 `mu-next` branch, then cut over on a flag day.
 
+**Status.** This page is the design of record, not a description of
+what ships. Shipped behaviour is in [ARCHITECTURE](../ARCHITECTURE.md),
+[VOCABULARY](../VOCABULARY.md) and the [CHANGELOG](../../CHANGELOG.md);
+the planned contract, with the unit that delivers each part, is in
+[surface-contract.md](surface-contract.md). Where they disagree today,
+the shipped docs win.
+
 Revision 2 (2026-10-23) folds in an ultrathink run over revision 1:
 12 finders, 85 findings (53 accepted, 24 rejected, 8 duplicate), and a
 4-way interface tournament. The run lives in workstream `next-ut`; each
@@ -76,7 +83,7 @@ orchestrators); ~1/3 of "carry on" prods follow API errors, not stalls;
 most `sleep` loops wait for `/new` resets (≈199) or poll until CLOSED
 (≥36); pane reads are mostly status checks, ~75/778 scrape context %.
 
-## Interface (tournament winner: JSON-only, 6/6 verdicts, plus steals)
+## Interface (JSON-only, plus steals)
 
 Four extremes were judged pairwise in both orders: JSON-only 6/6,
 next-driven 3/6, terse-line 3/6, SQL-native 0/6. The interface is
@@ -252,9 +259,9 @@ key, not only `id`.
 | `agent send [--fresh/--interrupt]`, `wait`, `abort` | ctl only; send returns `runs` + incarnation; wait refuses an incarnation mismatch; timeout after write = delivery unknown, check never resend (`extension-mu-pi`, `ctl-client`) |
 | `agent close [--discard]`, `list`, `read` | reaper + ghost prune; close refuses a dirty worktree (`agents`) |
 | `task add [--triage] [--blocks u] [ids...]`, `block`, `unblock` | cycle guard; batch create (`edges`) |
-| `task claim`, `release`, `open`, `accept` | CAS; release returns IN_PROGRESS to OPEN (`claim`; 78/65/46/749 uses: `kg_release_reopen`, `pv_substate_verbs`) |
+| `task claim`, `release`, `open`, `accept` | CAS; release returns IN_PROGRESS to OPEN (shipped in `src/tasks/claim.ts`; 78/65/46/749 uses: `kg_release_reopen`, `pv_substate_verbs`) |
 | `task close [--as s --why] --evidence` | status + substate + evidence, one op group; `done` needs `--evidence` and closed blockers, other substates need `--why` (their evidence) and may close over open blockers; reclassifying to `done` is checked like any close to done (`local-guards`, `lifecycle`) |
-| `task wait <ids> / --blockers-of u` | streams each close; exits on all closed, dead owner, or settled agent (`tasks-wait`; `we_wait_any_not_loop`) |
+| `task wait <ids> / --blockers-of u` | shipped: all-of wait, streams each close, exits on all closed, dead owner, or settled agent, timeout exits 5. Planned: an alias over the one `mu wait` below (`tasks-wait`; `we_wait_any_not_loop`) |
 | `task tree <id> [--down]` | open-only, capped (`pv_tree_view`: one umbrella reaches 870 tasks, 3 open) |
 | `state [--me]`, `log [--tail]`, `notes`, `show` | caps; `renderOp` trimmed to the new intents |
 | `next [--dry]` | executor above |
@@ -262,10 +269,11 @@ key, not only `id`.
 | `sync`, `rebuild`, `doctor`, `host add/check/init` | doctor: mux, integrity, cycles, drift, schema/capture version, trigger checksum, sqlite3 version, network mount, case collisions |
 
 **Plain `sqlite3` is read-only.** It defaults to `foreign_keys=0` and
-`busy_timeout=0` (cascades silently skipped, 0 ops logged), cannot
+`busy_timeout=0` (cascades silently skipped), cannot
 enable `recursive_triggers` for others, and may run SQLite < 3.42
-(`unixepoch('subsec')` → zero-time HLCs). Writes go through mu or `mu
-db` (`kg_sqlite_fk_off`, `mi_sqlite_cli_version`). Reads may lag other
+(`unixepoch('subsec')` → zero-time HLCs). Persistent capture records a plain write as a safety net, but writes
+stay unsupported: go through mu or `mu db` (`kg_sqlite_fk_off`,
+`mi_sqlite_cli_version`). Reads may lag other
 machines until any mu call syncs.
 
 **Sync contract.** Every verb ingests peer ops before and flushes its
@@ -280,7 +288,7 @@ agents: ctl `/reload`, else mux reload, else respawn (`mi_ctl_versioning`).
 
 **Mux seam (tmux, herdr).** `available`, `ensureSession`,
 `killSession` (herdr: workspace close, group refusal surfaced),
-`spawnAgent(name, cli, cmd, cmdSource, cwd, env)` (tmux one step;
+`spawnAgent(opts: SpawnAgentPaneOptions)` (tmux one step;
 herdr shell pane, readiness retry, `agent start --kind`, refuses
 command overrides), `listPanes`, `paneAlive`, `killPane`, `capture`,
 `attachCommands(target)` → ordered steps, some optional, may fail with
@@ -311,6 +319,13 @@ Skill and prompts ship in the package.
 
 ## The orchestrator's loop: never stop, never starve
 
+*Planned.* Everything in this section is owned by `v_wait_core`,
+`v_wait_cli`, `v_loop_storage`, `v_delegate`, `v_settle` and `v_human`,
+and supersedes the older separate task/agent waits and follow-up-only
+delegate delivery described elsewhere. Today delegate answers arrive as
+pi follow-ups and `task wait` is a separate all-of wait. The guarantees
+are unchanged: a send is never resent, and an answer is never lost.
+
 Two traps pull against each other. Ending the turn while work runs
 stalls the crew until a human prods (85 stalls mined, never after a
 real wait). Not ending it starves delegate answers, which pi delivers
@@ -318,11 +333,19 @@ only between turns (36 piled up behind a shell wait loop in the
 next-build run). Prose cannot hold both. The fix is one primitive:
 
 **`mu wait` is the only way an orchestrator waits, and it returns on
-any event the orchestrator owns:** a task it watches closes or stalls,
-an owner dies, an agent it spawned settles or needs input, a delegate
-it issued finishes, or a heartbeat cap passes (~25 min). One JSON
-result names the event and the next move; output is never empty, even
-when killed.
+the first event the orchestrator owns** (`--all` keeps the all-of loop):
+a task it watches closes or stalls, an owner dies, an agent it spawned
+settles or needs input, a delegate it issued finishes, or a heartbeat
+cap passes (~25 min). One JSON result, `{ok,data,next}`, names the
+event (`kind`, `ref`, `incarnation`, `runs`), embeds its `exit`, and
+gives the next move; a timeout is `ok:true` with `timedOut`. Output is
+never empty on SIGINT or SIGTERM; SIGKILL cannot print and is not
+promised. Also in scope: `--until-idle`, `--until-text <re>` (a bounded
+regex over authoritative `lastText` or the report, never pane text),
+`--stuck-after` with explicit `--on-stall exit|steer|release` (only on
+`auto` tasks on this `dispatch_host`), `dispatch --wait` /
+`claim --and-wait`, and a durable registered wait so plain spawn, send
+and claim arm the loop from state.
 
 - **Delegates are tasks.** Every `mu_delegate` call is a row
   (`kind=delegate`, owner = the delegate) in the caller's workstream or
@@ -338,7 +361,8 @@ when killed.
   only when nothing it owns is running, or a `mu human-needed <reason>`
   is open. Otherwise it continues the turn by running `mu wait`
   itself (state-armed, not shell-parsed; every settle, not once per
-  prompt).
+  prompt). It never decides for a human: `human-needed` is explicit and
+  caller-scoped, and no error or refusal creates one.
 - **Reading is part of waiting.** A delegate wave is one `mu wait
   --wave <id>` returning a per-finding verdict tally (`2/3 CONFIRMED,
   1 pending`), not N follow-ups.
@@ -369,13 +393,15 @@ decision). Host profiles are templates mu fills in.
 - **`spawn --host dev [--worktree] [--task t]`**: fills the pane template,
   creates the remote worktree via `--exec` (`git worktree add --detach`),
   records host, path and base as agent fields (no hand-written
-  `REMOTE:` note).
+  `REMOTE:` note; until `v_remote_spawn` ships, `REMOTE:` notes are how
+  3.x records it).
 - **`agent collect <a>`**: runs `--fetch` and prints the merge; records
-  the collected HEAD. `agent close` (and the reaper) removes the remote
+  the collected HEAD. `agent close` removes the remote
   worktree only if it is clean **and** remote HEAD equals the base or
   the last collected HEAD; otherwise it refuses, or `--keep-branch`
-  leaves a remote branch `mu/<ws>/<agent>-<sha>`. A reap never deletes
-  a remote worktree.
+  leaves a remote branch `mu/<ws>/<agent>-<sha>`. The reaper never
+  deletes a remote worktree: it keeps the agent's remote metadata (a
+  durable recovery record) so `close` can still decide (`v_remote_collect`).
 - **`--max-sessions N`** counts every channel mu opened for that host:
   attached panes, `--exec`, `--fetch`. At the cap mu refuses with one
   line naming the holder. Remote agents run in detached remote tmux,
@@ -426,13 +452,21 @@ Target ~2k LOC written fresh against this list, not trimmed from 3.x's
 
 ## Prose budget
 
+Targets, not facts: no shipped prose meets them yet. `v_skill` owns the
+prose-budget, marker and rule-destination tests; `v_docs_final` owns the
+help-budget test. They do not cap canonical docs (this page, VOCABULARY,
+`surface-contract.md`). Output budgets (a 4 KB result, 400-char list
+record, pinned content exempt, no truncated `seq` Next) are separate;
+see the Interface section.
+
 | Surface | Cap |
 |---|---|
 | SKILL.md | 600 words |
 | One recipe | 250 words |
 | All recipes | 4k words |
 | `Next:` hint / error | one line |
-| `--help` per verb | 3 lines |
+| `--help` per verb | 3 descriptive lines |
+| Remote recipe | 200 words |
 
 Three refuters compressed real recipes under the cap with every
 evidence-backed rule kept (refute+findings 94–219 words,
@@ -443,19 +477,21 @@ or dropped (a table in the skill PR).
 
 ## Persistent capture
 
-Triggers live in the DB file; `op_ctx` is a one-row main-schema table.
+*Shipped (kernel, `CAPTURE_VERSION` 2).* Triggers live in the DB file; `op_ctx` is a one-row main-schema table.
 Plain writes are captured as a safety net, not a supported path.
 - **The context wrappers own the transaction.** `withOpContext` and
-  `withCaptureSuppressed` open `BEGIN IMMEDIATE`, set ctx, run, clear,
-  commit. Run unchanged, 3.x wrappers leak ctx to other writers and
+  `withCaptureSuppressed`, when no transaction is open, open the
+  outermost `BEGIN IMMEDIATE`, set ctx, run, clear, commit; nested
+  calls inherit and restore the outer context. Run unchanged, 3.x wrappers leak ctx to other writers and
   leave `applying=1` after a crash; transaction-first wrappers block
   concurrent writers and roll back on crash (`sp_ctx_txn_boundary`
   refuter repro is the regression test).
 - Reuse 3.x's payload builder (all changed columns) and DELETE
   triggers with the dying stash; the spike had neither
   (`sp_payload_one_col`, `sp_no_delete_trigger`).
-- Trigger version folds into `schema_version`: refuse newer, recreate
-  only if older, in one `BEGIN IMMEDIATE` with the stamp (`sp_downgrade`,
+- The trigger revision is `schema_version.capture_version`, separate
+  from the schema number: refuse newer, recreate only if older or
+  missing, in one `BEGIN IMMEDIATE` with the stamp (`sp_downgrade`,
   `sp_migration_txn`).
 - Minimum SQLite 3.42 checked by the triggers (abort below) and by
   doctor.
@@ -498,8 +534,20 @@ Plain writes are captured as a safety net, not a supported path.
 
 ## Decisions during the build
 
-Revision 2 fixes architecture, guarantees and contracts. The surface is
-open and is decided by agent behaviour, not by judges reading designs.
+Revision 2 fixes architecture, guarantees and contracts. The surface
+defaults are the Interface section plus the binding amendments in the
+[surface contract](surface-contract.md).
+
+**Tournaments dropped (2026-10-24).** Six build-time `dec_*` tournaments
+(verb grammar, record format, error style, next rules, executor
+authority, skill text) were closed as wontfix. Each compared spellings
+of behaviour that did not exist yet (unified wait, durable delegate
+tasks, `note -m`, `close --note`, the envelope), so a candidate could
+not be built as a patch in one session; three refuters found that shared
+root cause. The README defaults stand. The final measurement is
+`v_eval_next`: grammar-neutral judges that assert state and provenance,
+not verb spellings, three reps per cell, a paired comparison, and a
+default kept unless a candidate wins by more than the rep spread.
 
 **Eval harness (the judge).** ~10 scripted scenarios from real
 failures: fan-out with gates; refute with verdicts; worker dies; API
@@ -519,23 +567,24 @@ release-surface check; budget about 7M tokens and 30 min per run.
 
 | Decision | Settled by |
 |---|---|
-| verb names, flags, grammar | tournament, eval-judged |
-| text record format (notes/show/list) | tournament, eval-judged |
-| `Next:` rule set | eval, one rule at a time |
-| `mu next` executor authority | eval failure scenarios |
-| error message style | eval: fixed in one retry? |
-| SKILL.md and recipes under caps | tournament, eval-judged, cheap model |
-| note `kind` assignment | during build |
+| verb names, flags, grammar | README defaults and aliases; `v_eval_next` measures |
+| text record format (notes/show/list) | README default; `v_eval_next` measures |
+| `Next:` rule set | `v_hints` on the README rules; `v_eval_next` measures |
+| `mu next` executor authority | explicit `auto` (`v_auto`, `v_executor`) |
+| error message style | README default: one line, fixed in one retry |
+| SKILL.md and recipes under caps | `v_skill`: budgets and marker tests |
+| note `kind` assignment | `v_notes`, at insert |
 | dashboard layout and keys | the user |
 
 The kernel does not depend on these and is built first.
 
 ## Open
 
-- `kind` on notes and soft-delete teardown need the flag-day segment
-  bump; confirm both machines can upgrade together.
-- Two 3.x bugs found by the run, fixable now: `bug_replace_rekey`
-  (INSERT OR REPLACE re-keys with no tombstone), `bug_touch_regresses`.
+- `kind` on notes and soft-delete teardown ride segment v2 lines
+  (shipped; mu-next reads v1 and v2); confirm both machines can upgrade
+  together at the flag day.
+- `bug_replace_rekey` and `bug_touch_regresses` are fixed (CHANGELOG
+  Unreleased).
 
 ## Process note
 
