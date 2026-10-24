@@ -128,7 +128,7 @@ describe("mu task wait — --any vs --first output shape", () => {
     // — but the exit is 5 (timeout), never 0. `b` is the only ref and
     // it stays OPEN.
     const timedOut = await runCli(
-      ["task", "wait", "b", "--first", "--json", "-w", "test", "--timeout", "1"],
+      ["task", "wait", "b", "--first", "--json", "-w", "test", "--timeout", "0.3"],
       dbPath,
     );
     expect(timedOut.exitCode).toBe(5);

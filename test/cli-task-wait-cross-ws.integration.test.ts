@@ -153,7 +153,7 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
     closeTask(db, "foo", { workstream: "wsa", evidence: "test" });
 
     const { exitCode, stdout, error } = await runCli(
-      ["task", "wait", "wsa/foo", "wsb/bar", "--timeout", "1", "--json"],
+      ["task", "wait", "wsa/foo", "wsb/bar", "--timeout", "0.3", "--json"],
       dbPath,
     );
     expect(error).toBeUndefined();
