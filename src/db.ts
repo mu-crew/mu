@@ -306,6 +306,8 @@ export class WorkstreamNotFoundError extends Error implements HasNextSteps {
  *  the name back: `workstream init` previews, then `--if <rev>` reuses it. */
 export class WorkstreamTornDownError extends WorkstreamNotFoundError {
   override readonly name: string = "WorkstreamTornDownError";
+  /** The message names the command: one stderr line. */
+  readonly inlineNext = true;
   constructor(
     workstream: string,
     public readonly tornDownAt: string,

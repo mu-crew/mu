@@ -230,11 +230,9 @@ export function checkDormantWorkstreams(
       // correctly calls teardown reversible), and "work" reads as "my code"
       // when what teardown removes here is the PLAN — task rows and notes.
       //
-      // "no checkout is touched" is true only because this list EXCLUDES
-      // workstreams with registered worktrees; teardown does free real
-      // worktrees when they exist (`freedWorktrees` in teardownWorkstream).
-      // The exclusion in findDormantWorkstreams is what makes this sentence
-      // safe, so the two must not drift apart.
+      // "no checkout is touched" is true because teardown never removes a
+      // worktree (it lists them as kept). This list still EXCLUDES
+      // workstreams with registered worktrees: they are live work.
       "Hides the task rows and notes — the plan, not the code (no checkout",
       "is touched); reusing the name later deletes them. The risk is",
       "losing sight of what was left to do, so read it first:",

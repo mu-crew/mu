@@ -74,7 +74,9 @@ import {
   WorkstreamHasAgentsError,
   WorkstreamNameInvalidError,
   WorkstreamNameReservedError,
+  WorkstreamPanesLiveError,
   WorkstreamRevisionMismatchError,
+  WorkstreamSessionLiveError,
 } from "../src/workstream.js";
 import {
   WorktreeDirtyError,
@@ -377,6 +379,16 @@ const cases: NextStepsCase[] = [
   {
     error: new WorkstreamHasAgentsError("ws", 2),
     label: "WorkstreamHasAgentsError",
+    expectedTokens: ["teardown ws"],
+  },
+  {
+    error: new WorkstreamPanesLiveError("ws", ["w1"]),
+    label: "WorkstreamPanesLiveError",
+    expectedTokens: ["agent close w1 -w ws"],
+  },
+  {
+    error: new WorkstreamSessionLiveError("ws", "mu-ws"),
+    label: "WorkstreamSessionLiveError",
     expectedTokens: ["teardown ws"],
   },
   {

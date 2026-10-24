@@ -453,7 +453,7 @@ gitDescribe("spawn --worktree", () => {
 });
 
 gitDescribe("workstream teardown", () => {
-  it("removes clean worktrees, keeps unmerged commits on a branch, never deletes a dirty one", async () => {
+  it("never removes a worktree: clean, unmerged and dirty all stay on disk and registered", async () => {
     const clean = await seedWorktree(db, {
       root,
       workstream: "auth",
@@ -472,29 +472,29 @@ gitDescribe("workstream teardown", () => {
       agent: "dirty-1",
       paneId: "%3",
     });
-    const head = commitFileIn(unmerged.path, "w.txt", "own work");
+    commitFileIn(unmerged.path, "w.txt", "own work");
     writeFileSync(join(dirty.path, "u.txt"), "precious");
 
     const r = await softTeardown(db, "auth");
 
-    expect(r.freedWorktrees).toBe(2);
-    expect(r.keptBranches).toEqual([`mu/auth/own-1-${head.slice(0, 12)}`]);
-    expect(r.failedWorktrees).toHaveLength(1);
-    expect(r.failedWorktrees[0]).toMatchObject({ agent: "dirty-1", path: dirty.path });
-    expect(existsSync(clean.path)).toBe(false);
-    expect(existsSync(unmerged.path)).toBe(false);
+    expect(r.keptWorktrees.map((w) => w.agent).sort()).toEqual(["clean-1", "dirty-1", "own-1"]);
+    for (const wt of [clean, unmerged, dirty]) expect(existsSync(wt.path)).toBe(true);
     expect(existsSync(join(dirty.path, "u.txt"))).toBe(true);
-    // the dirty one stays registered so `agent close --discard` can finish it
-    expect(listWorktrees(db).map((w) => w.agent)).toEqual(["dirty-1"]);
+    expect(
+      listWorktrees(db)
+        .map((w) => w.agent)
+        .sort(),
+    ).toEqual(["clean-1", "dirty-1", "own-1"]);
+    // no branch was made for the unmerged commits either
+    expect(gitIn(root, "branch", "--list", "mu/*").trim()).toBe("");
   });
 
-  it("counts a registered worktree whose dir is already gone apart", async () => {
+  it("a registered worktree whose dir is already gone stays registered too", async () => {
     const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
     rmSync(wt.path, { recursive: true, force: true });
     const r = await softTeardown(db, "auth");
-    expect(r.alreadyGoneWorktrees).toBe(1);
-    expect(r.freedWorktrees).toBe(0);
-    expect(listWorktrees(db)).toEqual([]);
+    expect(r.keptWorktrees).toEqual([{ agent: "worker-1", path: wt.path }]);
+    expect(listWorktrees(db).map((w) => w.agent)).toEqual(["worker-1"]);
   });
 });
 

@@ -127,7 +127,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **tombstone** | An `op='del'` row. There is no tombstone table. | "deletion marker" |
 | **resurrection** | A put newer than a seen tombstone, which legitimately recreates the row. | "undelete", "revive" |
 | **provenance** | Which HLC last wrote a field, derived from the ops log by query, never stored. | "version vector" |
-| **teardown** | Soft: kill a workstream's mux session, free clean worktrees, delete its machine-local agent rows, set `torn_down_at`. Tasks, edges and notes stay, hidden. Previewed first, applied with `--if <rev>`. Panes do not come back. Reusing the name (`init --if`) hard-deletes the old rows. | "destroy", "nuke", "purge" |
+| **teardown** | Soft: kill a workstream's mux session, delete its machine-local agent rows (worktrees are never removed), set `torn_down_at`. Tasks, edges and notes stay, hidden. Previewed first, applied with `--if <rev>`. Panes do not come back. Reusing the name (`init --if`) hard-deletes the old rows. | "destroy", "nuke", "purge" |
 | **drift** | The ops log and live tables disagree. Always a bug. | "inconsistency", "corruption" |
 | **shallow / deep check** | Drift checks in `mu doctor` and `mu doctor --deep` (full rebuild). | "fsck" |
 | **scored** | `tasks.scored`: impact/effort were given (`-i`/`-e`, `update`), not defaulted (50 / 1). `ready` order: scored by impact/effort desc, then unscored oldest first. | "prioritised" |

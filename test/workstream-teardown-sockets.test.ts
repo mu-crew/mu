@@ -30,6 +30,7 @@ describe("teardownWorkstream control sockets", () => {
     db = openDb({ path: dbPath });
     mux = installMux("tmux", [
       ["list-panes", { stdout: "", exitCode: 1, stderr: "can't find session" }],
+      ["display-message", { stdout: "", exitCode: 1, stderr: "can't find pane" }],
     ]);
   });
 

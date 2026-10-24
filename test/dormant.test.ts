@@ -220,11 +220,10 @@ describe("checkDormantWorkstreams", () => {
   });
 
   // THE COUPLING TEST. The abandoned remediation asserts "no checkout is
-  // touched", which is only true because this list excludes workstreams
-  // that have one — `teardownWorkstream` genuinely frees real checkouts
-  // when they exist (`freedWorktrees`). If that exclusion is ever relaxed,
-  // the sentence becomes a lie about data loss, so pin the claim to the
-  // behaviour rather than trusting a comment to be read.
+  // touched" (teardown never removes a worktree), and this list excludes
+  // workstreams that have one: they are live work. If that exclusion is
+  // ever relaxed, pin the claim to the behaviour rather than trusting a
+  // comment to be read.
   it("never claims 'no checkout is touched' about a workstream that has a worktree and no agent", () => {
     seed("has-checkout", { status: "OPEN", idleDays: ABANDONED_IDLE_DAYS + 99 });
     seedWorktree("has-checkout");

@@ -66,6 +66,8 @@ function mockTmux(state: MockState): { calls: string[][]; executor: TmuxExecutor
         ? ok("@1\t%1\t_mu\n")
         : fail(`can't find session: ${target}`);
     }
+    // A registered pane outside the session is asked about by id: none lives here.
+    if (verb === "display-message") return fail("can't find pane");
     if (verb === "list-sessions") {
       if (state.sessions.size === 0) return fail("no server running");
       return ok([...state.sessions].join("\n"));
@@ -328,10 +330,7 @@ describe("teardownWorkstream (soft)", () => {
       tasks: 3,
       notes: 2,
       edges: 2,
-      freedWorktrees: 0,
-      alreadyGoneWorktrees: 0,
-      keptBranches: [],
-      failedWorktrees: [],
+      keptWorktrees: [],
     });
 
     expect(state.killed).toEqual(["mu-auth"]);
@@ -386,10 +385,7 @@ describe("teardownWorkstream (soft)", () => {
       tasks: 0,
       notes: 0,
       edges: 0,
-      freedWorktrees: 0,
-      alreadyGoneWorktrees: 0,
-      keptBranches: [],
-      failedWorktrees: [],
+      keptWorktrees: [],
     });
   });
 
@@ -415,10 +411,7 @@ describe("teardownWorkstream (soft)", () => {
       tasks: 0,
       notes: 0,
       edges: 0,
-      freedWorktrees: 0,
-      alreadyGoneWorktrees: 0,
-      keptBranches: [],
-      failedWorktrees: [],
+      keptWorktrees: [],
     });
     expect(state.killed).toEqual(["mu-empty"]);
   });
@@ -436,10 +429,7 @@ describe("teardownWorkstream (soft)", () => {
       tasks: 3,
       notes: 2,
       edges: 2,
-      freedWorktrees: 0,
-      alreadyGoneWorktrees: 0,
-      keptBranches: [],
-      failedWorktrees: [],
+      keptWorktrees: [],
     });
   });
 
