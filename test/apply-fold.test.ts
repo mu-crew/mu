@@ -198,6 +198,19 @@ describe("every arrival order folds to the rebuild (reviewer repros)", () => {
         expect(s.tasks).toEqual([]);
       },
     },
+    "an edge put before an endpoint's delete stays dead across the restore (sync_edge_horizon_test)":
+      {
+        ops: [
+          op(1, "workstream", "put", "w", { created_at: S }),
+          op(2, "task", "put", "w/a", { created_at: S, updated_at: S }),
+          op(3, "task", "put", "w/b", { created_at: S, updated_at: S }),
+          op(4, "edge", "put", "w/a->w/b", { created_at: S }),
+          op(5, "task", "del", "w/a"),
+          op(6, "task", "put", "w/a", { created_at: S, updated_at: S }),
+        ],
+        // The edge predates the delete of its blocker: it stays dead after the restore.
+        check: (s) => expect(s.edges).toEqual([]),
+      },
   };
 
   for (const [name, set] of Object.entries(sets)) {
@@ -306,7 +319,48 @@ function generate(rand: () => number): Op[] {
       ops.push(op(wall, "edge", "del", `${pick(tasks)}->${pick(tasks)}`, {}, machineId, counter));
     }
   }
+  if (chance(0.4)) {
+    // An edge's life across an endpoint's delete/restore. Counter 7 keeps these
+    // HLCs clear of the random ops above; the walls interleave with them.
+    const w0 = 1 + Math.floor(rand() * (n + 4));
+    const [from, to] = pick([
+      ["w/a", "w/b"],
+      ["w/b", "w/a"],
+      ["w/a", "x/a"],
+    ] as const);
+    const victim = pick([from, to]);
+    const m = pick([A, B]);
+    const edge = `${from}->${to}`;
+    ops.push(op(w0, "edge", "put", edge, { created_at: pick(stamps) }, m, 7));
+    ops.push(op(w0 + 1, "task", "del", victim, {}, m, 7));
+    if (chance(0.7))
+      ops.push(op(w0 + 2, "task", "put", victim, { created_at: S, updated_at: S }, m, 7));
+    if (chance(0.4)) ops.push(op(w0 + 3, "edge", "put", edge, { created_at: pick(stamps) }, m, 7));
+  }
   return ops;
+}
+
+/** Independent of the fold: a live edge needs a put newer than every delete of
+ *  itself, of either endpoint task, and of either endpoint's workstream. */
+function edgeLivenessViolations(ops: readonly Op[], edges: unknown[]): string[] {
+  const newestDel = (entity: Op["entity"], key: string): string =>
+    ops
+      .filter((o) => o.entity === entity && o.key === key && o.op === "del")
+      .reduce((m, o) => (o.hlc > m ? o.hlc : m), "");
+  const bad: string[] = [];
+  for (const e of edges as { blocker: string; blocked: string }[]) {
+    const key = `${e.blocker}->${e.blocked}`;
+    const horizon = [
+      newestDel("edge", key),
+      newestDel("task", e.blocker),
+      newestDel("task", e.blocked),
+      newestDel("workstream", e.blocker.split("/")[0] as string),
+      newestDel("workstream", e.blocked.split("/")[0] as string),
+    ].reduce((m, h) => (h > m ? h : m), "");
+    if (!ops.some((o) => o.entity === "edge" && o.key === key && o.op === "put" && o.hlc > horizon))
+      bad.push(key);
+  }
+  return bad;
 }
 
 function shuffled<T>(xs: readonly T[], rand: () => number): T[] {
@@ -327,6 +381,7 @@ describe("randomized: live == rebuild (500 cases, fixed seed)", () => {
       const want = rebuilt(ops);
       const order = shuffled(ops, rand);
       const label = `case ${c}: ${order.map((o) => `${o.entity}:${o.op}:${o.key}@${o.hlc.slice(9, 15)}`).join(" ")}`;
+      expect(edgeLivenessViolations(ops, want.edges as unknown[]), label).toEqual([]);
       expect(arrive(order), label).toEqual(want);
       expect(arrive([...order].reverse()), `${label} (reversed)`).toEqual(want);
       if (c % 25 === 0) {
