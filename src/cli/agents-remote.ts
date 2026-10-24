@@ -114,7 +114,8 @@ export async function cmdRemoteEnv(
   }
   const nextSteps: NextStep[] = [
     {
-      intent: "Spawn it (replace <host> and <remote-dir>; the host needs `mu link pi`)",
+      intent:
+        "Spawn it (replace <host> and <remote-dir>; the host needs `pi install npm:@mu-crew/mu`)",
       command: `mu agent spawn ${agent} -w ${ws} --command ${shellQuote(r.command)}`,
     },
     {
@@ -136,7 +137,7 @@ export function wireRemoteEnvCommand(agent: Command): void {
   agent
     .command("remote-env <name>")
     .description(
-      "Print, without running anything, what a remote pi agent's ssh command needs: the socket forward (-o ControlMaster=no -o ControlPath=none -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L <local>:<remote>) and the identity env (MU_MANAGED_AGENT, MU_AGENT_NAME, MU_WORKSTREAM, MU_CTL_SOCK). mu then reaches the remote pi through the local socket exactly like a local one. ControlMaster=no / ControlPath=none give each agent a direct connection: a multiplexed ssh (ControlMaster auto in ~/.ssh/config) never binds the local end of the forward. The example command wraps pi in `$SHELL -ilc` because ssh's non-interactive shell skips ~/.zshrc / ~/.bashrc (PATH, provider env); drop the wrapper if your remote env needs no rc file. The host needs the mu extension (`mu link pi` there) and sshd must allow the forward: if spawn reports ctl refused, check AllowStreamLocalForwarding in the host's sshd_config.",
+      "Print, without running anything, what a remote pi agent's ssh command needs: the socket forward (-o ControlMaster=no -o ControlPath=none -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L <local>:<remote>) and the identity env (MU_MANAGED_AGENT, MU_AGENT_NAME, MU_WORKSTREAM, MU_CTL_SOCK). mu then reaches the remote pi through the local socket exactly like a local one. ControlMaster=no / ControlPath=none give each agent a direct connection: a multiplexed ssh (ControlMaster auto in ~/.ssh/config) never binds the local end of the forward. The example command wraps pi in `$SHELL -ilc` because ssh's non-interactive shell skips ~/.zshrc / ~/.bashrc (PATH, provider env); drop the wrapper if your remote env needs no rc file. The host needs the mu extension (`pi install npm:@mu-crew/mu` there) and sshd must allow the forward: if spawn reports ctl refused, check AllowStreamLocalForwarding in the host's sshd_config.",
     )
     .option(
       "--remote-sock <path>",

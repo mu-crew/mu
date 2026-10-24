@@ -91,7 +91,8 @@ prompt <pane> /reload`; tmux has none, so the step is omitted); else
 a row older than the columns has no spawn line and omits it). `mu doctor`
 probes every pi agent's socket (the `ctl` row) and flags an
 `extVersion` older than the installed mu or a missing op. Its extension
-row reports whether `mu link pi` installed the extension.
+row reads the live `hello` (`extVersion`, ops, features) from those probes;
+with no pi agent to ask it is `unknown`, never inferred from a file.
 
 ## Extension lifecycle
 

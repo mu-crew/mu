@@ -49,6 +49,17 @@
     "README.md",
     "AGENTS.md"
   ],
+  "pi": {
+    "extensions": [
+      "./dist/extension/mu-pi.js"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts/*.md"
+    ]
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -72,6 +83,14 @@
     "picocolors": "^1.1.1",
     "signal-exit": "^4.1.0",
     "string-width": "^8.2.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

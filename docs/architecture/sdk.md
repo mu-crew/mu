@@ -177,7 +177,7 @@ One npm package, `mu`. `tsup` bundles three entries:
 | --- | --- |
 | `dist/cli.js` | `bin: { mu: ./dist/cli.js }` |
 | `dist/index.js`, `dist/index.d.ts` | SDK and types |
-| `dist/extension/mu-pi.js` | the pi extension `mu link pi` points at |
+| `dist/extension/mu-pi.js` | the pi extension the package manifest (`pi.extensions`) loads |
 
 `skills/` and `docs/` ship alongside. There is no build step on the user's
 machine. pi stays a peer dependency: the extension types pi's API

@@ -45,7 +45,6 @@ import { CTL_OPS } from "./ctl/protocol.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "./db.js";
 import { checkCheapDriftInvariant } from "./drift.js";
 import { checkFleetHazards } from "./fleet-hazards.js";
-import { inspectLinks, type LinkOptions } from "./link.js";
 import type { WorkstreamSnapshot } from "./state.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
@@ -232,9 +231,9 @@ export function loadDoctorSummary(
     }
   }
 
-  const muExt = ctlExtensionDoctorCheck();
-  checks.push(murmurDoctorCheck(agentStateSource, { muExtOk: muExt.status === "ok" }));
-  checks.push(muExt, skillDoctorCheck());
+  // The "mu ext" row is live (a ctl probe) and so async: `mu doctor` adds
+  // it; this per-tick summary stays synchronous and socket-free.
+  checks.push(murmurDoctorCheck(agentStateSource));
 
   // ─ Mixed-fleet hazards + the SHALLOW drift invariant.
   //
@@ -323,8 +322,8 @@ export const MURMUR_NOT_NEEDED_DETAIL =
 
 /**
  * The agent-state source row. Shared by the TUI card and `mu doctor`.
- * `muExtOk`: the mu pi extension is linked, so pi agents report state
- * over their control socket and a missing murmur only affects other CLIs.
+ * `muExtOk`: a pi agent's live hello answered (never a file on disk), so
+ * pi agents report state over their control socket and a missing murmur only affects other CLIs.
  */
 export function murmurDoctorCheck(
   agentStateSource: "murmur" | "herdr",
@@ -371,55 +370,40 @@ export function murmurDoctorCheck(
   };
 }
 
-const RELINK = "run mu link pi";
+/** What to run when no live extension answers: the package is the only install path. */
+export const INSTALL_ADVICE = "pi install npm:@mu-crew/mu, then restart pi";
 
-/** The "mu ext" row's feature list; a feature an env var switched off is named with it. */
-export function extFeatures(env: NodeJS.ProcessEnv): string {
-  const features: [string, string][] = [
-    ["mu_delegate", "MU_DELEGATE"],
-    ["nudge", "MU_NUDGE"],
-  ];
-  const on = ["ctl", ...features.filter(([, v]) => env[v] !== "0").map(([f]) => f)];
-  const off = features.filter(([, v]) => env[v] === "0").map(([f, v]) => `${f} disabled by ${v}=0`);
-  return `(${on.join(", ")}${off.length ? `; ${off.join("; ")}` : ""})`;
+/** A pi agent answered hello: the only proof the extension is loaded. */
+export function extensionLive(reports: readonly AgentCtlReport[]): boolean {
+  return reports.some((r) => r.probe === "ok");
 }
 
-/** The "mu ext" row: is the mu pi extension shim installed and live? */
-export function ctlExtensionDoctorCheck(opts?: LinkOptions): DoctorCheck {
-  const { extension } = inspectLinks(opts);
-  switch (extension.state) {
-    case "ok":
-      return {
-        name: "mu ext",
-        status: "ok",
-        detail: extFeatures(process.env),
-      };
-    case "stale-copy":
-      return { name: "mu ext", status: "warn", detail: `stale copy: ${RELINK}` };
-    case "dangling":
-      return { name: "mu ext", status: "warn", detail: `dangling: ${RELINK}` };
-    default:
-      return { name: "mu ext", status: "warn", detail: `not linked: ${RELINK}` };
+/**
+ * The "mu ext" row, from the live ctl probes of the pi agents `mu doctor`
+ * just asked (hello's extVersion / ops / features). Never inferred from a
+ * file on disk. With no agent to ask the extension is UNKNOWN, not
+ * missing, and the row stays ok: a fresh install must not warn. hello
+ * cannot prove a skill was loaded, so there is no skill row.
+ */
+export function ctlExtensionDoctorCheck(reports: readonly AgentCtlReport[]): DoctorCheck {
+  const live = reports.find((r) => r.probe === "ok");
+  if (live) {
+    const features = live.features?.length ? `; ${live.features.join(", ")}` : "";
+    const ops = live.opCount === undefined ? "" : `, ${live.opCount} ops`;
+    return {
+      name: "mu ext",
+      status: "ok",
+      detail: `${live.extVersion ?? "from source"} (ctl${ops}${features})`,
+    };
   }
-}
-
-/** The "mu skill" row: is `~/.agents/skills/mu` this package's skill? */
-export function skillDoctorCheck(opts?: LinkOptions): DoctorCheck {
-  const { skill } = inspectLinks(opts);
-  switch (skill.state) {
-    case "ok":
-      return { name: "mu skill", status: "ok", detail: skill.target ?? skill.path };
-    case "foreign":
-      return {
-        name: "mu skill",
-        status: "warn",
-        detail: `foreign skill at ~/.agents/skills/mu (${skill.target ?? "not a symlink"})`,
-      };
-    case "dangling":
-      return { name: "mu skill", status: "warn", detail: `dangling: ${RELINK}` };
-    default:
-      return { name: "mu skill", status: "warn", detail: `not linked: ${RELINK}` };
+  if (reports.length === 0) {
+    return {
+      name: "mu ext",
+      status: "ok",
+      detail: `unknown: no pi agent running to ask (${INSTALL_ADVICE})`,
+    };
   }
+  return { name: "mu ext", status: "warn", detail: `no pi agent answered: ${INSTALL_ADVICE}` };
 }
 
 /** Per-agent probe budget for the doctor "ctl" row. */
@@ -434,6 +418,10 @@ export interface AgentCtlReport {
   extVersion?: string;
   /** ok probes whose extension is older than the installed mu, or lacks ops. */
   outdated?: boolean;
+  /** ok probes: how many ops hello lists. */
+  opCount?: number;
+  /** ok probes: the optional features hello lists. */
+  features?: string[];
   /** ok probes: protocol ops (CTL_OPS) the extension's hello does not list. */
   missingOps?: string[];
   /** Outdated probes: how `/reload` reaches it. "ctl" when the extension
@@ -520,6 +508,10 @@ export async function ctlSocketsDoctorCheck(
         probe: probe.kind,
         ...(probe.kind === "ok" && probe.extVersion !== undefined
           ? { extVersion: probe.extVersion }
+          : {}),
+        ...(probe.kind === "ok" && probe.ops !== undefined ? { opCount: probe.ops.length } : {}),
+        ...(probe.kind === "ok" && probe.features !== undefined
+          ? { features: probe.features }
           : {}),
         ...(older || missingOps.length > 0
           ? {
@@ -621,8 +613,7 @@ export function yankCommandForCheck(check: Pick<DoctorCheck, "name" | "status">)
     case "murmur":
       return "murmur link pi";
     case "mu ext":
-    case "mu skill":
-      return "mu link pi";
+      return "pi list";
     case "ctl":
       return "mu agent list";
     case "agents":
@@ -678,20 +669,20 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
         "`murmur init` and `murmur link pi`. Restart running pi sessions.",
       ];
     case "mu ext":
-    case "mu skill":
       return [
-        "Run `mu link pi` to install the mu pi extension shim and the mu",
-        "skill symlink, then restart running pi sessions so they load it.",
+        "Install the mu pi package once with `pi install npm:@mu-crew/mu`",
+        "(extension, skill and prompts), then restart running pi sessions.",
+        "An old `mu link pi` shim loads a second copy: `mu pi migrate`.",
       ];
     case "ctl":
       return [
         "mu talks to pi agents over a per-agent control socket served by",
         "the mu pi extension. `missing`: no socket (extension not loaded,",
-        "the agent predates `mu link pi`, or a new pi still waits at its",
+        "the mu package is not installed in that pi, or a new pi still waits at its",
         "project trust prompt: answer /trust in the pane, or spawn with",
         "--command 'pi --approve'). `refused`: socket present but not",
         "answering. `version`: protocol mismatch; upgrade mu or pi.",
-        "Run `mu link pi`, then respawn the agent. `extension X older than",
+        "Run `pi install npm:@mu-crew/mu`, then respawn the agent. `extension X older than",
         "installed Y` or `lacks ops`: the agent's pi loaded an older mu",
         "build; reload it with `mu agent send <a> '/reload'` (needs an",
         "extension that serves op command) or respawn it.",

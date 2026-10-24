@@ -11,8 +11,8 @@ Read it before your first remote spawn.
 
 On the remote host:
 
-1. Install mu and run `mu link pi`, so the remote pi loads the mu
-   extension.
+1. Install mu and run `pi install npm:@mu-crew/mu`, so the remote pi
+   loads the mu extension.
 2. Allow unix-socket forwards in the host's sshd:
    `AllowStreamLocalForwarding yes`.
 3. Create the worker's checkout yourself. `--worktree` works only

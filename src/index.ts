@@ -172,15 +172,6 @@ export {
   receiveHlc,
 } from "./hlc.js";
 export {
-  inspectLinks,
-  LinkConflictError,
-  type LinkState,
-  type LinkStatus,
-  linkPi,
-  linkSkill,
-  MU_SHIM_MARKER,
-} from "./link.js";
-export {
   type CaptureIntent,
   KNOWN_INTENTS,
   KNOWN_VERBS,
@@ -227,6 +218,13 @@ export {
   withCaptureSuppressed,
   withOpContext,
 } from "./op-context.js";
+export {
+  type MigrateEntry,
+  type MigrateResult,
+  type MigrateState,
+  MU_SHIM_MARKER,
+  migratePi,
+} from "./pi-migrate.js";
 export {
   type MachineLocalLoss,
   type RebuildOptions,

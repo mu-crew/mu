@@ -783,7 +783,7 @@ describe("mu agent send transport", () => {
     );
     expect(exitCode).toBe(1);
     expect(stderr).toContain("ctl: missing");
-    expect(stderr).toContain("mu link pi");
+    expect(stderr).toContain("pi install npm:@mu-crew/mu");
     expect(pasted()).toBe(false);
   });
 

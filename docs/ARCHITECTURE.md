@@ -140,7 +140,7 @@ are re-export hubs.
 | `extension/mu-pi.ts` | pi extension, child side: serves `$MU_CTL_SOCK`; built to `dist/extension/mu-pi.js` |
 | `extension/delegate.ts` | pi extension, parent side: `mu_delegate` / `mu_delegate_cancel`, which shell out to `mu` |
 | `extension/nudge.ts` | pi extension: the keep-driving nudge. Arms on a `mu` dispatch, checks `mu task list --status IN_PROGRESS --json` at `agent_before_settle`, injects the SKILL.md rule once per prompt, logs `--kind nudge`. Also the close nudge (worker settles owning a task). `parallelSettle` runs the two settle checks in parallel behind one `agent_before_settle` handler and merges their entries; `mu log` breadcrumbs are not awaited |
-| `src/link.ts` | `mu link pi`: extension shim, skill symlink, `inspectLinks` for doctor |
+| `src/pi-migrate.ts`, `src/cli/pi.ts` | `mu pi migrate`: move the old link-pi shim and skill link aside (mu-owned only). pi loads mu as a package: `package.json` `pi` manifest |
 
 ### Tasks, worktrees and workstreams
 

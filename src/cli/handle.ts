@@ -61,7 +61,6 @@ import {
 } from "../db.js";
 import { DriftDetectedError } from "../drift.js";
 import { checkDbInsideSyncDir, DbInsideSyncDirError, HazardFailError } from "../fleet-hazards.js";
-import { LinkConflictError } from "../link.js";
 import { GroupIdAmbiguousError, GroupNotFoundError, LogKindReservedError } from "../logs.js";
 import {
   HerdrCommandOverrideError,
@@ -371,8 +370,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RebuildTargetIsSourceError ||
     // An abbreviated group id matching several groups: the operator must
     // disambiguate. Guessing could pick the wrong group.
-    err instanceof GroupIdAmbiguousError ||
-    err instanceof LinkConflictError
+    err instanceof GroupIdAmbiguousError
   ) {
     return { label: "conflict", exitCode: 4 };
   }
@@ -614,7 +612,7 @@ export interface HandleOptions {
 /** Refuse to open a DB that lives inside MU_SYNC_DIR. Runs before
  *  `openDb` for every verb, ambient or not, so nothing is created or
  *  written and `mu sync` cannot bypass it. Path-based, symlinks resolved:
- *  it fires even when the DB file does not exist yet. `mu link` (which
+ *  it fires even when the DB file does not exist yet. `mu pi migrate` (which
  *  opens no DB, so it is outside handle()) calls it too. */
 export function refuseDbInsideSyncDir(): void {
   const dir = syncDir();

@@ -11,7 +11,7 @@
 //   5. A busy segment lock is reported, never silent; `mu doctor` counts
 //      the unpublished ops.
 //   6. The DB-inside-MU_SYNC_DIR refusal sees through symlinks and covers
-//      `mu link`.
+//      `mu pi migrate`.
 //
 // Fast tier: in-process runCli, per-test temp DBs and sync dir.
 
@@ -524,27 +524,31 @@ describe("the DB-inside-MU_SYNC_DIR refusal canonicalises both sides", () => {
   });
 });
 
-// ─── (4) mu link sits behind the same refusal ─────────────────────────
+// ─── (4) mu pi migrate sits behind the same refusal ───────────────────
 
-describe("mu link refuses a DB inside MU_SYNC_DIR", () => {
-  it("exit 4, and nothing is installed", async () => {
-    const home = join(tempDir, "pihome");
-    mkdirSync(home);
-    await withEnv("MU_PI_HOME", home, async () => {
-      const r = await runCli(["link", "pi", "--skill-only"], join(syncDir, "mu.db"));
+describe("mu pi migrate refuses a DB inside MU_SYNC_DIR", () => {
+  const shim = () => join(tempDir, "pihome", ".pi", "agent", "extensions", "mu.ts");
+  function seedShim(): void {
+    mkdirSync(join(tempDir, "pihome", ".pi", "agent", "extensions"), { recursive: true });
+    writeFileSync(shim(), "// mu:shim\nexport default function () {}\n");
+  }
+
+  it("exit 4, and nothing is moved", async () => {
+    seedShim();
+    await withEnv("MU_PI_HOME", join(tempDir, "pihome"), async () => {
+      const r = await runCli(["pi", "migrate", "--apply"], join(syncDir, "mu.db"));
       expect(r.exitCode, r.stderr).toBe(4);
       expect(r.stderr).toContain("is inside MU_SYNC_DIR");
-      expect(existsSync(join(home, ".agents"))).toBe(false);
+      expect(existsSync(shim())).toBe(true);
     });
   });
 
-  it("still installs when the DB is outside, and opens no DB", async () => {
-    const home = join(tempDir, "pihome");
-    mkdirSync(home);
-    await withEnv("MU_PI_HOME", home, async () => {
-      const r = await runCli(["link", "pi", "--skill-only"], lap);
+  it("still migrates when the DB is outside, and opens no DB", async () => {
+    seedShim();
+    await withEnv("MU_PI_HOME", join(tempDir, "pihome"), async () => {
+      const r = await runCli(["pi", "migrate", "--apply"], lap);
       expect(r.exitCode, r.stderr).toBeNull();
-      expect(existsSync(join(home, ".agents", "skills", "mu"))).toBe(true);
+      expect(existsSync(shim())).toBe(false);
       expect(existsSync(lap)).toBe(false);
     });
   });

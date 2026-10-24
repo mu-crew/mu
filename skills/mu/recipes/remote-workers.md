@@ -76,7 +76,7 @@ retry next turn, not progress.
 Spawn reports `ctl: ok` when all of these hold (`mu doctor` has a ctl
 row per agent):
 
-- The host has the mu extension: run `mu link pi` there.
+- The host has the mu extension: run `pi install npm:@mu-crew/mu` there.
 - The ssh is direct. `$MU_SSH_ARGS` sets `ControlMaster=no
   ControlPath=none`; a multiplexed ssh never binds the forward and spawn
   reports `ctl: missing`.

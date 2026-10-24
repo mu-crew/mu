@@ -56,7 +56,7 @@ milliseconds; `0` disables a wait unless noted.
 socket forward) and `MU_REMOTE_ENV` (the four vars above) for a remote
 pi agent's `--command`. mu never reads them back.
 
-## pi extension and `mu link pi`
+## pi package and `mu pi migrate`
 
 | Name | Effect | Default |
 | --- | --- | --- |
@@ -64,9 +64,8 @@ pi agent's `--command`. mu never reads them back.
 | `MU_DELEGATE_TRACE` | `1` appends one JSON line per delegate delivery step and pi lifecycle event to `<cache dir>/delegate-trace.log`. For debugging a lost follow-up. | unset: off |
 | `MU_DELEGATE_MAX` | Most delegates one pi session runs at once. Further calls queue, up to four times this; past that `mu_delegate` refuses. A positive integer. | `16` |
 | `MU_NUDGE` | `0` turns off the two nudges: the keep-driving nudge (one reminder when an orchestrator ends a turn with dispatched work still IN_PROGRESS) and the close nudge (one reminder when a mu-spawned pi worker ends a turn still owning an IN_PROGRESS task). A pi nested in an agent's pane (it found `MU_CTL_SOCK` served by another pi) gets neither; a pi without UI (`pi -p`, json mode) gets no close nudge. `mu doctor` reports it. | unset: on |
-| `MU_PI_HOME` | Root under which `mu link pi` writes `.pi/` and `.agents/`. | `$HOME` |
+| `MU_PI_HOME` | Root under which `mu pi migrate` looks for the old `.pi/` shim and `.agents/` skill link. | `$HOME` |
 | `PI_CODING_AGENT_DIR` | Read only. pi's agent dir, checked for a linked murmur extension. | `~/.pi/agent` |
-| `MU_EXTENSION_ENTRY` | Test only. Built extension the `mu link pi` shim imports. | `dist/extension/mu-pi.js` |
 
 ## Output
 

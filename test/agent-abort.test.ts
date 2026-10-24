@@ -200,7 +200,7 @@ describe("abortAgent", () => {
     expect(err).toBeInstanceOf(AgentCtlUnreachableError);
     expect((err as AgentCtlUnreachableError).kind).toBe("missing");
     const steps = (err as AgentCtlUnreachableError).errorNextSteps().map((s) => s.command);
-    expect(steps).toContain("mu link pi");
+    expect(steps).toContain("pi install npm:@mu-crew/mu");
     expect(steps.some((c) => c.includes("kick"))).toBe(false);
     const trust = (err as AgentCtlUnreachableError)
       .errorNextSteps()
@@ -216,7 +216,7 @@ describe("abortAgent", () => {
     const err = new AgentCtlUnreachableError("worker-1", "auth", "/tmp/x.sock", "refused");
     const steps = err.errorNextSteps();
     expect(steps.some((s) => /trust/.test(s.intent) || /trust/.test(s.command))).toBe(false);
-    expect(steps.map((s) => s.command)).toContain("mu link pi");
+    expect(steps.map((s) => s.command)).toContain("pi install npm:@mu-crew/mu");
   });
 
   it("custom cli key running pi (its socket answers): aborts through ctl", async () => {

@@ -12,11 +12,9 @@ import {
   countProblems,
   type DoctorCheck,
   loadDoctorSummary,
-  MURMUR_NOT_NEEDED_DETAIL,
   remediationParagraph,
   yankCommandForCheck,
 } from "../src/doctor-summary.js";
-import { linkPi, linkSkill } from "../src/link.js";
 import type { WorkstreamSnapshot } from "../src/state.js";
 
 const EMPTY_VIEW = {
@@ -51,7 +49,6 @@ describe("loadDoctorSummary", () => {
   let murmurRoot: string;
   let originalPath: string | undefined;
   let originalPiDir: string | undefined;
-  let originalPiHome: string | undefined;
 
   beforeEach(() => {
     originalPath = process.env.PATH;
@@ -75,25 +72,11 @@ describe("loadDoctorSummary", () => {
     mkdirSync(join(piDir, "extensions"), { recursive: true });
     writeFileSync(join(piDir, "extensions", "murmur.ts"), "");
     process.env.PI_CODING_AGENT_DIR = piDir;
-
-    // The mu extension + skill, linked into a temp home (never ~).
-    originalPiHome = process.env.MU_PI_HOME;
-    process.env.MU_PI_HOME = tempDir;
-    const entry = join(tempDir, "mu-pi.js");
-    writeFileSync(entry, "export default function () {}\n");
-    process.env.MU_EXTENSION_ENTRY = entry;
-    linkPi();
-    linkSkill();
   });
 
   afterEach(() => {
     const pathKey = "PATH";
     const piDirKey = "PI_CODING_AGENT_DIR";
-    const entryKey = "MU_EXTENSION_ENTRY";
-    const piHomeKey = "MU_PI_HOME";
-    delete process.env[entryKey];
-    if (originalPiHome === undefined) delete process.env[piHomeKey];
-    else process.env.MU_PI_HOME = originalPiHome;
     if (originalPath === undefined) delete process.env[pathKey];
     else process.env.PATH = originalPath;
     if (originalPiDir === undefined) delete process.env[piDirKey];
@@ -125,25 +108,14 @@ describe("loadDoctorSummary", () => {
         "name-case",
         "drift",
         "murmur",
-        "mu ext",
-        "mu skill",
       ]),
     );
     expect(s.checks.every((c) => c.status === "ok")).toBe(true);
     expect(s.problemCount).toBe(0);
   });
 
-  it("murmur not installed is ok when the mu extension is linked", () => {
+  it("murmur not installed warns: the per-tick summary has no live hello to prove the extension", () => {
     process.env.PATH = join(tempDir, "empty-bin");
-
-    const murmur = loadDoctorSummary(db, null).checks.find((check) => check.name === "murmur");
-
-    expect(murmur).toMatchObject({ status: "ok", detail: MURMUR_NOT_NEEDED_DETAIL });
-  });
-
-  it("warns when murmur is not installed and the mu extension is not linked", () => {
-    process.env.PATH = join(tempDir, "empty-bin");
-    rmSync(join(tempDir, ".pi"), { recursive: true });
 
     const murmur = loadDoctorSummary(db, null).checks.find((check) => check.name === "murmur");
 
@@ -154,8 +126,7 @@ describe("loadDoctorSummary", () => {
     });
   });
 
-  it("warns when the murmur pi extension is not linked (mu ext missing)", () => {
-    rmSync(join(tempDir, ".pi"), { recursive: true });
+  it("warns when the murmur pi extension is not linked", () => {
     rmSync(join(process.env.PI_CODING_AGENT_DIR ?? "", "extensions", "murmur.ts"));
 
     const murmur = loadDoctorSummary(db, null).checks.find((check) => check.name === "murmur");
@@ -177,7 +148,7 @@ describe("loadDoctorSummary", () => {
     });
   });
 
-  it("warns when murmur predates pane-state timing (non-pi CLIs only: mu ext linked)", () => {
+  it("warns when murmur predates pane-state timing", () => {
     writeFileSync(
       join(murmurRoot, "package.json"),
       JSON.stringify({ name: "@mu-crew/murmur", version: "0.6.1" }),
@@ -189,7 +160,7 @@ describe("loadDoctorSummary", () => {
       name: "murmur",
       status: "warn",
       detail:
-        "murmur 0.6.1 is older than 1.0.0; idle/stall timing unknown for non-pi CLIs (pi agents use ctl)",
+        "murmur 0.6.1 is older than 1.0.0; @murmur_pane_since missing, idle/stall timing unknown",
     });
   });
 

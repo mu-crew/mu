@@ -30,6 +30,8 @@ export type CtlProbe =
       ops?: string[];
       /** From hello: the mu version the extension was built from. */
       extVersion?: string;
+      /** From hello: the optional features the extension serves. Absent: it predates reporting them. */
+      features?: string[];
       /** The pi process's incarnation (status reply, else hello's); absent from older extensions. */
       incarnation?: string;
     }
@@ -205,6 +207,7 @@ export async function ctlProbe(
       status: { state, since, runs, pending, ...(blocked !== undefined ? { blocked } : {}) },
       ...(hello?.ok && hello.ops !== undefined ? { ops: hello.ops } : {}),
       ...(hello?.ok && hello.extVersion !== undefined ? { extVersion: hello.extVersion } : {}),
+      ...(hello?.ok && hello.features !== undefined ? { features: hello.features } : {}),
       ...(st.incarnation !== undefined || (hello?.ok && hello.incarnation !== undefined)
         ? { incarnation: st.incarnation ?? (hello?.ok ? hello.incarnation : undefined) }
         : {}),

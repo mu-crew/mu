@@ -676,7 +676,7 @@ describe("mu agent spawn (CLI)", () => {
     );
     db = openDb({ path: dbPath });
     expect((r.data as { ctl: string }).ctl).toBe("skipped");
-    expect(r.stderr).not.toContain("mu link pi");
+    expect(r.stderr).not.toContain("pi install npm:@mu-crew/mu");
   });
 
   it("--next-free takes the next free name when the asked one is taken", async () => {
