@@ -12,7 +12,9 @@
 //    gate-report.txt carries exactly its nonce line, written after the gate finished;
 //  - g1 ran once in a worker on dev, its commit is on main as that worker's commit, and the AUT
 //    closed g1 after the worker's run;
-//  - no AUT tool call held an ssh session longer than 20s (a long exec is the gate pane's job).
+//  - the remote-gate session came from the pane of the mu agent named gate (sessions.log records
+//    the opener's TMUX_PANE, the DB the agent's pane), never from an AUT tool call; and no AUT
+//    tool call held an ssh session longer than 5s (the gate runs 6s: a long exec is the pane's job).
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -96,6 +98,14 @@ const scenario: Scenario = {
       completed = false;
       wrong.push(`${gateSessions.length} remote-gate session(s) on dev (want 1)`);
     }
+    const gatePane = probe.agentPanes("eval").get("gate");
+    const openedBy = /\bpane=(\S+)/.exec(gateSessions[0] ?? "")?.[1];
+    if (gateSessions.length === 1 && (gatePane === undefined || openedBy !== gatePane)) {
+      completed = false;
+      wrong.push(
+        `the remote-gate session was not opened from the mu pane named gate (pane ${openedBy ?? "?"}, agent gate: ${gatePane ?? "none"})`,
+      );
+    }
     // the gate's result and the report
     let gateDone: { label: string; ms: number } | null = null;
     try {
@@ -129,9 +139,9 @@ const scenario: Scenario = {
       ...orderWrong(doneRun ? runMoment(doneRun) : null, closeMoment(sb, "eval", "g1"), "g1 close"),
     );
     if (!(closed && doneRun && proof.ok)) completed = false;
-    // no long exec of the AUT over ssh
+    // no long exec of the AUT over ssh (the gate runs 6s)
     for (const c of run.toolCalls) {
-      if (/\bssh\b/.test(commandOf(c)) && (c.durationMs ?? 0) > 20_000)
+      if (/\bssh\b/.test(commandOf(c)) && (c.durationMs ?? 0) > 5000)
         wrong.push(`an ssh call held the host for ${c.durationMs}ms: ${commandOf(c).slice(0, 80)}`);
     }
     wrong.push(...prodWrong(run));

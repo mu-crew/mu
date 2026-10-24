@@ -32,7 +32,7 @@
   {
     "calls": [
       {
-        "bash": "f=$(mktemp); mu task wait i1 i2 -w eval --timeout 120 --json >$f 2>&1; rc=$?; if [ $rc -ge 128 ] || [ ! -s $f ]; then echo \"{\\\"interrupted\\\":true,\\\"exit\\\":$rc,\\\"tasks\\\":$(mu task list -w eval --json),\\\"resume\\\":\\\"mu task wait i1 i2 -w eval --json\\\"}\"; else cat $f; fi; rm -f $f"
+        "bash": "f=$(mktemp); mu agent wait w1 w2 -w eval --after-runs 0 --timeout 120 --json >$f 2>&1; rc=$?; if [ $rc -ge 128 ] || [ ! -s $f ]; then echo \"{\\\"interrupted\\\":true,\\\"exit\\\":$rc,\\\"tasks\\\":$(mu task list -w eval --json),\\\"resume\\\":\\\"mu task wait i1 i2 -w eval --json\\\"}\"; else cat $f; fi; rm -f $f"
       }
     ]
   },

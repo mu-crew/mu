@@ -18,6 +18,8 @@ export interface Probe {
   /** [blocker, blocked] pairs. */
   edges(ws: string): [string, string][];
   agents(ws: string): string[];
+  /** agent name -> its tmux pane id (agents.pane_id). */
+  agentPanes(ws: string): Map<string, string>;
   workstreams(): string[];
   opsCount(where: { entity?: string; op?: "put" | "del"; intentLike?: string }): number;
   close(): void;
@@ -94,6 +96,21 @@ export function openProbe(sb: Sandbox): Probe {
             )
             .all(ws) as { name: string }[]
         ).map((r) => r.name),
+      );
+    },
+    agentPanes(ws) {
+      return withDb(
+        (db) =>
+          new Map(
+            (
+              db
+                .prepare(
+                  `SELECT a.name AS name, a.pane_id AS pane FROM agents a
+                     JOIN workstreams w ON w.id = a.workstream_id WHERE w.name = ?`,
+                )
+                .all(ws) as { name: string; pane: string }[]
+            ).map((r): [string, string] => [r.name, r.pane]),
+          ),
       );
     },
     workstreams() {
