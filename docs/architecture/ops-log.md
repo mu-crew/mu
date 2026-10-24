@@ -79,8 +79,10 @@ events through `emitEvent`. `appendLog` writes operator prose
   transaction: other writers wait for the lock instead of inheriting
   someone's intent or `applying = 1`, and a crash rolls the context
   back. Nested scopes inherit the group (a cascade is one group) and
-  restore the previous row in a `finally`; `db.transaction()` inside a
-  scope is a savepoint. `withCaptureSuppressed` is the echo guard used
+  restore the previous row in a `finally` only while the transaction is
+  still open (after an implicit rollback or a raw COMMIT nothing is
+  written, so the outer context is never autocommitted); `db.transaction()`
+  inside a scope is a savepoint. `withCaptureSuppressed` is the echo guard used
   by the apply path, with the same ownership.
 - An importer must synthesize **ops, not rows**. A direct INSERT is
   invisible to sync and reported as drift.

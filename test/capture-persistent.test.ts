@@ -297,6 +297,140 @@ describe("the context wrappers own the transaction (sp_ctx_txn_boundary)", () =>
   });
 });
 
+describe("an implicit rollback never leaves op_ctx to another writer (rv6_ctx_rollback_leak)", () => {
+  const probe = (db: Db): void => {
+    db.exec(
+      "CREATE TEMP TABLE rollback_probe(x TEXT NOT NULL); INSERT OR ROLLBACK INTO rollback_probe VALUES (NULL)",
+    );
+  };
+  // PRAGMA data_version moves when ANOTHER connection commits; read first so b has a snapshot.
+  const dataVersion = (db: Db): number => {
+    db.prepare("SELECT 1 FROM op_ctx").get();
+    return db.pragma("data_version", { simple: true }) as number;
+  };
+  const committedCtx = (db: Db): unknown =>
+    db.prepare("SELECT group_id, actor, intent, applying FROM op_ctx").get();
+  const DEFAULTS = { group_id: null, actor: null, intent: null, applying: 0 };
+
+  it("nested differing ctx: caught rollback writes nothing, b sees defaults and is captured", () => {
+    insertTask(a, "t1");
+    clearOps(a);
+    const v0 = dataVersion(b);
+    let seen: unknown;
+    let captured = 0;
+    let versionAtCatch = -1;
+    expect(() =>
+      withCaptureSuppressed(a, () => {
+        try {
+          withOpContext(a, { intent: "inner" }, () => probe(a));
+        } catch {
+          expect(a.inTransaction).toBe(false);
+          versionAtCatch = dataVersion(b);
+          seen = committedCtx(b);
+          // The lock is gone with the rollback; b's plain write must be captured.
+          b.prepare("UPDATE tasks SET title = 'independent'").run();
+          captured = opsOf(b, "task").length;
+        }
+      }),
+    ).toThrow(CtxTransactionEndedError);
+    expect(seen).toEqual(DEFAULTS);
+    expect(captured).toBe(1);
+    // a committed nothing between the rollback and the catch (no autocommit ctx write).
+    expect(versionAtCatch).toBe(v0);
+    expect(committedCtx(b)).toEqual(DEFAULTS);
+  });
+
+  it("nested same ctx (fast path): caught rollback leaves defaults", () => {
+    let seen: unknown;
+    expect(() =>
+      withCaptureSuppressed(a, () => {
+        try {
+          withCaptureSuppressed(a, () => probe(a));
+        } catch {
+          seen = committedCtx(b);
+        }
+      }),
+    ).toThrow(CtxTransactionEndedError);
+    expect(seen).toEqual(DEFAULTS);
+  });
+
+  it("outermost scope: a fn that rolled back itself triggers no autocommit write", () => {
+    const v0 = dataVersion(b);
+    expect(() => withOpContext(a, { intent: "x" }, () => probe(a))).toThrow();
+    expect(a.inTransaction).toBe(false);
+    expect(committedCtx(b)).toEqual(DEFAULTS);
+    expect(dataVersion(b)).toBe(v0);
+    // and a caught one that returns normally still fails loudly
+    expect(() =>
+      withOpContext(a, { intent: "x" }, () => {
+        try {
+          probe(a);
+        } catch {}
+      }),
+    ).toThrow(CtxTransactionEndedError);
+    expect(dataVersion(b)).toBe(v0);
+    expect(committedCtx(b)).toEqual(DEFAULTS);
+  });
+
+  it("after a rollback the scope writes nothing: another writer's lock cannot mask the error", () => {
+    a.pragma("busy_timeout = 0");
+    expect(() =>
+      withOpContext(a, { intent: "x" }, () => {
+        try {
+          probe(a);
+        } catch {}
+        b.exec("BEGIN IMMEDIATE"); // b now holds the write lock; a must not need it
+      }),
+    ).toThrow(CtxTransactionEndedError);
+    b.exec("ROLLBACK");
+  });
+
+  it("a crash right after the caught rollback leaves applying = 0", () => {
+    let atCrash: unknown;
+    expect(() =>
+      withCaptureSuppressed(a, () => {
+        try {
+          withOpContext(a, { intent: "inner" }, () => probe(a));
+        } catch {
+          // What a fresh process would find if a died right here.
+          const fresh = new Database(path);
+          try {
+            atCrash = fresh.prepare("SELECT group_id, actor, intent, applying FROM op_ctx").get();
+          } finally {
+            fresh.close();
+          }
+        }
+      }),
+    ).toThrow(CtxTransactionEndedError);
+    expect(atCrash).toEqual(DEFAULTS);
+  });
+
+  it("nested fn that COMMITs the transaction does not leave its ctx committed", () => {
+    let seen: unknown;
+    expect(() =>
+      withCaptureSuppressed(a, () => {
+        try {
+          withOpContext(a, { intent: "inner" }, () => {
+            a.exec("COMMIT");
+          });
+        } finally {
+          seen = committedCtx(b);
+        }
+      }),
+    ).toThrow(CtxTransactionEndedError);
+    expect(seen).toEqual(DEFAULTS);
+    expect(committedCtx(b)).toEqual(DEFAULTS);
+  });
+
+  it("a healthy nested scope still restores the outer context in the transaction", () => {
+    withOpContext(a, { intent: "outer" }, () => {
+      withOpContext(a, { intent: "inner" }, () => {});
+      expect(currentOpContext(a).intent).toBe("outer");
+      expect(committedCtx(b)).toEqual(DEFAULTS);
+    });
+  });
+});
+
 describe("the op_ctx row", () => {
   it("cannot be deleted through SQL", () => {
     expect(() => a.prepare("DELETE FROM op_ctx").run()).toThrow(/op_ctx is the op context row/);

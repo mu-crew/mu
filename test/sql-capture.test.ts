@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { classifyError, UsageError } from "../src/cli/handle.js";
-import { cmdSql, topLevelKeywords } from "../src/cli/sql.js";
+import { cmdSql } from "../src/cli/sql.js";
 import { type Db, openDb } from "../src/db.js";
 import { renderOpLine } from "../src/log-render.js";
 import { appendLog, LogKindReservedError, listLogs } from "../src/logs.js";
@@ -304,15 +304,110 @@ describe("mu sql refuses user transaction control", () => {
     await cmdSql(db, "DROP TRIGGER t_x");
   });
 
-  it("topLevelKeywords lists the first keyword of each statement", () => {
-    expect(topLevelKeywords("select 1; Update t set a=1 ;; delete from t")).toEqual([
-      "SELECT",
-      "UPDATE",
-      "DELETE",
-    ]);
-    expect(
-      topLevelKeywords("CREATE TRIGGER x AFTER INSERT ON t BEGIN SELECT 1; END; COMMIT"),
-    ).toEqual(["CREATE", "COMMIT"]);
+  // rv6_sql_tx_scan: transaction control is recognised by SQLite's own
+  // parser, never by words. Keyword-named identifiers neither bypass the
+  // refusal nor cause a false one.
+  const titles = (): string =>
+    (db.prepare("SELECT title FROM tasks ORDER BY local_id").all() as { title: string }[])
+      .map((r) => r.title)
+      .join(",");
+  const tableExists = (name: string): boolean =>
+    db.prepare("SELECT 1 FROM sqlite_master WHERE name = ?").get(name) !== undefined;
+
+  it.each([
+    [
+      "trigger table + begin column",
+      "CREATE TABLE trigger(begin TEXT); UPDATE tasks SET title='bypass'; COMMIT",
+    ],
+    [
+      "trigger + begin columns",
+      "CREATE TABLE t1(trigger TEXT, begin TEXT); UPDATE tasks SET title='bypass'; COMMIT",
+    ],
+    [
+      "trigger + begin, then END",
+      "CREATE TABLE t2(trigger TEXT, begin TEXT); UPDATE tasks SET title='bypass'; END",
+    ],
+    [
+      "savepoint table",
+      "CREATE TABLE savepoint(begin TEXT); UPDATE tasks SET title='bypass'; RELEASE s",
+    ],
+    [
+      "ROLLBACK then autocommit write",
+      "CREATE TABLE t3(trigger TEXT, begin TEXT); ROLLBACK; UPDATE tasks SET title='bypass'",
+    ],
+    [
+      "real trigger, then COMMIT",
+      "CREATE TRIGGER tg AFTER INSERT ON ops BEGIN SELECT CASE WHEN 1 THEN 1 END; END; UPDATE tasks SET title='bypass'; COMMIT",
+    ],
+    [
+      "BEGIN after a trigger-named column",
+      "CREATE TABLE t4(trigger TEXT); BEGIN; UPDATE tasks SET title='bypass'; COMMIT",
+    ],
+  ])("refuses before running anything: %s", async (_name, sql) => {
+    const seq = maxSeq();
+    const before = titles();
+    const tablesBefore = (
+      db.prepare("SELECT COUNT(*) AS n FROM sqlite_master").get() as { n: number }
+    ).n;
+    await expect(cmdSql(db, sql)).rejects.toThrow(TX);
+    await expect(cmdSql(db, sql, { confirmRows: 99 })).rejects.toThrow(TX);
+    expect(titles()).toBe(before);
+    expect(opsAfter(seq)).toEqual([]);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM sqlite_master").get() as { n: number }).n).toBe(
+      tablesBefore,
+    );
+    expect(db.inTransaction).toBe(false);
+  });
+
+  it("the committed-bypass repro leaves the data untouched, for a second connection too", async () => {
+    await expect(
+      cmdSql(
+        db,
+        "CREATE TABLE trigger(begin TEXT); UPDATE tasks SET title='committed-bypass'; COMMIT",
+      ),
+    ).rejects.toThrow(UsageError);
+    const other = openDb({ path: join(dir, "mu.db") });
+    try {
+      expect(
+        other.prepare("SELECT COUNT(*) AS n FROM tasks WHERE title = 'committed-bypass'").get(),
+      ).toEqual({ n: 0 });
+      expect(tableExists("trigger")).toBe(false);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("accepts tables and columns named after transaction keywords", async () => {
+    for (const name of ["begin", "commit", "end", "trigger", "savepoint", "release", "rollback"]) {
+      // quoted: `commit` is a reserved word that cannot be bare.
+      await cmdSql(db, `CREATE TABLE "${name}"("${name}" TEXT, x TEXT)`);
+      await cmdSql(db, `INSERT INTO "${name}"("${name}", x) VALUES ('v', 'w')`);
+      await cmdSql(db, `SELECT "${name}", x FROM "${name}"`);
+    }
+    await cmdSql(
+      db,
+      `CREATE TABLE multi(begin, "commit", end, trigger, savepoint);
+       INSERT INTO multi(begin, "commit", end, trigger, savepoint) VALUES (1,2,3,4,5);
+       UPDATE multi SET end = begin + "commit"; SELECT trigger, savepoint FROM multi`,
+    );
+    expect(db.prepare("SELECT end FROM multi").get()).toEqual({ end: 3 });
+    expect(db.inTransaction).toBe(false);
+  });
+
+  it("runs a script with a real trigger followed by more statements", async () => {
+    await cmdSql(
+      db,
+      "CREATE TABLE trigger(begin TEXT); CREATE TRIGGER tg AFTER INSERT ON trigger BEGIN UPDATE trigger SET begin = CASE WHEN 1 THEN 'x' END; END; INSERT INTO trigger(begin) VALUES ('a'); SELECT 1",
+    );
+    expect(db.prepare("SELECT begin FROM trigger").get()).toEqual({ begin: "x" });
+  });
+
+  it("refuses ROLLBACK TO, and a COMMIT after a statement naming a table the script creates", async () => {
+    await expect(cmdSql(db, "ROLLBACK TO s1")).rejects.toThrow(TX);
+    await expect(
+      cmdSql(db, "CREATE TABLE later(x); INSERT INTO later VALUES (1); COMMIT"),
+    ).rejects.toThrow(TX);
+    expect(tableExists("later")).toBe(false);
   });
 
   it("a plain read does not take the write lock", async () => {

@@ -57,7 +57,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `ROLLBACK`, `SAVEPOINT` and `RELEASE` are refused (`UsageError`: "mu sql
   runs inside mu's transaction; remove BEGIN/COMMIT"). `--confirm-rows` no
   longer opens its own transaction: a mismatch throws and the scope rolls
-  back. A read-only statement skips the scope (no write lock).
+  back. A read-only statement skips the scope (no write lock). Transaction
+  control is recognised by SQLite (the statement compiles to an `AutoCommit`
+  or `Savepoint` opcode), one statement at a time, not by scanning for
+  keywords, so identifiers named `begin`, `trigger` or `end` neither bypass
+  nor trip the refusal. A nested scope restores the outer context only
+  while the transaction is still open: an implicit rollback inside it
+  (`INSERT OR ROLLBACK`, `RAISE(ROLLBACK)`) no longer autocommits it.
 - **Explicit non-positive ids are refused.** An `INSERT` naming `id <= 0`
   (`rowid` on `task_edges`), including `-1`, raises `mu: explicit non-positive
   ids are refused` (local writes only; ingest is never refused). `-1` stays
