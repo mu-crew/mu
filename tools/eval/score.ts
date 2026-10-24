@@ -29,6 +29,8 @@ export interface VerdictExtra {
   wrong?: string[];
   destructive?: string[];
   notes?: string[];
+  /** Native guarantees missed on the baseline (see lifecycle.native). Shown as N/A everywhere; a pass is then a manual workaround. */
+  na?: string[];
   /** DESTRUCTIVE ids this scenario legitimately triggers. */
   allow?: string[];
   expectFail?: ExpectFail[];
@@ -76,8 +78,16 @@ export function verdict(run: RunMetrics, completed: boolean, extra: VerdictExtra
     if (exp) notes.push(`expected fail: ${exp.why}: ${f.entry}`);
     else wrong.push(f.entry);
   }
+  const na = extra.na ?? [];
+  if (na.length > 0) {
+    notes.push(...na.map((x) => `N/A baseline 3.x: ${x}`));
+    notes.push(
+      `manual workaround: ${completed ? "completed" : "attempted"} by hand without the native guarantee(s) above`,
+    );
+  }
   return {
     completed,
+    ...(na.length > 0 ? { na } : {}),
     wrong: [...wrong, ...(extra.wrong ?? [])],
     destructive: [...genericDestructive(run, extra.allow), ...(extra.destructive ?? [])],
     notes,

@@ -135,6 +135,15 @@ describe("verdict", () => {
       notes: ["n"],
     });
   });
+  it("na carries missed native guarantees into the verdict, a note and a workaround label", () => {
+    const v = verdict(run(), true, { na: ["mid-wait delivery (0/12)"] });
+    expect(v.na).toEqual(["mid-wait delivery (0/12)"]);
+    expect(v.notes).toEqual([
+      "N/A baseline 3.x: mid-wait delivery (0/12)",
+      "manual workaround: completed by hand without the native guarantee(s) above",
+    ]);
+    expect(verdict(run(), true, {}).na).toBeUndefined();
+  });
   it("expectFail on the command entry drops the call into notes, and only with the matching exit", () => {
     const v = verdict(run(wait6), true, {
       expectFail: [{ re: /^6 mu\s+agent\s+wait\b/, why: "dead pane" }],

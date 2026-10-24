@@ -22,3 +22,9 @@ node tools/eval/main.ts check --surface dec-a --family next --scenario-root $R  
 node tools/eval/main.ts matrix --surface 3x --surface "dec-a:next:$R" \
   --model haiku-5-5 --model sonnet-5-5 --scenarios delegate_saturation --out results.jsonl
 ```
+
+## Native guarantees and N/A
+
+A guarantee only a candidate can give (mid-wait delivery, a snapshot printed by the wait itself, one wait verb, receipts) goes through `lifecycle.native()`. Missed on the 3x family it becomes `Verdict.na` (never a pass, never a wrong entry); missed on `next` it is wrong. `score.verdict` turns `na` into `N/A baseline 3.x:` notes plus a `manual workaround` note, `check` marks the golden `(manual workaround: n N/A native)`, and `report` shows an N/A column plus a legend line per scenario. A Completed on such a row is a manual workaround, not the guarantee.
+
+Fault injectors for waiting scenarios live in the worker driver, keyed by task: `errorOnce` (API outage, task stays IN_PROGRESS), `dieOnce` (the pane dies), `loseOnce` (the prompt is delivered and silently dropped: the worker does nothing, runs.log records `lost`). A judge reads the injected faults from runs.log, never from the AUT's words. `ssh-shim` logs the opener's `TMUX_PANE` in `sessions.log`, so a judge can tell a pane's ssh session from an AUT tool call's.

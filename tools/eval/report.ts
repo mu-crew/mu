@@ -6,6 +6,7 @@ export const HEADERS = [
   "Surface",
   "Model",
   "Completed",
+  "N/A",
   "Mean tokens",
   "Mean mu calls",
   "Mean mu errors",
@@ -25,6 +26,7 @@ function row(label: string, surface: string, model: string, rs: RunResult[]): st
     surface,
     model,
     `${rs.filter((r) => r.verdict.completed).length}/${n}`,
+    String(sum((r) => r.verdict.na?.length ?? 0)),
     mean((r) => r.metrics.usage.total, 0),
     mean((r) => r.metrics.muCalls, 1),
     mean((r) => r.metrics.muErrors, 1),
@@ -56,6 +58,21 @@ export function toMarkdown(results: RunResult[]): string {
   for (const rs of groupBy(results, (r) => `${r.surface}\u0000${r.model}`).values()) {
     const first = rs[0];
     if (first) add(row("**total**", first.surface, first.model, rs));
+  }
+  // N/A: native guarantees a surface cannot give. Its Completed is a manual workaround, not the guarantee.
+  const na = new Map<string, Set<string>>();
+  for (const r of results) {
+    for (const x of r.verdict.na ?? []) {
+      const key = `${r.scenario} on ${r.surface}`;
+      na.set(key, (na.get(key) ?? new Set()).add(x));
+    }
+  }
+  if (na.size > 0) {
+    lines.push(
+      "",
+      "N/A = native guarantee the surface does not have. Completed on such a row is a manual workaround, not the guarantee:",
+    );
+    for (const [key, set] of na) lines.push(`- ${key}: ${[...set].join("; ")}`);
   }
   return `${lines.join("\n")}\n`;
 }

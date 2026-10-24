@@ -152,7 +152,7 @@ export function readResults(file: string): RunResult[] {
 
 export function summary(r: RunResult): string {
   const m = r.metrics;
-  return `${r.scenario} ${r.surface} ${r.model} rep${r.rep}: completed=${r.verdict.completed} tokens=${m.usage.total} muCalls=${m.muCalls} muErrors=${m.muErrors} wrong=${r.verdict.wrong.length} destructive=${r.verdict.destructive.length} prods=${m.prods} aborted=${m.aborted} wall=${Math.round(m.wallMs / 1000)}s`;
+  return `${r.scenario} ${r.surface} ${r.model} rep${r.rep}: completed=${r.verdict.completed} tokens=${m.usage.total} muCalls=${m.muCalls} muErrors=${m.muErrors} wrong=${r.verdict.wrong.length} na=${r.verdict.na?.length ?? 0} destructive=${r.verdict.destructive.length} prods=${m.prods} aborted=${m.aborted} wall=${Math.round(m.wallMs / 1000)}s`;
 }
 
 const safe = (s: string): string => s.replace(/[^A-Za-z0-9._-]+/g, "_");
@@ -346,7 +346,8 @@ export async function runCheck(o: CheckOptions): Promise<number> {
             (m) => `missing golden evidence: /${m}/`,
           );
           const ok = goldenOk(v) && missing.length === 0;
-          line(ok, `${id} golden ok`, ok && !o.verbose ? "" : [...missing, detail].join("\n"));
+          const na = v.na?.length ? ` (manual workaround: ${v.na.length} N/A native)` : "";
+          line(ok, `${id} golden ok${na}`, ok && !o.verbose ? "" : [...missing, detail].join("\n"));
         } else {
           line(
             badFlagged(v),

@@ -22,6 +22,7 @@ export function extraBadScripts(dir: string, id: string, family: Family): string
 /** Notes a scenario's golden run must show (its injected failure really happened). */
 export const GOLDEN_EVIDENCE: Record<string, RegExp[]> = {
   delegate_saturation: [/\brefused=[1-9]/],
+  wait_wave_starvation: [/\brefused=[1-9]/],
 };
 
 /** Golden notes missing from `v.notes`, as regex sources. */
