@@ -92,6 +92,8 @@ export interface RunMetrics {
 
 export interface Verdict {
   completed: boolean;
+  /** Native guarantees the surface cannot give (baseline 3.x): "completed" is then a manual workaround, never the guarantee. */
+  na?: string[];
   wrong: string[];
   destructive: string[];
   notes: string[];
