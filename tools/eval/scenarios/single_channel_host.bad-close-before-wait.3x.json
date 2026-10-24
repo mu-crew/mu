@@ -30,14 +30,14 @@
   {
     "calls": [
       {
-        "bash": "mu agent send w1 -w eval --fresh --json 'do s1; mu is not on this host'"
+        "bash": "mu task close s1 -w eval --evidence 's1 will be done on dev'"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu task close s1 -w eval --evidence 's1 will be done on dev'"
+        "bash": "mu agent send w1 -w eval --fresh --json 'do s1; mu is not on this host'"
       }
     ]
   },
@@ -79,14 +79,14 @@
   {
     "calls": [
       {
-        "bash": "mu agent send w1 -w eval --json 'do s2; mu is not on this host'"
+        "bash": "mu task close s2 -w eval --evidence 's2 will be done on dev'"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu task close s2 -w eval --evidence 's2 will be done on dev'"
+        "bash": "mu agent send w1 -w eval --json 'do s2; mu is not on this host'"
       }
     ]
   },

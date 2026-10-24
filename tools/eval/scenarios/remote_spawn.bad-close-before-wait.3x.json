@@ -23,14 +23,14 @@
   {
     "calls": [
       {
-        "bash": "mu agent send w1 -w eval --fresh --json 'do rt1; mu is not on this host, print your sha when done'"
+        "bash": "mu task close rt1 -w eval --evidence 'worker on dev finished; commit cherry-picked into main'"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu task close rt1 -w eval --evidence 'worker on dev finished; commit cherry-picked into main'"
+        "bash": "mu agent send w1 -w eval --fresh --json 'do rt1; mu is not on this host, print your sha when done'"
       }
     ]
   },
