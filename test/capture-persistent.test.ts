@@ -614,6 +614,7 @@ describe("capture version stamp", () => {
     b.close();
     const raw = new Database(path);
     raw.exec("DROP TRIGGER _cap_tasks_ins");
+    raw.pragma("legacy_alter_table = ON"); // DROP COLUMN otherwise re-parses every trigger (~2s)
     raw.exec("ALTER TABLE schema_version DROP COLUMN capture_version");
     raw.close();
     reopen();

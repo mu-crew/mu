@@ -29,13 +29,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Op } from "../src/apply.js";
 import { handle } from "../src/cli/handle.js";
-import { openDb } from "../src/db.js";
+import { type Db, openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
 import { checkUnpublishedOps } from "../src/fleet-hazards.js";
 import { formatHlc } from "../src/hlc.js";
+import { withCaptureSuppressed } from "../src/op-context.js";
 import { applyIncomingOp, flushSegment, localMachineId } from "../src/segments.js";
 import { ambientFlush } from "../src/sync.js";
 import { addTask } from "../src/tasks.js";
@@ -280,25 +281,38 @@ describe("apply is order-independent: live == rebuild for EVERY arrival order", 
           permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((rest) => [x, ...rest]),
         );
 
+  // One DB for the whole file, emptied between arrival orders: a fresh openDb
+  // per order cost ~45ms x ~700 orders. Capture is suppressed for the wipe, as
+  // in test/apply-fold.test.ts, so the log holds only the order under test.
+  let permDb: Db | undefined;
+  let permDir: string | undefined;
+  afterAll(() => {
+    permDb?.close();
+    if (permDir) rmFixtureDir(permDir);
+  });
   const stateOf = (ops: Op[]) => {
-    const db = openDb({ path: join(tempDir, `perm-${++seq}.db`) });
-    try {
-      for (const o of ops) applyIncomingOp(db, o);
-      const drift = checkDrift(db);
-      return {
-        clean: drift.clean,
-        drift: drift.records,
-        workstreams: db.prepare("SELECT name, created_at FROM workstreams ORDER BY name").all(),
-        tasks: db
-          .prepare(
-            `SELECT w.name AS ws, t.local_id, t.title, t.impact FROM tasks t
-               JOIN workstreams w ON w.id = t.workstream_id ORDER BY 1, 2`,
-          )
-          .all(),
-      };
-    } finally {
-      db.close();
+    if (!permDb) {
+      permDir = mkdtempSync(join(tmpdir(), "mu-sync-contract-perm-"));
+      permDb = openDb({ path: join(permDir, "perm.db") });
     }
+    const db = permDb;
+    withCaptureSuppressed(db, () => {
+      db.prepare("DELETE FROM workstreams").run();
+      db.prepare("DELETE FROM ops").run();
+    });
+    for (const o of ops) applyIncomingOp(db, o);
+    const drift = checkDrift(db);
+    return {
+      clean: drift.clean,
+      drift: drift.records,
+      workstreams: db.prepare("SELECT name, created_at FROM workstreams ORDER BY name").all(),
+      tasks: db
+        .prepare(
+          `SELECT w.name AS ws, t.local_id, t.title, t.impact FROM tasks t
+             JOIN workstreams w ON w.id = t.workstream_id ORDER BY 1, 2`,
+        )
+        .all(),
+    };
   };
 
   const sets: Record<string, { ops: Op[]; tasks: unknown[]; workstreams: number }> = {
