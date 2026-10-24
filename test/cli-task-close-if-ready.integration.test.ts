@@ -48,7 +48,7 @@ describe("mu task close --if-ready", () => {
     seed.close();
 
     const r = await runCli(
-      ["task", "close", "umbrella", "-w", "test", "--if-ready", "--json"],
+      ["task", "close", "umbrella", "-w", "test", "--if-ready", "--evidence", "test", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBeNull();
@@ -85,13 +85,13 @@ describe("mu task close --if-ready", () => {
       effortDays: 1,
       blockedBy: ["a", "b", "c"],
     });
-    closeTask(seed, "a", { workstream: "test" });
-    closeTask(seed, "b", { workstream: "test" });
-    closeTask(seed, "c", { workstream: "test" });
+    closeTask(seed, "a", { workstream: "test", evidence: "test" });
+    closeTask(seed, "b", { workstream: "test", evidence: "test" });
+    closeTask(seed, "c", { workstream: "test", evidence: "test" });
     seed.close();
 
     const r = await runCli(
-      ["task", "close", "umbrella", "-w", "test", "--if-ready", "--json"],
+      ["task", "close", "umbrella", "-w", "test", "--if-ready", "--evidence", "test", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBeNull();
@@ -125,11 +125,11 @@ describe("mu task close --if-ready", () => {
       blockedBy: ["a", "b", "c"],
     });
     // a CLOSED, b/c still OPEN.
-    closeTask(seed, "a", { workstream: "test" });
+    closeTask(seed, "a", { workstream: "test", evidence: "test" });
     seed.close();
 
     const r = await runCli(
-      ["task", "close", "umbrella", "-w", "test", "--if-ready", "--json"],
+      ["task", "close", "umbrella", "-w", "test", "--if-ready", "--evidence", "test", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBeNull();
@@ -157,15 +157,9 @@ describe("mu task close --if-ready", () => {
     check.close();
   });
 
-  it("bare `mu task close` (no --if-ready) closes regardless of blockers", async () => {
+  it("bare `mu task close --as done` refuses while a blocker is open (exit 4, names it)", async () => {
     const seed = openDb({ path: dbPath });
-    addTask(seed, {
-      localId: "a",
-      workstream: "test",
-      title: "A",
-      impact: 50,
-      effortDays: 1,
-    });
+    addTask(seed, { localId: "a", workstream: "test", title: "A", impact: 50, effortDays: 1 });
     addTask(seed, {
       localId: "umbrella",
       workstream: "test",
@@ -176,16 +170,50 @@ describe("mu task close --if-ready", () => {
     });
     seed.close();
 
-    const r = await runCli(["task", "close", "umbrella", "-w", "test", "--json"], dbPath);
+    const r = await runCli(
+      ["task", "close", "umbrella", "-w", "test", "--evidence", "test", "--json"],
+      dbPath,
+    );
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain("open blockers: a");
+    expect(r.stderr).toContain("mu task tree umbrella -w test");
+  });
+
+  it("a non-done close still closes over open blockers (it claims no work happened)", async () => {
+    const seed = openDb({ path: dbPath });
+    addTask(seed, { localId: "a", workstream: "test", title: "A", impact: 50, effortDays: 1 });
+    addTask(seed, {
+      localId: "umbrella",
+      workstream: "test",
+      title: "Umbrella",
+      impact: 50,
+      effortDays: 1,
+      blockedBy: ["a"],
+    });
+    seed.close();
+
+    const r = await runCli(
+      ["task", "close", "umbrella", "-w", "test", "--as", "wontfix", "--why", "dropped", "--json"],
+      dbPath,
+    );
     expect(r.exitCode).toBeNull();
-    const payload = JSON.parse(r.stdout) as {
-      changed: boolean;
-      status: string;
-      skipped?: string;
-    };
-    expect(payload.changed).toBe(true);
-    expect(payload.status).toBe("CLOSED");
-    expect(payload.skipped).toBeUndefined();
+    expect(JSON.parse(r.stdout)).toMatchObject({ changed: true, status: "CLOSED" });
+  });
+
+  it("--if-ready without --evidence and no open blockers: CloseNeedsEvidenceError (exit 4), nothing written", async () => {
+    const seed = openDb({ path: dbPath });
+    addTask(seed, {
+      localId: "umbrella",
+      workstream: "test",
+      title: "U",
+      impact: 50,
+      effortDays: 1,
+    });
+    seed.close();
+
+    const r = await runCli(["task", "close", "umbrella", "-w", "test", "--if-ready"], dbPath);
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain("--evidence");
   });
 
   it("human card prints the skip reason + still-blocking ids", async () => {
@@ -207,7 +235,10 @@ describe("mu task close --if-ready", () => {
     });
     seed.close();
 
-    const r = await runCli(["task", "close", "umbrella", "-w", "test", "--if-ready"], dbPath);
+    const r = await runCli(
+      ["task", "close", "umbrella", "-w", "test", "--if-ready", "--evidence", "test"],
+      dbPath,
+    );
     expect(r.exitCode).toBeNull();
     expect(r.stdout).toContain("Skipped");
     expect(r.stdout).toContain("umbrella");

@@ -8,6 +8,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { classifyError } from "../src/cli/handle.js";
 import { type Db, defaultDbPath, openDb, SchemaTooOldError } from "../src/db.js";
+import { withCaptureSuppressed } from "../src/op-context.js";
 import { TaskNotFoundError } from "../src/tasks/errors.js";
 import { DEFAULT_SUBSTATE, type TaskStatus } from "../src/tasks/status.js";
 import { addBlockEdge, addTask } from "../src/tasks.js";
@@ -441,7 +442,10 @@ describe("openDb", () => {
     insertTask(db, { id: "a", title: "A", impact: 50, effortDays: 1 });
     insertTask(db, { id: "b", title: "B", impact: 50, effortDays: 1 });
     insertEdge(db, "a", "b");
-    db.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='a'").run();
+    // Suppressed: seeding a CLOSED blocker, not testing the local close guards.
+    withCaptureSuppressed(db, () =>
+      db.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='a'").run(),
+    );
     void taskIdByLocalId; // silence "unused" warning when this test path doesn't hit it
     const ready = (
       db.prepare("SELECT local_id FROM ready ORDER BY local_id").all() as {

@@ -56,7 +56,7 @@ describe("rebuildInto", () => {
     addNote(db, "a", "context note", { workstream: "demo", author: "worker-1" });
     addNote(db, "b", "second note", { workstream: "demo" });
     updateTask(db, "c", { impact: 95, title: "C renamed" }, { workstream: "demo" });
-    closeTask(db, "a", { workstream: "demo" });
+    closeTask(db, "a", { workstream: "demo", evidence: "test" });
     // Log-only ops: agent lifecycle mutates NO portable table, so no
     // trigger can capture it and applyOp refuses the entity. They are
     // still this machine's own history, so a rebuild must keep them.
@@ -129,7 +129,7 @@ describe("rebuildInto", () => {
       // Sanity: the fixture is actually non-trivial, so the assertions
       // above are not vacuously comparing empty arrays.
       expect(before.tasks.length).toBe(3);
-      expect(before.notes.length).toBe(2);
+      expect(before.notes.length).toBe(3); // 2 notes + the close evidence
       expect(before.edges.length).toBe(1);
     });
 

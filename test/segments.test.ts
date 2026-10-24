@@ -213,7 +213,7 @@ describe("segments", () => {
       addTask(a, { workstream: "demo", localId: "y", title: "Y", impact: 40, effortDays: 2 });
       addBlockEdge(a, "demo", "y", "x");
       addNote(a, "x", "context", { workstream: "demo", author: "worker-1" });
-      closeTask(a, "x", { workstream: "demo" });
+      closeTask(a, "x", { workstream: "demo", evidence: "test" });
 
       const flushed = await flushSegment(a, dir);
       expect(flushed.appended).toBeGreaterThan(4);
@@ -270,7 +270,7 @@ describe("segments", () => {
       // THROUGH FILES, which is the claim that actually matters.
       await establishShared(a, [b], "fix-auth");
       // Concurrent, on two machines, with no coordination.
-      closeTask(a, "fix-auth", { workstream: "demo" });
+      closeTask(a, "fix-auth", { workstream: "demo", evidence: "test" });
       updateTask(b, "fix-auth", { impact: 95 }, { workstream: "demo" });
 
       await flushSegment(a, dir);
@@ -294,7 +294,7 @@ describe("segments", () => {
 
     it("converges regardless of the order the segments are exchanged", async () => {
       await establishShared(a, [b], "t");
-      closeTask(a, "t", { workstream: "demo" });
+      closeTask(a, "t", { workstream: "demo", evidence: "test" });
       updateTask(b, "t", { impact: 77 }, { workstream: "demo" });
 
       // B ingests first this time, then A.
@@ -315,7 +315,7 @@ describe("segments", () => {
       const c = openDb({ path: join(tempDir, "c.db") });
       try {
         await establishShared(a, [b, c], "shared");
-        closeTask(a, "shared", { workstream: "demo" });
+        closeTask(a, "shared", { workstream: "demo", evidence: "test" });
         updateTask(b, "shared", { impact: 88 }, { workstream: "demo" });
         updateTask(c, "shared", { title: "Renamed by C" }, { workstream: "demo" });
 

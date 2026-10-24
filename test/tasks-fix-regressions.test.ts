@@ -77,7 +77,7 @@ describe("re-closing a CLOSED task", () => {
   it("a bare close keeps wontfix (idempotent no-op)", () => {
     add("r", "ws");
     closeTask(db, "r", { workstream: "ws", as: "wontfix", why: "not worth it at all" });
-    const again = closeTask(db, "r", { workstream: "ws" });
+    const again = closeTask(db, "r", { workstream: "ws", evidence: "test" });
     expect(again).toMatchObject({ changed: false, substate: "wontfix" });
     expect(getTask(db, "r", "ws")?.substate).toBe("wontfix");
   });
@@ -85,14 +85,16 @@ describe("re-closing a CLOSED task", () => {
   it("an explicit --as still reclassifies", () => {
     add("r", "ws");
     closeTask(db, "r", { workstream: "ws", as: "rejected", why: "nope, wrong approach" });
-    const again = closeTask(db, "r", { workstream: "ws", as: "done" });
+    const again = closeTask(db, "r", { workstream: "ws", as: "done", evidence: "test" });
     expect(again).toMatchObject({ changed: true, previousSubstate: "rejected", substate: "done" });
   });
 
   it("a bare close of an OPEN task still defaults to done", () => {
     add("o", "ws");
-    expect(closeTask(db, "o", { workstream: "ws" })).toMatchObject({ substate: "done" });
-    expect(listNotes(db, "o", "ws")).toEqual([]);
+    expect(closeTask(db, "o", { workstream: "ws", evidence: "test" })).toMatchObject({
+      substate: "done",
+    });
+    expect(listNotes(db, "o", "ws").map((n) => n.content)).toEqual(["CLOSE: test"]);
   });
 });
 

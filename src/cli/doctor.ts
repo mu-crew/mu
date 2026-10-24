@@ -40,6 +40,7 @@ import {
   formatDriftRecord,
 } from "../drift.js";
 import {
+  checkCloseGuards,
   checkFleetHazards,
   checkSegmentVersion,
   type FleetHazard,
@@ -276,6 +277,11 @@ export async function cmdDoctor(
     checkSegmentVersion(db, process.env.MU_SYNC_DIR),
   ];
   let sawHazard = printHazards(fleet);
+
+  // Sync can merge states the local close guards refuse (open blockers
+  // under a done task, a close with no evidence note). Warn rows only.
+  console.log(pc.bold("\nclose guards"));
+  if (printHazards(checkCloseGuards(db))) sawHazard = true;
 
   // Sync can merge two valid edges into a cycle; its members block each
   // other until one closes. Report-only: the fix is an existing verb.
@@ -556,6 +562,12 @@ export async function cmdDoctorJson(
     detail: h.detail,
   }));
 
+  const closeGuards = checkCloseGuards(db).map((h) => ({
+    name: h.name,
+    severity: h.severity,
+    detail: h.detail,
+    remediation: h.remediation ?? [],
+  }));
   const dagCycles = findEdgeCycles(db).map((c) => ({ ...c, fix: cycleFix(c) }));
 
   // Disk ↔ DB: same checks as the human path. Remediation lines ride
@@ -621,6 +633,7 @@ export async function cmdDoctorJson(
     state: workstreamStats,
     fleet: hazards,
     housekeeping,
+    closeGuards,
     dagCycles,
     disk,
     workspaceUsage,

@@ -253,7 +253,7 @@ key, not only `id`.
 | `agent close [--discard]`, `list`, `read` | reaper + ghost prune; close refuses a dirty worktree (`agents`) |
 | `task add [--triage] [--blocks u] [ids...]`, `block`, `unblock` | cycle guard; batch create (`edges`) |
 | `task claim`, `release`, `open`, `accept` | CAS; release returns IN_PROGRESS to OPEN (`claim`; 78/65/46/749 uses: `kg_release_reopen`, `pv_substate_verbs`) |
-| `task close [--as s --why] --evidence` | status + substate + evidence, one op group (`lifecycle`) |
+| `task close [--as s --why] --evidence` | status + substate + evidence, one op group; `done` needs `--evidence` and closed blockers, other substates need `--why` (their evidence) and may close over open blockers; reclassifying to `done` is checked like any close to done (`local-guards`, `lifecycle`) |
 | `task wait <ids> / --blockers-of u` | streams each close; exits on all closed, dead owner, or settled agent (`tasks-wait`; `we_wait_any_not_loop`) |
 | `task tree <id> [--down]` | open-only, capped (`pv_tree_view`: one umbrella reaches 870 tasks, 3 open) |
 | `state [--me]`, `log [--tail]`, `notes`, `show` | caps; `renderOp` trimmed to the new intents |

@@ -98,6 +98,32 @@ Identity resolution (`resolveWorkerIdentity`, `src/tasks/claim.ts`) reads
 is backend-independent and needs no mux call; pane titles are not
 identity. The agent does not need to know its own name.
 
+## Local-write guards
+
+Three triggers in the DB file (`src/capture.ts`, `localGuards`) refuse
+states a **local** write must not create. Each is gated on
+`applying = 0`, so ingest, import and rebuild accept what the log says: peers
+merge into states no local write allows (a close and its evidence are
+separate ops), and a RAISE during ingest would roll back the segment and
+stall sync forever. `mu doctor` lists such tasks instead (warn).
+
+| Trigger | Refuses | Error (exit 4) |
+|---|---|---|
+| `_cap_tasks_claim_cas` | `owner_id` moving from one agent to another | `TaskAlreadyOwnedError` |
+| `_cap_tasks_close_evidence` | a close with no `kind = 'close'` note in the same op group | `CloseNeedsEvidenceError` |
+| `_cap_tasks_close_blockers` | a close to `done` while a blocker is not CLOSED | `TaskHasOpenBlockersError` |
+
+- A close is OPEN/IN_PROGRESS → CLOSED, or a CLOSED task changing
+  substate. Reclassifying to `done` therefore needs fresh evidence and
+  closed blockers.
+- `wontfix`, `duplicate`, `rejected` and `superseded` closes skip the
+  blocker check: they do not claim the work happened. Their `--why`
+  note is the evidence.
+- The note must exist before the status UPDATE, in the same op group
+  (`closeTask` writes it first). Identity is the exact note key, never a
+  `LIKE` (task ids allow `_`).
+- `owner_id` never syncs, so a peer's owner op cannot change ownership.
+
 ## Scoped subtree views
 
 `mu task tree <id>` and the task queries show the part of the graph

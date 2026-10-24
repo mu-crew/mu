@@ -250,6 +250,9 @@ export function renderOp(row: RenderableOp): RenderedOp | null {
       detail,
     };
   }
+  // A note written inside another verb's op group (the close's evidence
+  // note carries intent task.close) is still a note line.
+  if (row.kind === "note" && row.op !== "del") return renderKnown(row, "task.note");
   return renderKnown(row, intent);
 }
 

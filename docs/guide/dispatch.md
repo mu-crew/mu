@@ -150,8 +150,11 @@ mu task park polish -w auth --why "after the release"
 mu task release build -w auth
 ```
 
-- Closed substates other than `done` need `--why`. Every `CLOSED`
-  substate satisfies a blocker.
+- `close` needs `--evidence "<command + result>"` for `done`; the other
+  substates need `--why`, which is their evidence. `done` also refuses
+  while a blocker is open (exit 4, `mu task tree <id>` lists them); the
+  other substates may close over open blockers. Every `CLOSED` substate
+  satisfies a blocker.
 - Deciding a finding (`accept`, or `close --as rejected|wontfix|duplicate`)
   with a reason under 40 characters and no `VERDICT:` or `REFUTER` note
   prints a warning. The exit code stays the same. A `REJECTED` or `SUPERSEDED`

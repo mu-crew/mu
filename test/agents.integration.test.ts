@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { deleteAgent, getAgent, getAgentByPane, insertAgent, listAgents } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { listLogs } from "../src/logs.js";
-import { addTask, claimTask, getTask, listNotes } from "../src/tasks.js";
+import { addTask, claimTask, closeTask, getTask, listNotes } from "../src/tasks.js";
 
 describe("agents CRUD", () => {
   let tempDir: string;
@@ -270,9 +270,7 @@ describe("agents CRUD", () => {
       effortDays: 1,
     });
     await claimTask(db, "done", { agentName: "worker-1", workstream: "auth" });
-    db.prepare(
-      "UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id = 'done'",
-    ).run();
+    closeTask(db, "done", { workstream: "auth", evidence: "test" });
 
     deleteAgent(db, "worker-1", "auth");
 

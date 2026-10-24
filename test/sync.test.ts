@@ -604,7 +604,7 @@ describe("sync", () => {
       // history. See test/segments.test.ts's establishShared.)
       await flushSegment(a, dir);
       await syncPass(b, dir);
-      closeTask(b, "t1", { workstream: "demo" });
+      closeTask(b, "t1", { workstream: "demo", evidence: "test" });
       // a re-prices it.
       updateTask(a, "t1", { impact: 95 }, { workstream: "demo" });
 

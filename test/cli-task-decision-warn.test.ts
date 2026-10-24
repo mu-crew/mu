@@ -123,7 +123,9 @@ describe("weak decision warnings", () => {
   });
 
   it("(e) closing a task not in triage never warns", async () => {
-    expect((await json(["task", "close", "plain"])).body.warnings).toEqual([]);
+    expect((await json(["task", "close", "plain", "--evidence", "test"])).body.warnings).toEqual(
+      [],
+    );
     const r = await runCli(
       ["task", "close", "fix_x", "-w", WS, "--as", "wontfix", "--why", "x"],
       dbPath,
@@ -231,7 +233,7 @@ describe("lifecycle evidence notes carry the actor", () => {
     const db = openDb({ path: dbPath });
     insertAgent(db, { name: "w1", workstream: WS, paneId: "%1" });
     parkTask(db, "plain", { workstream: WS, why: "later" });
-    closeTask(db, "fix_x", { workstream: WS });
+    closeTask(db, "fix_x", { workstream: WS, evidence: "test" });
     db.close();
     await runCli(["task", "accept", "f1", "-w", WS, "--evidence", LONG], dbPath);
     await runCli(["task", "unpark", "plain", "-w", WS, "--evidence", "ok"], dbPath);

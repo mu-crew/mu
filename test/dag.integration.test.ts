@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { formatTreeNodeLabel, loadFullDag, renderForest, renderTaskTree } from "../src/dag.js";
 import { type Db, openDb } from "../src/db.js";
 import type { TaskStatus } from "../src/tasks/status.js";
-import { addBlockEdge, addTask, setTaskStatus } from "../src/tasks.js";
+import { addBlockEdge, addTask, closeTask, setTaskStatus } from "../src/tasks.js";
 
 let openDbs: Db[] = [];
 
@@ -23,7 +23,8 @@ function fixtureDb(): Db {
 
 function addTaskWithStatus(db: Db, id: string, status: TaskStatus, title: string = id): void {
   addTask(db, { workstream: "demo", localId: id, title, impact: 50, effortDays: 1 });
-  if (status !== "OPEN") setTaskStatus(db, id, status, { workstream: "demo" });
+  if (status === "CLOSED") closeTask(db, id, { workstream: "demo", evidence: "test" });
+  else if (status !== "OPEN") setTaskStatus(db, id, status, { workstream: "demo" });
 }
 
 function getTaskRow(db: Db, id: string) {

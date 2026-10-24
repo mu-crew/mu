@@ -75,7 +75,7 @@ async function runFullSession(): Promise<void> {
   insertAgent(db, { name: "worker-1", workstream: "demo", paneId: "%1" });
   await claimTask(db, "t1", { workstream: "demo", agentName: "worker-1" });
   releaseTask(db, "t1", { workstream: "demo" });
-  closeTask(db, "t1", { workstream: "demo" });
+  closeTask(db, "t1", { workstream: "demo", evidence: "test" });
   openTask(db, "t1", { workstream: "demo" });
   deleteTask(db, "t2", "demo");
 }
@@ -117,19 +117,27 @@ describe("ops log has no duplicate records of one change", () => {
     ).toEqual([]);
   });
 
-  it("a 4-command session writes exactly 4 ops (was 8)", () => {
+  it("a 4-command session writes exactly 5 ops (was 8): the close adds its evidence note", () => {
     // The orchestrator's measured case, frozen as a test.
     addTask(db, { localId: "t1", workstream: "demo", title: "hello", impact: 50, effortDays: 1 });
     updateTask(db, "t1", { impact: 80 }, { workstream: "demo" });
-    closeTask(db, "t1", { workstream: "demo" });
+    closeTask(db, "t1", { workstream: "demo", evidence: "test" });
     const rows = ops();
     expect(rows.map((r) => r.intent)).toEqual([
       "workstream.init",
       "task.add",
       "task.update",
       "task.close",
+      "task.close",
     ]);
-    expect(rows.map((r) => r.key)).toEqual(["demo", "demo/t1", "demo/t1", "demo/t1"]);
+    // The evidence note comes first (the guard needs it), then the status put.
+    expect(rows.map((r) => [r.entity, r.key.replace(/#\d+$/, "#n")])).toEqual([
+      ["workstream", "demo"],
+      ["task", "demo/t1"],
+      ["task", "demo/t1"],
+      ["note", "demo/t1#n"],
+      ["task", "demo/t1"],
+    ]);
   });
 
   it("captured payloads are JSON, so they are renderable without prose parsing", async () => {

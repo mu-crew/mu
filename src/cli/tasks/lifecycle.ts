@@ -27,6 +27,7 @@ import {
 } from "../../tasks.js";
 import { backendByName } from "../../vcs.js";
 import { getWorkspaceForAgent } from "../../workspace.js";
+import { UsageError } from "../handle.js";
 
 export async function cmdTaskClose(
   db: Db,
@@ -68,6 +69,22 @@ export async function cmdTaskClose(
   // even though closeTask doesn't return owner info. owner won't
   // change as a result of close (FK SET NULL only fires on delete).
   const taskRow = getTask(db, localId, ws);
+  // A close to done needs --evidence. Refuse before any write, with one
+  // line naming the flag. A no-op retry of an already-CLOSED task needs
+  // none; with --if-ready the SDK decides (a skip writes nothing).
+  const closeAs = sdkOpts.as ?? (taskRow?.status === "CLOSED" ? taskRow.substate : "done");
+  const retry = taskRow?.status === "CLOSED" && taskRow.substate === closeAs;
+  if (
+    taskRow &&
+    !retry &&
+    !opts.ifReady &&
+    closeAs === "done" &&
+    (opts.evidence ?? "").trim() === ""
+  ) {
+    throw new UsageError(
+      `closing ${localId} as done needs --evidence "<command + result>" (what you ran and saw)`,
+    );
+  }
   // Read before the close: the warning is about the finding as it was.
   const warnings = decisionWarnings(db, localId, ws, sdkOpts.as ?? "done", opts.why);
   const r = closeTask(db, localId, sdkOpts);
@@ -91,10 +108,6 @@ export async function cmdTaskClose(
         command: `mu task wait ${r.blockingIds.join(" ")} -w ${ws} --first --any --on-stall exit`,
       },
       { intent: "Show the umbrella + blockers", command: `mu task show ${localId} -w ${ws}` },
-      {
-        intent: "Close anyway (override --if-ready)",
-        command: `mu task close ${localId} -w ${ws}`,
-      },
     ];
     if (opts.json) {
       emitJson({ taskName: localId, ...r, nextSteps: blockingNextSteps });
@@ -105,7 +118,7 @@ export async function cmdTaskClose(
     const tail = total > 8 ? ", \u2026" : "";
     console.log(
       pc.dim(
-        `Skipped ${pc.bold(localId)}: blocked by ${total} task(s) (${shown}${tail}); rerun without --if-ready to close anyway`,
+        `Skipped ${pc.bold(localId)}: blocked by ${total} task(s) (${shown}${tail}); close again once they are CLOSED`,
       ),
     );
     printNextSteps(blockingNextSteps);

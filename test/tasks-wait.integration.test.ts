@@ -18,6 +18,7 @@ import { type Db, openDb } from "../src/db.js";
 import { listLogs } from "../src/logs.js";
 import {
   addTask,
+  closeTask,
   deleteTask,
   getWaitPollCount,
   resetWaitPollCount,
@@ -57,9 +58,9 @@ describe("waitForTasks", () => {
   });
 
   it("returns immediately when the wait condition is already satisfied (--all default)", async () => {
-    setTaskStatus(db, "a", "CLOSED", { workstream: "test" });
-    setTaskStatus(db, "b", "CLOSED", { workstream: "test" });
-    setTaskStatus(db, "c", "CLOSED", { workstream: "test" });
+    closeTask(db, "a", { workstream: "test", evidence: "test" });
+    closeTask(db, "b", { workstream: "test", evidence: "test" });
+    closeTask(db, "c", { workstream: "test", evidence: "test" });
     // Prove the immediate-exit path deterministically via the sleep
     // seam instead of a tight wall-clock bound (which can flake under
     // heavy parallel-suite load — GC/scheduler pauses can blow a
@@ -109,7 +110,7 @@ describe("waitForTasks", () => {
   });
 
   it("returns immediately on --any when at least one task already reached the target", async () => {
-    setTaskStatus(db, "b", "CLOSED", { workstream: "test" });
+    closeTask(db, "b", { workstream: "test", evidence: "test" });
     const r = await waitForTasks(db, ["a", "b", "c"], {
       any: true,
       pollMs: 50,
@@ -123,7 +124,7 @@ describe("waitForTasks", () => {
   it("blocks until the condition is met (poll loop wakes up on the next snapshot)", async () => {
     // Schedule a status change to fire after one poll interval.
     const flipAt = Date.now();
-    setTimeout(() => setTaskStatus(db, "a", "CLOSED", { workstream: "test" }), 60);
+    setTimeout(() => closeTask(db, "a", { workstream: "test", evidence: "test" }), 60);
     const r = await waitForTasks(db, ["a"], { pollMs: 30, timeoutMs: 1000, workstream: "test" });
     expect(r.refs.every((t) => t.reachedTarget)).toBe(true);
     expect(r.timedOut).toBe(false);
@@ -177,7 +178,7 @@ describe("waitForTasks", () => {
   });
 
   it("partial-progress on timeout: some tasks reached, others didn't", async () => {
-    setTaskStatus(db, "a", "CLOSED", { workstream: "test" });
+    closeTask(db, "a", { workstream: "test", evidence: "test" });
     // b stays OPEN → all-of fails on timeout but one ref reached.
     const r = await waitForTasks(db, ["a", "b"], { timeoutMs: 80, pollMs: 30, workstream: "test" });
     expect(r.timedOut).toBe(true);
@@ -222,7 +223,7 @@ describe("waitForTasks", () => {
   it("deletion of one task mid-wait does not block sibling progress detection", async () => {
     setTimeout(() => {
       deleteTask(db, "b", "test");
-      setTaskStatus(db, "a", "CLOSED", { workstream: "test" });
+      closeTask(db, "a", { workstream: "test", evidence: "test" });
     }, 30);
     const r = await waitForTasks(db, ["a", "b"], {
       any: true,

@@ -150,19 +150,19 @@ describe("v5 name-clash regression: claimTask / releaseTask scope correctly", ()
 
 describe("v5 name-clash regression: lifecycle verbs scope correctly", () => {
   it("setTaskStatus({ workstream }) only flips the right row", () => {
-    setTaskStatus(db, "design", "CLOSED", { workstream: "wsa" });
-    expect(getTask(db, "design", "wsa")?.status).toBe("CLOSED");
+    setTaskStatus(db, "design", "IN_PROGRESS", { workstream: "wsa" });
+    expect(getTask(db, "design", "wsa")?.status).toBe("IN_PROGRESS");
     expect(getTask(db, "design", "wsb")?.status).toBe("OPEN");
   });
 
   it("closeTask({ workstream }) scopes correctly", () => {
-    closeTask(db, "design", { workstream: "wsb" });
+    closeTask(db, "design", { workstream: "wsb", evidence: "test" });
     expect(getTask(db, "design", "wsa")?.status).toBe("OPEN");
     expect(getTask(db, "design", "wsb")?.status).toBe("CLOSED");
   });
 
   it("openTask({ workstream }) scopes correctly", () => {
-    setTaskStatus(db, "design", "CLOSED", { workstream: "wsa" });
+    closeTask(db, "design", { workstream: "wsa", evidence: "test" });
     openTask(db, "design", { workstream: "wsa" });
     expect(getTask(db, "design", "wsa")?.status).toBe("OPEN");
     // wsb never touched.
@@ -170,7 +170,7 @@ describe("v5 name-clash regression: lifecycle verbs scope correctly", () => {
   });
 
   it("closeTask({ workstream }) scopes correctly", () => {
-    closeTask(db, "design", { workstream: "wsa" });
+    closeTask(db, "design", { workstream: "wsa", evidence: "test" });
     expect(getTask(db, "design", "wsa")?.status).toBe("CLOSED");
     expect(getTask(db, "design", "wsb")?.status).toBe("OPEN");
   });
@@ -250,7 +250,7 @@ describe("v5 name-clash regression: read verbs scope correctly", () => {
     // Close wsa's task; wsb's left OPEN. With workstream=wsa the SDK
     // should consider the wait satisfied (wsa's design is CLOSED) even
     // though wsb's design with the same local_id is still OPEN.
-    closeTask(db, "design", { workstream: "wsa" });
+    closeTask(db, "design", { workstream: "wsa", evidence: "test" });
     const r = await waitForTasks(db, ["design"], {
       workstream: "wsa",
       timeoutMs: 100,

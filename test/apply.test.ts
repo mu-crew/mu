@@ -25,6 +25,7 @@ import { formatHlc } from "../src/hlc.js";
 import { applyIncomingOp } from "../src/segments.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
+import { closeTask } from "../src/tasks/lifecycle.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -1057,7 +1058,7 @@ describe("applyOp", () => {
       addTask(db, { workstream: "demo", localId: "b", title: "B", impact: 60, effortDays: 2 });
       addBlockEdge(db, "demo", "b", "a");
       addNote(db, "a", "a real note", { workstream: "demo", author: "worker-1" });
-      db.prepare("UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='a'").run();
+      closeTask(db, "a", { workstream: "demo", evidence: "test" });
 
       const captured = db
         .prepare(
@@ -1141,7 +1142,7 @@ describe("applyOp", () => {
         applyOps(target, ops);
         expect(
           (target.prepare("SELECT COUNT(*) AS n FROM task_notes").get() as { n: number }).n,
-        ).toBe(1);
+        ).toBe(2);
       } finally {
         target.close();
       }

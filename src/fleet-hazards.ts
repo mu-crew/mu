@@ -370,3 +370,69 @@ export function checkSegmentVersion(db: Db, syncDir: string | undefined): FleetH
     ],
   };
 }
+
+// ─── (e) states the local-write close guards would refuse ─────────────
+
+/** Ids listed per check. */
+const GUARD_LIST_CAP = 10;
+
+function listIds(rows: { id: string }[]): string {
+  const shown = rows.slice(0, GUARD_LIST_CAP).map((r) => r.id);
+  return rows.length > GUARD_LIST_CAP
+    ? `${shown.join(", ")}, … (${rows.length} total)`
+    : shown.join(", ");
+}
+
+/**
+ * CLOSED tasks that the local-write guards (src/capture.ts) would never
+ * have produced. Ingest accepts what the log says, so a peer can merge
+ * into them (a close and its evidence are separate ops; a blocker can be
+ * added or reopened after the close). Two warn rows, never fail: they
+ * report a state, not a hazard to the substrate. Not part of
+ * `checkFleetHazards` (the TUI's per-tick summary): two indexed-ish
+ * scans of CLOSED tasks, run by `mu doctor` only.
+ */
+export function checkCloseGuards(db: Db): FleetHazard[] {
+  const key = "w.name || '/' || t.local_id";
+  const openBlockers = db
+    .prepare(
+      `SELECT ${key} AS id
+         FROM tasks t JOIN workstreams w ON w.id = t.workstream_id AND w.torn_down_at IS NULL
+        WHERE t.status = 'CLOSED' AND t.substate = 'done'
+          AND EXISTS (SELECT 1 FROM blockers b WHERE b.task_id = t.id)
+        ORDER BY 1`,
+    )
+    .all() as { id: string }[];
+  const noEvidence = db
+    .prepare(
+      `SELECT ${key} AS id
+         FROM tasks t JOIN workstreams w ON w.id = t.workstream_id AND w.torn_down_at IS NULL
+        WHERE t.status = 'CLOSED'
+          AND NOT EXISTS (SELECT 1 FROM task_notes n WHERE n.task_id = t.id AND n.kind = 'close')
+        ORDER BY 1`,
+    )
+    .all() as { id: string }[];
+  const row = (name: string, found: { id: string }[], what: string, fix: string): FleetHazard =>
+    found.length === 0
+      ? { name, severity: "ok", detail: `no ${what}` }
+      : {
+          name,
+          severity: "warn",
+          detail: `${found.length} ${what}: ${listIds(found)}`,
+          remediation: [fix],
+        };
+  return [
+    row(
+      "closed-blockers",
+      openBlockers,
+      "CLOSED/done task(s) with open blockers",
+      "A peer merged these states (the local guard refuses them). Inspect with `mu task tree <id>`; reopen or close the blockers.",
+    ),
+    row(
+      "closed-evidence",
+      noEvidence,
+      "CLOSED task(s) with no close note",
+      "A peer merged the close without its evidence note. Add one with `mu task note <id>`, or reopen and re-close with --evidence.",
+    ),
+  ];
+}

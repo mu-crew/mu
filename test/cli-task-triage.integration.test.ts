@@ -120,7 +120,10 @@ describe("triage hints on read surfaces", () => {
 
   it("close --if-ready on a review blocked by findings leads with the triage inbox", async () => {
     await addFinding("f1");
-    const r = await runCli(["task", "close", "review", "-w", WS, "--if-ready", "--json"], dbPath);
+    const r = await runCli(
+      ["task", "close", "review", "-w", WS, "--if-ready", "--evidence", "test", "--json"],
+      dbPath,
+    );
     const payload = JSON.parse(r.stdout) as { skipped: string; nextSteps: { command: string }[] };
     expect(payload.skipped).toBe("not_ready");
     expect(payload.nextSteps[0]?.command).toBe(`mu task list --substate triage -w ${WS}`);

@@ -124,7 +124,7 @@ describe("mu task wait --timeout", () => {
     // The wait result records no per-ref time, so a stamp would be
     // emit time, not when the ref reached the target.
     addT("t1");
-    closeTask(db, "t1", { workstream: WS });
+    closeTask(db, "t1", { workstream: WS, evidence: "test" });
     const res = await runCli(["task", "wait", "t1", "-w", WS, "--json", "--timeout", "1"], dbPath);
     expect(res.error).toBeUndefined();
     expect(res.exitCode).toBeNull();

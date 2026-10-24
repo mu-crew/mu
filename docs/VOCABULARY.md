@@ -131,6 +131,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **shallow / deep check** | Drift checks in `mu doctor` and `mu doctor --deep` (full rebuild). | "fsck" |
 | **scored** | `tasks.scored`: impact/effort were given (`-i`/`-e`, `update`), not defaulted (50 / 1). `ready` order: scored by impact/effort desc, then unscored oldest first. | "prioritised" |
 | **dispatch host** | `tasks.dispatch_host` (synced): the host the task is dispatched to. | "target machine" |
+| **local-write guard** | A persistent trigger gated on `applying = 0`: claim CAS, close needs evidence, close to `done` refuses open blockers. Ingest and import are never blocked; `mu doctor` warns about the states they accept. | "constraint", "validation" |
 | **note kind** | `task_notes.kind`: `brief`, `report`, `verdict`, `close` or `note`. Set once at insert; a local change raises. | "note type", "tag" |
 | **torn down** | `workstreams.torn_down_at` set (soft teardown). Views and reads skip it; ingest still sees the row. | "archived", "deleted" |
 | **portable** | Syncable: `workstreams`, `tasks`, `task_edges`, `task_notes`. The rest is **machine-local** (`src/db.ts`). | "shared", "global" |

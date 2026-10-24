@@ -33,6 +33,7 @@ import {
 } from "../src/segments.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, updateTask } from "../src/tasks/edit.js";
+import { closeTask } from "../src/tasks/lifecycle.js";
 import { byRoiDesc } from "../src/tasks/sort.js";
 import { getTask, listBlocked, listGoals, listReady, listTasks } from "../src/tasks.js";
 import { ensureWorkstream, listWorkstreams } from "../src/workstream.js";
@@ -190,7 +191,7 @@ describe("blockers view", () => {
     }
     addBlockEdge(db, "d", "c", "a");
     addBlockEdge(db, "d", "c", "b");
-    db.prepare("UPDATE tasks SET status='CLOSED', substate='done' WHERE local_id='b'").run();
+    closeTask(db, "b", { workstream: "d", evidence: "test" });
     const rows = db
       .prepare(
         `SELECT t.local_id AS task, v.blocker_local_id AS blocker, v.blocker_status AS st

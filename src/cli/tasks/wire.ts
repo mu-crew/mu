@@ -291,7 +291,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("close <id>")
     .description(
-      "Mark a task CLOSED (idempotent). --as records why it closed (not every close is done work); any CLOSED substate satisfies blockers. --if-ready no-ops unless every blocker is CLOSED — the umbrella-on-wave-done pattern.",
+      'Mark a task CLOSED (idempotent). `done` needs --evidence "<command + result>" and refuses while a blocker is open (exit 4). --as records why it closed (not every close is done work; needs --why, which is its evidence, and may close over open blockers); any CLOSED substate satisfies blockers. --if-ready no-ops unless every blocker is CLOSED — the umbrella-on-wave-done pattern.',
     )
     .option(
       "--as <substate>",

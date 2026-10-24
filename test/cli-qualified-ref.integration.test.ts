@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyQualifiedRef, parseQualifiedRef } from "../src/cli.js";
 import { type Db, openDb } from "../src/db.js";
-import { addTask, getTask } from "../src/tasks.js";
+import { addTask, closeTask, getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli } from "./_runCli.js";
 
@@ -232,9 +232,7 @@ describe("CLI: qualified entity refs", () => {
     // Close wsb's design then wait on it via qualified ref — should
     // succeed with a tiny timeout (already CLOSED at wait time).
     const db = openDb({ path: dbPath });
-    db.prepare(
-      "UPDATE tasks SET status = 'CLOSED', substate = 'done' WHERE local_id='design' AND workstream_id=(SELECT id FROM workstreams WHERE name='wsb')",
-    ).run();
+    closeTask(db, "design", { workstream: "wsb", evidence: "test" });
     db.close();
     const { exitCode, error } = await runCli(
       ["task", "wait", "wsb/design", "--timeout", "1", "--json"],

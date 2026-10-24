@@ -12,6 +12,7 @@ import { deleteAgent, insertAgent } from "../src/agents.js";
 import { applyOp } from "../src/apply.js";
 import { CURRENT_SCHEMA_VERSION, type Db, openDb, SchemaTooNewError } from "../src/db.js";
 import { formatHlc } from "../src/hlc.js";
+import { withCaptureSuppressed } from "../src/op-context.js";
 import { TASK_SUBSTATE_ROWS } from "../src/tasks/status.js";
 import {
   addTask,
@@ -82,7 +83,7 @@ describe("task_substates lookup table", () => {
 
   it("refuses to delete a pair a task still uses", () => {
     add("a");
-    closeTask(db, "a", { workstream: "ws" });
+    closeTask(db, "a", { workstream: "ws", evidence: "test" });
     expect(() =>
       raw("DELETE FROM task_substates WHERE status = 'CLOSED' AND substate = 'done'"),
     ).toThrow(/FOREIGN KEY/);
@@ -97,19 +98,24 @@ describe("tasks.substate FK", () => {
 
   it("is deferred: two single-field UPDATEs in one transaction commit", () => {
     add("a");
-    db.transaction(() => {
-      raw("UPDATE tasks SET status = 'CLOSED' WHERE local_id = 'a'");
-      raw("UPDATE tasks SET substate = 'wontfix' WHERE local_id = 'a'");
-    })();
+    // Suppressed: this tests the deferred FK, not the local close guards.
+    withCaptureSuppressed(db, () => {
+      db.transaction(() => {
+        raw("UPDATE tasks SET status = 'CLOSED' WHERE local_id = 'a'");
+        raw("UPDATE tasks SET substate = 'wontfix' WHERE local_id = 'a'");
+      })();
+    });
     expect(pair("a")).toEqual({ status: "CLOSED", substate: "wontfix" });
   });
 
   it("rejects a substate that belongs to another status", () => {
     add("a");
-    closeTask(db, "a", { workstream: "ws" });
-    expect(() => raw("UPDATE tasks SET substate = 'parked' WHERE local_id = 'a'")).toThrow(
-      /FOREIGN KEY/,
-    );
+    closeTask(db, "a", { workstream: "ws", evidence: "test" });
+    expect(() =>
+      withCaptureSuppressed(db, () =>
+        raw("UPDATE tasks SET substate = 'parked' WHERE local_id = 'a'"),
+      ),
+    ).toThrow(/FOREIGN KEY/);
   });
 
   it("rejects an unknown substate", () => {
@@ -149,13 +155,13 @@ describe("write sites keep the pair valid", () => {
 
   it("close -> CLOSED/done", () => {
     add("a");
-    closeTask(db, "a", { workstream: "ws" });
+    closeTask(db, "a", { workstream: "ws", evidence: "test" });
     expect(pair("a")).toEqual({ status: "CLOSED", substate: "done" });
   });
 
   it("applyOp of a status-only put onto CLOSED/done commits as OPEN/todo", () => {
     add("a");
-    closeTask(db, "a", { workstream: "ws" });
+    closeTask(db, "a", { workstream: "ws", evidence: "test" });
     applyOp(db, {
       hlc: formatHlc({
         wallMs: 2_000_000_000_000,
