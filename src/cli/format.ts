@@ -455,76 +455,117 @@ export function escapeNoteText(s: string): string {
 
 /** Characters of an oversize ordinary note kept as a preview in its stub. */
 const NOTE_PREVIEW_CHARS = 120;
+/** Characters of the author a stub keeps; `show --note` prints the whole one. */
+const STUB_AUTHOR_CHARS = 64;
+
+/** The author as a stub shows it: clipped, so free-text metadata cannot blow the cap. */
+export function stubAuthor(author: string | null): string | null {
+  if (author === null) return null;
+  const chars = [...author];
+  return chars.length <= STUB_AUTHOR_CHARS
+    ? author
+    : `${chars.slice(0, STUB_AUTHOR_CHARS).join("")}…`;
+}
+
+/** The content preview a stub shows. */
+export function stubPreview(content: string): string {
+  return `${[...content].slice(0, NOTE_PREVIEW_CHARS).join("")}…`;
+}
 
 /** One note, one line, TAB-separated: `kind  n  by=…  at=…  <escaped text>`.
- *  `cutBytes` marks a stub: the text is a preview and `next=` names the
- *  command that prints the note whole. */
+ *  `retrieve` marks a stub: author and text are clipped previews, `cut=` is the
+ *  whole note's bytes and `next=` names the command that prints it whole. */
 export function noteRecord(
   n: TaskNoteRow,
   retrieve?: { cutBytes: number; command: string },
 ): string {
+  const author = retrieve === undefined ? n.author : stubAuthor(n.author);
   const head = [
     n.kind,
     String(n.n),
-    `by=${escapeNoteText(n.author ?? "<orchestrator>")}`,
+    `by=${escapeNoteText(author ?? "<orchestrator>")}`,
     `at=${n.createdAt}`,
   ];
   if (retrieve === undefined) return [...head, escapeNoteText(n.content)].join("\t");
-  const preview = `${[...n.content].slice(0, NOTE_PREVIEW_CHARS).join("")}…`;
   return [
     ...head,
-    escapeNoteText(preview),
+    escapeNoteText(stubPreview(n.content)),
     `cut=${retrieve.cutBytes}`,
     `next=${retrieve.command}`,
   ].join("\t");
 }
 
+/** A note to print; `cutBytes` set on an oversize ordinary stub. */
+export interface ShownNote {
+  note: TaskNoteRow;
+  cutBytes?: number;
+}
+
 export interface PlannedNotes {
-  /** Notes to print, oldest first; `cutBytes` set on an oversize ordinary stub. */
-  shown: { note: TaskNoteRow; cutBytes?: number }[];
+  /** Notes to print, oldest first. */
+  shown: ShownNote[];
   /** `n` of every note left out, ascending. */
   omitted: number[];
 }
 
 /**
- * Apply the ordinary-note byte budget. `pinned` notes (the brief, report and
- * verdicts) are content: always kept whole, never charged. Ordinary notes get
- * `budget` UTF-8 bytes of their own, escaping, TAB separators and newline
- * counted. One bigger than the whole budget becomes a short stub, so a page
- * always makes progress and `show --note` has something to name. Filling runs
- * newest-first when `fill` is "newest" (the default view) and oldest-first
- * when it is "page" (`--all` / `--from`: what is left out is then a suffix a
- * further `--from` reaches); it stops at the first ordinary note that does not
- * fit, so the shown ordinary notes are one contiguous run.
+ * Apply the byte cap. It is measured on what is EMITTED: `size(ordinary,
+ * footer)` returns the bytes of the whole output (text lines or JSON
+ * envelope, record keys and the `more=…` footer included) with the pinned
+ * notes set aside, because pinned notes (the brief, report and verdicts) are
+ * content: always whole, never charged, never dropped. `footer` says whether
+ * the output carries the `more` / `retrieve` footer (sized at its worst case
+ * when notes are dropped here). A note that alone exceeds `budget` becomes a
+ * stub, so a page always makes progress and `show --note` has something to
+ * name. Filling runs newest-first when `fill` is "newest" (the default view:
+ * the oldest ordinary notes are dropped) and oldest-first when it is "page"
+ * (`--all` / `--from`: what is left out is a suffix a further `--from`
+ * reaches); it stops at the first ordinary note that does not fit, so the
+ * shown ordinary notes are one contiguous run. `selectionOmits`: the selection
+ * itself already left notes out, so the footer is there whatever the cap does.
  */
 export function planNotes(
   notes: readonly TaskNoteRow[],
   pinned: ReadonlySet<number>,
-  stubCommand: (n: TaskNoteRow) => string,
   fill: "newest" | "page",
-  budget: number = RESULT_BYTES,
+  size: (ordinary: readonly ShownNote[], footer: boolean) => number,
+  opts: { selectionOmits?: boolean; budget?: number } = {},
 ): PlannedNotes {
+  const budget = opts.budget ?? RESULT_BYTES;
+  const ordinary = notes.filter((n) => !pinned.has(n.n));
   const keep = new Map<number, number | undefined>();
-  let used = 0;
-  let full = false;
-  for (const n of fill === "newest" ? [...notes].reverse() : notes) {
-    if (pinned.has(n.n)) {
-      keep.set(n.n, undefined);
-      continue;
+  const toShown = (): ShownNote[] =>
+    notes
+      .filter((n) => keep.has(n.n) && !pinned.has(n.n))
+      .map((note) => {
+        const cutBytes = keep.get(note.n);
+        return cutBytes === undefined ? { note } : { note, cutBytes };
+      });
+  const whole = (n: TaskNoteRow): number => Buffer.byteLength(noteRecord(n)) + 1;
+  if (
+    size(
+      ordinary.map((note) => ({ note })),
+      opts.selectionOmits === true,
+    ) <= budget
+  ) {
+    for (const n of ordinary) keep.set(n.n, undefined);
+  } else {
+    let full = false;
+    for (const n of fill === "newest" ? [...ordinary].reverse() : ordinary) {
+      if (full) continue;
+      const plain: ShownNote = { note: n };
+      const entry: ShownNote =
+        size([plain], true) > budget ? { note: n, cutBytes: whole(n) } : plain;
+      const shownNow = toShown();
+      const probe = fill === "newest" ? [entry, ...shownNow] : [...shownNow, entry];
+      if (shownNow.length > 0 && size(probe, true) > budget) {
+        full = true;
+        continue;
+      }
+      keep.set(n.n, entry.cutBytes);
     }
-    if (full) continue;
-    const size = Buffer.byteLength(noteRecord(n)) + 1;
-    const oversize = size > budget;
-    const cost = oversize
-      ? Buffer.byteLength(noteRecord(n, { cutBytes: size, command: stubCommand(n) })) + 1
-      : size;
-    if (used > 0 && used + cost > budget) {
-      full = true;
-      continue;
-    }
-    keep.set(n.n, oversize ? size : undefined);
-    used += cost;
   }
+  for (const n of notes) if (pinned.has(n.n)) keep.set(n.n, undefined);
   const shown = notes
     .filter((n) => keep.has(n.n))
     .map((note) => {

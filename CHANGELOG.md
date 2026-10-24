@@ -27,8 +27,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the first `brief`, the last `report` (else the closer's last note, found
   from the `close` note's author at read time), every `verdict`, then the
   last 3 ordinary notes newer than the report. Those three kinds are never
-  cut; the other notes get their own 4 KB (UTF-8 bytes); one bigger than
-  that is a stub with `cut=` and `next=mu task show <id> --note <n>`. A
+  cut; the other notes are capped so the emitted bytes (text lines, or the
+  JSON document with keys and `more`/`retrieve`) stay within 4 KB, pinned
+  notes exempt; one bigger than that is a stub (author and text clipped) with
+  `cut=` and `next=mu task show <id> --note <n>`. `--all` on a task with no
+  notes is an empty result (an explicit `--from 1` still exits 3). A
   trimmed view ends `more=N next=…` (`--all`, or `--from <n>`, pages the
   whole history whole). `n` is the note's 1-based number in its task, local
   to this DB. `--note <n>` on `show` prints one note whole; `n` outside

@@ -356,10 +356,15 @@ export function selectTaskNotes(
     .prepare("SELECT id, kind, author FROM task_notes WHERE task_id = ? ORDER BY id")
     .all(taskId) as { id: number; kind: string; author: string | null }[];
   const total = meta.length;
-  const from = opts.from ?? (opts.all === true ? 1 : undefined);
-  if (from !== undefined && (!Number.isInteger(from) || from < 1 || from > total)) {
-    throw new TaskNoteRangeError(taskLocalId, from, total);
+  // `--all` is the whole-history read, not a lookup of note 1: an empty task
+  // has none and that is an empty result. Only an explicit `from` is checked.
+  if (
+    opts.from !== undefined &&
+    (!Number.isInteger(opts.from) || opts.from < 1 || opts.from > total)
+  ) {
+    throw new TaskNoteRangeError(taskLocalId, opts.from, total);
   }
+  const from = opts.from ?? (opts.all === true ? 1 : undefined);
 
   const kindOf = (i: number): string => meta[i]?.kind ?? "note";
   const lastOf = (kind: string, pred: (i: number) => boolean = () => true): number => {

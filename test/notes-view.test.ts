@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { planNotes } from "../src/cli/format.js";
+import { noteRecord, planNotes, type ShownNote } from "../src/cli/format.js";
 import { type Db, type NoteKind, openDb } from "../src/db.js";
 import {
   addNote,
@@ -56,6 +56,11 @@ describe("selectTaskNotes", () => {
     ]);
     expect(r.more).toBe(0);
     expect(r.total).toBe(2);
+  });
+
+  it("--all on an existing task with no notes is an empty result; an explicit --from 1 is still a miss", () => {
+    expect(select({ all: true })).toMatchObject({ notes: [], more: 0, total: 0 });
+    expect(() => select({ from: 1 })).toThrow(TaskNoteRangeError);
   });
 
   it("an empty task selects nothing", () => {
@@ -216,12 +221,23 @@ describe("planNotes (ordinary byte budget)", () => {
     content,
     createdAt: "2026-01-01T00:00:00.000Z",
   });
-  const stub = (n: { n: number }) => `show ${n.n}`;
+  // Text wire size: records, newline-joined, plus a worst-case footer.
+  const size = (ordinary: readonly ShownNote[], footer: boolean): number =>
+    Buffer.byteLength(
+      [
+        ...ordinary.map((s) =>
+          s.cutBytes === undefined
+            ? noteRecord(s.note)
+            : noteRecord(s.note, { cutBytes: s.cutBytes, command: `show ${s.note.n}` }),
+        ),
+        ...(footer ? ["more=99 next=mu task notes t -w w --from 99"] : []),
+      ].join("\n"),
+    ) + 1;
 
   it("never charges pinned bytes against the ordinary budget", () => {
     const pinned = mk(1, "p".repeat(4800), "brief");
     const small = mk(2, "tiny");
-    const r = planNotes([pinned, small], new Set([1]), stub, "newest");
+    const r = planNotes([pinned, small], new Set([1]), "newest", size);
     expect(r.shown.map((s) => s.note.n)).toEqual([1, 2]);
     expect(r.omitted).toEqual([]);
   });
@@ -232,13 +248,13 @@ describe("planNotes (ordinary byte budget)", () => {
     const tail = mk(4, "r".repeat(4800), "report");
     const notes = [head, small(2), small(3), tail];
     for (const fill of ["newest", "page"] as const) {
-      const r = planNotes(notes, new Set([1, 4]), stub, fill);
+      const r = planNotes(notes, new Set([1, 4]), fill, size);
       expect(r.shown.map((s) => s.note.n)).toEqual([1, 2, 3, 4]);
     }
   });
 
   it("a page always makes progress: the first ordinary note is kept (as a stub) even when the budget is tiny", () => {
-    const r = planNotes([mk(1, "z".repeat(500))], new Set(), stub, "page", 10);
+    const r = planNotes([mk(1, "z".repeat(500))], new Set(), "page", size, { budget: 10 });
     expect(r.shown.map((s) => s.note.n)).toEqual([1]);
     expect(r.shown[0]?.cutBytes).toBeGreaterThan(500);
   });
@@ -246,15 +262,15 @@ describe("planNotes (ordinary byte budget)", () => {
   it("budgets ordinary notes in UTF-8 bytes, not characters", () => {
     const five = (ch: string) => [1, 2, 3, 4, 5].map((n) => mk(n, ch.repeat(700)));
     // 700 ASCII chars ~ 760 bytes a record: all five fit; 700 'é' ~ 1460 bytes: two fit.
-    expect(planNotes(five("e"), new Set(), stub, "newest").omitted).toEqual([]);
-    const wide = planNotes(five("é"), new Set(), stub, "newest");
+    expect(planNotes(five("e"), new Set(), "newest", size).omitted).toEqual([]);
+    const wide = planNotes(five("é"), new Set(), "newest", size);
     expect(wide.shown.map((s) => s.note.n)).toEqual([4, 5]);
     expect(wide.omitted).toEqual([1, 2, 3]);
   });
 
   it("an oversize ordinary note becomes a stub, never a silent 5 KB record", () => {
     const big = mk(1, "z".repeat(5000));
-    const r = planNotes([big], new Set(), stub, "page");
+    const r = planNotes([big], new Set(), "page", size);
     expect(r.shown).toHaveLength(1);
     expect(r.shown[0]?.cutBytes).toBeGreaterThan(5000);
     expect(r.omitted).toEqual([]);
@@ -262,7 +278,7 @@ describe("planNotes (ordinary byte budget)", () => {
 
   it("a page fills oldest-first and stops at the first note that does not fit", () => {
     const notes = [1, 2, 3, 4, 5].map((n) => mk(n, "e".repeat(1500)));
-    const r = planNotes(notes, new Set(), stub, "page");
+    const r = planNotes(notes, new Set(), "page", size);
     expect(r.shown.map((s) => s.note.n)).toEqual([1, 2]);
     expect(r.omitted).toEqual([3, 4, 5]);
   });
@@ -360,5 +376,113 @@ describe("mu task notes / show --note (CLI)", () => {
     const r = await runCli(["task", "notes", "t", "-w", WS, "--tail", "2"], dbPath);
     expect(r.stdout.trimEnd().split("\n")).toHaveLength(2);
     expect(r.stdout).toContain("\tn5");
+  });
+});
+
+describe("the 4 KB cap is measured on the emitted bytes (CLI)", () => {
+  const bytes = (s: string): number => Buffer.byteLength(s);
+
+  it("JSON: envelope, record keys and footer count; paging --from still covers every note", async () => {
+    for (let i = 1; i <= 20; i++) note(`row-${i} ${"a".repeat(300)}`);
+    const seen: number[] = [];
+    let args = ["--all"];
+    for (let guard = 0; guard < 30; guard++) {
+      const r = await runCli(["task", "notes", "t", "-w", WS, ...args, "--json"], dbPath);
+      expect(bytes(r.stdout)).toBeLessThanOrEqual(4096);
+      const d = (JSON.parse(r.stdout) as { data: { items: { n: number }[]; retrieve?: string } })
+        .data;
+      seen.push(...d.items.map((x) => x.n));
+      const from = d.retrieve?.match(/--from (\d+)$/)?.[1];
+      if (from === undefined) break;
+      args = ["--from", from];
+    }
+    expect(seen).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+  });
+
+  it("JSON: the more/retrieve fields are inside the cap at every boundary", async () => {
+    // Sweep the body length so some size lands just under 4096 without the footer.
+    for (let pad = 0; pad < 40; pad++) {
+      const id = `s${pad}`;
+      addTask(db, { localId: id, workstream: WS, title: id, impact: 50, effortDays: 1 });
+      for (let i = 1; i <= 6; i++) {
+        addNote(db, id, `row-${i} ${"a".repeat(880 + pad)}`, { workstream: WS, author: "a" });
+      }
+      const r = await runCli(["task", "notes", id, "-w", WS, "--all", "--json"], dbPath);
+      expect(bytes(r.stdout)).toBeLessThanOrEqual(4096);
+    }
+  });
+
+  it("text: the more=/next= footer is inside the cap", async () => {
+    for (let i = 1; i <= 4; i++) note(`row-${i} ${"a".repeat(1312)}`);
+    const r = await runCli(["task", "notes", "t", "-w", WS], dbPath);
+    expect(r.stdout).toContain("more=");
+    expect(bytes(r.stdout)).toBeLessThanOrEqual(4096);
+  });
+
+  it("an oversized author is clipped in a stub; show --note prints it whole", async () => {
+    const author = "author-".repeat(800);
+    note("some body", "note", author);
+    for (const extra of [[], ["--json"]]) {
+      const r = await runCli(["task", "notes", "t", "-w", WS, ...extra], dbPath);
+      expect(bytes(r.stdout)).toBeLessThanOrEqual(4096);
+    }
+    const stub = await runCli(["task", "notes", "t", "-w", WS], dbPath);
+    expect(stub.stdout).toContain("cut=");
+    const whole = await runCli(["task", "show", "t", "-w", WS, "--note", "1"], dbPath);
+    expect(whole.stdout).toContain(author);
+  });
+
+  it("pinned content is exempt: everything but the pinned records fits 4 KB, in text and JSON", async () => {
+    const brief = `B${"b".repeat(4800)}`;
+    note(brief, "brief");
+    for (let i = 1; i <= 12; i++) note(`mid-${i} ${"m".repeat(500)}`);
+    note("R".repeat(4500), "report");
+    for (let i = 1; i <= 6; i++) note(`late-${i} ${"l".repeat(900)}`);
+    const text = await runCli(["task", "notes", "t", "-w", WS], dbPath);
+    const lines = text.stdout.trimEnd().split("\n");
+    expect(lines[0]).toContain(brief);
+    expect(lines.some((l) => l.startsWith("report\t14\t") && l.includes("R".repeat(4500)))).toBe(
+      true,
+    );
+    const rest = lines.filter((l) => !/^(brief|report|verdict)\t/.test(l));
+    expect(bytes(`${rest.join("\n")}\n`)).toBeLessThanOrEqual(4096);
+    const json = await runCliJson(["task", "notes", "t", "-w", WS, "--json"], dbPath);
+    const d = json.data as { items: { kind: string }[]; more: number; retrieve?: string };
+    const ordinary = d.items.filter((i) => i.kind === "note");
+    const { items: _i, count: _c, ...fields } = d as Record<string, unknown>;
+    expect(
+      bytes(
+        JSON.stringify({ ok: true, data: { items: ordinary, count: 0, ...fields }, next: null }),
+      ),
+    ).toBeLessThanOrEqual(4096);
+    expect(d.more).toBeGreaterThan(0);
+  });
+
+  it("show: the notes block honours the same cap in text", async () => {
+    for (let i = 1; i <= 4; i++) note(`row-${i} ${"a".repeat(1300)}`);
+    const r = await runCli(["task", "show", "t", "-w", WS], dbPath);
+    const block = r.stdout.slice(r.stdout.indexOf("Notes ("));
+    expect(bytes(block)).toBeLessThanOrEqual(4096 + 16);
+  });
+});
+
+describe("notes --all on a task with no notes (CLI)", () => {
+  it("is success with an empty result; --from 1 and --note 1 stay exit 3", async () => {
+    const j = await runCli(["task", "notes", "t", "-w", WS, "--all", "--json"], dbPath);
+    expect(j.exitCode).toBe(null);
+    expect((JSON.parse(j.stdout) as { data: unknown }).data).toEqual({
+      items: [],
+      count: 0,
+      more: 0,
+    });
+    const t = await runCli(["task", "notes", "t", "-w", WS, "--all"], dbPath);
+    expect(t.exitCode).toBe(null);
+    expect(t.stdout).toContain("no notes");
+    for (const argv of [
+      ["task", "notes", "t", "-w", WS, "--from", "1"],
+      ["task", "show", "t", "-w", WS, "--note", "1"],
+    ]) {
+      expect((await runCli(argv, dbPath)).exitCode).toBe(3);
+    }
   });
 });
