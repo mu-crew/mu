@@ -18,15 +18,22 @@ export interface RunEntry {
   action: string;
 }
 
-const VERB = /\bmu\s+agent\s+(close|kill)\b/g;
+// `mu [global options] agent close|kill`: `mu -w eval agent close ...` is as common as `mu agent close -w eval`.
+const VERB = /\bmu(?:\s+(?:(?:-w|--workstream)\s+\S+|-\S+))*\s+agent\s+(close|kill)\b/g;
 const OPTS_WITH_VALUE = new Set(["-w", "--workstream"]);
+/** `2>&1`, `>/dev/null`, `&>f`, `2>>f`, `<f`: not arguments, and the `&` in them is not a command separator. */
+const REDIRECT = /\d*>>?&\d+|&>>?\s*\S+|\d*>>?\s*[^\s;&|]+|\d*<\s*[^\s;&|]+/g;
 
 /** Every `mu agent close|kill` in a command, whatever the option order. `for v in a b; do ... $v` is expanded. */
 export function agentCloseCalls(cmd: string): AgentCloseCall[] {
   const out: AgentCloseCall[] = [];
   for (const m of cmd.matchAll(VERB)) {
     const at = m.index ?? 0;
-    const rest = cmd.slice(at + m[0].length).split(/&&|\|\||[;&|\n]/, 1)[0] ?? "";
+    const rest =
+      cmd
+        .slice(at + m[0].length)
+        .replace(REDIRECT, " ")
+        .split(/&&|\|\||[;&|\n]/, 1)[0] ?? "";
     const tokens = rest.trim().split(/\s+/).filter(Boolean);
     const names: string[] = [];
     let unresolved = false;
@@ -39,12 +46,19 @@ export function agentCloseCalls(cmd: string): AgentCloseCall[] {
       }
       if (/^--discard(-workspace)?$/.test(t)) discard = true;
       if (t.startsWith("-")) continue;
-      const v = /^\$\{?(\w+)\}?$/.exec(t);
+      // `$v`, `${v}`, or a literal prefix/suffix around one (`worker-$i`).
+      const v = /^([^$`]*)\$\{?(\w+)\}?([^$`]*)$/.exec(t);
       if (v) {
-        const loop = new RegExp(`for\\s+${v[1]}\\s+in\\s+([^;\\n]+?)\\s*;\\s*do\\b`).exec(
+        const loop = new RegExp(`for\\s+${v[2]}\\s+in\\s+([^;\\n]+?)\\s*;\\s*do\\b`).exec(
           cmd.slice(0, at),
         );
-        if (loop && !/[$`]/.test(loop[1] ?? "")) names.push(...(loop[1] ?? "").trim().split(/\s+/));
+        if (loop && !/[$`]/.test(loop[1] ?? ""))
+          names.push(
+            ...(loop[1] ?? "")
+              .trim()
+              .split(/\s+/)
+              .map((x) => `${v[1]}${x}${v[3]}`),
+          );
         else unresolved = true;
       } else if (/[$`]/.test(t)) unresolved = true;
       else names.push(t);
@@ -104,4 +118,19 @@ export function tasksRunTwice(runs: RunEntry[]): string[] {
   return [...by]
     .filter(([, a]) => a.size > 1)
     .map(([t, a]) => `${t} ran under ${[...a].join(" and ")}`);
+}
+
+/**
+ * Whether a successful `mu_delegate` call was for claim `n`: the claim token in the task text
+ * (`claim-3`), or the call's own bookkeeping, which names the claim however the AUT worded the
+ * prompt: `label` (`c3` / `claim-3`) or `record.task` (`c3`, `eval/c3`).
+ */
+export function delegateIsForClaim(args: Record<string, unknown>, n: number): boolean {
+  const token = new RegExp(`claim-${n}(?!\\d)`);
+  const id = new RegExp(`^(?:claim-|c)${n}$`);
+  if (token.test(String(args.task ?? ""))) return true;
+  if (typeof args.label === "string" && id.test(args.label.trim().toLowerCase())) return true;
+  const rec = args.record;
+  const task = rec && typeof rec === "object" ? (rec as { task?: unknown }).task : undefined;
+  return typeof task === "string" && id.test(task.split("/").pop() ?? "");
 }
