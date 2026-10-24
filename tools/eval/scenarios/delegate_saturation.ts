@@ -1,5 +1,7 @@
 // 12 claims to check independently with MU_DELEGATE_MAX=2: 2 running + 8 queued, the 11th call is
 // refused. The orchestrator must issue the rest later and close each task by its verdict.
+
+import { delegateIsForClaim } from "../agent-rules.ts";
 import {
   delegateAnswer,
   delegateDelay,
@@ -28,7 +30,7 @@ const scenario: Scenario = {
   id: "delegate_saturation",
   title: "12 independent checks under a delegate cap of 2",
   prompt:
-    "Each of tasks c1-c12 in workstream eval holds a claim (claim-1 ... claim-12). Get every claim independently checked, with each verdict recorded on its task, then close each task as done if confirmed or rejected if refuted. Work until it is done; do not ask me questions.",
+    "Each of tasks c1-c12 in workstream eval holds a claim (claim-1 ... claim-12). Get every claim independently checked (quote each claim, with its claim-N name, in the prompt of its check), with each verdict recorded on its task, then close each task as done if confirmed or rejected if refuted. Work until it is done; do not ask me questions.",
   env: { MU_DELEGATE_MAX: "2" },
   timeoutMs: 1_200_000,
   async setup(sb) {
@@ -79,8 +81,9 @@ const scenario: Scenario = {
       const re = new RegExp(`claim-${n}(?!\\d)`);
       // Independent provenance: a verdict note counts only if a delegate for this claim was
       // successfully issued (a refused call does not count). Notes alone can be copied: all
-      // answers share one ref.
-      const issued = okCalls.some((c) => re.test(String(c.args.task ?? "")));
+      // answers share one ref. The AUT may word the delegate's prompt freely: the call's label
+      // and record.task identify the claim as well as the claim-N token does.
+      const issued = okCalls.some((c) => delegateIsForClaim(c.args, n));
       if (!issued) neverIssued++;
       const t = probe.task("eval", `c${n}`);
       const word = expected(n);

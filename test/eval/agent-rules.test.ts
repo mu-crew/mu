@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { agentCloseCalls, tasksRunTwice, unsafeDiscards } from "../../tools/eval/agent-rules.ts";
+import {
+  agentCloseCalls,
+  delegateIsForClaim,
+  tasksRunTwice,
+  unsafeDiscards,
+} from "../../tools/eval/agent-rules.ts";
 import { missingGoldenEvidence } from "../../tools/eval/check-rules.ts";
 import type { ToolCall } from "../../tools/eval/types.ts";
 
@@ -26,6 +31,20 @@ describe("agentCloseCalls", () => {
       ["w1", "w2"],
     );
     expect(agentCloseCalls('mu agent close "$(pick)"')[0]?.unresolved).toBe(true);
+  });
+  it("sees a global option before the noun", () => {
+    expect(
+      agentCloseCalls(
+        "cd /r && mu -w eval agent close worker-2 --discard-workspace >/dev/null 2>&1",
+      ),
+    ).toMatchObject([{ names: ["worker-2"], discard: true, unresolved: false }]);
+  });
+  it("does not read a redirection as an agent name", () => {
+    expect(
+      agentCloseCalls(
+        "for i in 1 2 3; do mu agent close worker-$i -w eval --discard-workspace 2>&1|tail -1; done",
+      ),
+    ).toMatchObject([{ names: ["worker-1", "worker-2", "worker-3"], unresolved: false }]);
   });
   it("finds kill and several calls", () => {
     const c = agentCloseCalls("mu agent kill a; mu agent close b");
@@ -92,5 +111,18 @@ describe("golden evidence", () => {
     expect(missingGoldenEvidence("delegate_saturation", v("refused=0 issued=12"))).toHaveLength(1);
     expect(missingGoldenEvidence("delegate_saturation", v("refused=2 issued=12"))).toEqual([]);
     expect(missingGoldenEvidence("other", v("x"))).toEqual([]);
+  });
+});
+
+describe("delegateIsForClaim", () => {
+  it("takes the claim token in the task, the label, or record.task", () => {
+    expect(delegateIsForClaim({ task: "CLAIM claim-3: x" }, 3)).toBe(true);
+    expect(delegateIsForClaim({ task: "check it", label: "c3" }, 3)).toBe(true);
+    expect(delegateIsForClaim({ task: "check it", record: { task: "eval/c3" } }, 3)).toBe(true);
+  });
+  it("does not confuse claim-1 with claim-12", () => {
+    expect(
+      delegateIsForClaim({ task: "claim-12", label: "c12", record: { task: "eval/c12" } }, 1),
+    ).toBe(false);
   });
 });
