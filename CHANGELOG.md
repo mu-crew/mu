@@ -34,7 +34,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `record` now files `verdict`, not `note`). `mu task close --note` is an alias
   of `--evidence` (both is a usage error); `--report <text>` stores the report
   first, then the close note, then the status put, in one op group. A report
-  is not evidence: a `done` close still needs `--evidence`. SDK: `addTasks`;
+  is not evidence: a `done` close still needs `--evidence`. SDK: `addTasks` (exported from the package entry; omitted ids derive the next free `_N` suffix inside the transaction);
   `addNote`/`closeTask` accept `group: "inherit"` (join the caller's op group,
   actor and intent) and `addNote` returns `kind`. The `task add` id/title count
   mismatch replaces commander's "too many arguments" error, with the same
