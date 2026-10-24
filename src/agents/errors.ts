@@ -421,6 +421,8 @@ export class AgentSendIndeterminateError extends Error implements HasNextSteps {
     public readonly reason: string,
     /** The receipt id the send carried: `mu agent check <agent> <msgId>` asks whether it landed. */
     public readonly msgId?: string,
+    /** The pi process the send was written to (hello's), when the extension reports one. */
+    public readonly incarnation?: string,
   ) {
     super(
       `agent ${agentName}: ${op} was written to its control socket but no reply arrived (${reason}); delivery unknown${msgId === undefined ? "" : `, msgId ${msgId}`}. Never resend blindly`,

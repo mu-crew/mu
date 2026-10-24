@@ -9,10 +9,8 @@
 // --interrupt and `mu agent abort` get taught.
 
 import { type AgentRow, expectsCtl } from "../agents.js";
-import type { CtlStatus } from "../ctl/protocol.js";
 import type { NextStep } from "../output.js";
 import { shellQuote, shellWord } from "../shell-quote.js";
-import { relTime } from "./format.js";
 
 export type HintAgent = Pick<AgentRow, "name" | "cli" | "workstreamName">;
 
@@ -26,16 +24,19 @@ function dispatchText(task: { id: string; workstream: string }): string {
  * the baseline the send measured; `incarnation` pins the pi process, so a
  * restart is refused instead of waited on. `--json` is part of it: the text
  * mode prints no answer, `lastText` is in the JSON. Every word is POSIX
- * quoted; the line parses as printed.
+ * quoted; the line parses as printed. `msgId` names the send in the intent
+ * (the wait command has no msgId word: the run is pinned by runs + inc).
  */
 export function waitHint(
   agent: Pick<HintAgent, "name" | "workstreamName">,
   runs: number,
   incarnation?: string,
+  msgId?: string,
 ): NextStep {
   const inc = incarnation === undefined ? "" : ` --inc ${shellWord(incarnation)}`;
+  const of = msgId === undefined ? "" : ` to ${msgId}`;
   return {
-    intent: "Wait for the response (returns its final text)",
+    intent: `Wait for the response${of} (returns its final text)`,
     command: `mu agent wait ${shellWord(agent.name)} -w ${shellWord(agent.workstreamName)} --after-runs ${runs}${inc} --json`,
   };
 }
@@ -60,40 +61,6 @@ export function dispatchHint(
         : `Send the task to ${agent.name} (fresh session + prompt in one step)`,
     command: `mu agent send ${agent.name} --fresh ${text} -w ${ws}`,
   };
-}
-
-/**
- * Hints for a plain or --steer ctl send, from the status read just before
- * it. Busy: the text was queued, so say how long the run has gone and how
- * to make pi act now. Idle after a settled run (plain only): the text
- * probably started a new task in an old context, so nudge toward --fresh.
- */
-export function plainSendHints(
-  agent: HintAgent,
-  before: Pick<CtlStatus, "state" | "runs"> & { since?: number },
-  now: number = Date.now(),
-  mode: "followUp" | "steer" = "followUp",
-): NextStep[] {
-  const { name, workstreamName: ws } = agent;
-  if (before.state === "busy") {
-    const busy = before.since === undefined ? "busy" : `busy since ${relTime(now - before.since)}`;
-    const lands = mode === "steer" ? "the current tool call" : "the current run ends";
-    return [
-      {
-        intent: `${busy}: sees this after ${lands}; to act now: --interrupt`,
-        command: `mu agent send ${name} --interrupt '...' -w ${ws}`,
-      },
-    ];
-  }
-  if (mode === "followUp" && before.state === "idle" && before.runs > 0) {
-    return [
-      {
-        intent: "Starting unrelated work? Use --fresh next time (new session, no stale context)",
-        command: `mu agent send ${name} --fresh '...' -w ${ws}`,
-      },
-    ];
-  }
-  return [];
 }
 
 /** After `mu task wait` fires: hand the owner its next task (in `ws`), fresh. pi only. */

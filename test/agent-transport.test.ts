@@ -297,7 +297,7 @@ describe("sendViaTransport", () => {
     expect(received.map((r) => r.op)).toEqual([op, "status"]);
   });
 
-  it("the CLI: indeterminate exits 1 and --json carries msgId; confirmed prints the wait hint with --inc", async () => {
+  it("the CLI: indeterminate exits 1 and --json carries msgId/incarnation/delivery as structured fields", async () => {
     seed("worker-1");
     await serveSilentOn("send", false);
     const bad = await runCli(
@@ -305,9 +305,73 @@ describe("sendViaTransport", () => {
       dbPath,
     );
     expect(bad.exitCode).toBe(1);
-    const env = JSON.parse(bad.stderr) as { error: string; message: string };
-    expect(env.error).toBe("AgentSendIndeterminateError");
-    expect(env.message).toContain((received[0] as { msgId: string }).msgId);
+    const id = (received[0] as { msgId: string }).msgId;
+    const env = JSON.parse(bad.stderr) as Record<string, unknown>;
+    expect(env).toMatchObject({
+      error: "AgentSendIndeterminateError",
+      exitCode: 1,
+      msgId: id,
+      incarnation: INC,
+      delivery: "unknown",
+    });
+    expect(env.message).toContain(id);
+  });
+
+  // Every --json send form carries the same receipt triple, delivered or not.
+  it.each([
+    ["plain", ["hello"], "send"],
+    ["--steer", ["hello", "--steer"], "send"],
+    ["--fresh", ["hello", "--fresh"], "fresh"],
+    ["--interrupt", ["hello", "--interrupt"], "interrupt"],
+  ])(
+    "%s --json: delivery-unknown error carries the wire msgId, incarnation, delivery",
+    async (_n, args, op) => {
+      seed("worker-1");
+      await serveSilentOn(op, false);
+      const bad = await runCli(
+        ["agent", "send", "worker-1", ...args, "-w", "auth", "--json"],
+        dbPath,
+      );
+      expect(bad.exitCode).toBe(1);
+      const wire = received.find((r) => r.op === op) as { msgId: string };
+      expect(JSON.parse(bad.stderr)).toMatchObject({
+        msgId: wire.msgId,
+        incarnation: INC,
+        delivery: "unknown",
+      });
+    },
+  );
+
+  it("a confirmed-after-timeout send --json: msgId, incarnation, delivery 'delivered', one wait hint", async () => {
+    seed("worker-1");
+    await serveSilentOn("send", true);
+    const r = await runCli(["agent", "send", "worker-1", "hello", "-w", "auth", "--json"], dbPath);
+    expect(r.exitCode).toBeNull();
+    const id = (received[0] as { msgId: string }).msgId;
+    const body = JSON.parse(r.stdout) as { nextSteps: unknown[] };
+    expect(body).toMatchObject({
+      msgId: id,
+      incarnation: INC,
+      delivery: "delivered",
+      receipt: "confirmed-after-timeout",
+    });
+    expect(body.nextSteps).toEqual([
+      {
+        intent: `Wait for the response to ${id} (returns its final text)`,
+        command: `mu agent wait worker-1 -w auth --after-runs 5 --inc ${INC} --json`,
+      },
+    ]);
+  });
+
+  it("a normal send --json carries delivery 'delivered' with msgId and incarnation", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"));
+    const r = await runCli(["agent", "send", "worker-1", "hello", "-w", "auth", "--json"], dbPath);
+    expect(JSON.parse(r.stdout)).toMatchObject({
+      msgId: received[0]?.msgId,
+      incarnation: INC,
+      delivery: "delivered",
+    });
   });
 
   // No path may send a side-effecting request twice (reviewer mutant 6: a
@@ -620,7 +684,7 @@ describe("mu agent send transport", () => {
     expect(received.map((r) => r.op)).toEqual(["send"]);
     const body = JSON.parse(stdout) as { runs?: number; state?: string; nextSteps: unknown[] };
     expect(body).toMatchObject({ state: "idle", runs: 4 });
-    expect(JSON.stringify(body.nextSteps)).toContain("--fresh next time");
+    expect(body.nextSteps).toHaveLength(1);
   });
 
   it("a ctl send with runs points at wait --after-runs, not a pane read", async () => {
