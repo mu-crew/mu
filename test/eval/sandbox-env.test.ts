@@ -67,6 +67,13 @@ describe("sandboxEnv", () => {
     });
   });
 
+  it("keeps only system dirs on PATH, so host tool installs and docs are out of reach", () => {
+    const e = sandboxEnv(dir, surface, "s", {
+      PATH: "/home/me/.local/bin:/home/me/.local/share/mise/installs/x/bin:/usr/local/bin:/usr/bin:/bin",
+    });
+    expect(e.PATH).toBe(`${dir}/bin:/usr/local/bin:/usr/bin:/bin`);
+  });
+
   it("never sets MU_NUDGE (the AUT keeps its nudges)", () => {
     expect(env.MU_NUDGE).toBeUndefined();
   });
