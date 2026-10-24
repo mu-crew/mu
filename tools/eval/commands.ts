@@ -22,7 +22,13 @@ import { scenarioDir, sshShim } from "./fixtures.ts";
 import { toMarkdown } from "./report.ts";
 import { runAut } from "./runner.ts";
 import { createSandbox, FAUX_EXT, sh } from "./sandbox.ts";
-import { checkScenarioRoot, parseSurfaceSpec, SURFACES_DIR, surfaceFromDir } from "./surface.ts";
+import {
+  checkScenarioRoot,
+  parseSurfaceSpec,
+  SURFACES_DIR,
+  surfaceFromDir,
+  surfaceId,
+} from "./surface.ts";
 import type { Family, RunResult, Scenario, Surface, Verdict } from "./types.ts";
 
 export const EVAL_MODEL_FAUX = "evalfaux/aut";
@@ -119,7 +125,7 @@ export async function runOne(o: RunOne): Promise<RunResult> {
     if (o.keep) console.error(`kept sandbox: ${sb.dir} (tmux -L ${sb.tmuxSocket})`);
     return {
       scenario: o.scenario.id,
-      surface: o.surface.name,
+      surface: surfaceId(o.surface),
       model: o.model,
       rep: o.rep,
       startedAt,
@@ -181,6 +187,9 @@ export interface MatrixOptions {
 /** Run every scenario x surface x model x rep, `concurrency` at a time; stop starting runs past the token budget. */
 export async function runMatrix(o: MatrixOptions): Promise<RunResult[]> {
   const stamp = timestamp();
+  const ids = o.surfaces.map(surfaceId);
+  const dup = ids.find((id, i) => ids.indexOf(id) !== i);
+  if (dup !== undefined) throw new Error(`duplicate --surface spec ${dup}`);
   const queue: RunOne[] = [];
   for (const id of o.scenarios) {
     for (const surface of o.surfaces) {
@@ -193,7 +202,7 @@ export async function runMatrix(o: MatrixOptions): Promise<RunResult[]> {
             model,
             providerExt: o.providerExt,
             rep,
-            log: logPath(o.root, stamp, { scenario: id, surface: surface.name, model, rep }),
+            log: logPath(o.root, stamp, { scenario: id, surface: surfaceId(surface), model, rep }),
           });
         }
       }
@@ -216,7 +225,7 @@ export async function runMatrix(o: MatrixOptions): Promise<RunResult[]> {
         console.log(summary(r));
       } catch (e) {
         console.error(
-          `run failed: ${job.scenario.id} ${job.surface.name} ${job.model}: ${e instanceof Error ? e.message : String(e)}`,
+          `run failed: ${job.scenario.id} ${surfaceId(job.surface)} ${job.model}: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }

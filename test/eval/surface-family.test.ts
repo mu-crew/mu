@@ -2,10 +2,21 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadScenario, resolveSurface, scenarioIds } from "../../tools/eval/commands.ts";
+import {
+  loadScenario,
+  logPath,
+  resolveSurface,
+  runMatrix,
+  scenarioIds,
+} from "../../tools/eval/commands.ts";
 import { sandboxFamily, scenarioDir, writeWorkerDriver } from "../../tools/eval/fixtures.ts";
 import { sandboxEnv } from "../../tools/eval/sandbox.ts";
-import { checkScenarioRoot, parseSurfaceSpec, SURFACES_DIR } from "../../tools/eval/surface.ts";
+import {
+  checkScenarioRoot,
+  parseSurfaceSpec,
+  SURFACES_DIR,
+  surfaceId,
+} from "../../tools/eval/surface.ts";
 import type { Sandbox } from "../../tools/eval/types.ts";
 
 let tmp: string;
@@ -55,6 +66,39 @@ describe("surface spec", () => {
     );
     expect(() => checkScenarioRoot(SURFACES_DIR)).toThrow(/prepare deletes/);
     expect(() => checkScenarioRoot(join(tmp, "nope"))).toThrow(/does not exist/);
+  });
+});
+
+describe("surface id", () => {
+  it("one built dir under two family/root specs gets distinct ids, hence distinct logs", () => {
+    const dir = fakeSurface("3.13.3");
+    const root = join(tmp, "r");
+    mkdirSync(root);
+    const a = resolveSurface(`${dir}:3x`);
+    const b = resolveSurface(`${dir}:next:${root}`);
+    expect(surfaceId(a)).not.toBe(surfaceId(b));
+    expect(surfaceId(a)).toBe(surfaceId(resolveSurface(`${dir}:3x`)));
+    const log = (s: typeof a) =>
+      logPath(tmp, "t", { scenario: "x", surface: surfaceId(s), model: "m", rep: 1 });
+    expect(log(a)).not.toBe(log(b));
+  });
+
+  it("runMatrix refuses the same spec twice", async () => {
+    const dir = fakeSurface("dup");
+    const s = resolveSurface(dir);
+    await expect(
+      runMatrix({
+        surfaces: [s, s],
+        models: ["m"],
+        scenarios: [],
+        reps: 1,
+        concurrency: 1,
+        budgetTokens: 1,
+        providerExt: "",
+        out: join(tmp, "o.jsonl"),
+        root: tmp,
+      }),
+    ).rejects.toThrow(/duplicate --surface spec/);
   });
 });
 

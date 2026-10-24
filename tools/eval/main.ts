@@ -20,7 +20,7 @@ import {
 import type { FauxStep } from "./faux.ts";
 import { runAut } from "./runner.ts";
 import { createSandbox, FAUX_EXT, mu, sh, tmuxSocketPath } from "./sandbox.ts";
-import { parseFamily, prepareSurface, surfaceFromDir } from "./surface.ts";
+import { parseFamily, prepareSurface, surfaceFromDir, surfaceId } from "./surface.ts";
 import type { Family, Sandbox, Scenario, Surface } from "./types.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -244,7 +244,7 @@ async function main(argv: string[]): Promise<number> {
         keep: rest.includes("--keep"),
         log: logPath(REPO_ROOT, timestamp(), {
           scenario: id,
-          surface: surface.name,
+          surface: surfaceId(surface),
           model,
           rep: 1,
         }),

@@ -1,5 +1,6 @@
 // A surface is a directory holding a built mu (dist/ + skills/mu). mu is only ever a subprocess.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -24,6 +25,17 @@ export function surfaceFromDir(name: string, root: string): Surface {
     );
   }
   return surface;
+}
+
+/**
+ * Unique label for one surface spec: `<name>:<family>:<hash of built dir + scenario root>`. Keys run
+ * logs and report rows, so one built dir under two families or roots stays two surfaces.
+ */
+export function surfaceId(s: Surface): string {
+  const h = createHash("sha256")
+    .update(`${s.root}\0${s.scenarioRoot ?? ""}`)
+    .digest("hex");
+  return `${s.name}:${s.family ?? "3x"}:${h.slice(0, 6)}`;
 }
 
 /** A surface name is one plain lowercase path segment: no separators, no "..", not hidden, not empty. */
