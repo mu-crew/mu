@@ -125,6 +125,52 @@ function installPanes(extensionFor?: string): void {
   });
 }
 
+// The row keeps how the pane was started, so an outdated extension can be
+// respawned exactly (README: Ctl versioning). Read back through getAgent AND
+// the raw column: a dropped write must fail here.
+describe("spawn records the command it ran (agents.command / command_source)", () => {
+  const raw = (name: string) =>
+    db
+      .prepare(
+        "SELECT command, command_source AS src FROM agents WHERE name = ? AND workstream_id = (SELECT id FROM workstreams WHERE name = 'auth')",
+      )
+      .get(name) as { command: string | null; src: string | null };
+
+  it("cli-key: the cli value itself, source cli-key; the returned row and the stored row agree", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(raw("worker-1")).toEqual({ command: "pi", src: "cli-key" });
+    expect(agent).toMatchObject({ command: "pi", commandSource: "cli-key" });
+    expect(getAgent(db, "worker-1", "auth")).toMatchObject({
+      command: "pi",
+      commandSource: "cli-key",
+    });
+  });
+
+  it("an $MU_<CLI>_COMMAND override: the resolved command, source env", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    process.env.MU_PI_COMMAND = "pi-alt --flag";
+    try {
+      await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    } finally {
+      const k = "MU_PI_COMMAND";
+      delete process.env[k];
+    }
+    expect(raw("worker-1")).toEqual({ command: "pi-alt --flag", src: "env" });
+  });
+
+  it("--command: verbatim, source explicit", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    await spawnAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      cli: "helper",
+      command: "pi-meta --no-solo",
+    });
+    expect(raw("worker-1")).toEqual({ command: "pi-meta --no-solo", src: "explicit" });
+  });
+});
+
 describe("spawn control socket", () => {
   it("injects MU_CTL_SOCK at the derived path and creates its directory", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";

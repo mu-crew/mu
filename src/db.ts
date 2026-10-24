@@ -573,6 +573,11 @@ function applySchema(db: Db): void {
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec(CURRENT_SCHEMA);
+    // Columns a v12 DB written before they existed still lacks.
+    for (const [table, column, ddl] of ADDED_COLUMNS) {
+      if (!hasColumn(db, table, column))
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    }
     // vcs_workspaces (machine-local) is superseded by `worktrees`: carry its
     // rows over, then drop it, in this one transaction. Idempotent;
     // schemaIsCurrent reports a DB that still has it as not current.
@@ -681,6 +686,26 @@ function expectedObjects(): ExpectedObjects {
   return expectedCache;
 }
 
+/**
+ * Columns added to a table after a v12 DB may already exist, as
+ * `[table, column, DDL]`. `CREATE TABLE IF NOT EXISTS` leaves an existing
+ * table alone, so applySchema adds each missing one with `ALTER TABLE ADD
+ * COLUMN` (idempotent, inside the schema transaction), and schemaIsCurrent
+ * reports a DB without one as not current. The DDL must stay a plain
+ * nullable/defaulted column: SQLite adds nothing else in place.
+ */
+const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: string])[] = [
+  ["agents", "command", "TEXT"],
+  ["agents", "command_source", "TEXT"],
+];
+
+function hasColumn(db: Db, table: string, column: string): boolean {
+  return (
+    db.prepare("SELECT 1 AS x FROM pragma_table_info(?) WHERE name = ?").get(table, column) !==
+    undefined
+  );
+}
+
 /** True when applySchema would change nothing: every table, index and
  *  seeded substate row exists, and every view's stored SQL equals this
  *  build's definition. Reads only, so openDb on an up-to-date DB takes
@@ -695,6 +720,7 @@ function schemaIsCurrent(db: Db): boolean {
   const expected = expectedObjects();
   if (have.has("table:vcs_workspaces")) return false;
   if (expected.tables.some((t) => !have.has(`table:${t}`))) return false;
+  if (ADDED_COLUMNS.some(([t, c]) => !hasColumn(db, t, c))) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {
     if (have.get(`view:${name}`) !== sql) return false;
