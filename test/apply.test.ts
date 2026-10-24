@@ -254,7 +254,7 @@ describe("applyOp", () => {
       const late = ingest(
         makeOp({ hlc: peerHlc(1000), entity: "task", key: "demo/t1", payload: { impact: 10 } }),
       );
-      expect(late).toMatchObject({ changed: false, skipped: "older-than-current" });
+      expect(late.changed).toBe(false);
       expect(task("demo/t1")?.impact).toBe(90);
     });
 
@@ -417,7 +417,7 @@ describe("applyOp", () => {
       ingest(del(5000));
       expect(task("demo/t1")).toBeUndefined();
       const r = ingest(put(1000));
-      expect(r).toMatchObject({ changed: false, skipped: "older-than-tombstone" });
+      expect(r.changed).toBe(false);
       expect(task("demo/t1")).toBeUndefined();
     });
 
@@ -499,7 +499,7 @@ describe("applyOp", () => {
       ingest(noteOp(1000));
       const after = noteCount();
       const second = ingest(noteOp(1000));
-      expect(second).toMatchObject({ changed: false, skipped: "already-present" });
+      expect(second.changed).toBe(false);
       expect(noteCount()).toBe(after);
     });
 
@@ -523,7 +523,7 @@ describe("applyOp", () => {
       expect(noteCount()).toBe(2);
       // Re-delivering either one is still a no-op.
       const replay = ingest(at(2000, "demo/t1#10532", "2026-09-30T10:41:40.855Z"));
-      expect(replay).toMatchObject({ changed: false, skipped: "already-present" });
+      expect(replay.changed).toBe(false);
       expect(noteCount()).toBe(2);
     });
 
@@ -537,10 +537,10 @@ describe("applyOp", () => {
       expect(contents).toEqual(["first", "second"]);
     });
 
-    it("is skipped (not fatal) when the parent task is absent", () => {
+    it("changes nothing (not fatal) when the parent task is absent", () => {
       ensureWorkstream(db, "demo");
       const r = ingest(noteOp(1000));
-      expect(r).toMatchObject({ changed: false, skipped: "absent" });
+      expect(r.changed).toBe(false);
     });
 
     it("order of arrival does not matter for grow-only notes", () => {
@@ -653,7 +653,7 @@ describe("applyOp", () => {
           machineId: "9f1c8a2e-0000-4000-8000-0000000000cc",
         }),
       );
-      expect(late).toMatchObject({ changed: false, skipped: "older-than-tombstone" });
+      expect(late.changed).toBe(false);
       expect(edgeExists()).toBe(false);
     });
 
@@ -681,7 +681,7 @@ describe("applyOp", () => {
       seedPair();
       ingest(add(1000));
       const second = ingest(add(1000));
-      expect(second).toMatchObject({ changed: false, skipped: "already-present" });
+      expect(second.changed).toBe(false);
       const n = (db.prepare("SELECT COUNT(*) AS n FROM task_edges").get() as { n: number }).n;
       expect(n).toBe(1);
     });

@@ -42,17 +42,15 @@ the first per-field UPDATE would fail the FK.
 Every lifecycle write sets `status` and `substate` in one UPDATE, so
 one op carries both under one HLC. A pair can still split across ops:
 a status-only op from a v10 peer, an unknown substate from a newer
-peer, or a concurrent close and park on two machines. Before commit,
-`repairTaskPair` (`src/apply.ts`) sets the substate to the one implied
-by the newest op in the log that writes a substate, resolved against
-the row's current status. If that pair is illegal, it falls back to
-the status default.
+peer, or a concurrent close and park on two machines. `foldTask`
+(`src/fold.ts`) takes the substate from the newest live op in the log
+that writes one and resolves it against the folded status. If that
+pair is illegal, it falls back to the status default.
 
-Substate is therefore not per-field LWW. Reading the log instead of
-the row makes the result a pure function of the op set plus the row's
-status, so every peer converges whatever the arrival order. For the
-same reason the repair records no op: each peer computes the identical
-repair from the identical log.
+Substate is therefore not per-field LWW. Folding the log instead of
+patching the row makes the result a pure function of the op set, so
+every peer converges whatever the arrival order, and the apply records
+no op: each peer computes the identical row from the identical log.
 
 ## Built-in views
 
