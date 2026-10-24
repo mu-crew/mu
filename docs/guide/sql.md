@@ -72,8 +72,9 @@ shows the whole call. `--confirm-rows N` counts rows removed by
 `ON DELETE CASCADE` too: deleting a task with one edge counts 2.
 
 The whole call runs in one transaction that mu opens, so `BEGIN`,
-`COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT` and `RELEASE` are refused; a
-failed statement rolls the call back. An `INSERT` that names an `id` of 0
+`COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT` and `RELEASE` are refused, each
+statement checked by SQLite itself (a table or column named `begin` or
+`end` is fine); a failed statement rolls the call back. An `INSERT` that names an `id` of 0
 or below is refused too (omit it).
 
 `mu sql` refuses to change a natural-key column (`workstreams.name`,

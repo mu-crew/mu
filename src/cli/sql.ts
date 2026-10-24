@@ -3,15 +3,17 @@
 // Read OR write — `mu sql` is the explicit escape hatch. Single-statement
 // path uses better-sqlite3's prepare() so we can distinguish read
 // (.all() rows) from write (.run() change count). Multi-statement path
-// uses db.exec() which handles multiple semicolon-separated statements
-// but returns nothing structured.
+// runs the statements one at a time (runScript) and returns nothing
+// structured.
 //
 // Every write runs inside ONE op-context scope, which owns the
 // transaction (src/op-context.ts): one `sql.write` group, atomic, and
 // the context is never committed. So the SQL may not control the
 // transaction itself: BEGIN / COMMIT / END / ROLLBACK / SAVEPOINT /
 // RELEASE are refused up front (END is COMMIT's alias; running any of
-// them would end the transaction the context lives in).
+// them would end the transaction the context lives in). SQLite itself
+// recognises them (see refuseTransactionControl), statement by statement;
+// the text is never scanned for keywords.
 //
 // `--confirm-rows N` adds a safety belt on top: if the actual
 // affected-row count (FK cascades included) doesn't match N, the scope
@@ -30,7 +32,6 @@ export async function cmdSql(
   query: string,
   opts: { json?: boolean; confirmRows?: number } = {},
 ): Promise<void> {
-  refuseTransactionControl(query);
   // ONE op context for the whole invocation. Without it every captured
   // row got its own random group and a null intent, so one multi-row
   // UPDATE showed up in `mu log` as N separate "(no intent)" actions
@@ -56,53 +57,85 @@ export async function cmdSql(
 
 const USER_TRANSACTION_MESSAGE = "mu sql runs inside mu's transaction; remove BEGIN/COMMIT";
 
-/** Refuse any top-level statement that is transaction control. */
-function refuseTransactionControl(sql: string): void {
-  for (const keyword of topLevelKeywords(sql)) {
-    if (TRANSACTION_KEYWORDS.has(keyword)) throw new UsageError(USER_TRANSACTION_MESSAGE);
+/**
+ * Throw if `statement` (one compiled statement) is BEGIN / COMMIT / END /
+ * ROLLBACK [TO] / SAVEPOINT / RELEASE. SQLite answers, not a keyword
+ * scan: it compiles exactly these to an `AutoCommit` or `Savepoint`
+ * opcode, so a table or column named `begin` or `commit` can neither
+ * hide one nor be mistaken for one.
+ */
+function refuseTransactionControl(db: Db, statement: string): void {
+  let ops: { opcode: string }[];
+  try {
+    ops = db.prepare(`EXPLAIN ${statement}`).all() as { opcode: string }[];
+  } catch {
+    return; // EXPLAIN EXPLAIN ...: never transaction control
+  }
+  if (ops.some((r) => r.opcode === "AutoCommit" || r.opcode === "Savepoint")) {
+    throw new UsageError(USER_TRANSACTION_MESSAGE);
   }
 }
 
-const TRANSACTION_KEYWORDS: ReadonlySet<string> = new Set([
-  "BEGIN",
-  "COMMIT",
-  "END",
-  "ROLLBACK",
-  "SAVEPOINT",
-  "RELEASE",
-]);
-
 /**
- * The first keyword (upper-cased) of every top-level statement in `sql`.
- * Skips strings, quoted identifiers and comments. A `CREATE [TEMP]
- * TRIGGER` statement runs to the `END` that closes its body, so the
- * `;` and `END` inside a trigger (or a `CASE … END`) are not statements
- * of their own and cannot cause a false refusal.
+ * Run a multi-statement script one statement at a time, checking each
+ * with `refuseTransactionControl` just before it runs. SQLite, not the
+ * text, decides where a statement ends: a `;` outside strings, quoted
+ * identifiers and comments is only a CANDIDATE end, and "incomplete
+ * input" from prepare() means the statement goes on (a `CREATE TRIGGER`
+ * body, whose inner `;` and `END` are not statements of their own).
+ * No keyword is ever inspected.
+ *
+ * Checking per statement, in the scope's transaction, is what makes a
+ * refusal safe: statements compile against the schema the earlier ones
+ * built (a trigger on a table the script just created), and a refusal
+ * throws, so the scope ROLLs BACK everything that ran before it.
  */
-export function topLevelKeywords(sql: string): string[] {
-  const keywords: string[] = [];
-  let words: string[] = []; // words of the current statement, upper-case
-  let caseDepth = 0;
-  let inTriggerBody = false;
-  const endStatement = (): void => {
-    words = [];
-    caseDepth = 0;
-    inTriggerBody = false;
+function runScript(db: Db, sql: string): void {
+  let start = 0;
+  const runOne = (text: string, stmt: ReturnType<typeof db.prepare>): void => {
+    refuseTransactionControl(db, text);
+    if (stmt.reader) stmt.all([]);
+    else stmt.run([]);
   };
+  for (const end of semicolonOffsets(sql)) {
+    const text = sql.slice(start, end + 1);
+    let stmt: ReturnType<typeof db.prepare>;
+    try {
+      stmt = db.prepare(text);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/incomplete input/i.test(msg)) continue; // statement continues past this `;`
+      if (/no statements/i.test(msg)) {
+        start = end + 1;
+        continue;
+      }
+      throw err;
+    }
+    runOne(text, stmt);
+    start = end + 1;
+  }
+  const rest = sql.slice(start);
+  try {
+    runOne(rest, db.prepare(rest));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/no statements/i.test(msg)) throw err;
+  }
+}
+
+/** Offsets of every `;` that is not inside a string, quoted identifier or comment. */
+function semicolonOffsets(sql: string): number[] {
+  const offsets: number[] = [];
   let i = 0;
   while (i < sql.length) {
     const c = sql[i] as string;
     const next = sql[i + 1];
     if (c === "-" && next === "-") {
       while (i < sql.length && sql[i] !== "\n") i++;
-      continue;
-    }
-    if (c === "/" && next === "*") {
+    } else if (c === "/" && next === "*") {
       const close = sql.indexOf("*/", i + 2);
       i = close === -1 ? sql.length : close + 2;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === "`" || c === "[") {
+    } else if (c === "'" || c === '"' || c === "`" || c === "[") {
       const closer = c === "[" ? "]" : c;
       i++;
       while (i < sql.length) {
@@ -116,34 +149,12 @@ export function topLevelKeywords(sql: string): string[] {
         i++;
       }
       i++;
-      if (words.length === 0) words.push("?"); // a statement that starts with a literal
-      continue;
-    }
-    if (/[A-Za-z_]/.test(c)) {
-      let j = i;
-      while (j < sql.length && /[A-Za-z0-9_$]/.test(sql[j] as string)) j++;
-      const word = sql.slice(i, j).toUpperCase();
-      i = j;
-      if (words.length === 0) keywords.push(word);
-      words.push(word);
-      if (words[0] === "CREATE" && words.includes("TRIGGER")) {
-        if (word === "BEGIN") inTriggerBody = true;
-        else if (inTriggerBody && word === "CASE") caseDepth++;
-        else if (inTriggerBody && word === "END") {
-          if (caseDepth > 0) caseDepth--;
-          else inTriggerBody = false;
-        }
-      }
-      continue;
-    }
-    if (c === ";") {
-      if (!inTriggerBody) endStatement();
+    } else {
+      if (c === ";") offsets.push(i);
       i++;
-      continue;
     }
-    i++;
   }
-  return keywords;
+  return offsets;
 }
 
 function runSql(
@@ -156,10 +167,9 @@ function runSql(
   //
   // Single-statement path uses better-sqlite3's prepare() so we can
   // distinguish read (.all() rows) from write (.run() change count).
-  // Multi-statement path uses db.exec() which handles BEGIN/COMMIT and
-  // multiple semicolon-separated statements but returns nothing
-  // structured. We try prepare() first; if it throws the
-  // 'more than one statement' SqliteError, we fall back to exec().
+  // Multi-statement path (runScript) runs semicolon-separated statements
+  // one by one but returns nothing structured. We try prepare() first; if
+  // it throws the 'more than one statement' SqliteError, we fall back.
   // This keeps the simple case fast and well-typed while making
   // multi-statement migrations / cleanup scripts a one-shot.
   // `cmdSql` prepared the statement once (review_code_sql_double_prepare);
@@ -167,7 +177,7 @@ function runSql(
   if (stmt === undefined) {
     if (opts.confirmRows !== undefined) {
       const expected = opts.confirmRows;
-      const { actual } = runConfirmed(db, expected, () => db.exec(trimmed));
+      const { actual } = runConfirmed(db, expected, () => runScript(db, trimmed));
       const n = countTopLevelStatements(trimmed);
       if (opts.json) {
         emitJson({
@@ -185,7 +195,7 @@ function runSql(
       );
       return;
     }
-    db.exec(trimmed);
+    runScript(db, trimmed);
     const n = countTopLevelStatements(trimmed);
     if (opts.json) {
       emitJson({ statements: n, multiStatement: true });
@@ -196,6 +206,7 @@ function runSql(
   }
 
   const single = stmt;
+  refuseTransactionControl(db, trimmed);
   // better-sqlite3's prepared-statement metadata is the source of truth;
   // prefix guesses miss PRAGMA reads and comment-prefixed SELECTs.
   // `readonly` (not `reader`) decides whether --confirm-rows applies:
@@ -314,7 +325,7 @@ function totalChanges(db: Db): number {
  * is for human-typed scripts, not arbitrary SQL. The state machine
  * covers the cases we care about; pathological inputs (nested
  * comments, dollar-quoted strings, etc.) may miscount but won't crash
- * the verb (db.exec already ran successfully by then).
+ * the verb (the script already ran successfully by then).
  */
 export function countTopLevelStatements(sql: string): number {
   let count = 0;

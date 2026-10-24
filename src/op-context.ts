@@ -147,7 +147,15 @@ function withCtxRow<T>(db: Db, next: (previous: CtxRow) => CtxRow, fn: () => T):
     try {
       return fn();
     } finally {
-      writeCtx(db, previous);
+      // The context row lives in the transaction. If fn ended it (an
+      // implicit ROLLBACK such as INSERT OR ROLLBACK, a RAISE(ROLLBACK)
+      // trigger, SQLITE_FULL, or a raw COMMIT) the write below would
+      // AUTOCOMMIT, publishing the outer context (even `applying = 1`)
+      // to every other connection. So restore only inside a live
+      // transaction; otherwise leave nothing but defaults behind. The
+      // outermost scope reports the ended transaction.
+      if (db.inTransaction) writeCtx(db, previous);
+      else resetCommittedCtx(db);
     }
   }
 
@@ -166,10 +174,11 @@ function withCtxRow<T>(db: Db, next: (previous: CtxRow) => CtxRow, fn: () => T):
         db.exec("ROLLBACK");
       } catch {}
     } else {
-      // fn committed the transaction the context lives in, so the
-      // context row was committed too. Put it back before anyone else
-      // reads it (autocommit: waits on the lock like any writer).
-      writeCtx(db, DEFAULT_CTX);
+      // fn ended the transaction the context lives in. After a ROLLBACK
+      // the row is already defaults and nothing is written; after a
+      // COMMIT it was committed too, so put it back before anyone else
+      // reads it.
+      resetCommittedCtx(db);
     }
     throw err;
   }
@@ -186,6 +195,15 @@ function withCtxRow<T>(db: Db, next: (previous: CtxRow) => CtxRow, fn: () => T):
     throw err;
   }
   return result;
+}
+
+/** Outside any transaction: make the committed context row defaults,
+ *  writing (an autocommit, waiting on the lock like any writer) only if
+ *  it is not already. A rolled-back scope needs no write at all. */
+function resetCommittedCtx(db: Db): void {
+  const row = readCtx(db);
+  if (row !== undefined && sameCtx(row, DEFAULT_CTX)) return;
+  writeCtx(db, DEFAULT_CTX);
 }
 
 /** Thrown when `fn` COMMITs or ROLLBACKs the transaction its op-context
