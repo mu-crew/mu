@@ -243,6 +243,8 @@ export interface MuxDiagnostics {
  */
 export class NoMultiplexerError extends Error implements HasNextSteps {
   override readonly name = "NoMultiplexerError";
+  /** The message names the install: the human path prints it alone. */
+  readonly inlineNext = true;
   constructor(public readonly tried: readonly string[]) {
     super(
       `no supported multiplexer found (tried: ${tried.join(", ")}); install tmux ≥ 3.0 (task, DAG and sql verbs work without one)`,

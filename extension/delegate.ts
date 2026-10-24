@@ -27,6 +27,7 @@ import {
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultCacheDir } from "../src/state-dir.js";
+import { workstreamNameProblem } from "../src/workstream-scope.js";
 
 /** The slice of pi's ExtensionAPI the delegate side uses. */
 export interface MuDelegateApi {
@@ -772,13 +773,38 @@ export function registerDelegate(
   async function resolveRecord(raw: unknown): Promise<RecordTarget | undefined> {
     if (raw === undefined) return undefined;
     const r = raw as { task?: unknown; workstream?: unknown } | null;
-    const task = typeof r?.task === "string" ? r.task.trim() : "";
-    if (!task) throw new Error("mu_delegate: record.task must name a task");
-    const ws = typeof r?.workstream === "string" ? r.workstream.trim() : "";
+    const task = typeof r?.task === "string" ? r.task : "";
+    if (task.trim() === "") throw new Error("mu_delegate: record.task must name a task");
+    // The one validator (never trims): an empty, blank or padded scope is an
+    // error here, as it is at the CLI, never another valid workstream.
+    const scope = (value: string, what: string): string => {
+      const problem = workstreamNameProblem(value, what);
+      if (problem !== undefined) throw new Error(`mu_delegate: ${problem} Nothing spawned.`);
+      return value;
+    };
+    const rawWs = r?.workstream;
+    const ws =
+      rawWs === undefined || rawWs === null
+        ? ""
+        : scope(typeof rawWs === "string" ? rawWs : String(rawWs), "record.workstream");
+    const slash = task.indexOf("/");
+    if (slash >= 0) {
+      const prefix = scope(task.slice(0, slash), "record.task workstream prefix");
+      if (ws && ws !== prefix) {
+        throw new Error(
+          `mu_delegate: record.task ${task} conflicts with record.workstream ${ws}. Nothing spawned.`,
+        );
+      }
+    }
+    if (task !== task.trim()) {
+      throw new Error(
+        `mu_delegate: record.task ${JSON.stringify(task)} has surrounding whitespace. Nothing spawned.`,
+      );
+    }
     // Scope is explicit: <ws>/<task> or record.workstream. mu has no ambient
     // default, so refuse here, before anything spawns, rather than let `task
     // show` guess or fail after the fact.
-    if (!ws && !task.includes("/")) {
+    if (!ws && slash < 0) {
       throw new Error(
         `mu_delegate: record.task ${task} needs a workstream: pass record.task as <workstream>/${task}, or set record.workstream. Nothing spawned.`,
       );

@@ -23,6 +23,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseWorkstreamFragments, workstreamNameProblem } from "../src/workstream-scope.js";
 import { defaultRunner, type MuRunner } from "./delegate.js";
 
 export const NUDGE_MESSAGE_TYPE = "mu-keep-driving";
@@ -110,13 +111,107 @@ function muArgs(words: string[]): string[] | undefined {
   return words.slice(at + 1);
 }
 
+/** Options (after the verb) that take a value, so their value is not mistaken for the ref. */
+const VALUE_OPTS = new Set([
+  "--for",
+  "-f",
+  "--evidence",
+  "--actor",
+  "--timeout",
+  "--cli",
+  "--command",
+  "--tab",
+  "--role",
+  "--cwd",
+  "--from",
+  "--root",
+  "--send",
+]);
+
+/**
+ * Scan args from `from`: every `-w` / `--workstream` value in order (a
+ * missing one is `""`, which is invalid), the option names seen, and the
+ * positionals. Mirrors commander: `-wX` attaches, `--workstream=X` splits.
+ * `stopAtPositional` ends the scan at the first positional (the root
+ * options before the verb); `end` is where it stopped.
+ */
+function scanArgs(
+  args: string[],
+  from: number,
+  stopAtPositional = false,
+): { ws: string[]; seen: Set<string>; positionals: string[]; end: number } {
+  const ws: string[] = [];
+  const seen = new Set<string>();
+  const positionals: string[] = [];
+  let k = from;
+  for (; k < args.length; k++) {
+    const w = args[k] ?? "";
+    if (w === "--") {
+      positionals.push(...args.slice(k + 1));
+      k = args.length;
+      break;
+    }
+    if (!w.startsWith("-") || w === "-") {
+      if (stopAtPositional) break;
+      positionals.push(w);
+      continue;
+    }
+    const eq = w.startsWith("--") ? w.indexOf("=") : -1;
+    const opt = eq === -1 ? w : w.slice(0, eq);
+    seen.add(opt);
+    if (opt === "-w" || opt === "--workstream") {
+      ws.push(eq !== -1 ? w.slice(eq + 1) : (args[++k] ?? ""));
+    } else if (!w.startsWith("--") && w.startsWith("-w")) {
+      ws.push(w.slice(2));
+    } else if (VALUE_OPTS.has(opt) && eq === -1) {
+      k++;
+    }
+  }
+  return { ws, seen, positionals, end: k };
+}
+
+/**
+ * The workstream mu would act on, or undefined when mu would refuse (so
+ * nothing is dispatched): a root `-w` (before the verb; one name), the
+ * verb's `-w` (last wins), a qualified `<ws>/<name>` ref, else the injected
+ * one. Given explicitly, they must agree. Validation is the CLI's one
+ * validator (src/workstream-scope.ts): an empty, blank or padded name is
+ * invalid, never trimmed and never a reason to fall back to the injected
+ * workstream.
+ */
+function scopeOf(
+  root: string[],
+  verb: string[],
+  prefix: string | undefined,
+  injected: string,
+): string | undefined {
+  if (root.length > 0 && verb.length > 0) return undefined;
+  let explicit: string | undefined;
+  if (root.length > 0) {
+    const parsed = parseWorkstreamFragments(root);
+    if ("problem" in parsed || parsed.names.length !== 1) return undefined;
+    explicit = parsed.names[0];
+  } else if (verb.length > 0) {
+    explicit = verb[verb.length - 1] ?? "";
+    if (workstreamNameProblem(explicit) !== undefined) return undefined;
+  }
+  if (prefix !== undefined) {
+    if (workstreamNameProblem(prefix) !== undefined) return undefined;
+    if (explicit !== undefined && explicit !== prefix) return undefined;
+    explicit = prefix;
+  }
+  const ws = explicit ?? injected;
+  return ws === "" ? undefined : ws;
+}
+
 /**
  * The workstreams a bash command dispatches mu work into, or undefined
  * when it dispatches nothing. Dispatch = `mu agent send|spawn`, or
- * `mu task claim <id> --for` (parsed by claimOf). A dispatch with no `-w`
- * and no qualified ref names no workstream, so mu refuses it (nothing was
- * dispatched): it counts only when `env` carries a managed worker's
- * injected workstream.
+ * `mu task claim <id> --for`. The scope is the CLI's (see scopeOf): a
+ * root or verb `-w`, or the `<ws>/` of the agent or task ref. A dispatch
+ * with no scope, or an invalid one, is refused by mu (nothing was
+ * dispatched); a missing scope counts only when `env` carries a managed
+ * worker's injected workstream.
  */
 export function dispatchedWorkstreams(
   command: string,
@@ -126,29 +221,24 @@ export function dispatchedWorkstreams(
   const found = new Set<string>();
   // One mu invocation per shell segment.
   for (const words of shellSegments(command)) {
-    const args = muArgs(words);
-    if (args === undefined) continue;
-    const claim = claimOf(args);
-    if (claim !== undefined) {
-      const ws = claim.ws || injected;
-      if (ws !== "" && ws !== "scratch") found.add(ws);
-      continue;
-    }
-    if (args[0] !== "agent" || (args[1] !== "send" && args[1] !== "spawn")) continue;
-    let ws = "";
-    for (let k = 2; k < args.length; k++) {
-      const w = args[k] ?? "";
-      if (w === "-w" || w === "--workstream") ws = args[k + 1] ?? "";
-      else if (w.startsWith("--workstream=")) ws = w.slice("--workstream=".length);
-    }
-    ws ||= injected;
-    if (ws !== "" && ws !== "scratch") found.add(ws);
+    const all = muArgs(words);
+    if (all === undefined) continue;
+    const rootOpts = scanArgs(all, 0, true);
+    const args = all.slice(rootOpts.end);
+    const isClaim = args[0] === "task" && args[1] === "claim";
+    const isAgent = args[0] === "agent" && (args[1] === "send" || args[1] === "spawn");
+    if (!isClaim && !isAgent) continue;
+    const { ws, seen, positionals } = scanArgs(args, 2);
+    if (isClaim && !seen.has("--for") && !seen.has("-f")) continue;
+    const ref = positionals[0];
+    if (isClaim && ref === undefined) continue;
+    const slash = ref?.indexOf("/") ?? -1;
+    const prefix = slash >= 0 ? ref?.slice(0, slash) : undefined;
+    const dispatched = scopeOf(rootOpts.ws, ws, prefix, injected);
+    if (dispatched !== undefined && dispatched !== "scratch") found.add(dispatched);
   }
   return found.size > 0 ? [...found] : undefined;
 }
-
-/** Claim options that take a value; the task id is the first other positional. */
-const CLAIM_VALUE_OPTS = new Set(["--for", "-f", "-w", "--workstream", "--evidence", "--actor"]);
 
 /** A heredoc body to skip: lines up to `delim` (leading tabs stripped with `<<-`). */
 type Heredoc = { delim: string; strip: boolean };
@@ -263,31 +353,6 @@ function arithmeticEnd(command: string, open: number): number {
     }
   }
   return -1;
-}
-
-/** The task a `mu task claim <id> --for` dispatches, from the args after
- *  `mu`, as `{ ws, id }`; undefined for any other mu command. */
-function claimOf(args: string[]): { ws: string; id: string } | undefined {
-  if (args[0] !== "task" || args[1] !== "claim") return undefined;
-  let ws = "";
-  let id: string | undefined;
-  let isFor = false;
-  for (let k = 2; k < args.length; k++) {
-    const w = args[k] ?? "";
-    const [opt, eq] = w.startsWith("--") && w.includes("=") ? w.split("=", 2) : [w, undefined];
-    if (opt === "--for" || opt === "-f") isFor = true;
-    if (opt === "-w" || opt === "--workstream") ws = eq ?? args[k + 1] ?? "";
-    if (CLAIM_VALUE_OPTS.has(opt ?? "")) {
-      if (eq === undefined) k++;
-    } else if (id === undefined && !w.startsWith("-")) id = w;
-  }
-  if (!isFor || id === undefined) return undefined;
-  const slash = id.indexOf("/");
-  if (slash >= 0) {
-    if (ws === "") ws = id.slice(0, slash);
-    id = id.slice(slash + 1);
-  }
-  return { ws, id };
 }
 
 type ListJson = { items?: { name?: string; workstreamName?: string }[] };

@@ -49,6 +49,7 @@ import {
   type TaskStatus,
 } from "./tasks.js";
 import { resolveMuxSessionWorkstreamName } from "./workstream.js";
+import { parseWorkstreamFragments, workstreamNameProblem } from "./workstream-scope.js";
 
 // ─── Re-exports for downstream cli/* modules ──────────────────────────
 //
@@ -115,16 +116,8 @@ export function injectedIdentity(): { name: string; workstream: string } | undef
  * valid workstream (`-w ' auth'` would read `auth`).
  */
 export function checkWorkstreamName(value: string, flag = "-w/--workstream"): string {
-  if (value.length > 0 && value.trim().length === 0) {
-    throw new UsageError(
-      `${flag} got a blank (whitespace-only) value ${JSON.stringify(value)}. Pass a workstream name.`,
-    );
-  }
-  if (value.length === 0 || value !== value.trim()) {
-    throw new UsageError(
-      `${flag} got ${JSON.stringify(value)}: pass a bare workstream name with no surrounding whitespace.`,
-    );
-  }
+  const problem = workstreamNameProblem(value, flag);
+  if (problem !== undefined) throw new UsageError(problem, { showHelp: false });
   return value;
 }
 
@@ -135,14 +128,9 @@ export function checkWorkstreamName(value: string, flag = "-w/--workstream"): st
  * padded or blank ones, and a lone empty value, are usage errors.
  */
 export function parseWorkstreamList(values: readonly string[], flag = "-w/--workstream"): string[] {
-  const out: string[] = [];
-  for (const value of values) {
-    if (value === "") checkWorkstreamName(value, flag);
-    for (const fragment of value.split(",")) {
-      if (fragment !== "") out.push(checkWorkstreamName(fragment, flag));
-    }
-  }
-  return out;
+  const parsed = parseWorkstreamFragments(values, flag);
+  if ("problem" in parsed) throw new UsageError(parsed.problem, { showHelp: false });
+  return parsed.names;
 }
 
 /**
@@ -206,16 +194,27 @@ export function parseQualifiedRef(raw: string): ParsedRef {
   return { workstream: raw.slice(0, slash), name: raw.slice(slash + 1) };
 }
 
+/** The `<ws>` of a qualified ref goes through the same validator as `-w`:
+ *  ` own/t` or `/t` is an error, never trimmed into `own`. */
+export function checkQualifiedPrefix(raw: string, workstream: string): string {
+  const problem = workstreamNameProblem(workstream, `qualified ref ${JSON.stringify(raw)}:`);
+  if (problem !== undefined) throw new UsageError(problem, { showHelp: false });
+  return workstream;
+}
+
 /** Sync glue: parse a qualified ref and (if qualified) push the
  *  workstream onto opts.workstream. Throws UsageError when the caller
  *  passed BOTH `--workstream A` AND `B/<name>` and they disagree.
  *  Returns the bare name for downstream use. Mutates opts. */
 export function applyQualifiedRef(raw: string, opts: { workstream?: string }): string {
   const parsed = parseQualifiedRef(raw);
+  if (opts.workstream !== undefined) checkWorkstreamName(opts.workstream);
   if (parsed.workstream === undefined) return raw;
+  checkQualifiedPrefix(raw, parsed.workstream);
   if (opts.workstream !== undefined && opts.workstream !== parsed.workstream) {
     throw new UsageError(
       `qualified ref ${JSON.stringify(raw)} (workstream=${parsed.workstream}) conflicts with --workstream ${opts.workstream}`,
+      { showHelp: false },
     );
   }
   opts.workstream = parsed.workstream;
@@ -719,6 +718,7 @@ export function normalizeInheritedWorkstream(
   if (names.length > 1) {
     throw new UsageError(
       `-w/--workstream takes a single workstream here (got ${names.length}: ${names.join(", ")})`,
+      { showHelp: false },
     );
   }
   return names[0];
@@ -840,31 +840,27 @@ function forwardRootWorkstream(root: Command, leaf: Command): void {
   if (leaf === root) return;
   const names = root.opts().workstream as string[] | undefined;
   if (names === undefined) return;
-  const usage = (message: string): never =>
-    leaf.error(message, { exitCode: 2, code: "commander.usage" }) as never;
+  // One line, no help dump: the message already names the fix.
+  const usage = (message: string): never => {
+    throw new UsageError(message, { showHelp: false });
+  };
   const opt = leaf.options.find((o) => o.attributeName() === "workstream");
   if (opt === undefined) {
-    usage(`error: \`${leaf.name()}\` takes no -w/--workstream; drop the root -w`);
+    usage(`\`${leaf.name()}\` takes no -w/--workstream; drop the root -w`);
     return;
   }
   if (leaf.getOptionValue("workstream") !== undefined) {
-    usage("error: -w/--workstream given both before and after the verb; pass it once");
+    usage("-w/--workstream given both before and after the verb; pass it once");
     return;
   }
   if (opt.variadic) {
     leaf.setOptionValueWithSource("workstream", names, "cli");
     return;
   }
-  let parsed: string[];
-  try {
-    parsed = parseWorkstreamList(names);
-  } catch (err) {
-    usage(`error: ${err instanceof Error ? err.message : String(err)}`);
-    return;
-  }
+  const parsed = parseWorkstreamList(names);
   if (parsed.length > 1) {
     usage(
-      `error: -w/--workstream takes a single workstream here (got ${parsed.length}: ${parsed.join(", ")})`,
+      `-w/--workstream takes a single workstream here (got ${parsed.length}: ${parsed.join(", ")})`,
     );
     return;
   }

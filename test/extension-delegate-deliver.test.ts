@@ -226,6 +226,26 @@ describe("record", () => {
     }
   });
 
+  it.each([
+    [{ task: "t-own", workstream: " own" }],
+    [{ task: "t-own", workstream: "own " }],
+    [{ task: "t-own", workstream: "" }],
+    [{ task: "t-own", workstream: "  " }],
+    [{ task: " own/t-own" }],
+    [{ task: "own /t-own" }],
+    [{ task: "/t-own" }],
+    [{ task: " t-own", workstream: "own" }],
+    [{ task: "own/t-own", workstream: "decoy" }],
+  ])("an invalid record scope %j is refused: no mu call, never trimmed", async (record) => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("t", { task: "x", record })).rejects.toThrow(
+      /mu_delegate: .*Nothing spawned/,
+    );
+    expect(mu.calls).toHaveLength(0);
+  });
+
   it("a record without a task name is refused", async () => {
     const mu = fakeMu();
     const p = fakePi();
