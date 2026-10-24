@@ -106,6 +106,9 @@ log() { echo "$(date +%s%3N) $AGENT $T $1 $(cat "$W/tasks/$T.commit" 2>/dev/null
 if [ -e "$W/tasks/$T.die-once" ]; then
   rm -f "$W/tasks/$T.die-once"; touch "$W/die-next.$AGENT"; log die; echo dying; exit 0
 fi
+if [ -e "$W/tasks/$T.lose-once" ]; then
+  rm -f "$W/tasks/$T.lose-once"; log lost; exit 0
+fi
 if [ -e "$W/tasks/$T.error-once" ]; then
   rm -f "$W/tasks/$T.error-once"; touch "$W/error-next.$AGENT"; log error; exit 0
 fi
@@ -191,12 +194,14 @@ export async function writeWorkerDriver(
 export async function workerTask(
   sb: Sandbox,
   id: string,
-  opts: { sh?: string; dieOnce?: boolean; errorOnce?: boolean },
+  opts: { sh?: string; dieOnce?: boolean; errorOnce?: boolean; loseOnce?: boolean },
 ): Promise<void> {
   const dir = join(sb.workerDir, "tasks");
   if (opts.sh !== undefined) write(join(dir, `${id}.sh`), `${opts.sh}\n`);
   if (opts.dieOnce) write(join(dir, `${id}.die-once`), "");
   if (opts.errorOnce) write(join(dir, `${id}.error-once`), "");
+  // the prompt is delivered but silently dropped: the worker does nothing, no error (runs.log: lost)
+  if (opts.loseOnce) write(join(dir, `${id}.lose-once`), "");
 }
 
 /** Seconds every delegate holds its answer, so a delegate cap stays saturated while the AUT issues calls. */

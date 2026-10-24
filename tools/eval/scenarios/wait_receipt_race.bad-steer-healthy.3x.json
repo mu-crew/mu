@@ -2,7 +2,25 @@
   {
     "calls": [
       {
-        "bash": "for w in w1 w2 w3; do mu agent spawn $w -w eval >/dev/null 2>&1; done; mu agent list -w eval"
+        "bash": "mu agent spawn w1 -w eval >/dev/null 2>&1"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval >/dev/null 2>&1"
+      },
+      {
+        "bash": "mu agent spawn w3 -w eval >/dev/null 2>&1"
+      },
+      {
+        "bash": "mu agent spawn w4 -w eval >/dev/null 2>&1"
+      },
+      {
+        "bash": "mu agent spawn w5 -w eval >/dev/null 2>&1"
+      },
+      {
+        "bash": "mu agent spawn w6 -w eval >/dev/null 2>&1"
+      },
+      {
+        "bash": "mu agent list -w eval"
       }
     ]
   },
@@ -16,6 +34,15 @@
       },
       {
         "bash": "mu task claim r3 -w eval --for w3"
+      },
+      {
+        "bash": "mu task claim r4 -w eval --for w4"
+      },
+      {
+        "bash": "mu task claim r5 -w eval --for w5"
+      },
+      {
+        "bash": "mu task claim r6 -w eval --for w6"
       }
     ]
   },
@@ -29,20 +56,29 @@
       },
       {
         "bash": "mu agent send w3 -w eval 'do r3 and close it'"
+      },
+      {
+        "bash": "mu agent send w4 -w eval 'do r4 and close it'"
+      },
+      {
+        "bash": "mu agent send w5 -w eval 'do r5 and close it'"
+      },
+      {
+        "bash": "mu agent send w6 -w eval 'do r6 and close it'"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu agent wait w1 w2 w3 -w eval --after-runs 0 --timeout 120 --json"
+        "bash": "mu agent wait w1 w2 w3 w4 w5 w6 -w eval --after-runs 0 --timeout 120 --json"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu task list -w eval"
+        "bash": "mu agent list -w eval; mu task list -w eval"
       }
     ]
   },
@@ -55,18 +91,38 @@
         "bash": "mu agent send w2 -w eval 'carry on with r2 and close it'"
       },
       {
+        "bash": "mu agent send w4 -w eval 'carry on with r4 and close it'"
+      },
+      {
         "bash": "mu agent send w3 -w eval 'carry on with r3'"
+      },
+      {
+        "bash": "mu agent spawn w7 -w eval >/dev/null 2>&1"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu task wait r1 r2 r3 -w eval --timeout 120"
+        "bash": "mu task claim r5 -w eval --for w7"
       }
     ]
   },
   {
-    "text": "r1, r2 and r3 are done."
+    "calls": [
+      {
+        "bash": "mu agent send w7 -w eval 'do r5 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait r1 r2 r3 r4 r5 r6 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "text": "r1-r6 are done."
   }
 ]
