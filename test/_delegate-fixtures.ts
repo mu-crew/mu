@@ -74,9 +74,8 @@ export function fakeMu(
     const name = args.includes("--next-free") ? nextFree(String(args[2])) : String(args[2]);
     taken.add(name);
     const base = {
-      agent: { name },
+      agent: { name, cwd: opts.workspace ?? null },
       ctl: opts.ctl ?? "ok",
-      workspace: opts.workspace ? { path: opts.workspace } : null,
       nextSteps: [{ intent: "Attach the pane", command: `tmux attach -t mu-scratch` }],
     };
     const text = args[args.indexOf("--send") + 1];

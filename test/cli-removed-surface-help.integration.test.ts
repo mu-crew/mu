@@ -39,27 +39,42 @@ describe("removed CLI surface stays removed", () => {
     expect(stdout).not.toContain("--all");
   });
 
-  it("mu workspace --help omits the removed verbs", async () => {
-    const { stdout, exitCode } = await runCli(["workspace", "--help"], dbPath);
-
-    expect(exitCode === null || exitCode === 0).toBe(true);
-    // The surviving verbs stay listed.
-    for (const kept of ["list", "free", "path"]) {
-      expect(stdout).toContain(kept);
-    }
-    expect(stdout).not.toMatch(/^\s*create\b/m);
-    expect(stdout).not.toMatch(/^\s*recreate\b/m);
-    for (const gone of ["refresh", "commits", "orphans"]) {
-      expect(stdout).not.toMatch(new RegExp(`^ {2}${gone}\\b`, "m"));
-    }
-  });
-
-  it("removed workspace verbs fail as unknown commands", async () => {
-    for (const verb of ["create", "recreate", "refresh", "commits", "orphans"]) {
+  it("the `mu workspace` namespace is gone: every old verb is an unknown command", async () => {
+    for (const verb of [
+      "list",
+      "path",
+      "free",
+      "create",
+      "recreate",
+      "refresh",
+      "commits",
+      "orphans",
+    ]) {
       const r = await runCli(["workspace", verb, "worker-1"], dbPath);
       expect(r.exitCode, `mu workspace ${verb} should not exist`).toBe(2);
-      expect(r.stderr.toLowerCase()).toContain("unknown command");
+      // No such top-level command: commander reports the stray words.
+      expect(r.stderr.toLowerCase()).toMatch(/unknown command|too many arguments/);
+      expect(r.stderr).toContain("workspace");
     }
+    const { stdout } = await runCli(["--help"], dbPath);
+    expect(stdout).not.toMatch(/^ {2}workspace\b/m);
+  });
+
+  it("the old workspace flags are unknown options; their replacements are listed", async () => {
+    for (const argv of [
+      ["agent", "spawn", "x", "--workspace"],
+      ["agent", "spawn", "x", "--workspace-from", "main"],
+      ["agent", "spawn", "x", "--workspace-project-root", "/tmp"],
+      ["agent", "close", "x", "--discard-workspace"],
+    ]) {
+      const r = await runCli(argv, dbPath);
+      expect(r.exitCode, argv.join(" ")).toBe(2);
+      expect(r.stderr.toLowerCase()).toContain("unknown option");
+    }
+    const spawn = await runCli(["agent", "spawn", "--help"], dbPath);
+    for (const flag of ["--worktree", "--from", "--root"]) expect(spawn.stdout).toContain(flag);
+    const close = await runCli(["agent", "close", "--help"], dbPath);
+    expect(close.stdout).toContain("--discard");
   });
 
   it("removed staleness and backend flags fail as unknown options", async () => {

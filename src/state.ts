@@ -24,7 +24,6 @@ import {
   type TaskRow,
 } from "./tasks.js";
 import { getParallelTracks, type Track } from "./tracks.js";
-import { listWorkspaces, type WorkspaceRow } from "./workspace.js";
 
 // ─── WorkstreamSnapshot ───────────────────────────────────────────
 
@@ -59,7 +58,6 @@ export interface WorkstreamSnapshot {
    *  The TUI dashboard fast tick leaves this empty and the all-tasks
    *  popup reads its exhaustive list directly from SQLite while open. */
   allTasks: TaskRow[];
-  workspaces: WorkspaceRow[];
   recent: LogRow[];
   /** Populated when `loadWorkstreamSnapshot` is called with
    *  `withDoctor: true`. Used by the TUI's slot-9 Doctor card to
@@ -75,7 +73,7 @@ export interface LoadWorkstreamSnapshotOptions {
   eventLimit?: number;
   /** When true, slow snapshot loading also populates
    *  `WorkstreamSnapshot.doctor` via `loadDoctorSummary`. The summary is
-   *  cheap SQL, but it reports tmux/workspace drift from slow-tier fields,
+   *  cheap SQL, but it reports tmux drift from slow-tier fields,
    *  so the TUI refreshes it with the subprocess tier. */
   withDoctor?: boolean;
   /** Optional full task list for the TUI all-tasks popup. */
@@ -185,7 +183,6 @@ export async function loadWorkstreamSnapshotFast(
         .get(workstream) as { n: number }
     ).n,
     allTasks: opts.withAllTasks === true ? listTasks(db, workstream) : [],
-    workspaces: listWorkspaces(db, workstream),
     // v2-retire-log-shim: this used to filter `kind: "event"` — the
     // prose breadcrumbs. Those are gone, so the Recent card reads every
     // op for the workstream. Payloads are raw JSON for captured ops
@@ -272,7 +269,6 @@ function minimalSnapshot(workstream: string): WorkstreamSnapshot {
     triage: [],
     taskCount: 0,
     allTasks: [],
-    workspaces: [],
     recent: [],
     doctor: null,
   };

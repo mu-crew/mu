@@ -6,13 +6,13 @@ Terms are defined in [VOCABULARY.md](VOCABULARY.md).
 
 mu is a small, durable control plane for a persistent crew of AI agents
 in multiplexer panes. Agents have names and roles, outlive sessions, and
-work on a built-in task graph, each in its own VCS workspace. Humans and
+work on a built-in task graph, each in its own git worktree. Humans and
 agents drive them through one CLI. State lives in one SQLite file. Every
 feature is a typed verb over that state or a reconciled view of reality.
 
 ```bash
-mu agent spawn worker-1   --tab Backend --workspace
-mu agent spawn reviewer-1 --tab Review  --workspace --role read-only
+mu agent spawn worker-1   --tab Backend --worktree
+mu agent spawn reviewer-1 --tab Review  --worktree --role read-only
 mu task add --title "Build auth" --impact 80 --effort-days 3
 mu task claim build_auth --for worker-1 --evidence "have implementation plan"
 mu agent send worker-1 "Implement build_auth per the description"
@@ -113,7 +113,7 @@ machine are separate sessions, partitioned in the DB by `workstream_id`.
 The crew survives detach and reattach.
 
 The multiplexer is a backend chosen by detection
-(`MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH`), like the VCS backend.
+(`MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH`).
 Topology, herdr's atomic send, scrollback capture, pane-id validation,
 and identity fallback live behind `MuxBackend` in `src/mux/`. There are
 two implementations. A third needs its own friction evidence.
@@ -161,7 +161,7 @@ win32-x64) or a C++ toolchain.
 - **Read views**: the `ready`, `blocked`, and `goals` views, and
   `mu state` as the state card.
 - **Typed verbs** that map to resource transitions (`task claim`,
-  `task close`, `agent spawn --workspace`, `workstream teardown`).
+  `task close`, `agent spawn --worktree`, `workstream teardown`).
 - **`--json` on every read verb**, so scripts use `jq`, not table parsing.
 - **`mu sql`** underneath, as the explicit escape hatch.
 
@@ -232,7 +232,7 @@ the agent choosing; mu reads none of it.
   queue: bounded, shown in pi's footer, cancellable, and named at
   shutdown when it is dropped.
 - **DB-only history.** The ops log records rows. It does not revive
-  killed panes or freed workspace directories. Reconciliation reports
+  killed panes or removed worktree directories. Reconciliation reports
   ghosts and orphans.
 
 ## Key constraints

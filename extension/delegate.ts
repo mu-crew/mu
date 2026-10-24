@@ -707,7 +707,7 @@ export function registerDelegate(
     // without one it is numbered (delegate-1, delegate-2).
     const base = stem ? `delegate-${stem}` : "delegate-1";
     const args = ["agent", "spawn", base, "-w", W, "--next-free", "--send", text, "--json"];
-    if (params.workspace === true) args.push("--workspace");
+    if (params.workspace === true) args.push("--worktree");
     else if (cwd) args.push("--cwd", cwd);
     const cli = typeof params.cli === "string" && params.cli ? params.cli : undefined;
     if (cli) args.push("--cli", cli);
@@ -751,7 +751,8 @@ export function registerDelegate(
     const attach = steps
       .map((s: unknown) => s as { intent?: unknown; command?: unknown })
       .find((s) => s.intent === "Attach the pane")?.command;
-    const wsPath = (out.workspace as { path?: unknown } | null | undefined)?.path;
+    // The worktree is the agent's cwd (`agents.cwd`).
+    const wsPath = params.workspace === true ? (out.agent as { cwd?: unknown }).cwd : undefined;
     return {
       name,
       // A pi just spawned has settled no run, so 0 is exact when an older

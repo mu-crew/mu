@@ -1,7 +1,7 @@
 # Waves: several workers in one repo
 
 Use when two or more workers edit the same repo at once. Every worker
-runs in its own `--workspace`; this recipe decides what each one gets.
+runs in its own `--worktree`; this recipe decides what each one gets.
 
 1. **Bucket by file cluster, not severity.** Two agents editing one
    file conflict, whatever the priority. Chain tasks that share files

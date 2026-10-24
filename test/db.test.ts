@@ -56,8 +56,8 @@ describe("openDb", () => {
       "task_notes",
       "task_substates",
       "tasks",
-      "vcs_workspaces",
       "workstreams",
+      "worktrees",
     ]);
     expect(tables).toHaveLength(15);
     expect([...tables].sort()).toEqual(tables);
@@ -397,8 +397,8 @@ describe("openDb", () => {
       "task_notes",
       "task_substates",
       "tasks",
-      "vcs_workspaces",
       "workstreams",
+      "worktrees",
     ]);
     db2.close();
   });

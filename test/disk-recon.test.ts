@@ -12,14 +12,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import {
   checkEmptyWorkstreamDirs,
-  checkMissingWorkspaceDirs,
+  checkMissingWorktreeDirs,
   checkRemovedExportsDir,
   checkStaleLocks,
   checkStrayDbFiles,
-  findMissingWorkspaceDirs,
+  findMissingWorktreeDirs,
   findStrayDbFiles,
   formatBytes,
-  measureWorkspaceUsage,
+  measureWorktreeUsage,
   STALE_LOCK_REPORT_MS,
 } from "../src/disk-recon.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -27,29 +27,16 @@ import { ensureWorkstream } from "../src/workstream.js";
 let stateDir: string;
 let db: Db;
 
-/** Register a workspace row directly. `createWorkspace` would run a real
- *  VCS backend; these tests only care about the row's `path`. */
-function insertWorkspaceRow(workstream: string, agent: string, path: string): void {
-  const wsId = (
-    db.prepare("SELECT id FROM workstreams WHERE name = ?").get(workstream) as { id: number }
-  ).id;
+/** Register a worktrees row directly: these tests only care about its `path`. */
+function insertWorktreeRow(workstream: string, agent: string, path: string): void {
   db.prepare(
-    `INSERT INTO agents (name, workstream_id, pane_id, cli, status, created_at, updated_at)
-     VALUES (?, ?, ?, 'pi', 'free', datetime('now'), datetime('now'))`,
-  ).run(agent, wsId, `%${agent}`);
-  const agentId = (
-    db.prepare("SELECT id FROM agents WHERE name = ? AND workstream_id = ?").get(agent, wsId) as {
-      id: number;
-    }
-  ).id;
-  db.prepare(
-    `INSERT INTO vcs_workspaces (agent_id, workstream_id, backend, path, parent_ref, created_at)
-     VALUES (?, ?, 'git', ?, 'main', datetime('now'))`,
-  ).run(agentId, wsId, path);
+    `INSERT INTO worktrees (path, agent, workstream, root, base, created_at)
+     VALUES (?, ?, ?, '/repo', 'abc', datetime('now'))`,
+  ).run(path, agent, workstream);
 }
 
 const wsDir = (workstream: string, agent: string): string =>
-  join(stateDir, "workspaces", workstream, agent);
+  join(stateDir, "worktrees", workstream, agent);
 
 beforeEach(() => {
   stateDir = mkdtempSync(join(tmpdir(), "mu-disk-recon-"));
@@ -70,41 +57,41 @@ afterEach(() => {
 });
 
 describe("DB → disk: rows pointing at nothing", () => {
-  it("reports a workspace row whose dir was removed by hand", () => {
+  it("reports a worktree row whose dir was removed by hand", () => {
     const path = wsDir("alpha", "worker-1");
     mkdirSync(path, { recursive: true });
-    insertWorkspaceRow("alpha", "worker-1", path);
-    expect(checkMissingWorkspaceDirs(db).severity).toBe("ok");
+    insertWorktreeRow("alpha", "worker-1", path);
+    expect(checkMissingWorktreeDirs(db).severity).toBe("ok");
 
-    // The failure mode: rm -rf instead of `mu workspace free`.
+    // The failure mode: rm -rf instead of `mu agent close`.
     rmSync(path, { recursive: true });
 
-    const missing = findMissingWorkspaceDirs(db);
+    const missing = findMissingWorktreeDirs(db);
     expect(missing).toHaveLength(1);
     expect(missing[0]?.agentName).toBe("worker-1");
-    const check = checkMissingWorkspaceDirs(db);
+    const check = checkMissingWorktreeDirs(db);
     expect(check.severity).toBe("warn");
-    expect(check.detail).toContain("1 workspace row");
-    // Remediation must name the verb that unregisters it, per workspace.
-    expect(check.remediation?.join("\n")).toContain("mu workspace free worker-1 -w alpha");
+    expect(check.detail).toContain("1 worktree row");
+    // Remediation must name the verb that unregisters it, per worktree.
+    expect(check.remediation?.join("\n")).toContain("mu agent close worker-1 -w alpha");
   });
 
-  it("is ok when there are no workspace rows at all", () => {
-    expect(checkMissingWorkspaceDirs(db).severity).toBe("ok");
+  it("is ok when there are no worktree rows at all", () => {
+    expect(checkMissingWorktreeDirs(db).severity).toBe("ok");
   });
 });
 
 describe("empty workstream dirs", () => {
   it("reports an empty parent as ok-severity housekeeping", () => {
-    mkdirSync(join(stateDir, "workspaces", "alpha"), { recursive: true });
+    mkdirSync(join(stateDir, "worktrees", "alpha"), { recursive: true });
     const check = checkEmptyWorkstreamDirs();
-    // Deliberately ok: `workspace free` leaves this and it harms nothing.
+    // Deliberately ok: closing the last worktree leaves this and it harms nothing.
     expect(check.severity).toBe("ok");
     expect(check.detail).toContain("1 empty workstream dir");
     expect(check.detail).toContain("alpha");
   });
 
-  it("does not count a parent that still holds a checkout", () => {
+  it("does not count a parent that still holds a worktree", () => {
     mkdirSync(wsDir("alpha", "worker-1"), { recursive: true });
     expect(checkEmptyWorkstreamDirs().detail).toBe("no empty workstream dirs");
   });
@@ -184,17 +171,17 @@ describe("stale locks", () => {
 });
 
 describe("--disk tier: byte accounting", () => {
-  it("sums bytes per checkout and flags the orphan ones", () => {
+  it("sums bytes per worktree and flags the orphan ones", () => {
     const tracked = wsDir("alpha", "worker-1");
     mkdirSync(join(tracked, "nested"), { recursive: true });
     writeFileSync(join(tracked, "nested", "big"), "x".repeat(2048));
-    insertWorkspaceRow("alpha", "worker-1", tracked);
+    insertWorktreeRow("alpha", "worker-1", tracked);
 
     const orphan = wsDir("alpha", "worker-2");
     mkdirSync(orphan, { recursive: true });
     writeFileSync(join(orphan, "small"), "x".repeat(512));
 
-    const usage = measureWorkspaceUsage(db);
+    const usage = measureWorktreeUsage(db);
     expect(usage).toHaveLength(2);
     // Sorted largest-first, and recursion reached the nested file.
     expect(usage[0]?.agentName).toBe("worker-1");
@@ -217,9 +204,9 @@ describe("--disk tier: symlinks", () => {
     writeFileSync(join(ws, "own"), "x".repeat(100));
     symlinkSync(join(outside, "big"), join(ws, "file-link"));
     symlinkSync(join(outside, "tree"), join(ws, "dir-link"));
-    insertWorkspaceRow("alpha", "worker-1", ws);
+    insertWorktreeRow("alpha", "worker-1", ws);
 
-    expect(measureWorkspaceUsage(db)[0]?.bytes).toBe(100);
+    expect(measureWorktreeUsage(db)[0]?.bytes).toBe(100);
   });
 });
 

@@ -6,7 +6,7 @@
 //
 // Schema (v12 — v11's task substates plus the kernel additions below):
 //   - 6 entity tables: workstreams, agents, tasks, task_edges,
-//                      task_notes, vcs_workspaces
+//                      task_notes, worktrees
 //   - 1 machine-local table: task_auto (per-task auto-dispatch state)
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
@@ -527,6 +527,9 @@ function applySchema(db: Db): void {
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec(CURRENT_SCHEMA);
+    // vcs_workspaces (machine-local) is superseded by `worktrees`. Idempotent;
+    // schemaIsCurrent reports a DB that still has it as not current.
+    db.exec("DROP TABLE IF EXISTS vcs_workspaces");
     // Seed the legal (status, substate) pairs from code. INSERT OR
     // IGNORE keeps it idempotent; the table is machine-local and never
     // synced, so every machine derives it from the same constant.
@@ -591,6 +594,7 @@ function schemaIsCurrent(db: Db): boolean {
   }[];
   const have = new Map(rows.map((r) => [`${r.type}:${r.name}`, r.sql]));
   const expected = expectedObjects();
+  if (have.has("table:vcs_workspaces")) return false;
   if (expected.tables.some((t) => !have.has(`table:${t}`))) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {
@@ -647,8 +651,8 @@ export const EXPECTED_TABLES: readonly string[] = [
   "task_notes",
   "task_substates",
   "tasks",
-  "vcs_workspaces",
   "workstreams",
+  "worktrees",
 ];
 
 // ─── Syncability — which state crosses machines ───────────────────────
@@ -708,7 +712,7 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *  row's meaning does not survive the trip:
  *
  *    agents           holds `pane_id` ('%17') — meaningless elsewhere.
- *    vcs_workspaces   holds absolute paths — /home/... vs /Users/...
+ *    worktrees        holds absolute paths — /home/... vs /Users/...
  *                     on a mixed macOS/Linux fleet.
  *    machine_identity IS the per-machine identity.
  *    op_ctx           the capture context row; defaults at rest.
@@ -745,7 +749,7 @@ export const MACHINE_LOCAL_TABLES = [
   "sync_peers",
   "task_auto",
   "task_substates",
-  "vcs_workspaces",
+  "worktrees",
 ] as const;
 
 export type MachineLocalTable = (typeof MACHINE_LOCAL_TABLES)[number];
@@ -1108,22 +1112,22 @@ CREATE TABLE IF NOT EXISTS sync_fingerprints (
   fingerprint TEXT NOT NULL
 );
 
--- vcs_workspaces: one isolated working copy per agent.
--- UNIQUE (agent_id) enforces the 1:1 invariant; workstream_id is
--- denormalised for query convenience. path is UNIQUE because two
--- agents pointing at the same on-disk workspace would defeat the
--- purpose.
-CREATE TABLE IF NOT EXISTS vcs_workspaces (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  agent_id      INTEGER NOT NULL UNIQUE REFERENCES agents (id) ON DELETE CASCADE,
-  workstream_id INTEGER NOT NULL REFERENCES workstreams (id) ON DELETE CASCADE,
-  backend       TEXT NOT NULL CHECK (backend IN ('jj', 'sl', 'git', 'none')),
-  path          TEXT NOT NULL UNIQUE,
-  parent_ref    TEXT,
-  created_at    TEXT NOT NULL
+-- worktrees: the machine-local registry of git worktrees mu created for
+-- agents. NOT keyed to agents: the row outlives the agent so a reused
+-- name can tell "my own clean leftover" from foreign work (base,
+-- last_collected_head). deleteAgent never touches it; closing the
+-- worktree (src/worktree.ts) does.
+CREATE TABLE IF NOT EXISTS worktrees (
+  path                TEXT PRIMARY KEY,
+  agent               TEXT NOT NULL,
+  workstream          TEXT NOT NULL,
+  root                TEXT NOT NULL,            -- the repo checkout the worktree was added from
+  base                TEXT NOT NULL,            -- commit the worktree was created at
+  last_collected_head TEXT,                     -- HEAD last brought back (remote collect)
+  created_at          TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_vcs_workspaces_workstream ON vcs_workspaces (workstream_id);
+CREATE INDEX IF NOT EXISTS idx_worktrees_workstream ON worktrees (workstream, agent);
 
 -- ─── Views (replaced when stale so the latest definition wins) ────────
 -- See READY_VIEW_SQL / BLOCKED_VIEW_SQL / BLOCKERS_VIEW_SQL / GOALS_VIEW_SQL

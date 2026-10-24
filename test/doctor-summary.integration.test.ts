@@ -38,7 +38,6 @@ function emptySnapshot(over: Partial<WorkstreamSnapshot> = {}): WorkstreamSnapsh
     triage: [],
     taskCount: 0,
     allTasks: [],
-    workspaces: [],
     recent: [],
     doctor: null,
     ...over,

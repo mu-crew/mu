@@ -18,15 +18,14 @@ holds the only ssh channel and silently breaks `git fetch`,
 - **One orchestrator DB.** Never run a second mu on the host.
   `tasks.owner_id` is an FK into the machine-local `agents` table, so a
   remote mu cannot claim tasks in your DAG.
-- **mu does not know the remote workspace**: no `mu workspace` verbs
-  or auto-free. You own it.
+- **mu does not know the remote worktree**: no auto-removal. You own it.
 - **Everything is orchestrator-pull.** The host usually has no route
   back to your laptop. Push setup out, fetch commits back.
 
 ## The recipe
 
 ```bash
-# 1. WORKSPACE: you create it; --workspace is local-only
+# 1. WORKTREE: you create it; --worktree is local-only
 ssh dev 'git -C ~/repo worktree add ~/ws/worker-1'
 
 # 2. RECORD: location and per-worker baseline, in one note

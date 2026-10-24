@@ -80,7 +80,7 @@ export interface DoctorSummary {
  * synchronous DB queries + reads from the supplied snapshot. Callers
  * that don't want to compute a snapshot first (or are running inside
  * `loadWorkstreamSnapshot` mid-build) can omit `snapshot` — the
- * snapshot-derived checks (ghosts / orphans / workspace-orphans) are
+ * snapshot-derived checks (ghosts / orphans / worktree dirs) are
  * skipped in that case.
  */
 export function loadDoctorSummary(
@@ -741,7 +741,7 @@ export function remediationParagraph(check: DoctorCheck): readonly string[] {
       return [
         "Two workstream names differ only by letter case. They coexist on",
         "Linux but collide on macOS (APFS) and Windows (NTFS), and a",
-        "workstream name IS a tmux session name and seeds workspace paths.",
+        "workstream name IS a tmux session name and seeds worktree paths.",
         "A Mac in the fleet would see one session where Linux sees two.",
         "Rename one side before adding a Mac: export, re-init under a new",
         "name, tear down the old one.",

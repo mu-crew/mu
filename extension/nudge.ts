@@ -287,7 +287,7 @@ type ListJson = { items?: { name?: string; workstreamName?: string }[] };
 /**
  * IN_PROGRESS task refs, one `mu task list --status IN_PROGRESS --json`
  * per workstream (newest first, as `mu state` listed them), all in flight at once. (`mu state` also lists tmux
- * panes and builds orphans and workspaces; this read needs none of it.
+ * panes and builds orphans; this read needs none of it.
  * `task list` does not reap dead owners, so a task a ghost agent still
  * owns shows until the next `mu state` or `mu task wait` reaps it.)
  * A workstream named "" is the default one: no `-w`.

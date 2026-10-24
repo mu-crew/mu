@@ -18,7 +18,7 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
                 ▼                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  mu core (shared TS modules)                                    │
-│  agents/ mux/ ctl/ · tasks/ tracks · vcs/ workspace/ · ops log  │
+│  agents/ mux/ ctl/ · tasks/ tracks · vcs/ worktree · ops log  │
 │  (capture, apply, sync, drift)                                  │
 └───────────────┬──────────────────┬──────────────────┬───────────┘
                 ▼                  ▼                  ▼
@@ -77,8 +77,8 @@ codes 0-7. The same page covers testing layers and packaging:
 
 `src/` is flat at the root, with one level of cohesive clusters.
 Cluster files import from neighbours and root modules, never from the
-hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
-`src/vcs.ts` and `src/workspace.ts` are re-export hubs.
+hub that re-exports them. `src/tasks.ts`, `src/agents.ts` and `src/mux.ts`
+are re-export hubs.
 
 ### Storage and the ops log
 
@@ -141,7 +141,7 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `extension/nudge.ts` | pi extension: the keep-driving nudge. Arms on a `mu` dispatch, checks `mu task list --status IN_PROGRESS --json` at `agent_before_settle`, injects the SKILL.md rule once per prompt, logs `--kind nudge`. Also the close nudge (worker settles owning a task). `parallelSettle` runs the two settle checks in parallel behind one `agent_before_settle` handler and merges their entries; `mu log` breadcrumbs are not awaited |
 | `src/link.ts` | `mu link pi`: extension shim, skill symlink, `inspectLinks` for doctor |
 
-### Tasks, workspaces and workstreams
+### Tasks, worktrees and workstreams
 
 | Module | Responsibility |
 | --- | --- |
@@ -154,8 +154,8 @@ hub that re-exports them. `src/tasks.ts`, `src/agents.ts`, `src/mux.ts`,
 | `src/tracks.ts` | union-find tracks with diamond merge |
 | `src/dag.ts` | `loadFullDag`, `renderForest`, `renderTaskTree` for `mu task tree` and the DAG popup |
 | `src/workstream.ts` | ensure, list, summarize, destroy |
-| `src/vcs/*.ts` | `VcsBackend` (git only): `detect` or `WorkspaceVcsRequiredError`, worktree create/free, clean and dirty probes, `commitsSinceBase` |
-| `src/workspace/*.ts` | per-agent workspace registry: CRUD and the close-time clean check |
+| `src/vcs/git.ts` | git primitives (plain functions, git only): toplevel, `worktree add --detach` / remove, dirty files, the upstream ref set, `isAncestor`, `createBranch` |
+| `src/worktree.ts` | per-agent worktrees: `createWorktree`, `removeWorktree`, `worktreeState`, the machine-local `worktrees` registry (outlives the agent; the reaper never touches it), the one close rule (`releaseWorktree`), name reuse (`reclaimWorktreePath`); `WorktreeDirtyError`, `WorktreePathNotEmptyError`, `WorktreeVcsRequiredError` |
 | `src/state.ts` | `mu state` seam: fast SQL tier, slow mux tier, merge; parses `REMOTE:` notes |
 
 ### CLI, output and packaging
@@ -184,7 +184,6 @@ A new implementation of each is small.
 | Seam | Add one by |
 | --- | --- |
 | `MuxBackend` | implementing the interface in `src/mux/`; a backend without an equivalent no-ops, and a backend-only feature is an optional method callers test for |
-| `VcsBackend` | git is the only implementation; the interface is `detect`, `createWorkspace`, `freeWorkspace`, `isClean`, `commitsSinceBase`, `listDirtyFiles` |
 | typed verb | an SDK function; a `cmd<Verb>` in `src/cli/<namespace>.ts`; one Commander block in `buildProgram()` wrapped in `handle()` and routed through `printNextSteps` |
 | schema change | bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror `CURRENT_SCHEMA`; startup stays migration-free |
 | syncable field | add the column to a portable table, extend the UPDATE trigger's changed-column comparison, confirm apply writes it; a full-row payload regresses merge to row-level LWW |

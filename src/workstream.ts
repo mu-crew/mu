@@ -17,12 +17,11 @@
 import { existsSync, readdirSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { unlinkCtlSocket } from "./ctl/path.js";
-import { type Db, defaultStateDir } from "./db.js";
+import type { Db } from "./db.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
 import type { HasNextSteps, NextStep } from "./output.js";
-import { backendByName, type VcsBackend, type VcsBackendName } from "./vcs.js";
-import { listWorkspaces } from "./workspace.js";
+import { listWorktrees, releaseWorktree, worktreesRoot } from "./worktree.js";
 
 /**
  * Allowed workstream-name shape: lowercase alpha first, then alnum,
@@ -241,10 +240,10 @@ export interface WorkstreamSummary {
   noteCount: number;
   /** Rows in `task_edges` whose `from_task` is in this workstream. */
   edgeCount: number;
-  /** Rows in `vcs_workspaces` for this workstream. Surfaced so the
-   *  teardown dry-run can warn about per-agent worktrees that need
-   *  cleanup before the FK cascade silently nukes their rows. */
-  workspaceCount: number;
+  /** Registered worktrees (`worktrees` rows) of this workstream. Surfaced so
+   *  the teardown dry-run can warn about per-agent worktrees that need
+   *  cleanup. */
+  worktreeCount: number;
   /** True iff a row exists in the `workstreams` table itself. False
    *  for tmux-only `mu-*` sessions that mu never observed via
    *  `mu workstream init`. Surfaced so teardown can clean up bare
@@ -265,27 +264,23 @@ export interface TeardownResult {
   deletedNotes: number;
   /** Number of `task_edges` deleted by the cascade — informational. */
   deletedEdges: number;
-  /** Number of vcs_workspaces whose on-disk path was actually
-   *  removed by the backend on this teardown. Excludes
-   *  `alreadyGoneWorkspaces` (those were no-ops on disk). */
-  freedWorkspaces: number;
-  /** Number of vcs_workspaces whose registry row existed but
-   *  whose on-disk path was already gone (manual rm -rf or a prior
-   *  interrupted teardown). The DB row was cascade-deleted; the
-   *  backend did no filesystem work. Tracked separately so the
-   *  teardown report doesn't lie about how much cleanup it actually
-   *  performed. */
-  alreadyGoneWorkspaces: number;
-  /** Workspaces whose backend cleanup failed (e.g. `git worktree
-   *  remove` refused because of uncommitted changes). The DB row
-   *  was still cascade-deleted; the on-disk path remains and needs
-   *  manual cleanup. */
-  failedWorkspaces: WorkspaceFailure[];
+  /** Worktrees this teardown removed (clean and merged, or with their
+   *  unmerged commits kept on a branch: see `keptBranches`). */
+  freedWorktrees: number;
+  /** Worktrees whose registry row existed but whose dir was already gone
+   *  (manual rm -rf or an interrupted earlier teardown). Nothing was done
+   *  on disk; tracked apart so the report does not claim the work. */
+  alreadyGoneWorktrees: number;
+  /** Branches made to keep unmerged commits of removed worktrees. */
+  keptBranches: string[];
+  /** Worktrees left in place, with the reason: dirty (uncommitted work is
+   *  never deleted by teardown) or git failed. Their registry rows stay, so
+   *  `mu agent close <agent> --discard` can finish them. */
+  failedWorktrees: WorktreeFailure[];
 }
 
-export interface WorkspaceFailure {
+export interface WorktreeFailure {
   agent: string;
-  backend: string;
   path: string;
   error: string;
 }
@@ -294,13 +289,6 @@ export interface WorkstreamOptions {
   workstream: string;
   /** Override the mux session name. Defaults to `mu-<workstream>`. */
   muxSession?: string;
-  /** Override the per-name VcsBackend resolver. Defaults to
-   *  `backendByName`. Lets tests inject a fake backend (e.g. one whose
-   *  `freeWorkspace` throws) without mutating the exported singletons —
-   *  same pattern as `createWorkspace`'s `opts.backend` accepting a
-   *  pre-built `VcsBackend` object. Production callers leave this
-   *  unset. */
-  resolveBackend?: (name: VcsBackendName) => VcsBackend;
 }
 
 export interface TeardownWorkstreamOptions extends WorkstreamOptions {}
@@ -385,7 +373,7 @@ export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
 /**
  * Discover every REGISTERED workstream that has no user-meaningful
  * state attached: a row in `workstreams` with zero tasks, zero
- * agents, zero vcs_workspaces. Mux session presence and agent_logs
+ * agents, zero worktrees. Mux session presence and agent_logs
  * entries do NOT disqualify — the session itself was created at
  * init time and contains no agent panes; the events are audit, not
  * state.
@@ -414,12 +402,12 @@ export async function listEmptyWorkstreams(db: Db): Promise<WorkstreamSummary[]>
          FROM workstreams ws
          LEFT JOIN tasks          t  ON t.workstream_id  = ws.id
          LEFT JOIN agents         a  ON a.workstream_id  = ws.id
-         LEFT JOIN vcs_workspaces v  ON v.workstream_id  = ws.id
+         LEFT JOIN worktrees      v  ON v.workstream      = ws.name
         WHERE ws.torn_down_at IS NULL
         GROUP BY ws.id, ws.name
        HAVING COUNT(DISTINCT t.id)  = 0
           AND COUNT(DISTINCT a.id)  = 0
-          AND COUNT(DISTINCT v.id)  = 0
+          AND COUNT(DISTINCT v.path) = 0
         ORDER BY ws.name`,
     )
     .all() as { name: string }[];
@@ -447,7 +435,7 @@ async function summarize(db: Db, opts: WorkstreamOptions): Promise<WorkstreamSum
     taskCount: countTasks(db, opts.workstream),
     noteCount: countNotes(db, opts.workstream),
     edgeCount: countEdges(db, opts.workstream),
-    workspaceCount: listWorkspaces(db, opts.workstream).length,
+    worktreeCount: listWorktrees(db, opts.workstream).length,
     registered: isRegistered(db, opts.workstream),
   };
 }
@@ -484,7 +472,7 @@ export async function teardownWorkstream(
   const tasksBefore = countTasks(db, opts.workstream);
   const notesBefore = countNotes(db, opts.workstream);
   const edgesBefore = countEdges(db, opts.workstream);
-  const workspacesBefore = listWorkspaces(db, opts.workstream);
+  const worktreesBefore = listWorktrees(db, opts.workstream);
   const agentNames = listAgentNames(db, opts.workstream);
 
   // Mux session first: if killSession throws we don't want the DB rows
@@ -501,59 +489,41 @@ export async function teardownWorkstream(
     await mux.killSession(muxSession);
   }
 
-  // Workspaces SECOND, before the FK cascade. The cascade silently
-  // deletes vcs_workspaces rows but leaves the on-disk worktrees
-  // (and the git worktree registry entries) behind — the bug from
-  // mufeedback note #195. Per backend, the right cleanup is
-  // 'git worktree remove --force', not 'rm -rf'. We surface failures so the user can recover; we
-  // do NOT abort the teardown on workspace failure (the workstream
+  // Worktrees SECOND, with the same close rule as `agent close`
+  // (src/worktree.ts): clean ones are removed (unmerged commits keep a
+  // branch), dirty ones are NEVER deleted, they are reported and their
+  // registry rows stay so `agent close --discard` can finish them. A
+  // worktree failure does not abort the teardown (the workstream
   // semantics are 'tear it all down', not 'partial cleanup').
-  let freedWorkspaces = 0;
-  let alreadyGoneWorkspaces = 0;
-  const failedWorkspaces: WorkspaceFailure[] = [];
-  const resolveBackend = opts.resolveBackend ?? backendByName;
-  for (const ws of workspacesBefore) {
+  let freedWorktrees = 0;
+  let alreadyGoneWorktrees = 0;
+  const keptBranches: string[] = [];
+  const failedWorktrees: WorktreeFailure[] = [];
+  for (const wt of worktreesBefore) {
     try {
-      const backend = resolveBackend(ws.backend);
-      const result = await backend.freeWorkspace({
-        workspacePath: ws.path,
-        commit: false,
-      });
-      if (result.removed) {
-        // Backend actually removed the on-disk path. This is the
-        // only case that counts as 'work done by teardown'.
-        freedWorkspaces += 1;
-      } else {
-        // Path was already gone (manual rm -rf or interrupted prior
-        // teardown). The DB row is cascade-deleted below either way,
-        // but we don't claim to have freed anything on disk — it was
-        // already in the desired state. Tracked separately so the
-        // user can spot stale registry rows from past mishaps.
-        alreadyGoneWorkspaces += 1;
-      }
+      const released = await releaseWorktree(db, wt);
+      if (released.action === "gone") alreadyGoneWorktrees += 1;
+      else freedWorktrees += 1;
+      if (released.branch !== undefined) keptBranches.push(released.branch);
     } catch (err) {
-      failedWorkspaces.push({
-        agent: ws.agentName,
-        backend: ws.backend,
-        path: ws.path,
+      failedWorktrees.push({
+        agent: wt.agent,
+        path: wt.path,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
-  // After every per-agent worktree is freed, the parent
-  // <state>/workspaces/<workstream>/ directory is empty — reap it
-  // too. Best-effort: rmdir refuses if non-empty (e.g. backend
-  // removal failed and left files behind), which is the right
-  // outcome (don't silently rm -rf user data). Skipped if the
-  // parent doesn't exist (workstream never had any workspaces).
-  const parentDir = join(defaultStateDir(), "workspaces", opts.workstream);
+  // After every per-agent worktree is removed, the parent
+  // <state>/worktrees/<workstream>/ directory is empty — reap it too.
+  // Best-effort: rmdir refuses if non-empty (a kept dirty worktree), which
+  // is the right outcome (don't silently rm -rf user data).
+  const parentDir = join(worktreesRoot(), opts.workstream);
   if (existsSync(parentDir)) {
     try {
       if (readdirSync(parentDir).length === 0) rmdirSync(parentDir);
     } catch {
-      // Non-empty or otherwise unreapable. The failed-workspaces
-      // list above already tells the user what to clean.
+      // Non-empty or otherwise unreapable: failedWorktrees says what remains.
     }
   }
 
@@ -576,7 +546,7 @@ export async function teardownWorkstream(
 
   // One DELETE: the FK CASCADE chain (workstreams → agents,
   // workstreams → tasks → task_edges + task_notes, workstreams →
-  // agent_logs, workstreams → vcs_workspaces) cleans every row in
+  // agent_logs) cleans every row in
   // one shot, atomically. If the workstream was never registered
   // (e.g. an orphan mux session that mu never observed),
   // changes() = 0 and we still report the killed mux session
@@ -601,9 +571,10 @@ export async function teardownWorkstream(
     deletedTasks: tasksBefore,
     deletedNotes: notesBefore,
     deletedEdges: edgesBefore,
-    freedWorkspaces,
-    alreadyGoneWorkspaces,
-    failedWorkspaces,
+    freedWorktrees,
+    alreadyGoneWorktrees,
+    keptBranches,
+    failedWorktrees,
   };
 }
 

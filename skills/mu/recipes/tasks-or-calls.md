@@ -61,7 +61,7 @@ quoted heredocs keep the evidence verbatim ([brief § Quoting](brief.md#quoting)
 | a gate that decides whether work counts (`review_x`) | checking a claim against its source |
 | a finding, claim, or hypothesis that survives into the workstream | judging a pair in a tournament |
 | the umbrella, and each round of a loop | a skeptic or dedupe pass |
-| anything that needs its own workspace | a reader or scout whose output feeds one step |
+| anything that needs its own worktree | a reader or scout whose output feeds one step |
 
 A call adds no node: its note and your decision land on the task it
 judged ([findings § Triage](findings.md#triage)).
@@ -73,7 +73,7 @@ judged ([findings § Triage](findings.md#triage)).
 - A tournament over 16 names: 15 judge calls; each round's `WINNER:`
   lines go on the umbrella.
 - A hypothesis test that reverts commits or forces a race needs a
-  workspace: that one is a task.
+  worktree: that one is a task.
 
 ## Counting
 

@@ -56,8 +56,6 @@ import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
 import { listTasksByOwner } from "../tasks.js";
-import { detectBackend } from "../vcs.js";
-import { getWorkspaceForAgent } from "../workspace.js";
 import { dispatchHint, plainSendHints } from "./dispatch-hints.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
@@ -68,9 +66,9 @@ interface SpawnOpts {
   role?: string;
   cwd?: string;
   workstream?: string;
-  workspace?: boolean;
-  workspaceFrom?: string;
-  workspaceProjectRoot?: string;
+  worktree?: boolean;
+  from?: string;
+  root?: string;
   /** commander's `--no-ctl` negation: false skips the ctl handshake. */
   ctl?: boolean;
   /** Take the next free name when `<name>` is taken. */
@@ -79,21 +77,18 @@ interface SpawnOpts {
   send?: string;
   json?: boolean;
 }
-// Preflight: when --workspace is set, resolve+announce the project root
-// BEFORE the long-running `git worktree add`, so the operator can ctrl-c
-// if --workspace-project-root points somewhere unintended. A non-git root
-// throws WorkspaceVcsRequiredError here. Skipped on --json so machine
-// consumers get a single structured output, not preflight chatter.
-async function maybePrintWorkspacePreflight(opts: SpawnOpts): Promise<void> {
-  if (!opts.workspace) return;
-  const projectRoot = opts.workspaceProjectRoot ?? process.cwd();
-  const backend = await detectBackend(projectRoot);
-  if (opts.json) return;
-  console.log(
-    pc.dim(
-      `[mu] workspace preflight: backend=${pc.bold(backend.name)} projectRoot=${pc.bold(projectRoot)}`,
-    ),
-  );
+// --from / --root only mean something with --worktree; refuse a stray one
+// before any side effect rather than silently ignoring it.
+function assertWorktreeFlags(opts: SpawnOpts): void {
+  if (opts.worktree) {
+    if (opts.cwd !== undefined) {
+      throw new UsageError("--cwd conflicts with --worktree (the worktree is the cwd)");
+    }
+    return;
+  }
+  for (const flag of ["from", "root"] as const) {
+    if (opts[flag] !== undefined) throw new UsageError(`--${flag} requires --worktree`);
+  }
 }
 
 export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
@@ -106,7 +101,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
         ? await readStdinText("send text")
         : opts.send;
 
-  await maybePrintWorkspacePreflight(opts);
+  assertWorktreeFlags(opts);
 
   const agent = await spawnAgent(db, {
     name: rawName,
@@ -116,11 +111,9 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     ...(opts.tab !== undefined ? { tab: opts.tab } : {}),
     ...(opts.role !== undefined ? { role: opts.role } : {}),
     ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
-    ...(opts.workspace !== undefined ? { workspace: opts.workspace } : {}),
-    ...(opts.workspaceFrom !== undefined ? { workspaceFrom: opts.workspaceFrom } : {}),
-    ...(opts.workspaceProjectRoot !== undefined
-      ? { workspaceProjectRoot: opts.workspaceProjectRoot }
-      : {}),
+    ...(opts.worktree === true ? { worktree: true } : {}),
+    ...(opts.from !== undefined ? { from: opts.from } : {}),
+    ...(opts.root !== undefined ? { root: opts.root } : {}),
     ...(opts.ctl === false ? { ctl: false } : {}),
     ...(opts.nextFree === true ? { nextFree: true } : {}),
   });
@@ -163,7 +156,6 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     : sendText === undefined
       ? undefined
       : await spawnSend(db, agent, sendText);
-  const workspace = opts.workspace ? getWorkspaceForAgent(db, name, workstream) : undefined;
   // Resolve the actual command that landed in the pane, so the operator
   // can confirm `--command 'pi-meta --no-solo'` (etc.) took effect.
   // Mirrors the resolution chain in spawnAgent: explicit --command >
@@ -215,7 +207,6 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   if (opts.json) {
     emitJson({
       agent,
-      workspace: workspace ?? null,
       resolvedCommand,
       commandOverridden,
       // env-var attribution for machine consumers: present iff the
@@ -231,7 +222,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
       throw new CliExitError(sent.exitCode);
     return;
   }
-  const wsBit = opts.workspace ? pc.dim(" with auto-workspace") : "";
+  const wsBit = opts.worktree ? pc.dim(" with its own worktree") : "";
   // Three display modes (precedence top-down):
   //   1. --command was explicit       → 'pi (cmd: pi-meta --no-solo)'
   //   2. resolved via env var override → 'pi (via $MU_PI_COMMAND)'
@@ -248,7 +239,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   console.log(
     `Spawned ${pc.bold(agent.name)} (${cliDisplay}) in window ${pc.bold(agent.tab ?? agent.name)} of ${pc.bold(`mu-${workstream}`)}, pane ${pc.dim(agent.paneId)}${wsBit}`,
   );
-  if (workspace) console.log(pc.dim(`  workspace: ${workspace.path} (${workspace.backend})`));
+  if (agent.cwd !== null) console.log(pc.dim(`  cwd: ${agent.cwd}`));
   console.log(pc.dim(`  ctl: ${agent.ctl} (${agent.ctlSocket})`));
   if (sent?.ok) {
     const runs = sent.runs !== undefined ? `, runs ${sent.runs}` : "";
@@ -594,6 +585,7 @@ export async function cmdAgentShow(
   console.log(`  pane       : ${pc.dim(agent.paneId)}`);
   console.log(`  window     : ${agent.tab ?? agent.name}`);
   console.log(`  role       : ${agent.role}`);
+  console.log(`  cwd        : ${agent.cwd ?? pc.dim("—")}`);
   console.log(`  created    : ${pc.dim(agent.createdAt)}`);
   console.log(`  updated    : ${pc.dim(agent.updatedAt)}`);
 
@@ -653,22 +645,21 @@ export async function cmdMe(
 export async function cmdClose(
   db: Db,
   rawName: string,
-  opts: { workstream?: string; json?: boolean; discardWorkspace?: boolean } = {},
+  opts: { workstream?: string; json?: boolean; discard?: boolean } = {},
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   const result = await closeAgent(db, name, {
     workstream: ws,
-    ...(opts.discardWorkspace === true ? { discardWorkspace: true } : {}),
+    ...(opts.discard === true ? { discard: true } : {}),
   });
   const next: NextStep[] = [];
-  if (result.workspaceFreed) {
+  const kept = result.worktree?.branch;
+  if (kept !== undefined) {
     next.push({
-      intent: result.workspaceAutoFreedClean
-        ? "Workspace was clean (no uncommitted changes, no commits since fork) so it was auto-freed alongside the agent"
-        : "Workspace was freed alongside the agent (--discard-workspace)",
-      command: "cd /  # the workspace dir is gone",
+      intent: `Its unmerged commits are on ${kept}; merge or inspect them`,
+      command: `git log --oneline HEAD..${kept}`,
     });
   }
   next.push({
@@ -679,15 +670,26 @@ export async function cmdClose(
     emitJson({ agentName: name, ...result, nextSteps: next });
     return;
   }
-  if (!result.killedPane && !result.deletedRow) {
+  if (!result.killedPane && !result.deletedRow && result.worktree === null) {
     console.log(pc.dim(`no agent named ${name} (already closed?)`));
     printNextSteps(next);
     return;
   }
-  const wsBit = result.workspaceFreed
-    ? pc.dim(result.workspaceAutoFreedClean ? " (workspace auto-freed)" : " (workspace discarded)")
-    : "";
-  console.log(`Closed ${pc.bold(name)}${wsBit}`);
+  console.log(`Closed ${pc.bold(name)}`);
+  if (result.worktree !== null) {
+    const w = result.worktree;
+    console.log(
+      pc.dim(
+        w.action === "kept-branch"
+          ? `  worktree removed; unmerged commits kept on branch ${w.branch}`
+          : w.action === "discarded"
+            ? "  worktree discarded"
+            : w.action === "gone"
+              ? "  worktree already gone"
+              : "  worktree removed",
+      ),
+    );
+  }
   printNextSteps(next);
 }
 
@@ -1014,15 +1016,18 @@ export function wireAgentCommands(program: Command): void {
     )
     .option("--tab <tab>", "mux window/tab name to group under (defaults to agent name)")
     .option("--role <role>", "full-access | read-only", "full-access")
-    .option("--cwd <cwd>", "initial working directory (ignored when --workspace is set)")
-    .option("--workspace", "auto-create a git worktree for this agent and use its path as cwd")
     .option(
-      "--workspace-from <ref>",
-      "base the workspace on a specific commit / branch / changeset",
+      "--cwd <dir>",
+      "directory the pane starts in (default: yours); conflicts with --worktree",
     )
     .option(
-      "--workspace-project-root <path>",
-      "override the project root the workspace branches from (default: cwd)",
+      "--worktree",
+      "run in its own git worktree (git worktree add --detach under the state dir); its path is the cwd",
+    )
+    .option("--from <ref>", "with --worktree: start at this commit or branch (default: HEAD)")
+    .option(
+      "--root <repo>",
+      "with --worktree: the repo to add it to (default: the git root of your cwd)",
     )
     .option("--no-ctl", "skip the control-socket handshake with the mu pi extension")
     .option(
@@ -1045,9 +1050,9 @@ export function wireAgentCommands(program: Command): void {
         role?: string;
         cwd?: string;
         workstream?: string;
-        workspace?: boolean;
-        workspaceFrom?: string;
-        workspaceProjectRoot?: string;
+        worktree?: boolean;
+        from?: string;
+        root?: string;
         ctl?: boolean;
         json?: boolean;
       };
@@ -1141,11 +1146,11 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("close <name>")
     .description(
-      "Kill an agent's pane and remove its registry row. If the agent has a clean workspace (no uncommitted changes AND no commits since fork) it is auto-freed alongside the close; otherwise close refuses (would orphan or lose work) — pass --discard-workspace to free both anyway (lossy), or run `mu workspace free <agent>` first.",
+      "Kill an agent's pane and remove its registry row. Its worktree goes with it: removed when clean, a branch mu/<ws>/<agent>-<sha> keeps unmerged commits; a dirty worktree refuses before anything is killed.",
     )
     .option(
-      "--discard-workspace",
-      "free the agent's workspace alongside close (lossy: pending changes are gone)",
+      "--discard",
+      "close even with uncommitted work in the worktree (lossy: it is thrown away)",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
@@ -1153,7 +1158,7 @@ export function wireAgentCommands(program: Command): void {
       const opts = (this as Command).opts() as {
         workstream?: string;
         json?: boolean;
-        discardWorkspace?: boolean;
+        discard?: boolean;
       };
       return handle((db) => cmdClose(db, name, opts), this as Command)();
     });

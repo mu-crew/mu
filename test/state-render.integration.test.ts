@@ -32,7 +32,6 @@ afterAll(() => {
   }
 });
 
-import { initGitRepo } from "./_git.js";
 import { runCli } from "./_runCli.js";
 
 // ── default mode (full top-to-bottom card) ─────────────────────────
@@ -71,7 +70,7 @@ describe("mu state — default (full) mode", () => {
     expect(stdout).toContain("In progress (");
     expect(stdout).toContain("Blocked (");
     expect(stdout).toContain("Recent closed (");
-    expect(stdout).toContain("Workspaces (");
+    expect(stdout).not.toContain("Workspaces (");
     expect(stdout).not.toContain("Remote workers (");
     // v2-log-verb renamed the heading: it is no longer "of kind=event"
     // (that entity is retired), it is the last N ops.
@@ -83,7 +82,7 @@ describe("mu state — default (full) mode", () => {
     expect(exitCode).toBeNull();
     const parsed = JSON.parse(stdout);
     // Spec: { workstreamName, agents, orphans, tracks, ready, blocked,
-    //         inProgress, recentClosed, workspaces, recent,
+    //         inProgress, recentClosed, recent,
     //         remoteWorkers } (flat).
     expect(parsed.workstreamName).toBe("ws");
     expect(parsed.agents).toEqual([]);
@@ -105,7 +104,7 @@ describe("mu state — default (full) mode", () => {
     expect(parsed.blocked).toEqual([]);
     expect(parsed.inProgress).toEqual([]);
     expect(parsed.recentClosed).toEqual([]);
-    expect(parsed.workspaces).toEqual([]);
+    expect(parsed.workspaces).toBeUndefined();
     expect(parsed.remoteWorkers).toEqual([]);
     expect(parsed.recentCommits).toBeUndefined();
     expect(parsed.commitsBackend).toBeUndefined();
@@ -180,13 +179,11 @@ describe("mu state — default (full) mode", () => {
           expect.objectContaining({ name: "beta", title: "B", status: "OPEN" }),
         ]),
         blocked: [],
-        workspaces: [],
       }),
       expect.objectContaining({
         workstreamName: "ws2",
         ready: [expect.objectContaining({ name: "gamma", title: "G", status: "OPEN" })],
         blocked: [],
-        workspaces: [],
       }),
     ]);
   });
@@ -286,7 +283,6 @@ describe("the op formatter", () => {
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const {
-      AgentNotFoundError,
       closeAgent,
       insertAgent,
       resetCommandResolverForTests,
@@ -311,13 +307,10 @@ describe("the op formatter", () => {
     } = await import("../src/tasks.js");
     const { claimTask, releaseTask } = await import("../src/tasks/claim.js");
     const { resetTmuxExecutor, setTmuxExecutor } = await import("../src/tmux.js");
-    const { createWorkspace, freeWorkspace } = await import("../src/workspace.js");
     const { teardownWorkstream, ensureWorkstream } = await import("../src/workstream.js");
     const { freshMockState, mockTmux } = await import("./_verbs-mock.js");
 
     const tempDir = mkdtempSync(join(tmpdir(), "mu-state-render-events-"));
-    const projectRoot = mkdtempSync(join(tmpdir(), "mu-state-render-events-project-"));
-    initGitRepo(projectRoot);
     const db = openDb({ path: join(tempDir, "mu.db") });
     const previousWaitSleep = setWaitSleepForTests(async () => {});
     const previousStuckWarn = setWaitStuckWarnForTests(() => {});
@@ -333,7 +326,7 @@ describe("the op formatter", () => {
         // carry JSON payloads and a typed intent, and are classified by
         // intent (v2-log-verb), never by prefix — so scope this audit to
         // the entities emitEvent still writes.
-        const localEntities = ["agent", "workspace", "workstream"];
+        const localEntities = ["agent", "workstream"];
         const isLocalEmit = (r: {
           kind: string;
           intent: string | null;
@@ -406,31 +399,6 @@ describe("the op formatter", () => {
         }),
       );
 
-      insertAgent(db, { name: "worker-1", workstream: "events", paneId: "%15" });
-      await captureNewEvents(() =>
-        createWorkspace(db, {
-          agent: "worker-1",
-          workstream: "events",
-          projectRoot: projectRoot,
-          backend: "git",
-        }),
-      );
-      await captureNewEvents(() =>
-        freeWorkspace(db, "worker-1", { workstream: "events", commit: false }),
-      );
-      await expect(
-        createWorkspace(db, {
-          agent: "ghost-1",
-          workstream: "events",
-          projectRoot: projectRoot,
-          backend: "git",
-        }),
-      ).rejects.toBeInstanceOf(AgentNotFoundError);
-      const workspaceCreateFailures = listLogs(db, { workstream: "events", kind: "event" }).filter(
-        (r) => r.payload.startsWith("workspace create ghost-1"),
-      );
-      expect(workspaceCreateFailures).toEqual([]);
-
       addTask(db, {
         localId: "stalled",
         workstream: "events",
@@ -475,10 +443,9 @@ describe("the op formatter", () => {
       // v2-retire-log-shim: the 11 task.* / workstream.init /
       // workstream.teardown prose emits are GONE — each duplicated a
       // capture-trigger op that already had a real intent and key. What
-      // survives is exactly the set no trigger can see: `agents` and
-      // `vcs_workspaces` are machine-local, and `agent stalled` mutates
-      // nothing.
-      const expected = ["agent close", "agent spawn", "workspace create", "workspace free"];
+      // survives is exactly the set no trigger can see: `agents`
+      // is machine-local, and `agent stalled` mutates nothing.
+      const expected = ["agent close", "agent spawn"];
       expect([...captured.keys()].sort()).toEqual(expected.sort());
       // Every verb the session produced must be one the formatter
       // declares, so a new emitter cannot be added without teaching the
@@ -495,7 +462,6 @@ describe("the op formatter", () => {
       resetTmuxExecutor();
       db.close();
       rmSync(tempDir, { recursive: true, force: true });
-      rmSync(projectRoot, { recursive: true, force: true });
       if (originalStateDir === undefined) {
         const key = "MU_STATE_DIR";
         delete process.env[key];

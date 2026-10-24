@@ -54,7 +54,7 @@ export function compact(db: Db): CompactPlan {
 
 /** The ops one workstream's history occupies: the workstream op itself,
  *  and every op keyed under it (`<ws>/...`: tasks, notes, edges, agents,
- *  workspaces, waves). The key range ['<ws>', '<ws>0') ('0' is the byte
+ *  worktrees, waves). The key range ['<ws>', '<ws>0') ('0' is the byte
  *  after '/') seeks idx_ops_entity_key once per entity; the exact test
  *  after it drops siblings such as '<ws>-2'. A bare `substr(key, …)` test, or
  *  an OR around the range, scanned all of ops per candidate. The entity list

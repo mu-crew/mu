@@ -21,7 +21,7 @@ this brief, with `<ws>` filled in:
 Read-only drift audit of mu workstream <ws>. Change nothing. Sources:
 mu state -w <ws>; mu task list -w <ws> --json; mu task notes <id> -w <ws>;
 mu sql (ops, tasks, task_notes, agents); git log in the repo and in each
-owner's workspace. Never judge by a capped mu log -n window: the claim
+owner's worktree. Never judge by a capped mu log -n window: the claim
 or close you compare against is often older than it.
 1. Unsent notes: notes on IN_PROGRESS tasks, by someone other than the
    owner, after the owner's last task.claim or agent.send op:

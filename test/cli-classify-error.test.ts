@@ -20,7 +20,6 @@ import {
   AgentNotInWorkstreamError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
-  WorkspacePreservedError,
 } from "../src/agents.js";
 import { classifyError, NameAmbiguousError, UsageError } from "../src/cli.js";
 import { SchemaTooOldError, WorkstreamNotFoundError } from "../src/db.js";
@@ -44,14 +43,12 @@ import {
   TaskTitleSlugEmptyError,
 } from "../src/tasks.js";
 import { PaneNotFoundError, TmuxError } from "../src/tmux.js";
-import { WorkspaceVcsRequiredError } from "../src/vcs.js";
-import {
-  HomeDirAsProjectRootError,
-  WorkspaceExistsError,
-  WorkspaceNotFoundError,
-  WorkspacePathNotEmptyError,
-} from "../src/workspace.js";
 import { WorkstreamExistsError, WorkstreamNameInvalidError } from "../src/workstream.js";
+import {
+  WorktreeDirtyError,
+  WorktreePathNotEmptyError,
+  WorktreeVcsRequiredError,
+} from "../src/worktree.js";
 
 describe("classifyError exit-code map", () => {
   // (instance, expected exit code, expected label)
@@ -68,7 +65,6 @@ describe("classifyError exit-code map", () => {
     // schema_v5_cli_boundary — the resolve-time miss for the SDK
     // boundary's first leg (operator-name → workstreams.id).
     [new WorkstreamNotFoundError("ghost"), 3, "not found"],
-    [new WorkspaceNotFoundError("alice"), 3, "not found"],
 
     // switch branch 3: conflicts / state mismatches
     [new NameAmbiguousError("dupe", ["ws-a", "ws-b"], "task"), 4, "conflict"],
@@ -79,11 +75,9 @@ describe("classifyError exit-code map", () => {
     [new AgentNotInWorkstreamError("alice", "wsA", "wsB"), 4, "conflict"],
     [new CycleError("a", "b"), 4, "conflict"],
     [new CrossWorkstreamEdgeError("blocker", "wsA", "dep", "wsB"), 4, "conflict"],
-    [new WorkspaceExistsError("alice"), 4, "conflict"],
-    [new WorkspacePathNotEmptyError("alice", "ws", "/tmp/ws/alice"), 4, "conflict"],
-    [new WorkspacePreservedError("alice", "/tmp/ws/alice"), 4, "conflict"],
-    [new HomeDirAsProjectRootError("alice", "ws", "/Users/alice"), 4, "conflict"],
-    [new WorkspaceVcsRequiredError("/tmp/not-a-repo"), 4, "conflict"],
+    [new WorktreePathNotEmptyError("alice", "ws", "/tmp/ws/alice", "dirty"), 4, "conflict"],
+    [new WorktreeDirtyError("alice", "ws", "/tmp/ws/alice", ["a.txt"]), 4, "conflict"],
+    [new WorktreeVcsRequiredError("/tmp/not-a-repo"), 4, "conflict"],
     [new ClaimerNotRegisteredError("pi-mu", "%6441"), 4, "conflict"],
     [new SchemaTooOldError(4, 5), 4, "conflict"],
     [new WorkstreamExistsError("existing-ws"), 4, "conflict"],

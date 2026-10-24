@@ -9,7 +9,7 @@ read the same rules in
 ```bash
 mu doctor           # exit 0 healthy (WARN rows too), 5 on drift or a FAIL row
 mu doctor --deep    # rebuild the ops log and diff every field
-mu doctor --disk    # add per-workspace byte usage
+mu doctor --disk    # add per-worktree byte usage
 ```
 
 ## An agent's pane died
@@ -54,7 +54,7 @@ launched through a wrapper whose name is not `pi` or `pi-meta` shows
 `needs_input` instead. Run
 `/trust` in the pane once, or spawn with
 `--command 'pi --approve'`. `--approve` trusts every directory,
-including workspace forks, so use it only on your own code.
+including worktrees, so use it only on your own code.
 
 Claude asks the same on an untrusted folder, with "No, exit" as the
 default. Spawn warns and skips `--send`: attach the pane, answer it, then
@@ -93,15 +93,18 @@ command.
 
 | Row | Means |
 | --- | ----- |
-| `ws-rows` | a workspace row whose directory is gone; the next send fails inside git |
-| `ws-empty` | a workstream directory with no checkouts |
+| `ws-rows` | a worktree row whose directory is gone; a reused name trips over it. `mu agent close <agent>` forgets it |
+| `ws-empty` | a workstream directory with no worktrees |
 | `db-copies` | stray `mu.db*` files that nothing reads, including the `pre-compact` / `pre-forget` backups |
 | `exports` | output left by the removed export verb |
 | `locks` | lock directories older than one hour, from a spawn or flush that died |
 
-An orphan workspace directory has no row, so `mu workspace free` cannot
-remove it. Inspect it, then remove it with `git worktree remove --force
-<path>` from the project root, or `rm -rf <path>` when it is not a worktree.
+The worktree registry outlives the agent, so a worktree whose agent was
+reaped is still closed by name: `mu agent close <agent>` keeps unmerged
+commits on a branch and refuses dirty work (`--discard` drops it). A
+directory mu never registered has no row: inspect it, then remove it with
+`git worktree remove --force <path>` from the project root, or `rm -rf
+<path>` when it is not a worktree.
 
 ## Rename a workstream
 

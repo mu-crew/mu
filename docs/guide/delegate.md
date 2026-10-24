@@ -20,7 +20,7 @@ Delegates called in one turn run in parallel.
 | `brief` | Ad hoc persona or ground rules, sent first. Not enforced. |
 | `cwd` | Start directory. Default: the caller's. Must exist. |
 | `timeout` | Seconds to wait for the answer (default 3600). After it, the answer does not come back; the follow-up gives the `mu agent wait` command. |
-| `workspace` | Own VCS checkout, for delegates that edit files. The follow-up names its path. It isolates repository edits only. |
+| `workspace` | Own git worktree, for delegates that edit files. The follow-up names its path. It isolates repository edits only. |
 | `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`). Only keys set in pi's environment exist. |
 | `model` | pi `--model` value, appended to the cli's command (`sonnet`, `<provider>/<model>:high`, copied from `pi --list-models`). Varies models across a panel. tmux only: herdr refuses a command override. |
 | `keep` | Keep the pane after it finishes, to talk to it again. |
@@ -153,7 +153,7 @@ pane.
 | Steer mid-run           | no                       | `mu agent send`; stop with `mu agent abort` |
 | Keep talking after it answers | no                 | yes, with `keep: true` |
 | Transcript              | collapses into a result  | a normal pi session log |
-| If the work grows       | re-brief a new agent     | same task DAG and workspaces |
+| If the work grows       | re-brief a new agent     | same task DAG and worktrees |
 | Cost                    | light                    | one pane and one pi process |
 
 For many tiny calls, a hidden subagent is lighter. mu bets that seeing

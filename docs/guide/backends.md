@@ -20,10 +20,10 @@ mu picks the backend from the first rule that matches:
 4. The first binary that runs, tmux before herdr.
 5. Neither: `NoMultiplexerError`, exit 5.
 
-## Workspaces are git worktrees
+## Worktrees are git worktrees
 
-`mu agent spawn --workspace` makes a git worktree. Outside a git repo it
-fails with `WorkspaceVcsRequiredError` (exit 4). mu has no jj, sl or
+`mu agent spawn --worktree` makes a git worktree. Outside a git repo it
+fails with `WorktreeVcsRequiredError` (exit 4). mu has no jj, sl or
 copy backend.
 
 ## Know what differs

@@ -78,7 +78,7 @@ describe("renderOp covers every known intent", () => {
     // The pre-1.2.0 spelling is cut: it renders through the unknown-intent path.
     expect(KNOWN_INTENTS).not.toContain("workstream.destroy");
     expect(KNOWN_INTENTS).toContain("agent.spawn");
-    expect(KNOWN_INTENTS).toContain("workspace.refresh");
+    expect(KNOWN_INTENTS).toContain("agent.stall");
   });
 });
 
@@ -141,7 +141,7 @@ describe("renderOp prose", () => {
     for (const file of readdirSync(srcDir, { recursive: true, encoding: "utf8" })) {
       if (!file.endsWith(".ts")) continue;
       const text = readFileSync(join(srcDir, file), "utf8");
-      for (const m of text.matchAll(/intent: "((?:task|workstream|agent|workspace)\.[a-z-]+)"/g)) {
+      for (const m of text.matchAll(/intent: "((?:task|workstream|agent)\.[a-z-]+)"/g)) {
         if (m[1] !== undefined) written.add(m[1]);
       }
     }

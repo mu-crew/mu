@@ -11,7 +11,7 @@ reliable than scoring one.
    in a few ranked criteria. Judges apply it; they do not invent one.
 2. **Generate.** N attempts with the same brief and a different
    approach or model each. Code attempts are tasks, each in its own
-   workspace. Ideas (names, plans) are delegate calls; one call can
+   worktree. Ideas (names, plans) are delegate calls; one call can
    generate many candidates.
 3. **Filter** (when there are many candidates): one delegate call drops
    the ones that fail a hard rubric criterion and merges duplicates. What is left
@@ -25,7 +25,7 @@ reliable than scoring one.
    next round. A round wider than the cap runs in batches
    ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
 5. **Confirm the winner** with a final check against the rubric, then
-   merge it. Free the losing workspaces.
+   merge it. Close the losing agents with `--discard`.
 
 Done when one candidate has won every comparison it entered and the
 final check passed.

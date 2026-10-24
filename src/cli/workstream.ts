@@ -1,7 +1,7 @@
 // mu — `mu workstream` verbs (init / list / teardown).
 //
 // A workstream = one mux session (`mu-<name>`) + every DB row tagged
-// with that name (agents / tasks / edges / notes / workspaces / logs).
+// with that name (agents / tasks / edges / notes / worktrees / logs).
 // `init` creates the session + DB row pair; `list` shows
 // every workstream on the machine; `teardown` is the symmetric inverse,
 // two-phase by default (dry-run; `--yes` commits).
@@ -171,7 +171,7 @@ export async function cmdTeardown(
     summary.agentCount === 0 &&
     summary.taskCount === 0 &&
     summary.noteCount === 0 &&
-    summary.workspaceCount === 0;
+    summary.worktreeCount === 0;
 
   if (nothingToDo) {
     if (opts.json) {
@@ -215,7 +215,7 @@ export async function cmdTeardown(
       `  tasks        : ${summary.taskCount}  (edges: ${summary.edgeCount}, notes: ${summary.noteCount})`,
     );
     console.log(
-      `  workspaces   : ${summary.workspaceCount}${summary.workspaceCount > 0 ? pc.dim(" (will be cleaned via per-backend remove)") : ""}`,
+      `  worktrees    : ${summary.worktreeCount}${summary.worktreeCount > 0 ? pc.dim(" (clean ones are removed; dirty ones are kept)") : ""}`,
     );
     console.log("");
     console.log(pc.dim("(dry-run; rerun with --yes to actually tear down)"));
@@ -240,28 +240,31 @@ export async function cmdTeardown(
   console.log(
     `  tasks        : ${summary.taskCount}  (edges: ${summary.edgeCount}, notes: ${summary.noteCount})`,
   );
-  console.log(`  workspaces   : ${summary.workspaceCount}`);
+  console.log(`  worktrees    : ${summary.worktreeCount}`);
   console.log("");
   console.log(
-    `Destroyed ${pc.bold(workstream)}: killed mux=${result.killedMux}, agents=${result.deletedAgents}, tasks=${result.deletedTasks}, edges=${result.deletedEdges}, notes=${result.deletedNotes}, workspaces=${result.freedWorkspaces}/${summary.workspaceCount}${result.alreadyGoneWorkspaces > 0 ? ` (${result.alreadyGoneWorkspaces} already gone on disk)` : ""}`,
+    `Destroyed ${pc.bold(workstream)}: killed mux=${result.killedMux}, agents=${result.deletedAgents}, tasks=${result.deletedTasks}, edges=${result.deletedEdges}, notes=${result.deletedNotes}, worktrees=${result.freedWorktrees}/${summary.worktreeCount}${result.alreadyGoneWorktrees > 0 ? ` (${result.alreadyGoneWorktrees} already gone on disk)` : ""}`,
   );
-  if (result.failedWorkspaces.length > 0) {
+  for (const branch of result.keptBranches) {
+    console.log(`  kept unmerged commits on branch ${pc.bold(branch)}`);
+  }
+  if (result.failedWorktrees.length > 0) {
     console.log("");
     console.log(
       pc.yellow(
-        `WARNING: ${result.failedWorkspaces.length} workspace(s) could not be freed cleanly. The DB rows are gone (FK cascade); the on-disk paths remain and need manual cleanup:`,
+        `WARNING: ${result.failedWorktrees.length} worktree(s) were kept (uncommitted work is never deleted by teardown); their registry rows remain:`,
       ),
     );
-    for (const f of result.failedWorkspaces) {
-      console.log(`  - ${f.agent} (${f.backend}): ${f.path}`);
-      console.log(`    error: ${f.error}`);
+    for (const f of result.failedWorktrees) {
+      console.log(`  - ${f.agent}: ${f.path}`);
+      console.log(`    ${f.error}`);
     }
     printNextSteps([
+      { intent: "Look at a kept worktree", command: "git -C <path> status --short" },
       {
-        intent: "For each git worktree above, run",
-        command: "git worktree remove --force <path>",
+        intent: "Throw one away (lossy)",
+        command: `mu agent close <agent> -w ${workstream} --discard`,
       },
-      { intent: "As a last resort", command: "rm -rf <path>" },
     ]);
   }
 }
@@ -269,7 +272,7 @@ export async function cmdTeardown(
 // ─── cmdTeardownEmpty ─────────────────────────────────────────────────
 //
 // `mu workstream teardown --empty` sweeps every workstream with no
-// user-meaningful state (zero tasks, agents, vcs_workspaces), except
+// user-meaningful state (zero tasks, agents, worktrees), except
 // `scratch`, whose idle session is kept alive on purpose. It never
 // sweeps an unregistered `mu-*` session: with no DB row there is no
 // evidence it is idle (see listEmptyWorkstreams); the human output
@@ -287,8 +290,8 @@ interface EmptyTeardownResult {
   deletedTasks: number;
   deletedNotes: number;
   deletedEdges: number;
-  freedWorkspaces: number;
-  alreadyGoneWorkspaces: number;
+  freedWorktrees: number;
+  alreadyGoneWorktrees: number;
 }
 
 interface EmptyDestroyFailure {
@@ -382,8 +385,8 @@ async function cmdTeardownEmpty(
         deletedTasks: result.deletedTasks,
         deletedNotes: result.deletedNotes,
         deletedEdges: result.deletedEdges,
-        freedWorkspaces: result.freedWorkspaces,
-        alreadyGoneWorkspaces: result.alreadyGoneWorkspaces,
+        freedWorktrees: result.freedWorktrees,
+        alreadyGoneWorktrees: result.alreadyGoneWorktrees,
       });
     } catch (err) {
       // Best-effort sweep: log the failure and keep going. Every
@@ -497,13 +500,13 @@ export function wireWorkstreamCommands(program: Command): void {
   workstream
     .command("teardown [name]")
     .description(
-      "Tear down a workstream: kill its mux session and cascade-delete every DB row tagged with its name. Writes tombstone ops. The target may be given positionally (matching `workstream init <name>`) or via -w. Pass --yes to actually tear down; otherwise prints a dry-run summary. With --empty, sweeps every empty workstream (zero tasks/agents/workspaces) except scratch in one call.",
+      "Tear down a workstream: kill its mux session and cascade-delete every DB row tagged with its name. Writes tombstone ops. The target may be given positionally (matching `workstream init <name>`) or via -w. Pass --yes to actually tear down; otherwise prints a dry-run summary. With --empty, sweeps every empty workstream (zero tasks/agents/worktrees) except scratch in one call.",
     )
     .option(...WORKSTREAM_OPT)
     .option("-y, --yes", "actually tear down (without this flag, prints a dry-run summary)")
     .option(
       "--empty",
-      "sweep every empty workstream (zero tasks, agents, vcs_workspaces); never scratch; mutually exclusive with -w",
+      "sweep every empty workstream (zero tasks, agents, worktrees); never scratch; mutually exclusive with -w",
     )
     .option(...JSON_OPT)
     .action(function (name: string | undefined) {

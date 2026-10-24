@@ -89,7 +89,7 @@ describe("keep-driving rule source", () => {
 describe("dispatchedWorkstreams", () => {
   it.each([
     ["mu agent send worker-1 -w auth --fresh 'x'", ["auth"]],
-    ["mu agent spawn worker-1 --workspace -w=ignored --workstream auth", ["auth"]],
+    ["mu agent spawn worker-1 --worktree -w=ignored --workstream auth", ["auth"]],
     ["mu task claim build -w auth --for worker-1", ["auth"]],
     ["mu task claim auth/build --for worker-1", ["auth"]],
     ["mu agent send worker-1 --fresh 'go'", [""]],

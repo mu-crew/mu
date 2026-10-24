@@ -559,9 +559,9 @@ export function latestSeq(db: Db, workstream?: string): number {
  *
  *   agent.*      spawn / close / free / adopt / kick — `agents` is
  *                machine-local (it holds `pane_id`), so there is no
- *                trigger and never will be.
- *   workspace.*  create / free / refresh — `vcs_workspaces`
- *                is machine-local (absolute paths).
+ *                trigger and never will be. The `worktrees` registry is
+ *                machine-local too (absolute paths); its changes ride the
+ *                agent.spawn / agent.close lines.
  *   agent.stall  a pure observation; nothing is mutated.
  *
  * `intent` is REQUIRED (and typed), not optional, because the whole
@@ -598,10 +598,7 @@ export type LocalIntent =
   | "agent.kick"
   | "agent.send"
   | "agent.abort"
-  | "agent.stall"
-  | "workspace.create"
-  | "workspace.free"
-  | "workspace.refresh";
+  | "agent.stall";
 
 /** Entity for a local intent: the token before the dot. Keeps
  *  `entity`/`intent` consistent by construction instead of asking each

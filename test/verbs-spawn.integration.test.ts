@@ -6,7 +6,7 @@
 // the shared MockState / mockTmux harness, and the sibling
 // test/verbs-*.test.ts files for the rest of the verbs.
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -25,18 +25,8 @@ import {
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { hasNextSteps } from "../src/output.js";
+import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import {
-  resetSleep,
-  resetTmuxExecutor,
-  setSleepForTests,
-  setTmuxExecutor,
-  type TmuxExecutor,
-} from "../src/tmux.js";
-import { listWorkspaces, workspacePath } from "../src/workspace.js";
-import { ensureWorkstream } from "../src/workstream.js";
-import { initGitRepo } from "./_git.js";
-import {
-  fail,
   freshMockState,
   type MockState,
   mockTmux,
@@ -273,7 +263,7 @@ describe("spawnAgent", () => {
     setTmuxExecutor(executor);
     const panesBaseline = state.panes.size;
 
-    // Inject a failure into the no-workspace finalize step: patch
+    // Inject a failure into the no-worktree finalize step: patch
     // db.prepare so the `INSERT INTO agents` statement's .run() throws.
     // The pane has already been created by spawnAgent pane creation at this
     // point, so the catch in spawnAgent must call rollbackSpawn ->
@@ -596,197 +586,5 @@ describe("spawn startup-error scan", () => {
       const agent = await spawnAgent(db, { name: "alice", workstream: "auth" });
       expect(agent.name).toBe("alice");
     });
-  });
-});
-
-// ─── --workspace rollback on tmux failure ──────────────────────────────
-//
-// Regression for agent_spawn_abort_leaves_orphan_workspace: when a
-// `--workspace` spawn prestaged the workspace dir + placeholder agent
-// row and then spawnAgent pane creation threw (tmux refused, e.g. no
-// workstream session and `new-session` failed), the workspace dir +
-// placeholder row were left behind as an orphan. The fix wraps
-// pane-create in the same outer try as finalize/liveness so
-// rollbackSpawn runs on every post-prestage failure.
-
-describe("spawn --workspace rollback on tmux failure", () => {
-  let stateDir: string;
-  let projectRoot: string;
-
-  beforeEach(() => {
-    stateDir = mkdtempSync(join(tmpdir(), "mu-spawn-ws-state-"));
-    process.env.MU_STATE_DIR = stateDir;
-    projectRoot = mkdtempSync(join(tmpdir(), "mu-spawn-ws-proj-"));
-    initGitRepo(projectRoot);
-    // The workstream row must exist — prestageWorkspace inserts the
-    // agent row first which calls ensureWorkstream, but it's clearer
-    // (and harmless) to set it up explicitly here so the test reads
-    // top-down.
-    ensureWorkstream(db, "auth");
-  });
-
-  afterEach(() => {
-    const key = "MU_STATE_DIR";
-    delete process.env[key];
-    for (const dir of [stateDir, projectRoot]) {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {}
-    }
-  });
-
-  /** Wrap an executor so the named tmux verb fails (simulating the
-   *  tmux-refused-create case from update-note 3 of the feedback task,
-   *  where no workstream session existed and tmux refused new-session). */
-  function failOnVerb(inner: TmuxExecutor, verb: string): TmuxExecutor {
-    return async (args) => {
-      if (args[0] === verb) return fail(`mock: tmux ${verb} refused`);
-      return inner(args);
-    };
-  }
-
-  it("rolls back the workspace dir + agent row when spawnAgent pane creation throws", async () => {
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(failOnVerb(executor, "new-session"));
-
-    // Sanity: the workspace path mu would create.
-    const expectedWsPath = workspacePath("auth", "worker-1");
-
-    await expect(
-      spawnAgent(db, {
-        name: "worker-1",
-        workstream: "auth",
-        workspace: true,
-        workspaceProjectRoot: projectRoot,
-      }),
-    ).rejects.toThrow();
-
-    // No agent row, no workspace row, no on-disk dir.
-    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
-    expect(listWorkspaces(db, "auth")).toEqual([]);
-    expect(existsSync(expectedWsPath)).toBe(false);
-  });
-
-  it("thrown error carries workspace-cleanup nextSteps when a workspace was prestaged", async () => {
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(failOnVerb(executor, "new-session"));
-
-    let caught: unknown;
-    try {
-      await spawnAgent(db, {
-        name: "worker-1",
-        workstream: "auth",
-        workspace: true,
-        workspaceProjectRoot: projectRoot,
-      });
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeDefined();
-    expect(hasNextSteps(caught)).toBe(true);
-    if (!hasNextSteps(caught)) throw new Error("unreachable");
-    const steps = caught.errorNextSteps();
-    const commands = steps.map((s) => s.command).join("\n");
-    expect(commands).toMatch(/mu workspace free worker-1 -w auth/);
-  });
-
-  it("rollback also runs when finalize fails (regression: existing inner-try path now folded into outer try)", async () => {
-    // Make the placeholder-row patch (finalizeAgentRow's UPDATE) fail.
-    // That happens AFTER the pane exists — exercises the path that
-    // used to be the first inner try-block.
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(executor);
-    db.exec(
-      "CREATE TRIGGER fail_finalize BEFORE UPDATE ON agents BEGIN SELECT RAISE(ABORT, 'boom'); END",
-    );
-    const expectedWsPath = workspacePath("auth", "worker-1");
-
-    await expect(
-      spawnAgent(db, {
-        name: "worker-1",
-        workstream: "auth",
-        workspace: true,
-        workspaceProjectRoot: projectRoot,
-      }),
-    ).rejects.toThrow();
-
-    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
-    expect(listWorkspaces(db, "auth")).toEqual([]);
-    expect(existsSync(expectedWsPath)).toBe(false);
-  });
-
-  it("rollback also runs when liveness check fails for a --workspace spawn", async () => {
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(executor);
-    setSleepForTests(async () => {
-      // Pane vanishes during the liveness window.
-      state.panes.clear();
-    });
-    const expectedWsPath = workspacePath("auth", "worker-1");
-
-    let caught: unknown;
-    try {
-      await spawnAgent(db, {
-        name: "worker-1",
-        workstream: "auth",
-        workspace: true,
-        workspaceProjectRoot: projectRoot,
-      });
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(AgentDiedOnSpawnError);
-    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
-    expect(listWorkspaces(db, "auth")).toEqual([]);
-    expect(existsSync(expectedWsPath)).toBe(false);
-    // Workspace was prestaged → the AgentDiedOnSpawnError's nextSteps
-    // should include both the pre-existing diagnostic hints AND the
-    // appended orphan-cleanup hints.
-    if (!hasNextSteps(caught)) throw new Error("expected nextSteps on AgentDiedOnSpawnError");
-    const commands = caught
-      .errorNextSteps()
-      .map((s) => s.command)
-      .join("\n");
-    expect(commands).toMatch(/mu agent read worker-1/); // existing hint
-    expect(commands).toMatch(/mu workspace free worker-1 -w auth/); // appended hint
-  });
-
-  it("rollback also runs when the startup-error scan fires for a --workspace spawn", async () => {
-    // agent_spawn_model_auth_failure_counts_as_live: when the new
-    // startup-error scan trips, the same outer try/catch must run
-    // rollbackSpawn + attachOrphanCleanupHint. This is just
-    // exercising the existing seam with the new error class — if
-    // someone later moves the scan outside the try, this test breaks.
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(executor);
-    setSleepForTests(async () => {
-      for (const pane of state.panes.values()) {
-        pane.scrollback = "Error: No API key found for amazon-bedrock";
-      }
-    });
-    const expectedWsPath = workspacePath("auth", "worker-1");
-
-    let caught: unknown;
-    try {
-      await spawnAgent(db, {
-        name: "worker-1",
-        workstream: "auth",
-        workspace: true,
-        workspaceProjectRoot: projectRoot,
-      });
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(AgentSpawnStartupError);
-    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
-    expect(listWorkspaces(db, "auth")).toEqual([]);
-    expect(existsSync(expectedWsPath)).toBe(false);
-    if (!hasNextSteps(caught)) throw new Error("expected nextSteps");
-    const commands = caught
-      .errorNextSteps()
-      .map((s) => s.command)
-      .join("\n");
-    expect(commands).toMatch(/mu agent spawn worker-1/); // existing diagnostic hint
-    expect(commands).toMatch(/mu workspace free worker-1 -w auth/); // appended orphan-cleanup hint
   });
 });

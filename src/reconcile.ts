@@ -29,7 +29,7 @@ import { activeMux, type MuxPane } from "./mux.js";
  *                 diagnostic).
  *
  * Mid-spawn placeholders are protected directly in the prune loop, so read
- * paths no longer need a separate mode just to avoid racing spawn's workspace
+ * paths no longer need a separate mode just to avoid racing spawn's worktree
  * pre-stage.
  */
 export type ReconcileMode = "full" | "report-only";

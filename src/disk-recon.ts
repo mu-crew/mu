@@ -5,12 +5,11 @@
 // and nothing surfaced either one:
 //
 //   disk has, DB doesn't  ->  empty parent / residue
-//   DB has, disk doesn't  ->  a `vcs_workspaces` row pointing at nothing
+//   DB has, disk doesn't  ->  a `worktrees` row pointing at nothing
 //
-// The second direction had NO surface at all before this module.
-// `mu workspace list` prints such a row as if it were fine, and every
-// spawn that reuses it fails deep in the VCS backend with a path error
-// rather than at the row that lied.
+// The second direction had NO surface at all before this module: the
+// registry row reads as a healthy worktree, and a spawn that reuses the
+// name trips over it rather than at the row that lied.
 //
 // REPORT ONLY, on purpose. Each finding names its own cleanup command in
 // the remediation block and mu runs none of them: an operator or an agent
@@ -27,7 +26,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type Db, defaultDbPath, defaultStateDir } from "./db.js";
 import type { FleetHazard } from "./fleet-hazards.js";
-import { listWorkspaces } from "./workspace.js";
+import { listWorktrees, worktreesRoot } from "./worktree.js";
 
 /** A held lock dir older than this is presumed abandoned. Mirrors
  *  `DEFAULT_STALE_LOCK_MS` in src/file-lock.ts — that value governs
@@ -78,62 +77,61 @@ function sizeOf(path: string): number {
 
 // ─── DB → disk: rows pointing at nothing ──────────────────────────────
 
-export interface MissingWorkspaceDir {
+export interface MissingWorktreeDir {
   agentName: string;
   workstreamName: string;
   path: string;
 }
 
 /**
- * `vcs_workspaces` rows whose `path` is not on disk.
+ * `worktrees` rows whose `path` is not on disk.
  *
- * A row pointing at a deleted directory is reported as a healthy
- * workspace by every read surface mu has. The usual cause is a hand-run `rm -rf` (or a `git worktree remove`) on a
- * path that `mu workspace free` would have unregistered.
+ * A row pointing at a deleted directory reads as a healthy worktree. The
+ * usual cause is a hand-run `rm -rf` (or a `git worktree remove`) on a
+ * path that `mu agent close` would have unregistered.
  */
-export function findMissingWorkspaceDirs(db: Db): MissingWorkspaceDir[] {
-  return listWorkspaces(db)
+export function findMissingWorktreeDirs(db: Db): MissingWorktreeDir[] {
+  return listWorktrees(db)
     .filter((row) => !exists(row.path))
     .map((row) => ({
-      agentName: row.agentName,
-      workstreamName: row.workstreamName,
+      agentName: row.agent,
+      workstreamName: row.workstream,
       path: row.path,
     }));
 }
 
-export function checkMissingWorkspaceDirs(db: Db): FleetHazard {
-  const missing = findMissingWorkspaceDirs(db);
+export function checkMissingWorktreeDirs(db: Db): FleetHazard {
+  const missing = findMissingWorktreeDirs(db);
   if (missing.length === 0) {
-    return { name: "ws-rows", severity: "ok", detail: "every workspace row has its dir" };
+    return { name: "ws-rows", severity: "ok", detail: "every worktree row has its dir" };
   }
   return {
     name: "ws-rows",
     severity: "warn",
-    detail: `${missing.length} workspace row(s) point at a path that is gone`,
+    detail: `${missing.length} worktree row(s) point at a path that is gone`,
     remediation: [
-      "These vcs_workspaces rows name a directory that no longer exists:",
+      "These worktrees rows name a directory that no longer exists:",
       ...missing.map((m) => `  ${m.workstreamName}/${m.agentName}  ${m.path}`),
       "",
-      "mu reports such a row as a healthy workspace on every read surface, and",
-      "the next send or refresh against it fails inside the VCS backend rather",
-      "than at the row that lied. Unregister them:",
-      ...missing.map((m) => `  mu workspace free ${m.agentName} -w ${m.workstreamName}`),
+      "A reused agent name trips over such a row. `agent close` finds the dir",
+      "gone, prunes git's registration and forgets the row:",
+      ...missing.map((m) => `  mu agent close ${m.agentName} -w ${m.workstreamName}`),
     ],
   };
 }
 
 /**
- * `<state-dir>/workspaces/<workstream>/` dirs with no children.
+ * `<state-dir>/worktrees/<workstream>/` dirs with no children.
  *
- * Left behind by `mu workspace free`, which removes the agent dir and
- * its row but never the per-workstream parent. Harmless — it is
- * `severity: "ok"` for that reason — but reported because it is the
- * cheapest possible signal that a workstream is done with its
- * checkouts, and because an operator counting directories to work out
+ * Left behind when the last worktree of a workstream is closed (close
+ * removes the agent dir and its row, not the per-workstream parent).
+ * Harmless — it is `severity: "ok"` for that reason — but reported because
+ * it is the cheapest possible signal that a workstream is done with its
+ * worktrees, and because an operator counting directories to work out
  * what mu still holds should not have to open each one.
  */
 export function checkEmptyWorkstreamDirs(): FleetHazard {
-  const root = join(defaultStateDir(), "workspaces");
+  const root = worktreesRoot();
   const empty = dirNames(root).filter((name) => dirNames(join(root, name)).length === 0);
   if (empty.length === 0) {
     return { name: "ws-empty", severity: "ok", detail: "no empty workstream dirs" };
@@ -143,10 +141,10 @@ export function checkEmptyWorkstreamDirs(): FleetHazard {
     severity: "ok",
     detail: `${empty.length} empty workstream dir(s): ${empty.slice(0, 4).join(", ")}`,
     remediation: [
-      "These per-workstream workspace dirs hold no checkouts:",
+      "These per-workstream worktree dirs hold no worktrees:",
       ...empty.map((name) => `  ${join(root, name)}`),
       "",
-      "`mu workspace free` removes an agent's dir and its row but not the parent,",
+      "Closing an agent removes its dir and its row but not the parent,",
       "so this is normal residue rather than a fault. Remove if you want the",
       "state dir to read cleanly:",
       ...empty.slice(0, 3).map((name) => `  rmdir ${join(root, name)}`),
@@ -292,19 +290,19 @@ export function checkStaleLocks(now: number = Date.now()): FleetHazard {
 
 // ─── --disk tier: recursive byte accounting ───────────────────────────
 
-export interface WorkspaceUsage {
+export interface WorktreeUsage {
   workstreamName: string;
   agentName: string;
   path: string;
   bytes: number;
-  /** True iff no `vcs_workspaces` row references this path — the bytes
-   *  are reclaimable without freeing anything mu still tracks. */
+  /** True iff no `worktrees` row references this path — the bytes
+   *  are reclaimable without closing anything mu still tracks. */
   orphan: boolean;
 }
 
 /** Recursive byte sum. Symlinks are skipped (0 bytes, never followed):
  *  a Dirent for a symlink is neither a file nor a directory, so a
- *  workspace symlinked into a huge tree does not report that tree's
+ *  worktree symlinked into a huge tree does not report that tree's
  *  bytes as mu's. */
 function walkBytes(path: string): number {
   let total = 0;
@@ -323,18 +321,18 @@ function walkBytes(path: string): number {
 }
 
 /**
- * Per-workspace disk usage, `--disk` tier only.
+ * Per-worktree disk usage, `--disk` tier only.
  *
  * Cost scales with the size of the CHECKOUTS, not with mu's own state
  * (measured 0.25s / 574MB / 5196 files), which is why it is not in the
- * default tier: a monorepo workspace would make `mu doctor` slow enough
+ * default tier: a monorepo worktree would make `mu doctor` slow enough
  * that people stop running it, and a diagnostic nobody runs reports
  * nothing.
  */
-export function measureWorkspaceUsage(db: Db): WorkspaceUsage[] {
-  const root = join(defaultStateDir(), "workspaces");
-  const registered = new Set(listWorkspaces(db).map((w) => w.path));
-  const usage: WorkspaceUsage[] = [];
+export function measureWorktreeUsage(db: Db): WorktreeUsage[] {
+  const root = worktreesRoot();
+  const registered = new Set(listWorktrees(db).map((w) => w.path));
+  const usage: WorktreeUsage[] = [];
   for (const wsName of dirNames(root)) {
     const wsRoot = join(root, wsName);
     for (const agentName of dirNames(wsRoot)) {
@@ -358,12 +356,12 @@ export function measureWorkspaceUsage(db: Db): WorkspaceUsage[] {
  * directions first (those are inconsistencies), then residue.
  *
  * Cheap enough for the default doctor: one readdir of the state dir,
- * a depth-2 readdir of `workspaces/`, one `stat` per workspace row and
+ * a depth-2 readdir of `worktrees/`, one `stat` per worktree row and
  * per lock dir.
  */
 export function checkDiskRecon(db: Db): FleetHazard[] {
   return [
-    checkMissingWorkspaceDirs(db),
+    checkMissingWorktreeDirs(db),
     checkEmptyWorkstreamDirs(),
     checkStrayDbFiles(),
     checkRemovedExportsDir(),

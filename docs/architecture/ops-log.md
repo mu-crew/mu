@@ -46,7 +46,7 @@ every op: a hybrid logical clock serialized as sortable TEXT
 `<wall_ms:15>.<counter:6>.<machine_id>`, so bytewise `ORDER BY hlc` is
 causal order. Clock state lives in `machine_identity`.
 
-**Machine-local tables** (`agents`, `vcs_workspaces`) have no capture
+**Machine-local tables** (`agents`, `worktrees`) have no capture
 triggers. Their contents are pane ids and absolute paths, which mean
 nothing on another machine. Their changes are recorded as log-only
 events through `emitEvent`. `appendLog` writes operator prose
@@ -134,7 +134,7 @@ read forward, so a peer never re-sends forgotten history.
 
 `src/rebuild.ts` (`rebuildInto`) replays the whole log into a new DB
 file through `applyOp`. The verb prints counts, supports `--json`,
-suggests an `mv` swap, and warns that `agents` and `vcs_workspaces`
+suggests an `mv` swap, and warns that `agents` and `worktrees`
 cannot be reconstructed.
 
 Rebuild is not ingest:

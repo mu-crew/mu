@@ -204,6 +204,8 @@ function agent(name: string, cli = "pi"): AgentRow {
     paneId: "%1",
     role: "full-access",
     tab: null,
+    cwd: null,
+    base: null,
     createdAt: now,
     updatedAt: now,
   };

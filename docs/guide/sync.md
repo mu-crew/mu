@@ -68,7 +68,7 @@ Ingest is idempotent, so `--repair` is safe at any time.
 
 ## Know what travels
 
-Workstreams, tasks, edges, and notes travel. Agents and workspaces
+Workstreams, tasks, edges, and notes travel. Agents and worktrees
 stay on their machine, because a pane id and a local path mean nothing
 elsewhere. So task ownership does not sync: a task claimed on the
 devserver shows no owner on your laptop.

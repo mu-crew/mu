@@ -123,6 +123,51 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   reconcile still propagates an unreachable mux instead of pruning every
   agent, and `workstream teardown` aborts on a failed liveness probe
   instead of deleting DB state while panes may live.
+- **Worktrees replace workspaces.** `mu agent spawn <name> --worktree [--from
+  <ref>] [--root <repo>]` runs `git -C <root> worktree add --detach
+  <state dir>/worktrees/<workstream>/<name> [<ref>]`; the pane starts there
+  and the worker's cwd *is* its worktree (briefs never `cd`). `--root`
+  defaults to the git toplevel of the caller's cwd; `--cwd` conflicts with
+  `--worktree`, `--from` / `--root` need it. `agents.cwd` records the pane's
+  directory for every spawn (`--cwd`, default the caller's cwd) and
+  `agents.base` the commit of a worktree; `mu agent list` shows a `cwd`
+  column and `--json` carries `cwd` / `base`. **`mu agent close`** applies one
+  rule to the worktree: dirty refuses before the pane is killed
+  (`WorktreeDirtyError`, exit 4, up to 10 files listed; `--discard`
+  overrides, lossy, no branch), clean and merged (nothing the base, the
+  root's HEAD, `origin/HEAD` or `@{upstream}` lacks) is removed, clean with
+  unmerged commits keeps `mu/<workstream>/<agent>-<sha12>` in the root repo,
+  prints its name, and is removed. `workstream teardown` uses the same rule
+  and never deletes a dirty worktree: it reports it (`failedWorktrees`) and
+  keeps its registry row. New machine-local table **`worktrees`** (path,
+  agent, workstream, root, base, last_collected_head), **not** keyed to
+  `agents`: it outlives the agent, so a reaped agent's worktree is still
+  closed by `mu agent close <name>` and a reused name can tell its own clean
+  leftover (HEAD is the base or the last collected head, no branch made)
+  from work it must not overwrite (`WorktreePathNotEmptyError`, one line).
+  The reaper (`reconcile`) only deletes the agent row; it never touches a
+  worktree or the registry. A failed spawn removes the worktree it made.
+  `vcs_workspaces` is dropped: `openDb` treats a DB that still has it as not
+  current, and `applySchema` drops it in its one transaction. The schema
+  stays v12 (additive and idempotent, no bump). `EXPECTED_TABLES` is still 15
+  (`worktrees` for `vcs_workspaces`).
+- **Spawn injects exactly six identity variables**: `MU_MANAGED_AGENT`,
+  `MU_AGENT_NAME`, `MU_WORKSTREAM`, `MU_CTL_SOCK`, `MU_DB_PATH` and
+  `MU_STATE_DIR`, the last two absolute and **always** set (the default DB
+  and state dir included), plus `SSH_AUTH_SOCK` forwarding as before. An
+  in-memory DB pins the default DB path.
+- The git layer is plain functions in `src/vcs/git.ts` (the one-implementation
+  `VcsBackend` interface, `detectBackend` and `WorkspaceVcsRequiredError` are
+  gone); `src/worktree.ts` holds creation, the registry and the close rule.
+  `TeardownResult` and `WorkstreamSummary` count worktrees
+  (`freedWorktrees`, `alreadyGoneWorktrees`, `keptBranches`,
+  `failedWorktrees`, `worktreeCount`); `mu state` no longer prints a
+  Workspaces section (`workspaces` is gone from its JSON); `mu doctor`'s
+  `ws-rows` / `ws-empty` rows and `--disk` read the registry and
+  `<state>/worktrees/`. The `mu task close` commit hint is `git -C <path> add
+  -A && git -C <path> commit -m ...`; `mu task wait`'s inspect hint names the
+  worktree and the same upstream-ref set.
+
 - **Identity is `$MU_AGENT_NAME` only.** `resolveWorkerIdentity` no longer
   falls back to the pane title; nothing reads or writes pane titles, so a
   pane adopted without the env var resolves to `$USER` / `orchestrator`.
@@ -150,6 +195,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Removed
 
+- **`mu workspace` and the workspace flags.** The `mu workspace` namespace
+  (`list`, `path`, `free`) is gone: `list` is `mu agent list` (cwd column),
+  `path` is `mu agent list --json` `.cwd`, `free` is `mu agent close
+  --discard`. `mu agent spawn --workspace`, `--workspace-from` and
+  `--workspace-project-root` are replaced by `--worktree`, `--from`,
+  `--root`; `mu agent close --discard-workspace` is `--discard`. Removed from
+  the SDK and `src/index.ts`: `createWorkspace`, `freeWorkspace`,
+  `getWorkspaceForAgent`, `listWorkspaces`, `workspacePath`,
+  `Workspace{Exists,NotFound,PathNotEmpty,Preserved,OwnerBusy,VcsRequired}Error`,
+  `HomeDirAsProjectRootError`, `VcsBackend`, `detectBackend`, `gitBackend`;
+  the `workspace.create|free|refresh` log intents; `src/workspace.ts`,
+  `src/workspace/`, `src/cli/workspace.ts`, `src/vcs.ts`,
+  `src/vcs/{types,index,helpers}.ts`. `free --commit` (auto-commit before
+  free) has no replacement: commit in the worktree, or close and keep the
+  branch.
 - **Pane titles, pane borders and mux session discovery.** Gone from the
   backends and the SDK: `setPaneTitle`, `lockPaneTitle`, `getPaneTitle`,
   `currentAgentName`, `currentPaneTitle`, `parseAgentNameFromTitle`,

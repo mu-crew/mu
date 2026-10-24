@@ -1,4 +1,4 @@
-// Bare verb-namespace invocations (`mu workspace`, `mu task`, ...)
+// Bare verb-namespace invocations (`mu agent`, `mu task`, ...)
 // previously printed nothing and exited 0 — looked like the verb
 // succeeded silently. They now print the namespace's --help instead,
 // which is what commander does by default when no `.action()` is
@@ -35,7 +35,7 @@ describe("bare verb-namespace prints --help instead of exiting silently", () => 
 
   // Every subcommand group that exists today. Adding/removing
   // namespaces requires updating this list.
-  const namespaces = ["workspace", "task", "agent", "workstream"];
+  const namespaces = ["task", "agent", "workstream"];
 
   for (const ns of namespaces) {
     it(`\`mu ${ns}\` prints the namespace help block`, async () => {

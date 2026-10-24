@@ -47,8 +47,6 @@ import {
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
-  WorkspaceOwnerBusyError,
-  WorkspacePreservedError,
 } from "../agents.js";
 import {
   type Db,
@@ -110,18 +108,16 @@ import {
   TaskParkStateError,
   TaskTitleSlugEmptyError,
 } from "../tasks.js";
-import { WorkspaceVcsRequiredError } from "../vcs.js";
-import {
-  HomeDirAsProjectRootError,
-  WorkspaceExistsError,
-  WorkspaceNotFoundError,
-  WorkspacePathNotEmptyError,
-} from "../workspace.js";
 import {
   WorkstreamExistsError,
   WorkstreamNameInvalidError,
   WorkstreamNameReservedError,
 } from "../workstream.js";
+import {
+  WorktreeDirtyError,
+  WorktreePathNotEmptyError,
+  WorktreeVcsRequiredError,
+} from "../worktree.js";
 
 export class UsageError extends Error {
   override readonly name = "UsageError";
@@ -233,7 +229,7 @@ export class NameAmbiguousError extends Error {
   constructor(
     public readonly entityName: string,
     public readonly candidates: readonly string[],
-    public readonly kind: "task" | "agent" | "workspace",
+    public readonly kind: "task" | "agent",
   ) {
     super(
       `${kind} name "${entityName}" exists in ${candidates.length} workstreams (${candidates.join(", ")}); pass -w <workstream> or use the qualified form <workstream>/${entityName}`,
@@ -291,8 +287,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   if (
     err instanceof AgentNotFoundError ||
     err instanceof TaskNotFoundError ||
-    err instanceof WorkstreamNotFoundError ||
-    err instanceof WorkspaceNotFoundError
+    err instanceof WorkstreamNotFoundError
   ) {
     // WorkstreamNotFoundError originates inside resolveWorkstreamId
     // (src/db.ts) — it's the canonical resolve-time miss for the
@@ -319,15 +314,12 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof InvalidSubstateError ||
     err instanceof TaskNotInWorkstreamError ||
     err instanceof AgentNotInWorkstreamError ||
-    err instanceof WorkspaceOwnerBusyError ||
     err instanceof AgentSendUnsupportedError ||
     err instanceof CycleError ||
     err instanceof CrossWorkstreamEdgeError ||
-    err instanceof WorkspaceExistsError ||
-    err instanceof WorkspacePathNotEmptyError ||
-    err instanceof WorkspacePreservedError ||
-    err instanceof HomeDirAsProjectRootError ||
-    err instanceof WorkspaceVcsRequiredError ||
+    err instanceof WorktreeDirtyError ||
+    err instanceof WorktreePathNotEmptyError ||
+    err instanceof WorktreeVcsRequiredError ||
     err instanceof ClaimerNotRegisteredError ||
     err instanceof SchemaTooOldError ||
     err instanceof SchemaTooNewError ||
