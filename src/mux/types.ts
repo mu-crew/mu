@@ -19,7 +19,7 @@
 // index that dispatches. See docs/VOCABULARY.md § "mux backend".
 
 import type { HasNextSteps, NextStep } from "../output.js";
-import { shellQuote } from "../shell-quote.js";
+import { shellWord } from "../shell-quote.js";
 
 /** The multiplexers mu can drive. */
 export type MuxBackendName = "herdr" | "tmux";
@@ -82,7 +82,7 @@ export interface SpawnAgentPaneOptions {
    *   "env"      — a `MU_<UPPER_CLI>_COMMAND` override.
    *   "explicit" — an explicit `--command "…"`.
    */
-  commandSource: "cli-key" | "env" | "explicit";
+  commandSource: CommandSource;
   /** Initial working directory for the pane. */
   cwd?: string;
   /** Identity and state env for the pane (tmux `-e`, herdr `--env`). */
@@ -108,6 +108,9 @@ export interface AttachTarget {
 }
 
 /** One argv the caller may execute to hand the terminal to the mux. */
+/** Where a spawn's command came from: the cli key itself, `MU_<CLI>_COMMAND`, or `--command`. */
+export type CommandSource = "cli-key" | "env" | "explicit";
+
 export interface MuxCommand {
   command: string;
   args: readonly string[];
@@ -159,8 +162,6 @@ export interface CaptureOptions {
 
 // ─── Attach line ───────────────────────────────────────────────────────
 
-const PLAIN_TOKEN = /^[\w@%+=:,./-]+$/;
-
 /**
  * One copy-pasteable shell line for `steps`, joined with `&&` so a
  * failed required step stops everything after it. An `optional` step is
@@ -171,9 +172,7 @@ const PLAIN_TOKEN = /^[\w@%+=:,./-]+$/;
 export function attachShellLine(steps: readonly MuxCommand[]): string {
   return steps
     .map((step) => {
-      const words = [step.command, ...step.args]
-        .map((t) => (PLAIN_TOKEN.test(t) ? t : shellQuote(t)))
-        .join(" ");
+      const words = [step.command, ...step.args].map(shellWord).join(" ");
       return step.optional === true ? `{ ${words} || true; }` : words;
     })
     .join(" && ");
