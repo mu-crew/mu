@@ -775,7 +775,14 @@ export function registerDelegate(
     const task = typeof r?.task === "string" ? r.task.trim() : "";
     if (!task) throw new Error("mu_delegate: record.task must name a task");
     const ws = typeof r?.workstream === "string" ? r.workstream.trim() : "";
-    // Without a workstream, mu resolves it as any verb does (<ws>/<task>, $MU_SESSION, tmux).
+    // Scope is explicit: <ws>/<task> or record.workstream. mu has no ambient
+    // default, so refuse here, before anything spawns, rather than let `task
+    // show` guess or fail after the fact.
+    if (!ws && !task.includes("/")) {
+      throw new Error(
+        `mu_delegate: record.task ${task} needs a workstream: pass record.task as <workstream>/${task}, or set record.workstream. Nothing spawned.`,
+      );
+    }
     const shown = await mu(["task", "show", task, ...(ws ? ["-w", ws] : []), "--json"]);
     const out = json(shown);
     const t = out?.task as { name?: unknown; workstreamName?: unknown } | undefined;
@@ -1081,7 +1088,7 @@ export function registerDelegate(
         record: {
           type: "object",
           description:
-            "When the answer arrives, write its VERDICT/EVIDENCE onto this task as a note (for a check that judges a mu task; omit with no task); task may be <ws>/<task>.",
+            "When the answer arrives, write its VERDICT/EVIDENCE onto this task as a note (for a check that judges a mu task; omit with no task); name the workstream: task as <ws>/<task>, or set workstream.",
           properties: {
             task: { type: "string" },
             workstream: { type: "string" },

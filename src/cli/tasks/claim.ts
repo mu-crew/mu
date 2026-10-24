@@ -220,8 +220,8 @@ function isUndelivered(ref: TaskWaitTaskState): boolean {
 /** Resolve a single `<ws>/<name>` or bare id into a TaskWaitRef.
  *  - Qualified refs use their prefix; -w is NOT consulted (so a
  *    cross-workstream wait can name two different workstreams).
- *  - Bare refs fall back to the standard chain via resolveWorkstream.
- *  - When neither qualifier nor -w/MU_SESSION/tmux session resolves a
+ *  - Bare refs use -w or the injected scope via resolveWorkstream.
+ *  - When neither qualifier nor -w / the injected worker scope gives a
  *    workstream for a bare ref, surface the canonical UsageError from
  *    resolveWorkstream so the operator gets the same diagnostic as
  *    every other task verb.
@@ -240,10 +240,9 @@ async function resolveWaitRef(
   if (parsed.workstream !== undefined) {
     workstreamName = parsed.workstream;
   } else {
-    // Bare ref — use the standard chain (--workstream / $MU_SESSION /
-    // tmux session). resolveWorkstream throws UsageError if none of
-    // those resolve, which is the same error operators see today on
-    // every other task verb.
+    // Bare ref — -w or the injected worker scope. resolveWorkstream
+    // throws the one-line UsageError if neither is present: the same
+    // error every other task verb gives.
     workstreamName = await resolveWorkstream(fallbackWs);
   }
   if (getTask(db, parsed.name, workstreamName) === undefined) {

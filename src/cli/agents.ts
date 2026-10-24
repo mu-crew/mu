@@ -799,7 +799,7 @@ export async function cmdAgentWait(
   const wantFirstShape = opts.first === true;
 
   // Resolve each ref — cross-workstream-aware via `<ws>/<name>`; bare
-  // names resolve through the standard -w / $MU_SESSION / tmux chain.
+  // names resolve through -w or the injected worker scope.
   const refs = await Promise.all(
     rawNames.map(async (raw) => {
       const local: { workstream?: string } = { workstream: opts.workstream };
@@ -1349,7 +1349,7 @@ export function wireSelfCommands(program: Command): void {
   const me = program
     .command("me")
     .description(
-      "Identify the agent running this process (via $TMUX_PANE) plus its currently-owned tasks (excludes CLOSED by default). Subcommands: `mu me tasks` for just the owned-tasks table; `mu me next [-n K]` for the top-K ready tasks in this agent's workstream.",
+      "Identify the agent running this process (via the injected $MU_AGENT_NAME/$MU_WORKSTREAM; a managed tmux pane is the fallback) plus its currently-owned tasks (excludes CLOSED by default). Subcommands: `mu me tasks` for just the owned-tasks table; `mu me next [-n K]` for the top-K ready tasks in this agent's workstream.",
     )
     .option("--include-closed", "include CLOSED tasks in the owned-tasks list")
     .option(...JSON_OPT)

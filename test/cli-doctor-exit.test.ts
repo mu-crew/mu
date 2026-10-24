@@ -22,7 +22,9 @@ import { runCli } from "./_runCli.js";
 
 const STATE_KEY = "MU_STATE_DIR";
 const SYNC_KEY = "MU_SYNC_DIR";
-const SESSION_KEY = "MU_SESSION";
+// A managed worker's injected scope is the only thing that gives doctor a
+// per-workstream `state` block; $MU_SESSION is ignored.
+const SCOPE_KEYS = ["MU_SESSION", "MU_MANAGED_AGENT", "MU_WORKSTREAM"] as const;
 
 let tempDir: string;
 let dbPath: string;
@@ -49,7 +51,7 @@ beforeEach(() => {
 
 afterEach(() => {
   mux.restore();
-  for (const key of [STATE_KEY, SYNC_KEY, SESSION_KEY]) delete process.env[key];
+  for (const key of [STATE_KEY, SYNC_KEY, ...SCOPE_KEYS]) delete process.env[key];
   rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -89,7 +91,8 @@ describe("mu doctor exit code", () => {
 
 describe("mu doctor state counts", () => {
   it("ops rows counts the workstream's task ops, not only its own row", async () => {
-    process.env[SESSION_KEY] = "demo";
+    process.env.MU_MANAGED_AGENT = "1";
+    process.env.MU_WORKSTREAM = "demo";
     const db = openDb({ path: dbPath });
     const expected = (
       db.prepare("SELECT COUNT(*) AS n FROM ops WHERE key = 'demo' OR key LIKE 'demo/%'").get() as {
@@ -108,6 +111,23 @@ describe("mu doctor state counts", () => {
 
     const human = await runCli(["doctor"], dbPath);
     expect(human.stdout).toMatch(new RegExp(`ops rows\\s+: ${expected}\\b`));
+  });
+});
+
+describe("mu doctor ignores the session", () => {
+  it("$MU_SESSION does not select a workstream: no state block", async () => {
+    process.env.MU_SESSION = "demo";
+    const r = await runCli(["doctor", "--json"], dbPath);
+    expect(r.exitCode, r.stderr).toBeNull();
+    const parsed = JSON.parse(r.stdout.trim()) as {
+      state: unknown;
+      workstream: { currentName: string | null };
+      environment: Record<string, unknown>;
+    };
+    expect(parsed.state).toBeNull();
+    expect(parsed.workstream.currentName).toBeNull();
+    expect(parsed.environment).not.toHaveProperty("MU_SESSION");
+    expect((await runCli(["doctor"], dbPath)).stdout).not.toContain("$MU_SESSION");
   });
 });
 

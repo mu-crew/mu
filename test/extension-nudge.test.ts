@@ -92,7 +92,6 @@ describe("dispatchedWorkstreams", () => {
     ["mu agent spawn worker-1 --worktree -w=ignored --workstream auth", ["auth"]],
     ["mu task claim build -w auth --for worker-1", ["auth"]],
     ["mu task claim auth/build --for worker-1", ["auth"]],
-    ["mu agent send worker-1 --fresh 'go'", [""]],
     ["cd x && mu agent send a -w one 'p' && mu agent send b -w two 'q'", ["one", "two"]],
     ["node dist/cli.js agent send a -w x", undefined],
     ["/usr/bin/mu agent send a -w x 'p'", ["x"]],
@@ -204,24 +203,22 @@ describe("registerNudge", () => {
     ]);
   });
 
-  it("the default workstream and the same one named explicitly are counted once", async () => {
-    // Without -w the CLI resolves the default (here "small") and reports it.
-    const table: Table = { small: ["a1", "a2"], two: ["only"] };
-    const f = fakePi();
-    const run = vi.fn(async (args: readonly string[]) =>
-      listAnswer(table, args.includes("-w") ? args : ["task", "-w", "small"]),
-    );
-    registerNudge(f.pi, run, SKILL);
-    await f.emit(
-      "tool_call",
-      bash("mu agent send w1 go && mu agent send w2 -w small go && mu agent send w3 -w two go"),
-    );
-    const r = (await f.emit("agent_before_settle", { outcome: "completed" })) as {
-      entries: { content: string }[];
-    };
-    const text = r.entries[0]?.content ?? "";
-    expect(text).toContain("3 task(s) IN_PROGRESS");
-    expect(text).toContain("mu task wait small/a1 small/a2 two/only --first");
+  it("a dispatch with no -w names no workstream: it arms nothing and never reads without -w", async () => {
+    const { emit, run } = setup(card("small", ["a1"]));
+    await emit("tool_call", bash("mu agent send w1 go"));
+    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("a managed pi's no-`-w` dispatch is its injected workstream, counted once with an explicit one", () => {
+    const env = { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "small" };
+    const cmd = "mu agent send w1 go && mu agent send w2 -w small go && mu agent send w3 -w two go";
+    expect(dispatchedWorkstreams(cmd, env)).toEqual(["small", "two"]);
+    expect(dispatchedWorkstreams("mu agent send w1 go", {})).toBeUndefined();
+    expect(
+      dispatchedWorkstreams("mu agent send w1 go", { MU_WORKSTREAM: "small" }),
+    ).toBeUndefined();
+    expect(dispatchedWorkstreams("mu task claim t1 --for w1", env)).toEqual(["small"]);
   });
 
   it("asks for newest-first so the capped wait hint keeps the latest tasks", async () => {

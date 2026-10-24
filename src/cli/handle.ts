@@ -225,7 +225,7 @@ function isUsageClassError(err: unknown): boolean {
 
 /**
  * Raised when a bare entity name is used at the CLI but the resolution
- * context (--workstream / $MU_SESSION / current tmux session) is empty
+ * context (no --workstream and no injected worker scope) is empty
  * AND the same name lives in two or more workstreams. Exit 4 (conflict)
  * via classifyError. The errorNextSteps lists every candidate as a
  * runnable qualified-form invocation — a one-paste fix.

@@ -245,15 +245,11 @@ export class NoMultiplexerError extends Error implements HasNextSteps {
   override readonly name = "NoMultiplexerError";
   constructor(public readonly tried: readonly string[]) {
     super(
-      `no supported multiplexer found (tried: ${tried.join(", ")}). mu drives agents through tmux panes.`,
+      `no supported multiplexer found (tried: ${tried.join(", ")}); install tmux ≥ 3.0 (task, DAG and sql verbs work without one)`,
     );
   }
   errorNextSteps(): NextStep[] {
-    return [
-      { intent: "Run health check", command: "mu doctor" },
-      { intent: "Verify tmux is installed", command: "tmux -V" },
-      { intent: "Force a specific backend", command: "MU_MUX=tmux mu <verb>" },
-    ];
+    return [{ intent: "Check the install", command: "tmux -V" }];
   }
 }
 

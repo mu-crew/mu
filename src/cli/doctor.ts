@@ -1,9 +1,9 @@
 // mu — `mu doctor` diagnostic verb (human + --json forms).
 //
 // Reports:
-//   - environment: the active mux + its ambient env facts, $MU_SESSION
+//   - environment: the active mux + its ambient env facts
 //   - db: schema integrity, schema_version, journal_mode, foreign_keys
-//   - workstream: auto-detected current workstream
+//   - workstream: the injected worker scope, if any (never read from the session)
 //   - state: per-workstream agent / task / log counts + reconcile drift
 //   - disk: state-dir vs DB reconciliation (both directions) + residue
 //
@@ -15,7 +15,7 @@
 import { dirname } from "node:path";
 import { listAgents, listLiveAgents } from "../agents.js";
 import { captureDoctorCheck } from "../capture.js";
-import { emitJson, resolveWorkstream } from "../cli.js";
+import { emitJson, injectedWorkstream } from "../cli.js";
 import { planCompact } from "../compact.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "../db.js";
 import { checkDiskRecon, formatBytes, measureWorktreeUsage } from "../disk-recon.js";
@@ -48,7 +48,7 @@ import {
   type FleetHazard,
   HazardFailError,
 } from "../fleet-hazards.js";
-import { activeMux, type MuxHealth } from "../mux.js";
+import { activeMux, type MuxHealth, NoMultiplexerError } from "../mux.js";
 import { pc } from "../output.js";
 import { type EdgeCycle, findEdgeCycles } from "../tasks/edges.js";
 import { summarizeWorkstream } from "../workstream.js";
@@ -89,6 +89,15 @@ async function muxHealth(): Promise<MuxHealth | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/** No multiplexer works here (none detected, or the forced one does not
+ *  answer): doctor prints its whole report first, then fails with the
+ *  one-line install advice, exit 5. A binary with no client attached is
+ *  NOT this case: detached servers start on demand. */
+function noMuxFailure(health: MuxHealth | undefined): NoMultiplexerError | null {
+  if (health?.ok === true) return null;
+  return new NoMultiplexerError(health === undefined ? ["tmux", "herdr"] : [health.name]);
 }
 
 /** Render a hazard list as doctor rows plus a remediation block per
@@ -137,9 +146,6 @@ export async function cmdDoctor(
       console.log(`  ${pad(fact.name)}: ${fact.value ? pc.green(fact.value) : pc.dim("not set")}`);
     }
   }
-  console.log(
-    `  ${pad("$MU_SESSION")}: ${process.env.MU_SESSION ? pc.green(process.env.MU_SESSION) : pc.dim("not set")}`,
-  );
   const muExt = ctlExtensionDoctorCheck();
   printCheck("agent state", agentStateCheck(health, muExt));
   printCheck("mu ext", muExt);
@@ -211,15 +217,15 @@ export async function cmdDoctor(
     );
   }
 
-  // ─ Workstream auto-detect
+  // ─ Workstream (doctor is machine-wide; per-workstream stats only for a
+  // managed worker's injected scope; nothing is read from the session)
   console.log(pc.bold("\nworkstream"));
-  let currentWorkstream: string | null = null;
-  try {
-    currentWorkstream = await resolveWorkstream();
+  const currentWorkstream: string | null = injectedWorkstream() ?? null;
+  if (currentWorkstream !== null) {
     console.log(`  current          : ${pc.green(currentWorkstream)}`);
-  } catch {
+  } else {
     console.log(
-      `  current          : ${pc.yellow("none")} (set $MU_SESSION, cd into an mu-<name> mux session, or pass -w to a subcommand)`,
+      `  current          : ${pc.dim("none")} (doctor reads the whole machine; pass nothing, or use mu state -w <name>)`,
     );
   }
 
@@ -419,6 +425,8 @@ export async function cmdDoctor(
   // whole report is printed first.
   const failed = failedHazardNames([...fleet, ...disk]);
   if (failed.length > 0) throw new HazardFailError(failed);
+  const noMux = noMuxFailure(health);
+  if (noMux !== null) throw noMux;
 }
 
 /** Names of the `fail`-severity rows, the ones that make doctor exit 5. */
@@ -470,7 +478,6 @@ export async function cmdDoctorJson(
     mux: health ?? { name: null, ok: false, version: null },
     tmux: { ok: health?.ok ?? false, version: health?.version ?? null },
     ...Object.fromEntries(health?.env.map((f) => [f.name.replace(/^\$/, ""), f.value]) ?? []),
-    MU_SESSION: process.env.MU_SESSION ?? null,
     agentState: agentStateCheck(health, muExt),
     ctl: { extension: muExt, sockets: ctlSockets.check, agents: ctlSockets.agents },
     skill: skillDoctorCheck(),
@@ -522,12 +529,7 @@ export async function cmdDoctorJson(
   }
 
   // workstream
-  let currentWorkstream: string | null = null;
-  try {
-    currentWorkstream = await resolveWorkstream();
-  } catch {
-    currentWorkstream = null;
-  }
+  const currentWorkstream: string | null = injectedWorkstream() ?? null;
 
   // per-workstream stats (only when resolvable)
   let workstreamStats: Record<string, unknown> | null = null;
@@ -652,6 +654,8 @@ export async function cmdDoctorJson(
   if (driftFailure !== null) throw driftFailure;
   const failed = failedHazardNames([...hazards, ...disk]);
   if (failed.length > 0) throw new HazardFailError(failed);
+  const noMux = noMuxFailure(health);
+  if (noMux !== null) throw noMux;
 }
 
 // agents/tasks counts come from summarizeWorkstream() (src/workstream.ts) —

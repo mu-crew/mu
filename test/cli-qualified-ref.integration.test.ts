@@ -107,9 +107,8 @@ describe("CLI: qualified entity refs", () => {
       effortDays: 1,
     });
     db.close();
-    // Ensure the test process can't accidentally resolve a workstream
-    // via the standard chain — we want to exercise the bare+no-context
-    // path explicitly.
+    // No ambient routing exists any more; clear the env anyway so the
+    // bare+no-context path is exercised on every host.
     savedMuSession = process.env.MU_SESSION;
     savedTmux = process.env.TMUX;
     const keys = ["MU_SESSION", "TMUX"];
@@ -189,22 +188,44 @@ describe("CLI: qualified entity refs", () => {
     expect(out).toMatch(/2 workstreams/);
   });
 
-  it("bare ref + only one match across workstreams + no -w → resolves via single match", async () => {
-    const { stdout, exitCode, error } = await runCli(
+  it("bare ref + only one match across workstreams + no -w → one-line error naming the qualified ref, routes nothing", async () => {
+    const { stdout, stderr, exitCode } = await runCli(
       ["task", "show", "only-in-a", "--json"],
       dbPath,
     );
-    expect(error).toBeUndefined();
-    expect(exitCode).toBeNull();
-    const parsed = JSON.parse(stdout.trim()) as { task: { workstreamName: string } };
-    expect(parsed.task.workstreamName).toBe("wsa");
+    expect(exitCode).toBe(2);
+    expect(stdout).toBe("");
+    expect(stderr.trim().split("\n")).toHaveLength(1);
+    expect(stderr).toMatch(/no workstream: pass -w <name>/);
+    expect(stderr).toContain("wsa/only-in-a");
   });
 
-  it("bare ref + zero matches anywhere + no -w → UsageError exit 2 (workstream required)", async () => {
+  it("bare ref + zero matches anywhere + no -w → the same one-line error (exit 2)", async () => {
     const { stderr, exitCode } = await runCli(["task", "show", "ghost"], dbPath);
     expect(exitCode).toBe(2);
-    // The standard 'workstream required' surface from resolveWorkstream.
-    expect(stderr).toMatch(/workstream required/);
+    expect(stderr).toMatch(/no workstream: pass -w <name>/);
+    expect(stderr).not.toContain("Usage:");
+  });
+
+  it("a stray MU_SESSION no longer rescues a bare ref", async () => {
+    process.env.MU_SESSION = "wsa";
+    try {
+      const { stdout, exitCode } = await runCli(["task", "show", "only-in-a", "--json"], dbPath);
+      expect(exitCode).toBe(2);
+      expect(stdout).toBe("");
+    } finally {
+      const k = "MU_SESSION";
+      delete process.env[k];
+    }
+  });
+
+  it("a blank -w is a usage error, not a single-match guess", async () => {
+    const { stdout, exitCode } = await runCli(
+      ["task", "show", "only-in-a", "-w", " ", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBe(2);
+    expect(stdout).toBe("");
   });
 
   it("qualified ref works for `mu task close` (write verb path)", async () => {

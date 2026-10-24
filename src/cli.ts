@@ -20,7 +20,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command, InvalidArgumentError } from "commander";
 
-import { AgentNotInWorkstreamError, type AgentRow, getAgentByPane } from "./agents.js";
+import { AgentNotInWorkstreamError, type AgentRow, getAgent, getAgentByPane } from "./agents.js";
 import { wireAgentCommands, wireSelfCommands } from "./cli/agents.js";
 import { wireDbCommands } from "./cli/db.js";
 import { wireDoctorCommand } from "./cli/doctor.js";
@@ -90,50 +90,92 @@ export {
 // ─── Workstream resolution ─────────────────────────────────────────────
 
 /**
- * Resolve the active workstream. Order:
- *   1. --workstream <name> flag
- *   2. $MU_SESSION env var
- *   3. $MU_WORKSTREAM, only when $MU_MANAGED_AGENT=1 (inside a
- *      mu-spawned pane, where spawn injects both). Saves the
- *      `tmux display-message` fork; the gate keeps a stale
- *      $MU_WORKSTREAM in a user shell from overriding the tmux session.
- *   4. Current tmux session name (with `mu-` prefix stripped)
- *
- * Throws UsageError if none of the above produce a name, or if the
- * explicit value is BLANK (whitespace-only). The blank check lives
- * here as well as in parseCsvFlag because the single-value `-w <name>`
- * shape never passes through the CSV helper: without it,
- * `mu task list -w ' '` resolved to the workstream named " " and
- * rendered an empty table instead of erroring
- * (bug_whitespace_status_fragment, adjacent hole).
+ * The workstream a mu-spawned worker was injected with, or undefined.
+ * Spawn sets `MU_MANAGED_AGENT=1` and `MU_WORKSTREAM` together; the gate
+ * keeps a stale `$MU_WORKSTREAM` in a user shell from routing anything.
  */
-export async function resolveWorkstream(explicit?: string): Promise<string> {
-  if (explicit !== undefined && explicit.length > 0 && explicit.trim().length === 0) {
-    throw new UsageError(
-      `-w/--workstream got a blank (whitespace-only) value ${JSON.stringify(explicit)}. Pass a workstream name, or omit the flag to use $MU_SESSION / the current tmux session.`,
-    );
-  }
-  if (explicit) return explicit;
-  if (process.env.MU_SESSION) return process.env.MU_SESSION;
-  if (process.env.MU_MANAGED_AGENT === "1" && process.env.MU_WORKSTREAM) {
-    return process.env.MU_WORKSTREAM;
-  }
-  const tmuxWorkstream = await resolveMuxSessionWorkstreamName();
-  if (tmuxWorkstream !== null) return tmuxWorkstream;
-  throw new UsageError(
-    "workstream required: pass --workstream <name>, set $MU_SESSION, or run inside an mu-<name> tmux session",
-  );
+export function injectedWorkstream(): string | undefined {
+  if (process.env.MU_MANAGED_AGENT !== "1") return undefined;
+  const ws = process.env.MU_WORKSTREAM;
+  return ws !== undefined && ws !== "" ? ws : undefined;
 }
 
-/** Like resolveWorkstream but returns null instead of throwing on miss.
- *  Used by read-permissive verbs (mu log, mu state).
- *  where 'no workstream' is a legitimate state to render. */
-export async function resolveOptionalWorkstream(): Promise<string | null> {
-  try {
-    return await resolveWorkstream(undefined);
-  } catch {
-    return null;
+/** The managed worker this process runs as (spawn-injected), or undefined. */
+export function injectedIdentity(): { name: string; workstream: string } | undefined {
+  const workstream = injectedWorkstream();
+  const name = process.env.MU_AGENT_NAME;
+  if (workstream === undefined || name === undefined || name === "") return undefined;
+  return { name, workstream };
+}
+
+/**
+ * Validate ONE workstream name from `-w`: exactly what the caller typed,
+ * or a UsageError. Empty, blank or padded values are rejected rather than
+ * trimmed, because trimming turns a quoting accident into a different,
+ * valid workstream (`-w ' auth'` would read `auth`).
+ */
+export function checkWorkstreamName(value: string, flag = "-w/--workstream"): string {
+  if (value.length > 0 && value.trim().length === 0) {
+    throw new UsageError(
+      `${flag} got a blank (whitespace-only) value ${JSON.stringify(value)}. Pass a workstream name.`,
+    );
   }
+  if (value.length === 0 || value !== value.trim()) {
+    throw new UsageError(
+      `${flag} got ${JSON.stringify(value)}: pass a bare workstream name with no surrounding whitespace.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Parse repeated / comma-separated `-w` values into names. Like
+ * parseCsvFlag, a structurally empty fragment (`"a,"`) is a comma
+ * artifact and is dropped; unlike it, a fragment is never trimmed:
+ * padded or blank ones, and a lone empty value, are usage errors.
+ */
+export function parseWorkstreamList(values: readonly string[], flag = "-w/--workstream"): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    if (value === "") checkWorkstreamName(value, flag);
+    for (const fragment of value.split(",")) {
+      if (fragment !== "") out.push(checkWorkstreamName(fragment, flag));
+    }
+  }
+  return out;
+}
+
+/**
+ * The one-line "no scope" error. The session name is only a SUGGESTION,
+ * read best-effort here on the error path; nothing ever routes by it.
+ * `extra` carries verb-specific hints (a candidate qualified ref, `--all`).
+ */
+export async function missingWorkstreamError(
+  opts: { extra?: string; orAll?: boolean } = {},
+): Promise<UsageError> {
+  const parts: string[] = [];
+  const session = await resolveMuxSessionWorkstreamName();
+  if (session !== null) parts.push(`tmux session mu-${session}: -w ${session}`);
+  if (opts.extra !== undefined) parts.push(opts.extra);
+  const tail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  return new UsageError(`no workstream: pass -w <name>${opts.orAll ? " or --all" : ""}${tail}`, {
+    showHelp: false,
+  });
+}
+
+/**
+ * Resolve the workstream a verb acts on. Scope is explicit or injected:
+ *   1. `-w <name>` (validated, never trimmed)
+ *   2. the injected `$MU_WORKSTREAM` of a managed worker (`MU_MANAGED_AGENT=1`)
+ * Anything else is a one-line UsageError. `$MU_SESSION` and the mux
+ * session name never route a verb: a silent misroute is worse than a
+ * cheap error.
+ */
+export async function resolveWorkstream(explicit?: string): Promise<string> {
+  if (explicit !== undefined) return checkWorkstreamName(explicit);
+  const injected = injectedWorkstream();
+  if (injected !== undefined) return injected;
+  throw await missingWorkstreamError();
 }
 
 // ─── Qualified entity refs (cross-workstream verb args) ────────────────
@@ -210,13 +252,13 @@ export function findEntityWorkstreams(db: Db, kind: EntityKind, name: string): s
  * Pipeline:
  *   1. Parse `<ws>/<name>` (qualified form) — sets opts.workstream
  *      from the prefix and returns the bare name.
- *   2. Resolve workstream from --workstream / $MU_SESSION / tmux
- *      session (the standard chain in resolveWorkstream).
- *   3. When no workstream resolves AND the bare name lives in ≥2
- *      workstreams: throw NameAmbiguousError listing the candidates.
- *      When it lives in exactly 1: use that workstream (still bare).
- *      When it lives in 0: rethrow the original UsageError so the
- *      operator sees the canonical 'workstream required' message.
+ *   2. Resolve the workstream: -w, else the injected worker scope
+ *      (the ladder in resolveWorkstream). An invalid -w is an error,
+ *      never a reason to guess.
+ *   3. When no scope exists and the bare name lives in ≥2 workstreams:
+ *      throw NameAmbiguousError listing the candidates. Otherwise throw
+ *      the one-line missing-scope error, naming the qualified ref when
+ *      exactly one workstream has the name. Nothing is routed by a guess.
  *
  * Returns `{ name, workstream }`. The verb then uses `name` for the
  * entity lookup and `workstream` for downstream SDK calls; opts.workstream
@@ -230,23 +272,13 @@ export async function resolveEntityRef(
   kind: EntityKind,
 ): Promise<{ name: string; workstream: string }> {
   const name = applyQualifiedRef(raw, opts);
-  try {
-    const workstream = await resolveWorkstream(opts.workstream);
-    return { name, workstream };
-  } catch (err) {
-    // Bare-name + no resolved context: try ambiguity disambiguation.
-    if (!(err instanceof UsageError)) throw err;
-    const matches = findEntityWorkstreams(db, kind, name);
-    if (matches.length >= 2) throw new NameAmbiguousError(name, matches, kind);
-    if (matches.length === 1) {
-      const only = matches[0];
-      if (only !== undefined) {
-        opts.workstream = only;
-        return { name, workstream: only };
-      }
-    }
-    throw err;
+  if (opts.workstream !== undefined || injectedWorkstream() !== undefined) {
+    return { name, workstream: await resolveWorkstream(opts.workstream) };
   }
+  const matches = findEntityWorkstreams(db, kind, name);
+  if (matches.length >= 2) throw new NameAmbiguousError(name, matches, kind);
+  const only = matches[0];
+  throw await missingWorkstreamError(only !== undefined ? { extra: `${only}/${name}?` } : {});
 }
 
 /** Standard --status validation: case-insensitive, returns the
@@ -317,45 +349,50 @@ export function parseSubstatesOption(
   return [...out];
 }
 
-// ─── Self-resolution (current pane → AgentRow) ─────────────────────────
+// ─── Self-resolution (injected identity → AgentRow) ────────────────────
 
 /**
- * Resolve "the agent running this process" by reading `$TMUX_PANE` and
- * looking up the matching agent row. Returns null when `$TMUX_PANE` is
- * unset or the pane isn't a managed agent — the lenient variant used
- * by verbs that have a sensible fallback (the calling agent name when
- * resolvable, else a generic 'user' / 'orchestrator'). `resolveSelf`
- * wraps this with the strict throwing variant for verbs that genuinely
- * require a managed-pane caller.
+ * Resolve "the agent running this process". A mu-spawned worker carries
+ * its identity in the env (`MU_AGENT_NAME` + `MU_WORKSTREAM`, injected at
+ * spawn), and that is authoritative: the row is looked up by name in that
+ * workstream, never guessed from a pane. A managed identity with no row
+ * is an error. Only a process with no injected identity falls back to
+ * `$TMUX_PANE` (a hand-registered agent, or an adopted pane). Returns null
+ * when neither identifies a managed agent.
  */
 export function resolveSelfOptional(db: Db): AgentRow | null {
+  const injected = injectedIdentity();
+  if (injected !== undefined) {
+    const row = getAgent(db, injected.name, injected.workstream);
+    if (row === undefined) {
+      throw new UsageError(
+        `injected identity ${injected.workstream}/${injected.name} has no agent row (closed or torn down). Use \`mu agent list -w ${injected.workstream}\`.`,
+        { showHelp: false },
+      );
+    }
+    return row;
+  }
   const paneId = process.env.TMUX_PANE;
   if (!paneId) return null;
   return getAgentByPane(db, paneId) ?? null;
 }
 
 /**
- * Strict variant of `resolveSelfOptional`: throws UsageError with a
- * helpful message if `$TMUX_PANE` is unset or the pane isn't a
- * managed agent. Used by `mu me` / `mu me tasks` / `mu me next` to give
- * an LLM-in-a-pane zero-config self-identification. Lives in cli.ts
- * so cli/agents.ts and cli/tasks.ts can both import it without a
- * lateral cli/* dependency.
+ * Strict variant of `resolveSelfOptional`: throws UsageError when the
+ * process is neither a managed worker nor in a managed pane. Used by
+ * `mu me` / `mu me tasks` / `mu me next`. Lives in cli.ts so cli/agents.ts
+ * and cli/tasks.ts can both import it without a lateral cli/* dependency.
  */
 export function resolveSelf(db: Db): AgentRow {
-  const paneId = process.env.TMUX_PANE;
-  if (!paneId) {
-    throw new UsageError(
-      "$TMUX_PANE is not set; this verb only works inside an mu-spawned tmux pane (or any tmux pane, but the pane has to be a managed agent)",
-    );
-  }
   const agent = resolveSelfOptional(db);
-  if (!agent) {
-    throw new UsageError(
-      `pane ${paneId} is not a managed agent. Use \`mu agent list\` to see managed panes, or \`mu agent spawn\` to register a new one.`,
-    );
-  }
-  return agent;
+  if (agent) return agent;
+  const paneId = process.env.TMUX_PANE;
+  throw new UsageError(
+    paneId
+      ? `pane ${paneId} is not a managed agent. Use \`mu agent list\` to see managed panes, or \`mu agent spawn\` to register a new one.`
+      : "not a managed agent: this verb needs the identity spawn injects (MU_AGENT_NAME, MU_WORKSTREAM) or a managed tmux pane",
+    { showHelp: false },
+  );
 }
 
 // ─── Shared SDK-CLI bridge helpers (used by cli/*.ts) ──────────────
@@ -582,7 +619,7 @@ export const parseLines = parseNonNegativeInt;
 // cross-command leakage.
 export const WORKSTREAM_OPT = [
   "-w, --workstream <name>",
-  "workstream (defaults to $MU_SESSION or the current tmux session minus mu- prefix)",
+  "workstream (required; a qualified <ws>/<name> ref carries its own; a spawned worker defaults to its own)",
 ] as const;
 
 // Reusable --json flag for every read verb. Output shape is documented
@@ -677,7 +714,7 @@ export function normalizeInheritedWorkstream(
   value: string | readonly string[] | undefined,
 ): string | undefined {
   if (value === undefined) return undefined;
-  const names = parseCsvFlag(typeof value === "string" ? [value] : value, "-w/--workstream");
+  const names = parseWorkstreamList(typeof value === "string" ? [value] : value);
   if (names.length === 0) return undefined;
   if (names.length > 1) {
     throw new UsageError(
@@ -764,7 +801,7 @@ export function buildProgram(): Command {
     // ["ws","task","list"] and printed root help with exit 0.
     .option(
       "-w, --workstream <names>",
-      "workstream(s) to render (repeat or comma-separate; or both; defaults to $MU_SESSION or current tmux session). Before a verb, it is that verb's -w",
+      "workstream(s) to render (repeat or comma-separate; or both). Before a verb, it is that verb's -w",
       (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
     )
     .option(...JSON_OPT)
@@ -818,7 +855,13 @@ function forwardRootWorkstream(root: Command, leaf: Command): void {
     leaf.setOptionValueWithSource("workstream", names, "cli");
     return;
   }
-  const parsed = parseCsvFlag(names, "-w/--workstream");
+  let parsed: string[];
+  try {
+    parsed = parseWorkstreamList(names);
+  } catch (err) {
+    usage(`error: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
   if (parsed.length > 1) {
     usage(
       `error: -w/--workstream takes a single workstream here (got ${parsed.length}: ${parsed.join(", ")})`,

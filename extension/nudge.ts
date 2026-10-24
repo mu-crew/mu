@@ -113,10 +113,16 @@ function muArgs(words: string[]): string[] | undefined {
 /**
  * The workstreams a bash command dispatches mu work into, or undefined
  * when it dispatches nothing. Dispatch = `mu agent send|spawn`, or
- * `mu task claim <id> --for` (parsed by claimOf). `""` stands for the default
- * workstream (resolved by mu itself: $MU_SESSION, then tmux).
+ * `mu task claim <id> --for` (parsed by claimOf). A dispatch with no `-w`
+ * and no qualified ref names no workstream, so mu refuses it (nothing was
+ * dispatched): it counts only when `env` carries a managed worker's
+ * injected workstream.
  */
-export function dispatchedWorkstreams(command: string): string[] | undefined {
+export function dispatchedWorkstreams(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] | undefined {
+  const injected = env.MU_MANAGED_AGENT === "1" ? (env.MU_WORKSTREAM ?? "") : "";
   const found = new Set<string>();
   // One mu invocation per shell segment.
   for (const words of shellSegments(command)) {
@@ -124,7 +130,8 @@ export function dispatchedWorkstreams(command: string): string[] | undefined {
     if (args === undefined) continue;
     const claim = claimOf(args);
     if (claim !== undefined) {
-      if (claim.ws !== "scratch") found.add(claim.ws);
+      const ws = claim.ws || injected;
+      if (ws !== "" && ws !== "scratch") found.add(ws);
       continue;
     }
     if (args[0] !== "agent" || (args[1] !== "send" && args[1] !== "spawn")) continue;
@@ -134,7 +141,8 @@ export function dispatchedWorkstreams(command: string): string[] | undefined {
       if (w === "-w" || w === "--workstream") ws = args[k + 1] ?? "";
       else if (w.startsWith("--workstream=")) ws = w.slice("--workstream=".length);
     }
-    if (ws !== "scratch") found.add(ws);
+    ws ||= injected;
+    if (ws !== "" && ws !== "scratch") found.add(ws);
   }
   return found.size > 0 ? [...found] : undefined;
 }
@@ -290,7 +298,7 @@ type ListJson = { items?: { name?: string; workstreamName?: string }[] };
  * panes and builds orphans; this read needs none of it.
  * `task list` does not reap dead owners, so a task a ghost agent still
  * owns shows until the next `mu state` or `mu task wait` reaps it.)
- * A workstream named "" is the default one: no `-w`.
+ * Every workstream is named: mu has no ambient default.
  */
 async function inProgress(run: MuRunner, workstreams: string[]): Promise<string[] | undefined> {
   const results = await Promise.all(
@@ -303,7 +311,8 @@ async function inProgress(run: MuRunner, workstreams: string[]): Promise<string[
         "--json",
         "--sort",
         "recency",
-        ...(w ? ["-w", w] : []),
+        "-w",
+        w,
       ]);
       if (r.code !== 0) return undefined;
       try {
@@ -315,8 +324,7 @@ async function inProgress(run: MuRunner, workstreams: string[]): Promise<string[
     }),
   );
   if (results.some((r) => r === undefined)) return undefined;
-  // The default workstream ("") and an explicit name can be the same one:
-  // dedupe by qualified ref, keeping first (most recent) position.
+  // Dedupe by qualified ref, keeping first (most recent) position.
   return [...new Set(results.flatMap((r) => r ?? []))];
 }
 
@@ -467,7 +475,7 @@ export function registerNudge(
       return;
     }
     const text = nudgeText(rule, refs);
-    const logWs = [...armed].find((w) => w !== "");
+    const logWs = [...armed][0];
     breadcrumb(run, [
       "log",
       ...(logWs ? ["-w", logWs] : []),

@@ -176,6 +176,13 @@ describe("normalizeInheritedWorkstream", () => {
     expect(() => normalizeInheritedWorkstream(["  "])).toThrow(/blank \(whitespace-only\)/);
   });
 
+  it("padded names are rejected, never trimmed into another workstream", () => {
+    expect(() => normalizeInheritedWorkstream(" auth")).toThrow(/no surrounding whitespace/);
+    expect(() => normalizeInheritedWorkstream(["auth "])).toThrow(/no surrounding whitespace/);
+    expect(() => normalizeInheritedWorkstream("auth, build")).toThrow(/no surrounding whitespace/);
+    expect(() => normalizeInheritedWorkstream("")).toThrow(/-w\/--workstream/);
+  });
+
   it("CSV string → single name when only one survives", () => {
     expect(normalizeInheritedWorkstream("foo,")).toBe("foo");
   });

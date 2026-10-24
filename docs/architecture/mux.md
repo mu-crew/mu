@@ -34,7 +34,7 @@ granularity, so a herdr workspace plays the mux-session role.
 ```
 
 - The first `mu agent spawn` creates the session if needed. Name it
-  with `mu workstream init <name>` or `MU_SESSION=<name>`.
+  with `mu workstream init <name>`; later verbs pass `-w <name>`.
 - `tmux attach -t mu-<workstream>` shows the whole crew (herdr:
   `herdr workspace focus <id>`). Killing the session kills the
   workstream, with no leaked panes, and the crew survives a closed

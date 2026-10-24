@@ -65,7 +65,7 @@ describe("record", () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     const refuter = [
       "Checked the claim.",
       "VERDICT: REFUTED src/x.ts:12 the guard exists",
@@ -95,7 +95,7 @@ describe("record", () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     const long = `${"a".repeat(3000)}END`;
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: long }] }));
     await settle();
@@ -113,7 +113,7 @@ describe("record", () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     const long = `VERDICT: CONFIRMED\n${"EVIDENCE: x\n".repeat(800)}`;
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: long }] }));
     await settle();
@@ -128,7 +128,7 @@ describe("record", () => {
       const mu = fakeMu();
       const p = fakePi();
       registerDelegate(p.pi, mu.run);
-      await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+      await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
       mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome, lastError: "overloaded" }] }));
       await settle();
       expect(notes(mu)).toHaveLength(1);
@@ -140,7 +140,7 @@ describe("record", () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     await tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "delegate-r" });
     expect(notes(mu)[0]?.at(-1)).toBe("REFUTER r: no verdict (cancelled)");
   });
@@ -149,7 +149,7 @@ describe("record", () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     mu.waits
       .get("delegate-r")
       ?.resolve(ok({ agents: [{ outcome: "done", lastText: " \n\t\n " }] }));
@@ -165,7 +165,7 @@ describe("record", () => {
       const p = fakePi();
       registerDelegate(p.pi, mu.run);
       await tool(p).execute("a", { task: "one" });
-      await tool(p).execute("b", { task: "two", label: "r", record: { task: "f9" } });
+      await tool(p).execute("b", { task: "two", label: "r", record: { task: "crew/f9" } });
       const c = await tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "queued-1" });
       expect(notes(mu)).toEqual([
         [
@@ -205,6 +205,27 @@ describe("record", () => {
     expect(mu.calls.some((c) => c[1] === "spawn" || c[1] === "list")).toBe(false);
   });
 
+  it("a bare record.task with no workstream is refused before anything spawns", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("t", { task: "x", record: { task: "f1" } })).rejects.toThrow(
+      /record\.task f1 needs a workstream.*crew\/f1|<workstream>\/f1/,
+    );
+    expect(mu.calls).toHaveLength(0);
+  });
+
+  it("record.workstream or a qualified task names the scope", async () => {
+    for (const record of [{ task: "f1", workstream: "audit" }, { task: "audit/f1" }]) {
+      const mu = fakeMu();
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      await tool(p).execute("t", { task: "x", label: "r", record });
+      const show = mu.calls.find((c) => c[0] === "task" && c[1] === "show");
+      expect(show?.slice(0, 3)).toEqual(["task", "show", record.task]);
+    }
+  });
+
   it("a record without a task name is refused", async () => {
     const mu = fakeMu();
     const p = fakePi();
@@ -219,7 +240,7 @@ describe("record", () => {
     });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
     await settle();
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
@@ -236,7 +257,11 @@ describe("record", () => {
       const p = fakePi();
       registerDelegate(p.pi, mu.run);
       await tool(p).execute("a", { task: "one" });
-      const q = await tool(p).execute("b", { task: "two", label: "r", record: { task: "f9" } });
+      const q = await tool(p).execute("b", {
+        task: "two",
+        label: "r",
+        record: { task: "crew/f9" },
+      });
       expect(q.content[0]?.text).toContain("queued-1");
       mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
       await settle();
@@ -260,7 +285,7 @@ describe("record", () => {
     });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
     await settle();
     expect(mu.calls.some((c) => c[1] === "close")).toBe(true);
@@ -282,7 +307,7 @@ describe("record", () => {
     });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x", label: "r", record: { task: "f1" } });
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
     await settle();
     const text = sentText(p);

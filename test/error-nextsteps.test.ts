@@ -302,7 +302,7 @@ const cases: NextStepsCase[] = [
   {
     error: new NoMultiplexerError(["tmux"]),
     label: "NoMultiplexerError",
-    expectedTokens: ["doctor", "tmux"],
+    expectedTokens: ["tmux"],
   },
 
   // src/mux/tmux.ts
