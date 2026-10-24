@@ -30,6 +30,7 @@ import {
 import type { Db, NoteKind } from "../../db.js";
 import { lastClaimActor } from "../../logs.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
+import { encodeEnvelope, okEnvelope } from "../../output-contract.js";
 import { taskRevision } from "../../revision.js";
 import {
   addNote,
@@ -46,7 +47,7 @@ import {
   type UpdateTaskOptions,
   updateTask,
 } from "../../tasks.js";
-import { noteRecord, planNotes } from "../format.js";
+import { noteRecord, planNotes, type ShownNote, stubAuthor, stubPreview } from "../format.js";
 import { readStdinText, STDIN_ARG } from "../stdin.js";
 
 /**
@@ -96,20 +97,64 @@ interface NotesPage {
   lines: string[];
 }
 
+/** The JSON record of one shown note; a stub carries a clipped author and preview, `cut` and `retrieve`. */
+function noteItem(ref: string, { note, cutBytes }: ShownNote): Record<string, unknown> {
+  const rec: Record<string, unknown> = {
+    n: note.n,
+    kind: note.kind,
+    author: cutBytes === undefined ? note.author : stubAuthor(note.author),
+    created_at: note.createdAt,
+    content: cutBytes === undefined ? note.content : stubPreview(note.content),
+  };
+  if (cutBytes !== undefined) {
+    rec.cut = cutBytes;
+    rec.retrieve = noteCommand(ref, note.n);
+  }
+  return rec;
+}
+
+const noteCommand = (ref: string, n: number): string => `mu task show ${ref} --note ${n}`;
+
 /**
  * Cap a selection into a page. `omitted` counts what the selection left out
  * before the byte cap (default view only; an explicit `--from` asked for its
  * suffix, so only the cap's cuts count). The way back is `--from <n>` for the
- * smallest `n` not shown, or `--all` when that is note 1.
+ * smallest `n` not shown, or `--all` when that is note 1. The 4 KB cap is
+ * measured on the bytes that go out (text lines, or the JSON document with
+ * its keys and `more`/`retrieve`), pinned notes set aside; `show` and `notes`
+ * differ only in the JSON key names, so each passes its own `wrap`.
  */
 function buildNotesPage(
   taskId: string,
   ws: string,
   notes: readonly TaskNoteRow[],
-  opts: { pinned: ReadonlySet<number>; total: number; fill: "newest" | "page"; explicit: boolean },
+  opts: {
+    pinned: ReadonlySet<number>;
+    total: number;
+    fill: "newest" | "page";
+    explicit: boolean;
+    json: boolean;
+    wrap: (items: Record<string, unknown>[], fields: Record<string, unknown>) => unknown;
+  },
 ): NotesPage {
   const ref = `${taskId} -w ${ws}`;
-  const plan = planNotes(notes, opts.pinned, (n) => `mu task show ${ref} --note ${n.n}`, opts.fill);
+  const nextFor = (first: number): string =>
+    first === 1 ? `mu task notes ${ref} --all` : `mu task notes ${ref} --from ${first}`;
+  const size = (ordinary: readonly ShownNote[], footer: boolean): number => {
+    // Worst case footer: every note left out, the longest `--from`.
+    const more = opts.total;
+    const next = nextFor(opts.total);
+    if (opts.json) {
+      const fields = footer ? { more, retrieve: next } : { more: 0 };
+      const items = ordinary.map((s) => noteItem(ref, s));
+      return Buffer.byteLength(encodeEnvelope(okEnvelope(opts.wrap(items, fields)))) + 1;
+    }
+    const lines = ordinary.map((s) => noteLine(ref, s));
+    if (footer) lines.push(`more=${more} next=${next}`);
+    return Buffer.byteLength(lines.join("\n")) + 1;
+  };
+  const selectionOmits = !opts.explicit && opts.total > notes.length;
+  const plan = planNotes(notes, opts.pinned, opts.fill, size, { selectionOmits });
   const shownN = new Set(plan.shown.map((s) => s.note.n));
   let firstOmitted: number | null = null;
   let more = 0;
@@ -124,42 +169,29 @@ function buildNotesPage(
     firstOmitted = plan.omitted[0] ?? null;
     more = plan.omitted.length;
   }
-  const next =
-    firstOmitted === null
-      ? null
-      : firstOmitted === 1
-        ? `mu task notes ${ref} --all`
-        : `mu task notes ${ref} --from ${firstOmitted}`;
-  const items: Record<string, unknown>[] = [];
-  const lines: string[] = [];
-  for (const { note, cutBytes } of plan.shown) {
-    const cmd = `mu task show ${ref} --note ${note.n}`;
-    lines.push(
-      cutBytes === undefined ? noteRecord(note) : noteRecord(note, { cutBytes, command: cmd }),
-    );
-    const rec: Record<string, unknown> = {
-      n: note.n,
-      kind: note.kind,
-      author: note.author,
-      created_at: note.createdAt,
-      content:
-        cutBytes === undefined ? note.content : `${[...note.content].slice(0, 120).join("")}…`,
-    };
-    if (cutBytes !== undefined) {
-      rec.cut = cutBytes;
-      rec.retrieve = cmd;
-    }
-    items.push(rec);
-  }
+  const next = firstOmitted === null ? null : nextFor(firstOmitted);
+  const items = plan.shown.map((s) => noteItem(ref, s));
+  const lines = plan.shown.map((s) => noteLine(ref, s));
   if (next !== null) lines.push(`more=${more} next=${next}`);
   return { items, more, next, lines };
 }
 
+function noteLine(ref: string, s: ShownNote): string {
+  return s.cutBytes === undefined
+    ? noteRecord(s.note)
+    : noteRecord(s.note, { cutBytes: s.cutBytes, command: noteCommand(ref, s.note.n) });
+}
+
 /** `more` and `retrieve`: the notes left out and the command that recovers them (key-prefixed in `show`). */
 function pageFields(page: NotesPage, prefix = ""): Record<string, unknown> {
-  return page.next === null
-    ? { [`${prefix}more`]: 0 }
-    : { [`${prefix}more`]: page.more, [`${prefix}retrieve`]: page.next };
+  return prefixed(
+    page.next === null ? { more: 0 } : { more: page.more, retrieve: page.next },
+    prefix,
+  );
+}
+
+function prefixed(fields: Record<string, unknown>, prefix: string): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(fields).map(([k, v]) => [`${prefix}${k}`, v]));
 }
 
 /** Split a list of edge neighbours into (still-gating, satisfied)
@@ -500,6 +532,8 @@ export async function cmdTaskShow(
     total: view?.total ?? 0,
     fill: "newest",
     explicit: false,
+    json: opts.json === true,
+    wrap: (items, fields) => ({ notes: items, ...prefixed(fields, "notes_") }),
   });
 
   // When owner IS NULL but the task is IN_PROGRESS (or recently was),
@@ -656,6 +690,14 @@ export async function cmdTaskNotes(
   if (!task) throw new TaskNotFoundError(localId, ws);
   let page: NotesPage;
   let total: number;
+  const notesWire = {
+    json: opts.json === true,
+    wrap: (items: Record<string, unknown>[], fields: Record<string, unknown>) => ({
+      items,
+      count: items.length,
+      ...fields,
+    }),
+  };
   if (opts.all === true || opts.from !== undefined) {
     const sel = selectTaskNotes(db, localId, {
       workstream: task.workstreamName,
@@ -668,6 +710,7 @@ export async function cmdTaskNotes(
       total,
       fill: "page",
       explicit: true,
+      ...notesWire,
     });
   } else if (filtered) {
     const filterOpts: { tail?: number; since?: string; sinceClaim?: boolean } = {};
@@ -681,6 +724,7 @@ export async function cmdTaskNotes(
       total,
       fill: "page",
       explicit: true,
+      ...notesWire,
     });
   } else {
     const sel = selectTaskNotes(db, localId, { workstream: task.workstreamName });
@@ -690,6 +734,7 @@ export async function cmdTaskNotes(
       total,
       fill: "newest",
       explicit: false,
+      ...notesWire,
     });
   }
   if (opts.json) {
