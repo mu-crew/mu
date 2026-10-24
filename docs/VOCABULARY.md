@@ -34,22 +34,22 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | --- | --- | --- |
 | **agent** | A named process in a pane with a row in `agents`. Identity is `$MU_AGENT_NAME`; mu never reads or writes pane titles. | "subagent", "worker" (a role) |
 | **worker** | An agent in its role as task claimer. Prefer **agent** when ambiguous. | |
-| **remote worker** | A worker running on another machine while its pane and the DB stay local. Recorded in task notes as `REMOTE: <host>:<path>` and `REMOTE_BASE: <agent>:<sha>`. | "remote agent record", "host registry" |
+| **remote worker** | A worker running on another machine while its pane and the DB stay local. Today it is recorded in task notes as `REMOTE: <host>:<path>` and `REMOTE_BASE: <agent>:<sha>`; planned agent fields replace the notes (see [Planned terms](#planned-terms-mu-next-not-shipped)). | "remote agent record", "host registry" |
 | **delivery unknown** | A send/fresh/interrupt/command request was written to a live agent's control socket but no reply arrived (`AgentSendIndeterminateError`). pi may have acted; read the pane before resending. | "refused" (the request never went out) |
 | **actor** | Whoever caused a state change (`ops.actor`); need not be a worker. | "caller", "author" (notes only) |
-| **role** | The capability flag: `full-access` or `read-only`. | "permission", "tier" |
+| **role** | Advisory label, `full-access` or `read-only`: recorded and shown, not enforced and not a security boundary. A read-only auditor simply gets no worktree. | "permission", "tier", "capability" |
 | **persistent** | An agent that stays alive across tasks. | "long-lived" (prose only) |
 | **one-shot** | An agent that exists for one task. | "ephemeral", "transient" |
 | **nudge** | The pi extension's one-shot keep-driving reminder: after a dispatch, if the orchestrator ends its turn with work IN_PROGRESS, it injects the SKILL.md rule once and continues. Logged as `--kind nudge`. | "goal", "loop" |
-| **delegate** | A scratch agent started for one task; its answer returns when its control-socket `wait` resolves. The `mu_delegate` tool does it in one call; the pane stays attachable. | "subagent", "child agent" |
-| **delegate call** | Using a delegate for one check (a refuter, judge, claim checker): one `mu_delegate` call, or `mu agent spawn -w scratch` + `send --fresh` + `wait --json` without the tool. Its verdict is recorded on the task it judged; the call itself adds no task. | "subtask" |
+| **delegate** | A scratch agent started for one check; today its answer returns as a pi follow-up when its control-socket `wait` resolves. The `mu_delegate` tool does it in one call; the pane stays attachable. Planned: the call is also a `delegate`-kind task. | "subagent", "child agent" |
+| **delegate call** | Using a delegate for one check (a refuter, judge, claim checker): one `mu_delegate` call, or `mu agent spawn -w scratch` + `send --fresh` + `wait --json` without the tool. Today its verdict is recorded on the task it judged and the call itself adds no task; planned, it is a task (see **task kind**). Admission control (`MU_DELEGATE_MAX` running, a bounded queue, refusal past it) is shipped and stays. | "subtask" |
 | **hidden subagent** | A child agent in other tools (pi-subagents, Claude Code and Codex task tools) with no pane to attach or steer. mu's counterpart is the **delegate**. | "subagent" (alone) |
 | **agent state** | `busy`, `needs_input`, `needs_permission`, or `unknown`, from the **state source**. Not persisted; see [Agent state values](#agent-state-values). | "agent status", "lifecycle state" |
 | **state source** | The **control socket** for pi agents; else herdr's `paneStatus()` or, on tmux, murmur. A silent pi socket gives `unknown` (`ctl missing`, `ctl refused`). | "scraper" |
 | **control socket** / **ctl** | The per-agent unix socket (`$MU_CTL_SOCK`) the mu pi extension serves inside pi. **ctl state** is `ok`, `missing`, or `refused`. | "rpc", "daemon" |
 | **session command** | `/new`, `/reload`, or `/compact [instructions]` sent to a pi agent. mu runs it inside pi through the ctl `command` op, never as a paste. Any other slash command to a pi agent is refused. | "slash paste" |
 | **outdated extension** | A running pi whose loaded extension is older than mu (exit 4 on a missing op). pi's `/reload` fixes it. | |
-| **lastText** | A pi run's final assistant message, returned verbatim by `wait`. mu never interprets it. | "result", "output" (alone) |
+| **lastText** | A pi run's final assistant message, returned verbatim by `wait`. Today mu never interprets it; planned, only a valid **CLOSE block** at its end is applied. | "result", "output" (alone) |
 | **ghost** | An `agents` row whose `pane_id` no longer exists. Pruned by **reconcile**. | "dead agent", "stale row" |
 | **reaper** | The part of reconcile that releases a ghost's tasks to `OPEN`. Makes `mu task wait` exit 6. | "garbage collector", "janitor" |
 | **needs attention** | An `IN_PROGRESS` task whose owner has been `needs_input` for `--stuck-after` seconds. Check with `mu agent read <owner>`. | "stuck", "stalled" (kept only in the `stuck` JSON field and exit-7 `STALL_DETECTED`) |
@@ -79,7 +79,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **claim** | Set `tasks.owner` to an agent. Atomic compare-and-set. | "assign" (prose only), "lock" |
 | **owner** | The worker in `tasks.owner`; NULL after an **anonymous claim**. Never syncs. | "claimer", "assignee" |
 | **anonymous claim** | A `--self` claim by an actor that is not a worker. `owner` stays NULL; `ops.actor` records who. | "unowned claim" |
-| **release** | Clear `tasks.owner`. | "unclaim", "unassign" |
+| **release** | Clear `tasks.owner`; an `IN_PROGRESS` task returns to `OPEN` (`--reopen` also reopens a `CLOSED` one). | "unclaim", "unassign" |
 
 ### Recipe gates
 
@@ -133,11 +133,11 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **drift** | The ops log and live tables disagree. Always a bug. | "inconsistency", "corruption" |
 | **shallow / deep check** | Drift checks in `mu doctor` and `mu doctor --deep` (full rebuild). | "fsck" |
 | **scored** | `tasks.scored`: impact/effort were given (`-i`/`-e`, `update`), not defaulted (50 / 1). `ready` order: scored by impact/effort desc, then unscored oldest first. | "prioritised" |
-| **dispatch host** | `tasks.dispatch_host` (synced): the host the task is dispatched to. | "target machine" |
+| **dispatch host** | `tasks.dispatch_host` (synced): the `machine_identity` allowed to dispatch the task; a planned `next` on another machine skips it. Not the remote **host profile** that `--host` selects. | "target machine" |
 | **local-write guard** | A persistent trigger gated on `applying = 0`: claim CAS, close needs evidence, close to `done` refuses open blockers. Ingest and import are never blocked; `mu doctor` warns about the states they accept. | "constraint", "validation" |
 | **note kind** | `task_notes.kind`: `brief`, `report`, `verdict`, `close` or `note`. Set once at insert; a local change raises. | "note type", "tag" |
 | **torn down** | `workstreams.torn_down_at` set (soft teardown). Views and reads skip it (exit 3 "is torn down"); ingest still sees the row. Teardowns an earlier mu wrote as deletes stay final and are listed from the ops log. | "archived", "deleted" |
-| **revision** | `rev=<n>`: a number a preview prints and `--if <n>` must repeat. It hashes the newest op touching the workstream plus its agents (name, pane) and worktrees, so any change since the preview makes the destructive verb refuse (exit 4). | "etag", "version" |
+| **revision** | `rev=<n>`: a number a preview prints and `--if <n>` must repeat. `workstreamRevision` hashes the newest op touching the workstream plus its agents (name, pane) and worktrees, so any change in those since the preview makes the destructive verb refuse (exit 4). It is not a fence on every field; task and agent revisions are planned. Also called **preview revision**. | "etag", "version" |
 | **portable** | Syncable: `workstreams`, `tasks`, `task_edges`, `task_notes`. The rest is **machine-local** (`src/db.ts`). | "shared", "global" |
 | **HLC** | Hybrid logical clock `(wall_ms, counter, machine_id)`; orders every op. Never regresses. | "timestamp", "version" |
 | **machine_id** | Per-state-dir uuid naming this DB's **peer** and **segment**. | "device id", "host id" |
@@ -156,17 +156,48 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **operation** | A canonical mu verb, each a thin wrapper over a typed SDK function. | "command", "action" |
 | **qualified ref** | `<workstream>/<name>`, used instead of `-w`. | "prefixed name" |
 | **DB** / **registry** | `<state-dir>/mu.db` and its tables. | "store" |
-| **TUI** | The read-only ink dashboard. The 3.x card TUI is removed in mu-next; bare `mu` prints help until the rewrite lands. | "GUI" |
-| **dashboard** | Removed with the 3.x card TUI; the mu-next rewrite is specified in `docs/mu-next/README.md`. | "home screen" |
-| **card** | A dashboard tile with a toggle digit 0-9. | "panel", "section" |
-| **popup** | A card's full-screen drill-down (`Shift+digit`). One at a time. | "modal", "dialog" |
-| **tick** | The TUI's data refresh (default 1s; `+`, `-`, `=` adjust). | "poll", "frame" |
-| **yank** | Copy the focused row's `mu` command to the clipboard (`y`). | "copy" |
-| **act-intent** | The action a yank stands for. The TUI never runs it. | "action proposal" |
-| **footer** | The bottom line showing the last yank. `c` clears it. | "status line" |
-| **toast** | A transient in-popup message. | "notification" |
-| **help overlay** | The `?` or `F1` keymap overlay. | "cheat sheet" |
-| **glanceable** / **drill-down** | The two TUI properties: cards are never exhaustive; popups are scrollable and filterable. | "compact", "detail view" |
+| **TUI** | The read-only ink dashboard. The 3.x card TUI (cards, popups, toasts, tick, help overlay) is removed; bare `mu` prints help until the planned dashboard lands. | "GUI" |
+
+### Planned terms (mu-next, not shipped)
+
+Terms for the [mu-next contract](mu-next/surface-contract.md). None
+describes shipped behaviour; each unit named there moves its rows up
+into the tables above, without the "planned" label, in the commit that
+ships the code. The kernel pieces that do ship are marked.
+
+<!-- doc-cli-drift:skip-start -->
+
+| Term | Meaning | Don't use |
+| --- | --- | --- |
+| **task kind** | `tasks.kind`: `work` (default), `delegate` or `human`. Not a **note kind** (`task_notes.kind`) and not a log **kind** (`mu log --kind`): three columns, three vocabularies. | "task type" |
+| **wave** | `tasks.wave`: a label grouping the delegate calls of one fan-out so one wait returns one verdict tally. Not a **merge batch**. | "batch" |
+| **call_id** | The durable id of one `mu_delegate` call (`delegate_calls.call_id`); a repeat of the same call is deduplicated by it. Not a **msgId**. | "request id" |
+| **attempt key** | Keys a spawn's replay record with the task: the same attempt returns the saved delivery and never a second prompt. Manual default `manual:<task id>`. | "nonce" |
+| **spawn replay** | Returning the saved `{msgId, incarnation, runs}` for a repeated spawn attempt. A **receipt** (msgId) answers "did pi accept this send"; replay answers "was this attempt already made". | "retry" |
+| **spawner** | `agents.spawner`: who spawned an agent: `<workstream>/<agent>` for a managed caller, else `pi:<PI_SESSION_ID>`. Never guessed from task ownership; null on older rows. | "parent" (alone), "owner" |
+| **wait ref** | One thing a wait watches: a task, an agent (with `--after-runs`, `--inc`) or a delegate. | "target" |
+| **wait event** | What ended a wait: `closed`, `settled`, `input`, `dead`, `stall`, `delegate`, `pane-exit`, `heartbeat` or `interrupted`, with the ref, **incarnation** and `runs`. | "result" (alone) |
+| **first / all** | A wait returns on the **first** event of any owned ref (default) or, with the all-of alias, once every ref has closed. | "any", "race" |
+| **heartbeat** | A wait's own cap (about 25 minutes): it ends with `timedOut` true and `ok:true`, never an error. | "keepalive" |
+| **embedded exit** | The process exit number repeated inside the JSON (`exit`), so a pipe that hides the status keeps the reason: 0 fired or timed out, 6 dead, 7 stall, 130 interrupted. | "status code" |
+| **wait cursor** | `wait_cursors`: per caller and ref, the last consumed incarnation and runs, so a settled run is never reported twice and a restart is not mistaken for one. Machine-local. | "offset", **watermark** (that is sync) |
+| **wait registration** | `wait_registrations`: per caller, the refs it owns and whether a wait is `armed` (work owed) or `waiting` (inside one). An optimisation and observable state, never the only test: the settle hook also reads the tasks and delegates directly. Not a **cursor**. | "subscription" |
+| **settle replay** | `agent_settles`: one row per (agent, incarnation, runs) already applied, so a **CLOSE block** takes effect once per settled run. | "dedupe table" |
+| **CLOSE block** | The last lines of a pi worker's final message: `CLOSE: task=<id> evidence="..."` then `REPORT:` and the text. Counts only at the very end and for the worker's own task; applied as report plus close in one op group. `mu task close` stays. | "completion marker" |
+| **report / verdict** | The pinned notes of a task: **report** is the closer's account (`kind=report`), **verdict** a judge's (`kind=verdict`). With the **brief** they are never truncated in the default notes view. | "result" |
+| **pinned content** | A task's brief, last report and verdicts: exempt from output caps. Ordinary notes are capped and cut with `more=N`. | "important notes" |
+| **more / cut** | `more=N`: N notes left out of a view; `cut=N`: N records dropped by a size cap. Each names the exact command that fetches the rest. | "truncated" |
+| **NextPlan** | The `next` of a result: `{mode, commands}`. `seq` is an ordered sequence, never truncated; `alt` is alternatives. Only state-advancing, executable-as-printed moves. | "suggestion" |
+| **auto** | A task authorised for the executor (`task_auto`, machine-local, **shipped**; the verb that sets it is planned) with a cli key, worktree mode and run ceiling. Ready is not permission: `next` acts only on `auto` tasks. | "autopilot" |
+| **host profile** | A machine-local template (`shell`, `exec`, `fetch`, `repo`, `max_sessions`) for one remote host, filled by mu and run by the mux or the operator; mu never connects. Selected by `--host`. Not the **dispatch host**. | "remote config" |
+| **host template** | One field of a host profile with `{env}`, `{cmd}`, `{local_sock}`, `{remote_sock}`, `{cwd}` placeholders. | "ssh command" |
+| **host channel** | One connection slot of a host (an attached pane, `--exec` or `--fetch`) counted against `max_sessions`. | "session" |
+| **collected HEAD** | A remote worktree's HEAD as last fetched home (`worktrees.last_collected_head` ships; `agents.collected_head` is planned). A remote close needs HEAD equal to the base or this. | "synced commit" |
+| **human-needed** | A `human` task, parked, recorded by the caller with a reason. It is the loop's only legitimate stop, scoped to that caller, and closed only by an explicit decision. Never created on an error or a queue refusal. | "blocker", "escalation" |
+| **identity trio** | Three unrelated identities: **spawner** (who started an agent), **dispatch host** (which machine may dispatch a task), **revision** (`workstreamRevision`, a preview fence). Do not substitute one for another. | |
+| **dashboard** | Planned: the human-only read-only four-tab view (Tasks, DAG, Agents, Log) over a workstream row, opened by bare `mu` on a TTY; keys yank commands and never run them. Replaces the removed card TUI. | "home screen" |
+
+<!-- doc-cli-drift:skip-end -->
 
 ## Topology
 

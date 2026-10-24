@@ -38,6 +38,15 @@ mu does not add these unless one earns its way back under the criteria:
   system, or a workflow engine.** A prior internal runtime collected all
   of these. Not inheriting them is the point.
 
+## Approved mu-next work
+
+The mu-next build is approved as a whole and is exempt from the
+promotion criteria: its design of record is
+[mu-next/README.md](mu-next/README.md), its planned contract and the
+unit that delivers each part are in
+[mu-next/surface-contract.md](mu-next/surface-contract.md). Nothing
+beyond that list is approved; anything else follows the criteria above.
+
 ## Candidates
 
 Each has a design but no proven friction yet. Most come from the prior

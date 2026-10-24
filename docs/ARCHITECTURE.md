@@ -65,7 +65,7 @@ JSONL segments before the verb and flushes its own ops after it,
 through `handle()`. There is no daemon and no network code:
 [architecture/sync.md](architecture/sync.md).
 
-**Dashboard.** Removed in mu-next; rewritten fresh in a later unit.
+**Dashboard.** The 3.x card TUI is removed and bare `mu` prints help. The planned four-tab, read-only dashboard is a fresh write (`v_dashboard_*`); see [Planned](#planned-owned-by-v_).
 
 **CLI and SDK surface.** Each operation is a typed SDK function plus a
 thin Commander wrapper. Public functions take operator-facing names and
@@ -177,6 +177,16 @@ are re-export hubs.
 | `skills/mu/` | the skill loaded into an agent's context; `mu --help` owns the verb reference |
 | `scripts/check-doc-links.mjs` | relative-link and anchor checker for every markdown file, run by `test/doc-links.test.ts` |
 | `test/` | vitest suites; `*.integration.test.ts` touch real tmux, herdr or VCS ([sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
+
+## Planned (owned by `v_*`)
+
+The rows above describe what ships. The mu-next surface (one unified wait verb,
+delegates as tasks, `{ok,data,next}` output, task-bound spawn, executor,
+hosts, dashboard, schema 13 additions) is not in this module map: a row
+is added in the commit that adds the module. The planned module and
+signature names, the unit that delivers each, and the current-versus-
+planned boundary live in
+[mu-next/surface-contract.md](mu-next/surface-contract.md).
 
 ## Key seams
 
