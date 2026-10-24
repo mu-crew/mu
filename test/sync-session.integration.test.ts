@@ -304,7 +304,16 @@ describe("mu sync — a multi-round two-machine session", () => {
     await runCli(["task", "note", "lap-1", "from-dev-b", "-w", WS], dev);
     await exchange(lap, dev, lap, dev, lap);
     for (const db of [lap, dev]) {
-      const contents = (await view(db, "lap-1")).notes.map((n) => n.content).sort();
+      // task show is the capped default view (README: last 3 ordinary notes);
+      // convergence needs the full history.
+      const { data } = await runCliJson(
+        ["task", "notes", "lap-1", "-w", WS, "--all", "--json"],
+        db,
+      );
+      const contents = (data as { items: { content: string }[] }).items
+        .map((n) => n.content)
+        .filter((c) => c.startsWith("from-"))
+        .sort();
       expect(contents).toEqual(["from-dev-a", "from-dev-b", "from-lap-a", "from-lap-b"]);
     }
     await record();
