@@ -95,10 +95,16 @@ describe("too-many-arguments quoting hint", () => {
       ],
       dbPath,
     );
+    // [ids...] swallows the stray words as ids; the id/title count check
+    // catches it and carries the same heredoc hint.
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toMatch(/too many arguments/);
+    expect(r.stderr).toMatch(/3 id\(s\).*need 3 -t\/--title, got 1/);
     expect(r.stderr).toMatch(HINT);
     expect(r.stderr).toContain("--note - <<'EOF'");
+    const d = openDb({ path: dbPath });
+    const n = (d.prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n;
+    d.close();
+    expect(n).toBe(0);
   });
 
   it("task note and agent send carry it too", async () => {
@@ -131,8 +137,8 @@ describe("--help states the quoting rule", () => {
     const noteHelp = note.stdout.replace(/\s+/g, " ");
     expect(noteHelp).toContain("an apostrophe ends '...'");
     expect(noteHelp).toContain("mu task note <id> - <<'EOF'");
-    expect(noteHelp).toContain("`-` reads stdin");
-    expect(noteHelp).toContain("a bare `-` or empty note warns");
+    expect(noteHelp).toContain("pass `-` and a quoted heredoc");
+    expect(noteHelp).toContain("stdin is stored verbatim");
     const send = await runCli(["agent", "send", "--help"], dbPath);
     const sendHelp = send.stdout.replace(/\s+/g, " ");
     expect(sendHelp).toContain("Text `-` reads stdin");

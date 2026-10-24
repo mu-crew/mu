@@ -45,9 +45,13 @@ export {
 } from "./tasks/edges.js";
 export {
   type AddNoteOptions,
+  type AddNoteResult,
   type AddTaskOptions,
+  type AddTasksOptions,
+  type AddTasksResult,
   addNote,
   addTask,
+  addTasks,
   type DeleteTaskOptions,
   type DeleteTaskResult,
   deleteTask,

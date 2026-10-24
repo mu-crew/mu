@@ -22,6 +22,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Task mutations: batch add, `--blocks`, note aliases, insert-only note
+  kinds.** `mu task add [ids...] -t <title> [-t …]` creates several tasks in
+  one op group and transaction (one `-t` per id, or ids derived from the
+  titles); `--note`, scoring, `--blocked-by` and the new `--blocks <umbrella>`
+  (the new tasks block an existing umbrella) apply to all, and a duplicate id,
+  missing or cross-workstream umbrella or a cycle rolls the whole batch back.
+  Every initial note is kind `brief`. `mu task note` takes `-m/--message/--note/--text`
+  (exactly one source), `--report` (kind `report`) and a hidden validated
+  `--kind` the pi extension uses to write delegate verdicts (`mu_delegate`
+  `record` now files `verdict`, not `note`). `mu task close --note` is an alias
+  of `--evidence` (both is a usage error); `--report <text>` stores the report
+  first, then the close note, then the status put, in one op group. A report
+  is not evidence: a `done` close still needs `--evidence`. SDK: `addTasks`;
+  `addNote`/`closeTask` accept `group: "inherit"` (join the caller's op group,
+  actor and intent) and `addNote` returns `kind`. The `task add` id/title count
+  mismatch replaces commander's "too many arguments" error, with the same
+  heredoc hint. Note kinds stay set once at INSERT; the reader view is `v_notes`.
+
 - **Schema 13: storage for task-backed delegation and loop provenance.**
   Portable (synced, segment format stays v2; a v1 line carrying `wave` or
   `kind` is refused): `tasks.kind` (`work` default, `delegate`, `human`;

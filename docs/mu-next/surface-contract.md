@@ -29,7 +29,7 @@ guards, `NOTE_KINDS`, `tasks.scored`, `tasks.dispatch_host`,
 soft teardown with a preview revision, ctl `msgId`/incarnation/`runs`,
 `mu agent check`, per-line segment versions, the `MuxBackend` seam
 (`spawnAgent(opts: SpawnAgentPaneOptions)`). Not shipped: everything in
-the tables below. Today `mu wait --json` and `task note -m` exit 2, JSON
+the tables below. Today `mu wait --json` exits 2 (the `task` aliases, batch add, `--blocks`, `--report` and note kinds shipped with `v_task_mutations`), JSON
 errors go to stdout in the envelope (shipped; `next` is always null, the legacy `nextSteps` ride beside it), `task wait` is a
 separate all-of wait whose timeout exits 5, and delegate answers arrive
 as pi follow-ups.

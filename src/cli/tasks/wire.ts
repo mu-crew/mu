@@ -8,7 +8,7 @@
 // Extracted from src/cli/tasks.ts as part of the wire-out follow-up
 // to refactor_split_large_src_files.
 
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import {
   handle,
   JSON_OPT,
@@ -20,6 +20,7 @@ import {
   TASK_SORT_KEYS,
   WORKSTREAM_OPT,
 } from "../../cli.js";
+import { NOTE_KINDS, type NoteKind } from "../../db.js";
 import { TASK_SUBSTATES } from "../../tasks/status.js";
 import { TASK_STATUS_LIST } from "../../tasks.js";
 import { cmdClaim, cmdTaskRelease, cmdTaskWait } from "./claim.js";
@@ -45,12 +46,14 @@ import { cmdTaskTree } from "./tree.js";
 export function wireTaskCommands(program: Command): void {
   const task = program.command("task").description("Task graph commands");
 
+  const collect = (v: string, prev: string[] = []): string[] => [...prev, v];
+
   task
-    .command("add [id]")
+    .command("add [ids...]")
     .description(
-      "Add a task to the graph. The id positional is optional — if omitted, derived from --title via slugify (collisions get _2, _3, … suffixes). Auto-derived ids are capped at ~40 chars with a word-boundary cut, so long titles drop trailing clauses; pass the <id> positional explicitly to override.",
+      "Add tasks atomically. No id: derived from -t (cut at ~40 chars, collisions get _2…). Several ids need one -t each; --note, score and edges apply to all. --blocks <umbrella> makes the umbrella wait for them.",
     )
-    .requiredOption("-t, --title <title>", "task title")
+    .requiredOption("-t, --title <title...>", "task title (repeat: one per id)", collect)
     .option(
       "-i, --impact <n>",
       "impact 1..100 (default 50; giving -i or -e scores the task)",
@@ -62,8 +65,12 @@ export function wireTaskCommands(program: Command): void {
       "task ids that block this one (repeat or comma-separate; or both)",
     )
     .option(
+      "--blocks <ids...>",
+      "umbrella ids this task blocks (repeat or comma-separate); rolls back with the task on a cycle",
+    )
+    .option(
       "--note <text>",
-      "append an initial note after creating the task; `-` reads it from stdin (prose: --note - <<'EOF')",
+      "append an initial note (the brief) after creating the task; `-` reads it from stdin (prose: --note - <<'EOF')",
     )
     .option("--note-author <name>", "author label for --note (default: current actor)")
     .option(
@@ -72,19 +79,20 @@ export function wireTaskCommands(program: Command): void {
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
-    .action(function (id: string | undefined) {
+    .action(function (ids: string[]) {
       const opts = (this as Command).opts() as {
-        title: string;
+        title: string[];
         impact?: number;
         effortDays?: number;
         blockedBy?: string[];
+        blocks?: string[];
         note?: string;
         noteAuthor?: string;
         triage?: boolean;
         workstream?: string;
         json?: boolean;
       };
-      return handle((db) => cmdTaskAdd(db, id, opts), this as Command)();
+      return handle((db) => cmdTaskAdd(db, ids, opts), this as Command)();
     });
 
   // --sort key list shared across list/next. `id` is the historical
@@ -183,13 +191,18 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("note <id> [text]")
     .description(
-      "Append a note to a task. The note text may be given positionally or via --text (dogfood-note-arg-shape: `mu task add --note` is a flag, so the flag form is what you reach for on the follow-up). Author defaults to $MU_AGENT_NAME (env injected at spawn) > $USER > 'orchestrator'; pass --author to override. Quoting: single quotes for short text; for prose (an apostrophe ends '...', double quotes expand $VAR and `cmd`) pass `-` and pipe a quoted heredoc: mu task note <id> - <<'EOF'. Stdin text is stored verbatim (no \\n unescaping); a bare `-` or empty note warns.",
+      "Append a note: <text> or -m/--message/--note/--text. Prose (an apostrophe ends '...'): pass `-` and a quoted heredoc, mu task note <id> - <<'EOF'; stdin is stored verbatim. --report files the report.",
+    )
+    .option("-m, --message <text>", "the note text (alias for <text>)")
+    .option("--note <text>", "the note text (alias for <text>)")
+    .option("--text <text>", "the note text (alias for <text>)")
+    .option("--report", "file the note as the task's report (kind report; set once, never edited)")
+    .addOption(
+      new Option("--kind <kind>", "note kind (internal: delegates write verdicts)")
+        .choices(NOTE_KINDS)
+        .hideHelp(),
     )
     .option("--author <name>", "override the auto-detected author label")
-    .option(
-      "--text <text>",
-      "the note text (alias for the positional <text> argument; `-` reads stdin)",
-    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (id: string, text: string | undefined) {
@@ -197,7 +210,11 @@ export function wireTaskCommands(program: Command): void {
         workstream?: string;
         json?: boolean;
         author?: string;
+        message?: string;
+        note?: string;
         text?: string;
+        report?: boolean;
+        kind?: NoteKind;
       };
       // resolveNoteText throws UsageError; call it INSIDE the handle()
       // callback so the typed-error → exit-code map wraps it. A throw
@@ -205,7 +222,17 @@ export function wireTaskCommands(program: Command): void {
       // parse-time catch, which is a different (and DB-close-skipping)
       // lane. Same rule every other verb's validation follows.
       return handle(
-        (db) => cmdTaskNote(db, id, resolveNoteText(text, opts.text), opts),
+        (db) =>
+          cmdTaskNote(
+            db,
+            id,
+            resolveNoteText(text, {
+              "-m/--message": opts.message,
+              "--note": opts.note,
+              "--text": opts.text,
+            }),
+            opts,
+          ),
         this as Command,
       )();
     });
@@ -291,7 +318,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("close <id>")
     .description(
-      'Mark a task CLOSED (idempotent). `done` needs --evidence "<command + result>" and refuses while a blocker is open (exit 4). --as records why it closed (not every close is done work; needs --why, which is its evidence, and may close over open blockers); any CLOSED substate satisfies blockers. --if-ready no-ops unless every blocker is CLOSED — the umbrella-on-wave-done pattern.',
+      'Mark a task CLOSED (idempotent). `done` needs --evidence/--note "<command + result>" and closed blockers (exit 4); --report adds the report. --as <substate> needs --why. --if-ready waits for blockers.',
     )
     .option(
       "--as <substate>",
@@ -302,12 +329,16 @@ export function wireTaskCommands(program: Command): void {
       "--if-ready",
       "only close when every blocker is CLOSED; otherwise no-op + list the still-blocking ids",
     )
+    .option("--report <text>", "the worker's report, stored first as its own note (not evidence)")
+    .option("--note <text>", "alias for --evidence")
     .option(...WORKSTREAM_OPT)
     .option(...EVIDENCE_OPT)
     .option(...JSON_OPT)
     .action(function (id: string) {
       const opts = (this as Command).opts() as {
         evidence?: string;
+        note?: string;
+        report?: string;
         as?: string;
         why?: string;
         ifReady?: boolean;

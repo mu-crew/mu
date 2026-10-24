@@ -49,8 +49,16 @@ describe("record", () => {
     await settle();
     const ns = notes(mu);
     expect(ns).toHaveLength(1);
-    const [, , id, w, ws, a, author, text = ""] = ns[0] ?? [];
-    expect([id, w, ws, a, author]).toEqual(["f1", "-w", "audit", "--author", "delegate-ref1"]);
+    const [, , id, w, ws, a, author, k, kind, text = ""] = ns[0] ?? [];
+    expect([id, w, ws, a, author, k, kind]).toEqual([
+      "f1",
+      "-w",
+      "audit",
+      "--author",
+      "delegate-ref1",
+      "--kind",
+      "verdict",
+    ]);
     const lines = text.split("\n");
     expect(lines[0]).toMatch(/^REFUTER ref1 \(delegate-ref1, \d+s\):$/);
     expect(lines.slice(1)).toEqual([
@@ -78,7 +86,7 @@ describe("record", () => {
     ].join("\n");
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: refuter }] }));
     await settle();
-    const text = notes(mu)[0]?.[7] ?? "";
+    const text = notes(mu)[0]?.[9] ?? "";
     expect(text.split("\n").slice(1)).toEqual(refuter.split("\n").slice(1));
   });
 
@@ -177,6 +185,8 @@ describe("record", () => {
           "crew",
           "--author",
           "queued-1",
+          "--kind",
+          "verdict",
           "REFUTER r: no verdict (cancelled)",
         ],
       ]);

@@ -10,7 +10,7 @@ import {
 import { currentOpContext, withOpContext } from "../op-context.js";
 import { ensureWorkstream } from "../workstream.js";
 import { taskIdFor, touchTask } from "./core.js";
-import { dedupeBlockersById, wouldCreateCycle } from "./edges.js";
+import { cycleErrorFor, dedupeBlockersById, wouldCreateCycle } from "./edges.js";
 import {
   CrossWorkstreamEdgeError,
   CycleError,
@@ -99,30 +99,8 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
       const newTaskId = Number(insertResult.lastInsertRowid);
 
       if (opts.blockedBy && opts.blockedBy.length > 0) {
-        // Prefer the same-workstream blocker first (v5 per-workstream
-        // local_id), then fall back to a global lookup so a cross-ws
-        // blocker still surfaces CrossWorkstreamEdgeError (not
-        // TaskNotFoundError). Without the same-ws preference, two
-        // blockers of the same local_id (one in this ws, one elsewhere)
-        // could silently bind to the wrong row
-        // (bug_v5_name_clash_silent_misroute).
-        const blockerLookupSameWs = db.prepare(
-          `SELECT t.id AS id, ws.name AS workstream FROM tasks t
-           JOIN workstreams ws ON ws.id = t.workstream_id
-          WHERE t.local_id = ? AND t.workstream_id = ?`,
-        );
-        const blockerLookupAnyWs = db.prepare(
-          `SELECT t.id AS id, ws.name AS workstream FROM tasks t
-           JOIN workstreams ws ON ws.id = t.workstream_id
-          WHERE t.local_id = ? LIMIT 1`,
-        );
         const requestedBlockers = opts.blockedBy.map((blocker) => {
-          const row = (blockerLookupSameWs.get(blocker, wsId) ?? blockerLookupAnyWs.get(blocker)) as
-            | { id: number; workstream: string }
-            | undefined;
-          if (!row) {
-            throw new TaskNotFoundError(blocker);
-          }
+          const row = lookupEdgeTask(db, wsId, blocker);
           if (row.workstream !== opts.workstream) {
             throw new CrossWorkstreamEdgeError(
               blocker,
@@ -155,6 +133,130 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
     .immediate();
 }
 
+export interface AddTasksOptions {
+  workstream: string;
+  /** Umbrellas the NEW tasks block (`mu task add --blocks`): edges
+   *  `newTask -> umbrella`, each umbrella same-workstream and cycle-checked. */
+  blocks?: readonly string[];
+  /** Tasks that block every NEW task (`--blocked-by`). */
+  blockedBy?: readonly string[];
+  triage?: boolean;
+  /** Applied to every task of the batch (see AddTaskOptions). */
+  impact?: number;
+  effortDays?: number;
+  /** Author of every `note` (the brief); also the group's actor. */
+  noteAuthor?: string;
+}
+
+export interface AddTasksResult {
+  /** Local ids, in input order. */
+  ids: string[];
+  /** False only for an empty batch. */
+  changed: boolean;
+}
+
+/**
+ * Create one or more tasks, each with an optional brief (kind 'brief'),
+ * their `blockedBy` edges and their outbound `blocks` edges, in ONE op
+ * group and ONE transaction. A duplicate id, invalid id, missing or
+ * cross-workstream blocker/umbrella or a cycle rolls back every row, edge
+ * and note of the batch.
+ */
+export function addTasks(
+  db: Db,
+  input: readonly { id: string; title: string; note?: string }[],
+  opts: AddTasksOptions,
+): AddTasksResult {
+  if (input.length === 0) return { ids: [], changed: false };
+  return withOpContext(db, { intent: "task.add", actor: opts.noteAuthor, group: "new" }, () =>
+    db
+      .transaction((): AddTasksResult => {
+        for (const t of input) {
+          addTaskImpl(db, {
+            localId: t.id,
+            workstream: opts.workstream,
+            title: t.title,
+            ...(opts.blockedBy !== undefined ? { blockedBy: [...opts.blockedBy] } : {}),
+            ...(opts.triage === true ? { triage: true } : {}),
+            ...(opts.impact !== undefined ? { impact: opts.impact } : {}),
+            ...(opts.effortDays !== undefined ? { effortDays: opts.effortDays } : {}),
+          });
+          if (t.note !== undefined) {
+            const noteOpts: AddNoteOptions = { workstream: opts.workstream, kind: "brief" };
+            if (opts.noteAuthor !== undefined) noteOpts.author = opts.noteAuthor;
+            insertNote(db, t.id, t.note, noteOpts, false);
+          }
+        }
+        if (opts.blocks !== undefined && opts.blocks.length > 0) {
+          addBlocksEdges(db, input, opts.blocks, opts.workstream);
+        }
+        return { ids: input.map((t) => t.id), changed: true };
+      })
+      .immediate(),
+  );
+}
+
+/** Edges `newTask -> umbrella` for every task of a batch. The cycle check
+ *  runs after the incoming `blockedBy` edges exist, so `a` blocked by U
+ *  and blocking U is caught. */
+function addBlocksEdges(
+  db: Db,
+  input: readonly { id: string }[],
+  blocks: readonly string[],
+  workstream: string,
+): void {
+  const wsId = resolveWorkstreamId(db, workstream);
+  const umbrellas = new Map<number, string>();
+  for (const local of blocks) {
+    const row = lookupEdgeTask(db, wsId, local);
+    if (row.workstream !== workstream) {
+      throw new CrossWorkstreamEdgeError(input[0]?.id ?? local, workstream, local, row.workstream);
+    }
+    umbrellas.set(row.id, local);
+  }
+  const now = new Date().toISOString();
+  const insertEdge = db.prepare(
+    "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
+  );
+  for (const t of input) {
+    const newId = taskIdFor(db, t.id, workstream);
+    if (newId === null) throw new TaskNotFoundError(t.id);
+    for (const [umbrellaId, umbrella] of umbrellas) {
+      if (wouldCreateCycle(db, newId, umbrellaId)) {
+        throw cycleErrorFor(db, t.id, umbrella, newId, umbrellaId, workstream);
+      }
+      insertEdge.run(newId, umbrellaId, now);
+    }
+  }
+  for (const umbrellaId of umbrellas.keys()) touchTask(db, umbrellaId, now);
+}
+
+/** Resolve an edge endpoint named by local id: prefer the
+ *  same-workstream task first (v5 per-workstream local_id), then fall
+ *  back to a global lookup so a cross-ws endpoint still surfaces
+ *  CrossWorkstreamEdgeError (not TaskNotFoundError). Without the
+ *  same-ws preference, two tasks of the same local_id (one in this ws,
+ *  one elsewhere) could silently bind to the wrong row
+ *  (bug_v5_name_clash_silent_misroute). */
+function lookupEdgeTask(db: Db, wsId: number, localId: string): { id: number; workstream: string } {
+  const row = (db
+    .prepare(
+      `SELECT t.id AS id, ws.name AS workstream FROM tasks t
+         JOIN workstreams ws ON ws.id = t.workstream_id
+        WHERE t.local_id = ? AND t.workstream_id = ?`,
+    )
+    .get(localId, wsId) ??
+    db
+      .prepare(
+        `SELECT t.id AS id, ws.name AS workstream FROM tasks t
+           JOIN workstreams ws ON ws.id = t.workstream_id
+          WHERE t.local_id = ? LIMIT 1`,
+      )
+      .get(localId)) as { id: number; workstream: string } | undefined;
+  if (!row) throw new TaskNotFoundError(localId);
+  return row;
+}
+
 export interface AddNoteOptions {
   /** Free-form author label. Convention: agent name, "user", or "orchestrator". */
   author?: string;
@@ -164,10 +266,41 @@ export interface AddNoteOptions {
   /** Note kind (`task_notes.kind`), set once at INSERT. Default 'note'.
    *  `closeTask` files its reason/evidence notes as 'close'. */
   kind?: NoteKind;
+  /** 'new' (default): the note is its own op group. 'inherit': it joins
+   *  the CALLER's group, actor and intent (a verdict written inside a
+   *  delegate's record group). Honoured by `addNote`; `insertNote` always
+   *  inherits. */
+  group?: "new" | "inherit";
 }
 
-export function addNote(db: Db, taskLocalId: string, content: string, opts: AddNoteOptions) {
-  return withOpContext(db, { intent: "task.note", actor: opts.author, group: "new" }, () =>
+export interface AddNoteResult {
+  author: string | null;
+  content: string;
+  createdAt: string;
+  kind: NoteKind;
+}
+
+/** The op context of a writer's `group` option. 'inherit' OMITS the group
+ *  (withOpContext reads any string other than "new" as a literal group
+ *  id) and keeps the outer actor and intent; with no outer context the
+ *  call labels itself and mints its own group. */
+export function writerContext(
+  db: Db,
+  intent: string,
+  actor: string | undefined,
+  group: "new" | "inherit" | undefined,
+): { intent?: string; intentIfUnset?: string; actor: string | undefined; group?: "new" } {
+  if (group !== "inherit") return { intent, actor, group: "new" };
+  return { intentIfUnset: intent, actor: currentOpContext(db).actor ?? actor };
+}
+
+export function addNote(
+  db: Db,
+  taskLocalId: string,
+  content: string,
+  opts: AddNoteOptions,
+): AddNoteResult {
+  return withOpContext(db, writerContext(db, "task.note", opts.author, opts.group), () =>
     insertNote(db, taskLocalId, content, opts),
   );
 }
@@ -184,7 +317,7 @@ export function insertNote(
   /** False when the caller's own UPDATE bumps `updated_at` in the same
    *  group: a second `task` put there would duplicate the change. */
   touch = true,
-) {
+): AddNoteResult {
   const task = getTask(db, taskLocalId, opts.workstream);
   if (!task) {
     throw new TaskNotFoundError(taskLocalId);
@@ -209,6 +342,7 @@ export function insertNote(
     author: opts.author ?? null,
     content,
     createdAt: now,
+    kind: opts.kind ?? "note",
   };
 }
 

@@ -842,7 +842,18 @@ export function registerDelegate(
   async function writeRecord(rec: RecordTarget, name: string, text: string): Promise<string> {
     const where = `${rec.workstream}/${rec.task}`;
     try {
-      const r = await mu(["task", "note", rec.task, "-w", rec.workstream, "--author", name, text]);
+      const r = await mu([
+        "task",
+        "note",
+        rec.task,
+        "-w",
+        rec.workstream,
+        "--author",
+        name,
+        "--kind",
+        "verdict",
+        text,
+      ]);
       if (r.code === 0) return `Recorded on ${where} as a note.`;
       return `Recording on ${where} failed (exit ${r.code}): ${why(r)}. Record it yourself.`;
     } catch (e) {
