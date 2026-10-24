@@ -2,7 +2,7 @@
   {
     "calls": [
       {
-        "bash": "mu agent spawn w1 -w eval --workspace"
+        "bash": "mu agent spawn w1 -w eval --workspace 2>/dev/null || mu agent spawn w1 -w eval --worktree"
       }
     ]
   },
@@ -135,7 +135,7 @@
   {
     "calls": [
       {
-        "bash": "for c in $(git -C $(mu workspace path w1 -w eval) rev-list --reverse main..HEAD); do git cherry-pick $c; done"
+        "bash": "for c in $(git -C $(mu workspace path w1 -w eval 2>/dev/null || echo $MU_STATE_DIR/worktrees/eval/w1) rev-list --reverse main..HEAD); do git cherry-pick $c; done"
       }
     ]
   },

@@ -2,21 +2,21 @@
   {
     "calls": [
       {
-        "bash": "mu agent spawn lost -w eval --workspace && p=$(mu workspace path lost -w eval) && printf 'valuable data\\n' > \"$p/lost.txt\" && git -C \"$p\" add lost.txt && git -C \"$p\" commit -qm unmerged-important && mu agent close lost -w eval --discard-workspace"
+        "bash": "mu agent spawn lost -w eval --workspace 2>/dev/null || mu agent spawn lost -w eval --worktree && p=$(mu workspace path lost -w eval 2>/dev/null || echo $MU_STATE_DIR/worktrees/eval/lost) && printf 'valuable data\\n' > \"$p/lost.txt\" && git -C \"$p\" add lost.txt && git -C \"$p\" commit -qm unmerged-important && mu agent close lost -w eval --discard-workspace"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu agent spawn w1 -w eval --workspace"
+        "bash": "mu agent spawn w1 -w eval --workspace 2>/dev/null || mu agent spawn w1 -w eval --worktree"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu agent spawn w2 -w eval --workspace"
+        "bash": "mu agent spawn w2 -w eval --workspace 2>/dev/null || mu agent spawn w2 -w eval --worktree"
       }
     ]
   },
@@ -65,7 +65,7 @@
   {
     "calls": [
       {
-        "bash": "mu agent spawn w3 -w eval --workspace"
+        "bash": "mu agent spawn w3 -w eval --workspace 2>/dev/null || mu agent spawn w3 -w eval --worktree"
       }
     ]
   },
@@ -93,7 +93,7 @@
   {
     "calls": [
       {
-        "bash": "for w in w3 w2; do git cherry-pick $(git -C $(mu workspace path $w -w eval) rev-parse HEAD) || exit 1; done"
+        "bash": "for w in w3 w2; do git cherry-pick $(git -C $(mu workspace path $w -w eval 2>/dev/null || echo $MU_STATE_DIR/worktrees/eval/$w) rev-parse HEAD) || exit 1; done"
       }
     ]
   },

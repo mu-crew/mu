@@ -53,14 +53,19 @@ const scenario: Scenario = {
     await workerTask(sb, "r1", {
       sh: "echo r1 > r1.txt && git add r1.txt && git commit -qm r1",
     });
-    await must(sb, ["agent", "spawn", "w1", "-w", "eval", "--workspace"]);
+    // 3.x spawns a workspace and frees it by hand; the checkout (spawn --worktree) has neither verb:
+    // `agent close` removes the clean worktree and keeps the same mu/eval/w1-<sha12> branch.
+    const legacy = (await mu(sb, ["agent", "spawn", "w1", "-w", "eval", "--workspace"])).code === 0;
+    if (!legacy) await must(sb, ["agent", "spawn", "w1", "-w", "eval", "--worktree"]);
     await must(sb, ["task", "claim", "r1", "-w", "eval", "--for", "w1"]);
     await must(sb, ["agent", "send", "w1", "-w", "eval", "go"]);
     await must(sb, ["task", "wait", "r1", "-w", "eval", "--timeout", "120"]);
-    const wsPath = await must(sb, ["workspace", "path", "w1", "-w", "eval"]);
+    const wsPath = legacy
+      ? await must(sb, ["workspace", "path", "w1", "-w", "eval"])
+      : join(sb.env.MU_STATE_DIR ?? "", "worktrees", "eval", "w1");
     const wsHead = (await sh(sb, `git -C ${JSON.stringify(wsPath)} rev-parse HEAD`)).stdout.trim();
     await sh(sb, `git -C ${JSON.stringify(sb.repoDir)} cherry-pick -x ${wsHead}`);
-    await must(sb, ["workspace", "free", "w1", "-w", "eval", "--commit"]);
+    if (legacy) await must(sb, ["workspace", "free", "w1", "-w", "eval", "--commit"]);
     await must(sb, ["agent", "close", "w1", "-w", "eval"]);
 
     // Assert the four leftovers.
