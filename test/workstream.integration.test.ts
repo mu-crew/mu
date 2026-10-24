@@ -331,6 +331,7 @@ describe("teardownWorkstream (soft)", () => {
       notes: 2,
       edges: 2,
       keptWorktrees: [],
+      orphanedAgents: [],
     });
 
     expect(state.killed).toEqual(["mu-auth"]);
@@ -386,6 +387,7 @@ describe("teardownWorkstream (soft)", () => {
       notes: 0,
       edges: 0,
       keptWorktrees: [],
+      orphanedAgents: [],
     });
   });
 
@@ -412,6 +414,7 @@ describe("teardownWorkstream (soft)", () => {
       notes: 0,
       edges: 0,
       keptWorktrees: [],
+      orphanedAgents: [],
     });
     expect(state.killed).toEqual(["mu-empty"]);
   });
@@ -430,6 +433,7 @@ describe("teardownWorkstream (soft)", () => {
       notes: 2,
       edges: 2,
       keptWorktrees: [],
+      orphanedAgents: [],
     });
   });
 

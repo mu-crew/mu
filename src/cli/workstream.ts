@@ -295,6 +295,20 @@ export async function cmdTeardown(
   console.log(
     `Tore down ${pc.bold(workstream)}: killed mux=${result.killedMux}, agents=${result.deletedAgents}; kept tasks=${result.tasks}, edges=${result.edges}, notes=${result.notes}, worktrees=${result.keptWorktrees.length}`,
   );
+  if (result.orphanedAgents.length > 0) {
+    console.log("");
+    console.log(
+      pc.yellow(
+        `KEPT ${result.orphanedAgents.length} agent row(s): the recorded pane is still alive (or could not be checked): ${result.orphanedAgents.map((o) => `${o.name} (${o.paneId})`).join(", ")}`,
+      ),
+    );
+    printNextSteps(
+      result.orphanedAgents.map((o) => ({
+        intent: `Close ${o.name} once its pane is gone (the row is kept while the pane lives)`,
+        command: `mu agent close ${o.name} -w ${workstream}`,
+      })),
+    );
+  }
   if (result.keptWorktrees.length > 0) {
     console.log("");
     console.log(pc.yellow("Worktrees are never removed by teardown; they are still registered:"));

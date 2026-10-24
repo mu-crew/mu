@@ -20,7 +20,7 @@ import {
   readAgentStates,
   type StateSource,
 } from "./agent-state.js";
-import { type Db, resolveWorkstreamId, tryResolveWorkstreamId } from "./db.js";
+import { type Db, resolveWorkstreamId, tornDownAtOf, tryResolveWorkstreamId } from "./db.js";
 import { emitEvent } from "./logs.js";
 import { withOpContext } from "./op-context.js";
 import { type ReconcileMode, type ReconcileReport, reconcile } from "./reconcile.js";
@@ -51,6 +51,7 @@ export {
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
+  AgentPaneStillAliveError,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
@@ -97,7 +98,7 @@ export {
   waitForAgents,
 } from "./agents/wait.js";
 
-import { AgentExistsError, AgentNotFoundError } from "./agents/errors.js";
+import { AgentExistsError, AgentNotFoundError, AgentPaneStillAliveError } from "./agents/errors.js";
 import {
   agentCtlSocket,
   recordSend,
@@ -256,13 +257,15 @@ function rowFromDb(row: RawAgentRow): AgentRow {
 }
 
 /** Resolve an agent's surrogate id by (workstream, name). Returns
- *  null on miss. */
+ *  null on miss. Sees agents of a torn-down workstream too: their rows
+ *  outlive the teardown while their pane lives, and cleanup must reach them. */
 function agentIdByName(db: Db, name: string, workstream: string): number | null {
-  const wsId = tryResolveWorkstreamId(db, workstream);
-  if (wsId === null) return null;
   const row = db
-    .prepare("SELECT id FROM agents WHERE name = ? AND workstream_id = ?")
-    .get(name, wsId) as { id: number } | undefined;
+    .prepare(
+      `SELECT a.id AS id FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id
+        WHERE a.name = ? AND ws.name = ?`,
+    )
+    .get(name, workstream) as { id: number } | undefined;
   return row ? row.id : null;
 }
 
@@ -331,6 +334,19 @@ export function getAgent(db: Db, name: string, workstream: string): AgentRow | u
       `SELECT ${SELECT_AGENT_COLS} ${AGENT_FROM_JOIN} WHERE a.name = ? AND a.workstream_id = ?`,
     )
     .get(name, wsId) as RawAgentRow | undefined;
+  return row ? rowFromDb(row) : undefined;
+}
+
+/**
+ * Like `getAgent`, but also finds an agent whose workstream is torn down
+ * (a teardown that kept its row because the pane lived, or a peer's
+ * teardown that reached this machine). For cleanup only: every other verb
+ * treats a torn-down workstream as gone.
+ */
+export function getAgentForCleanup(db: Db, name: string, workstream: string): AgentRow | undefined {
+  const row = db
+    .prepare(`SELECT ${SELECT_AGENT_COLS} ${AGENT_FROM_JOIN} WHERE a.name = ? AND ws.name = ?`)
+    .get(name, workstream) as RawAgentRow | undefined;
   return row ? rowFromDb(row) : undefined;
 }
 
@@ -574,7 +590,7 @@ export async function closeAgent(
   name: string,
   opts: CloseAgentOptions & { workstream: string },
 ): Promise<CloseAgentResult> {
-  const agent = getAgent(db, name, opts.workstream);
+  const agent = getAgentForCleanup(db, name, opts.workstream);
   if (!agent) {
     const orphan = getWorktreeFor(db, opts.workstream, name);
     if (orphan === undefined) return { killedPane: false, deletedRow: false, worktree: null };
@@ -584,11 +600,28 @@ export async function closeAgent(
   }
   const row = agent.cwd === null ? undefined : getWorktreeAt(db, agent.cwd);
   if (row !== undefined) await assertReleasable(row, { discard: opts.discard === true });
-  await activeMux()
-    .then((mux) => mux.killPane(agent.paneId))
-    .catch(() => {
-      /* idempotent — pane may already be gone, or the mux with it */
-    });
+  const mux = await activeMux().catch(() => undefined);
+  await mux?.killPane(agent.paneId).catch(() => {
+    /* idempotent — pane may already be gone, or the mux with it */
+  });
+  // The row rule: never delete (nor release a worktree for) a row whose
+  // recorded pane is alive. A pane that survives the kill (moved, or the
+  // kill failed) keeps its row. In a torn-down workstream, where teardown
+  // already deferred to this verb, a probe that cannot answer keeps it too.
+  if (mux !== undefined) {
+    let alive: boolean | "unknown" = false;
+    try {
+      alive = await mux.paneAlive(agent.paneId);
+    } catch {
+      alive = "unknown";
+    }
+    if (
+      alive === true ||
+      (alive === "unknown" && tornDownAtOf(db, agent.workstreamName) !== null)
+    ) {
+      throw new AgentPaneStillAliveError(name, agent.workstreamName, agent.paneId, alive);
+    }
+  }
   // Re-checks the state: a write after the pre-check still refuses, with
   // the agent row kept so the close can be retried.
   const worktree =

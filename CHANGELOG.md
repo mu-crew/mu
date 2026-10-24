@@ -45,7 +45,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   and refuses (`WorkstreamSessionLiveError`, exit 4) when it is alive or the
   probe fails. The commit re-reads the whole revision inside its transaction,
   and `--empty --if` applies each member's previewed revision (a member that
-  changed mid-sweep is reported in `failed`). The revision, torn-down, has-agents
+  changed mid-sweep is reported in `failed`). **One row rule:** an agent row
+  is deleted only when its recorded pane is known dead, asked by pane id
+  after the session kill and per row; a pane that is alive (moved during the
+  kill) or cannot be asked keeps its row and socket (`orphanedAgents` in the
+  result, a `KEPT` block in the output, an `orphaned-agents` row in
+  `mu doctor`). `mu agent close` now sees agents of a torn-down workstream
+  (a peer's teardown reaches machines whose panes live), kills the pane and
+  deletes the row only once the pane is gone, else refuses with
+  `AgentPaneStillAliveError` (exit 4, one line) and releases no worktree. The revision, torn-down, has-agents
   and live-pane refusals are one stderr line that names the command
   (`--json` keeps `nextSteps`).
 

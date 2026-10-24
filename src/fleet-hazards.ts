@@ -435,6 +435,39 @@ function listIds(rows: { id: string }[]): string {
 }
 
 /**
+ * Agent rows that outlive their workstream: it is torn down (here, with the
+ * pane still alive, or by a peer) and the row is still registered. One warn
+ * row; the fix is `mu agent close`, which kills the pane and deletes the
+ * row only once the pane is gone. Cheap (one indexed join): `mu doctor` runs it.
+ */
+export function checkOrphanedAgents(db: Db): FleetHazard {
+  const rows = db
+    .prepare(
+      `SELECT w.name AS ws, a.name AS agent, a.pane_id AS pane
+         FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+        WHERE w.torn_down_at IS NOT NULL
+        ORDER BY w.name, a.name`,
+    )
+    .all() as { ws: string; agent: string; pane: string }[];
+  if (rows.length === 0) {
+    return {
+      name: "orphaned-agents",
+      severity: "ok",
+      detail: "no agent rows in torn-down workstreams",
+    };
+  }
+  const shown = rows.slice(0, GUARD_LIST_CAP).map((r) => `${r.ws}/${r.agent} (${r.pane})`);
+  return {
+    name: "orphaned-agents",
+    severity: "warn",
+    detail: `${rows.length} agent row(s) in torn-down workstreams: ${shown.join(", ")}${rows.length > GUARD_LIST_CAP ? ", …" : ""}`,
+    remediation: [
+      "Their panes may still run. Per row: `mu agent close <agent> -w <ws>` (kills the pane; keeps the row while it lives).",
+    ],
+  };
+}
+
+/**
  * CLOSED tasks that the local-write guards (src/capture.ts) would never
  * have produced. Ingest accepts what the log says, so a peer can merge
  * into them (a close and its evidence are separate ops; a blocker can be
