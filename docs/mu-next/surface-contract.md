@@ -97,7 +97,7 @@ such as this page.
 | `v_wait_core`, `v_wait_cli` | unified wait engine and CLI, signal snapshots | `src/wait.ts`: `waitForEvents`, `WaitRef`, `WaitEvent`, `WaitResult`; `wireWaitCommand` |
 | `v_auto`, `v_executor`, `v_hints` | authorisation, bounded executor, one hint source | `authorizeTasks`, `authorisedReady`, `executeNext`, `computeNext` |
 | `v_delegate`, `v_settle`, `v_human` | durable delegates, every-settle waiting, human stop | `verdictTally`, `listDelegates`; state-armed settle hook; `recordHumanNeeded`, `openHumanNeeds`, `human_needs` |
-| `v_guards` | revision fences on task/agent mutations | `taskRevision`, `agentRevision`, `assertRevision`, `agents.revision` |
+| `v_guards` (**shipped**: task side and agent side, see [ARCHITECTURE](../ARCHITECTURE.md)) | revision fences on task/agent mutations | `taskRevision`, `agentRevision` (derived, no column), `assertRevision`, `AgentRow.incarnation`, `withAgentLock` |
 | `v_scope`, `v_state_log`, `v_task_reads`, `v_db` | explicit `-w`, compact reads, in-process `mu db` | `installScopedViews`, `cmdDbQuery` |
 | `v_host_profiles`, `v_remote_spawn`, `v_remote_collect` | ssh-free host templates, remote spawn and collect | `expandHostTemplate`, `withHostChannel`, `host_channels`, `ensureRemoteForward`, `collectRemoteAgent`, `closeRemoteWorktree` |
 | `v_pi_package`, `v_dashboard_*` | pi package (no `mu link`), four-tab read-only dashboard | `loadDashboard`, `DashboardSnapshot`, `runDashboard` |

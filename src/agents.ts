@@ -20,8 +20,7 @@ import {
   readAgentStates,
   type StateSource,
 } from "./agent-state.js";
-import { type Db, resolveWorkstreamId, tornDownAtOf, tryResolveWorkstreamId } from "./db.js";
-import { emitEvent } from "./logs.js";
+import { type Db, resolveWorkstreamId, tryResolveWorkstreamId } from "./db.js";
 import type { CommandSource } from "./mux/types.js";
 import { withOpContext } from "./op-context.js";
 import { type ReconcileMode, type ReconcileReport, reconcile } from "./reconcile.js";
@@ -37,6 +36,13 @@ export {
   type InterruptResult,
   interruptAgent,
 } from "./agents/abort.js";
+export {
+  type CloseAgentOptions,
+  type CloseAgentResult,
+  type ClosePreview,
+  closeAgent,
+  previewClose,
+} from "./agents/close.js";
 export { type DelegateOutcome, delegateOutcome } from "./agents/delegate.js";
 export {
   AgentAbortNeedsCtlError,
@@ -48,11 +54,13 @@ export {
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentLockBusyError,
   AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
   AgentPaneStillAliveError,
+  AgentReplacedError,
   AgentRestartedError,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,
@@ -60,6 +68,7 @@ export {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
 } from "./agents/errors.js";
+export { withAgentLock } from "./agents/lock.js";
 export {
   type CommandResolutionResult,
   type CommandResolver,
@@ -104,7 +113,7 @@ export {
   waitForAgents,
 } from "./agents/wait.js";
 
-import { AgentExistsError, AgentNotFoundError, AgentPaneStillAliveError } from "./agents/errors.js";
+import { AgentExistsError, AgentNotFoundError } from "./agents/errors.js";
 import {
   agentCtlSocket,
   recordSend,
@@ -116,15 +125,16 @@ import { unlinkCtlSocket } from "./ctl/path.js";
 import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
 import { resolveActorIdentity } from "./tasks/claim.js";
 import { ensureWorkstream, isScratchWorkstream } from "./workstream.js";
-import {
-  assertReleasable,
-  getWorktreeAt,
-  getWorktreeFor,
-  type ReleasedWorktree,
-  releaseWorktree,
-} from "./worktree.js";
 
 export interface AgentRow {
+  /**
+   * The registry incarnation: the row's surrogate id. AUTOINCREMENT never
+   * reuses one, so a name that is deleted and created again (or a pane id
+   * that is reused) is always a NEW incarnation. Every destructive agent
+   * write compares it (`deleteAgent`'s `expected`, `agent close --if`).
+   * Not pi's `incarnation` (a string, the `--inc` of `agent wait`).
+   */
+  incarnation: number;
   name: string;
   /** Foreign-name reference to the owning workstream. */
   workstreamName: string;
@@ -235,6 +245,7 @@ export interface InsertAgentInput {
 }
 
 interface RawAgentRow {
+  id: number;
   name: string;
   /** Joined from workstreams.name. */
   workstream: string;
@@ -257,6 +268,7 @@ interface RawAgentRow {
  *  operator-facing workstream name as `workstream`. Used by every
  *  read path. */
 const SELECT_AGENT_COLS = `
+  a.id AS id,
   a.name AS name,
   ws.name AS workstream,
   a.cli AS cli,
@@ -278,6 +290,7 @@ const AGENT_FROM_JOIN = "FROM agents a JOIN workstreams ws ON ws.id = a.workstre
 
 function rowFromDb(row: RawAgentRow): AgentRow {
   return {
+    incarnation: row.id,
     name: row.name,
     workstreamName: row.workstream,
     cli: row.cli,
@@ -460,20 +473,33 @@ export function deleteAgent(
   db: Db,
   name: string,
   workstream: string,
-  /** When set, delete only if the row still has this pane id (checked inside the reaper transaction). */
-  expectedPaneId?: string,
+  /**
+   * Compare-and-swap, checked inside the reaper transaction: delete only
+   * if the row still has this pane id (a bare string) and/or this
+   * incarnation. Same name but another pane or incarnation means the agent
+   * was replaced: it is kept (false), with its row, socket and tasks.
+   */
+  expected?: string | AgentIdentity,
 ): boolean {
-  const deleted = deleteAgentRow(db, name, workstream, expectedPaneId);
+  const deleted = deleteAgentRow(db, name, workstream, expected);
   if (deleted) unlinkCtlSocket(db, name, workstream);
   return deleted;
+}
+
+/** Which incarnation of a name a destructive write means. */
+export interface AgentIdentity {
+  paneId?: string;
+  incarnation?: number;
 }
 
 function deleteAgentRow(
   db: Db,
   name: string,
   workstream: string,
-  expectedPaneId?: string,
+  expected?: string | AgentIdentity,
 ): boolean {
+  const want: AgentIdentity =
+    typeof expected === "string" ? { paneId: expected } : (expected ?? {});
   // Wrap the whole reaper sequence (snapshot stuck tasks → DELETE
   // agent → per-task UPDATE + addNote + emitEvent) in a single
   // synchronous better-sqlite3 transaction. Without this, a throw
@@ -501,12 +527,13 @@ function deleteAgentRow(
           // pruned a ghost concurrently.) The DELETE is a no-op.
           return false;
         }
-        if (expectedPaneId !== undefined) {
+        // Same name, different pane or incarnation: the agent was replaced; keep it.
+        if (want.incarnation !== undefined && agentId !== want.incarnation) return false;
+        if (want.paneId !== undefined) {
           const cur = db.prepare("SELECT pane_id FROM agents WHERE id = ?").get(agentId) as
             | { pane_id: string }
             | undefined;
-          // Same name, different pane: the agent was replaced; keep it.
-          if (cur?.pane_id !== expectedPaneId) return false;
+          if (cur?.pane_id !== want.paneId) return false;
         }
         const stuck = db
           .prepare(
@@ -607,90 +634,6 @@ export async function readAgent(
   if (!agent) throw new AgentNotFoundError(name);
   // Load-bearing: the scrollback IS the output of this verb.
   return (await activeMux()).capture(agent.paneId, opts);
-}
-
-export interface CloseAgentOptions {
-  /**
-   * Throw the agent's worktree away even when it has uncommitted work.
-   * Lossy; never makes a branch. Without it a dirty worktree refuses
-   * (WorktreeDirtyError) before anything is killed.
-   */
-  discard?: boolean;
-}
-
-export interface CloseAgentResult {
-  killedPane: boolean;
-  deletedRow: boolean;
-  /** What the close rule did to the agent's worktree; null when it had none. */
-  worktree: ReleasedWorktree | null;
-}
-
-/**
- * Close an agent: kill its pane, apply the worktree close rule, remove its
- * DB row. Idempotent: an unknown agent is a no-op, a gone pane is fine.
- *
- * The worktree rule (src/worktree.ts `releaseWorktree`): dirty refuses
- * unless `discard`; clean and merged is removed; clean with unmerged
- * commits keeps a branch `mu/<ws>/<agent>-<sha12>` and is removed. The
- * refusal happens BEFORE the pane is killed. With no agent row but a
- * registered worktree (an earlier close or rollback left it) the same rule
- * runs on the leftover, so `agent close <name>` is the one way out.
- */
-export async function closeAgent(
-  db: Db,
-  name: string,
-  opts: CloseAgentOptions & { workstream: string },
-): Promise<CloseAgentResult> {
-  const agent = getAgentForCleanup(db, name, opts.workstream);
-  if (!agent) {
-    const orphan = getWorktreeFor(db, opts.workstream, name);
-    if (orphan === undefined) return { killedPane: false, deletedRow: false, worktree: null };
-    const worktree = await releaseWorktree(db, orphan, { discard: opts.discard === true });
-    emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, worktree));
-    return { killedPane: false, deletedRow: false, worktree };
-  }
-  const row = agent.cwd === null ? undefined : getWorktreeAt(db, agent.cwd);
-  if (row !== undefined) await assertReleasable(row, { discard: opts.discard === true });
-  const mux = await activeMux().catch(() => undefined);
-  await mux?.killPane(agent.paneId).catch(() => {
-    /* idempotent — pane may already be gone, or the mux with it */
-  });
-  // The row rule: never delete (nor release a worktree for) a row whose
-  // recorded pane is alive. A pane that survives the kill (moved, or the
-  // kill failed) keeps its row. In a torn-down workstream, where teardown
-  // already deferred to this verb, a probe that cannot answer keeps it too.
-  if (mux !== undefined) {
-    let alive: boolean | "unknown" = false;
-    try {
-      alive = await mux.paneAlive(agent.paneId);
-    } catch {
-      alive = "unknown";
-    }
-    if (
-      alive === true ||
-      (alive === "unknown" && tornDownAtOf(db, agent.workstreamName) !== null)
-    ) {
-      throw new AgentPaneStillAliveError(name, agent.workstreamName, agent.paneId, alive);
-    }
-  }
-  // Re-checks the state: a write after the pre-check still refuses, with
-  // the agent row kept so the close can be retried.
-  const worktree =
-    row === undefined ? null : await releaseWorktree(db, row, { discard: opts.discard === true });
-  const deletedRow = deleteAgent(db, name, agent.workstreamName);
-  // Machine-local table (`agents`): no trigger, so this emit is the
-  // only record.
-  emitEvent(db, agent.workstreamName, "agent.close", closeLine(name, agent.paneId, worktree));
-  return { killedPane: true, deletedRow, worktree };
-}
-
-function closeLine(name: string, paneId: string | undefined, wt: ReleasedWorktree | null): string {
-  const bits = [paneId === undefined ? undefined : `pane=${paneId}`];
-  if (wt !== null) {
-    bits.push(`worktree ${wt.action}${wt.branch === undefined ? "" : ` as ${wt.branch}`}`);
-  }
-  const detail = bits.filter((b) => b !== undefined).join(", ");
-  return `agent close ${name}${detail === "" ? "" : ` (${detail})`}`;
 }
 
 export interface ListLiveAgentsOptions {

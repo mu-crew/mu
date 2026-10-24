@@ -326,9 +326,15 @@ describe("record", () => {
     expect(sentText(p)).toContain("Recorded on crew/f1 as a note");
   });
 
-  it("a refused close and a failed note are both reported", async () => {
+  it("a refused close (the fenced apply) and a failed note are both reported", async () => {
     const mu = fakeMu({
-      on: { close: () => Promise.resolve({ code: 4, stdout: "", stderr: "busy" }) },
+      on: {
+        // the preview (no --if) answers; the apply is refused
+        close: (args) =>
+          args.includes("--if")
+            ? Promise.resolve({ code: 4, stdout: "", stderr: "busy" })
+            : undefined,
+      },
       task: { note: () => Promise.resolve({ code: 3, stdout: "", stderr: "db locked" }) },
     });
     const p = fakePi();
@@ -339,6 +345,20 @@ describe("record", () => {
     const text = sentText(p);
     expect(text).toMatch(/close refused: busy/);
     expect(text).toMatch(/Recording on crew\/f1 failed.*db locked/);
+  });
+
+  it("a failed close preview keeps the pane and never applies", async () => {
+    const mu = fakeMu({
+      on: { close: () => Promise.resolve({ code: 4, stdout: "", stderr: "busy" }) },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", label: "r" });
+    mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
+    await settle();
+    expect(sentText(p)).toMatch(/Pane kept \(close preview failed: busy\)/);
+    expect(mu.calls.filter((c) => c[1] === "close" && c.includes("--if"))).toEqual([]);
+    expect(mu.registry.has("delegate-r")).toBe(true);
   });
 
   it("without record, no task verb is called", async () => {

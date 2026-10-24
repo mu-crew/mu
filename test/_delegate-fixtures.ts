@@ -78,6 +78,18 @@ export function fakeMu(
   const waits = new Map<string, Deferred>();
   /** Agents up in scratch: delegate-1 belongs to someone else. */
   const taken = new Set(["delegate-1"]);
+  /** The registry the way `mu agent close` sees it: one incarnation per spawn,
+   *  a revision that moves with it. `replace(name)` re-registers a name as
+   *  another agent (a respawn behind the delegate's back). */
+  const registry = new Map<string, { incarnation: number; paneId: string }>();
+  let nextIncarnation = 100;
+  const register = (name: string) => {
+    const n = nextIncarnation++;
+    const row = { incarnation: n, paneId: `%${n}` };
+    registry.set(name, row);
+    return row;
+  };
+  const replace = (name: string) => register(name);
   /** `--next-free`, as mu picks it. */
   const nextFree = (base: string) => {
     const m = /^(.*)-(\d+)$/.exec(base);
@@ -90,8 +102,9 @@ export function fakeMu(
   const spawnReply = async (args: readonly string[]): Promise<MuResult> => {
     const name = args.includes("--next-free") ? nextFree(String(args[2])) : String(args[2]);
     taken.add(name);
+    const row = register(name);
     const base = {
-      agent: { name, cwd: opts.workspace ?? null },
+      agent: { name, cwd: opts.workspace ?? null, ...row },
       ctl: opts.ctl ?? "ok",
       nextSteps: [{ intent: "Attach the pane", command: `tmux attach -t mu-scratch` }],
     };
@@ -129,9 +142,24 @@ export function fakeMu(
         return Promise.resolve(ok({ agents: [...taken].map((n) => ({ name: n })) }));
       case "spawn":
         return spawnReply(args);
-      case "close":
+      case "close": {
+        // Read only without --if (the preview); a fenced apply with --if.
+        const cur = registry.get(String(name));
+        const ifAt = args.indexOf("--if");
+        if (ifAt < 0) {
+          if (!cur) return Promise.resolve(ok({ kind: "none", revision: 0, dryRun: true }));
+          return Promise.resolve(
+            ok({ kind: "agent", revision: cur.incarnation * 7, dryRun: true, ...cur }),
+          );
+        }
+        if (!cur || Number(args[ifAt + 1]) !== cur.incarnation * 7)
+          return Promise.resolve(
+            failed(4, "RevisionMismatchError", `agent ${String(name)} changed since preview`),
+          );
+        registry.delete(String(name));
         taken.delete(String(name));
-        return Promise.resolve(ok("{}"));
+        return Promise.resolve(ok({ agentName: name, killedPane: true, deletedRow: true }));
+      }
       case "wait":
         return new Promise((resolve) => {
           waits.set(name ?? "", { resolve, ...(signal ? { signal } : {}) });
@@ -142,7 +170,7 @@ export function fakeMu(
         return Promise.resolve(ok("{}"));
     }
   };
-  return { run, calls, waits, taken };
+  return { run, calls, waits, taken, registry, replace };
 }
 
 /** The text a spawn call sent (`--send`), or undefined. */

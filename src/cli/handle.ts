@@ -39,10 +39,12 @@ import {
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentLockBusyError,
   AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneStillAliveError,
+  AgentReplacedError,
   AgentRestartedError,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,
@@ -445,6 +447,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // The agent runs, but its extension cannot serve this op yet:
     // a state conflict the operator resolves by /reload or respawn.
     return { label: "extension outdated", exitCode: 4 };
+  }
+  if (err instanceof AgentReplacedError || err instanceof AgentLockBusyError) {
+    // The name changed hands, or another mu holds the agent: retry after a preview.
+    return { label: "conflict", exitCode: 4 };
   }
   if (err instanceof AgentPaneStillAliveError) {
     // The pane outlived the kill: a state conflict the operator resolves.

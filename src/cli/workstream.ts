@@ -304,7 +304,7 @@ export async function cmdTeardown(
     );
     printNextSteps(
       result.orphanedAgents.map((o) => ({
-        intent: `Close ${o.name} once its pane is gone (the row is kept while the pane lives)`,
+        intent: `Preview closing ${o.name} once its pane is gone (the row is kept while the pane lives)`,
         command: `mu agent close ${o.name} -w ${workstream}`,
       })),
     );
@@ -315,7 +315,7 @@ export async function cmdTeardown(
     for (const w of result.keptWorktrees) console.log(`  - ${w.agent}: ${w.path}`);
     printNextSteps(
       result.keptWorktrees.map((w) => ({
-        intent: `Close ${w.agent}'s worktree by the close rule (dirty refuses; --discard is lossy)`,
+        intent: `Preview closing ${w.agent}'s worktree by the close rule (dirty refuses; --discard is lossy)`,
         command: `mu agent close ${w.agent} -w ${workstream}`,
       })),
     );

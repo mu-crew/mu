@@ -40,6 +40,33 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `--json`: notes records use SQL names (`n kind author created_at content`),
   plus `more`/`retrieve` (`notes_more`/`notes_retrieve` in `show`). SDK:
   `selectTaskNotes`; `listNotes` stays the full history.
+- **Agent guards: `agent close` previews, `--if <rev>` applies.** Bare
+  `mu agent close <name>` now writes and kills nothing: it prints the revision,
+  the pane, the tasks the agent owns (an `IN_PROGRESS` one goes back to `OPEN`),
+  the worktree state and the `--if` command (`--json`: one `{ok,data,next}`
+  with `kind` `agent`/`orphan-worktree`/`none`, `revision`, `incarnation`,
+  `paneId`, `ownedTasks`, `worktree`, `refusesDirty`). `--if <rev>` closes,
+  and a stale one exits 4 with nothing killed (`expected_rev`/`current_rev`).
+  An unknown name stays a no-op. A dirty worktree previews with no apply
+  command (`--discard` previews the lossy close). The revision
+  (`agentRevision`, src/revision.ts) is derived, with no column: a hash of the
+  registry **incarnation** (the row's AUTOINCREMENT id, new for every row, so a
+  name deleted and created again, even on the same pane id, never matches an old
+  preview), the row's fields, every task it owns in any workstream, and its
+  registered worktree rows; an orphan worktree has a revision of its own.
+  Every agent-row writer now compares identity: `close` re-checks before the
+  kill and before the worktree release and deletes by incarnation + pane
+  (`AgentReplacedError`, exit 4, leaves a replacement's row, task, socket and
+  worktree alone: closing used to delete a replacement registered during the
+  kill), and `--worktree` spawn finalize, spawn rollback, reconcile and teardown
+  act on the incarnation they saw. Close and `--worktree` staging/rollback take a
+  per-agent lock that fails closed (`AgentLockBusyError`, exit 4, nothing done;
+  `MU_AGENT_LOCK_TIMEOUT_MS`, default 15000): `withFileLock` gains `strict`,
+  which steals an aged lock only from a dead holder, and every release is by
+  ownership token. The spawn lock keeps its best-effort behaviour. `mu_delegate`
+  keeps the pane and incarnation its spawn reported and closes through
+  preview, identity check, `--if` apply; a missing identity, failed preview or
+  replacement keeps the pane. Printed `mu agent close` hints now say "preview".
 - **Task guards: `--if <rev>` and `candidate_ids`.** `mu task delete`, `block`,
   `unblock`, `reparent`, `claim` and `release` accept `--if <rev>`, the task's
   revision (derived from current state, never a counter: a hash of the task

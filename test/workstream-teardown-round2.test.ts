@@ -17,6 +17,7 @@ import { ctlSocketPath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
 import { checkOrphanedAgents } from "../src/fleet-hazards.js";
 import { MuxError } from "../src/mux.js";
+import { agentRevision } from "../src/revision.js";
 import { addTask } from "../src/tasks/edit.js";
 import {
   ensureWorkstream,
@@ -537,12 +538,16 @@ describe("peer_close: `agent close` acts on rows of a torn-down workstream, or r
   it("the CLI close: exit 4 in one line for a live pane; exit 0 once it is gone", async () => {
     peerTorn();
     use(alive("%2"));
-    const refused = await run("agent", "close", "mw", "-w", "ws");
+    // Bare close previews and kills nothing; the apply carries the revision.
+    const preview = await run("agent", "close", "mw", "-w", "ws");
+    expect(preview.exitCode).toBeNull();
+    const rev = agentRevision(db, "ws", "mw");
+    const refused = await run("agent", "close", "mw", "-w", "ws", "--if", String(rev));
     expect(refused.exitCode).toBe(4);
     expect(stderrLines(refused.stderr)).toHaveLength(1);
     expect(agentNames()).toEqual(["mw"]);
     use(tmux({}));
-    const ok = await run("agent", "close", "mw", "-w", "ws");
+    const ok = await run("agent", "close", "mw", "-w", "ws", "--if", String(rev));
     expect(ok.exitCode).toBeNull();
     expect(agentNames()).toEqual([]);
   });

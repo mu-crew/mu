@@ -289,7 +289,7 @@ ssh dev "tmux new-session -d -s mu-worker-1 -c ~/ws/worker-1 \
 mu agent spawn worker-1 -w big --command "ssh $MU_SSH_ARGS dev -t 'tmux attach -t mu-worker-1'"
 
 # COLLECT: detach first to free the channel, then fetch
-mu agent close worker-1 -w big
+mu agent close worker-1 -w big --if <n>   # <n>: the revision a bare close prints
 git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
 
 # Reattach later with the same spawn command; LLM context is intact

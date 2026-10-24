@@ -224,13 +224,14 @@ export class WorkstreamHasAgentsError extends Error implements HasNextSteps {
     public readonly agents: readonly string[],
   ) {
     super(
-      `torn-down workstream ${workstream} still has ${agents.length} local agent row${agents.length === 1 ? "" : "s"} (${agents.join(", ")}); close each once its pane is gone: mu agent close ${agents[0]} -w ${workstream}`,
+      `torn-down workstream ${workstream} still has ${agents.length} local agent row${agents.length === 1 ? "" : "s"} (${agents.join(", ")}); close each once its pane is gone (preview, then apply with --if): mu agent close ${agents[0]} -w ${workstream}`,
     );
   }
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Close the agent (kills its pane; keeps the row while the pane lives)",
+        intent:
+          "Preview closing the agent (the --if apply kills its pane; the row stays while it lives)",
         command: `mu agent close ${this.agents[0]} -w ${this.workstream}`,
       },
     ];
@@ -248,13 +249,13 @@ export class WorkstreamPanesLiveError extends Error implements HasNextSteps {
     public readonly agents: readonly string[],
   ) {
     super(
-      `workstream ${workstream} has live panes outside its session (${agents.join(", ")}); close them first: mu agent close ${agents[0]} -w ${workstream}`,
+      `workstream ${workstream} has live panes outside its session (${agents.join(", ")}); close them first (preview, then apply with --if): mu agent close ${agents[0]} -w ${workstream}`,
     );
   }
   errorNextSteps(): NextStep[] {
     return [
       {
-        intent: "Close the stray agent",
+        intent: "Preview closing the stray agent",
         command: `mu agent close ${this.agents[0]} -w ${this.workstream}`,
       },
     ];
@@ -667,7 +668,7 @@ export async function teardownWorkstream(
   // (orphaned: it lives in a torn-down workstream) and the result says so.
   // A dead pane stays dead (tmux never reuses an id), so the answer holds
   // through the transaction below.
-  const dead: { name: string; paneId: string }[] = [];
+  const dead: { name: string; paneId: string; incarnation: number }[] = [];
   const orphaned: TeardownResult["orphanedAgents"] = [];
   for (const a of agentsBefore) {
     let reason: "alive" | "unknown" | undefined;
@@ -686,7 +687,16 @@ export async function teardownWorkstream(
   // sock/<ws>/ only if empty, never recursively: hashed long paths
   // share sock/h/ across workstreams, so a workstream named "h" must
   // not take the others' sockets with it. A kept row keeps its socket.
-  for (const a of dead) unlinkCtlSocket(db, a.name, opts.workstream);
+  // Only for the incarnation that was asked about: a replacement registered
+  // since owns the socket path now (its transaction check below then aborts).
+  const sameRow = db.prepare(
+    `SELECT 1 FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id
+      WHERE a.id = ? AND a.name = ? AND a.pane_id = ? AND ws.name = ?`,
+  );
+  for (const a of dead) {
+    if (sameRow.get(a.incarnation, a.name, a.paneId, opts.workstream) !== undefined)
+      unlinkCtlSocket(db, a.name, opts.workstream);
+  }
   if (!db.memory) {
     const sockDir = join(dirname(db.name), "sock", opts.workstream);
     try {
@@ -712,10 +722,10 @@ export async function teardownWorkstream(
           throw new WorkstreamRevisionMismatchError(opts.workstream, opts.ifRevision, now);
         }
         const del = db.prepare(
-          `DELETE FROM agents WHERE name = ? AND pane_id = ?
+          `DELETE FROM agents WHERE id = ? AND name = ? AND pane_id = ?
              AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
         );
-        for (const a of dead) del.run(a.name, a.paneId, opts.workstream);
+        for (const a of dead) del.run(a.incarnation, a.name, a.paneId, opts.workstream);
         db.prepare(
           "UPDATE workstreams SET torn_down_at = ? WHERE name = ? AND torn_down_at IS NULL",
         ).run(tornDownAt, opts.workstream);
@@ -804,15 +814,18 @@ export async function reinitWorkstream(
 
 // ─── Counts ────────────────────────────────────────────────────────────
 
-function listAgentPanes(db: Db, workstream: string): { name: string; paneId: string }[] {
+function listAgentPanes(
+  db: Db,
+  workstream: string,
+): { name: string; paneId: string; incarnation: number }[] {
   const rows = db
     .prepare(
-      `SELECT a.name, a.pane_id AS paneId FROM agents a
+      `SELECT a.name, a.pane_id AS paneId, a.id AS incarnation FROM agents a
          JOIN workstreams ws ON ws.id = a.workstream_id
         WHERE ws.name = ?
         ORDER BY a.name, a.pane_id`,
     )
-    .all(workstream) as { name: string; paneId: string }[];
+    .all(workstream) as { name: string; paneId: string; incarnation: number }[];
   return rows;
 }
 

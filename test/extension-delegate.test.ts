@@ -1489,3 +1489,178 @@ describe("nudges yield to a delegate answer on its way", () => {
     expect(await t.settle()).toMatchObject({ continue: true });
   });
 });
+
+describe("closing is bound to the agent the delegate spawned as", () => {
+  const done = ok({ agents: [{ outcome: "done", lastText: "the answer" }] });
+  const applies = (mu: ReturnType<typeof fakeMu>) =>
+    mu.calls.filter((c) => c[1] === "close" && c.includes("--if"));
+  const run = async (mu: ReturnType<typeof fakeMu>, params: Record<string, unknown> = {}) => {
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", ...params });
+    return p;
+  };
+
+  it("success: previews, then applies once with the preview's revision", async () => {
+    const mu = fakeMu();
+    const p = await run(mu);
+    mu.waits.get("delegate-2")?.resolve(done);
+    await flush();
+    await flush();
+    const closes = mu.calls.filter((c) => c[1] === "close");
+    expect(closes).toHaveLength(2);
+    expect(closes[0]).not.toContain("--if"); // the read-only preview first
+    // the fixture's first spawn is incarnation 100, revision incarnation * 7
+    expect(closes[1]?.[closes[1].indexOf("--if") + 1]).toBe("700");
+    expect(mu.registry.has("delegate-2")).toBe(false);
+    expect(sentText(p)).toContain("Pane closed.");
+  });
+
+  it("replaced before cleanup: the replacement is never previewed-then-applied; the pane is kept", async () => {
+    const mu = fakeMu();
+    const p = await run(mu);
+    mu.replace("delegate-2"); // another agent took the name behind the delegate's back
+    const replacement = mu.registry.get("delegate-2");
+    mu.waits.get("delegate-2")?.resolve(done);
+    await flush();
+    await flush();
+    expect(applies(mu)).toEqual([]);
+    expect(mu.registry.get("delegate-2")).toEqual(replacement);
+    expect(sentText(p)).toMatch(/Pane kept \(the name now belongs to another agent\)/);
+  });
+
+  it("the same incarnation on another pane, or another incarnation on the same pane, is not it", async () => {
+    for (const mutate of [
+      (r: { incarnation: number; paneId: string }) => ({ ...r, paneId: "%999" }),
+      (r: { incarnation: number; paneId: string }) => ({ ...r, incarnation: r.incarnation + 1 }),
+    ]) {
+      const mu = fakeMu();
+      const p = await run(mu);
+      const cur = mu.registry.get("delegate-2");
+      if (cur) mu.registry.set("delegate-2", mutate(cur));
+      mu.waits.get("delegate-2")?.resolve(done);
+      await flush();
+      await flush();
+      expect(applies(mu)).toEqual([]);
+      expect(sentText(p)).toMatch(/Pane kept \(the name now belongs to another agent\)/);
+    }
+  });
+
+  it("gone before cleanup: nothing to apply", async () => {
+    const mu = fakeMu();
+    const p = await run(mu);
+    mu.registry.delete("delegate-2");
+    mu.waits.get("delegate-2")?.resolve(done);
+    await flush();
+    await flush();
+    expect(applies(mu)).toEqual([]);
+    expect(sentText(p)).toMatch(/Pane kept \(it is no longer registered\)/);
+  });
+
+  it("a code-0 reply that is not a success envelope is not a preview", async () => {
+    const mu = fakeMu({
+      on: {
+        close: (args) =>
+          args.includes("--if")
+            ? undefined
+            : Promise.resolve({
+                code: 0,
+                stdout: JSON.stringify({
+                  ok: false,
+                  error: "X",
+                  message: "m",
+                  data: { kind: "agent", revision: 1 },
+                }),
+                stderr: "",
+              }),
+      },
+    });
+    const p = await run(mu);
+    mu.waits.get("delegate-2")?.resolve(done);
+    await flush();
+    await flush();
+    expect(applies(mu)).toEqual([]);
+    expect(sentText(p)).toMatch(/Pane kept \(close preview failed/);
+  });
+
+  it("a preview without a safe-integer revision is not applied", async () => {
+    const mu = fakeMu({
+      on: {
+        close: (args) => {
+          if (args.includes("--if")) return undefined;
+          const cur = mu.registry.get("delegate-2");
+          return Promise.resolve(ok({ kind: "agent", revision: "7", ...cur }));
+        },
+      },
+    });
+    const p = await run(mu);
+    mu.waits.get("delegate-2")?.resolve(done);
+    await flush();
+    await flush();
+    expect(applies(mu)).toEqual([]);
+    expect(sentText(p)).toMatch(/Pane kept \(close preview had no revision\)/);
+  });
+
+  it("cancel closes through the same bound path; a replacement survives it", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x" });
+    mu.replace("delegate-2");
+    const res = await tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "delegate-2" });
+    expect(applies(mu)).toEqual([]);
+    expect(res.content[0]?.text).toContain("Pane kept: the name now belongs to another agent");
+    expect(mu.registry.has("delegate-2")).toBe(true);
+  });
+
+  it("an abort during spawn and a failed send go through the bound close too", async () => {
+    const ac = new AbortController();
+    const mu = fakeMu({
+      on: {
+        spawn: () => {
+          ac.abort();
+          return undefined;
+        },
+      },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("t", { task: "x" }, ac.signal)).rejects.toThrow();
+    expect(applies(mu)).toHaveLength(1);
+    expect(mu.registry.has("delegate-2")).toBe(false);
+
+    let sends = 0;
+    const mu2 = fakeMu({
+      on: {
+        send: () =>
+          sends++ === 0 ? Promise.resolve({ code: 1, stdout: "", stderr: "boom" }) : undefined,
+      },
+    });
+    const p2 = fakePi();
+    registerDelegate(p2.pi, mu2.run);
+    await expect(tool(p2).execute("t", { task: "x" })).rejects.toThrow(/Pane closed/);
+    expect(applies(mu2)).toHaveLength(1);
+  });
+
+  it("a spawn reply without an identity keeps the pane (an older mu): no blind close", async () => {
+    const mu = fakeMu({
+      on: {
+        spawn: () =>
+          Promise.resolve(
+            ok({
+              agent: { name: "delegate-2", cwd: null },
+              ctl: "ok",
+              send: { ok: true, runs: 0 },
+              nextSteps: [],
+            }),
+          ),
+      },
+    });
+    const p = await run(mu);
+    mu.waits.get("delegate-2")?.resolve(done);
+    await flush();
+    await flush();
+    expect(mu.calls.some((c) => c[1] === "close")).toBe(false);
+    expect(sentText(p)).toMatch(/Pane kept \(its spawn did not report an identity\)/);
+  });
+});

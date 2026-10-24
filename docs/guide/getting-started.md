@@ -170,7 +170,8 @@ claim, send, wait, and merge steps.
 When you are done, close the agent:
 
 ```bash
-mu agent close worker-1 -w auth
+mu agent close worker-1 -w auth           # preview; prints the --if command
+mu agent close worker-1 -w auth --if <n>  # close it
 ```
 
 Close removes the worktree. It refuses while the worktree has uncommitted

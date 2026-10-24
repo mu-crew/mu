@@ -162,6 +162,26 @@ export function parseEnvelope(stdout: string): Record<string, unknown> | undefin
   }
 }
 
+/** A `mu --json` stdout as its `data`, only when it is a SUCCESS envelope
+ *  (`ok:true`). A failure's partial data is not a success: a destructive
+ *  call that acts on a read must use this, never `parseEnvelope`. */
+export function parseOkEnvelope(stdout: string): Record<string, unknown> | undefined {
+  try {
+    const v = JSON.parse(stdout) as Record<string, unknown> | null;
+    if (typeof v !== "object" || v === null || v.ok !== true) return undefined;
+    return typeof v.data === "object" && v.data !== null
+      ? (v.data as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Which agent a delegate spawned as: the registry incarnation and pane the
+ *  spawn reported. A close acts on that one only, never on a replacement
+ *  that took the name since. */
+export type DelegateIdentity = { paneId: string; incarnation: number };
+
 /** One agent row of `mu agent wait --json`, as far as the tool reads it. */
 export type WaitAgent = {
   outcome?: string;
@@ -525,6 +545,8 @@ type Inflight = {
   abort: AbortController;
   /** The delegate's pi session file, reported by the spawn's send. */
   sessionFile?: string;
+  /** What it spawned as; closing is bound to it. */
+  identity?: DelegateIdentity;
   record?: { target: RecordTarget; label: string };
   cancelling: boolean;
   parked?: () => Promise<void>;
@@ -701,6 +723,29 @@ export function registerDelegate(
     new Error(`${what} failed (exit ${r.code}): ${why(r)}`);
 
   /**
+   * Close a delegate's pane, bound to the agent it spawned as. `agent close`
+   * only previews until it gets `--if <revision>`, so: preview, check that
+   * the preview is a success envelope for THIS pane and incarnation with a
+   * safe-integer revision, then apply once with that revision. Anything
+   * else (no identity, a failed or malformed preview, another incarnation
+   * under the name, a stale revision) keeps the pane and says why. It never
+   * previews again and never retries onto a replacement.
+   */
+  async function closeDelegate(name: string, id: DelegateIdentity | undefined): Promise<PaneFate> {
+    if (id === undefined) return { closed: false, why: "its spawn did not report an identity" };
+    const p = await mu(["agent", "close", name, "-w", W, "--json"]);
+    const d = p.code === 0 ? parseOkEnvelope(p.stdout) : undefined;
+    if (d === undefined) return { closed: false, why: `close preview failed: ${why(p)}` };
+    if (d.kind === "none") return { closed: false, why: "it is no longer registered" };
+    if (d.kind !== "agent" || d.incarnation !== id.incarnation || d.paneId !== id.paneId)
+      return { closed: false, why: "the name now belongs to another agent" };
+    if (!Number.isSafeInteger(d.revision))
+      return { closed: false, why: "close preview had no revision" };
+    const c = await mu(["agent", "close", name, "-w", W, "--if", String(d.revision), "--json"]);
+    return c.code === 0 ? { closed: true } : { closed: false, why: `close refused: ${why(c)}` };
+  }
+
+  /**
    * Spawn the delegate and send it the task in ONE mu call (`spawn
    * --next-free --send`): mu picks the free name under its spawn lock, so
    * parallel calls get distinct names with no `agent list` first. Returns
@@ -717,6 +762,7 @@ export function registerDelegate(
     attach?: string;
     workspace?: string;
     sessionFile?: string;
+    identity?: DelegateIdentity;
   }> {
     signal?.throwIfAborted();
     const stem = labelStem(params.label);
@@ -736,9 +782,14 @@ export function registerDelegate(
     // No agent in the reply: the spawn itself failed, nothing is up.
     if (typeof spawned !== "string") throw failure("mu agent spawn", r);
     const name = spawned;
+    const row = out?.agent as { paneId?: unknown; incarnation?: unknown } | undefined;
+    const identity: DelegateIdentity | undefined =
+      typeof row?.paneId === "string" && Number.isSafeInteger(row.incarnation)
+        ? { paneId: row.paneId, incarnation: row.incarnation as number }
+        : undefined;
     if (signal?.aborted) {
       // The user cancelled while the pane came up: take it down again.
-      await mu(["agent", "close", name, "-w", W]);
+      await closeDelegate(name, identity);
       signal.throwIfAborted();
     }
     if (out?.ctl !== "ok") {
@@ -758,9 +809,10 @@ export function registerDelegate(
     }
     if (sent?.ok !== true) {
       // Nothing reached it: the pane is just an idle pi. Take it down.
-      const c = await mu(["agent", "close", name, "-w", W]);
-      const pane =
-        c.code === 0 ? "Pane closed." : `Pane kept; close it with: mu agent close ${name} -w ${W}`;
+      const c = await closeDelegate(name, identity);
+      const pane = c.closed
+        ? "Pane closed."
+        : `Pane kept (${c.why}); close it with: mu agent close ${name} -w ${W}`;
       const reason = typeof sent?.message === "string" ? sent.message : why(r);
       throw new Error(`mu agent send to ${W}/${name} failed (exit ${r.code}): ${reason}. ${pane}`);
     }
@@ -775,6 +827,7 @@ export function registerDelegate(
       // A pi just spawned has settled no run, so 0 is exact when an older
       // extension's reply carries no runs.
       runs: typeof sent.runs === "number" ? sent.runs : 0,
+      ...(identity ? { identity } : {}),
       ...(typeof attach === "string" ? { attach } : {}),
       ...(typeof wsPath === "string" ? { workspace: wsPath } : {}),
       ...(typeof sent.sessionFile === "string" ? { sessionFile: sent.sessionFile } : {}),
@@ -868,6 +921,7 @@ export function registerDelegate(
     extras: MessageExtras,
     delivery: number,
     record?: { target: RecordTarget; label: string },
+    identity?: DelegateIdentity,
   ) {
     const agent = (json(wait)?.agents as WaitAgent[] | undefined)?.[0];
     const outcome = agent?.outcome;
@@ -877,11 +931,11 @@ export function registerDelegate(
         : (await mu(["agent", "read", name, "-n", "50", "-w", W])).stdout;
     // Close only after a clean finish: a died or timed-out pane is evidence.
     let pane: PaneFate = { closed: false, why: "keep: true" };
-    let closing: Promise<MuResult> | undefined;
+    let closing: Promise<PaneFate> | undefined;
     if (outcome === "blocked") pane = { closed: false, why: "waiting on a dialog" };
     else if (outcome !== "done" && outcome !== "empty")
       pane = { closed: false, why: "kept as evidence" };
-    else if (!keep) closing = mu(["agent", "close", name, "-w", W]);
+    else if (!keep) closing = closeDelegate(name, identity);
     // The note never depends on the close, so the two mu calls overlap.
     const recording = record
       ? writeRecord(
@@ -891,11 +945,7 @@ export function registerDelegate(
         )
       : undefined;
     const [closed, recorded] = await Promise.all([closing, recording]);
-    if (closed)
-      pane =
-        closed.code === 0
-          ? { closed: true }
-          : { closed: false, why: `close refused: ${why(closed)}` };
+    if (closed) pane = closed;
     // No final answer: point at the transcript, and copy what it wrote so
     // far. A blocked run is mid-flight: no partial copy, which could read
     // as its answer.
@@ -980,7 +1030,7 @@ export function registerDelegate(
           typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
         if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
       }
-      const { name, runs, attach, workspace, sessionFile } = await spawn(
+      const { name, runs, attach, workspace, sessionFile, identity } = await spawn(
         params,
         brief ? `${brief}\n\n${task}` : task,
         cwd,
@@ -990,6 +1040,7 @@ export function registerDelegate(
         abort: new AbortController(),
         cancelling: false,
         ...(sessionFile ? { sessionFile } : {}),
+        ...(identity ? { identity } : {}),
         ...(record ? { record: { target: record, label: recordLabel(params, name) } } : {}),
       };
       inflight.set(name, entry);
@@ -1033,6 +1084,7 @@ export function registerDelegate(
             },
             delivery,
             entry.record,
+            entry.identity,
           );
           markSent(delivery);
         } catch (e) {
@@ -1270,8 +1322,8 @@ export function registerDelegate(
         text += ` ${await writeRecord(entry.record.target, name, recordNote(entry.record.label, name, "cancelled", undefined, 0))}`;
       if (params.keep === true) text += " Pane kept.";
       else {
-        const c = await mu(["agent", "close", name, "-w", W]);
-        text += c.code === 0 ? " Pane closed." : ` Pane kept: close refused: ${why(c)}`;
+        const c = await closeDelegate(name, entry?.identity);
+        text += c.closed ? " Pane closed." : ` Pane kept: ${c.why}`;
       }
       if (evidence.length > 0) text += `\n${evidence.join("\n")}`;
       return { content: [{ type: "text", text }], details: { name, workstream: W } };

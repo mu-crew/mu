@@ -59,6 +59,7 @@ import {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
 } from "./errors.js";
+import { withAgentLock } from "./lock.js";
 import { withSpawnLock } from "./spawn-lock.js";
 
 /**
@@ -578,7 +579,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   let agent: AgentRow;
   // Whether the agent row is this spawn's to delete on rollback. A
   // spawn that lost a same-name race must not delete the winner's row.
-  let ownsRow = hasWorktree;
+  let ownedIncarnation: number | undefined = staged?.incarnation;
   const wantsCtl = opts.ctl !== false && speaksMuCtl(cli, command) && defaultSpawnCtlMs() !== 0;
   let ctl: SpawnCtl | undefined;
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
@@ -655,7 +656,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         commandSource,
         spawner,
       });
-      ownsRow = true;
+      ownedIncarnation = row.incarnation;
       return { pid, row };
     });
     paneId = created.pid;
@@ -716,7 +717,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // mask the original error.
     emitSpawnFailed(db, opts, phase, err);
     try {
-      await rollbackSpawn(db, opts.name, paneId, staged, ownsRow, opts.workstream);
+      await rollbackSpawn(db, opts.name, paneId, staged, ownedIncarnation, opts.workstream);
     } catch (cleanupErr) {
       if (err instanceof Error && err.cause === undefined) {
         try {
@@ -758,6 +759,8 @@ interface StagedWorktree {
   path: string;
   base: string;
   root: string;
+  /** The placeholder row's incarnation: finalize and rollback act on it only. */
+  incarnation: number;
 }
 
 /**
@@ -782,6 +785,20 @@ async function prestageWorktree(
   cli: string,
   spawner: string | null,
 ): Promise<StagedWorktree> {
+  // The agent lock covers the whole staging: it reclaims, creates and
+  // registers disk state that a concurrent `agent close` of this name would
+  // be removing. Fail closed: a busy lock refuses the spawn before any effect.
+  return withAgentLock(db, opts.workstream, opts.name, () =>
+    prestageLocked(db, opts, cli, spawner),
+  );
+}
+
+async function prestageLocked(
+  db: Db,
+  opts: SpawnAgentOptions,
+  cli: string,
+  spawner: string | null,
+): Promise<StagedWorktree> {
   const path = worktreePath(opts.workstream, opts.name);
   const dir = opts.root ?? process.cwd();
   const top = await gitToplevel(dir);
@@ -793,7 +810,7 @@ async function prestageWorktree(
   // the checkout it works in, not in the main one. Objects and refs are
   // shared, so the pinned sha is valid from `root`.
   const from = await git(["rev-parse", "--verify", `${opts.from ?? "HEAD"}^{commit}`], top);
-  insertAgent(db, {
+  const placeholder = insertAgent(db, {
     name: opts.name,
     workstream: opts.workstream,
     cli,
@@ -818,10 +835,11 @@ async function prestageWorktree(
       base,
       createdAt: new Date().toISOString(),
     });
-    return { path, base, root };
+    return { path, base, root, incarnation: placeholder.incarnation };
   } catch (err) {
     try {
-      deleteAgent(db, opts.name, opts.workstream);
+      // Only the placeholder this spawn inserted, never a replacement.
+      deleteAgent(db, opts.name, opts.workstream, { incarnation: placeholder.incarnation });
     } catch {
       // best-effort: never mask the worktree error
     }
@@ -880,23 +898,31 @@ function finalizeAgentRow(
   // Scope the patch to the spawn's workstream so a same-named worker
   // in another workstream isn't repointed at this pane
   // (bug_v5_name_clash_silent_misroute).
-  db.prepare(
-    `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, updated_at = ?
-      WHERE name = ?
+  // And to the placeholder this spawn inserted (by incarnation, still
+  // pending): a row replaced since is not ours to repoint.
+  const patched = db
+    .prepare(
+      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, updated_at = ?
+      WHERE id = ? AND pane_id = ?
+        AND name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
-  ).run(
-    paneId,
-    staged.path,
-    staged.base,
-    command,
-    commandSource,
-    spawner,
-    new Date().toISOString(),
-    opts.name,
-    opts.workstream,
-  );
+    )
+    .run(
+      paneId,
+      staged.path,
+      staged.base,
+      command,
+      commandSource,
+      spawner,
+      new Date().toISOString(),
+      staged.incarnation,
+      pendingPaneIdFor(opts.name),
+      opts.name,
+      opts.workstream,
+    );
   const row = getAgent(db, opts.name, opts.workstream);
-  if (!row) throw new Error(`spawnAgent: agent vanished after worktree stage: ${opts.name}`);
+  if (patched.changes === 0 || !row || row.incarnation !== staged.incarnation)
+    throw new Error(`spawnAgent: agent vanished after worktree stage: ${opts.name}`);
   return row;
 }
 
@@ -912,9 +938,10 @@ function finalizeAgentRow(
  * fails the registry row stays, so `mu agent close <name> --discard` can
  * finish it. deleteAgent is idempotent (no-op on a missing row).
  *
- * `ownsRow` is false when the spawn failed before inserting its own row
- * (e.g. it lost a same-name race); the row then belongs to another
- * agent and is left alone.
+ * `ownedIncarnation` is undefined when the spawn failed before inserting
+ * its own row (e.g. it lost a same-name race); the row then belongs to
+ * another agent and is left alone. Otherwise only that incarnation is
+ * deleted, never a replacement under the same name.
  */
 type SpawnPhase = "worktree" | "pane" | "finalize" | "liveness";
 
@@ -938,7 +965,7 @@ async function rollbackSpawn(
   name: string,
   paneId: string | undefined,
   staged: StagedWorktree | undefined,
-  ownsRow: boolean,
+  ownedIncarnation: number | undefined,
   workstream: string,
 ): Promise<void> {
   if (paneId !== undefined) {
@@ -950,13 +977,21 @@ async function rollbackSpawn(
   }
   if (staged !== undefined) {
     try {
-      await removeWorktree(staged.root, staged.path, { force: true });
-      forgetWorktree(db, staged.path);
+      // Under the agent lock, and only while the name is still this spawn's
+      // (or gone): a replacement staged at this path owns the worktree now.
+      await withAgentLock(db, workstream, name, async () => {
+        const cur = getAgent(db, name, workstream);
+        if (cur !== undefined && cur.incarnation !== staged.incarnation) return;
+        await removeWorktree(staged.root, staged.path, { force: true });
+        forgetWorktree(db, staged.path);
+      });
     } catch {
       // the registry row stays: `mu agent close <name> --discard` finishes it
     }
   }
-  if (ownsRow) deleteAgent(db, name, workstream);
+  // Only the row this spawn inserted: never a replacement under the name.
+  if (ownedIncarnation !== undefined)
+    deleteAgent(db, name, workstream, { incarnation: ownedIncarnation });
 }
 
 /**

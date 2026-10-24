@@ -173,6 +173,7 @@ describe("murmur row with the mu extension", () => {
 function agent(name: string, cli = "pi"): AgentRow {
   const now = new Date().toISOString();
   return {
+    incarnation: 1,
     name,
     workstreamName: "ws",
     cli,

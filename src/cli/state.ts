@@ -188,7 +188,7 @@ export function scratchIdleNudge(workstreamName: string, agents: LiveAgent[]): s
   const lingering = agents.filter((a) => a.idle === true);
   if (lingering.length === 0) return null;
   const names = lingering.map((a) => a.name).join(", ");
-  return `\u26a0 ${lingering.length} idle scratch agent(s): ${names}. Close when done: mu agent close ${lingering[0]?.name ?? "<name>"} -w scratch`;
+  return `\u26a0 ${lingering.length} idle scratch agent(s): ${names}. Preview closing when done: mu agent close ${lingering[0]?.name ?? "<name>"} -w scratch`;
 }
 
 function renderFullMode(perWs: PerWsData[]): void {
