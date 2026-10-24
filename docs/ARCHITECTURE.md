@@ -89,8 +89,9 @@ are re-export hubs.
 | `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
 | `src/capture.ts` | Triggers stored in the DB file (versioned by `capture_version`) recording each portable write as an op, refusing natural-key changes and explicit ids <= 0; `captureDoctorCheck` |
 | `src/op-context.ts` | `withOpContext` (intent, actor, group) and the `withCaptureSuppressed` echo guard; both own the transaction around the `op_ctx` row |
-| `src/apply.ts` | apply one op: per-field LWW, tombstones, substate pair repair, `reprojectDeferredOps` |
-| `src/rebuild.ts` | replay the whole log into a new DB file |
+| `src/fold.ts` | the one definition of a portable row: pure per-key folds of the ops log (horizon, per-field LWW, substate, notes, edges) |
+| `src/apply.ts` | apply one op: re-fold the keys it touches and make their rows equal the fold; `projectLog` folds every key |
+| `src/rebuild.ts` | copy the whole log into a new DB file, then `projectLog` it |
 | `src/compact.ts` | `mu db compact` (blank redundant note-tombstone payloads) and `mu db forget` (drop a torn-down workstream's ops); this machine only |
 | `src/drift.ts` | cheap invariant (every row has an op) and `--deep` rebuild-diff |
 | `src/logs.ts` | typed reader over `ops`; `appendLog` and `emitEvent`, the writes triggers cannot cover |

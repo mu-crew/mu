@@ -65,7 +65,6 @@ import {
   ingestSegment,
   localMachineId,
   peerWatermarkKey,
-  reprojectIfPending,
   resetWatermark,
   type SegmentDefect,
   segmentCaughtUp,
@@ -350,19 +349,6 @@ export async function ambientIngest(db: Db, opts?: AmbientOptions): Promise<Ambi
         warn(message, opts);
       }
     }
-    // Every peer is in; now project anything that arrived before its
-    // parent task did. Deliberately outside the per-peer loop, and
-    // deliberately inside the outer try: a repair failure must not fail
-    // the verb any more than a torn segment does.
-    //
-    // Only when an ingest applied something since the last repair. The
-    // repair scans every historical edge/note put, which cost ~130 ms on
-    // every synced verb while finding nothing: a deferred op can only
-    // become projectable when its parent task arrives, and that arrival
-    // is an applied op. Each such ingest leaves a marker in the same
-    // transaction, so a process that died between its ingest commit and
-    // this line is repaired by the next invocation.
-    reprojectIfPending(db);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warnings.push(message);
@@ -544,10 +530,6 @@ export function ingestFromDb(db: Db, path: string): IngestFromDbResult {
       }
     });
     run.immediate();
-    // Same out-of-order repair the segment path runs: a peer's `ops`
-    // table can hold an edge whose task op we only got from a THIRD
-    // machine, in either order.
-    changed += reprojectIfPending(db, { force: true });
     return { path, read, changed, skippedLocal };
   } finally {
     try {

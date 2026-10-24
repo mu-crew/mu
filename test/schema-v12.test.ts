@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyOp, type Op } from "../src/apply.js";
+import type { Op } from "../src/apply.js";
 import {
   CURRENT_SCHEMA_VERSION,
   type Db,
@@ -23,6 +23,7 @@ import {
 import { formatHlc } from "../src/hlc.js";
 import { withCaptureSuppressed } from "../src/op-context.js";
 import {
+  applyIncomingOp,
   decodeLine,
   discoverPeers,
   encodeSegmentLine,
@@ -368,17 +369,18 @@ describe("note kind is set once at INSERT", () => {
 
 describe("apply of the new fields", () => {
   it("note kind comes from the payload; absent (a 3.x v1 op) is 'note'", () => {
-    applyOp(db, peerOp(1, "task", "d/a", { title: "a" }));
-    applyOp(
-      db,
+    for (const op of [
+      peerOp(1, "task", "d/a", { title: "a" }),
       peerOp(2, "note", "d/a#1", {
         author: "p",
         content: "with",
         created_at: "t1",
         kind: "verdict",
       }),
-    );
-    applyOp(db, peerOp(3, "note", "d/a#2", { author: "p", content: "without", created_at: "t2" }));
+      peerOp(3, "note", "d/a#2", { author: "p", content: "without", created_at: "t2" }),
+    ]) {
+      applyIncomingOp(db, op);
+    }
     expect(db.prepare("SELECT content, kind FROM task_notes ORDER BY id").all()).toEqual([
       { content: "with", kind: "verdict" },
       { content: "without", kind: "note" },
@@ -386,9 +388,12 @@ describe("apply of the new fields", () => {
   });
 
   it("an unknown kind from a newer peer lands as 'note' (never a CHECK failure)", () => {
-    applyOp(db, peerOp(1, "task", "d/a", { title: "a" }));
+    applyIncomingOp(db, peerOp(1, "task", "d/a", { title: "a" }));
     expect(() =>
-      applyOp(db, peerOp(2, "note", "d/a#1", { content: "c", created_at: "t", kind: "telemetry" })),
+      applyIncomingOp(
+        db,
+        peerOp(2, "note", "d/a#1", { content: "c", created_at: "t", kind: "telemetry" }),
+      ),
     ).not.toThrow();
     expect(db.prepare("SELECT kind FROM task_notes").get()).toEqual({ kind: "note" });
   });
@@ -409,11 +414,7 @@ describe("apply of the new fields", () => {
       const p = join(tempDir, `ord-${seq++}.db`);
       const x = openDb({ path: p });
       for (const op of order) {
-        x.prepare(
-          `INSERT OR IGNORE INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
-           VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, 'n')`,
-        ).run(op.hlc, op.machineId, op.groupId, op.actor, op.entity, op.key, op.op, op.payload);
-        withCaptureSuppressed(x, () => applyOp(x, op));
+        applyIncomingOp(x, op);
       }
       expect(
         x.prepare("SELECT scored, dispatch_host FROM tasks WHERE local_id = 'a'").get(),
@@ -426,12 +427,14 @@ describe("apply of the new fields", () => {
   });
 
   it("a scored outside {0,1} is dropped instead of failing the CHECK", () => {
-    expect(() => applyOp(db, peerOp(1, "task", "d/a", { title: "a", scored: 7 }))).not.toThrow();
+    expect(() =>
+      applyIncomingOp(db, peerOp(1, "task", "d/a", { title: "a", scored: 7 })),
+    ).not.toThrow();
     expect(taskRow("d", "a")).toMatchObject({ scored: 0 });
   });
 
   it("the placeholder insert for a partial task op uses the schema defaults", () => {
-    applyOp(db, peerOp(1, "task", "d/a", { title: "a" }));
+    applyIncomingOp(db, peerOp(1, "task", "d/a", { title: "a" }));
     expect(taskRow("d", "a")).toMatchObject({ impact: 50, effort_days: 1, scored: 0 });
   });
 
@@ -439,9 +442,9 @@ describe("apply of the new fields", () => {
     ensureWorkstream(db, "d");
     db.prepare("UPDATE workstreams SET torn_down_at = '2026-01-01T00:00:00.000Z'").run();
     expect(() => {
-      applyOp(db, peerOp(1, "workstream", "d", { created_at: "2025-01-01T00:00:00.000Z" }));
-      applyOp(db, peerOp(2, "task", "d/new", { title: "n" }));
-      applyOp(db, peerOp(3, "note", "d/new#1", { content: "c", created_at: "t" }));
+      applyIncomingOp(db, peerOp(1, "workstream", "d", { created_at: "2025-01-01T00:00:00.000Z" }));
+      applyIncomingOp(db, peerOp(2, "task", "d/new", { title: "n" }));
+      applyIncomingOp(db, peerOp(3, "note", "d/new#1", { content: "c", created_at: "t" }));
     }).not.toThrow();
     expect(db.prepare("SELECT COUNT(*) AS n FROM workstreams WHERE name = 'd'").get()).toEqual({
       n: 1,

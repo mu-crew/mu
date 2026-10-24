@@ -23,12 +23,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Op } from "../src/apply.js";
 import { CURRENT_SCHEMA_VERSION, type Db, openDb } from "../src/db.js";
-import { withCaptureSuppressed } from "../src/op-context.js";
 import {
   applyIncomingOp,
-  discoverPeers,
   flushSegment,
-  ingestSegment,
   localMachineId,
   segmentPath,
   syncPass,
@@ -402,7 +399,7 @@ describe("sync", () => {
 
   // ─── ordering: ingest before, flush after ──────────────────────────
 
-  describe("deferred-op repair on ambient ingest", () => {
+  describe("out-of-order arrival", () => {
     const edgeCount = (db: Db): number =>
       (db.prepare("SELECT COUNT(*) AS n FROM task_edges").get() as { n: number }).n;
 
@@ -430,41 +427,7 @@ describe("sync", () => {
       }
     });
 
-    it("a pass that died before the repair is repaired by the next ambient pass", async () => {
-      const c = openDb({ path: join(tempDir, "c.db") });
-      try {
-        seed(a, "parent");
-        await flushSegment(a, dir);
-        await ambientIngest(c);
-        seed(c, "child");
-        addBlockEdge(c, "demo", "child", "parent");
-        await flushSegment(c, dir);
-
-        // b holds the edge, deferred: its parent has not arrived.
-        const aSeg = segmentPath(dir, localMachineId(a));
-        renameSync(aSeg, `${aSeg}.hidden`);
-        await ambientIngest(b);
-        expect(edgeCount(b)).toBe(0);
-        renameSync(`${aSeg}.hidden`, aSeg);
-
-        // A process ingests the parent's segment and exits before the
-        // pass-wide repair runs.
-        const parentPeer = discoverPeers(dir, localMachineId(b)).find(
-          (p) => p.machineId === localMachineId(a),
-        );
-        if (parentPeer === undefined) throw new Error("expected a's segment");
-        expect(ingestSegment(b, parentPeer).applied).toBeGreaterThan(0);
-
-        // The next ordinary invocation applies nothing new.
-        const next = await ambientIngest(b);
-        expect(next.ingested.every((r) => r.applied === 0)).toBe(true);
-        expect(edgeCount(b)).toBe(1);
-      } finally {
-        c.close();
-      }
-    });
-
-    it("repairs an edge an SDK caller applied before its parent", async () => {
+    it("an edge an SDK caller applied before its parents lands when they arrive", () => {
       seed(a, "parent");
       seed(a, "child");
       addBlockEdge(a, "demo", "child", "parent");
@@ -477,39 +440,13 @@ describe("sync", () => {
           .all() as Op[]
       ).sort((x, y) => (x.entity === "edge" ? -1 : y.entity === "edge" ? 1 : 0));
       expect(ops[0]?.entity).toBe("edge");
-      // Edge first (deferred: neither task is here), then its parents,
-      // straight through the exported incoming-op seam.
-      for (const op of ops) applyIncomingOp(b, op);
+      // Edge first (neither task is here), then its parents, straight
+      // through the exported incoming-op seam: no repair pass, no marker.
+      applyIncomingOp(b, ops[0] as Op);
       expect(edgeCount(b)).toBe(0);
-
-      // An ambient pass over an empty sync dir applies nothing, yet runs
-      // the repair the direct calls left pending.
-      const empty = join(tempDir, "empty-sync");
-      mkdirSync(empty);
-      process.env[SYNC_DIR_KEY] = empty;
-      const pass = await ambientIngest(b);
-      expect(pass.ingested).toEqual([]);
+      for (const op of ops.slice(1)) applyIncomingOp(b, op);
       expect(edgeCount(b)).toBe(1);
       expect(b.pragma("user_version", { simple: true })).toBe(0);
-    });
-
-    it("does no repair scan when the pass applied nothing", async () => {
-      seed(a, "parent");
-      seed(a, "child");
-      addBlockEdge(a, "demo", "child", "parent");
-      await flushSegment(a, dir);
-      await ambientIngest(b);
-      expect(edgeCount(b)).toBe(1);
-
-      // Drop the projected edge behind capture's back, so only the
-      // repair scan could restore it.
-      withCaptureSuppressed(b, () => b.prepare("DELETE FROM task_edges").run());
-      await ambientIngest(b);
-      expect(edgeCount(b)).toBe(0);
-
-      // Explicit `mu sync` always runs the repair.
-      await syncPass(b, dir);
-      expect(edgeCount(b)).toBe(1);
     });
   });
 

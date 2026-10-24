@@ -1,107 +1,65 @@
-// mu — the APPLY path: how one op lands in the portable tables.
+// mu — the APPLY path: how an op lands in the portable tables.
 //
-// The counterpart to src/capture.ts. Capture answers "a row changed,
-// what op records it"; this answers "here is an op, local or from a
-// peer, what does the table look like afterwards". v2-sync will call
-// `applyOp` once per op it ingests; this module knows nothing about
-// segments, files or watermarks.
+// The counterpart to src/capture.ts. Capture answers "a row changed, what
+// op records it"; this answers "here is an op, local or from a peer, what
+// do the tables look like afterwards". It knows nothing about segments,
+// files or watermarks.
 //
-// THE MERGE RULES (docs/VOCABULARY.md; v2-merge-rules)
-// ---------------------------------------------------
-//   note / message      GROW-ONLY SET. Insert-if-absent by content
-//                       identity (task, author, content, created_at).
-//                       Never updated, so never in conflict.
-//   task / workstream   PER-FIELD LWW by HLC. Not row-level.
-//   edge                LWW-ELEMENT-SET: add/remove, each carrying an
-//                       HLC, so a remove and a re-add order correctly.
-//   anything else       NOT SYNCED. Rejected loudly.
+// LIVE STATE IS REBUILD-OF-THAT-KEY
+// ---------------------------------
+// The ops log is the canonical record and the tables are a projection of
+// it. src/fold.ts defines the projection as a PURE function: the ops of
+// one natural key (plus the tombstone horizon covering it) in, the row's
+// state out. This module has no merge rule of its own. `applyOp` finds the
+// keys the op can change and re-folds each from ALL the ops the log knows
+// for it, then makes the table row equal the fold. `mu rebuild` replays
+// the log through the same call. So live state equals an HLC-order
+// rebuild for EVERY arrival order of the same op set, by construction:
+// there is no per-path comparison (put vs del, child vs parent) left to
+// get wrong, and no "deferred" op to repair later.
 //
-// WHY PER-FIELD AND NOT ROW-LEVEL
-// -------------------------------
-// The original design note argued row-level LWW sufficed, because "the
-// operating rule is already no concurrent edits to one workstream on two
-// machines". That assumption is weak in mu specifically: mu runs
-// autonomous agent crews, so a crew on the devserver closing a task
-// while the operator edits that same task's impact on a laptop is
-// concurrent multi-machine writing BY CONSTRUCTION, not user error.
-// Row-level LWW would let the crew's status=CLOSED clobber the
-// operator's impact=80, silently, with no conflict reported.
+// WHAT AN OP CAN CHANGE
+//   workstream put   its own row.
+//   workstream del   its row, and every task, note and edge beneath it
+//                    (the horizon moved).
+//   task put         the task row and its workstream (a task put creates
+//                    its parent); when the task came into or went out of
+//                    existence, also its notes and the edges touching it.
+//   task del         the same, always.
+//   note put / del   that task's notes.
+//   edge put / del   that edge.
 //
-// Per-field costs nothing extra here because capture already emits
-// SEMANTIC PARTIAL UPDATES: a task.close op carries {"status":"CLOSED"},
-// not a row snapshot. So "apply each op's keys in HLC order" IS
-// per-field LWW. No column version vectors, no per-column metadata, none
-// of the cr-sqlite machinery we rejected.
+// PROVENANCE IS THE LOG
+// ---------------------
+// Every op carries its HLC and names the fields it touched, so "the HLC
+// that last wrote field F of key K" is a query over K's handful of ops
+// (`idx_ops_entity_key`), not a fact needing a side table. The op being
+// applied is passed in beside the log's rows, so record-then-apply and
+// apply-then-record fold identically, and re-applying an op is a no-op.
 //
-// PROVENANCE: DERIVED FROM THE OPS LOG, NOT STORED
-// ------------------------------------------------
-// Per-field LWW needs to know, per field, the HLC that last wrote it.
-// The obvious shape is a side table keyed (entity, key, field) -> hlc.
-// This module does NOT do that, and the reason is worth stating because
-// the brief explicitly asked for a justification.
-//
-// The ops log ALREADY IS the per-field provenance. Every op carries its
-// HLC and names exactly the fields it touched, and `idx_ops_entity_key`
-// indexes (entity, key). So "the HLC that last wrote field F of key K"
-// is a query over the ~handful of ops for K, not a fact needing separate
-// storage. Deriving it instead of storing it means:
-//
-//   * ONE source of truth. A side table is a denormalisation that can
-//     disagree with the log, and when it does, every downstream
-//     projection (sync, rebuild) inherits the disagreement. There
-//     is no reconciliation procedure that could fix it, because nothing
-//     would know which side was right.
-//   * Idempotence for free. Re-applying an op compares HLCs against the
-//     log, which already contains that op, so a second apply is a no-op
-//     by construction rather than by careful bookkeeping. That is what
-//     makes "re-read a peer's segment from zero" a safe universal
-//     repair.
-//   * Resurrection survives deletion for free. See below.
-//   * Storage cost: ZERO additional bytes. A side table would cost one
-//     row per (key, field) — for the 8 captured columns of `tasks`, 8
-//     rows per task, each ~60 bytes of key text plus a ~55-byte HLC, so
-//     roughly 1KB per task, unbounded in the number of tasks and
-//     duplicating data already on disk in `ops`.
-//
-// Measured cost of deriving: ~10us per key against a 16000-op / 2000-task
-// log (index seek over that key's ~8 ops). Ingest is already doing a
-// write per op, so this is not the bottleneck, and it buys the absence of
-// a whole class of drift bug. If a profile ever says otherwise, the fix
-// is a materialised cache keyed off `ops.seq` that can be rebuilt from
-// the log — which is exactly the kind of thing to add when measured, not
-// before.
-//
-// RESURRECTION vs A STALE PUT
-// ---------------------------
-// After a `del`, a LATER `put` must recreate the row (a legitimate
-// re-add), while an EARLIER `put` arriving late must not. Distinguishing
-// them requires provenance that outlives the row — and derived
-// provenance does, automatically, because `ops` rows are never deleted
-// when a table row is. A stored side table would have to be deliberately
-// NOT cleaned up on delete, which is a rule someone eventually
-// "optimises" away.
-//
-// TOMBSTONES ARE JUST OPS (v2-tombstones)
-// ---------------------------------------
-// There is no tombstone table. `op='del'` rows ARE the tombstones,
-// ordinary ops carrying an HLC, so out-of-order arrival is just "compare
-// HLCs" — the same comparison the update path does. A late `put` older
-// than a seen `del` loses; a `del` older than a seen `put` loses. One
-// code path, no special casing.
+// TOMBSTONES ARE JUST OPS. There is no tombstone table: a `del` is an op
+// with an HLC, and a put older than the newest `del` covering its key is
+// dead whatever the arrival order.
 
 import {
   type Db,
-  DEFAULT_EFFORT_DAYS,
-  DEFAULT_IMPACT,
   MACHINE_LOCAL_ENTITIES,
-  NOTE_KINDS,
   prepareCached,
   SYNCED_ENTITIES,
   type SyncedEntity,
 } from "./db.js";
+import {
+  foldEdge,
+  foldNotes,
+  foldTask,
+  foldWorkstream,
+  type LogOp,
+  laterHlc,
+  newestDel,
+  noteIdentity,
+} from "./fold.js";
 import { compareHlc } from "./hlc.js";
 import { withCaptureSuppressed } from "./op-context.js";
-import { DEFAULT_SUBSTATE, isTaskStatus, mapLegacyStatus, resolvePair } from "./tasks/status.js";
 
 /** An op as applied. Mirrors the `ops` row shape, minus the local-only
  *  `seq` (meaningless on a peer) and the advisory `created_at`. */
@@ -158,14 +116,11 @@ export class OpKeyMalformedError extends Error {
 /** What `applyOp` did, so callers (and tests) can assert on outcomes
  *  rather than re-querying. */
 export interface ApplyResult {
-  /** True iff the DB changed. False for a losing op, a duplicate, or a
-   *  no-op — all three are legitimate and non-exceptional. */
+  /** True iff the DB changed. False for a dead, superseded or duplicate
+   *  op: legitimate and non-exceptional. */
   changed: boolean;
-  /** Fields actually written, for a 'put' on task / workstream. Empty
-   *  when every field in the payload lost its HLC comparison. */
+  /** The columns of a task or workstream row the op changed. */
   appliedFields: string[];
-  /** Why nothing happened, when `changed` is false. */
-  skipped?: "older-than-tombstone" | "older-than-current" | "already-present" | "absent";
 }
 
 function isSyncedEntity(entity: string): entity is SyncedEntity {
@@ -176,145 +131,6 @@ function isSyncedEntity(entity: string): entity is SyncedEntity {
  *  only these are a defect. */
 function isKnownMachineLocalEntity(entity: string): boolean {
   return (MACHINE_LOCAL_ENTITIES as readonly string[]).includes(entity);
-}
-
-// ─── Derived provenance ───────────────────────────────────────────────
-
-/**
- * The newest HLC among ops for `key` that touched `field`, or null if no
- * op ever has. Ops are the provenance (see the module comment), so this
- * is a plain indexed query rather than a lookup in a side table.
- *
- * `json_type(payload, '$.field') IS NOT NULL` is the presence test, NOT
- * `json_extract(...) IS NOT NULL`. json_extract returns SQL NULL both
- * for an absent key and for a key whose value IS null, which would make
- * a set-to-NULL op invisible to its own provenance — the field would
- * then be permanently rewritable by any older op. json_type returns the
- * string 'null' for a present-but-null member and SQL NULL only when
- * the member is genuinely absent, so it distinguishes the two.
- *
- * The `hlc <> @self` exclusion makes re-application idempotent: an op
- * already in the log must not count itself as a competing writer, or a
- * second apply would compare its HLC against itself and lose.
- */
-function fieldHlc(db: Db, op: Op, field: string): string | null {
-  const row = prepareCached(
-    db,
-    `SELECT MAX(hlc) AS hlc
-         FROM ops
-        WHERE entity = @entity
-          AND key    = @key
-          AND op     = 'put'
-          AND hlc   <> @self
-          AND json_type(payload, '$.' || @field) IS NOT NULL`,
-  ).get({ entity: op.entity, key: op.key, self: op.hlc, field }) as
-    | { hlc: string | null }
-    | undefined;
-  return row?.hlc ?? null;
-}
-
-/**
- * The newest tombstone HLC for this key, or null if it was never
- * deleted. This is the whole of tombstone handling: a `del` is an
- * ordinary op, so "has this been deleted, and when" is one MAX().
- */
-function tombstoneHlc(db: Db, op: Op): string | null {
-  const row = prepareCached(
-    db,
-    `SELECT MAX(hlc) AS hlc
-         FROM ops
-        WHERE entity = @entity AND key = @key AND op = 'del' AND hlc <> @self`,
-  ).get({ entity: op.entity, key: op.key, self: op.hlc }) as { hlc: string | null } | undefined;
-  return row?.hlc ?? null;
-}
-
-/** The newest HLC of any op for this key, whatever kind. Used by the
- *  grow-only and element-set paths, which care about the row's
- *  existence rather than individual fields. */
-function anyHlc(db: Db, op: Op, kind: "put" | "del"): string | null {
-  const row = prepareCached(
-    db,
-    `SELECT MAX(hlc) AS hlc
-         FROM ops
-        WHERE entity = @entity AND key = @key AND op = @kind AND hlc <> @self`,
-  ).get({ entity: op.entity, key: op.key, kind, self: op.hlc }) as
-    | { hlc: string | null }
-    | undefined;
-  return row?.hlc ?? null;
-}
-
-/** True iff `candidate` is strictly newer than `incumbent`. A null
- *  incumbent means "nothing has written this yet", so anything wins. */
-function wins(candidate: string, incumbent: string | null): boolean {
-  if (incumbent === null) return true;
-  return compareHlc(candidate, incumbent) > 0;
-}
-
-/** Newest `del` for one natural key, or null. */
-function maxDelHlc(db: Db, entity: string, key: string): string | null {
-  const row = prepareCached(
-    db,
-    "SELECT MAX(hlc) AS hlc FROM ops WHERE entity = ? AND key = ? AND op = 'del'",
-  ).get(entity, key) as { hlc: string | null } | undefined;
-  return row?.hlc ?? null;
-}
-
-/**
- * The newest tombstone that covers a task: its own `del` or its
- * workstream's (rebuild replays in HLC order, so a workstream `del`
- * cascades every task, note and edge beneath it). A put OLDER than this
- * is dead whatever the arrival order: rebuild would have wiped it. Every
- * put path asks this one question, so apply is a function of the SET of
- * ops, never of their arrival order.
- */
-function taskHorizon(db: Db, taskKey: string): string | null {
-  const own = maxDelHlc(db, "task", taskKey);
-  const parent = maxDelHlc(db, "workstream", parseTaskKey(taskKey).workstream);
-  if (own === null) return parent;
-  if (parent === null) return own;
-  return compareHlc(own, parent) >= 0 ? own : parent;
-}
-
-// ─── Payload decoding ─────────────────────────────────────────────────
-
-/** A payload field and its value. `value` may legitimately be null —
- *  that is a set-to-NULL, not an absent field. */
-type PayloadEntry = readonly [field: string, value: string | number | null];
-
-/**
- * Decode a payload into ordered entries.
- *
- * Deliberately hand-rolled over `Object.entries(JSON.parse(...))`
- * only in that it validates shape and narrows types; the important part
- * is what it does NOT do: it never uses `json_patch` to merge a payload
- * into a row. json_patch implements RFC 7396, where a null member means
- * DELETE THIS KEY, so `json_patch('{"owner_id":7}', '{"owner_id":null}')`
- * returns `{}` — the set-to-NULL is silently discarded rather than
- * applied. Since capture emits exactly `{"owner_id":null}` when a claim
- * is released, using json_patch anywhere on the apply path would drop
- * every set-to-NULL transition in the system. Fields are applied one at
- * a time with explicit parameter binding instead.
- */
-function decodePayload(payload: string): PayloadEntry[] {
-  const parsed: unknown = JSON.parse(payload);
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new SyntaxError(`op payload must be a JSON object, got ${payload.slice(0, 40)}`);
-  }
-  const entries: PayloadEntry[] = [];
-  for (const [field, value] of Object.entries(parsed)) {
-    if (value === null || typeof value === "string" || typeof value === "number") {
-      entries.push([field, value]);
-      continue;
-    }
-    if (typeof value === "boolean") {
-      // SQLite has no boolean type; capture never emits one, but a
-      // hand-written or future op might.
-      entries.push([field, value ? 1 : 0]);
-      continue;
-    }
-    throw new SyntaxError(`op payload field ${JSON.stringify(field)} has unsupported type`);
-  }
-  return entries;
 }
 
 // ─── Natural key parsing ──────────────────────────────────────────────
@@ -362,636 +178,402 @@ function parseEdgeKey(key: string): { blocker: string; blocked: string } {
   return { blocker, blocked };
 }
 
-// ─── Row helpers ──────────────────────────────────────────────────────
+// ─── The log, as the folds read it ────────────────────────────────────
+
+/** The smallest string above every string starting with `p`. */
+const hi = (p: string): string =>
+  `${p.slice(0, -1)}${String.fromCharCode(p.charCodeAt(p.length - 1) + 1)}`;
+
+interface LogRow {
+  hlc: string;
+  op: "put" | "del";
+  key: string;
+  payload: string;
+}
 
 /**
- * Columns that must never be written from an op.
- *
- *   owner_id  is an FK into the machine-local `agents` table, so
- *             OWNERSHIP DOES NOT SYNC (src/db.ts § MACHINE_LOCAL_TABLES
- *             spells out why). It is CAPTURED, for local history,
- *             but applying a peer's owner_id would at best point
- *             at an unrelated local agent and at worst violate the FK
- *             outright — verified: inserting a task with an owner_id
- *             absent from `agents` fails with 'FOREIGN KEY constraint
- *             failed'. Stripping it structurally is the only correct
- *             move, and it makes the FK a backstop rather than a trap.
- *   local_id / name
- *             are encoded in the natural key. Taking them from the
- *             payload would let a op rename the row out from under its
- *             own key.
+ * Read access to the ops log, plus the op being applied (which the caller
+ * may not have recorded yet). Every query returns the union, deduplicated
+ * by HLC (an HLC embeds its machine id, so it names one op).
  */
-const NEVER_APPLY = new Set(["owner_id", "local_id", "name", "id", "workstream_id", "task_id"]);
+class Log {
+  private readonly pending: LogRow | undefined;
+  private readonly pendingEntity: string;
 
-/** Ensure the workstream row exists, returning its surrogate id. Rows
- *  arrive out of order across entities (a task op can precede its
- *  workstream op), so the apply path creates the parent on demand
- *  rather than rejecting. The subsequent workstream op then fills in
- *  its real fields by ordinary per-field LWW. */
-function ensureWorkstreamRow(db: Db, name: string): number {
-  const existing = prepareCached(db, "SELECT id FROM workstreams WHERE name = ?").get(name) as
-    | { id: number }
-    | undefined;
-  if (existing) return existing.id;
-  prepareCached(db, "INSERT INTO workstreams (name, created_at) VALUES (?, ?)").run(
-    name,
-    new Date().toISOString(),
-  );
-  const created = prepareCached(db, "SELECT id FROM workstreams WHERE name = ?").get(name) as
-    | { id: number }
-    | undefined;
-  if (!created) throw new Error(`failed to create workstream row for ${name}`);
-  return created.id;
+  constructor(
+    private readonly db: Db,
+    op?: Op,
+  ) {
+    this.pending = op && { hlc: op.hlc, op: op.op, key: op.key, payload: op.payload };
+    this.pendingEntity = op?.entity ?? "";
+  }
+
+  private withPending(entity: string, rows: LogRow[], inScope: (key: string) => boolean): LogRow[] {
+    const p = this.pending;
+    if (p === undefined || entity !== this.pendingEntity || !inScope(p.key)) return rows;
+    return rows.some((r) => r.hlc === p.hlc) ? rows : [...rows, p];
+  }
+
+  /** The ops of one natural key. */
+  ofKey(entity: string, key: string): LogOp[] {
+    const rows = prepareCached(
+      this.db,
+      "SELECT hlc, op, key, payload FROM ops WHERE entity = ? AND key = ?",
+    ).all(entity, key) as LogRow[];
+    return this.withPending(entity, rows, (k) => k === key);
+  }
+
+  /** The ops of every key in [lo, hi), grouped by key. */
+  range(entity: string, lo: string, hiKey: string): Map<string, LogOp[]> {
+    const rows = this.withPending(
+      entity,
+      prepareCached(
+        this.db,
+        "SELECT hlc, op, key, payload FROM ops WHERE entity = ? AND key >= ? AND key < ?",
+      ).all(entity, lo, hiKey) as LogRow[],
+      (k) => k >= lo && k < hiKey,
+    );
+    const out = new Map<string, LogOp[]>();
+    for (const r of rows) {
+      const list = out.get(r.key);
+      if (list) list.push(r);
+      else out.set(r.key, [r]);
+    }
+    return out;
+  }
+
+  /** The oldest task put under workstream `ws` newer than `after`. */
+  firstTaskPutAfter(ws: string, after: string | null): string | null {
+    const lo = `${ws}/`;
+    const row = prepareCached(
+      this.db,
+      `SELECT MIN(hlc) AS hlc FROM ops
+        WHERE entity = 'task' AND op = 'put' AND key >= @lo AND key < @hi
+          AND (@after IS NULL OR hlc > @after)`,
+    ).get({ lo, hi: hi(lo), after }) as { hlc: string | null };
+    const p = this.pending;
+    let best = row.hlc;
+    if (
+      p !== undefined &&
+      this.pendingEntity === "task" &&
+      p.op === "put" &&
+      p.key >= lo &&
+      p.key < hi(lo) &&
+      (after === null || p.hlc > after)
+    ) {
+      best = best === null || p.hlc < best ? p.hlc : best;
+    }
+    return best;
+  }
+
+  /** Edge keys naming a task in `scope`: a workstream (`name/`) or one task. */
+  edgeKeysTouching(scope: { workstream: string } | { task: string }): string[] {
+    const candidates =
+      "workstream" in scope
+        ? prepareCached(
+            this.db,
+            `SELECT DISTINCT key FROM ops
+              WHERE entity = 'edge' AND (instr(key, @to) > 0 OR (key >= @lo AND key < @hi))`,
+          ).all({
+            to: `->${scope.workstream}/`,
+            lo: `${scope.workstream}/`,
+            hi: hi(`${scope.workstream}/`),
+          })
+        : prepareCached(
+            this.db,
+            `SELECT DISTINCT key FROM ops
+              WHERE entity = 'edge'
+                AND ((key >= @lo AND key < @hi) OR substr(key, -length(@to)) = @to)`,
+          ).all({ to: `->${scope.task}`, lo: `${scope.task}->`, hi: hi(`${scope.task}->`) });
+    const keys = new Set((candidates as { key: string }[]).map((r) => r.key));
+    const p = this.pending;
+    if (p !== undefined && this.pendingEntity === "edge") keys.add(p.key);
+    return [...keys].filter((key) => {
+      let ends: { blocker: string; blocked: string };
+      try {
+        ends = parseEdgeKey(key);
+      } catch {
+        return false;
+      }
+      const inScope = (t: string): boolean =>
+        "workstream" in scope ? t.startsWith(`${scope.workstream}/`) : t === scope.task;
+      return inScope(ends.blocker) || inScope(ends.blocked);
+    });
+  }
 }
+
+/** The newest tombstone covering a task: its own `del` or its workstream's
+ *  (a workstream `del` cascades every task, note and edge beneath it). */
+function taskHorizon(log: Log, taskKey: string): string | null {
+  const { workstream } = parseTaskKey(taskKey);
+  return laterHlc(
+    newestDel(log.ofKey("task", taskKey)),
+    newestDel(log.ofKey("workstream", workstream)),
+  );
+}
+
+// ─── Reconcile: make a row equal its fold ─────────────────────────────
+
+type Fields = Record<string, string | number | null>;
+
+/** The names of the fields on which `a` and `b` differ, in `a`'s order. */
+function differing(a: Fields, b: Fields): string[] {
+  return Object.keys(a).filter((k) => a[k] !== b[k]);
+}
+
+const workstreamId = (db: Db, name: string): number | null =>
+  (
+    prepareCached(db, "SELECT id FROM workstreams WHERE name = ?").get(name) as
+      | { id: number }
+      | undefined
+  )?.id ?? null;
 
 /** Surrogate id for a task natural key, or null when absent. */
 function taskRowId(db: Db, key: string): number | null {
   const { workstream, localId } = parseTaskKey(key);
   const row = prepareCached(
     db,
-    `SELECT t.id AS id
-         FROM tasks t
-         JOIN workstreams w ON w.id = t.workstream_id
-        WHERE w.name = ? AND t.local_id = ?`,
+    `SELECT t.id AS id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+      WHERE w.name = ? AND t.local_id = ?`,
   ).get(workstream, localId) as { id: number } | undefined;
   return row?.id ?? null;
 }
 
-// ─── Entity appliers ──────────────────────────────────────────────────
+interface Reconciled {
+  changed: boolean;
+  fields: string[];
+}
+const UNCHANGED: Reconciled = { changed: false, fields: [] };
 
-/** PER-FIELD LWW for one row of a table with a natural key.
- *
- *  For each field in the payload, apply it only if this op's HLC beats
- *  the newest HLC that previously wrote THAT FIELD. Fields are
- *  independent, so one op can win on `status` and lose on `impact` in
- *  the same call — which is exactly the concurrent-crew case. */
-function applyFieldLww(
-  db: Db,
-  op: Op,
-  table: "tasks" | "workstreams",
-  rowId: number,
-  entries: readonly PayloadEntry[],
-): string[] {
-  const applied: string[] = [];
-  for (const [field, value] of entries) {
-    if (NEVER_APPLY.has(field)) continue;
-    if (!wins(op.hlc, fieldHlc(db, op, field))) continue;
-
-    // The HLC says this op may write the field. Before doing so, check
-    // whether the field ALREADY holds this value.
-    //
-    // This is what makes re-application a true no-op rather than a
-    // redundant rewrite that merely happens to be value-stable. The HLC
-    // comparison alone cannot tell "first apply" from "second apply",
-    // because provenance deliberately excludes the op's own HLC (so that
-    // record-then-apply and apply-then-record behave identically). Value
-    // equality is the honest signal: nothing changed, so report nothing
-    // changed. Callers use `changed` to decide whether to log or refresh,
-    // and a spurious true would make `mu sync` claim work it did not do.
-    //
-    // Identifier is not user input: `field` is filtered against the
-    // table's real column list by `filterAppliable` before we get here.
-    const current = prepareCached(db, `SELECT ${field} AS v FROM ${table} WHERE id = ?`).get(
-      rowId,
-    ) as { v: string | number | null } | undefined;
-    if (current !== undefined && current.v === value) continue;
-
-    prepareCached(db, `UPDATE ${table} SET ${field} = ? WHERE id = ?`).run(value, rowId);
-    applied.push(field);
+function syncWorkstream(db: Db, log: Log, name: string): Reconciled {
+  const state = foldWorkstream(log.ofKey("workstream", name), (after) =>
+    log.firstTaskPutAfter(name, after),
+  );
+  const row = prepareCached(
+    db,
+    "SELECT id, created_at, torn_down_at FROM workstreams WHERE name = ?",
+  ).get(name) as { id: number; created_at: string; torn_down_at: string | null } | undefined;
+  if (state === null) {
+    if (row === undefined) return UNCHANGED;
+    // FK CASCADE removes the tasks, notes and edges beneath it.
+    prepareCached(db, "DELETE FROM workstreams WHERE id = ?").run(row.id);
+    return { changed: true, fields: [] };
   }
-  return applied;
+  const want: Fields = { created_at: state.createdAt, torn_down_at: state.tornDownAt };
+  if (row === undefined) {
+    prepareCached(
+      db,
+      "INSERT INTO workstreams (name, created_at, torn_down_at) VALUES (?, ?, ?)",
+    ).run(name, state.createdAt, state.tornDownAt);
+    return { changed: true, fields: Object.keys(want) };
+  }
+  const fields = differing(want, { created_at: row.created_at, torn_down_at: row.torn_down_at });
+  if (fields.length === 0) return UNCHANGED;
+  prepareCached(db, "UPDATE workstreams SET created_at = ?, torn_down_at = ? WHERE id = ?").run(
+    state.createdAt,
+    state.tornDownAt,
+    row.id,
+  );
+  return { changed: true, fields };
 }
 
-/** The columns each portable table will accept from an op. Anything
- *  else in a payload is ignored rather than fatal: a peer on a newer mu
- *  may legitimately send fields we do not know yet, and dropping them
- *  is strictly better than refusing the whole op. */
-const APPLIABLE_COLUMNS: Record<"tasks" | "workstreams", readonly string[]> = {
-  tasks: [
-    "title",
-    "status",
-    "substate",
-    "impact",
-    "effort_days",
-    "scored",
-    "dispatch_host",
-    "created_at",
-    "updated_at",
-  ],
-  workstreams: ["created_at", "torn_down_at"],
-};
-
-function filterAppliable(
-  table: "tasks" | "workstreams",
-  entries: readonly PayloadEntry[],
-): PayloadEntry[] {
-  const allowed = APPLIABLE_COLUMNS[table];
-  return entries.filter(([field]) => allowed.includes(field));
-}
-
-/** The applicable (column, value) pairs of a task put, plus the substate
- *  it carries (see applyTaskPut). Shared by the live put and by the
- *  reconcile replay below, so the two cannot disagree on what a put writes. */
-function taskPutEntries(op: Op): {
-  entries: PayloadEntry[];
-  pending: { hlc: string; substate: string | null };
-} {
-  // Decode the pair out of the payload. `substate` is not applied by
-  // per-field LWW: repairTaskPair derives it from the log (see there),
-  // with this op passed in because the caller may not have recorded it
-  // yet. A legacy status (v9 peers, retained history) maps onto a pair;
-  // only the decoded projection changes, the payload is recorded as-is.
-  // A status this build does not know is dropped like an unknown field.
-  const entries: PayloadEntry[] = [];
-  for (const entry of filterAppliable("tasks", decodePayload(op.payload))) {
-    const [field, value] = entry;
-    if (field === "substate") continue;
-    // A value the CHECK would refuse is dropped like an unknown field: a
-    // RAISE during ingest would roll back the segment and stall sync.
-    if (field === "scored" && value !== 0 && value !== 1) continue;
-    if (field === "status") {
-      if (typeof value !== "string") continue;
-      const legacy = mapLegacyStatus(value);
-      if (legacy) entries.push(["status", legacy.status]);
-      else if (isTaskStatus(value)) entries.push(entry);
-      continue;
-    }
-    entries.push(entry);
+function syncTask(db: Db, log: Log, key: string): Reconciled {
+  const { workstream, localId } = parseTaskKey(key);
+  const state = foldTask(log.ofKey("task", key), taskHorizon(log, key), localId);
+  const existing = prepareCached(
+    db,
+    `SELECT t.id, t.title, t.status, t.substate, t.impact, t.effort_days, t.scored,
+            t.dispatch_host, t.created_at, t.updated_at
+       FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+      WHERE w.name = ? AND t.local_id = ?`,
+  ).get(workstream, localId) as (Fields & { id: number }) | undefined;
+  if (state === null) {
+    if (existing === undefined) return UNCHANGED;
+    prepareCached(db, "DELETE FROM tasks WHERE id = ?").run(existing.id);
+    return { changed: true, fields: [] };
   }
-  return { entries, pending: { hlc: op.hlc, substate: carriedSubstate(JSON.parse(op.payload)) } };
-}
-
-function applyTaskPut(db: Db, op: Op): ApplyResult {
-  const { workstream, localId } = parseTaskKey(op.key);
-  const { entries, pending } = taskPutEntries(op);
-
-  // A put older than a tombstone covering this task (its own `del`, or
-  // its workstream's: rebuild replays in HLC order, so that delete would
-  // have cascaded it away) is dead on arrival, row or no row. Applying it
-  // to a row that a newer put created would leak the dead life's fields.
-  const horizon = taskHorizon(db, op.key);
-  if (horizon !== null && !wins(op.hlc, horizon)) {
-    return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
-  }
-
-  const existing = taskRowId(db, op.key);
-  if (existing === null) {
-    // Row absent and not older than any tombstone: a first create or a
-    // legitimate resurrection.
-    // Create the row, then let per-field LWW fill it in. The insert uses
-    // placeholder values for NOT NULL columns so a partial payload
-    // cannot fail the insert; every field the op actually carries is
-    // written by applyFieldLww below, and any it does not carry will be
-    // filled by whichever op does.
-    const wsId = ensureWorkstreamRow(db, workstream);
-    const now = new Date().toISOString();
+  const want: Fields = {
+    title: state.title,
+    status: state.status,
+    substate: state.substate,
+    impact: state.impact,
+    effort_days: state.effortDays,
+    scored: state.scored,
+    dispatch_host: state.dispatchHost,
+    created_at: state.createdAt,
+    updated_at: state.updatedAt,
+  };
+  if (existing === undefined) {
+    const wsId = workstreamId(db, workstream);
+    // The workstream fold keeps the parent of every live task alive.
+    if (wsId === null) return UNCHANGED;
     prepareCached(
       db,
       `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days,
-                          owner_id, created_at, updated_at)
-       VALUES (?, ?, ?, 'OPEN', 'todo', ?, ?, NULL, ?, ?)`,
-    ).run(wsId, localId, localId, DEFAULT_IMPACT, DEFAULT_EFFORT_DAYS, now, now);
-    const rowId = taskRowId(db, op.key);
-    if (rowId === null) throw new Error(`failed to create task row for ${op.key}`);
-    // Force every carried field on: the row was just created, so there
-    // is no incumbent value worth preserving, but the HLC comparison
-    // still runs so a stale op cannot overwrite a newer one that
-    // arrived first and created the row.
-    const applied = applyFieldLww(db, op, "tasks", rowId, entries);
-    if (repairTaskPair(db, rowId, pending)) applied.push("substate");
-    return { changed: true, appliedFields: applied };
+                          scored, dispatch_host, owner_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+    ).run(
+      wsId,
+      localId,
+      state.title,
+      state.status,
+      state.substate,
+      state.impact,
+      state.effortDays,
+      state.scored,
+      state.dispatchHost,
+      state.createdAt,
+      state.updatedAt,
+    );
+    return { changed: true, fields: Object.keys(want) };
   }
-
-  const applied = applyFieldLww(db, op, "tasks", existing, entries);
-  if (repairTaskPair(db, existing, pending)) applied.push("substate");
-  return applied.length > 0
-    ? { changed: true, appliedFields: applied }
-    : { changed: false, appliedFields: [], skipped: "older-than-current" };
+  const fields = differing(want, existing);
+  if (fields.length === 0) return UNCHANGED;
+  prepareCached(
+    db,
+    `UPDATE tasks SET title = ?, status = ?, substate = ?, impact = ?, effort_days = ?,
+                      scored = ?, dispatch_host = ?, created_at = ?, updated_at = ?
+      WHERE id = ?`,
+  ).run(
+    state.title,
+    state.status,
+    state.substate,
+    state.impact,
+    state.effortDays,
+    state.scored,
+    state.dispatchHost,
+    state.createdAt,
+    state.updatedAt,
+    existing.id,
+  );
+  return { changed: true, fields };
 }
 
-/** The substate an op payload writes, or null if it writes none.
- *
- *  - A legacy status writes the substate it maps to, overriding any
- *    substate beside it (mirrors resolvePair).
- *  - A known status with no substate writes the status's default.
- *    Capture records only changed columns, and the substate sets of the
- *    statuses are disjoint, so a v11 status change always carries its
- *    substate. A status-only op therefore comes from a v10 peer or
- *    pre-v11 history, where every status had exactly its default.
- *  - Otherwise the explicit substate, or null. */
-function carriedSubstate(payload: unknown): string | null {
-  if (payload === null || typeof payload !== "object") return null;
-  const { status, substate } = payload as Record<string, unknown>;
-  if (typeof status === "string") {
-    const legacy = mapLegacyStatus(status);
-    if (legacy) return legacy.substate;
-    if (typeof substate !== "string" && isTaskStatus(status)) return DEFAULT_SUBSTATE[status];
+function syncNotes(db: Db, log: Log, taskKey: string): boolean {
+  const taskId = taskRowId(db, taskKey);
+  if (taskId === null) return false;
+  const ops: LogOp[] = [...log.range("note", `${taskKey}#`, `${taskKey}$`).values()].flat();
+  const want = foldNotes(ops, taskHorizon(log, taskKey));
+  const rows = prepareCached(
+    db,
+    "SELECT id, author, content, created_at, kind FROM task_notes WHERE task_id = ? ORDER BY id",
+  ).all(taskId) as {
+    id: number;
+    author: string | null;
+    content: string;
+    created_at: string;
+    kind: string;
+  }[];
+  let changed = false;
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const id = noteIdentity(r.author, r.content, r.created_at);
+    if (want.has(id) && !seen.has(id)) {
+      seen.add(id);
+      continue;
+    }
+    // Not in the fold, or a repeat of an identity already kept.
+    prepareCached(db, "DELETE FROM task_notes WHERE id = ?").run(r.id);
+    changed = true;
   }
-  return typeof substate === "string" ? substate : null;
+  for (const [id, n] of want) {
+    if (seen.has(id)) continue;
+    prepareCached(
+      db,
+      "INSERT INTO task_notes (task_id, author, content, created_at, kind) VALUES (?, ?, ?, ?, ?)",
+    ).run(taskId, n.author, n.content, n.createdAt, n.kind);
+    changed = true;
+  }
+  return changed;
 }
 
-/**
- * Set a task's substate to the one its op log implies, and keep the
- * (status, substate) pair legal for the deferred FK. Returns true iff it
- * rewrote the row.
- *
- * The substate comes from the newest (by HLC) op that writes one — see
- * carriedSubstate for what counts — resolved against the row's CURRENT
- * status. An unknown substate (newer peer) or one illegal for the
- * status (a concurrent close vs park, where status and substate come
- * from different ops) falls back to DEFAULT_SUBSTATE[status].
- *
- * It reads the LOG, not the row, on purpose. A repair that only looked
- * at the row would bake a fallback into it, and a later op that changes
- * status back would keep the fallback on one arrival order and the real
- * substate on another. Reading the log makes the result a pure function
- * of the set of ops plus the row's status (itself plain LWW), so every
- * peer that applies the same ops reaches the same row. That is why the
- * repair records no op: on the apply path it runs inside
- * withCaptureSuppressed, and every peer computes the same repair on its
- * own. Where capture is live (a local write), the repair is recorded in
- * the writer's op group.
- *
- * `pending` is the op being applied, which the caller may not have
- * recorded yet (ingest applies before recording).
- */
-export function repairTaskPair(
-  db: Db,
-  rowId: number,
-  pending?: { hlc: string; substate: string | null },
-): boolean {
-  const row = prepareCached(
-    db,
-    `SELECT t.status, t.substate, w.name || '/' || t.local_id AS key
-         FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
-        WHERE t.id = ?`,
-  ).get(rowId) as { status: string; substate: string; key: string } | undefined;
-  if (!row) return false;
-
-  let winner: { hlc: string; substate: string } | null = null;
-  const writers = prepareCached(
-    db,
-    `SELECT hlc, payload FROM ops
-        WHERE entity = 'task' AND key = ? AND op = 'put' AND hlc <> ?
-          AND (json_type(payload, '$.substate') IS NOT NULL
-               OR json_type(payload, '$.status') IS NOT NULL)
-        ORDER BY hlc DESC`,
-  ).iterate(row.key, pending?.hlc ?? "") as Iterable<{ hlc: string; payload: string }>;
-  for (const w of writers) {
-    const substate = carriedSubstate(JSON.parse(w.payload));
-    if (substate === null) continue;
-    winner = { hlc: w.hlc, substate };
-    break;
+function syncEdge(db: Db, log: Log, key: string): boolean {
+  const { blocker, blocked } = parseEdgeKey(key);
+  const state =
+    blocker === blocked
+      ? null
+      : foldEdge(log.ofKey("edge", key), [taskHorizon(log, blocker), taskHorizon(log, blocked)]);
+  const fromId = taskRowId(db, blocker);
+  const toId = taskRowId(db, blocked);
+  const existing =
+    fromId === null || toId === null
+      ? undefined
+      : (prepareCached(
+          db,
+          "SELECT created_at FROM task_edges WHERE from_task_id = ? AND to_task_id = ?",
+        ).get(fromId, toId) as { created_at: string } | undefined);
+  const wanted = state !== null && fromId !== null && toId !== null;
+  if (!wanted) {
+    if (existing === undefined || fromId === null || toId === null) return false;
+    prepareCached(db, "DELETE FROM task_edges WHERE from_task_id = ? AND to_task_id = ?").run(
+      fromId,
+      toId,
+    );
+    return true;
   }
-  if (pending && pending.substate !== null && wins(pending.hlc, winner?.hlc ?? null)) {
-    winner = { hlc: pending.hlc, substate: pending.substate };
+  if (existing === undefined) {
+    prepareCached(
+      db,
+      "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
+    ).run(fromId, toId, state.createdAt);
+    return true;
   }
-
-  const target = resolvePair(row.status, winner?.substate ?? row.substate);
-  if (target === null || target.substate === row.substate) return false;
-  prepareCached(db, "UPDATE tasks SET substate = ? WHERE id = ?").run(target.substate, rowId);
+  if (existing.created_at === state.createdAt) return false;
+  prepareCached(
+    db,
+    "UPDATE task_edges SET created_at = ? WHERE from_task_id = ? AND to_task_id = ?",
+  ).run(state.createdAt, fromId, toId);
   return true;
 }
 
-function applyWorkstreamPut(db: Db, op: Op): ApplyResult {
+/** Re-fold a task's notes and every edge touching it: its existence or
+ *  horizon changed. */
+function syncDependents(db: Db, log: Log, taskKey: string): boolean {
+  let changed = syncNotes(db, log, taskKey);
+  for (const key of log.edgeKeysTouching({ task: taskKey })) {
+    if (syncEdge(db, log, key)) changed = true;
+  }
+  return changed;
+}
+
+// ─── Per-entity application ───────────────────────────────────────────
+
+function applyWorkstream(db: Db, log: Log, op: Op): ApplyResult {
   const name = op.key;
   if (name.length === 0) throw new OpKeyMalformedError("workstream", name);
-  const entries = filterAppliable("workstreams", decodePayload(op.payload));
-
-  const existing = prepareCached(db, "SELECT id FROM workstreams WHERE name = ?").get(name) as
-    | { id: number }
-    | undefined;
-  // Older than a delete of this workstream: dead even when a newer put
-  // re-created the row, or its fields would leak into the new life.
-  const tomb = tombstoneHlc(db, op);
-  if (tomb !== null && !wins(op.hlc, tomb)) {
-    return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
+  const ws = syncWorkstream(db, log, name);
+  let changed = ws.changed;
+  if (op.op === "del") {
+    // The horizon moved: everything beneath the workstream re-folds.
+    const prefix = `${name}/`;
+    const taskKeys = [...log.range("task", prefix, hi(prefix)).keys()];
+    for (const key of taskKeys) if (syncTask(db, log, key).changed) changed = true;
+    for (const key of taskKeys) if (syncNotes(db, log, key)) changed = true;
+    const edges = log.edgeKeysTouching({ workstream: name });
+    for (const key of edges) if (syncEdge(db, log, key)) changed = true;
   }
-  if (!existing) {
-    const id = ensureWorkstreamRow(db, name);
-    const applied = applyFieldLww(db, op, "workstreams", id, entries);
-    return { changed: true, appliedFields: applied };
-  }
-  const applied = applyFieldLww(db, op, "workstreams", existing.id, entries);
-  return applied.length > 0
-    ? { changed: true, appliedFields: applied }
-    : { changed: false, appliedFields: [], skipped: "older-than-current" };
+  return { changed, appliedFields: ws.fields };
 }
 
-/** GROW-ONLY SET. A note is written once and never updated, so there is
- *  no conflict to resolve — only "is it already here".
- *
- *  IDENTITY IS THE NOTE'S CONTENT, not a surrogate id. A note's local
- *  `task_notes.id` is assigned by whichever machine inserted it, so the
- *  same logical note has different ids on different machines and the id
- *  cannot be the identity. The op key embeds the ORIGIN id
- *  (`demo/a#12`), which identifies it on its origin machine, but a peer
- *  cannot map that onto a local row without storing a mapping table.
- *
- *  So identity is `(task, author, content, created_at)`. Notes are
- *  immutable, and every copy of one carries the created_at its origin
- *  stamped, so applying a note that is already here is a no-op.
- *
- *  `created_at` is in the identity because text alone is not unique.
- *  Machine-written notes repeat: the reaper writes the same "previous
- *  owner gone" line each time it reaps a task, and dispatch writes
- *  "CLAIM: dispatch" on every claim. Keyed on text alone, a repeat
- *  collapsed into the first copy on every peer while the origin kept
- *  both, so note counts drifted apart one repeat at a time (a real
- *  fleet: 6359 vs 6360). Two notes identical to the millisecond still
- *  converge to one row, which is a dedupe rather than a loss.
- *
- *  Migrations and reprojection re-emit a note with the created_at
- *  it already had, so they still land on the existing row. */
-function applyNotePut(db: Db, op: Op): ApplyResult {
+function applyTask(db: Db, log: Log, op: Op): ApplyResult {
+  const { workstream } = parseTaskKey(op.key);
+  const existed = taskRowId(db, op.key) !== null;
+  const ws = syncWorkstream(db, log, workstream);
+  const task = syncTask(db, log, op.key);
+  let changed = ws.changed || task.changed;
+  const exists = taskRowId(db, op.key) !== null;
+  if ((op.op === "del" || existed !== exists) && syncDependents(db, log, op.key)) changed = true;
+  return { changed, appliedFields: task.fields };
+}
+
+function applyNote(db: Db, log: Log, op: Op): ApplyResult {
   const { taskKey } = parseNoteKey(op.key);
-  // Older than a delete of its task or workstream: rebuild wiped it.
-  const horizon = taskHorizon(db, taskKey);
-  if (horizon !== null && !wins(op.hlc, horizon)) {
-    return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
-  }
-  const taskId = taskRowId(db, taskKey);
-  if (taskId === null) {
-    // Parent task not here — either its op has not arrived yet, or it
-    // was deleted. Notes are FK-bound to a task, so there is nowhere to
-    // put this. Skipped rather than fatal: re-reading the peer's segment
-    // replays the task op first and this lands then.
-    return { changed: false, appliedFields: [], skipped: "absent" };
-  }
-
-  const entries = decodePayload(op.payload);
-  const author = entries.find(([f]) => f === "author")?.[1] ?? null;
-  const content = entries.find(([f]) => f === "content")?.[1] ?? "";
-  const stamped = entries.find(([f]) => f === "created_at")?.[1];
-  const createdAt = stamped ?? new Date().toISOString();
-  const authorText = author === null ? null : String(author);
-
-  // A put without created_at (capture always writes one) is matched on
-  // text alone: stamping it with "now" and then matching on that would
-  // make every re-delivery look new.
-  const already = prepareCached(
-    db,
-    `SELECT 1 AS present FROM task_notes
-        WHERE task_id = @taskId AND content = @content
-          AND COALESCE(author, '') = COALESCE(@author, '')
-          AND (@stamped IS NULL OR created_at = @stamped)
-        LIMIT 1`,
-  ).get({
-    taskId,
-    content: String(content),
-    author: authorText,
-    stamped: stamped === undefined || stamped === null ? null : String(stamped),
-  }) as { present: number } | undefined;
-  if (already) return { changed: false, appliedFields: [], skipped: "already-present" };
-
-  // A note deleted by a NEWER tombstone must not be re-inserted by a
-  // late-arriving put. Same comparison as every other entity.
-  const tomb = tombstoneHlc(db, op);
-  if (tomb !== null && !wins(op.hlc, tomb)) {
-    return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
-  }
-
-  // `kind` is absent on a v1 op (a 3.x peer): 'note'. A kind this build
-  // does not know (a newer peer) also lands as 'note', never a CHECK
-  // failure that would roll back the segment.
-  const sentKind = entries.find(([f]) => f === "kind")?.[1];
-  const kind = (NOTE_KINDS as readonly unknown[]).includes(sentKind) ? sentKind : "note";
-  prepareCached(
-    db,
-    "INSERT INTO task_notes (task_id, author, content, created_at, kind) VALUES (?, ?, ?, ?, ?)",
-  ).run(taskId, authorText, String(content), String(createdAt), kind);
-  return { changed: true, appliedFields: ["content"] };
+  return { changed: syncNotes(db, log, taskKey), appliedFields: [] };
 }
 
-/** LWW-ELEMENT-SET. An edge is a set member: present or absent, with no
- *  fields worth merging. So add and remove each carry an HLC and the
- *  newer one wins — a remove followed by a re-add converges to present,
- *  and the reverse converges to absent, in either arrival order. */
-function applyEdgePut(db: Db, op: Op): ApplyResult {
-  const { blocker, blocked } = parseEdgeKey(op.key);
-  // Older than a delete of either endpoint (or its workstream): rebuild
-  // wiped it.
-  for (const end of [blocker, blocked]) {
-    const horizon = taskHorizon(db, end);
-    if (horizon !== null && !wins(op.hlc, horizon)) {
-      return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
-    }
-  }
-  const fromId = taskRowId(db, blocker);
-  const toId = taskRowId(db, blocked);
-  if (fromId === null || toId === null) {
-    return { changed: false, appliedFields: [], skipped: "absent" };
-  }
-  const removedAt = anyHlc(db, op, "del");
-  if (removedAt !== null && !wins(op.hlc, removedAt)) {
-    return { changed: false, appliedFields: [], skipped: "older-than-tombstone" };
-  }
-  const existing = prepareCached(
-    db,
-    "SELECT 1 AS present FROM task_edges WHERE from_task_id = ? AND to_task_id = ?",
-  ).get(fromId, toId) as { present: number } | undefined;
-  if (existing) return { changed: false, appliedFields: [], skipped: "already-present" };
-
-  const entries = decodePayload(op.payload);
-  const createdAt = entries.find(([f]) => f === "created_at")?.[1] ?? new Date().toISOString();
-  prepareCached(
-    db,
-    "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
-  ).run(fromId, toId, String(createdAt));
-  return { changed: true, appliedFields: ["created_at"] };
-}
-
-/**
- * A tombstone for a workstream or task: wipe the subtree, then replay the
- * puts NEWER than the tombstone that already arrived. That is what
- * rebuild does (HLC order: the delete cascades, later puts re-create), so
- * the result no longer depends on whether those puts arrived first.
- *
- * Without newer puts it is a plain delete. With newer puts but nothing
- * older to wipe it is a no-op: the row, if any, comes only from them.
- */
-function applyContainerDel(db: Db, op: Op): ApplyResult {
-  const scope = op.entity === "workstream" ? wsScope(op.key) : taskScope(op.key);
-  const survivors = putsInScope(db, scope, op.hlc, ">");
-  const del = (): boolean =>
-    op.entity === "workstream"
-      ? prepareCached(db, "DELETE FROM workstreams WHERE name = ?").run(op.key).changes > 0
-      : prepareCached(
-          db,
-          `DELETE FROM tasks WHERE id = (SELECT t.id FROM tasks t
-              JOIN workstreams w ON w.id = t.workstream_id
-             WHERE w.name = @workstream AND t.local_id = @localId)`,
-        ).run(parseTaskKey(op.key)).changes > 0;
-  if (survivors.length === 0) {
-    // FK CASCADE removes the tasks, notes and edges beneath it.
-    const changed = del();
-    return { changed, appliedFields: [], ...(changed ? {} : { skipped: "absent" as const }) };
-  }
-  if (putsInScope(db, scope, op.hlc, "<", 1).length === 0) {
-    return { changed: false, appliedFields: [], skipped: "older-than-current" };
-  }
-  if (op.entity === "workstream" && survivors.some((o) => o.entity === "workstream")) {
-    // The workstream was restored by a newer put. Keep its row (machine-
-    // local agents hang off it), but drop the tasks of the dead life and
-    // the field the dead puts may have set; the survivors write it back.
-    prepareCached(
-      db,
-      "DELETE FROM tasks WHERE workstream_id = (SELECT id FROM workstreams WHERE name = ?)",
-    ).run(op.key);
-    prepareCached(db, "UPDATE workstreams SET torn_down_at = NULL WHERE name = ?").run(op.key);
-  } else {
-    del();
-  }
-  for (const survivor of survivors) applyPut(db, survivor);
-  return { changed: true, appliedFields: [] };
-}
-
-interface Scope {
-  /** Op keys that fall in the scope, per entity. */
-  entity: "workstream" | "task";
-  key: string;
-  /** Key-range prefix of the tasks and notes beneath it. */
-  prefix: string;
-  /** Edge-key substrings: blocker side starts with `prefix`, blocked side
-   *  contains `->prefix`. */
-  edgeFrom: string;
-  edgeTo: string;
-}
-
-const wsScope = (name: string): Scope => ({
-  entity: "workstream",
-  key: name,
-  prefix: `${name}/`,
-  edgeFrom: `${name}/`,
-  edgeTo: `->${name}/`,
-});
-const taskScope = (key: string): Scope => ({
-  entity: "task",
-  key,
-  prefix: key,
-  edgeFrom: `${key}->`,
-  edgeTo: `->${key}`,
-});
-
-/** Put ops in a tombstone's scope (the workstream or task and everything
- *  beneath it) on one side of `hlc`, in HLC order. Edges are matched by
- *  substring, which over-selects harmlessly: replaying an edge put that
- *  is already projected, or tombstoned, changes nothing. */
-function putsInScope(db: Db, scope: Scope, hlc: string, side: "<" | ">", limit = -1): Op[] {
-  const sql = (selector: string) =>
-    `SELECT hlc, machine_id, group_id, actor, intent, entity, key, op, payload FROM ops
-      WHERE op = 'put' AND hlc ${side} @hlc AND ${selector}`;
-  // Tasks of a workstream sit in the key range [ws/, ws0); a task's notes
-  // in [task#, task$). Both ranges use the (entity, key) index.
-  const hi = (p: string) =>
-    `${p.slice(0, -1)}${String.fromCharCode(p.charCodeAt(p.length - 1) + 1)}`;
-  const parts: string[] = [];
-  const params: Record<string, string> = { hlc };
-  if (scope.entity === "workstream") {
-    parts.push(sql("entity = 'workstream' AND key = @key"));
-    parts.push(sql("entity = 'task' AND key >= @lo AND key < @hi"));
-    parts.push(sql("entity = 'note' AND key >= @lo AND key < @hi"));
-    params.key = scope.key;
-    params.lo = scope.prefix;
-    params.hi = hi(scope.prefix);
-  } else {
-    parts.push(sql("entity = 'task' AND key = @key"));
-    parts.push(sql("entity = 'note' AND key >= @nlo AND key < @nhi"));
-    params.key = scope.key;
-    params.nlo = `${scope.key}#`;
-    params.nhi = `${scope.key}$`;
-  }
-  // A task is named in full, so its blocked side must END the key (`->w/a`
-  // must not match `->w/ab`); a workstream prefix `w/` can sit mid-key.
-  const toMatch =
-    scope.entity === "task" ? "substr(key, -length(@to)) = @to" : "instr(key, @to) > 0";
-  parts.push(sql(`entity = 'edge' AND (substr(key, 1, length(@from)) = @from OR ${toMatch})`));
-  params.from = scope.edgeFrom;
-  params.to = scope.edgeTo;
-  const rows = db.prepare(`${parts.join(" UNION ALL ")} LIMIT ${limit}`).all(params) as OpRow[];
-  return rows.map(rowToOp).sort((a, b) => compareHlc(a.hlc, b.hlc));
-}
-
-/** A tombstone. Workstream and task deletes reset their subtree (see
- *  applyContainerDel). Note and edge deletes apply iff newer than every
- *  put for the key, the mirror image of the put path's tombstone check,
- *  which is why there is no special casing between them. */
-function applyDel(db: Db, op: Op): ApplyResult {
-  if (op.entity === "workstream" || op.entity === "task") return applyContainerDel(db, op);
-  const newestPut = anyHlc(db, op, "put");
-  if (newestPut !== null && !wins(op.hlc, newestPut)) {
-    // A put NEWER than this delete already happened: the row is alive
-    // and must stay so. The tombstone is still recorded in `ops` (by
-    // the caller), so it participates in later comparisons.
-    return { changed: false, appliedFields: [], skipped: "older-than-current" };
-  }
-
-  switch (op.entity) {
-    case "note": {
-      const { taskKey } = parseNoteKey(op.key);
-      const taskId = taskRowId(db, taskKey);
-      if (taskId === null) return { changed: false, appliedFields: [], skipped: "absent" };
-      // A note's local surrogate id is not the origin's, so delete by
-      // the content identity the grow-only insert used. A self-describing
-      // tombstone (capture writes the full row when no put shares its
-      // key, drift-641) carries that identity itself; otherwise read it
-      // from the put under the same key.
-      let entries = decodePayload(op.payload);
-      if (!entries.some(([f, v]) => f === "content" && v !== null)) {
-        const src = prepareCached(
-          db,
-          `SELECT payload FROM ops
-              WHERE entity = 'note' AND key = @key AND op = 'put'
-              ORDER BY hlc DESC LIMIT 1`,
-        ).get({ key: op.key }) as { payload: string } | undefined;
-        if (!src) return { changed: false, appliedFields: [], skipped: "absent" };
-        entries = decodePayload(src.payload);
-      }
-      const content = entries.find(([f]) => f === "content")?.[1] ?? "";
-      const author = entries.find(([f]) => f === "author")?.[1] ?? null;
-      const createdAt = entries.find(([f]) => f === "created_at")?.[1] ?? null;
-      // created_at narrows the delete to this note, not every repeat of
-      // its text. A put without one (never written by capture) falls
-      // back to text alone.
-      const r = prepareCached(
-        db,
-        `DELETE FROM task_notes
-            WHERE task_id = @taskId AND content = @content
-              AND COALESCE(author, '') = COALESCE(@author, '')
-              AND (@createdAt IS NULL OR created_at = @createdAt)`,
-      ).run({
-        taskId,
-        content: String(content),
-        author: author === null ? null : String(author),
-        createdAt: createdAt === null ? null : String(createdAt),
-      });
-      return {
-        changed: r.changes > 0,
-        appliedFields: [],
-        ...(r.changes > 0 ? {} : { skipped: "absent" as const }),
-      };
-    }
-    case "edge": {
-      const { blocker, blocked } = parseEdgeKey(op.key);
-      const fromId = taskRowId(db, blocker);
-      const toId = taskRowId(db, blocked);
-      if (fromId === null || toId === null) {
-        return { changed: false, appliedFields: [], skipped: "absent" };
-      }
-      const r = prepareCached(
-        db,
-        "DELETE FROM task_edges WHERE from_task_id = ? AND to_task_id = ?",
-      ).run(fromId, toId);
-      return {
-        changed: r.changes > 0,
-        appliedFields: [],
-        ...(r.changes > 0 ? {} : { skipped: "absent" as const }),
-      };
-    }
-    default:
-      // 'message' has no portable table to delete from.
-      return { changed: false, appliedFields: [], skipped: "absent" };
-  }
+function applyEdge(db: Db, log: Log, op: Op): ApplyResult {
+  parseEdgeKey(op.key);
+  return { changed: syncEdge(db, log, op.key), appliedFields: [] };
 }
 
 // ─── The seam ─────────────────────────────────────────────────────────
@@ -1008,13 +590,13 @@ function applyDel(db: Db, op: Op): ApplyResult {
  * Runs inside `withCaptureSuppressed`, which is THE echo guard: without
  * it, writing a peer's op to `tasks` would fire the capture trigger,
  * mint a fresh local op, flush that back to the peer, and loop forever.
+ * Runs in its own transaction (a savepoint when nested): one op rewrites
+ * several rows, and they commit together or not at all.
  *
- * Does NOT insert the op into `ops` — that is the caller's job (v2-sync,
- * which owns segment bookkeeping and the (machine_id, hlc) dedupe). This
- * function is deliberately only "make the tables reflect this op", so it
- * can be called on a replay of ops already in the log without
- * double-recording them. Provenance queries exclude the op's own HLC
- * precisely so the order of those two steps does not matter.
+ * Does NOT insert the op into `ops` — that is the caller's job (which
+ * owns segment bookkeeping and the (machine_id, hlc) dedupe). The op is
+ * folded in beside the log's rows, so recording it before or after
+ * changes nothing and a replay of ops already in the log is a no-op.
  *
  * Idempotent: applying the same op twice makes no second change, which
  * is what lets `mu sync --repair` be nothing more than "re-read that
@@ -1027,220 +609,68 @@ export function applyOp(db: Db, op: Op): ApplyResult {
   // is the caller's step and is what preserves it for a later build
   // (and for `mu rebuild`) without blocking every op behind it.
   if (!isSyncedEntity(op.entity)) return { changed: false, appliedFields: [] };
+  // Log lines live in `ops` only; recording the op IS applying it.
+  if (op.entity === "message") return { changed: false, appliedFields: [] };
 
-  return withCaptureSuppressed(db, () => (op.op === "del" ? applyDel(db, op) : applyPut(db, op)));
+  return withCaptureSuppressed(db, () =>
+    db
+      .transaction((): ApplyResult => {
+        const log = new Log(db, op);
+        switch (op.entity) {
+          case "workstream":
+            return applyWorkstream(db, log, op);
+          case "task":
+            return applyTask(db, log, op);
+          case "note":
+            return applyNote(db, log, op);
+          default:
+            return applyEdge(db, log, op);
+        }
+      })
+      .immediate(),
+  );
 }
-
-/** The put half of the seam, also the replay step of applyContainerDel. */
-function applyPut(db: Db, op: Op): ApplyResult {
-  switch (op.entity) {
-    case "workstream":
-      return applyWorkstreamPut(db, op);
-    case "task":
-      // Own transaction (a savepoint when nested): the per-field
-      // UPDATEs pass through an invalid (status, substate) pair, and
-      // the deferred FK only tolerates that inside a transaction. In
-      // autocommit it would check each UPDATE on its own.
-      return db.transaction(() => applyTaskPut(db, op)).immediate();
-    case "note":
-      return applyNotePut(db, op);
-    case "edge":
-      return applyEdgePut(db, op);
-    case "message":
-      // Log lines live in `ops` only; there is no portable table to
-      // project them into. Recording the op IS applying it, and that
-      // is the caller's step.
-      return { changed: false, appliedFields: [] };
-    default:
-      // Unreachable: the union is closed and every member is handled
-      // above. Kept as a total return rather than a throw so an
-      // unrecognised entity can never wedge an ingest.
-      return { changed: false, appliedFields: [] };
-  }
-}
-
-// ─── Deferred projection: the out-of-order arrival repair ─────────────
 
 /**
- * Re-project note and edge ops that could not land when they arrived.
+ * Project the whole log: fold every workstream, task, note set and edge
+ * the ops name, once each, into the (empty or stale) tables. This is
+ * `mu rebuild`: no arrival order, no incremental step, just the fold. It
+ * returns the number of table rows it wrote.
  *
- * THE BUG THIS EXISTS TO FIX (v2-sync-workflow-integration)
- * ---------------------------------------------------------
- * `applyNotePut` / `applyEdgePut` return `skipped:"absent"` when the
- * task they hang off is not here YET. That is the right answer at that
- * moment — there is genuinely nowhere to put the row — and their
- * comments promised "re-reading the peer's segment replays the task op
- * first and this lands then". It does not. `ingestSegment` counts an
- * `absent` skip as a successful apply and ADVANCES THE WATERMARK past
- * the line, so the segment is never re-read and the note or edge is
- * never projected. The op IS recorded in local `ops`, so the data is
- * not lost — but the live tables silently diverge, permanently.
- *
- * It is not a corner case. `flushSegment` ships only LOCAL ops, so a
- * machine's segment routinely holds `edge`/`note` ops referring to
- * tasks created in ANOTHER machine's segment, and `syncPass` reads
- * peers in `discoverPeers` order — `localeCompare` over random UUID
- * filenames. Whether the parent arrives first is a coin flip. Measured
- * on 8 fresh fleets: 5 dropped the edge, 3 kept it, correlating exactly
- * with segment filename sort order.
- *
- * WHY REPAIR FROM THE LOG RATHER THAN A RETRY QUEUE
- * -------------------------------------------------
- * A queue of "ops to try again" would be a second source of truth that
- * can disagree with `ops` — the same denormalisation this module's
- * header rejects for provenance, and it would be lost across processes
- * (mu is one short-lived process per invocation, so an in-memory list
- * only ever fixes ops deferred within a SINGLE pass; the parent often
- * arrives the next day). The ops log already knows everything needed,
- * so this asks it directly: which note/edge puts are resolvable NOW but
- * are not projected?
- *
- * "Resolvable now" is doing real work in both queries. Restricting to
- * ops whose parent task rows EXIST means an op orphaned for good (its
- * task was deleted) is not retried on every pass forever, and excluding
- * keys with a NEWER `del` means a legitimately removed edge or note is
- * not resurrected. What is left is exactly the bug's footprint, which
- * in a healthy DB is the empty set — so the normal cost is two indexed
- * queries returning zero rows.
- *
- * Returns the number of ops that changed something, so callers can
- * report it and tests can assert the repair actually fired.
+ * Workstreams first (a task's fold needs its parent row), then tasks, then
+ * the rows that hang off tasks.
  */
-export function reprojectDeferredOps(db: Db): number {
-  installOpKeyFunctions(db);
-  const rows = [
-    ...(db
-      .prepare(
-        `SELECT o.hlc, o.machine_id, o.group_id, o.actor, o.intent, o.entity,
-                o.key, o.op, o.payload
-           FROM ops o
-           JOIN tasks ft ON ft.local_id = edge_local(o.key, 0)
-           JOIN workstreams fw ON fw.id = ft.workstream_id AND fw.name = edge_ws(o.key, 0)
-           JOIN tasks tt ON tt.local_id = edge_local(o.key, 1)
-           JOIN workstreams tw ON tw.id = tt.workstream_id AND tw.name = edge_ws(o.key, 1)
-          WHERE o.entity = 'edge' AND o.op = 'put'
-            AND NOT EXISTS (SELECT 1 FROM task_edges e
-                             WHERE e.from_task_id = ft.id AND e.to_task_id = tt.id)
-            AND NOT EXISTS (SELECT 1 FROM ops d
-                             WHERE d.entity = 'edge' AND d.key = o.key
-                               AND d.op = 'del' AND d.hlc > o.hlc)`,
-      )
-      .all() as OpRow[]),
-    ...(db
-      .prepare(
-        `SELECT o.hlc, o.machine_id, o.group_id, o.actor, o.intent, o.entity,
-                o.key, o.op, o.payload
-           FROM ops o
-           JOIN tasks t ON t.local_id = note_local(o.key)
-           JOIN workstreams w ON w.id = t.workstream_id AND w.name = note_ws(o.key)
-          WHERE o.entity = 'note' AND o.op = 'put'
-            AND NOT EXISTS (SELECT 1 FROM task_notes n
-                             WHERE n.task_id = t.id
-                               AND n.content = COALESCE(json_extract(o.payload, '$.content'), '')
-                               AND COALESCE(n.author, '')
-                                   = COALESCE(json_extract(o.payload, '$.author'), '')
-                               AND n.created_at = json_extract(o.payload, '$.created_at'))
-            AND NOT EXISTS (SELECT 1 FROM ops d
-                             WHERE d.entity = 'note' AND d.key = o.key
-                               AND d.op = 'del' AND d.hlc > o.hlc)`,
-      )
-      .all() as OpRow[]),
-  ];
-  if (rows.length === 0) return 0;
-
-  let changed = 0;
-  for (const row of rows.sort((a, b) => compareHlc(a.hlc, b.hlc))) {
-    if (applyOp(db, rowToOp(row)).changed) changed += 1;
-  }
-  return changed;
-}
-
-/** Raw `ops` row shape, as the two repair queries above return it. */
-interface OpRow {
-  hlc: string;
-  machine_id: string;
-  group_id: string;
-  actor: string | null;
-  intent: string | null;
-  entity: string;
-  key: string;
-  op: string;
-  payload: string;
-}
-
-function rowToOp(row: OpRow): Op {
-  return {
-    hlc: row.hlc,
-    machineId: row.machine_id,
-    groupId: row.group_id,
-    actor: row.actor,
-    intent: row.intent,
-    entity: row.entity,
-    key: row.key,
-    op: row.op === "del" ? "del" : "put",
-    payload: row.payload,
-  };
-}
-
-/**
- * Register the four key-splitting SQL functions the repair queries use.
- *
- * Natural keys are structured text (`<ws>/<local_id>`,
- * `<blocker>-><blocked>`, `<taskKey>#<originId>`) and the parsers here
- * already handle the awkward cases — a local_id containing `/`, an id
- * ending in `-` so `a-->b` splits correctly. Rather than reimplement
- * that splitting in SQL string functions (where it would be a second,
- * subtly different parser), the SAME TypeScript parsers are exposed to
- * SQLite. Deterministic, so SQLite may cache and index against them.
- *
- * Registered lazily by `reprojectDeferredOps` rather than by `openDb`,
- * because `db.ts` imports `capture.ts` and `apply.ts` imports `db.ts` —
- * so an `openDb`-side registration would need db.ts to import this
- * module and close a runtime import cycle. (capture.ts's header records
- * what that costs: `node dist/cli.js` printing nothing at all.)
- * Re-registration is a documented no-op-ish overwrite in better-sqlite3,
- * verified, so calling it per repair pass is safe and cheap.
- */
-function installOpKeyFunctions(db: Db): void {
-  const safe = <T>(f: () => T): T | null => {
-    try {
-      return f();
-    } catch {
-      // A malformed key is not this query's problem: return NULL so the
-      // JOIN drops the row rather than failing the whole ingest.
-      return null;
-    }
-  };
-  const opts = { deterministic: true, varargs: false } as const;
-  db.function("edge_ws", opts, (key: unknown, side: unknown) =>
-    safe(() => {
-      const parts = parseEdgeKey(String(key));
-      return parseTaskKey(Number(side) === 0 ? parts.blocker : parts.blocked).workstream;
-    }),
-  );
-  db.function("edge_local", opts, (key: unknown, side: unknown) =>
-    safe(() => {
-      const parts = parseEdgeKey(String(key));
-      return parseTaskKey(Number(side) === 0 ? parts.blocker : parts.blocked).localId;
-    }),
-  );
-  db.function("note_ws", opts, (key: unknown) =>
-    safe(() => parseTaskKey(parseNoteKey(String(key)).taskKey).workstream),
-  );
-  db.function("note_local", opts, (key: unknown) =>
-    safe(() => parseTaskKey(parseNoteKey(String(key)).taskKey).localId),
+export function projectLog(db: Db): number {
+  const log = new Log(db);
+  const keys = (entity: string): string[] =>
+    (
+      prepareCached(db, "SELECT DISTINCT key FROM ops WHERE entity = ?").all(entity) as {
+        key: string;
+      }[]
+    ).map((r) => r.key);
+  const taskKeys = keys("task");
+  const noteTasks = [...new Set(keys("note").map((k) => parseNoteKey(k).taskKey))];
+  const workstreams = new Set([
+    ...keys("workstream"),
+    ...taskKeys.map((k) => parseTaskKey(k).workstream),
+  ]);
+  let written = 0;
+  return withCaptureSuppressed(db, () =>
+    db
+      .transaction(() => {
+        for (const name of workstreams) if (syncWorkstream(db, log, name).changed) written += 1;
+        for (const key of taskKeys) if (syncTask(db, log, key).changed) written += 1;
+        for (const key of noteTasks) if (syncNotes(db, log, key)) written += 1;
+        for (const key of keys("edge")) if (syncEdge(db, log, key)) written += 1;
+        return written;
+      })
+      .immediate(),
   );
 }
 
 /**
- * Apply many ops in HLC order, inside one transaction.
- *
- * HLC order is what makes per-field LWW correct without any extra
- * bookkeeping: process oldest-first and each field simply ends up
- * holding the newest write. Callers may pass ops in arrival order.
- *
- * Grow-only entities are order-insensitive by construction, so a single
- * sort is enough for every rule here.
+ * Apply many ops in HLC order, inside one transaction. The fold makes the
+ * order irrelevant to the result; sorting keeps the work in log order.
  */
 export function applyOps(db: Db, ops: readonly Op[]): ApplyResult[] {
   const ordered = [...ops].sort((a, b) => compareHlc(a.hlc, b.hlc));

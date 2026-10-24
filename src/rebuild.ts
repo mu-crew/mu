@@ -62,7 +62,7 @@
 
 import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
-import { applyOp, type Op } from "./apply.js";
+import { projectLog } from "./apply.js";
 import { type Db, openDb, SYNCED_ENTITIES } from "./db.js";
 import { compareHlc } from "./hlc.js";
 import { withCaptureSuppressed } from "./op-context.js";
@@ -122,9 +122,9 @@ export interface RebuildReport {
    *  log-only entities (message / event / broadcast), machine-local
    *  agent ops are copied but have no table to land in. */
   opsProjected: number;
-  /** Ops that changed a row when applied. Lower than opsProjected
-   *  whenever later ops superseded earlier ones — which is normal and
-   *  is exactly what makes the rebuild a merge rather than a diff. */
+  /** Table rows the projection wrote (workstreams, tasks, note sets, edges
+   *  that changed). Far lower than opsProjected: the fold writes each key
+   *  once, however many ops named it. */
   opsChangedRows: number;
   /** Ops skipped as non-projectable, by entity. Diagnostic only. */
   logOnlyByEntity: Record<string, number>;
@@ -169,20 +169,6 @@ interface RawOpRow {
   op: string;
   payload: string;
   created_at: string;
-}
-
-function opFromRow(row: RawOpRow): Op {
-  return {
-    hlc: row.hlc,
-    machineId: row.machine_id,
-    groupId: row.group_id,
-    actor: row.actor,
-    intent: row.intent,
-    entity: row.entity,
-    key: row.key,
-    op: row.op === "del" ? "del" : "put",
-    payload: row.payload,
-  };
 }
 
 export interface RebuildOptions {
@@ -325,8 +311,8 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
     // ONE transaction for the whole replay. A rebuild is all-or-nothing:
     // a half-replayed DB is worse than no DB, because it looks usable.
     const replay = target.transaction(() => {
-      // Capture-suppressed for the entire replay. Without this, applying
-      // each op would fire the capture triggers and mint a SECOND op per
+      // Capture-suppressed for the entire replay. Without this, writing
+      // each row would fire the capture triggers and mint a SECOND op per
       // row, so the rebuilt log would be roughly double the original and
       // full of ops with fresh HLCs that never happened. The suppression
       // wraps the op INSERTs too, so nothing here can mint.
@@ -349,18 +335,13 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
             payload: row.payload,
             createdAt: row.created_at,
           });
-
-          if (!isProjectable(row.entity)) {
-            logOnlyByEntity[row.entity] = (logOnlyByEntity[row.entity] ?? 0) + 1;
-            continue;
-          }
-          // Project through the SAME apply path sync ingest uses. Not a
-          // second implementation of the merge rules: tombstone
-          // ordering, per-field LWW and grow-only sets all come from
-          // src/apply.ts, so a rebuild and an ingest can never disagree.
-          opsProjected += 1;
-          if (applyOp(target, opFromRow(row)).changed) opsChangedRows += 1;
+          if (isProjectable(row.entity)) opsProjected += 1;
+          else logOnlyByEntity[row.entity] = (logOnlyByEntity[row.entity] ?? 0) + 1;
         }
+        // Project through the SAME fold a live apply uses (src/fold.ts):
+        // each key is folded once from the whole log, so a rebuild and an
+        // ingest cannot disagree. Not replayed op by op.
+        opsChangedRows = projectLog(target);
 
         // sync_fingerprints is NOT copied: it is a cache that vouches for
         // the old DB's last reads, and without it the next ingest of

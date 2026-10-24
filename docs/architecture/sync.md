@@ -169,46 +169,55 @@ fresh state and nothing lands mid-query, and flushes its writes after.
 ## Order-independent apply
 
 Convergence means live state equals an HLC-order `rebuild` for every
-arrival order of the same op set. `src/apply.ts` gets there with two
-symmetric rules:
+arrival order of the same op set. `src/fold.ts` defines it once, as pure
+functions: the ops of one natural key (plus the tombstone horizon that
+covers it) in, the row's state out (`foldWorkstream`, `foldTask`,
+`foldNotes`, `foldEdge`). Nothing else in mu holds a merge rule.
 
-- **A put older than a tombstone covering it is dead, row or no row.**
-  The tombstone is the key's own `del` or its workstream's (`taskHorizon`).
-  Every put path asks it, including the update of a row a newer put
-  created, so a dead life's fields cannot leak into the restored row.
-- **A workstream or task `del` wipes its subtree, then replays the puts
-  newer than it** (`applyContainerDel`). That is what rebuild does, so it
-  no longer matters whether those puts arrived before the delete. With
-  nothing older to wipe the delete is a no-op; a workstream restored by a
-  newer put keeps its row (machine-local agents hang off it).
+- **Rebuild folds every key once** (`projectLog` in `src/apply.ts`).
+- **A live apply folds the keys an op touches** and makes their rows equal
+  the fold (`applyOp`): the op's own key; a task put also its workstream
+  (a task put creates its parent); a task or workstream `del`, or a task
+  that came into or went out of existence, also the notes and edges
+  beneath it. The op being applied is read beside the log's rows, so
+  recording it before or after changes nothing.
 
-`test/sync-contract.test.ts` shuffles op sets through every arrival order
-and asserts the same rows and a clean `checkDrift` for each.
+So there is no per-path comparison (put vs del, child vs parent) left to
+get wrong. The fold's rules:
+
+- **Horizon.** A put older than the newest `del` of its own key or of an
+  ancestor (task, then workstream) is dead, row or no row.
+- **Task:** per-field LWW over the live puts. A field no live put carries
+  takes its default, and a timestamp default is the ISO time of the HLC
+  that began the life, never "now": the same log folds to the same row on
+  any machine at any time. Substate is the newest live op that writes
+  one, resolved against the folded status. A value the schema would
+  refuse is dropped like an unknown field (a RAISE would roll back the
+  segment).
+- **Workstream:** exists from its first live put, or a task put under
+  it, until the next `del`; a restart forgets the dead life's fields.
+- **Notes:** a set by identity (author, content, created_at); a `del`
+  kills older puts of that identity, a later put brings it back.
+- **Edge:** present iff a put is newer than its own `del` and both
+  endpoints' horizons; created_at is the first live put's.
+
+Cost is per affected key, not per DB: a few indexed reads of that key's
+ops (`idx_ops_entity_key`). 13,000 ops apply in about 1.1 s, no slower
+than the per-path code it replaced.
+
+`test/apply-fold.test.ts` holds each reviewer repro over every arrival
+order and a 500-case randomized property (fixed seed) asserting live ==
+rebuild; every 25th case also runs `rebuildInto` and `checkDrift`.
 
 ## Out-of-order arrival
 
-An `edge` or `note` put whose task has not arrived yet skips as
-`absent`, correctly. Ingest still advances the watermark past it, so
-without a second pass it would never land. Peers are discovered by
-`localeCompare` over random-UUID filenames, so the arrival order is a
-coin flip per fleet.
-
-`reprojectDeferredOps` (`src/apply.ts`) re-queries the log for note and
-edge puts that are resolvable now but unprojected. It skips ops whose
-parent task is gone and keys with a newer `del`, so a deleted edge is
-never resurrected and an orphan is not retried forever. It runs once
-per ingest pass, not per peer, because an edge in one segment may name
-a task in another. Ambient ingest runs it only while SQLite's
-`user_version` is 1. `applyIncomingOp` sets that marker in the same
-transaction whenever an op changes a row or defers (`absent`), whether
-it came from a segment, `--from`, or an SDK caller; the repair clears
-it. A process that dies between
-the two leaves the marker set, so the next invocation runs the repair.
-`mu sync` and `--from` always run it.
-
-There is no retry queue. A queue would be a second source of truth and
-would not survive a short-lived `mu` process when the parent arrives
-days later.
+An `edge` or `note` can arrive before the task it hangs off, and peers are
+discovered by `localeCompare` over random-UUID filenames, so the order is a
+coin flip per fleet. There is no deferral and no repair pass: the op is
+recorded in `ops` regardless, and when the task's put lands, applying it
+re-folds the task's notes and its edges from the whole log, which already
+holds the earlier arrivals. There is no retry queue and no marker: both
+would be a second source of truth.
 
 ## Mixed-fleet hazards
 

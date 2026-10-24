@@ -42,20 +42,31 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   Only `mu sync` keeps `ambientSync: false`. Every verb now refuses to run when
   the DB path is inside `MU_SYNC_DIR`: `DbInsideSyncDirError`, exit 4, thrown by
   `handle()` before `openDb` so nothing is created or written (the doctor
-  `db-vs-sync` row stays). Ingest of a task put no longer re-creates a parent
-  workstream whose delete is newer than the put (live state now matches
-  `rebuild`; fixes a phantom workstream and permanent `doctor --deep` drift).
-- **Sync convergence and contract, round 2.** Apply is now order-independent:
-  live state equals an HLC-order `rebuild` for every arrival order of one op
-  set. A put older than a tombstone covering it (its own, or its workstream's)
-  is dropped even when a newer put re-created the row, and a workstream or
-  task `del` wipes its subtree then replays the newer puts, so a restored
-  workstream no longer keeps tasks an older delete should have removed. An
-  ambient flush that loses the segment lock prints `mu: sync: segment locked
-  by another mu; this op publishes on the next flush` (exit stays 0) and
-  `mu doctor` gains an `unpublished-ops` row. The DB-inside-`MU_SYNC_DIR`
-  refusal resolves symlinks on both sides (a symlinked DB directory or sync
-  dir no longer bypasses it) and `mu link` honours it.
+  `db-vs-sync` row stays).
+- **Sync convergence and contract, round 2.** Apply is now a fold: live
+  state for a key is defined as rebuild-of-that-key. `src/fold.ts` holds the
+  only merge rules as pure per-key functions of the ops log (tombstone
+  horizon, per-field LWW, substate, note sets, edges), `applyOp` re-folds
+  the keys an op touches and `mu rebuild` folds every key, so live equals an
+  HLC-order `rebuild` for every arrival order of one op set. This replaces
+  the per-path comparisons (`applyPut`, `applyDel`, `applyEdgePut`,
+  `repairTaskPair`, `applyContainerDel`) and the deferred-op repair
+  (`reprojectDeferredOps`, the `user_version` marker, the pass-wide repair):
+  an edge or note that arrives before its task lands when the task's put
+  folds. Defaults that were "now" are log-derived: a task or workstream
+  created by a partial put gets the wall clock of the HLC that began its
+  life, so the same log folds to the same row on every machine (a restored
+  workstream's `created_at` no longer depends on when it was applied). An
+  edge re-added after a delete takes the re-add's `created_at`; a dead
+  put's substate no longer survives a restore. `ApplyResult.skipped` is
+  gone (callers only used `changed`); `RebuildReport.opsChangedRows` now
+  counts table rows written. A 500-case randomized property test (fixed
+  seed) asserts live == rebuild. An ambient flush that loses the segment
+  lock prints `mu: sync: segment locked by another mu; this op publishes on
+  the next flush` (exit stays 0) and `mu doctor` gains an `unpublished-ops`
+  row. The DB-inside-`MU_SYNC_DIR` refusal resolves symlinks on both sides
+  (a symlinked DB directory or sync dir no longer bypasses it) and `mu link`
+  honours it.
 - **Schema v12** (additive over v11; a v11 DB is refused with
   `SchemaTooOldError`, exit 4). New columns: `workstreams.torn_down_at`
   (synced), `agents.cwd` and `agents.base` (machine-local), `tasks.scored`

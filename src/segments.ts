@@ -71,7 +71,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { applyOp, type Op, OpEntityNotSyncedError, reprojectDeferredOps } from "./apply.js";
+import { applyOp, type Op, OpEntityNotSyncedError } from "./apply.js";
 import { compareStrings } from "./compare.js";
 import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
@@ -1008,40 +1008,6 @@ export function setWatermark(
   }
 }
 
-/**
- * The pending-reprojection marker: SQLite's `user_version` header field,
- * 1 while applied ops await `reprojectDeferredOps`. mu uses it for
- * nothing else (the schema version lives in `schema_version`). Written
- * inside the applying transaction, so it commits or rolls back with the
- * ops; reading it costs no table lookup and adds no row anyone lists.
- */
-export function markReprojectionPending(db: Db): void {
-  prepareCached(db, "PRAGMA user_version = 1").run();
-}
-
-/**
- * Run `reprojectDeferredOps` when an ingest left the marker behind (or
- * always, with `force`), and clear the marker in the same transaction.
- *
- * The marker is what lets ambient ingest skip the repair scan (~130 ms
- * on a large log) when nothing arrived, yet still retry it after a
- * process died between its ingest commit and the repair. Clearing it
- * atomically with the repair means a concurrent ingest's marker is
- * either seen by this repair or survives it. Returns the rows changed.
- */
-export function reprojectIfPending(db: Db, opts?: { force?: boolean }): number {
-  if (opts?.force !== true && db.pragma("user_version", { simple: true }) === 0) return 0;
-  return db
-    .transaction(() => {
-      const pending = db.pragma("user_version", { simple: true }) !== 0;
-      if (!pending && opts?.force !== true) return 0;
-      const changed = reprojectDeferredOps(db);
-      if (pending) db.pragma("user_version = 0");
-      return changed;
-    })
-    .immediate();
-}
-
 /** Reset a peer's watermark so the next ingest re-reads from zero. The
  *  universal repair, safe because ingest is idempotent. */
 export function resetWatermark(db: Db, watermarkKey: string): void {
@@ -1310,9 +1276,6 @@ export function ingestSegment(
       watermark,
       clean && fingerprint !== null ? encodeFingerprint(fingerprint.key, nextResume) : null,
     );
-    // applyIncomingOp left the reprojection marker in this transaction
-    // if anything changed or deferred: a process that dies before the
-    // pass-wide reprojection leaves it behind for the next one.
   });
   run.immediate();
 
@@ -1376,11 +1339,6 @@ function isAlreadyRecorded(db: Db, op: Op): boolean {
 export function applyIncomingOp(db: Db, op: Op): { changed: boolean } {
   receiveHlc(db, op.hlc);
   const result = applyOp(db, op);
-  // A deferred note/edge (`absent`: its task is not here yet), or a row
-  // change that may be the parent some deferred op waits for: either way
-  // the next ambient pass must run the repair, however this op arrived
-  // (segment, `--from`, or an SDK caller).
-  if (result.changed || result.skipped === "absent") markReprojectionPending(db);
   prepareCached(
     db,
     `INSERT OR IGNORE INTO ops
@@ -1442,11 +1400,6 @@ export async function syncPass(db: Db, dir: string | null = syncDir()): Promise<
   const ingested = discoverPeers(dir, self).map((peer) =>
     ingestSegment(db, peer, { verify: true }),
   );
-  // AFTER every peer, not per peer: an edge in peer A's segment may name
-  // a task in peer B's, and `discoverPeers` order is `localeCompare` over
-  // random UUID filenames, so "parent first" is a coin flip. One pass at
-  // the end sees the union. See `reprojectDeferredOps`.
-  reprojectIfPending(db, { force: true });
   return {
     flushed,
     ingested,

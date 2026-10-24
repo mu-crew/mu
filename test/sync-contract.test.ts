@@ -235,8 +235,9 @@ describe("a task put older than its workstream delete does not resurrect the par
       op(4, "task", "put", "w/a", B),
     ]);
     try {
-      // No drift assertion: the re-created parent's created_at is stamped
-      // locally (it is in no op), so live and rebuild legitimately differ.
+      // The re-created parent's created_at comes from the log, not the local
+      // clock, so live and rebuild agree.
+      expect(checkDrift(db).clean).toBe(true);
       expect(db.prepare("SELECT local_id FROM tasks").all()).toEqual([{ local_id: "a" }]);
       expect(db.prepare("SELECT name FROM workstreams").all()).toEqual([{ name: "w" }]);
     } finally {
