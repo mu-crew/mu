@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DELEGATE_CANCEL_TOOL, type MuResult, registerDelegate } from "../extension/delegate.js";
 import {
+  failed,
   fakeMu,
   fakePi,
   flush,
@@ -189,12 +190,7 @@ describe("record", () => {
   it("an unknown task fails the call before anything spawns", async () => {
     const mu = fakeMu({
       task: {
-        show: () =>
-          Promise.resolve({
-            code: 3,
-            stdout: JSON.stringify({ error: "TaskNotFoundError", message: "no such task: nope" }),
-            stderr: "",
-          }),
+        show: () => Promise.resolve(failed(3, "TaskNotFoundError", "no such task: nope")),
       },
     });
     const p = fakePi();

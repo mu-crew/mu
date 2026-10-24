@@ -22,6 +22,7 @@ import { rebuildInto } from "../src/rebuild.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { envelopeData } from "./_envelope.js";
 import { rmFixtureDir } from "./_fs.js";
 
 let dir: string;
@@ -63,8 +64,7 @@ const opsAfter = (seq: number): OpRow[] =>
 const maxSeq = (): number =>
   (db.prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM ops").get() as { n: number }).n;
 
-const lastJson = (): Record<string, unknown> =>
-  JSON.parse(String(logSpy.mock.calls.at(-1)?.[0])) as Record<string, unknown>;
+const lastJson = (): Record<string, unknown> => envelopeData(logSpy.mock.calls.at(-1)?.[0]);
 
 describe("mu sql writes share one op context", () => {
   it("a multi-row UPDATE is one sql.write group", async () => {

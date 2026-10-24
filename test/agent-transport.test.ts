@@ -32,7 +32,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { helloReply, INC, withHello } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson, runCliWire } from "./_runCli.js";
 
 let dir: string;
 let dbPath: string;
@@ -300,16 +300,20 @@ describe("sendViaTransport", () => {
   it("the CLI: indeterminate exits 1 and --json carries msgId/incarnation/delivery as structured fields", async () => {
     seed("worker-1");
     await serveSilentOn("send", false);
-    const bad = await runCli(
+    const bad = await runCliWire(
       ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
       dbPath,
     );
     expect(bad.exitCode).toBe(1);
+    // The failure is ONE document on stdout; stderr stays empty.
+    expect(bad.stderr).toBe("");
     const id = (received[0] as { msgId: string }).msgId;
-    const env = JSON.parse(bad.stderr) as Record<string, unknown>;
+    const env = JSON.parse(bad.stdout) as Record<string, unknown>;
     expect(env).toMatchObject({
+      ok: false,
       error: "AgentSendIndeterminateError",
-      exitCode: 1,
+      exit: 1,
+      next: null,
       msgId: id,
       incarnation: INC,
       delivery: "unknown",
@@ -328,13 +332,14 @@ describe("sendViaTransport", () => {
     async (_n, args, op) => {
       seed("worker-1");
       await serveSilentOn(op, false);
-      const bad = await runCli(
+      const bad = await runCliWire(
         ["agent", "send", "worker-1", ...args, "-w", "auth", "--json"],
         dbPath,
       );
       expect(bad.exitCode).toBe(1);
       const wire = received.find((r) => r.op === op) as { msgId: string };
-      expect(JSON.parse(bad.stderr)).toMatchObject({
+      expect(JSON.parse(bad.stdout)).toMatchObject({
+        ok: false,
         msgId: wire.msgId,
         incarnation: INC,
         delivery: "unknown",
@@ -345,10 +350,13 @@ describe("sendViaTransport", () => {
   it("a confirmed-after-timeout send --json: msgId, incarnation, delivery 'delivered', one wait hint", async () => {
     seed("worker-1");
     await serveSilentOn("send", true);
-    const r = await runCli(["agent", "send", "worker-1", "hello", "-w", "auth", "--json"], dbPath);
+    const r = await runCliJson(
+      ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
+      dbPath,
+    );
     expect(r.exitCode).toBeNull();
     const id = (received[0] as { msgId: string }).msgId;
-    const body = JSON.parse(r.stdout) as { nextSteps: unknown[] };
+    const body = r.data as { nextSteps: unknown[] };
     expect(body).toMatchObject({
       msgId: id,
       incarnation: INC,
@@ -366,8 +374,12 @@ describe("sendViaTransport", () => {
   it("a normal send --json carries delivery 'delivered' with msgId and incarnation", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));
-    const r = await runCli(["agent", "send", "worker-1", "hello", "-w", "auth", "--json"], dbPath);
-    expect(JSON.parse(r.stdout)).toMatchObject({
+    const r = await runCliJson(
+      ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(r.doc).toMatchObject({ ok: true, next: null });
+    expect(r.data).toMatchObject({
       msgId: received[0]?.msgId,
       incarnation: INC,
       delivery: "delivered",
@@ -601,19 +613,20 @@ describe("pi session commands over ctl", () => {
   it("CLI: /compact --force --json reports command; unknown slash exits 2 with the read-the-pane hint", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "idle" });
-    const ok = await runCli(
+    const ok = await runCliJson(
       ["agent", "send", "worker-1", "/compact", "--force", "-w", "auth", "--json"],
       dbPath,
     );
     expect(ok.exitCode).toBeNull();
-    expect(JSON.parse(ok.stdout)).toMatchObject({ transport: "ctl", command: "compact" });
+    expect(ok.data).toMatchObject({ transport: "ctl", command: "compact" });
     expect(received.at(-1)).toEqual({ op: "command", name: "compact", force: true });
-    const bad = await runCli(
+    const bad = await runCliJson(
       ["agent", "send", "worker-1", "/tree", "-w", "auth", "--json"],
       dbPath,
     );
     expect(bad.exitCode).toBe(2);
-    const body = JSON.parse(bad.stderr) as { error: string; nextSteps: { command: string }[] };
+    expect(bad.stderr).toBe("");
+    const body = bad.doc as unknown as { error: string; nextSteps: { command: string }[] };
     expect(body.error).toBe("AgentSlashCommandUnsupportedError");
     expect(body.nextSteps[0]?.command).toBe("mu agent read worker-1 -n 20 -w auth");
   });
@@ -652,12 +665,12 @@ describe("mu agent send transport", () => {
   it("reports transport ctl in --json", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));
-    const { stdout, exitCode } = await runCli(
+    const { data, exitCode } = await runCliJson(
       ["agent", "send", "worker-1", "hello", "--steer", "-w", "auth", "--json"],
       dbPath,
     );
     expect(exitCode).toBeNull();
-    expect(JSON.parse(stdout)).toMatchObject({
+    expect(data).toMatchObject({
       transport: "ctl",
       state: "busy",
       incarnation: INC,
@@ -676,13 +689,13 @@ describe("mu agent send transport", () => {
       runs: 4,
       pending: false,
     });
-    const { stdout, exitCode } = await runCli(
+    const { data, exitCode } = await runCliJson(
       ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
       dbPath,
     );
     expect(exitCode).toBeNull();
     expect(received.map((r) => r.op)).toEqual(["send"]);
-    const body = JSON.parse(stdout) as { runs?: number; state?: string; nextSteps: unknown[] };
+    const body = data as { runs?: number; state?: string; nextSteps: unknown[] };
     expect(body).toMatchObject({ state: "idle", runs: 4 });
     expect(body.nextSteps).toHaveLength(1);
   });
@@ -697,11 +710,11 @@ describe("mu agent send transport", () => {
       runs: 4,
       pending: false,
     });
-    const { stdout } = await runCli(
+    const { data } = await runCliJson(
       ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
       dbPath,
     );
-    const cmds = (JSON.parse(stdout) as { nextSteps: Array<{ command: string }> }).nextSteps.map(
+    const cmds = (data as { nextSteps: Array<{ command: string }> }).nextSteps.map(
       (s) => s.command,
     );
     expect(cmds[0]).toBe(`mu agent wait worker-1 -w auth --after-runs 4 --inc ${INC} --json`);
@@ -719,11 +732,11 @@ describe("mu agent send transport", () => {
       pending: false,
     });
     for (const flag of ["--steer", "--fresh"]) {
-      const { stdout } = await runCli(
+      const { data } = await runCliJson(
         ["agent", "send", "worker-1", "hello", flag, "-w", "auth", "--json"],
         dbPath,
       );
-      const cmds = (JSON.parse(stdout) as { nextSteps: Array<{ command: string }> }).nextSteps.map(
+      const cmds = (data as { nextSteps: Array<{ command: string }> }).nextSteps.map(
         (s) => s.command,
       );
       expect(cmds[0], flag).toBe(
@@ -739,11 +752,11 @@ describe("mu agent send transport", () => {
   it("a ctl reply without runs keeps the pane-read hint", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "busy" });
-    const old = await runCli(
+    const old = await runCliJson(
       ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
       dbPath,
     );
-    const body = JSON.stringify(JSON.parse(old.stdout).nextSteps);
+    const body = JSON.stringify((old.data as { nextSteps: unknown }).nextSteps);
     expect(body).toContain("mu agent read worker-1 -n 50 -w auth");
     expect(body).not.toContain("--after-runs");
   });
@@ -751,13 +764,13 @@ describe("mu agent send transport", () => {
   it("an older extension's send reply (no runs) skips the state hints", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "busy" });
-    const { stdout, exitCode } = await runCli(
+    const { data, exitCode } = await runCliJson(
       ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
       dbPath,
     );
     expect(exitCode).toBeNull();
     expect(received.map((r) => r.op)).toEqual(["send"]);
-    const body = JSON.parse(stdout) as { runs?: number; nextSteps: unknown[] };
+    const body = data as { runs?: number; nextSteps: unknown[] };
     expect(body.runs).toBeUndefined();
     expect(JSON.stringify(body.nextSteps)).not.toContain("--steer");
   });
@@ -783,9 +796,9 @@ describe("mu agent send transport", () => {
     expect(via.exitCode).not.toBeNull();
     expect(via.stderr).toMatch(/unknown option/);
     seed("shy", "claude");
-    const r = await runCli(["agent", "send", "shy", "hello", "-w", "auth", "--json"], dbPath);
+    const r = await runCliJson(["agent", "send", "shy", "hello", "-w", "auth", "--json"], dbPath);
     expect(r.exitCode).toBe(4);
-    expect(JSON.parse(r.stderr).error).toBe("AgentSendUnsupportedError");
+    expect(r.doc.error).toBe("AgentSendUnsupportedError");
   });
 });
 
@@ -906,12 +919,12 @@ describe("send --fresh", () => {
       cwd: "/work/x",
     });
     await serveExtension(sockFor("worker-1"), oldExtension);
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "send", "worker-1", "go", "--fresh", "-w", "auth", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBe(4);
-    const body = JSON.parse(r.stderr) as { error: string; nextSteps: { command: string }[] };
+    const body = r.doc as unknown as { error: string; nextSteps: { command: string }[] };
     expect(body.error).toBe("AgentExtensionOutdatedError");
     expect(body.nextSteps.map((n) => n.command).join("\n")).toContain("mu agent spawn worker-1");
   });
@@ -927,12 +940,12 @@ describe("send --fresh", () => {
   it("CLI: --fresh --json reports fresh; busy exits 4; --force without --fresh is usage", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));
-    const ok = await runCli(
+    const ok = await runCliJson(
       ["agent", "send", "worker-1", "go", "--fresh", "-w", "auth", "--json"],
       dbPath,
     );
     expect(ok.exitCode).toBeNull();
-    expect(JSON.parse(ok.stdout)).toMatchObject({ transport: "ctl", fresh: true });
+    expect(ok.data).toMatchObject({ transport: "ctl", fresh: true });
 
     seed("worker-2");
     await serveExtension(sockFor("worker-2"), { v: 1, ok: false, error: "busy" });

@@ -9,8 +9,8 @@
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
 import {
-  emitJson,
   emitJsonCollection,
+  emitJsonRow,
   injectedIdentity,
   injectedWorkstream,
   missingWorkstreamError,
@@ -188,8 +188,8 @@ async function cmdLogTail(db: Db, baseOpts: ListLogsOptions, cliOpts: LogReadOpt
     const rows = listLogs(db, { ...baseOpts, since: cursor });
     for (const row of rows) {
       // NDJSON for --tail (one object per line), per SKILL.md: it is a
-      // stream, not a collection, so no {items,count} envelope.
-      if (cliOpts.json) emitJson(withRendered(row));
+      // stream, not a document: raw op rows, no {ok,data,next} envelope.
+      if (cliOpts.json) emitJsonRow(withRendered(row));
       else printLogRow(row);
       cursor = row.seq;
     }

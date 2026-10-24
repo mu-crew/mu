@@ -39,6 +39,7 @@ import { wireSyncCommand } from "./cli/sync.js";
 import { wireTaskCommands } from "./cli/tasks.js";
 import { wireWorkstreamCommands } from "./cli/workstream.js";
 import type { Db } from "./db.js";
+import { encodeEnvelope, okEnvelope } from "./output-contract.js";
 import { isTaskSortKey, TASK_SORT_KEYS, type TaskSortKey } from "./tasks/sort.js";
 import { TASK_SUBSTATES, type TaskSubstate } from "./tasks/status.js";
 import {
@@ -729,14 +730,22 @@ export function normalizeInheritedWorkstream(
   return names[0];
 }
 
-/** Stable JSON output: one line, no trailing newline beyond console.log's.
- *  Exported so cli/*.ts modules can use the same single-source-of-truth
- *  formatter. */
+/** The one JSON document of a successful `--json` invocation: the payload in
+ *  a `{ok:true,data,next:null}` envelope (src/output-contract.ts), one line.
+ *  An explicit success envelope passes through, never `data.ok`. `next` stays
+ *  null until per-verb plans land; the legacy `nextSteps` ride inside `data`.
+ *  Exported so cli/*.ts modules share one formatter. */
 export function emitJson(value: unknown): void {
+  console.log(encodeEnvelope(okEnvelope(value)));
+}
+
+/** One raw JSON line, NOT enveloped: the NDJSON stream rows of `mu log --tail`
+ *  (a stream is not a document, and its rows keep the stored op shape). */
+export function emitJsonRow(value: unknown): void {
   console.log(JSON.stringify(value));
 }
 
-/** Wrap a collection in mu's canonical `{items, count}` envelope.
+/** Wrap a collection in mu's canonical `{items, count}` payload (the `data` of the envelope).
  *  audit_json_envelope_uniformity: every collection-read verb (list,
  *  next, owned-by, notes, search, orphans, commits, ...) emits this
  *  shape so a future sibling field (`baseRef`, `totalAcrossPages`,

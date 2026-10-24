@@ -18,7 +18,7 @@ import { openDb } from "../src/db.js";
 import { addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliWire } from "./_runCli.js";
 
 const STATE_KEY = "MU_STATE_DIR";
 const SYNC_KEY = "MU_SYNC_DIR";
@@ -79,13 +79,13 @@ describe("mu doctor exit code", () => {
     expect(r.stderr).toContain("is inside MU_SYNC_DIR");
   });
 
-  it("--json: the same refusal is an error envelope on stderr, exit 4", async () => {
+  it("--json: the same refusal is an error envelope on stdout, exit 4", async () => {
     process.env[SYNC_KEY] = tempDir;
-    const r = await runCli(["doctor", "--json"], dbPath);
+    const r = await runCliWire(["doctor", "--json"], dbPath);
     expect(r.exitCode).toBe(4);
-    expect(r.stdout).toBe("");
-    const env = JSON.parse(r.stderr.trim()) as { error: string; exitCode: number };
-    expect(env).toMatchObject({ error: "DbInsideSyncDirError", exitCode: 4 });
+    expect(r.stderr).toBe("");
+    const env = JSON.parse(r.stdout.trim()) as { error: string; exit: number };
+    expect(env).toMatchObject({ ok: false, error: "DbInsideSyncDirError", exit: 4 });
   });
 });
 

@@ -23,10 +23,10 @@ not in `--help` do not exist.
 ## Output + JSON shapes
 
 Default output is a card on stdout plus a `Next:` block. Read both.
-Every verb takes `--json`: one stdout object; collections are
-`{items, count}`, except `mu agent list` (`{agents, orphans}`); `mu sql --json` is bare rows; `mu log --tail` is
-NDJSON; `mu log` writes print text even with `--json`. Errors are `{error,message,nextSteps,exitCode}` on stderr
-(validation errors add `usage`). **`nextSteps` survives in JSON.**
+Every verb takes `--json`: one stdout document `{ok:true,data,next}`; `data` holds
+`{items, count}` for collections, except `mu agent list` (`{agents, orphans}`); `mu sql --json` rows are `data`; `mu log --tail` is
+raw NDJSON; `mu log` writes print text even with `--json`. Errors are `{ok:false,error,message,next,exit,nextSteps}` on **stdout**
+(validation errors add `usage`). **`nextSteps` survives in `data` and errors.**
 
 ## Vocabulary
 

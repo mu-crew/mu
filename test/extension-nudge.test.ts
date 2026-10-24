@@ -42,7 +42,15 @@ const listAnswer = (table: Table, args: readonly string[]): MuResult => {
   return {
     code: 0,
     stdout: JSON.stringify({
-      items: (table[ws] ?? []).map((name) => ({ name, workstreamName: ws, status: "IN_PROGRESS" })),
+      ok: true,
+      data: {
+        items: (table[ws] ?? []).map((name) => ({
+          name,
+          workstreamName: ws,
+          status: "IN_PROGRESS",
+        })),
+      },
+      next: null,
     }),
     stderr: "",
   };

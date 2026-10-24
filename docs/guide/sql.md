@@ -7,16 +7,20 @@ reports, and repairs that no verb covers.
 
 Every verb takes `--json`.
 
-- Collection reads print `{"items": [...], "count": N}`.
-- Single objects, such as `mu task show`, print an object with named
-  fields.
-- `mu sql --json` prints a bare array of rows.
-- `mu log --tail --json` prints one JSON object per line.
-- Errors go to stderr as `{error, message, nextSteps, exitCode}`.
+- Every verb prints ONE document on stdout: `{"ok": true, "data": ..., "next": null}`.
+- Collection reads put `{"items": [...], "count": N}` in `data`.
+- Single objects, such as `mu task show`, put an object with named
+  fields in `data`.
+- `mu sql --json` puts the array of rows in `data`.
+- `mu log --tail --json` is the exception: one raw JSON object per line.
+- A failure is `{"ok": false, "error", "message", "next", "exit"}` on
+  **stdout** (plus `nextSteps` and, for usage errors, `usage`, at most 3
+  lines), with the same non-zero exit code. `2>/dev/null` loses nothing.
 
 ```bash
 mu state -w auth --json
-mu task list -w auth --json | jq '.count'
+mu task list -w auth --json | jq '.data.count'
+mu task show t1 -w auth --json | jq 'if .ok then .data.task else .message end'
 ```
 
 Exit codes: `2` usage error, `3` not found, `4` conflict, `5`

@@ -57,7 +57,9 @@ export interface Capture {
   error?: Error;
 }
 
-export async function runCli(argv: readonly string[], dbPath: string): Promise<Capture> {
+/** The raw capture: exactly what the process wrote and exited with. Use it for
+ *  wire assertions (the envelope itself, which stream, which exit). */
+export async function runCliWire(argv: readonly string[], dbPath: string): Promise<Capture> {
   const originalDbPath = process.env.MU_DB_PATH;
   const originalWrite = process.stdout.write.bind(process.stdout);
   const originalErrWrite = process.stderr.write.bind(process.stderr);
@@ -181,4 +183,69 @@ export async function runCli(argv: readonly string[], dbPath: string): Promise<C
   return caughtError !== undefined
     ? { stdout, stderr, exitCode, error: caughtError }
     : { stdout, stderr, exitCode };
+}
+
+// ─── Envelope views ──────────────────────────────────────────────────
+//
+// `mu --json` prints ONE document: `{ok:true,data,next}` or, on failure and
+// on STDOUT, `{ok:false,error,message,next,exit}` (src/output-contract.ts).
+
+export interface JsonCapture<T = unknown> extends Capture {
+  /** The envelope's `data` (success), or the failure's partial `data`. */
+  data: T;
+  /** The whole parsed document. */
+  doc: Record<string, unknown> & { ok: boolean };
+}
+
+/** Run a `--json` verb and unwrap the envelope: `data` is the payload, `doc`
+ *  the whole document. Fails loudly when stdout is not exactly one document. */
+export async function runCliJson<T = unknown>(
+  argv: readonly string[],
+  dbPath: string,
+): Promise<JsonCapture<T>> {
+  const cap = await runCliWire(argv, dbPath);
+  let doc: unknown;
+  try {
+    doc = JSON.parse(cap.stdout);
+  } catch {
+    throw new Error(`stdout is not one JSON document: ${cap.stdout.slice(0, 200)}`);
+  }
+  if (typeof doc !== "object" || doc === null || typeof (doc as { ok?: unknown }).ok !== "boolean")
+    throw new Error(`stdout is not an envelope: ${cap.stdout.slice(0, 200)}`);
+  const d = doc as JsonCapture["doc"];
+  return { ...cap, data: (d as { data?: unknown }).data as T, doc: d };
+}
+
+/** The pre-envelope view, TRANSITIONAL: tests not yet moved to runCliJson
+ *  (part B, v_output_tests) read bare payloads on stdout and error documents
+ *  on stderr. A success envelope is unwrapped to its `data`; a failure goes
+ *  back to the old `{error,message,nextSteps,exitCode}` shape on stderr (its
+ *  partial `data`, if any, back on stdout). Delete when part B lands. */
+export async function runCli(argv: readonly string[], dbPath: string): Promise<Capture> {
+  const cap = await runCliWire(argv, dbPath);
+  let stdout = "";
+  let stderr = cap.stderr;
+  for (const line of cap.stdout.split("\n")) {
+    let doc: Record<string, unknown> | undefined;
+    try {
+      const v: unknown = JSON.parse(line);
+      if (typeof v === "object" && v !== null && !Array.isArray(v)) doc = v as typeof doc;
+    } catch {
+      // not JSON: human output, passed through
+    }
+    if (doc === undefined || typeof doc.ok !== "boolean" || !("next" in doc)) {
+      stdout += line === "" ? "" : `${line}\n`;
+      continue;
+    }
+    if (doc.ok === true && "data" in doc) {
+      stdout += `${JSON.stringify(doc.data)}\n`;
+      continue;
+    }
+    const { ok: _ok, next: _next, exit, data, ...old } = doc;
+    if (data !== undefined) stdout += `${JSON.stringify(data)}\n`;
+    stderr += `${JSON.stringify({ ...old, exitCode: exit })}\n`;
+  }
+  return cap.error !== undefined
+    ? { stdout, stderr, exitCode: cap.exitCode, error: cap.error }
+    : { stdout, stderr, exitCode: cap.exitCode };
 }

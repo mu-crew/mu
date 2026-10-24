@@ -15,7 +15,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { INC } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliWire } from "./_runCli.js";
 
 let dir: string;
 let dbPath: string;
@@ -135,6 +135,23 @@ describe("mu agent check", () => {
     const no = await check("--json");
     expect(no.exitCode).toBe(3);
     expect(JSON.parse(no.stdout)).toMatchObject({ state: "not-accepted", id: "msg-123" });
+  });
+
+  it("--json on a failure is ONE failure document: the verdict in data, the real exit beside it", async () => {
+    await serve((id) => ({ msg: { id, accepted: false } }));
+    const no = await runCliWire(
+      ["agent", "check", "worker-1", "msg-123", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(no.exitCode).toBe(3);
+    expect(no.stderr).toBe("");
+    expect(JSON.parse(no.stdout)).toMatchObject({
+      ok: false,
+      error: "MessageNotAccepted",
+      next: null,
+      exit: 3,
+      data: { agentName: "worker-1", state: "not-accepted", id: "msg-123" },
+    });
   });
 
   it("an unknown agent is exit 3 from the verb's own not-found path", async () => {

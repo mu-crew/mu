@@ -29,6 +29,7 @@ import {
   workstreamRevision,
 } from "../src/workstream.js";
 import { listWorktrees, registerWorktree } from "../src/worktree.js";
+import { envelopeData } from "./_envelope.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxExecutor, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
@@ -266,7 +267,7 @@ describe("sweep_toctou: the sweep applies the previewed members, not whatever th
     const out = await captureStdout(() =>
       cmdTeardown(db, { empty: true, if: revision, json: true }),
     );
-    const j = JSON.parse(out) as { tornDown: number; failed: { workstreamName: string }[] };
+    const j = envelopeData<{ tornDown: number; failed: { workstreamName: string }[] }>(out);
     expect(j.tornDown).toBe(1);
     expect(j.failed.map((f) => f.workstreamName)).toEqual(["e2"]);
     expect(tornDownAt("e1")).not.toBeNull();

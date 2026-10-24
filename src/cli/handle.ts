@@ -78,9 +78,9 @@ import {
   pc,
   printNextStepsTo,
   printUsageHuman,
-  renderUsageJson,
-  type UsageJson,
+  usageLines,
 } from "../output.js";
+import { type Envelope, encodeEnvelope } from "../output-contract.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
 import { syncDir } from "../segments.js";
 import {
@@ -146,9 +146,35 @@ export class UsageError extends Error {
  */
 export class CliExitError extends Error {
   override readonly name = "CliExitError";
-  constructor(public readonly exitCode: number) {
+  constructor(
+    public readonly exitCode: number,
+    /** With `--json`: the ONE failure document (instead of a success one). */
+    public readonly failure?: JsonFailure,
+  ) {
     super(`exit ${exitCode}`);
   }
+}
+
+/** A failure document a verb builds itself: the error class and message, the
+ *  partial evidence it already produced (`data`), and receipts (`extra`). */
+export interface JsonFailure {
+  error: string;
+  message: string;
+  data?: unknown;
+  extra?: Record<string, unknown>;
+}
+
+/** The sentinel for a verb that fails AFTER producing its report (doctor's
+ *  drift/hazard/no-mux): `--json` prints one failure document holding `data`,
+ *  with the real error's class, message, exit code and legacy nextSteps. */
+export function failureWithData(err: unknown, data: unknown): CliExitError {
+  const nextSteps = hasNextSteps(err) ? err.errorNextSteps() : [];
+  return new CliExitError(classifyError(err).exitCode, {
+    error: err instanceof Error ? err.name : "Error",
+    message: err instanceof Error ? err.message : String(err),
+    data,
+    ...(nextSteps.length > 0 ? { extra: { nextSteps } } : {}),
+  });
 }
 
 // ─── Active-command tracking for the validation-error contract ──────
@@ -499,7 +525,22 @@ function quotingHint(err: unknown, cmd: Command | undefined): NextStep | undefin
  *  UsageError + typed *Invalid*) ALSO emit the failing subcommand's
  *  --help (human path) or a structured `usage` field (JSON path). */
 function emitError(err: unknown): number {
-  if (err instanceof CliExitError) return err.exitCode;
+  if (err instanceof CliExitError) {
+    const f = err.failure;
+    if (f !== undefined) {
+      const env: Envelope<unknown> = {
+        ok: false,
+        error: f.error,
+        message: f.message,
+        next: null,
+        exit: err.exitCode,
+        ...(f.extra !== undefined ? { extra: f.extra } : {}),
+        ...(f.data !== undefined ? { data: f.data } : {}),
+      };
+      console.log(encodeEnvelope(env));
+    }
+    return err.exitCode;
+  }
 
   // Commander's --help / --version success-exits arrive as CommanderError
   // with exitCode 0. helpInformation() has already been written by
@@ -523,23 +564,29 @@ function emitError(err: unknown): number {
       ? message.slice("error: ".length)
       : message;
   const usageCmd = isUsageClassError(err) ? activeCommand : undefined;
-  const usage: UsageJson | undefined = usageCmd ? renderUsageJson(usageCmd) : undefined;
 
   if (isJsonMode()) {
-    const envelope: Record<string, unknown> = {
-      error: errClass,
-      message: cleanMessage,
-      nextSteps: steps,
-      exitCode,
-    };
-    if (usage) envelope.usage = usage;
+    // ONE failure document on STDOUT, the real exit code beside it: a caller
+    // that pipes `2>/dev/null` loses nothing. `nextSteps` is the legacy hint
+    // list, kept until the per-verb `next` plans replace it.
+    const extra: Record<string, unknown> = { nextSteps: steps };
+    if (usageCmd) extra.usage = usageLines(usageCmd);
     // A send whose delivery is unknown still names its receipt, structurally.
     if (err instanceof AgentSendIndeterminateError && err.msgId !== undefined) {
-      envelope.msgId = err.msgId;
-      if (err.incarnation !== undefined) envelope.incarnation = err.incarnation;
-      envelope.delivery = "unknown";
+      extra.msgId = err.msgId;
+      if (err.incarnation !== undefined) extra.incarnation = err.incarnation;
+      extra.delivery = "unknown";
     }
-    process.stderr.write(`${JSON.stringify(envelope)}\n`);
+    console.log(
+      encodeEnvelope({
+        ok: false,
+        error: errClass,
+        message: cleanMessage,
+        next: null,
+        exit: exitCode,
+        extra,
+      }),
+    );
     return exitCode;
   }
 

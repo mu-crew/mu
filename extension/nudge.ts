@@ -28,7 +28,7 @@ import {
   qualifiedRefProblem,
   workstreamNameProblem,
 } from "../src/workstream-scope.js";
-import { defaultRunner, type MuRunner } from "./delegate.js";
+import { defaultRunner, type MuRunner, parseEnvelope } from "./delegate.js";
 
 export const NUDGE_MESSAGE_TYPE = "mu-keep-driving";
 export const NUDGE_LOG_KIND = "nudge";
@@ -400,7 +400,10 @@ async function inProgress(run: MuRunner, workstreams: string[]): Promise<string[
       ]);
       if (r.code !== 0) return undefined;
       try {
-        const items = (JSON.parse(r.stdout) as ListJson).items ?? [];
+        // mu prints {ok,data:{items,count},next}; no envelope reads as "unknown".
+        const data = parseEnvelope(r.stdout) as ListJson | undefined;
+        if (data === undefined) return undefined;
+        const items = data.items ?? [];
         return items.flatMap((t) => (t.name ? [`${t.workstreamName ?? w}/${t.name}`] : []));
       } catch {
         return undefined;
@@ -598,7 +601,10 @@ async function ownedInProgress(
   const r = await run(["task", "owned-by", agent, "-w", workstream, "--json"]);
   if (r.code !== 0) return undefined;
   try {
-    const json = JSON.parse(r.stdout) as { items?: { name?: string; status?: string }[] };
+    const json = parseEnvelope(r.stdout) as
+      | { items?: { name?: string; status?: string }[] }
+      | undefined;
+    if (json === undefined) return undefined;
     return (json.items ?? []).flatMap((t) =>
       t.status === "IN_PROGRESS" && t.name ? [t.name] : [],
     );
