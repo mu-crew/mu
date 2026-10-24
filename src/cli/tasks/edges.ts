@@ -19,7 +19,7 @@ import type { Db } from "../../db.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
 import { withTaskFence } from "../../revision.js";
 import { candidateTaskIds } from "../../tasks/id.js";
-import { addBlockEdge, deleteTask, removeBlockEdge, reparentTask } from "../../tasks.js";
+import { addBlockEdge, deleteTask, getTask, removeBlockEdge, reparentTask } from "../../tasks.js";
 
 /** Canonicalise the `-b/--by` value into a non-empty blocker list.
  *
@@ -114,6 +114,15 @@ export async function cmdTaskUnblock(
     })),
   );
   const removed = results.filter((r) => r.removed).length;
+  // The no-op for an unknown id stays a no-op; it only says which ids of
+  // THIS workstream the typo may have meant (read-only).
+  const candidates = [
+    ...new Set(
+      [blocked, ...blockers]
+        .filter((id) => getTask(db, id, ws) === undefined)
+        .flatMap((id) => candidateTaskIds(db, ws, id)),
+    ),
+  ];
   const nextSteps: NextStep[] = [
     { intent: "Show what now blocks this task", command: `mu task tree ${blocked} -w ${ws}` },
     { intent: "Re-add the edges", command: `mu task block ${blocked} --by ${byList} -w ${ws}` },
@@ -127,6 +136,7 @@ export async function cmdTaskUnblock(
       results,
       removed: removed > 0,
       removedEdges: removed,
+      ...(candidates.length > 0 ? { candidate_ids: candidates } : {}),
       nextSteps,
     });
     return;
@@ -138,6 +148,7 @@ export async function cmdTaskUnblock(
     }
     console.log(`Removed edge ${pc.bold(r.blockerName)} → ${pc.bold(blocked)}`);
   }
+  if (candidates.length > 0) console.log(pc.dim(`  similar: ${candidates.join(", ")}`));
   printNextSteps(nextSteps);
 }
 

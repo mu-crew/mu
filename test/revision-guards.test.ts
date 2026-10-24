@@ -12,18 +12,22 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
+import { formatHlc } from "../src/hlc.js";
 import {
   assertRevision,
   RevisionMismatchError,
   taskRevision,
   taskRevisions,
 } from "../src/revision.js";
+import { applyIncomingOp } from "../src/segments.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask } from "../src/tasks/edit.js";
 import { claimTask, getTask, getTaskEdges, releaseTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCli, runCliJson } from "./_runCli.js";
+
+const PEER = "9f1c8a2e-0000-4000-8000-0000000000aa";
 
 let dir: string;
 let path: string;
@@ -69,29 +73,107 @@ describe("taskRevision", () => {
     expect(rev("t", "other")).toBeGreaterThan(rev("t"));
   });
 
-  it("moves on a note, a claim, and either end of an edge", () => {
-    const seen = new Set<number>([rev("t")]);
-    addNote(db, "t", "n", { workstream: "demo" });
-    seen.add(rev("t"));
-    addBlockEdge(db, "demo", "t", "u"); // t is blocked by u
-    seen.add(rev("t"));
-    expect(rev("u")).toBeGreaterThan(0);
+  it("moves on EVERY step: a note, a field update, a claim, either end of an edge", async () => {
+    const steps: [string, () => void | Promise<void>][] = [
+      ["note", () => void addNote(db, "t", "n", { workstream: "demo" })],
+      ["blocked end of an edge", () => void addBlockEdge(db, "demo", "t", "u")],
+      ["blocker end of an edge", () => void addBlockEdge(db, "demo", "a_b", "t")],
+      ["claim", () => claimTask(db, "t", { workstream: "demo", agentName: "w1" }).then(() => {})],
+      ["release", () => void releaseTask(db, "t", { workstream: "demo" })],
+    ];
+    let last = rev("t");
     const uBefore = rev("u");
-    addBlockEdge(db, "demo", "a_b", "t"); // t is the BLOCKER now
-    expect(rev("t")).toBeGreaterThan(Math.max(...seen));
-    expect(rev("a_b")).toBeGreaterThanOrEqual(rev("t"));
-    expect(rev("u")).toBe(uBefore);
+    for (const [label, step] of steps) {
+      await step();
+      const now = rev("t");
+      expect(now, label).not.toBe(last);
+      last = now;
+    }
+    // u is on the far end of t's blocker edge: it moved once, with the edge.
+    expect(rev("u")).not.toBe(uBefore);
+    expect(rev("axb")).toBe(rev("axb"));
   });
 
-  it("a synced edge op whose other end is in another workstream moves only the local end", () => {
+  it("is derived from state: the same state gives the same revision, whatever got it there", () => {
     const r = rev("t");
-    db.prepare(
-      `INSERT INTO ops (hlc, machine_id, group_id, intent, entity, key, op, payload, created_at)
-       VALUES ('9999-peer', 'peer', 'g', 'task.block', 'edge', 'demo/t->other/t', 'put', '{}', '2030-01-01')`,
-    ).run();
-    expect(rev("t")).toBeGreaterThan(r);
-    expect(taskRevisions(db, "demo").has("2/t")).toBe(false);
+    addNote(db, "t", "n", { workstream: "demo" });
+    expect(rev("t")).not.toBe(r);
+    addBlockEdge(db, "demo", "t", "u");
+    db.prepare("DELETE FROM task_edges").run();
+    // the edge is gone again but the note stays: still not the original
+    expect(rev("t")).not.toBe(r);
+    expect(Number.isSafeInteger(rev("t"))).toBe(true);
+  });
+
+  it("an edge whose other end is in another workstream moves the local end (either direction, via the real apply path)", () => {
+    const r = rev("t");
+    const peerOp = (key: string, op: "put" | "del" = "put") => ({
+      hlc: formatHlc({ wallMs: Date.now() + 60_000, counter: 0, machineId: PEER }),
+      machineId: PEER,
+      groupId: `g-${key}`,
+      actor: "peer",
+      intent: null,
+      entity: "edge",
+      key,
+      op,
+      payload: JSON.stringify({ created_at: "2030-01-01T00:00:00.000Z" }),
+    });
+    // local task is the FIRST (blocker) endpoint
+    expect(applyIncomingOp(db, peerOp("demo/t->other/t")).changed).toBe(true);
+    const r1 = rev("t");
+    expect(r1).not.toBe(r);
+    expect(rev("t", "other")).not.toBe(0);
+    // local task is the SECOND (blocked) endpoint: key starts in `other`
+    add("other", "x");
+    const u = rev("u");
+    expect(applyIncomingOp(db, peerOp("other/x->demo/u")).changed).toBe(true);
+    expect(getTaskEdges(db, "u", "demo").blockers).toEqual(["x"]);
+    expect(rev("u")).not.toBe(u);
+    expect(rev("t")).toBe(r1);
     expect([...taskRevisions(db, "demo").keys()].every((k) => !k.includes("/"))).toBe(true);
+  });
+
+  it("a peer's blocker delete drops the edge with no edge op, and still moves the dependent", () => {
+    addBlockEdge(db, "demo", "t", "u"); // u blocks t
+    const r = rev("t");
+    const ops = opCount();
+    const res = applyIncomingOp(db, {
+      hlc: formatHlc({ wallMs: Date.now() + 60_000, counter: 0, machineId: PEER }),
+      machineId: PEER,
+      groupId: "g-del",
+      actor: "peer",
+      intent: null,
+      entity: "task",
+      key: "demo/u",
+      op: "del",
+      payload: "{}",
+    });
+    expect(res.changed).toBe(true);
+    expect(getTaskEdges(db, "t", "demo").blockers).toEqual([]);
+    // only the peer's own op was logged: the edge vanished under capture suppression
+    expect(opCount()).toBe(ops + 1);
+    expect(rev("t")).not.toBe(r);
+  });
+
+  it("a peer note (capture-suppressed, no updated_at touch) moves the revision", () => {
+    const r = rev("t");
+    const res = applyIncomingOp(db, {
+      hlc: formatHlc({ wallMs: Date.now() + 60_000, counter: 0, machineId: PEER }),
+      machineId: PEER,
+      groupId: "g-note",
+      actor: "peer",
+      intent: null,
+      entity: "note",
+      key: "demo/t#99",
+      op: "put",
+      payload: JSON.stringify({
+        author: "peer",
+        content: "hi",
+        created_at: "2030-01-01T00:00:00.000Z",
+      }),
+    });
+    expect(res.changed).toBe(true);
+    expect(rev("t")).not.toBe(r);
   });
 
   it("an absent task is revision 0, and reading it writes nothing", () => {
@@ -246,6 +328,65 @@ describe("CLI: task delete", () => {
     expect(r.data).toMatchObject({ present: false, candidate_ids: ["fix_auth"] });
     expect(opCount()).toBe(ops);
     expect(getTask(db, "fix_auth", "demo")).toBeDefined();
+  });
+});
+
+describe("CLI: a stale preview is refused after a PEER op changed the task", () => {
+  const peer = (entity: string, key: string, op: "put" | "del", payload: object = {}) => ({
+    hlc: formatHlc({ wallMs: Date.now() + 60_000, counter: 0, machineId: PEER }),
+    machineId: PEER,
+    groupId: `g-${entity}-${key}`,
+    actor: "peer",
+    intent: null,
+    entity,
+    key,
+    op,
+    payload: JSON.stringify(payload),
+  });
+  const expectRefused = async (id: string, stale: number, ops: number): Promise<void> => {
+    const r = await runCliJson(
+      ["task", "delete", id, "-w", "demo", "--if", String(stale), "--json"],
+      path,
+    );
+    expect(r.exitCode).toBe(4);
+    expect(r.doc).toMatchObject({ error: "RevisionMismatchError", expected_rev: stale });
+    expect(opCount()).toBe(ops);
+    expect(getTask(db, id, "demo")).toBeDefined();
+  };
+
+  it("an incoming edge from another workstream (key starts elsewhere)", async () => {
+    add("other", "cross_blocker");
+    const preview = await runCliJson(["task", "delete", "u", "-w", "demo", "--json"], path);
+    const stale = preview.data.revision as number;
+    applyIncomingOp(
+      db,
+      peer("edge", "other/cross_blocker->demo/u", "put", {
+        created_at: "2030-01-01T00:00:00.000Z",
+      }),
+    );
+    expect(getTaskEdges(db, "u", "demo").blockers).toEqual(["cross_blocker"]);
+    await expectRefused("u", stale, opCount());
+  });
+
+  it("a peer deleting a blocker whose edge it never saw (no edge op)", async () => {
+    addBlockEdge(db, "demo", "t", "blocker");
+    const stale = rev("t");
+    applyIncomingOp(db, peer("task", "demo/blocker", "del"));
+    expect(getTaskEdges(db, "t", "demo").blockers).toEqual([]);
+    await expectRefused("t", stale, opCount());
+  });
+
+  it("a peer note", async () => {
+    const stale = rev("u");
+    applyIncomingOp(
+      db,
+      peer("note", "demo/u#99", "put", {
+        author: "peer",
+        content: "hi",
+        created_at: "2030-01-01T00:00:00.000Z",
+      }),
+    );
+    await expectRefused("u", stale, opCount());
   });
 });
 
@@ -406,6 +547,45 @@ describe("candidate_ids: read-only, exact partition", () => {
     );
     expect(r.exitCode).toBe(3);
     expect(r.doc.candidate_ids).toEqual(["fix_auth"]);
+  });
+
+  it("unblock keeps its no-op but names near ids of the workstream (blocked and blocker)", async () => {
+    const ops = opCount();
+    const a = await runCliJson(
+      ["task", "unblock", "fix-auth", "--by", "u", "-w", "demo", "--json"],
+      path,
+    );
+    expect(a.exitCode).toBeNull();
+    expect(a.data).toMatchObject({ removed: false, candidate_ids: ["fix_auth"] });
+    const b = await runCliJson(
+      ["task", "unblock", "t", "--by", "fixauth", "-w", "demo", "--json"],
+      path,
+    );
+    expect(b.data).toMatchObject({ removed: false, candidate_ids: ["fix_auth"] });
+    const none = await runCliJson(
+      ["task", "unblock", "t", "--by", "u", "-w", "demo", "--json"],
+      path,
+    );
+    expect("candidate_ids" in none.data).toBe(false);
+    expect(opCount()).toBe(ops);
+  });
+
+  it("note, notes, update, tree and park-style lifecycle misses name candidates, writing nothing", async () => {
+    const ops = opCount();
+    const cases = [
+      ["task", "note", "fix-auth", "-m", "text"],
+      ["task", "notes", "fix-auth"],
+      ["task", "update", "fix-auth", "--title", "x"],
+      ["task", "tree", "fix-auth"],
+      ["task", "close", "fix-auth", "--as", "wontfix", "--why", "x"],
+    ];
+    for (const c of cases) {
+      const r = await runCliJson([...c, "-w", "demo", "--json"], path);
+      expect(r.exitCode, c.join(" ")).toBe(3);
+      expect(r.doc.candidate_ids, c.join(" ")).toEqual(["fix_auth"]);
+    }
+    expect(opCount()).toBe(ops);
+    expect(getTask(db, "fix_auth", "demo")?.title).toBe("fix_auth");
   });
 
   it("claim and release name candidates too; no candidates → no key", async () => {
