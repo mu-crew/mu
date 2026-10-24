@@ -286,7 +286,7 @@ function refuseUserDbDuringTests(path: string): void {
 // (review_substrate_resolve_id_anonymous_errors).
 
 export class WorkstreamNotFoundError extends Error implements HasNextSteps {
-  override readonly name = "WorkstreamNotFoundError";
+  override readonly name: string = "WorkstreamNotFoundError";
   constructor(public readonly workstream: string) {
     super(`no such workstream: ${workstream}`);
   }
@@ -301,29 +301,73 @@ export class WorkstreamNotFoundError extends Error implements HasNextSteps {
   }
 }
 
+/** A verb named a **torn down** workstream (`workstreams.torn_down_at`
+ *  set). It is a kind of not-found (exit 3), but says why and how to get
+ *  the name back: `workstream init` previews, then `--if <rev>` reuses it. */
+export class WorkstreamTornDownError extends WorkstreamNotFoundError {
+  override readonly name: string = "WorkstreamTornDownError";
+  constructor(
+    workstream: string,
+    public readonly tornDownAt: string,
+  ) {
+    super(workstream);
+    this.message = `workstream ${workstream} is torn down (at ${tornDownAt}); \`mu workstream init ${workstream}\` to reuse the name`;
+  }
+  override errorNextSteps(): NextStep[] {
+    return [
+      { intent: "Preview reusing the name", command: `mu workstream init ${this.workstream}` },
+      { intent: "List workstreams", command: "mu workstream list" },
+    ];
+  }
+}
+
+/** When `workstream` is torn down: its `torn_down_at`; else null (live or
+ *  unknown). */
+export function tornDownAtOf(db: Db, workstream: string): string | null {
+  const row = db.prepare("SELECT torn_down_at FROM workstreams WHERE name = ?").get(workstream) as
+    | { torn_down_at: string | null }
+    | undefined;
+  return row?.torn_down_at ?? null;
+}
+
 /** Resolve a workstream name to its INTEGER surrogate id. Throws
- *  WorkstreamNotFoundError on miss; a torn-down workstream is a miss
- *  (ingest, which must still find it, queries `workstreams` directly). Pure: no auto-create — callers
+ *  WorkstreamNotFoundError on miss, and WorkstreamTornDownError when the
+ *  row exists torn down (ingest, which must still find it, queries
+ *  `workstreams` directly). Pure: no auto-create — callers
  *  that want the auto-create-or-resolve semantics use
  *  `ensureWorkstream` from src/workstream.ts (which returns void;
  *  follow up with `resolveWorkstreamId` if the id is needed).
  */
 export function resolveWorkstreamId(db: Db, workstream: string): number {
   const row = db
-    .prepare("SELECT id FROM workstreams WHERE name = ? AND torn_down_at IS NULL")
-    .get(workstream) as { id: number } | undefined;
+    .prepare("SELECT id, torn_down_at FROM workstreams WHERE name = ?")
+    .get(workstream) as { id: number; torn_down_at: string | null } | undefined;
   if (!row) throw new WorkstreamNotFoundError(workstream);
+  if (row.torn_down_at !== null) throw new WorkstreamTornDownError(workstream, row.torn_down_at);
   return row.id;
 }
 
 /** Resolve a workstream name to its id, returning null on miss instead
- *  of throwing. Useful for read paths that want to early-return [] on
- *  a non-existent workstream (e.g. listTasks). */
+ *  of throwing. A torn-down workstream is a miss too. Tolerant on purpose:
+ *  agent and reaper paths use it, and a peer's teardown can reach a machine
+ *  that still has agent rows (and live panes) in that workstream. */
 export function tryResolveWorkstreamId(db: Db, workstream: string): number | null {
   const row = db
     .prepare("SELECT id FROM workstreams WHERE name = ? AND torn_down_at IS NULL")
     .get(workstream) as { id: number } | undefined;
   return row ? row.id : null;
+}
+
+/** Like `tryResolveWorkstreamId` for user-facing task reads: null when the
+ *  name is unknown (callers decide), but a torn-down workstream THROWS
+ *  `WorkstreamTornDownError`, so every verb says why instead of "no tasks". */
+export function tryResolveLiveWorkstreamId(db: Db, workstream: string): number | null {
+  const row = db
+    .prepare("SELECT id, torn_down_at FROM workstreams WHERE name = ?")
+    .get(workstream) as { id: number; torn_down_at: string | null } | undefined;
+  if (!row) return null;
+  if (row.torn_down_at !== null) throw new WorkstreamTornDownError(workstream, row.torn_down_at);
+  return row.id;
 }
 
 /** Resolve a (workstream_id, local_id) pair to the task's surrogate

@@ -3,8 +3,8 @@
 // A workstream = one mux session (`mu-<name>`) + every DB row tagged
 // with that name (agents / tasks / edges / notes / worktrees / logs).
 // `init` creates the session + DB row pair; `list` shows
-// every workstream on the machine; `teardown` is the symmetric inverse,
-// two-phase by default (dry-run; `--yes` commits).
+// every workstream on the machine; `teardown` is the symmetric inverse:
+// soft (sets torn_down_at), previewed first, applied with `--if <rev>`.
 //
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
@@ -14,10 +14,11 @@ import {
   emitJsonCollection,
   formatTornDownWorkstreamsTable,
   formatWorkstreamsTable,
+  parseNonNegativeInt,
   resolveWorkstream,
   UsageError,
 } from "../cli.js";
-import type { Db } from "../db.js";
+import { type Db, tornDownAtOf } from "../db.js";
 import { type AttachTarget, activeMux, attachShellLine, type MuxBackend } from "../mux.js";
 import { muTable, type NextStep, pc, printNextSteps } from "../output.js";
 import {
@@ -26,14 +27,52 @@ import {
   listEmptyWorkstreams,
   listTornDownWorkstreams,
   listWorkstreams,
+  previewReinit,
+  reinitWorkstream,
   summarizeWorkstream,
+  sweepRevision,
   teardownWorkstream,
+  WorkstreamRevisionMismatchError,
+  workstreamRevision,
 } from "../workstream.js";
 
-export async function cmdInit(db: Db, name: string, opts: { json?: boolean } = {}): Promise<void> {
-  assertWorkstreamInitable(name);
+export async function cmdInit(
+  db: Db,
+  name: string,
+  opts: { json?: boolean; if?: number } = {},
+): Promise<void> {
+  assertWorkstreamInitable(name, db);
   const sessionName = `mu-${name}`;
-  const dbCreated = ensureWorkstream(db, name);
+  // A torn-down name is reused only after a preview: init then hard-deletes
+  // the old rows (one op group with the new row). Without --if it writes
+  // nothing and creates no session.
+  const reuse = previewReinit(db, name);
+  if (reuse !== null && opts.if === undefined) {
+    const cmd = `mu workstream init ${name} --if ${reuse.revision}`;
+    if (opts.json) {
+      emitJson({
+        workstreamName: name,
+        created: false,
+        dryRun: true,
+        tornDownAt: reuse.tornDownAt,
+        tasks: reuse.tasks,
+        notes: reuse.notes,
+        edges: reuse.edges,
+        revision: reuse.revision,
+        nextSteps: [{ intent: "Permanently delete the old rows and reuse the name", command: cmd }],
+      });
+      return;
+    }
+    console.log(
+      `will permanently delete torn-down ${name}: ${reuse.tasks} tasks, ${reuse.notes} notes; rev=${reuse.revision}`,
+    );
+    printNextSteps([
+      { intent: "Permanently delete the old rows and reuse the name", command: cmd },
+    ]);
+    return;
+  }
+  if (reuse !== null && opts.if !== undefined) reinitWorkstream(db, name, opts.if);
+  const dbCreated = ensureWorkstream(db, name) || reuse !== null;
   // Load-bearing: `workstream init` IS session creation.
   const mux = await activeMux();
   // Creates the session with its placeholder `_mu` window, or repairs
@@ -114,8 +153,8 @@ export async function cmdWorkstreamList(
   opts: { json?: boolean; tornDown?: boolean } = {},
 ): Promise<void> {
   // `--torn-down` answers a DIFFERENT question ("what did I remove, and
-  // how do I get it back") from the ops log rather than the live
-  // tables, so it replaces the listing instead of adding rows to it.
+  // how do I get it back") from the torn-down rows plus the ops log (old
+  // hard teardowns), so it replaces the listing instead of adding rows to it.
   // Mixing the two would need a status column on every row to say which
   // half each came from.
   if (opts.tornDown === true) {
@@ -125,12 +164,12 @@ export async function cmdWorkstreamList(
       return;
     }
     if (gone.length === 0) {
-      console.log(pc.dim("no teardowns in the ops log"));
+      console.log(pc.dim("no torn-down workstreams"));
       return;
     }
     console.log(formatTornDownWorkstreamsTable(gone));
     printNextSteps([
-      { intent: "Inspect what one teardown removed", command: "mu log --group <group>" },
+      { intent: "Inspect what one teardown changed", command: "mu log --group <group>" },
     ]);
     return;
   }
@@ -150,7 +189,7 @@ export async function cmdTeardown(
   db: Db,
   opts: {
     workstream?: string;
-    yes?: boolean;
+    if?: number;
     json?: boolean;
     empty?: boolean;
   },
@@ -161,39 +200,48 @@ export async function cmdTeardown(
   }
   const workstream = await resolveWorkstream(opts.workstream);
   const summary = await summarizeWorkstream(db, { workstream });
+  const tornDownAt = tornDownAtOf(db, workstream);
+  const hasLocalState = summary.muxAlive || summary.agentCount > 0 || summary.worktreeCount > 0;
+  // Already torn down with nothing local left: a no-op. A torn-down name
+  // that still has agents, worktrees or a session here (a peer tore it down)
+  // IS worth finishing locally, so it falls through.
   // Empty-but-registered workstreams (a row in `workstreams` with no
   // agents/tasks/etc.) ARE worth tearing down — otherwise the bare
   // registry row is orphaned forever. nothingToDo is the strict
   // intersection: nothing on disk, in mux, OR in the DB.
   const nothingToDo =
-    !summary.muxAlive &&
-    !summary.registered &&
-    summary.agentCount === 0 &&
-    summary.taskCount === 0 &&
-    summary.noteCount === 0 &&
-    summary.worktreeCount === 0;
+    tornDownAt !== null
+      ? !hasLocalState
+      : !summary.muxAlive &&
+        !summary.registered &&
+        summary.agentCount === 0 &&
+        summary.taskCount === 0 &&
+        summary.noteCount === 0 &&
+        summary.worktreeCount === 0;
 
   if (nothingToDo) {
+    const reason =
+      tornDownAt !== null ? `already torn down (at ${tornDownAt})` : "nothing to tear down";
     if (opts.json) {
-      emitJson({
-        workstreamName: workstream,
-        tornDown: false,
-        reason: "nothing to tear down",
-        summary,
-      });
+      emitJson({ workstreamName: workstream, tornDown: false, reason, summary });
       return;
     }
     console.log(
-      pc.dim(`workstream "${workstream}" has no mux session and no DB rows; nothing to tear down`),
+      pc.dim(
+        tornDownAt !== null
+          ? `workstream "${workstream}" is already torn down (at ${tornDownAt}); nothing left on this machine`
+          : `workstream "${workstream}" has no mux session and no DB rows; nothing to tear down`,
+      ),
     );
     return;
   }
 
-  if (!opts.yes) {
+  const revision = workstreamRevision(db, workstream);
+  if (opts.if === undefined) {
     const dryRunNextSteps: NextStep[] = [
       {
-        intent: "Confirm and actually tear down",
-        command: `mu workstream teardown -w ${workstream} --yes`,
+        intent: "Apply this preview",
+        command: `mu workstream teardown ${workstream} --if ${revision}`,
       },
     ];
     if (opts.json) {
@@ -201,6 +249,7 @@ export async function cmdTeardown(
         workstreamName: workstream,
         tornDown: false,
         dryRun: true,
+        revision,
         summary,
         nextSteps: dryRunNextSteps,
       });
@@ -212,18 +261,19 @@ export async function cmdTeardown(
     );
     console.log(`  agents       : ${summary.agentCount}`);
     console.log(
-      `  tasks        : ${summary.taskCount}  (edges: ${summary.edgeCount}, notes: ${summary.noteCount})`,
+      `  tasks        : ${summary.taskCount}  (edges: ${summary.edgeCount}, notes: ${summary.noteCount}; kept)`,
     );
     console.log(
       `  worktrees    : ${summary.worktreeCount}${summary.worktreeCount > 0 ? pc.dim(" (clean ones are removed; dirty ones are kept)") : ""}`,
     );
+    console.log(`  rev=${revision}`);
     console.log("");
-    console.log(pc.dim("(dry-run; rerun with --yes to actually tear down)"));
+    console.log(pc.dim("(preview; nothing changed. Apply with --if <rev>)"));
     printNextSteps(dryRunNextSteps);
     return;
   }
 
-  const result = await teardownWorkstream(db, { workstream });
+  const result = await teardownWorkstream(db, { workstream, ifRevision: opts.if });
   if (opts.json) {
     emitJson({
       workstreamName: workstream,
@@ -238,12 +288,12 @@ export async function cmdTeardown(
   );
   console.log(`  agents       : ${summary.agentCount}`);
   console.log(
-    `  tasks        : ${summary.taskCount}  (edges: ${summary.edgeCount}, notes: ${summary.noteCount})`,
+    `  tasks        : ${summary.taskCount}  (edges: ${summary.edgeCount}, notes: ${summary.noteCount}; kept)`,
   );
   console.log(`  worktrees    : ${summary.worktreeCount}`);
   console.log("");
   console.log(
-    `Destroyed ${pc.bold(workstream)}: killed mux=${result.killedMux}, agents=${result.deletedAgents}, tasks=${result.deletedTasks}, edges=${result.deletedEdges}, notes=${result.deletedNotes}, worktrees=${result.freedWorktrees}/${summary.worktreeCount}${result.alreadyGoneWorktrees > 0 ? ` (${result.alreadyGoneWorktrees} already gone on disk)` : ""}`,
+    `Tore down ${pc.bold(workstream)}: killed mux=${result.killedMux}, agents=${result.deletedAgents}, worktrees=${result.freedWorktrees}/${summary.worktreeCount}${result.alreadyGoneWorktrees > 0 ? ` (${result.alreadyGoneWorktrees} already gone on disk)` : ""}; kept tasks=${result.tasks}, edges=${result.edges}, notes=${result.notes}`,
   );
   for (const branch of result.keptBranches) {
     console.log(`  kept unmerged commits on branch ${pc.bold(branch)}`);
@@ -278,7 +328,10 @@ export async function cmdTeardown(
 // evidence it is idle (see listEmptyWorkstreams); the human output
 // names them so the operator can tear one down explicitly.
 // Each workstream's teardown is its own op group
-// (`mu workstream list --torn-down` lists the groups).
+// (`mu workstream list --torn-down` lists the groups). Without `--if` it
+// previews the set and prints the sweep revision; `--empty --if <rev>`
+// recomputes the revision (a member added, removed or changed refuses the
+// sweep), then tears each down with its own freshly read revision.
 // Per-workstream teardown errors are accumulated into a `failed` array
 // so a single bad pane doesn't abort the rest of the cleanup. See
 // workstream_destroy_empty_sweep.
@@ -287,9 +340,6 @@ interface EmptyTeardownResult {
   workstreamName: string;
   killedMux: boolean;
   deletedAgents: number;
-  deletedTasks: number;
-  deletedNotes: number;
-  deletedEdges: number;
   freedWorktrees: number;
   alreadyGoneWorktrees: number;
 }
@@ -312,7 +362,7 @@ async function cmdTeardownEmpty(
   db: Db,
   opts: {
     workstream?: string;
-    yes?: boolean;
+    if?: number;
     json?: boolean;
   },
 ): Promise<void> {
@@ -326,10 +376,14 @@ async function cmdTeardownEmpty(
     );
   }
   const empties = await listEmptyWorkstreams(db);
+  const revision = sweepRevision(
+    db,
+    empties.map((e) => e.name),
+  );
 
-  if (!opts.yes) {
+  if (opts.if === undefined) {
     if (opts.json) {
-      emitJsonCollection(empties);
+      emitJson({ items: empties, count: empties.length, revision });
       return;
     }
     if (empties.length === 0) {
@@ -351,19 +405,28 @@ async function cmdTeardownEmpty(
     console.log("");
     console.log(
       pc.dim(
-        `${empties.length} empty workstream${empties.length === 1 ? "" : "s"} would be torn down (dry-run; rerun with --yes to actually tear down).`,
+        `${empties.length} empty workstream${empties.length === 1 ? "" : "s"} would be torn down (preview; rev=${revision}).`,
       ),
     );
     printNextSteps([
       {
-        intent: "Confirm and actually tear down every empty workstream",
-        command: "mu workstream teardown --empty --yes",
+        intent: "Apply this preview to every empty workstream",
+        command: `mu workstream teardown --empty --if ${revision}`,
       },
     ]);
     return;
   }
 
-  // --yes path. No-op early if there's nothing to do.
+  // --if path: the set must be the one that was previewed.
+  if (opts.if !== revision) {
+    throw new WorkstreamRevisionMismatchError(
+      "(empty sweep)",
+      opts.if,
+      revision,
+      "mu workstream teardown --empty",
+    );
+  }
+  // No-op early if there's nothing to do.
   if (empties.length === 0) {
     if (opts.json) {
       emitJson({ tornDown: 0, results: [], failed: [] });
@@ -377,14 +440,16 @@ async function cmdTeardownEmpty(
   const failed: EmptyDestroyFailure[] = [];
   for (const ws of empties) {
     try {
-      const result = await teardownWorkstream(db, { workstream: ws.name });
+      // The sweep is the one place mu computes and passes a revision
+      // itself: the set was just checked against the previewed revision.
+      const result = await teardownWorkstream(db, {
+        workstream: ws.name,
+        ifRevision: workstreamRevision(db, ws.name),
+      });
       results.push({
         workstreamName: ws.name,
         killedMux: result.killedMux,
         deletedAgents: result.deletedAgents,
-        deletedTasks: result.deletedTasks,
-        deletedNotes: result.deletedNotes,
-        deletedEdges: result.deletedEdges,
         freedWorktrees: result.freedWorktrees,
         alreadyGoneWorktrees: result.alreadyGoneWorktrees,
       });
@@ -405,8 +470,8 @@ async function cmdTeardownEmpty(
   }
   for (const r of results) {
     console.log(
-      `Destroyed ${pc.bold(r.workstreamName)} ${pc.dim(
-        `(killedMux=${r.killedMux}, agents=${r.deletedAgents}, tasks=${r.deletedTasks}, notes=${r.deletedNotes}, edges=${r.deletedEdges})`,
+      `Tore down ${pc.bold(r.workstreamName)} ${pc.dim(
+        `(killedMux=${r.killedMux}, agents=${r.deletedAgents})`,
       )}`,
     );
   }
@@ -426,7 +491,7 @@ async function cmdTeardownEmpty(
   if (results.length > 0) {
     printNextSteps([
       {
-        intent: "One op group per torn-down workstream; each wrote tombstone ops",
+        intent: "One op group per torn-down workstream",
         command: "mu workstream list --torn-down",
       },
     ]);
@@ -476,11 +541,12 @@ export function wireWorkstreamCommands(program: Command): void {
   workstream
     .command("init <name>")
     .description(
-      "Create the workstream's mux session and register it in the DB. Name it <project>-<purpose>.",
+      "Create the workstream's mux session and register it in the DB. Name it <project>-<purpose>. A torn-down name is previewed first (it permanently deletes the old rows); apply with --if <rev>.",
     )
+    .option("--if <rev>", "the revision from the preview", parseNonNegativeInt)
     .option(...JSON_OPT)
     .action(function (name: string) {
-      const opts = (this as Command).opts() as { json?: boolean };
+      const opts = (this as Command).opts() as { json?: boolean; if?: number };
       return handle((db) => cmdInit(db, name, opts), this as Command)();
     });
 
@@ -489,7 +555,7 @@ export function wireWorkstreamCommands(program: Command): void {
     .description("List every registered workstream on this machine")
     .option(
       "--torn-down",
-      "instead list past teardowns from the ops log, with the op group id (`mu log --group <id>`)",
+      "instead list torn-down workstreams (and pre-cut-over teardowns from the ops log), with the op group id (`mu log --group <id>`)",
     )
     .option(...JSON_OPT)
     .action(function () {
@@ -500,10 +566,10 @@ export function wireWorkstreamCommands(program: Command): void {
   workstream
     .command("teardown [name]")
     .description(
-      "Tear down a workstream: kill its mux session and cascade-delete every DB row tagged with its name. Writes tombstone ops. The target may be given positionally (matching `workstream init <name>`) or via -w. Pass --yes to actually tear down; otherwise prints a dry-run summary. With --empty, sweeps every empty workstream (zero tasks/agents/worktrees) except scratch in one call.",
+      "Tear down a workstream (soft): kill its mux session, free clean worktrees, delete its agent rows and mark it torn down; its tasks, edges and notes are kept. The target may be given positionally (matching `workstream init <name>`) or via -w. Without --if prints a preview with `rev=<n>`; apply with --if <n> (refused if the workstream changed since). With --empty, previews or sweeps every empty workstream (zero tasks/agents/worktrees) except scratch.",
     )
     .option(...WORKSTREAM_OPT)
-    .option("-y, --yes", "actually tear down (without this flag, prints a dry-run summary)")
+    .option("--if <rev>", "apply the preview with this revision", parseNonNegativeInt)
     .option(
       "--empty",
       "sweep every empty workstream (zero tasks, agents, worktrees); never scratch; mutually exclusive with -w",
@@ -512,7 +578,7 @@ export function wireWorkstreamCommands(program: Command): void {
     .action(function (name: string | undefined) {
       const opts = (this as Command).opts() as {
         workstream?: string;
-        yes?: boolean;
+        if?: number;
         json?: boolean;
         empty?: boolean;
       };

@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent, insertAgent, listAgents, listLiveAgents, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { listLogs } from "../src/logs.js";
+import { activeMux } from "../src/mux.js";
 import {
   addNote,
   addTask,
@@ -32,6 +33,7 @@ import { killPane, killSession, paneAlive, resetTmuxExecutor } from "../src/tmux
 import { getParallelTracks } from "../src/tracks.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
+import { runCli } from "./_runCli.js";
 
 const TMUX_AVAILABLE = process.env.TMUX !== undefined && process.env.TMUX !== "";
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
@@ -43,6 +45,9 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
   let session: string;
 
   const SH_COMMAND = "sh -c 'while true; do sleep 60; done'";
+  const dbPathFor = (): string => join(tempDir, "mu.db");
+  const sessionHasPanes = async (name: string): Promise<boolean> =>
+    (await (await activeMux()).listPanes(name)).length > 0;
 
   beforeEach(() => {
     resetTmuxExecutor();
@@ -292,6 +297,29 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
 
     const view5 = await listLiveAgents(db, { workstream });
     expect(view5.agents).toEqual([]);
+
+    // ── Teardown: preview (writes nothing), then apply with its revision ──
+    // The demo spawned without `init`, so its session died with the last
+    // agent; init brings it back so teardown has a real session to kill.
+    db.close();
+    const init = await runCli(["workstream", "init", workstream, "--json"], dbPathFor());
+    expect(init.error).toBeUndefined();
+    const preview = await runCli(["workstream", "teardown", workstream, "--json"], dbPathFor());
+    expect(preview.error).toBeUndefined();
+    const { revision } = JSON.parse(preview.stdout) as { revision: number };
+    expect(await sessionHasPanes(session)).toBe(true);
+
+    const torn = await runCli(
+      ["workstream", "teardown", workstream, "--if", String(revision), "--json"],
+      dbPathFor(),
+    );
+    expect(torn.error).toBeUndefined();
+    expect(JSON.parse(torn.stdout)).toMatchObject({ tornDown: true, killedMux: true, tasks: 10 });
+    // The session died; the tasks stay but every -w verb says so.
+    expect(await sessionHasPanes(session)).toBe(false);
+    const hidden = await runCli(["task", "list", "-w", workstream], dbPathFor());
+    expect(hidden.exitCode).toBe(3);
+    expect(hidden.stderr).toContain(`workstream ${workstream} is torn down`);
   });
 });
 

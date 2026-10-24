@@ -112,8 +112,10 @@ import {
 } from "../tasks.js";
 import {
   WorkstreamExistsError,
+  WorkstreamHasAgentsError,
   WorkstreamNameInvalidError,
   WorkstreamNameReservedError,
+  WorkstreamRevisionMismatchError,
 } from "../workstream.js";
 import {
   WorktreeDirtyError,
@@ -329,6 +331,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SyncSourceTooNewError ||
     err instanceof DbInsideSyncDirError ||
     err instanceof WorkstreamExistsError ||
+    err instanceof WorkstreamRevisionMismatchError ||
+    err instanceof WorkstreamHasAgentsError ||
     // Rebuild refuses to overwrite an existing target or to write onto
     // the source DB: both are name/state collisions, not usage errors.
     err instanceof RebuildTargetExistsError ||

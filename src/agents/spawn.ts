@@ -25,7 +25,13 @@ import {
 } from "../agents.js";
 import { type CtlProbe, ctlProbe } from "../ctl/client.js";
 import { CTL_SOCK_ENV, ctlSocketPath } from "../ctl/path.js";
-import { type Db, defaultDbPath, defaultStateDir } from "../db.js";
+import {
+  type Db,
+  defaultDbPath,
+  defaultStateDir,
+  tornDownAtOf,
+  WorkstreamTornDownError,
+} from "../db.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode, type NextStep } from "../output.js";
@@ -438,6 +444,11 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       `invalid agent name: ${JSON.stringify(opts.name)} (expected /^[a-z][a-z0-9_-]{0,31}$/)`,
     );
   }
+  // A torn-down workstream takes no new agents. Refuse BEFORE any side
+  // effect (worktree, session, pane): the failure would otherwise surface at
+  // insertAgent, after the pane exists.
+  const tornDownAt = tornDownAtOf(db, opts.workstream);
+  if (tornDownAt !== null) throw new WorkstreamTornDownError(opts.workstream, tornDownAt);
   // Per-workstream uniqueness check: v5 allows the same agent name in
   // different workstreams. Scope the existence check to the spawn's
   // workstream so two operators spawning 'worker-1' in wsA and wsB

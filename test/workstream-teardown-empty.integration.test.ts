@@ -4,12 +4,12 @@
 // Coverage map (mirrors workstream_destroy_empty_sweep design note):
 //
 //   1. dry-run: 2 empty + 2 non-empty seeded; only the empties show.
-//   2. --yes: both empties torn down; non-empties untouched.
-//   3. one empty has a live tmux session; --yes kills it.
+//   2. --if <rev>: both empties torn down; non-empties untouched.
+//   3. one empty has a live tmux session; --if kills it.
 //   4. --empty + -w → mutually exclusive (UsageError; exit 2).
 //   5. mid-sweep failure (kill-session throws on one ws) → others
 //      still run; failure surfaced in summary.
-//   7. --json shape verified for both dry-run and --yes.
+//   7. --json shape verified for both the preview and --if.
 //   8. tmux-only mu-* sessions (no DB row) are NEVER surfaced or torn
 //      down; the human output names them (live-session guard:
 //      workstream-teardown-empty-live.test.ts).
@@ -32,6 +32,7 @@ import {
 } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli } from "./_runCli.js";
+import { previewRevision } from "./_teardown.js";
 
 let tempDir: string;
 let dbPath: string;
@@ -139,6 +140,12 @@ function seed(state: MockState): void {
   state.sessions.add("mu-empty-a");
 }
 
+/** Preview, then apply the sweep with the printed revision. */
+async function sweep() {
+  const rev = await previewRevision(dbPath, ["--empty"]);
+  return runCli(["workstream", "teardown", "--empty", "--if", String(rev), "--json"], dbPath);
+}
+
 // ─── Test cases ─────────────────────────────────────────────────────
 
 describe("mu workstream teardown --empty", () => {
@@ -160,8 +167,9 @@ describe("mu workstream teardown --empty", () => {
     expect(tbl.stdout).toContain("empty-b");
     expect(tbl.stdout).not.toContain("with-tasks");
     expect(tbl.stdout).not.toContain("with-agent");
-    // Dry-run hint surfaces the --yes invocation.
-    expect(tbl.stdout).toContain("mu workstream teardown --empty --yes");
+    // The preview hint carries the sweep revision to apply.
+    expect(tbl.stdout).toMatch(/mu workstream teardown --empty --if \d+/);
+    expect(tbl.stdout).not.toContain("--yes");
 
     // JSON form: array of WorkstreamSummary, sorted by name.
     const j = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
@@ -174,7 +182,9 @@ describe("mu workstream teardown --empty", () => {
         taskCount: number;
       }>;
       count: number;
+      revision: number;
     };
+    expect(Number.isInteger(env.revision)).toBe(true);
     const arr = env.items;
     expect(arr.map((w) => w.name)).toEqual(["empty-a", "empty-b"]);
     expect(arr[0]?.muxAlive).toBe(true);
@@ -192,7 +202,7 @@ describe("mu workstream teardown --empty", () => {
     expect(state.killed).toEqual([]);
   });
 
-  it("--yes tears down every empty workstream and leaves the non-empty ones intact", async () => {
+  it("--if tears down every empty workstream and leaves the non-empty ones intact", async () => {
     const state: MockState = {
       sessions: new Set(),
       killed: [],
@@ -202,7 +212,7 @@ describe("mu workstream teardown --empty", () => {
     seed(state);
     db.close();
 
-    const r = await runCli(["workstream", "teardown", "--empty", "--yes", "--json"], dbPath);
+    const r = await sweep();
     expect(r.error).toBeUndefined();
     expect(r.exitCode).toBeNull();
     const env = JSON.parse(r.stdout.trim()) as {
@@ -217,16 +227,18 @@ describe("mu workstream teardown --empty", () => {
     // The empty-a tmux session is killed; empty-b never had one.
     expect(state.killed).toEqual(["mu-empty-a"]);
 
-    // Non-empties untouched in the DB.
+    // Non-empties untouched in the DB; the empties are marked, not deleted.
     db = openDb({ path: dbPath });
-    const remaining = (
-      db.prepare("SELECT name FROM workstreams ORDER BY name").all() as { name: string }[]
+    const live = (
+      db.prepare("SELECT name FROM workstreams WHERE torn_down_at IS NULL ORDER BY name").all() as {
+        name: string;
+      }[]
     ).map((r) => r.name);
-    expect(remaining).toEqual(["with-agent", "with-tasks"]);
+    expect(live).toEqual(["with-agent", "with-tasks"]);
   });
 
-  it("--yes kills the live tmux session on an empty workstream", async () => {
-    // Same as the --yes test but pinned: this is the assertion that
+  it("--if kills the live tmux session on an empty workstream", async () => {
+    // Same as the --if test but pinned: this is the assertion that
     // the kill happens for an empty-but-tmux-alive workstream
     // (regression-locks the "tmux session presence does NOT
     // disqualify" predicate).
@@ -239,7 +251,7 @@ describe("mu workstream teardown --empty", () => {
     ensureWorkstream(db, "empty-a");
     db.close();
 
-    const r = await runCli(["workstream", "teardown", "--empty", "--yes", "--json"], dbPath);
+    const r = await sweep();
     expect(r.error).toBeUndefined();
     const env = JSON.parse(r.stdout.trim()) as {
       results: Array<{ workstreamName: string; killedMux: boolean }>;
@@ -304,7 +316,7 @@ describe("mu workstream teardown --empty", () => {
     ensureWorkstream(db, "empty-b");
     db.close();
 
-    const r = await runCli(["workstream", "teardown", "--empty", "--yes", "--json"], dbPath);
+    const r = await sweep();
     expect(r.error).toBeUndefined();
     expect(r.exitCode).toBeNull();
     const env = JSON.parse(r.stdout.trim()) as {
@@ -322,7 +334,9 @@ describe("mu workstream teardown --empty", () => {
     // kill threw before the DB row delete.
     db = openDb({ path: dbPath });
     const remaining = (
-      db.prepare("SELECT name FROM workstreams ORDER BY name").all() as { name: string }[]
+      db.prepare("SELECT name FROM workstreams WHERE torn_down_at IS NULL ORDER BY name").all() as {
+        name: string;
+      }[]
     ).map((r) => r.name);
     expect(remaining).toEqual(["empty-a"]);
     // empty-b's tmux was killed; empty-a's was attempted-and-failed.
@@ -343,7 +357,7 @@ describe("mu workstream teardown --empty", () => {
 
     const j = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
     expect(j.error).toBeUndefined();
-    expect(JSON.parse(j.stdout.trim())).toEqual({ items: [], count: 0 });
+    expect(JSON.parse(j.stdout.trim())).toEqual({ items: [], count: 0, revision: 0 });
 
     const tbl = await runCli(["workstream", "teardown", "--empty"], dbPath);
     expect(tbl.error).toBeUndefined();
@@ -351,7 +365,7 @@ describe("mu workstream teardown --empty", () => {
     expect(tbl.stdout).not.toContain("Skipped");
   });
 
-  it("--yes leaves unregistered mu-* tmux sessions alone", async () => {
+  it("--if leaves unregistered mu-* tmux sessions alone", async () => {
     const state: MockState = {
       sessions: new Set(["mu-foo", "mu-bar"]),
       killed: [],
@@ -360,7 +374,7 @@ describe("mu workstream teardown --empty", () => {
     setTmuxExecutor(mockTmux(state));
     db.close();
 
-    const r = await runCli(["workstream", "teardown", "--empty", "--yes", "--json"], dbPath);
+    const r = await sweep();
     expect(r.error).toBeUndefined();
     expect(JSON.parse(r.stdout.trim())).toEqual({ tornDown: 0, results: [], failed: [] });
     expect(state.killed).toEqual([]);
@@ -379,7 +393,7 @@ describe("mu workstream teardown --empty", () => {
     ensureWorkstream(db, "empty-a");
     db.close();
 
-    const r = await runCli(["workstream", "teardown", "--empty", "--yes", "--json"], dbPath);
+    const r = await sweep();
     expect(r.error).toBeUndefined();
     const env = JSON.parse(r.stdout.trim()) as {
       tornDown: number;
@@ -391,14 +405,17 @@ describe("mu workstream teardown --empty", () => {
     expect(state.sessions.has("mu-foo")).toBe(true);
 
     db = openDb({ path: dbPath });
-    const remaining = (db.prepare("SELECT COUNT(*) AS n FROM workstreams").get() as { n: number })
-      .n;
+    const remaining = (
+      db.prepare("SELECT COUNT(*) AS n FROM workstreams WHERE torn_down_at IS NULL").get() as {
+        n: number;
+      }
+    ).n;
     expect(remaining).toBe(0);
   });
 
   it("NEVER matches tmux sessions without the mu- prefix", async () => {
     // 'plain-foo' has no mu- prefix → it must not appear in the
-    // sweep, must not be killed, even with --yes. This is the
+    // sweep, must not be killed, even with --if. This is the
     // load-bearing safety guarantee: mu only owns mu-* sessions.
     const state: MockState = {
       sessions: new Set(["plain-foo", "random-session"]),
@@ -411,10 +428,10 @@ describe("mu workstream teardown --empty", () => {
     // Dry-run: no entries.
     const j = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
     expect(j.error).toBeUndefined();
-    expect(JSON.parse(j.stdout.trim())).toEqual({ items: [], count: 0 });
+    expect(JSON.parse(j.stdout.trim())).toEqual({ items: [], count: 0, revision: 0 });
 
-    // --yes: still nothing destroyed; sessions untouched.
-    const r = await runCli(["workstream", "teardown", "--empty", "--yes", "--json"], dbPath);
+    // --if: still nothing destroyed; sessions untouched.
+    const r = await sweep();
     expect(r.error).toBeUndefined();
     const env = JSON.parse(r.stdout.trim()) as {
       tornDown: number;

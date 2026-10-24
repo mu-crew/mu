@@ -18,8 +18,9 @@ import { currentOpContext, withCaptureSuppressed, withOpContext } from "../src/o
 import { addBlockEdge, removeBlockEdge, reparentTask } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask, openTask, setTaskStatus } from "../src/tasks/lifecycle.js";
-import { ensureWorkstream, teardownWorkstream } from "../src/workstream.js";
+import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
+import { legacyHardTeardown } from "./_teardown.js";
 
 interface OpRow {
   seq: number;
@@ -486,7 +487,7 @@ describe("op capture (triggers)", () => {
       addNote(db, "a", "note text", { workstream: "demo" });
       clearOps();
 
-      await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-capture-test-absent" });
+      legacyHardTeardown(db, "demo");
 
       const rows = ops();
       expect(rows.length).toBeGreaterThan(0);
@@ -530,7 +531,7 @@ describe("op capture (triggers)", () => {
       addNote(db, "a", "keep me", { workstream: "demo" });
       clearOps();
 
-      await teardownWorkstream(db, { workstream: "demo", muxSession: "mu-capture-test-absent" });
+      legacyHardTeardown(db, "demo");
 
       const byEntity = (e: string) => ops(e).filter((r) => r.op === "del");
       // One tombstone per row, at every level of the cascade.

@@ -19,6 +19,7 @@ import {
   SchemaTooOldError,
   tryResolveWorkstreamId,
   WorkstreamNotFoundError,
+  WorkstreamTornDownError,
 } from "../src/db.js";
 import { formatHlc } from "../src/hlc.js";
 import { withCaptureSuppressed } from "../src/op-context.js";
@@ -489,11 +490,16 @@ describe("torn-down workstreams are invisible to user-facing reads", () => {
     tearDown();
     expect(tryResolveWorkstreamId(db, "d")).toBeNull();
     expect(() => resolveWorkstreamId(db, "d")).toThrow(WorkstreamNotFoundError);
-    expect(listReady(db, "d")).toEqual([]);
-    expect(listBlocked(db, "d")).toEqual([]);
-    expect(listGoals(db, "d")).toEqual([]);
-    expect(listTasks(db, "d")).toEqual([]);
-    expect(getTask(db, "a", "d")).toBeUndefined();
+    expect(() => resolveWorkstreamId(db, "d")).toThrow(/is torn down/);
+    // User-facing task reads say why instead of returning "no tasks".
+    for (const read of [
+      () => listReady(db, "d"),
+      () => listBlocked(db, "d"),
+      () => listGoals(db, "d"),
+      () => listTasks(db, "d"),
+      () => getTask(db, "a", "d"),
+    ])
+      expect(read).toThrow(WorkstreamTornDownError);
     expect((await listWorkstreams(db)).map((w) => w.name)).toEqual(["live"]);
   });
 });

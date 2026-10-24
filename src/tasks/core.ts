@@ -6,7 +6,7 @@
 // from this file or sibling files, never from the hub they're re-exported
 // through.
 
-import { type Db, tryResolveWorkstreamId } from "../db.js";
+import { type Db, tryResolveLiveWorkstreamId } from "../db.js";
 import type { TaskStatus, TaskSubstate } from "./status.js";
 
 export interface TaskRow {
@@ -142,7 +142,7 @@ export function lookupTaskAnyWorkstream(
 /** Resolve a (workstream, localId) pair to the surrogate task id.
  *  Returns null on miss. */
 export function taskIdFor(db: Db, localId: string, workstream: string): number | null {
-  const wsId = tryResolveWorkstreamId(db, workstream);
+  const wsId = tryResolveLiveWorkstreamId(db, workstream);
   if (wsId === null) return null;
   const row = db
     .prepare("SELECT id FROM tasks WHERE workstream_id = ? AND local_id = ?")

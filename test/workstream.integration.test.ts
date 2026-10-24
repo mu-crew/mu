@@ -10,8 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent, listAgents } from "../src/agents.js";
-import { type Db, openDb } from "../src/db.js";
-import { addNote, addTask, listTasks } from "../src/tasks.js";
+import { type Db, openDb, WorkstreamTornDownError } from "../src/db.js";
+import { addNote, addTask, getTask, listTasks } from "../src/tasks.js";
 import {
   resetTmuxExecutor,
   setTmuxExecutor,
@@ -23,9 +23,9 @@ import {
   isValidWorkstreamName,
   listWorkstreams,
   summarizeWorkstream,
-  teardownWorkstream,
   WorkstreamNameInvalidError,
 } from "../src/workstream.js";
+import { softTeardown } from "./_teardown.js";
 
 // ─── Mock tmux harness ─────────────────────────────────────────────────
 
@@ -315,19 +315,19 @@ describe("listWorkstreams", () => {
 
 // ─── teardownWorkstream ─────────────────────────────────────────────────
 
-describe("teardownWorkstream", () => {
-  it("kills tmux session and removes every DB row tagged with the workstream", async () => {
+describe("teardownWorkstream (soft)", () => {
+  it("kills the tmux session, deletes agent rows, marks torn down; tasks, edges and notes stay", async () => {
     state.sessions.add("mu-auth");
     setTmuxExecutor(mockTmux(state).executor);
     seedAuth();
 
-    const result = await teardownWorkstream(db, { workstream: "auth" });
+    const result = await softTeardown(db, "auth");
     expect(result).toEqual({
       killedMux: true,
       deletedAgents: 2,
-      deletedTasks: 3,
-      deletedNotes: 2,
-      deletedEdges: 2,
+      tasks: 3,
+      notes: 2,
+      edges: 2,
       freedWorktrees: 0,
       alreadyGoneWorktrees: 0,
       keptBranches: [],
@@ -335,13 +335,15 @@ describe("teardownWorkstream", () => {
     });
 
     expect(state.killed).toEqual(["mu-auth"]);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM agents").get() as { n: number }).n).toBe(0);
+    // Soft: the rows are still there ...
+    const count = (t: string) =>
+      (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
+    expect([count("tasks"), count("task_notes"), count("task_edges")]).toEqual([3, 2, 2]);
+    // ... and hidden from every user-facing read.
+    expect(() => listTasks(db, "auth")).toThrow(WorkstreamTornDownError);
+    expect(() => getTask(db, "design", "auth")).toThrow(WorkstreamTornDownError);
     expect(listAgents(db, { workstream: "auth" })).toEqual([]);
-    expect(listTasks(db, "auth")).toEqual([]);
-    // Cascade emptied the join tables too.
-    const noteCount = (db.prepare("SELECT COUNT(*) AS n FROM task_notes").get() as { n: number }).n;
-    const edgeCount = (db.prepare("SELECT COUNT(*) AS n FROM task_edges").get() as { n: number }).n;
-    expect(noteCount).toBe(0);
-    expect(edgeCount).toBe(0);
   });
 
   it("leaves other workstreams completely untouched", async () => {
@@ -359,7 +361,7 @@ describe("teardownWorkstream", () => {
     });
     addNote(db, "invoice", "FILES: src/billing.rs", { workstream: "billing" });
 
-    await teardownWorkstream(db, { workstream: "auth" });
+    await softTeardown(db, "auth");
 
     // Billing intact.
     expect(state.sessions.has("mu-billing")).toBe(true);
@@ -377,13 +379,13 @@ describe("teardownWorkstream", () => {
 
   it("is idempotent: destroying an unknown workstream is a no-op", async () => {
     setTmuxExecutor(mockTmux(state).executor);
-    const result = await teardownWorkstream(db, { workstream: "nope" });
+    const result = await softTeardown(db, "nope");
     expect(result).toEqual({
       killedMux: false,
       deletedAgents: 0,
-      deletedTasks: 0,
-      deletedNotes: 0,
-      deletedEdges: 0,
+      tasks: 0,
+      notes: 0,
+      edges: 0,
       freedWorktrees: 0,
       alreadyGoneWorktrees: 0,
       keptBranches: [],
@@ -395,10 +397,10 @@ describe("teardownWorkstream", () => {
     setTmuxExecutor(mockTmux(state).executor);
     seedAuth(); // no tmux session for it
 
-    const result = await teardownWorkstream(db, { workstream: "auth" });
+    const result = await softTeardown(db, "auth");
     expect(result.killedMux).toBe(false);
     expect(result.deletedAgents).toBe(2);
-    expect(result.deletedTasks).toBe(3);
+    expect(result.tasks).toBe(3);
     expect(state.killed).toEqual([]);
   });
 
@@ -406,13 +408,13 @@ describe("teardownWorkstream", () => {
     state.sessions.add("mu-empty");
     setTmuxExecutor(mockTmux(state).executor);
 
-    const result = await teardownWorkstream(db, { workstream: "empty" });
+    const result = await softTeardown(db, "empty");
     expect(result).toEqual({
       killedMux: true,
       deletedAgents: 0,
-      deletedTasks: 0,
-      deletedNotes: 0,
-      deletedEdges: 0,
+      tasks: 0,
+      notes: 0,
+      edges: 0,
       freedWorktrees: 0,
       alreadyGoneWorktrees: 0,
       keptBranches: [],
@@ -426,14 +428,14 @@ describe("teardownWorkstream", () => {
     setTmuxExecutor(mockTmux(state).executor);
     seedAuth();
 
-    await teardownWorkstream(db, { workstream: "auth" });
-    const second = await teardownWorkstream(db, { workstream: "auth" });
+    await softTeardown(db, "auth");
+    const second = await softTeardown(db, "auth");
     expect(second).toEqual({
       killedMux: false,
       deletedAgents: 0,
-      deletedTasks: 0,
-      deletedNotes: 0,
-      deletedEdges: 0,
+      tasks: 3,
+      notes: 2,
+      edges: 2,
       freedWorktrees: 0,
       alreadyGoneWorktrees: 0,
       keptBranches: [],
@@ -441,32 +443,18 @@ describe("teardownWorkstream", () => {
     });
   });
 
-  it("destroys a bare-registry workstream (workstreams row but no agents/tasks)", async () => {
-    // Regression for the temp_confirm_a/temp_confirm_b live bug:
-    // an empty registered workstream was unreachable by destroy
-    // because the cli's nothingToDo short-circuit ignored the
-    // workstreams row itself. summarizeWorkstream now returns
-    // `registered: true` so the cli can factor it in. At the SDK
-    // layer this test pins down that teardownWorkstream itself does
-    // delete the bare row.
+  it("tears down a bare-registry workstream (workstreams row but no agents/tasks)", async () => {
+    // Regression for the temp_confirm_a/temp_confirm_b live bug: an empty
+    // registered workstream was unreachable because the cli's nothingToDo
+    // short-circuit ignored the workstreams row itself. Soft teardown marks
+    // the bare row (the row stays; torn_down_at is set).
     setTmuxExecutor(mockTmux(state).executor);
     ensureWorkstream(db, "orphan");
-    expect(
-      (
-        db.prepare("SELECT COUNT(*) AS n FROM workstreams WHERE name='orphan'").get() as {
-          n: number;
-        }
-      ).n,
-    ).toBe(1);
 
-    await teardownWorkstream(db, { workstream: "orphan" });
+    await softTeardown(db, "orphan");
     expect(
-      (
-        db.prepare("SELECT COUNT(*) AS n FROM workstreams WHERE name='orphan'").get() as {
-          n: number;
-        }
-      ).n,
-    ).toBe(0);
+      db.prepare("SELECT torn_down_at AS t FROM workstreams WHERE name='orphan'").get(),
+    ).toEqual({ t: expect.any(String) });
   });
 
   it("summarize reports `registered: true` for an empty registered workstream", async () => {

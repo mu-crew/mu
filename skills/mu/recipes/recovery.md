@@ -4,8 +4,9 @@ Use before you rebuild the DB, tear down a workstream,
 set up sync, or act on `mu doctor` output. Each of these can lose work
 when done in the wrong order.
 
-- **`workstream teardown`** writes tombstone ops; `workstream list
-  --torn-down` lists past teardowns and their group ids. Dry-run first.
+- **`workstream teardown`** is soft (rows stay, hidden); `workstream list
+  --torn-down` lists them and their group ids. Preview first, then
+  apply with `--if <rev>`; reusing the name later deletes the old rows.
 - **`mu rebuild <file>`** writes a new DB from the ops log, without
   agents or worktrees; re-spawn after the swap. Recovery is
   `mu rebuild`, not `mu db backup`.
@@ -24,7 +25,7 @@ when done in the wrong order.
   none. Read before you run them.
 
 Done when, per operation: teardown was previewed, then applied
-with `--yes`; rebuild was swapped in and agents re-spawned; `mu sync`
+with `--if <rev>`; rebuild was swapped in and agents re-spawned; `mu sync`
 lists the peer; forget touched only the named workstreams. Any
 `doctor --deep` DRIFT is backed up and reported to the human, and you
 read every cleanup command before you ran it.
