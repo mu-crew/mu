@@ -82,7 +82,7 @@ with no row are not discovered.
 Three concerns belong to the backend, because each would otherwise
 hardcode a tmux string a herdr user sees:
 
-- `attachCommands()`: ordered argv steps for the TUI, some `optional`
+- `attachCommands()`: ordered argv steps that attach to a session, some `optional`
   with a `reason`. It throws when the target cannot be resolved (herdr:
   no such workspace). `attachShellLine()` joins the steps into the
   printed line (`&&` between steps, an optional step as `{ step || true; }`); callers omit the
