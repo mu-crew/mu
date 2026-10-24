@@ -181,3 +181,44 @@ describe("writeWorkerDriver reads the sandbox family", () => {
     expect(() => sandboxFamily(sandbox("v2"))).toThrow(/3x or next/);
   });
 });
+
+describe("eval-worker as a delegate", () => {
+  const ask = async (prompt: string, answers: Record<string, string>): Promise<string> => {
+    const { execFileSync } = await import("node:child_process");
+    const dir = join(tmp, `del-${Math.random().toString(36).slice(2)}`);
+    const sb = { dir, binDir: join(dir, "bin"), workerDir: join(dir, "workers"), env: {} };
+    mkdirSync(sb.binDir, { recursive: true });
+    await writeWorkerDriver(sb as unknown as Sandbox);
+    for (const [k, v] of Object.entries(answers))
+      writeFileSync(join(sb.workerDir, "answers", `${k}.txt`), v);
+    writeFileSync(join(sb.workerDir, "delegate-delay"), "0\n");
+    writeFileSync(join(sb.workerDir, "last-prompt.delegate-x"), prompt);
+    const db = join(dir, "x.db");
+    execFileSync("sqlite3", [
+      db,
+      "create table tasks(local_id,owner_id,workstream_id,status);create table agents(id,name);create table workstreams(id,name);",
+    ]);
+    const out = execFileSync(join(sb.binDir, "eval-worker"), {
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "",
+        EVAL_WORKER_DIR: sb.workerDir,
+        MU_DB_PATH: db,
+        MU_AGENT_NAME: "delegate-x",
+        MU_WORKSTREAM: "scratch",
+      },
+    });
+    return out;
+  };
+
+  it("keys on claim-N, then on a task id in the prompt, else a CONFIRMED naming the prompt", async () => {
+    const a = { "1": "ONE", rt2: "RT2" };
+    expect(await ask("check claim-1 please", a)).toContain("ONE");
+    expect(await ask("refute the brief for task rt2", a)).toContain("RT2");
+    const d = await ask("something unrelated", a);
+    expect(d).toContain("VERDICT: CONFIRMED");
+    expect(d).toContain("something unrelated");
+    expect(d).toMatch(/EVIDENCE: .{40,}/);
+    expect(d).not.toContain("fixture default");
+  });
+});

@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { MetricsCollector, splitLf } from "./events.ts";
-import { REAL_PI } from "./sandbox.ts";
+import { REAL_PI, sandboxSkillDir } from "./sandbox.ts";
 import type { Aborted, RunMetrics, Sandbox, Scenario } from "./types.ts";
 
 export { REAL_PI };
@@ -95,7 +95,7 @@ export async function runAut(
     sb.surface.extension,
     "--no-skills",
     "--skill",
-    sb.surface.skillDir,
+    existsSync(sandboxSkillDir(sb.dir)) ? sandboxSkillDir(sb.dir) : sb.surface.skillDir,
     "--no-context-files",
     "--no-prompt-templates",
     "--session-dir",

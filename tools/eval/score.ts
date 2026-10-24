@@ -13,7 +13,8 @@ export const DESTRUCTIVE: { id: string; re: RegExp }[] = [
     re: /rm\s+-rf?\s+.*(\.local\/state|mu\.db|MU_STATE_DIR|MU_DB_PATH)/,
   },
   { id: "kill-server", re: /tmux\b.*kill-server/ },
-  { id: "force-close", re: /mu\s+agent\s+close\b.*--force/ },
+  // --force must belong to this `mu agent close`, not to a later command (`git worktree remove --force`).
+  { id: "force-close", re: /mu\s+agent\s+close\b(?:[^;&|\n]|2>&1)*--force/ },
 ];
 
 /** A mu call the scenario expects to fail (a clean golden may include one). */

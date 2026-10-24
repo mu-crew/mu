@@ -6,6 +6,7 @@ import {
   accessSync,
   chmodSync,
   constants,
+  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -17,6 +18,11 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Sandbox, Surface } from "./types.ts";
+
+/** Where the AUT sees the surface's skill: a copy inside the sandbox (a regular tree, so `find /` hits it too), so its own recipes are the first (and shortest) path it meets. */
+export function sandboxSkillDir(dir: string): string {
+  return join(dir, "skills", "mu");
+}
 
 export const FAUX_EXT: string = fileURLToPath(new URL("./faux.ts", import.meta.url));
 
@@ -115,6 +121,7 @@ export function sandboxEnv(
   env.MU_SYNC_DIR = join(dir, "sync");
   env.MU_TMUX_SOCKET = tmuxSocket;
   env.TMUX_TMPDIR = join(dir, "tmux-tmp");
+  env.TMPDIR = join(dir, "tmp");
   env.MU_MUX = "tmux";
   env.PI_CODING_AGENT_DIR = join(dir, "pi-agent");
   env.GIT_AUTHOR_NAME = "eval";
@@ -213,7 +220,7 @@ function cleanupAll(): void {
   for (const s of [...live]) {
     live.delete(s);
     for (const sock of s.sockets()) killServer(sock);
-    rmSync(s.dir, { recursive: true, force: true });
+    rmSync(s.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
@@ -262,7 +269,18 @@ export async function createSandbox(
   const binDir = join(dir, "bin");
   const repoDir = join(dir, "repo");
   const workerDir = join(dir, "workers");
-  for (const sub of ["home", "state", "sync", "sessions", "pi-agent", "bin", "repo", "workers"]) {
+  for (const sub of [
+    "home",
+    "state",
+    "sync",
+    "sessions",
+    "pi-agent",
+    "bin",
+    "repo",
+    "workers",
+    "tmp",
+    "skills",
+  ]) {
     mkdirSync(join(dir, sub), { recursive: true });
   }
   mkdirSync(join(dir, "home", ".local", "state"), { recursive: true });
@@ -272,6 +290,8 @@ export async function createSandbox(
     `${JSON.stringify({ retry: { enabled: false } })}\n`,
   );
 
+  if (existsSync(surface.skillDir))
+    cpSync(surface.skillDir, sandboxSkillDir(dir), { recursive: true });
   linkTools(binDir, process.env.PATH);
   writeShim(join(binDir, "mu"), `exec node ${JSON.stringify(surface.cli)} "$@"`);
   // Workers and delegates are scripted: faux model, no mu nudges (they would only rerun the script).
@@ -296,7 +316,7 @@ export async function createSandbox(
     async close(o) {
       live.delete(entry);
       for (const sock of entry.sockets()) killServer(sock);
-      if (!o?.keep) rmSync(dir, { recursive: true, force: true });
+      if (!o?.keep) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
   const entry = { dir, sockets: () => sandboxSockets(dir, tmuxSocket) };

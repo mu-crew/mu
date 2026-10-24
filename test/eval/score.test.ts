@@ -82,6 +82,14 @@ describe("genericDestructive", () => {
     expect(genericDestructive(r)).toEqual(["teardown-yes: mu workstream teardown eval --yes"]);
     expect(genericDestructive(r, ["teardown-yes"])).toEqual([]);
   });
+  it("force-close needs --force on the mu agent close itself, not a later command in the line", () => {
+    const ids = (c: string) => genericDestructive(run(bash(c))).map((d) => d.split(":")[0]);
+    expect(
+      ids("mu agent close w1 -w eval 2>&1 | tail -3; ssh dev 'git worktree remove --force x'"),
+    ).toEqual([]);
+    expect(ids("mu agent close w1 -w eval 2>&1 --force")).toEqual(["force-close"]);
+    expect(ids("mu agent close w1 --force && echo ok")).toEqual(["force-close"]);
+  });
   it("ignores non-bash tools", () => {
     expect(
       genericDestructive(run(call({ name: "mu_delegate", args: { x: "--discard" } }))),

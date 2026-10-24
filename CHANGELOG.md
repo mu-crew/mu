@@ -12,7 +12,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
-- Eval harness (`tools/eval/`) and 3.x baseline (`docs/mu-next/eval/baseline-3.13.3-v2.md`; v1 superseded: delegate token, discard parse, send-before-claim, origin and PATH artifacts fixed). The scripted scenarios run on both surfaces: spawn falls back from `--workspace` to `--worktree`, so `check` is green on the checkout and on 3.13.3.
+- Eval harness (`tools/eval/`) and 3.x baseline (`docs/mu-next/eval/baseline-3.13.3-v2.md`; v1 superseded: delegate token, discard parse, send-before-claim, origin and PATH artifacts fixed; v2.1: discard scoring in fanout_gates/worktree_reuse, keyed delegate answers, TMPDIR and an in-sandbox skill copy, `--force` scoring). The scripted scenarios run on both surfaces: spawn falls back from `--workspace` to `--worktree`, so `check` is green on the checkout and on 3.13.3.
 
 - **`mu agent send` returns a receipt; `wait --inc` refuses a restart; `mu agent check`.**
   A ctl `send`, `--fresh` and `--interrupt` carry a fresh `msgId` and return
