@@ -1,0 +1,26 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn gate -w eval --command \"ssh dev -t remote-gate\" --no-ctl"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "ssh dev 'git -C ~/repo worktree add ~/ws/w1'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "eval \"$(mu agent remote-env w1 -w eval --shell)\"; ssh dev \"tmux new-session -d -s mu-w1 -c ~/ws/w1 '$MU_REMOTE_ENV \\$SHELL -ilc \\\"pi --approve\\\"'\""
+      }
+    ]
+  },
+  {
+    "text": "Started g1 on dev."
+  }
+]
