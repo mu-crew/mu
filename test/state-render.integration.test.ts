@@ -32,7 +32,7 @@ afterAll(() => {
   }
 });
 
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 import { softTeardown } from "./_teardown.js";
 
 // ── default mode (full top-to-bottom card) ─────────────────────────
@@ -44,12 +44,12 @@ describe("mu state — default (full) mode", () => {
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), "mu-state-full-"));
     dbPath = join(tempDir, "mu.db");
-    await runCli(["workstream", "init", "ws", "--json"], dbPath);
-    await runCli(
+    await runCliJson(["workstream", "init", "ws", "--json"], dbPath);
+    await runCliJson(
       ["task", "add", "alpha", "-w", "ws", "--title", "A", "-i", "50", "-e", "1", "--json"],
       dbPath,
     );
-    await runCli(
+    await runCliJson(
       ["task", "add", "beta", "-w", "ws", "--title", "B", "-i", "60", "-e", "1", "--json"],
       dbPath,
     );
@@ -79,9 +79,9 @@ describe("mu state — default (full) mode", () => {
   });
 
   it("--json emits the unified flat shape (single workstream)", async () => {
-    const { stdout, exitCode } = await runCli(["state", "-w", "ws", "--json"], dbPath);
+    const { data, exitCode } = await runCliJson(["state", "-w", "ws", "--json"], dbPath);
     expect(exitCode).toBeNull();
-    const parsed = JSON.parse(stdout);
+    const parsed = data;
     // Spec: { workstreamName, agents, orphans, tracks, ready, blocked,
     //         inProgress, recentClosed, recent,
     //         remoteWorkers } (flat).
@@ -155,23 +155,21 @@ describe("mu state — default (full) mode", () => {
   it("includes remote workers in the JSON state shape", async () => {
     await runCli(["task", "note", "alpha", "-w", "ws", "REMOTE: dev:~/ws/worker-1"], dbPath);
 
-    const { stdout, exitCode } = await runCli(["state", "-w", "ws", "--json"], dbPath);
+    const { data, exitCode } = await runCliJson(["state", "-w", "ws", "--json"], dbPath);
 
     expect(exitCode).toBeNull();
-    expect(JSON.parse(stdout).remoteWorkers).toEqual([
-      { taskName: "alpha", host: "dev", path: "~/ws/worker-1" },
-    ]);
+    expect(data.remoteWorkers).toEqual([{ taskName: "alpha", host: "dev", path: "~/ws/worker-1" }]);
   });
 
   it("multi-ws --json wraps per-ws shapes in { workstreams: [...] }", async () => {
-    await runCli(["workstream", "init", "ws2", "--json"], dbPath);
-    await runCli(
+    await runCliJson(["workstream", "init", "ws2", "--json"], dbPath);
+    await runCliJson(
       ["task", "add", "gamma", "-w", "ws2", "--title", "G", "-i", "10", "-e", "1", "--json"],
       dbPath,
     );
-    const { stdout, exitCode } = await runCli(["state", "-w", "ws,ws2", "--json"], dbPath);
+    const { data, exitCode } = await runCliJson(["state", "-w", "ws,ws2", "--json"], dbPath);
     expect(exitCode).toBeNull();
-    const parsed = JSON.parse(stdout);
+    const parsed = data;
     expect(parsed.workstreams).toEqual([
       expect.objectContaining({
         workstreamName: "ws",
@@ -200,8 +198,8 @@ describe("mu state — mutual-exclusion + cross-workstream", () => {
     tempDir = mkdtempSync(join(tmpdir(), "mu-state-mux-"));
     dbPath = join(tempDir, "mu.db");
     for (const w of ["alpha", "beta", "gamma"]) {
-      await runCli(["workstream", "init", w, "--json"], dbPath);
-      await runCli(
+      await runCliJson(["workstream", "init", w, "--json"], dbPath);
+      await runCliJson(
         ["task", "add", `t_${w}`, "-w", w, "--title", `T-${w}`, "-i", "50", "-e", "1", "--json"],
         dbPath,
       );

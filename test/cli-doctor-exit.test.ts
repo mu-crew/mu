@@ -18,7 +18,7 @@ import { openDb } from "../src/db.js";
 import { addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli, runCliWire } from "./_runCli.js";
+import { runCli, runCliJson, runCliWire } from "./_runCli.js";
 
 const STATE_KEY = "MU_STATE_DIR";
 const SYNC_KEY = "MU_SYNC_DIR";
@@ -89,6 +89,8 @@ describe("mu doctor exit code", () => {
   });
 });
 
+type Doctor = { dagCycles: { fix: string }[] };
+
 describe("mu doctor state counts", () => {
   it("ops rows counts the workstream's task ops, not only its own row", async () => {
     process.env.MU_MANAGED_AGENT = "1";
@@ -103,9 +105,9 @@ describe("mu doctor state counts", () => {
     // workstream op + 3 task ops at least; demo_x's ops excluded.
     expect(expected).toBeGreaterThanOrEqual(4);
 
-    const r = await runCli(["doctor", "--json"], dbPath);
+    const r = await runCliJson(["doctor", "--json"], dbPath);
     expect(r.exitCode, r.stderr).toBeNull();
-    const parsed = JSON.parse(r.stdout.trim()) as { state: { logs: number; tasks: number } };
+    const parsed = r.data as { state: { logs: number; tasks: number } };
     expect(parsed.state.tasks).toBe(3);
     expect(parsed.state.logs).toBe(expected);
 
@@ -117,9 +119,9 @@ describe("mu doctor state counts", () => {
 describe("mu doctor ignores the session", () => {
   it("$MU_SESSION does not select a workstream: no state block", async () => {
     process.env.MU_SESSION = "demo";
-    const r = await runCli(["doctor", "--json"], dbPath);
+    const r = await runCliJson(["doctor", "--json"], dbPath);
     expect(r.exitCode, r.stderr).toBeNull();
-    const parsed = JSON.parse(r.stdout.trim()) as {
+    const parsed = r.data as {
       state: unknown;
       workstream: { currentName: string | null };
       environment: Record<string, unknown>;
@@ -149,8 +151,8 @@ describe("mu doctor dependency cycles", () => {
   };
 
   it("is ok with no cycle", async () => {
-    const r = await runCli(["doctor", "--json"], dbPath);
-    expect(JSON.parse(r.stdout).dagCycles).toEqual([]);
+    const r = await runCliJson(["doctor", "--json"], dbPath);
+    expect(r.data.dagCycles).toEqual([]);
   });
 
   it("reports a sync-made cycle in human and json output, and the fix clears it", async () => {
@@ -158,14 +160,14 @@ describe("mu doctor dependency cycles", () => {
     const human = await runCli(["doctor"], dbPath);
     expect(human.stdout).toContain("1 dependency cycle(s)");
     expect(human.stdout).toMatch(/demo: t[12] -> t[12] -> t[12]/);
-    const json = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout);
+    const json = (await runCliJson<Doctor>(["doctor", "--json"], dbPath)).data;
     expect(json.dagCycles).toHaveLength(1);
-    const { fix } = json.dagCycles[0];
+    const fix = json.dagCycles[0]?.fix ?? "";
     expect(fix).toMatch(/^mu task unblock t[12] --by t[12] -w demo$/);
     const argv = fix.split(" ").slice(1);
     const un = await runCli(argv, dbPath);
     expect(un.error).toBeUndefined();
-    const after = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout);
+    const after = (await runCliJson<Doctor>(["doctor", "--json"], dbPath)).data;
     expect(after.dagCycles).toEqual([]);
   });
 
@@ -193,9 +195,7 @@ describe("mu doctor dependency cycles", () => {
       ins.run(id(f), id(t));
     db.close();
     for (let round = 0; round < 4; round++) {
-      const { dagCycles } = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout) as {
-        dagCycles: { fix: string }[];
-      };
+      const { dagCycles } = (await runCliJson<Doctor>(["doctor", "--json"], dbPath)).data;
       if (round === 0) expect(dagCycles.length).toBeGreaterThanOrEqual(2);
       if (round === 1) expect(dagCycles).toEqual([]); // one round of fixes is enough here
       if (dagCycles.length === 0) return;
@@ -236,12 +236,10 @@ describe("mu doctor dependency cycles", () => {
     ] as const)
       ins.run(id(f), id(t));
     db.close();
-    const first = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout) as {
-      dagCycles: { fix: string }[];
-    };
+    const first = (await runCliJson<Doctor>(["doctor", "--json"], dbPath)).data;
     expect(first.dagCycles.length).toBeGreaterThan(0);
     for (const { fix } of first.dagCycles) await runCli(fix.split(" ").slice(1), dbPath);
-    const after = JSON.parse((await runCli(["doctor", "--json"], dbPath)).stdout);
+    const after = (await runCliJson<Doctor>(["doctor", "--json"], dbPath)).data;
     expect(after.dagCycles).toEqual([]);
   });
 });

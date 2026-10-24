@@ -21,7 +21,7 @@ import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, claimTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCliJson } from "./_runCli.js";
 
 describe("root-position -w + optsWithGlobals subcommands (finding_optswithglobals_can_pass_root)", () => {
   let tempDir: string;
@@ -57,34 +57,39 @@ describe("root-position -w + optsWithGlobals subcommands (finding_optswithglobal
   // subcommand a string[] through optsWithGlobals(); the plain form is
   // covered in test/cli-root-workstream-forward.test.ts.
   it("task owned-by: root-position --workstream=ws scopes identically to subcommand-position -w", async () => {
-    const rootPos = await runCli(
+    const rootPos = await runCliJson(
       ["--workstream=wsa", "task", "owned-by", "worker-1", "--json"],
       dbPath,
     );
     expect(rootPos.error).toBeUndefined();
     expect(rootPos.exitCode).toBeNull();
-    const rootParsed = JSON.parse(rootPos.stdout) as { items: { title: string }[] };
+    const rootParsed = rootPos.data as { items: { title: string }[] };
     expect(rootParsed.items).toHaveLength(1);
     expect(rootParsed.items[0]?.title).toBe("Owned by worker");
 
-    const subPos = await runCli(["task", "owned-by", "worker-1", "-w", "wsa", "--json"], dbPath);
+    const subPos = await runCliJson(
+      ["task", "owned-by", "worker-1", "-w", "wsa", "--json"],
+      dbPath,
+    );
     expect(subPos.error).toBeUndefined();
     expect(subPos.stdout).toBe(rootPos.stdout);
   });
 
   it("rejects a padded root -w for an optsWithGlobals verb instead of trimming it", async () => {
-    const res = await runCli(["-w", " wsa", "task", "owned-by", "worker-1", "--json"], dbPath);
+    const res = await runCliJson(["-w", " wsa", "task", "owned-by", "worker-1", "--json"], dbPath);
     expect(res.exitCode).toBe(2);
-    expect(res.stdout).toBe("");
+    expect(res.doc.ok).toBe(false);
+    expect(res.data).toBeUndefined();
   });
 
   it("task owned-by with no scope is a one-line error, even with a decoy $MU_SESSION", async () => {
     const key = "MU_SESSION";
     process.env[key] = "wsa";
     try {
-      const res = await runCli(["task", "owned-by", "worker-1", "--json"], dbPath);
+      const res = await runCliJson(["task", "owned-by", "worker-1", "--json"], dbPath);
       expect(res.exitCode).toBe(2);
-      expect(res.stdout).toBe("");
+      expect(res.doc.ok).toBe(false);
+      expect(res.data).toBeUndefined();
     } finally {
       delete process.env[key];
     }
@@ -92,11 +97,11 @@ describe("root-position -w + optsWithGlobals subcommands (finding_optswithglobal
 
   it("rejects multiple workstreams at root position for a single-workstream verb", async () => {
     ensureWorkstream(db, "wsb");
-    const res = await runCli(
+    const res = await runCliJson(
       ["--workstream=wsa,wsb", "task", "owned-by", "worker-1", "--json"],
       dbPath,
     );
     expect(res.exitCode).not.toBeNull();
-    expect(res.stderr).toMatch(/single workstream here/);
+    expect(res.doc.message).toMatch(/single workstream here/);
   });
 });

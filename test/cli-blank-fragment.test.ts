@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("blank (whitespace-only) flag fragments are a usage error", () => {
   let tempDir: string;
@@ -90,9 +90,9 @@ describe("blank (whitespace-only) flag fragments are a usage error", () => {
   // typo, so neither may start erroring.
 
   it("`--status 'OPEN,'` (trailing comma) still succeeds", async () => {
-    const r = await runCli(["task", "list", "-w", "ws", "--status", "OPEN,", "--json"], dbPath);
+    const r = await runCliJson(["task", "list", "-w", "ws", "--status", "OPEN,", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
-    const payload = JSON.parse(r.stdout.trim()) as { count: number };
+    const payload = r.data as { count: number };
     expect(payload.count).toBe(2);
   });
 

@@ -16,7 +16,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
 let dbPath: string;
@@ -129,7 +129,7 @@ function seed(cli = "pi"): void {
 }
 
 const send = (...args: string[]) =>
-  runCli(["agent", "send", "worker-1", ...args, "-w", "auth", "--json"], dbPath);
+  runCliJson(["agent", "send", "worker-1", ...args, "-w", "auth", "--json"], dbPath);
 
 const opNames = () => ops.filter((o) => o.op !== "hello").map((o) => o.op);
 const sent = () => ops.filter((o) => o.op !== "hello");
@@ -144,7 +144,7 @@ describe("mu agent send --interrupt", () => {
     expect(sent()).toEqual([
       { op: "interrupt", text: "stop, do X", timeoutMs: 30_000, msgId: expect.any(String) },
     ]);
-    const body = JSON.parse(r.stdout) as Record<string, unknown> & {
+    const body = r.data as Record<string, unknown> & {
       nextSteps: Array<{ command: string }>;
     };
     expect(body).toMatchObject({ transport: "ctl", wasBusy: true, pending: true, runs: 4 });
@@ -171,7 +171,7 @@ describe("mu agent send --interrupt", () => {
     await serve({ busy: false });
     const r = await send("--interrupt", "hi");
     expect(r.exitCode).toBeNull();
-    expect(JSON.parse(r.stdout)).toMatchObject({ wasBusy: false, runs: 3 });
+    expect(r.data).toMatchObject({ wasBusy: false, runs: 3 });
   });
 
   it("--timeout reaches the op in ms", async () => {
@@ -186,7 +186,7 @@ describe("mu agent send --interrupt", () => {
     await serve({ settles: false });
     const r = await send("--interrupt", "--timeout", "0.1", "x");
     expect(r.exitCode).toBe(5);
-    expect(r.stderr).toContain("mu agent close worker-1");
+    expect(JSON.stringify(r.doc)).toContain("mu agent close worker-1");
   });
 
   it("an extension without the msgId feature: refused before anything is aborted or sent", async () => {
@@ -194,7 +194,7 @@ describe("mu agent send --interrupt", () => {
     await serve({ hello: helloReply({ features: [] }) });
     const r = await send("--interrupt", "stop");
     expect(r.exitCode).toBe(4);
-    expect(JSON.parse(r.stderr)).toMatchObject({ error: "AgentExtensionOutdatedError" });
+    expect(r.doc).toMatchObject({ error: "AgentExtensionOutdatedError" });
     expect(opNames()).toEqual([]);
     expect(pasted()).toBe(false);
   });
@@ -204,7 +204,7 @@ describe("mu agent send --interrupt", () => {
     await serve({ silent: true, accepts: true });
     const r = await send("--interrupt", "stop");
     expect(r.exitCode).toBeNull();
-    expect(JSON.parse(r.stdout)).toMatchObject({
+    expect(r.data).toMatchObject({
       transport: "ctl",
       receipt: "confirmed-after-timeout",
       incarnation: INC,
@@ -217,7 +217,7 @@ describe("mu agent send --interrupt", () => {
     await serve({ silent: true, accepts: false });
     const r = await send("--interrupt", "stop");
     expect(r.exitCode).toBe(1);
-    const env = JSON.parse(r.stderr) as {
+    const env = r.doc as unknown as {
       error: string;
       message: string;
       nextSteps: { command: string }[];
@@ -237,7 +237,7 @@ describe("mu agent send --interrupt", () => {
     await serve();
     const r = await send("--interrupt", ...flags, "x");
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toMatch(msg);
+    expect(JSON.stringify(r.doc)).toMatch(msg);
     expect(ops).toEqual([]);
     expect(pasted()).toBe(false);
   });
@@ -247,7 +247,7 @@ describe("mu agent send --interrupt", () => {
     await serve();
     const r = await send("--interrupt", "/new");
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toMatch(/--interrupt sends a prompt, not a slash command/);
+    expect(JSON.stringify(r.doc)).toMatch(/--interrupt sends a prompt, not a slash command/);
     expect(ops).toEqual([]);
   });
 
@@ -256,7 +256,7 @@ describe("mu agent send --interrupt", () => {
     await serve();
     const r = await send("--interrupt", "");
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toMatch(/--interrupt needs a non-empty prompt/);
+    expect(JSON.stringify(r.doc)).toMatch(/--interrupt needs a non-empty prompt/);
     expect(ops).toEqual([]);
   });
 
@@ -274,14 +274,14 @@ describe("mu agent send --interrupt", () => {
     await serve();
     const r = await send("--timeout", "3", "x");
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toMatch(/--timeout only applies with --interrupt/);
+    expect(JSON.stringify(r.doc)).toMatch(/--timeout only applies with --interrupt/);
   });
 
   it("non-pi agent: exit 2 pointing at close, never pastes", async () => {
     seed("claude");
     const r = await send("--interrupt", "x");
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain("mu agent close");
+    expect(JSON.stringify(r.doc)).toContain("mu agent close");
     expect(pasted()).toBe(false);
   });
 });

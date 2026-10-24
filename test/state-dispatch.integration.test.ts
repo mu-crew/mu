@@ -31,7 +31,7 @@ afterAll(() => {
 
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { withEnv } from "./_env.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("cmdState dispatch", () => {
   let tempDir: string;
@@ -77,9 +77,9 @@ describe("cmdState dispatch", () => {
   it("--json on a non-TTY emits JSON regardless of TTY", async () => {
     // runCli pipes stdout, so isTTY is always false in tests; the
     // dispatch goes to renderStateStatic / renderStateJson.
-    const { stdout, exitCode } = await runCli(["state", "-w", "ws", "--json"], dbPath);
+    const { data, exitCode } = await runCliJson(["state", "-w", "ws", "--json"], dbPath);
     expect(exitCode).toBeNull();
-    const parsed = JSON.parse(stdout);
+    const parsed = data;
     expect(parsed.workstreamName).toBe("ws");
   });
 
@@ -166,10 +166,11 @@ describe("cmdState empty-workstream paths", () => {
   it("`mu state --json` with no scope is the same error, not an empty success", async () => {
     await runCli(["workstream", "init", "alpha"], dbPath);
     await withEnv("MU_SESSION", "alpha", async () => {
-      const { stdout, stderr, exitCode } = await runCli(["state", "--json"], dbPath);
+      const { doc, data, exitCode } = await runCliJson(["state", "--json"], dbPath);
       expect(exitCode).toBe(2);
-      expect(stdout).toBe("");
-      expect(stderr).toMatch(/no workstream: pass -w <name> or --all/);
+      expect(doc.ok).toBe(false);
+      expect(data).toBeUndefined();
+      expect(String(doc.message)).toMatch(/no workstream: pass -w <name> or --all/);
     });
   });
 });

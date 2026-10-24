@@ -6,7 +6,7 @@ import { resetAgentStateCacheForTests, setMurmurRunnerForTests } from "../src/ag
 import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { tmux } from "../src/tmux.js";
-import { runCli } from "./_runCli.js";
+import { runCliJson } from "./_runCli.js";
 
 let tempDir: string;
 let dbPath: string;
@@ -37,9 +37,9 @@ describe("agent state display", () => {
     await tmux(["set-option", "-pt", paneId, "@murmur_pane_state", "working"]);
     await tmux(["set-option", "-pt", paneId, "@murmur_pane_since", "1790000000000"]);
 
-    const result = await runCli(["agent", "list", "-w", "state", "--json"], dbPath);
+    const result = await runCliJson(["agent", "list", "-w", "state", "--json"], dbPath);
     expect(result.error).toBeUndefined();
-    const payload = JSON.parse(result.stdout) as { agents: Array<Record<string, unknown>> };
+    const payload = result.data as { agents: Array<Record<string, unknown>> };
     expect(payload.agents).toHaveLength(1);
     expect(payload.agents[0]).toMatchObject({
       state: "busy",
@@ -52,8 +52,8 @@ describe("agent state display", () => {
     await tmux(["set-option", "-pu", "-t", paneId, "@murmur_pane_since"]);
     setMurmurRunnerForTests(async () => null);
     resetAgentStateCacheForTests();
-    const unknown = await runCli(["agent", "list", "-w", "state", "--json"], dbPath);
-    const unknownPayload = JSON.parse(unknown.stdout) as {
+    const unknown = await runCliJson(["agent", "list", "-w", "state", "--json"], dbPath);
+    const unknownPayload = unknown.data as {
       agents: Array<Record<string, unknown>>;
     };
     expect(unknownPayload.agents[0]).toMatchObject({ state: "unknown", source: "none" });

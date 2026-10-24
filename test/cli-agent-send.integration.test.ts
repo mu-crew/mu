@@ -12,7 +12,7 @@ import { type Db, openDb } from "../src/db.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCliJson } from "./_runCli.js";
 
 let tempDir: string;
 let dbPath: string;
@@ -57,14 +57,14 @@ describe("mu agent send to a non-pi agent (herdr)", () => {
   afterEach(() => herdr.restore());
 
   it("sends through the multiplexer with no staleness field", async () => {
-    const { exitCode, stdout, stderr, error } = await runCli(
-      ["agent", "send", "worker-1", "hello", "-w", "auth", "--json"],
-      dbPath,
-    );
+    const { exitCode, data, stderr, error } = await runCliJson<{
+      staleness?: unknown;
+      transport: string;
+    }>(["agent", "send", "worker-1", "hello", "-w", "auth", "--json"], dbPath);
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
     expect(stderr).toBe("");
-    const out = JSON.parse(stdout) as { staleness?: unknown; transport: string };
+    const out = data;
     expect(out.staleness).toBeUndefined();
     expect(out.transport).toBe("mux");
     expect(calls.map((c) => c.slice(0, 3).join(" "))).toEqual(["agent prompt w1:p1"]);
@@ -84,12 +84,12 @@ describe("mu agent send to a pi agent", () => {
   });
 
   it("fails loud when the control socket is missing, without pasting", async () => {
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, doc } = await runCliJson(
       ["agent", "send", "pi-1", "hello", "-w", "auth", "--json"],
       dbPath,
     );
     expect(exitCode).toBe(1);
-    const env = JSON.parse(stderr) as { error: string; nextSteps: { command: string }[] };
+    const env = doc as unknown as { error: string; nextSteps: { command: string }[] };
     expect(env.error).toBe("AgentCtlUnreachableError");
     expect(env.nextSteps.some((s) => s.command === "mu link pi")).toBe(true);
     expect(calls.filter((c) => c[0] === "paste-buffer")).toEqual([]);
@@ -100,24 +100,24 @@ describe("mu agent send to a pi agent", () => {
       (calls as string[][]).push([...args]);
       return { stdout: "", stderr: "", exitCode: 0 };
     });
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, doc } = await runCliJson(
       ["agent", "send", "pi-1", "hello", "-w", "auth", "--json"],
       dbPath,
     );
     expect(exitCode).toBe(1);
-    const env = JSON.parse(stderr) as { error: string; nextSteps: { command: string }[] };
+    const env = doc as unknown as { error: string; nextSteps: { command: string }[] };
     expect(env.error).toBe("AgentPaneDeadError");
     expect(env.nextSteps.some((s) => s.command === "mu link pi")).toBe(false);
     expect(calls.filter((c) => c[0] === "paste-buffer")).toEqual([]);
   });
 
   it("runs /new over the control socket: fails loud without one, never pastes", async () => {
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, doc } = await runCliJson(
       ["agent", "send", "pi-1", "/new", "-w", "auth", "--json"],
       dbPath,
     );
     expect(exitCode).toBe(1);
-    expect((JSON.parse(stderr) as { error: string }).error).toBe("AgentCtlUnreachableError");
+    expect((doc as unknown as { error: string }).error).toBe("AgentCtlUnreachableError");
     expect(calls.map((c) => c[0])).not.toContain("paste-buffer");
   });
 });

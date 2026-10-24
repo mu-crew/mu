@@ -14,7 +14,7 @@ import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("root-position -w forwards to the verb's -w", () => {
   let dir: string;
@@ -33,21 +33,21 @@ describe("root-position -w forwards to the verb's -w", () => {
 
   afterEach(() => rmFixtureDir(dir));
 
-  const names = (stdout: string): string[] =>
-    (JSON.parse(stdout) as { items: { name: string }[] }).items.map((t) => t.name);
+  const names = (data: unknown): string[] =>
+    (data as { items: { name: string }[] }).items.map((t) => t.name);
 
   it("`mu -w wsa task list` lists wsa's tasks, same as the verb-position form", async () => {
-    const root = await runCli(["-w", "wsa", "task", "list", "--json"], dbPath);
+    const root = await runCliJson(["-w", "wsa", "task", "list", "--json"], dbPath);
     expect(root.error).toBeUndefined();
     expect(root.exitCode).toBeNull();
-    expect(names(root.stdout)).toEqual(["t-wsa"]);
+    expect(names(root.data)).toEqual(["t-wsa"]);
 
-    const verb = await runCli(["task", "list", "-w", "wsa", "--json"], dbPath);
+    const verb = await runCliJson(["task", "list", "-w", "wsa", "--json"], dbPath);
     expect(root.stdout).toBe(verb.stdout);
   });
 
   it("forwards to a variadic verb -w (state) with every name", async () => {
-    const r = await runCli(["-w", "wsa", "-w", "wsb", "state", "--json"], dbPath);
+    const r = await runCliJson(["-w", "wsa", "-w", "wsb", "state", "--json"], dbPath);
     expect(r.error).toBeUndefined();
     expect(r.exitCode).toBeNull();
     expect(r.stdout).toContain("wsa");
@@ -77,18 +77,18 @@ describe("root-position -w forwards to the verb's -w", () => {
         ["list-panes", { stdout: "", stderr: "can't find session", exitCode: 1 }],
       ]);
       try {
-        const preview = await runCli(
+        const preview = await runCliJson(
           ["--workstream=wsb", "workstream", "teardown", "--json"],
           dbPath,
         );
-        expect(JSON.parse(preview.stdout)).toMatchObject({ workstreamName: "wsb", dryRun: true });
-        const { revision } = JSON.parse(preview.stdout) as { revision: number };
-        const r = await runCli(
+        expect(preview.data).toMatchObject({ workstreamName: "wsb", dryRun: true });
+        const { revision } = preview.data as { revision: number };
+        const r = await runCliJson(
           ["--workstream=wsb", "workstream", "teardown", "--if", String(revision), "--json"],
           dbPath,
         );
         expect(r.error).toBeUndefined();
-        expect(JSON.parse(r.stdout)).toMatchObject({ workstreamName: "wsb", tornDown: true });
+        expect(r.data).toMatchObject({ workstreamName: "wsb", tornDown: true });
       } finally {
         mux.restore();
       }
@@ -111,17 +111,18 @@ describe("root-position -w forwards to the verb's -w", () => {
 
   it("a decoy $MU_SESSION never scopes a root-less verb", async () => {
     await withEnv("MU_SESSION", "wsa", async () => {
-      const r = await runCli(["task", "list", "--json"], dbPath);
+      const r = await runCliJson(["task", "list", "--json"], dbPath);
       expect(r.exitCode).toBe(2);
-      expect(r.stdout).toBe("");
+      expect(r.doc.ok).toBe(false);
+      expect(r.doc).not.toHaveProperty("data");
     });
   });
 
   it("state honours root --workstream over $MU_SESSION", async () => {
     await withEnv("MU_SESSION", "wsa", async () => {
-      const r = await runCli(["--workstream=nonexist", "state", "--json"], dbPath);
+      const r = await runCliJson(["--workstream=nonexist", "state", "--json"], dbPath);
       expect(r.exitCode).toBe(3);
-      expect(r.stderr).toMatch(/no such workstream: nonexist/);
+      expect(r.doc.message).toMatch(/no such workstream: nonexist/);
     });
   });
 

@@ -13,7 +13,7 @@ import { type Db, openDb } from "../src/db.js";
 import { addNote, addTask, claimTask, closeTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("--json output on read verbs", () => {
   let tempDir: string;
@@ -76,8 +76,8 @@ describe("--json output on read verbs", () => {
   });
 
   it("workstream list --json emits a collection envelope of summaries", async () => {
-    const { stdout } = await runCli(["workstream", "list", "--json"], dbPath);
-    const env = JSON.parse(stdout.trim()) as { items: Array<{ name: string }>; count: number };
+    const { data } = await runCliJson(["workstream", "list", "--json"], dbPath);
+    const env = data as { items: Array<{ name: string }>; count: number };
     expect(Array.isArray(env.items)).toBe(true);
     expect(env.count).toBe(env.items.length);
     // listWorkstreams unions DB rows with live mu-* tmux sessions, so a
@@ -87,15 +87,15 @@ describe("--json output on read verbs", () => {
   });
 
   it("task list --json emits a collection envelope of TaskRows", async () => {
-    const { stdout } = await runCli(["task", "list", "-w", "auth", "--json"], dbPath);
-    const env = JSON.parse(stdout.trim()) as { items: Array<{ name: string }>; count: number };
+    const { data } = await runCliJson(["task", "list", "-w", "auth", "--json"], dbPath);
+    const env = data as { items: Array<{ name: string }>; count: number };
     expect(env.items.map((t) => t.name).sort()).toEqual(["a", "b", "c"]);
     expect(env.count).toBe(3);
   });
 
   it("task next --json honors -n", async () => {
-    const { stdout } = await runCli(["task", "next", "-w", "auth", "-n", "5", "--json"], dbPath);
-    const env = JSON.parse(stdout.trim()) as { items: Array<{ name: string }>; count: number };
+    const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "5", "--json"], dbPath);
+    const env = data as { items: Array<{ name: string }>; count: number };
     // Only 'a' is ready (b is blocked by a, c by b). Even with -n 5.
     expect(env.items).toHaveLength(1);
     expect(env.items[0]?.name).toBe("a");
@@ -106,8 +106,8 @@ describe("--json output on read verbs", () => {
     // roi field at all, so `mu task next --json | jq 'sort_by(.roi)'`
     // returned items in arbitrary order. The table view computed ROI
     // inline; the JSON path didn't. Now both paths agree.
-    const { stdout } = await runCli(["task", "next", "-w", "auth", "-n", "5", "--json"], dbPath);
-    const env = JSON.parse(stdout.trim()) as {
+    const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "5", "--json"], dbPath);
+    const env = data as {
       items: Array<{
         name: string;
         impact: number;
@@ -122,8 +122,8 @@ describe("--json output on read verbs", () => {
   });
 
   it("task next -n 0 --json (the merged-in `task ready` shape) decorates with roi too", async () => {
-    const { stdout } = await runCli(["task", "next", "-w", "auth", "-n", "0", "--json"], dbPath);
-    const env = JSON.parse(stdout.trim()) as {
+    const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "0", "--json"], dbPath);
+    const env = data as {
       items: Array<{ name: string; roi?: number }>;
       count: number;
     };
@@ -131,8 +131,8 @@ describe("--json output on read verbs", () => {
   });
 
   it("task list --json decorates with roi too", async () => {
-    const { stdout } = await runCli(["task", "list", "-w", "auth", "--json"], dbPath);
-    const env = JSON.parse(stdout.trim()) as {
+    const { data } = await runCliJson(["task", "list", "-w", "auth", "--json"], dbPath);
+    const env = data as {
       items: Array<{
         name: string;
         impact: number;
@@ -149,8 +149,8 @@ describe("--json output on read verbs", () => {
   });
 
   it("task show --json decorates the inner task with roi", async () => {
-    const { stdout } = await runCli(["task", "show", "a", "-w", "auth", "--json"], dbPath);
-    const parsed = JSON.parse(stdout.trim()) as { task: { roi?: number } };
+    const { data } = await runCliJson(["task", "show", "a", "-w", "auth", "--json"], dbPath);
+    const parsed = data as { task: { roi?: number } };
     expect(parsed.task.roi).toBe(40);
   });
 
@@ -160,8 +160,8 @@ describe("--json output on read verbs", () => {
     const db2 = openDb({ path: dbPath });
     for (const id of ["a", "b", "c"]) closeTask(db2, id, { workstream: "auth", evidence: "test" });
     db2.close();
-    const { stdout } = await runCli(["task", "next", "-w", "auth", "-n", "0", "--json"], dbPath);
-    expect(JSON.parse(stdout.trim())).toEqual({ items: [], count: 0 });
+    const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "0", "--json"], dbPath);
+    expect(data).toEqual({ items: [], count: 0 });
   });
 
   it("task show --json emits a composite { task, blockers, dependents, notes } with status-bearing edges", async () => {
@@ -170,8 +170,8 @@ describe("--json output on read verbs", () => {
     // vs satisfied without a second query. (Prior shape was bare
     // string[]; that lossy shape is what the human-renderer fix is
     // also addressing in the table view.)
-    const { stdout } = await runCli(["task", "show", "a", "-w", "auth", "--json"], dbPath);
-    const parsed = JSON.parse(stdout.trim()) as {
+    const { data } = await runCliJson(["task", "show", "a", "-w", "auth", "--json"], dbPath);
+    const parsed = data as {
       task: { name: string };
       blockers: Array<{ name: string; status: string }>;
       dependents: Array<{ name: string; status: string }>;
@@ -189,8 +189,8 @@ describe("--json output on read verbs", () => {
     // 134+ read sites). Pin that no task-shaped JSON read leaks a
     // `localId` key.
     {
-      const { stdout } = await runCli(["task", "list", "-w", "auth", "--json"], dbPath);
-      const env = JSON.parse(stdout.trim()) as {
+      const { data } = await runCliJson(["task", "list", "-w", "auth", "--json"], dbPath);
+      const env = data as {
         items: Array<Record<string, unknown>>;
         count: number;
       };
@@ -202,8 +202,8 @@ describe("--json output on read verbs", () => {
       }
     }
     {
-      const { stdout } = await runCli(["task", "next", "-w", "auth", "--json"], dbPath);
-      const env = JSON.parse(stdout.trim()) as {
+      const { data } = await runCliJson(["task", "next", "-w", "auth", "--json"], dbPath);
+      const env = data as {
         items: Array<Record<string, unknown>>;
         count: number;
       };
@@ -215,16 +215,16 @@ describe("--json output on read verbs", () => {
       expect(parsed[0]?.name).toBe("a");
     }
     {
-      const { stdout } = await runCli(["task", "show", "a", "-w", "auth", "--json"], dbPath);
-      const parsed = JSON.parse(stdout.trim()) as { task: Record<string, unknown> };
+      const { data } = await runCliJson(["task", "show", "a", "-w", "auth", "--json"], dbPath);
+      const parsed = data as { task: Record<string, unknown> };
       expect(parsed.task).not.toHaveProperty("localId");
       expect(parsed.task.name).toBe("a");
     }
   });
 
   it("task tree --json emits a recursive { direction, root: { task, children } } shape", async () => {
-    const { stdout } = await runCli(["task", "tree", "c", "-w", "auth", "--json"], dbPath);
-    const parsed = JSON.parse(stdout.trim()) as {
+    const { data } = await runCliJson(["task", "tree", "c", "-w", "auth", "--json"], dbPath);
+    const parsed = data as {
       direction: string;
       root: {
         task: { name: string };
@@ -272,8 +272,8 @@ describe("--json output on read verbs", () => {
       blockedBy: ["d", "e"],
     });
     db3.close();
-    const { stdout } = await runCli(["task", "tree", "f", "-w", "auth", "--json"], dbPath);
-    const parsed = JSON.parse(stdout.trim()) as {
+    const { data } = await runCliJson(["task", "tree", "f", "-w", "auth", "--json"], dbPath);
+    const parsed = data as {
       root: {
         children: Array<{
           task: { name: string };
@@ -327,8 +327,8 @@ describe("--json output on read verbs", () => {
     closeTask(db2, "done", { workstream: "auth", evidence: "seed closed row" });
     db2.close();
 
-    const { stdout } = await runCli(["state", "-w", "auth", "--json"], dbPath);
-    const parsed = JSON.parse(stdout.trim()) as {
+    const { data } = await runCliJson(["state", "-w", "auth", "--json"], dbPath);
+    const parsed = data as {
       workstreamName: string;
       agents: Array<{ name: string; status: string; workstreamName: string }>;
       orphans: unknown[];
@@ -388,8 +388,8 @@ describe("--json output on read verbs", () => {
   });
 
   it("agent list --json emits live seeded agents, not only array shape", async () => {
-    const { stdout } = await runCli(["agent", "list", "-w", "auth", "--json"], dbPath);
-    const parsed = JSON.parse(stdout.trim()) as {
+    const { data } = await runCliJson(["agent", "list", "-w", "auth", "--json"], dbPath);
+    const parsed = data as {
       workstreamName: string;
       agents: Array<{ name: string; paneId: string; status: string; workstreamName: string }>;
       orphans: unknown[];
@@ -473,8 +473,8 @@ describe("--json output on read verbs", () => {
     const originalPane = process.env.TMUX_PANE;
     process.env.TMUX_PANE = "%42";
     try {
-      const { stdout } = await runCli(["me", "--json"], dbPath);
-      const parsed = JSON.parse(stdout.trim()) as {
+      const { data } = await runCliJson(["me", "--json"], dbPath);
+      const parsed = data as {
         agent: { name: string };
         ownedTasks: Array<{ name: string }>;
       };
@@ -599,11 +599,11 @@ describe("task list --status", () => {
       .run();
     db2.close();
 
-    const { stdout } = await runCli(
+    const { data } = await runCliJson(
       ["task", "list", "-w", "auth", "--status", "open", "--json"],
       dbPath,
     );
-    const env = JSON.parse(stdout.trim()) as { items: Array<{ name: string }>; count: number };
+    const env = data as { items: Array<{ name: string }>; count: number };
     expect(env.items.map((t) => t.name)).toEqual(["c"]);
   });
 
@@ -647,36 +647,36 @@ describe("task list/next/ready --sort", () => {
   });
 
   it("--sort recency orders by updated_at DESC (most recent first)", async () => {
-    const { stdout } = await runCli(
+    const { data } = await runCliJson(
       ["task", "list", "-w", "auth", "--sort", "recency", "--json"],
       dbPath,
     );
-    const env = JSON.parse(stdout.trim()) as { items: Array<{ name: string }>; count: number };
+    const env = data as { items: Array<{ name: string }>; count: number };
     expect(env.items.map((t) => t.name)).toEqual(["c", "b", "a"]);
   });
 
   it("--sort age orders by created_at ASC (oldest first)", async () => {
-    const { stdout } = await runCli(
+    const { data } = await runCliJson(
       ["task", "list", "-w", "auth", "--sort", "age", "--json"],
       dbPath,
     );
-    const env = JSON.parse(stdout.trim()) as { items: Array<{ name: string }>; count: number };
+    const env = data as { items: Array<{ name: string }>; count: number };
     expect(env.items.map((t) => t.name)).toEqual(["a", "b", "c"]);
   });
 
   it("--sort roi (default for `next`) — highest ROI first", async () => {
-    const { stdout } = await runCli(["task", "next", "-w", "auth", "-n", "5", "--json"], dbPath);
-    const env = JSON.parse(stdout.trim()) as { items: Array<{ name: string }>; count: number };
+    const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "5", "--json"], dbPath);
+    const env = data as { items: Array<{ name: string }>; count: number };
     // b (90) > c (20) > a (5).
     expect(env.items.map((t) => t.name)).toEqual(["b", "c", "a"]);
   });
 
   it("`mu task next -n 0 --sort recency` re-sorts (overrides ROI default)", async () => {
-    const { stdout } = await runCli(
+    const { data } = await runCliJson(
       ["task", "next", "-w", "auth", "-n", "0", "--sort", "recency", "--json"],
       dbPath,
     );
-    const env = JSON.parse(stdout.trim()) as { items: Array<{ name: string }>; count: number };
+    const env = data as { items: Array<{ name: string }>; count: number };
     expect(env.items.map((t) => t.name)).toEqual(["c", "b", "a"]);
   });
 
@@ -710,11 +710,11 @@ describe("task list/next/ready --sort", () => {
   });
 
   it("JSON shape is unchanged (no extra fields when --sort is active)", async () => {
-    const { stdout } = await runCli(
+    const { data } = await runCliJson(
       ["task", "list", "-w", "auth", "--sort", "recency", "--json"],
       dbPath,
     );
-    const env = JSON.parse(stdout.trim()) as {
+    const env = data as {
       items: Array<Record<string, unknown>>;
       count: number;
     };

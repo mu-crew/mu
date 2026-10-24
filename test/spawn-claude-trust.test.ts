@@ -15,7 +15,7 @@ import {
 import { type Db, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCliJson } from "./_runCli.js";
 import { freshMockState, mockTmux } from "./_verbs-mock.js";
 
 const SCREEN = readFileSync(new URL("./fixtures/claude-trust-dialog.txt", import.meta.url), "utf8");
@@ -82,22 +82,20 @@ describe("claude trust dialog", () => {
   it("--send is skipped (reported in --json) and no keys are sent", async () => {
     db.close();
     installPanes(SCREEN);
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "spawn", "w-1", "-w", "auth", "--cli", "claude", "--send", "hello", "--json"],
       dbPath,
     );
     db = openDb({ path: dbPath });
     expect(r.exitCode ?? 0).toBe(0);
-    const out = JSON.parse(r.stdout) as {
+    const out = r.data as {
       send: { ok: boolean; error: string };
       nextSteps: { command: string }[];
     };
     expect(out.send).toMatchObject({ ok: false, error: "TrustDialogPending" });
     expect(out.nextSteps[0]?.command).toContain("mu agent send w-1");
     expect(r.stderr).toBe(""); // --json: the warning rides in the document
-    expect((JSON.parse(r.stdout) as { warnings: string[] }).warnings.join("\n")).toContain(
-      "folder-trust dialog",
-    );
+    expect((r.data as { warnings: string[] }).warnings.join("\n")).toContain("folder-trust dialog");
     expect(sent).toEqual([]);
     expect(getAgent(db, "w-1", "auth")).toBeDefined();
   });

@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, closeTask, setTaskStatus } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 // Strip ANSI escape sequences so assertions can match plain text.
 // (cli-table3 + picocolors emit \x1b[...m sequences we don't want
@@ -177,12 +177,12 @@ describe("mu task show — blockers/dependents grouped by status", () => {
       blockedBy: ["target"],
     });
 
-    const { stdout, exitCode } = await runCli(
+    const { data, exitCode } = await runCliJson(
       ["task", "show", "target", "-w", "wsx", "--json"],
       dbPath,
     );
     expect(exitCode).toBeNull();
-    const parsed = JSON.parse(stdout.trim()) as {
+    const parsed = data as {
       blockers: Array<{ name: string; status: string }>;
       dependents: Array<{ name: string; status: string }>;
     };

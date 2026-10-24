@@ -33,7 +33,7 @@ import { killPane, killSession, paneAlive, resetTmuxExecutor } from "../src/tmux
 import { getParallelTracks } from "../src/tracks.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const TMUX_AVAILABLE = process.env.TMUX !== undefined && process.env.TMUX !== "";
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
@@ -302,19 +302,19 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
     // The demo spawned without `init`, so its session died with the last
     // agent; init brings it back so teardown has a real session to kill.
     db.close();
-    const init = await runCli(["workstream", "init", workstream, "--json"], dbPathFor());
+    const init = await runCliJson(["workstream", "init", workstream, "--json"], dbPathFor());
     expect(init.error).toBeUndefined();
-    const preview = await runCli(["workstream", "teardown", workstream, "--json"], dbPathFor());
+    const preview = await runCliJson(["workstream", "teardown", workstream, "--json"], dbPathFor());
     expect(preview.error).toBeUndefined();
-    const { revision } = JSON.parse(preview.stdout) as { revision: number };
+    const { revision } = preview.data as { revision: number };
     expect(await sessionHasPanes(session)).toBe(true);
 
-    const torn = await runCli(
+    const torn = await runCliJson(
       ["workstream", "teardown", workstream, "--if", String(revision), "--json"],
       dbPathFor(),
     );
     expect(torn.error).toBeUndefined();
-    expect(JSON.parse(torn.stdout)).toMatchObject({ tornDown: true, killedMux: true, tasks: 10 });
+    expect(torn.data).toMatchObject({ tornDown: true, killedMux: true, tasks: 10 });
     // The session died; the tasks stay but every -w verb says so.
     expect(await sessionHasPanes(session)).toBe(false);
     const hidden = await runCli(["task", "list", "-w", workstream], dbPathFor());

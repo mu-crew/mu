@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task next --status (multi-value)", () => {
   let tempDir: string;
@@ -35,10 +35,10 @@ describe("mu task next --status (multi-value)", () => {
   });
 
   async function names(argv: readonly string[]): Promise<string[]> {
-    const { stdout, exitCode, error } = await runCli(argv, dbPath);
+    const { data, exitCode, error } = await runCliJson(argv, dbPath);
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
-    const env = JSON.parse(stdout.trim()) as { items: Array<{ name: string }>; count: number };
+    const env = data as { items: Array<{ name: string }>; count: number };
     return env.items.map((t) => t.name);
   }
 

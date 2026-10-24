@@ -10,7 +10,7 @@ import { type Db, openDb } from "../src/db.js";
 import { addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 type Step = { intent: string; command: string };
 let dir: string;
@@ -34,52 +34,55 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function note(author: string, json = true) {
-  const r = await runCli(
-    [
-      "task",
-      "note",
-      "t1",
-      "rebuild first",
-      "--author",
-      author,
-      "-w",
-      "auth",
-      ...(json ? ["--json"] : []),
-    ],
-    dbPath,
-  );
+const noteArgs = (author: string, ...extra: string[]) => [
+  "task",
+  "note",
+  "t1",
+  "rebuild first",
+  "--author",
+  author,
+  "-w",
+  "auth",
+  ...extra,
+];
+async function note(author: string) {
+  const r = await runCliJson(noteArgs(author, "--json"), dbPath);
   expect(r.exitCode).toBeNull();
   return r;
 }
-const steps = (stdout: string) => (JSON.parse(stdout) as { nextSteps: Step[] }).nextSteps;
+async function noteHuman(author: string) {
+  const r = await runCli(noteArgs(author), dbPath);
+  expect(r.exitCode).toBeNull();
+  return r;
+}
+const steps = (data: unknown) => (data as { nextSteps: Step[] }).nextSteps;
 const sendHint = (s: Step[]) => s.find((x) => x.command.startsWith("mu agent send"));
 const claim = () => runCli(["task", "claim", "t1", "--for", "worker-1", "-w", "auth"], dbPath);
 
 describe("mu task note send hint", () => {
   it("another agent's IN_PROGRESS task: names the send (json + human)", async () => {
     await claim();
-    const hint = sendHint(steps((await note("orchestrator")).stdout));
+    const hint = sendHint(steps((await note("orchestrator")).data));
     expect(hint).toEqual({
       intent:
         "worker-1 will not see this note: send it (--steer, or --interrupt if the note makes the current work wasted)",
       command: 'mu agent send worker-1 -w auth --steer "..."',
     });
-    expect((await note("orchestrator", false)).stdout).toContain("worker-1 will not see this note");
+    expect((await noteHuman("orchestrator")).stdout).toContain("worker-1 will not see this note");
   });
 
   it("the owner's own note: no send hint", async () => {
     await claim();
-    expect(sendHint(steps((await note("worker-1")).stdout))).toBeUndefined();
+    expect(sendHint(steps((await note("worker-1")).data))).toBeUndefined();
   });
 
   it("OPEN task: no send hint", async () => {
-    expect(sendHint(steps((await note("orchestrator")).stdout))).toBeUndefined();
+    expect(sendHint(steps((await note("orchestrator")).data))).toBeUndefined();
   });
 
   it("CLOSED task: no send hint", async () => {
     await claim();
     await runCli(["task", "close", "t1", "-w", "auth", "--evidence", "test"], dbPath);
-    expect(sendHint(steps((await note("orchestrator")).stdout))).toBeUndefined();
+    expect(sendHint(steps((await note("orchestrator")).data))).toBeUndefined();
   });
 });

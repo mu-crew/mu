@@ -44,7 +44,7 @@ import { addTask } from "../src/tasks.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { readRows } from "./_ro.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const SYNC_KEY = "MU_SYNC_DIR";
 const DB_KEY = "MU_DB_PATH";
@@ -97,9 +97,9 @@ describe("mu sql follows the ambient contract", () => {
   it("a read ingests peer ops BEFORE the query", async () => {
     await seed(lap);
     // dev has never heard of lap's task; one `mu sql` read must see it.
-    const r = await runCli(["sql", "SELECT local_id FROM tasks", "--json"], dev);
+    const r = await runCliJson(["sql", "SELECT local_id FROM tasks", "--json"], dev);
     expect(r.exitCode, r.stderr).toBeNull();
-    expect(JSON.parse(r.stdout)).toEqual([{ local_id: "t1" }]);
+    expect(r.data).toEqual([{ local_id: "t1" }]);
   });
 
   it("a script that throws rolls back whole and leaves no op in the segment", async () => {

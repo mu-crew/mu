@@ -18,7 +18,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withHello } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const SINCE = Date.parse("2026-10-05T06:00:00.000Z");
 let dir: string;
@@ -106,9 +106,12 @@ describe("agent.send op", () => {
     mux = installMux("herdr", [["agent prompt", "{}"]]);
     insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "w1:p1", cli: "claude" });
     // "é" is 2 bytes and "🚀" is 4 bytes in UTF-8 (String.length: 1 and 2).
-    const r = await runCli(["agent", "send", "worker-1", "é🚀", "--json", "-w", "auth"], dbPath);
+    const r = await runCliJson(
+      ["agent", "send", "worker-1", "é🚀", "--json", "-w", "auth"],
+      dbPath,
+    );
     expect(r.exitCode).toBeNull();
-    expect(JSON.parse(r.stdout)).toMatchObject({ sentBytes: 6 });
+    expect(r.data).toMatchObject({ sentBytes: 6 });
     expect(sendOps().map((o) => o.payload)).toEqual([
       "agent send worker-1 (mode=plain transport=mux, 6 bytes)",
     ]);

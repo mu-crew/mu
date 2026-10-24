@@ -38,7 +38,7 @@ import { addTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor, type TmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { freshWorkstream } from "./_fixture.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task wait --on-stall warn|exit", () => {
   let tempDir: string;
@@ -322,7 +322,7 @@ describe("mu task wait --on-stall warn|exit", () => {
     // proving the redirect is scoped to the stuck case.
     addTask(db, { localId: "plain_task", workstream, title: "P", impact: 50, effortDays: 1 });
 
-    const { exitCode, stdout } = await runCli(
+    const { exitCode, data } = await runCliJson(
       [
         "task",
         "wait",
@@ -342,7 +342,7 @@ describe("mu task wait --on-stall warn|exit", () => {
     );
 
     expect(exitCode).toBe(5);
-    const payload = JSON.parse(stdout) as {
+    const payload = data as {
       timedOut: Array<{ name: string; stuck: boolean }>;
       nextSteps: Array<{ intent: string; command: string }>;
     };
@@ -362,7 +362,7 @@ describe("mu task wait --on-stall warn|exit", () => {
     setupStalledWorker("piwarn", "pi_stuck", "pi");
     await serveCtl("piwarn", Date.now() - 10 * 60_000, 3);
 
-    const { exitCode, stdout } = await runCli(
+    const { exitCode, data } = await runCliJson(
       [
         "task",
         "wait",
@@ -381,9 +381,9 @@ describe("mu task wait --on-stall warn|exit", () => {
     );
 
     expect(exitCode).toBe(5);
-    const commands = (
-      JSON.parse(stdout) as { nextSteps: Array<{ command: string }> }
-    ).nextSteps.map((s) => s.command);
+    const commands = (data as { nextSteps: Array<{ command: string }> }).nextSteps.map(
+      (s) => s.command,
+    );
     const wait = commands.indexOf(`mu agent wait piwarn --after-runs 2 --json -w ${workstream}`);
     const read = commands.indexOf(`mu agent read piwarn -w ${workstream} --lines 60`);
     expect(wait).toBeGreaterThanOrEqual(0);

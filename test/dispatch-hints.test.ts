@@ -21,7 +21,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withHello } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 type Step = { intent: string; command: string };
 
@@ -135,12 +135,12 @@ describe("mu task claim --for", () => {
   it("pi owner: first next step is the --fresh send of the task (also in --json)", async () => {
     insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "pi" });
     seedTask("t1");
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"],
       dbPath,
     );
     expect(r.error).toBeUndefined();
-    const steps = (JSON.parse(r.stdout) as { nextSteps: Step[] }).nextSteps;
+    const steps = (r.data as { nextSteps: Step[] }).nextSteps;
     expect(steps[0]).toEqual({
       intent: "Send the task to worker-1 (fresh session + prompt in one step)",
       command:
@@ -151,11 +151,11 @@ describe("mu task claim --for", () => {
   it("non-pi owner: plain send of the task", async () => {
     insertAgent(db, { name: "worker-2", workstream: "auth", paneId: "%2", cli: "claude" });
     seedTask("t2");
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "claim", "t2", "--for", "worker-2", "-w", "auth", "--json"],
       dbPath,
     );
-    const steps = (JSON.parse(r.stdout) as { nextSteps: Step[] }).nextSteps;
+    const steps = (r.data as { nextSteps: Step[] }).nextSteps;
     expect(steps[0]?.command).toBe(
       "mu agent send worker-2 'Claim done: work on t2. Read: mu task notes t2 -w auth' -w auth",
     );
@@ -163,8 +163,8 @@ describe("mu task claim --for", () => {
 
   it("--self: no send hint", async () => {
     seedTask("t3");
-    const r = await runCli(["task", "claim", "t3", "--self", "-w", "auth", "--json"], dbPath);
-    const steps = (JSON.parse(r.stdout) as { nextSteps: Step[] }).nextSteps;
+    const r = await runCliJson(["task", "claim", "t3", "--self", "-w", "auth", "--json"], dbPath);
+    const steps = (r.data as { nextSteps: Step[] }).nextSteps;
     expect(steps.some((s) => s.command.startsWith("mu agent send"))).toBe(false);
   });
 });
@@ -188,12 +188,12 @@ describe("mu agent send hints: exactly ONE, the wait", () => {
   ] as const)("%s: JSON nextSteps is exactly the one wait hint", async (_n, flags, state, runs) => {
     seed();
     await serve("worker-1", state, runs);
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "send", "worker-1", "go", ...flags, "-w", "auth", "--json"],
       dbPath,
     );
     expect(r.error).toBeUndefined();
-    const body = JSON.parse(r.stdout) as { nextSteps: Step[]; msgId: string };
+    const body = r.data as { nextSteps: Step[]; msgId: string };
     expect(body.nextSteps).toEqual([
       {
         intent: `Wait for the response to ${body.msgId} (returns its final text)`,
@@ -274,12 +274,12 @@ describe("waitHint: executable as printed", () => {
     insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "pi" });
     await serve("worker-1", "idle", 4);
     for (const flags of [[], ["--fresh"], ["--interrupt"]]) {
-      const r = await runCli(
+      const r = await runCliJson(
         ["agent", "send", "worker-1", ...flags, "go", "-w", "auth", "--json"],
         dbPath,
       );
       expect(r.exitCode, flags.join(" ")).toBeNull();
-      const steps = (JSON.parse(r.stdout) as { nextSteps: Step[] }).nextSteps;
+      const steps = (r.data as { nextSteps: Step[] }).nextSteps;
       const wait = steps.find((s) => s.command.startsWith("mu agent wait"));
       expect(wait?.command, flags.join(" ")).toMatch(
         /^mu agent wait worker-1 -w auth --after-runs \d+ --inc \S+ --json$/,

@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { addBlockEdge, addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escapes
 const ANSI = /\u001b\[[0-9;]*m/g;
@@ -91,8 +91,8 @@ describe("output_labels_human_rename: cli-table3 column headers", () => {
   // duplicate field was dropped (sole user; codebase reads `.name`
   // canonically). `name` is once again the only id key on a task.
   it("`mu task list --json` emits `name` as the sole per-workstream id key", async () => {
-    const { stdout } = await runCli(["task", "list", "-w", "auth", "--json"], dbPath);
-    const env = JSON.parse(stdout.trim()) as {
+    const { data } = await runCliJson(["task", "list", "-w", "auth", "--json"], dbPath);
+    const env = data as {
       items: Array<Record<string, unknown>>;
       count: number;
     };

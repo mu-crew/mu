@@ -32,7 +32,7 @@ import { listWorktrees, registerWorktree } from "../src/worktree.js";
 import { envelopeData } from "./_envelope.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxExecutor, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { asJson, runCli } from "./_runCli.js";
 import { softTeardown } from "./_teardown.js";
 
 let dir: string;
@@ -377,7 +377,7 @@ describe("error_lines: each refusal is one stderr line (--json keeps nextSteps)"
     const stale = workstreamRevision(db, "ws");
     addTask(db, { workstream: "ws", localId: "b", title: "B", impact: 50, effortDays: 1 });
     const r = await run("workstream", "teardown", "ws", "--if", String(stale), "--json");
-    const env = JSON.parse(stderrLines(r.stderr)[0] as string) as {
+    const env = asJson(r).doc as unknown as {
       nextSteps: { command: string }[];
     };
     expect(env.nextSteps.map((n) => n.command)).toEqual(["mu workstream teardown ws"]);

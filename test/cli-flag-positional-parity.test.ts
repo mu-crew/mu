@@ -29,12 +29,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 interface JsonError {
   error: string;
   message: string;
-  exitCode: number;
+  exit: number;
 }
 
 interface BlockJson {
@@ -88,11 +88,11 @@ describe("flag-vs-positional parity sweep (dogfood-*)", () => {
     });
 
     it("`workstream init mu-foo --json` exits 2 with a typed envelope", async () => {
-      const r = await runCli(["workstream", "init", "mu-foo", "--json"], dbPath);
+      const r = await runCliJson(["workstream", "init", "mu-foo", "--json"], dbPath);
       expect(r.exitCode).toBe(2);
-      const env = JSON.parse(r.stderr.trim()) as JsonError;
+      const env = r.doc as unknown as JsonError;
       expect(env.error).toBe("WorkstreamNameInvalidError");
-      expect(env.exitCode).toBe(2);
+      expect(env.exit).toBe(2);
     });
 
     it("`workstream init scratch` (reserved name) exits 2", async () => {
@@ -115,39 +115,39 @@ describe("flag-vs-positional parity sweep (dogfood-*)", () => {
       expect(r.error).toBeUndefined();
       expect(r.exitCode).toBeNull();
 
-      const show = await runCli(["task", "show", "c", "-w", "ws", "--json"], dbPath);
-      const payload = JSON.parse(show.stdout.trim()) as ShowJson;
+      const show = await runCliJson(["task", "show", "c", "-w", "ws", "--json"], dbPath);
+      const payload = show.data as ShowJson;
       expect(payload.blockers.map((b) => b.name).sort()).toEqual(["a", "b"]);
     });
 
     it("repeated `--by a --by b` adds both edges", async () => {
       await seedTasks("a", "b", "c");
-      const r = await runCli(
+      const r = await runCliJson(
         ["task", "block", "c", "--by", "a", "--by", "b", "-w", "ws", "--json"],
         dbPath,
       );
       expect(r.exitCode).toBeNull();
-      const payload = JSON.parse(r.stdout.trim()) as BlockJson;
+      const payload = r.data as BlockJson;
       expect(payload.blockerNames).toEqual(["a", "b"]);
       expect(payload.addedEdges).toBe(2);
     });
 
     it("mixed `--by a,b --by c` adds all three (same shape as --blocked-by)", async () => {
       await seedTasks("a", "b", "c", "d");
-      const r = await runCli(
+      const r = await runCliJson(
         ["task", "block", "d", "--by", "a,b", "--by", "c", "-w", "ws", "--json"],
         dbPath,
       );
       expect(r.exitCode).toBeNull();
-      const payload = JSON.parse(r.stdout.trim()) as BlockJson;
+      const payload = r.data as BlockJson;
       expect(payload.blockerNames).toEqual(["a", "b", "c"]);
     });
 
     it("single `--by a` still works and keeps the scalar blockerName field", async () => {
       await seedTasks("a", "c");
-      const r = await runCli(["task", "block", "c", "--by", "a", "-w", "ws", "--json"], dbPath);
+      const r = await runCliJson(["task", "block", "c", "--by", "a", "-w", "ws", "--json"], dbPath);
       expect(r.exitCode).toBeNull();
-      const payload = JSON.parse(r.stdout.trim()) as BlockJson & { blockerName?: string };
+      const payload = r.data as BlockJson & { blockerName?: string };
       expect(payload.blockerName).toBe("a");
       expect(payload.blockerNames).toEqual(["a"]);
     });
@@ -155,13 +155,16 @@ describe("flag-vs-positional parity sweep (dogfood-*)", () => {
     it("`unblock --by a,b` is symmetric and removes both edges", async () => {
       await seedTasks("a", "b", "c");
       await runCli(["task", "block", "c", "--by", "a,b", "-w", "ws"], dbPath);
-      const r = await runCli(["task", "unblock", "c", "--by", "a,b", "-w", "ws", "--json"], dbPath);
+      const r = await runCliJson(
+        ["task", "unblock", "c", "--by", "a,b", "-w", "ws", "--json"],
+        dbPath,
+      );
       expect(r.exitCode).toBeNull();
-      const payload = JSON.parse(r.stdout.trim()) as BlockJson;
+      const payload = r.data as BlockJson;
       expect(payload.removedEdges).toBe(2);
 
-      const show = await runCli(["task", "show", "c", "-w", "ws", "--json"], dbPath);
-      expect((JSON.parse(show.stdout.trim()) as ShowJson).blockers).toEqual([]);
+      const show = await runCliJson(["task", "show", "c", "-w", "ws", "--json"], dbPath);
+      expect((show.data as ShowJson).blockers).toEqual([]);
     });
 
     it("a bad id inside the list still surfaces exit 3, naming the bad id alone", async () => {
@@ -187,10 +190,10 @@ describe("flag-vs-positional parity sweep (dogfood-*)", () => {
   describe("dogfood-destroy-w-flag: positional target aliases -w", () => {
     it("`workstream teardown ws` targets ws (was: too many arguments + help)", async () => {
       await seedTasks("a");
-      const r = await runCli(["workstream", "teardown", "ws", "--json"], dbPath);
+      const r = await runCliJson(["workstream", "teardown", "ws", "--json"], dbPath);
       expect(r.error).toBeUndefined();
       expect(r.exitCode).toBeNull();
-      const payload = JSON.parse(r.stdout.trim()) as { workstreamName: string; dryRun?: boolean };
+      const payload = r.data as { workstreamName: string; dryRun?: boolean };
       expect(payload.workstreamName).toBe("ws");
       // Bare (no --yes) is still the dry-run half of the two-phase verb.
       expect(payload.dryRun).toBe(true);
@@ -198,9 +201,9 @@ describe("flag-vs-positional parity sweep (dogfood-*)", () => {
 
     it("`workstream teardown -w ws` (the pre-existing form) still works", async () => {
       await seedTasks("a");
-      const r = await runCli(["workstream", "teardown", "-w", "ws", "--json"], dbPath);
+      const r = await runCliJson(["workstream", "teardown", "-w", "ws", "--json"], dbPath);
       expect(r.exitCode).toBeNull();
-      const payload = JSON.parse(r.stdout.trim()) as { workstreamName: string };
+      const payload = r.data as { workstreamName: string };
       expect(payload.workstreamName).toBe("ws");
     });
 
@@ -226,7 +229,7 @@ describe("flag-vs-positional parity sweep (dogfood-*)", () => {
       expect(r.error).toBeUndefined();
       expect(r.exitCode).toBeNull();
 
-      const notes = await runCli(["task", "notes", "a", "-w", "ws", "--json"], dbPath);
+      const notes = await runCliJson(["task", "notes", "a", "-w", "ws", "--json"], dbPath);
       expect(notes.stdout).toMatch(/from the flag/);
     });
 
@@ -234,7 +237,7 @@ describe("flag-vs-positional parity sweep (dogfood-*)", () => {
       await seedTasks("a");
       const r = await runCli(["task", "note", "a", "from the positional", "-w", "ws"], dbPath);
       expect(r.exitCode).toBeNull();
-      const notes = await runCli(["task", "notes", "a", "-w", "ws", "--json"], dbPath);
+      const notes = await runCliJson(["task", "notes", "a", "-w", "ws", "--json"], dbPath);
       expect(notes.stdout).toMatch(/from the positional/);
     });
 

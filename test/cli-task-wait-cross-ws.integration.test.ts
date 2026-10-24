@@ -26,7 +26,14 @@ import { type Db, openDb } from "../src/db.js";
 import { setWaitSleepForTests } from "../src/tasks/wait.js";
 import { addTask, closeTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
+
+interface WaitOut {
+  firing: Record<string, unknown> | null;
+  all: unknown[];
+  timedOut: unknown[];
+  nextSteps: unknown[];
+}
 
 describe("mu task wait — cross-workstream qualified refs + --first", () => {
   let tempDir: string;
@@ -62,14 +69,14 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
     // wsa/foo is already CLOSED → wait should return immediately.
     closeTask(db, "foo", { workstream: "wsa", evidence: "test" });
 
-    const { exitCode, stdout, stderr, error } = await runCli(
+    const { exitCode, data, stderr, error } = await runCliJson(
       ["task", "wait", "wsa/foo", "wsb/bar", "--first", "--timeout", "5", "--json"],
       dbPath,
     );
     expect(error).toBeUndefined();
     expect(stderr).toBe("");
     expect(exitCode).toBeNull();
-    const out = JSON.parse(stdout);
+    const out = data as WaitOut;
     expect(out.firing).toMatchObject({
       workstreamName: "wsa",
       name: "foo",
@@ -105,14 +112,14 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
     closeTask(db, "bar", { workstream: "wsb", evidence: "test" });
 
     // foo is bare (resolves via -w wsa); wsb/bar is qualified.
-    const { exitCode, stdout, stderr, error } = await runCli(
+    const { exitCode, data, stderr, error } = await runCliJson(
       ["task", "wait", "foo", "wsb/bar", "-w", "wsa", "--timeout", "5", "--json"],
       dbPath,
     );
     expect(error).toBeUndefined();
     expect(stderr).toBe("");
     expect(exitCode).toBeNull();
-    const out = JSON.parse(stdout);
+    const out = data as WaitOut;
     expect(out.timedOut).toEqual([]);
     expect(out.all).toHaveLength(2);
     const allIds = (out.all as { qualifiedId: string }[]).map((t) => t.qualifiedId).sort();
@@ -127,13 +134,13 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
     closeTask(db, "foo", { workstream: "wsa", evidence: "test" });
     closeTask(db, "bar", { workstream: "wsb", evidence: "test" });
 
-    const { exitCode, stdout, error } = await runCli(
+    const { exitCode, data, error } = await runCliJson(
       ["task", "wait", "wsa/foo", "wsb/bar", "--timeout", "5", "--json"],
       dbPath,
     );
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
-    const out = JSON.parse(stdout);
+    const out = data as WaitOut;
     // --all path: firing IS null (no single "first" to single out).
     expect(out.firing).toBeNull();
     expect(out.all).toHaveLength(2);
@@ -152,14 +159,14 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
     // foo CLOSED, bar OPEN → --all times out with partial progress.
     closeTask(db, "foo", { workstream: "wsa", evidence: "test" });
 
-    const { exitCode, stdout, error } = await runCli(
+    const { exitCode, data, error } = await runCliJson(
       ["task", "wait", "wsa/foo", "wsb/bar", "--timeout", "0.3", "--json"],
       dbPath,
     );
     expect(error).toBeUndefined();
     // --json + timeout = exit 5.
     expect(exitCode).toBe(5);
-    const out = JSON.parse(stdout);
+    const out = data as WaitOut;
     // The JSON contract per task_wait_cross_workstream:
     //   firing  — null on the --all path (even on partial success)
     //   all     — array of refs that REACHED target

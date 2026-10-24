@@ -29,7 +29,7 @@ import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task claim --for: cross-workstream qualified ref", () => {
   let tempDir: string;
@@ -60,14 +60,14 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
   });
 
   it("--for <ws>/<name> dispatches across workstreams; owner set", async () => {
-    const { exitCode, stdout, stderr, error } = await runCli(
+    const { exitCode, data, stderr, error } = await runCliJson(
       ["task", "claim", "foo", "-w", "wsa", "--for", "wsb/worker-1", "--json"],
       dbPath,
     );
     expect(error).toBeUndefined();
     expect(stderr).toBe("");
     expect(exitCode).toBeNull();
-    const out = JSON.parse(stdout);
+    const out = data as { ownerName: string; previousStatus: string; status: string };
     expect(out.ownerName).toBe("worker-1");
     expect(out.previousStatus).toBe("OPEN");
     expect(out.status).toBe("IN_PROGRESS");
@@ -104,7 +104,7 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
   it("bare --for to an agent in the SAME workstream still works (regression guard)", async () => {
     // Add a worker-2 in wsa; bare --for resolves there.
     insertAgent(db, { name: "worker-2", workstream: "wsa", paneId: "%2" });
-    const { exitCode, stderr, error } = await runCli(
+    const { exitCode, stderr, error } = await runCliJson(
       ["task", "claim", "foo", "-w", "wsa", "--for", "worker-2", "--json"],
       dbPath,
     );
@@ -127,7 +127,7 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
       dbPath,
     );
 
-    const { exitCode, stdout, stderr, error } = await runCli(
+    const { exitCode, data, stderr, error } = await runCliJson(
       ["task", "claim", "foo", "-w", "wsa", "--for", "wsb/worker-1", "--json"],
       dbPath,
     );
@@ -135,7 +135,7 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
     expect(error).toBeUndefined();
     expect(stderr).toBe("");
     expect(exitCode).toBeNull();
-    const out = JSON.parse(stdout) as { nextSteps: { intent: string; command: string }[] };
+    const out = data as { nextSteps: { intent: string; command: string }[] };
     const step = out.nextSteps.find((candidate) => candidate.intent.includes("remote commit"));
     expect(step?.command).toContain("mule run --host 'dev' --max-secs 30");
     expect(step?.command).toContain("cd ~/ws/worker-1 && git rev-parse HEAD");

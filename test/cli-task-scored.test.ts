@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task add/update/next with optional scoring", () => {
   let tempDir: string;
@@ -67,10 +67,11 @@ describe("mu task add/update/next with optional scoring", () => {
     ).run();
     db.close();
     for (const extra of [[], ["--sort", "roi"]]) {
-      const r = await runCli(["task", "next", "-n", "0", "-w", "t", "--json", ...extra], dbPath);
-      const names = (JSON.parse(r.stdout) as { items: { name: string }[] }).items.map(
-        (t) => t.name,
+      const r = await runCliJson(
+        ["task", "next", "-n", "0", "-w", "t", "--json", ...extra],
+        dbPath,
       );
+      const names = (r.data as { items: { name: string }[] }).items.map((t) => t.name);
       expect(names).toEqual(["hi", "lo", "old_unscored", "new_unscored"]);
     }
   });

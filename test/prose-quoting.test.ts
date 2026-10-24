@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setStdinReaderForTests } from "../src/cli/stdin.js";
 import { openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 // What a quoted heredoc delivers: real newlines, a trailing newline,
 // and characters a shell would mangle inside '...' or "...".
@@ -38,8 +38,8 @@ afterEach(() => {
 });
 
 async function noteContents(id: string): Promise<string[]> {
-  const r = await runCli(["task", "notes", id, "-w", "ws", "--json"], dbPath);
-  return (JSON.parse(r.stdout) as { items: { content: string }[] }).items.map((n) => n.content);
+  const r = await runCliJson(["task", "notes", id, "-w", "ws", "--json"], dbPath);
+  return (r.data as { items: { content: string }[] }).items.map((n) => n.content);
 }
 
 describe("`-` reads note text from stdin, verbatim", () => {
@@ -151,34 +151,32 @@ describe("a note that is only `-`, empty or whitespace is loud", () => {
     const empty = await runCli(["task", "note", "a", "", "-w", "ws"], dbPath);
     expect(empty.exitCode).toBeNull();
     expect(empty.stderr).toMatch(EMPTY);
-    const ws = await runCli(["task", "note", "a", "   ", "-w", "ws", "--json"], dbPath);
-    expect((JSON.parse(ws.stdout) as { warnings?: string[] }).warnings?.[0]).toMatch(
-      /empty or whitespace/,
-    );
+    const ws = await runCliJson(["task", "note", "a", "   ", "-w", "ws", "--json"], dbPath);
+    expect((ws.data as { warnings?: string[] }).warnings?.[0]).toMatch(/empty or whitespace/);
     expect(ws.stderr).toBe("");
-    const ok = await runCli(["task", "note", "a", "fine", "-w", "ws", "--json"], dbPath);
+    const ok = await runCliJson(["task", "note", "a", "fine", "-w", "ws", "--json"], dbPath);
     expect(ok.stderr).not.toMatch(/warning:/);
-    expect(JSON.parse(ok.stdout)).not.toHaveProperty("warnings");
+    expect(ok.data).not.toHaveProperty("warnings");
   });
 
   it("stdin that is itself just `-` warns instead of storing it silently", async () => {
     setStdinReaderForTests(async () => "-\n");
     await runCli(["task", "add", "a", "-t", "A", "-i", "5", "-e", "1", "-w", "ws"], dbPath);
-    const r = await runCli(["task", "note", "a", "-", "-w", "ws", "--json"], dbPath);
+    const r = await runCliJson(["task", "note", "a", "-", "-w", "ws", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
     expect(r.stderr).toBe(""); // --json: the warning is in the document only
-    expect((JSON.parse(r.stdout) as { warnings?: string[] }).warnings?.[0]).toMatch(/bare "-"/);
+    expect((r.data as { warnings?: string[] }).warnings?.[0]).toMatch(/bare "-"/);
     expect(await noteContents("a")).toEqual(["-"]);
   });
 
   it("task add --note with a bare `-` from stdin or whitespace warns", async () => {
     setStdinReaderForTests(async () => " - \n");
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "add", "a", "-t", "A", "-i", "5", "-e", "1", "-w", "ws", "--note", "-", "--json"],
       dbPath,
     );
     expect(r.stderr).toBe("");
-    expect((JSON.parse(r.stdout) as { warnings?: string[] }).warnings?.[0]).toMatch(/bare "-"/);
+    expect((r.data as { warnings?: string[] }).warnings?.[0]).toMatch(/bare "-"/);
     const b = await runCli(
       ["task", "add", "b", "-t", "B", "-i", "5", "-e", "1", "-w", "ws", "--note", " "],
       dbPath,

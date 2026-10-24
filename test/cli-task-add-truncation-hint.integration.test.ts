@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task add — truncation hint", () => {
   let tempDir: string;
@@ -77,14 +77,14 @@ describe("mu task add — truncation hint", () => {
   });
 
   it("suppresses the hint under --json (machine surface stays clean)", async () => {
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "add", "-w", "test", "-t", LONG_TITLE, "-i", "50", "-e", "1", "--json"],
       dbPath,
     );
     expect(r.error).toBeUndefined();
     // No stderr noise, and stdout parses as a clean JSON object.
     expect(r.stderr).toBe("");
-    const parsed = JSON.parse(r.stdout);
+    const parsed = r.data;
     expect(parsed).toHaveProperty("task");
     expect(typeof parsed.task.name).toBe("string");
   });
@@ -95,12 +95,12 @@ describe("mu task add — truncation hint", () => {
   // slug, so pipelines can detect meaning loss without grepping
   // stderr.
   it("--json surfaces top-level truncated:true + originalSlug when auto-id is truncated", async () => {
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "add", "-w", "test", "-t", LONG_TITLE, "-i", "50", "-e", "1", "--json"],
       dbPath,
     );
     expect(r.error).toBeUndefined();
-    const parsed = JSON.parse(r.stdout);
+    const parsed = r.data;
     expect(parsed.truncated).toBe(true);
     expect(typeof parsed.originalSlug).toBe("string");
     // Sanity: the originalSlug is strictly longer than the truncated
@@ -116,12 +116,12 @@ describe("mu task add — truncation hint", () => {
   });
 
   it("--json omits truncated/originalSlug entirely for a short auto-derived title", async () => {
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "add", "-w", "test", "-t", SHORT_TITLE, "-i", "50", "-e", "1", "--json"],
       dbPath,
     );
     expect(r.error).toBeUndefined();
-    const parsed = JSON.parse(r.stdout);
+    const parsed = r.data;
     // Conventions — audit_json_envelope_uniformity singleton style:
     // optional fields stay omitted when there's nothing to say.
     // truncated/originalSlug only appear when truncation actually
@@ -133,7 +133,7 @@ describe("mu task add — truncation hint", () => {
   it("--json omits truncated/originalSlug when the operator passed an explicit <id>", async () => {
     // Explicit <id> path — even with a long title, the operator chose
     // the id by hand; there is no auto-derive lossiness to report.
-    const r = await runCli(
+    const r = await runCliJson(
       [
         "task",
         "add",
@@ -151,7 +151,7 @@ describe("mu task add — truncation hint", () => {
       dbPath,
     );
     expect(r.error).toBeUndefined();
-    const parsed = JSON.parse(r.stdout);
+    const parsed = r.data;
     expect(parsed.task.name).toBe("manual_short_id");
     expect(parsed).not.toHaveProperty("truncated");
     expect(parsed).not.toHaveProperty("originalSlug");

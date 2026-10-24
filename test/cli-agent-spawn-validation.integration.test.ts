@@ -43,7 +43,7 @@ import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from
 import { ensureWorkstream } from "../src/workstream.js";
 import { listWorktrees, worktreePath } from "../src/worktree.js";
 import { initGitRepo } from "./_git.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -461,12 +461,12 @@ describe("`mu agent spawn` — env-var attribution in success line (Part C)", ()
 
   it("--json carries `resolvedFromEnvVar` when the override came from an env var", async () => {
     await withEnv("MU_XXX_COMMAND", "/bin/echo", async () => {
-      const r = await runCli(
+      const r = await runCliJson(
         ["agent", "spawn", "worker-1", "-w", "auth", "--cli", "xxx", "--json"],
         dbPath,
       );
       expect(r.error).toBeUndefined();
-      const env = JSON.parse(r.stdout);
+      const env = r.data;
       expect(env.resolvedFromEnvVar).toBe("MU_XXX_COMMAND");
       expect(env.resolvedCommand).toBe("/bin/echo");
       expect(env.commandOverridden).toBe(true);
@@ -475,12 +475,12 @@ describe("`mu agent spawn` — env-var attribution in success line (Part C)", ()
 
   it("--json omits `resolvedFromEnvVar` on the bare-cli (no-override) path", async () => {
     await withEnv("MU_PI_COMMAND", undefined, async () => {
-      const r = await runCli(
+      const r = await runCliJson(
         ["agent", "spawn", "worker-1", "-w", "auth", "--cli", "pi", "--json"],
         dbPath,
       );
       expect(r.error).toBeUndefined();
-      const env = JSON.parse(r.stdout);
+      const env = r.data;
       expect(env.resolvedFromEnvVar).toBeUndefined();
       expect(env.commandOverridden).toBe(false);
     });

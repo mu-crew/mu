@@ -40,7 +40,7 @@ import {
 import { registerWorktree } from "../src/worktree.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { asJson, runCli } from "./_runCli.js";
 import { softTeardown } from "./_teardown.js";
 
 let dir: string;
@@ -164,7 +164,7 @@ describe("preview writes nothing", () => {
   it("--json preview carries revision and nextSteps with --if", async () => {
     seed("ws");
     const r = await run("workstream", "teardown", "ws", "--json");
-    const j = JSON.parse(r.stdout) as { revision: number; dryRun: boolean; nextSteps: unknown[] };
+    const j = asJson(r).data as { revision: number; dryRun: boolean; nextSteps: unknown[] };
     expect(j.dryRun).toBe(true);
     expect(JSON.stringify(j.nextSteps)).toContain(`--if ${j.revision}`);
   });
@@ -216,7 +216,7 @@ describe("--if", () => {
     const rev = workstreamRevision(db, "ws");
     const r = await run("workstream", "teardown", "ws", "--if", String(rev), "--json");
     expect(r.error).toBeUndefined();
-    expect(JSON.parse(r.stdout)).toMatchObject({ tornDown: true, tasks: 2, notes: 1 });
+    expect(asJson(r).data).toMatchObject({ tornDown: true, tasks: 2, notes: 1 });
     expect(tornDownAt("ws")).not.toBeNull();
   });
 });
@@ -264,7 +264,7 @@ describe("--empty sweep revision", () => {
   it("--empty --if refuses (exit 4) when the swept set changed since the preview; nothing is torn down", async () => {
     ensureWorkstream(db, "e1");
     const prev = await run("workstream", "teardown", "--empty", "--json");
-    const { revision } = JSON.parse(prev.stdout) as { revision: number };
+    const { revision } = asJson(prev).data as { revision: number };
     ensureWorkstream(db, "e2"); // a new empty workstream appears after the preview
     const r = await run("workstream", "teardown", "--empty", "--if", String(revision));
     expect(r.exitCode).toBe(4);
@@ -277,9 +277,9 @@ describe("--empty sweep revision", () => {
     ensureWorkstream(db, "e1");
     ensureWorkstream(db, "e2");
     const prev = await run("workstream", "teardown", "--empty", "--json");
-    const { revision } = JSON.parse(prev.stdout) as { revision: number };
+    const { revision } = asJson(prev).data as { revision: number };
     const r = await run("workstream", "teardown", "--empty", "--if", String(revision), "--json");
-    expect(JSON.parse(r.stdout)).toMatchObject({ tornDown: 2, failed: [] });
+    expect(asJson(r).data).toMatchObject({ tornDown: 2, failed: [] });
     const groups = db
       .prepare(
         "SELECT DISTINCT group_id FROM ops WHERE intent = 'workstream.teardown' AND entity = 'workstream'",
@@ -335,7 +335,7 @@ describe("soft", () => {
     const rev = workstreamRevision(db, "ws");
     const r = await run("workstream", "teardown", "ws", "--if", String(rev), "--json");
     expect(r.error).toBeUndefined();
-    expect(JSON.parse(r.stdout)).toMatchObject({ tornDown: true, deletedAgents: 1 });
+    expect(asJson(r).data).toMatchObject({ tornDown: true, deletedAgents: 1 });
     expect(tornDownAt("ws")).toBe("2026-01-01T00:00:00.000Z");
     expect((db.prepare("SELECT COUNT(*) AS n FROM agents").get() as { n: number }).n).toBe(0);
   });
@@ -382,14 +382,13 @@ describe("torn-down workstreams are invisible", () => {
     expect((await listWorkstreams(db)).map((w) => w.name)).toEqual(["live"]);
     expect(() => listTasks(db, "ws")).toThrow(WorkstreamTornDownError);
     const r = await run("workstream", "list", "--json");
-    expect(JSON.stringify(JSON.parse(r.stdout))).not.toContain('"name":"ws"');
+    expect(JSON.stringify(asJson(r).data)).not.toContain('"name":"ws"');
   });
 
   it("list --torn-down shows it as soft (rows kept) with the teardown group", async () => {
     const r = await run("workstream", "list", "--torn-down", "--json");
-    const items = (
-      JSON.parse(r.stdout) as { items: { name: string; kind: string; group: string }[] }
-    ).items;
+    const items = (asJson(r).data as { items: { name: string; kind: string; group: string }[] })
+      .items;
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ name: "ws", kind: "soft" });
     expect(items[0]?.group).toMatch(/^[0-9a-f-]{36}$/);
@@ -403,7 +402,7 @@ describe("torn-down workstreams are invisible", () => {
       "UPDATE ops SET intent = 'workstream.teardown' WHERE entity = 'workstream' AND op = 'del' AND key = 'old'",
     ).run();
     const r = await run("workstream", "list", "--torn-down", "--json");
-    const items = (JSON.parse(r.stdout) as { items: { name: string; kind: string }[] }).items;
+    const items = (asJson(r).data as { items: { name: string; kind: string }[] }).items;
     expect(items.map((i) => [i.name, i.kind]).sort()).toEqual([
       ["old", "hard"],
       ["ws", "soft"],

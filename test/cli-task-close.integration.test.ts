@@ -15,7 +15,7 @@ import { addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import type { WorktreeRow } from "../src/worktree.js";
 import { withEnv } from "./_env.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 import { seedWorktree } from "./_worktree.js";
 
 const GIT = (() => {
@@ -114,13 +114,13 @@ gitDescribe("mu task close dirty-worktree commit hint", () => {
         `git -C '${worktree.path}' add -A && git -C '${worktree.path}' commit -m 'Implement Helpful Thing'`,
       );
 
-      const json = await runCli(
+      const json = await runCliJson(
         ["task", "close", "dirty_json", "-w", "test", "--evidence", "test", "--json"],
         dbPath,
       );
       expect(json.error).toBeUndefined();
       expect(json.exitCode).toBeNull();
-      const payload = JSON.parse(json.stdout) as JsonClosePayload;
+      const payload = json.data as JsonClosePayload;
       expect(payload.nextSteps).toContainEqual({
         intent: "Don't forget to commit",
         command: `git -C '${worktree.path}' add -A && git -C '${worktree.path}' commit -m 'Emit JSON Hint'`,
@@ -132,12 +132,12 @@ gitDescribe("mu task close dirty-worktree commit hint", () => {
     await seedDb({ withWorktree: true });
 
     await withEnv("MU_AGENT_NAME", "worker-1", async () => {
-      const json = await runCli(
+      const json = await runCliJson(
         ["task", "close", "dirty_json", "-w", "test", "--evidence", "test", "--json"],
         dbPath,
       );
       expect(json.error).toBeUndefined();
-      const payload = JSON.parse(json.stdout) as JsonClosePayload;
+      const payload = json.data as JsonClosePayload;
       expect(payload.nextSteps.map((s) => s.intent)).not.toContain("Don't forget to commit");
       expect(json.stdout).not.toContain("git commit -m");
     });
@@ -147,12 +147,12 @@ gitDescribe("mu task close dirty-worktree commit hint", () => {
     await seedDb({ withWorktree: false });
 
     await withEnv("MU_AGENT_NAME", "worker-1", async () => {
-      const json = await runCli(
+      const json = await runCliJson(
         ["task", "close", "dirty_json", "-w", "test", "--evidence", "test", "--json"],
         dbPath,
       );
       expect(json.error).toBeUndefined();
-      const payload = JSON.parse(json.stdout) as JsonClosePayload;
+      const payload = json.data as JsonClosePayload;
       expect(payload.nextSteps.map((s) => s.intent)).not.toContain("Don't forget to commit");
       expect(json.stdout).not.toContain("git commit -m");
     });

@@ -31,7 +31,7 @@ import {
   waitForTasks,
 } from "../src/tasks.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const WS = "wf";
 let dir: string;
@@ -125,10 +125,13 @@ describe("mu task wait --timeout", () => {
     // emit time, not when the ref reached the target.
     addT("t1");
     closeTask(db, "t1", { workstream: WS, evidence: "test" });
-    const res = await runCli(["task", "wait", "t1", "-w", WS, "--json", "--timeout", "1"], dbPath);
+    const res = await runCliJson(
+      ["task", "wait", "t1", "-w", WS, "--json", "--timeout", "1"],
+      dbPath,
+    );
     expect(res.error).toBeUndefined();
     expect(res.exitCode).toBeNull();
-    const out = JSON.parse(res.stdout) as { all: Array<Record<string, unknown>> };
+    const out = res.data as { all: Array<Record<string, unknown>> };
     expect(out.all).toHaveLength(1);
     expect(out.all[0]?.qualifiedId).toBe(`${WS}/t1`);
     expect(out.all[0]).not.toHaveProperty("reachedAt");

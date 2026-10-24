@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { addTask, getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { asJson, type Capture, runCli } from "./_runCli.js";
 
 describe("mu task substates CLI", () => {
   let tempDir: string;
@@ -46,8 +46,8 @@ describe("mu task substates CLI", () => {
   });
 
   const cli = (...args: string[]) => runCli(["task", ...args, "-w", "test"], dbPath);
-  const names = (stdout: string) =>
-    (JSON.parse(stdout) as { items: { name: string }[] }).items.map((t) => t.name);
+  const names = (cap: Capture) =>
+    (asJson(cap).data as { items: { name: string }[] }).items.map((t) => t.name);
 
   it("close --as wontfix without --why exits 4 naming --why", async () => {
     const r = await cli("close", "a", "--as", "wontfix");
@@ -63,7 +63,7 @@ describe("mu task substates CLI", () => {
   it("close --as wontfix --why reports status, substate and unblocked", async () => {
     const r = await cli("close", "a", "--as", "wontfix", "--why", "dup of x", "--json");
     expect(r.exitCode).toBeNull();
-    const p = JSON.parse(r.stdout) as { status: string; substate: string; unblocked: string[] };
+    const p = asJson<{ status: string; substate: string; unblocked: string[] }>(r).data;
     expect(p.status).toBe("CLOSED");
     expect(p.substate).toBe("wontfix");
     expect(p.unblocked).toEqual(["b"]);
@@ -81,16 +81,16 @@ describe("mu task substates CLI", () => {
     const park = await cli("park", "c", "--why", "later");
     expect(park.exitCode).toBeNull();
     const list = await cli("list", "--substate", "parked", "--json");
-    expect(names(list.stdout)).toEqual(["c"]);
+    expect(names(list)).toEqual(["c"]);
     const next = await cli("next", "-n", "0", "--json");
-    expect(names(next.stdout)).not.toContain("c");
-    expect(names(next.stdout)).toContain("a");
+    expect(names(next)).not.toContain("c");
+    expect(names(next)).toContain("a");
   });
 
   it("--substate accepts comma lists and rejects unknown values (usage error)", async () => {
     await cli("park", "c", "--why", "later");
     const list = await cli("list", "--substate", "parked,todo", "--json");
-    expect(names(list.stdout)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(names(list)).toEqual(["a", "b", "c", "d", "e"]);
     const bad = await cli("list", "--substate", "bogus");
     expect(bad.exitCode).toBe(2); // UsageError, same as --status bogus
     expect(bad.stderr).toContain("--substate");
@@ -108,7 +108,7 @@ describe("mu task substates CLI", () => {
     const r = await cli("unpark", "c", "--json");
     expect(r.exitCode).toBeNull();
     const next = await cli("next", "-n", "0", "--json");
-    expect(names(next.stdout)).toContain("c");
+    expect(names(next)).toContain("c");
   });
 
   it("claim refuses a parked task unless --force", async () => {
@@ -170,9 +170,9 @@ describe("mu task substates CLI", () => {
     expect(out).toContain("a (CLOSED/duplicate)");
     expect(out).not.toContain("cherry-pick");
     expect(out).toContain("mu task notes a -w test");
-    const j = JSON.parse((await cli("wait", "a", "--first", "--json")).stdout) as {
-      firing: { substate: string };
-    };
+    const j = asJson<{ firing: { substate: string } }>(
+      await cli("wait", "a", "--first", "--json"),
+    ).data;
     expect(j.firing.substate).toBe("duplicate");
   });
 

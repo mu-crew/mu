@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { addTask, closeTask, getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task close --if-ready", () => {
   let tempDir: string;
@@ -47,12 +47,12 @@ describe("mu task close --if-ready", () => {
     });
     seed.close();
 
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "close", "umbrella", "-w", "test", "--if-ready", "--evidence", "test", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBeNull();
-    const payload = JSON.parse(r.stdout) as {
+    const payload = r.data as {
       changed: boolean;
       status: string;
       skipped?: string;
@@ -90,12 +90,12 @@ describe("mu task close --if-ready", () => {
     closeTask(seed, "c", { workstream: "test", evidence: "test" });
     seed.close();
 
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "close", "umbrella", "-w", "test", "--if-ready", "--evidence", "test", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBeNull();
-    const payload = JSON.parse(r.stdout) as { changed: boolean; status: string; skipped?: string };
+    const payload = r.data as { changed: boolean; status: string; skipped?: string };
     expect(payload.changed).toBe(true);
     expect(payload.status).toBe("CLOSED");
     expect(payload.skipped).toBeUndefined();
@@ -128,12 +128,12 @@ describe("mu task close --if-ready", () => {
     closeTask(seed, "a", { workstream: "test", evidence: "test" });
     seed.close();
 
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "close", "umbrella", "-w", "test", "--if-ready", "--evidence", "test", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBeNull();
-    const payload = JSON.parse(r.stdout) as {
+    const payload = r.data as {
       taskName: string;
       changed: boolean;
       skipped?: string;
@@ -170,13 +170,13 @@ describe("mu task close --if-ready", () => {
     });
     seed.close();
 
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "close", "umbrella", "-w", "test", "--evidence", "test", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBe(4);
-    expect(r.stderr).toContain("open blockers: a");
-    expect(r.stderr).toContain("mu task tree umbrella -w test");
+    expect(String(r.doc.message)).toContain("open blockers: a");
+    expect(JSON.stringify(r.doc)).toContain("mu task tree umbrella -w test");
   });
 
   it("a non-done close still closes over open blockers (it claims no work happened)", async () => {
@@ -192,12 +192,12 @@ describe("mu task close --if-ready", () => {
     });
     seed.close();
 
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "close", "umbrella", "-w", "test", "--as", "wontfix", "--why", "dropped", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBeNull();
-    expect(JSON.parse(r.stdout)).toMatchObject({ changed: true, status: "CLOSED" });
+    expect(r.data).toMatchObject({ changed: true, status: "CLOSED" });
   });
 
   it("--if-ready without --evidence and no open blockers: usage refusal (exit 2, one line), nothing written", async () => {

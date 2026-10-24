@@ -32,7 +32,7 @@ import { worktreePath } from "../src/worktree.js";
 import { INC, withHello } from "./_ctl-ext.js";
 import { withEnv } from "./_env.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli, runCliWire } from "./_runCli.js";
+import { runCliJson, runCliWire } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
 /** MU_* vars the harness itself sets (and the clean-env check ignores). */
@@ -629,10 +629,10 @@ describe("mu agent spawn (CLI)", () => {
   it("--json reports ctl ok and the socket path", async () => {
     db.close();
     installPanes("worker-1");
-    const r = await runCli(["agent", "spawn", "worker-1", "-w", "auth", "--json"], dbPath);
+    const r = await runCliJson(["agent", "spawn", "worker-1", "-w", "auth", "--json"], dbPath);
     db = openDb({ path: dbPath });
     expect(r.exitCode ?? 0).toBe(0);
-    const out = JSON.parse(r.stdout) as {
+    const out = r.data as {
       ctl: string;
       ctlSocket: string;
       nextSteps: { command: string }[];
@@ -644,12 +644,12 @@ describe("mu agent spawn (CLI)", () => {
 
   it("a non-pi CLI keeps the plain Send work hint", async () => {
     db.close();
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "spawn", "worker-1", "--cli", "claude", "-w", "auth", "--json"],
       dbPath,
     );
     db = openDb({ path: dbPath });
-    const out = JSON.parse(r.stdout) as { nextSteps: { intent: string; command: string }[] };
+    const out = r.data as { nextSteps: { intent: string; command: string }[] };
     expect(out.nextSteps[0]).toEqual({
       intent: "Send work",
       command: "mu agent send worker-1 '...' -w auth",
@@ -658,26 +658,24 @@ describe("mu agent spawn (CLI)", () => {
 
   it("exits 0 with the warning in the document (stderr empty) when ctl is missing", async () => {
     db.close();
-    const r = await runCli(["agent", "spawn", "worker-1", "-w", "auth", "--json"], dbPath);
+    const r = await runCliJson(["agent", "spawn", "worker-1", "-w", "auth", "--json"], dbPath);
     db = openDb({ path: dbPath });
     expect(r.exitCode ?? 0).toBe(0);
-    expect((JSON.parse(r.stdout) as { ctl: string }).ctl).toBe("missing");
+    expect((r.data as { ctl: string }).ctl).toBe("missing");
     // --json: stderr stays empty; the warning rides in the document.
     expect(r.stderr).toBe("");
-    expect((JSON.parse(r.stdout) as { warnings: string[] }).warnings.join("\n")).toContain(
-      "no control socket",
-    );
+    expect((r.data as { warnings: string[] }).warnings.join("\n")).toContain("no control socket");
     expect(getAgent(db, "worker-1", "auth")).toBeDefined();
   });
 
   it("--no-ctl reports skipped", async () => {
     db.close();
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "spawn", "worker-1", "-w", "auth", "--no-ctl", "--json"],
       dbPath,
     );
     db = openDb({ path: dbPath });
-    expect((JSON.parse(r.stdout) as { ctl: string }).ctl).toBe("skipped");
+    expect((r.data as { ctl: string }).ctl).toBe("skipped");
     expect(r.stderr).not.toContain("mu link pi");
   });
 
@@ -685,13 +683,13 @@ describe("mu agent spawn (CLI)", () => {
     insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1" });
     db.close();
     installPanes("worker-2");
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "spawn", "worker-1", "-w", "auth", "--next-free", "--json"],
       dbPath,
     );
     db = openDb({ path: dbPath });
     expect(r.exitCode ?? 0).toBe(0);
-    const out = JSON.parse(r.stdout) as { agent: { name: string }; ctl: string };
+    const out = r.data as { agent: { name: string }; ctl: string };
     expect(out.agent.name).toBe("worker-2");
     expect(out.ctl).toBe("ok");
     expect(getAgent(db, "worker-1", "auth")?.paneId).toBe("%1");
@@ -700,13 +698,13 @@ describe("mu agent spawn (CLI)", () => {
   it("--send sends the first prompt in the same call and reports runs", async () => {
     db.close();
     installPanes("worker-1");
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "spawn", "worker-1", "-w", "auth", "--send", "hello", "--json"],
       dbPath,
     );
     db = openDb({ path: dbPath });
     expect(r.exitCode ?? 0).toBe(0);
-    const out = JSON.parse(r.stdout) as {
+    const out = r.data as {
       send: { ok: boolean; runs?: number; transport: string; sentBytes: number };
       nextSteps: { command: string }[];
     };
@@ -725,13 +723,13 @@ describe("mu agent spawn (CLI)", () => {
 
   it("--send to a pi whose socket never answered keeps the pane and exits non-zero", async () => {
     db.close();
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "spawn", "worker-1", "-w", "auth", "--send", "hello", "--json"],
       dbPath,
     );
     db = openDb({ path: dbPath });
     expect(r.exitCode).toBe(1);
-    const out = JSON.parse(r.stdout) as { ctl: string; send: { ok: boolean; error: string } };
+    const out = r.data as { ctl: string; send: { ok: boolean; error: string } };
     expect(out.ctl).toBe("missing");
     expect(out.send).toMatchObject({ ok: false, error: "AgentCtlUnreachableError" });
     expect(getAgent(db, "worker-1", "auth")).toBeDefined();

@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { addNote, addTask, getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task delete (two-phase)", () => {
   let tempDir: string;
@@ -60,9 +60,9 @@ describe("mu task delete (two-phase)", () => {
 
   it("bare `mu task delete` is a dry-run: shows cascade, mutates nothing", async () => {
     seed();
-    const r = await runCli(["task", "delete", "b", "-w", "test", "--json"], dbPath);
+    const r = await runCliJson(["task", "delete", "b", "-w", "test", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
-    const payload = JSON.parse(r.stdout) as {
+    const payload = r.data as {
       taskName: string;
       deleted: boolean;
       deletedEdges: number;
@@ -96,9 +96,9 @@ describe("mu task delete (two-phase)", () => {
 
   it("`--yes` commits and reports the cascade", async () => {
     seed();
-    const r = await runCli(["task", "delete", "b", "-w", "test", "--yes", "--json"], dbPath);
+    const r = await runCliJson(["task", "delete", "b", "-w", "test", "--yes", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
-    const payload = JSON.parse(r.stdout) as {
+    const payload = r.data as {
       deleted: boolean;
       deletedEdges: number;
       deletedNotes: number;
@@ -125,12 +125,12 @@ describe("mu task delete (two-phase)", () => {
 
   it("dry-run on a missing task: present=false, no error", async () => {
     seed();
-    const r = await runCli(["task", "delete", "ghost", "-w", "test", "--json"], dbPath);
+    const r = await runCliJson(["task", "delete", "ghost", "-w", "test", "--json"], dbPath);
     // mu's resolveEntityRef may surface a typed not-found before
     // deleteTask is called; either path should result in NOT a
     // process crash. Accept exit 4 (not-found) or null + present:false.
     if (r.exitCode === null) {
-      const payload = JSON.parse(r.stdout) as { deleted: boolean; present: boolean };
+      const payload = r.data as { deleted: boolean; present: boolean };
       expect(payload.deleted).toBe(false);
       expect(payload.present).toBe(false);
     } else {
@@ -140,10 +140,13 @@ describe("mu task delete (two-phase)", () => {
 
   it("`--yes` on a missing task is a no-op, not an error", async () => {
     seed();
-    const r = await runCli(["task", "delete", "ghost", "-w", "test", "--yes", "--json"], dbPath);
+    const r = await runCliJson(
+      ["task", "delete", "ghost", "-w", "test", "--yes", "--json"],
+      dbPath,
+    );
     // Same forgiving acceptance as the dry-run case.
     if (r.exitCode === null) {
-      const payload = JSON.parse(r.stdout) as { deleted: boolean; present: boolean };
+      const payload = r.data as { deleted: boolean; present: boolean };
       expect(payload.deleted).toBe(false);
       expect(payload.present).toBe(false);
     } else {
