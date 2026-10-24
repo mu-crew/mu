@@ -71,6 +71,8 @@ describe("foldTask", () => {
       effortDays: 1,
       scored: 0,
       dispatchHost: null,
+      kind: "work",
+      wave: null,
       createdAt: isoOfHlc(h(5)),
       updatedAt: isoOfHlc(h(5)),
     });

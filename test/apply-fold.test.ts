@@ -67,7 +67,7 @@ function snapshot(db: Db): Record<string, unknown[]> {
     workstreams: all("SELECT name, created_at, torn_down_at FROM workstreams ORDER BY name"),
     tasks: all(
       `SELECT w.name AS ws, t.local_id, t.title, t.status, t.substate, t.impact, t.effort_days,
-              t.scored, t.dispatch_host, t.created_at, t.updated_at
+              t.scored, t.dispatch_host, t.kind, t.wave, t.created_at, t.updated_at
          FROM tasks t JOIN workstreams w ON w.id = t.workstream_id ORDER BY 1, 2`,
     ),
     notes: all(
@@ -266,6 +266,8 @@ function generate(rand: () => number): Op[] {
     if (chance(0.2)) p.effort_days = pick([0.5, 2, 0, -1]);
     if (chance(0.15)) p.scored = pick([0, 1, 7]);
     if (chance(0.15)) p.dispatch_host = pick(["h1", null]);
+    if (chance(0.2)) p.kind = pick(["work", "delegate", "human", "bogus", 3]);
+    if (chance(0.2)) p.wave = pick(["r1", "r2", null, 5]);
     if (chance(0.4)) p.created_at = pick(stamps);
     if (chance(0.4)) p.updated_at = pick(stamps);
     if (chance(0.1)) p.owner_id = 4242;

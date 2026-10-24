@@ -113,6 +113,8 @@ export {
   SqliteTooOldError,
   SYNCED_ENTITIES,
   type SyncedEntity,
+  TASK_KINDS,
+  type TaskKind,
   WorkstreamNotFoundError,
   WorkstreamTornDownError,
 } from "./db.js";

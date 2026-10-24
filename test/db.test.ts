@@ -33,7 +33,7 @@ describe("openDb", () => {
     // No throw = parent dirs created.
   });
 
-  it("applies exactly the 15 v12 tables (op_ctx, op_dying added)", () => {
+  it("applies exactly the 19 v13 tables", () => {
     const db = openDb({ path: dbPath });
     const tables = (
       db
@@ -43,7 +43,10 @@ describe("openDb", () => {
         .all() as { name: string }[]
     ).map((r) => r.name);
     expect(tables).toEqual([
+      "agent_settles",
       "agents",
+      "delegate_calls",
+      "host_profiles",
       "machine_identity",
       "op_ctx",
       "op_dying",
@@ -56,25 +59,26 @@ describe("openDb", () => {
       "task_notes",
       "task_substates",
       "tasks",
+      "wait_cursors",
       "workstreams",
       "worktrees",
     ]);
-    expect(tables).toHaveLength(15);
+    expect(tables).toHaveLength(19);
     expect([...tables].sort()).toEqual(tables);
-    // schema_version stamped to current (v12).
+    // schema_version stamped to current (v13).
     const v = (
       db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as { version: number }
     ).version;
-    expect(v).toBe(12);
+    expect(v).toBe(13);
     db.close();
   });
 
-  it("a fresh DB stamps version 12 and seeds machine_identity", () => {
+  it("a fresh DB stamps version 13 and seeds machine_identity", () => {
     const db = openDb({ path: dbPath });
     const v = (
       db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as { version: number }
     ).version;
-    expect(v).toBe(12);
+    expect(v).toBe(13);
     const ids = db.prepare("SELECT machine_id FROM machine_identity").all() as {
       machine_id: string;
     }[];
@@ -384,7 +388,10 @@ describe("openDb", () => {
         .all() as { name: string }[]
     ).map((r) => r.name);
     expect(tables).toEqual([
+      "agent_settles",
       "agents",
+      "delegate_calls",
+      "host_profiles",
       "machine_identity",
       "op_ctx",
       "op_dying",
@@ -397,6 +404,7 @@ describe("openDb", () => {
       "task_notes",
       "task_substates",
       "tasks",
+      "wait_cursors",
       "workstreams",
       "worktrees",
     ]);

@@ -22,6 +22,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Schema 13: storage for task-backed delegation and loop provenance.**
+  Portable (synced, segment format stays v2; a v1 line carrying `wave` or
+  `kind` is refused): `tasks.kind` (`work` default, `delegate`, `human`;
+  an unknown value from a newer peer is dropped by the fold, never a CHECK
+  failure in ingest) and `tasks.wave` (nullable label); both per-field
+  last-writer-wins, captured, drift-checked and rebuilt. Machine-local:
+  `agents.spawner`, `host`, `collected_head`, and the tables
+  `delegate_calls`, `wait_cursors`, `agent_settles` (no foreign keys, so
+  replay evidence outlives the agent and task) and `host_profiles`.
+  `spawn` records `agents.spawner` as `<MU_WORKSTREAM>/<MU_AGENT_NAME>` for a
+  managed caller, else `pi:<PI_SESSION_ID>`, read from the caller's env;
+  never guessed from task ownership. A schema 12 DB upgrades in place on
+  its first open (columns, tables, capture triggers (revision 3) and both
+  stamps in one transaction; a failure leaves the old file as it was).
+  Rebuild reports the four tables' rows as lost like `task_auto`.
+
 - **`mu pi migrate [--apply]`.** A leftover `mu link pi` shim would load a
   second extension next to the package, so this moves only files it can
   prove mu generated, into a `disabled/` folder pi does not read: a file at
@@ -71,6 +87,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   CLI changed.
 
 ### Changed
+
+- **Capture UPDATE triggers are a flat `json_group_object` over the
+  changed columns.** The nested-CASE form doubled the trigger text per
+  column (two columns took `_cap_tasks_upd` from 274 KB to 1.09 MB, +12 ms
+  on every `mu` start); payloads are unchanged.
 
 - **`mu doctor`'s `mu ext` row is live.** It reads `hello` (`extVersion`,
   ops, features) from the pi agents' control sockets; with no pi agent it is

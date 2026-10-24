@@ -74,11 +74,11 @@ describe("segment versions are checked per line", () => {
   const reencode = (raw: string, version: number): string => {
     const d = decodeLine(raw);
     if (!d.ok) throw new Error(`cannot re-encode: ${d.detail}`);
-    // A real v1 writer (3.x) never wrote the schema-v12 fields.
+    // A real v1 writer (3.x) never wrote the schema-12/13 fields.
     let payload = d.payloadText;
     if (version === 1) {
       const body = JSON.parse(payload) as Record<string, unknown>;
-      for (const f of ["scored", "dispatch_host", "kind", "torn_down_at"]) delete body[f];
+      for (const f of ["scored", "dispatch_host", "kind", "wave", "torn_down_at"]) delete body[f];
       payload = JSON.stringify(body);
     }
     return encodeSegmentLine(

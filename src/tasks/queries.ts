@@ -123,6 +123,8 @@ const SELECT_VIEW_COLS = `
   v.effort_days AS effort_days,
   v.scored AS scored,
   v.dispatch_host AS dispatch_host,
+  v.kind AS kind,
+  v.wave AS wave,
   ag.name AS owner,
   v.created_at AS created_at,
   v.updated_at AS updated_at

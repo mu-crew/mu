@@ -183,6 +183,9 @@ function agent(name: string, cli = "pi"): AgentRow {
     base: null,
     command: null,
     commandSource: null,
+    spawner: null,
+    host: null,
+    collectedHead: null,
     createdAt: now,
     updatedAt: now,
   };

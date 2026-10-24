@@ -18,6 +18,8 @@ function task(over: Partial<TaskRow>): TaskRow {
     effortDays: 1,
     scored: true,
     dispatchHost: null,
+    kind: "work",
+    wave: null,
     ownerName: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",

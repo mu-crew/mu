@@ -141,6 +141,13 @@ export interface AgentRow {
   command: string | null;
   /** Where `command` came from; null with it. */
   commandSource: CommandSource | null;
+  /** Who spawned it: `<workstream>/<agent>` for a managed caller, else
+   *  `pi:<PI_SESSION_ID>`; null when unknown (older rows, no identity). */
+  spawner: string | null;
+  /** The remote host profile it runs on; null for a local agent. */
+  host: string | null;
+  /** HEAD last collected from its remote worktree; null until one is. */
+  collectedHead: string | null;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** ISO 8601 timestamp. */
@@ -221,6 +228,10 @@ export interface InsertAgentInput {
    *  extension can be respawned exactly. */
   command?: string | null;
   commandSource?: CommandSource | null;
+  /** Who spawned it (see AgentRow.spawner); never guessed from task ownership. */
+  spawner?: string | null;
+  host?: string | null;
+  collectedHead?: string | null;
 }
 
 interface RawAgentRow {
@@ -235,6 +246,9 @@ interface RawAgentRow {
   base: string | null;
   command: string | null;
   command_source: string | null;
+  spawner: string | null;
+  host: string | null;
+  collected_head: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -253,6 +267,9 @@ const SELECT_AGENT_COLS = `
   a.base AS base,
   a.command AS command,
   a.command_source AS command_source,
+  a.spawner AS spawner,
+  a.host AS host,
+  a.collected_head AS collected_head,
   a.created_at AS created_at,
   a.updated_at AS updated_at
 `;
@@ -276,6 +293,9 @@ function rowFromDb(row: RawAgentRow): AgentRow {
       row.command_source === "cli-key"
         ? row.command_source
         : null,
+    spawner: row.spawner,
+    host: row.host,
+    collectedHead: row.collected_head,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -303,9 +323,10 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
   const now = new Date().toISOString();
   try {
     db.prepare(
-      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, created_at, updated_at)
+      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, created_at, updated_at)
        VALUES (@name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
-               COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource, @now, @now)`,
+               COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource,
+               @spawner, @host, @collectedHead, @now, @now)`,
     ).run({
       name: input.name,
       workstreamId,
@@ -317,6 +338,9 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
       base: input.base ?? null,
       command: input.command ?? null,
       commandSource: input.commandSource ?? null,
+      spawner: input.spawner ?? null,
+      host: input.host ?? null,
+      collectedHead: input.collectedHead ?? null,
       now,
     });
   } catch (err) {

@@ -140,7 +140,15 @@ export interface RebuildReport {
 /** Tables that hold real state but leave no ops, so a rebuild cannot
  *  reconstruct them. Both are machine-local by nature — see the module
  *  comment for why resurrecting them would be wrong even if we could. */
-const UNREBUILDABLE_TABLES = ["agents", "task_auto", "worktrees"] as const;
+const UNREBUILDABLE_TABLES = [
+  "agents",
+  "task_auto",
+  "worktrees",
+  "delegate_calls",
+  "wait_cursors",
+  "agent_settles",
+  "host_profiles",
+] as const;
 
 /** Entities that exist only in the log: there is no portable table to
  *  project them into, so copying the op IS applying it.

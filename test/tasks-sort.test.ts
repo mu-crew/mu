@@ -20,6 +20,8 @@ function row(over: {
     ownerName: null,
     scored: true,
     dispatchHost: null,
+    kind: "work",
+    wave: null,
     createdAt: over.createdAt,
     updatedAt: over.updatedAt,
   };
