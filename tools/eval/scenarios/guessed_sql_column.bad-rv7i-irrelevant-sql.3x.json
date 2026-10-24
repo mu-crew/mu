@@ -1,0 +1,26 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu sql \"SELECT name FROM sqlite_master WHERE type='table'\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task list -w eval --status IN_PROGRESS"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task note s4 -w eval 'top owner: w2'"
+      }
+    ]
+  },
+  {
+    "text": "w2 owns s4."
+  }
+]

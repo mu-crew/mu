@@ -11,6 +11,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { closeMoment, firstNote, orderWrong } from "../provenance.ts";
 import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
@@ -106,7 +107,19 @@ const scenario: Scenario = {
             `c${n} has a verdict or is closed but no delegate was ever issued for claim-${n}`,
           );
       }
-      if (!(got.includes(word) && closedRight)) completed = false;
+      // The matching verdict note (this claim, the delegate's ref) precedes this task's close.
+      const order = orderWrong(
+        firstNote(
+          sb,
+          "eval",
+          `c${n}`,
+          (x) => /VERDICT:/.test(x) && x.includes(`ref=${ref}`) && re.test(x),
+        ),
+        closeMoment(sb, "eval", `c${n}`),
+        `c${n} must close after its verdict was recorded`,
+      );
+      if (t?.status === "CLOSED" && notes.length > 0) wrong.push(...order);
+      if (!(got.includes(word) && closedRight && order.length === 0)) completed = false;
     }
     return verdict(run, completed, {
       wrong,

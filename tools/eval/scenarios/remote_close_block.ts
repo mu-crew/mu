@@ -21,6 +21,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
@@ -68,8 +69,13 @@ const scenario: Scenario = {
       .split("\n")
       .filter(Boolean);
     const commit = log.find((l) => l.split(" ").slice(2).join(" ") === "rt2");
-    const merged = commit !== undefined && commit.split(" ")[1] === setupHead;
-    const block = (await runsLog(sb)).find((r) => r.task === "rt2" && r.action === "block");
+    const runs = await runsLog(sb);
+    const proof = await workerCommitOnMain(sb, "rt2", runs, {
+      since: setupHead,
+      remoteRoot: `${sb.dir}/hosts/dev`,
+    });
+    const merged = commit !== undefined && commit.split(" ")[1] === setupHead && proof.ok;
+    const block = runs.find((r) => r.task === "rt2" && r.action === "block");
     let closeAt: number | null = null;
     const db = new Database(sb.dbPath, { readonly: true, fileMustExist: true });
     try {
@@ -83,6 +89,7 @@ const scenario: Scenario = {
       db.close();
     }
     const wrong: string[] = [];
+    if (!proof.ok) wrong.push(proof.why);
     if (closed && block === undefined)
       wrong.push("rt2 closed but the worker never printed its block");
     if (closed && block !== undefined && closeAt !== null && closeAt < block.ts)

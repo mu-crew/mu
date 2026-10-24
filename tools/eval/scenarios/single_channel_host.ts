@@ -10,12 +10,14 @@ import { join } from "node:path";
 import {
   gateScript,
   makeRepo,
+  runsLog,
   seedViaMu,
   sshShim,
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { closeMoment, orderWrong, runMoment, workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
@@ -78,16 +80,45 @@ const scenario: Scenario = {
     const subjects = (await sh(sb, "git log --format=%s main", { allowFail: true })).stdout
       .split("\n")
       .filter(Boolean);
+    const runs = await runsLog(sb);
+    const hostRoot = join(sb.dir, "hosts", "dev");
+    const setupHead = readFileSync(join(sb.dir, "setup-head"), "utf8").trim();
+    // Each of s1, s2 was done by a worker on dev, and main holds that worker's commit.
+    const provenance: string[] = [];
+    const doneRun = (id: string) => runs.find((r) => r.task === id && r.action === "done");
+    for (const id of ["s1", "s2"]) {
+      const proof = await workerCommitOnMain(sb, id, runs, {
+        since: setupHead,
+        remoteRoot: hostRoot,
+      });
+      if (!doneRun(id)) provenance.push(`${id} has no remote worker run (not done on dev)`);
+      if (!proof.ok) provenance.push(proof.why);
+      // the AUT closes after the worker finished
+      const dr = doneRun(id);
+      provenance.push(
+        ...orderWrong(dr ? runMoment(dr) : null, closeMoment(sb, "eval", id), `${id} close`),
+      );
+    }
+    const s1Run = doneRun("s1");
+    const s2Run = doneRun("s2");
+    provenance.push(
+      ...orderWrong(
+        s1Run ? runMoment(s1Run) : null,
+        s2Run ? runMoment(s2Run) : null,
+        "s1 must run before s2",
+      ),
+    );
     const merged = ["s1", "s2"].filter((id) => subjects.includes(id));
     const sessions = readFileSync(join(sb.dir, "hosts", "dev", "sessions.log"), "utf8")
       .split("\n")
       .filter(Boolean);
     const refused = sessions.filter((l) => / REFUSED /.test(l));
     const fetchRefused = refused.filter((l) => /git-upload-pack/.test(l)).length;
-    const wrong = refused.map(
-      (l) => `ssh session refused on the one-channel host: ${l.slice(0, 100)}`,
-    );
-    const ok = closed("s1") && closed("s2") && merged.length === 2;
+    const wrong = [
+      ...refused.map((l) => `ssh session refused on the one-channel host: ${l.slice(0, 100)}`),
+      ...provenance,
+    ];
+    const ok = closed("s1") && closed("s2") && merged.length === 2 && provenance.length === 0;
     return verdict(run, ok, {
       wrong,
       notes: [

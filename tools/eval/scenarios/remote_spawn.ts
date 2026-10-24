@@ -16,6 +16,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { closeMoment, orderWrong, runMoment, workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
@@ -63,11 +64,24 @@ const scenario: Scenario = {
       .split("\n")
       .filter(Boolean);
     const commit = log.find((l) => l.split(" ").slice(2).join(" ") === "rt1");
-    const merged = commit !== undefined && commit.split(" ")[1] === setupHead;
     const wrong: string[] = [];
 
     // Where did the worker run? runs.log carries its cwd.
-    const runs = (await runsLog(sb)).filter((r) => r.task === "rt1");
+    const allRuns = await runsLog(sb);
+    const runs = allRuns.filter((r) => r.task === "rt1");
+    // main's rt1 must be the commit the remote worker produced (cherry-picked: same patch-id).
+    const proof = await workerCommitOnMain(sb, "rt1", allRuns, {
+      since: setupHead,
+      remoteRoot: hostRoot(sb),
+    });
+    if (!proof.ok) wrong.push(proof.why);
+    const merged = commit !== undefined && commit.split(" ")[1] === setupHead && proof.ok;
+    // The AUT closes rt1 (closeMode none) only after the remote worker finished.
+    const done = runs.find((r) => r.action === "done");
+    if (closed)
+      wrong.push(
+        ...orderWrong(done ? runMoment(done) : null, closeMoment(sb, "eval", "rt1"), "rt1 close"),
+      );
     const remoteRuns = runs.filter((r) => r.cwd.startsWith(`${hostRoot(sb)}/home`));
     for (const r of runs) {
       if (!r.cwd.startsWith(`${hostRoot(sb)}/home`)) {

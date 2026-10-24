@@ -9,6 +9,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
@@ -48,9 +49,23 @@ const scenario: Scenario = {
     const wrong: string[] = [];
     const runs = await runsLog(sb);
     wrong.push(...tasksRunTwice(runs));
+    // Both tasks are done by a worker, main holds that worker's commit, and t1 was not redone by
+    // the agent that died on it.
+    const dead = runs.find((r) => r.task === "t1" && r.action === "die")?.agent;
+    let provenance = true;
+    for (const t of ["t1", "t2"]) {
+      const closer = runs.find((r) => r.task === t && r.action === "close");
+      const proof = await workerCommitOnMain(sb, t, runs);
+      if (!closer) wrong.push(`${t} has no worker close record (not done by a worker)`);
+      if (!proof.ok) wrong.push(proof.why);
+      if (t === "t1" && closer && closer.agent === dead)
+        wrong.push(`t1 closed by ${dead}, the agent that died on it`);
+      if (!closer || !proof.ok || (t === "t1" && (dead === undefined || closer.agent === dead)))
+        provenance = false;
+    }
     if (c1 > 1) wrong.push(`duplicate t1 commit on main (${c1})`);
     if (c2 > 1) wrong.push(`duplicate t2 commit on main (${c2})`);
-    const completed = closedDone("t1") && closedDone("t2") && c1 === 1 && c2 === 1;
+    const completed = closedDone("t1") && closedDone("t2") && c1 === 1 && c2 === 1 && provenance;
     return verdict(run, completed, {
       wrong,
       // A discard is cleanup only for a scripted worker whose commits are on main and were merged

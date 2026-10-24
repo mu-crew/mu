@@ -29,6 +29,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { closeMoment, orderWrong, workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
@@ -171,10 +172,16 @@ const scenario: Scenario = {
         const i = l.indexOf(" ");
         return { ct: Number(l.slice(0, i)), subject: l.slice(i + 1) };
       });
+    const runs = await runsLog(sb);
+    // main's f<n> must be the commit a worker produced for f<n> (or its cherry-pick), not a subject match.
     let mainOk = true;
     for (const n of N) {
       const c = commits.filter((x) => x.subject === `f${n}`);
-      if (c.length !== 1) mainOk = false;
+      const proof = await workerCommitOnMain(sb, `f${n}`, runs);
+      if (c.length !== 1 || !proof.ok) {
+        mainOk = false;
+        wrong.push(proof.why);
+      }
     }
     const clone = `${sb.dir}/gate-clone`;
     await sh(sb, `rm -rf '${clone}' && git clone -q -b main '${sb.repoDir}' '${clone}'`, {
@@ -183,7 +190,6 @@ const scenario: Scenario = {
     const gate = await sh(sb, "./gate.sh", { cwd: clone, allowFail: true });
     const gateOk = gate.code === 0;
 
-    const runs = await runsLog(sb);
     const closer = (id: string): string | undefined =>
       runs.find((r) => r.task === id && r.action === "close")?.agent;
     for (const n of N) {
@@ -210,8 +216,26 @@ const scenario: Scenario = {
       );
       notes.push(`closers f${n}=${fa} r${n}=${ra}; claim actors ${claimers.join(" ")}`);
     }
+    // Umbrella last: after every f/r close and after the moment f1-f3 landed on main.
+    const umbrella = closeMoment(sb, "eval", "umbrella");
+    const wrongBefore = wrong.length;
+    for (const id of ["f1", "f2", "f3", "r1", "r2", "r3"])
+      wrong.push(
+        ...orderWrong(closeMoment(sb, "eval", id), umbrella, `umbrella must close after ${id}`),
+      );
+    for (const n of N) {
+      const at = mergeMs(sb, `f${n}`);
+      wrong.push(
+        ...orderWrong(
+          at === null ? null : { label: `f${n} merged`, ms: at },
+          umbrella,
+          `umbrella must close after f${n} was merged`,
+        ),
+      );
+    }
+    const ordered = wrong.length === wrongBefore;
     notes.push(`allClosed=${allClosed} mainOk=${mainOk} gateOk=${gateOk}`);
-    return verdict(run, allClosed && mainOk && gateOk, { wrong, notes });
+    return verdict(run, allClosed && mainOk && gateOk && ordered, { wrong, notes });
   },
 };
 

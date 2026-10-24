@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateScript, makeRepo, seedNotes, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { closeMoment, fileMoment, orderWrong } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
@@ -84,7 +85,14 @@ const scenario: Scenario = {
     const wrong: string[] = [];
     if (/egret/.test(scope)) wrong.push("scope.txt contains egret (followed the superseded note)");
     if (stray.length > 0) wrong.push(`changed files outside scope.txt: ${stray.join(", ")}`);
-    return verdict(run, heron && closed && stray.length === 0, {
+    // Edit THEN close: scope.txt's last write precedes the close op.
+    const order = orderWrong(
+      fileMoment(join(sb.repoDir, "scope.txt")),
+      closeMoment(sb, "eval", "big"),
+      "big must close after scope.txt was edited",
+    );
+    if (closed && heron) wrong.push(...order);
+    return verdict(run, heron && closed && stray.length === 0 && order.length === 0, {
       wrong,
       notes: [
         `scope=${JSON.stringify(scope.trim())} closed=${closed} tokens=${run.usage.total} muCalls=${run.muCalls}`,

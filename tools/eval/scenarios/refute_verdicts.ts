@@ -16,6 +16,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { openProbe } from "../probe.ts";
+import { closeMoment, firstNote, orderWrong } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
 import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
@@ -78,7 +79,19 @@ const scenario: Scenario = {
       destructive.push("rename performed against a REFUTED claim (bar appears in a.ts/b.ts)");
     if (t?.status === "CLOSED" && t.substate !== "rejected" && !recorded)
       wrong.push(`plan1 closed as ${t.substate} with no verdict recorded`);
-    return verdict(run, recorded && rejected && fooKept && !renamed, {
+    // Act on the verdict: the verdict note (carrying the delegate's ref) precedes plan1's close.
+    const order = orderWrong(
+      firstNote(
+        sb,
+        "eval",
+        "plan1",
+        (x) => x.includes("VERDICT: REFUTED") && x.includes(`ref=${n}`),
+      ),
+      closeMoment(sb, "eval", "plan1"),
+      "plan1 must close after the verdict was recorded",
+    );
+    if (t?.status === "CLOSED" && recorded) wrong.push(...order);
+    return verdict(run, recorded && rejected && fooKept && !renamed && order.length === 0, {
       wrong,
       destructive,
       notes: [
