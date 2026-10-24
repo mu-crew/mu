@@ -18,11 +18,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { openDb } from "../src/db.js";
 import { listLogs } from "../src/logs.js";
-import { NoMultiplexerError } from "../src/mux.js";
 import { addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
-import { installMux, installUnreachableMux, type MuxHarness } from "./_mux.js";
+import { installMux, installNoMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
 const ENV_KEYS = [
@@ -307,10 +306,55 @@ describe("blank and padded workstream names are rejected everywhere, never trimm
     [["task", "owned-by", "self-1", "-w", " own"]],
     [["-w", " own", "task", "owned-by", "self-1"]],
     [["agent", "wait", "self-1", "-w", " own"]],
+    // task wait: qualified refs never consult -w, but an explicit -w is still validated.
+    [["task", "wait", "own/t-own", "--status", "IN_PROGRESS", "-w", ""]],
+    [["task", "wait", "own/t-own", "--status", "IN_PROGRESS", "-w", " own"]],
+    [["task", "wait", "own/t-own", "--status", "IN_PROGRESS", "-w", "own "]],
+    [["task", "wait", "own/t-own", "--status", "IN_PROGRESS", "-w", " "]],
+    [["-w", " own", "task", "wait", "own/t-own", "--status", "IN_PROGRESS"]],
+    // A padded or blank qualified prefix is the same error, never trimmed.
+    [["task", "wait", " own/t-own", "--status", "IN_PROGRESS"]],
+    [["task", "show", " own/t-own"]],
+    [["task", "show", "/t-own"]],
+    [["task", "show", "own /t-own"]],
   ])("%j exits 2 and reads nothing", async (argv) => {
     const r = await runCli(argv, dbPath);
     expect(r.exitCode, `${r.stdout}${r.stderr}`).toBe(2);
     expect(r.stdout).toBe("");
+  });
+
+  it.each([
+    [["task", "show", "t-own", "-w", " own"]],
+    [["task", "show", "t-own", "-w", ""]],
+    [["-w", " own", "task", "list"]],
+    [["-w", "", "task", "list"]],
+    [["-w", "a", "-w", "b", "task", "list"]],
+    [["-w", "a", "task", "list", "-w", "b"]],
+    [["-w", "own", "doctor"]],
+    [["state", "-w", " own"]],
+    [["state", "-w", "own, decoy"]],
+    [["log", "-w", " own"]],
+    [["task", "wait", "own/t-own", "-w", " own"]],
+    [["task", "show", " own/t-own"]],
+    [["task", "show", "own/t-own", "-w", "decoy"]],
+  ])("%j: a scope error is one line, no usage dump", async (argv) => {
+    const r = await runCli(argv, dbPath);
+    expect(r.exitCode, `${r.stdout}${r.stderr}`).toBe(2);
+    const lines = plain(r.stderr).trim().split("\n");
+    expect(lines, r.stderr).toHaveLength(1);
+    expect(r.stderr).not.toContain("Usage:");
+  });
+
+  it("a scope error in --json mode is still the envelope, one line", async () => {
+    const r = await runCli(["task", "show", "t-own", "-w", " own", "--json"], dbPath);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
+  });
+
+  it("a valid qualified wait still ignores a matching or absent -w", async () => {
+    const argv = ["task", "wait", "own/t-own", "--status", "OPEN", "--timeout", "1", "--json"];
+    expect((await runCli(argv, dbPath)).exitCode).toBeNull();
+    expect((await runCli([...argv, "-w", "own"], dbPath)).exitCode).toBeNull();
   });
 
   it("a trailing comma is a comma artifact, not a blank name", async () => {
@@ -324,7 +368,7 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
   let unreachable: { restore(): void };
 
   beforeEach(() => {
-    unreachable = installUnreachableMux("tmux", () => new NoMultiplexerError(["tmux", "herdr"]));
+    unreachable = installNoMux();
   });
   afterEach(() => unreachable.restore());
 
@@ -352,13 +396,39 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
     expectOneLineMissingScope(r.stderr);
   });
 
-  it("agent verbs fail with one line naming the install, exit 5", async () => {
-    const r = await runCli(["agent", "list", "-w", "own"], dbPath);
-    expect(r.exitCode).toBe(5);
+  // EVERY agent verb, including the ones that only print a registry row or
+  // a command, exits 5 with exactly one line: the install.
+  it.each([
+    [["agent", "list", "-w", "own"]],
+    [["agent", "show", "own/self-1", "--json"]],
+    [["agent", "show", "self-1", "-w", "own"]],
+    [["agent", "remote-env", "self-1", "-w", "own", "--json"]],
+    [["agent", "remote-env", "self-1", "-w", "own", "--shell"]],
+    [["agent", "read", "self-1", "-w", "own"]],
+    [["agent", "send", "self-1", "go", "-w", "own"]],
+    [["agent", "check", "self-1", "m1", "-w", "own"]],
+    [["agent", "close", "self-1", "-w", "own"]],
+    [["agent", "abort", "self-1", "-w", "own"]],
+    [["agent", "wait", "self-1", "-w", "own"]],
+    [["agent", "spawn", "w9", "-w", "own"]],
+  ])("%j: one line naming the install, exit 5", async (argv) => {
+    const r = await runCli(argv, dbPath);
+    expect(r.exitCode, `${r.stdout}${r.stderr}`).toBe(5);
+    expect(r.stdout).toBe("");
     const lines = plain(r.stderr).trim().split("\n");
-    expect(lines[0]).toMatch(/^no multiplexer: .*install tmux/);
-    // The one-line error carries at most one Next hint.
-    expect(lines.filter((l) => l.includes("mu ")).length).toBeLessThanOrEqual(2);
+    expect(lines, r.stderr).toHaveLength(1);
+    expect(lines[0]).toMatch(
+      argv.includes("--json")
+        ? /"error":"NoMultiplexerError".*install tmux/
+        : /^no multiplexer: .*install tmux/,
+    );
+  });
+
+  it("--json keeps the nextSteps in the envelope", async () => {
+    const r = await runCli(["agent", "list", "-w", "own", "--json"], dbPath);
+    expect(r.exitCode).toBe(5);
+    const env = JSON.parse(r.stderr.trim()) as { nextSteps: unknown[] };
+    expect(env.nextSteps).toHaveLength(1);
   });
 
   it("doctor prints its report, then exits 5 naming the install", async () => {

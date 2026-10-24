@@ -62,7 +62,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `-w ''`, `-w ' auth'` and `-w 'a, b'` are usage errors everywhere (root
   `-w`, `state`, `optsWithGlobals` verbs, every `resolveWorkstream`) instead
   of being trimmed into another workstream; only a structural comma
-  artifact (`-w 'a,'`) is dropped. Identity: `mu me`, `me tasks`, `me next`
+  artifact (`-w 'a,'`) is dropped. One validator (`src/workstream-scope.ts`,
+  never trims) serves every path: CLI `-w`, the `<ws>` of a qualified ref
+  (` own/t` and `/t` are errors), `task wait` (an explicit `-w` is checked
+  even when every ref is qualified), `mu_delegate`'s `record`, and the
+  nudge parser. Scope errors are one line with no help dump, from the root
+  `-w` hook too. Identity: `mu me`, `me tasks`, `me next`
   and `mu log` source/partition read `MU_AGENT_NAME`/`MU_WORKSTREAM` first
   (no `$TMUX_PANE` needed; a managed identity with no agent row is an
   error, never a pane guess); `$TMUX_PANE` is the fallback only without an
@@ -72,11 +77,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   stats only for an injected scope), and with no working multiplexer prints
   its report, then exits 5 (`--json`: the report on stdout, the error
   envelope on stderr). `NoMultiplexerError` is one line naming the install
-  and carries one Next. Task, DAG, wait and `sql` verbs work with no
+  (`--json` keeps its `nextSteps`). EVERY `mu agent` verb needs a multiplexer
+  (a `preAction` gate on the namespace): `agent show` and `agent remote-env`
+  used to print with none. Task, DAG, wait and `sql` verbs work with no
   multiplexer. pi extension: `mu_delegate` `record.task` must be `<ws>/<task>`
-  or come with `record.workstream` (refused before anything spawns); the
-  keep-driving nudge no longer reads or logs without `-w` (a dispatch with
-  no `-w` counts only for a managed pi, as its injected workstream).
+  or come with `record.workstream` (refused before anything spawns; a blank
+  or padded `record` scope is refused, never trimmed); the keep-driving
+  nudge reads the scope as the CLI does (root `-w`, verb `-w`, a qualified
+  `<ws>/<agent>` or `<ws>/<task>` ref, explicit over injected; an invalid
+  explicit scope dispatches nothing) and no longer reads or logs without
+  one (no scope counts only for a managed pi, as its injected workstream).
   Docs: README quick start and `docs/reference/env.md` drop `MU_SESSION`.
 
 - Test health, kernel milestone: slow tests sped up without dropping assertions (fast 19.6 s -> 13.5 s, slow 3m14s -> 2m32s; counts unchanged); `docs/ARCHITECTURE.md` module map and `docs/test-health/2026-10-24-kernel.md`.

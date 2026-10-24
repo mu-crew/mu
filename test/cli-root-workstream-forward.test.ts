@@ -58,8 +58,8 @@ describe("root-position -w forwards to the verb's -w", () => {
     const r = await runCli(["-w", "wsa,wsb", "task", "list"], dbPath);
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(/single workstream here/);
-    // Usage is the verb's, not the root's.
-    expect(r.stderr).toContain("Usage: mu task list");
+    // One line, no help dump: the message names the fix.
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
   });
 
   it("rejects a root -w on a verb that takes none, instead of ignoring it", async () => {

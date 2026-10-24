@@ -17,6 +17,8 @@ import { type AgentRow, getAgent } from "../../agents.js";
 import {
   assertTaskInWorkstream,
   CliExitError,
+  checkQualifiedPrefix,
+  checkWorkstreamName,
   emitJson,
   parseQualifiedRef,
   parseStatusOption,
@@ -119,7 +121,7 @@ export async function cmdClaim(
     const parsed = parseQualifiedRef(opts.for);
     forName = parsed.name;
     if (parsed.workstream !== undefined) {
-      forWorkstream = parsed.workstream;
+      forWorkstream = checkQualifiedPrefix(opts.for, parsed.workstream);
       // Pre-flight: workstream must exist (typed error so the operator
       // sees the canonical exit-3 mapping instead of a bare
       // ClaimerNotRegisteredError pointing at the wrong cause).
@@ -238,7 +240,7 @@ async function resolveWaitRef(
   const parsed = parseQualifiedRef(raw);
   let workstreamName: string;
   if (parsed.workstream !== undefined) {
-    workstreamName = parsed.workstream;
+    workstreamName = checkQualifiedPrefix(raw, parsed.workstream);
   } else {
     // Bare ref — -w or the injected worker scope. resolveWorkstream
     // throws the one-line UsageError if neither is present: the same
@@ -299,6 +301,9 @@ export async function cmdTaskWait(
   // own workstream so the wait set can span multiple workstreams.
   // Pre-flight existence check is inside resolveWaitRef; failures
   // throw before any waiting begins.
+  // An explicit -w is validated even when every ref is qualified (and so
+  // never consults it): a blank or padded -w is a usage error on every path.
+  if (opts.workstream !== undefined) checkWorkstreamName(opts.workstream);
   const refs: TaskWaitRef[] = [];
   for (const id of ids) {
     refs.push(await resolveWaitRef(db, id, opts.workstream));

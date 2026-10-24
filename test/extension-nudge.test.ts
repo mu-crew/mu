@@ -221,6 +221,47 @@ describe("registerNudge", () => {
     expect(dispatchedWorkstreams("mu task claim t1 --for w1", env)).toEqual(["small"]);
   });
 
+  it("scope is the CLI's: qualified refs and root -w name it, explicit beats injected", () => {
+    const env = { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "decoy" };
+    for (const [cmd, want] of [
+      ["mu agent send own/worker-1 go", ["own"]],
+      ["mu agent spawn own/worker-1", ["own"]],
+      ["mu -w own agent send worker-1 go", ["own"]],
+      ["mu --workstream=own agent send worker-1 go", ["own"]],
+      ["mu --json -w own agent send worker-1 go", ["own"]],
+      ["mu -wown agent send worker-1 go", ["own"]],
+      ["mu agent send worker-1 go -wown", ["own"]],
+      ["mu -w own task claim t1 --for worker-1", ["own"]],
+      ["mu task claim own/t1 --for worker-1", ["own"]],
+      ["mu agent send own/worker-1 go -w own", ["own"]],
+      ["mu agent send worker-1 go -w own", ["own"]],
+      ["mu agent send worker-1 go", ["decoy"]],
+    ] as const) {
+      expect(dispatchedWorkstreams(cmd, env), cmd).toEqual(want);
+    }
+  });
+
+  it("an invalid or conflicting explicit scope dispatches nothing, even with an injected one", () => {
+    const env = { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "decoy" };
+    for (const cmd of [
+      "mu agent send worker-1 go -w ''",
+      "mu agent send worker-1 go -w ' own'",
+      "mu agent send worker-1 go -w 'own '",
+      "mu -w '' agent send worker-1 go",
+      "mu -w ' own' agent send worker-1 go",
+      "mu -w own agent send worker-1 go -w own",
+      "mu -w a,b agent send worker-1 go",
+      "mu agent send ' own/worker-1' go",
+      "mu agent send /worker-1 go",
+      "mu agent send own/worker-1 go -w other",
+      "mu -w other agent send own/worker-1 go",
+      "mu task claim t1 --for w1 -w ''",
+      "mu task claim ' own/t1' --for w1",
+    ]) {
+      expect(dispatchedWorkstreams(cmd, env), cmd).toBeUndefined();
+    }
+  });
+
   it("asks for newest-first so the capped wait hint keeps the latest tasks", async () => {
     const { emit, run } = setup(card("auth", ["build"]));
     await emit("tool_call", bash("mu agent send worker-1 -w auth 'go'"));

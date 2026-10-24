@@ -176,6 +176,27 @@ export function installUnreachableMux(
   };
 }
 
+/**
+ * A box with NO multiplexer, through the real detection path: no backend
+ * is installed, and both executors fail like a missing binary, so
+ * `activeMux()` itself throws `NoMultiplexerError`. (`installUnreachableMux`
+ * installs a backend, so detection never runs; it models a dead server.)
+ * The caller must have `$TMUX`, `$TMUX_PANE`, `$HERDR_ENV`, `$MU_MUX` unset.
+ */
+export function installNoMux(): { restore(): void } {
+  const gone: MuxExecutor = async () => ({ stdout: "", stderr: "not found", exitCode: 127 });
+  const previousBackend = setMuxForTests(undefined);
+  const previousTmux = setTmuxExecutor(gone);
+  const previousHerdr = setHerdrExecutor(gone);
+  return {
+    restore() {
+      setMuxForTests(previousBackend);
+      setTmuxExecutor(previousTmux);
+      setHerdrExecutor(previousHerdr);
+    },
+  };
+}
+
 // ─── Integration-tier gates ────────────────────────────────────────────
 
 /**

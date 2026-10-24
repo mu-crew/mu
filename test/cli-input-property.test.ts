@@ -1,5 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
+import { UsageError } from "../src/cli/handle.js";
 import {
   applyQualifiedRef,
   parseCsvFlag,
@@ -267,9 +268,26 @@ describe("CLI parser properties", () => {
       );
     });
 
+    // A workstream prefix is validated like -w: never padded, never blank.
+    const wsPart = refPart.filter((s) => s === s.trim());
+
+    it("applyQualifiedRef rejects a blank or padded prefix, never trims it", () => {
+      fc.assert(
+        fc.property(
+          refPart.filter((s) => s !== s.trim()),
+          refPart,
+          (ws, name) => {
+            const opts: { workstream?: string } = {};
+            expect(() => applyQualifiedRef(`${ws}/${name}`, opts)).toThrow(UsageError);
+            expect(opts.workstream).toBeUndefined();
+          },
+        ),
+      );
+    });
+
     it("applyQualifiedRef fills missing workstream", () => {
       fc.assert(
-        fc.property(refPart, refPart, (ws, name) => {
+        fc.property(wsPart, refPart, (ws, name) => {
           const opts: { workstream?: string } = {};
           expect(applyQualifiedRef(`${ws}/${name}`, opts)).toBe(name);
           expect(opts.workstream).toBe(ws);
@@ -279,7 +297,7 @@ describe("CLI parser properties", () => {
 
     it("applyQualifiedRef rejects conflicting explicit workstream", () => {
       fc.assert(
-        fc.property(refPart, refPart, refPart, (ws, other, name) => {
+        fc.property(wsPart, wsPart, refPart, (ws, other, name) => {
           fc.pre(ws !== other);
           expect(() => applyQualifiedRef(`${ws}/${name}`, { workstream: other })).toThrow(
             /conflicts/,

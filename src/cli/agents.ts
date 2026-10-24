@@ -1082,7 +1082,15 @@ import { wireRemoteEnvCommand } from "./agents-remote.js";
 import { cmdMyNext, cmdMyTasks } from "./tasks.js";
 
 export function wireAgentCommands(program: Command): void {
-  const agent = program.command("agent").description("Agent-level commands");
+  const agent = program
+    .command("agent")
+    .description("Agent-level commands")
+    // Every agent verb needs a multiplexer, including the ones that only
+    // read a registry row (show, remote-env): no backend at all is exit 5
+    // with the install line, before any DB or scope work.
+    .hook("preAction", async () => {
+      await activeMux();
+    });
 
   agent
     .command("spawn <name>")

@@ -38,8 +38,9 @@
 //                Both cases land here and the test can pattern-match
 //                on which.
 
-import { emitParseError, findCommandForArgv } from "../src/cli/handle.js";
+import { emitParseError, findCommandForArgv, UsageError } from "../src/cli/handle.js";
 import { buildProgram, injectBareNamespaceHelp } from "../src/cli.js";
+import { NoMultiplexerError } from "../src/mux.js";
 
 export interface Capture {
   stdout: string;
@@ -147,11 +148,16 @@ export async function runCli(argv: readonly string[], dbPath: string): Promise<C
       // CommanderError has a string `code` like 'commander.unknownOption'.
       const code = (err as { code?: unknown }).code;
       const isCommander = typeof code === "string" && code.startsWith("commander.");
-      if (isCommander && program !== undefined) {
+      // A UsageError (root `-w` forwarding) or NoMultiplexerError (the agent
+      // namespace's preAction gate) thrown from a hook escapes handle();
+      // production's runCli routes EVERY parse-phase error through
+      // emitParseError, so the shim does the same for these.
+      const isUsage = err instanceof UsageError || err instanceof NoMultiplexerError;
+      if ((isCommander || isUsage) && program !== undefined) {
         const failingCmd = findCommandForArgv(program, argv);
         const ec = emitParseError(err, failingCmd);
         if (exitCode === null) exitCode = ec;
-      } else if (!isExitShim && !isCommander) {
+      } else if (!isExitShim && !isCommander && !isUsage) {
         caughtError = err;
       }
     } else {
