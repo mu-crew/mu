@@ -11,7 +11,7 @@ import { withCaptureSuppressed } from "../src/op-context.js";
 import { addTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 let tempDir: string;
 let dbPath: string;
@@ -35,22 +35,18 @@ describe("workstream init naming hint", () => {
   it("a name without '-' gets a <project>-<purpose> hint, in text and --json", async () => {
     const text = await runCli(["workstream", "init", "auth"], dbPath);
     expect(text.stdout).toMatch(/hint: name workstreams <project>-<purpose> \(e\.g\. .+-auth\)/);
-    const json = JSON.parse(
-      (await runCli(["workstream", "init", "billing", "--json"], dbPath)).stdout,
-    ) as {
-      hint?: string;
-    };
+    const json = (
+      await runCliJson<{ hint?: string }>(["workstream", "init", "billing", "--json"], dbPath)
+    ).data;
     expect(json.hint).toContain("<project>-<purpose>");
   });
 
   it("a <project>-<purpose> name gets no hint", async () => {
     const r = await runCli(["workstream", "init", "hail-auth"], dbPath);
     expect(r.stdout).not.toContain("hint:");
-    const json = JSON.parse(
-      (await runCli(["workstream", "init", "hail-db", "--json"], dbPath)).stdout,
-    ) as {
-      hint?: string;
-    };
+    const json = (
+      await runCliJson<{ hint?: string }>(["workstream", "init", "hail-db", "--json"], dbPath)
+    ).data;
     expect(json.hint).toBeUndefined();
   });
 });

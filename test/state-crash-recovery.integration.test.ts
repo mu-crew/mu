@@ -12,7 +12,7 @@ import { type Db, openDb } from "../src/db.js";
 import { listLogs } from "../src/logs.js";
 import { addTask, claimTask, listNotes } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
-import { runCli } from "./_runCli.js";
+import { runCliJson } from "./_runCli.js";
 
 let tempDir: string;
 let dbPath: string;
@@ -63,11 +63,11 @@ describe("mu state --json crash recovery", () => {
       return { stdout: "", stderr: `unmocked tmux call: ${args.join(" ")}`, exitCode: 1 };
     });
 
-    const result = await runCli(["state", "-w", "auth", "--json"], dbPath);
+    const result = await runCliJson(["state", "-w", "auth", "--json"], dbPath);
 
     expect(result.error).toBeUndefined();
     expect(result.exitCode).toBeNull();
-    const state = JSON.parse(result.stdout.trim()) as { agents: unknown[] };
+    const state = result.data as { agents: unknown[] };
     expect(state.agents).toEqual([]);
     expect(db.prepare("SELECT * FROM agents").all()).toEqual([]);
 

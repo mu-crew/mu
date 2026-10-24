@@ -15,7 +15,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { INC } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli, runCliWire } from "./_runCli.js";
+import { asJson, runCli, runCliWire } from "./_runCli.js";
 
 let dir: string;
 let dbPath: string;
@@ -119,8 +119,8 @@ describe("mu agent check", () => {
 
   it("--json returns the msg object for each outcome", async () => {
     await serve((id) => ({ msg: { id, accepted: true, runs: 4, at: 1 } }));
-    const ok = await check("--json");
-    expect(JSON.parse(ok.stdout)).toMatchObject({
+    const ok = asJson(await check("--json"));
+    expect(ok.data).toMatchObject({
       agentName: "worker-1",
       state: "accepted",
       id: "msg-123",
@@ -132,9 +132,9 @@ describe("mu agent check", () => {
 
   it("--json not-accepted and unreachable carry their state and still exit 3 / 1", async () => {
     await serve((id) => ({ msg: { id, accepted: false } }));
-    const no = await check("--json");
+    const no = asJson(await check("--json"));
     expect(no.exitCode).toBe(3);
-    expect(JSON.parse(no.stdout)).toMatchObject({ state: "not-accepted", id: "msg-123" });
+    expect(no.doc.data).toMatchObject({ state: "not-accepted", id: "msg-123" });
   });
 
   it("--json on a failure is ONE failure document: the verdict in data, the real exit beside it", async () => {

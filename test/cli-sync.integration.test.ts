@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { opCount as opCountOf } from "./_ro.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const SYNC_DIR_KEY = "MU_SYNC_DIR";
 
@@ -58,8 +58,8 @@ describe("mu sync (CLI)", () => {
   };
 
   const taskJson = async (db: string, id: string) => {
-    const { stdout } = await runCli(["task", "show", id, "-w", "demo", "--json"], db);
-    return JSON.parse(stdout) as { task: { name: string; status: string; impact: number } };
+    const { data } = await runCliJson(["task", "show", id, "-w", "demo", "--json"], db);
+    return data as { task: { name: string; status: string; impact: number } };
   };
 
   // Reads the file directly (read-only): every verb, `mu sql` included,
@@ -77,8 +77,8 @@ describe("mu sync (CLI)", () => {
     expect(exitCode).toBeNull();
     expect(stdout).toMatch(/ingested \d+ from 1 peer/);
 
-    const listed = await runCli(["task", "list", "-w", "demo", "--json"], dev);
-    const parsed = JSON.parse(listed.stdout) as { items: Array<{ name: string }> };
+    const listed = await runCliJson(["task", "list", "-w", "demo", "--json"], dev);
+    const parsed = listed.data as { items: Array<{ name: string }> };
     expect(parsed.items.map((t) => t.name)).toEqual(["t1"]);
   });
 
@@ -110,8 +110,8 @@ describe("mu sync (CLI)", () => {
     await seedTask(lap, "t1");
 
     // Never runs `mu sync`. The ambient hook is the whole feature.
-    const { stdout } = await runCli(["task", "list", "-w", "demo", "--json"], dev);
-    const parsed = JSON.parse(stdout) as { items: Array<{ name: string }> };
+    const { data } = await runCliJson(["task", "list", "-w", "demo", "--json"], dev);
+    const parsed = data as { items: Array<{ name: string }> };
     expect(parsed.items.map((t) => t.name)).toEqual(["t1"]);
   });
 
@@ -120,18 +120,18 @@ describe("mu sync (CLI)", () => {
     // until the next invocation — which is the no-hands claim, broken.
     await runCli(["workstream", "init", "demo"], lap);
     await seedTask(lap, "brand-new");
-    const { stdout } = await runCli(["task", "list", "-w", "demo", "--json"], dev);
+    const { stdout } = await runCliJson(["task", "list", "-w", "demo", "--json"], dev);
     expect(stdout).toContain("brand-new");
   });
 
   it("a verb whose flush finds the segment lock held by a live process defers, then a later verb flushes once", async () => {
     await runCli(["workstream", "init", "demo"], lap);
     await seedTask(lap, "t1");
-    const { stdout: idOut } = await runCli(
+    const { data: idRows } = await runCliJson<Array<{ id: string }>>(
       ["sql", "SELECT machine_id AS id FROM machine_identity", "--json"],
       lap,
     );
-    const machineId = (JSON.parse(idOut) as Array<{ id: string }>)[0]?.id ?? "";
+    const machineId = idRows[0]?.id ?? "";
     const segment = join(dir, `${machineId}.jsonl`);
     const stateDir = join(tempDir, "state");
     const lockName = createHash("sha256")
@@ -177,8 +177,8 @@ describe("mu sync (CLI)", () => {
       rmFixtureDir(lockPath);
 
       await withEnv("MU_STATE_DIR", stateDir, async () => {
-        await runCli(["task", "list", "-w", "demo", "--json"], lap);
-        await runCli(["task", "list", "-w", "demo", "--json"], lap);
+        await runCliJson(["task", "list", "-w", "demo", "--json"], lap);
+        await runCliJson(["task", "list", "-w", "demo", "--json"], lap);
       });
       const lines = readFileSync(segment, "utf8").trimEnd().split("\n");
       const hlcs = lines.map((l) => (JSON.parse(l) as { hlc: string }).hlc);
@@ -203,8 +203,8 @@ describe("mu sync (CLI)", () => {
 
     // From the laptop's point of view there are now two peers, and it
     // configured nothing to learn that.
-    const { stdout } = await runCli(["sync", "--json"], lap);
-    const parsed = JSON.parse(stdout) as { peers: Array<{ machineId: string }> };
+    const { data } = await runCliJson(["sync", "--json"], lap);
+    const parsed = data as { peers: Array<{ machineId: string }> };
     expect(parsed.peers).toHaveLength(2);
   });
 
@@ -215,7 +215,7 @@ describe("mu sync (CLI)", () => {
     await runCli(["sync"], dev);
     // ...and a third machine reads BOTH segments out of the same folder.
     const third = join(tempDir, "third.db");
-    const { stdout } = await runCli(["task", "list", "-w", "demo", "--json"], third);
+    const { stdout } = await runCliJson(["task", "list", "-w", "demo", "--json"], third);
     expect(stdout).toContain("relayed");
   });
 
@@ -239,8 +239,8 @@ describe("mu sync (CLI)", () => {
 
     it("--json reports enabled:false rather than erroring", async () => {
       delete process.env[SYNC_DIR_KEY];
-      const { stdout } = await runCli(["sync", "--json"], lap);
-      const parsed = JSON.parse(stdout) as { enabled: boolean; peers: unknown[] };
+      const { data } = await runCliJson(["sync", "--json"], lap);
+      const parsed = data as { enabled: boolean; peers: unknown[] };
       expect(parsed.enabled).toBe(false);
       expect(parsed.peers).toEqual([]);
     });
@@ -263,9 +263,9 @@ describe("mu sync (CLI)", () => {
     process.env[SYNC_DIR_KEY] = dir;
 
     const before = await opCount(dev);
-    const r = await runCli(["sql", "SELECT local_id FROM tasks", "--json"], dev);
+    const r = await runCliJson(["sql", "SELECT local_id FROM tasks", "--json"], dev);
     // The read saw the peer's task: ingest ran first.
-    expect(JSON.parse(r.stdout)).toEqual([{ local_id: "t1" }]);
+    expect(r.data).toEqual([{ local_id: "t1" }]);
     expect(await opCount(dev)).toBeGreaterThan(before);
   });
 
@@ -335,8 +335,8 @@ describe("mu sync (CLI)", () => {
       await runCli(["workstream", "init", "demo"], lap);
       await seedTask(lap, "t1");
       await seedTask(lap, "t2");
-      const first = await runCli(["sync", "--json"], dev);
-      const parsedFirst = JSON.parse(first.stdout) as {
+      const first = await runCliJson(["sync", "--json"], dev);
+      const parsedFirst = first.data as {
         peers: Array<{ short: string; watermark: number }>;
       };
       const peer = parsedFirst.peers[0];
@@ -344,9 +344,9 @@ describe("mu sync (CLI)", () => {
       expect(peer.watermark).toBeGreaterThan(0);
 
       const opsBefore = await opCount(dev);
-      const { stdout, exitCode } = await runCli(["sync", "--repair", peer.short, "--json"], dev);
+      const { data, exitCode } = await runCliJson(["sync", "--repair", peer.short, "--json"], dev);
       expect(exitCode).toBeNull();
-      const parsed = JSON.parse(stdout) as {
+      const parsed = data as {
         repaired: string;
         ingested: Array<{ applied: number }>;
         peers: Array<{ watermark: number; behind: number }>;
@@ -358,16 +358,16 @@ describe("mu sync (CLI)", () => {
       // UNIQUE (machine_id, hlc).
       expect(await opCount(dev)).toBe(opsBefore);
       expect(parsed.peers[0]?.behind).toBe(0);
-      const listed = await runCli(["task", "list", "-w", "demo", "--json"], dev);
-      const tasks = JSON.parse(listed.stdout) as { items: Array<{ name: string }> };
+      const listed = await runCliJson(["task", "list", "-w", "demo", "--json"], dev);
+      const tasks = listed.data as { items: Array<{ name: string }> };
       expect(tasks.items.map((t) => t.name).sort()).toEqual(["t1", "t2"]);
     });
 
     it("accepts a unique prefix", async () => {
       await runCli(["workstream", "init", "demo"], lap);
       await runCli(["sync"], dev);
-      const { stdout } = await runCli(["sync", "--json"], dev);
-      const peer = (JSON.parse(stdout) as { peers: Array<{ short: string }> }).peers[0];
+      const { data } = await runCliJson(["sync", "--json"], dev);
+      const peer = (data as { peers: Array<{ short: string }> }).peers[0];
       if (peer === undefined) throw new Error("expected one peer");
       const { exitCode } = await runCli(["sync", "--repair", peer.short.slice(0, 4)], dev);
       expect(exitCode).toBeNull();
@@ -401,8 +401,8 @@ describe("mu sync (CLI)", () => {
     it("--json reports the counts", async () => {
       await runCli(["workstream", "init", "demo"], lap);
       await seedTask(lap, "t1");
-      const { stdout } = await runCli(["sync", "--from", lap, "--json"], dev);
-      const parsed = JSON.parse(stdout) as { read: number; changed: number; from: string };
+      const { data } = await runCliJson(["sync", "--from", lap, "--json"], dev);
+      const parsed = data as { read: number; changed: number; from: string };
       expect(parsed.read).toBeGreaterThan(0);
       expect(parsed.changed).toBeGreaterThan(0);
       expect(parsed.from).toBe(lap);
@@ -467,8 +467,8 @@ describe("mu sync (CLI)", () => {
       await runCli(["workstream", "init", "demo"], lap);
       const human = await runCli(["sync"], dev);
       expect(human.stdout).toContain("Next:");
-      const { stdout } = await runCli(["sync", "--json"], dev);
-      const parsed = JSON.parse(stdout) as {
+      const { data } = await runCliJson(["sync", "--json"], dev);
+      const parsed = data as {
         syncDir: string;
         enabled: boolean;
         flushed: number;

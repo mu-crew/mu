@@ -43,7 +43,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmFixtureDir } from "./_fs.js";
 import { opCount as opCountOf } from "./_ro.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const SYNC_DIR_KEY = "MU_SYNC_DIR";
 const WS = "fleet";
@@ -95,21 +95,22 @@ describe("mu sync — a multi-round two-machine session", () => {
   };
 
   const view = async (db: string, id: string): Promise<TaskView> => {
-    const { stdout, stderr, exitCode } = await runCli(["task", "show", id, "-w", WS, "--json"], db);
+    const { data, stderr, exitCode } = await runCliJson(
+      ["task", "show", id, "-w", WS, "--json"],
+      db,
+    );
     expect(exitCode, `${id}: ${stderr}`).toBeNull();
-    return JSON.parse(stdout) as TaskView;
+    return data as TaskView;
   };
 
   const missing = async (db: string, id: string): Promise<boolean> => {
-    const { exitCode } = await runCli(["task", "show", id, "-w", WS, "--json"], db);
+    const { exitCode } = await runCliJson(["task", "show", id, "-w", WS, "--json"], db);
     return exitCode === 3;
   };
 
   const names = async (db: string): Promise<string[]> => {
-    const { stdout } = await runCli(["task", "list", "-w", WS, "--json"], db);
-    return (JSON.parse(stdout) as { items: Array<{ name: string }> }).items
-      .map((t) => t.name)
-      .sort();
+    const { data } = await runCliJson(["task", "list", "-w", WS, "--json"], db);
+    return (data as { items: Array<{ name: string }> }).items.map((t) => t.name).sort();
   };
 
   /** No verb is a safe probe (all ingest), so read the file directly. */
@@ -126,7 +127,7 @@ describe("mu sync — a multi-round two-machine session", () => {
    */
   const portable = async (db: string): Promise<string> => {
     const q = async (sql: string): Promise<string> => {
-      const { stdout, stderr } = await runCli(["sql", sql, "--json"], db);
+      const { stdout, stderr } = await runCliJson(["sql", sql, "--json"], db);
       expect(stderr, sql).toBe("");
       return stdout.trim();
     };
@@ -174,11 +175,11 @@ describe("mu sync — a multi-round two-machine session", () => {
 
   /** This machine's segment stem, i.e. its machine id. */
   const stemOf = async (db: string): Promise<string> => {
-    const { stdout } = await runCli(
+    const { data } = await runCliJson(
       ["sql", "SELECT machine_id FROM machine_identity", "--json"],
       db,
     );
-    const rows = JSON.parse(stdout) as Array<{ machine_id: string }>;
+    const rows = data as Array<{ machine_id: string }>;
     const id = rows[0]?.machine_id;
     if (id === undefined) throw new Error("no machine identity");
     return id;
@@ -405,8 +406,8 @@ describe("mu sync — a multi-round two-machine session", () => {
     for (const db of [lap, dev]) {
       const before = await portable(db);
       const beforeOps = await opCount(db);
-      const { stdout } = await runCli(["sync", "--json"], db);
-      const peers = (JSON.parse(stdout) as { peers: Array<{ short: string }> }).peers;
+      const { data } = await runCliJson(["sync", "--json"], db);
+      const peers = (data as { peers: Array<{ short: string }> }).peers;
       expect(peers.length).toBeGreaterThan(0);
       for (const p of peers) {
         const r = await runCli(["sync", "--repair", p.short], db);

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 let tempDir: string;
 let dbPath: string;
@@ -39,8 +39,8 @@ afterEach(() => {
 
 /** The full group id of the most recent op in `demo`. */
 async function newestGroup(): Promise<string> {
-  const r = await runCli(["log", "-w", "demo", "--json", "-n", "1"], dbPath);
-  const group = (JSON.parse(r.stdout.trim()) as LogJson).items[0]?.group;
+  const r = await runCliJson(["log", "-w", "demo", "--json", "-n", "1"], dbPath);
+  const group = (r.data as LogJson).items[0]?.group;
   if (group === undefined) throw new Error("no group id");
   return group;
 }
@@ -67,13 +67,13 @@ describe("group workflow with a SHORT id", () => {
     await runCli(["task", "add", "t1", "-t", "T", "-i", "5", "-e", "1", "-w", "demo"], dbPath);
     const fullId = await newestGroup();
 
-    const byShort = await runCli(
+    const byShort = await runCliJson(
       ["log", "--group", fullId.slice(0, 8), "-w", "demo", "--json"],
       dbPath,
     );
-    const byFull = await runCli(["log", "--group", fullId, "-w", "demo", "--json"], dbPath);
-    const shortItems = (JSON.parse(byShort.stdout.trim()) as LogJson).items;
-    const fullItems = (JSON.parse(byFull.stdout.trim()) as LogJson).items;
+    const byFull = await runCliJson(["log", "--group", fullId, "-w", "demo", "--json"], dbPath);
+    const shortItems = (byShort.data as LogJson).items;
+    const fullItems = (byFull.data as LogJson).items;
     expect(shortItems.length).toBeGreaterThan(0);
     expect(shortItems.map((i) => i.seq)).toEqual(fullItems.map((i) => i.seq));
   });
@@ -125,9 +125,9 @@ describe("group prefix resolution errors", () => {
     } finally {
       db.close();
     }
-    const r = await runCli(["log", "--group", full, "-w", "demo", "--json"], dbPath);
+    const r = await runCliJson(["log", "--group", full, "-w", "demo", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
-    const items = (JSON.parse(r.stdout.trim()) as LogJson).items;
+    const items = (r.data as LogJson).items;
     expect(items.every((i) => i.group === "abc")).toBe(true);
   });
 });

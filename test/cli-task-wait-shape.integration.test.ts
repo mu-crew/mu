@@ -18,7 +18,7 @@ import { type Db, openDb } from "../src/db.js";
 import { addTask, closeTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 interface WaitJsonPayload {
   firing: { qualifiedId: string } | null;
@@ -74,17 +74,20 @@ describe("mu task wait — --any vs --first output shape", () => {
   });
 
   it("--first --json sets `firing`; --any --json leaves it null", async () => {
-    const first = await runCli(
+    const first = await runCliJson(
       ["task", "wait", "a", "b", "--first", "--json", "-w", "test"],
       dbPath,
     );
-    const any = await runCli(["task", "wait", "a", "b", "--any", "--json", "-w", "test"], dbPath);
+    const any = await runCliJson(
+      ["task", "wait", "a", "b", "--any", "--json", "-w", "test"],
+      dbPath,
+    );
 
     expect(first.error).toBeUndefined();
     expect(any.error).toBeUndefined();
 
-    const firstPayload = JSON.parse(first.stdout) as WaitJsonPayload;
-    const anyPayload = JSON.parse(any.stdout) as WaitJsonPayload;
+    const firstPayload = first.data as WaitJsonPayload;
+    const anyPayload = any.data as WaitJsonPayload;
 
     expect(firstPayload.firing).not.toBeNull();
     expect(firstPayload.firing?.qualifiedId).toBe("test/a");
@@ -99,10 +102,13 @@ describe("mu task wait — --any vs --first output shape", () => {
   // real shape nor the invariant can drift back.
 
   it("--any exits 0 with firing:null on SUCCESS (the null is not a failure signal)", async () => {
-    const any = await runCli(["task", "wait", "a", "b", "--any", "--json", "-w", "test"], dbPath);
+    const any = await runCliJson(
+      ["task", "wait", "a", "b", "--any", "--json", "-w", "test"],
+      dbPath,
+    );
 
     expect(any.error).toBeUndefined();
-    const payload = JSON.parse(any.stdout) as WaitJsonPayload;
+    const payload = any.data as WaitJsonPayload;
     // The wait genuinely succeeded: `a` reached CLOSED and is in `all`,
     // and nothing is outstanding — yet `firing` is null. Exit 0 plus
     // firing:null therefore means "success, ref unidentified", never
@@ -117,22 +123,22 @@ describe("mu task wait — --any vs --first output shape", () => {
     // --first implies any:true, and both non-timeout returns in
     // waitForTasks are guarded by isDone(), which for any:true means
     // >=1 ref reachedTarget. So a zero exit must carry a firing ref.
-    const success = await runCli(
+    const success = await runCliJson(
       ["task", "wait", "a", "b", "--first", "--json", "-w", "test"],
       dbPath,
     );
     expect(success.error).toBeUndefined();
-    expect((JSON.parse(success.stdout) as WaitJsonPayload).firing).not.toBeNull();
+    expect((success.data as WaitJsonPayload).firing).not.toBeNull();
 
     // The complement: when nothing reaches the target, firing is null
     // — but the exit is 5 (timeout), never 0. `b` is the only ref and
     // it stays OPEN.
-    const timedOut = await runCli(
+    const timedOut = await runCliJson(
       ["task", "wait", "b", "--first", "--json", "-w", "test", "--timeout", "0.3"],
       dbPath,
     );
     expect(timedOut.exitCode).toBe(5);
-    const payload = JSON.parse(timedOut.stdout) as WaitJsonPayload;
+    const payload = timedOut.data as WaitJsonPayload;
     expect(payload.firing).toBeNull();
     expect(payload.timedOut).toHaveLength(1);
   });

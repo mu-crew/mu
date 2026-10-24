@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { getTask, listNotes } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task add --note", () => {
   let tempDir: string;
@@ -90,7 +90,7 @@ describe("mu task add --note", () => {
   });
 
   it("includes the initial note in --json output", async () => {
-    const { stdout } = await runCli(
+    const { data } = await runCliJson(
       [
         "task",
         "add",
@@ -112,7 +112,7 @@ describe("mu task add --note", () => {
       dbPath,
     );
 
-    const parsed = JSON.parse(stdout) as { note?: { author: string | null; content: string } };
+    const parsed = data as { note?: { author: string | null; content: string } };
     expect(parsed.note).toEqual(expect.objectContaining({ author: "author-a", content: "A: b" }));
   });
 

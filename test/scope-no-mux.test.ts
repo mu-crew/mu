@@ -92,11 +92,29 @@ afterEach(() => {
   rmFixtureDir(dir);
 });
 
-const names = (stdout: string): string[] =>
-  (JSON.parse(stdout) as { items: { name: string }[] }).items.map((t) => t.name).sort();
+const names = (data: unknown): string[] =>
+  (data as { items: { name: string }[] }).items.map((t) => t.name).sort();
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching SGR escapes is the point
 const plain = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, "");
+
+/** A --json refusal: one failure document on stdout that carries no data. */
+function expectJsonRefusal(r: { doc: { ok: boolean }; data: unknown }): void {
+  expect(r.doc.ok).toBe(false);
+  expect(r.data).toBeUndefined();
+}
+
+/** Refusal of an argv that may or may not carry --json: --json gives a data-less failure
+ *  document on stdout, human mode gives empty stdout. */
+function expectNothingRead(r: { stdout: string }, argv: readonly string[]): void {
+  if (!argv.includes("--json")) {
+    expect(r.stdout).toBe("");
+    return;
+  }
+  const doc = JSON.parse(r.stdout) as { ok: boolean; data?: unknown };
+  expect(doc.ok).toBe(false);
+  expect(doc.data).toBeUndefined();
+}
 
 /** One line, no help dump: what a missing scope must look like on stderr. */
 function expectOneLineMissingScope(raw: string): void {
@@ -122,10 +140,10 @@ for (const where of ["inside", "outside"] as const) {
 
     it("task list with no scope is a one-line teaching error, never the decoy's data", async () => {
       setEnv({ MU_SESSION: "decoy" });
-      const r = await runCli(["task", "list", "--json"], dbPath);
+      const r = await runCliJson(["task", "list", "--json"], dbPath);
       expect(r.exitCode).toBe(2);
-      expect(r.stdout).toBe("");
-      expectOneLineMissingScope(r.stderr);
+      expectJsonRefusal(r);
+      expectOneLineMissingScope(String(r.doc.message));
     });
 
     it("the session name is only a suggestion", async () => {
@@ -137,24 +155,24 @@ for (const where of ["inside", "outside"] as const) {
 
     it("-w selects exactly that partition, root position too", async () => {
       setEnv({ MU_SESSION: "decoy" });
-      const verb = await runCli(["task", "list", "-w", "own", "--json"], dbPath);
-      expect(names(verb.stdout)).toEqual(["only-own", "shared", "t-own"]);
-      const root = await runCli(["-w", "own", "task", "list", "--json"], dbPath);
+      const verb = await runCliJson(["task", "list", "-w", "own", "--json"], dbPath);
+      expect(names(verb.data)).toEqual(["only-own", "shared", "t-own"]);
+      const root = await runCliJson(["-w", "own", "task", "list", "--json"], dbPath);
       expect(root.stdout).toBe(verb.stdout);
     });
 
     it("injected managed identity scopes the verb, over MU_SESSION and the session", async () => {
       setEnv({ ...MANAGED, MU_SESSION: "decoy" });
-      const r = await runCli(["task", "list", "--json"], dbPath);
+      const r = await runCliJson(["task", "list", "--json"], dbPath);
       expect(r.exitCode).toBeNull();
-      expect(names(r.stdout)).toEqual(["only-own", "shared", "t-own"]);
+      expect(names(r.data)).toEqual(["only-own", "shared", "t-own"]);
     });
 
     it("an explicit -w beats the injected identity", async () => {
       setEnv(MANAGED);
-      const r = await runCli(["task", "list", "-w", "decoy", "--json"], dbPath);
-      expect(names(r.stdout)).toEqual(["shared", "t-decoy"]);
-      const root = await runCli(["-w", "decoy", "task", "list", "--json"], dbPath);
+      const r = await runCliJson(["task", "list", "-w", "decoy", "--json"], dbPath);
+      expect(names(r.data)).toEqual(["shared", "t-decoy"]);
+      const root = await runCliJson(["-w", "decoy", "task", "list", "--json"], dbPath);
       expect(root.stdout).toBe(r.stdout);
     });
 
@@ -174,9 +192,9 @@ for (const where of ["inside", "outside"] as const) {
     });
 
     it("a qualified ref is explicit scope and needs no mux", async () => {
-      const r = await runCli(["task", "show", "own/only-own", "--json"], dbPath);
+      const r = await runCliJson(["task", "show", "own/only-own", "--json"], dbPath);
       expect(r.exitCode).toBeNull();
-      expect(JSON.parse(r.stdout).task.workstreamName).toBe("own");
+      expect(r.data.task.workstreamName).toBe("own");
     });
 
     it("mutating verbs refuse too: nothing is closed in the decoy workstream", async () => {
@@ -194,23 +212,26 @@ for (const where of ["inside", "outside"] as const) {
     it("state: bare is an error (also --json), --all and -w are explicit", async () => {
       setEnv({ MU_SESSION: "decoy" });
       for (const argv of [["state"], ["state", "--json"]]) {
-        const r = await runCli(argv, dbPath);
+        const r = await runCliWire(argv, dbPath);
         expect(r.exitCode, argv.join(" ")).toBe(2);
-        expect(r.stdout).toBe("");
-        expect(r.stderr).toContain("--all");
-        expect(r.stderr.trim().split("\n")).toHaveLength(1);
+        expectNothingRead(r, argv);
+        const text = argv.includes("--json")
+          ? String((JSON.parse(r.stdout) as { message: string }).message)
+          : r.stderr;
+        expect(text).toContain("--all");
+        expect(text.trim().split("\n")).toHaveLength(1);
       }
-      const all = await runCli(["state", "--all", "--json"], dbPath);
+      const all = await runCliJson(["state", "--all", "--json"], dbPath);
       expect(all.exitCode).toBeNull();
-      const one = await runCli(["state", "-w", "own", "--json"], dbPath);
-      expect(JSON.parse(one.stdout).workstreamName).toBe("own");
+      const one = await runCliJson(["state", "-w", "own", "--json"], dbPath);
+      expect(one.data.workstreamName).toBe("own");
     });
 
     it("state: injected identity scopes a bare `mu state`", async () => {
       setEnv(MANAGED);
-      const r = await runCli(["state", "--json"], dbPath);
+      const r = await runCliJson(["state", "--json"], dbPath);
       expect(r.exitCode).toBeNull();
-      expect(JSON.parse(r.stdout).workstreamName).toBe("own");
+      expect(r.data.workstreamName).toBe("own");
     });
 
     it("log: write and bare read need a scope; --all is the explicit global read", async () => {
@@ -224,13 +245,13 @@ for (const where of ["inside", "outside"] as const) {
       const w = await runCli(["log", "hello"], dbPath);
       expect(w.exitCode).toBe(2);
       expectOneLineMissingScope(w.stderr);
-      const read = await runCli(["log", "--json"], dbPath);
+      const read = await runCliJson(["log", "--json"], dbPath);
       expect(read.exitCode).toBe(2);
-      expect(read.stdout).toBe("");
+      expectJsonRefusal(read);
       const db = openDb({ path: dbPath });
       expect(listLogs(db, {}).length).toBe(before);
       db.close();
-      const all = await runCli(["log", "--all", "--json"], dbPath);
+      const all = await runCliJson(["log", "--all", "--json"], dbPath);
       expect(all.exitCode).toBeNull();
     });
 
@@ -248,25 +269,25 @@ for (const where of ["inside", "outside"] as const) {
 
     it("me: the injected identity wins over a pane that belongs to another agent", async () => {
       setEnv({ ...MANAGED, TMUX_PANE: "%9" });
-      const r = await runCli(["me", "--json"], dbPath);
+      const r = await runCliJson(["me", "--json"], dbPath);
       expect(r.exitCode, r.stderr).toBeNull();
-      expect(JSON.parse(r.stdout).agent).toMatchObject({ name: "self-1", workstreamName: "own" });
+      expect(r.data.agent).toMatchObject({ name: "self-1", workstreamName: "own" });
     });
 
     it("me: injected identity works with no $TMUX_PANE at all", async () => {
       setEnv(MANAGED);
-      const r = await runCli(["me", "--json"], dbPath);
+      const r = await runCliJson(["me", "--json"], dbPath);
       expect(r.exitCode, r.stderr).toBeNull();
-      expect(JSON.parse(r.stdout).agent.name).toBe("self-1");
-      const next = await runCli(["me", "next", "--json"], dbPath);
+      expect(r.data.agent.name).toBe("self-1");
+      const next = await runCliJson(["me", "next", "--json"], dbPath);
       expect(next.exitCode, next.stderr).toBeNull();
     });
 
     it("me: a managed identity with no agent row is an error, not a pane guess", async () => {
       setEnv({ ...MANAGED, MU_AGENT_NAME: "ghost-1", TMUX_PANE: "%9" });
-      const r = await runCli(["me", "--json"], dbPath);
+      const r = await runCliJson(["me", "--json"], dbPath);
       expect(r.exitCode).toBe(2);
-      expect(r.stderr).toContain("own/ghost-1");
+      expect(String(r.doc.message)).toContain("own/ghost-1");
     });
 
     it("task note authorship is MU_AGENT_NAME, never the pane", async () => {
@@ -320,7 +341,7 @@ describe("blank and padded workstream names are rejected everywhere, never trimm
   ])("%j exits 2 and reads nothing", async (argv) => {
     const r = await runCli(argv, dbPath);
     expect(r.exitCode, `${r.stdout}${r.stderr}`).toBe(2);
-    expect(r.stdout).toBe("");
+    expectNothingRead(r, argv);
   });
 
   it.each([
@@ -346,7 +367,7 @@ describe("blank and padded workstream names are rejected everywhere, never trimm
   });
 
   it("a scope error in --json mode is still the envelope, one line", async () => {
-    const r = await runCli(["task", "show", "t-own", "-w", " own", "--json"], dbPath);
+    const r = await runCliJson(["task", "show", "t-own", "-w", " own", "--json"], dbPath);
     expect(r.exitCode).toBe(2);
     expect(r.stderr.trim().split("\n")).toHaveLength(1);
   });
@@ -358,9 +379,9 @@ describe("blank and padded workstream names are rejected everywhere, never trimm
   });
 
   it("a trailing comma is a comma artifact, not a blank name", async () => {
-    const r = await runCli(["-w", "own,", "task", "list", "--json"], dbPath);
+    const r = await runCliJson(["-w", "own,", "task", "list", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
-    expect(names(r.stdout)).toContain("t-own");
+    expect(names(r.data)).toContain("t-own");
   });
 });
 
@@ -373,10 +394,10 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
   afterEach(() => unreachable.restore());
 
   it("task, DAG, wait and sql verbs keep working with explicit scope", async () => {
-    const list = await runCli(["task", "list", "-w", "own", "--json"], dbPath);
+    const list = await runCliJson(["task", "list", "-w", "own", "--json"], dbPath);
     expect(list.exitCode, list.stderr).toBeNull();
-    expect(names(list.stdout)).toContain("t-own");
-    const root = await runCli(["-w", "own", "task", "list", "--json"], dbPath);
+    expect(names(list.data)).toContain("t-own");
+    const root = await runCliJson(["-w", "own", "task", "list", "--json"], dbPath);
     expect(root.stdout).toBe(list.stdout);
     for (const argv of [
       ["task", "tree", "own/t-own", "--json"],
@@ -467,9 +488,9 @@ describe("a mux binary with no client is not 'no mux'", () => {
   it("doctor exits 0 when tmux answers, with $TMUX/$TMUX_PANE/$HERDR_ENV unset", async () => {
     const mux = installMux("tmux", [["-V", "tmux 3.4"]]);
     try {
-      const r = await runCli(["doctor", "--json"], dbPath);
+      const r = await runCliJson(["doctor", "--json"], dbPath);
       expect(r.exitCode, r.stderr).toBeNull();
-      expect(JSON.parse(r.stdout).environment.mux.ok).toBe(true);
+      expect(r.data.environment.mux.ok).toBe(true);
     } finally {
       mux.restore();
     }

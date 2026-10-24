@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { addBlockEdge, addTask, getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const WS = "rv";
 let tempDir: string;
@@ -62,9 +62,9 @@ describe("mu task add --triage / accept", () => {
 
   it("accept moves it to OPEN/todo with --json, then is a no-op", async () => {
     await addFinding("f1");
-    const r = await runCli(["task", "accept", "f1", "-w", WS, "--json"], dbPath);
+    const r = await runCliJson(["task", "accept", "f1", "-w", WS, "--json"], dbPath);
     expect(r.exitCode).toBeNull();
-    expect(JSON.parse(r.stdout)).toMatchObject({
+    expect(r.data).toMatchObject({
       taskName: "f1",
       changed: true,
       previousSubstate: "triage",
@@ -120,11 +120,11 @@ describe("triage hints on read surfaces", () => {
 
   it("close --if-ready on a review blocked by findings leads with the triage inbox", async () => {
     await addFinding("f1");
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "close", "review", "-w", WS, "--if-ready", "--evidence", "test", "--json"],
       dbPath,
     );
-    const payload = JSON.parse(r.stdout) as { skipped: string; nextSteps: { command: string }[] };
+    const payload = r.data as { skipped: string; nextSteps: { command: string }[] };
     expect(payload.skipped).toBe("not_ready");
     expect(payload.nextSteps[0]?.command).toBe(`mu task list --substate triage -w ${WS}`);
     expect(pairOf("review")).toBe("OPEN/todo");
@@ -135,10 +135,12 @@ describe("triage hints on read surfaces", () => {
     const text = plain((await runCli(["state", "-w", WS], dbPath)).stdout);
     expect(text).toContain("Triage (1)");
     expect(text).toContain("mu task accept <id>");
-    const json = JSON.parse((await runCli(["state", "-w", WS, "--json"], dbPath)).stdout) as {
-      triage: { name: string }[];
-      ready: { name: string }[];
-    };
+    const json = (
+      await runCliJson<{
+        triage: { name: string }[];
+        ready: { name: string }[];
+      }>(["state", "-w", WS, "--json"], dbPath)
+    ).data;
     expect(json.triage.map((t) => t.name)).toEqual(["f1"]);
     expect(json.ready.map((t) => t.name)).toEqual([]);
   });

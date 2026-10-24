@@ -19,7 +19,7 @@ import { encode, INCARNATION_MISMATCH, LineDecoder } from "../src/ctl/protocol.j
 import { type Db, openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
 let dbPath: string;
@@ -240,16 +240,16 @@ describe("mu agent abort (CLI)", () => {
   it("exit 0 with --json result", async () => {
     seed("worker-1");
     await serve("worker-1", "busy");
-    const r = await runCli(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
+    const r = await runCliJson(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
-    expect(JSON.parse(r.stdout)).toMatchObject({ before: "busy", after: "idle", aborted: true });
+    expect(r.data).toMatchObject({ before: "busy", after: "idle", aborted: true });
   });
 
   it("an abort that reported idle drops the read-the-pane hint", async () => {
     seed("worker-1");
     await serve("worker-1", "busy");
-    const r = await runCli(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
-    const body = JSON.parse(r.stdout) as { after: string; nextSteps: Array<{ command: string }> };
+    const r = await runCliJson(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
+    const body = r.data as { after: string; nextSteps: Array<{ command: string }> };
     expect(body.after).toBe("idle");
     expect(body.nextSteps.some((s) => s.command.startsWith("mu agent read"))).toBe(false);
   });
@@ -257,8 +257,8 @@ describe("mu agent abort (CLI)", () => {
   it("an abort that ends busy (a queued run started) keeps the read-the-pane hint", async () => {
     seed("worker-1");
     await serve("worker-1", "busy", true, "busy");
-    const r = await runCli(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
-    const body = JSON.parse(r.stdout) as { after: string; nextSteps: Array<{ command: string }> };
+    const r = await runCliJson(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
+    const body = r.data as { after: string; nextSteps: Array<{ command: string }> };
     expect(body.after).toBe("busy");
     expect(body.nextSteps.map((s) => s.command)).toContain("mu agent read worker-1 -n 30 -w auth");
   });
@@ -266,12 +266,12 @@ describe("mu agent abort (CLI)", () => {
   it("exit 5 on timeout", async () => {
     seed("worker-1");
     await serve("worker-1", "busy", false);
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "abort", "worker-1", "-w", "auth", "--timeout", "0.2", "--json"],
       dbPath,
     );
     expect(r.exitCode).toBe(5);
-    expect(r.stderr).toContain("mu agent close worker-1");
+    expect(JSON.stringify(r.doc)).toContain("mu agent close worker-1");
   });
 
   it("exit 2 for a non-pi agent", async () => {

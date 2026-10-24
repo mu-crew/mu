@@ -13,7 +13,7 @@ import { ctlProbe } from "../src/ctl/client.js";
 import { ctlSocketPath, MAX_SOCK_PATH, remoteCtlSocketPath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
 let dbPath: string;
@@ -47,10 +47,10 @@ describe("remoteCtlSocketPath", () => {
 
 describe("mu agent remote-env", () => {
   it("--json: ssh args forward the local derived path to the remote path", async () => {
-    const r = await runCli(["agent", "remote-env", "worker-1", "-w", "big", "--json"], dbPath);
+    const r = await runCliJson(["agent", "remote-env", "worker-1", "-w", "big", "--json"], dbPath);
     expect(r.error).toBeUndefined();
     expect(r.exitCode).toBeNull();
-    const j = JSON.parse(r.stdout) as Record<string, string>;
+    const j = r.data as Record<string, string>;
     const local = ctlSocketPath("big", "worker-1", dir);
     const remote = `/tmp/mu-${uid}/big/worker-1.sock`;
     expect(j.localSock).toBe(local);
@@ -72,11 +72,11 @@ describe("mu agent remote-env", () => {
   });
 
   it("--remote-sock overrides the remote path", async () => {
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "remote-env", "worker-1", "-w", "big", "--remote-sock", "/run/u/w1.sock", "--json"],
       dbPath,
     );
-    const j = JSON.parse(r.stdout) as Record<string, string>;
+    const j = r.data as Record<string, string>;
     expect(j.remoteSock).toBe("/run/u/w1.sock");
     expect(j.sshArgs).toMatch(/:\/run\/u\/w1\.sock$/);
     expect(j.env).toMatch(/MU_CTL_SOCK=\/run\/u\/w1\.sock$/);
@@ -108,11 +108,11 @@ describe("mu agent remote-env", () => {
   it("long names hash both paths under the socket limit", async () => {
     const name = `a${"b".repeat(31)}`;
     ensureWorkstream(db, `w${"x".repeat(31)}`);
-    const r = await runCli(
+    const r = await runCliJson(
       ["agent", "remote-env", name, "-w", `w${"x".repeat(31)}`, "--json"],
       dbPath,
     );
-    const j = JSON.parse(r.stdout) as Record<string, string>;
+    const j = r.data as Record<string, string>;
     expect(Buffer.byteLength(j.localSock ?? "")).toBeLessThanOrEqual(MAX_SOCK_PATH);
     expect(Buffer.byteLength(j.remoteSock ?? "")).toBeLessThanOrEqual(MAX_SOCK_PATH);
   });
@@ -127,9 +127,12 @@ describe("mu agent remote-env", () => {
       ["-c", `${r.stdout}\nprintf '%s\\n%s' "$MU_SSH_ARGS" "$MU_REMOTE_ENV"`],
       { encoding: "utf8" },
     );
-    const j = JSON.parse(
-      (await runCli(["agent", "remote-env", "worker-1", "-w", "big", "--json"], dbPath)).stdout,
-    ) as Record<string, string>;
+    const j = (
+      await runCliJson<Record<string, string>>(
+        ["agent", "remote-env", "worker-1", "-w", "big", "--json"],
+        dbPath,
+      )
+    ).data;
     expect(out).toBe(`${j.sshArgs}\n${j.env}`);
   });
 

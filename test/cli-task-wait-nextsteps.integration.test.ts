@@ -15,7 +15,7 @@ import { addTask, claimTask, closeTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import type { WorktreeRow } from "../src/worktree.js";
-import { runCli } from "./_runCli.js";
+import { runCliJson } from "./_runCli.js";
 import { seedWorktree } from "./_worktree.js";
 
 const GIT = (() => {
@@ -141,13 +141,13 @@ gitDescribe("mu task wait nextSteps — git worktree commits", () => {
   async function closeAndWait(firingTask: string, otherTask: string): Promise<WaitJsonPayload> {
     closeTask(db, firingTask, { workstream: "test", evidence: "done" });
     closeTask(db, otherTask, { workstream: "test", evidence: "done" });
-    const r = await runCli(
+    const r = await runCliJson(
       ["task", "wait", firingTask, otherTask, "-w", "test", "--first", "--json"],
       dbPath,
     );
     expect(r.error).toBeUndefined();
     expect(r.exitCode).toBeNull();
-    return JSON.parse(r.stdout) as WaitJsonPayload;
+    return r.data as WaitJsonPayload;
   }
 
   it("points at the worker's worktree log from its fork point", async () => {

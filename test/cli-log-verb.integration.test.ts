@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { latestSeq, listLogs } from "../src/logs.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 let tempDir: string;
 let dbPath: string;
@@ -118,8 +118,8 @@ describe("mu log filters", () => {
 
   it("--group narrows to one op group", async () => {
     await seedSession();
-    const j = await runCli(["log", "-w", "demo", "--intent", "task.close", "--json"], dbPath);
-    const items = (JSON.parse(j.stdout.trim()) as { items: LogJson[] }).items;
+    const j = await runCliJson(["log", "-w", "demo", "--intent", "task.close", "--json"], dbPath);
+    const items = (j.data as { items: LogJson[] }).items;
     const group = items[0]?.group;
     expect(group).toBeDefined();
     if (group === undefined) return;
@@ -149,11 +149,11 @@ describe("mu log filters", () => {
 
   it("the ledger round-trips through --json as the docs describe", async () => {
     await runCli(["log", "pr=1 ci=green", "-w", "demo", "--kind", "pr-state"], dbPath);
-    const r = await runCli(
+    const r = await runCliJson(
       ["log", "-w", "demo", "--kind", "pr-state", "-n", "1", "--json"],
       dbPath,
     );
-    const items = (JSON.parse(r.stdout.trim()) as { items: LogJson[] }).items;
+    const items = (r.data as { items: LogJson[] }).items;
     expect(items).toHaveLength(1);
     expect(items[0]?.payload).toBe("pr=1 ci=green");
     expect(items[0]?.kind).toBe("pr-state");
@@ -164,8 +164,8 @@ describe("mu log filters", () => {
 describe("mu log --json", () => {
   it("carries both the structured fields AND the rendered prose", async () => {
     await seedSession();
-    const r = await runCli(["log", "-w", "demo", "--json"], dbPath);
-    const items = (JSON.parse(r.stdout.trim()) as { items: LogJson[] }).items;
+    const r = await runCliJson(["log", "-w", "demo", "--json"], dbPath);
+    const items = (r.data as { items: LogJson[] }).items;
     const close = items.find((i) => i.intent === "task.close" && i.kind === "task");
     expect(close).toBeDefined();
     // Structured, so scripts switch on intent rather than parsing prose...

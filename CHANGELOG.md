@@ -68,6 +68,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   New pure `src/output-contract.ts` (`encodeEnvelope`, `capRecords`: UTF-8
   byte budget, cut on a record boundary, first and pinned records never cut);
   test helpers `runCliJson` (unwraps `data`) and `runCliWire` (raw).
+  Part B (tests only): every test that parsed `--json` stdout/stderr moved
+  onto `runCliJson`/`asJson` (or the raw `runCliWire` for wire assertions);
+  `runCli` is now the raw capture (human output), the transitional legacy
+  view is gone. Test counts unchanged.
   Round 2: root-position `mu --json <verb>` now prints the envelope on
   success too (it only worked on errors); `mu log <text> --json` prints the
   written row (with `rendered`) as one envelope; under `--json` the warnings

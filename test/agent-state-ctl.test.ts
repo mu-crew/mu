@@ -24,7 +24,7 @@ import { StallDetectedDuringWaitError } from "../src/tasks/errors.js";
 import { addTask, claimTask, setWaitStuckWarnForTests, waitForTasks } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { helloReply, INC } from "./_ctl-ext.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const WS = "cs";
 let dir: string;
@@ -278,7 +278,10 @@ describe("readAgentStates via the control socket", () => {
 describe("mu agent wait on a pi agent", () => {
   it("resolves on the extension's settle without polling status", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 3 });
-    const pending = runCli(["agent", "wait", "pia", "-w", WS, "--timeout", "10", "--json"], dbPath);
+    const pending = runCliJson(
+      ["agent", "wait", "pia", "-w", WS, "--timeout", "10", "--json"],
+      dbPath,
+    );
     // Let the wait request arrive, then settle.
     for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
       await new Promise((r) => setTimeout(r, 10));
@@ -288,7 +291,7 @@ describe("mu agent wait on a pi agent", () => {
     const res = await pending;
     expect(res.error).toBeUndefined();
     expect(res.exitCode).toBeNull();
-    const payload = JSON.parse(res.stdout) as {
+    const payload = res.data as {
       agents: Array<{ fired: boolean; lastText?: string; outcome?: string }>;
     };
     expect(payload.agents[0]?.fired).toBe(true);
@@ -301,7 +304,10 @@ describe("mu agent wait on a pi agent", () => {
     // idle with runs already past nothing: a fresh send made pi busy and it
     // settled; the status read before the wait is the baseline.
     const ext = await fakeExtension({ state: "idle", since: 1, runs: 0 });
-    const pending = runCli(["agent", "wait", "pia", "-w", WS, "--timeout", "10", "--json"], dbPath);
+    const pending = runCliJson(
+      ["agent", "wait", "pia", "-w", WS, "--timeout", "10", "--json"],
+      dbPath,
+    );
     for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
       await new Promise((r) => setTimeout(r, 10));
     }
@@ -311,22 +317,18 @@ describe("mu agent wait on a pi agent", () => {
     ext.settle();
     const res = await pending;
     expect(res.exitCode).toBeNull();
-    expect((JSON.parse(res.stdout) as { agents: Array<{ fired: boolean }> }).agents[0]?.fired).toBe(
-      true,
-    );
+    expect((res.data as { agents: Array<{ fired: boolean }> }).agents[0]?.fired).toBe(true);
   });
 
   it("--after-runs catches a run that settled before the wait started", async () => {
     // send replied runs:2, then the run went 2 → 3 before the wait ran.
     const ext = await fakeExtension({ state: "idle", since: 1, runs: 3 });
-    const res = await runCli(
+    const res = await runCliJson(
       ["agent", "wait", "pia", "-w", WS, "--after-runs", "2", "--timeout", "2", "--json"],
       dbPath,
     );
     expect(res.exitCode).toBeNull();
-    expect((JSON.parse(res.stdout) as { agents: Array<{ fired: boolean }> }).agents[0]?.fired).toBe(
-      true,
-    );
+    expect((res.data as { agents: Array<{ fired: boolean }> }).agents[0]?.fired).toBe(true);
     expect(ext.ops).toEqual(["wait"]);
   });
 
@@ -334,14 +336,13 @@ describe("mu agent wait on a pi agent", () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
     ext.settle("the answer"); // runs 1, idle; no waiter held
     const started = Date.now();
-    const res = await runCli(
+    const res = await runCliJson(
       ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--timeout", "5", "--json"],
       dbPath,
     );
     expect(Date.now() - started).toBeLessThan(2000);
     expect(res.exitCode).toBeNull();
-    const a = (JSON.parse(res.stdout) as { agents: Array<{ fired: boolean; lastText?: string }> })
-      .agents[0];
+    const a = (res.data as { agents: Array<{ fired: boolean; lastText?: string }> }).agents[0];
     expect(a).toMatchObject({ fired: true, lastText: "the answer" });
     expect(ext.ops).toEqual(["wait"]);
   });
@@ -350,25 +351,25 @@ describe("mu agent wait on a pi agent", () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
     ext.settle("the answer");
     const args = ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--first"];
-    const withText = await runCli([...args, "--timeout", "5", "--json"], dbPath);
-    expect(JSON.parse(withText.stdout).nextSteps).toEqual([]);
+    const withText = await runCliJson([...args, "--timeout", "5", "--json"], dbPath);
+    expect(withText.data.nextSteps).toEqual([]);
     ext.start();
     ext.settle("");
-    const empty = await runCli(
+    const empty = await runCliJson(
       ["agent", "wait", "pia", "-w", WS, "--after-runs", "1", "--first", "--json"],
       dbPath,
     );
-    expect(JSON.stringify(JSON.parse(empty.stdout).nextSteps)).toContain("mu agent read pia -w cs");
+    expect(JSON.stringify(empty.data.nextSteps)).toContain("mu agent read pia -w cs");
   });
 
   it("--first keeps the read hint for a run with lastText and a lastError", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
     ext.settle("partial", "rate limited");
-    const res = await runCli(
+    const res = await runCliJson(
       ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--first", "--json"],
       dbPath,
     );
-    expect(JSON.stringify(JSON.parse(res.stdout).nextSteps)).toContain("mu agent read pia -w cs");
+    expect(JSON.stringify(res.data.nextSteps)).toContain("mu agent read pia -w cs");
   });
 
   it("--first human output prints the read hint only when the run has no lastText", async () => {
@@ -408,7 +409,7 @@ describe("mu agent wait on a pi agent", () => {
 
   it("a dialog opening mid-wait ends it: outcome blocked, not fired, exit 7", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
-    const pending = runCli(
+    const pending = runCliJson(
       ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--timeout", "10", "--json"],
       dbPath,
     );
@@ -419,7 +420,7 @@ describe("mu agent wait on a pi agent", () => {
     const res = await pending;
     expect(process.exitCode).toBe(7);
     process.exitCode = undefined;
-    const out = JSON.parse(res.stdout) as {
+    const out = res.data as {
       timedOut: boolean;
       agents: Array<{ fired: boolean; outcome?: string; status?: string; blocked?: unknown }>;
       nextSteps: unknown[];
@@ -448,13 +449,13 @@ describe("mu agent wait on a pi agent", () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 2 });
     ext.block("confirm", "Allow push?");
     // No --after-runs: the baseline is the status read taken at wait start.
-    const first = await runCli(
+    const first = await runCliJson(
       ["agent", "wait", "pia", "-w", WS, "--timeout", "5", "--json"],
       dbPath,
     );
     expect(process.exitCode).toBe(7);
     process.exitCode = undefined;
-    const out = JSON.parse(first.stdout) as {
+    const out = first.data as {
       agents: Array<{ outcome?: string; afterRuns?: number }>;
       nextSteps: Array<{ command: string }>;
     };
@@ -465,10 +466,10 @@ describe("mu agent wait on a pi agent", () => {
     ext.unblock();
     ext.settle("the answer");
     const args = (rewait ?? "").split(" ").slice(1);
-    const again = await runCli([...args, "--timeout", "2", "--json"], dbPath);
+    const again = await runCliJson([...args, "--timeout", "2", "--json"], dbPath);
     expect(again.exitCode).toBeNull();
     expect(process.exitCode).toBeUndefined();
-    expect(JSON.parse(again.stdout).agents[0]).toMatchObject({
+    expect(again.data.agents[0]).toMatchObject({
       fired: true,
       outcome: "done",
       lastText: "the answer",
@@ -477,7 +478,7 @@ describe("mu agent wait on a pi agent", () => {
 
   it("a dialog seen after a dropped wait still ends blocked, not fired", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
-    const pending = runCli(
+    const pending = runCliJson(
       ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--timeout", "10", "--json"],
       dbPath,
     );
@@ -491,7 +492,7 @@ describe("mu agent wait on a pi agent", () => {
     const res = await pending;
     expect(process.exitCode).toBe(7);
     process.exitCode = undefined;
-    const out = JSON.parse(res.stdout) as {
+    const out = res.data as {
       agents: Array<{ fired: boolean; outcome?: string; status?: string; blocked?: unknown }>;
     };
     expect(out.agents[0]).toMatchObject({
@@ -620,21 +621,21 @@ describe("mu agent wait --inc: a restarted agent is refused, never waited on", (
 
   it("the matching incarnation waits normally and the request carries it", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
-    const pending = runCli(waitArgs("--after-runs", "0", "--inc", INC), dbPath);
+    const pending = runCliJson(waitArgs("--after-runs", "0", "--inc", INC), dbPath);
     for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
       await new Promise((r) => setTimeout(r, 10));
     }
     ext.settle("done");
     const res = await pending;
     expect(res.exitCode).toBeNull();
-    expect(JSON.parse(res.stdout).agents[0]).toMatchObject({ fired: true, lastText: "done" });
+    expect(res.data.agents[0]).toMatchObject({ fired: true, lastText: "done" });
   });
 
   it("a mismatch reply is AgentRestartedError: exit 4, old and new incarnation named, one stderr line", async () => {
     await fakeExtension({ state: "idle", since: 1, runs: 3 });
-    const res = await runCli(waitArgs("--after-runs", "2", "--inc", "inc-OLD"), dbPath);
+    const res = await runCliJson(waitArgs("--after-runs", "2", "--inc", "inc-OLD"), dbPath);
     expect(res.exitCode).toBe(4);
-    const env = JSON.parse(res.stderr) as { error: string; message: string };
+    const env = res.doc as unknown as { error: string; message: string };
     expect(env.error).toBe("AgentRestartedError");
     expect(env.message).toBe(
       `agent pia restarted (incarnation inc-OLD → ${INC}); its earlier run is gone: re-send the brief`,
@@ -661,19 +662,19 @@ describe("mu agent wait --inc: a restarted agent is refused, never waited on", (
 
   it("pi restarts MID-wait: the held wait drops, the reconnect finds another incarnation: fatal, not polled", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
-    const pending = runCli(waitArgs("--after-runs", "0", "--inc", INC), dbPath);
+    const pending = runCliJson(waitArgs("--after-runs", "0", "--inc", INC), dbPath);
     for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
       await new Promise((r) => setTimeout(r, 10));
     }
     ext.restart("inc-NEW");
     const res = await pending;
     expect(res.exitCode).toBe(4);
-    expect(JSON.parse(res.stderr).message).toContain(`${INC} → inc-NEW`);
+    expect(res.doc.message).toContain(`${INC} → inc-NEW`);
   });
 
   it("the SAME incarnation answering after a drop (a /new) still falls back to polling", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
-    const pending = runCli(waitArgs("--after-runs", "0", "--inc", INC), dbPath);
+    const pending = runCliJson(waitArgs("--after-runs", "0", "--inc", INC), dbPath);
     for (let i = 0; i < 100 && !ext.ops.includes("wait"); i++) {
       await new Promise((r) => setTimeout(r, 10));
     }
@@ -681,16 +682,16 @@ describe("mu agent wait --inc: a restarted agent is refused, never waited on", (
     ext.settle("after the drop");
     const res = await pending;
     expect(res.exitCode).toBeNull();
-    expect(JSON.parse(res.stdout).agents[0]).toMatchObject({ fired: true });
+    expect(res.data.agents[0]).toMatchObject({ fired: true });
   });
 
   it("without --inc nothing changes: a restarted pi is still waited on", async () => {
     const ext = await fakeExtension({ state: "idle", since: 1, runs: 3 });
     ext.restart("inc-NEW");
     ext.settle("fresh answer");
-    const res = await runCli(waitArgs("--after-runs", "0"), dbPath);
+    const res = await runCliJson(waitArgs("--after-runs", "0"), dbPath);
     expect(res.exitCode).toBeNull();
-    expect(JSON.parse(res.stdout).agents[0]).toMatchObject({ fired: true });
+    expect(res.data.agents[0]).toMatchObject({ fired: true });
   });
 
   it("an extension without the incarnation feature: AgentExtensionOutdatedError before waiting", async () => {
@@ -715,9 +716,9 @@ describe("mu agent wait --inc: a restarted agent is refused, never waited on", (
     });
     servers.push(server);
     await new Promise<void>((r) => server.listen(path, () => r()));
-    const res = await runCli(waitArgs("--inc", "x"), dbPath);
+    const res = await runCliJson(waitArgs("--inc", "x"), dbPath);
     expect(res.exitCode).toBe(4);
-    expect(JSON.parse(res.stderr)).toMatchObject({ error: "AgentExtensionOutdatedError" });
+    expect(res.doc).toMatchObject({ error: "AgentExtensionOutdatedError" });
   });
 
   it("--inc needs a pi agent and one agent: usage errors", async () => {

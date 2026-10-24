@@ -14,7 +14,7 @@ import { type Db, openDb } from "../src/db.js";
 import { ensureWorkstream, listEmptyWorkstreams } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 import { previewRevision } from "./_teardown.js";
 
 /** Sessions → the foreground command of each of their panes. */
@@ -91,17 +91,17 @@ describe("teardown --empty: live-pane guard and group hint", () => {
     expect((await listEmptyWorkstreams(db)).map((w) => w.name)).toEqual(["bare"]);
 
     db.close();
-    const dry = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
+    const dry = await runCliJson(["workstream", "teardown", "--empty", "--json"], dbPath);
     expect(dry.error).toBeUndefined();
-    const preview = JSON.parse(dry.stdout) as { items: { name: string }[]; revision: number };
+    const preview = dry.data as { items: { name: string }[]; revision: number };
     expect(preview.items.map((w) => w.name)).toEqual(["bare"]);
 
-    const r = await runCli(
+    const r = await runCliJson(
       ["workstream", "teardown", "--empty", "--if", String(preview.revision), "--json"],
       dbPath,
     );
     expect(r.error).toBeUndefined();
-    expect(JSON.parse(r.stdout)).toMatchObject({ tornDown: 1, failed: [] });
+    expect(r.data).toMatchObject({ tornDown: 1, failed: [] });
     expect(killed).toEqual([]);
     expect(Object.keys(sessions).sort()).toEqual(["mu-busy-shell", "mu-litter", "mu-livecrew"]);
   });
@@ -147,10 +147,8 @@ describe("teardown --empty: live-pane guard and group hint", () => {
     expect(r.stdout).toContain("mu workstream list --torn-down");
 
     // Each teardown is its own group: that is why the hint lists them.
-    const list = await runCli(["workstream", "list", "--torn-down", "--json"], dbPath);
-    const groups = (JSON.parse(list.stdout) as { items: { group: string }[] }).items.map(
-      (i) => i.group,
-    );
+    const list = await runCliJson(["workstream", "list", "--torn-down", "--json"], dbPath);
+    const groups = (list.data as { items: { group: string }[] }).items.map((i) => i.group);
     expect(new Set(groups).size).toBe(2);
   });
 });

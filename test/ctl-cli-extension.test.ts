@@ -14,7 +14,7 @@ import { type Db, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 type Handler = (event: unknown, ctx: MuPiContext) => unknown;
 
@@ -73,9 +73,9 @@ afterEach(async () => {
 
 describe("CLI against the real extension", () => {
   it("send returns msgId + incarnation + runs; check confirms the same msgId; the wait hint names both", async () => {
-    const r = await runCli(["agent", "send", "worker-1", "go", "-w", "auth", "--json"], dbPath);
+    const r = await runCliJson(["agent", "send", "worker-1", "go", "-w", "auth", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
-    const out = JSON.parse(r.stdout) as {
+    const out = r.data as {
       msgId: string;
       incarnation: string;
       runs: number;
@@ -100,7 +100,7 @@ describe("CLI against the real extension", () => {
     const inc = sent.incarnation ?? "";
     await emit("agent_start");
     await emit("agent_settled");
-    const ok = await runCli(
+    const ok = await runCliJson(
       [
         "agent",
         "wait",
@@ -118,8 +118,8 @@ describe("CLI against the real extension", () => {
       dbPath,
     );
     expect(ok.exitCode).toBeNull();
-    expect(JSON.parse(ok.stdout).agents[0]).toMatchObject({ fired: true });
-    const stale = await runCli(
+    expect(ok.data.agents[0]).toMatchObject({ fired: true });
+    const stale = await runCliJson(
       [
         "agent",
         "wait",
@@ -137,7 +137,7 @@ describe("CLI against the real extension", () => {
       dbPath,
     );
     expect(stale.exitCode).toBe(4);
-    expect(JSON.parse(stale.stderr)).toMatchObject({ error: "AgentRestartedError" });
-    expect(JSON.parse(stale.stderr).message).toContain(`inc-from-an-old-pi → ${inc}`);
+    expect(stale.doc).toMatchObject({ error: "AgentRestartedError" });
+    expect(stale.doc.message).toContain(`inc-from-an-old-pi → ${inc}`);
   });
 });

@@ -9,13 +9,17 @@
 //
 // Usage:
 //
-//   import { runCli } from "./_runCli.js";
+//   import { runCli, runCliJson } from "./_runCli.js";
 //
-//   const { stdout, stderr, exitCode } = await runCli(
-//     ["task", "add", "foo", "-w", "test", "-t", "Foo", "-i", "50", "-e", "1"],
+//   // `--json` verbs: one envelope on stdout; `data` is the payload, `doc` the whole document.
+//   const { data, doc, exitCode } = await runCliJson(
+//     ["task", "add", "foo", "-w", "test", "-t", "Foo", "-i", "50", "-e", "1", "--json"],
 //     dbPath,
 //   );
-//   expect(JSON.parse(stdout)).toMatchObject({ task: { localId: "foo" } });
+//   expect(data).toMatchObject({ task: { localId: "foo" } });
+//
+//   // Human output (no --json), or wire assertions: the raw capture.
+//   const { stdout, stderr } = await runCli(["task", "list", "-w", "test"], dbPath);
 //
 // Why a function rather than a vitest fixture:
 //
@@ -190,20 +194,31 @@ export async function runCliWire(argv: readonly string[], dbPath: string): Promi
 // `mu --json` prints ONE document: `{ok:true,data,next}` or, on failure and
 // on STDOUT, `{ok:false,error,message,next,exit}` (src/output-contract.ts).
 
-export interface JsonCapture<T = unknown> extends Capture {
+// `data` defaults to `any`: it replaces `JSON.parse(stdout)`, which was `any`, and
+// a test narrows it with a type argument or a cast where the shape matters.
+// biome-ignore lint/suspicious/noExplicitAny: see above
+export interface JsonCapture<T = any> extends Capture {
   /** The envelope's `data` (success), or the failure's partial `data`. */
   data: T;
   /** The whole parsed document. */
-  doc: Record<string, unknown> & { ok: boolean };
+  // biome-ignore lint/suspicious/noExplicitAny: a document's keys are asserted per test
+  doc: Record<string, any> & { ok: boolean };
 }
 
 /** Run a `--json` verb and unwrap the envelope: `data` is the payload, `doc`
  *  the whole document. Fails loudly when stdout is not exactly one document. */
-export async function runCliJson<T = unknown>(
+// biome-ignore lint/suspicious/noExplicitAny: see JsonCapture
+export async function runCliJson<T = any>(
   argv: readonly string[],
   dbPath: string,
 ): Promise<JsonCapture<T>> {
-  const cap = await runCliWire(argv, dbPath);
+  return asJson<T>(await runCliWire(argv, dbPath));
+}
+
+/** The envelope view of a capture you already hold (for a wrapper that runs
+ *  both human and `--json` argvs). Same loud failures as runCliJson. */
+// biome-ignore lint/suspicious/noExplicitAny: see JsonCapture
+export function asJson<T = any>(cap: Capture): JsonCapture<T> {
   let doc: unknown;
   try {
     doc = JSON.parse(cap.stdout);
@@ -216,36 +231,6 @@ export async function runCliJson<T = unknown>(
   return { ...cap, data: (d as { data?: unknown }).data as T, doc: d };
 }
 
-/** The pre-envelope view, TRANSITIONAL: tests not yet moved to runCliJson
- *  (part B, v_output_tests) read bare payloads on stdout and error documents
- *  on stderr. A success envelope is unwrapped to its `data`; a failure goes
- *  back to the old `{error,message,nextSteps,exitCode}` shape on stderr (its
- *  partial `data`, if any, back on stdout). Delete when part B lands. */
-export async function runCli(argv: readonly string[], dbPath: string): Promise<Capture> {
-  const cap = await runCliWire(argv, dbPath);
-  let stdout = "";
-  let stderr = cap.stderr;
-  for (const line of cap.stdout.split("\n")) {
-    let doc: Record<string, unknown> | undefined;
-    try {
-      const v: unknown = JSON.parse(line);
-      if (typeof v === "object" && v !== null && !Array.isArray(v)) doc = v as typeof doc;
-    } catch {
-      // not JSON: human output, passed through
-    }
-    if (doc === undefined || typeof doc.ok !== "boolean" || !("next" in doc)) {
-      stdout += line === "" ? "" : `${line}\n`;
-      continue;
-    }
-    if (doc.ok === true && "data" in doc) {
-      stdout += `${JSON.stringify(doc.data)}\n`;
-      continue;
-    }
-    const { ok: _ok, next: _next, exit, data, ...old } = doc;
-    if (data !== undefined) stdout += `${JSON.stringify(data)}\n`;
-    stderr += `${JSON.stringify({ ...old, exitCode: exit })}\n`;
-  }
-  return cap.error !== undefined
-    ? { stdout, stderr, exitCode: cap.exitCode, error: cap.error }
-    : { stdout, stderr, exitCode: cap.exitCode };
-}
+/** Human-mode (no `--json`) captures: the raw capture under its short name.
+ *  `--json` tests use runCliJson; wire assertions use runCliWire. */
+export const runCli = runCliWire;

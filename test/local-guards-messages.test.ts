@@ -14,7 +14,7 @@ import { addBlockEdge } from "../src/tasks/edges.js";
 import { addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
 let path: string;
@@ -41,9 +41,15 @@ afterEach(() => {
 
 const lines = (s: string): string[] => s.split("\n").filter((l) => l.trim() !== "");
 const count = (sql: string): number => (db.prepare(sql).get() as { n: number }).n;
-const sql = async (stmt: string, json = false) => {
+const sql = async (stmt: string) => {
   db.close();
-  const r = await runCli(["sql", ...(json ? ["--json"] : []), stmt], path);
+  const r = await runCli(["sql", stmt], path);
+  db = openDb({ path });
+  return r;
+};
+const sqlJson = async (stmt: string) => {
+  db.close();
+  const r = await runCliJson(["sql", "--json", stmt], path);
   db = openDb({ path });
   return r;
 };
@@ -57,13 +63,9 @@ describe("mu sql: a guard's RAISE is a typed conflict (exit 4) with the next com
   });
 
   it("--json names the typed error, not SqliteError", async () => {
-    const r = await sql(
-      "UPDATE tasks SET status='CLOSED', substate='done' WHERE local_id='t'",
-      true,
-    );
+    const r = await sqlJson("UPDATE tasks SET status='CLOSED', substate='done' WHERE local_id='t'");
     expect(r.exitCode).toBe(4);
-    const env = JSON.parse(lines(r.stderr)[0] as string) as { error: string; exitCode: number };
-    expect(env).toMatchObject({ error: "CloseNeedsEvidenceError", exitCode: 4 });
+    expect(r.doc).toMatchObject({ error: "CloseNeedsEvidenceError", exit: 4 });
   });
 
   it("multi statement: a note first, then a close over an open blocker; all rolled back", async () => {
@@ -114,6 +116,15 @@ describe("mu task close without --evidence: exit 2, ONE stderr line, nothing wri
     return r;
   };
 
+  const closeNoEvidenceJson = async () => {
+    const ops = count("SELECT COUNT(*) n FROM ops");
+    db.close();
+    const r = await runCliJson(["task", "close", "t", "-w", "demo", "--json"], path);
+    db = openDb({ path });
+    expect(count("SELECT COUNT(*) n FROM ops")).toBe(ops);
+    return r;
+  };
+
   it("plain close", async () => {
     const r = await closeNoEvidence();
     expect(r.exitCode).toBe(2);
@@ -143,9 +154,9 @@ describe("mu task close without --evidence: exit 2, ONE stderr line, nothing wri
   });
 
   it("--json keeps the one-line envelope without a usage block", async () => {
-    const r = await closeNoEvidence("--json");
+    const r = await closeNoEvidenceJson();
     expect(r.exitCode).toBe(2);
-    const env = JSON.parse(r.stderr) as { error: string; usage?: unknown };
+    const env = r.doc as unknown as { error: string; usage?: unknown };
     expect(env.error).toBe("UsageError");
     expect(env.usage).toBeUndefined();
   });

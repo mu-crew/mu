@@ -22,11 +22,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 interface JsonError {
   error: string;
-  exitCode: number;
+  exit: number;
 }
 
 describe("typed not-found exit code surfaces from verb paths", () => {
@@ -53,11 +53,11 @@ describe("typed not-found exit code surfaces from verb paths", () => {
   });
 
   it("`mu task close <nonexistent> --json` exits 3 and emits a structured error", async () => {
-    const r = await runCli(["task", "close", "no_such_task", "-w", "test", "--json"], dbPath);
+    const r = await runCliJson(["task", "close", "no_such_task", "-w", "test", "--json"], dbPath);
     expect(r.error).toBeUndefined();
     expect(r.exitCode).toBe(3);
-    const payload = JSON.parse(r.stderr) as JsonError;
-    expect(payload.exitCode).toBe(3);
+    const payload = r.doc as unknown as JsonError;
+    expect(payload.exit).toBe(3);
     expect(payload.error).toBe("TaskNotFoundError");
   });
 

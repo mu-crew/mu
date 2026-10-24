@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task add — invalid id ergonomics", () => {
   let tempDir: string;
@@ -53,22 +53,19 @@ describe("mu task add — invalid id ergonomics", () => {
       "-e",
       "1",
     ];
-    const { stderr, exitCode, error } = await runCli(argv, dbPath);
+    const { doc, stderr, exitCode, error } = await runCliJson(argv, dbPath);
     expect(error).toBeUndefined();
     expect(exitCode).toBe(2);
-    // The CLI's emitError() writes one JSON object per error to stderr.
-    const lines = stderr.trim().split("\n").filter(Boolean);
-    expect(lines.length).toBeGreaterThan(0);
-    const lastLine = lines[lines.length - 1];
-    expect(lastLine).toBeDefined();
-    const envelope = JSON.parse(lastLine as string) as {
+    // The failure is ONE document on STDOUT (stderr stays empty).
+    expect(stderr).toBe("");
+    const envelope = doc as unknown as {
       error: string;
       message: string;
       nextSteps: { intent: string; command: string }[];
-      exitCode: number;
+      exit: number;
     };
     expect(envelope.error).toBe("TaskIdInvalidError");
-    expect(envelope.exitCode).toBe(2);
+    expect(envelope.exit).toBe(2);
     expect(envelope.message).toMatch(/invalid task id/);
     expect(envelope.nextSteps.length).toBeGreaterThan(0);
     // First step is the auto-derived path: `mu task add --title "..."`

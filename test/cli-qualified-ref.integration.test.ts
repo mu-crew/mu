@@ -19,7 +19,7 @@ import { applyQualifiedRef, parseQualifiedRef } from "../src/cli.js";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, closeTask, getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("parseQualifiedRef (unit)", () => {
   it("bare name → workstream undefined, name = input", () => {
@@ -122,13 +122,13 @@ describe("CLI: qualified entity refs", () => {
   });
 
   it("bare ref + -w resolves the right workstream's task (existing behaviour)", async () => {
-    const { stdout, exitCode, error } = await runCli(
+    const { data, exitCode, error } = await runCliJson(
       ["task", "show", "design", "-w", "wsa", "--json"],
       dbPath,
     );
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
-    const parsed = JSON.parse(stdout.trim()) as {
+    const parsed = data as {
       task: { workstreamName: string; title: string };
     };
     expect(parsed.task.workstreamName).toBe("wsa");
@@ -136,13 +136,13 @@ describe("CLI: qualified entity refs", () => {
   });
 
   it("qualified ref resolves directly, no -w needed", async () => {
-    const { stdout, exitCode, error } = await runCli(
+    const { data, exitCode, error } = await runCliJson(
       ["task", "show", "wsb/design", "--json"],
       dbPath,
     );
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
-    const parsed = JSON.parse(stdout.trim()) as {
+    const parsed = data as {
       task: { workstreamName: string; title: string };
     };
     expect(parsed.task.workstreamName).toBe("wsb");
@@ -152,8 +152,8 @@ describe("CLI: qualified entity refs", () => {
   it("qualified ref overrides $MU_SESSION", async () => {
     process.env.MU_SESSION = "wsa";
     try {
-      const { stdout } = await runCli(["task", "show", "wsb/design", "--json"], dbPath);
-      const parsed = JSON.parse(stdout.trim()) as { task: { workstreamName: string } };
+      const { data } = await runCliJson(["task", "show", "wsb/design", "--json"], dbPath);
+      const parsed = data as { task: { workstreamName: string } };
       expect(parsed.task.workstreamName).toBe("wsb");
     } finally {
       const k = "MU_SESSION";
@@ -162,12 +162,12 @@ describe("CLI: qualified entity refs", () => {
   });
 
   it("qualified ref + matching -w works (no conflict)", async () => {
-    const { stdout, error } = await runCli(
+    const { data, error } = await runCliJson(
       ["task", "show", "wsa/design", "-w", "wsa", "--json"],
       dbPath,
     );
     expect(error).toBeUndefined();
-    const parsed = JSON.parse(stdout.trim()) as { task: { workstreamName: string } };
+    const parsed = data as { task: { workstreamName: string } };
     expect(parsed.task.workstreamName).toBe("wsa");
   });
 
@@ -189,15 +189,16 @@ describe("CLI: qualified entity refs", () => {
   });
 
   it("bare ref + only one match across workstreams + no -w → one-line error naming the qualified ref, routes nothing", async () => {
-    const { stdout, stderr, exitCode } = await runCli(
+    const { stdout, stderr, exitCode, doc } = await runCliJson(
       ["task", "show", "only-in-a", "--json"],
       dbPath,
     );
     expect(exitCode).toBe(2);
-    expect(stdout).toBe("");
-    expect(stderr.trim().split("\n")).toHaveLength(1);
-    expect(stderr).toMatch(/no workstream: pass -w <name>/);
-    expect(stderr).toContain("wsa/only-in-a");
+    expect(doc).not.toHaveProperty("data"); // routes nothing
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toHaveLength(1);
+    expect(doc.message).toMatch(/no workstream: pass -w <name>/);
+    expect(doc.message).toContain("wsa/only-in-a");
   });
 
   it("bare ref + zero matches anywhere + no -w → the same one-line error (exit 2)", async () => {
@@ -210,9 +211,10 @@ describe("CLI: qualified entity refs", () => {
   it("a stray MU_SESSION no longer rescues a bare ref", async () => {
     process.env.MU_SESSION = "wsa";
     try {
-      const { stdout, exitCode } = await runCli(["task", "show", "only-in-a", "--json"], dbPath);
+      const { doc, exitCode } = await runCliJson(["task", "show", "only-in-a", "--json"], dbPath);
       expect(exitCode).toBe(2);
-      expect(stdout).toBe("");
+      expect(doc.ok).toBe(false);
+      expect(doc).not.toHaveProperty("data");
     } finally {
       const k = "MU_SESSION";
       delete process.env[k];
@@ -220,16 +222,17 @@ describe("CLI: qualified entity refs", () => {
   });
 
   it("a blank -w is a usage error, not a single-match guess", async () => {
-    const { stdout, exitCode } = await runCli(
+    const { doc, exitCode } = await runCliJson(
       ["task", "show", "only-in-a", "-w", " ", "--json"],
       dbPath,
     );
     expect(exitCode).toBe(2);
-    expect(stdout).toBe("");
+    expect(doc.ok).toBe(false);
+    expect(doc).not.toHaveProperty("data");
   });
 
   it("qualified ref works for `mu task close` (write verb path)", async () => {
-    const { exitCode, error } = await runCli(
+    const { exitCode, error } = await runCliJson(
       ["task", "close", "wsb/design", "--evidence", "test", "--json"],
       dbPath,
     );
@@ -243,9 +246,9 @@ describe("CLI: qualified entity refs", () => {
   });
 
   it("`mu task tree` accepts qualified refs", async () => {
-    const { stdout, error } = await runCli(["task", "tree", "wsb/design", "--json"], dbPath);
+    const { data, error } = await runCliJson(["task", "tree", "wsb/design", "--json"], dbPath);
     expect(error).toBeUndefined();
-    const parsed = JSON.parse(stdout.trim()) as { root: { task: { workstreamName: string } } };
+    const parsed = data as { root: { task: { workstreamName: string } } };
     expect(parsed.root.task.workstreamName).toBe("wsb");
   });
 
@@ -255,7 +258,7 @@ describe("CLI: qualified entity refs", () => {
     const db = openDb({ path: dbPath });
     closeTask(db, "design", { workstream: "wsb", evidence: "test" });
     db.close();
-    const { exitCode, error } = await runCli(
+    const { exitCode, error } = await runCliJson(
       ["task", "wait", "wsb/design", "--timeout", "1", "--json"],
       dbPath,
     );

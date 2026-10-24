@@ -31,8 +31,11 @@ export function legacyHardTeardown(db: Db, workstream: string): void {
 
 /** The `revision` a CLI preview (`teardown <args…> --json`) prints. */
 export async function previewRevision(dbPath: string, args: readonly string[]): Promise<number> {
-  const { runCli } = await import("./_runCli.js");
-  const r = await runCli(["workstream", "teardown", ...args, "--json"], dbPath);
+  const { runCliJson } = await import("./_runCli.js");
+  const r = await runCliJson<{ revision: number }>(
+    ["workstream", "teardown", ...args, "--json"],
+    dbPath,
+  );
   if (r.error !== undefined) throw r.error;
-  return (JSON.parse(r.stdout.trim()) as { revision: number }).revision;
+  return r.data.revision;
 }

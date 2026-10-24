@@ -12,7 +12,7 @@ import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCliJson } from "./_runCli.js";
 
 let dir: string;
 let dbPath: string;
@@ -42,9 +42,12 @@ function paneShows(text: string): void {
 }
 
 async function scrollbackLines(verb: "read" | "show"): Promise<unknown> {
-  const r = await runCli(["agent", verb, "worker-1", "-n", "20", "--json", "-w", "auth"], dbPath);
+  const r = await runCliJson(
+    ["agent", verb, "worker-1", "-n", "20", "--json", "-w", "auth"],
+    dbPath,
+  );
   expect(r.exitCode).toBeNull();
-  const out = JSON.parse(r.stdout) as { scrollback: string; scrollbackLines: unknown };
+  const out = r.data as { scrollback: string; scrollbackLines: unknown };
   return out.scrollbackLines;
 }
 

@@ -23,7 +23,7 @@ import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addNote, addTask, claimTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 // Sleep helper: SQLite created_at is ISO with ms precision; rapid
 // successive INSERTs can land in the same ms. The filter is `>`
@@ -72,13 +72,13 @@ describe("mu task notes — filters", () => {
   describe("--tail", () => {
     it("--tail 1 returns only the last note", async () => {
       await seedNotes(3);
-      const r = await runCli(
+      const r = await runCliJson(
         ["task", "notes", "tnotes", "-w", "test", "--tail", "1", "--json"],
         dbPath,
       );
       expect(r.error).toBeUndefined();
       expect(r.exitCode === null || r.exitCode === 0).toBe(true);
-      const out = JSON.parse(r.stdout) as {
+      const out = r.data as {
         items: { content: string }[];
         count: number;
       };
@@ -89,23 +89,23 @@ describe("mu task notes — filters", () => {
 
     it("--tail N where N >= total returns all notes", async () => {
       await seedNotes(3);
-      const r = await runCli(
+      const r = await runCliJson(
         ["task", "notes", "tnotes", "-w", "test", "--tail", "99", "--json"],
         dbPath,
       );
       expect(r.error).toBeUndefined();
-      const out = JSON.parse(r.stdout) as { items: unknown[]; count: number };
+      const out = r.data as { items: unknown[]; count: number };
       expect(out.count).toBe(3);
     });
 
     it("--last is an alias for --tail", async () => {
       await seedNotes(3);
-      const r = await runCli(
+      const r = await runCliJson(
         ["task", "notes", "tnotes", "-w", "test", "--last", "2", "--json"],
         dbPath,
       );
       expect(r.error).toBeUndefined();
-      const out = JSON.parse(r.stdout) as {
+      const out = r.data as {
         items: { content: string }[];
         count: number;
       };
@@ -135,23 +135,23 @@ describe("mu task notes — filters", () => {
     it("--since <past iso> returns all notes", async () => {
       await seedNotes(3);
       // 1970-01-01 is before any seeded note.
-      const r = await runCli(
+      const r = await runCliJson(
         ["task", "notes", "tnotes", "-w", "test", "--since", "1970-01-01T00:00:00.000Z", "--json"],
         dbPath,
       );
       expect(r.error).toBeUndefined();
-      const out = JSON.parse(r.stdout) as { items: unknown[]; count: number };
+      const out = r.data as { items: unknown[]; count: number };
       expect(out.count).toBe(3);
     });
 
     it("--since <future iso> returns no notes", async () => {
       await seedNotes(3);
-      const r = await runCli(
+      const r = await runCliJson(
         ["task", "notes", "tnotes", "-w", "test", "--since", "2999-01-01T00:00:00.000Z", "--json"],
         dbPath,
       );
       expect(r.error).toBeUndefined();
-      const out = JSON.parse(r.stdout) as { items: unknown[]; count: number };
+      const out = r.data as { items: unknown[]; count: number };
       expect(out.count).toBe(0);
     });
 
@@ -183,12 +183,12 @@ describe("mu task notes — filters", () => {
       await sleep(5);
       await seedNotes(2, "post");
 
-      const r = await runCli(
+      const r = await runCliJson(
         ["task", "notes", "tnotes", "-w", "test", "--since-claim", "--json"],
         dbPath,
       );
       expect(r.error).toBeUndefined();
-      const out = JSON.parse(r.stdout) as {
+      const out = r.data as {
         items: { content: string }[];
         count: number;
       };
@@ -200,12 +200,12 @@ describe("mu task notes — filters", () => {
       await seedNotes(3);
       // No claim happened — `lastClaimEventAt` returns null, the SDK
       // degrades to no filter (equivalent to --since-beginning).
-      const r = await runCli(
+      const r = await runCliJson(
         ["task", "notes", "tnotes", "-w", "test", "--since-claim", "--json"],
         dbPath,
       );
       expect(r.error).toBeUndefined();
-      const out = JSON.parse(r.stdout) as { items: unknown[]; count: number };
+      const out = r.data as { items: unknown[]; count: number };
       expect(out.count).toBe(3);
     });
   });
@@ -232,9 +232,9 @@ describe("mu task notes — filters", () => {
 
     it("--json emits the {items, count} collection envelope with note contents", async () => {
       await seedNotes(2, "envelope");
-      const r = await runCli(["task", "notes", "tnotes", "-w", "test", "--json"], dbPath);
+      const r = await runCliJson(["task", "notes", "tnotes", "-w", "test", "--json"], dbPath);
       expect(r.error).toBeUndefined();
-      const out = JSON.parse(r.stdout) as {
+      const out = r.data as {
         items: Array<{ author: string | null; content: string; createdAt: string }>;
         count: number;
       };
@@ -249,9 +249,9 @@ describe("mu task notes — filters", () => {
 
     it("default behaviour (no filters) is unchanged", async () => {
       await seedNotes(3);
-      const r = await runCli(["task", "notes", "tnotes", "-w", "test", "--json"], dbPath);
+      const r = await runCliJson(["task", "notes", "tnotes", "-w", "test", "--json"], dbPath);
       expect(r.error).toBeUndefined();
-      const out = JSON.parse(r.stdout) as {
+      const out = r.data as {
         items: { content: string }[];
         count: number;
       };
@@ -261,7 +261,7 @@ describe("mu task notes — filters", () => {
 
     it("--tail composes with --since (since first, then tail)", async () => {
       await seedNotes(5);
-      const r = await runCli(
+      const r = await runCliJson(
         [
           "task",
           "notes",
@@ -277,7 +277,7 @@ describe("mu task notes — filters", () => {
         dbPath,
       );
       expect(r.error).toBeUndefined();
-      const out = JSON.parse(r.stdout) as {
+      const out = r.data as {
         items: { content: string }[];
         count: number;
       };

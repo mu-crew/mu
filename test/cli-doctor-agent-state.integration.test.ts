@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { linkPi, linkSkill } from "../src/link.js";
 import { rmFixtureDir } from "./_fs.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu doctor — agent state source", () => {
   let tempDir: string;
@@ -42,8 +42,8 @@ describe("mu doctor — agent state source", () => {
 
   it("reports the same row in --json", async () => {
     process.env.PATH = join(tempDir, "empty-bin");
-    const { stdout } = await runCli(["doctor", "--json"], dbPath);
-    const report = JSON.parse(stdout) as {
+    const { data } = await runCliJson(["doctor", "--json"], dbPath);
+    const report = data as {
       environment: { agentState: { name: string; status: string } };
     };
     expect(report.environment.agentState).toMatchObject({ name: "murmur", status: "warn" });
@@ -66,8 +66,8 @@ describe("mu doctor — agent state source", () => {
   });
 
   it("reports environment.ctl and environment.skill in --json", async () => {
-    const { stdout } = await runCli(["doctor", "--json"], dbPath);
-    const report = JSON.parse(stdout) as {
+    const { data } = await runCliJson(["doctor", "--json"], dbPath);
+    const report = data as {
       environment: {
         ctl: { extension: { status: string }; sockets: { name: string }; agents: unknown[] };
         skill: { name: string; status: string };

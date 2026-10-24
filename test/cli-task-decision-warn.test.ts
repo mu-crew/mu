@@ -17,7 +17,7 @@ import { openDb } from "../src/db.js";
 import { addNote, addTask, claimTask, closeTask, listNotes, parkTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const WS = "rv";
 const AGENT_KEY = "MU_AGENT_NAME";
@@ -69,8 +69,8 @@ function notesOf(id: string): { author: string | null; content: string }[] {
 async function json(
   argv: string[],
 ): Promise<{ exitCode: number | null; body: { warnings?: string[] } }> {
-  const r = await runCli([...argv, "-w", WS, "--json"], dbPath);
-  return { exitCode: r.exitCode, body: JSON.parse(r.stdout) as { warnings?: string[] } };
+  const r = await runCliJson([...argv, "-w", WS, "--json"], dbPath);
+  return { exitCode: r.exitCode, body: r.data as { warnings?: string[] } };
 }
 
 describe("weak decision warnings", () => {

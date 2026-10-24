@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmFixtureDir } from "./_fs.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("mu rebuild", () => {
   let tempDir: string;
@@ -50,8 +50,8 @@ describe("mu rebuild", () => {
     expect(stdout).toMatch(/2 tasks/);
 
     // The rebuilt DB answers real queries — the actual recovery test.
-    const listed = await runCli(["task", "list", "-w", "demo", "--json"], out);
-    const parsed = JSON.parse(listed.stdout) as { items: Array<{ name: string; status: string }> };
+    const listed = await runCliJson(["task", "list", "-w", "demo", "--json"], out);
+    const parsed = listed.data as { items: Array<{ name: string; status: string }> };
     expect(parsed.items.map((t) => `${t.name}:${t.status}`).sort()).toEqual(["a:CLOSED", "b:OPEN"]);
 
     // The blocked-by edge survived, so the DAG is intact.
@@ -73,9 +73,9 @@ describe("mu rebuild", () => {
   it("--json emits the documented shape including the swap command", async () => {
     await seed();
     const out = target();
-    const { stdout, stderr } = await runCli(["rebuild", out, "--json"], dbPath);
+    const { data, stderr } = await runCliJson(["rebuild", out, "--json"], dbPath);
     expect(stderr).toBe("");
-    const parsed = JSON.parse(stdout) as {
+    const parsed = data as {
       targetPath: string;
       machineId: string;
       opsCopied: number;
@@ -143,8 +143,8 @@ describe("mu rebuild", () => {
     expect(exitCode).toBe(4);
     expect(stdout + stderr).toContain("source DB");
     // The live DB still works.
-    const listed = await runCli(["task", "list", "-w", "demo", "--json"], dbPath);
-    expect((JSON.parse(listed.stdout) as { count: number }).count).toBe(2);
+    const listed = await runCliJson(["task", "list", "-w", "demo", "--json"], dbPath);
+    expect((listed.data as { count: number }).count).toBe(2);
   });
 
   it("appears in --help", async () => {

@@ -31,7 +31,7 @@ import {
   type TmuxExecutor,
 } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 import { previewRevision } from "./_teardown.js";
 
 let tempDir: string;
@@ -143,7 +143,7 @@ function seed(state: MockState): void {
 /** Preview, then apply the sweep with the printed revision. */
 async function sweep() {
   const rev = await previewRevision(dbPath, ["--empty"]);
-  return runCli(["workstream", "teardown", "--empty", "--if", String(rev), "--json"], dbPath);
+  return runCliJson(["workstream", "teardown", "--empty", "--if", String(rev), "--json"], dbPath);
 }
 
 // ─── Test cases ─────────────────────────────────────────────────────
@@ -172,9 +172,9 @@ describe("mu workstream teardown --empty", () => {
     expect(tbl.stdout).not.toContain("--yes");
 
     // JSON form: array of WorkstreamSummary, sorted by name.
-    const j = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
+    const j = await runCliJson(["workstream", "teardown", "--empty", "--json"], dbPath);
     expect(j.error).toBeUndefined();
-    const env = JSON.parse(j.stdout.trim()) as {
+    const env = j.data as {
       items: Array<{
         name: string;
         muxAlive: boolean;
@@ -215,7 +215,7 @@ describe("mu workstream teardown --empty", () => {
     const r = await sweep();
     expect(r.error).toBeUndefined();
     expect(r.exitCode).toBeNull();
-    const env = JSON.parse(r.stdout.trim()) as {
+    const env = r.data as {
       tornDown: number;
       results: Array<{ workstreamName: string; killedMux: boolean }>;
       failed: unknown[];
@@ -253,7 +253,7 @@ describe("mu workstream teardown --empty", () => {
 
     const r = await sweep();
     expect(r.error).toBeUndefined();
-    const env = JSON.parse(r.stdout.trim()) as {
+    const env = r.data as {
       results: Array<{ workstreamName: string; killedMux: boolean }>;
     };
     expect(env.results).toHaveLength(1);
@@ -275,9 +275,9 @@ describe("mu workstream teardown --empty", () => {
     ensureWorkstream(db, "audit-only"); // emits a log row
     db.close();
 
-    const r = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
+    const r = await runCliJson(["workstream", "teardown", "--empty", "--json"], dbPath);
     expect(r.error).toBeUndefined();
-    const env = JSON.parse(r.stdout.trim()) as {
+    const env = r.data as {
       items: Array<{ name: string }>;
       count: number;
     };
@@ -319,7 +319,7 @@ describe("mu workstream teardown --empty", () => {
     const r = await sweep();
     expect(r.error).toBeUndefined();
     expect(r.exitCode).toBeNull();
-    const env = JSON.parse(r.stdout.trim()) as {
+    const env = r.data as {
       tornDown: number;
       results: Array<{ workstreamName: string }>;
       failed: Array<{ workstreamName: string; error: string }>;
@@ -355,9 +355,9 @@ describe("mu workstream teardown --empty", () => {
     setTmuxExecutor(mockTmux(state));
     db.close();
 
-    const j = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
+    const j = await runCliJson(["workstream", "teardown", "--empty", "--json"], dbPath);
     expect(j.error).toBeUndefined();
-    expect(JSON.parse(j.stdout.trim())).toEqual({ items: [], count: 0, revision: 0 });
+    expect(j.data).toEqual({ items: [], count: 0, revision: 0 });
 
     const tbl = await runCli(["workstream", "teardown", "--empty"], dbPath);
     expect(tbl.error).toBeUndefined();
@@ -376,7 +376,7 @@ describe("mu workstream teardown --empty", () => {
 
     const r = await sweep();
     expect(r.error).toBeUndefined();
-    expect(JSON.parse(r.stdout.trim())).toEqual({ tornDown: 0, results: [], failed: [] });
+    expect(r.data).toEqual({ tornDown: 0, results: [], failed: [] });
     expect(state.killed).toEqual([]);
     expect([...state.sessions].sort()).toEqual(["mu-bar", "mu-foo"]);
   });
@@ -395,7 +395,7 @@ describe("mu workstream teardown --empty", () => {
 
     const r = await sweep();
     expect(r.error).toBeUndefined();
-    const env = JSON.parse(r.stdout.trim()) as {
+    const env = r.data as {
       tornDown: number;
       results: Array<{ workstreamName: string; killedMux: boolean }>;
     };
@@ -426,14 +426,14 @@ describe("mu workstream teardown --empty", () => {
     db.close();
 
     // Dry-run: no entries.
-    const j = await runCli(["workstream", "teardown", "--empty", "--json"], dbPath);
+    const j = await runCliJson(["workstream", "teardown", "--empty", "--json"], dbPath);
     expect(j.error).toBeUndefined();
-    expect(JSON.parse(j.stdout.trim())).toEqual({ items: [], count: 0, revision: 0 });
+    expect(j.data).toEqual({ items: [], count: 0, revision: 0 });
 
     // --if: still nothing destroyed; sessions untouched.
     const r = await sweep();
     expect(r.error).toBeUndefined();
-    const env = JSON.parse(r.stdout.trim()) as {
+    const env = r.data as {
       tornDown: number;
       results: unknown[];
       failed: unknown[];

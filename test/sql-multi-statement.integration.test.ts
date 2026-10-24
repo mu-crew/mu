@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { countTopLevelStatements } from "../src/cli/sql.js";
 import { type Db, openDb } from "../src/db.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 describe("countTopLevelStatements", () => {
   it("counts a single trailing-semicolon-less statement", () => {
@@ -145,7 +145,7 @@ describe("mu sql single-statement reader detection", () => {
   });
 
   it("routes PRAGMA table_info(...) through the row-returning path", async () => {
-    const { stdout, stderr, exitCode, error } = await runCli(
+    const { data, stderr, exitCode, error } = await runCliJson(
       ["sql", "PRAGMA table_info(tasks)", "--json"],
       dbPath,
     );
@@ -153,12 +153,12 @@ describe("mu sql single-statement reader detection", () => {
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
     expect(stderr).toBe("");
-    const parsed = JSON.parse(stdout.trim()) as Array<{ name?: string }>;
+    const parsed = data as Array<{ name?: string }>;
     expect(parsed.some((row) => row.name === "local_id")).toBe(true);
   });
 
   it("routes comment-prefixed SELECT through the row-returning path", async () => {
-    const { stdout, stderr, exitCode, error } = await runCli(
+    const { data, stderr, exitCode, error } = await runCliJson(
       ["sql", "-- a comment\nSELECT 1 AS one", "--json"],
       dbPath,
     );
@@ -166,7 +166,7 @@ describe("mu sql single-statement reader detection", () => {
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual([{ one: 1 }]);
+    expect(data).toEqual([{ one: 1 }]);
   });
 
   it("rejects --confirm-rows on PRAGMA because it returns rows", async () => {
@@ -214,12 +214,12 @@ describe("mu sql --confirm-rows", () => {
 
   it("single-statement: --confirm-rows N matches actual → commits", async () => {
     expect(countCr()).toBe(3);
-    const { stdout, stderr } = await runCli(
+    const { data, stderr } = await runCliJson(
       ["sql", "DELETE FROM workstreams WHERE name LIKE 'cr_%'", "--confirm-rows", "3", "--json"],
       dbPath,
     );
     expect(stderr).toBe("");
-    const parsed = JSON.parse(stdout.trim());
+    const parsed = data;
     expect(parsed).toMatchObject({ changes: 3, confirmRows: 3, actualRows: 3 });
     expect(countCr()).toBe(0);
   });
@@ -255,9 +255,12 @@ describe("mu sql --confirm-rows", () => {
       DELETE FROM workstreams WHERE name = 'cr_a';
       DELETE FROM workstreams WHERE name = 'cr_b';
     `;
-    const { stdout, stderr } = await runCli(["sql", sql, "--confirm-rows", "2", "--json"], dbPath);
+    const { data, stderr } = await runCliJson(
+      ["sql", sql, "--confirm-rows", "2", "--json"],
+      dbPath,
+    );
     expect(stderr).toBe("");
-    const parsed = JSON.parse(stdout.trim());
+    const parsed = data;
     expect(parsed).toMatchObject({
       multiStatement: true,
       confirmRows: 2,
