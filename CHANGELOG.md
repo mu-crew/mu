@@ -29,7 +29,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   last 3 ordinary notes newer than the report. Those three kinds are never
   cut; the other notes are capped so the emitted bytes (text lines, or the
   JSON document with keys and `more`/`retrieve`) stay within 4 KB, pinned
-  notes exempt; one bigger than that is a stub (author and text clipped) with
+  notes exempt (the output is serialized and the oldest ordinary notes are
+  dropped until it fits, never predicted); one bigger than that is a stub (author and text clipped) with
   `cut=` and `next=mu task show <id> --note <n>`. `--all` on a task with no
   notes is an empty result (an explicit `--from 1` still exits 3). A
   trimmed view ends `more=N next=…` (`--all`, or `--from <n>`, pages the

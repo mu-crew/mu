@@ -6,6 +6,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import fc from "fast-check";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { noteRecord, planNotes, type ShownNote } from "../src/cli/format.js";
 import { type Db, type NoteKind, openDb } from "../src/db.js";
@@ -221,8 +222,8 @@ describe("planNotes (ordinary byte budget)", () => {
     content,
     createdAt: "2026-01-01T00:00:00.000Z",
   });
-  // Text wire size: records, newline-joined, plus a worst-case footer.
-  const size = (ordinary: readonly ShownNote[], footer: boolean): number =>
+  // Text wire size: the records, newline-joined.
+  const size = (ordinary: readonly ShownNote[]): number =>
     Buffer.byteLength(
       [
         ...ordinary.map((s) =>
@@ -230,7 +231,6 @@ describe("planNotes (ordinary byte budget)", () => {
             ? noteRecord(s.note)
             : noteRecord(s.note, { cutBytes: s.cutBytes, command: `show ${s.note.n}` }),
         ),
-        ...(footer ? ["more=99 next=mu task notes t -w w --from 99"] : []),
       ].join("\n"),
     ) + 1;
 
@@ -485,4 +485,78 @@ describe("notes --all on a task with no notes (CLI)", () => {
       expect((await runCli(argv, dbPath)).exitCode).toBe(3);
     }
   });
+});
+
+describe("the 4 KB cap holds for random note sets (property)", () => {
+  const KINDS = ["note", "note", "note", "brief", "report", "verdict", "close"] as const;
+  const noteArb = fc.record({
+    kind: fc.constantFrom(...KINDS),
+    // Sizes from tiny to well over the cap; multibyte and escapable characters.
+    len: fc.oneof(fc.integer({ min: 0, max: 40 }), fc.integer({ min: 0, max: 6000 })),
+    ch: fc.constantFrom("a", "é", "😀", "\n", "\\", "\t"),
+    author: fc.constantFrom<string | null>("a", "b", null, "x".repeat(300)),
+  });
+
+  const ordinaryBytes = (stdout: string, json: boolean, pinned: ReadonlySet<number>): number => {
+    if (!json) {
+      const rest = stdout
+        .trimEnd()
+        .split("\n")
+        .filter((l) => !pinned.has(Number(l.split("\t")[1])));
+      return Buffer.byteLength(`${rest.join("\n")}\n`);
+    }
+    const doc = JSON.parse(stdout) as { data: { items: { n: number }[] } };
+    const items = doc.data.items.filter((i) => !pinned.has(i.n));
+    return Buffer.byteLength(
+      `${JSON.stringify({ ...doc, data: { ...doc.data, items, count: items.length } })}\n`,
+    );
+  };
+
+  it("emitted non-pinned bytes are <= 4096 in text and --json, for the default view, --all and --from", async () => {
+    let seq = 0;
+    await fc.assert(
+      fc.asyncProperty(
+        // Random sets, and sets sized to land on the cap.
+        fc.oneof(
+          fc.array(noteArb, { minLength: 1, maxLength: 14 }),
+          // m equal notes whose records total about 4096 - slack bytes (a record is ~70
+          // bytes of framing plus text), so the footer decides whether the page fits;
+          // one older note gives the default view something to drop.
+          fc
+            .tuple(fc.integer({ min: 2, max: 8 }), fc.integer({ min: 0, max: 200 }))
+            .map(([m, slack]) =>
+              Array.from({ length: m + 1 }, (_, i) => ({
+                kind: "note" as const,
+                len: i === 0 ? 50 : Math.floor((4096 - slack) / m) - 70,
+                ch: "a",
+                author: "a" as string | null,
+              })),
+            ),
+        ),
+        fc.nat(13),
+        async (specs, fromSeed) => {
+          const id = `p${seq++}`;
+          addTask(db, { localId: id, workstream: WS, title: id, impact: 50, effortDays: 1 });
+          for (const s of specs) {
+            addNote(db, id, s.ch.repeat(s.len), {
+              workstream: WS,
+              kind: s.kind,
+              ...(s.author === null ? {} : { author: s.author }),
+            });
+          }
+          const from = (fromSeed % specs.length) + 1;
+          const pinned = new Set(selectTaskNotes(db, id, { workstream: WS }).pinned);
+          for (const view of [[], ["--all"], ["--from", String(from)]]) {
+            for (const json of [false, true]) {
+              const argv = ["task", "notes", id, "-w", WS, ...view, ...(json ? ["--json"] : [])];
+              const r = await runCli(argv, dbPath);
+              expect(r.exitCode).toBeNull();
+              expect(ordinaryBytes(r.stdout, json, pinned)).toBeLessThanOrEqual(4096);
+            }
+          }
+        },
+      ),
+      { numRuns: 150 },
+    );
+  }, 120_000);
 });
