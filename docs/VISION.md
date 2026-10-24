@@ -46,7 +46,7 @@ mu joins the first three without becoming the fourth.
 
 Everything mu does works from a shell with no pi extension loaded. A
 feature that needs the extension does not ship. The pi extension
-(`mu link pi`) serves the control socket and the `mu_delegate` tool, and
+(the pi package) serves the control socket and the `mu_delegate` tool, and
 three rules keep it thin:
 
 1. **The DB is canonical.** The extension reads and writes through the

@@ -1,4 +1,4 @@
-// Doctor rows for the mu pi extension, the mu skill, and per-agent
+// Doctor rows for the mu pi extension (live hello) and per-agent
 // control sockets (pictl_doctor). Every test writes only into a temp
 // MU_PI_HOME; no real pi, no real ~/.pi or ~/.agents.
 
@@ -11,21 +11,18 @@ import type { AgentRow } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { CTL_OPS, encode, LineDecoder } from "../src/ctl/protocol.js";
 import {
+  type AgentCtlReport,
   ctlExtensionDoctorCheck,
   ctlSocketsDoctorCheck,
   MURMUR_NOT_NEEDED_DETAIL,
   murmurDoctorCheck,
   remediationParagraph,
-  skillDoctorCheck,
 } from "../src/doctor-summary.js";
-import { linkPi, linkSkill } from "../src/link.js";
 
-const ENTRY_KEY = "MU_EXTENSION_ENTRY";
 const HOME_KEY = "MU_PI_HOME";
 const DB_KEY = "MU_DB_PATH";
 
 let home: string;
-let entry: string;
 let savedHome: string | undefined;
 let savedPath: string | undefined;
 let savedPiDir: string | undefined;
@@ -33,13 +30,9 @@ let servers: Server[];
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "mu-dctl-"));
-  entry = join(home, "fixture", "mu-pi.js");
-  mkdirSync(dirname(entry));
-  writeFileSync(entry, "export default function () {}\n");
   savedHome = process.env[HOME_KEY];
   savedPath = process.env.PATH;
   savedPiDir = process.env.PI_CODING_AGENT_DIR;
-  process.env[ENTRY_KEY] = entry;
   process.env[HOME_KEY] = home;
   process.env[DB_KEY] = join(home, "mu.db");
   servers = [];
@@ -47,7 +40,6 @@ beforeEach(() => {
 
 afterEach(async () => {
   await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
-  delete process.env[ENTRY_KEY];
   delete process.env[DB_KEY];
   if (savedHome === undefined) delete process.env[HOME_KEY];
   else process.env[HOME_KEY] = savedHome;
@@ -58,78 +50,61 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-describe("mu ext / mu skill rows", () => {
-  it("warn with 'run mu link pi' on an empty home", () => {
-    expect(ctlExtensionDoctorCheck()).toEqual({
-      name: "mu ext",
-      status: "warn",
-      detail: "not linked: run mu link pi",
-    });
-    expect(skillDoctorCheck()).toEqual({
-      name: "mu skill",
-      status: "warn",
-      detail: "not linked: run mu link pi",
-    });
+describe("mu ext row (live hello, never a file on disk)", () => {
+  const report = (over: Partial<AgentCtlReport> = {}): AgentCtlReport => ({
+    workstream: "ws",
+    agent: "a",
+    socket: "/s",
+    probe: "ok",
+    ...over,
   });
 
-  it("are ok after linkPi + linkSkill", () => {
-    linkPi();
-    linkSkill();
-    expect(ctlExtensionDoctorCheck()).toEqual({
+  it("is unknown (ok, no claim) when there is no pi agent to ask", () => {
+    const row = ctlExtensionDoctorCheck([]);
+    expect(row).toMatchObject({ name: "mu ext", status: "ok" });
+    expect(row.detail).toContain("unknown");
+    expect(row.detail).toContain("pi install npm:@mu-crew/mu");
+  });
+
+  it("is not inferred from a legacy shim: one on disk changes nothing", () => {
+    mkdirSync(join(home, ".pi", "agent", "extensions"), { recursive: true });
+    writeFileSync(join(home, ".pi", "agent", "extensions", "mu.ts"), "// mu:shim\n");
+    expect(ctlExtensionDoctorCheck([]).detail).toContain("unknown");
+  });
+
+  it("reports the live extVersion, ops and features from hello", () => {
+    const row = ctlExtensionDoctorCheck([
+      report({ extVersion: "3.14.0", opCount: 9, features: ["incarnation", "msgId"] }),
+    ]);
+    expect(row).toEqual({
       name: "mu ext",
       status: "ok",
-      detail: "(ctl, mu_delegate, nudge)",
-    });
-    expect(skillDoctorCheck()).toMatchObject({ name: "mu skill", status: "ok" });
-  });
-
-  it("mu ext names the MU_DELEGATE=0 kill switch", () => {
-    linkPi();
-    process.env.MU_DELEGATE = "0";
-    try {
-      expect(ctlExtensionDoctorCheck().detail).toBe(
-        "(ctl, nudge; mu_delegate disabled by MU_DELEGATE=0)",
-      );
-    } finally {
-      const key = "MU_DELEGATE";
-      delete process.env[key];
-    }
-  });
-
-  it("mu ext names the MU_NUDGE=0 kill switch", () => {
-    linkPi();
-    process.env.MU_NUDGE = "0";
-    try {
-      expect(ctlExtensionDoctorCheck().detail).toBe(
-        "(ctl, mu_delegate; nudge disabled by MU_NUDGE=0)",
-      );
-    } finally {
-      const key = "MU_NUDGE";
-      delete process.env[key];
-    }
-  });
-
-  it("mu ext warns dangling when the shim's target is gone", () => {
-    linkPi();
-    rmSync(entry);
-    expect(ctlExtensionDoctorCheck()).toMatchObject({
-      status: "warn",
-      detail: "dangling: run mu link pi",
+      detail: "3.14.0 (ctl, 9 ops; incarnation, msgId)",
     });
   });
 
-  it("mu ext warns stale copy for --copy installs", () => {
-    linkPi({ copy: true });
-    expect(ctlExtensionDoctorCheck().detail).toBe("stale copy: run mu link pi");
+  it("warns, with the install advice, when agents exist and none answers", () => {
+    const row = ctlExtensionDoctorCheck([report({ probe: "missing" })]);
+    expect(row.status).toBe("warn");
+    expect(row.detail).toContain("pi install npm:@mu-crew/mu");
   });
 
-  it("mu skill warns about a foreign skill dir", () => {
-    mkdirSync(join(home, ".agents", "skills", "mu"), { recursive: true });
-    expect(skillDoctorCheck()).toEqual({
-      name: "mu skill",
-      status: "warn",
-      detail: "foreign skill at ~/.agents/skills/mu (not a symlink)",
+  it("the ctl rows carry hello.features through the probe", async () => {
+    await serveV1("w1", { ops: [...CTL_OPS], extVersion: "1.2.3", features: ["msgId"] });
+    const { agents } = await ctlSocketsDoctorCheck([agent("w1")], { installedVersion: "1.2.3" });
+    expect(agents[0]).toMatchObject({
+      probe: "ok",
+      extVersion: "1.2.3",
+      opCount: CTL_OPS.length,
+      features: ["msgId"],
     });
+    expect(ctlExtensionDoctorCheck(agents).detail).toContain("1.2.3");
+  });
+
+  it("an extension whose hello lists no features reports none", async () => {
+    await serveV1("w1");
+    const { agents } = await ctlSocketsDoctorCheck([agent("w1")]);
+    expect(agents[0]?.features).toBeUndefined();
   });
 });
 
@@ -251,7 +226,13 @@ describe("ctl row", () => {
     const r = await ctlSocketsDoctorCheck([agent("w1")]);
     expect(r.check).toEqual({ name: "ctl", status: "ok", detail: "1/1 pi agents reachable" });
     expect(r.agents).toEqual([
-      { workstream: "ws", agent: "w1", socket: ctlSocketPath("ws", "w1"), probe: "ok" },
+      {
+        workstream: "ws",
+        agent: "w1",
+        socket: ctlSocketPath("ws", "w1"),
+        probe: "ok",
+        opCount: CTL_OPS.length,
+      },
     ]);
   });
 

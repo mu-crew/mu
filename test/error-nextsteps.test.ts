@@ -238,7 +238,7 @@ const cases: NextStepsCase[] = [
   {
     error: new AgentCtlUnreachableError("alice", "auth", "/s/sock/auth/alice.sock", "missing"),
     label: "AgentCtlUnreachableError",
-    expectedTokens: ["mu link pi", "/s/sock/auth/alice.sock"],
+    expectedTokens: ["pi install npm:@mu-crew/mu", "/s/sock/auth/alice.sock"],
   },
   {
     error: new AgentSendIndeterminateError("alice", "auth", "send", "timeout"),

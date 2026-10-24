@@ -31,7 +31,7 @@ back to pasting.
 
 | State | Means | Fix |
 | ----- | ----- | --- |
-| `ctl missing` | no socket: the extension is not loaded, or a new pi waits at its trust prompt | answer the [trust prompt](#a-new-pi-agent-shows-ctl-missing), or run `mu link pi`, then respawn the agent |
+| `ctl missing` | no socket: the extension is not loaded, or a new pi waits at its trust prompt | answer the [trust prompt](#a-new-pi-agent-shows-ctl-missing), or run `pi install npm:@mu-crew/mu`, then respawn the agent |
 | `ctl refused` | the socket exists but does not answer | respawn the agent; for a remote agent, check the ssh forward |
 | `extension X older than installed Y` or `extension lacks ops` | pi loaded an older mu build | send `/reload`, or respawn |
 

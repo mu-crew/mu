@@ -36,7 +36,7 @@ raw NDJSON; `mu log` writes print text even with `--json`. Errors are `{ok:false
 - **mux** — tmux or herdr, one per invocation. `mu doctor` names it;
   `MU_MUX` forces it. tmux cannot send to non-pi agents; herdr can.
 - **control socket (ctl)** — how mu drives a pi agent: the mu pi
-  extension (`mu link pi`) serves exact send, state, wait and abort
+  extension (pi package) serves exact send, state, wait and abort
   inside pi's own TUI. `ctl missing|refused` means it does not answer.
 - **task** — DAG node with mandatory `impact` (1–100) and
   `effort_days`. Shown as status/substate: `OPEN/todo|parked|triage`,
@@ -81,7 +81,7 @@ look at your own work or diff, make a [delegate call](recipes/tasks-or-calls.md#
 that tries to refute it, on another model family ([models](recipes/models.md#checkers); briefs: see
 Orchestrator rules; many claims: [refute](recipes/refute.md)).
 
-For one-shot work inside pi, call `mu_delegate` (installed by `mu link pi`). Outside pi: spawn
+For one-shot work inside pi, call `mu_delegate` (in the pi package). Outside pi: spawn
 into the reserved `scratch` workstream (no task DAG, auto-created), as in
 [delegate call](recipes/tasks-or-calls.md#delegate-call). Recipes call either form a **delegate call**. A check judging a mu
 task lands its verdict there: `record: { task: "<ws>/<id>" }` on `mu_delegate`, a hand-written

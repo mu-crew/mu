@@ -2,8 +2,8 @@
 
 ## Delegate from pi
 
-`mu link pi` installs the `mu_delegate` and `mu_delegate_cancel` tools
-in every pi session. Ask pi in plain words:
+The mu pi package (`pi install npm:@mu-crew/mu`) installs the
+`mu_delegate` and `mu_delegate_cancel` tools in every pi session. Ask pi in plain words:
 
 - "Delegate a review of src/x.ts to a helper."
 - "Have three helpers investigate A, B, and C."

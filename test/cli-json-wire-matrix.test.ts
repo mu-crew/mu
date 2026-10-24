@@ -68,7 +68,7 @@ const ARGS: Record<string, string[]> = {
   "db compact": [],
   "db forget": ["probe"],
   doctor: [],
-  link: ["pi"],
+  "pi migrate": [],
 };
 
 function leafVerbs(cmd: Command, parents: string[] = []): { path: string; cmd: Command }[] {

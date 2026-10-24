@@ -397,8 +397,8 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
         : [];
     return [
       ...trust,
-      { intent: "Check whether the mu pi extension is linked", command: "mu doctor" },
-      { intent: "Link the extension, then re-spawn", command: "mu link pi" },
+      { intent: "Check whether the mu pi extension answers", command: "mu doctor" },
+      { intent: "Install the mu pi package, then re-spawn", command: "pi install npm:@mu-crew/mu" },
       {
         intent: "Remote agent: forward the socket in your ssh command",
         command: `ssh -L ${this.socket}:<remote sock> ...   (see mu agent remote-env)`,
@@ -615,7 +615,7 @@ export class AgentFreshNeedsCtlError extends Error implements HasNextSteps {
  * The agent's pi serves the control socket with an extension it loaded
  * before mu learned `op` (e.g. `fresh`): running pi processes keep the
  * extension code they started with. pi's `/reload` re-imports the
- * extension through the `mu link pi` shim and keeps the socket; a
+ * extension through the pi package and keeps the socket; a
  * respawn always works. An extension that serves op `command` takes
  * `/reload` over ctl; an older one cannot be reloaded by mu: respawn it.
  */

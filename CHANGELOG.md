@@ -10,7 +10,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Removed
+
+- **`mu link pi` and its shims.** pi now loads mu as a package: `package.json`
+  declares `pi.extensions` (`./dist/extension/mu-pi.js`), `pi.skills`
+  (`./skills`) and `pi.prompts` (`./prompts/*.md`), and lists
+  `@earendil-works/pi-coding-agent` as an optional `*` peer (never bundled).
+  Install with `pi install npm:@mu-crew/mu`. The extension no longer
+  registers prompts through `resources_discover` (the manifest ships them),
+  and `MU_EXTENSION_ENTRY` is gone.
+
 ### Added
+
+- **`mu pi migrate [--apply]`.** A leftover `mu link pi` shim would load a
+  second extension next to the package, so this moves only mu-generated
+  files (a `// mu:shim` file at `~/.pi/agent/extensions/mu.ts`, a symlink at
+  `~/.agents/skills/mu` to a skill named `mu`) into a `disabled/` folder pi
+  does not read. Copies, real directories and foreign links are reported and
+  left alone. Report-only without `--apply`; prints restart guidance.
 
 - Eval harness (`tools/eval/`) and 3.x baseline (`docs/mu-next/eval/baseline-3.13.3-v2.md`; v1 superseded: delegate token, discard parse, send-before-claim, origin and PATH artifacts fixed; v2.1: discard scoring in fanout_gates/worktree_reuse, keyed delegate answers, TMPDIR and an in-sandbox skill copy, `--force` scoring). The scripted scenarios run on both surfaces: spawn falls back from `--workspace` to `--worktree`, so `check` is green on the checkout and on 3.13.3.
 
@@ -48,6 +65,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   CLI changed.
 
 ### Changed
+
+- **`mu doctor`'s `mu ext` row is live.** It reads `hello` (`extVersion`,
+  ops, features) from the pi agents' control sockets; with no pi agent it is
+  `unknown` (ok), never inferred from a file on disk. The `mu skill` row is
+  gone (hello cannot prove a skill loaded). Advice that said `mu link pi`
+  now says `pi install npm:@mu-crew/mu`. `CtlProbe` keeps `hello.features`.
 
 - **`--json` prints ONE envelope document on stdout, errors included.**
   Success is `{"ok":true,"data":<old payload>,"next":null}`; failure is

@@ -23,8 +23,8 @@ import {
   ctlExtensionDoctorCheck,
   ctlSocketsDoctorCheck,
   type DoctorCheck,
+  extensionLive,
   murmurDoctorCheck,
-  skillDoctorCheck,
 } from "../doctor-summary.js";
 import {
   ABANDONED_IDLE_DAYS,
@@ -62,10 +62,10 @@ const LABEL_WIDTH = 19;
 const pad = (s: string): string => s.padEnd(LABEL_WIDTH);
 
 /** Where agent state comes from: herdr on herdr, murmur otherwise. A
- *  linked mu extension makes murmur optional for pi agents. */
-function agentStateCheck(health: MuxHealth | undefined, muExt: DoctorCheck): DoctorCheck {
+ *  live mu extension makes murmur optional for pi agents. */
+function agentStateCheck(health: MuxHealth | undefined, muExtLive: boolean): DoctorCheck {
   return murmurDoctorCheck(health?.name === "herdr" ? "herdr" : "murmur", {
-    muExtOk: muExt.status === "ok",
+    muExtOk: muExtLive,
   });
 }
 
@@ -147,14 +147,11 @@ export async function cmdDoctor(
       console.log(`  ${pad(fact.name)}: ${fact.value ? pc.green(fact.value) : pc.dim("not set")}`);
     }
   }
-  const muExt = ctlExtensionDoctorCheck();
-  printCheck("agent state", agentStateCheck(health, muExt));
+  const ctlSockets = await ctlSocketsDoctorCheck(listAgents(db), { stateDir: dirname(db.name) });
+  const muExt = ctlExtensionDoctorCheck(ctlSockets.agents);
+  printCheck("agent state", agentStateCheck(health, extensionLive(ctlSockets.agents)));
   printCheck("mu ext", muExt);
-  printCheck("mu skill", skillDoctorCheck());
-  printCheck(
-    "ctl",
-    (await ctlSocketsDoctorCheck(listAgents(db), { stateDir: dirname(db.name) })).check,
-  );
+  printCheck("ctl", ctlSockets.check);
 
   // ─ DB + schema
   console.log(pc.bold("\ndb"));
@@ -470,8 +467,8 @@ export async function cmdDoctorJson(
 ): Promise<void> {
   // environment
   const health = await muxHealth();
-  const muExt = ctlExtensionDoctorCheck();
   const ctlSockets = await ctlSocketsDoctorCheck(listAgents(db), { stateDir: dirname(db.name) });
+  const muExt = ctlExtensionDoctorCheck(ctlSockets.agents);
   const env = {
     // `mux` is the backend-agnostic key. `tmux` is kept as an alias for
     // back-compat with scripts that grew around the pre-MuxBackend
@@ -479,9 +476,8 @@ export async function cmdDoctorJson(
     mux: health ?? { name: null, ok: false, version: null },
     tmux: { ok: health?.ok ?? false, version: health?.version ?? null },
     ...Object.fromEntries(health?.env.map((f) => [f.name.replace(/^\$/, ""), f.value]) ?? []),
-    agentState: agentStateCheck(health, muExt),
+    agentState: agentStateCheck(health, extensionLive(ctlSockets.agents)),
     ctl: { extension: muExt, sockets: ctlSockets.check, agents: ctlSockets.agents },
-    skill: skillDoctorCheck(),
   };
 
   // db / schema

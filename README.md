@@ -22,12 +22,12 @@ mu persists state and coordinates handoffs. Every read path has
 
 ```bash
 npm i -g @mu-crew/mu
-mu link pi       # pi extension (control socket, mu_delegate) + the mu skill
+pi install npm:@mu-crew/mu   # extension (control socket, mu_delegate), the mu skill, recipe prompts
 mu doctor
 ```
 
 To drive mu from another agent CLI (claude-code, codex), install the
-skill with `npx skills add mu-crew/mu` instead of `mu link pi`.
+skill with `npx skills add mu-crew/mu` instead of the pi package.
 
 You need:
 
@@ -60,8 +60,8 @@ mu task wait design_auth -w auth --first --on-stall exit   # exit 7 = worker nee
 mu workstream teardown auth                         # preview (rev=<n>); apply with --if <n>
 ```
 
-For one helper, ask pi to delegate (`mu_delegate` ships with `mu link
-pi`), or spawn into the reserved `scratch` workstream:
+For one helper, ask pi to delegate (`mu_delegate` ships in the pi
+package), or spawn into the reserved `scratch` workstream:
 `mu agent spawn scout-1 -w scratch`.
 
 ## Ultrathink, the mu way
@@ -112,7 +112,7 @@ That recipe composes smaller ones you can also use on their own:
 | [review-panel](skills/mu/recipes/review-panel.md) | one reviewer per angle on a diff; delegates by default, tasks when fixes follow |
 | [rules-audit](skills/mu/recipes/rules-audit.md) | one checker per AGENTS.md rule plus a skeptic; or mine repeated corrections into new rules |
 
-In pi, `mu link pi` adds them as commands: `/ultrathink <job>`,
+In pi, the package adds them as commands: `/ultrathink <job>`,
 `/mu-research <question>`, `/mu-review [target]`, `/mu-refute <scope>`,
 `/mu-tournament <task>`, `/mu-rules-audit [check <target> | mine]`,
 `/mu-debug <symptom>`, `/mu-sweep <change>`, and `/mu-until <stop rule>`.

@@ -22,7 +22,6 @@ import muPi, {
   LAST_TEXT_TRUNCATED,
   type MuPiCommandContext,
   type MuPiContext,
-  promptsDir,
 } from "../extension/mu-pi.js";
 import { CtlUnknownOpError, ctlProbe, ctlRequest } from "../src/ctl/client.js";
 import {
@@ -91,7 +90,7 @@ afterEach(async () => {
 });
 
 describe("mu pi extension", () => {
-  it("serves no socket when MU_CTL_SOCK is unset (only prompts and the nudge)", async () => {
+  it("serves no socket when MU_CTL_SOCK is unset (only the nudge)", async () => {
     const key = "MU_CTL_SOCK";
     delete process.env[key];
     const other = fakePi();
@@ -100,7 +99,6 @@ describe("mu pi extension", () => {
       [
         "agent_before_settle",
         "input",
-        "resources_discover",
         "session_start",
         "tool_call",
         "ui_prompt_end",
@@ -1089,32 +1087,8 @@ describe("mu pi extension", () => {
 });
 
 describe("recipe prompt templates", () => {
-  it("serves every prompts/*.md through resources_discover", async () => {
-    const h = fake.handlers.get("resources_discover") ?? [];
-    expect(h).toHaveLength(1);
-    const handler = h[0];
-    if (!handler) throw new Error("unreachable");
-    const r = (await handler(
-      { type: "resources_discover", cwd: dir, reason: "startup" },
-      fake.ctx,
-    )) as {
-      promptPaths?: string[];
-    };
-    const names = (r.promptPaths ?? []).map((p) => p.split("/").pop());
-    expect(names).toContain("ultrathink.md");
-    expect(names).toEqual(
-      readdirSync(join(import.meta.dirname, "..", "prompts"))
-        .filter((f) => f.endsWith(".md"))
-        .sort(),
-    );
-  });
-
-  it("finds prompts/ from both the source and the built layout", () => {
-    const root = join(import.meta.dirname, "..");
-    const want = join(root, "prompts");
-    expect(promptsDir(`file://${join(root, "extension", "mu-pi.ts")}`)).toBe(want);
-    expect(promptsDir(`file://${join(root, "dist", "extension", "mu-pi.js")}`)).toBe(want);
-    expect(promptsDir("not-a-url")).toBeUndefined();
+  it("registers no resources_discover handler (the package manifest ships prompts)", () => {
+    expect(fake.handlers.get("resources_discover") ?? []).toHaveLength(0);
   });
 
   // pi parses the frontmatter as YAML: an unquoted value containing

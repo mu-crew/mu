@@ -4,22 +4,30 @@
 
 ```bash
 npm i -g @mu-crew/mu@latest
-mu link pi
+pi update --extensions
 mu doctor
 ```
 
-`mu link pi` installs a one-line shim at
-`~/.pi/agent/extensions/mu.ts` that loads the installed extension, and
-links `~/.agents/skills/mu` to the package's skill. Later upgrades
-update both with no relink. `MU_PI_HOME` changes the home directory
-that both paths start from.
+pi loads mu as a package: one extension, one skill, and the recipe
+prompts, all from the declared `pi` manifest. There is no relink step.
 
-- `--copy` copies the extension instead of the shim. You then have to
-  relink after every upgrade.
-- `--force` replaces an extension or skill symlink that points
-  elsewhere, such as a dev checkout. mu replaces the link, never its
-  target, and never replaces a real skill directory (exit 4).
-- `--extension-only` and `--skill-only` install one part.
+### Coming from the old `link pi` install
+
+Before the package, the old `link pi` verb wrote a shim at
+`~/.pi/agent/extensions/mu.ts` and a skill link at
+`~/.agents/skills/mu`. Left in place, the shim loads a second copy of
+the extension next to the package. Retire them once, by hand:
+
+```bash
+mu pi migrate           # report only
+mu pi migrate --apply   # move mu-owned files aside; nothing is deleted
+```
+
+Only a file mu generated (the `// mu:shim` header, or a symlink to a
+skill named `mu`) is moved, into a `disabled/` folder pi does not read.
+A copied extension, a real skill directory, or a link to somewhere else
+is reported and left for you. `MU_PI_HOME` changes the home directory
+both start from. Then restart pi agents.
 
 For agents other than pi, see [README § Install](../../README.md#install).
 
@@ -39,7 +47,7 @@ such as `send --fresh`, fail with exit 4.
 ## Upgrade from 3.1 or earlier
 
 Before 3.2.0, mu pasted text into pi panes. Now it sends through a
-control socket. Agents started before `mu link pi` have no socket, so
+control socket. Agents started before the pi package was installed have no socket, so
 sends to them fail with `ctl missing` instead of pasting. Restart those
 agents.
 
@@ -58,5 +66,5 @@ alias mu="node $PWD/dist/cli.js"
 ```
 
 Or run `npm install -g .` in the checkout. Its `prepare` script builds
-first. Run `mu link pi --force` to point the skill link at the
-checkout.
+first. To load the checkout as the pi package instead of the installed
+one, run `pi install /path/to/checkout`.

@@ -60,8 +60,7 @@ for (const key of Object.keys(process.env)) {
 // test/spawn-ctl.test.ts opts back in with a small budget.
 process.env.MU_SPAWN_CTL_MS = "0";
 
-// Baseline: `mu link pi` / doctor's "mu ext" + "mu skill" rows resolve
-// under MU_PI_HOME, never the developer's real ~/.pi and ~/.agents. The
-// path does not exist, so every test reads "not linked" unless it links
-// into its own temp home.
+// Baseline: `mu pi migrate` resolves under MU_PI_HOME, never the
+// developer's real ~/.pi and ~/.agents. The path does not exist, so every
+// test sees an empty home unless it builds its own temp one.
 process.env.MU_PI_HOME = `${process.env.TMPDIR ?? "/tmp"}/mu-test-no-pi-home-${process.pid}`;

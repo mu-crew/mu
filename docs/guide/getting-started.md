@@ -8,19 +8,20 @@ You need Node.js, the pi coding agent, tmux 3.0
 or later, and a git repository to work in. Run every command from
 inside a tmux session, in the root of that repository.
 
-## Install mu and link pi
+## Install mu and the pi package
 
-First, install mu and connect it to pi:
+First, install mu and install its pi package:
 
 ```bash
 npm i -g @mu-crew/mu
-mu link pi
+pi install npm:@mu-crew/mu
 mu doctor
 ```
 
-`mu link pi` installs the mu pi extension and the mu skill. In the
-output of `mu doctor`, the extension, skill, and `ctl` rows say `ok`.
-If pi was already running, restart it so it loads the extension.
+`pi install` loads the mu extension, skill, and recipe prompts as one
+package. Once a pi agent is running, the `ext` and `ctl` rows of
+`mu doctor` report the live extension; before that, `ext` says
+`unknown`. If pi was already running, restart it so it loads the package.
 
 ## Create a workstream
 

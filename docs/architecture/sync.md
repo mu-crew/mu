@@ -143,7 +143,7 @@ every verb.
   so nothing is created or written. The check is path-based, resolves
   symlinks on both sides (through the nearest existing ancestor, so a
   first run is covered; a dangling link is followed), and runs without
-  the DB file existing. `mu link` opens no DB but calls the same check.
+  the DB file existing. `mu pi migrate` opens no DB but calls the same check.
 - **A busy segment lock is never silent.** When the flush cannot take the
   lock within 2 s it writes nothing, prints `mu: sync: segment locked by
   another mu; this op publishes on the next flush` and the verb still
@@ -160,7 +160,7 @@ peer's segment and of every conflict copy of it.
 | Surface | Behaviour | Why |
 | --- | --- | --- |
 | `MU_SYNC_DIR` unset | one `if` on one env var; no filesystem touch | the single-machine case pays nothing (measured: baseline; about 3ms with one peer) |
-| `mu link` | outside `handle()`: opens no DB (a fresh install would create one), so no ingest or flush; it still refuses a DB inside `MU_SYNC_DIR` | a pure filesystem install |
+| `mu pi migrate` | outside `handle()`: opens no DB (a fresh install would create one), so no ingest or flush; it still refuses a DB inside `MU_SYNC_DIR` | a pure filesystem move |
 | `mu sync` | the only verb that opts out (`handle(..., { ambientSync: false })`); runs the pass itself, flush then ingest | otherwise the report prints "ingested 0" right after ingesting |
 
 `mu sql` is not a carve-out: it ingests before the query, so a read sees
