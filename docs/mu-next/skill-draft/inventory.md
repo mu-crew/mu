@@ -19,10 +19,10 @@ its absence (README, Prose budget, rule 7 "Promote back").
 
 | # | 3.x rule | | mu-next destination |
 |---|---|---|---|
-| 1 | Trust `--help` over the skill; absent verbs do not exist | K | SKILL.md top |
-| 2 | Default output is a card plus `Next:`; read both | C | `{ok,data,next}` envelope, `src/output-contract.ts`; hints are v_hints (TODO) |
-| 3 | `data` shapes per collection (`{items,count}`, `agent list` exception, `sql` `more`, `log --tail` NDJSON) | C | per-verb `--help` and shipped shapes (`task list --json`, `delegates list --json`); the stale-shape trap (`f_output_skill_log_json_stale`) is why the skill states none |
-| 4 | Errors on stdout with `exit`; `nextSteps` survives | K* | SKILL.md line 2 (`{ok:false,error,message,next,exit}`); `nextSteps` is legacy, unstated |
+| 1 | Trust `--help` over the skill; absent verbs do not exist | K | SKILL.md top; `-w` only where `--help` lists it (`doctor`, `sync`, `delegates show`, `delegates finish`, `rebuild`, `db forget`, `host add` reject it) |
+| 2 | Default output is a card plus `Next:`; read both | K*/C | SKILL.md line 2: the envelope, and `next` is null until **TODO v_hints**; today the hints are `data.nextSteps` (errors: top-level `nextSteps`). `src/output-contract.ts` |
+| 3 | `data` shapes per collection (`{items,count}`, `agent list` exception, `sql` `more`, `log --tail` NDJSON) | K* | SKILL.md line 2 keeps one clause: collections are `{items,count}`, `agent list` is `{workstreamName,agents,orphans}`. `--help` states no shape (checked on `task list`, `agent list`, `delegates list`), so this is **not** C: `agent list ... d["items"]` raised `KeyError`, the README's `KeyError: 'id'` class. `sql` `more` and `log --tail` NDJSON dropped. Revisit when `agent list` returns `items` or a shape guard lands |
+| 4 | Errors on stdout with `exit`; `nextSteps` survives | K | SKILL.md line 2 (`{ok:false,error,message,next,exit}`) and the `nextSteps` location, until **TODO v_hints** fills `next` |
 | 5 | A cut names its way back | K* | SKILL.md ("run it" dropped: the `next=` is executable) |
 | 6 | Vocabulary: workstream, agent, mux, ctl, claim, release, note, worktree | D | `mu --help`, VOCABULARY.md; models use the words correctly unprompted |
 | 7 | Vocabulary: task statuses and substates, `CLOSED/*` satisfies `--blocked-by` | C | `task close --help`, `task list --substate` choices; `src/tasks/status.ts` |
@@ -52,13 +52,13 @@ its absence (README, Prose budget, rule 7 "Promote back").
 | 31 | `agent close` previews until `--if <rev>`; dirty worktree refuses; unmerged commits kept on `mu/<ws>/<agent>-<sha>`; `--discard` | C | `agent close --help`; `WorktreeDirtyError` (`src/agents/close.ts:49,244`); preview-then-`--if` is the hint |
 | 32 | Before a `--fresh` send, `git fetch && rebase <base>`; on conflict abort and tell the human | K | orchestrator-loop.md step 3 (README: "Refresh is one skill sentence"; `pv_refresh_per_send`) |
 | 33 | Remote: pane is local transport, process remote; pane dying is agent dying | K | remote-workers.md |
-| 34 | Remote: one orchestrator DB, the remote worker cannot close; read the remote recipe first | K | remote-workers.md; SKILL.md gotcha pointer |
+| 34 | Remote: one orchestrator DB, the remote worker cannot close; read the remote recipe first | K | remote-workers.md (brief ends with a `CLOSE:` block; read it from `agent wait` `lastText`; `task close --evidence`), worker.md remote bullet; SKILL.md gotcha pointer |
 | 35 | `mule` exit 3 is a hand-back; never retry or open `ssh -MNf` | K | remote-workers.md last bullet (destructive/irreversible: operator's key) |
 | 36 | Workstream names `<project>-<purpose>`, one per effort, torn down when shipped | C | `workstream init` prints the hint and `workstream --help` says it |
 | 37 | Reviews nobody will track run as `scratch` delegates | K* | findings.md mode paragraph |
 | 38 | Agent names: roles with smallest unused suffix; no human names | C | `agent spawn --next-free` |
 | 39 | Task note contract: FILES/COMMANDS/FINDINGS/DECISION/NEXT/VERIFIED/ODDITIES | K*/D | worker.md keeps FILES, COMMANDS, VERIFIED. FINDINGS/DECISION/NEXT/ODDITIES dropped: `task notes` default view pins brief, report and verdicts (`cc_last5_hides_brief`), and nothing measured those four fields. Hill-climb candidate |
-| 40 | Close with grounding: `close --evidence "tests pass: ..."` | C+K | `task close` refuses `done` without evidence (exit 4); worker.md shows one |
+| 40 | Close with grounding: `close --evidence "tests pass: ..."` | C+K | `task close` refuses `done` without evidence (`UsageError`, exit 2; its `nextSteps` is the fix); worker.md shows one |
 | 41 | **Keep driving**: the turn ends only when all is closed or a human must decide; summary is a log line | K | SKILL.md, inside the `mu:keep-driving` markers (`extension/nudge.ts:36-37,88-102`; pinned opening in `test/extension-nudge.test.ts:78-83`; `um_prods_outage`: ~2/3 of 95 prods were real stalls). Rewritten: one summary per wave, "an error never means a human is needed", `mu human-needed` named. Nudge still fires from this block |
 | 42 | Read orchestrator-loop before dispatching | K | SKILL.md |
 | 43 | Claim before sending, even one-shot reviewers | C+K | `agent spawn --task --send` claims after the pane exists, one journaled attempt (`src/agents/task-spawn.ts`, `spawn_receipts`); rule kept as the one line |
@@ -67,11 +67,11 @@ its absence (README, Prose budget, rule 7 "Promote back").
 | 46 | Push after merged-tree gates pass; full slow once per batch; queue upkeep at milestones | K* | orchestrator-loop.md Merging + test-health.md |
 | 47 | Define done before a long run | K | SKILL.md ("Stop rule on the umbrella first") |
 | 48 | New work to pi is `send --fresh`; never chain `/new` and a prompt | C | `--fresh` is one operation (`agent send --help`); `/new` over the ctl socket refused while busy |
-| 49 | `task wait --first --on-stall exit`; exit 7 means read the pane and answer | K | SKILL.md + orchestrator-loop.md step 4, **TODO v_wait_surface** (`mu wait`: first owned event, resume) |
+| 49 | `task wait --first --on-stall exit`; exit 7 means read the pane and answer | K | orchestrator-loop.md step 4 only (exits 5/6/7); SKILL.md says "no sleep loops" and links, **TODO v_wait_surface** (`mu wait`: first owned event, resume) |
 | 50 | Stop a worker gently: `abort`, then `close` | K | orchestrator-loop.md Stopping |
 | 51 | `--interrupt` redirects a busy pi now; `--steer` waits for the tool | K | SKILL.md, orchestrator-loop.md Sending (`test/agent-interrupt.test.ts:299-307` reads the path and forbids "--steer … interrupt the") |
 | 52 | Send, don't note, a running worker | K | SKILL.md |
-| 53 | Refute a brief claiming a cause, fix, threshold or code fact; else `REFUTE-EXEMPT: <why>` | K | brief.md (the only place with the exempt note); SKILL.md rule 'Before you act' |
+| 53 | Refute a brief claiming a cause, fix, threshold or code fact; else `REFUTE-EXEMPT: <why>` | K | SKILL.md rule "Checks are calls" states refute-before-act once; brief.md keeps only the exempt note and links |
 | 54 | Checks are calls, not tasks; issue all in one turn; `record`; judges `WINNER:` | K* | tasks-or-calls.md; `WINNER:` dropped: the judge recipes are cut (§2) |
 | 55 | `MU_DELEGATE_MAX` (16) run at once; the rest queue | C | extension admission control; tasks-or-calls.md states the queue/refuse/reissue once |
 | 56 | Leave no scratch files; stdin for pure delegate calls; one `mktemp -d`, `rm -rf` | D | `agent send -`, `mu_delegate task`, `delegates register --text -` are file-free; the cleanup rule was obeyed by default |
@@ -83,7 +83,7 @@ its absence (README, Prose budget, rule 7 "Promote back").
 | 62 | Before rebuild, teardown, sync setup, a `doctor --deep` DRIFT or cleanup output, read recovery | K | SKILL.md Gotchas + recovery.md |
 | 63 | You pick the model; tiers per role; local models last resort | K | models.md |
 | 64 | `mu_delegate` takes `model`; spawn takes `--command "pi --model <id>"` | K | models.md |
-| 65 | A checker runs at the author's tier or higher, another family; no `model` = the cli default | K | SKILL.md Gotchas, models.md |
+| 65 | A checker runs at the author's tier or higher, another family; no `model` = the cli default | K | models.md only; SKILL.md Gotchas and adversarial-review step 3 link to it |
 | 66 | Reaper: a dead pane reopens IN_PROGRESS tasks with a `[reaper]` note; no manual release | C | `src/agents/reap.ts:64` (`877 reaps`); SKILL.md keeps the failure half: `unknown` is not dead |
 | 67 | pi state through ctl, needs no murmur; other CLIs through murmur (tmux) or herdr; `unknown` means no source | D | `mu doctor` says why (`agent state`/`ctl` rows); murmur has its own docs. Non-pi CLIs are rare |
 | 68 | Before merge/close `--as rejected`/abort/teardown read the pane, `log --tail`, task notes | C | `agent close` preview prints revision, owned tasks, worktree state; `unknown is not dead` rule keeps the pane read |
@@ -94,9 +94,9 @@ its absence (README, Prose budget, rule 7 "Promote back").
 
 ## 2. Recipes
 
-15,519 words become 2,304 (core ten) plus a slice-B allowance (§4).
+15,519 words become 2,357 (core ten) plus a slice-B allowance (§4).
 
-### orchestrator-loop (1,156 → 247)
+### orchestrator-loop (1,156 → 249)
 
 | 3.x rule | | Destination |
 |---|---|---|
@@ -104,7 +104,7 @@ its absence (README, Prose budget, rule 7 "Promote back").
 | Claim before sending | C+K | `spawn --task --send` in step 3 |
 | Ceiling written on the umbrella so a resume keeps it | K* | step 2 (one line, no numbers) |
 | Delegate concurrency 10-20, start at 8; `MU_DELEGATE_MAX`, queue 4×, refuse | C | extension admission; recipe says nothing about the numbers |
-| Answers arrive when you stop; `followUpMode: "all"` | D | **superseded by design**: README "never stop, never starve": delegates are tasks, the wait sees them (TODO v_settle, v_wait_surface). The 3.x advice taught the starvation trap (36 piled-up answers) |
+| Answers arrive when you stop; `followUpMode: "all"` | K* | **superseded when v_settle ships** (README "never stop, never starve"), not before: answers still arrive only as follow-ups (`extension/delegate.ts:921`). Delegate waves says so and adds the wave's delegate task ids to the `task wait --first` (`task wait` on a `kind=delegate` task verified: exit 0, `firing` set). `followUpMode` and the batch-reading advice dropped |
 | Workers with worktrees: one per CPU core | D | unmeasured; the ceiling is the orchestrator's note |
 | Stream dispatch; codemode driver for batches | D | drivers are cut (§2 codemode-driver) |
 | Waiting: `--first --on-stall exit`; exit 6/7; the exit's `Next:` leads with `agent wait --after-runs` | K | step 4 (exit codes). The `Next:` text is code (v_hints TODO) |
@@ -137,7 +137,7 @@ its absence (README, Prose budget, rule 7 "Promote back").
 | Counting: units + gates + findings; > few hundred means checks became tasks | D | measured nowhere; the table prevents it |
 | Examples (30 findings → 30 calls) | D | the table |
 
-### worker (233 → 203)
+### worker (233 → 222)
 
 | Rule | | Destination |
 |---|---|---|
@@ -147,11 +147,11 @@ its absence (README, Prose budget, rule 7 "Promote back").
 | Gate records in the final note (test-health) | K | bullet |
 | Keep each tool call to minutes; steering reaches you only between calls | K | bullet |
 | Commit before you close; the orchestrator cherry-picks commits, not your tree | K | code comment |
-| Never `cd` into your worktree | K | first line, SKILL.md rule (5,755 redundant `cd` calls) |
+| Never `cd` into your worktree | K | brief.md bullet only (the worker reads its cwd; 5,755 redundant `cd` calls); worker.md says "your cwd is your worktree" |
 | Skipping close hangs the wait; won't do it: `--as wontfix --why` | K | closing lines |
 | CLOSE block as the final lines of a pi worker's message | **TODO v_wait_core** | `src/close-block.ts` parses and applies it but nothing calls `applySettledClose` yet (grep: only `observe.ts` builds the input). One TODO line; `mu task close` stays |
 
-### brief (562 → 245)
+### brief (562 → 240)
 
 | Rule | | Destination |
 |---|---|---|
@@ -183,7 +183,7 @@ its absence (README, Prose budget, rule 7 "Promote back").
 | Umbrella closes `--if-ready`; an UNVERIFIED finding blocks it | K | last line |
 | The report is a query (`task list --substate rejected`) | D | obeyed |
 
-### adversarial-review (845 → 243)
+### adversarial-review (845 → 238)
 
 | Rule | | Destination |
 |---|---|---|
@@ -218,12 +218,12 @@ its absence (README, Prose budget, rule 7 "Promote back").
 
 Tier table, role table, checkers (level or up, another family, same model with higher effort), passing the model and effort, herdr refuses overrides: **K**. Dropped: how to rank an unknown model (long paragraph; probe and compare), "a local model never reviews" kept as one clause, "`ctl: ok` does not test the model" and the probe command (`pi --list-models` states it), "thinking effort strengthens a model" kept as "Effort is no other family", the gateway prefix example (`modelbridge/...`): **D**, it is host-specific and `mu_delegate: model must be one pi model id like 'provider/id:thinking'` already teaches it (`extension/delegate.ts:1029`).
 
-### remote-workers (1,985 → 197; README target ≤ 200)
+### remote-workers (1,985 → 239; README target ≤ 200, exceeded to carry the close step; cap 250)
 
 | 3.x rule | | Destination |
 |---|---|---|
 | Pane is transport; pane dying is agent dying | K | first paragraph |
-| One orchestrator DB; the remote worker cannot claim or close; you close from its reported sha | K | same paragraph |
+| One orchestrator DB; the remote worker cannot claim or close; you close from its reported sha | K | first paragraph and the brief's `CLOSE:` line; no code applies the block yet (`applySettledClose` has no caller, **TODO v_wait_core**), so you read it and run `task close` |
 | Registry fields (`agents.host`, `cwd`, `base`); no `REMOTE:` note | C | `mu state` shows them; the `REMOTE:` note is gone |
 | Profile: `host init --ssh`, `host check` | K | code block |
 | One journaled spawn: `--host --worktree --task --send` | K | code block |
@@ -296,14 +296,14 @@ table can point at one place.
 
 ## 4. Slice B: allowances and hand-offs
 
-**Budget arithmetic.** Core ten = 2,304 words. The total cap is 4,000 and
-`v_move_recipe` reserves up to 250, so the other recipes share ≈ 1,445. The
+**Budget arithmetic.** Core ten = 2,357 words. The total cap is 4,000 and
+`v_move_recipe` reserves up to 250, so the other recipes share ≈ 1,393. The
 proposed allowances sum to 690 (§2: ultrathink 110, plan 110, fan-out 90,
 loop-until-done 90, review-panel 90, tournament 70, hypothesis-panel 60,
-deep-research 70). Slack: ≈755, so slice B can restore any D row below that
+deep-research 70). Slack: ≈703, so slice B can restore any D row below that
 measurement supports, one 250-word recipe at a time.
 
-**SKILL.md has 11 words of headroom** (589 of 600). Index rows for those
+**SKILL.md has 14 words of headroom** (586 of 600). Index rows for those
 eight recipes plus `move` cost ≈ 100 words. Slice B must either cut Gotchas
 (first candidate: the `park` and tier bullets) or reach the extra recipes
 from `ultrathink.md`'s shape table and the `prompts/` pointers instead of
@@ -328,9 +328,9 @@ the SKILL index. Decide with `t_skill` evidence, not by word count.
 | Unit | What the draft would otherwise state | Draft today |
 |---|---|---|
 | `v_wait_surface`, `v_wait_arming` | one `mu wait` over tasks, agents, delegates; first owned event; `send --wait`, `claim --and-wait`; registered waits | still `task wait --first --on-stall exit`, `TODO(v_wait_surface)` in SKILL.md and orchestrator-loop.md |
-| `v_settle`, `v_settle_wait` | an answer or settle wakes an idle turn; keep-driving by state | `TODO(v_settle)` in orchestrator-loop.md; SKILL.md keeps the nudge block unchanged |
+| `v_settle`, `v_settle_wait` | an answer or settle wakes an idle turn; keep-driving by state | orchestrator-loop.md Delegate waves states the current rule "until v_settle"; SKILL.md keeps the nudge block unchanged |
 | `v_wait_core` | applying a worker's CLOSE block on settle | `TODO(v_wait_core)` in worker.md |
-| `v_hints` | every `Next:` hint executable; a rule set | silent; `next` is `null` today |
+| `v_hints` | every `Next:` hint executable; a rule set | SKILL.md: `TODO(v_hints)`, `next` is null today, hints in `nextSteps` |
 | `v_exec_dispatch`, `v_exec_recover`, `v_exec_refute`, `v_auto` | `mu next`, `task auto` | silent (`task auto` exists; `mu next` does not). Add one line when dispatch lands |
 | `v_wait_actions`, `v_wait_release`, `v_wait_steer` | `--on-stall steer\|release` | silent |
 | `v_delegate_nomux` | delegates outside tmux without a pane | tasks-or-calls.md keeps the manual `scratch` form |
@@ -342,16 +342,17 @@ the SKILL index. Decide with `t_skill` evidence, not by word count.
    `state --me`. `state --help` has no `--me` yet. The draft uses neither.
 2. `mu delegates tally` requires `--wave` (CommanderError without it);
    `delegates show` rejects `-w`. Real surface, not draft errors.
-3. `task wait <delegate-task-id>` for a `kind=delegate` task is not
-   verified by the draft; the draft routes delegate waves through
+3. `task wait <delegate-task-id>` for a `kind=delegate` task works (round 2
+   check: exit 0, `firing` set once the call closed). Until v_settle the draft
+   puts the wave's delegate task ids in the `task wait --first`, then tallies through
    `mu delegates tally`.
 4. The old codemode-driver snippets were stale beyond naming (refuter's
    finding); the draft drops the recipe rather than repairing it.
 
 ## 5. Verification
 
-- `wc -w`: SKILL.md 589 (cap 600); every recipe 197-247 (cap 250); recipes
-  total 2,304 (cap 4,000). Counted
+- `wc -w`: SKILL.md 586 (cap 600); every recipe 207-249 (cap 250); recipes
+  total 2,357 (cap 4,000). Counted
   with `wc -w`, so frontmatter, code blocks and tables count.
 - A throwaway vitest (not committed) ran `checkDocCommand` over every `mu`
   snippet in the draft against `buildProgram()`: 0 invalid verbs or flags

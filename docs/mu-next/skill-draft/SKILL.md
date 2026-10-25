@@ -11,12 +11,16 @@ description: >-
 # mu
 
 Agents in tmux/herdr panes, coordinated by a SQLite task DAG. **`mu --help` and
-`mu <verb> --help` outrank this skill**; a verb they omit does not exist. Every
-verb takes `-w <workstream>` (workers: injected).
+`mu <verb> --help` outrank this skill**; a verb they omit does not exist. A verb takes
+`-w <workstream>` only if its `--help` lists it (`doctor`, `sync`, `delegates
+show` do not); workers: injected.
 
 `--json` returns `{ok,data,next}`; errors come on stdout as
-`{ok:false,error,message,next,exit}`. Keys are SQL column names; `id` is the
-task's name. A capped reader names its way back (`more=N next=<command>`).
+`{ok:false,error,message,next,exit}`. TODO(v_hints): `next` is null today; hints
+are in `data.nextSteps` (errors: top-level `nextSteps`). Collections are
+`{items,count}`; `agent list` is `{workstreamName,agents,orphans}`. Keys are SQL
+column names; `id` is the task's name. A capped reader names its way back
+(`more=N next=<command>`).
 
 - **umbrella**: the parent task of a job, blocked by every unit; holds brief,
   criteria and stop rule. Close it with `--if-ready`.
@@ -39,11 +43,11 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch.
 These hold even if you skip it:
 
 - **Claim before work is sent.** `agent spawn --task <id> --send ...` does both.
-- **Wait with `mu task wait <ids> --first --on-stall exit --json`**: exit 5
-  timeout, 6 pane died, 7 owner needs you. No `sleep` loops. TODO(v_wait_surface): the one wait verb.
+- **Wait with `mu task wait`, never `sleep` loops** (flags and exits:
+  [orchestrator-loop](recipes/orchestrator-loop.md)).
 - **A send that timed out is unknown, never resent**: `mu agent check <a> <msgId>`.
 - **New work to pi: `send --fresh`.** A running worker never sees a note: send
-  (`--interrupt` kills its tool, `--steer` waits for it).
+  ([modes](recipes/orchestrator-loop.md#sending)).
 - **`unknown` is not dead.** Read the pane and `mu doctor` before you release.
 - **Only `CLOSED/done` ships.** Verify the merged tree.
 - **Checks are calls, not tasks** ([tasks-or-calls](recipes/tasks-or-calls.md)).
@@ -58,8 +62,7 @@ These hold even if you skip it:
 
 - `close --as rejected|wontfix --why` unblocks dependents; `park --why` keeps them waiting.
 - Prose goes through `-` and a quoted heredoc ([brief](recipes/brief.md)).
-- A checker runs at the author's tier or higher, from another family
-  ([models](recipes/models.md)). No `model` means the cli default.
+- Checker tier and family, and which model: [models](recipes/models.md).
 - Teardown, rebuild, sync, `doctor` DRIFT: [recovery](recipes/recovery.md) first.
 - Claimed for you: [worker](recipes/worker.md). Remote host:
   [remote-workers](recipes/remote-workers.md).

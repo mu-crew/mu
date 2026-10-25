@@ -9,7 +9,7 @@ Use when a unit that produces commits must be checked by someone other than its 
    mu task add review_x -w <ws> -t "Review x" --blocked-by x --note 'ACCEPTANCE: see x notes. Refute; findings, not style.'
    ```
 
-3. **Fresh reviewer** at the worker's tier or higher, another family ([models](models.md)). Send the diff range, criteria and gate records, not the worker's reasoning. Its only writes are findings, the verdict note and the close.
+3. **Fresh reviewer**, a checker per [models](models.md). Send the diff range, criteria and gate records, not the worker's reasoning. Its only writes are findings, the verdict note and the close.
 4. **Reviewer brief:** reproduce claimed failures; report unmet requirements, untested or broken behaviour, scope creep, unsupported evidence, each as a [finding](findings.md); `UNVERIFIED` for what it could not check. Close:
    - ACCEPT: `mu task close review_x --evidence "<command it ran>: <result>"`
    - REJECT: `mu task close review_x --as rejected --why "<n> findings: <ids>"`
