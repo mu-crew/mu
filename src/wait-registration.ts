@@ -27,6 +27,7 @@ import { isValidAgentName } from "./agents.js";
 import { compareStrings } from "./compare.js";
 import type { Db } from "./db.js";
 import { isValidTaskId } from "./tasks/id.js";
+import { cursorKey } from "./wait-cursor.js";
 import { isValidWorkstreamName } from "./workstream.js";
 
 export const WAIT_REF_KINDS = ["task", "agent", "delegate"] as const;
@@ -39,6 +40,22 @@ export interface RegisteredRef {
   id: string;
 }
 
+/**
+ * The UNCONSUMED run baseline of an agent ref: what a producer (`send`,
+ * `spawn`, `claim`) saw BEFORE its effect: the ctl run count, pi's process
+ * incarnation and the registry id. A wait counts the agent's runs from here, so
+ * a send that settles before any wait starts is still caught. Distinct from a
+ * consumed cursor (`wait_cursors`), which says what a wait already delivered.
+ */
+export interface RefBaseline {
+  afterRuns: number;
+  incarnation?: string;
+  agentId?: number;
+}
+
+/** A ref to register, with its baseline when it is an agent. */
+export type RegisterRef = RegisteredRef & { baseline?: RefBaseline };
+
 export const WAIT_REGISTRATION_STATES = ["armed", "waiting"] as const;
 export type WaitRegistrationState = (typeof WAIT_REGISTRATION_STATES)[number];
 
@@ -49,6 +66,8 @@ export interface WaitRegistration {
   state: WaitRegistrationState;
   /** Bumped by every `beginWait`; never decreases. */
   generation: number;
+  /** Unconsumed baselines of agent refs, by `cursorKey("agent", ws, name)`. */
+  baselines: Record<string, RefBaseline>;
   updatedAt: string;
 }
 
@@ -63,7 +82,8 @@ export class WaitRegistrationError extends Error {
 const CALLER_MAX = 200;
 const ID_MAX = 512;
 
-function checkCaller(caller: string): void {
+/** Throws WaitRegistrationError unless `caller` is 1-200 printable characters. */
+export function checkCaller(caller: string): void {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are the point
   if (caller.trim() === "" || caller.length > CALLER_MAX || /[\u0000-\u001f\u007f]/.test(caller)) {
     throw new WaitRegistrationError(
@@ -147,6 +167,41 @@ interface Row {
   state: WaitRegistrationState;
   generation: number;
   updated_at: string;
+  baselines_json: string;
+}
+
+function parseBaselines(json: string, refs: readonly RegisteredRef[]): Record<string, RefBaseline> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return {};
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const live = new Set(refs.filter((r) => r.kind === "agent").map((r) => refKeyOf(r)));
+  const out: Record<string, RefBaseline> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const b = v as Partial<RefBaseline> | null;
+    if (!live.has(k) || b === null || typeof b !== "object") continue;
+    if (typeof b.afterRuns !== "number" || !Number.isInteger(b.afterRuns) || b.afterRuns < 0)
+      continue;
+    out[k] = {
+      afterRuns: b.afterRuns,
+      ...(typeof b.incarnation === "string" ? { incarnation: b.incarnation } : {}),
+      ...(typeof b.agentId === "number" ? { agentId: b.agentId } : {}),
+    };
+  }
+  return out;
+}
+
+const refKeyOf = (r: RegisteredRef): string => cursorKey(r.kind, r.workstream, r.id);
+
+/** Merge a new baseline into an old one: the EARLIEST run of one incarnation wins; a new incarnation replaces. */
+function mergeBaseline(old: RefBaseline | undefined, add: RefBaseline): RefBaseline {
+  if (old === undefined || old.incarnation !== add.incarnation || old.agentId !== add.agentId) {
+    return add;
+  }
+  return old.afterRuns <= add.afterRuns ? old : add;
 }
 
 function parse(row: Row): WaitRegistration {
@@ -165,6 +220,7 @@ function parse(row: Row): WaitRegistration {
     refs,
     state: row.state,
     generation: row.generation,
+    baselines: parseBaselines(row.baselines_json, refs),
     updatedAt: row.updated_at,
   };
 }
@@ -172,7 +228,7 @@ function parse(row: Row): WaitRegistration {
 const select = (db: Db, caller: string): Row | undefined =>
   db
     .prepare(
-      "SELECT caller, refs_json, state, generation, updated_at FROM wait_registrations WHERE caller = ?",
+      "SELECT caller, refs_json, state, generation, updated_at, baselines_json FROM wait_registrations WHERE caller = ?",
     )
     .get(caller) as Row | undefined;
 
@@ -195,31 +251,52 @@ export function readWaitRegistration(db: Db, caller: string): WaitRegistration |
 export function registerOwnedWait(
   db: Db,
   caller: string,
-  refs: readonly RegisteredRef[],
+  refs: readonly RegisterRef[],
 ): WaitRegistration {
   checkCaller(caller);
   if (refs.length === 0) throw new WaitRegistrationError("wait registration: no refs to register");
   const add = canonical(refs);
+  const incoming = new Map<string, RefBaseline>();
+  for (const r of refs) {
+    if (r.baseline === undefined) continue;
+    if (r.kind !== "agent") {
+      throw new WaitRegistrationError(
+        `wait registration: only an agent ref has a run baseline (${r.kind}:${r.workstream}/${r.id})`,
+      );
+    }
+    const b = r.baseline;
+    if (!Number.isInteger(b.afterRuns) || b.afterRuns < 0) {
+      throw new WaitRegistrationError(
+        `wait registration: baseline afterRuns must be a non-negative integer (${r.workstream}/${r.id})`,
+      );
+    }
+    const key = refKeyOf(r);
+    incoming.set(key, mergeBaseline(incoming.get(key), b));
+  }
   return db
     .transaction((): WaitRegistration => {
       checkRefsExist(db, add);
       const row = select(db, caller);
-      const have = row === undefined ? [] : parse(row).refs;
+      const old = row === undefined ? undefined : parse(row);
+      const have = old?.refs ?? [];
       const merged = canonical([...have, ...add]);
       if (merged.length > WAIT_REGISTRATION_MAX_REFS) {
         throw new WaitRegistrationError(
           `wait registration: at most ${WAIT_REGISTRATION_MAX_REFS} refs may be owed at once (${caller} would owe ${merged.length})`,
         );
       }
+      const baselines: Record<string, RefBaseline> = { ...(old?.baselines ?? {}) };
+      for (const [k, b] of incoming) baselines[k] = mergeBaseline(baselines[k], b);
       const now = new Date().toISOString();
+      const baselinesJson = JSON.stringify(baselines);
       if (row === undefined) {
         db.prepare(
-          "INSERT INTO wait_registrations (caller, refs_json, state, generation, updated_at) VALUES (?, ?, 'armed', 0, ?)",
-        ).run(caller, JSON.stringify(merged), now);
-      } else if (merged.length !== have.length) {
+          "INSERT INTO wait_registrations (caller, refs_json, state, generation, updated_at, baselines_json) VALUES (?, ?, 'armed', 0, ?, ?)",
+        ).run(caller, JSON.stringify(merged), now, baselinesJson);
+      } else if (merged.length !== have.length || baselinesJson !== row.baselines_json) {
         db.prepare(
-          "UPDATE wait_registrations SET refs_json = ?, updated_at = ? WHERE caller = ?",
-        ).run(JSON.stringify(merged), now, caller);
+          "UPDATE wait_registrations SET refs_json = ?, baselines_json = ?, updated_at = ? WHERE caller = ?",
+        ).run(JSON.stringify(merged), baselinesJson, now, caller);
       }
       const after = select(db, caller);
       if (after === undefined) throw new WaitRegistrationError("wait registration vanished");
@@ -237,9 +314,11 @@ export function registerOwnedWait(
 export function beginWait(
   db: Db,
   caller: string,
-): { generation: number; refs: RegisteredRef[] } | undefined {
+):
+  | { generation: number; refs: RegisteredRef[]; baselines: Record<string, RefBaseline> }
+  | undefined {
   return db
-    .transaction((): { generation: number; refs: RegisteredRef[] } | undefined => {
+    .transaction(() => {
       const row = select(db, caller);
       if (row === undefined) return undefined;
       const reg = parse(row);
@@ -248,7 +327,7 @@ export function beginWait(
       db.prepare(
         "UPDATE wait_registrations SET state = 'waiting', generation = ?, updated_at = ? WHERE caller = ?",
       ).run(generation, new Date().toISOString(), caller);
-      return { generation, refs: reg.refs };
+      return { generation, refs: reg.refs, baselines: reg.baselines };
     })
     .immediate();
 }
@@ -274,10 +353,14 @@ export function endWait(
       if (row === undefined || row.generation !== generation || row.state !== "waiting") {
         return { applied: false };
       }
-      const left = parse(row).refs.filter((r) => !gone.has(keyOf(r)));
+      const reg = parse(row);
+      const left = reg.refs.filter((r) => !gone.has(keyOf(r)));
+      const kept = Object.fromEntries(
+        Object.entries(reg.baselines).filter(([k]) => left.some((r) => refKeyOf(r) === k)),
+      );
       db.prepare(
-        "UPDATE wait_registrations SET refs_json = ?, state = 'armed', updated_at = ? WHERE caller = ?",
-      ).run(JSON.stringify(left), new Date().toISOString(), caller);
+        "UPDATE wait_registrations SET refs_json = ?, baselines_json = ?, state = 'armed', updated_at = ? WHERE caller = ?",
+      ).run(JSON.stringify(left), JSON.stringify(kept), new Date().toISOString(), caller);
       return { applied: true };
     })
     .immediate();

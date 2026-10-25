@@ -196,6 +196,29 @@ export function listDelegates(
   return (db.prepare(sql).all(...args) as RawCall[]).map(rowOf);
 }
 
+/** Calls of any of `callers` (the union, each call once, oldest first), optionally in one workstream and wave. `[]` is no calls. */
+export function listDelegatesOf(
+  db: Db,
+  callers: readonly string[],
+  workstream?: string,
+  opts: { wave?: string } = {},
+): DelegateRow[] {
+  const set = [...new Set(callers)];
+  if (set.length === 0) return [];
+  const where = [`d.caller IN (${set.map(() => "?").join(",")})`];
+  const args: string[] = [...set];
+  if (workstream !== undefined) {
+    where.push("w.name = ?");
+    args.push(workstream);
+  }
+  if (opts.wave !== undefined) {
+    where.push("t.wave = ?");
+    args.push(opts.wave);
+  }
+  const sql = `${SELECT_CALL} WHERE ${where.join(" AND ")} ORDER BY d.task_id`;
+  return (db.prepare(sql).all(...args) as RawCall[]).map(rowOf);
+}
+
 /** JSON with sorted keys and no undefined, so two spellings of one request compare equal. */
 function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
@@ -510,20 +533,25 @@ export interface VerdictTally {
  * delegate's own task for a call with no record target). One result per call:
  * a done answer counts its parsed label (none: UNVERIFIED); failed and
  * cancelled calls are UNVERIFIED; queued, starting, running, recording and
- * refused are pending. Reads only the call rows, never notes. `caller`
- * restricts the wave to that caller's calls: two callers may use the same wave
- * name in the same workstream.
+ * refused are pending. Reads only the call rows, never notes. `callers`
+ * restricts the wave to those callers' calls (a SET: managed ws/name and
+ * pi:session; `[]` is no calls): two callers may use the same wave name in one
+ * workstream. `undefined` reads every caller (a human's view).
  */
 export function verdictTally(
   db: Db,
   workstream: string,
   wave: string,
-  /** Only this caller's calls (`mu state` never mixes in another session's identically named wave). */
-  caller?: string,
+  /** Only these callers' calls (`mu state` never mixes in another session's identically named wave); `[]` is none. */
+  callers?: readonly string[],
 ): VerdictTally {
   const out: VerdictTally = { findings: [], queued: 0, running: 0, refused: [] };
   const byId = new Map<string, VerdictTally["findings"][number]>();
-  for (const c of listDelegates(db, caller, workstream, { wave })) {
+  const calls =
+    callers === undefined
+      ? listDelegates(db, undefined, workstream, { wave })
+      : listDelegatesOf(db, callers, workstream, { wave });
+  for (const c of calls) {
     const id = c.record ? `${c.record.workstream}/${c.record.task}` : `${c.workstream}/${c.task}`;
     let f = byId.get(id);
     if (!f) {

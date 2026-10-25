@@ -257,7 +257,7 @@ describe("beginWait / endWait: one active wait per caller", () => {
   it("beginWait returns the refs and a generation, and marks the row waiting", () => {
     registerOwnedWait(db, "c", [task("t1"), agent("w1")]);
     const w = beginWait(db, "c");
-    expect(w).toEqual({ generation: 1, refs: [agent("w1"), task("t1")] });
+    expect(w).toEqual({ generation: 1, refs: [agent("w1"), task("t1")], baselines: {} });
     expect(readWaitRegistration(db, "c")).toMatchObject({ state: "waiting", generation: 1 });
   });
 

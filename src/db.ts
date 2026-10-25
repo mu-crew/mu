@@ -753,6 +753,7 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   ["agents", "spawner", "TEXT"],
   ["agents", "host", "TEXT"],
   ["agents", "collected_head", "TEXT"],
+  ["wait_registrations", "baselines_json", "TEXT NOT NULL DEFAULT '{}'"],
   ["task_auto", "enabled", "INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))"],
   ...["request", "verdict", "agent"].map((c) => ["delegate_calls", c, "TEXT"] as const),
   // The template's process group, recorded before it runs (hosts.ts).
@@ -927,7 +928,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *                     call_id and pane-side state of THIS machine.
  *    wait_cursors     per caller and ref, the last wait result consumed.
  *    wait_registrations per caller, the refs a wait still owes it, and
- *                     whether one is in flight (generation CAS).
+ *                     whether one is in flight (generation CAS), plus the
+ *                     unconsumed run baselines of its agent refs.
     human_needs      which caller recorded a `human` task (`mu human-needed`).
                      Rebuild cannot restore it (UNREBUILDABLE_TABLES).
  *    agent_settles    settled runs already applied (settle replay).
@@ -1312,7 +1314,10 @@ CREATE TABLE IF NOT EXISTS wait_registrations (
   refs_json  TEXT NOT NULL,
   state      TEXT NOT NULL CHECK (state IN ('armed', 'waiting')),
   generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  -- Per agent ref, the UNCONSUMED run baseline a producer registered
+  -- ({afterRuns, incarnation, agentId}); never a consumed cursor.
+  baselines_json TEXT NOT NULL DEFAULT '{}'
 );
 
 -- agent_settles: one row per (agent, incarnation, runs) already applied

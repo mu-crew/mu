@@ -53,11 +53,14 @@ import {
   DelegateNotFoundError,
   type DelegateRow,
   getDelegateCall,
-  listDelegates,
+  listDelegatesOf,
   TERMINAL_DELEGATE_STATES,
   type VerdictTally,
   verdictTally,
 } from "./delegates.js";
+import { openHumanNeeds } from "./human-needed.js";
+import { emitEvent } from "./logs.js";
+import { taskRevision } from "./revision.js";
 import { ambientFlush, ambientIngest } from "./sync.js";
 import { taskIdFor } from "./tasks/core.js";
 import { TaskNotFoundError } from "./tasks/errors.js";
@@ -76,7 +79,9 @@ import { agentExists, closeSettledRun, openBlockers } from "./wait-db.js";
 import { compileTextMatcher, type TextMatcher } from "./wait-regex.js";
 import {
   beginWait,
+  checkCaller,
   endWait,
+  type RefBaseline,
   type RegisteredRef,
   readWaitRegistration,
 } from "./wait-registration.js";
@@ -84,6 +89,9 @@ import {
   type AgentReading,
   type AgentWatchHandle,
   type CloseOutcome,
+  DEFAULT_CTL_STUCK_AFTER_MS,
+  DEFAULT_STUCK_AFTER_MS,
+  type StallActionResult,
   WAIT_HEARTBEAT_CAP_MS,
   type WaitEventKind,
   WaitNothingError,
@@ -92,6 +100,7 @@ import {
   WaitRefError,
   type WaitResult,
   type WaitSnapshot,
+  type WaitStallContext,
 } from "./wait-types.js";
 
 let pollCount = 0;
@@ -118,6 +127,12 @@ interface Item {
   /** Completed: closed, settled, delegate terminal, dead. */
   done: boolean;
   ready: boolean;
+  /** A task whose owner stalled: what the stall hook needs. */
+  stall?: {
+    token: string;
+    owner: AgentReading;
+    ownerRef: { name: string; workstreamName: string };
+  };
 }
 
 interface AgentTrack {
@@ -141,8 +156,13 @@ const registered = (r: WaitRef): RegisteredRef => ({
   workstream: r.workstream,
   id: r.id,
 });
-const URGENCY: Partial<Record<WaitEventKind, number>> = { dead: 0, input: 1, delegate: 2 };
-const urgency = (k: WaitEventKind | undefined): number => (k === undefined ? 9 : (URGENCY[k] ?? 3));
+const URGENCY: Partial<Record<WaitEventKind, number>> = {
+  dead: 0,
+  input: 1,
+  stall: 2,
+  delegate: 3,
+};
+const urgency = (k: WaitEventKind | undefined): number => (k === undefined ? 9 : (URGENCY[k] ?? 4));
 const exitFor = (k: WaitEventKind): WaitResult["exit"] =>
   k === "dead" ? 6 : k === "input" || k === "stall" ? 7 : k === "interrupted" ? 130 : 0;
 
@@ -150,10 +170,22 @@ const exitFor = (k: WaitEventKind): WaitResult["exit"] =>
 export async function waitForEvents(
   db: Db,
   input: readonly WaitRef[],
-  opts: WaitOptions = {},
+  opts: WaitOptions,
 ): Promise<WaitResult> {
-  const { caller } = opts;
-  const all = opts.all === true;
+  const callers = [...new Set(opts.callers ?? [])];
+  for (const c of callers) checkCaller(c);
+  const all = opts.mode === "all";
+  const ownedScope = opts.eventScope !== "refs";
+  const stuckExplicit = opts.stuckAfterMs;
+  const stuckEnabled =
+    stuckExplicit !== 0 && opts.status !== "OPEN" && opts.status !== "IN_PROGRESS";
+  const stuckAfter = (viaCtl: boolean): number =>
+    stuckExplicit ?? (viaCtl ? DEFAULT_CTL_STUCK_AFTER_MS : DEFAULT_STUCK_AFTER_MS);
+  // Owners of watched tasks are read for death (callers) and for stalls.
+  const observeOwners =
+    ((callers.length > 0 && ownedScope) || stuckEnabled) && opts.readAgents !== undefined;
+  /** The callers consume what they are handed (cursors, registration) only for owned-scope waits. */
+  const consumes = ownedScope && callers.length > 0;
   const target: TaskStatus = opts.status ?? "CLOSED";
   const matcher: TextMatcher | undefined =
     typeof opts.until === "object" ? compileTextMatcher(opts.until.text) : undefined;
@@ -180,7 +212,7 @@ export async function waitForEvents(
       if (call === undefined || call.workstream !== ref.workstream) {
         throw new DelegateNotFoundError(ref.id);
       }
-      if (caller !== undefined && call.caller !== caller) {
+      if (callers.length > 0 && !callers.includes(call.caller)) {
         throw new WaitRefError(`delegate call ${ref.id} belongs to another caller`);
       }
     }
@@ -194,13 +226,32 @@ export async function waitForEvents(
   }
   const explicit = new Map<string, WaitRef>();
   for (const r of input) explicit.set(refKey(r), r);
-  if (input.length === 0 && !opts.wave && !opts.blockersOf && caller === undefined) {
+  if (opts.wave !== undefined && callers.length === 0) {
+    throw new WaitRefError("wait: a wave belongs to callers; none given (no all-caller fallback)");
+  }
+  if (input.length === 0 && !opts.wave && !opts.blockersOf && callers.length === 0) {
     throw new WaitNothingError();
   }
 
   // ─── one active wait per caller; cursors read before any await ────
-  const begun = caller === undefined ? undefined : beginWait(db, caller);
-  const cursors = caller === undefined ? new Map<string, CursorToken>() : readCursors(db, caller);
+  const begun = new Map<string, NonNullable<ReturnType<typeof beginWait>>>();
+  if (consumes) {
+    for (const c of callers) {
+      const b = beginWait(db, c);
+      if (b !== undefined) begun.set(c, b);
+    }
+  }
+  const cursorsBy = new Map<string, Map<string, CursorToken>>(
+    (consumes ? callers : []).map((c) => [c, readCursors(db, c)]),
+  );
+  /** Whose registration or delegate call holds `key` (else the first caller: where its token is written). */
+  const ownerOfKey = new Map<string, string>();
+  const ownerOf = (key: string): string | undefined => ownerOfKey.get(key) ?? callers[0];
+  const cursorOf = (key: string): CursorToken | undefined => {
+    const o = ownerOf(key);
+    return o === undefined ? undefined : cursorsBy.get(o)?.get(key);
+  };
+  const baselineOf = new Map<string, RefBaseline>();
 
   // ─── stop signals: abort and the deadline race every await ────────
   const watchAbort = new AbortController();
@@ -243,7 +294,36 @@ export async function waitForEvents(
   const reapedOwners = new Set<string>();
   let lastItems: Item[] = [];
   let firstRefresh = true;
+  let inspected = false;
   const delivered: Item[] = [];
+
+  /** The callers' registered refs, merged (each ref once); records which caller owes which. */
+  const ownedRefs = (): WaitRef[] => {
+    if (!consumes) return [];
+    const out = new Map<string, WaitRef>();
+    for (const c of callers) {
+      const reg = readWaitRegistration(db, c);
+      if (reg === undefined) continue;
+      for (const r of reg.refs) {
+        const key = refKey(r);
+        if (!out.has(key)) {
+          out.set(key, { ...r });
+          ownerOfKey.set(key, c);
+        }
+        const b = reg.baselines[key];
+        if (b !== undefined) {
+          const old = baselineOf.get(key);
+          if (
+            old === undefined ||
+            (old.incarnation === b.incarnation && b.afterRuns < old.afterRuns)
+          ) {
+            baselineOf.set(key, b);
+          }
+        }
+      }
+    }
+    return [...out.values()];
+  };
 
   const track = (ref: WaitRef, isExplicit: boolean): AgentTrack => {
     const key = refKey(ref);
@@ -274,11 +354,17 @@ export async function waitForEvents(
     const got = await within(
       Promise.all(
         want.map((t) => {
-          const cur = cursors.get(refKey(t.ref));
+          const key = refKey(t.ref);
+          const cur = cursorOf(key);
+          const base = baselineOf.get(key);
           return watch(
             { ...t.ref, ...(t.baseline !== undefined ? { afterRuns: t.baseline } : {}) },
             watchAbort.signal,
-            { owed: !t.explicit, ...(cur !== undefined ? { cursor: cur } : {}) },
+            {
+              owed: !t.explicit,
+              ...(cur !== undefined ? { cursor: cur } : {}),
+              ...(base !== undefined ? { baseline: base } : {}),
+            },
           );
         }),
       ),
@@ -308,7 +394,7 @@ export async function waitForEvents(
     const consumed =
       !t.explicit &&
       r.runs !== undefined &&
-      isConsumed(cursors.get(refKey(t.ref)), { incarnation: r.incarnation ?? "", runs: r.runs });
+      isConsumed(cursorOf(refKey(t.ref)), { incarnation: r.incarnation ?? "", runs: r.runs });
     const close = consumed ? undefined : closeSettledRun(db, t.ref, r, applyClose);
     const textOk =
       matcher === undefined ||
@@ -357,10 +443,9 @@ export async function waitForEvents(
       if (b.lost) return;
     }
     if (opts.sync !== false) await ambientIngest(db, { quiet: true });
-    const reg = caller === undefined ? undefined : readWaitRegistration(db, caller);
+    const owned = ownedRefs();
     for (const r of explicit.values()) if (r.kind === "agent") track(r, true);
-    for (const r of reg?.refs ?? [])
-      if (r.kind === "agent") track({ ...r }, explicit.has(refKey(r)));
+    for (const r of owned) if (r.kind === "agent") track(r, explicit.has(refKey(r)));
     await setupWatches();
     if (stopReason !== undefined) return;
     // Owners of watched in-progress tasks ride on the same batched read.
@@ -368,10 +453,8 @@ export async function waitForEvents(
     for (const t of tracks.values()) {
       if (t.latched === undefined && t.handle === undefined) reads.set(refKey(t.ref), t.ref);
     }
-    if (caller !== undefined) {
-      const taskRefs = [...explicit.values(), ...(reg?.refs ?? [])].filter(
-        (r) => r.kind === "task",
-      );
+    if (observeOwners) {
+      const taskRefs = [...explicit.values(), ...owned].filter((r) => r.kind === "task");
       for (const r of taskRefs) {
         const row = getTask(db, r.id, r.workstream);
         const o = row?.status === "IN_PROGRESS" ? getTaskOwner(db, r.id, r.workstream) : undefined;
@@ -399,7 +482,7 @@ export async function waitForEvents(
         if (r === undefined) {
           // A caller's own refs: an agent that is gone is dead, not unknown.
           r =
-            caller !== undefined && !agentExists(db, ref)
+            callers.length > 0 && !agentExists(db, ref)
               ? { status: null, reason: "agent is no longer registered" }
               : { status: "unknown", reason: "state reader returned no row" };
         }
@@ -429,6 +512,10 @@ export async function waitForEvents(
     return {
       ref: t.ref,
       status,
+      ...(r?.agentId !== undefined ? { agentId: r.agentId } : {}),
+      ...(r?.paneId !== undefined ? { paneId: r.paneId } : {}),
+      ...(r?.settled !== undefined ? { settled: r.settled } : {}),
+      ...(r?.lastTextTruncated !== undefined ? { lastTextTruncated: r.lastTextTruncated } : {}),
       ...(r?.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
       ...(r?.runs !== undefined ? { runs: r.runs } : {}),
       ...(r?.lastText !== undefined ? { lastText: r.lastText } : {}),
@@ -442,6 +529,31 @@ export async function waitForEvents(
       dead: t.latched?.kind === "dead",
       ...(t.close !== undefined ? { close: t.close } : {}),
     };
+  };
+
+  // ─── stall detection (the engine's; the policy is handleStall's) ───
+  /** Owners whose control socket is broken: first-seen time (the age runs from here). */
+  const ctlBrokenSince = new Map<string, number>();
+  const stallEmitted = new Set<string>();
+  const stallStates = new Map<string, { job?: Promise<void>; result?: StallActionResult }>();
+
+  /** How long (ms) the owner has needed attention, or null when it does not. */
+  const stallAgeMs = (ownerKey: string, r: AgentReading | undefined): number | null => {
+    if (r === undefined || r.status === null) return null;
+    const alive = true;
+    // A pi owner whose control socket does not answer (pane alive): nothing will report it settling.
+    if (alive && (r.ctl === "missing" || r.ctl === "refused")) {
+      const first = ctlBrokenSince.get(ownerKey) ?? Date.now();
+      ctlBrokenSince.set(ownerKey, first);
+      const age = Date.now() - first;
+      return age >= stuckAfter(false) ? age : null;
+    }
+    ctlBrokenSince.delete(ownerKey);
+    if (r.status !== "needs_input" || r.since === undefined || r.since === null) return null;
+    const viaCtl = r.source === "ctl" && r.ctl === "ok";
+    if (viaCtl && r.pending === true) return null;
+    const age = Date.now() - r.since;
+    return age >= stuckAfter(viaCtl) ? age : null;
   };
 
   const taskItem = (
@@ -477,7 +589,7 @@ export async function waitForEvents(
     };
     if (row === undefined) return item;
     // The owner died before the task closed: reaper precedence over closure.
-    if (caller !== undefined && want === "CLOSED" && status !== "CLOSED") {
+    if (callers.length > 0 && want === "CLOSED" && status !== "CLOSED") {
       const prior = priorTask.get(item.key);
       const ownerKey = ownerRef === undefined ? undefined : agentKey(ownerRef);
       const dead =
@@ -490,6 +602,42 @@ export async function waitForEvents(
         snap.dead = true;
         item.kind = "dead";
         item.done = true;
+        return item;
+      }
+    }
+    // A work task whose owner needs attention: a stall (exit 7), never a close.
+    if (
+      stuckEnabled &&
+      status === "IN_PROGRESS" &&
+      row.kind === "work" &&
+      ownerRef !== undefined &&
+      want === "CLOSED"
+    ) {
+      const ownerKey = agentKey(ownerRef);
+      const r = ownerReadings.get(ownerKey);
+      const age = stallAgeMs(ownerKey, r);
+      if (age !== null && r !== undefined) {
+        const token = [
+          row.workstreamId,
+          row.name,
+          ownerKey,
+          r.incarnation ?? "",
+          r.runs ?? "",
+          r.since ?? "",
+        ].join("|");
+        snap.stuck = true;
+        item.kind = "stall";
+        item.stall = { token, owner: r, ownerRef };
+        if (!stallEmitted.has(token)) {
+          stallEmitted.add(token);
+          emitEvent(
+            db,
+            ref.workstream,
+            "agent.stall",
+            `agent stalled ${ownerRef.name} owns ${ref.id} for ${Math.round(age / 1000)}s`,
+            ownerRef.name,
+          );
+        }
         return item;
       }
     }
@@ -569,7 +717,7 @@ export async function waitForEvents(
   };
 
   /** The synchronous half: the current picture, from the DB and what refresh saw. */
-  let wave: VerdictTally | undefined;
+  let tally: VerdictTally | undefined;
   const evaluate = (): Item[] => {
     const items: Item[] = [];
     const byKey = new Map<string, Item>();
@@ -584,8 +732,7 @@ export async function waitForEvents(
       byKey.set(it.key, it);
       items.push(it);
     };
-    const reg = caller === undefined ? undefined : readWaitRegistration(db, caller);
-    const owned = (reg?.refs ?? []).map((r) => ({ ...r }) as WaitRef);
+    const owned = ownedRefs();
     const calls = new Map<string, { call: DelegateRow; target: boolean; suppressible: boolean }>();
     const addCall = (
       c: DelegateRow | undefined,
@@ -606,15 +753,25 @@ export async function waitForEvents(
       else addCall(getDelegateCall(db, r.id), true, false);
     }
     if (opts.wave !== undefined) {
-      for (const c of listDelegates(db, caller, opts.wave.workstream, { wave: opts.wave.name })) {
+      for (const c of listDelegatesOf(db, callers, opts.wave.workstream, {
+        wave: opts.wave.name,
+      })) {
         addCall(c, true, !all);
       }
-      wave = verdictTally(db, opts.wave.workstream, opts.wave.name, caller);
+      tally = verdictTally(db, opts.wave.workstream, opts.wave.name, callers);
     }
     for (const r of owned)
       if (r.kind === "delegate") addCall(getDelegateCall(db, r.id), false, true);
-    // Every call this caller made is owed its report; the cursor hides the consumed ones.
-    if (caller !== undefined) for (const c of listDelegates(db, caller)) addCall(c, false, true);
+    // Every call the callers made is owed its report; the cursor hides the consumed ones.
+    if (consumes) {
+      for (const c of listDelegatesOf(db, callers)) {
+        addCall(c, false, true);
+        ownerOfKey.set(
+          refKey({ kind: "delegate", workstream: c.workstream, id: c.callId }),
+          c.caller,
+        );
+      }
+    }
     for (const { call, target: isTarget, suppressible } of calls.values()) {
       push(delegateItem(call, isTarget, suppressible, order++));
     }
@@ -671,13 +828,106 @@ export async function waitForEvents(
     const shown: Item[] = [];
     for (const it of items) {
       const hidden =
-        it.suppressible && it.token !== undefined && isConsumed(cursors.get(it.key), it.token);
+        it.suppressible && it.token !== undefined && isConsumed(cursorOf(it.key), it.token);
       it.ready = it.kind !== undefined && !hidden;
       // Consumed owned history is no longer owed: it is not part of the picture.
       if (hidden && !it.target) continue;
       shown.push(it);
     }
     return shown;
+  };
+
+  /**
+   * Hand each stall to `handleStall` (raced: the job runs beside the loop and
+   * wakes it), once per stallToken. A stall stays unselectable while its job is
+   * out or after a `continue`; `return` (or no handler) makes it the event.
+   */
+  const driveStalls = (items: Item[]): void => {
+    const handler = opts.handleStall;
+    for (const it of items) {
+      if (it.stall === undefined || it.kind !== "stall") continue;
+      const steering = opts.onStall === "steer" || opts.onStall === "release";
+      const caller = ownerOf(it.key);
+      if (!steering || handler === undefined || caller === undefined) {
+        it.ready = true;
+        continue;
+      }
+      const { token, owner, ownerRef } = it.stall;
+      let st = stallStates.get(token);
+      if (st === undefined) {
+        const own = db
+          .prepare(
+            `SELECT a.id, a.pane_id FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+              WHERE a.name = ? AND w.name = ?`,
+          )
+          .get(ownerRef.name, ownerRef.workstreamName) as
+          | { id: number; pane_id: string }
+          | undefined;
+        const taskId = taskIdFor(db, it.ref.id, it.ref.workstream);
+        if (own === undefined || taskId === null) {
+          it.ready = true;
+          continue;
+        }
+        const ctx: WaitStallContext = {
+          caller,
+          generation: begun.get(caller)?.generation ?? null,
+          ref: it.ref,
+          taskId,
+          revision: taskRevision(db, it.ref.workstream, it.ref.id),
+          owner: {
+            workstream: ownerRef.workstreamName,
+            name: ownerRef.name,
+            agentId: owner.agentId ?? own.id,
+            paneId: owner.paneId ?? own.pane_id,
+            status: owner.status,
+            source: owner.source ?? "none",
+            since: owner.since ?? null,
+            settled: false,
+            ...(owner.ctl !== undefined ? { ctl: owner.ctl } : {}),
+            ...(owner.incarnation !== undefined ? { incarnation: owner.incarnation } : {}),
+            ...(owner.runs !== undefined ? { runs: owner.runs } : {}),
+            ...(owner.pending !== undefined ? { pending: owner.pending } : {}),
+            ...(owner.reason !== undefined ? { reason: owner.reason } : {}),
+          },
+          stallToken: token,
+          deadlineMs: Number.isFinite(deadline)
+            ? Math.max(0, deadline - Date.now())
+            : Number.MAX_SAFE_INTEGER,
+          signal: watchAbort.signal,
+        };
+        const fresh: { job?: Promise<void>; result?: StallActionResult } = {};
+        const action = opts.onStall === "release" ? "release" : "steer";
+        fresh.job = Promise.resolve()
+          .then(() => handler(ctx))
+          .catch(
+            (e: unknown): StallActionResult => ({
+              disposition: "return",
+              action,
+              state: "unknown",
+              reason: e instanceof Error ? e.message : String(e),
+            }),
+          )
+          .then((res) => {
+            fresh.result = res;
+            fresh.job = undefined;
+            // The owner's next run counts from the actual send baseline.
+            const t = tracks.get(
+              refKey({
+                kind: "agent",
+                ...{ workstream: ownerRef.workstreamName, id: ownerRef.name },
+              }),
+            );
+            if (t !== undefined && res.afterRuns !== undefined && t.latched === undefined) {
+              t.baseline = res.afterRuns;
+              t.wasBusy = false;
+            }
+            wake();
+          });
+        st = fresh;
+        stallStates.set(token, st);
+      }
+      it.ready = st.job === undefined && st.result?.disposition === "return";
+    }
   };
 
   const select = (items: Item[]): { event: Item; fired: Item[] } | undefined => {
@@ -690,7 +940,10 @@ export async function waitForEvents(
       return undefined;
     }
     const urgent = ready.find(
-      (i) => i.kind === "input" || (!i.target && (i.kind === "dead" || i.kind === "delegate")),
+      (i) =>
+        i.kind === "input" ||
+        i.kind === "stall" ||
+        (!i.target && (i.kind === "dead" || i.kind === "delegate")),
     );
     if (urgent !== undefined) return { event: urgent, fired: [urgent] };
     const targets = items.some((i) => i.target) ? items.filter((i) => i.target) : items;
@@ -728,7 +981,11 @@ export async function waitForEvents(
       interrupted: kind === "interrupted",
       exit: exitFor(kind),
       cursor: {},
-      ...(wave !== undefined ? { wave } : {}),
+      ...(e?.stall !== undefined && stallStates.get(e.stall.token)?.result !== undefined
+        ? { action: stallStates.get(e.stall.token)?.result as StallActionResult }
+        : {}),
+      humanNeeds: callers.flatMap((c) => openHumanNeeds(db, c)),
+      ...(tally !== undefined ? { tally } : {}),
       ...(drained ? { drained: true } : {}),
     };
   };
@@ -748,6 +1005,13 @@ export async function waitForEvents(
       }
       if (stopReason === "deadline" || Date.now() >= deadline) {
         const items = evaluate();
+        driveStalls(items);
+        // The legacy waits always took one full snapshot, stuck check included,
+        // before honouring the deadline: a deadline that won the race still does.
+        if (opts.inspect && !inspected) {
+          inspected = true;
+          await opts.inspect(items.filter((i) => i.target).map((i) => i.snap));
+        }
         const chosen = select(items);
         result = chosen
           ? build(chosen.event.kind ?? "closed", items, chosen)
@@ -758,8 +1022,12 @@ export async function waitForEvents(
       rethrow();
       if (stopReason === "abort") continue;
       const items = evaluate();
+      driveStalls(items);
       lastItems = items;
-      if (opts.inspect) await opts.inspect(items.filter((i) => i.target).map((i) => i.snap));
+      if (opts.inspect) {
+        inspected = true;
+        await opts.inspect(items.filter((i) => i.target).map((i) => i.snap));
+      }
       if (items.length === 0) throw new WaitNothingError();
       const chosen = select(items);
       if (chosen !== undefined) {
@@ -776,7 +1044,8 @@ export async function waitForEvents(
       // registration and polled agents. All agents watched: sleep until a
       // settle, the deadline or an abort.
       const polled =
-        caller !== undefined ||
+        callers.length > 0 ||
+        observeOwners ||
         items.some((i) => i.ref.kind !== "agent") ||
         [...tracks.values()].some((t) => t.latched === undefined && t.handle === undefined);
       const left = deadline - Date.now();
@@ -802,35 +1071,44 @@ export async function waitForEvents(
     clearTimeout(deadlineTimer);
     opts.signal?.removeEventListener("abort", onAbort);
     watchAbort.abort();
-    if (caller !== undefined) {
-      const mine = delivered; // only an event pushes here: a timeout or interrupt delivers nothing
-      const completed = mine.filter(
+    if (consumes) {
+      const completed = delivered.filter(
         (i) =>
           i.kind === "closed" ||
           i.kind === "settled" ||
           i.kind === "delegate" ||
           (i.kind === "dead" && i.ref.kind === "agent"),
       );
-      const tokens = completed.flatMap((i) =>
-        i.token === undefined ? [] : [{ key: i.key, token: i.token }],
-      );
+      // Each delivered ref is consumed by the caller that owns it, in one
+      // transaction guarded by that caller's wait generation.
       let applied = true;
       db.transaction(() => {
-        if (begun !== undefined) {
-          applied = endWait(
-            db,
-            caller,
-            begun.generation,
-            completed.map((i) => registered(i.ref)),
-          ).applied;
+        for (const c of callers) {
+          const mine = completed.filter((i) => ownerOf(i.key) === c);
+          const tokens = mine.flatMap((i) =>
+            i.token === undefined ? [] : [{ key: i.key, token: i.token }],
+          );
+          const b = begun.get(c);
+          if (b !== undefined) {
+            const ended = endWait(
+              db,
+              c,
+              b.generation,
+              mine.map((i) => registered(i.ref)),
+            );
+            if (!ended.applied) {
+              applied = false;
+              continue;
+            }
+          }
+          recordCursors(db, c, tokens);
         }
-        if (applied) recordCursors(db, caller, tokens);
       }).immediate();
       if (result !== undefined) {
-        result.cursor = Object.fromEntries(readCursors(db, caller));
+        result.cursor = Object.fromEntries(callers.flatMap((c) => [...readCursors(db, c)]));
         if (!applied) result.superseded = true;
       }
-    }
+    } else if (result !== undefined) result.cursor = {};
     if (opts.sync !== false) await ambientFlush(db, { quiet: true });
   }
   return result as WaitResult;

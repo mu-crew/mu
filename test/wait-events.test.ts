@@ -32,7 +32,7 @@ import {
 } from "./_wait-fixtures.js";
 
 const env = useWaitDb();
-const fast = { pollMs: 1, sync: false } as const;
+const fast = { callers: [], pollMs: 1, sync: false } as const;
 
 describe("tasks", () => {
   it("returns at once for an already-closed explicit task (snapshot, non-null event)", async () => {
@@ -66,7 +66,7 @@ describe("tasks", () => {
     };
     const both = await waitForEvents(env.db, [taskRef("c"), taskRef("d")], {
       ...fast,
-      all: true,
+      mode: "all",
       sleep: sleep2,
     });
     expect(polls).toBe(3);
@@ -124,7 +124,7 @@ describe("delegates racing busy workers (the starvation case)", () => {
       };
       const r = await waitForEvents(env.db, [], {
         ...fast,
-        caller,
+        callers: [caller],
         sleep,
         timeoutMs: 5000,
         ...reader,
@@ -147,7 +147,7 @@ describe("delegates racing busy workers (the starvation case)", () => {
     let slept = 0;
     const r = await waitForEvents(env.db, [], {
       ...fast,
-      caller,
+      callers: [caller],
       timeoutMs: 5000,
       readAgents: async () => new Map(),
       watchAgent: async () => watch.handle,
@@ -229,6 +229,7 @@ describe("lost wakeups and the stop signals", () => {
     const ac2 = new AbortController();
     setTimeout(() => ac2.abort(), 5);
     const b = await waitForEvents(env.db, [taskRef("a")], {
+      callers: [],
       sync: false,
       pollMs: 10_000,
       signal: ac2.signal,
@@ -249,6 +250,7 @@ describe("lost wakeups and the stop signals", () => {
     mkAgent(env.db, "w1");
     const t0 = Date.now();
     const r = await waitForEvents(env.db, [agentRef("w1")], {
+      callers: [],
       sync: false,
       pollMs: 10_000,
       timeoutMs: 20,
@@ -331,7 +333,11 @@ describe("agent events", () => {
     const caller = "pi:s3";
     registerOwnedWait(env.db, caller, [taskRef("t1")]);
     const table = new Map<string, AgentReading>([["w/w1", { status: null }]]);
-    const r = await waitForEvents(env.db, [], { ...fast, caller, ...scriptedAgents(table) });
+    const r = await waitForEvents(env.db, [], {
+      ...fast,
+      callers: [caller],
+      ...scriptedAgents(table),
+    });
     expect(r.event).toMatchObject({ kind: "dead", ref: { kind: "task", id: "t1" } });
     expect(r.exit).toBe(6);
   });
@@ -349,8 +355,8 @@ describe("all: urgent events and unrelated refs", () => {
     let n = 0;
     const r = await waitForEvents(env.db, [taskRef("a")], {
       ...fast,
-      caller,
-      all: true,
+      callers: [caller],
+      mode: "all",
       timeoutMs: 1000,
       sleep: async () => {
         if (n++ === 0) answer(env.db, call);
@@ -369,8 +375,8 @@ describe("all: urgent events and unrelated refs", () => {
     let n = 0;
     const r = await waitForEvents(env.db, [], {
       ...fast,
-      caller,
-      all: true,
+      callers: [caller],
+      mode: "all",
       timeoutMs: 1000,
       sleep: async () => {
         if (n === 0) closeTask(env.db, "a", { workstream: "w", evidence: "e" });
@@ -483,7 +489,7 @@ describe("caller and wave isolation", () => {
     let n = 0;
     const r = await waitForEvents(env.db, [], {
       ...fast,
-      caller: "pi:me",
+      callers: ["pi:me"],
       timeoutMs: 1000,
       sleep: async () => {
         if (n++ === 0) answer(env.db, mine);
@@ -491,7 +497,7 @@ describe("caller and wave isolation", () => {
     });
     expect(r.event.ref?.id).toBe(mine);
     await expect(
-      waitForEvents(env.db, [delegateRef(other)], { ...fast, caller: "pi:me" }),
+      waitForEvents(env.db, [delegateRef(other)], { ...fast, callers: ["pi:me"] }),
     ).rejects.toBeInstanceOf(WaitRefError);
   });
 
@@ -502,11 +508,11 @@ describe("caller and wave isolation", () => {
     answer(env.db, b);
     const r = await waitForEvents(env.db, [], {
       ...fast,
-      caller: "pi:a",
-      all: true,
+      callers: ["pi:a"],
+      mode: "all",
       wave: { workstream: "scratch", name: "w1" },
     });
-    expect(r.wave?.findings.reduce((s, f) => s + f.confirmed, 0)).toBe(1);
+    expect(r.tally?.findings.reduce((s, f) => s + f.confirmed, 0)).toBe(1);
     expect(r.refs.map((s) => s.ref.id)).toEqual([a]);
     expect(
       verdictTally(env.db, "scratch", "w1").findings.reduce((s, f) => s + f.confirmed, 0),
@@ -523,7 +529,7 @@ describe("blockersOf", () => {
     let n = 0;
     const r = await waitForEvents(env.db, [], {
       ...fast,
-      all: true,
+      mode: "all",
       timeoutMs: 1000,
       blockersOf: { workstream: "w", id: "goal" },
       sleep: async () => {
@@ -541,7 +547,7 @@ describe("blockersOf", () => {
     mkTask(env.db, "goal");
     const r = await waitForEvents(env.db, [], {
       ...fast,
-      all: true,
+      mode: "all",
       blockersOf: { workstream: "w", id: "goal" },
     });
     expect(r.event.kind).toBe("closed");
@@ -640,7 +646,7 @@ describe("sync bounds", () => {
   it("flushes once on return and ingests each iteration (no peers when sync is off: a cheap no-op)", async () => {
     mkTask(env.db, "a");
     closeTask(env.db, "a", { workstream: "w", evidence: "e" });
-    const r = await waitForEvents(env.db, [taskRef("a")], { timeoutMs: 1000 });
+    const r = await waitForEvents(env.db, [taskRef("a")], { callers: [], timeoutMs: 1000 });
     expect(r.event.kind).toBe("closed");
   });
 });

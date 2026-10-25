@@ -194,7 +194,10 @@ export async function waitForAgents(
     db,
     input.map((r) => ({ kind: "agent" as const, workstream: r.workstreamName, id: r.name })),
     {
-      all: opts.any !== true,
+      callers: [],
+      mode: opts.any === true ? "first" : "all",
+      eventScope: "refs",
+      stuckAfterMs: 0,
       uncapped: true,
       timeoutMs: opts.timeoutMs ?? 600_000,
       pollMs: opts.pollMs ?? 1000,
