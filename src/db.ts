@@ -747,6 +747,9 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   ["agents", "spawner", "TEXT"],
   ["agents", "host", "TEXT"],
   ["agents", "collected_head", "TEXT"],
+  // The template's process group, recorded before it runs (hosts.ts).
+  ["host_channels", "pgid", "INTEGER"],
+  ["host_channels", "pgid_start", "TEXT"],
 ];
 
 function hasColumn(db: Db, table: string, column: string): boolean {
@@ -1322,7 +1325,10 @@ CREATE TABLE IF NOT EXISTS host_profiles (
 -- per holder. 'transient' rides an invocation (exec, fetch, check) and is
 -- reclaimed only when its pid is proven gone; 'attached' rides an agent's
 -- pane (registry id + pane, no pid) and is reclaimed only when that pane is
--- proven dead. 'token' makes every release a compare-and-set. No FK: the
+-- proven dead. 'pgid' is the template's process group, recorded before the
+-- command starts: a transient row stays held while that group lives, whatever
+-- became of the holder pid (SIGKILL included). 'token' makes every release a
+-- compare-and-set. No FK: the
 -- row must outlive neither its host nor guess at its holder.
 CREATE TABLE IF NOT EXISTS host_channels (
   host      TEXT NOT NULL,
@@ -1331,6 +1337,8 @@ CREATE TABLE IF NOT EXISTS host_channels (
   token     TEXT NOT NULL,
   pid       INTEGER,
   pid_start TEXT,
+  pgid      INTEGER,
+  pgid_start TEXT,
   agent_id  INTEGER,
   pane_id   TEXT,
   opened_at TEXT NOT NULL,

@@ -108,6 +108,28 @@ describe("execGroupCapture", () => {
     }
   });
 
+  it("onSpawn gets the group id before the command runs; if it throws, the command never runs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-exec-group-"));
+    const marker = join(dir, "ran");
+    try {
+      let seen = 0;
+      const r = await sh(`echo $$; touch ${marker}`, { onSpawn: (g: number) => (seen = g) });
+      expect(seen).toBeGreaterThan(0);
+      expect(r).toMatchObject({ stdout: String(seen), exitCode: 0 });
+      rmSync(marker);
+      const bad = await sh(`touch ${marker}`, {
+        onSpawn: () => {
+          throw new Error("no lease");
+        },
+      });
+      expect(bad.exitCode).toBeNull();
+      await sleep(100);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("parent termination kills the whole group, descendants included", async () => {
     const dir = mkdtempSync(join(tmpdir(), "mu-exec-group-"));
     const pidFile = join(dir, "pid");

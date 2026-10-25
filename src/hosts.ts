@@ -38,8 +38,11 @@
 // the awaited template run:
 //   transient   rides one invocation (exec, fetch, check); released in
 //               `finally` by token; reclaimed only when its pid is proven
-//               gone (ESRCH, or the pid's start time changed). EPERM or any
-//               unknown keeps the row.
+//               gone (ESRCH, or the pid's start time changed) AND the
+//               template's process group (`pgid`, recorded before the command
+//               starts) is gone: kill(-pgid, 0) succeeding or EPERM holds the
+//               slot, so a caller that died by SIGKILL mid-reap cannot free it
+//               under a live transport. EPERM or any unknown keeps the row.
 //   attached    rides an agent's pane (registry id + pane, no pid): reserve,
 //               `bindHostChannel` once the pane exists, and
 //               `releaseHostChannelsForAgent(id, pane)` at close. Reclaimed
@@ -383,6 +386,9 @@ export interface HostChannel {
   token: string;
   pid: number | null;
   pid_start: string | null;
+  /** The template's process group (its leader's pid), set before the command starts. */
+  pgid: number | null;
+  pgid_start: string | null;
   agent_id: number | null;
   pane_id: string | null;
   opened_at: string;
@@ -430,6 +436,23 @@ function pidProvenGone(pid: number, start: string | null): boolean {
   return now !== null && now !== start;
 }
 
+/**
+ * Is the template's process group still there? `kill(-pgid, 0)` succeeding
+ * or failing with EPERM means yes. Only ESRCH, or proof that the pid was
+ * reused (the leader pid is alive with another start time: a pid cannot be
+ * reused while its group has members), means gone.
+ */
+function groupAlive(pgid: number, start: string | null): boolean {
+  try {
+    process.kill(-pgid, 0);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+  if (start === null) return true;
+  const now = pidStart(pgid);
+  return now === null || now === start;
+}
+
 /** Attached channels whose pane is proven dead. Runs OUTSIDE any transaction. */
 async function probeAttached(
   db: Db,
@@ -450,7 +473,8 @@ async function probeAttached(
 }
 
 /**
- * Delete proven-dead rows: transient by pid; attached only the identity that
+ * Delete proven-dead rows: transient by pid, and held while its template's
+ * process group lives, whoever died; attached only the identity that
  * was PROBED dead. `deadPanes` is the snapshot read before the awaited probe;
  * a row matches only if holder, token, agent id and pane all equal it, and
  * the DELETE binds the snapshot's values, never the re-read row's.
@@ -461,7 +485,8 @@ function reclaim(db: Db, host: string, deadPanes: readonly HostChannel[]): void 
   );
   for (const c of listHostChannels(db, host)) {
     if (c.kind === "transient") {
-      if (c.pid !== null && pidProvenGone(c.pid, c.pid_start)) {
+      const holderGone = c.pid !== null && pidProvenGone(c.pid, c.pid_start);
+      if (holderGone && !(c.pgid !== null && groupAlive(c.pgid, c.pgid_start))) {
         del.run(host, c.holder, c.token, c.agent_id, c.pane_id);
       }
       continue;
@@ -552,7 +577,7 @@ export function bindHostChannel(
   return (
     db
       .prepare(
-        `UPDATE host_channels SET kind = 'attached', pid = NULL, pid_start = NULL, agent_id = ?, pane_id = ?
+        `UPDATE host_channels SET kind = 'attached', pid = NULL, pid_start = NULL, pgid = NULL, pgid_start = NULL, agent_id = ?, pane_id = ?
          WHERE host = ? AND holder = ? AND token = ? AND kind = 'transient'`,
       )
       .run(to.agentId, to.paneId, lease.host, lease.holder, lease.token).changes === 1
@@ -566,17 +591,31 @@ export function releaseHostChannelsForAgent(db: Db, agentId: number, paneId: str
     .run(agentId, paneId).changes;
 }
 
-/** Hold a transient channel for the duration of `run` (given the admission snapshot of the profile); released in `finally` by token. */
+/**
+ * Record the template's process group on its lease (compare-and-set on the
+ * token). Throws when the lease is gone, so the command never starts under a
+ * channel it no longer holds.
+ */
+function recordGroup(db: Db, lease: HostLease, pgid: number): void {
+  const n = db
+    .prepare(
+      "UPDATE host_channels SET pgid = ?, pgid_start = ? WHERE host = ? AND holder = ? AND token = ?",
+    )
+    .run(pgid, pidStart(pgid), lease.host, lease.holder, lease.token).changes;
+  if (n !== 1) throw new Error(`host ${lease.host}: channel ${lease.holder} was lost`);
+}
+
+/** Hold a transient channel for the duration of `run` (given the admission snapshot of the profile and the lease); released in `finally` by token. */
 export async function withHostChannel<T>(
   db: Db,
   host: string,
   holder: string,
-  run: (profile: HostProfile) => Promise<T>,
+  run: (profile: HostProfile, lease: HostLease) => Promise<T>,
   opts: ChannelOpts = {},
 ): Promise<T> {
   const { lease, profile } = await admit(db, host, holder, opts);
   try {
-    return await run(profile);
+    return await run(profile, lease);
   } finally {
     releaseHostChannel(db, lease);
   }
@@ -601,13 +640,18 @@ export interface HostRun {
  * before this returns, so the channel is never released under a live one.
  */
 async function runTemplate(
+  db: Db,
+  lease: HostLease,
   profile: HostProfile,
   field: "exec" | "fetch",
   values: HostTemplateValues,
   timeoutMs: number,
 ): Promise<HostRun> {
   const expanded = expandHostTemplate(profile[field], values);
-  return execGroupCapture("/bin/sh", ["-c", expanded], { timeoutMs });
+  return execGroupCapture("/bin/sh", ["-c", expanded], {
+    timeoutMs,
+    onSpawn: (pgid) => recordGroup(db, lease, pgid),
+  });
 }
 
 /** Run the profile's `exec` or `fetch` template under one transient channel. */
@@ -624,7 +668,7 @@ export async function runHostTemplate(
     db,
     host,
     holder,
-    (profile) => runTemplate(profile, field, values, timeoutMs),
+    (profile, lease) => runTemplate(db, lease, profile, field, values, timeoutMs),
     opts,
   );
 }
@@ -685,7 +729,7 @@ export async function checkHost(
     db,
     host,
     `check:${process.pid}`,
-    async (profile) => {
+    async (profile, lease) => {
       // One remote command through `exec`; `good` turns a clean exit into a detail, or undefined.
       const step = async (
         name: HostCheckStep["step"],
@@ -696,7 +740,14 @@ export async function checkHost(
         let detail: string;
         let ok = false;
         try {
-          const r = await runTemplate(profile, "exec", { cmd, cwd: profile.repo }, timeoutMs);
+          const r = await runTemplate(
+            db,
+            lease,
+            profile,
+            "exec",
+            { cmd, cwd: profile.repo },
+            timeoutMs,
+          );
           const why = firstLine(r.stderr) || firstLine(r.stdout);
           const good1 = r.exitCode === 0 ? good(r) : undefined;
           ok = good1 !== undefined;

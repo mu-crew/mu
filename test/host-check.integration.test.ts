@@ -319,6 +319,80 @@ describe("mu host check", () => {
     );
   });
 
+  // finding_host_reap_exit_hook_gap: the shell exits at once but leaves a TERM-ignoring
+  // descendant on redirected stdio, so mu is inside the reap grace window when it dies.
+  // The slot must stay held for as long as that transport lives.
+  describe.runIf(existsSync(join(process.cwd(), "dist", "cli.js")))(
+    "caller death during the reap never frees a slot under a live transport",
+    () => {
+      const alive = (pid: number): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const until = async (f: () => boolean): Promise<boolean> => {
+        for (let i = 0; i < 100 && !f(); i++) await new Promise((r) => setTimeout(r, 25));
+        return f();
+      };
+
+      it.each(["SIGINT", "SIGTERM", "SIGABRT", "SIGKILL"] as const)(
+        "%s",
+        async (sig) => {
+          const pidFile = join(dir, "r.pid");
+          addHost(db, {
+            name: "reap",
+            shell: "s",
+            exec: `sh -c 'trap "" TERM; echo $$ > "${pidFile}"; exec sleep 30' >/dev/null 2>&1 & while [ ! -s "${pidFile}" ]; do :; done; echo ready`,
+            fetch: "f",
+            repo: dir,
+            max_sessions: 1,
+          });
+          const parent = spawn(
+            process.execPath,
+            [join(process.cwd(), "dist", "cli.js"), "host", "check", "reap"],
+            { stdio: "ignore", env: { ...process.env, MU_DB_PATH: dbPath, MU_SYNC_DIR: "" } },
+          );
+          const closed = new Promise((res) => parent.once("close", res));
+          let pid = 0;
+          try {
+            expect(
+              await until(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").trim() !== ""),
+            ).toBe(true);
+            pid = Number(readFileSync(pidFile, "utf8"));
+            await new Promise((r) => setTimeout(r, 100));
+            parent.kill(sig);
+            await closed;
+            if (sig === "SIGKILL") {
+              // Nothing could clean up: the transport lives, so the slot is still held.
+              expect(alive(pid)).toBe(true);
+            } else {
+              // The exit hook outlives the shell: the group is killed on the way out.
+              expect(await until(() => !alive(pid))).toBe(true);
+            }
+            if (alive(pid)) {
+              await expect(reserveHostChannel(db, "reap", "second")).rejects.toThrow(
+                /max-sessions/,
+              );
+              process.kill(pid, "SIGKILL");
+              expect(await until(() => !alive(pid))).toBe(true);
+            }
+            const lease = await reserveHostChannel(db, "reap", "second");
+            expect(lease.host).toBe("reap");
+          } finally {
+            parent.kill("SIGKILL");
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {}
+          }
+        },
+        20_000,
+      );
+    },
+  );
+
   it("at the cap: refused naming the holder, and the template is never run", async () => {
     db.prepare(
       "INSERT INTO host_channels (host, holder, kind, token, pid, opened_at) VALUES ('dev', 'exec:worker-9', 'transient', 't', ?, 'n')",
