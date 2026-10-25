@@ -27,6 +27,8 @@ export interface StateReading {
   pending?: boolean;
   /** ctl only: pi's settled-run count (`mu agent wait --after-runs`). */
   runs?: number;
+  /** ctl only: the pi process's incarnation string; absent from older extensions. */
+  incarnation?: string;
   /** ctl only: the extension dialog pi is waiting on (state needs_permission). */
   blocked?: CtlBlocked;
 }
@@ -305,6 +307,7 @@ export async function readAgentStates(
         ctl: "ok",
         pending: probe.status.pending,
         runs: probe.status.runs,
+        ...(probe.incarnation !== undefined ? { incarnation: probe.incarnation } : {}),
       });
     } else {
       failed.set(agentKey(agent), probe?.kind === "missing" ? "missing" : "refused");

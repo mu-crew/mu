@@ -93,7 +93,8 @@ such as this page.
 | `v_loop_storage` | schema 13: `tasks.kind/wave`; `agents.spawner/host/collected_head`; local tables | `delegate_calls`, `wait_cursors`, `agent_settles`, `host_profiles` |
 | `v_agent_surface` (**shipped**, part A) | SQL-keyed agent JSON, outside-tmux attach, `spawn --task` brief | `src/agent-output.ts` |
 | `v_spawn_receipts` (**shipped**, part B) | task-bound spawn: journaled reserve, spawn, claim, send; replay | `spawn_receipts`, `spawnForTask`, `attempt_key` (`manual:<k>`), `SendOptions.msgId`, `claimTask.expectedAgentId`, `releaseTask.expectedOwnerId` |
-| _unassigned_ (own units, blocked on B where they use its writer) | `buildTaskBrief`, `wait_registrations`/`registerOwnedWait`, `task_auto.last_spawn` attempts, batch grammar | `buildTaskBrief(db,ws,id,identity)`, `registerOwnedWait` |
+| _unassigned_ (own units, blocked on B where they use its writer) | `buildTaskBrief`, `task_auto.last_spawn` attempts, batch grammar | `buildTaskBrief(db,ws,id,identity)` |
+| `v_wait_reg` (**shipped**; slice A of `v_wait_core`) | machine-local `wait_registrations`, `registerOwnedWait`/`beginWait`/`endWait`, the one typed agent observation. `v_agent_surface` never shipped the table. Arming from spawn/send/claim is `v_wait_cli`'s | `src/wait-registration.ts`, `src/agents/observe.ts`: `AgentObservation`, `watchAgentRun`, `settledCloseInput` |
 | `v_task_mutations`, `v_notes` (**notes view shipped**: `task notes`/`show`, see CHANGELOG) | aliases, report writers, pinned note view | `selectTaskNotes(db,id,opts)`, `kind` assignment at insert |
 | `v_close_apply` | CLOSE parse and exactly-once apply | `src/close-block.ts`: `parseCloseBlock`, `applySettledClose` |
 | `v_wait_core`, `v_wait_cli` | unified wait engine and CLI, signal snapshots | `src/wait.ts`: `waitForEvents`, `WaitRef`, `WaitEvent`, `WaitResult`; `wireWaitCommand` |
@@ -107,9 +108,9 @@ such as this page.
 | `v_import`, `v_cutover_runbook`, `v_dogfood` | rehearsed import, human-run swap and rollback | `importDb`; actual cut-over is human-chosen |
 | `v_skill`, `v_docs_final`, `v_eval_next` | prose budgets and markers, final docs and help budgets, measurement | `test/prose-budget.test.ts`, `test/help-budget.test.ts` |
 
-Later additive local tables: `wait_registrations`, `spawn_receipts`
-(`v_agent_surface`), `host_channels` (`v_host_profiles`), `human_needs`
-(`v_human`).
+Later additive local tables: `spawn_receipts` (`v_spawn_receipts`),
+`host_channels` (`v_host_profiles`), `human_needs` (`v_human`),
+`wait_registrations` (`v_wait_reg`).
 
 ## Reconciliation inventory
 

@@ -146,6 +146,7 @@ const UNREBUILDABLE_TABLES = [
   "worktrees",
   "delegate_calls",
   "wait_cursors",
+  "wait_registrations",
   "agent_settles",
   "host_profiles",
   "host_channels",

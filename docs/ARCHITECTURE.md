@@ -84,7 +84,7 @@ are re-export hubs.
 
 | Module | Responsibility |
 | --- | --- |
-| `src/db.ts` | better-sqlite3 connection (WAL); schema 13: `upgradeSchema` brings a new or v12 file current in ONE transaction (DDL, `ADDED_COLUMNS`, schema stamp, capture triggers and capture stamp together; both stamps re-read under the lock); 22 tables (`schema_version`, `machine_identity`, `op_ctx`, `op_dying`, `ops`, `workstreams`, `agents`, `worktrees`, `tasks`, `task_edges`, `task_notes`, `task_substates`, `task_auto`, `sync_peers`, `sync_fingerprints`, and the machine-local `delegate_calls`, `wait_cursors`, `agent_settles`, `host_profiles`, `host_channels`, `spawn_receipts`, `human_needs`) and 4 views (`ready`, `blocked`, `blockers`, `goals`); owns `TASK_KINDS`; `SqliteTooOldError` below 3.42; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; `migrateLegacyWorkspaces` carries rows of the dropped `vcs_workspaces` table into `worktrees`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
+| `src/db.ts` | better-sqlite3 connection (WAL); schema 13: `upgradeSchema` brings a new or v12 file current in ONE transaction (DDL, `ADDED_COLUMNS`, schema stamp, capture triggers and capture stamp together; both stamps re-read under the lock); 23 tables (`schema_version`, `machine_identity`, `op_ctx`, `op_dying`, `ops`, `workstreams`, `agents`, `worktrees`, `tasks`, `task_edges`, `task_notes`, `task_substates`, `task_auto`, `sync_peers`, `sync_fingerprints`, and the machine-local `delegate_calls`, `wait_cursors`, `agent_settles`, `host_profiles`, `host_channels`, `spawn_receipts`, `human_needs`, `wait_registrations`) and 4 views (`ready`, `blocked`, `blockers`, `goals`); owns `TASK_KINDS`; `SqliteTooOldError` below 3.42; owns `SYNCED_ENTITIES`, `PORTABLE_TABLES`, `MACHINE_LOCAL_TABLES`; `migrateLegacyWorkspaces` carries rows of the dropped `vcs_workspaces` table into `worktrees`; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
 | `src/compare.ts` | code-unit string compare; replaces `localeCompare` so ICU is never initialised |
 | `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
 | `src/capture.ts` | Triggers stored in the DB file (versioned by `capture_version`) recording each portable write as an op, refusing natural-key changes and explicit ids <= 0 or above 2^53-1; `installCapture` (own transaction) and `installCaptureLocked` (inside the caller's, used by `upgradeSchema`); `captureDoctorCheck` |
@@ -92,6 +92,7 @@ are re-export hubs.
 | `src/fold.ts` | the one definition of a portable row: pure per-key folds of the ops log (horizon, per-field LWW including `kind` and `wave`, substate, notes, edges) |
 | `src/apply.ts` | apply one op: re-fold the keys it touches and make their rows equal the fold; `projectLog` folds every key |
 | `src/human-needed.ts`, `src/cli/human-needed.ts` | `recordHumanNeeded` / `openHumanNeeds`: a `human` task (OPEN/parked, brief = reason) plus the machine-local `human_needs(task_id, caller)` row in one transaction; `mu human-needed <reason>`. `HumanTaskError` (tasks/errors.ts) refuses unpark, claim and the CLOSE block on such a task |
+| `src/wait-registration.ts` | `wait_registrations`: `registerOwnedWait` (validated typed refs, merged and deduped), `beginWait`/`endWait` (one active wait per caller: generation compare-and-set, delivered refs only removed); every write one short transaction, never across an await; never touches `wait_cursors` |
 | `src/rebuild.ts` | copy the whole log into a new DB file, then `projectLog` it |
 | `src/compact.ts` | `mu db compact` (blank redundant note-tombstone payloads) and `mu db forget` (drop a torn-down workstream's ops); this machine only |
 | `src/drift.ts` | cheap invariant (every row has an op) and `--deep` rebuild-diff |
@@ -130,6 +131,7 @@ are re-export hubs.
 | `src/agents/abort.ts` | stop a pi turn through the control socket; abort + send (`--interrupt`) |
 | `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `error` / `died` / `timeout` / `pending` |
 | `src/agents/wait.ts` | block until task-less agents leave `busy` |
+| `src/agents/observe.ts` | `AgentObservation`: the one typed read of an agent (registry id + pane, ctl incarnation, settled run count, `settled`, text + `lastTextTruncated`, pending, source/since, session file); `observeAgentStates` (one `readAgentStates` pass), `watchAgentRun` (the ctl probe + `wait` + drop fallback `mu agent wait` uses), `settledCloseInput` (the `applySettledClose` input, undefined unless ctl-settled), `toStatusSnapshot`. A seam, not a second poll loop |
 | `src/agents/errors.ts` | typed agent errors |
 | `src/exec-file.ts` | `execFileCapture` (+ `execGroupCapture`: own process group, reaped before it settles): child_process runner shared by the tmux, herdr and murmur executors (no execa) |
 | `src/agent-state.ts` | runtime state from ctl, herdr or murmur; `unknown` with a reason |

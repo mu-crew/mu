@@ -198,6 +198,7 @@ describe("readAgentStates via the control socket", () => {
       ctl: "ok",
       pending: false,
       runs: 0,
+      incarnation: INC,
     });
     ext.settle();
     expect(await read()).toMatchObject({ state: "needs_input", source: "ctl", ctl: "ok" });

@@ -17,11 +17,11 @@ import {
   liveAgentToOutput,
   workstreamIdOf,
 } from "../agent-output.js";
-import { agentKey, blockedReason, ctlRuntimeState, readAgentStates } from "../agent-state.js";
+import { agentKey, blockedReason, readAgentStates } from "../agent-state.js";
+import { observeAgentStates, toStatusSnapshot, watchAgentRun } from "../agents/observe.js";
 import {
   AgentCtlUnreachableError,
   AgentNotFoundError,
-  AgentRestartedError,
   AgentSendIndeterminateError,
   type AgentStatusSnapshot,
   type AgentWatch,
@@ -64,8 +64,6 @@ import {
   statusIcon,
   UsageError,
 } from "../cli.js";
-import { ctlProbe, ctlRequest } from "../ctl/client.js";
-import { type CtlBlocked, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
@@ -1141,116 +1139,44 @@ export async function cmdAgentWait(
 
   const readStatuses = async (
     pending: readonly { name: string; workstreamName: string }[],
-  ): Promise<
-    Map<
-      string,
-      {
-        status: "busy" | "needs_input" | "needs_permission" | "unknown" | null;
-        unknownReason?: string;
-        blocked?: CtlBlocked;
-      }
-    >
-  > => {
+  ): Promise<Map<string, AgentStatusSnapshot>> => {
     const agents = pending.flatMap((ref) => {
       const agent = getAgent(db, ref.name, ref.workstreamName);
       return agent === undefined ? [] : [agent];
     });
-    const readings = await readAgentStates(agents, { stateDir: dirname(db.name) });
-    const snapshots = new Map<
-      string,
-      {
-        status: "busy" | "needs_input" | "needs_permission" | "unknown" | null;
-        unknownReason?: string;
-        blocked?: CtlBlocked;
-      }
-    >();
+    const observed = await observeAgentStates(db, agents);
+    const snapshots = new Map<string, AgentStatusSnapshot>();
     for (const ref of pending) {
-      const agent = getAgent(db, ref.name, ref.workstreamName);
-      const reading = agent === undefined ? undefined : readings.get(agentKey(agent));
-      snapshots.set(agentKey(ref), {
-        status: reading?.alive === false ? null : (reading?.state ?? "unknown"),
-        ...(reading?.reason !== undefined ? { unknownReason: reading.reason } : {}),
-        ...(reading?.blocked !== undefined ? { blocked: reading.blocked } : {}),
-      });
+      const obs = observed.get(agentKey(ref));
+      snapshots.set(
+        agentKey(ref),
+        obs === undefined ? { status: "unknown" } : toStatusSnapshot(obs),
+      );
     }
     return snapshots;
   };
 
   // pi agents: one ctl `wait` per agent, resolved by the extension on
-  // agent_settled. `afterRuns` is --after-runs (the `runs` a send
-  // replied with, so a run that settled before this wait still counts),
-  // else a status read taken BEFORE the wait starts: a followUp queued
-  // while busy runs in the same pi run.
+  // agent_settled (src/agents/observe.ts owns the probe, the wait and the
+  // drop fallback). `afterRuns` is --after-runs (the `runs` a send replied
+  // with, so a run that settled before this wait still counts), else a
+  // status read taken BEFORE the wait starts.
   const watch = async (
     ref: { name: string; workstreamName: string },
     signal: AbortSignal,
   ): Promise<AgentWatch | undefined> => {
     const agent = getAgent(db, ref.name, ref.workstreamName);
     if (agent === undefined) return undefined;
-    const sock = agentCtlSocket(db, agent);
-    if (!expectsCtl(agent, sock)) return undefined;
-    // With --after-runs the run past the baseline is the pending work:
-    // read as busy until the wait settles; no status probe needed.
-    let initial: AgentStatusSnapshot = { status: "busy" };
-    let afterRuns = opts.afterRuns;
-    if (afterRuns === undefined) {
-      const probe = await ctlProbe(sock);
-      if (probe.kind !== "ok") return undefined;
-      afterRuns = probe.status.runs;
-      initial = { status: ctlRuntimeState(probe.status.state, probe.status.blocked) };
-    }
-    // returnOnBlocked: a dialog opening mid-run ends the wait (exit 7)
-    // instead of holding it to --timeout. Older extensions ignore it.
-    const req = {
-      op: "wait",
-      afterRuns,
-      returnOnBlocked: true,
-      ...(opts.inc !== undefined ? { incarnation: opts.inc } : {}),
-    } as const;
-    const restarted = (actual?: string): AgentRestartedError =>
-      new AgentRestartedError(ref.name, ref.workstreamName, opts.inc ?? "", actual);
-    const settled = ctlRequest(sock, req, { signal }).then(
-      (reply): AgentStatusSnapshot => {
-        // A refused incarnation is fatal, never "unknown": the run is gone.
-        if (!reply.ok && reply.error === INCARNATION_MISMATCH) throw restarted(reply.incarnation);
-        if (reply.ok && reply.ended === "blocked" && reply.blocked !== undefined) {
-          return { status: "needs_permission", blocked: reply.blocked };
-        }
-        if (reply.ok && reply.state !== undefined) {
-          return {
-            status: ctlRuntimeState(reply.state),
-            ...(reply.lastText !== undefined ? { lastText: reply.lastText } : {}),
-            ...(reply.lastError !== undefined ? { lastError: reply.lastError } : {}),
-            ...(reply.sessionFile !== undefined ? { sessionFile: reply.sessionFile } : {}),
-          };
-        }
-        return {
-          status: "unknown",
-          unknownReason: reply.ok ? "ctl wait: no state" : reply.error,
-        };
-      },
-      // The connection dropped. A socket that still answers (pi's /new
-      // restarts the session) hands back to polling; one that does not
-      // means the pi that served it is gone. With --inc an answering
-      // process must also BE that incarnation: another one means the agent
-      // restarted and the run is gone (fatal, never polled).
-      async (): Promise<AgentStatusSnapshot> => {
-        if (signal.aborted) return { status: "unknown" };
-        const again = await ctlProbe(sock);
-        if (
-          opts.inc !== undefined &&
-          again.kind === "ok" &&
-          again.incarnation !== undefined &&
-          again.incarnation !== opts.inc
-        ) {
-          throw restarted(again.incarnation);
-        }
-        return again.kind === "ok"
-          ? { status: "unknown", unknownReason: "ctl wait interrupted" }
-          : { status: null };
-      },
-    );
-    return { initial, settled, afterRuns };
+    const watched = await watchAgentRun(agent, agentCtlSocket(db, agent), signal, {
+      ...(opts.afterRuns !== undefined ? { afterRuns: opts.afterRuns } : {}),
+      ...(opts.inc !== undefined ? { inc: opts.inc } : {}),
+    });
+    if (watched === undefined) return undefined;
+    return {
+      initial: toStatusSnapshot(watched.initial),
+      afterRuns: watched.afterRuns,
+      settled: watched.settled.then(toStatusSnapshot),
+    };
   };
 
   const timeoutMs = (opts.timeout ?? 600) * 1000;

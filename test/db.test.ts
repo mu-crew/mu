@@ -33,7 +33,7 @@ describe("openDb", () => {
     // No throw = parent dirs created.
   });
 
-  it("applies exactly the 22 v13 tables", () => {
+  it("applies exactly the 23 v13 tables", () => {
     const db = openDb({ path: dbPath });
     const tables = (
       db
@@ -63,10 +63,11 @@ describe("openDb", () => {
       "task_substates",
       "tasks",
       "wait_cursors",
+      "wait_registrations",
       "workstreams",
       "worktrees",
     ]);
-    expect(tables).toHaveLength(22);
+    expect(tables).toHaveLength(23);
     expect([...tables].sort()).toEqual(tables);
     // schema_version stamped to current (v13).
     const v = (
@@ -411,6 +412,7 @@ describe("openDb", () => {
       "task_substates",
       "tasks",
       "wait_cursors",
+      "wait_registrations",
       "workstreams",
       "worktrees",
     ]);

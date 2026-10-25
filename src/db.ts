@@ -9,7 +9,7 @@
 //                      task_notes, worktrees
 //   - 1 machine-local table: task_auto (per-task auto-dispatch state); v13
 //     adds delegate_calls, wait_cursors, agent_settles, host_profiles,
-//     host_channels and spawn_receipts
+//     host_channels, spawn_receipts, human_needs and wait_registrations
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
 //   - 2 sync tables:   sync_peers (per-peer watermarks),
@@ -19,7 +19,7 @@
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
 //   - 4 views:         ready, blocked, blockers, goals
-//   => EXPECTED_TABLES is exactly 15 entries at v12 (22 at v13: see there).
+//   => EXPECTED_TABLES is exactly 15 entries at v12 (23 at v13: see there).
 //
 // v12 is additive over v11: workstreams.torn_down_at (soft teardown),
 // agents.cwd / agents.base (worktree path and the commit it forked
@@ -818,7 +818,7 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 22 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 23 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
@@ -840,6 +840,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "task_substates",
   "tasks",
   "wait_cursors",
+  "wait_registrations",
   "workstreams",
   "worktrees",
 ];
@@ -916,6 +917,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    delegate_calls   one row per task-backed delegate call: the caller,
  *                     call_id and pane-side state of THIS machine.
  *    wait_cursors     per caller and ref, the last wait result consumed.
+ *    wait_registrations per caller, the refs a wait still owes it, and
+ *                     whether one is in flight (generation CAS).
     human_needs      which caller recorded a `human` task (`mu human-needed`).
                      Rebuild cannot restore it (UNREBUILDABLE_TABLES).
  *    agent_settles    settled runs already applied (settle replay).
@@ -958,6 +961,7 @@ export const MACHINE_LOCAL_TABLES = [
   "task_auto",
   "task_substates",
   "wait_cursors",
+  "wait_registrations",
   "worktrees",
 ] as const;
 
@@ -1282,6 +1286,20 @@ CREATE TABLE IF NOT EXISTS wait_cursors (
   incarnation TEXT,
   runs        INTEGER,
   PRIMARY KEY (caller, ref)
+);
+
+-- wait_registrations: per caller, the typed refs a wait still owes it
+-- (machine-local; src/wait-registration.ts owns the JSON shape). state
+-- 'waiting' = a wait is in flight; generation is bumped by each wait that
+-- starts, so a finished older wait cannot overwrite a newer one. No foreign
+-- keys: a ref outliving its task or agent is still owed its answer. Never
+-- holds consumed runs: that is wait_cursors.
+CREATE TABLE IF NOT EXISTS wait_registrations (
+  caller     TEXT PRIMARY KEY,
+  refs_json  TEXT NOT NULL,
+  state      TEXT NOT NULL CHECK (state IN ('armed', 'waiting')),
+  generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
+  updated_at TEXT NOT NULL
 );
 
 -- agent_settles: one row per (agent, incarnation, runs) already applied

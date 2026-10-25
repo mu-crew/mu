@@ -73,6 +73,16 @@ export {
   SpawnTrustDialogError,
 } from "./agents/errors.js";
 export { withAgentLock } from "./agents/lock.js";
+export {
+  type AgentObservation,
+  type ObservedAgent,
+  type ObservedWatch,
+  observationFromReading,
+  observeAgentStates,
+  settledCloseInput,
+  toStatusSnapshot,
+  watchAgentRun,
+} from "./agents/observe.js";
 export type { SpawnReceipt } from "./agents/receipts.js";
 export {
   type CommandResolutionResult,
