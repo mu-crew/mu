@@ -19,7 +19,7 @@
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
 //   - 4 views:         ready, blocked, blockers, goals
-//   => EXPECTED_TABLES is exactly 15 entries at v12 (21 at v13: see there).
+//   => EXPECTED_TABLES is exactly 15 entries at v12 (22 at v13: see there).
 //
 // v12 is additive over v11: workstreams.torn_down_at (soft teardown),
 // agents.cwd / agents.base (worktree path and the commit it forked
@@ -818,13 +818,14 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 21 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 22 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
   "delegate_calls",
   "host_channels",
   "host_profiles",
+  "human_needs",
   "machine_identity",
   "op_ctx",
   "op_dying",
@@ -915,6 +916,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    delegate_calls   one row per task-backed delegate call: the caller,
  *                     call_id and pane-side state of THIS machine.
  *    wait_cursors     per caller and ref, the last wait result consumed.
+    human_needs      which caller recorded a `human` task (`mu human-needed`).
+                     Rebuild cannot restore it (UNREBUILDABLE_TABLES).
  *    agent_settles    settled runs already applied (settle replay).
  *    host_profiles    ssh-free command templates per remote host.
  *    host_channels    the connection slots a host's `max_sessions` counts:
@@ -943,6 +946,7 @@ export const MACHINE_LOCAL_TABLES = [
   "delegate_calls",
   "host_channels",
   "host_profiles",
+  "human_needs",
   "machine_identity",
   "op_ctx",
   "op_dying",
@@ -1260,6 +1264,14 @@ CREATE TABLE IF NOT EXISTS delegate_calls (
   record_label     TEXT,
   error            TEXT,
   updated_at       TEXT NOT NULL
+);
+
+-- human_needs: the caller that recorded a kind=human task (machine-local).
+-- The task, its reason brief and its close are portable; who asked is not
+-- (a caller names a managed agent or pi session of THIS machine).
+CREATE TABLE IF NOT EXISTS human_needs (
+  task_id INTEGER PRIMARY KEY REFERENCES tasks (id) ON DELETE CASCADE,
+  caller  TEXT NOT NULL
 );
 
 -- wait_cursors: per caller and ref, the last consumed incarnation and

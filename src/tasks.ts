@@ -68,6 +68,7 @@ export {
   CloseNeedsEvidenceError,
   CrossWorkstreamEdgeError,
   CycleError,
+  HumanTaskError,
   InvalidSubstateError,
   ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,

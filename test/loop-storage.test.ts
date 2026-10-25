@@ -56,6 +56,7 @@ const NEW_TABLES = [
   "delegate_calls",
   "host_channels",
   "host_profiles",
+  "human_needs",
   "spawn_receipts",
   "wait_cursors",
 ] as const;
@@ -312,6 +313,22 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(db.prepare("SELECT COUNT(*) AS c FROM spawn_receipts").get()).toEqual({ c: 0 });
     expect(getAgent(db, "w1", "alpha")).toBeDefined();
     expect(getTask(db, "t1", "alpha")).toBeDefined();
+  });
+
+  it("an already-v13 file without human_needs gets the table, no version bump, rows cascade", () => {
+    const p = v12Copy();
+    track(openDb({ path: p })).close();
+    raw(p, (r) => r.exec("DROP TABLE human_needs"));
+    const db = track(openDb({ path: p }));
+    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(columns(p, "human_needs")).toEqual(["task_id", "caller"]);
+    const tid = (db.prepare("SELECT id FROM tasks LIMIT 1").get() as { id: number }).id;
+    db.prepare("INSERT INTO human_needs (task_id, caller) VALUES (?, 'a/o')").run(tid);
+    expect(() =>
+      db.prepare("INSERT INTO human_needs (task_id, caller) VALUES (999999, 'a/o')").run(),
+    ).toThrow(/FOREIGN KEY/i);
+    db.prepare("DELETE FROM tasks WHERE id = ?").run(tid);
+    expect(db.prepare("SELECT COUNT(*) AS c FROM human_needs").get()).toEqual({ c: 0 });
   });
 
   it("an already-v13 file without host_channels gets the table, host_profiles rows intact (no version bump)", () => {
@@ -658,7 +675,7 @@ describe("machine-local state", () => {
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(21);
+    expect(EXPECTED_TABLES).toHaveLength(22);
     expect(PORTABLE_TABLES).toEqual(["task_edges", "task_notes", "tasks", "workstreams"]);
   });
 

@@ -6,6 +6,7 @@ import {
   DEFAULT_IMPACT,
   type NoteKind,
   resolveWorkstreamId,
+  type TaskKind,
 } from "../db.js";
 import { currentOpContext, withOpContext } from "../op-context.js";
 import { assertTaskRevision, taskRevision } from "../revision.js";
@@ -40,6 +41,8 @@ export interface AddTaskOptions {
   blockedBy?: string[];
   /** Start as OPEN/triage (a proposal, e.g. a review finding) instead of OPEN/todo. */
   triage?: boolean;
+  /** Task kind (default `work`). `human` starts OPEN/parked, never ready. */
+  kind?: TaskKind;
 }
 
 /**
@@ -83,14 +86,15 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
       const now = new Date().toISOString();
       const insertResult = db
         .prepare(
-          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, scored, created_at, updated_at)
-         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, kind, impact, effort_days, scored, created_at, updated_at)
+         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           wsId,
           opts.localId,
           opts.title,
-          opts.triage === true ? "triage" : "todo",
+          opts.kind === "human" ? "parked" : opts.triage === true ? "triage" : "todo",
+          opts.kind ?? "work",
           opts.impact ?? DEFAULT_IMPACT,
           opts.effortDays ?? DEFAULT_EFFORT_DAYS,
           opts.impact !== undefined || opts.effortDays !== undefined ? 1 : 0,
@@ -143,6 +147,7 @@ export interface AddTasksOptions {
   blockedBy?: readonly string[];
   triage?: boolean;
   /** Applied to every task of the batch (see AddTaskOptions). */
+  kind?: TaskKind;
   impact?: number;
   effortDays?: number;
   /** Author of every `note` (the brief); also the group's actor. */
@@ -197,6 +202,7 @@ export function addTasks(
             title: t.title,
             ...(opts.blockedBy !== undefined ? { blockedBy: [...opts.blockedBy] } : {}),
             ...(opts.triage === true ? { triage: true } : {}),
+            ...(opts.kind !== undefined ? { kind: opts.kind } : {}),
             ...(opts.impact !== undefined ? { impact: opts.impact } : {}),
             ...(opts.effortDays !== undefined ? { effortDays: opts.effortDays } : {}),
           });

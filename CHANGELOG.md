@@ -52,6 +52,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (enabled + `kind=work` + `dispatch_host` is this machine; ignores status, for
   steer/release) and `authorisedReady` (ready + permitted + `runs < max_runs`).
 
+- **`mu human-needed <reason>`: a durable, caller-scoped stop for a human decision.**
+  It records a `human` task (OPEN/parked, brief = the reason) and a new
+  machine-local `human_needs(task_id, caller)` row in one transaction, the
+  caller being the managed `<ws>/<agent>` or `pi:<session>` (no identity: exit 2;
+  no shared `$USER` fallback). The same caller and reason is a no-op; a new
+  reason appends a brief. `openHumanNeeds(db, caller)` lists only that caller's
+  open needs. No error or queue refusal records one. A `human` task resolves only
+  by an explicit `mu task close`: `task unpark`, `task claim` (even `--force`) and
+  a settled CLOSE block are refused (exit 4, one line naming `task close`), a
+  reopened one returns to parked, and `task show` no longer hints `unpark` for it.
+  `human_needs` is machine-local and joins `UNREBUILDABLE_TABLES`: `mu rebuild`
+  keeps the task and brief but cannot restore who recorded it, and reports the
+  loss. No schema or capture version bump (an additive table; same-version
+  repair creates it).
+
 - **`mu host add | list | show | rm | init --ssh | check`: ssh-free host profiles.**
   A profile is your `--shell` / `--exec` / `--fetch` templates, a `--repo` and
   an optional `--max-sessions`, stored machine-local in the existing

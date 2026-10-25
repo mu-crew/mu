@@ -606,6 +606,33 @@ export class TaskParkedError extends Error implements HasNextSteps {
 }
 
 /**
+ * Thrown when a verb would resolve a `human` task other than by an explicit
+ * `mu task close`: unpark, claim (even --force) and a CLOSE block. A human
+ * task records a decision only a person can make; nothing autonomous may
+ * make it ready or close it.
+ */
+export class HumanTaskError extends Error implements HasNextSteps {
+  override readonly name = "HumanTaskError";
+  constructor(
+    public readonly taskId: string,
+    public readonly workstream: string,
+    action: string,
+  ) {
+    super(
+      `task ${taskId} is a human task: ${action} refused; it resolves only by an explicit \`mu task close ${taskId} -w ${workstream}\``,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Close it on the human's decision",
+        command: `mu task close ${this.taskId} -w ${this.workstream} --evidence "<the decision>"`,
+      },
+    ];
+  }
+}
+
+/**
  * Thrown when a verb is asked for a (status, substate) pair that the
  * task_substates table does not allow, e.g. `close --as parked`.
  * Caught here rather than by the deferred FK, which would fail only at

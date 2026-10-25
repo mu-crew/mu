@@ -76,6 +76,7 @@ import {
   HostProfileError,
   HostSpawnUnsupportedError,
 } from "../hosts.js";
+import { HumanNeededInvalidError } from "../human-needed.js";
 import { GroupIdAmbiguousError, GroupNotFoundError, LogKindReservedError } from "../logs.js";
 import {
   HerdrCommandOverrideError,
@@ -116,6 +117,7 @@ import {
   CloseNeedsEvidenceError,
   CrossWorkstreamEdgeError,
   CycleError,
+  HumanTaskError,
   InvalidSubstateError,
   ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
@@ -339,6 +341,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // typed that cannot become an id. isUsageClassError prints --help.
     err instanceof TaskIdInvalidError ||
     err instanceof TaskTitleSlugEmptyError ||
+    // A blank reason or missing caller identity for `mu human-needed`.
+    err instanceof HumanNeededInvalidError ||
     // The operator asked the ACTIVE backend for something it cannot do:
     // a `--cli` the mux does not recognise as an agent kind, or a
     // `--command` / `MU_<CLI>_COMMAND` override it cannot honour. The
@@ -389,6 +393,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SubstateReasonRequiredError ||
     err instanceof TaskParkStateError ||
     err instanceof TaskParkedError ||
+    err instanceof HumanTaskError ||
     err instanceof TaskInTriageError ||
     err instanceof InvalidSubstateError ||
     err instanceof TaskNotInWorkstreamError ||

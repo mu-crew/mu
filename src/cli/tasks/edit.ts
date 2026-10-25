@@ -631,7 +631,7 @@ export async function cmdTaskShow(
   // Only the non-default substates get a hint: they are the ones whose
   // way out is not obvious from the status alone.
   const hints: string[] = [];
-  if (task.substate === "parked") hints.push(`next=mu task unpark ${ref}`);
+  if (task.substate === "parked" && task.kind !== "human") hints.push(`next=mu task unpark ${ref}`);
   else if (task.substate === "triage") {
     hints.push(`next=mu task accept ${ref}`);
     hints.push(`next=mu task close ${ref} --as rejected --why "<reason>"`);

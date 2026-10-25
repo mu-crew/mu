@@ -233,12 +233,19 @@ function applyInTxn(db: Db, input: SettledCloseInput): SettledCloseResult {
   if (block.kind === "malformed") return diagnose(`${CLOSE_MALFORMED}: ${block.reason}`);
   const task = db
     .prepare(
-      `SELECT t.id, t.status, t.owner_id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+      `SELECT t.id, t.status, t.owner_id, t.kind FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
         WHERE w.name = ? AND w.torn_down_at IS NULL AND t.local_id = ?`,
     )
     .get(input.workstream, block.task) as
-    | { id: number; status: string; owner_id: number | null }
+    | { id: number; status: string; owner_id: number | null; kind: string }
     | undefined;
+  if (task?.kind === "human") {
+    record(task.id);
+    return no(
+      `human task: close it with \`mu task close ${block.task} -w ${input.workstream}\``,
+      block.task,
+    );
+  }
   if (!task || task.owner_id !== input.agentId) {
     record(null);
     return no("task is not owned by this agent", block.task);

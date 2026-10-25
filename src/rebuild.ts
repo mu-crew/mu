@@ -150,6 +150,9 @@ const UNREBUILDABLE_TABLES = [
   "host_profiles",
   "host_channels",
   "spawn_receipts",
+  // The human task and its reason rebuild from ops; WHO recorded it does
+  // not. Ownership is never inferred from a note author.
+  "human_needs",
 ] as const;
 
 /** Entities that exist only in the log: there is no portable table to

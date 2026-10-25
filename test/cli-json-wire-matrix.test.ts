@@ -86,6 +86,7 @@ const ARGS: Record<string, string[]> = {
   "host rm": ["dev"],
   "host init": ["dev", "--ssh"],
   "host check": ["dev"],
+  "human-needed": ["needs a decision"],
   "pi migrate": [],
 };
 

@@ -61,6 +61,7 @@ import {
   CloseNeedsEvidenceError,
   CrossWorkstreamEdgeError,
   CycleError,
+  HumanTaskError,
   InvalidSubstateError,
   ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
@@ -151,6 +152,11 @@ const cases: NextStepsCase[] = [
     error: new TaskParkStateError("foo", "CLOSED", "ws"),
     label: "TaskParkStateError (CLOSED)",
     expectedTokens: ["mu task open foo -w ws"],
+  },
+  {
+    error: new HumanTaskError("foo", "ws", "claim"),
+    label: "HumanTaskError",
+    expectedTokens: ["mu task close foo -w ws"],
   },
   {
     error: new TaskParkedError("foo", "ws"),

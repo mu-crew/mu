@@ -17,6 +17,7 @@ import { getTaskEdgesWithStatus } from "./edges.js";
 import { addNote, insertNote, writerContext } from "./edit.js";
 import {
   CloseNeedsEvidenceError,
+  HumanTaskError,
   InvalidSubstateError,
   SubstateReasonRequiredError,
   TaskHasOpenBlockersError,
@@ -512,6 +513,8 @@ export function openTask(
     const before = getTask(db, localId, opts.workstream);
     const r = setTaskStatus(db, localId, "OPEN", {
       workstream: opts.workstream,
+      // A reopened human task goes back to parked: never into `ready`.
+      ...(before?.kind === "human" ? { substate: "parked" } : {}),
       ...(opts.evidence !== undefined ? { evidence: opts.evidence } : {}),
     });
     if (r.changed && before) recordEvidenceNote(db, localId, before.workstreamName, "OPEN", opts);
@@ -600,6 +603,8 @@ export function unparkTask(
       .transaction((): SetStatusResult => {
         const before = getTask(db, localId, opts.workstream);
         if (!before) throw new TaskNotFoundError(localId, opts.workstream);
+        if (before.kind === "human")
+          throw new HumanTaskError(before.name, before.workstreamName, "unpark");
         if (before.status !== "OPEN" || before.substate !== "parked") {
           return {
             previousStatus: before.status,
