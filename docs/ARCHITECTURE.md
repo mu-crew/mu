@@ -92,7 +92,7 @@ are re-export hubs.
 | `src/fold.ts` | the one definition of a portable row: pure per-key folds of the ops log (horizon, per-field LWW including `kind` and `wave`, substate, notes, edges) |
 | `src/apply.ts` | apply one op: re-fold the keys it touches and make their rows equal the fold; `projectLog` folds every key |
 | `src/human-needed.ts`, `src/cli/human-needed.ts` | `recordHumanNeeded` / `openHumanNeeds`: a `human` task (OPEN/parked, brief = reason) plus the machine-local `human_needs(task_id, caller)` row in one transaction; `mu human-needed <reason>`. `HumanTaskError` (tasks/errors.ts) refuses unpark, claim and the CLOSE block on such a task |
-| `src/wait-registration.ts` | `wait_registrations`: `registerOwnedWait` (validated typed refs, merged and deduped), `beginWait`/`endWait` (one active wait per caller: generation compare-and-set, delivered refs only removed); every write one short transaction, never across an await; never touches `wait_cursors` |
+| `src/wait-registration.ts` | `wait_registrations`: `registerOwnedWait` (typed refs that exist now, checked in its transaction; merged and deduped), `beginWait`/`endWait` (one active wait per caller: generation compare-and-set, delivered refs only removed); every write one short transaction, never across an await; never touches `wait_cursors` |
 | `src/rebuild.ts` | copy the whole log into a new DB file, then `projectLog` it |
 | `src/compact.ts` | `mu db compact` (blank redundant note-tombstone payloads) and `mu db forget` (drop a torn-down workstream's ops); this machine only |
 | `src/drift.ts` | cheap invariant (every row has an op) and `--deep` rebuild-diff |

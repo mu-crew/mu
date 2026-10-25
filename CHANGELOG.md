@@ -34,7 +34,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `updated_at`; no foreign keys, never synced, not rebuildable and reported as
   lost) records the typed refs (task, agent, delegate) a caller still owes a
   wait. `registerOwnedWait(db, caller, refs)` validates, merges and dedupes
-  (at most 256 owed; one bad ref stores nothing); `beginWait` bumps the
+  (at most 256 owed; one bad ref stores nothing). Every ref must exist when
+  registered, checked inside the registering transaction: the task or agent in
+  its workstream, the delegate call exactly as `delegate_calls.call_id` stores
+  it (no id grammar of its own), the workstream; a missing one refuses the
+  whole call with one line naming it. A ref whose entity is deleted later stays
+  owed. `beginWait` bumps the
   generation and marks `waiting`; `endWait(db, caller, generation, delivered)`
   is a compare-and-set that removes only the delivered refs, so an older wait
   finishing late cannot overwrite a newer one and an undelivered sibling stays

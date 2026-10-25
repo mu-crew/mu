@@ -2,37 +2,80 @@
 // Real SQLite, no mux. Registration never consumes anything: wait_cursors
 // (the consumed runs) is not touched by any function here.
 
+import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { insertAgent, isValidAgentName } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
+import { addTask } from "../src/tasks/edit.js";
+import { isValidTaskId } from "../src/tasks/id.js";
 import {
   beginWait,
   endWait,
   type RegisteredRef,
   readWaitRegistration,
   registerOwnedWait,
+  WAIT_REF_KINDS,
   WAIT_REGISTRATION_MAX_REFS,
   WaitRegistrationError,
 } from "../src/wait-registration.js";
+import { ensureWorkstream, isValidWorkstreamName } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
 let dir: string;
 let db: Db;
 
-const task = (id: string, workstream = "w"): RegisteredRef => ({ kind: "task", workstream, id });
-const agent = (id: string, workstream = "w"): RegisteredRef => ({
-  kind: "agent",
-  workstream,
-  id,
-});
-const delegate = (id: string, workstream = "w"): RegisteredRef => ({
-  kind: "delegate",
-  workstream,
-  id,
-});
+// Each constructor makes the entity it names exist (registration refuses a
+// ref to nothing); a syntactically bad id is left alone so the syntax
+// refusal is what the test sees. `ghost` refs name nothing.
+const ensureTask = (workstream: string, id: string): void => {
+  ensureWorkstream(db, workstream);
+  const has = db
+    .prepare(
+      "SELECT 1 FROM tasks t JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = ? AND t.local_id = ?",
+    )
+    .get(workstream, id);
+  if (has) return;
+  addTask(db, { workstream, localId: id, title: id });
+};
+const task = (id: string, workstream = "w"): RegisteredRef => {
+  if (isValidTaskId(id) && isValidWorkstreamName(workstream)) ensureTask(workstream, id);
+  return { kind: "task", workstream, id };
+};
+const agent = (id: string, workstream = "w"): RegisteredRef => {
+  if (isValidAgentName(id) && isValidWorkstreamName(workstream)) {
+    ensureWorkstream(db, workstream);
+    if (
+      !db
+        .prepare(
+          "SELECT 1 FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id WHERE a.name = ? AND ws.name = ?",
+        )
+        .get(id, workstream)
+    ) {
+      insertAgent(db, { name: id, workstream, paneId: `%${id}` });
+    }
+  }
+  return { kind: "agent", workstream, id };
+};
+const delegate = (id: string, workstream = "w"): RegisteredRef => {
+  const local = `call-${createHash("sha1").update(id).digest("hex").slice(0, 12)}`;
+  ensureTask(workstream, local);
+  const row = db
+    .prepare(
+      "SELECT t.id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = ? AND t.local_id = ?",
+    )
+    .get(workstream, local) as { id: number };
+  if (!db.prepare("SELECT 1 FROM delegate_calls WHERE call_id = ?").get(id)) {
+    db.prepare(
+      "INSERT INTO delegate_calls (task_id, caller, call_id, state, updated_at) VALUES (?, 'c', ?, 'queued', 'n')",
+    ).run(row.id, id);
+  }
+  return { kind: "delegate", workstream, id };
+};
 const keys = (caller: string) =>
   readWaitRegistration(db, caller)?.refs.map((r) => `${r.kind}:${r.workstream}/${r.id}`);
 
@@ -93,13 +136,17 @@ describe("registerOwnedWait", () => {
     expect(keys("c")).toEqual(["task:w/t1", "task:w/t2"]);
   });
 
-  it.each([
-    ["a blank caller", " ", [task("t1")]],
-    ["a bad workstream", "c", [task("t1", "Bad Name")]],
-    ["a bad task id", "c", [task("Not Valid")]],
-    ["a bad agent name", "c", [agent("Bad Name")]],
-    ["a delegate id with a shell metacharacter", "c", [delegate("a;rm -rf")]],
-    ["an overlong delegate id", "c", [delegate("d".repeat(65))]],
+  it.each<[string, string, RegisteredRef[]]>([
+    ["a blank caller", " ", [{ kind: "task", workstream: "w", id: "t1" }]],
+    ["a bad workstream", "c", [{ kind: "task", workstream: "Bad Name", id: "t1" }]],
+    ["a bad task id", "c", [{ kind: "task", workstream: "w", id: "Not Valid" }]],
+    ["a bad agent name", "c", [{ kind: "agent", workstream: "w", id: "Bad Name" }]],
+    ["an empty delegate id", "c", [{ kind: "delegate", workstream: "w", id: "" }]],
+    [
+      "an absurdly long delegate id",
+      "c",
+      [{ kind: "delegate", workstream: "w", id: "d".repeat(513) }],
+    ],
     [
       "an unknown kind",
       "c",
@@ -109,6 +156,70 @@ describe("registerOwnedWait", () => {
   ])("refuses %s and stores nothing", (_why, caller, refs) => {
     expect(() => registerOwnedWait(db, caller, refs)).toThrow(WaitRegistrationError);
     expect(db.prepare("SELECT COUNT(*) AS n FROM wait_registrations").get()).toEqual({ n: 0 });
+  });
+
+  it("a delegate call id registers exactly as delegate_calls stores it (no private grammar)", () => {
+    const ids = [`pi:${"a".repeat(36)}:toolu_01${"X".repeat(30)}`, "call_abc|fc_123", "c1"];
+    registerOwnedWait(
+      db,
+      "c",
+      ids.map((id) => delegate(id)),
+    );
+    expect(keys("c")).toEqual(ids.map((id) => `delegate:w/${id}`).sort());
+  });
+
+  describe("refs must exist now (checked inside the registering transaction)", () => {
+    const count = () => db.prepare("SELECT COUNT(*) AS n FROM wait_registrations").get();
+    it.each(WAIT_REF_KINDS)("a missing %s is refused in one line naming it", (kind) => {
+      task("real"); // the workstream exists; only the ref is missing
+      const ref = { task: "nope", agent: "ghost", delegate: "nocall" }[kind];
+      let msg = "";
+      try {
+        registerOwnedWait(db, "c", [{ kind, workstream: "w", id: ref }]);
+      } catch (e) {
+        msg = (e as Error).message;
+      }
+      expect(msg).toBe(`wait registration: no ${kind} w/${ref}; nothing registered`);
+      expect(count()).toEqual({ n: 0 });
+    });
+
+    it("a missing workstream is refused, naming it", () => {
+      expect(() =>
+        registerOwnedWait(db, "c", [{ kind: "task", workstream: "nows", id: "t" }]),
+      ).toThrow(/^wait registration: no workstream nows /);
+      expect(count()).toEqual({ n: 0 });
+    });
+
+    it("all or nothing: a valid ref beside a phantom stores neither, and keeps what was owed", () => {
+      registerOwnedWait(db, "c", [task("keep")]);
+      const good = task("good");
+      expect(() =>
+        registerOwnedWait(db, "c", [good, { kind: "agent", workstream: "w", id: "ghost" }]),
+      ).toThrow(/no agent w\/ghost/);
+      expect(keys("c")).toEqual(["task:w/keep"]);
+    });
+
+    it("an entity of ANOTHER workstream does not satisfy the ref", () => {
+      task("only-in-w");
+      agent("only-agent");
+      delegate("only-call");
+      ensureWorkstream(db, "other");
+      for (const kind of WAIT_REF_KINDS) {
+        const id = { task: "only-in-w", agent: "only-agent", delegate: "only-call" }[kind];
+        expect(() => registerOwnedWait(db, "c", [{ kind, workstream: "other", id }])).toThrow(
+          /nothing registered/,
+        );
+      }
+      expect(count()).toEqual({ n: 0 });
+    });
+
+    it("a ref whose entity is deleted AFTER registration stays owed", () => {
+      registerOwnedWait(db, "c", [task("soon-gone")]);
+      db.prepare("DELETE FROM tasks WHERE local_id = 'soon-gone'").run();
+      expect(keys("c")).toEqual(["task:w/soon-gone"]);
+      registerOwnedWait(db, "c", [task("fresh")]); // re-registering the survivor is not needed
+      expect(keys("c")).toEqual(["task:w/fresh", "task:w/soon-gone"]);
+    });
   });
 
   it("one bad ref refuses the whole call: earlier valid refs are not stored", () => {
@@ -131,8 +242,9 @@ describe("registerOwnedWait", () => {
     db.prepare(
       "INSERT INTO wait_cursors (caller, ref, incarnation, runs) VALUES ('c', 'agent:w/w1', 'i', 7)",
     ).run();
+    const w1 = agent("w1"); // fixture ops first; only registration is measured
     const ops = db.prepare("SELECT COUNT(*) AS n FROM ops").get();
-    registerOwnedWait(db, "c", [agent("w1")]);
+    registerOwnedWait(db, "c", [w1]);
     beginWait(db, "c");
     expect(db.prepare("SELECT * FROM wait_cursors").all()).toEqual([
       { caller: "c", ref: "agent:w/w1", incarnation: "i", runs: 7 },
@@ -252,6 +364,50 @@ describe("beginWait / endWait: one active wait per caller", () => {
     } finally {
       other.close();
     }
+  });
+
+  // A second THREAD (own connection) takes the write lock, signals, holds it
+  // ~50ms, runs `sql`, commits. The caller registers while it is held.
+  const withWriterHolding = (sql: string, during: () => void): void => {
+    const flag = new Int32Array(new SharedArrayBuffer(4));
+    const worker = new Worker(
+      `const { workerData: w } = require("node:worker_threads");
+       const D = require("better-sqlite3");
+       const d = new D(w.path);
+       d.pragma("busy_timeout = 5000");
+       d.exec("BEGIN IMMEDIATE");
+       Atomics.store(w.flag, 0, 1); Atomics.notify(w.flag, 0);
+       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+       d.exec(w.sql); d.exec("COMMIT"); d.close();
+       Atomics.store(w.flag, 0, 2); Atomics.notify(w.flag, 0);`,
+      { eval: true, workerData: { path: join(dir, "mu.db"), flag, sql } },
+    );
+    try {
+      expect(Atomics.wait(flag, 0, 0, 5000)).not.toBe("timed-out"); // lock is held now
+      during();
+      Atomics.wait(flag, 0, 1, 5000); // the writer committed
+    } finally {
+      void worker.terminate();
+    }
+  };
+
+  it("registerOwnedWait takes the write lock at BEGIN: a writer committing meanwhile is waited for, not a stale-snapshot BUSY", () => {
+    const a = task("a");
+    const b = task("b");
+    registerOwnedWait(db, "c", [a]);
+    withWriterHolding("UPDATE schema_version SET version = version WHERE id = 1", () => {
+      expect(keys("c")).toEqual(["task:w/a"]);
+      registerOwnedWait(db, "c", [b]);
+    });
+    expect(keys("c")).toEqual(["task:w/a", "task:w/b"]);
+  });
+
+  it("existence is checked after the lock is taken: a ref deleted by the writer ahead of us is refused", () => {
+    const doomed = task("doomed");
+    withWriterHolding("DELETE FROM tasks WHERE local_id = 'doomed'", () => {
+      expect(() => registerOwnedWait(db, "c", [doomed])).toThrow(/no task w\/doomed/);
+    });
+    expect(readWaitRegistration(db, "c")).toBeUndefined();
   });
 
   it("two connections racing beginWait get distinct generations", () => {
