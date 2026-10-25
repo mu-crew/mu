@@ -148,6 +148,7 @@ export class MetricsCollector {
     this.mark("tool_end", { id: call.id, name: call.name });
     call.isError = event.isError === true;
     call.output = isRec(event.result) ? textOf(event.result.content) : "";
+    if (isRec(event.result) && isRec(event.result.details)) call.details = event.result.details;
     call.durationMs = typeof event.durationMs === "number" ? event.durationMs : null;
     const m = EXIT_CODE.exec(call.output);
     if (m?.[1] !== undefined) call.exitCode = Number(m[1]);

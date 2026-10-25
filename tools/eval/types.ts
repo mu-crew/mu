@@ -37,6 +37,8 @@ export interface ToolCall {
   args: Record<string, unknown>;
   isError: boolean;
   output: string;
+  /** The tool result's structured `details` (what the tool recorded), when it returned any. */
+  details?: Record<string, unknown>;
   exitCode: number | null;
   durationMs: number | null;
 }

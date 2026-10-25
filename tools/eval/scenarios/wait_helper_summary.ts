@@ -23,7 +23,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { prodWrong, stopsWhileWorking } from "../lifecycle.ts";
-import { claimCount, deliveries, verdictFx } from "../observe.ts";
+import { claimCount, closeEarnedWrong, deliveries, verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, fileMoment, orderWrong, runMoment } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
@@ -109,6 +109,7 @@ const scenario: Scenario = {
         `work was not handed to both workers through mu (delivered: ${ds.map((d) => `${d.p.agent}${d.call ? "" : "?"}`).join(",") || "none"})`,
       );
     }
+    for (const id of IDS) wrong.push(...closeEarnedWrong(sb, "eval", id, runs));
     for (const id of IDS)
       if (claimCount(sb, "eval", id) !== 1)
         wrong.push(`${id} was claimed ${claimCount(sb, "eval", id)} times (want 1)`);

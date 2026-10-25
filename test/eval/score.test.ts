@@ -210,8 +210,15 @@ describe("extraBadScripts", () => {
 });
 
 describe("delegate refusal in both families", () => {
-  const call = (name: string, args: Record<string, unknown>, output: string, isError = false) =>
+  const call = (
+    name: string,
+    args: Record<string, unknown>,
+    output: string,
+    isError = false,
+    details?: Record<string, unknown>,
+  ) =>
     ({
+      ...(details ? { details } : {}),
       id: `${name}-${output.length}`,
       name,
       args,
@@ -234,6 +241,27 @@ describe("delegate refusal in both families", () => {
     expect(refusedNext(refused)).toBe(true);
     expect(refusedNext(accepted)).toBe(false);
     expect(issuedDelegateArgs(run([refused, accepted, failed]))).toEqual([{ label: "c1" }]);
+  });
+
+  it("the recorded state decides, not the prose", async () => {
+    const { refusedNext, issuedDelegateArgs } = await import("../../tools/eval/observe.ts");
+    const worded = call(
+      "mu_delegate",
+      { label: "c7" },
+      "Held back: nothing started. call pi:s:t-7",
+      false,
+      {
+        state: "refused",
+        call_id: "pi:s:t-7",
+      },
+    );
+    const proseOnly = call("mu_delegate", { label: "c8" }, "REFUSED, not started", false, {
+      state: "queued",
+    });
+    expect(refusedNext(worded)).toBe(true);
+    expect(refusedNext(proseOnly)).toBe(false);
+    const reissue = call("mu_delegate_reissue", { call_id: "pi:s:t-7" }, "ok");
+    expect(issuedDelegateArgs(run([worded, reissue]))).toEqual([{ label: "c7" }]);
   });
 
   it("a reissue naming the refused call's id makes it issued", async () => {
