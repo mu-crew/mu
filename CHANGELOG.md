@@ -12,6 +12,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Dashboard read model** (`v_dashboard_core`): `loadDashboard(db, opts)` (`src/dashboard-data.ts`,
+  exported from the SDK) is the one read-only projection the dashboard tabs share: every live
+  workstream (scratch included), all tasks by status (CLOSED hidden by default, uncapped when
+  asked) under `<workstream>/<id>` keys ordered by raw `MAX(ops.seq)` activity, the open
+  frontier, registry agents with their owned task, the canonical op log, and the caller's own
+  human needs and delegate calls (a null caller sees none: `caller_scope: "none"`). It never
+  reconciles, reaps, ingests or writes, and runs on a `readonly` connection. `next` (type
+  `NextPlan`) is null with `next_source: "unavailable"` and an agent's `tool` is unset until
+  `v_dashboard_next`.
 - **mu-next is isolated from 3.x on disk** (`v_isolation`; after the 18:04 incident, where an
   inherited `MU_SYNC_DIR` let a mu-next run write a v2 segment into the real 3.x sync folder
   and 3.x warned `unknown-version` on every command). The default state dir is now
