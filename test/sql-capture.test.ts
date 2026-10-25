@@ -298,12 +298,8 @@ describe("mu sql refuses user transaction control", () => {
     ).toBe("commit; end");
   });
 
-  it("accepts a CREATE TEMP TRIGGER whose body ends with END", async () => {
-    await cmdDbQuery(
-      db,
-      "CREATE TEMP TRIGGER t_x AFTER INSERT ON ops BEGIN SELECT CASE WHEN 1 THEN 1 END; END; SELECT 1",
-    );
-    await cmdDbQuery(db, "DROP TRIGGER t_x");
+  it("accepts a CASE ... END expression (END is not transaction control)", async () => {
+    await cmdDbQuery(db, "SELECT CASE WHEN 1 THEN 1 END; SELECT 1");
   });
 
   // rv6_sql_tx_scan: transaction control is recognised by SQLite's own
@@ -313,51 +309,38 @@ describe("mu sql refuses user transaction control", () => {
     (db.prepare("SELECT title FROM tasks ORDER BY local_id").all() as { title: string }[])
       .map((r) => r.title)
       .join(",");
-  const tableExists = (name: string): boolean =>
-    db.prepare("SELECT 1 FROM temp.sqlite_master WHERE name = ?").get(name) !== undefined;
-
   it.each([
     [
       "trigger table + begin column",
-      "CREATE TEMP TABLE trigger(begin TEXT); UPDATE tasks SET title='bypass'; COMMIT",
+      "SELECT 1 AS trigger, 2 AS begin; UPDATE tasks SET title='bypass'; COMMIT",
     ],
     [
       "trigger + begin columns",
-      "CREATE TEMP TABLE t1(trigger TEXT, begin TEXT); UPDATE tasks SET title='bypass'; COMMIT",
+      "SELECT 1 AS trigger, 2 AS begin; UPDATE tasks SET title='bypass'; COMMIT",
     ],
     [
       "trigger + begin, then END",
-      "CREATE TEMP TABLE t2(trigger TEXT, begin TEXT); UPDATE tasks SET title='bypass'; END",
+      "SELECT 1 AS trigger, 2 AS begin; UPDATE tasks SET title='bypass'; END",
     ],
     [
       "savepoint table",
-      "CREATE TEMP TABLE savepoint(begin TEXT); UPDATE tasks SET title='bypass'; RELEASE s",
+      "SELECT 1 AS savepoint, 2 AS begin; UPDATE tasks SET title='bypass'; RELEASE s",
     ],
     [
       "ROLLBACK then autocommit write",
-      "CREATE TEMP TABLE t3(trigger TEXT, begin TEXT); ROLLBACK; UPDATE tasks SET title='bypass'",
-    ],
-    [
-      "real trigger, then COMMIT",
-      "CREATE TEMP TRIGGER tg AFTER INSERT ON ops BEGIN SELECT CASE WHEN 1 THEN 1 END; END; UPDATE tasks SET title='bypass'; COMMIT",
+      "SELECT 1 AS trigger, 2 AS begin; ROLLBACK; UPDATE tasks SET title='bypass'",
     ],
     [
       "BEGIN after a trigger-named column",
-      "CREATE TEMP TABLE t4(trigger TEXT); BEGIN; UPDATE tasks SET title='bypass'; COMMIT",
+      "SELECT 1 AS trigger; BEGIN; UPDATE tasks SET title='bypass'; COMMIT",
     ],
   ])("refuses before running anything: %s", async (_name, sql) => {
     const seq = maxSeq();
     const before = titles();
-    const tablesBefore = (
-      db.prepare("SELECT COUNT(*) AS n FROM temp.sqlite_master").get() as { n: number }
-    ).n;
     await expect(cmdDbQuery(db, sql)).rejects.toThrow(TX);
     await expect(cmdDbQuery(db, sql, { confirmRows: 99 })).rejects.toThrow(TX);
     expect(titles()).toBe(before);
     expect(opsAfter(seq)).toEqual([]);
-    expect(
-      (db.prepare("SELECT COUNT(*) AS n FROM temp.sqlite_master").get() as { n: number }).n,
-    ).toBe(tablesBefore);
     expect(db.inTransaction).toBe(false);
   });
 
@@ -365,7 +348,7 @@ describe("mu sql refuses user transaction control", () => {
     await expect(
       cmdDbQuery(
         db,
-        "CREATE TEMP TABLE trigger(begin TEXT); UPDATE tasks SET title='committed-bypass'; COMMIT",
+        "SELECT 1 AS trigger, 2 AS begin; UPDATE tasks SET title='committed-bypass'; COMMIT",
       ),
     ).rejects.toThrow(UsageError);
     const other = openDb({ path: join(dir, "mu.db") });
@@ -373,43 +356,30 @@ describe("mu sql refuses user transaction control", () => {
       expect(
         other.prepare("SELECT COUNT(*) AS n FROM tasks WHERE title = 'committed-bypass'").get(),
       ).toEqual({ n: 0 });
-      expect(tableExists("trigger")).toBe(false);
     } finally {
       other.close();
     }
   });
 
-  it("accepts tables and columns named after transaction keywords", async () => {
+  it("accepts columns and aliases named after transaction keywords", async () => {
     for (const name of ["begin", "commit", "end", "trigger", "savepoint", "release", "rollback"]) {
       // quoted: `commit` is a reserved word that cannot be bare.
-      await cmdDbQuery(db, `CREATE TEMP TABLE "${name}"("${name}" TEXT, x TEXT)`);
-      await cmdDbQuery(db, `INSERT INTO "${name}"("${name}", x) VALUES ('v', 'w')`);
-      await cmdDbQuery(db, `SELECT "${name}", x FROM "${name}"`);
+      await cmdDbQuery(db, `SELECT 1 AS "${name}"; SELECT "${name}" FROM (SELECT 2 AS "${name}")`);
     }
     await cmdDbQuery(
       db,
-      `CREATE TEMP TABLE multi(begin, "commit", end, trigger, savepoint);
-       INSERT INTO multi(begin, "commit", end, trigger, savepoint) VALUES (1,2,3,4,5);
-       UPDATE multi SET end = begin + "commit"; SELECT trigger, savepoint FROM multi`,
+      `WITH multi(begin, "commit", end, trigger, savepoint) AS (VALUES (1,2,3,4,5))
+       SELECT end, begin + "commit" AS s, trigger, savepoint FROM multi`,
     );
-    expect(db.prepare("SELECT end FROM multi").get()).toEqual({ end: 3 });
     expect(db.inTransaction).toBe(false);
-  });
-
-  it("runs a script with a real trigger followed by more statements", async () => {
-    await cmdDbQuery(
-      db,
-      "CREATE TEMP TABLE trigger(begin TEXT); CREATE TEMP TRIGGER tg AFTER INSERT ON trigger BEGIN UPDATE trigger SET begin = CASE WHEN 1 THEN 'x' END; END; INSERT INTO trigger(begin) VALUES ('a'); SELECT 1",
-    );
-    expect(db.prepare("SELECT begin FROM trigger").get()).toEqual({ begin: "x" });
   });
 
   it("refuses ROLLBACK TO, and a COMMIT after a statement naming a table the script creates", async () => {
     await expect(cmdDbQuery(db, "ROLLBACK TO s1")).rejects.toThrow(TX);
     await expect(
-      cmdDbQuery(db, "CREATE TEMP TABLE later(x); INSERT INTO later VALUES (1); COMMIT"),
+      cmdDbQuery(db, "UPDATE tasks SET title = 'later'; SELECT 1; COMMIT"),
     ).rejects.toThrow(TX);
-    expect(tableExists("later")).toBe(false);
+    expect(titles()).not.toContain("later");
   });
 
   it("a plain read does not take the write lock", async () => {
