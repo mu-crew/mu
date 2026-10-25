@@ -44,8 +44,8 @@ describe("mu task list --status (multi-value)", () => {
     const { data, exitCode, error } = await runCliJson(argv, dbPath);
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
-    const env = data as { items: Array<{ name: string }>; count: number };
-    return env.items.map((t) => t.name).sort();
+    const env = data as { items: Array<{ id: string }>; count: number };
+    return env.items.map((t) => t.id).sort();
   }
 
   it("single --status (back-compat: byte-identical to today's shape)", async () => {

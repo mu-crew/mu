@@ -19,7 +19,6 @@
 
 import {
   assertTaskInWorkstream,
-  colorPair,
   emitJson,
   parseCsvFlag,
   resolveEntityRef,
@@ -32,6 +31,8 @@ import { lastClaimActor } from "../../logs.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../../output-contract.js";
 import { taskRevision } from "../../revision.js";
+import { shellWord } from "../../shell-quote.js";
+import { formatPair, type TaskStatus, type TaskSubstate } from "../../tasks/status.js";
 import {
   addNote,
   addTasks,
@@ -49,6 +50,20 @@ import {
 } from "../../tasks.js";
 import { noteRecord, planNotes, type ShownNote, stubAuthor, stubPreview } from "../format.js";
 import { readStdinText, STDIN_ARG } from "../stdin.js";
+import {
+  escapeRecordText,
+  fromOffset,
+  jsonDocument,
+  linesBytes,
+  moreLine,
+  pageRecords,
+  SHOW_TITLE_CHARS,
+  SHOW_TITLE_ESCAPED_BYTES,
+  SHOW_TITLE_JSON_BYTES,
+  taskItem,
+  taskRecord,
+  titleCommand,
+} from "./records.js";
 
 /**
  * Translate the small set of shell-style escapes (\n, \t, \r, \\)
@@ -135,8 +150,15 @@ function buildNotesPage(
     explicit: boolean;
     json: boolean;
     wrap: (items: Record<string, unknown>[], fields: Record<string, unknown>) => unknown;
+    /** Text lines printed BEFORE the notes that count toward the cap (the `show` task and edge records). */
+    fixedLines?: readonly string[];
+    /** Text lines printed after the notes that count toward the cap (hints). */
+    tailLines?: readonly string[];
+    /** The cap on the whole output (default RESULT_BYTES). */
+    budget?: number;
   },
 ): NotesPage {
+  const budget = opts.budget ?? RESULT_BYTES;
   const ref = `${taskId} -w ${ws}`;
   const nextFor = (first: number): string =>
     first === 1 ? `mu task notes ${ref} --all` : `mu task notes ${ref} --from ${first}`;
@@ -168,8 +190,9 @@ function buildNotesPage(
     const { more, next } = omission(shown);
     const ordinary = shown.filter((s) => !isPinned(s));
     if (!opts.json) {
-      const lines = ordinary.map((s) => noteLine(ref, s));
+      const lines = [...(opts.fixedLines ?? []), ...ordinary.map((s) => noteLine(ref, s))];
       if (next !== null) lines.push(`more=${more} next=${next}`);
+      lines.push(...(opts.tailLines ?? []));
       return Buffer.byteLength(lines.join("\n")) + 1;
     }
     const fields = next === null ? { more: 0 } : { more, retrieve: next };
@@ -178,14 +201,18 @@ function buildNotesPage(
   };
   // The planner's probes are the same serialization, not an estimate: the
   // pinned notes are always shown, so a probe is pinned plus the ordinary run.
-  const plan = planNotes(notes, opts.pinned, opts.fill, (ordinary) =>
-    emitted([...pinnedShown, ...ordinary]),
+  const plan = planNotes(
+    notes,
+    opts.pinned,
+    opts.fill,
+    (ordinary) => emitted([...pinnedShown, ...ordinary]),
+    { budget },
   );
   const final = [...plan.shown];
   // Drop the oldest ordinary note (default view) or the last (a page, so what
   // is left out stays a suffix `--from` reaches). The last one stays: a page
   // makes progress, and a stub is bounded.
-  while (emitted(final) > RESULT_BYTES) {
+  while (emitted(final) > budget) {
     const ordinary = final.filter((s) => !isPinned(s));
     const victim = opts.fill === "newest" ? ordinary[0] : ordinary[ordinary.length - 1];
     if (ordinary.length <= 1 || victim === undefined) break;
@@ -227,21 +254,6 @@ function partitionEdges(edges: readonly TaskEdgeWithStatus[]): {
     else stillGating.push(e);
   }
   return { stillGating, satisfied };
-}
-
-/** Render one edge bucket as a comma-separated `<name> [<STATUS[/substate]>]`
- *  list. The status is colour-coded the same way the task table
- *  renders it (src/cli/format.ts colorPair); satisfied buckets are
- *  additionally dimmed so they recede visually. An empty bucket
- *  renders as an em-dash (—) to match the prior "no edges" rendering
- *  for back-compat with operator-eyed scripts. */
-function formatEdgeList(edges: readonly TaskEdgeWithStatus[], dim: boolean): string {
-  if (edges.length === 0) return pc.dim("—");
-  const parts = edges.map((e) => {
-    const piece = `${e.name} [${colorPair(e)}]`;
-    return dim ? pc.dim(piece) : piece;
-  });
-  return parts.join(", ");
 }
 
 /** A note whose whole text is empty, whitespace or a bare `-` is almost
@@ -512,10 +524,49 @@ export async function cmdTaskNote(
   printNextSteps(nextSteps);
 }
 
+/** Bytes the edge records of one `show` may take (the task, notes and hints share the rest of the 4 KB). */
+const EDGE_BYTES = 1200;
+
+/** One neighbour of a task, in the order `show` lists them: blockers then dependents, still-gating first. */
+interface EdgeRecord {
+  kind: "blocker" | "dependent";
+  id: string;
+  status: string;
+  substate: string;
+}
+
+function edgeRecords(edges: {
+  blockers: readonly TaskEdgeWithStatus[];
+  dependents: readonly TaskEdgeWithStatus[];
+}): EdgeRecord[] {
+  const side = (kind: EdgeRecord["kind"], list: readonly TaskEdgeWithStatus[]): EdgeRecord[] => {
+    const { stillGating, satisfied } = partitionEdges(list);
+    return [...stillGating, ...satisfied].map((e) => ({
+      kind,
+      id: e.name,
+      status: e.status,
+      substate: e.substate,
+    }));
+  };
+  return [...side("blocker", edges.blockers), ...side("dependent", edges.dependents)];
+}
+
+const edgeLine = (e: EdgeRecord): string =>
+  [
+    e.kind,
+    escapeRecordText(e.id),
+    formatPair({ status: e.status as TaskStatus, substate: e.substate as TaskSubstate }),
+  ].join("\t");
+const edgeItem = (e: EdgeRecord): Record<string, unknown> => ({
+  id: e.id,
+  status: e.status,
+  substate: e.substate,
+});
+
 export async function cmdTaskShow(
   db: Db,
   rawId: string,
-  opts: { json?: boolean; workstream?: string; note?: number } = {},
+  opts: { json?: boolean; workstream?: string; note?: number; edgesFrom?: number } = {},
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
@@ -524,15 +575,13 @@ export async function cmdTaskShow(
   const ws = await resolveWorkstream(opts.workstream);
   const task = getTask(db, localId, ws);
   if (!task) throw new TaskNotFoundError(localId, ws);
-  const edges = getTaskEdgesWithStatus(db, localId, task.workstreamName);
-  const view =
-    opts.note !== undefined
-      ? null
-      : selectTaskNotes(db, localId, { workstream: task.workstreamName });
+  const json = opts.json === true;
+  const ref = `${shellWord(task.name)} -w ${shellWord(task.workstreamName)}`;
+  const edges = edgeRecords(getTaskEdgesWithStatus(db, localId, task.workstreamName));
   if (opts.note !== undefined) {
     // One note, whole: no cap, exact membership of this task's own notes.
     const note = getTaskNote(db, localId, task.workstreamName, opts.note);
-    if (opts.json) {
+    if (json) {
       emitJson({
         n: note.n,
         kind: note.kind,
@@ -545,14 +594,50 @@ export async function cmdTaskShow(
     console.log(noteRecord(note));
     return;
   }
-  const page = buildNotesPage(localId, task.workstreamName, view?.notes ?? [], {
-    pinned: new Set(view?.pinned ?? []),
-    total: view?.total ?? 0,
-    fill: "newest",
-    explicit: false,
-    json: opts.json === true,
-    wrap: (items, fields) => ({ notes: items, ...prefixed(fields, "notes_") }),
-  });
+  const edgesCmd = (k: number): string => `mu task show ${ref} --edges-from ${k}`;
+  if (opts.edgesFrom !== undefined) {
+    // Only the neighbours, paged like any read: the way back from a cut edge list.
+    const page = pageRecords(
+      edges,
+      fromOffset(opts.edgesFrom),
+      json
+        ? (p) =>
+            Buffer.byteLength(
+              jsonDocument({ items: p.shown.map(edgeItem), count: p.shown.length, more: p.more }),
+            ) + 600
+        : (p) => linesBytes([...p.shown.map(edgeLine), moreLine(p) ?? ""]),
+      edgesCmd,
+    );
+    if (json) {
+      console.log(
+        jsonDocument({
+          items: page.shown.map((e) => ({ kind: e.kind, ...edgeItem(e) })),
+          count: page.shown.length,
+          more: page.more,
+          ...(page.next === null ? {} : { retrieve: page.next }),
+        }),
+      );
+      return;
+    }
+    const foot = moreLine(page);
+    console.log([...page.shown.map(edgeLine), ...(foot === null ? [] : [foot])].join("\n"));
+    return;
+  }
+
+  // The neighbours that fit EDGE_BYTES, the first always (progress), the rest named by `--edges-from`.
+  const edgePage = pageRecords(
+    edges,
+    1,
+    json
+      ? (p) =>
+          Buffer.byteLength(JSON.stringify({ blockers: p.shown, more: p.more, retrieve: p.next }))
+      : (p) => linesBytes([...p.shown.map(edgeLine), moreLine(p) ?? ""]),
+    edgesCmd,
+    EDGE_BYTES,
+  );
+  const shownEdges = edgePage.shown;
+  const edgeFoot = moreLine(edgePage);
+  const view = selectTaskNotes(db, localId, { workstream: task.workstreamName });
 
   // When owner IS NULL but the task is IN_PROGRESS (or recently was),
   // the actor is in agent_logs. Surface it so 'who's working on this'
@@ -561,90 +646,77 @@ export async function cmdTaskShow(
     task.ownerName === null && task.status !== "OPEN"
       ? lastClaimActor(db, task.workstreamName, task.name)
       : null;
+  const lastActorShown = lastActor === null ? null : [...lastActor].slice(0, 80).join("");
+  const revision = taskRevision(db, task.workstreamName, task.name);
 
-  if (opts.json) {
-    // JSON shape: blockers/dependents are arrays of {name, status}
-    // objects so scripts can filter by status without a second query.
-    // (task_show_blocked_by_renders_closed: prior shape was bare
-    // string[], which discarded the gating-vs-satisfied distinction.)
+  // Only the non-default substates get a hint: they are the ones whose
+  // way out is not obvious from the status alone.
+  const hints: string[] = [];
+  if (task.substate === "parked") hints.push(`next=mu task unpark ${ref}`);
+  else if (task.substate === "triage") {
+    hints.push(`next=mu task accept ${ref}`);
+    hints.push(`next=mu task close ${ref} --as rejected --why "<reason>"`);
+  } else if (task.status === "CLOSED" && task.substate !== "done") {
+    hints.push(`next=mu task open ${ref}`);
+  }
+
+  const taskLine = taskRecord(task, {
+    withWorkstream: true,
+    revision,
+    claimedBy: lastActor,
+    times: true,
+    titleChars: SHOW_TITLE_CHARS,
+    titleBytes: SHOW_TITLE_ESCAPED_BYTES,
+    maxChars: SHOW_TITLE_CHARS + 400,
+  });
+  const fixedLines = [
+    taskLine,
+    ...shownEdges.map(edgeLine),
+    ...(edgeFoot === null ? [] : [edgeFoot]),
+  ];
+  const taskJson = taskItem(task, {
+    withWorkstream: true,
+    revision,
+    titleChars: SHOW_TITLE_CHARS,
+    titleJsonBytes: SHOW_TITLE_JSON_BYTES,
+    retrieve: titleCommand(task, true),
+  });
+  const edgeJson = {
+    blockers: shownEdges.filter((e) => e.kind === "blocker").map(edgeItem),
+    dependents: shownEdges.filter((e) => e.kind === "dependent").map(edgeItem),
+    ...(edgePage.next === null
+      ? { edges_more: 0 }
+      : { edges_more: edgePage.more, edges_retrieve: edgePage.next }),
+  };
+  const page = buildNotesPage(localId, task.workstreamName, view.notes, {
+    pinned: new Set(view.pinned),
+    total: view.total,
+    fill: "newest",
+    explicit: false,
+    json,
+    wrap: (items, fields) => ({
+      task: taskJson,
+      ...edgeJson,
+      notes: items,
+      ...prefixed(fields, "notes_"),
+      lastClaimActor: lastActorShown,
+    }),
+    fixedLines,
+    tailLines: hints,
+  });
+
+  if (json) {
     emitJson({
-      task: {
-        ...withRoiAll([task])[0],
-        revision: taskRevision(db, task.workstreamName, task.name),
-      },
-      blockers: edges.blockers,
-      dependents: edges.dependents,
+      task: taskJson,
+      ...edgeJson,
       notes: page.items,
       ...pageFields(page, "notes_"),
-      lastClaimActor: lastActor,
+      lastClaimActor: lastActorShown,
     });
     return;
   }
-
-  const roi = task.effortDays > 0 ? (task.impact / task.effortDays).toFixed(1) : "∞";
-  console.log(pc.bold(`${task.name}  —  ${task.title}`));
-  console.log(`  workstream : ${task.workstreamName}`);
-  console.log(`  status     : ${colorPair(task)}`);
-  // owner: registered worker name, or '(self: <actor>)' for an anonymous
-  // claim, or '(unowned)' for OPEN tasks.
-  const ownerLine =
-    task.ownerName !== null
-      ? task.ownerName
-      : lastActor !== null
-        ? pc.dim(`(self: ${lastActor})`)
-        : pc.dim("(unowned)");
-  console.log(`  owner      : ${ownerLine}`);
-  console.log(`  impact     : ${task.impact}`);
-  console.log(`  effort     : ${task.effortDays}  ${pc.dim(`(ROI ${roi})`)}`);
-  console.log(`  created    : ${pc.dim(task.createdAt)}`);
-  console.log(`  updated    : ${pc.dim(task.updatedAt)}`);
-  console.log(`  rev        : ${pc.dim(String(taskRevision(db, task.workstreamName, task.name)))}`);
-
-  console.log("");
-  console.log(pc.bold("Edges"));
-  // Group each side of the edge set by status so the operator can
-  // tell at a glance which prerequisites still gate the task vs which
-  // have already been satisfied. CLOSED is the only status that
-  // satisfies a `blocks` edge; OPEN/IN_PROGRESS stay in the
-  // still-gating bucket. (task_show_blocked_by_renders_closed.)
-  const { stillGating: gatingBlockers, satisfied: satisfiedBlockers } = partitionEdges(
-    edges.blockers,
-  );
-  const { stillGating: openDependents, satisfied: closedDependents } = partitionEdges(
-    edges.dependents,
-  );
-  console.log(`  blocked by : ${formatEdgeList(gatingBlockers, false)}`);
-  if (satisfiedBlockers.length > 0) {
-    console.log(`  satisfied  : ${formatEdgeList(satisfiedBlockers, true)}`);
-  }
-  console.log(`  blocks     : ${formatEdgeList(openDependents, false)}`);
-  if (closedDependents.length > 0) {
-    console.log(`  no longer  : ${formatEdgeList(closedDependents, true)}`);
-  }
-
-  console.log("");
-  console.log(pc.bold(`Notes (${view?.total ?? 0})`));
-  if ((view?.total ?? 0) === 0) {
-    console.log(pc.dim("  (no notes)"));
-  } else {
-    for (const line of page.lines) console.log(line);
-  }
-  // Only the non-default substates get a hint: they are the ones whose
-  // way out is not obvious from the status alone.
-  const ref = `${task.name} -w ${task.workstreamName}`;
-  if (task.substate === "parked") {
-    console.log("");
-    printNextSteps([{ intent: "Return it to next", command: `mu task unpark ${ref}` }]);
-  } else if (task.substate === "triage") {
-    console.log("");
-    printNextSteps([
-      { intent: "Accept it as work", command: `mu task accept ${ref}` },
-      { intent: "Decline it", command: `mu task close ${ref} --as rejected --why "<reason>"` },
-    ]);
-  } else if (task.status === "CLOSED" && task.substate !== "done") {
-    console.log("");
-    printNextSteps([{ intent: "Reopen it", command: `mu task open ${ref}` }]);
-  }
+  // Notes keep their own records; an empty view prints none (the task record says nothing of them).
+  console.log([...fixedLines, ...page.lines, ...hints].join("\n"));
 }
 
 export async function cmdTaskNotes(

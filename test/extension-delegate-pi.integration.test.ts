@@ -137,7 +137,7 @@ async function runScenario(s: Scenario) {
   const run = async (args: string[]) => {
     const [ns, verb, name = ""] = args;
     if (ns === "task")
-      return ok(verb === "show" ? { task: { name, workstreamName: "probe" } } : {});
+      return ok(verb === "show" ? { task: { id: name, workstream: "probe" } } : {});
     if (verb === "spawn") {
       let actual = name;
       for (let i = 2; taken.has(actual); i++) actual = `${name}-${i}`;

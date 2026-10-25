@@ -702,14 +702,14 @@ describe("task show / list expose the revision", () => {
     expect(s.data.task.revision).toBe(rev("t"));
     const l = await runCliJson(["task", "list", "-w", "demo", "--json"], path);
     const byId = new Map(
-      (l.data.items as { name: string; revision: number }[]).map((i) => [i.name, i.revision]),
+      (l.data.items as { id: string; revision: number }[]).map((i) => [i.id, i.revision]),
     );
     expect(byId.get("t")).toBe(rev("t"));
     expect(byId.get("a_b")).toBe(rev("a_b"));
     expect(byId.get("a_b")).not.toBe(byId.get("axb"));
     const h = await runCli(["task", "show", "t", "-w", "demo"], path);
     // biome-ignore lint/suspicious/noControlCharactersInRegex: strips SGR colour codes
-    expect(h.stdout.replace(/\u001b\[[0-9;]*m/g, "")).toContain(`rev        : ${rev("t")}`);
+    expect(h.stdout.replace(/\u001b\[[0-9;]*m/g, "")).toContain(`rev=${rev("t")}`);
   });
 });
 

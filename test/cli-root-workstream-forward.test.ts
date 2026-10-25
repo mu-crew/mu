@@ -34,7 +34,7 @@ describe("root-position -w forwards to the verb's -w", () => {
   afterEach(() => rmFixtureDir(dir));
 
   const names = (data: unknown): string[] =>
-    (data as { items: { name: string }[] }).items.map((t) => t.name);
+    (data as { items: { id: string }[] }).items.map((t) => t.id);
 
   it("`mu -w wsa task list` lists wsa's tasks, same as the verb-position form", async () => {
     const root = await runCliJson(["-w", "wsa", "task", "list", "--json"], dbPath);

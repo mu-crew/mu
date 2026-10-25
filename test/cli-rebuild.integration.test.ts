@@ -51,8 +51,8 @@ describe("mu rebuild", () => {
 
     // The rebuilt DB answers real queries — the actual recovery test.
     const listed = await runCliJson(["task", "list", "-w", "demo", "--json"], out);
-    const parsed = listed.data as { items: Array<{ name: string; status: string }> };
-    expect(parsed.items.map((t) => `${t.name}:${t.status}`).sort()).toEqual(["a:CLOSED", "b:OPEN"]);
+    const parsed = listed.data as { items: Array<{ id: string; status: string }> };
+    expect(parsed.items.map((t) => `${t.id}:${t.status}`).sort()).toEqual(["a:CLOSED", "b:OPEN"]);
 
     // The blocked-by edge survived, so the DAG is intact.
     const tree = await runCli(["task", "tree", "b", "-w", "demo"], out);

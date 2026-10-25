@@ -59,7 +59,7 @@ describe("mu sync (CLI)", () => {
 
   const taskJson = async (db: string, id: string) => {
     const { data } = await runCliJson(["task", "show", id, "-w", "demo", "--json"], db);
-    return data as { task: { name: string; status: string; impact: number } };
+    return data as { task: { id: string; status: string; impact: number } };
   };
 
   // Reads the file directly (read-only): every verb, `mu sql` included,
@@ -78,8 +78,8 @@ describe("mu sync (CLI)", () => {
     expect(stdout).toMatch(/ingested \d+ from 1 peer/);
 
     const listed = await runCliJson(["task", "list", "-w", "demo", "--json"], dev);
-    const parsed = listed.data as { items: Array<{ name: string }> };
-    expect(parsed.items.map((t) => t.name)).toEqual(["t1"]);
+    const parsed = listed.data as { items: Array<{ id: string }> };
+    expect(parsed.items.map((t) => t.id)).toEqual(["t1"]);
   });
 
   it("converges after both machines edit DIFFERENT fields of one task", async () => {
@@ -111,8 +111,8 @@ describe("mu sync (CLI)", () => {
 
     // Never runs `mu sync`. The ambient hook is the whole feature.
     const { data } = await runCliJson(["task", "list", "-w", "demo", "--json"], dev);
-    const parsed = data as { items: Array<{ name: string }> };
-    expect(parsed.items.map((t) => t.name)).toEqual(["t1"]);
+    const parsed = data as { items: Array<{ id: string }> };
+    expect(parsed.items.map((t) => t.id)).toEqual(["t1"]);
   });
 
   it("flushes AFTER the verb body, so one invocation publishes its own work", async () => {
@@ -359,8 +359,8 @@ describe("mu sync (CLI)", () => {
       expect(await opCount(dev)).toBe(opsBefore);
       expect(parsed.peers[0]?.behind).toBe(0);
       const listed = await runCliJson(["task", "list", "-w", "demo", "--json"], dev);
-      const tasks = listed.data as { items: Array<{ name: string }> };
-      expect(tasks.items.map((t) => t.name).sort()).toEqual(["t1", "t2"]);
+      const tasks = listed.data as { items: Array<{ id: string }> };
+      expect(tasks.items.map((t) => t.id).sort()).toEqual(["t1", "t2"]);
     });
 
     it("accepts a unique prefix", async () => {

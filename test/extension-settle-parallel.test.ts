@@ -24,9 +24,9 @@ const json = (v: unknown): MuResult => ({
 function answer(args: readonly string[]): MuResult {
   const [noun, verb] = args;
   if (noun === "task" && verb === "list")
-    return json({ items: [{ name: "t1", workstreamName: "ws", status: "IN_PROGRESS" }] });
+    return json({ items: [{ id: "t1", status: "IN_PROGRESS" }] });
   if (noun === "task" && verb === "owned-by")
-    return json({ items: [{ name: "t1", status: "IN_PROGRESS" }] });
+    return json({ items: [{ id: "t1", status: "IN_PROGRESS" }] });
   return json({});
 }
 

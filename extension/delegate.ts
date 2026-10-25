@@ -882,13 +882,14 @@ export function registerDelegate(
     }
     const shown = await mu(["task", "show", task, ...(ws ? ["-w", ws] : []), "--json"]);
     const out = json(shown);
-    const t = out?.task as { name?: unknown; workstreamName?: unknown } | undefined;
-    if (shown.code !== 0 || typeof t?.name !== "string" || typeof t.workstreamName !== "string") {
+    // `show` names the task by `id` (its local_id) and its workstream by `workstream`.
+    const t = out?.task as { id?: unknown; workstream?: unknown } | undefined;
+    if (shown.code !== 0 || typeof t?.id !== "string" || typeof t.workstream !== "string") {
       throw new Error(
         `mu_delegate: record task ${ws ? `${ws}/` : ""}${task} not found (exit ${shown.code}): ${why(shown)}. Nothing spawned.`,
       );
     }
-    return { workstream: t.workstreamName, task: t.name };
+    return { workstream: t.workstream, task: t.id };
   }
 
   /** Write one note on the record task; the follow-up's line about it. */

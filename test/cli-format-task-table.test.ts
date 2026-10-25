@@ -11,6 +11,7 @@ function task(over: Partial<TaskRow>): TaskRow {
   return {
     name: "a1",
     workstreamName: "demo",
+    workstreamId: 1,
     title: "x".repeat(200),
     status: "OPEN",
     substate: "todo",
@@ -21,6 +22,7 @@ function task(over: Partial<TaskRow>): TaskRow {
     kind: "work",
     wave: null,
     ownerName: null,
+    ownerId: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...over,

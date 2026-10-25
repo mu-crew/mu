@@ -112,6 +112,4 @@ mu agent close worker-1 -w auth --discard --if <n>  # apply it
 
 ```bash
 mu db backup /tmp/mu-backup.db      # VACUUM INTO; never overwrites
-mu task list -w auth --json
-mu task notes design -w auth --json
 ```

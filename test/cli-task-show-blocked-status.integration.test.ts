@@ -1,17 +1,10 @@
-// Regression tests for `mu task show` rendering blockers / dependents
-// grouped by status. Surfaced as task_show_blocked_by_renders_closed:
-// prior behaviour rendered a comma-joined list of blocker ids regardless
-// of status, so a reader could not tell from `mu task show` alone which
-// blockers still gated the task vs which were already CLOSED (and thus
-// satisfied). The fix groups by status:
-//
-//   blocked by : <still-gating> [<COLOURED-STATUS>] (OPEN / IN_PROGRESS)
-//   satisfied  : <CLOSED entries> [CLOSED] (dimmed; line omitted when empty)
-//   blocks     : <still-blocked dependents> [<STATUS>]
-//   no longer  : <CLOSED dependents> [CLOSED] (dimmed; symmetric)
-//
-// JSON shape: blockers/dependents are now {name, status} objects, so
-// scripts can filter by status without a second round-trip.
+// Regression tests for `mu task show` listing blockers / dependents with their
+// status (task_show_blocked_by_renders_closed): a reader must tell from `show`
+// alone which blockers still gate the task and which are CLOSED (satisfied).
+// mu-next form: after the task record, one `blocker|dependent<TAB>id<TAB>STATE`
+// record per neighbour, still-gating first, CLOSED (satisfied) after; JSON
+// blockers/dependents are {id, status, substate} items. CLOSED satisfies an edge
+// and nothing else does; OPEN/IN_PROGRESS keep gating.
 //
 // Drives the CLI via buildProgram() + parseAsync() with stdout captured
 // (same pattern as test/json-output.integration.test.ts).
@@ -33,6 +26,13 @@ function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
+/** The edge records of a `show` (every line after the task record, minus footers). */
+const edges = (plain: string): string[] =>
+  plain
+    .trimEnd()
+    .split("\n")
+    .filter((l) => /^(blocker|dependent)\t/.test(l));
+
 describe("mu task show — blockers/dependents grouped by status", () => {
   let tempDir: string;
   let dbPath: string;
@@ -50,7 +50,7 @@ describe("mu task show — blockers/dependents grouped by status", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("all-open blockers: renders 'blocked by' with each entry [STATUS], no 'satisfied' line", async () => {
+  it("all-open blockers: one blocker record each, STATE shown", async () => {
     addTask(db, { localId: "blocker_a", workstream: "wsx", title: "A", impact: 50, effortDays: 1 });
     addTask(db, { localId: "blocker_b", workstream: "wsx", title: "B", impact: 50, effortDays: 1 });
     addTask(db, {
@@ -65,12 +65,10 @@ describe("mu task show — blockers/dependents grouped by status", () => {
     const { stdout, exitCode } = await runCli(["task", "show", "target", "-w", "wsx"], dbPath);
     expect(exitCode).toBeNull();
     const plain = stripAnsi(stdout);
-    expect(plain).toMatch(/blocked by : blocker_a \[OPEN\], blocker_b \[OPEN\]/);
-    // No 'satisfied' line when nothing is CLOSED.
-    expect(plain).not.toMatch(/satisfied/);
+    expect(edges(plain)).toEqual(["blocker\tblocker_a\tOPEN", "blocker\tblocker_b\tOPEN"]);
   });
 
-  it("all-closed blockers: 'blocked by' shows '—', 'satisfied' lists CLOSED entries", async () => {
+  it("all-closed blockers: listed as CLOSED (satisfied)", async () => {
     addTask(db, { localId: "done_a", workstream: "wsx", title: "A", impact: 50, effortDays: 1 });
     addTask(db, { localId: "done_b", workstream: "wsx", title: "B", impact: 50, effortDays: 1 });
     addTask(db, {
@@ -87,13 +85,11 @@ describe("mu task show — blockers/dependents grouped by status", () => {
     const { stdout, exitCode } = await runCli(["task", "show", "target", "-w", "wsx"], dbPath);
     expect(exitCode).toBeNull();
     const plain = stripAnsi(stdout);
-    // 'blocked by' kept for back-compat; renders '—' (em-dash) when
-    // every blocker is satisfied.
-    expect(plain).toMatch(/blocked by : —/);
-    expect(plain).toMatch(/satisfied {2}: done_a \[CLOSED\], done_b \[CLOSED\]/);
+    // Satisfied blockers are still listed, as CLOSED: the reader sees none gates.
+    expect(edges(plain)).toEqual(["blocker\tdone_a\tCLOSED", "blocker\tdone_b\tCLOSED"]);
   });
 
-  it("mixed blockers: split into 'blocked by' (OPEN/IN_PROGRESS) + 'satisfied' (CLOSED)", async () => {
+  it("mixed blockers: still-gating (OPEN/IN_PROGRESS) first, CLOSED (satisfied) after", async () => {
     addTask(db, { localId: "open_x", workstream: "wsx", title: "X", impact: 50, effortDays: 1 });
     addTask(db, { localId: "inprog_y", workstream: "wsx", title: "Y", impact: 50, effortDays: 1 });
     addTask(db, { localId: "done_w", workstream: "wsx", title: "W", impact: 50, effortDays: 1 });
@@ -112,23 +108,24 @@ describe("mu task show — blockers/dependents grouped by status", () => {
     expect(exitCode).toBeNull();
     const plain = stripAnsi(stdout);
     // OPEN and IN_PROGRESS gate downstream work; only CLOSED is satisfied.
-    expect(plain).toMatch(/blocked by : inprog_y \[IN_PROGRESS\], open_x \[OPEN\]/);
-    expect(plain).toMatch(/satisfied {2}: done_w \[CLOSED\]/);
+    expect(edges(plain)).toEqual([
+      "blocker\tinprog_y\tIN_PROGRESS",
+      "blocker\topen_x\tOPEN",
+      "blocker\tdone_w\tCLOSED",
+    ]);
   });
 
-  it("empty edges: 'blocked by : —' and 'blocks : —'; no extra lines", async () => {
+  it("empty edges: the task record alone, no edge lines", async () => {
     addTask(db, { localId: "lonely", workstream: "wsx", title: "L", impact: 50, effortDays: 1 });
 
     const { stdout, exitCode } = await runCli(["task", "show", "lonely", "-w", "wsx"], dbPath);
     expect(exitCode).toBeNull();
     const plain = stripAnsi(stdout);
-    expect(plain).toMatch(/blocked by : —/);
-    expect(plain).toMatch(/blocks {5}: —/);
-    expect(plain).not.toMatch(/satisfied/);
-    expect(plain).not.toMatch(/no longer/);
+    expect(edges(plain)).toEqual([]);
+    expect(plain.trimEnd().split("\n")).toHaveLength(1);
   });
 
-  it("dependents side gets the same treatment: CLOSED dependents move to 'no longer'", async () => {
+  it("dependents side gets the same treatment: CLOSED dependents listed after the open ones", async () => {
     addTask(db, { localId: "root", workstream: "wsx", title: "R", impact: 50, effortDays: 1 });
     addTask(db, {
       localId: "open_dep",
@@ -152,11 +149,13 @@ describe("mu task show — blockers/dependents grouped by status", () => {
     const { stdout, exitCode } = await runCli(["task", "show", "root", "-w", "wsx"], dbPath);
     expect(exitCode).toBeNull();
     const plain = stripAnsi(stdout);
-    expect(plain).toMatch(/blocks {5}: open_dep \[OPEN\]/);
-    expect(plain).toMatch(/no longer {2}: closed_dep \[CLOSED\/wontfix\]/);
+    expect(edges(plain)).toEqual([
+      "dependent\topen_dep\tOPEN",
+      "dependent\tclosed_dep\tCLOSED/wontfix",
+    ]);
   });
 
-  it("--json: blockers/dependents are arrays of {name, status, substate} objects", async () => {
+  it("--json: blockers/dependents are arrays of {id, status, substate} items", async () => {
     addTask(db, { localId: "b_open", workstream: "wsx", title: "O", impact: 50, effortDays: 1 });
     addTask(db, { localId: "b_done", workstream: "wsx", title: "D", impact: 50, effortDays: 1 });
     addTask(db, {
@@ -183,13 +182,16 @@ describe("mu task show — blockers/dependents grouped by status", () => {
     );
     expect(exitCode).toBeNull();
     const parsed = data as {
-      blockers: Array<{ name: string; status: string }>;
-      dependents: Array<{ name: string; status: string }>;
+      blockers: Array<{ id: string; status: string }>;
+      dependents: Array<{ id: string; status: string }>;
+      edges_more: number;
     };
+    // Still-gating first (same order as the text records), CLOSED after.
     expect(parsed.blockers).toEqual([
-      { name: "b_done", status: "CLOSED", substate: "done" },
-      { name: "b_open", status: "OPEN", substate: "todo" },
+      { id: "b_open", status: "OPEN", substate: "todo" },
+      { id: "b_done", status: "CLOSED", substate: "done" },
     ]);
-    expect(parsed.dependents).toEqual([{ name: "downstream", status: "OPEN", substate: "todo" }]);
+    expect(parsed.dependents).toEqual([{ id: "downstream", status: "OPEN", substate: "todo" }]);
+    expect(parsed.edges_more).toBe(0);
   });
 });

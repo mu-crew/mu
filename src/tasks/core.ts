@@ -15,6 +15,8 @@ export interface TaskRow {
   name: string;
   /** Foreign-name reference to the owning workstream. */
   workstreamName: string;
+  /** The real `tasks.workstream_id` (output boundary only; never invent from names). */
+  workstreamId: number;
   title: string;
   status: TaskStatus;
   /** Qualifies status (e.g. OPEN/parked, CLOSED/wontfix). Never null. */
@@ -31,6 +33,8 @@ export interface TaskRow {
   wave: string | null;
   /** Foreign-name reference to the owning agent (NULL when unowned). */
   ownerName: string | null;
+  /** The real `tasks.owner_id` (NULL when unowned). */
+  ownerId: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -50,6 +54,7 @@ export interface RawTaskRow {
   /** Surrogate id (v5). */
   id: number;
   local_id: string;
+  workstream_id: number;
   /** Joined from workstreams.name. */
   workstream: string;
   title: string;
@@ -61,6 +66,7 @@ export interface RawTaskRow {
   dispatch_host: string | null;
   kind: string;
   wave: string | null;
+  owner_id: number | null;
   /** Joined from agents.name via owner_id. NULL when unowned. */
   owner: string | null;
   created_at: string;
@@ -81,6 +87,7 @@ export interface RawTaskNoteRow {
 export const SELECT_TASK_COLS = `
   t.id AS id,
   t.local_id AS local_id,
+  t.workstream_id AS workstream_id,
   ws.name AS workstream,
   t.title AS title,
   t.status AS status,
@@ -91,6 +98,7 @@ export const SELECT_TASK_COLS = `
   t.dispatch_host AS dispatch_host,
   t.kind AS kind,
   t.wave AS wave,
+  t.owner_id AS owner_id,
   ag.name AS owner,
   t.created_at AS created_at,
   t.updated_at AS updated_at
@@ -114,6 +122,7 @@ export function rowFromDb(row: RawTaskRow): TaskRow {
   return {
     name: row.local_id,
     workstreamName: row.workstream,
+    workstreamId: row.workstream_id,
     title: row.title,
     status: row.status as TaskStatus,
     substate: row.substate as TaskSubstate,
@@ -124,6 +133,7 @@ export function rowFromDb(row: RawTaskRow): TaskRow {
     kind: row.kind as TaskKind,
     wave: row.wave,
     ownerName: row.owner,
+    ownerId: row.owner_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

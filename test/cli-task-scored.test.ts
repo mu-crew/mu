@@ -71,7 +71,7 @@ describe("mu task add/update/next with optional scoring", () => {
         ["task", "next", "-n", "0", "-w", "t", "--json", ...extra],
         dbPath,
       );
-      const names = (r.data as { items: { name: string }[] }).items.map((t) => t.name);
+      const names = (r.data as { items: { id: string }[] }).items.map((t) => t.id);
       expect(names).toEqual(["hi", "lo", "old_unscored", "new_unscored"]);
     }
   });

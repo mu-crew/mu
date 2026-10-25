@@ -94,10 +94,19 @@ export {
   installCapture,
 } from "./capture.js";
 export {
+  FRONTIER_CLOSED_PER_NODE,
+  FRONTIER_MAX_DEPTH,
+  FRONTIER_MAX_NODES,
+  type FrontierDirection,
+  type FrontierEntry,
   type FullDag,
   type LoadFullDagOptions,
   loadFullDag,
+  loadOpenTaskFrontier,
+  type OpenTaskFrontier,
+  type OpenTaskFrontierOptions,
   renderForest,
+  renderFrontierLines,
   renderTaskTree,
 } from "./dag.js";
 export {

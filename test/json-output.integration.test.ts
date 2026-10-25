@@ -86,208 +86,166 @@ describe("--json output on read verbs", () => {
     expect(env.items.some((r) => r.name === "auth")).toBe(true);
   });
 
-  it("task list --json emits a collection envelope of TaskRows", async () => {
+  it("task list --json emits a collection envelope of SQL-keyed task items", async () => {
     const { data } = await runCliJson(["task", "list", "-w", "auth", "--json"], dbPath);
-    const env = data as { items: Array<{ name: string }>; count: number };
-    expect(env.items.map((t) => t.name).sort()).toEqual(["a", "b", "c"]);
+    const env = data as { items: Array<{ id: string }>; count: number; more: number };
+    expect(env.items.map((t) => t.id).sort()).toEqual(["a", "b", "c"]);
     expect(env.count).toBe(3);
+    expect(env.more).toBe(0);
   });
 
   it("task next --json honors -n", async () => {
     const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "5", "--json"], dbPath);
-    const env = data as { items: Array<{ name: string }>; count: number };
+    const env = data as { items: Array<{ id: string }>; count: number };
     // Only 'a' is ready (b is blocked by a, c by b). Even with -n 5.
     expect(env.items).toHaveLength(1);
-    expect(env.items[0]?.name).toBe("a");
+    expect(env.items[0]?.id).toBe("a");
   });
 
-  it("task next --json decorates each row with computed roi (impact/effortDays)", async () => {
-    // Real bug found in real use (mu task notes #99): JSON output had no
-    // roi field at all, so `mu task next --json | jq 'sort_by(.roi)'`
-    // returned items in arbitrary order. The table view computed ROI
-    // inline; the JSON path didn't. Now both paths agree.
+  it("task next --json carries impact and effort_days (the inputs of the order), no computed roi", async () => {
+    // The ROI is not a SQL column: output keys equal column names. A consumer
+    // that wants the ratio computes it from impact / effort_days, and `next`
+    // already returns the ready tasks in that order.
     const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "5", "--json"], dbPath);
-    const env = data as {
-      items: Array<{
-        name: string;
-        impact: number;
-        effortDays: number;
-        roi?: number;
-      }>;
-      count: number;
-    };
-    // Task 'a' has impact=80 effortDays=2 -> roi=40. (Seeded in beforeEach.)
-    expect(env.items[0]?.name).toBe("a");
-    expect(env.items[0]?.roi).toBe(40);
+    const env = data as { items: Array<Record<string, unknown>> };
+    const a = env.items[0];
+    expect(a).toMatchObject({ id: "a", impact: 80, effort_days: 2 });
+    expect(a).not.toHaveProperty("roi");
+    expect((a?.impact as number) / (a?.effort_days as number)).toBe(40);
   });
 
-  it("task next -n 0 --json (the merged-in `task ready` shape) decorates with roi too", async () => {
+  it("task next -n 0 --json (the merged-in `task ready` shape) keeps the ready order", async () => {
     const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "0", "--json"], dbPath);
-    const env = data as {
-      items: Array<{ name: string; roi?: number }>;
-      count: number;
-    };
-    expect(env.items[0]?.roi).toBe(40);
+    const env = data as { items: Array<{ id: string; impact: number; effort_days: number }> };
+    expect(env.items[0]).toMatchObject({ id: "a", impact: 80, effort_days: 2 });
   });
 
-  it("task list --json decorates with roi too", async () => {
+  it("task list --json items are the real SQL columns (impact, effort_days, workstream_id), no roi", async () => {
     const { data } = await runCliJson(["task", "list", "-w", "auth", "--json"], dbPath);
-    const env = data as {
-      items: Array<{
-        name: string;
-        impact: number;
-        effortDays: number;
-        roi?: number;
-      }>;
-      count: number;
+    const env = data as { items: Array<Record<string, unknown>> };
+    const probe = openDb({ path: dbPath });
+    const ws = probe.prepare("SELECT id FROM workstreams WHERE name = 'auth'").get() as {
+      id: number;
     };
+    probe.close();
     for (const t of env.items) {
-      // roi field present iff effortDays > 0; in this seed every task has
-      // a positive effort so roi must equal impact/effortDays.
-      expect(t.roi).toBe(t.impact / t.effortDays);
+      expect(typeof t.impact).toBe("number");
+      expect(typeof t.effort_days).toBe("number");
+      expect(t.workstream_id).toBe(ws.id);
+      expect(t).not.toHaveProperty("roi");
     }
   });
 
-  it("task show --json decorates the inner task with roi", async () => {
+  it("task show --json: the inner task has SQL keys and a revision, no roi", async () => {
     const { data } = await runCliJson(["task", "show", "a", "-w", "auth", "--json"], dbPath);
-    const parsed = data as { task: { roi?: number } };
-    expect(parsed.task.roi).toBe(40);
+    const parsed = data as { task: Record<string, unknown> };
+    expect(parsed.task).toMatchObject({ id: "a", impact: 80, effort_days: 2, workstream: "auth" });
+    expect(typeof parsed.task.revision).toBe("number");
+    expect(parsed.task).not.toHaveProperty("roi");
   });
 
-  it("task next -n 0 --json on an empty result emits [] (not '(no ready tasks)')", async () => {
+  it("task next -n 0 --json on an empty result is an empty item list (not '(no ready tasks)')", async () => {
     // Close 'a' so 'b' becomes ready; close 'b' so 'c' becomes ready;
     // close 'c' so nothing is ready.
     const db2 = openDb({ path: dbPath });
     for (const id of ["a", "b", "c"]) closeTask(db2, id, { workstream: "auth", evidence: "test" });
     db2.close();
     const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "0", "--json"], dbPath);
-    expect(data).toEqual({ items: [], count: 0 });
+    expect(data).toEqual({ items: [], count: 0, more: 0 });
   });
 
   it("task show --json emits a composite { task, blockers, dependents, notes } with status-bearing edges", async () => {
-    // task_show_blocked_by_renders_closed: blockers/dependents are
-    // arrays of {name, status} objects so scripts can split gating
-    // vs satisfied without a second query. (Prior shape was bare
-    // string[]; that lossy shape is what the human-renderer fix is
-    // also addressing in the table view.)
+    // task_show_blocked_by_renders_closed: blockers/dependents are arrays of
+    // {id, status, substate} items so scripts can split gating vs satisfied
+    // without a second query.
     const { data } = await runCliJson(["task", "show", "a", "-w", "auth", "--json"], dbPath);
     const parsed = data as {
-      task: { name: string };
-      blockers: Array<{ name: string; status: string }>;
-      dependents: Array<{ name: string; status: string }>;
+      task: { id: string };
+      blockers: Array<{ id: string; status: string }>;
+      dependents: Array<{ id: string; status: string }>;
       notes: Array<{ content: string }>;
     };
-    expect(parsed.task.name).toBe("a");
+    expect(parsed.task.id).toBe("a");
     expect(parsed.blockers).toEqual([]);
-    expect(parsed.dependents).toEqual([{ name: "b", status: "OPEN", substate: "todo" }]);
+    expect(parsed.dependents).toEqual([{ id: "b", status: "OPEN", substate: "todo" }]);
     expect(parsed.notes.map((n) => n.content)).toEqual(["FILES: src/auth.ts"]);
   });
 
-  it("task list/next/show --json expose `name` as the sole per-workstream id key (no `localId`)", async () => {
-    // The TaskRow.localId duplicate field was dropped: jq consumers
-    // read .name canonically (matching the rest of the codebase's
-    // 134+ read sites). Pin that no task-shaped JSON read leaks a
-    // `localId` key.
+  it("task list/next/show --json expose `id` (the local_id) and never name/localId", async () => {
+    // Output aliases only: `id` is the task's local_id (never the integer PK),
+    // `local_id` is the column name, and neither `name` nor `localId` leaks.
+    const keysOf = (t: Record<string, unknown>) => {
+      expect(typeof t.id).toBe("string");
+      expect(t.id).toBe(t.local_id);
+      for (const gone of ["name", "localId", "workstreamName", "ownerName", "effortDays"]) {
+        expect(t).not.toHaveProperty(gone);
+      }
+    };
     {
       const { data } = await runCliJson(["task", "list", "-w", "auth", "--json"], dbPath);
-      const env = data as {
-        items: Array<Record<string, unknown>>;
-        count: number;
-      };
-      const parsed = env.items;
-      expect(parsed.length).toBeGreaterThan(0);
-      for (const t of parsed) {
-        expect(typeof t.name).toBe("string");
-        expect(t).not.toHaveProperty("localId");
-      }
+      const items = (data as { items: Array<Record<string, unknown>> }).items;
+      expect(items.length).toBeGreaterThan(0);
+      for (const t of items) keysOf(t);
     }
     {
       const { data } = await runCliJson(["task", "next", "-w", "auth", "--json"], dbPath);
-      const env = data as {
-        items: Array<Record<string, unknown>>;
-        count: number;
-      };
-      const parsed = env.items;
-      expect(parsed.length).toBeGreaterThan(0);
-      for (const t of parsed) {
-        expect(t).not.toHaveProperty("localId");
-      }
-      expect(parsed[0]?.name).toBe("a");
+      const items = (data as { items: Array<Record<string, unknown>> }).items;
+      expect(items.length).toBeGreaterThan(0);
+      for (const t of items) keysOf(t);
+      expect(items[0]?.id).toBe("a");
     }
     {
       const { data } = await runCliJson(["task", "show", "a", "-w", "auth", "--json"], dbPath);
-      const parsed = data as { task: Record<string, unknown> };
-      expect(parsed.task).not.toHaveProperty("localId");
-      expect(parsed.task.name).toBe("a");
+      keysOf((data as { task: Record<string, unknown> }).task);
     }
   });
 
-  it("task tree --json emits a recursive { direction, root: { task, children } } shape", async () => {
+  it("task tree --json is a flat preorder of { id, depth, parent } entries (c -> b -> a)", async () => {
     const { data } = await runCliJson(["task", "tree", "c", "-w", "auth", "--json"], dbPath);
     const parsed = data as {
       direction: string;
-      root: {
-        task: { name: string };
-        children: Array<{
-          task: { name: string };
-          children: Array<{ task: { name: string } }>;
-        }>;
-      };
+      root: string;
+      items: Array<{ id: string; depth: number; parent: string | null }>;
+      more: number;
     };
     expect(parsed.direction).toBe("blockers");
-    expect(parsed.root.task.name).toBe("c");
-    // c → b → a
-    expect(parsed.root.children).toHaveLength(1);
-    expect(parsed.root.children[0]?.task.name).toBe("b");
-    expect(parsed.root.children[0]?.children[0]?.task.name).toBe("a");
+    expect(parsed.root).toBe("c");
+    expect(parsed.items.map((e) => [e.id, e.depth, e.parent])).toEqual([
+      ["c", 0, null],
+      ["b", 1, "c"],
+      ["a", 2, "b"],
+    ]);
+    expect(parsed.more).toBe(0);
   });
 
   it("task tree --json marks diamond recurrences without expanding", async () => {
     // Build a diamond: a blocks both d and e, both block f.
-    const db2 = openDb({ path: dbPath });
-    db2.close();
     const db3 = openDb({ path: dbPath });
-    addTask(db3, {
-      localId: "d",
-      workstream: "auth",
-      title: "D",
-      impact: 50,
-      effortDays: 1,
-      blockedBy: ["a"],
-    });
-    addTask(db3, {
-      localId: "e",
-      workstream: "auth",
-      title: "E",
-      impact: 50,
-      effortDays: 1,
-      blockedBy: ["a"],
-    });
-    addTask(db3, {
-      localId: "f",
-      workstream: "auth",
-      title: "F",
-      impact: 50,
-      effortDays: 1,
-      blockedBy: ["d", "e"],
-    });
+    for (const [id, blockedBy] of [
+      ["d", ["a"]],
+      ["e", ["a"]],
+      ["f", ["d", "e"]],
+    ] as const) {
+      addTask(db3, {
+        localId: id,
+        workstream: "auth",
+        title: id.toUpperCase(),
+        impact: 50,
+        effortDays: 1,
+        blockedBy: [...blockedBy],
+      });
+    }
     db3.close();
     const { data } = await runCliJson(["task", "tree", "f", "-w", "auth", "--json"], dbPath);
     const parsed = data as {
-      root: {
-        children: Array<{
-          task: { name: string };
-          children: Array<{ task: { name: string }; recurrence?: boolean }>;
-        }>;
-      };
+      items: Array<{ id: string; depth: number; parent: string | null; again?: boolean }>;
     };
-    // f → d, e. d expands to a; e's child a should be marked recurrence.
-    const dChild = parsed.root.children.find((c) => c.task.name === "d");
-    const eChild = parsed.root.children.find((c) => c.task.name === "e");
-    expect(dChild?.children[0]?.task.name).toBe("a");
-    expect(dChild?.children[0]?.recurrence).toBeUndefined();
-    expect(eChild?.children[0]?.task.name).toBe("a");
-    expect(eChild?.children[0]?.recurrence).toBe(true);
+    // f -> d, e. d expands to a; e's child a is a recurrence.
+    const at = (parent: string, id: string) =>
+      parsed.items.find((e) => e.parent === parent && e.id === id);
+    expect(at("d", "a")?.again).toBeUndefined();
+    expect(at("e", "a")?.again).toBe(true);
+    expect(parsed.items.filter((e) => e.id === "a")).toHaveLength(2);
   });
 
   it("state --json emits seeded content for each top-level collection", async () => {
@@ -493,7 +451,7 @@ describe("--json output on read verbs", () => {
 
 // ─── Table-rendering ergonomics (non-JSON output path) ──────────
 
-describe("table rendering", () => {
+describe("record rendering", () => {
   let tempDir: string;
   let dbPath: string;
   let db: Db;
@@ -513,57 +471,27 @@ describe("table rendering", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  function withTerminalWidth<T>(cols: number, fn: () => Promise<T> | T): Promise<T> | T {
-    const original = process.stdout.columns;
-    Object.defineProperty(process.stdout, "columns", { value: cols, configurable: true });
-    try {
-      return fn();
-    } finally {
-      Object.defineProperty(process.stdout, "columns", { value: original, configurable: true });
-    }
-  }
-
-  it("truncates the title column to fit the terminal but never the id column", async () => {
-    // Make 'a' have a very long title so we can observe truncation.
-    const db2 = openDb({ path: dbPath });
-    db2
-      .prepare("UPDATE tasks SET title = ? WHERE local_id = 'a'")
-      .run(
-        "Some absurdly long title that will definitely exceed the title-column budget for an 80-column terminal and would otherwise blow the whole table out to two-hundred-plus characters wide",
-      );
-    db2.close();
-
-    const { stdout } = await withTerminalWidth(80, () =>
-      runCli(["task", "list", "-w", "auth"], dbPath),
+  it("a long title is clipped inside the 400-character record, the id stays whole, the cut names its way back", async () => {
+    db.prepare("UPDATE tasks SET title = ? WHERE local_id = 'a'").run(
+      `Some long title ${"x".repeat(900)}`,
     );
-
-    // Per-line guard: every rendered line ≤ a generous bound around the
-    // 80-col target. cli-table3 plus borders pushes a bit, hence the
-    // looseness; the point is the previous behaviour produced 200+
-    // columns which this assertion catches.
-    const lines = stdout.split("\n");
-    for (const line of lines) {
-      // strip ANSI for length measurement
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escapes
-      const visible = line.replace(/\u001b\[[0-9;]*m/g, "");
-      expect(visible.length).toBeLessThanOrEqual(120);
+    const { stdout } = await runCli(["task", "list", "-w", "auth"], dbPath);
+    for (const line of stdout.trimEnd().split("\n")) {
+      expect([...line].length).toBeLessThanOrEqual(400);
     }
-    // The full id 'a' must appear verbatim in the output (never
-    // truncated), because users copy IDs to issue follow-up commands.
-    // Match it framed by the table cell (whitespace either side) so we
-    // don't accidentally hit a substring of 'auth' or similar.
-    expect(stdout).toMatch(/[\s│] a [\s│]/);
-    // The title must show evidence of truncation (ellipsis).
-    expect(stdout).toMatch(/Some absurdly long title.*…/);
+    const a = stdout.split("\n").find((l) => l.startsWith("task\ta\t")) ?? "";
+    // 900 characters does not fit a `show` either, so the way back is the SQL read.
+    expect(a).toMatch(/Some long title x+…\tcut=\d+\tnext=mu sql "SELECT title FROM tasks /);
   });
 
-  it("renders all task ids in full even when titles are tiny (id column is the contract)", async () => {
-    const { stdout } = await withTerminalWidth(80, () =>
-      runCli(["task", "list", "-w", "auth"], dbPath),
-    );
-    expect(stdout).toContain("a");
-    expect(stdout).toContain("b");
-    expect(stdout).toContain("c");
+  it("renders all task ids in full, one record per task", async () => {
+    const { stdout } = await runCli(["task", "list", "-w", "auth"], dbPath);
+    expect(
+      stdout
+        .trimEnd()
+        .split("\n")
+        .map((l) => l.split("\t")[1]),
+    ).toEqual(["a", "b", "c"]);
   });
 });
 
@@ -603,8 +531,8 @@ describe("task list --status", () => {
       ["task", "list", "-w", "auth", "--status", "open", "--json"],
       dbPath,
     );
-    const env = data as { items: Array<{ name: string }>; count: number };
-    expect(env.items.map((t) => t.name)).toEqual(["c"]);
+    const env = data as { items: Array<{ id: string }>; count: number };
+    expect(env.items.map((t) => t.id)).toEqual(["c"]);
   });
 
   it("rejects an invalid --status value with exit 2", async () => {
@@ -651,8 +579,8 @@ describe("task list/next/ready --sort", () => {
       ["task", "list", "-w", "auth", "--sort", "recency", "--json"],
       dbPath,
     );
-    const env = data as { items: Array<{ name: string }>; count: number };
-    expect(env.items.map((t) => t.name)).toEqual(["c", "b", "a"]);
+    const env = data as { items: Array<{ id: string }>; count: number };
+    expect(env.items.map((t) => t.id)).toEqual(["c", "b", "a"]);
   });
 
   it("--sort age orders by created_at ASC (oldest first)", async () => {
@@ -660,15 +588,15 @@ describe("task list/next/ready --sort", () => {
       ["task", "list", "-w", "auth", "--sort", "age", "--json"],
       dbPath,
     );
-    const env = data as { items: Array<{ name: string }>; count: number };
-    expect(env.items.map((t) => t.name)).toEqual(["a", "b", "c"]);
+    const env = data as { items: Array<{ id: string }>; count: number };
+    expect(env.items.map((t) => t.id)).toEqual(["a", "b", "c"]);
   });
 
   it("--sort roi (default for `next`) — highest ROI first", async () => {
     const { data } = await runCliJson(["task", "next", "-w", "auth", "-n", "5", "--json"], dbPath);
-    const env = data as { items: Array<{ name: string }>; count: number };
+    const env = data as { items: Array<{ id: string }>; count: number };
     // b (90) > c (20) > a (5).
-    expect(env.items.map((t) => t.name)).toEqual(["b", "c", "a"]);
+    expect(env.items.map((t) => t.id)).toEqual(["b", "c", "a"]);
   });
 
   it("`mu task next -n 0 --sort recency` re-sorts (overrides ROI default)", async () => {
@@ -676,32 +604,33 @@ describe("task list/next/ready --sort", () => {
       ["task", "next", "-w", "auth", "-n", "0", "--sort", "recency", "--json"],
       dbPath,
     );
-    const env = data as { items: Array<{ name: string }>; count: number };
-    expect(env.items.map((t) => t.name)).toEqual(["c", "b", "a"]);
+    const env = data as { items: Array<{ id: string }>; count: number };
+    expect(env.items.map((t) => t.id)).toEqual(["c", "b", "a"]);
   });
 
   it("renders an extra `updated` column under --sort recency (table mode)", async () => {
     const { stdout } = await runCli(["task", "list", "-w", "auth", "--sort", "recency"], dbPath);
-    // Header gains the column; the timestamp basis tag matches the sort.
-    expect(stdout).toContain("updated");
-    expect(stdout).not.toMatch(/\bcreated\b/);
+    // Each record gains the timestamp the sort orders by; the other one stays out.
+    expect(stdout).toMatch(/ updated=\d{4}-/);
+    expect(stdout).not.toMatch(/\bcreated=/);
   });
 
   it("renders an extra `created` column under --sort age (table mode)", async () => {
     const { stdout } = await runCli(["task", "list", "-w", "auth", "--sort", "age"], dbPath);
-    expect(stdout).toContain("created");
+    expect(stdout).toMatch(/ created=\d{4}-/);
+    expect(stdout).not.toMatch(/\bupdated=/);
   });
 
   it("does NOT render the time column under default sort (id) or roi", async () => {
     const { stdout: stdoutDefault } = await runCli(["task", "list", "-w", "auth"], dbPath);
-    expect(stdoutDefault).not.toContain("updated");
-    expect(stdoutDefault).not.toContain("created");
+    expect(stdoutDefault).not.toContain("updated=");
+    expect(stdoutDefault).not.toContain("created=");
     const { stdout: stdoutRoi } = await runCli(
       ["task", "next", "-w", "auth", "-n", "0", "--sort", "roi"],
       dbPath,
     );
-    expect(stdoutRoi).not.toContain("updated");
-    expect(stdoutRoi).not.toContain("created");
+    expect(stdoutRoi).not.toContain("updated=");
+    expect(stdoutRoi).not.toContain("created=");
   });
 
   it("rejects an unknown --sort key with exit 2 and a helpful message", async () => {
@@ -718,11 +647,11 @@ describe("task list/next/ready --sort", () => {
       items: Array<Record<string, unknown>>;
       count: number;
     };
-    // Same fields as without --sort: rows already include createdAt /
-    // updatedAt; nothing computed gets added (consumers can sort).
+    // Same fields as without --sort: rows already include created_at /
+    // updated_at; nothing computed gets added (consumers can sort).
     for (const row of env.items) {
-      expect(row).toHaveProperty("createdAt");
-      expect(row).toHaveProperty("updatedAt");
+      expect(row).toHaveProperty("created_at");
+      expect(row).toHaveProperty("updated_at");
       expect(row).not.toHaveProperty("relTime");
       expect(row).not.toHaveProperty("ago");
     }

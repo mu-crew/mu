@@ -47,7 +47,7 @@ describe("mu task substates CLI", () => {
 
   const cli = (...args: string[]) => runCli(["task", ...args, "-w", "test"], dbPath);
   const names = (cap: Capture) =>
-    (asJson(cap).data as { items: { name: string }[] }).items.map((t) => t.name);
+    (asJson(cap).data as { items: { id: string }[] }).items.map((t) => t.id);
 
   it("close --as wontfix without --why exits 4 naming --why", async () => {
     const r = await cli("close", "a", "--as", "wontfix");
@@ -134,7 +134,7 @@ describe("mu task substates CLI", () => {
     await cli("park", "c", "--why", "later");
     const r = await cli("show", "c");
     expect(r.exitCode).toBeNull();
-    expect(plain(r.stdout)).toMatch(/status +: OPEN\/parked/);
+    expect(plain(r.stdout)).toMatch(/^task\tc\tOPEN\/parked\t/);
   });
 
   it("empty next names the parked count and how to list them", async () => {
@@ -181,7 +181,7 @@ describe("mu task substates CLI", () => {
     const r = await cli("list");
     const out = plain(r.stdout);
     expect(out).toContain("CLOSED/wontfix");
-    expect(out).toMatch(/│ b +│ OPEN +│/);
+    expect(out).toMatch(/^task\tb\tOPEN\t/m);
     expect(out).not.toContain("OPEN/todo");
   });
 

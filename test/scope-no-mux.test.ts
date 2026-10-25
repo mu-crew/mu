@@ -93,7 +93,7 @@ afterEach(() => {
 });
 
 const names = (data: unknown): string[] =>
-  (data as { items: { name: string }[] }).items.map((t) => t.name).sort();
+  (data as { items: { id: string }[] }).items.map((t) => t.id).sort();
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching SGR escapes is the point
 const plain = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, "");
@@ -194,7 +194,7 @@ for (const where of ["inside", "outside"] as const) {
     it("a qualified ref is explicit scope and needs no mux", async () => {
       const r = await runCliJson(["task", "show", "own/only-own", "--json"], dbPath);
       expect(r.exitCode).toBeNull();
-      expect(r.data.task.workstreamName).toBe("own");
+      expect(r.data.task.workstream).toBe("own");
     });
 
     it("mutating verbs refuse too: nothing is closed in the decoy workstream", async () => {

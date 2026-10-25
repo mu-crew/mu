@@ -742,7 +742,7 @@ describe("mu pi extension", () => {
             code: 0,
             stdout: JSON.stringify({
               ok: true,
-              data: { items: [{ name: "t1", status: "IN_PROGRESS" }] },
+              data: { items: [{ id: "t1", status: "IN_PROGRESS" }] },
               next: null,
             }),
             stderr: "",
@@ -752,7 +752,7 @@ describe("mu pi extension", () => {
             code: 0,
             stdout: JSON.stringify({
               ok: true,
-              data: { items: [{ name: "t1", workstreamName: "ws", status: "IN_PROGRESS" }] },
+              data: { items: [{ id: "t1", status: "IN_PROGRESS" }] },
               next: null,
             }),
             stderr: "",

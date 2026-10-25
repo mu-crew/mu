@@ -44,11 +44,7 @@ const listAnswer = (table: Table, args: readonly string[]): MuResult => {
     stdout: JSON.stringify({
       ok: true,
       data: {
-        items: (table[ws] ?? []).map((name) => ({
-          name,
-          workstreamName: ws,
-          status: "IN_PROGRESS",
-        })),
+        items: (table[ws] ?? []).map((id) => ({ id, status: "IN_PROGRESS" })),
       },
       next: null,
     }),
@@ -318,6 +314,47 @@ describe("registerNudge", () => {
     const f = fakePi();
     registerNudge(f.pi, vi.fn(), SKILL);
     expect(f.handlers.size).toBe(0);
+  });
+});
+
+describe("a capped list read (more=N)", () => {
+  const page = (ids: string[], more: number): MuResult => ({
+    code: 0,
+    stdout: JSON.stringify({
+      ok: true,
+      data: {
+        items: ids.map((id) => ({ id, status: "IN_PROGRESS" })),
+        count: ids.length,
+        more,
+      },
+      next: null,
+    }),
+    stderr: "",
+  });
+
+  it("follows --from so refs past the first page are named too", async () => {
+    const f = fakePi();
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] !== "task") return { code: 0, stdout: "", stderr: "" };
+      return args.includes("--from") ? page(["c", "d"], 0) : page(["a", "b"], 2);
+    });
+    registerNudge(f.pi, run, SKILL);
+    await f.emit("tool_call", bash("mu agent send w1 -w auth 'x'"));
+    const r = (await f.emit("agent_before_settle", { outcome: "completed" })) as {
+      entries: { content: string }[];
+    };
+    expect(r.entries[0]?.content).toContain("4 task(s) IN_PROGRESS");
+    expect(r.entries[0]?.content).toContain("auth/a auth/b auth/c auth/d");
+  });
+
+  it("a page that stalls is unknown (no nudge), never a short list", async () => {
+    const f = fakePi();
+    const run = vi.fn(async (args: readonly string[]) =>
+      args[0] === "task" ? page([], 3) : { code: 0, stdout: "", stderr: "" },
+    );
+    registerNudge(f.pi, run, SKILL);
+    await f.emit("tool_call", bash("mu agent send w1 -w auth 'x'"));
+    expect(await f.emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
   });
 });
 

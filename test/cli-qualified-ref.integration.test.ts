@@ -129,9 +129,9 @@ describe("CLI: qualified entity refs", () => {
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
     const parsed = data as {
-      task: { workstreamName: string; title: string };
+      task: { workstream: string; title: string };
     };
-    expect(parsed.task.workstreamName).toBe("wsa");
+    expect(parsed.task.workstream).toBe("wsa");
     expect(parsed.task.title).toBe("wsa design");
   });
 
@@ -143,9 +143,9 @@ describe("CLI: qualified entity refs", () => {
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
     const parsed = data as {
-      task: { workstreamName: string; title: string };
+      task: { workstream: string; title: string };
     };
-    expect(parsed.task.workstreamName).toBe("wsb");
+    expect(parsed.task.workstream).toBe("wsb");
     expect(parsed.task.title).toBe("wsb design");
   });
 
@@ -153,8 +153,8 @@ describe("CLI: qualified entity refs", () => {
     process.env.MU_SESSION = "wsa";
     try {
       const { data } = await runCliJson(["task", "show", "wsb/design", "--json"], dbPath);
-      const parsed = data as { task: { workstreamName: string } };
-      expect(parsed.task.workstreamName).toBe("wsb");
+      const parsed = data as { task: { workstream: string } };
+      expect(parsed.task.workstream).toBe("wsb");
     } finally {
       const k = "MU_SESSION";
       delete process.env[k];
@@ -167,8 +167,8 @@ describe("CLI: qualified entity refs", () => {
       dbPath,
     );
     expect(error).toBeUndefined();
-    const parsed = data as { task: { workstreamName: string } };
-    expect(parsed.task.workstreamName).toBe("wsa");
+    const parsed = data as { task: { workstream: string } };
+    expect(parsed.task.workstream).toBe("wsa");
   });
 
   it("qualified ref + conflicting -w → exit 2 (usage)", async () => {
@@ -248,8 +248,9 @@ describe("CLI: qualified entity refs", () => {
   it("`mu task tree` accepts qualified refs", async () => {
     const { data, error } = await runCliJson(["task", "tree", "wsb/design", "--json"], dbPath);
     expect(error).toBeUndefined();
-    const parsed = data as { root: { task: { workstreamName: string } } };
-    expect(parsed.root.task.workstreamName).toBe("wsb");
+    const parsed = data as { workstream: string; root: string };
+    expect(parsed.workstream).toBe("wsb");
+    expect(parsed.root).toBe("design");
   });
 
   it("`mu task wait` accepts qualified refs in positional list", async () => {
