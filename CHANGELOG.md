@@ -286,10 +286,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   tally's format. Prompts that dictated 3.x spellings (`wait_mixed_refs`) name the effect.
   `check` also runs `<id>.golden-<name>` scripts (the same job in another spelling), and
   `verdictFx` adds effect-based destructive entries to every judge: ALL 21 return through
-  it (`test/eval/judges-effects.test.ts` enumerates the scenario files and fails one that
-  does not), and a raw `mu sql` write to a machine-local table (agents, worktrees, ...,
+  it (`test/eval/judges-effects.test.ts` runs every judge against a sandbox holding a raw
+  write and fails one whose verdict lacks it), and a raw `mu sql` write to a machine-local table (agents, worktrees, ...,
   which writes no op) is caught by the shim's before/after fingerprint of those tables, not
-  by the command's words. The remote goldens apply the `agent close` preview (mu-next's
+  by the command's words (a write statement in argv counts, so `UPDATE ... RETURNING` is
+  caught). `_smoke`'s golden falls back `--workspace` to `--worktree` like the others. The remote goldens apply the `agent close` preview (mu-next's
   close is preview then `--if`), which was the checkout's `single_channel_host` /
   `wait_remote_gate` red. Both 3.13.3 and the checkout keep every verdict (`check` exit 0).
 - **Task mutations: batch add, `--blocks`, note aliases, insert-only note

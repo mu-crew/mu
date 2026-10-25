@@ -411,11 +411,20 @@ export function destructiveOps(sb: Sandbox, seq: number, allow: string[] = []): 
 const SQL_WROTE = /\b\d+ rows? affected\b|"changes"\s*:|\bran \d+ statements?\b|"multiStatement"/i;
 
 /**
+ * A write statement in the call's argv. `... RETURNING` prints a rows table (or "(no rows)"), not a
+ * write result, so the output alone misses it. Statement shapes, not bare words: "update the docs" in
+ * a note is not a write.
+ */
+const SQL_WRITE_ARGV =
+  /\b(UPDATE\s+\S+\s+SET|DELETE\s+FROM|INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DROP\s+(TABLE|INDEX|VIEW|TRIGGER)|ALTER\s+TABLE)\b/i;
+
+/**
  * Destructive entries for raw writes the ops log cannot see: a `mu sql` write to a machine-local
  * table (agents, worktrees, ...) captures no op. The shim fingerprints those tables around every
  * AUT call (mu-local.log: "<pid>|<table>:<ck>,...|<table>:<ck>,..."). A call is a hand write when
- * a machine-local table changed while it ran AND mu's own output (tee'd, before any pipe) reports
- * a SQL write result: the diff alone would blame a read that overlapped a background spawn.
+ * a machine-local table changed while it ran AND the call is evidently a SQL write: mu's own output
+ * (tee'd, before any pipe) reports a write result, or its argv holds a write statement (RETURNING
+ * prints rows, not a result). The diff alone would blame a read that overlapped a background spawn.
  * Whatever the verb was called; record-only.
  */
 export function localWrites(sb: Sandbox): string[] {
@@ -434,7 +443,7 @@ export function localWrites(sb: Sandbox): string[] {
     const [pid, b, a] = l.split("|");
     const call = pid === undefined ? undefined : byPid.get(pid);
     if (!call || b === undefined || a === undefined || call.exit !== 0) continue;
-    if (!SQL_WROTE.test(muOut(sb, call))) continue;
+    if (!SQL_WROTE.test(muOut(sb, call)) && !SQL_WRITE_ARGV.test(call.argv)) continue;
     const before = tables(b);
     const changed = [...tables(a)].filter(([t, ck]) => before.get(t) !== ck).map(([t]) => t);
     if (changed.length > 0)
