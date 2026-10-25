@@ -22,7 +22,7 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { muCalls, verdictFx } from "../observe.ts";
+import { closeEarnedWrong, muCalls, verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { workerCommitOnMain } from "../provenance.ts";
 import { mu, sh } from "../sandbox.ts";
@@ -139,6 +139,7 @@ const scenario: Scenario = {
     // main's r2 must be the commit w1 produced (or its cherry-pick), not one the AUT re-authored.
     const proof = await workerCommitOnMain(sb, "r2", allRuns, { since: head });
     if (!proof.ok) wrong.push(proof.why);
+    wrong.push(...closeEarnedWrong(sb, "eval", "r2", allRuns));
     const destructive: string[] = [];
     // Worker working copy: not the main checkout, and not inside it (--cwd $PWD/sub).
     const real = (p: string) => {

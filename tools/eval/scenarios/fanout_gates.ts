@@ -28,7 +28,7 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { verdictFx } from "../observe.ts";
+import { closeEarnedWrong, verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, orderWrong, workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
@@ -203,6 +203,7 @@ const scenario: Scenario = {
         if (mergedAt !== null && mergedAt < reviewedAt)
           wrong.push(`f${n} merged into main ${reviewedAt - mergedAt} ms before r${n} was closed`);
       }
+      for (const p of ["f", "r"]) wrong.push(...closeEarnedWrong(sb, "eval", `${p}${n}`, runs));
       const fa = closer(`f${n}`);
       const ra = closer(`r${n}`);
       if (!fa) wrong.push(`f${n} has no worker execution record (not done by a worker)`);
