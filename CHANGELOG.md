@@ -491,20 +491,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   most 400 characters; the parent-row touch an add-note writes stays hidden, as
   before) and one line per workstream. A result is at most 4 KB on its final bytes;
   `more=N next=<same read, continued>` and `cut=N next=<lossless read>` name the
-  way back; every hint runs as printed (`mu log -w <ws> <filters> --since <seq> -n <n>`; a
-  filter too long to repeat falls back to `mu db query` on the exact seqs left out;
-  `mu db query 'SELECT seq, key, actor, intent, group_id, op, entity, payload, created_at
-  FROM ops WHERE seq IN (...)' -w <ws> --all` returns every clipped column;
-  `mu workstream list [--torn-down] --all`). Every JSON item, fixed fields included, is
+  way back **by seq, never by filter**: `mu log --seq 5..9,12` (exactly those ops, each
+  whole; no `-w`, no filter, nothing inherited from `MU_WORKSTREAM`) when the omitted ops
+  are a few runs with no other visible op between, else `mu log --after <seq>` (the whole
+  log, paged, from there). No filter, group or workstream name is ever echoed into a hint,
+  so a hint is digits only and always fits, and a malicious historical group id cannot
+  reach a shell. `mu workstream list [--torn-down] --all` reads a workstream page whole.
+  Every JSON item, fixed fields included, is
   bounded to 2 KB, a page keeps no record when one would bust 4 KB, and the torn-down
   list's `Next:` block counts in the 4 KB. `--json` items use the
   `ops` column names (`key`, `actor`, `entity`, `group_id`, `created_at`, plus
   `rendered`), not `workstreamName`/`source`/`kind`/`group`/`createdAt`; clipped
-  fields count into the item's `cut`. A log write answers with one such item.
+  fields count into the item's `cut`. A log write answers with one such item; its text
+  receipt is the same escaped, clipped record the log shows (plus `cut=N next=mu log --seq <n>`).
   `workstream list` gains `--all` (every row whole, no field clipped). The old tables are gone.
 - **`mu log --tail` is always NDJSON** (no header line, `--json` not needed): one
   item per line, each bounded like a `--json` item with a `retrieve` command when
-  it clipped something. Rows are written before the cursor moves; SIGINT exits 130
+  it clipped something (`mu log --seq <n> --json`). Rows are written before the cursor moves (a failed write ends the tail with the seq it reached); SIGINT exits 130
   and SIGTERM 143 with every polled row already on stdout.
 - **An op of an intent this build does not know prints as what the row says**:
   `op put|del <key> intent=<i> kind=<entity> patch=<fields>` (a prose payload

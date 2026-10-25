@@ -17,24 +17,28 @@ import {
   resolveWorkstream,
   UsageError,
 } from "../cli.js";
-import { type Db, tryResolveWorkstreamId } from "../db.js";
+import type { Db } from "../db.js";
 import {
+  anyVisibleBetween,
   appendLog,
   GroupNotFoundError,
   groupIdFromPrefix,
   type ListLogsOptions,
+  type LogRow,
   latestSeq,
   listLogs,
 } from "../logs.js";
 import { pc } from "../output.js";
-import { shellWord } from "../shell-quote.js";
-import { logOut, logPage } from "./log-records.js";
-import { boundedCommand } from "./page-records.js";
+import { logOut, logPage, logReceipt } from "./log-records.js";
 
 export interface LogReadOpts {
   workstream?: string;
   allWorkstreams?: boolean;
   since?: number;
+  /** Cursor read of the whole log, strictly after this seq (no scope, no filter). */
+  after?: number;
+  /** Exact seqs, `A..B,C`: each record whole (no scope, no filter). */
+  seq?: string;
   lines?: number;
   source?: string;
   /** Operator channel tag (`ops.entity`). See the log-ledger pattern. */
@@ -96,17 +100,98 @@ async function cmdLogWrite(db: Db, text: string, opts: LogWriteOpts): Promise<vo
     payload: text,
   });
   if (opts.json) {
-    emitJson(logOut(row, recoveryScope(db, ctx.workstream)));
+    emitJson(logOut(row));
     return;
   }
-  console.log(
-    pc.dim(
-      `seq ${row.seq}  workstream=${row.workstreamName ?? "—"}  source=${row.source}  kind=${row.kind}`,
-    ),
-  );
+  // The receipt is the record the log will show for this op: escaped, clipped, counted.
+  for (const line of logReceipt(row)) console.log(line);
+}
+
+/** `1..5,9` → [[1,5],[9,9]]; anything else is a usage error. */
+export function parseSeqSpec(spec: string): [number, number][] {
+  const runs: [number, number][] = [];
+  for (const part of spec.split(",")) {
+    const m = /^(\d{1,15})(?:\.\.(\d{1,15}))?$/.exec(part);
+    const a = m?.[1] === undefined ? Number.NaN : Number(m[1]);
+    const b = m?.[2] === undefined ? a : Number(m[2]);
+    if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || a > b) {
+      throw new UsageError(`--seq expects seqs like 7 or 5..9,12, got ${JSON.stringify(spec)}`, {
+        showHelp: false,
+      });
+    }
+    runs.push([a, b]);
+  }
+  return runs;
+}
+
+/** `--seq` and `--after` read the log by position: no scope, no filter, nothing inherited. */
+function refuseScopeAndFilters(opts: LogReadOpts, flag: string, allowLines: boolean): void {
+  const other = [
+    opts.workstream !== undefined && "-w",
+    opts.allWorkstreams === true && "--all",
+    opts.kind !== undefined && "--kind",
+    opts.source !== undefined && "--source",
+    opts.intent !== undefined && "--intent",
+    opts.group !== undefined && "--group",
+    opts.since !== undefined && "--since",
+    opts.tail === true && "--tail",
+    opts.seq !== undefined && flag !== "--seq" && "--seq",
+    opts.after !== undefined && flag !== "--after" && "--after",
+    !allowLines && opts.lines !== undefined && "-n",
+  ].find((x) => x !== false);
+  if (other !== undefined) {
+    throw new UsageError(`${flag} reads by seq: it cannot be combined with ${other}`, {
+      showHelp: false,
+    });
+  }
+}
+
+const gapEmptyIn =
+  (db: Db) =>
+  (a: number, b: number): boolean =>
+    !anyVisibleBetween(db, a + 1, b - 1);
+
+function printPage(page: ReturnType<typeof logPage>): void {
+  if (page.data !== undefined) {
+    emitJson(page.data);
+    return;
+  }
+  for (const line of page.lines) console.log(line);
+}
+
+/** `mu log --seq A..B,C`: exactly those ops (no scope, no filter), each whole. */
+function cmdLogSeq(db: Db, opts: LogReadOpts): void {
+  refuseScopeAndFilters(opts, "--seq", false);
+  const rows = new Map<number, LogRow>();
+  for (const [a, b] of parseSeqSpec(opts.seq ?? "")) {
+    for (const row of listLogs(db, { since: a - 1, upTo: b })) rows.set(row.seq, row);
+  }
+  const sorted = [...rows.values()].sort((x, y) => x.seq - y.seq);
+  const json = opts.json === true;
+  if (sorted.length === 0 && !json) {
+    console.log(pc.dim("(no log entries)"));
+    return;
+  }
+  printPage(logPage(sorted, { json, newest: false, whole: true, gapEmpty: gapEmptyIn(db) }));
+}
+
+/** `mu log --after S`: the whole log after S (no scope, no filter), oldest first, paged. */
+function cmdLogAfter(db: Db, opts: LogReadOpts): void {
+  refuseScopeAndFilters(opts, "--after", true);
+  const listOpts: ListLogsOptions = { since: opts.after ?? 0 };
+  if (opts.lines !== undefined) listOpts.limit = opts.lines;
+  const rows = listLogs(db, listOpts);
+  const json = opts.json === true;
+  if (rows.length === 0 && !json) {
+    console.log(pc.dim("(no log entries)"));
+    return;
+  }
+  printPage(logPage(rows, { json, newest: false, cursor: true, gapEmpty: gapEmptyIn(db) }));
 }
 
 async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
+  if (opts.seq !== undefined) return cmdLogSeq(db, opts);
+  if (opts.after !== undefined) return cmdLogAfter(db, opts);
   const workstream = await logReadWorkstream(opts);
   const listOpts: ListLogsOptions = {};
   if (workstream !== undefined) listOpts.workstream = workstream;
@@ -141,47 +226,9 @@ async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
     console.log(pc.dim("(no log entries)"));
     return;
   }
-  const page = logPage(rows, {
-    json,
-    newest: listOpts.since === undefined,
-    resume: (seq, n) => readCommand(opts, listOpts, workstream, seq, n),
-    workstream: recoveryScope(db, workstream),
-  });
-  if (page.data !== undefined) {
-    emitJson(page.data);
-    return;
-  }
-  for (const line of page.lines) console.log(line);
-}
-
-/** The same read, continued strictly after `since`, `n` records: what a cut's `next=` runs. */
-function readCommand(
-  opts: LogReadOpts,
-  listOpts: ListLogsOptions,
-  workstream: string | undefined,
-  since: number,
-  n: number,
-): string | null {
-  const parts = [
-    "mu log",
-    ...(workstream === undefined ? ["--all"] : ["-w", shellWord(workstream)]),
-  ];
-  if (opts.kind !== undefined) parts.push("--kind", shellWord(opts.kind));
-  if (opts.source !== undefined) parts.push("--source", shellWord(opts.source));
-  if (opts.intent !== undefined) parts.push("--intent", shellWord(opts.intent));
-  if (listOpts.group !== undefined) parts.push("--group", listOpts.group);
-  parts.push("--since", String(since), "-n", String(n));
-  if (opts.json) parts.push("--json");
-  // A filter too long to repeat has no one-line form: the caller says the exact ops instead.
-  const cmd = parts.join(" ");
-  return boundedCommand(cmd, () => "") === cmd ? cmd : null;
-}
-
-/** The `-w` a recovery query carries: the read's workstream when `mu db query` can scope to it (live), else none. */
-function recoveryScope(db: Db, workstream: string | undefined): string | undefined {
-  return workstream !== undefined && tryResolveWorkstreamId(db, workstream) !== null
-    ? workstream
-    : undefined;
+  printPage(
+    logPage(rows, { json, newest: listOpts.since === undefined, gapEmpty: gapEmptyIn(db) }),
+  );
 }
 
 /**
@@ -204,6 +251,21 @@ async function logReadWorkstream(opts: LogReadOpts): Promise<string | undefined>
     throw await missingWorkstreamError({ orAll: true });
   }
   return resolveWorkstream(opts.workstream);
+}
+
+/** A tail whose output failed. `cursor` is the seq of the last row that went out: `--since` it to lose none. */
+export class TailStopped extends Error {
+  constructor(
+    readonly cursor: number,
+    cause: unknown,
+  ) {
+    super(
+      `log tail stopped after seq ${cursor}: output failed; resume with --tail --since ${cursor}`,
+      {
+        cause,
+      },
+    );
+  }
 }
 
 /** How a tail waits between polls; a test replaces it to drive the loop without sleeping. */
@@ -240,16 +302,15 @@ export async function cmdLogTail(
     sleep?: TailSleep;
     /** Where a row goes (default: one NDJSON line on stdout); a test makes it fail or lag. */
     emit?: (row: object) => void;
-    /** Mirrors the cursor: `cursor` is the seq of the last row `emit` returned from. */
-    state?: { cursor: number };
+    /** How a poll reads (default `listLogs`); a test records the `since` cursor each poll is given. */
+    poll?: (opts: ListLogsOptions) => LogRow[];
   } = {},
 ): Promise<void> {
   // If --since wasn't given, start at "now" so the subscriber only sees
   // NEW entries. Pass `--since 0` to replay from the beginning.
   let cursor = cliOpts.since ?? latestSeq(db);
   const emit = hooks.emit ?? emitJsonRow;
-  const state = hooks.state ?? { cursor };
-  state.cursor = cursor;
+  const poll = hooks.poll ?? ((o: ListLogsOptions) => listLogs(db, o));
   const control = new AbortController();
   const signal = hooks.signal ?? control.signal;
   const sleep = hooks.sleep ?? realSleep;
@@ -266,16 +327,15 @@ export async function cmdLogTail(
     process.once("SIGTERM", onTerm);
   }
   const intervalMs = defaultLogTailIntervalMs();
-  const scope =
-    baseOpts.workstream === undefined || baseOpts.workstream === null
-      ? undefined
-      : recoveryScope(db, baseOpts.workstream);
   try {
     while (!signal.aborted) {
-      for (const row of listLogs(db, { ...baseOpts, since: cursor })) {
-        emit(logOut(row, scope));
+      for (const row of poll({ ...baseOpts, since: cursor })) {
+        try {
+          emit(logOut(row));
+        } catch (err) {
+          throw new TailStopped(cursor, err);
+        }
         cursor = row.seq;
-        state.cursor = cursor;
       }
       await sleep(intervalMs, signal);
     }
@@ -342,6 +402,15 @@ export function wireLogCommand(program: Command): void {
       parseNonNegativeInt,
     )
     .option(
+      "--after <seq>",
+      "read the whole log strictly after this seq (no scope, no filter; what a cut's `next=` names)",
+      parseNonNegativeInt,
+    )
+    .option(
+      "--seq <spec>",
+      "read exactly these seqs, each record whole: 7 or 5..9,12 (no scope, no filter, nothing inherited)",
+    )
+    .option(
       "-n, --lines <n>",
       "cap to N entries: the latest N (default 50), or with --since the first N after the cursor (no default cap)",
       parseLines,
@@ -358,6 +427,8 @@ export function wireLogCommand(program: Command): void {
         group?: string;
         tail?: boolean;
         since?: number;
+        after?: number;
+        seq?: string;
         lines?: number;
         source?: string;
         all?: boolean;
@@ -371,6 +442,8 @@ export function wireLogCommand(program: Command): void {
       if (raw.group !== undefined) opts.group = raw.group;
       if (raw.tail !== undefined) opts.tail = raw.tail;
       if (raw.since !== undefined) opts.since = raw.since;
+      if (raw.after !== undefined) opts.after = raw.after;
+      if (raw.seq !== undefined) opts.seq = raw.seq;
       if (raw.lines !== undefined) opts.lines = raw.lines;
       if (raw.source !== undefined) opts.source = raw.source;
       if (raw.all !== undefined) opts.allWorkstreams = raw.all;

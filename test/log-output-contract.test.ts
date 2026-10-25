@@ -7,7 +7,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cmdLogTail } from "../src/cli/log.js";
+import { cmdLogTail, TailStopped } from "../src/cli/log.js";
 import { logRecord } from "../src/cli/log-records.js";
 import { pageOut } from "../src/cli/page-records.js";
 import { type Db, openDb } from "../src/db.js";
@@ -112,13 +112,15 @@ describe("text: one record per visible op", () => {
     const r = await runCli(["log", "-w", "demo", "-n", "1"], dbPath);
     const lines = r.stdout.trimEnd().split("\n");
     expect(lines).toHaveLength(2);
-    const m = /^cut=(\d+) next=(.+)$/.exec(lines[1] ?? "");
+    const m = /^cut=(\d+) next=(mu log --seq \d+)$/.exec(lines[1] ?? "");
     expect(m).not.toBeNull();
     expect(Number(m?.[1])).toBeGreaterThan(400);
     expect(lines[0]).toMatch(/…$/);
     // The retrieval is a real command: run it as a shell would and get the payload whole.
     const next = m?.[2] ?? "";
-    const rows = JSON.parse(runHint(next)) as { data: { items: { payload: string }[] } };
+    const rows = JSON.parse(runHint(`${next} --json`)) as {
+      data: { items: { payload: string }[] };
+    };
     expect(rows.data.items[0]?.payload).toBe("y".repeat(900));
   });
 
@@ -183,11 +185,9 @@ describe("json: canonical keys and a bounded final envelope", () => {
       const doc = JSON.parse(line) as { data: Page };
       expect(doc.data.more).toBeGreaterThan(0);
       expect(doc.data.count + doc.data.more).toBe(40);
-      expect(doc.data.resume).toMatch(/^mu log -w demo --since \d+ -n \d+ --json$/);
+      expect(doc.data.resume).toMatch(/^mu log --seq \d+\.\.\d+ --json$/);
       expect(doc.data.cut).toBeGreaterThan(0);
-      expect(doc.data.retrieve).toMatch(
-        /^mu db query 'SELECT seq, key, actor, intent, group_id, op, entity, payload, created_at FROM ops/,
-      );
+      expect(doc.data.retrieve).toMatch(/^mu log --seq [\d.,]+ --json$/);
     },
   );
 
@@ -198,36 +198,39 @@ describe("json: canonical keys and a bounded final envelope", () => {
     const doc = JSON.parse(r.stdout) as { data: Page };
     expect(doc.data.items).toHaveLength(1);
     expect(doc.data.items[0]?.cut).toBeGreaterThan(4000);
-    expect(doc.data.retrieve).toContain(`seq IN (${doc.data.items[0]?.seq})`);
+    expect(doc.data.retrieve).toBe(`mu log --seq ${doc.data.items[0]?.seq} --json`);
   });
 
   it("the resume command continues exactly where the page stopped (latest-N and cursor reads)", async () => {
     for (let i = 0; i < 30; i++) say(`${i}:${"w".repeat(300)}`);
     const first = await runCliJson<Page>(["log", "-w", "demo", "-n", "30", "--json"], dbPath);
     expect(first.data.more).toBeGreaterThan(0);
-    const next = await runCliJson<Page>(
-      (first.data.resume ?? "").replace(/^mu /, "").split(" "),
-      dbPath,
-    );
+    const next = JSON.parse(runHint(first.data.resume ?? "")) as { data: Page };
     // latest-N window: the page holds the NEWEST; resume reads the displaced older ones,
-    // oldest first, with no overlap and none skipped at the seam.
+    // oldest first, with no overlap and none skipped at the seam, each whole.
     const window = listLogs(db, { workstream: "demo", limit: 30 }).map((x) => x.seq);
     expect(first.data.items.map((i) => i.seq)).toEqual(window.slice(-first.data.count));
-    expect(next.data.items.map((i) => i.seq)).toEqual(window.slice(0, next.data.count));
+    expect(next.data.items.map((i) => i.seq)).toEqual(window.slice(0, first.data.more));
+    expect(next.data.items[0]?.payload.length).toBeGreaterThan(300);
     expect(first.data.more).toBe(30 - first.data.count);
 
     const cursor = await runCliJson<Page>(["log", "-w", "demo", "--since", "0", "--json"], dbPath);
     expect(cursor.data.items[0]?.seq).toBe(1);
-    expect(cursor.data.resume).toContain(`--since ${cursor.data.items.at(-1)?.seq} `);
+    const rest = JSON.parse(runHint(cursor.data.resume ?? "")) as { data: Page };
+    expect(rest.data.items[0]?.seq).toBe((cursor.data.items.at(-1)?.seq ?? 0) + 1);
+    expect(cursor.data.count + cursor.data.more).toBe(31);
   });
 
-  it("filters survive in the resume command", async () => {
+  it("filters are never echoed into a hint: it names seqs, and returns the ops left out", async () => {
     for (let i = 0; i < 30; i++) say("k".repeat(300), "ledger");
     const r = await runCliJson<Page>(
       ["log", "-w", "demo", "--kind", "ledger", "-n", "30", "--json"],
       dbPath,
     );
-    expect(r.data.resume).toContain("--kind ledger");
+    expect(r.data.resume).toMatch(/^mu log --seq \d+\.\.\d+ --json$/);
+    for (const hint of [r.data.resume, r.data.retrieve]) {
+      expect(hint).not.toMatch(/ledger|demo|-w|--kind|--all/);
+    }
   });
 
   it("a log write answers with one canonical, bounded item", async () => {
@@ -235,6 +238,33 @@ describe("json: canonical keys and a bounded final envelope", () => {
     expect(r.data).toMatchObject({ key: "demo", entity: "message", actor: "user" });
     expect(r.data.payload.length).toBeLessThan(300);
     expect(r.data.cut).toBeGreaterThan(5000);
+  });
+
+  it("a log write's text receipt is one escaped, clipped record, like the log shows it", async () => {
+    const big = "a".repeat(5000);
+    for (const args of [
+      ["log", "small", "-w", "demo", "--as", big],
+      ["log", "small", "-w", "demo", "--kind", big],
+      ["log", "small", "-w", "demo", "--kind", "first\nsecond\t\u001b[31m"],
+      ["log", "x".repeat(6000), "-w", "demo"],
+    ]) {
+      const r = await runCli(args, dbPath);
+      expect(r.exitCode).toBeNull();
+      expect(bytesOf(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+      const lines = r.stdout.trimEnd().split("\n");
+      expect(lines[0]).toMatch(/^log\t\d+\t/);
+      expect([...(lines[0] ?? "")].length).toBeLessThanOrEqual(400);
+      expect(r.stdout).not.toContain("\u001b");
+      if (lines.length === 2) expect(lines[1]).toMatch(/^cut=\d+ next=mu log --seq \d+$/);
+    }
+    const long = `w${"n".repeat(5000)}`;
+    db.prepare("INSERT INTO workstreams (name, created_at) VALUES (?, ?)").run(
+      long,
+      "2026-01-01T00:00:00Z",
+    );
+    const r = await runCli(["log", "small", "-w", long], dbPath);
+    expect(bytesOf(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    expect(r.stdout.trimEnd().split("\n")[1]).toMatch(/^cut=\d+ next=mu log --seq \d+$/);
   });
 });
 
@@ -370,7 +400,7 @@ describe("--tail is an NDJSON stream", () => {
     expect(bytesOf(out[0] ?? "")).toBeLessThanOrEqual(RESULT_BYTES / 2);
     const item = JSON.parse(out[0] ?? "") as Item & { retrieve?: string };
     expect(item.cut).toBeGreaterThan(2000);
-    expect(item.retrieve).toContain(`seq IN (${item.seq})`);
+    expect(item.retrieve).toBe(`mu log --seq ${item.seq} --json`);
   });
 
   it("a line is one inert line: no raw newline, DEL, C1 or separator characters", async () => {
@@ -546,8 +576,10 @@ describe("a record whose fixed fields alone are huge", () => {
   });
 });
 
-describe("hints run as printed", () => {
-  it("a long filter has no echoed placeholder: the resume is a runnable command that returns the ops left out", async () => {
+describe("hints name seqs, never filters, and run as printed", () => {
+  const foreign = { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "elsewhere", MU_AGENT_NAME: "worker-1" };
+
+  it("a long filter is never echoed: the resume is `--seq a..b` and returns exactly the ops left out", async () => {
     const kind = `channel-${"k".repeat(1100)}`;
     for (let i = 0; i < 35; i++) say("p".repeat(300), kind);
     const r = await runCliJson<Page>(
@@ -556,137 +588,238 @@ describe("hints run as printed", () => {
     );
     expect(r.data.more).toBeGreaterThan(0);
     const hint = r.data.resume ?? "";
-    expect(hint).not.toContain("same filters");
-    expect(hint.split("\n")).toHaveLength(1);
-    const rest = JSON.parse(runHint(hint)) as {
+    expect(hint).toMatch(/^mu log --seq \d+\.\.\d+ --json$/);
+    const rest = JSON.parse(runHint(hint, foreign)) as {
       data: { items: { seq: number; payload: string }[] };
     };
     const shown = new Set(r.data.items.map((i) => i.seq));
     const want = listLogs(db, { workstream: "demo", kind, limit: 35 }).map((x) => x.seq);
-    const missing = want.filter((x) => !shown.has(x));
-    expect(rest.data.items.map((i) => i.seq)).toEqual(missing);
+    expect(rest.data.items.map((i) => i.seq)).toEqual(want.filter((x) => !shown.has(x)));
     expect(rest.data.items[0]?.payload).toBe("p".repeat(300));
   });
 
-  it("a short filter keeps scope, filters and --json in the resume", async () => {
-    for (let i = 0; i < 30; i++) say("k".repeat(300), "ledger");
+  it("sparse omissions (70 matching ops interleaved with unrelated ones) are never silently widened", async () => {
+    const kind = `channel-${"k".repeat(1100)}`;
+    for (let i = 0; i < 70; i++) {
+      say("p".repeat(300), kind);
+      say("interleaved", "unrelated");
+    }
     const r = await runCliJson<Page>(
-      ["log", "-w", "demo", "--kind", "ledger", "-n", "30", "--json"],
+      ["log", "-w", "demo", "--kind", kind, "-n", "70", "--json"],
       dbPath,
     );
-    expect(r.data.resume).toMatch(/^mu log -w demo --kind ledger --since \d+ -n \d+ --json$/);
-    const next = JSON.parse(runHint(r.data.resume ?? "")) as { data: Page };
-    expect(next.data.items.length).toBeGreaterThan(0);
-    for (const i of next.data.items) expect(i.entity).toBe("ledger");
+    expect(r.data.more).toBeGreaterThan(30);
+    const hint = r.data.resume ?? "";
+    // Too scattered to name as a few exact runs: an explicit whole-log cursor, no filter echoed.
+    expect(hint).toMatch(/^mu log --after \d+ --json$/);
+    expect(bytesOf(hint)).toBeLessThan(64);
+    const rest = JSON.parse(runHint(hint)) as { data: Page };
+    const omitted = listLogs(db, { workstream: "demo", kind, limit: 70 })
+      .map((x) => x.seq)
+      .filter((x) => !r.data.items.some((i) => i.seq === x));
+    const got = new Set(rest.data.items.map((i) => i.seq));
+    // Every omitted op is reachable by following the cursor from the hint's own start.
+    expect(rest.data.items[0]?.seq).toBe(Math.min(...omitted));
+    expect(omitted.some((x) => got.has(x))).toBe(true);
   });
 
-  it("the retrieve of a clipped op returns EVERY clipped column, run as a shell would", async () => {
+  it("a historical group id with shell metacharacters never reaches a hint", async () => {
+    const group = "g; printf REVIEW_GROUP_SPLIT; #";
+    for (let i = 0; i < 35; i++) {
+      db.prepare(
+        `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
+         SELECT hlc || 'g' || ?, machine_id, ?, 'u', NULL, 'message', 'demo', 'put', ?, ? FROM ops LIMIT 1`,
+      ).run(i, group, "p".repeat(300), "2026-01-01T00:00:00Z");
+    }
+    for (const g of [group, "g; printf"]) {
+      const r = await runCliJson<Page>(
+        ["log", "-w", "demo", "--group", g, "-n", "35", "--json"],
+        dbPath,
+      );
+      expect(r.data.more).toBeGreaterThan(0);
+      expect(r.data.resume).not.toMatch(/printf|group|;/);
+      // An injected `printf` would put bare text before the JSON document and break the parse.
+      const out = runHint(r.data.resume ?? "");
+      expect((JSON.parse(out) as { ok: boolean }).ok).toBe(true);
+    }
+  });
+
+  it("every clipped field is retrievable whole by seq, for --all, a deleted workstream and a foreign identity", async () => {
     const actor = `actor-${"a".repeat(150)}`;
-    appendLog(db, {
-      workstream: "demo",
-      source: actor,
-      kind: `ent-${"e".repeat(150)}`,
-      payload: "small",
-    });
-    const r = await runCliJson<Page>(["log", "-w", "demo", "-n", "1", "--json"], dbPath);
-    expect(r.data.items[0]?.cut).toBeGreaterThan(0);
-    const rows = JSON.parse(runHint(r.data.retrieve ?? "")) as {
-      data: { items: { actor: string; entity: string; key: string }[] };
-    };
-    expect(rows.data.items[0]).toMatchObject({
-      actor,
-      entity: `ent-${"e".repeat(150)}`,
-      key: "demo",
-    });
+    const entity = `ent-${"e".repeat(150)}`;
+    appendLog(db, { workstream: "gone", source: actor, kind: entity, payload: "small" });
+    const reads = [
+      ["log", "--all", "-n", "1", "--json"],
+      ["log", "-w", "gone", "-n", "1", "--json"],
+    ];
+    for (const args of reads) {
+      const r = await runCliJson<Page>(args, dbPath);
+      expect(r.data.items[0]?.cut).toBeGreaterThan(0);
+      const hint = r.data.retrieve ?? "";
+      expect(hint).toBe(`mu log --seq ${r.data.items[0]?.seq} --json`);
+      const back = JSON.parse(runHint(hint, foreign)) as {
+        ok: boolean;
+        data: { items: { actor: string; entity: string; key: string; cut?: number }[] };
+      };
+      expect(back.ok).toBe(true);
+      expect(back.data.items[0]).toMatchObject({ actor, entity, key: "gone" });
+      expect(back.data.items[0]?.cut).toBeUndefined();
+    }
   });
 
-  it("the retrieve runs from a managed worker's identity too (no inherited-workstream failure)", async () => {
-    appendLog(db, { workstream: "demo", source: "a".repeat(200), payload: "small" });
-    const r = await runCliJson<Page>(["log", "-w", "demo", "-n", "1", "--json"], dbPath);
-    const out = JSON.parse(
-      runHint(r.data.retrieve ?? "", {
-        MU_MANAGED_AGENT: "1",
-        MU_WORKSTREAM: "elsewhere",
-        MU_AGENT_NAME: "worker-1",
-      }),
-    ) as { ok: boolean };
-    expect(out.ok).toBe(true);
+  it("--seq reads exactly the named seqs, whole, and never inherits a workstream", async () => {
+    say("one");
+    say("two");
+    say("three");
+    const all = listLogs(db, { workstream: "demo" }).map((x) => x.seq);
+    const [a, b, c] = all.slice(-3);
+    const r = JSON.parse(runHint(`mu log --seq ${a},${c} --json`, foreign)) as { data: Page };
+    expect(r.data.items.map((i) => i.payload)).toEqual(["one", "three"]);
+    expect(r.data.items.some((i) => i.seq === b)).toBe(false);
+    const range = await runCliJson<Page>(["log", "--seq", `${a}..${c}`, "--json"], dbPath);
+    expect(range.data.count).toBe(3);
+    const bad = await runCli(["log", "--seq", "5..2"], dbPath);
+    expect(bad.exitCode).toBe(2);
+    const mixed = await runCli(["log", "--seq", "1", "-w", "demo"], dbPath);
+    expect(mixed.exitCode).toBe(2);
   });
 
-  it("a --tail line and a log write carry the same full-column retrieve", async () => {
+  it("--after pages the whole log, strictly after the seq, with no scope", async () => {
+    say("one");
+    const r = JSON.parse(runHint("mu log --after 0 -n 2 --json", foreign)) as { data: Page };
+    expect(r.data.items.map((i) => i.seq)).toEqual([1, 2]);
+  });
+
+  it("a hint stays short and the final bytes fit when even zero records cannot (huge workstream name)", async () => {
+    const long = `w${"n".repeat(5000)}`;
+    db.prepare("INSERT INTO workstreams (name, created_at) VALUES (?, ?)").run(
+      long,
+      "2026-01-01T00:00:00Z",
+    );
+    appendLog(db, { workstream: long, source: "user", payload: "x".repeat(6000) });
+    for (const extra of [[], ["--json"]]) {
+      const r = await runCli(["log", "-w", long, "-n", "1", ...extra], dbPath);
+      expect(bytesOf(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+      expect(r.stdout).not.toContain("nnnnnnnnnn".repeat(20) + "nnn".repeat(30) + "n".repeat(300));
+      expect(r.stdout).toMatch(/mu log --seq \d+/);
+    }
+    const w = await runCli(["log", "small", "-w", long, "--json"], dbPath);
+    expect(bytesOf(w.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const tail = await tailWith(() =>
+      appendLog(db, { workstream: "demo", source: "user", payload: "x" }),
+    );
+    expect(tail.every((l) => bytesOf(l) < RESULT_BYTES)).toBe(true);
+  });
+
+  it("a --tail line and a log write carry the same by-seq retrieve", async () => {
     const out = await tailWith(() => say("🙂".repeat(3000)));
     const item = JSON.parse(out[0] ?? "") as Item & { retrieve?: string };
-    expect(item.retrieve).toContain("actor, intent");
+    expect(item.retrieve).toBe(`mu log --seq ${item.seq} --json`);
     const w = await runCliJson<Item & { retrieve?: string }>(
       ["log", "x".repeat(6000), "-w", "demo", "--json"],
       dbPath,
     );
-    expect(w.data.retrieve).toContain("actor, intent");
-    const back = JSON.parse(runHint(w.data.retrieve ?? "")) as {
+    expect(w.data.retrieve).toBe(`mu log --seq ${w.data.seq} --json`);
+    const back = JSON.parse(runHint(w.data.retrieve ?? "", foreign)) as {
       data: { items: { payload: string }[] };
     };
     expect(back.data.items[0]?.payload).toBe("x".repeat(6000));
   });
 });
 
-describe("--tail mutations: cursor after emission, flush before exit", () => {
-  it("a failing emit leaves the cursor BEFORE that row, so nothing is skipped on resume", async () => {
+describe("--tail: the REAL emit order and the cursor the next poll is given", () => {
+  /** Run a tail whose polls and emits are captured; no state of the tail's is mirrored. */
+  async function run(
+    since: number,
+    emit: (row: Item) => void,
+    polls: number,
+  ): Promise<{ sinces: (number | undefined)[]; error: unknown }> {
+    const sinces: (number | undefined)[] = [];
+    const ctl = new AbortController();
+    let n = 0;
+    let error: unknown;
+    try {
+      await cmdLogTail(
+        db,
+        { workstream: "demo" },
+        { workstream: "demo", tail: true, since },
+        {
+          signal: ctl.signal,
+          sleep: async () => {
+            if (++n >= polls) ctl.abort();
+          },
+          poll: (o) => {
+            sinces.push(o.since);
+            return listLogs(db, o);
+          },
+          emit: (row) => emit(row as Item),
+        },
+      );
+    } catch (e) {
+      error = e;
+    }
+    return { sinces, error };
+  }
+
+  it("a failing emit stops the tail at the seq of the last row that really went out", async () => {
     say("a");
     say("b");
     say("c");
-    const state = { cursor: 0 };
-    const seen: string[] = [];
-    const ctl = new AbortController();
-    await expect(
-      cmdLogTail(
-        db,
-        { workstream: "demo" },
-        { workstream: "demo", tail: true, since: 0 },
-        {
-          signal: ctl.signal,
-          state,
-          sleep: async () => ctl.abort(),
-          emit: (row) => {
-            const p = (row as Item).payload;
-            if (p === "b") throw new Error("stdout closed");
-            seen.push(p);
-          },
-        },
-      ),
-    ).rejects.toThrow("stdout closed");
-    // 'b' was not written, so the cursor still points at the row before it: a resume re-reads 'b'.
-    const rows = listLogs(db, { workstream: "demo", since: state.cursor }).map((r) => r.payload);
-    expect(rows).toEqual(["b", "c"]);
-    expect(seen.at(-1)).not.toBe("b");
+    const seqOf = (p: string): number =>
+      listLogs(db, { workstream: "demo" }).find((r) => r.payload === p)?.seq ?? -1;
+    const out: string[] = [];
+    const { error } = await run(
+      0,
+      (row) => {
+        if (row.payload === "b") throw new Error("stdout closed");
+        out.push(row.payload);
+      },
+      1,
+    );
+    expect(error).toBeInstanceOf(TailStopped);
+    expect((error as TailStopped).cursor).toBe(seqOf("a"));
+    expect(out.at(-1)).toBe("a");
+    // Restarting from the reported cursor re-reads b and c: none lost.
+    const resumed = listLogs(db, { workstream: "demo", since: (error as TailStopped).cursor });
+    expect(resumed.map((r) => r.payload)).toEqual(["b", "c"]);
   });
 
-  it("the cursor equals the last row actually emitted, row by row", async () => {
+  it("the next poll starts at the last row emitted, rows go out in seq order, once each", async () => {
     say("a");
     say("b");
-    const state = { cursor: 0 };
+    const emitted: number[] = [];
+    const { sinces } = await run(0, (row) => emitted.push(row.seq), 2);
+    const all = listLogs(db, { workstream: "demo" }).map((r) => r.seq);
+    expect(emitted).toEqual(all);
+    expect(sinces).toEqual([0, all.at(-1)]);
+  });
+
+  it("an emit that aborts mid-batch still finishes the batch, and the next poll never runs", async () => {
+    say("a");
+    say("b");
+    say("c");
     const ctl = new AbortController();
-    const trail: [string, number][] = [];
+    const seen: string[] = [];
+    const sinces: (number | undefined)[] = [];
     await cmdLogTail(
       db,
       { workstream: "demo" },
-      { workstream: "demo", tail: true, since: 0 },
+      { workstream: "demo", tail: true, since: latestSeq(db) - 3 },
       {
         signal: ctl.signal,
-        state,
-        sleep: async () => ctl.abort(),
+        sleep: async () => {},
+        poll: (o) => {
+          sinces.push(o.since);
+          return listLogs(db, o);
+        },
         emit: (row) => {
-          // At emit time the cursor must not have moved onto THIS row yet.
-          trail.push([(row as Item).payload, state.cursor]);
+          seen.push((row as Item).payload);
+          ctl.abort();
         },
       },
     );
-    const ids = listLogs(db, { workstream: "demo" }).map((r) => r.seq);
-    const first = trail[0];
-    expect(first?.[1]).toBeLessThan(ids[0] ?? 0);
-    const b = trail.find(([p]) => p === "b");
-    const aSeq = listLogs(db, { workstream: "demo", kind: "message" })[0]?.seq ?? 0;
-    expect(b?.[1]).toBe(aSeq);
-    expect(state.cursor).toBe(ids.at(-1));
+    expect(seen).toEqual(["a", "b", "c"]);
+    expect(sinces).toHaveLength(1);
   });
 });
 
@@ -707,29 +840,5 @@ describe("pageOut: the cap is on the final bytes, a record never forced past it"
 
   it("a record that fits goes out; the same record behind a too-large hint does not", () => {
     expect(pageOut(["ok"], spec("mu log -w demo")).shown).toBe(1);
-  });
-});
-
-describe("an interrupt mid-batch loses nothing", () => {
-  it("the batch being written is finished even when the signal fires from inside emit", async () => {
-    say("a");
-    say("b");
-    say("c");
-    const ctl = new AbortController();
-    const seen: string[] = [];
-    await cmdLogTail(
-      db,
-      { workstream: "demo" },
-      { workstream: "demo", tail: true, since: latestSeq(db) - 3 },
-      {
-        signal: ctl.signal,
-        sleep: async () => {},
-        emit: (row) => {
-          seen.push((row as Item).payload);
-          ctl.abort();
-        },
-      },
-    );
-    expect(seen).toEqual(["a", "b", "c"]);
   });
 });
