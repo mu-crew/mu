@@ -148,6 +148,7 @@ const UNREBUILDABLE_TABLES = [
   "wait_cursors",
   "agent_settles",
   "host_profiles",
+  "host_channels",
   "spawn_receipts",
 ] as const;
 

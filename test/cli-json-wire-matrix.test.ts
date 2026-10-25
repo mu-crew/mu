@@ -69,6 +69,22 @@ const ARGS: Record<string, string[]> = {
   "db forget": ["probe"],
   "db query": ["SELECT 1 AS one"],
   doctor: [],
+  "host add": [
+    "dev",
+    "--shell",
+    "sh -c {cmd}",
+    "--exec",
+    "sh -c {cmd}",
+    "--fetch",
+    "true",
+    "--repo",
+    "/r",
+  ],
+  "host list": [],
+  "host show": ["dev"],
+  "host rm": ["dev"],
+  "host init": ["dev", "--ssh"],
+  "host check": ["dev"],
   "pi migrate": [],
 };
 

@@ -8,8 +8,8 @@
 //   - 6 entity tables: workstreams, agents, tasks, task_edges,
 //                      task_notes, worktrees
 //   - 1 machine-local table: task_auto (per-task auto-dispatch state); v13
-//     adds delegate_calls, wait_cursors, agent_settles, host_profiles and
-//     spawn_receipts
+//     adds delegate_calls, wait_cursors, agent_settles, host_profiles,
+//     host_channels and spawn_receipts
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
 //   - 2 sync tables:   sync_peers (per-peer watermarks),
@@ -19,7 +19,7 @@
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
 //   - 4 views:         ready, blocked, blockers, goals
-//   => EXPECTED_TABLES is exactly 15 entries at v12 (20 at v13: see there).
+//   => EXPECTED_TABLES is exactly 15 entries at v12 (21 at v13: see there).
 //
 // v12 is additive over v11: workstreams.torn_down_at (soft teardown),
 // agents.cwd / agents.base (worktree path and the commit it forked
@@ -814,11 +814,12 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 20 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 21 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
   "delegate_calls",
+  "host_channels",
   "host_profiles",
   "machine_identity",
   "op_ctx",
@@ -912,6 +913,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    wait_cursors     per caller and ref, the last wait result consumed.
  *    agent_settles    settled runs already applied (settle replay).
  *    host_profiles    ssh-free command templates per remote host.
+ *    host_channels    the connection slots a host's `max_sessions` counts:
+ *                     one row per live holder (invocation pid or agent pane).
  *    spawn_receipts   one row per task-bound spawn attempt: the replay and
  *                     crash-recovery journal (reservation, pane identity,
  *                     claim, send state). No FK to `agents`: it must
@@ -934,6 +937,7 @@ export const MACHINE_LOCAL_TABLES = [
   "agent_settles",
   "agents",
   "delegate_calls",
+  "host_channels",
   "host_profiles",
   "machine_identity",
   "op_ctx",
@@ -1312,6 +1316,27 @@ CREATE TABLE IF NOT EXISTS host_profiles (
   fetch        TEXT NOT NULL,
   repo         TEXT NOT NULL,
   max_sessions INTEGER CHECK (max_sessions > 0)
+);
+
+-- host_channels: the connection slots of a host (machine-local). One row
+-- per holder. 'transient' rides an invocation (exec, fetch, check) and is
+-- reclaimed only when its pid is proven gone; 'attached' rides an agent's
+-- pane (registry id + pane, no pid) and is reclaimed only when that pane is
+-- proven dead. 'token' makes every release a compare-and-set. No FK: the
+-- row must outlive neither its host nor guess at its holder.
+CREATE TABLE IF NOT EXISTS host_channels (
+  host      TEXT NOT NULL,
+  holder    TEXT NOT NULL,
+  kind      TEXT NOT NULL CHECK (kind IN ('transient', 'attached')),
+  token     TEXT NOT NULL,
+  pid       INTEGER,
+  pid_start TEXT,
+  agent_id  INTEGER,
+  pane_id   TEXT,
+  opened_at TEXT NOT NULL,
+  PRIMARY KEY (host, holder),
+  CHECK (kind = 'transient' AND pid IS NOT NULL
+         OR kind = 'attached' AND agent_id IS NOT NULL AND pane_id IS NOT NULL)
 );
 
 -- ─── The ops log (VISION.md § 2b, VOCABULARY.md § op / ops log) ──────

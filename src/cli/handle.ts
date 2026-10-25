@@ -67,6 +67,14 @@ import {
 } from "../db.js";
 import { DriftDetectedError } from "../drift.js";
 import { checkDbInsideSyncDir, DbInsideSyncDirError, HazardFailError } from "../fleet-hazards.js";
+import {
+  HostChannelBusyError,
+  HostCheckFailedError,
+  HostExistsError,
+  HostInUseError,
+  HostNotFoundError,
+  HostProfileError,
+} from "../hosts.js";
 import { GroupIdAmbiguousError, GroupNotFoundError, LogKindReservedError } from "../logs.js";
 import {
   HerdrCommandOverrideError,
@@ -316,6 +324,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentSlashCommandUnsupportedError ||
     err instanceof WorkstreamNameInvalidError ||
     err instanceof WorkstreamNameReservedError ||
+    // A host profile field or template mu refuses: nothing is stored or run.
+    err instanceof HostProfileError ||
     // Same typed-*Invalid* class: a task id or a title the operator
     // typed that cannot become an id. isUsageClassError prints --help.
     err instanceof TaskIdInvalidError ||
@@ -339,6 +349,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentNotFoundError ||
     err instanceof TaskNotFoundError ||
     err instanceof TaskNoteRangeError ||
+    err instanceof HostNotFoundError ||
     err instanceof WorkstreamNotFoundError
   ) {
     // WorkstreamNotFoundError originates inside resolveWorkstreamId
@@ -351,6 +362,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   }
   if (
     err instanceof NameAmbiguousError ||
+    // A host profile that exists, is at its channel cap, or still holds channels.
+    err instanceof HostExistsError ||
+    err instanceof HostChannelBusyError ||
+    err instanceof HostInUseError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||
@@ -486,6 +501,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   if (err instanceof AgentAbortTimeoutError) {
     // Same lane as the wait verbs' timeout: still busy, try again.
     return { label: "timeout", exitCode: 5 };
+  }
+  if (err instanceof HostCheckFailedError) {
+    // The host (or its forward) failed a check step: substrate, not usage.
+    return { label: "host check", exitCode: 5 };
   }
   if (err instanceof NoMultiplexerError) {
     return { label: "no multiplexer", exitCode: 5 };
