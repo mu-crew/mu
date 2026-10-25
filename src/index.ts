@@ -329,6 +329,11 @@ export {
   RemoteCollectUnsupportedError,
 } from "./remote-collect.js";
 export {
+  listRemoteRecoveries,
+  type RemoteRecovery,
+  type RemoteRecoveryReason,
+} from "./remote-recovery.js";
+export {
   agentRevision,
   assertRevision,
   RevisionMismatchError,

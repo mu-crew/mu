@@ -110,7 +110,8 @@ such as this page.
 
 Later additive local tables: `spawn_receipts` (`v_spawn_receipts`),
 `host_channels` (`v_host_profiles`), `human_needs` (`v_human`),
-`wait_registrations` (`v_wait_reg`).
+`wait_registrations` (`v_wait_reg`), `remote_recovery` (`v_remote_recovery`,
+storage and deleters; its close/collect readers are `v_remote_recovery_close`).
 
 ## Reconciliation inventory
 

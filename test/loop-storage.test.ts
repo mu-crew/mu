@@ -58,6 +58,7 @@ const NEW_TABLES = [
   "host_channels",
   "host_profiles",
   "human_needs",
+  "remote_recovery",
   "spawn_receipts",
   "wait_cursors",
   "wait_registrations",
@@ -315,6 +316,18 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(db.prepare("SELECT COUNT(*) AS c FROM spawn_receipts").get()).toEqual({ c: 0 });
     expect(getAgent(db, "w1", "alpha")).toBeDefined();
     expect(getTask(db, "t1", "alpha")).toBeDefined();
+  });
+
+  it("an already-v13 file without remote_recovery gets the table, no version bump, no foreign key", () => {
+    const p = v12Copy();
+    track(openDb({ path: p })).close();
+    raw(p, (r) => r.exec("DROP TABLE remote_recovery"));
+    const db = track(openDb({ path: p }));
+    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(columns(p, "remote_recovery")).toContain("aside");
+    expect(db.prepare("PRAGMA foreign_key_list(remote_recovery)").all()).toEqual([]);
+    expect(db.prepare("SELECT COUNT(*) AS c FROM remote_recovery").get()).toEqual({ c: 0 });
+    expect(getAgent(db, "w1", "alpha")).toBeDefined();
   });
 
   it("an already-v13 file without human_needs gets the table, no version bump, rows cascade", () => {
@@ -710,7 +723,7 @@ describe("machine-local state", () => {
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(23);
+    expect(EXPECTED_TABLES).toHaveLength(24);
     expect(PORTABLE_TABLES).toEqual(["task_edges", "task_notes", "tasks", "workstreams"]);
   });
 

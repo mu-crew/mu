@@ -9,7 +9,8 @@
 //                      task_notes, worktrees
 //   - 1 machine-local table: task_auto (per-task auto-dispatch state); v13
 //     adds delegate_calls, wait_cursors, agent_settles, host_profiles,
-//     host_channels, spawn_receipts, human_needs and wait_registrations
+//     host_channels, spawn_receipts, human_needs, wait_registrations and
+//     remote_recovery
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
 //   - 2 sync tables:   sync_peers (per-peer watermarks),
@@ -19,7 +20,7 @@
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
 //   - 4 views:         ready, blocked, blockers, goals
-//   => EXPECTED_TABLES is exactly 15 entries at v12 (23 at v13: see there).
+//   => EXPECTED_TABLES is exactly 15 entries at v12 (24 at v13: see there).
 //
 // v12 is additive over v11: workstreams.torn_down_at (soft teardown),
 // agents.cwd / agents.base (worktree path and the commit it forked
@@ -818,7 +819,7 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 23 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 24 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
@@ -830,6 +831,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "op_ctx",
   "op_dying",
   "ops",
+  "remote_recovery",
   "schema_version",
   "spawn_receipts",
   "sync_fingerprints",
@@ -929,6 +931,11 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *                     crash-recovery journal (reservation, pane identity,
  *                     claim, send state). No FK to `agents`: it must
  *                     outlive the agent it names.
+ *    remote_recovery  what a remote worker's deleted row said about its
+ *                     worktree (host, path, base, aside): a deleter's
+ *                     snapshot. No FK: it must outlive the agent, its
+ *                     workstream and its host profile. Rebuild cannot
+ *                     restore it (UNREBUILDABLE_TABLES).
  *    ops              see below — the carrier, not cargo.
  *
  *  `ops` is listed here deliberately rather than omitted. It is not
@@ -954,6 +961,7 @@ export const MACHINE_LOCAL_TABLES = [
   "op_ctx",
   "op_dying",
   "ops",
+  "remote_recovery",
   "schema_version",
   "spawn_receipts",
   "sync_fingerprints",
@@ -1378,6 +1386,33 @@ CREATE TABLE IF NOT EXISTS host_channels (
   PRIMARY KEY (host, holder),
   CHECK (kind = 'transient' AND pid IS NOT NULL
          OR kind = 'attached' AND agent_id IS NOT NULL AND pane_id IS NOT NULL)
+);
+
+-- remote_recovery: what a finalized remote worker row said about its
+-- worktree, written by every path that deletes the row (machine-local). One
+-- row per ORIGINAL registry incarnation (agent_id = agents.id, never reused),
+-- so a name or workstream recreated later never merges with it. 'aside' is
+-- the exact path asideOf(cwd, agent_id) would park the tree at. host_exec /
+-- host_repo pin the profile's identity when the profile existed. No foreign
+-- key on purpose: it must outlive the agent, its workstream (a peer's
+-- tombstone cascades) and its host profile. It is a receipt of the
+-- resource, not a live channel.
+CREATE TABLE IF NOT EXISTS remote_recovery (
+  agent_id             INTEGER PRIMARY KEY,
+  workstream           TEXT NOT NULL,
+  workstream_id        INTEGER NOT NULL,
+  workstream_created_at TEXT NOT NULL,
+  name                 TEXT NOT NULL,
+  pane_id              TEXT NOT NULL,
+  host                 TEXT NOT NULL,
+  cwd                  TEXT NOT NULL,
+  base                 TEXT NOT NULL,
+  collected_head       TEXT,
+  aside                TEXT NOT NULL,
+  host_exec            TEXT,
+  host_repo            TEXT,
+  reason               TEXT NOT NULL CHECK (reason IN ('reap', 'teardown', 'workstream-delete')),
+  preserved_at         TEXT NOT NULL
 );
 
 -- ─── The ops log (VISION.md § 2b, VOCABULARY.md § op / ops log) ──────

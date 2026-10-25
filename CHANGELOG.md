@@ -53,6 +53,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (that is `v_wait_cli`). No schema bump: an existing v13 file gains the table
   on open (same-version additive repair).
 
+- **A deleted remote worker row no longer takes its worktree's location with it.** A new
+  machine-local table `remote_recovery` (no foreign key, no op, never synced) keeps, per
+  ORIGINAL registry incarnation, the host, worktree path, base, last collected HEAD, the exact
+  `.mu-removing-<id>` aside path and the profile's exec/repo of a finalized remote row, written
+  inside the transaction of every path that deletes it: the reaper (`deleteAgent`, so
+  `reconcile` too), `workstream teardown` and a peer's workstream tombstone. A failed identity
+  check or a rollback records nothing and deletes nothing; local, cwd-only and base-less rows
+  record nothing; an `agent close` that removed the tree itself records nothing. Teardown now
+  deletes its dead rows through the same reaper step, which also fixes a task left
+  `IN_PROGRESS` with no owner: it reopens with a `[reaper]` note, as after any reap. Storage
+  only: reading a record to close or collect the tree is the next change. Records are lost by
+  `mu rebuild` (reported with the other machine-local tables): back up the source DB. SDK:
+  `listRemoteRecoveries`.
+
 - **`mu db query` / `mu sql` print JSON by default, paged like task lists.** A read's
   `data` is `{items, count, more}` (was a bare array): rows are kept whole while the final
   document fits 4 KB, `more` counts the rest and `retrieve` is the same query with the new

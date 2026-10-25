@@ -20,11 +20,11 @@ import {
   readAgentStates,
   type StateSource,
 } from "./agent-state.js";
+import { reapAgentRow } from "./agents/reap.js";
 import { type Db, resolveWorkstreamId, tryResolveWorkstreamId } from "./db.js";
 import type { CommandSource } from "./mux/types.js";
 import { withOpContext } from "./op-context.js";
 import { type ReconcileMode, type ReconcileReport, reconcile } from "./reconcile.js";
-import { addNote } from "./tasks.js";
 
 // Re-export the cluster modules so external callers continue to
 // `import { AgentNotFoundError, spawnAgent, ... } from "./agents.js"`.
@@ -143,7 +143,6 @@ import {
   type TransportSendOptions,
 } from "./agents/transport.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
-import { releaseHostChannelsForAgent } from "./hosts.js";
 import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
 import { resolveActorIdentity } from "./tasks/claim.js";
 import { ensureWorkstream, isScratchWorkstream } from "./workstream.js";
@@ -484,8 +483,9 @@ export function isPendingPaneId(paneId: string): boolean {
  * deleting an agent that doesn't exist returns false without throwing.
  *
  * Reaper side-effect: any task that was IN_PROGRESS owned by this
- * agent gets flipped back to OPEN with a `[reaper]` task_note and a
- * `task reap` event in `agent_logs`. The FK on `tasks.owner` is
+ * agent gets flipped back to OPEN with a `[reaper]` task_note, and a
+ * remote worker's worktree is recorded in `remote_recovery` first, all in
+ * one transaction (src/agents/reap.ts). The FK on `tasks.owner` is
  * `ON DELETE SET NULL` so the owner column resets automatically; the
  * extra step here is the status revert. Without this an agent that
  * crashed (or was explicitly closed mid-task) leaves the task graph
@@ -502,8 +502,14 @@ export function deleteAgent(
    * was replaced: it is kept (false), with its row, socket and tasks.
    */
   expected?: string | AgentIdentity,
+  /**
+   * `preserve: false` skips the remote recovery record: only for a close that
+   * has itself just removed (or found gone) the worktree. Every other
+   * deleter keeps what the row says about it (src/remote-recovery.ts).
+   */
+  opts: { preserve?: boolean } = {},
 ): boolean {
-  const deleted = deleteAgentRow(db, name, workstream, expected);
+  const deleted = deleteAgentRow(db, name, workstream, expected, opts);
   if (deleted) unlinkCtlSocket(db, name, workstream);
   return deleted;
 }
@@ -518,7 +524,8 @@ function deleteAgentRow(
   db: Db,
   name: string,
   workstream: string,
-  expected?: string | AgentIdentity,
+  expected: string | AgentIdentity | undefined,
+  opts: { preserve?: boolean },
 ): boolean {
   const want: AgentIdentity =
     typeof expected === "string" ? { paneId: expected } : (expected ?? {});
@@ -557,43 +564,10 @@ function deleteAgentRow(
             | undefined;
           if (cur?.pane_id !== want.paneId) return false;
         }
-        const stuck = db
-          .prepare(
-            `SELECT t.id AS taskId, t.local_id AS localId, ws.name AS workstream
-             FROM tasks t
-             JOIN workstreams ws ON ws.id = t.workstream_id
-            WHERE t.owner_id = ? AND t.status = 'IN_PROGRESS'`,
-          )
-          .all(agentId) as Array<{ taskId: number; localId: string; workstream: string }>;
-
-        const pane = db.prepare("SELECT pane_id FROM agents WHERE id = ?").get(agentId) as
-          | { pane_id: string }
-          | undefined;
-        const result = db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
-        if (result.changes === 0) return false;
-        // A remote agent's pane IS its host transport: the row's death frees the
-        // channel it held, by registry id + pane (never a name).
-        if (pane !== undefined) releaseHostChannelsForAgent(db, agentId, pane.pane_id);
-
-        for (const t of stuck) {
-          db.prepare(
-            "UPDATE tasks SET status = 'OPEN', substate = CASE WHEN kind = 'human' THEN 'parked' ELSE 'todo' END, updated_at = ? WHERE id = ?",
-          ).run(new Date().toISOString(), t.taskId);
-          addNote(
-            db,
-            t.localId,
-            `[reaper] previous owner ${name} gone (agent removed); status reverted IN_PROGRESS → OPEN, owner cleared`,
-            { author: "reaper", workstream: t.workstream },
-          );
-          // No emitEvent: the UPDATE above fired the tasks capture
-          // trigger. Reap is the one site the orchestrator's split did not
-          // predict — it DOES mutate a portable table, so a trigger sees
-          // it, but it ran outside any withOpContext and so produced
-          // intent=NULL typed ops. The fix is the intent above, not a
-          // second prose row. The `[reaper]` task_note is the
-          // human-readable breadcrumb, and it is itself a captured op.
-        }
-        return true;
+        return reapAgentRow(db, agentId, name, {
+          reason: "reap",
+          preserve: opts.preserve !== false,
+        });
       })
       .immediate(),
   );

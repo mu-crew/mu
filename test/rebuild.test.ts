@@ -497,6 +497,17 @@ describe("rebuildInto", () => {
       expect(report.machineLocalLost).toEqual([{ table: "human_needs", rows: 1 }]);
     });
 
+    it("counts remote_recovery (a deleted remote row's worktree cannot be rebuilt)", () => {
+      seedRealisticSource();
+      db.prepare(
+        `INSERT INTO remote_recovery (agent_id, workstream, workstream_id, workstream_created_at, name,
+           pane_id, host, cwd, base, aside, reason, preserved_at)
+         VALUES (7, 'demo', 1, 'n', 'w1', '%1', 'dev', '/wt', 'b', '/wt.mu-removing-7', 'reap', 'n')`,
+      ).run();
+      const report = rebuildInto(db, { targetPath: targetPath() });
+      expect(report.machineLocalLost).toEqual([{ table: "remote_recovery", rows: 1 }]);
+    });
+
     it("counts worktrees too", () => {
       seedRealisticSource();
       seedAgent();

@@ -151,6 +151,8 @@ const UNREBUILDABLE_TABLES = [
   "host_profiles",
   "host_channels",
   "spawn_receipts",
+  // A remote worker's worktree, kept when its row was deleted: no op carries it.
+  "remote_recovery",
   // The human task and its reason rebuild from ops; WHO recorded it does
   // not. Ownership is never inferred from a note author.
   "human_needs",
