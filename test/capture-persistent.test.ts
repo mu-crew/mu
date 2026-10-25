@@ -33,7 +33,7 @@ import {
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
-const PINNED_CHECKSUM = "63c46e0f02899a0bb5f0a86c2c8f70b000ed98c3cf49896060ead81e4ff638f4";
+const PINNED_CHECKSUM = "0fa2a6ee2668584f1bdf66e3d65e8f792eeba3bd46eeeb808c58bf0050ace3d9";
 
 let dir: string;
 let path: string;
@@ -486,6 +486,34 @@ describe("explicit non-positive ids are refused", () => {
     expect(opsOf(a)).toEqual([]);
   });
 
+  // An explicit id near INT64_MAX moves the AUTOINCREMENT counter there, and the
+  // next omitted-id insert then fails "database or disk is full" for good.
+  it.each([9007199254740992n, 9223372036854775807n])(
+    "id %s (above 2^53-1) is refused on all four tables, and inserts keep working",
+    (id) => {
+      insertTask(a, "t1");
+      insertTask(a, "t2");
+      clearOps(a);
+      for (const sql of [
+        () => a.prepare(ws).run(id),
+        () => a.prepare(task(id as unknown as number)).run(),
+        () => a.prepare(note(id as unknown as number)).run(),
+        () => a.prepare(edge(id as unknown as number)).run(),
+      ]) {
+        expect(sql).toThrow(/ids above 2\^53-1 are refused/);
+      }
+      expect(opsOf(a)).toEqual([]);
+      expect(() => insertTask(a, "after")).not.toThrow();
+      expect(() =>
+        a.prepare("INSERT INTO workstreams (name, created_at) VALUES ('ok', 'x')").run(),
+      ).not.toThrow();
+    },
+  );
+
+  it("the largest safe id (2^53-1) is still accepted", () => {
+    expect(() => a.prepare(ws).run(9007199254740991n)).not.toThrow();
+  });
+
   it("an omitted-id insert still works after a refused -1 attempt", () => {
     expect(() => a.prepare(ws).run(-1)).toThrow(/non-positive/);
     expect(() =>
@@ -554,7 +582,7 @@ describe("capture version stamp", () => {
   it("pins the generated DDL: changing a generator requires a CAPTURE_VERSION bump", () => {
     // If this fails you changed trigger SQL. Bump CAPTURE_VERSION in
     // src/capture.ts, then update the pin below.
-    expect(CAPTURE_VERSION).toBe(3);
+    expect(CAPTURE_VERSION).toBe(4);
     expect(GENERATED_TRIGGER_CHECKSUM).toBe(PINNED_CHECKSUM);
   });
 

@@ -22,7 +22,7 @@ Rules for readers and for the units below:
 
 ## Where the kernel is today (shipped)
 
-Schema v12, `CAPTURE_VERSION` 2, 15 classified tables plus SQLite's
+Schema v12, `CAPTURE_VERSION` 4, 15 classified tables plus SQLite's
 `sqlite_sequence`. Shipped: persistent capture triggers, local-write
 guards, `NOTE_KINDS`, `tasks.scored`, `tasks.dispatch_host`,
 `task_auto`, `agents.cwd/base/command/command_source`, `worktrees`,

@@ -801,6 +801,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **Explicit ids above 2^53-1 are refused (`CAPTURE_VERSION` 4).** An `INSERT`
+  naming `id = 9223372036854775807` moved the AUTOINCREMENT counter to the max and
+  bricked every later insert ("database or disk is full") with no `mu` repair, now
+  that `sqlite_sequence` is protected. Local writes refuse it
+  (`mu: explicit ids above 2^53-1 are refused`, one usage line from `mu db query`);
+  ingest is unaffected. A `mu db query` whose retrieval command would exceed 1 KB
+  now says "re-run the same query with --all" instead of echoing the query.
+
 - **`mu db query` no longer writes `sqlite_sequence`, `sync_peers` or row ids.**
   One `UPDATE sqlite_sequence` could brick every later captured write ("database or
   disk is full"); a forged `sync_peers` watermark skipped peer ops until a repair; an

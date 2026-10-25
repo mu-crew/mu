@@ -12,10 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkStatement, cmdDbQuery, installScopedViews } from "../src/cli/db-query.js";
 import { SqlColumnError, UsageError } from "../src/cli/handle.js";
 import { type Db, openDb, WorkstreamNotFoundError } from "../src/db.js";
+import { RESULT_BYTES } from "../src/output-contract.js";
 import { shellQuote } from "../src/shell-quote.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { withEnv } from "./_env.js";
 import { envelopeData } from "./_envelope.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -755,6 +757,29 @@ describe("db query read payload is a capped collection", () => {
     expect(p.retrieve).toBe(`mu db query ${shellQuote(q)} -w w --all`);
   });
 
+  it("a managed worker's retrieve carries its injected -w", async () => {
+    const q = "SELECT hex(zeroblob(3000)) AS s UNION ALL SELECT hex(zeroblob(3000))";
+    await withEnv("MU_MANAGED_AGENT", "1", () =>
+      withEnv("MU_WORKSTREAM", "w", async () => {
+        await cmdDbQuery(db, q, { json: true });
+      }),
+    );
+    const p = lastPayload();
+    expect(p.more).toBeGreaterThan(0);
+    expect(p.retrieve).toBe(`mu db query ${shellQuote(q)} -w w --all`);
+  });
+
+  it("a query too long to echo gets a generic retrieval and the document stays under the cap", async () => {
+    const q = `SELECT '${"y".repeat(5000)}' AS a UNION ALL SELECT '${big.repeat(20)}'`;
+    await cmdDbQuery(db, q, { json: true });
+    const p = lastPayload();
+    expect(p.more).toBeGreaterThan(0);
+    expect(p.retrieve).toBe("re-run the same query with --all");
+    expect(Buffer.byteLength(String(logSpy.mock.calls.at(-1)?.[0]))).toBeLessThanOrEqual(
+      RESULT_BYTES,
+    );
+  });
+
   it("one row over the cap: zero items, more 1, the retrieval, cells never cut", async () => {
     const q = `SELECT '${big.repeat(20)}' AS huge`;
     await cmdDbQuery(db, q, { json: true });
@@ -780,6 +805,19 @@ describe("db query read payload is a capped collection", () => {
     );
     const p = lastPayload();
     expect(p.count).toBe(4);
+    expect(p.more).toBe(0);
+    expect(p.retrieve).toBeUndefined();
+  });
+
+  it("RETURNING rows totalling over the cap are all printed, none withheld", async () => {
+    const rows = 3;
+    const cell = "z".repeat(Math.ceil(RESULT_BYTES / rows) + 100);
+    await cmdDbQuery(db, `UPDATE tasks SET title = '${cell}' WHERE id <= ${rows} RETURNING title`, {
+      json: true,
+    });
+    const p = lastPayload();
+    expect(Buffer.byteLength(String(logSpy.mock.calls.at(-1)?.[0]))).toBeGreaterThan(RESULT_BYTES);
+    expect(p.count).toBe(rows);
     expect(p.more).toBe(0);
     expect(p.retrieve).toBeUndefined();
   });
