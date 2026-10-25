@@ -51,7 +51,7 @@
   {
     "calls": [
       {
-        "bash": "mu agent close w1 -w eval"
+        "bash": "rev=$(mu agent close w1 -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); if [ -n \"$rev\" ]; then mu agent close w1 -w eval --if \"$rev\"; fi"
       }
     ]
   },
@@ -100,7 +100,7 @@
   {
     "calls": [
       {
-        "bash": "mu agent close w1 -w eval"
+        "bash": "rev=$(mu agent close w1 -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); if [ -n \"$rev\" ]; then mu agent close w1 -w eval --if \"$rev\"; fi"
       }
     ]
   },
