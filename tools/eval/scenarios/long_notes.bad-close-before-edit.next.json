@@ -1,0 +1,26 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task notes big -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close big -w eval --evidence 'will set scope.txt to heron'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "echo heron > scope.txt"
+      }
+    ]
+  },
+  {
+    "text": "Done."
+  }
+]

@@ -1,0 +1,180 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --worktree --task f1 --send 'do f1 and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close f1 -w eval --evidence 'f1 worker finished'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim r1 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --json 'review f1 (task r1) and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 1 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close r1 -w eval --evidence 'r1 worker finished'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim f2 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --json 'do f2 and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 2 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close f2 -w eval --evidence 'f2 worker finished'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim r2 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --json 'review f2 (task r2) and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 3 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close r2 -w eval --evidence 'r2 worker finished'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim f3 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --json 'do f3 and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 4 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close f3 -w eval --evidence 'f3 worker finished'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim r3 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --json 'review f3 (task r3) and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 5 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close r3 -w eval --evidence 'r3 worker finished'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for c in $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-list --reverse main..HEAD); do git cherry-pick $c; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "./gate.sh"
+      }
+    ]
+  },
+  {
+    "text": "Done."
+  }
+]

@@ -1,0 +1,19 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu workstream list"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu workstream teardown eval"
+      }
+    ]
+  },
+  {
+    "text": "Workstream eval is cleaned up."
+  }
+]

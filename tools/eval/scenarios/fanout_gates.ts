@@ -191,7 +191,7 @@ const scenario: Scenario = {
     const gateOk = gate.code === 0;
 
     const closer = (id: string): string | undefined =>
-      runs.find((r) => r.task === id && r.action === "close")?.agent;
+      runs.find((r) => r.task === id && ["close", "block"].includes(r.action))?.agent;
     for (const n of N) {
       const last = <T>(xs: T[]): T | undefined => xs[xs.length - 1];
       const fc = last(ops(sb, `eval/f${n}`, "task.close"));

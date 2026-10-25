@@ -292,10 +292,41 @@ export async function sshShim(
     }),
   );
   appendFileSync(join(sb.dir, "tmux-sockets"), `${hostSock}\n`);
+  // EVAL_DB_PATH: mu-next strips MU_DB_PATH from the pane's env (the remote pi never gets the DB), but
+  // eval-worker still reads the task table (read-only) to know which task is claimed for it.
   write(
     join(sb.binDir, "ssh"),
-    `#!/bin/sh\nEVAL_SANDBOX_DIR=${shq(sb.dir)} exec node ${shq(join(EVAL_DIR, "ssh-shim.ts"))} "$@"\n`,
+    `#!/bin/sh\nEVAL_DB_PATH=${shq(sb.dbPath)} EVAL_SANDBOX_DIR=${shq(sb.dir)} exec node ${shq(join(EVAL_DIR, "ssh-shim.ts"))} "$@"\n`,
     0o755,
   );
   return { hostRoot, sessionsLog };
+}
+
+/**
+ * mu-next family: the host profile a user would have stored for an ssh host (`mu host add`), with
+ * the starter templates of `mu host init <host> --ssh`. The shim is the `ssh` on PATH. 3.x has no
+ * host profiles (its goldens spell the ssh command out), so a scenario calls this only on `next`.
+ */
+export async function hostProfile(
+  sb: Sandbox,
+  host: string,
+  opts: { maxSessions?: number } = {},
+): Promise<void> {
+  const o = "-o ControlMaster=no -o ControlPath=none";
+  await seedViaMu(sb, [
+    [
+      "host",
+      "add",
+      host,
+      "--shell",
+      `ssh ${o} -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L {local_sock}:{remote_sock} ${host} -t 'cd {cwd:sh} && {env} "$SHELL" -ilc {cmd:sh}'`,
+      "--exec",
+      `ssh ${o} -o BatchMode=yes ${host} {cmd}`,
+      "--fetch",
+      `git fetch ssh://${host}{cwd} HEAD`,
+      "--repo",
+      "~/repo",
+      ...(opts.maxSessions === undefined ? [] : ["--max-sessions", String(opts.maxSessions)]),
+    ],
+  ]);
 }

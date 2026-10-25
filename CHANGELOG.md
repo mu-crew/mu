@@ -447,6 +447,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `RevisionMismatchError`, `ifRevision` on `deleteTask`/`claimTask`/`releaseTask`.
   Agent-side guards are a separate unit.
 
+- **Eval `next` family: ten stable-surface scenarios.** `guessed_flag`, `guessed_sql_column`, `long_notes`, `wrong_id`, `worktree_reuse`, `teardown`, `remote_spawn`, `remote_close_block`, `single_channel_host` and `fanout_gates` have a `.golden.next.json` and the same bad set as 3.x, written against the built checkout (workers close with a CLOSE block and the AUT closes after `agent wait`; remote scenarios store a host profile with `fixtures.hostProfile`, spawn with `--host --worktree --task`, then `agent collect`). The judges accept a worker's `block` as well as `close` in `runs.log`; the 3.x scripts are unchanged and still pass on 3.13.3. `sshShim` hands `EVAL_DB_PATH` to the remote worker driver because mu-next strips `MU_DB_PATH` from the pane.
+
 - **Eval judges assert effects, not command spellings.** The sandbox `mu` shim records
   every invocation (`mu-calls.log`) and tees the AUT's own output; the faux workers log the
   prompts they receive and the delegate answers they serve. Every judge now reads what mu

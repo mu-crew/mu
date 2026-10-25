@@ -11,8 +11,10 @@ import {
   delegateAnswerFor,
   delegateDelay,
   gateScript,
+  hostProfile,
   makeRepo,
   runsLog,
+  sandboxFamily,
   seedViaMu,
   sshShim,
   workerTask,
@@ -83,6 +85,8 @@ const scenario: Scenario = {
       });
     }
     await sshShim(sb, { host: "dev", maxSessions: 1 });
+    // mu-next stores the host as a profile; 3.x spells the ssh command out
+    if (sandboxFamily(sb) === "next") await hostProfile(sb, "dev", { maxSessions: 1 });
     writeFileSync(join(sb.dir, "setup-head"), (await sh(sb, "git rev-parse HEAD")).stdout.trim());
   },
   async judge(sb, run) {

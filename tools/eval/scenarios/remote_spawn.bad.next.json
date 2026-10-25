@@ -1,0 +1,33 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --worktree --task rt1 --send 'do rt1' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD)"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close rt1 -w eval --evidence 'worker on dev finished; commit cherry-picked into main'"
+      }
+    ]
+  },
+  {
+    "text": "rt1 is done and merged."
+  }
+]

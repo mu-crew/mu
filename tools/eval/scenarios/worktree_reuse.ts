@@ -17,6 +17,7 @@ import {
   gateScript,
   makeRepo,
   runsLog,
+  sandboxFamily,
   seedViaMu,
   workerTask,
   writeWorkerDriver,
@@ -59,7 +60,23 @@ const scenario: Scenario = {
     if (!legacy) await must(sb, ["agent", "spawn", "w1", "-w", "eval", "--worktree"]);
     await must(sb, ["task", "claim", "r1", "-w", "eval", "--for", "w1"]);
     await must(sb, ["agent", "send", "w1", "-w", "eval", "go"]);
-    await must(sb, ["task", "wait", "r1", "-w", "eval", "--timeout", "120"]);
+    if (sandboxFamily(sb) === "next") {
+      // the next worker ends with a CLOSE block, not a close: wait for the run, then close r1 here
+      await must(sb, [
+        "agent",
+        "wait",
+        "w1",
+        "-w",
+        "eval",
+        "--after-runs",
+        "0",
+        "--timeout",
+        "120",
+      ]);
+      await must(sb, ["task", "close", "r1", "-w", "eval", "--evidence", "w1 finished r1"]);
+    } else {
+      await must(sb, ["task", "wait", "r1", "-w", "eval", "--timeout", "120"]);
+    }
     const wsPath = legacy
       ? await must(sb, ["workspace", "path", "w1", "-w", "eval"])
       : join(sb.env.MU_STATE_DIR ?? "", "worktrees", "eval", "w1");
@@ -116,7 +133,7 @@ const scenario: Scenario = {
       .filter((x) => x !== "");
     const dirty = (await git("status --porcelain")).stdout.trim();
     const allRuns = await runsLog(sb);
-    const runs = allRuns.filter((r) => r.task === "r2" && r.action === "close");
+    const runs = allRuns.filter((r) => r.task === "r2" && ["close", "block"].includes(r.action));
     const ranIn = runs.at(-1);
     const wrong: string[] = [];
     // main's r2 must be the commit w1 produced (or its cherry-pick), not one the AUT re-authored.

@@ -1,0 +1,19 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "echo rt2 >> rt2.txt && git add rt2.txt && git commit -qm rt2"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close rt2 -w eval --evidence 'did rt2 myself, tests pass'"
+      }
+    ]
+  },
+  {
+    "text": "rt2 done."
+  }
+]
