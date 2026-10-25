@@ -12,29 +12,30 @@
 // group, once per (agent, incarnation, runs). Everything else is ignored
 // or recorded as "no close (malformed)": the block never closes by guess.
 //
-// Grammar (the only definition; the README names the shape, not the escapes):
-//   - The CLOSE block is recognised ONLY as the literal final block of the
-//     message. Trailing blank lines are dropped; the report is everything
-//     after the `REPORT:` line to there, byte for byte (leading blank lines,
-//     indentation, CRLF and all). Nothing else is normalized.
-//   - Fence state (``` / ~~~, CommonMark open/close rules) is tracked over
-//     the WHOLE message. An unclosed fence quotes the rest of it, so a message
-//     that ends inside a fence has no block at all. A line
-//     inside a fence (or a fence line) is never a block line.
-//   - A block starts at a line at column 0, outside any fence, that begins
-//     `CLOSE:` and is followed at once by a line that is exactly `REPORT:`.
-//     The FINAL such start is the block; earlier ones are ignored.
-//   - If the last non-blank line is itself such a `CLOSE:` line (outside a
-//     fence), the final block is malformed, whatever precedes it: no
-//     fallback to an earlier block.
-//   - Header: `CLOSE: task=<id> evidence="<text>"`. <id> is a task id.
-//     Inside the quotes `\"`, `\\` and `\n` are escapes; any other
-//     backslash is literal; a bare `"` ends the evidence and so must be
-//     the last character of the line, or the block is malformed.
-//   - Malformed: bad header, invalid id, empty evidence, blank report, or a
-//     final `CLOSE:` line with no `REPORT:` after it.
-//   - The template line `CLOSE: task=<id> ...` is a quoted contract: not a
-//     start.
+// Grammar (the only definition; the README names the shape, not the escapes).
+// A CLOSE applies only if the whole tail of the message fits it exactly:
+//
+//   CLOSE: task=<id> evidence="<escaped text>"      (column 0, outside a fence)
+//   REPORT:                                         (the very next line)
+//   <report: every byte to the end of the message>
+//
+//   - The tail starts at the LAST column-0 line outside any fence that begins
+//     `CLOSE:` (the quoted template `task=<...>` is not one). Earlier blocks
+//     are never considered. No such line: no block.
+//   - Fence state (``` / ~~~, CommonMark open/close rules) is tracked over the
+//     WHOLE message. A message that ends inside a fence has no block; a fence
+//     line or a line inside a fence is never a marker.
+//   - Both marker lines are exact: single spaces, no indentation, no trailing
+//     blanks (a CR before the LF is the only tolerance). `REPORT:` must be the
+//     line right after the header. Anything else is malformed.
+//   - <id> is a task id. Inside the quotes `\"`, `\\` and `\n` are escapes; any
+//     other backslash is literal; a bare `"` ends the evidence and so must be
+//     the last character of the line. Evidence and report must not be blank.
+//   - The report is the exact bytes after the `REPORT:` line. Only the
+//     run of trailing newlines is normalized: it becomes exactly one `\n`
+//     (none stays none; spaces and TABs are report bytes).
+//   - Whatever is not a valid block applies nothing and carries a one-line
+//     reason; a start line whose tail does not fit is "malformed".
 
 import type { Db } from "./db.js";
 import { withOpContext } from "./op-context.js";
@@ -44,10 +45,11 @@ import { closeTask } from "./tasks/lifecycle.js";
 
 export type CloseBlock =
   | { kind: "valid"; task: string; evidence: string; report: string }
-  | { kind: "malformed" }
-  | { kind: "none" };
+  | { kind: "malformed"; reason: string }
+  | { kind: "none"; reason: string };
 
-const HEADER = /^CLOSE:[ \t]+task=(\S+)[ \t]+evidence="/;
+const HEADER = /^CLOSE: task=(\S+) evidence="(.*)"$/;
+const TEMPLATE = /^CLOSE:[ \t]+task=<[^>\s]*>/;
 
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
@@ -76,14 +78,15 @@ function quotedLines(lines: string[]): { quoted: boolean[]; unclosed: boolean } 
   return { quoted, unclosed: open !== undefined };
 }
 
-const isStart = (line: string): boolean =>
-  line.startsWith("CLOSE:") && !/^CLOSE:[ \t]+task=<[^>\s]*>/.test(line);
+const isStart = (line: string): boolean => line.startsWith("CLOSE:") && !TEMPLATE.test(line);
+
+const none = (reason: string): CloseBlock => ({ kind: "none", reason });
+const malformed = (reason: string): CloseBlock => ({ kind: "malformed", reason });
 
 /** Parse the CLOSE block at the tail of a settled run's final message. */
 export function parseCloseBlock(text: string): CloseBlock {
-  if (text.trim() === "") return { kind: "none" };
-  // Only the trailing blank lines go; the last content line keeps its bytes.
-  const body = text.replace(/(?:\r?\n[ \t\r\f\v]*)+$/, "");
+  if (text.trim() === "") return none("empty message");
+  const body = text.replace(/(?:\r?\n)+$/, "");
   const raw = body.split("\n");
   const offsets: number[] = [];
   let at = 0;
@@ -93,34 +96,31 @@ export function parseCloseBlock(text: string): CloseBlock {
   }
   const lines = raw.map((l) => l.replace(/\r$/, ""));
   const { quoted, unclosed } = quotedLines(lines);
-  // A fence still open at the end quotes the tail: the message does not END
-  // with a block, whatever block-looking lines sit before it.
-  if (unclosed) return { kind: "none" };
-  const last = lines.length - 1;
-  if (!quoted[last] && isStart(lines[last] ?? "")) return { kind: "malformed" };
+  if (unclosed) return none("the message ends inside a code fence");
   let start = -1;
-  for (let i = 0; i < last; i++) {
-    if (quoted[i] || !isStart(lines[i] ?? "")) continue;
-    if ((lines[i + 1] ?? "").trimEnd() === "REPORT:") start = i;
+  for (let i = 0; i < lines.length; i++) {
+    if (!quoted[i] && isStart(lines[i] ?? "")) start = i;
   }
-  if (start < 0) return { kind: "none" };
-  const header = (lines[start] ?? "").trimEnd();
-  const m = HEADER.exec(header);
-  if (!m) return { kind: "malformed" };
+  if (start < 0) return none("no CLOSE: line at column 0");
+  const m = HEADER.exec(lines[start] ?? "");
+  if (!m) return malformed('the CLOSE: line is not `CLOSE: task=<id> evidence="<text>"`');
   const task = m[1] ?? "";
-  if (!isValidTaskId(task)) return { kind: "malformed" };
-  const evidence = unescapeEvidence(header.slice(m[0].length));
-  if (evidence === undefined || evidence.trim() === "") return { kind: "malformed" };
+  if (!isValidTaskId(task)) return malformed("task= is not a valid task id");
+  const evidence = unescapeEvidence(m[2] ?? "");
+  if (evidence === undefined) return malformed("evidence has a bare or unterminated quote");
+  if (evidence.trim() === "") return malformed("evidence is empty");
+  if (start + 1 >= lines.length || lines[start + 1] !== "REPORT:") {
+    return malformed("the line after CLOSE: is not exactly REPORT:");
+  }
   const report = body.slice(offsets[start + 2] ?? body.length);
-  if (report.trim() === "") return { kind: "malformed" };
-  return { kind: "valid", task, evidence, report };
+  if (report.trim() === "") return malformed("the report is empty");
+  const normalized = body.length < text.length ? `${report}\n` : report;
+  return { kind: "valid", task, evidence, report: normalized };
 }
 
-/** `rest` is what follows the opening quote. Undefined unless it is the
- *  escaped text plus exactly one closing quote at the end. */
-function unescapeEvidence(rest: string): string | undefined {
-  if (!rest.endsWith('"')) return undefined;
-  const body = rest.slice(0, -1);
+/** `body` is the text between the opening and the closing quote. Undefined
+ *  when it holds a bare quote or ends in a backslash that escaped the closer. */
+function unescapeEvidence(body: string): string | undefined {
   let out = "";
   for (let i = 0; i < body.length; i++) {
     const c = body[i] as string;
@@ -136,12 +136,13 @@ function unescapeEvidence(rest: string): string | undefined {
     } else if (n === "n") {
       out += "\n";
       i++;
+    } else if (n === undefined) {
+      return undefined;
     } else {
       out += c;
     }
   }
-  // A trailing lone backslash escaped the closing quote: unterminated.
-  return /(?:^|[^\\])(?:\\\\)*\\$/.test(body) ? undefined : out;
+  return out;
 }
 
 export const CLOSE_MALFORMED = "no close (malformed)";
@@ -228,8 +229,8 @@ function applyInTxn(db: Db, input: SettledCloseInput): SettledCloseResult {
   };
   if (input.lastTextTruncated === true) return diagnose(CLOSE_TRUNCATED);
   const block = parseCloseBlock(input.lastText);
-  if (block.kind === "none") return no("no CLOSE block");
-  if (block.kind === "malformed") return diagnose(CLOSE_MALFORMED);
+  if (block.kind === "none") return no(`no CLOSE block: ${block.reason}`);
+  if (block.kind === "malformed") return diagnose(`${CLOSE_MALFORMED}: ${block.reason}`);
   const task = db
     .prepare(
       `SELECT t.id, t.status, t.owner_id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id

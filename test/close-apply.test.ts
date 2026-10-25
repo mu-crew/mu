@@ -235,7 +235,7 @@ describe("applySettledClose: no inferred close", () => {
     const before = opCount();
     expect(applySettledClose(db, input({ lastText: "all done" }))).toMatchObject({
       applied: false,
-      reason: "no CLOSE block",
+      reason: "no CLOSE block: no CLOSE: line at column 0",
     });
     expect(opCount()).toBe(before);
     expect(settles()).toEqual([]);
@@ -246,12 +246,14 @@ describe("applySettledClose: no inferred close", () => {
     expect(applySettledClose(db, input({ lastText: text }))).toMatchObject({
       applied: false,
       task: "t1",
-      reason: CLOSE_MALFORMED,
+      reason: expect.stringMatching(/^no close \(malformed\): \S/),
     });
     expect(applySettledClose(db, input({ lastText: text }))).toMatchObject({
       reason: "already applied",
     });
-    expect(kinds("t1")).toEqual([{ kind: "note", content: CLOSE_MALFORMED }]);
+    expect(kinds("t1")).toEqual([
+      { kind: "note", content: expect.stringContaining(CLOSE_MALFORMED) },
+    ]);
     expect(getTask(db, "t1", "w")?.status).toBe("IN_PROGRESS");
   });
 
@@ -264,7 +266,7 @@ describe("applySettledClose: no inferred close", () => {
     ).toMatchObject({
       applied: false,
       task: null,
-      reason: CLOSE_MALFORMED,
+      reason: expect.stringContaining(CLOSE_MALFORMED),
     });
     expect(kinds("t1")).toEqual([]);
     expect(kinds("t5")).toEqual([]);
@@ -290,14 +292,26 @@ describe("applySettledClose: no inferred close", () => {
     expect(getTask(db, "t1", "w")?.status).toBe("IN_PROGRESS");
   });
 
-  it("a report may contain CLOSE text without executing it", () => {
-    const text = block("t1", "ok", 'Contract was:\nCLOSE: task=t2 evidence="x"\nso I did not.');
-    expect(applySettledClose(db, input({ lastText: text }))).toMatchObject({
+  it("a report may quote a CLOSE line only indented or fenced; a column-0 one makes the tail malformed", () => {
+    const quoted = block(
+      "t1",
+      "ok",
+      'Contract was:\n  CLOSE: task=t2 evidence="x"\n```\nCLOSE: task=t2 evidence="x"\n```\nso I did not.',
+    );
+    expect(applySettledClose(db, input({ lastText: quoted }))).toMatchObject({
       applied: true,
       task: "t1",
     });
     expect(getTask(db, "t2", "w")?.status).toBe("IN_PROGRESS");
-    expect(kinds("t1")[0]?.content).toContain('CLOSE: task=t2 evidence="x"');
+    expect(kinds("t1")[0]?.content).toContain('  CLOSE: task=t2 evidence="x"');
+    // Column 0: the tail no longer fits the grammar, nothing is applied.
+    const loose = block("t1", "ok", 'CLOSE: task=t2 evidence="x"\nso I did not.');
+    openTask(db, "t1", { workstream: "w" });
+    expect(applySettledClose(db, input({ runs: 2, lastText: loose }))).toMatchObject({
+      applied: false,
+      reason: expect.stringContaining(CLOSE_MALFORMED),
+    });
+    expect(getTask(db, "t1", "w")?.status).toBe("OPEN");
   });
 });
 
@@ -309,10 +323,19 @@ describe("applySettledClose: round 2 parser findings through the writer", () => 
       'CLOSE: task=t1 evidence="npm test: passed"\nREPORT:\ndone\nCLOSE: task=t1 evidence=bad';
     expect(applySettledClose(db, input({ lastText: text }))).toMatchObject({
       applied: false,
-      reason: CLOSE_MALFORMED,
+      reason: expect.stringContaining(CLOSE_MALFORMED),
     });
     expect(open()).toBe("IN_PROGRESS");
-    expect(kinds("t1")).toEqual([{ kind: "note", content: CLOSE_MALFORMED }]);
+    expect(kinds("t1")).toEqual([
+      { kind: "note", content: expect.stringContaining(CLOSE_MALFORMED) },
+    ]);
+  });
+
+  it("f_close_malformed_tail_2: a bad REPORT line + body after a valid pair closes nothing", () => {
+    const text = `${block("t1")}\n\nCLOSE: task=t1 evidence=bad\nREPORT\nnot a valid final block`;
+    expect(applySettledClose(db, input({ lastText: text }))).toMatchObject({ applied: false });
+    expect(open()).toBe("IN_PROGRESS");
+    expect(kinds("t1").map((k) => k.kind)).toEqual(["note"]);
   });
 
   it("f_close_quoted_fence: a block quoted in an unclosed fence closes nothing and writes nothing", () => {
@@ -325,10 +348,10 @@ describe("applySettledClose: round 2 parser findings through the writer", () => 
     expect(kinds("t1")).toEqual([]);
   });
 
-  it("f_close_report_whitespace: the stored report keeps its leading indentation", () => {
-    const text = 'CLOSE: task=t1 evidence="npm test: passed"\nREPORT:\n    code\nnext\n\n';
+  it("f_close_report_tail_bytes: the stored report is the exact tail bytes", () => {
+    const text = 'CLOSE: task=t1 evidence="npm test: passed"\nREPORT:\n    code\nnext\n \t\n\n';
     expect(applySettledClose(db, input({ lastText: text }))).toMatchObject({ applied: true });
-    expect(kinds("t1")[0]).toEqual({ kind: "report", content: "    code\nnext" });
+    expect(kinds("t1")[0]).toEqual({ kind: "report", content: "    code\nnext\n \t\n" });
   });
 });
 
