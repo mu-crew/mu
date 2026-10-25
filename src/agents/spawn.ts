@@ -46,6 +46,7 @@ import { isScratchWorkstream } from "../workstream.js";
 import {
   createWorktree,
   forgetWorktree,
+  getWorktreeAt,
   reclaimWorktreePath,
   registerWorktree,
   removeWorktree,
@@ -775,6 +776,9 @@ interface StagedWorktree {
   path: string;
   base: string;
   root: string;
+  /** The registry row's `createdAt`: rollback frees the worktree only while
+   *  the row at `path` is still this one (the registry has no owner column). */
+  createdAt: string;
   /** The placeholder row's incarnation: finalize and rollback act on it only. */
   incarnation: number;
 }
@@ -843,15 +847,16 @@ async function prestageLocked(
       path,
       from,
     });
+    const createdAt = new Date().toISOString();
     registerWorktree(db, {
       path,
       agent: opts.name,
       workstream: opts.workstream,
       root,
       base,
-      createdAt: new Date().toISOString(),
+      createdAt,
     });
-    return { path, base, root, incarnation: placeholder.incarnation };
+    return { path, base, root, createdAt, incarnation: placeholder.incarnation };
   } catch (err) {
     try {
       // Only the placeholder this spawn inserted, never a replacement.
@@ -991,17 +996,36 @@ async function rollbackSpawn(
     // The mux is in hand before the check, and the kill is issued in the
     // same step: a row of another incarnation on this very pane id (a
     // replacement that reused it) means the pane is no longer ours.
-    const cur = getAgent(db, name, workstream);
-    const ours = cur === undefined || cur.paneId !== paneId || cur.incarnation === ownedIncarnation;
-    if (ours) await mux?.killPane(paneId).catch(() => {});
+    // A pane id registered to ANY other incarnation (any name, any
+    // workstream) is not ours either: leave it alone and say so.
+    const foreign = db
+      .prepare("SELECT 1 FROM agents WHERE pane_id = ? AND id IS NOT ? LIMIT 1")
+      .get(paneId, ownedIncarnation ?? null);
+    if (foreign === undefined) await mux?.killPane(paneId).catch(() => {});
+    else {
+      try {
+        emitEvent(
+          db,
+          workstream,
+          "agent.spawn_failed",
+          `agent spawn rollback ${name}: pane ${paneId} now belongs to another agent, left alone`,
+        );
+      } catch {
+        // best-effort
+      }
+    }
   }
   if (staged !== undefined) {
     try {
       // Under the agent lock, and only while the name is still this spawn's
-      // (or gone): a replacement staged at this path owns the worktree now.
+      // (or gone) AND the registry row at the path is the one this spawn
+      // wrote: a replacement staged there, or a newer orphan, owns it now.
       await withAgentLock(db, workstream, name, async () => {
         const cur = getAgent(db, name, workstream);
         if (cur !== undefined && cur.incarnation !== staged.incarnation) return;
+        const reg = getWorktreeAt(db, staged.path);
+        if (reg !== undefined && (reg.createdAt !== staged.createdAt || reg.base !== staged.base))
+          return;
         await removeWorktree(staged.root, staged.path, { force: true });
         forgetWorktree(db, staged.path);
       });

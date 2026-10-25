@@ -72,7 +72,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   refused), the close kill and the spawn-rollback kill re-check the incarnation
   in the step that kills (a replacement on a reused pane id is left alone), and
   a staged `--worktree` spawn unlinks the ctl socket only while its own
-  placeholder (own incarnation, still pending) holds the name. `mu_delegate`
+  placeholder (own incarnation, still pending) holds the name. Round three:
+  the preview reads in one SQLite read transaction (another process's
+  replacement cannot land between identity and revision), a spawn rollback
+  leaves a pane id any other agent holds, and frees a staged worktree only
+  while the registry row at its path is the one that spawn wrote. `mu_delegate`
   keeps the pane and incarnation its spawn reported and closes through
   preview, identity check, `--if` apply; a missing identity, failed preview or
   replacement keeps the pane. Printed `mu agent close` hints now say "preview".

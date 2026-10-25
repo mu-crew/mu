@@ -709,6 +709,145 @@ describe("round 2: identity from one read, rollback and socket fenced", () => {
   });
 });
 
+describe("round 3: one read transaction, rollback leaves foreign panes", () => {
+  /** Run `inject` once, right before the first `get`/`all` of a statement whose SQL has `marker`. */
+  function interleaveBefore(marker: string, inject: () => void): void {
+    const orig = db.prepare.bind(db);
+    let done = false;
+    (db as unknown as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
+      const st = orig(sql) as unknown as Record<string, (...a: unknown[]) => unknown>;
+      if (done || !sql.includes(marker)) return st;
+      return new Proxy(st, {
+        get(t, p) {
+          const v = t[p as string];
+          if (typeof v !== "function") return v;
+          if (p !== "get" && p !== "all") return v.bind(t);
+          return (...a: unknown[]) => {
+            if (!done) {
+              done = true;
+              inject();
+            }
+            return v.apply(t, a);
+          };
+        },
+      });
+    };
+  }
+
+  it("another process replacing the name between the preview's statements is not seen half and half", async () => {
+    const other = openDb({ path: dbPath });
+    try {
+      const a = insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1" });
+      let b: { incarnation: number } | undefined;
+      // agentRevision's agent SELECT: the revision is read after the identity.
+      interleaveBefore("a.collected_head, a.created_at", () => {
+        deleteAgent(other, "w1", "auth");
+        b = insertAgent(other, { name: "w1", workstream: "auth", paneId: "%2" });
+      });
+      const p = await previewClose(db, "w1", { workstream: "auth" });
+      expect(b).toBeDefined();
+      // Either wholly A (stale: `--if` then refuses) or wholly B; never A's identity with B's revision.
+      const current = agentRevision(db, "auth", "w1");
+      if (p.incarnation === a.incarnation) {
+        expect(p.paneId).toBe("%1");
+        expect(p.revision).not.toBe(current);
+        await expect(
+          closeAgent(db, "w1", { workstream: "auth", ifRevision: p.revision }),
+        ).rejects.toBeInstanceOf(RevisionMismatchError);
+        expect(getAgent(db, "w1", "auth")?.paneId).toBe("%2");
+        expect(kills()).toEqual([]);
+      } else {
+        expect(p.incarnation).toBe(b?.incarnation);
+        expect(p.paneId).toBe("%2");
+        expect(p.revision).toBe(current);
+      }
+    } finally {
+      other.close();
+    }
+  });
+
+  it("the preview's worktree state is of the row it describes: a replacement during the git check retries", async () => {
+    // A's worktree is a non-git dir (state: dirty); B's is missing. A preview that
+    // skipped the staleness compare would report B's path with A's `dirty`.
+    const pathA = mkdtempSync(join(tmpdir(), "mu-wt-a-"));
+    const pathB = join(pathA, "gone");
+    try {
+      insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1", cwd: pathA });
+      registerWorktree(db, {
+        path: pathA,
+        agent: "w1",
+        workstream: "auth",
+        root: pathA,
+        base: "aaa",
+        createdAt: "t",
+      });
+      const pending = previewClose(db, "w1", { workstream: "auth" });
+      deleteAgent(db, "w1", "auth");
+      db.prepare("DELETE FROM worktrees WHERE path = ?").run(pathA);
+      insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1", cwd: pathB });
+      registerWorktree(db, {
+        path: pathB,
+        agent: "w1",
+        workstream: "auth",
+        root: pathA,
+        base: "aaa",
+        createdAt: "t",
+      });
+      const p = await pending;
+      expect(p.worktree).toEqual({ path: pathB, state: "missing" });
+      expect(p.refusesDirty).toBe(false);
+    } finally {
+      rmFixtureDir(pathA);
+    }
+  });
+
+  it.each(["same workstream", "other workstream"])(
+    "a rollback does not kill a pane id another agent now holds (%s)",
+    async (where) => {
+      const prev = process.env.MU_SPAWN_LIVENESS_MS;
+      process.env.MU_SPAWN_LIVENESS_MS = "10";
+      setSleepForTests(async () => {});
+      const state = freshMockState();
+      const fake = mockTmux(state);
+      let swapped = false;
+      use(async (args) => {
+        if (args[0] === "display-message" && args[2] === "%1" && !swapped) {
+          swapped = true;
+          // alice's pane died; a restarted mux handed %1 to bob, registered meanwhile.
+          insertAgent(db, {
+            name: "bob",
+            workstream: where === "same workstream" ? "auth" : "billing",
+            paneId: "%1",
+          });
+          state.panes.delete("%1");
+        }
+        return fake.executor(args);
+      });
+      try {
+        await expect(
+          spawnAgent(db, {
+            name: "alice",
+            workstream: "auth",
+            cli: "sh",
+            command: "sh",
+            ctl: false,
+          }),
+        ).rejects.toThrow();
+      } finally {
+        resetSleep();
+        if (prev === undefined) delete process.env.MU_SPAWN_LIVENESS_MS;
+        else process.env.MU_SPAWN_LIVENESS_MS = prev;
+      }
+      expect(swapped).toBe(true);
+      expect(getAgent(db, "alice", "auth")).toBeUndefined();
+      expect(getAgent(db, "bob", where === "same workstream" ? "auth" : "billing")?.paneId).toBe(
+        "%1",
+      );
+      expect(fake.calls.filter((c) => c[0] === "kill-pane")).toEqual([]);
+    },
+  );
+});
+
 describe("withFileLock strict: reclaim and metadata fail closed", () => {
   const lock = (): string => join(dir, "locks", "y.lock");
   const unavailable = (): never => {
