@@ -20,7 +20,7 @@
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
 //   - 4 views:         ready, blocked, blockers, goals
-//   => EXPECTED_TABLES is exactly 15 entries at v12 (24 at v13: see there).
+//   => EXPECTED_TABLES is exactly 15 entries at v12 (25 at v13: see there).
 //
 // v12 is additive over v11: workstreams.torn_down_at (soft teardown),
 // agents.cwd / agents.base (worktree path and the commit it forked
@@ -723,6 +723,21 @@ export const DELEGATE_CALL_STATES = [
   "cancelled",
 ] as const;
 
+/** The states of a stall action (`wait_action_receipts.state`). */
+export const WAIT_ACTION_STATES = [
+  "reserved",
+  "sending",
+  "sent",
+  "unknown",
+  "refused",
+  "released",
+] as const;
+export type WaitActionState = (typeof WAIT_ACTION_STATES)[number];
+
+/** The stall actions a wait may take (`wait_action_receipts.action`). */
+export const WAIT_ACTIONS = ["steer", "release"] as const;
+export type WaitAction = (typeof WAIT_ACTIONS)[number];
+
 /** The states of a task-bound spawn attempt (`spawn_receipts.state`). */
 export const SPAWN_RECEIPT_STATES = [
   "reserved",
@@ -827,7 +842,7 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 24 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 25 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
@@ -849,6 +864,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "task_notes",
   "task_substates",
   "tasks",
+  "wait_action_receipts",
   "wait_cursors",
   "wait_registrations",
   "workstreams",
@@ -936,6 +952,10 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    host_profiles    ssh-free command templates per remote host.
  *    host_channels    the connection slots a host's `max_sessions` counts:
  *                     one row per live holder (invocation pid or agent pane).
+ *    wait_action_receipts one row per stall action a wait took on a task
+ *                     (task id, owner registry id, ctl incarnation, action):
+ *                     the exclusion that keeps a nudge to ONE and the record
+ *                     of a release. No FK: it must outlive the task and agent.
  *    spawn_receipts   one row per task-bound spawn attempt: the replay and
  *                     crash-recovery journal (reservation, pane identity,
  *                     claim, send state). No FK to `agents`: it must
@@ -974,6 +994,7 @@ export const MACHINE_LOCAL_TABLES = [
   "sync_peers",
   "task_auto",
   "task_substates",
+  "wait_action_receipts",
   "wait_cursors",
   "wait_registrations",
   "worktrees",
@@ -1359,6 +1380,35 @@ CREATE TABLE IF NOT EXISTS spawn_receipts (
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
   PRIMARY KEY (task_id, attempt_key)
+);
+
+-- wait_action_receipts: one row per stall action a wait took (machine-local,
+-- never captured or synced). The identity is the TASK (tasks.id), the OWNER
+-- (agents.id) and pi's ctl incarnation, plus the action: NOT the wait
+-- generation, the task revision or the caller, so every caller, restart and
+-- generation shares one exclusion. No foreign keys: the row is evidence that
+-- an effect may have happened and must outlive the task and the agent.
+-- incarnation '' = ctl named none. state: reserved (nothing written) <
+-- sending (the write MAY have happened: never resend) < sent | unknown;
+-- refused = a guard stopped it, nothing written; released = a release took
+-- effect (written in the release's own transaction).
+CREATE TABLE IF NOT EXISTS wait_action_receipts (
+  task_id          INTEGER NOT NULL,
+  owner_id         INTEGER NOT NULL,
+  incarnation      TEXT NOT NULL DEFAULT '',
+  action           TEXT NOT NULL CHECK (action IN (${sqlList(WAIT_ACTIONS)})),
+  caller           TEXT NOT NULL,
+  task_ref         TEXT NOT NULL,
+  owner_ref        TEXT NOT NULL,
+  pane_id          TEXT NOT NULL,
+  preview_revision INTEGER NOT NULL,
+  msg_id           TEXT,
+  state            TEXT NOT NULL CHECK (state IN (${sqlList(WAIT_ACTION_STATES)})),
+  runs             INTEGER,
+  detail           TEXT,
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL,
+  PRIMARY KEY (task_id, owner_id, incarnation, action)
 );
 
 -- host_profiles: ssh-free command templates for a remote host

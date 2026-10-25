@@ -163,6 +163,13 @@ interface Item {
   };
 }
 
+/** One handled stall: the job, its result, and what to report if the handler removed the condition. */
+interface StallState {
+  job?: Promise<void>;
+  result?: StallActionResult;
+  carry?: { key: string; stall: Item["stall"] };
+}
+
 interface AgentTrack {
   ref: WaitRef;
   explicit: boolean;
@@ -613,7 +620,14 @@ export async function waitForEvents(
   /** Owners whose control socket is broken: first-seen time (the age runs from here). */
   const ctlBrokenSince = new Map<string, number>();
   const stallEmitted = new Set<string>();
-  const stallStates = new Map<string, { job?: Promise<void>; result?: StallActionResult }>();
+  const stallStates = new Map<
+    string,
+    {
+      job?: Promise<void>;
+      result?: StallActionResult;
+      carry?: { key: string; stall: Item["stall"] };
+    }
+  >();
 
   /** How long (ms) the owner has needed attention, or null when it does not. */
   const stallAgeMs = (ownerKey: string, r: AgentReading | undefined): number | null => {
@@ -632,6 +646,15 @@ export async function waitForEvents(
     if (viaCtl && r.pending === true) return null;
     const age = Date.now() - r.since;
     return age >= stuckAfter(viaCtl) ? age : null;
+  };
+
+  /** Make `item` the stall `stall` describes (also how a handled stall outlives its own effect). */
+  const markStall = (item: Item, stall: NonNullable<Item["stall"]>): void => {
+    item.snap.stuck = true;
+    item.kind = "stall";
+    item.ckey = urgentKey("stall", item.key);
+    item.token = { incarnation: `stall:${stall.token}`, runs: 1 };
+    item.stall = stall;
   };
 
   const taskItem = (
@@ -708,11 +731,7 @@ export async function waitForEvents(
           r.runs ?? "",
           r.since ?? "",
         ].join("|");
-        snap.stuck = true;
-        item.kind = "stall";
-        item.ckey = urgentKey("stall", item.key);
-        item.token = { incarnation: `stall:${token}`, runs: 1 };
-        item.stall = { token, owner: r, ownerRef };
+        markStall(item, { token, owner: r, ownerRef });
         if (!stallEmitted.has(token)) {
           stallEmitted.add(token);
           emitEvent(
@@ -970,6 +989,20 @@ export async function waitForEvents(
    */
   const driveStalls = (items: Item[]): void => {
     const handler = opts.handleStall;
+    // A handler that returned `return` may have removed the very condition (a
+    // release leaves the task OPEN and unowned): the stall is still what this
+    // wait reports, with the task as it is now.
+    for (const st of stallStates.values()) {
+      if (st.job !== undefined || st.result?.disposition !== "return" || st.carry === undefined) {
+        continue;
+      }
+      const { key, stall } = st.carry;
+      const gone = items.find((i) => i.key === key && i.kind !== "stall");
+      if (gone !== undefined && stall !== undefined) {
+        markStall(gone, stall);
+        gone.hidden = false;
+      }
+    }
     for (const it of items) {
       if (it.stall === undefined || it.kind !== "stall" || it.hidden === true) continue;
       const steering = opts.onStall === "steer" || opts.onStall === "release";
@@ -1021,7 +1054,7 @@ export async function waitForEvents(
             : Number.MAX_SAFE_INTEGER,
           signal: watchAbort.signal,
         };
-        const fresh: { job?: Promise<void>; result?: StallActionResult } = {};
+        const fresh: StallState = {};
         const action = opts.onStall === "release" ? "release" : "steer";
         fresh.job = Promise.resolve()
           .then(() => handler(ctx))
@@ -1049,6 +1082,7 @@ export async function waitForEvents(
             }
             wake();
           });
+        fresh.carry = { key: it.key, stall: it.stall };
         st = fresh;
         stallStates.set(token, st);
       }
