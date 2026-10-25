@@ -15,7 +15,7 @@
 // line/paragraph-separator character as `\u{hex}`.
 
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../../output-contract.js";
-import { shellQuote, shellWord } from "../../shell-quote.js";
+import { shellQuote } from "../../shell-quote.js";
 import { formatPair } from "../../tasks/status.js";
 import type { TaskRow } from "../../tasks.js";
 
@@ -50,21 +50,9 @@ export function escapeRecordText(s: string): string {
   });
 }
 
-/**
- * Re-escape the characters JSON.stringify leaves raw but a terminal or line
- * tool treats specially (C1 controls incl. 8-bit CSI, bidi controls, U+2028/9)
- * as `\uXXXX` JSON escapes: still valid, lossless JSON, one inert line.
- */
-export function safeJsonLine(json: string): string {
-  return json.replace(
-    /[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu,
-    (c) => `\\u${(c.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`,
-  );
-}
-
-/** The one JSON document line of a success envelope, made inert (see safeJsonLine). */
+/** The one JSON document line of a success envelope: the encoder every `--json` read emits through, so a size measured here is the size printed. */
 export function jsonDocument(data: unknown): string {
-  return safeJsonLine(encodeEnvelope(okEnvelope(data)));
+  return encodeEnvelope(okEnvelope(data));
 }
 
 const bytes = (s: string): number => Buffer.byteLength(s);
@@ -122,7 +110,7 @@ export interface TaskOutput {
   wave: string | null;
   /** What `--if <rev>` repeats; present when the verb computed it. */
   revision?: number;
-  /** Title code points dropped from `title`; with `retrieve`, the command that prints it whole. */
+  /** Code points dropped from the free-text fields (title, wave, dispatch_host); with `retrieve`, the command that prints them whole. */
   cut?: number;
   retrieve?: string;
 }
@@ -160,30 +148,40 @@ export const SHOW_TITLE_CHARS = 600;
 export const SHOW_TITLE_ESCAPED_BYTES = 800;
 export const SHOW_TITLE_JSON_BYTES = 800;
 
-const showCommand = (row: Pick<TaskRow, "name" | "workstreamName">): string =>
-  `mu task show ${shellWord(row.name)} -w ${shellWord(row.workstreamName)}`;
+/** A shell argument for `query`: double-quoted when that is inert, else single-quoted. */
+const sqlArg = (query: string): string =>
+  /^[^"$`\\!]*$/.test(query) ? `"${query}"` : shellQuote(query);
 
-/** Does `title` print whole in a `show` (text or JSON)? */
-export function titleFitsShow(title: string, json: boolean): boolean {
-  return json
-    ? bytes(JSON.stringify(title)) <= SHOW_TITLE_JSON_BYTES
-    : codePoints(title).length <= SHOW_TITLE_CHARS &&
-        bytes(escapeRecordText(title)) <= SHOW_TITLE_ESCAPED_BYTES;
-}
+/** `mu sql --json <query>`: the lossless read (JSON rows, no table clipping, inert encoding). */
+export const sqlCommand = (query: string): string => `mu sql --json ${sqlArg(query)}`;
 
 /**
- * The command that prints a task's title whole: `task show` when it fits there,
- * else the raw SQL read (the title is the one thing `show` itself must clip).
+ * The command that prints a task's free-text fields whole: the title, the wave
+ * label and the dispatch host (the fields a record clips), plus, for `show`,
+ * the last claimer (`actor`). Names are `[a-z0-9_-]`, so the literals need no
+ * escaping; the workstream is its real numeric key. `all` reads the whole row.
+ * One command for every clipped field, in text and in JSON: `task show` clips
+ * the same fields again, so it is never the way back.
  */
-export function titleCommand(
-  row: Pick<TaskRow, "name" | "workstreamName" | "title">,
-  json = false,
+export function fieldsCommand(
+  row: Pick<TaskRow, "name" | "workstreamName" | "workstreamId">,
+  opts: { actor?: boolean; all?: boolean } = {},
 ): string {
-  if (titleFitsShow(row.title, json)) return `${showCommand(row)}${json ? " --json" : ""}`;
-  const lit = (v: string): string => `'${v.replace(/'/g, "''")}'`;
-  // Names are [a-z0-9_-] by validation, so double quotes need no further escaping.
-  const query = `SELECT title FROM tasks WHERE local_id = ${lit(row.name)} AND workstream_id = (SELECT id FROM workstreams WHERE name = ${lit(row.workstreamName)})`;
-  return /^[\w\s'=(),*-]+$/.test(query) ? `mu sql "${query}"` : `mu sql ${shellQuote(query)}`;
+  const cols =
+    opts.all === true
+      ? "t.*, w.name AS workstream, a.name AS owner"
+      : "t.title, t.wave, t.dispatch_host";
+  const actor =
+    opts.actor === true
+      ? `, (SELECT actor FROM ops WHERE entity = 'task' AND key = '${row.workstreamName}/${row.name}' AND intent = 'task.claim' ORDER BY seq DESC LIMIT 1) AS last_claim_actor`
+      : "";
+  const from =
+    opts.all === true
+      ? "tasks t JOIN workstreams w ON w.id = t.workstream_id LEFT JOIN agents a ON a.id = t.owner_id"
+      : "tasks t";
+  return sqlCommand(
+    `SELECT ${cols}${actor} FROM ${from} WHERE t.local_id = '${row.name}' AND t.workstream_id = ${row.workstreamId}`,
+  );
 }
 
 /** JSON item with a bounded title; a clipped title carries `cut` and `retrieve`. */
@@ -195,10 +193,14 @@ export function taskItem(
     titleChars?: number;
     titleJsonBytes?: number;
     retrieve?: string;
+    /** Code points already cut from a field the item does not hold itself (`show`'s last claimer). */
+    extraCut?: number;
+    /** `retrieve` also reads the last claimer. */
+    actor?: boolean;
   } = {},
 ): TaskOutput {
   const item = taskToOutput(row, opts);
-  let cut = 0;
+  let cut = opts.extraCut ?? 0;
   const clip = (s: string, max: number): string => {
     const cps = codePoints(s);
     if (cps.length <= max) return s;
@@ -222,7 +224,7 @@ export function taskItem(
   if (item.owner !== undefined) item.owner = clip(item.owner, JSON_FIELD_CHARS);
   if (cut > 0) {
     item.cut = cut;
-    item.retrieve = opts.retrieve ?? titleCommand(row, true);
+    item.retrieve = opts.retrieve ?? fieldsCommand(row, opts.actor === true ? { actor: true } : {});
   }
   return item;
 }
@@ -237,6 +239,8 @@ export interface RecordOpts {
   claimedBy?: string | null;
   /** Add `created=` and `updated=` (the `show` record). */
   times?: boolean;
+  /** Extra `key=value` fields (`tree`'s depth, parent and what hangs below): kept even when metadata crowds the title out. */
+  extra?: readonly string[];
   /** Add the one timestamp a `--sort recency|age` orders by. */
   basis?: "updatedAt" | "createdAt";
   /** Characters of the whole record (default RECORD_CHARS). */
@@ -248,58 +252,103 @@ export interface RecordOpts {
   titleBytes?: number;
 }
 
-/** Free-text metadata (a wave label, a host) as a record field: escaped, at most 40 characters. */
-function clipField(s: string, chars = 40): string {
+/** Free-text metadata (a wave label, a host) as a record field: escaped, at most 40 characters; `onCut` hears what was dropped. */
+function clipField(s: string, onCut: (n: number) => void, chars = 40): string {
   const { text, cut } = clipEscaped(s, chars);
-  return cut > 0 ? `${text}…` : text;
+  if (cut === 0) return text;
+  onCut(cut);
+  return `${text}…`;
 }
 
-/** `task<TAB>id<TAB>STATE<TAB>k=v ...<TAB>title`: one line, escaped, <= maxChars. */
+/**
+ * `task<TAB>id<TAB>STATE<TAB>k=v ...<TAB>title`: one line, escaped, <= maxChars.
+ * Anything the line clips (the title, a wave label, a host, a claimer) is counted in ONE
+ * `cut=N` with `next=<command>` printing those fields whole (`fieldsCommand`).
+ */
 export function taskRecord(row: TaskRow, opts: RecordOpts = {}): string {
+  let fieldCut = 0;
+  const clip = (s: string, chars = 40): string =>
+    clipField(
+      s,
+      (n) => {
+        fieldCut += n;
+      },
+      chars,
+    );
   const kv: string[] = [`impact=${row.impact}`, `effort_days=${row.effortDays}`];
   if (!row.scored) kv.push("scored=0");
-  if (row.status === "IN_PROGRESS" && row.ownerName !== null) {
-    kv.push(`owner=${clipField(row.ownerName)}`);
-  }
-  if (opts.withWorkstream === true) kv.push(`ws=${clipField(row.workstreamName)}`);
+  if (row.status === "IN_PROGRESS" && row.ownerName !== null)
+    kv.push(`owner=${clip(row.ownerName)}`);
+  if (opts.withWorkstream === true) kv.push(`ws=${clip(row.workstreamName)}`);
   if (row.status !== "OPEN" && row.ownerName === null && opts.claimedBy) {
-    kv.push(`self=${clipField(opts.claimedBy)}`);
+    kv.push(`self=${clip(opts.claimedBy)}`);
   }
   if (row.kind !== "work") kv.push(`kind=${row.kind}`);
-  if (row.wave !== null) kv.push(`wave=${clipField(row.wave)}`);
-  if (row.dispatchHost !== null) kv.push(`host=${clipField(row.dispatchHost)}`);
+  if (row.wave !== null) kv.push(`wave=${clip(row.wave)}`);
+  if (row.dispatchHost !== null) kv.push(`host=${clip(row.dispatchHost)}`);
   if (opts.times === true) kv.push(`created=${row.createdAt}`, `updated=${row.updatedAt}`);
   else if (opts.basis === "updatedAt") kv.push(`updated=${row.updatedAt}`);
   else if (opts.basis === "createdAt") kv.push(`created=${row.createdAt}`);
   if (opts.revision !== undefined) kv.push(`rev=${opts.revision}`);
-  const head = ["task", clipField(row.name, 64), formatPair(row), kv.join(" ")].join("\t");
+  kv.push(...(opts.extra ?? []));
+  const id = clip(row.name, 64);
+  const head = ["task", id, formatPair(row), kv.join(" ")].join("\t");
   const max = opts.maxChars ?? RECORD_CHARS;
   const whole = escapeRecordText(row.title);
+  const titleLen = codePoints(row.title).length;
+  const wholeLen = codePoints(whole).length;
   const titleOk =
-    (opts.titleChars === undefined || codePoints(whole).length <= opts.titleChars) &&
+    (opts.titleChars === undefined || wholeLen <= opts.titleChars) &&
     (opts.titleBytes === undefined || bytes(whole) <= opts.titleBytes);
-  if (titleOk && codePoints(whole).length + codePoints(head).length + 1 <= max) {
-    return `${head}\t${whole}`;
+  const fits = titleOk && wholeLen + codePoints(head).length + 1 <= max;
+  if (fits && fieldCut === 0) return `${head}\t${whole}`;
+  const retrieve = opts.retrieve ?? fieldsCommand(row, opts.claimedBy ? { actor: true } : {});
+  // The suffix is `\tcut=<N>\tnext=<cmd>`; N has at most as many digits as the clipped text has code points.
+  const suffixLen = (extra: number): number =>
+    `\tcut=\tnext=${retrieve}`.length + String(titleLen + extra).length;
+  if (fits && wholeLen + codePoints(head).length + 1 + suffixLen(fieldCut) <= max) {
+    return `${head}\t${whole}\tcut=${fieldCut}\tnext=${retrieve}`;
   }
-  const retrieve = opts.retrieve ?? titleCommand(row);
-  // The suffix is `\tcut=<N>\tnext=<cmd>`; N has at most as many digits as the title has code points.
-  const digits = String(codePoints(row.title).length).length;
-  const suffixLen = `\tcut=\tnext=${retrieve}`.length + digits;
-  const room = max - codePoints(head).length - 1 - suffixLen - 1;
-  const clipped = (h: string, r: number): string => {
+  const clipped = (h: string, extraCut: number, next: string = retrieve): string => {
+    const room =
+      max -
+      codePoints(h).length -
+      1 -
+      `\tcut=\tnext=${next}`.length -
+      String(titleLen + extraCut).length -
+      1;
     const { text, cut } = clipEscaped(
       row.title,
-      Math.max(0, Math.min(r, (opts.titleChars ?? r + 1) - 1)),
+      Math.max(0, Math.min(room, (opts.titleChars ?? room + 1) - 1)),
       opts.titleBytes === undefined ? undefined : opts.titleBytes - 3,
     );
-    return `${h}\t${text}…\tcut=${cut}\tnext=${retrieve}`;
+    return `${h}\t${text}…\tcut=${cut + extraCut}\tnext=${next}`;
   };
-  if (room >= 8) return clipped(head, room);
-  // Metadata crowds the title out: keep the identity and the score, the rest is on `show`.
-  const lean = ["task", clipField(row.name, 64), formatPair(row), kv.slice(0, 2).join(" ")].join(
-    "\t",
+  const room = max - codePoints(head).length - 1 - suffixLen(fieldCut) - 1;
+  if (room >= 8) return clipped(head, fieldCut);
+  // Metadata crowds the title out: keep the identity and the score; the free-text fields dropped
+  // from the line count into `cut` and the way back reads the whole row.
+  const dropped = [
+    row.status === "IN_PROGRESS" ? row.ownerName : null,
+    opts.withWorkstream === true ? row.workstreamName : null,
+    row.wave,
+    row.dispatchHost,
+    row.status !== "OPEN" && row.ownerName === null ? (opts.claimedBy ?? null) : null,
+  ]
+    .filter((v): v is string => typeof v === "string")
+    .reduce((n, v) => n + codePoints(v).length, 0);
+  const leanId = clipEscaped(row.name, 64).text;
+  const lean = [
+    "task",
+    leanId,
+    formatPair(row),
+    [...kv.slice(0, 2), ...(opts.extra ?? [])].join(" "),
+  ].join("\t");
+  const out = clipped(
+    lean,
+    dropped,
+    opts.retrieve ?? fieldsCommand(row, { all: true, ...(opts.claimedBy ? { actor: true } : {}) }),
   );
-  const out = clipped(lean, max - codePoints(lean).length - 1 - suffixLen - 1);
   return codePoints(out).length <= max ? out : codePoints(out).slice(0, max).join("");
 }
 

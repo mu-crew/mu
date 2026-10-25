@@ -50,17 +50,33 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   records. The task record, edges and ordinary notes share the cap (the
   pinned brief, report and verdicts stay exempt); edges beyond their share
   end `more=N next=mu task show <id> --edges-from <n>`; a title too long
-  even for `show` names a `mu sql` read that returns it whole. `--json`:
+  even for `show` names a `mu sql --json` read that returns it whole. `--json`:
   `{task,blockers,dependents,edges_more[,edges_retrieve],notes,notes_more…}`.
-- **`task tree` is the open DAG.** `loadOpenTaskFrontier(db, ws, root?,
+- **`task tree` is the open DAG, in records.** `loadOpenTaskFrontier(db, ws, root?,
   direction?)` (exported from `src/index.ts`): open tasks expand, CLOSED ones
   are leaves (a CLOSED root still expands), at most 3 CLOSED neighbours per
-  node are listed and the rest counted (`closed+N next=… --all`), depth <= 12
-  and <= 2000 tasks, diamonds and cycles list once then `↻`, one SQL read per
-  level. `(+N next=mu task tree <node>)` names the open tasks a cap left out;
-  `--all` walks CLOSED too; `--from <n>` pages the lines. `--json` is a flat
-  preorder of `{id,depth,parent,again?,kids?,closed?}` items. `loadFullDag`
-  keeps its whole-workstream SDK semantics.
+  node are listed and the rest counted, depth <= 12 (the preorder walk of a
+  shared DAG holds it too) and <= 2000 tasks, diamonds and cycles list once
+  then `again=1`, one SQL read per level. Text is the task-record grammar: a
+  `tree<TAB>root<TAB>direction<TAB>entries=…` header, one `task` record per
+  entry (`depth=N parent=<id>` as fields, no branch drawing), and
+  `more<TAB><id><TAB>kids=N closed=N<TAB>next=<tree of that node>` records for
+  what a cap left under it (`--all` reaches the closed ones). Neighbours the
+  2000-task cap left out of one parent are `capped=K` with a `mu sql --json`
+  read that returns exactly them (re-rooting would load the same 2000
+  again). A page ends on a whole subtree (`more=N next=… --from <n>`), the
+  bytes measured on the emitted text or JSON document, colour never emitted.
+  `--all` walks CLOSED too. `--json` is a flat preorder of
+  `{id,depth,parent,again?,kids?,under_retrieve?,closed?,capped?,capped_retrieve?}`
+  items. `loadFullDag` keeps its whole-workstream SDK semantics.
+- **Every capped task read has a working way back.** A clipped title, wave
+  label, dispatch host or claimer counts into one `cut=N`, and
+  `next=mu sql --json "SELECT t.title, t.wave, t.dispatch_host FROM tasks t
+  WHERE …"` prints those fields whole (`show` clips them too, so it is never
+  the way back); executing the command is tested through the CLI. Every
+  `--json` document, `task show` included, goes through the one envelope
+  encoder (`encodeEnvelope`), which escapes C1 controls, bidi controls and
+  U+2028/9 as `\uXXXX`: the size measured is the size printed.
 - **Notes default view.** `mu task notes <id>` and the notes of `mu task show`
   print one escaped TAB-separated record per line (`kind n by= at= text`):
   the first `brief`, the last `report` (else the closer's last note, found

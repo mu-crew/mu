@@ -62,7 +62,6 @@ import {
   SHOW_TITLE_JSON_BYTES,
   taskItem,
   taskRecord,
-  titleCommand,
 } from "./records.js";
 
 /**
@@ -647,6 +646,8 @@ export async function cmdTaskShow(
       ? lastClaimActor(db, task.workstreamName, task.name)
       : null;
   const lastActorShown = lastActor === null ? null : [...lastActor].slice(0, 80).join("");
+  const actorCut =
+    lastActor === null ? 0 : [...lastActor].length - [...(lastActorShown ?? "")].length;
   const revision = taskRevision(db, task.workstreamName, task.name);
 
   // Only the non-default substates get a hint: they are the ones whose
@@ -679,7 +680,8 @@ export async function cmdTaskShow(
     revision,
     titleChars: SHOW_TITLE_CHARS,
     titleJsonBytes: SHOW_TITLE_JSON_BYTES,
-    retrieve: titleCommand(task, true),
+    extraCut: actorCut,
+    actor: lastActor !== null,
   });
   const edgeJson = {
     blockers: shownEdges.filter((e) => e.kind === "blocker").map(edgeItem),

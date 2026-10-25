@@ -480,8 +480,8 @@ describe("record rendering", () => {
       expect([...line].length).toBeLessThanOrEqual(400);
     }
     const a = stdout.split("\n").find((l) => l.startsWith("task\ta\t")) ?? "";
-    // 900 characters does not fit a `show` either, so the way back is the SQL read.
-    expect(a).toMatch(/Some long title x+…\tcut=\d+\tnext=mu sql "SELECT title FROM tasks /);
+    // The way back is the lossless SQL read (`--json`), never `show`, which clips the same fields.
+    expect(a).toMatch(/Some long title x+…\tcut=\d+\tnext=mu sql --json "SELECT t\.title, /);
   });
 
   it("renders all task ids in full, one record per task", async () => {
