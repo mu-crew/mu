@@ -382,6 +382,19 @@ export {
   transportNextSteps,
 } from "./sync.js";
 export {
+  type AuthorisedTask,
+  type AuthorizeTasksOptions,
+  type AuthorizeTasksResult,
+  type AutoConfig,
+  authorisedReady,
+  authorizeTasks,
+  autoPermitted,
+  getAutoConfig,
+  openBlockersClosure,
+  TaskAutoArgError,
+  TaskAutoRefusedError,
+} from "./task-auto.js";
+export {
   type AddNoteOptions,
   type AddNoteResult,
   type AddTaskOptions,

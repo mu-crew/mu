@@ -38,6 +38,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `UPDATE ... RETURNING` prints its rows whole with no `retrieve`. Callers of the bare array
   (`.data[0]`) read `.data.items[0]`.
 
+- **`mu task auto <ids…> | --blockers-of <u> --cli <key> [--worktree] [--max N] | --off`:
+  explicit, host-fenced permission for `mu next`.** Ready is never permission.
+  `auto` stores the cli key, worktree mode and run ceiling in the machine-local
+  `task_auto` row and, in the same transaction, writes the synced
+  `dispatch_host` = this machine; the whole batch is checked first, so a
+  refusal (another host's designation, a human/delegate task, parked, triage,
+  CLOSED, the `scratch` queue) writes nothing (exit 4). `--blockers-of u` adds
+  every open transitive blocker of `u` (uncapped, same workstream, not `u`).
+  `--off` revokes this machine's permission and clears `dispatch_host` only if
+  this machine holds it; it keeps `runs` and the spawn-replay receipt, and
+  re-authorising never resets them. SDK: `authorizeTasks`, `autoPermitted`
+  (enabled + `kind=work` + `dispatch_host` is this machine; ignores status, for
+  steer/release) and `authorisedReady` (ready + permitted + `runs < max_runs`).
+
 - **`mu host add | list | show | rm | init --ssh | check`: ssh-free host profiles.**
   A profile is your `--shell` / `--exec` / `--fetch` templates, a `--repo` and
   an optional `--max-sessions`, stored machine-local in the existing

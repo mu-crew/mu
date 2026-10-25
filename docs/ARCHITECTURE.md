@@ -154,6 +154,7 @@ are re-export hubs.
 | `src/tasks/core.ts`, `id.ts` | row shapes, id resolution, qualified ids |
 | `src/tasks/queries.ts`, `sort.ts` | list, next, owned-by; `selectTaskNotes` (default notes view), `listNotes` (full history); ROI, recency, age and id sorts |
 | `src/tasks/edit.ts`, `edges.ts` | add and edit; block, unblock, reparent, delete with cycle check |
+| `src/task-auto.ts` | `mu task auto`: `authorizeTasks` (one op-context transaction: local `task_auto` row + synced `dispatch_host`), `autoPermitted`, `authorisedReady`, `openBlockersClosure`; never DELETEs a `task_auto` row |
 | `src/tasks/claim.ts` | atomic claim and release; `resolveWorkerIdentity` |
 | `src/tasks/lifecycle.ts`, `status.ts` | close, open and cascade; `TaskStatus` |
 | `src/tasks/wait.ts`, `errors.ts` | `waitForTasks`; typed task errors |
