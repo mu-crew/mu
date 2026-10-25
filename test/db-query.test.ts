@@ -231,6 +231,33 @@ describe("db query refuses to write mu's capture bookkeeping", () => {
     expect(ctx()).toEqual(CTX_AT_REST);
   });
 
+  // triage_vdb_machine_identity: every capture trigger reads the HLC from
+  // machine_identity; a forged id or clock silently unpublishes later ops.
+  it.each([
+    ["clock skew", "UPDATE machine_identity SET last_wall = last_wall + 100000000000"],
+    ["impersonate a peer", "UPDATE machine_identity SET machine_id = 'peer-machine'"],
+    [
+      "INSERT OR REPLACE",
+      "INSERT OR REPLACE INTO machine_identity (id, machine_id, created_at) VALUES (1, 'x', 'now')",
+    ],
+    ["delete", "DELETE FROM machine_identity"],
+  ])("machine_identity: %s", async (_name, sql) => {
+    const before = db.prepare("SELECT * FROM machine_identity").all();
+    const opsBefore = ops();
+    await expect(cmdDbQuery(db, sql)).rejects.toThrow(/cannot write machine_identity/);
+    expect(db.prepare("SELECT * FROM machine_identity").all()).toEqual(before);
+    expect(ops()).toBe(opsBefore);
+    expect(db.inTransaction).toBe(false);
+  });
+
+  it("machine_identity: a captured write still advances the clock", async () => {
+    const before = db.prepare("SELECT last_wall, last_counter FROM machine_identity").get();
+    await cmdDbQuery(db, "UPDATE tasks SET impact = 34 WHERE local_id = 'a'");
+    expect(db.prepare("SELECT last_wall, last_counter FROM machine_identity").get()).not.toEqual(
+      before,
+    );
+  });
+
   it("allows reading the bookkeeping", async () => {
     await cmdDbQuery(db, "SELECT * FROM op_ctx");
     await cmdDbQuery(db, "SELECT COUNT(*) AS n FROM ops", { json: true });

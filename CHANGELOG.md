@@ -764,6 +764,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`mu db query` no longer writes `machine_identity`.** Its HLC clock and machine id
+  feed every captured op, so a forged id or clock silently unpublished later ops.
+  Only a main `_cap_*` trigger writes it now.
+
 - **Remote spawn follow-ups.** A rollback whose pane survives the kill keeps a
   host agent's row (and so its channel) and says so in the log, instead of
   freeing the slot under a live pane. The transport pane runs with the local
