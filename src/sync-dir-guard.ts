@@ -3,8 +3,12 @@
 // every command once a v2 line lands in its folder (the 18:04 incident), so
 // no segment may open with a v1 line for mu-next to touch the dir.
 // Builtins only: segments.ts and the CLI's handle() both import it.
+//
+// The guard lives INSIDE flushSegment, discoverPeers and ingestSegment, so
+// every caller (CLI, SDK, extension, TUI tick) is covered; handle() repeats it
+// before the DB opens so a refused run creates nothing at all.
 
-import { closeSync, openSync, readdirSync, readSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
 
 /** The one-line refusal. Exit 4 (conflict); nothing was written or read. */
@@ -25,6 +29,25 @@ export class SyncDirForeignError extends Error {
  *  bytes are enough: no line is parsed, so a segment still being copied in
  *  does not block the dir. */
 const VERSION_PREFIX = /^\{"v":(\d+)[,}]/;
+
+/** Test seam: the v1-reader tests deliberately write and read v1 segments to
+ *  exercise the kept reader. Never set outside a test. */
+let guardOffForTests = false;
+export function setSyncDirGuardForTests(off: boolean): void {
+  guardOffForTests = off;
+}
+
+/** True when a `.manifest` says `"v"` below 2: a 3.x peer's sidecar. A 3.x
+ *  peer with no ops yet leaves an EMPTY segment and a v1 manifest, so the
+ *  segment's first line cannot show it. Unreadable or torn: not evidence. */
+function manifestIsPreV2(path: string): boolean {
+  try {
+    const v: unknown = (JSON.parse(readFileSync(path, "utf8")) as { v?: unknown } | null)?.v;
+    return typeof v === "number" && v < 2;
+  } catch {
+    return false;
+  }
+}
 
 /** False only when the file's first bytes are a recognisable pre-v2 line (what
  *  3.x writes). Empty, torn, garbage and newer-than-v2 files are not evidence
@@ -50,11 +73,14 @@ function startsAsV2OrUnknown(path: string): boolean {
 }
 
 /**
- * Throw `SyncDirForeignError` when any `*.jsonl` in `dir` (conflict copies
- * included) starts with a pre-v2 (3.x) line. A missing or empty dir passes. Only
- * the first line decides: a v1 file that later gained v2 lines is a 3.x file.
+ * Throw `SyncDirForeignError` when ANY file in `dir` is 3.x evidence: a
+ * `*.jsonl` (conflict copies included) whose first line is pre-v2, or a
+ * `*.manifest` whose `"v"` is below 2 (covers an empty segment). Every file is
+ * scanned, in name order. A missing or empty dir passes. Only the first line
+ * decides: a v1 file that later gained v2 lines is a 3.x file.
  */
 export function assertSyncDirV2(dir: string): void {
+  if (guardOffForTests) return;
   let names: string[];
   try {
     names = readdirSync(dir);
@@ -62,7 +88,10 @@ export function assertSyncDirV2(dir: string): void {
     return;
   }
   for (const name of names.sort()) {
-    if (!name.endsWith(".jsonl")) continue;
-    if (!startsAsV2OrUnknown(join(dir, name))) throw new SyncDirForeignError(dir, name);
+    const path = join(dir, name);
+    const foreign = name.endsWith(".jsonl")
+      ? !startsAsV2OrUnknown(path)
+      : name.endsWith(".manifest") && manifestIsPreV2(path);
+    if (foreign) throw new SyncDirForeignError(dir, name);
   }
 }

@@ -27,6 +27,7 @@ import {
 } from "../src/segments.js";
 import { sha256Digest, sha256Initial, sha256Update } from "../src/sha256-resumable.js";
 import { foreignVersionMessage } from "../src/sync.js";
+import { setSyncDirGuardForTests } from "../src/sync-dir-guard.js";
 import { addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -38,6 +39,8 @@ describe("segment versions are checked per line", () => {
   let b: Db;
 
   beforeEach(() => {
+    // These tests exercise the kept v1 reader on purpose; the guard has its own file.
+    setSyncDirGuardForTests(true);
     tempDir = mkdtempSync(join(tmpdir(), "mu-seg-mixed-"));
     dir = join(tempDir, "sync");
     mkdirSync(dir, { recursive: true });
@@ -46,6 +49,7 @@ describe("segment versions are checked per line", () => {
   });
 
   afterEach(() => {
+    setSyncDirGuardForTests(false);
     for (const db of [a, b]) {
       try {
         db.close();

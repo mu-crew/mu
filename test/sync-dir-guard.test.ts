@@ -9,7 +9,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { formatHlc } from "../src/hlc.js";
-import { encodeSegmentLine, localMachineId, syncPass } from "../src/segments.js";
+import {
+  discoverPeers,
+  encodeSegmentLine,
+  flushSegment,
+  ingestSegment,
+  localMachineId,
+  type PeerSegment,
+  syncPass,
+} from "../src/segments.js";
 import { ambientFlush, ambientIngest } from "../src/sync.js";
 import { assertSyncDirV2, SyncDirForeignError } from "../src/sync-dir-guard.js";
 import { addTask } from "../src/tasks/edit.js";
@@ -118,6 +126,93 @@ describe("SDK: the env-driven entry points refuse a dir with a non-v2 first line
     const db = openDb({ path: dbPath });
     await expect(syncPass(db, dir)).resolves.toBeDefined();
     db.close();
+  });
+});
+
+/** A 3.x peer with no ops yet: an EMPTY segment and a v1 manifest. */
+const writeEmptyV1Peer = (id = "3xempty"): void => {
+  writeFileSync(join(dir, `${id}.jsonl`), "");
+  writeFileSync(
+    join(dir, `${id}.manifest`),
+    JSON.stringify({ v: 1, machine: id, count: 0, lastHlc: null, sha256: "0", updatedAt: "x" }),
+  );
+};
+
+describe("SDK: the guard is inside flushSegment, discoverPeers and ingestSegment (every caller covered)", () => {
+  it("flushSegment refuses a 3.x dir and writes nothing", async () => {
+    writeV1();
+    const db = openDb({ path: dbPath });
+    ensureWorkstream(db, "demo");
+    const before = readdirSync(dir).sort();
+    await expect(flushSegment(db, dir)).rejects.toThrow(SyncDirForeignError);
+    await expect(flushSegment(db, dir, { verify: true })).rejects.toThrow(MESSAGE);
+    expect(readdirSync(dir).sort()).toEqual(before);
+    db.close();
+  });
+
+  it("discoverPeers refuses a 3.x dir", () => {
+    writeV1();
+    expect(() => discoverPeers(dir, "me")).toThrow(SyncDirForeignError);
+  });
+
+  it("ingestSegment refuses a hand-built peer in a 3.x dir and applies nothing", () => {
+    writeV1();
+    const db = openDb({ path: dbPath });
+    const peer: PeerSegment = {
+      machineId: "3xpeer",
+      watermarkKey: "3xpeer",
+      path: join(dir, "3xpeer.jsonl"),
+      conflictCopy: false,
+    };
+    expect(() => ingestSegment(db, peer)).toThrow(SyncDirForeignError);
+    expect(() => ingestSegment(db, peer, { verify: true })).toThrow(SyncDirForeignError);
+    db.close();
+  });
+
+  it("a v2-only dir still flushes, discovers and ingests", async () => {
+    writeV2();
+    const db = openDb({ path: dbPath });
+    ensureWorkstream(db, "demo");
+    await expect(flushSegment(db, dir)).resolves.toBeDefined();
+    const peers = discoverPeers(dir, localMachineId(db));
+    expect(peers.map((p) => p.machineId)).toEqual(["mu-next-peer"]);
+    expect(() => ingestSegment(db, peers[0] as PeerSegment)).not.toThrow();
+    db.close();
+  });
+});
+
+describe("assertSyncDirV2 scans every file", () => {
+  it("a v1 segment sorting AFTER a v2 one still refuses", () => {
+    writeV2("0000-v2peer.jsonl");
+    writeV1("zzzz-3x.jsonl");
+    expect(() => assertSyncDirV2(dir)).toThrow(SyncDirForeignError);
+  });
+
+  it('a bare {"v":1} first line is 3.x evidence', () => {
+    writeFileSync(join(dir, "bare.jsonl"), '{"v":1}\n');
+    expect(() => assertSyncDirV2(dir)).toThrow(SyncDirForeignError);
+  });
+
+  it("an empty segment with a v1 manifest is a 3.x peer (flush refuses too)", async () => {
+    writeEmptyV1Peer();
+    expect(() => assertSyncDirV2(dir)).toThrow(SyncDirForeignError);
+    const db = openDb({ path: dbPath });
+    const before = readdirSync(dir).sort();
+    await expect(flushSegment(db, dir)).rejects.toThrow(SyncDirForeignError);
+    expect(readdirSync(dir).sort()).toEqual(before);
+    db.close();
+    const r = await runCli(["workstream", "init", "demo"], dbPath);
+    expect(r.exitCode).toBe(4);
+  });
+
+  it("a v1 manifest alone (no segment) refuses; v2, torn and unreadable manifests do not", () => {
+    writeFileSync(join(dir, "a.manifest"), JSON.stringify({ v: 2 }));
+    writeFileSync(join(dir, "b.manifest"), '{"v":');
+    writeFileSync(join(dir, "c.manifest"), "null");
+    writeFileSync(join(dir, "d.manifest"), JSON.stringify({ v: 3 }));
+    expect(() => assertSyncDirV2(dir)).not.toThrow();
+    writeFileSync(join(dir, "e.manifest"), JSON.stringify({ v: 1 }));
+    expect(() => assertSyncDirV2(dir)).toThrow(SyncDirForeignError);
   });
 });
 

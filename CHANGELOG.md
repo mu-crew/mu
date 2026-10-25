@@ -17,10 +17,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   and 3.x warned `unknown-version` on every command). The default state dir is now
   `$XDG_STATE_HOME/mu-next` (`~/.local/state/mu-next`), holding the DB, control sockets, locks,
   worktrees and compile cache; `MU_STATE_DIR` and `MU_DB_PATH` are unchanged. Sync stays opt-in,
-  but mu-next refuses a `MU_SYNC_DIR` where any `*.jsonl` segment opens with a v1 line (a 3.x
-  peer), for read and write: exit 4, `MU_SYNC_DIR holds 3.x segments; give mu-next its own dir`,
-  nothing read or written (`SyncDirForeignError`; checked in `handle()` before the DB opens and
-  again in `flushSegment` / `discoverPeers`). The vitest real-DB guard and the global teardown
+  but mu-next refuses a `MU_SYNC_DIR` where any file is 3.x evidence: a `*.jsonl` segment opening
+  with a v1 line, or a `*.manifest` with `"v"` below 2 (a 3.x peer with no ops yet leaves an empty
+  segment and a v1 manifest). Read and write: exit 4, `MU_SYNC_DIR holds 3.x segments; give
+  mu-next its own dir`, nothing read or written (`SyncDirForeignError`; checked in `handle()`
+  before the DB opens and again inside `flushSegment`, `discoverPeers` and `ingestSegment`
+  themselves, so SDK callers are covered). The vitest real-DB guard and the global teardown
   now cover both the mu-next and the 3.x default DB paths. Remote worktrees move to
   `~/.local/state/mu-next/remote-worktrees`.
 - **mu-next design: a model-run move recipe replaces the import and the flag day.**
