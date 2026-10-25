@@ -123,6 +123,8 @@ export type CtlReply =
         ended?: "settled" | "blocked";
         /** wait only: text of the settled run's final assistant message ("" when none). */
         lastText?: string;
+        /** wait only: true when `lastText` lost its head to the 64 KiB tail cap. Absent otherwise. */
+        lastTextTruncated?: boolean;
         /** wait only: the error that ended the settled run (retries exhausted). */
         lastError?: string;
         /** wait only: the settled pi's session file, where its full transcript lives. */

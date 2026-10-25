@@ -1,0 +1,218 @@
+// mu — the CLOSE block of a settled pi run: parse it, apply it once.
+//
+// A pi worker ends its final message with
+//
+//   CLOSE: task=<id> evidence="<command + result>"
+//   REPORT:
+//   <report, any number of lines>
+//
+// `applySettledClose` reads that block from the run's authoritative ctl
+// `lastText` (never the pane) and, when `task=` is a task the agent owns,
+// writes the report note, the close note and the status flip in ONE op
+// group, once per (agent, incarnation, runs). Everything else is ignored
+// or recorded as "no close (malformed)": the block never closes by guess.
+//
+// Grammar (the only definition; the README names the shape, not the escapes):
+//   - Lines end in LF or CRLF. Trailing blank lines are ignored.
+//   - A block starts at a line that begins at column 0 with `CLOSE:` and is
+//     followed at once by a line that is exactly `REPORT:`. The FINAL such
+//     start is the block; earlier ones (a quoted contract, an old attempt)
+//     are ignored. The report is every line after `REPORT:` to the end.
+//   - Header: `CLOSE: task=<id> evidence="<text>"`. <id> is a task id.
+//     Inside the quotes `\"`, `\\` and `\n` are escapes; any other
+//     backslash is literal; a bare `"` ends the evidence and so must be
+//     the last character of the line, or the block is malformed.
+//   - Malformed: bad header, invalid id, empty evidence, empty report, or a
+//     `CLOSE:` last line with no `REPORT:` after it (only when no block
+//     start exists).
+//   - The template line `CLOSE: task=<id> ...` is a quoted contract: not a
+//     start. A report with an odd number of ``` / ~~~ fence lines is a
+//     block quoted inside a fence (the closing fence is the tail): none.
+
+import type { Db } from "./db.js";
+import { withOpContext } from "./op-context.js";
+import { addNote } from "./tasks/edit.js";
+import { isValidTaskId } from "./tasks/id.js";
+import { closeTask } from "./tasks/lifecycle.js";
+
+export type CloseBlock =
+  | { kind: "valid"; task: string; evidence: string; report: string }
+  | { kind: "malformed" }
+  | { kind: "none" };
+
+const HEADER = /^CLOSE:[ \t]+task=(\S+)[ \t]+evidence="/;
+
+/** Parse the CLOSE block at the tail of a settled run's final message. */
+export function parseCloseBlock(text: string): CloseBlock {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  while (lines.length > 0 && (lines[lines.length - 1] ?? "").trim() === "") lines.pop();
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (!line.startsWith("CLOSE:")) continue;
+    if ((lines[i + 1] ?? "").trimEnd() !== "REPORT:") continue;
+    if (/^CLOSE:[ \t]+task=<[^>\s]*>/.test(line)) continue; // the quoted template
+    start = i;
+  }
+  if (start < 0) {
+    return (lines[lines.length - 1] ?? "").startsWith("CLOSE:")
+      ? { kind: "malformed" }
+      : { kind: "none" };
+  }
+  const header = (lines[start] ?? "").trimEnd();
+  const m = HEADER.exec(header);
+  if (!m) return { kind: "malformed" };
+  const task = m[1] ?? "";
+  if (!isValidTaskId(task)) return { kind: "malformed" };
+  const evidence = unescapeEvidence(header.slice(m[0].length));
+  if (evidence === undefined || evidence.trim() === "") return { kind: "malformed" };
+  const report = lines
+    .slice(start + 2)
+    .join("\n")
+    .trim();
+  if (report === "") return { kind: "malformed" };
+  const fences = report.split("\n").filter((l) => /^ {0,3}(```|~~~)/.test(l)).length;
+  if (fences % 2 === 1) return { kind: "none" };
+  return { kind: "valid", task, evidence, report };
+}
+
+/** `rest` is what follows the opening quote. Undefined unless it is the
+ *  escaped text plus exactly one closing quote at the end. */
+function unescapeEvidence(rest: string): string | undefined {
+  if (!rest.endsWith('"')) return undefined;
+  const body = rest.slice(0, -1);
+  let out = "";
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i] as string;
+    if (c === '"') return undefined;
+    if (c !== "\\") {
+      out += c;
+      continue;
+    }
+    const n = body[i + 1];
+    if (n === '"' || n === "\\") {
+      out += n;
+      i++;
+    } else if (n === "n") {
+      out += "\n";
+      i++;
+    } else {
+      out += c;
+    }
+  }
+  // A trailing lone backslash escaped the closing quote: unterminated.
+  return /(?:^|[^\\])(?:\\\\)*\\$/.test(body) ? undefined : out;
+}
+
+export const CLOSE_MALFORMED = "no close (malformed)";
+export const CLOSE_TRUNCATED =
+  "CLOSE block not applied: the final message was truncated; close with mu task close";
+
+export interface SettledCloseInput {
+  /** The agent's workstream, and the workstream of the task it may close. */
+  workstream: string;
+  agent: string;
+  agentId: number;
+  incarnation: string;
+  /** The settled run's count from ctl (not a wait baseline). */
+  runs: number;
+  lastText: string;
+  /** Ctl `lastTextTruncated`: the head was cut, so the block cannot be trusted. */
+  lastTextTruncated?: boolean;
+  /** ctl `ended === "settled"`; a blocked or unknown observation is false. */
+  settled: boolean;
+  lastError?: string;
+}
+
+export interface SettledCloseResult {
+  applied: boolean;
+  task: string | null;
+  reason: string;
+}
+
+const no = (reason: string, task: string | null = null): SettledCloseResult => ({
+  applied: false,
+  task,
+  reason,
+});
+
+/**
+ * Apply a settled pi run's CLOSE block exactly once. One transaction owns
+ * the decision, the notes, the status flip and the replay row (inserted
+ * last), so a refused or failed close leaves nothing and a retry is safe.
+ * Guard errors (open blockers) propagate and roll everything back.
+ */
+export function applySettledClose(db: Db, input: SettledCloseInput): SettledCloseResult {
+  if (!input.settled) return no("not settled");
+  if (input.lastError !== undefined) return no("run ended on an error");
+  return withOpContext(db, { intent: "close.apply", actor: input.agent, group: "new" }, () =>
+    applyInTxn(db, input),
+  );
+}
+
+function applyInTxn(db: Db, input: SettledCloseInput): SettledCloseResult {
+  const agent = db
+    .prepare(
+      `SELECT a.cli FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+        WHERE a.id = ? AND a.name = ? AND w.name = ? AND w.torn_down_at IS NULL`,
+    )
+    .get(input.agentId, input.agent, input.workstream) as { cli: string } | undefined;
+  if (!agent) return no("unknown agent");
+  if (agent.cli !== "pi") return no("not a pi agent");
+  const seen = db
+    .prepare("SELECT 1 FROM agent_settles WHERE agent_id = ? AND incarnation = ? AND runs = ?")
+    .get(input.agentId, input.incarnation, input.runs);
+  if (seen) return no("already applied");
+  const record = (taskId: number | null): void => {
+    db.prepare(
+      "INSERT INTO agent_settles (agent_id, incarnation, runs, task_id) VALUES (?, ?, ?, ?)",
+    ).run(input.agentId, input.incarnation, input.runs, taskId);
+  };
+  const diagnose = (reason: string): SettledCloseResult => {
+    const open = db
+      .prepare(
+        `SELECT t.local_id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+          WHERE t.owner_id = ? AND t.status = 'IN_PROGRESS' AND w.name = ?`,
+      )
+      .all(input.agentId, input.workstream) as { local_id: string }[];
+    const only = open.length === 1 ? (open[0]?.local_id ?? null) : null;
+    if (only !== null) {
+      addNote(db, only, reason, {
+        workstream: input.workstream,
+        author: input.agent,
+        group: "inherit",
+      });
+    }
+    record(null);
+    return no(reason, only);
+  };
+  if (input.lastTextTruncated === true) return diagnose(CLOSE_TRUNCATED);
+  const block = parseCloseBlock(input.lastText);
+  if (block.kind === "none") return no("no CLOSE block");
+  if (block.kind === "malformed") return diagnose(CLOSE_MALFORMED);
+  const task = db
+    .prepare(
+      `SELECT t.id, t.status, t.owner_id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+        WHERE w.name = ? AND w.torn_down_at IS NULL AND t.local_id = ?`,
+    )
+    .get(input.workstream, block.task) as
+    | { id: number; status: string; owner_id: number | null }
+    | undefined;
+  if (!task || task.owner_id !== input.agentId) {
+    record(null);
+    return no("task is not owned by this agent", block.task);
+  }
+  if (task.status === "CLOSED") {
+    record(task.id);
+    return no("task already closed", block.task);
+  }
+  closeTask(db, block.task, {
+    workstream: input.workstream,
+    evidence: block.evidence,
+    report: block.report,
+    author: input.agent,
+    group: "inherit",
+  });
+  record(task.id);
+  return { applied: true, task: block.task, reason: "closed" };
+}
