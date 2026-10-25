@@ -376,31 +376,23 @@ function arithmeticEnd(command: string, open: number): number {
 
 type ListJson = { items?: { id?: string; status?: string }[]; count?: number; more?: number };
 
-/** Pages a task read may take before "unknown" beats "keep paging". */
-const MAX_PAGES = 20;
-
 /**
- * Every item of a capped task read, following its `--from` pages. A result that
- * still says `more` after MAX_PAGES (or a page that makes no progress) is
+ * Every item of a task read, uncapped: `uncapped` is the flag that turns the 4 KB
+ * cap off (`--all`; `--full` on owned-by). A result that still says `more` is
  * unknown (undefined): a cut is not proof that nothing else is running.
  */
 async function allItems(
   run: MuRunner,
   argv: string[],
+  uncapped: "--all" | "--full",
 ): Promise<NonNullable<ListJson["items"]> | undefined> {
-  const items: NonNullable<ListJson["items"]> = [];
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const r = await run(page === 0 ? argv : [...argv, "--from", String(items.length + 1)]);
-    if (r.code !== 0) return undefined;
-    // mu prints {ok,data:{items,count,more},next}; no envelope reads as "unknown".
-    const data = parseEnvelope(r.stdout) as ListJson | undefined;
-    if (data === undefined || !Array.isArray(data.items)) return undefined;
-    items.push(...data.items);
-    const more = data.more ?? 0;
-    if (more <= 0) return items;
-    if (data.items.length === 0) return undefined;
-  }
-  return undefined;
+  const r = await run([...argv, uncapped]);
+  if (r.code !== 0) return undefined;
+  // mu prints {ok,data:{items,count,more},next}; no envelope reads as "unknown".
+  const data = parseEnvelope(r.stdout) as ListJson | undefined;
+  if (data === undefined || !Array.isArray(data.items)) return undefined;
+  if ((data.more ?? 0) > 0) return undefined;
+  return data.items;
 }
 
 /**
@@ -415,17 +407,11 @@ async function inProgress(run: MuRunner, workstreams: string[]): Promise<string[
   const results = await Promise.all(
     workstreams.map(async (w) => {
       try {
-        const items = await allItems(run, [
-          "task",
-          "list",
-          "--status",
-          "IN_PROGRESS",
-          "--json",
-          "--sort",
-          "recency",
-          "-w",
-          w,
-        ]);
+        const items = await allItems(
+          run,
+          ["task", "list", "--status", "IN_PROGRESS", "--json", "--sort", "recency", "-w", w],
+          "--all",
+        );
         if (items === undefined) return undefined;
         // The list is scoped to `w`: its ids are that workstream's task ids.
         return items.flatMap((t) => (t.id ? [`${w}/${t.id}`] : []));
@@ -623,7 +609,11 @@ async function ownedInProgress(
   workstream: string,
 ): Promise<string[] | undefined> {
   try {
-    const items = await allItems(run, ["task", "owned-by", agent, "-w", workstream, "--json"]);
+    const items = await allItems(
+      run,
+      ["task", "owned-by", agent, "-w", workstream, "--json"],
+      "--full",
+    );
     if (items === undefined) return undefined;
     return items.flatMap((t) => (t.status === "IN_PROGRESS" && t.id ? [t.id] : []));
   } catch {

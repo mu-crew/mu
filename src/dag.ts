@@ -136,8 +136,6 @@ export type FrontierDirection = "blockers" | "dependents";
 /** One line of the open task tree, in preorder. */
 export interface FrontierEntry {
   task: TaskRow;
-  /** `tasks.id` (internal: only for a retrieval SQL command, never output as `id`). */
-  pk: number;
   /** 0 for a root. */
   depth: number;
   /** `local_id` of the entry it is listed under; null for a root. */
@@ -148,10 +146,8 @@ export interface FrontierEntry {
   kids: number;
   /** CLOSED neighbours collapsed into this count instead of listed. */
   closed: number;
-  /** Neighbours of any status the node cap left out (not in `kids` / `closed`): re-rooting here would hit the same cap, so the way back is a read from `capFrom`. */
+  /** Neighbours of any status the node cap left out (not in `kids` / `closed`). */
   capCut: number;
-  /** `local_id` of the first neighbour the node cap left out; the capped ones are among this entry's neighbours at or after it ("" when `capCut` is 0). */
-  capFrom: string;
 }
 
 export interface OpenTaskFrontier {
@@ -164,12 +160,12 @@ export interface OpenTaskFrontier {
 }
 
 export interface OpenTaskFrontierOptions {
-  /** Walk through CLOSED tasks too (still capped by depth and entries). */
+  /** Walk through CLOSED tasks too (still capped by depth and entries unless `uncapped`). */
   includeClosed?: boolean;
+  /** No cap at all: CLOSED tasks walked, every level, every task, every recurrence (`task tree --all`). */
+  uncapped?: boolean;
   /** Levels below a root to list (default and ceiling `FRONTIER_MAX_DEPTH`). */
   maxDepth?: number;
-  /** With a `root`: list only its neighbours whose `local_id` is at or after this (the way back from a node-cap cut). */
-  childrenFrom?: string;
 }
 
 /**
@@ -193,7 +189,12 @@ export function loadOpenTaskFrontier(
   opts: OpenTaskFrontierOptions = {},
 ): OpenTaskFrontier {
   const out: OpenTaskFrontier = { direction, entries: [], rootsCut: 0, againCut: 0 };
-  const maxDepth = Math.min(opts.maxDepth ?? FRONTIER_MAX_DEPTH, FRONTIER_MAX_DEPTH);
+  const uncapped = opts.uncapped === true;
+  const maxDepth = uncapped
+    ? Number.POSITIVE_INFINITY
+    : Math.min(opts.maxDepth ?? FRONTIER_MAX_DEPTH, FRONTIER_MAX_DEPTH);
+  const maxNodes = uncapped ? Number.POSITIVE_INFINITY : FRONTIER_MAX_NODES;
+  const closedPerNode = uncapped ? Number.POSITIVE_INFINITY : FRONTIER_CLOSED_PER_NODE;
   const wsRow = db
     .prepare("SELECT id FROM workstreams WHERE name = ? AND torn_down_at IS NULL")
     .get(workstream) as { id: number } | undefined;
@@ -201,7 +202,7 @@ export function loadOpenTaskFrontier(
   const wsId = wsRow.id;
   const [from, to] =
     direction === "dependents" ? ["from_task_id", "to_task_id"] : ["to_task_id", "from_task_id"];
-  const includeClosed = opts.includeClosed === true;
+  const includeClosed = opts.includeClosed === true || uncapped;
 
   const nodes = new Map<number, TaskRow>();
   const rootIds = new Set<number>();
@@ -230,17 +231,16 @@ export function loadOpenTaskFrontier(
         .all(wsId) as RawTaskRow[]),
     );
   }
-  for (const raw of startRows.slice(0, FRONTIER_MAX_NODES)) {
+  for (const raw of startRows.slice(0, maxNodes)) {
     nodes.set(raw.id, rowFromDb(raw));
     rootIds.add(raw.id);
     level.push(raw.id);
   }
-  const startCut = Math.max(0, startRows.length - FRONTIER_MAX_NODES);
+  const startCut = Math.max(0, startRows.length - maxNodes);
 
   const children = new Map<number, number[]>();
   const dropped = new Map<number, number>();
   const capDropped = new Map<number, number>();
-  const capFrom = new Map<number, string>();
   const closedHidden = new Map<number, number>();
   const expands = (id: number): boolean =>
     includeClosed || rootIds.has(id) || nodes.get(id)?.status !== "CLOSED";
@@ -248,44 +248,54 @@ export function loadOpenTaskFrontier(
   for (let depth = 0; level.length > 0; depth++) {
     const ids = level.filter(expands);
     if (ids.length === 0) break;
-    const marks = ids.map(() => "?").join(", ");
     if (depth >= maxDepth) {
-      const counts = db
-        .prepare(
-          `SELECT e.${from} AS src,
-                  SUM(CASE WHEN t.status = 'CLOSED' AND ? = 0 THEN 0 ELSE 1 END) AS open,
-                  SUM(CASE WHEN t.status = 'CLOSED' AND ? = 0 THEN 1 ELSE 0 END) AS closed
-             FROM task_edges e JOIN tasks t ON t.id = e.${to}
-            WHERE e.${from} IN (${marks}) AND t.workstream_id = ? GROUP BY e.${from}`,
-        )
-        .all(includeClosed ? 1 : 0, includeClosed ? 1 : 0, ...ids, wsId) as {
-        src: number;
-        open: number;
-        closed: number;
-      }[];
+      const counts: { src: number; open: number; closed: number }[] = [];
+      for (let i = 0; i < ids.length; i += 500) {
+        const chunk = ids.slice(i, i + 500);
+        counts.push(
+          ...(db
+            .prepare(
+              `SELECT e.${from} AS src,
+                      SUM(CASE WHEN t.status = 'CLOSED' AND ? = 0 THEN 0 ELSE 1 END) AS open,
+                      SUM(CASE WHEN t.status = 'CLOSED' AND ? = 0 THEN 1 ELSE 0 END) AS closed
+                 FROM task_edges e JOIN tasks t ON t.id = e.${to}
+                WHERE e.${from} IN (${chunk.map(() => "?").join(", ")}) AND t.workstream_id = ? GROUP BY e.${from}`,
+            )
+            .all(includeClosed ? 1 : 0, includeClosed ? 1 : 0, ...chunk, wsId) as {
+            src: number;
+            open: number;
+            closed: number;
+          }[]),
+        );
+      }
       for (const c of counts) {
         if (c.open > 0) dropped.set(c.src, (dropped.get(c.src) ?? 0) + c.open);
         if (c.closed > 0) closedHidden.set(c.src, (closedHidden.get(c.src) ?? 0) + c.closed);
       }
       break;
     }
-    const skip = depth === 0 && root !== undefined ? opts.childrenFrom : undefined;
-    const rows = db
-      .prepare(
-        `SELECT e.${from} AS src, ${SELECT_TASK_COLS}
-           FROM task_edges e
-           JOIN tasks t ON t.id = e.${to}
-           JOIN workstreams ws ON ws.id = t.workstream_id AND ws.torn_down_at IS NULL
-           LEFT JOIN agents ag ON ag.id = t.owner_id
-          WHERE e.${from} IN (${marks}) AND t.workstream_id = ?${skip === undefined ? "" : " AND t.local_id >= ?"}
-          ORDER BY e.${from}, t.local_id`,
-      )
-      .all(...ids, wsId, ...(skip === undefined ? [] : [skip])) as (RawTaskRow & { src: number })[];
+    // Chunked: an uncapped level can hold more ids than SQLite takes as variables.
+    const rows: (RawTaskRow & { src: number })[] = [];
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      rows.push(
+        ...(db
+          .prepare(
+            `SELECT e.${from} AS src, ${SELECT_TASK_COLS}
+               FROM task_edges e
+               JOIN tasks t ON t.id = e.${to}
+               JOIN workstreams ws ON ws.id = t.workstream_id AND ws.torn_down_at IS NULL
+               LEFT JOIN agents ag ON ag.id = t.owner_id
+              WHERE e.${from} IN (${chunk.map(() => "?").join(", ")}) AND t.workstream_id = ?
+              ORDER BY e.${from}, t.local_id`,
+          )
+          .all(...chunk, wsId) as (RawTaskRow & { src: number })[]),
+      );
+    }
     const next: number[] = [];
     const closedSeen = new Map<number, number>();
     // Rows come ordered by (parent, local_id). Once the node cap forces a drop, every later row
-    // of the level is dropped too (seen or not), so what a parent lost to the cap is exactly its
-    // neighbours from `capFrom` on: a read the tree can name as plain SQL.
+    // of the level is dropped too (seen or not).
     let capped = false;
     for (const row of rows) {
       const leaf = row.status === "CLOSED" && !includeClosed;
@@ -293,16 +303,15 @@ export function loadOpenTaskFrontier(
         if (leaf) {
           const n = closedSeen.get(row.src) ?? 0;
           closedSeen.set(row.src, n + 1);
-          if (n >= FRONTIER_CLOSED_PER_NODE) {
+          if (n >= closedPerNode) {
             closedHidden.set(row.src, (closedHidden.get(row.src) ?? 0) + 1);
             continue;
           }
         }
-        if (!nodes.has(row.id) && nodes.size >= FRONTIER_MAX_NODES) capped = true;
+        if (!nodes.has(row.id) && nodes.size >= maxNodes) capped = true;
       }
       if (capped) {
         capDropped.set(row.src, (capDropped.get(row.src) ?? 0) + 1);
-        if (!capFrom.has(row.src)) capFrom.set(row.src, row.local_id);
         continue;
       }
       if (!nodes.has(row.id)) {
@@ -324,14 +333,12 @@ export function loadOpenTaskFrontier(
     if (task === undefined) return;
     const entry: FrontierEntry = {
       task,
-      pk: id,
       depth,
       parent,
       again: false,
       kids: dropped.get(id) ?? 0,
       closed: closedHidden.get(id) ?? 0,
       capCut: capDropped.get(id) ?? 0,
-      capFrom: capFrom.get(id) ?? "",
     };
     out.entries.push(entry);
     listed.add(id);
@@ -349,21 +356,19 @@ export function loadOpenTaskFrontier(
       const c = nodes.get(child);
       if (c === undefined) continue;
       if (listed.has(child)) {
-        if (recurrences >= FRONTIER_MAX_NODES) {
+        if (recurrences >= maxNodes) {
           out.againCut++;
           entry.kids++;
         } else {
           recurrences++;
           out.entries.push({
             task: c,
-            pk: child,
             depth: depth + 1,
             parent: task.name,
             again: true,
             kids: 0,
             closed: 0,
             capCut: 0,
-            capFrom: "",
           });
         }
         continue;

@@ -171,7 +171,7 @@ are re-export hubs.
 | `src/compile-cache.ts`, `src/state-dir.ts` | best-effort V8 compile cache under `<state>/compile-cache`; builtins-only state-dir resolution |
 | `src/cli.ts` | Commander wiring (`buildProgram`, `runCli`) |
 | `src/cli/*.ts` | one file per verb namespace, thin wrappers over the SDK; `format.ts` renders tables, `handle.ts` maps errors to exit codes and runs ambient sync |
-| `src/cli/tasks/*.ts` | the `mu task` namespace, including `mu me tasks` / `mu me next`. `records.ts` is the task read boundary: `taskToOutput` (SQL column names, `id` = `local_id`, real `workstream_id`/`owner_id`), `taskRecord` (one escaped line, <= 400 characters), `taskPage`/`pageRecords` (a result serialized and grown to <= 4 KB, `more`/`next`); `list`, `next`, `owned-by`, `show` and `tree` all go through it. `mu state` and `mu me` keep the table formatter |
+| `src/cli/tasks/*.ts` | the `mu task` namespace, including `mu me tasks` / `mu me next`. `records.ts` is the task read boundary: `taskToOutput` (SQL column names, `id` = `local_id`, real `workstream_id`/`owner_id`), `taskRecordCut`/`taskItemCut` (one escaped line <= 400 characters, `cut=N` for what it clipped), `taskPage`/`pageRecords`/`footerLine` (a result serialized and grown to <= 4 KB; the `more=N cut=N next=<same command> --all` footer is reserved first and never sliced); `list`, `next`, `owned-by`, `show` and `tree` all go through it. `mu state` and `mu me` keep the table formatter |
 | `src/cli/dispatch-hints.ts` | dispatch-time `Next:` hints for pi agents (`--fresh`, `--interrupt`, abort) |
 | `src/cli/stdin.ts` | `-` as a text argument: reads note / send text from stdin (heredoc prose) |
 | `src/cli/agents-remote.ts` | `mu agent remote-env`: prints the ssh forward and env, runs nothing |

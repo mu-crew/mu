@@ -2,18 +2,17 @@
 //
 // Lists the OPEN blocker subtree (default) or dependent subtree (--down)
 // of a task from loadOpenTaskFrontier (src/dag.ts): open tasks expand, CLOSED
-// ones are leaves (--all walks them too), depth and node counts are capped.
-// One record per entry in preorder (the shared task record, plus `depth=` and
-// `parent=`), or one JSON item per entry. Diamonds list once plus an `again`
-// record at every later sighting; the same rule stops a cycle, which sync can
-// create (`mu doctor` reports those).
+// ones are leaves, depth and node counts are capped. One record per entry in
+// preorder (the shared task record plus `depth=`, `parent=`, and `kids=` /
+// `closed=` / `capped=` counts of what hangs below and is not listed), or one
+// JSON item per entry. Diamonds list once plus an `again` record at every
+// later sighting; the same rule stops a cycle, which sync can create
+// (`mu doctor` reports those).
 //
-// Every cut names its way back:
-//   - a node with tasks left under it: `kids=N under=<tree of that node>`;
-//   - a node whose neighbours the 2000-task cap left out: `capped=K capped_next=<SQL read of
-//     exactly those>` (re-rooting at the node would load the same 2000 again);
-//   - a page that does not fit 4 KB: `more=N next=<same tree> --from <entry>`, cut on a
-//     subtree boundary (whole subtrees, in preorder; `parent=` ties a later page back).
+// ONE way back from any cut (a page that does not fit 4 KB, a depth or node
+// cap, collapsed CLOSED neighbours, a clipped title): the same command with
+// `--all`, which walks everything (CLOSED included) and prints it whole.
+// The footer `more=N next=<that command>` is reserved before the page shrinks.
 //
 // Extracted from src/cli/tasks.ts as part of the wire-out follow-up
 // to refactor_split_large_src_files.
@@ -30,15 +29,13 @@ import { shellWord } from "../../shell-quote.js";
 import { getTask, TaskNotFoundError } from "../../tasks.js";
 import {
   escapeRecordText,
-  fromOffset,
+  footerLine,
   jsonDocument,
   linesBytes,
-  moreLine,
   pageRecords,
   type RecordPage,
-  sqlCommand,
-  taskItem,
-  taskRecord,
+  taskItemCut,
+  taskRecordCut,
 } from "./records.js";
 
 interface TreeOpts {
@@ -46,49 +43,8 @@ interface TreeOpts {
   down?: boolean;
   json?: boolean;
   workstream?: string;
-  /** Walk CLOSED tasks too. */
+  /** The uncapped read: CLOSED walked too, every level and task, no paging. */
   all?: boolean;
-  /** 1-based entry to start at. */
-  from?: number;
-}
-
-interface Omission {
-  key: "under" | "capped";
-  counts: (readonly [string, number])[];
-  next: string;
-}
-
-/** `task_edges` columns (from, to) of a walk direction: dependents follow from→to. */
-const edgeColumns = (direction: FrontierDirection): [string, string] =>
-  direction === "dependents" ? ["from_task_id", "to_task_id"] : ["to_task_id", "from_task_id"];
-
-/**
- * The page of `entries` from 1-based `from` that fits `size`, ending on a subtree
- * boundary: the next entry is no deeper than the first one of the page, or (when
- * one subtree fills the whole budget) than the shallowest level that has a
- * boundary within it. A page always makes progress.
- */
-function treePage(
-  entries: readonly FrontierEntry[],
-  from: number,
-  size: (page: RecordPage<FrontierEntry>) => number,
-  nextFor: (from: number) => string,
-): RecordPage<FrontierEntry> {
-  const fit = pageRecords(entries, from, size, nextFor);
-  if (fit.more === 0) return fit;
-  const start = from - 1;
-  let end = start + fit.shown.length;
-  const first = entries[start]?.depth ?? 0;
-  search: for (let d = first; d <= FRONTIER_MAX_DEPTH + 1; d++) {
-    for (let e = start + fit.shown.length; e > start; e--) {
-      if ((entries[e]?.depth ?? 0) <= d) {
-        end = e;
-        break search;
-      }
-    }
-  }
-  const left = entries.length - end;
-  return { shown: entries.slice(start, end), more: left, next: left > 0 ? nextFor(end + 1) : null };
 }
 
 export async function cmdTaskTree(db: Db, rawId: string, opts: TreeOpts): Promise<void> {
@@ -101,101 +57,84 @@ export async function cmdTaskTree(db: Db, rawId: string, opts: TreeOpts): Promis
   const root = getTask(db, rootId, ws);
   if (!root) throw new TaskNotFoundError(rootId, ws);
   const down = opts.down ?? false;
+  const json = opts.json === true;
+  const whole = opts.all === true;
   const direction: FrontierDirection = down ? "dependents" : "blockers";
-  const includeClosed = opts.all === true;
-  const { entries, againCut } = loadOpenTaskFrontier(db, ws, rootId, direction, { includeClosed });
-  const [fromCol, toCol] = edgeColumns(direction);
-  const treeCmd = (id: string, extra = ""): string =>
-    `mu task tree ${shellWord(id)} -w ${shellWord(ws)}${down ? " --down" : ""}${extra}`;
-  const nextFor = (k: number): string =>
-    `${treeCmd(rootId)}${includeClosed ? " --all" : ""} --from ${k}`;
+  const { entries, againCut } = loadOpenTaskFrontier(db, ws, rootId, direction, {
+    uncapped: whole,
+  });
+  const allCmd = `mu task tree ${shellWord(rootId)} -w ${shellWord(ws)}${down ? " --down" : ""}${json ? " --json" : ""} --all`;
 
-  /** The exact read of the neighbours the 2000-task cap left out (re-rooting would load the same 2000 again). */
-  const cappedCommand = (e: FrontierEntry): string =>
-    sqlCommand(
-      `SELECT t.local_id, t.status FROM task_edges e JOIN tasks t ON t.id = e.${toCol} WHERE e.${fromCol} = ${e.pk} AND t.workstream_id = ${e.task.workstreamId} AND t.local_id >= '${e.capFrom}' ORDER BY t.local_id`,
-    );
-  /** What is left under an entry, one omission per command: `under` (another tree read) and `capped` (SQL). */
-  const omissions = (e: FrontierEntry): Omission[] => {
-    const out: Omission[] = [];
-    if (e.kids > 0 || e.closed > 0) {
-      out.push({
-        key: "under",
-        counts: [
-          ...(e.kids > 0 ? [["kids", e.kids] as const] : []),
-          ...(e.closed > 0 ? [["closed", e.closed] as const] : []),
-        ],
-        // `--all` reaches the closed ones too.
-        next: treeCmd(e.task.name, e.closed > 0 && !includeClosed ? " --all" : ""),
-      });
-    }
-    if (e.capCut > 0) {
-      out.push({ key: "capped", counts: [["capped", e.capCut]], next: cappedCommand(e) });
-    }
-    return out;
-  };
+  const counts = (e: FrontierEntry): [string, number][] =>
+    (
+      [
+        ["kids", e.kids],
+        ["closed", e.closed],
+        ["capped", e.capCut],
+      ] as [string, number][]
+    ).filter(([, n]) => n > 0);
   const fields = (e: FrontierEntry): string[] => [
     `depth=${e.depth}`,
     ...(e.parent === null ? [] : [`parent=${escapeRecordText(e.parent)}`]),
     ...(e.again ? ["again=1"] : []),
+    ...counts(e).map(([k, n]) => `${k}=${n}`),
   ];
-  /** The record of an entry, then one `more` record per omission under it. */
-  const linesOfEntry = (e: FrontierEntry): string[] => [
-    taskRecord(e.task, { extra: fields(e) }),
-    ...omissions(e).map(
-      (o) =>
-        `more\t${escapeRecordText(e.task.name)}\t${o.counts.map(([k, n]) => `${k}=${n}`).join(" ")}\tnext=${o.next}`,
-    ),
-  ];
-
-  const from = fromOffset(opts.from);
-  if (opts.json) {
-    const itemOf = (e: FrontierEntry) => ({
-      ...taskItem(e.task),
-      depth: e.depth,
-      parent: e.parent,
-      ...(e.again ? { again: true } : {}),
-      ...Object.fromEntries(
-        omissions(e).flatMap((o) => [
-          ...o.counts.map(([k, n]) => [k, n]),
-          [`${o.key}_retrieve`, o.next],
-        ]),
-      ),
-    });
-    const dataOf = (page: RecordPage<FrontierEntry>) => ({
+  const render = (page: RecordPage<FrontierEntry>) => {
+    let cut = 0;
+    // Not listed: entries past the page, and what a cap or the CLOSED collapse left under any entry.
+    const more = page.more + entries.reduce((n, e) => n + e.kids + e.closed + e.capCut, 0);
+    const lines: string[] = [];
+    const items: Record<string, unknown>[] = [];
+    for (const e of page.shown) {
+      if (json) {
+        const one = taskItemCut(e.task, { whole });
+        cut += one.cut;
+        items.push({
+          ...one.item,
+          depth: e.depth,
+          parent: e.parent,
+          ...(e.again ? { again: true } : {}),
+          ...Object.fromEntries(counts(e)),
+        });
+      } else {
+        const one = taskRecordCut(e.task, { whole, extra: fields(e) });
+        cut += one.cut;
+        lines.push(one.line);
+      }
+    }
+    const foot = footerLine({ more, cut }, allCmd);
+    if (json) {
+      return {
+        lines,
+        data: {
+          direction,
+          workstream: ws,
+          root: rootId,
+          ...(whole ? {} : { max_depth: FRONTIER_MAX_DEPTH }),
+          ...(againCut > 0 ? { again_cut: againCut } : {}),
+          items,
+          count: items.length,
+          more,
+          ...(cut > 0 ? { cut } : {}),
+          ...(foot === null ? {} : { retrieve: allCmd }),
+        },
+      };
+    }
+    const header = [
+      "tree",
+      escapeRecordText(rootId),
       direction,
-      workstream: ws,
-      root: rootId,
-      max_depth: FRONTIER_MAX_DEPTH,
-      ...(againCut > 0 ? { again_cut: againCut } : {}),
-      items: page.shown.map(itemOf),
-      count: page.shown.length,
-      more: page.more,
-      ...(page.next === null ? {} : { retrieve: page.next }),
-    });
-    const page = treePage(
-      entries,
-      from,
-      (p) => Buffer.byteLength(jsonDocument(dataOf(p))) + 1,
-      nextFor,
-    );
-    console.log(jsonDocument(dataOf(page)));
-    return;
-  }
-
-  const header = [
-    "tree",
-    escapeRecordText(rootId),
-    direction,
-    `entries=${entries.length} max_depth=${FRONTIER_MAX_DEPTH}${againCut > 0 ? ` again_cut=${againCut}` : ""}`,
-    down ? "hint=omit --down for blockers" : "hint=--down for dependents",
-  ].join("\t");
-  const linesOf = (page: RecordPage<FrontierEntry>): string[] => {
-    const lines = [header, ...page.shown.flatMap(linesOfEntry)];
-    const foot = moreLine(page);
-    if (foot !== null) lines.push(foot);
-    return lines;
+      `entries=${entries.length}${whole ? "" : ` max_depth=${FRONTIER_MAX_DEPTH}`}`,
+      down ? "hint=omit --down for blockers" : "hint=--down for dependents",
+    ].join("\t");
+    return { lines: [header, ...lines, ...(foot === null ? [] : [foot])], data: undefined };
   };
-  const page = treePage(entries, from, (p) => linesBytes(linesOf(p)), nextFor);
-  console.log(linesOf(page).join("\n"));
+  const page: RecordPage<FrontierEntry> = whole
+    ? { shown: entries, more: 0 }
+    : pageRecords(entries, (p) => {
+        const r = render(p);
+        return json ? Buffer.byteLength(jsonDocument(r.data)) + 1 : linesBytes(r.lines);
+      });
+  const out = render(page);
+  console.log(json ? jsonDocument(out.data) : out.lines.join("\n"));
 }

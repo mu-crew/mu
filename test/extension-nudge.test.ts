@@ -156,6 +156,7 @@ describe("registerNudge", () => {
       "recency",
       "-w",
       "auth",
+      "--all",
     ]);
   });
 
@@ -201,10 +202,9 @@ describe("registerNudge", () => {
       entries: { content: string }[];
     };
     expect(r.entries[0]?.content).toContain("mu task wait one/a two/b");
-    expect(run.mock.calls.filter((c) => c[0][0] === "task").map((c) => c[0].at(-1))).toEqual([
-      "one",
-      "two",
-    ]);
+    expect(
+      run.mock.calls.filter((c) => c[0][0] === "task").map((c) => c[0][c[0].indexOf("-w") + 1]),
+    ).toEqual(["one", "two"]);
   });
 
   it("a dispatch with no -w names no workstream: it arms nothing and never reads without -w", async () => {
@@ -332,12 +332,15 @@ describe("a capped list read (more=N)", () => {
     stderr: "",
   });
 
-  it("follows --from so refs past the first page are named too", async () => {
+  it("reads uncapped (--all) and a result that still says more is unknown, never a short list", async () => {
     const f = fakePi();
-    const run = vi.fn(async (args: readonly string[]) => {
-      if (args[0] !== "task") return { code: 0, stdout: "", stderr: "" };
-      return args.includes("--from") ? page(["c", "d"], 0) : page(["a", "b"], 2);
-    });
+    const run = vi.fn(async (args: readonly string[]) =>
+      args[0] !== "task"
+        ? { code: 0, stdout: "", stderr: "" }
+        : args.includes("--all")
+          ? page(["a", "b", "c", "d"], 0)
+          : page(["a", "b"], 2),
+    );
     registerNudge(f.pi, run, SKILL);
     await f.emit("tool_call", bash("mu agent send w1 -w auth 'x'"));
     const r = (await f.emit("agent_before_settle", { outcome: "completed" })) as {
@@ -347,10 +350,10 @@ describe("a capped list read (more=N)", () => {
     expect(r.entries[0]?.content).toContain("auth/a auth/b auth/c auth/d");
   });
 
-  it("a page that stalls is unknown (no nudge), never a short list", async () => {
+  it("an uncapped read that still says more is unknown (no nudge), never a short list", async () => {
     const f = fakePi();
     const run = vi.fn(async (args: readonly string[]) =>
-      args[0] === "task" ? page([], 3) : { code: 0, stdout: "", stderr: "" },
+      args[0] === "task" ? page(["a"], 3) : { code: 0, stdout: "", stderr: "" },
     );
     registerNudge(f.pi, run, SKILL);
     await f.emit("tool_call", bash("mu agent send w1 -w auth 'x'"));

@@ -9,9 +9,10 @@ Every verb takes `--json`.
 
 - Every verb prints ONE document on stdout: `{"ok": true, "data": ..., "next": null}`.
 - Collection reads put `{"items": [...], "count": N}` in `data`. The task
-  reads (`task list/next/owned-by/tree`, `me tasks`) cap the result at 4 KB:
-  `more` counts what is left and `retrieve` is the exact `--from <n>`
-  command. Task items use the SQL column names (`id` is the `local_id`,
+  reads (`task list/next/owned-by/show/tree`, `me tasks`) cap the result at 4 KB:
+  `more` counts what is left and `retrieve` is the same command with `--all`
+  (`--full` on `owned-by`, whose `--all` means every workstream), which prints
+  everything whole. Task items use the SQL column names (`id` is the `local_id`,
   `effort_days`, `workstream_id`, `owner_id`; `owner` only while
   IN_PROGRESS), never `name`/`effortDays`/`roi`.
 - Single objects, such as `mu task show`, put an object with named

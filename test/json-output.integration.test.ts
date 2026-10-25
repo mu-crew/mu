@@ -480,8 +480,13 @@ describe("record rendering", () => {
       expect([...line].length).toBeLessThanOrEqual(400);
     }
     const a = stdout.split("\n").find((l) => l.startsWith("task\ta\t")) ?? "";
-    // The way back is the lossless SQL read (`--json`), never `show`, which clips the same fields.
-    expect(a).toMatch(/Some long title x+…\tcut=\d+\tnext=mu sql --json "SELECT t\.title, /);
+    expect(a).toMatch(/Some long title x+…$/);
+    // The cut is named once, in the footer, with the one way back: the same read, uncapped.
+    expect(stdout.trimEnd().split("\n").at(-1)).toMatch(
+      /^cut=\d+ next=mu task list -w auth --all$/,
+    );
+    const whole = await runCli(["task", "list", "-w", "auth", "--all"], dbPath);
+    expect(whole.stdout).toContain(`Some long title ${"x".repeat(900)}`);
   });
 
   it("renders all task ids in full, one record per task", async () => {

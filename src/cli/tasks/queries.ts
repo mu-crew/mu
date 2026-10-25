@@ -45,7 +45,7 @@ import {
   listTasksByOwnerCrossWorkstream,
   type TaskRow,
 } from "../../tasks.js";
-import { fromOffset, jsonDocument, type TaskPageOut, taskPage } from "./records.js";
+import { jsonDocument, type TaskPageOut, taskPage } from "./records.js";
 
 /** Print a page: the JSON document, or the record lines. */
 function emitPage(out: TaskPageOut, json: boolean): void {
@@ -58,16 +58,20 @@ function emitPage(out: TaskPageOut, json: boolean): void {
 
 /** Flags that re-select the same rows, for the `next=` command of a cut. */
 type Flags = readonly (string | undefined)[];
-const command = (parts: readonly string[], flags: Flags, from: number): string =>
-  [...parts, ...flags.filter((f): f is string => f !== undefined), "--from", String(from)].join(
-    " ",
-  );
+const command = (parts: readonly string[], flags: Flags, tail: readonly string[]): string =>
+  [...parts, ...flags.filter((f): f is string => f !== undefined), ...tail].join(" ");
+
+/** The one way back from a cut: the same read, `--all` (uncapped), `--json` as given. */
+const allTail = (opts: { json?: boolean }): string[] => [
+  ...(opts.json === true ? ["--json"] : []),
+  "--all",
+];
 
 const wsFlag = (ws: string): string => `-w ${shellWord(ws)}`;
 
 export async function cmdMyTasks(
   db: Db,
-  opts: { json?: boolean; includeClosed?: boolean; from?: number } = {},
+  opts: { json?: boolean; includeClosed?: boolean; all?: boolean } = {},
 ): Promise<void> {
   const self = resolveSelf(db);
   // Scope by self.workstream so a same-named worker in another
@@ -81,10 +85,13 @@ export async function cmdMyTasks(
   }
   emitPage(
     taskPage(tasks, {
-      from: fromOffset(opts.from),
+      all: opts.all === true,
       json: opts.json === true,
-      nextFor: (k) =>
-        command(["mu", "me", "tasks"], [opts.includeClosed ? "--include-closed" : undefined], k),
+      next: command(
+        ["mu", "me", "tasks"],
+        [opts.includeClosed ? "--include-closed" : undefined],
+        allTail(opts),
+      ),
     }),
     opts.json === true,
   );
@@ -92,7 +99,7 @@ export async function cmdMyTasks(
 
 export async function cmdMyNext(
   db: Db,
-  opts: { lines?: number; json?: boolean; from?: number },
+  opts: { lines?: number; json?: boolean; all?: boolean },
 ): Promise<void> {
   const self = resolveSelf(db);
   const k = opts.lines ?? 1;
@@ -104,9 +111,9 @@ export async function cmdMyNext(
   }
   emitPage(
     taskPage(tasks, {
-      from: fromOffset(opts.from),
+      all: opts.all === true,
       json: opts.json === true,
-      nextFor: (from) => command(["mu", "me", "next", "-n", String(k)], [], from),
+      next: command(["mu", "me", "next", "-n", String(k)], [], allTail(opts)),
     }),
     opts.json === true,
   );
@@ -147,7 +154,6 @@ export async function cmdTaskList(
     all?: boolean;
     owner?: string;
     mine?: boolean;
-    from?: number;
   },
 ): Promise<void> {
   const workstream = await resolveWorkstream(opts.workstream);
@@ -163,7 +169,7 @@ export async function cmdTaskList(
   if (substates !== undefined) listOpts.substate = substates;
   const owner = ownerFilter(db, workstream, opts);
   if (owner !== undefined) listOpts.ownerId = owner.id;
-  // `--all` is the explicit every-status listing (what no filter already is); it pages like any read.
+  // `--all` is the uncapped read: every task, whole (a list is every status already).
   // Default sort for `mu task list` is `id` (preserves prior
   // behaviour: SQL ORDER BY local_id). The other read verbs default
   // to `roi` because their primary use is "what should I do next".
@@ -173,7 +179,6 @@ export async function cmdTaskList(
     statuses === undefined ? undefined : `--status ${statuses.join(",")}`,
     substates === undefined ? undefined : `--substate ${substates.join(",")}`,
     opts.sort === undefined ? undefined : `--sort ${opts.sort}`,
-    opts.all === true ? "--all" : undefined,
     owner?.flag,
   ];
   const head = ["mu", "task", "list", wsFlag(workstream)];
@@ -194,9 +199,9 @@ export async function cmdTaskList(
   }
   emitPage(
     taskPage(tasks, {
-      from: fromOffset(opts.from),
+      all: opts.all === true,
       json: opts.json === true,
-      nextFor: (k) => command(head, flags, k),
+      next: command(head, flags, allTail(opts)),
       basis: relTimeBasisForSort(sortKey),
       // `revision` is what `--if <rev>` on the guarded verbs repeats.
       ...(opts.json === true ? { revisions: taskRevisions(db, workstream) } : {}),
@@ -221,7 +226,7 @@ export async function cmdTaskNext(
     sort?: string;
     status?: string[];
     substate?: string[];
-    from?: number;
+    all?: boolean;
   },
 ): Promise<void> {
   const workstream = await resolveWorkstream(opts.workstream);
@@ -276,9 +281,9 @@ export async function cmdTaskNext(
   ];
   emitPage(
     taskPage(tasks, {
-      from: fromOffset(opts.from),
+      all: opts.all === true,
       json: opts.json === true,
-      nextFor: (from) => command(["mu", "task", "next", wsFlag(workstream)], flags.slice(0), from),
+      next: command(["mu", "task", "next", wsFlag(workstream)], flags, allTail(opts)),
     }),
     opts.json === true,
   );
@@ -292,7 +297,7 @@ export async function cmdTaskOwnedBy(
     includeClosed?: boolean;
     workstream?: string;
     all?: boolean;
-    from?: number;
+    full?: boolean;
   } = {},
 ): Promise<void> {
   // Default behaviour: scope to the resolved workstream (so the common
@@ -318,15 +323,14 @@ export async function cmdTaskOwnedBy(
   // be redundant.
   emitPage(
     taskPage(tasks, {
-      from: fromOffset(opts.from),
+      all: opts.full === true,
       json: opts.json === true,
       withWorkstream: ws === undefined,
-      nextFor: (k) =>
-        command(
-          ["mu", "task", "owned-by", shellWord(agent), ...(ws === undefined ? [] : [wsFlag(ws)])],
-          flags,
-          k,
-        ),
+      next: command(
+        ["mu", "task", "owned-by", shellWord(agent), ...(ws === undefined ? [] : [wsFlag(ws)])],
+        flags,
+        [...(opts.json === true ? ["--json"] : []), "--full"],
+      ),
     }),
     opts.json === true,
   );

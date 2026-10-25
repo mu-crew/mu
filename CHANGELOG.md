@@ -23,60 +23,52 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 ### Added
 
 - **Task reads are bounded records.** `task list`, `next`, `owned-by`,
-  `me tasks`/`me next` print one escaped TAB-separated record per task
-  (`task id STATE impact=… effort_days=… [owner=…] title`, <= 400
-  characters; the title is clipped with `cut=N next=<exact command>`), and
-  the whole result stays within 4 KB, serialized and grown until it fits
-  (text lines or the JSON document, footer included). A cut ends
-  `more=N next=mu task list … --from <n>`; `--from <n>` is accepted by every
-  one of them, so the pages cover every task once. `list` takes `--all`
-  (accepted: it already lists every status), `--owner <agent|ws/agent>` and
-  `--mine` (the agent's real id, so same-named agents of two workstreams
-  never mix; `--mine` is the spawn-injected identity). The owner shows only
-  while IN_PROGRESS (`owner_id` stays the real FK, so closed history is
-  intact in the SDK). `--sort recency|age` adds the sorted timestamp to each
-  record. `--json`: items use the SQL column names (`id` = `local_id`,
+  `me tasks`/`me next`, `show` and `tree` print one escaped TAB-separated
+  record per task or entry (`task id STATE impact=… effort_days=… [owner=…]
+  title`, <= 400 characters, never sliced: a long title ends in `…`), and the
+  whole result stays within 4 KB, serialized (text lines or the JSON document
+  as emitted, escapes, edges, envelope and footer included) and shrunk by
+  whole records. A cut ends `more=N cut=N next=<command>`, reserved before
+  shrinking so it is never cut. **One way back, everywhere: the same command
+  with `--all`** (`--json` kept; `--full` on `owned-by`, whose `--all` means
+  every workstream), which prints everything uncapped and whole (every
+  record, title, wave, host, neighbour and note; `tree` walks every level and
+  CLOSED tasks too). `more` counts records left out, `cut` the characters a
+  record clipped. No per-field, per-subtree or `--from` retrieval commands:
+  `--from` and `show --edges-from` are gone (`task notes --from` stays).
+  `list` takes `--owner <agent|ws/agent>` and `--mine` (the agent's real id,
+  so same-named agents of two workstreams never mix). The owner shows only
+  while IN_PROGRESS (`owner_id` stays the real FK). `--sort recency|age` adds
+  the sorted timestamp. `--json`: items use the SQL column names (`id` =
   `local_id`, `workstream_id`, `owner_id`, `effort_days`, `scored`,
-  `dispatch_host`, `kind`, `wave`, `created_at`, `updated_at`, plus
-  `revision` on `list`/`show`, `workstream` on `show`/`owned-by --all`),
-  never `name`/`workstreamName`/`effortDays`/computed `roi`; `data` is
-  `{items,count,more[,retrieve]}`. `mu state` and `mu me` keep their tables.
-  `extension/delegate.ts` and `extension/nudge.ts` read `id`/`workstream` and
-  follow `--from`: a cut owned-by/list read that cannot be completed is
-  unknown, not "owns nothing".
+  `dispatch_host`, `kind`, `wave`, `created_at`, `updated_at`, plus `revision`
+  on `list`/`show`, `workstream` on `show`/`owned-by --all`), never
+  `name`/`workstreamName`/`effortDays`/computed `roi`; `data` is
+  `{items,count,more[,cut][,retrieve]}`, and every `--json` document goes
+  through the one inert envelope encoder (`encodeEnvelope`: C1, bidi and
+  U+2028/9 escaped). `mu state` and `mu me` keep their tables.
+  `extension/delegate.ts` and `extension/nudge.ts` read `id`/`workstream`; the
+  nudges read uncapped (`--all`/`--full`) and treat a result that still says
+  `more` as unknown, not "owns nothing".
 - **`task show` is one 4 KB result.** The task is a record (`task id STATE
   … ws= created= updated= rev=`), then one `blocker|dependent id STATE`
   record per neighbour (still-gating first, CLOSED after), then the notes
-  records. The task record, edges and ordinary notes share the cap (the
-  pinned brief, report and verdicts stay exempt); edges beyond their share
-  end `more=N next=mu task show <id> --edges-from <n>`; a title too long
-  even for `show` names a `mu sql --json` read that returns it whole. `--json`:
-  `{task,blockers,dependents,edges_more[,edges_retrieve],notes,notes_more…}`.
+  records, then one footer. The task record, edges and ordinary notes share
+  the cap (the pinned brief, report and verdicts stay exempt); neighbours
+  beyond their share, then ordinary notes, then the title are dropped until
+  the emitted bytes fit. `--json`: `{task,blockers,dependents,edges_more,notes,
+  notes_more,[cut,][retrieve,]lastClaimActor}`; `retrieve` is `show … --all`.
 - **`task tree` is the open DAG, in records.** `loadOpenTaskFrontier(db, ws, root?,
-  direction?)` (exported from `src/index.ts`): open tasks expand, CLOSED ones
-  are leaves (a CLOSED root still expands), at most 3 CLOSED neighbours per
-  node are listed and the rest counted, depth <= 12 (the preorder walk of a
-  shared DAG holds it too) and <= 2000 tasks, diamonds and cycles list once
-  then `again=1`, one SQL read per level. Text is the task-record grammar: a
-  `tree<TAB>root<TAB>direction<TAB>entries=…` header, one `task` record per
-  entry (`depth=N parent=<id>` as fields, no branch drawing), and
-  `more<TAB><id><TAB>kids=N closed=N<TAB>next=<tree of that node>` records for
-  what a cap left under it (`--all` reaches the closed ones). Neighbours the
-  2000-task cap left out of one parent are `capped=K` with a `mu sql --json`
-  read that returns exactly them (re-rooting would load the same 2000
-  again). A page ends on a whole subtree (`more=N next=… --from <n>`), the
-  bytes measured on the emitted text or JSON document, colour never emitted.
-  `--all` walks CLOSED too. `--json` is a flat preorder of
-  `{id,depth,parent,again?,kids?,under_retrieve?,closed?,capped?,capped_retrieve?}`
+  direction?, {uncapped?})` (exported from `src/index.ts`): open tasks expand,
+  CLOSED ones are leaves (a CLOSED root still expands), at most 3 CLOSED
+  neighbours per node are listed and the rest counted, depth <= 12 and <= 2000
+  tasks, diamonds and cycles list once then `again=1`, one SQL read per level;
+  `uncapped` lifts every cap and walks CLOSED too (`task tree --all`). Text is
+  the task-record grammar: a `tree<TAB>root<TAB>direction<TAB>entries=…` header,
+  one `task` record per entry (`depth=N parent=<id>` plus `kids=`/`closed=`/
+  `capped=` for what hangs below and is not listed), no branch drawing, no
+  colour; the page is a preorder prefix. `--json` is a flat preorder of the same
   items. `loadFullDag` keeps its whole-workstream SDK semantics.
-- **Every capped task read has a working way back.** A clipped title, wave
-  label, dispatch host or claimer counts into one `cut=N`, and
-  `next=mu sql --json "SELECT t.title, t.wave, t.dispatch_host FROM tasks t
-  WHERE …"` prints those fields whole (`show` clips them too, so it is never
-  the way back); executing the command is tested through the CLI. Every
-  `--json` document, `task show` included, goes through the one envelope
-  encoder (`encodeEnvelope`), which escapes C1 controls, bidi controls and
-  U+2028/9 as `\uXXXX`: the size measured is the size printed.
 - **Notes default view.** `mu task notes <id>` and the notes of `mu task show`
   print one escaped TAB-separated record per line (`kind n by= at= text`):
   the first `brief`, the last `report` (else the closer's last note, found

@@ -347,19 +347,19 @@ describe("mu task notes / show --note (CLI)", () => {
     expect(d.retrieve).toBe("mu task notes t -w w --from 2");
   });
 
-  it("show uses the same view; its JSON carries notes + more/retrieve beside task/blockers", async () => {
+  it("show uses the same view; its JSON carries notes + more/retrieve beside task/blockers; the way back is the same show --all", async () => {
     note("BRIEF", "brief");
     for (let i = 1; i <= 5; i++) note(`n${i}`);
     const r = await runCliJson(["task", "show", "t", "-w", WS, "--json"], dbPath);
-    const d = r.data as { notes: { n: number }[]; notes_more: number; notes_retrieve: string };
+    const d = r.data as { notes: { n: number }[]; notes_more: number; retrieve: string };
     expect(d.notes.map((n) => n.n)).toEqual([1, 4, 5, 6]);
     expect(d.notes_more).toBe(2);
-    expect(d.notes_retrieve).toBe("mu task notes t -w w --from 2");
+    expect(d.retrieve).toBe("mu task show t -w w --json --all");
     const text = await runCli(["task", "show", "t", "-w", WS], dbPath);
     // Record framing: the task is one record, the notes follow as records, no "Notes (n)" header.
     expect(text.stdout.split("\n")[0]).toMatch(/^task\tt\tOPEN\t/);
     expect(text.stdout).not.toContain("Notes (");
-    expect(text.stdout).toContain("more=2 next=mu task notes t -w w --from 2");
+    expect(text.stdout).toContain("more=2 next=mu task show t -w w --all");
   });
 
   it("--from / --note outside the task's notes is exit 3 with the valid range; --all rejects filters", async () => {
