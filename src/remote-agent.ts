@@ -206,7 +206,8 @@ const lastMatch = (out: string, re: RegExp): RegExpExecArray | null => {
  * the pane held it): under one lease, one exec observes the state (clean or
  * dirty, HEAD, and that the path is still a worktree of the profile's repo),
  * the rule is applied here, and a second exec re-checks HEAD and cleanliness
- * immediately before `git worktree remove` WITHOUT --force. Never removes
+ * immediately before `git worktree remove` WITHOUT --force, with HEAD fenced
+ * (HEAD.lock held, tree renamed aside, verified there). Never removes
  * dirty files, whatever the flags; a HEAD that is neither the base nor the
  * last collected one refuses unless `keepBranch`, which makes (or verifies)
  * `mu/<ws>/<agent>-<sha12>` at the observed HEAD first. Any doubt refuses.
@@ -214,7 +215,12 @@ const lastMatch = (out: string, re: RegExp): RegExpExecArray | null => {
 export async function closeRemoteWorktree(
   db: Db,
   agent: Pick<AgentRow, "name" | "workstreamName" | "host" | "cwd" | "base" | "collectedHead">,
-  opts: { keepBranch?: boolean; paneAlive?: (paneId: string) => Promise<boolean> } = {},
+  opts: {
+    keepBranch?: boolean;
+    paneAlive?: (paneId: string) => Promise<boolean>;
+    /** Runs between the observation and the removal; throws to stop (an identity re-check). */
+    beforeRemove?: () => void;
+  } = {},
 ): Promise<ReleasedWorktree> {
   const { name, workstreamName: ws, host, cwd: path, base, collectedHead } = agent;
   if (host === null || path === null || base === null) {
@@ -276,27 +282,37 @@ export async function closeRemoteWorktree(
         );
       }
       const branch = known ? undefined : `mu/${ws}/${name}-${short}`;
+      opts.beforeRemove?.();
+      // HEAD is fenced, not just checked: HEAD.lock (O_EXCL) stops any git
+      // writer from moving it (a commit or checkout fails on the lock), the
+      // tree is renamed aside (a writer that cds into the path no longer finds
+      // it), and HEAD and cleanliness are verified on the moved tree before the
+      // non-force remove. Any mismatch moves it back, drops the lock, refuses.
       const removed = await run(
         [
           `root=${root}`,
           `wt=${wt}`,
           `want=${shellQuote(head)}`,
           `[ -d "$wt" ] || { echo 'MU_RM gone'; exit 0; }`,
-          `[ "$(git -C "$wt" rev-parse --verify HEAD)" = "$want" ] || { echo 'MU_RM moved'; exit 0; }`,
-          `[ -z "$(git -C "$wt" status --porcelain)" ] || { echo 'MU_RM dirty'; exit 0; }`,
+          `gd=$(git -C "$wt" rev-parse --path-format=absolute --git-dir) || { echo 'MU_RM failed'; exit 0; }`,
+          `lock="$gd/HEAD.lock"`,
+          `(set -C; : > "$lock") 2>/dev/null || { echo 'MU_RM moved'; exit 0; }`,
+          `aside="$wt.mu-removing-$$"`,
+          `fail() { if [ -d "$aside" ]; then git -C "$root" worktree move "$aside" "$wt" >&2; fi; rm -f "$lock"; echo "MU_RM $1"; exit 0; }`,
+          `[ "$(git -C "$wt" rev-parse --verify HEAD)" = "$want" ] || fail moved`,
+          `[ -z "$(git -C "$wt" status --porcelain)" ] || fail dirty`,
+          `git -C "$root" worktree move "$wt" "$aside" >&2 || fail failed`,
+          `[ "$(git -C "$aside" rev-parse --verify HEAD)" = "$want" ] || fail moved`,
+          `[ -z "$(git -C "$aside" status --porcelain)" ] || fail dirty`,
           ...(branch === undefined
             ? []
             : [
                 `br=${shellQuote(`refs/heads/${branch}`)}`,
-                `if have=$(git -C "$root" rev-parse --verify -q "$br"); then`,
-                `  [ "$have" = "$want" ] || { echo 'MU_RM branch-collision'; exit 0; }`,
-                `else`,
-                `  git -C "$root" update-ref "$br" "$want" "" || { echo 'MU_RM branch-failed'; exit 0; }`,
-                `fi`,
-                `[ "$(git -C "$root" rev-parse --verify -q "$br")" = "$want" ] || { echo 'MU_RM branch-failed'; exit 0; }`,
-                `[ "$(git -C "$wt" rev-parse --verify HEAD)" = "$want" ] || { echo 'MU_RM moved'; exit 0; }`,
+                // Create-only (old value ""): never moves an existing branch.
+                `git -C "$root" update-ref "$br" "$want" "" 2>/dev/null || [ "$(git -C "$root" rev-parse --verify -q "$br")" = "$want" ] || fail branch-collision`,
+                `[ "$(git -C "$root" rev-parse --verify -q "$br")" = "$want" ] || fail branch-failed`,
               ]),
-          `git -C "$root" worktree remove "$wt" >&2 || { echo 'MU_RM failed'; exit 0; }`,
+          `git -C "$root" worktree remove "$aside" >&2 || fail failed`,
           `echo 'MU_RM removed'`,
         ].join("\n"),
       );

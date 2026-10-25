@@ -13,6 +13,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -335,6 +336,118 @@ describe("close", () => {
     gitIn(remote, "worktree", "remove", wtPath("worker-1"));
     expect((await close("worker-1")).worktree).toMatchObject({ action: "gone" });
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+});
+
+describe("round-2 fences", () => {
+  it("an unchanged collect still fences the incarnation, and leaves the earlier pin alone", async () => {
+    const old = await remoteAgent("worker-1");
+    const head = commitIn("worker-1", "a.txt");
+    await collect("worker-1");
+    writeFileSync(join(dir, "gate"), "");
+    const pending = collect("worker-1").catch((e: unknown) => e);
+    await until(() => readdirSync(dir).some((f) => f.startsWith("started-")), "the fetch to start");
+    db.prepare("DELETE FROM agents WHERE id = ?").run(old.incarnation);
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%99",
+      host: "wide",
+      cwd: wtPath("worker-1"),
+      base,
+    });
+    rmSync(join(dir, "gate"));
+    expect(await pending).toBeInstanceOf(AgentReplacedError);
+    expect(getAgent(db, "worker-1", "auth")?.collectedHead).toBeNull();
+    expect(localRef("worker-1")).toBe(head);
+  });
+
+  it("a failed collect restores the previous pin instead of dropping it", async () => {
+    const old = await remoteAgent("worker-1");
+    const first = commitIn("worker-1", "a.txt");
+    await collect("worker-1");
+    commitIn("worker-1", "b.txt");
+    writeFileSync(join(dir, "gate"), "");
+    const pending = collect("worker-1").catch((e: unknown) => e);
+    await until(() => readdirSync(dir).some((f) => f.startsWith("started-")), "the fetch to start");
+    db.prepare("UPDATE agents SET cwd = ? WHERE id = ?").run(wtPath("worker-2"), old.incarnation);
+    rmSync(join(dir, "gate"));
+    expect(await pending).toBeInstanceOf(AgentReplacedError);
+    expect(localRef("worker-1")).toBe(first);
+    expect(getAgent(db, "worker-1", "auth")?.collectedHead).toBe(first);
+  });
+
+  it("a replacement that lands after the observation is caught before anything is removed", async () => {
+    const old = await remoteAgent("worker-1");
+    writeFileSync(join(dir, "gate-remove"), "");
+    writeFileSync(
+      join(dir, "exec.sh"),
+      `#!/bin/sh\ncase "$1" in *MU_STATE*) sh -c "$1"; touch '${dir}/observed'; while [ -f '${dir}/gate-remove' ]; do sleep 0.02; done; exit 0 ;; esac\nexec sh -c "$1"\n`,
+    );
+    const pending = close("worker-1").catch((e: unknown) => e);
+    await until(() => existsSync(join(dir, "observed")), "the observation");
+    db.prepare("DELETE FROM agents WHERE id = ?").run(old.incarnation);
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%99",
+      host: "wide",
+      cwd: wtPath("worker-1"),
+      base,
+    });
+    rmSync(join(dir, "gate-remove"));
+    expect(await pending).toBeInstanceOf(AgentReplacedError);
+    expect(existsSync(wtPath("worker-1"))).toBe(true);
+  });
+
+  it("a commit arriving after the last check cannot land: HEAD is fenced, and nothing is lost", async () => {
+    await remoteAgent("worker-1");
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const shim = join(bin, "git");
+    // On the SECOND `status --porcelain` (the remove exec's first), print the real status, then commit in the worktree.
+    writeFileSync(
+      shim,
+      `#!/bin/sh
+case " $* " in *' status --porcelain '*)
+  if [ -f '${dir}/status-seen' ]; then
+    /usr/bin/git "$@"
+    cd '${wtPath("worker-1")}' || exit 1
+    echo newer > newer.txt; /usr/bin/git add .
+    /usr/bin/git -c user.email=t@t -c user.name=t commit -q -m newer 2>/dev/null; echo $? > '${dir}/late-exit'
+    /usr/bin/git rev-parse HEAD > '${dir}/late-head'
+    exit 0
+  fi
+  touch '${dir}/status-seen' ;;
+esac
+exec /usr/bin/git "$@"
+`,
+    );
+    chmodSync(shim, 0o755);
+    db.prepare("UPDATE host_profiles SET exec = ? WHERE name = 'wide'").run(
+      `PATH=${bin}:$PATH /bin/sh ${join(dir, "exec.sh")} {cmd}`,
+    );
+    const outcome = await close("worker-1").catch((e: unknown) => e);
+    const lateHead = readFileSync(join(dir, "late-head"), "utf8").trim();
+    const lateExit = readFileSync(join(dir, "late-exit"), "utf8").trim();
+    gitIn(remote, "gc", "-q", "--prune=now");
+    // The writer could not move HEAD (it failed on HEAD.lock); whatever it left staged keeps the worktree.
+    expect(lateExit).not.toBe("0");
+    expect(lateHead).toBe(base);
+    expect(outcome).toBeInstanceOf(RemoteCloseRefusedError);
+    expect(existsSync(wtPath("worker-1"))).toBe(true);
+    expect(existsSync(join(wtPath("worker-1"), ".git"))).toBe(true);
+    expect(gitIn(remote, "worktree", "list")).toContain(wtPath("worker-1"));
+    expect(existsSync(join(remote, ".git", "worktrees", "worker-1", "HEAD.lock"))).toBe(false);
+  });
+
+  it("--keep-branch never moves an existing branch, and the removal leaves no aside tree", async () => {
+    await remoteAgent("worker-1");
+    const head = commitIn("worker-1", "a.txt");
+    const out = await close("worker-1", { keepBranch: true });
+    expect(out.worktree?.action).toBe("kept-branch");
+    expect(gitIn(remote, "rev-parse", `refs/heads/${out.worktree?.branch}`)).toBe(head);
+    expect(readdirSync(join(dir, "wts"))).toEqual([]);
   });
 });
 
