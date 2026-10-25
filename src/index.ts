@@ -31,6 +31,7 @@ export {
   AgentNameExhaustedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
+  type AgentObservation,
   AgentPaneDeadError,
   AgentPaneStillAliveError,
   AgentReplacedError,
@@ -64,6 +65,10 @@ export {
   type LiveAgentsView,
   listAgents,
   listLiveAgents,
+  type ObservedAgent,
+  type ObservedWatch,
+  observationFromReading,
+  observeAgentStates,
   previewClose,
   readAgent,
   resetCommandResolverForTests,
@@ -79,11 +84,14 @@ export {
   sendToAgent,
   sendViaTransport,
   setCommandResolverForTests,
+  settledCloseInput,
   spawnAgent,
   spawnForTask,
   type TaskSpawnOutcome,
   type TaskSpawnRequest,
   type Transport,
+  toStatusSnapshot,
+  watchAgentRun,
   withAgentLock,
 } from "./agents.js";
 export {
@@ -535,6 +543,20 @@ export {
   type TmuxPane,
 } from "./tmux.js";
 export { getParallelTracks, type Track } from "./tracks.js";
+export {
+  beginWait,
+  endWait,
+  type RegisteredRef,
+  readWaitRegistration,
+  registerOwnedWait,
+  WAIT_REF_KINDS,
+  WAIT_REGISTRATION_MAX_REFS,
+  WAIT_REGISTRATION_STATES,
+  type WaitRefKind,
+  type WaitRegistration,
+  WaitRegistrationError,
+  type WaitRegistrationState,
+} from "./wait-registration.js";
 export {
   ensureWorkstream,
   isValidWorkstreamName,

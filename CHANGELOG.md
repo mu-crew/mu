@@ -28,6 +28,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Wait registrations and one typed agent observation (storage and seams for
+  the unified wait; no new verb).** The machine-local `wait_registrations`
+  table (`caller`, `refs_json`, `state` armed|waiting, `generation`,
+  `updated_at`; no foreign keys, never synced, not rebuildable and reported as
+  lost) records the typed refs (task, agent, delegate) a caller still owes a
+  wait. `registerOwnedWait(db, caller, refs)` validates, merges and dedupes
+  (at most 256 owed; one bad ref stores nothing); `beginWait` bumps the
+  generation and marks `waiting`; `endWait(db, caller, generation, delivered)`
+  is a compare-and-set that removes only the delivered refs, so an older wait
+  finishing late cannot overwrite a newer one and an undelivered sibling stays
+  owed. Each write is one short transaction, never held across an await, and
+  nothing here touches `wait_cursors`. `AgentObservation` (`observeAgentStates`,
+  `watchAgentRun`, `settledCloseInput`, `toStatusSnapshot`) carries the registry
+  id and pane, pi's incarnation, the settled run count, `settled`, the final
+  text with `lastTextTruncated`, `pending`, source/since and the session file;
+  `mu agent wait` now builds its watch and reads on it, output unchanged.
+  `readAgentStates` also returns ctl's `incarnation`. Producers do not arm yet
+  (that is `v_wait_cli`). No schema bump: an existing v13 file gains the table
+  on open (same-version additive repair).
+
 - **`mu db query` / `mu sql` print JSON by default, paged like task lists.** A read's
   `data` is `{items, count, more}` (was a bare array): rows are kept whole while the final
   document fits 4 KB, `more` counts the rest and `retrieve` is the same query with the new

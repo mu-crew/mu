@@ -48,6 +48,7 @@ import {
 } from "../src/segments.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask, listTasks } from "../src/tasks.js";
+import { beginWait, endWait, registerOwnedWait } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -59,6 +60,7 @@ const NEW_TABLES = [
   "human_needs",
   "spawn_receipts",
   "wait_cursors",
+  "wait_registrations",
 ] as const;
 
 let dir: string;
@@ -329,6 +331,39 @@ describe("a populated v12 DB upgrades to v13", () => {
     ).toThrow(/FOREIGN KEY/i);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(tid);
     expect(db.prepare("SELECT COUNT(*) AS c FROM human_needs").get()).toEqual({ c: 0 });
+  });
+
+  it("an already-v13 file without wait_registrations gets the table, wait_cursors rows intact (no version bump)", () => {
+    const p = v12Copy();
+    track(openDb({ path: p })).close();
+    raw(p, (r) => {
+      r.exec("INSERT INTO wait_cursors (caller, ref, incarnation, runs) VALUES ('c','r','i',2)");
+      r.exec("DROP TABLE wait_registrations");
+    });
+    const db = track(openDb({ path: p }));
+    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(columns(p, "wait_registrations")).toEqual([
+      "caller",
+      "refs_json",
+      "state",
+      "generation",
+      "updated_at",
+    ]);
+    expect(db.prepare("SELECT COUNT(*) AS c FROM wait_registrations").get()).toEqual({ c: 0 });
+    expect(db.prepare("SELECT caller, ref, runs FROM wait_cursors").all()).toEqual([
+      { caller: "c", ref: "r", runs: 2 },
+    ]);
+    expect(getAgent(db, "w1", "alpha")).toBeDefined();
+    expect(getTask(db, "t1", "alpha")).toBeDefined();
+    // The repaired table works, and a second open does no DDL.
+    registerOwnedWait(db, "c", [{ kind: "task", workstream: "alpha", id: "t1" }]);
+    db.close();
+    const cookie = raw(p, (r) => r.pragma("schema_version", { simple: true }));
+    track(openDb({ path: p })).close();
+    expect(raw(p, (r) => r.pragma("schema_version", { simple: true }))).toBe(cookie);
+    expect(raw(p, (r) => r.prepare("SELECT COUNT(*) AS c FROM wait_registrations").get())).toEqual({
+      c: 1,
+    });
   });
 
   it("an already-v13 file without host_channels gets the table, host_profiles rows intact (no version bump)", () => {
@@ -669,13 +704,13 @@ describe("segments: kind and wave ride v2 lines only", () => {
 // ─── 3. Machine-local ─────────────────────────────────────────────────
 
 describe("machine-local state", () => {
-  it("the six tables are classified machine-local, never portable, and listed as expected", () => {
+  it("the new tables are classified machine-local, never portable, and listed as expected", () => {
     for (const t of NEW_TABLES) {
       expect(MACHINE_LOCAL_TABLES).toContain(t);
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(22);
+    expect(EXPECTED_TABLES).toHaveLength(23);
     expect(PORTABLE_TABLES).toEqual(["task_edges", "task_notes", "tasks", "workstreams"]);
   });
 
@@ -691,6 +726,9 @@ describe("machine-local state", () => {
       "INSERT INTO delegate_calls (task_id, caller, call_id, state, updated_at) VALUES (?, 'ws/o', 'c1', 'queued', 'n')",
     ).run(tid);
     db.prepare("INSERT INTO wait_cursors (caller, ref) VALUES ('c', 'r')").run();
+    registerOwnedWait(db, "c", [{ kind: "task", workstream: "d", id: "a" }]);
+    const w = beginWait(db, "c");
+    endWait(db, "c", w?.generation ?? -1, []);
     db.prepare("INSERT INTO agent_settles (agent_id, incarnation, runs) VALUES (1, 'i', 1)").run();
     db.prepare(
       "INSERT INTO host_profiles (name, shell, exec, fetch, repo) VALUES ('h', 's', 'e', 'f', 'r')",
@@ -831,7 +869,7 @@ describe("machine-local state", () => {
     expect(() => cur.run("a", "r")).toThrow(/UNIQUE|PRIMARY/i);
   });
 
-  it("a rebuild reports the five tables' rows as lost, not silently dropped", () => {
+  it("a rebuild reports the machine-local tables' rows as lost, not silently dropped", () => {
     const db = fresh();
     ensureWorkstream(db, "d");
     addTask(db, { workstream: "d", localId: "a", title: "a" });
@@ -841,6 +879,7 @@ describe("machine-local state", () => {
     ).run(tid);
     db.prepare("INSERT INTO wait_cursors (caller, ref) VALUES ('c', 'r')").run();
     db.prepare("INSERT INTO wait_cursors (caller, ref) VALUES ('c', 's')").run();
+    registerOwnedWait(db, "c", [{ kind: "task", workstream: "d", id: "a" }]);
     db.prepare("INSERT INTO agent_settles (agent_id, incarnation, runs) VALUES (1, 'i', 1)").run();
     db.prepare(
       "INSERT INTO host_profiles (name, shell, exec, fetch, repo) VALUES ('h','s','e','f','r')",
@@ -857,6 +896,7 @@ describe("machine-local state", () => {
       expect.arrayContaining([
         { table: "delegate_calls", rows: 1 },
         { table: "wait_cursors", rows: 2 },
+        { table: "wait_registrations", rows: 1 },
         { table: "agent_settles", rows: 1 },
         { table: "host_profiles", rows: 1 },
         { table: "host_channels", rows: 1 },
