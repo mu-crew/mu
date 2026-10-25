@@ -136,6 +136,8 @@ export type FrontierDirection = "blockers" | "dependents";
 /** One line of the open task tree, in preorder. */
 export interface FrontierEntry {
   task: TaskRow;
+  /** `tasks.id` (internal: only for a retrieval SQL command, never output as `id`). */
+  pk: number;
   /** 0 for a root. */
   depth: number;
   /** `local_id` of the entry it is listed under; null for a root. */
@@ -146,6 +148,10 @@ export interface FrontierEntry {
   kids: number;
   /** CLOSED neighbours collapsed into this count instead of listed. */
   closed: number;
+  /** Neighbours of any status the node cap left out (not in `kids` / `closed`): re-rooting here would hit the same cap, so the way back is a read from `capFrom`. */
+  capCut: number;
+  /** `local_id` of the first neighbour the node cap left out; the capped ones are among this entry's neighbours at or after it ("" when `capCut` is 0). */
+  capFrom: string;
 }
 
 export interface OpenTaskFrontier {
@@ -162,6 +168,8 @@ export interface OpenTaskFrontierOptions {
   includeClosed?: boolean;
   /** Levels below a root to list (default and ceiling `FRONTIER_MAX_DEPTH`). */
   maxDepth?: number;
+  /** With a `root`: list only its neighbours whose `local_id` is at or after this (the way back from a node-cap cut). */
+  childrenFrom?: string;
 }
 
 /**
@@ -231,6 +239,8 @@ export function loadOpenTaskFrontier(
 
   const children = new Map<number, number[]>();
   const dropped = new Map<number, number>();
+  const capDropped = new Map<number, number>();
+  const capFrom = new Map<number, string>();
   const closedHidden = new Map<number, number>();
   const expands = (id: number): boolean =>
     includeClosed || rootIds.has(id) || nodes.get(id)?.status !== "CLOSED";
@@ -259,6 +269,7 @@ export function loadOpenTaskFrontier(
       }
       break;
     }
+    const skip = depth === 0 && root !== undefined ? opts.childrenFrom : undefined;
     const rows = db
       .prepare(
         `SELECT e.${from} AS src, ${SELECT_TASK_COLS}
@@ -266,26 +277,35 @@ export function loadOpenTaskFrontier(
            JOIN tasks t ON t.id = e.${to}
            JOIN workstreams ws ON ws.id = t.workstream_id AND ws.torn_down_at IS NULL
            LEFT JOIN agents ag ON ag.id = t.owner_id
-          WHERE e.${from} IN (${marks}) AND t.workstream_id = ?
+          WHERE e.${from} IN (${marks}) AND t.workstream_id = ?${skip === undefined ? "" : " AND t.local_id >= ?"}
           ORDER BY e.${from}, t.local_id`,
       )
-      .all(...ids, wsId) as (RawTaskRow & { src: number })[];
+      .all(...ids, wsId, ...(skip === undefined ? [] : [skip])) as (RawTaskRow & { src: number })[];
     const next: number[] = [];
     const closedSeen = new Map<number, number>();
+    // Rows come ordered by (parent, local_id). Once the node cap forces a drop, every later row
+    // of the level is dropped too (seen or not), so what a parent lost to the cap is exactly its
+    // neighbours from `capFrom` on: a read the tree can name as plain SQL.
+    let capped = false;
     for (const row of rows) {
-      if (row.status === "CLOSED" && !includeClosed) {
-        const n = closedSeen.get(row.src) ?? 0;
-        closedSeen.set(row.src, n + 1);
-        if (n >= FRONTIER_CLOSED_PER_NODE) {
-          closedHidden.set(row.src, (closedHidden.get(row.src) ?? 0) + 1);
-          continue;
+      const leaf = row.status === "CLOSED" && !includeClosed;
+      if (!capped) {
+        if (leaf) {
+          const n = closedSeen.get(row.src) ?? 0;
+          closedSeen.set(row.src, n + 1);
+          if (n >= FRONTIER_CLOSED_PER_NODE) {
+            closedHidden.set(row.src, (closedHidden.get(row.src) ?? 0) + 1);
+            continue;
+          }
         }
+        if (!nodes.has(row.id) && nodes.size >= FRONTIER_MAX_NODES) capped = true;
+      }
+      if (capped) {
+        capDropped.set(row.src, (capDropped.get(row.src) ?? 0) + 1);
+        if (!capFrom.has(row.src)) capFrom.set(row.src, row.local_id);
+        continue;
       }
       if (!nodes.has(row.id)) {
-        if (nodes.size >= FRONTIER_MAX_NODES) {
-          dropped.set(row.src, (dropped.get(row.src) ?? 0) + 1);
-          continue;
-        }
         nodes.set(row.id, rowFromDb(row));
         next.push(row.id);
       }
@@ -304,28 +324,46 @@ export function loadOpenTaskFrontier(
     if (task === undefined) return;
     const entry: FrontierEntry = {
       task,
+      pk: id,
       depth,
       parent,
       again: false,
       kids: dropped.get(id) ?? 0,
       closed: closedHidden.get(id) ?? 0,
+      capCut: capDropped.get(id) ?? 0,
+      capFrom: capFrom.get(id) ?? "",
     };
     out.entries.push(entry);
     listed.add(id);
-    for (const child of children.get(id) ?? []) {
+    const kids = children.get(id) ?? [];
+    if (depth >= maxDepth) {
+      // The level cap holds for the walk too: a shared DAG loads nodes at a shallow
+      // level that the walk first meets deep. What is not listed under this entry is counted.
+      for (const child of kids) {
+        if (nodes.get(child)?.status === "CLOSED" && !includeClosed) entry.closed++;
+        else entry.kids++;
+      }
+      return;
+    }
+    for (const child of kids) {
       const c = nodes.get(child);
       if (c === undefined) continue;
       if (listed.has(child)) {
-        if (recurrences >= FRONTIER_MAX_NODES) out.againCut++;
-        else {
+        if (recurrences >= FRONTIER_MAX_NODES) {
+          out.againCut++;
+          entry.kids++;
+        } else {
           recurrences++;
           out.entries.push({
             task: c,
+            pk: child,
             depth: depth + 1,
             parent: task.name,
             again: true,
             kids: 0,
             closed: 0,
+            capCut: 0,
+            capFrom: "",
           });
         }
         continue;
@@ -359,7 +397,7 @@ export function renderTaskTree(
   const { entries } = loadOpenTaskFrontier(db, workstream, root.name, direction);
   return renderFrontierLines(entries, (e) => {
     const marks = [
-      e.kids > 0 ? `+${e.kids}` : "",
+      e.kids + e.capCut > 0 ? `+${e.kids + e.capCut}` : "",
       e.closed > 0 ? `closed +${e.closed}` : "",
     ].filter(Boolean);
     return `${formatTreeNodeLabel(e.task, statusFn, opts)}${e.again ? RECURRENCE_MARKER : ""}${

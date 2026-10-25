@@ -292,7 +292,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("tree <id>")
     .description(
-      "Open tree of a task's blockers (default) or dependents (--down): open tasks expand, CLOSED are leaves, capped; `(+N next=…)` names the command for what is left. Diamonds list once, then an arrow marker.",
+      "Open tree of a task's blockers (default) or dependents (--down), one record per entry (`depth=` `parent=`): open tasks expand, CLOSED are leaves, capped; `more … next=…` names the command for what is left. Diamonds list once, then `again=1`.",
     )
     .option("--down", "render dependents (what this task blocks) instead of blockers")
     .option("--all", "walk CLOSED tasks too (default: open tasks, CLOSED as leaves)")
