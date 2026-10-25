@@ -127,6 +127,19 @@ export {
   renderTaskTree,
 } from "./dag.js";
 export {
+  type AgentTool,
+  type DashboardAgent,
+  type DashboardDelegate,
+  type DashboardEdge,
+  type DashboardHumanNeed,
+  type DashboardLogItem,
+  type DashboardOptions,
+  type DashboardSnapshot,
+  type DashboardTask,
+  type DashboardWorkstream,
+  loadDashboard,
+} from "./dashboard-data.js";
+export {
   CURRENT_SCHEMA_VERSION,
   type Db,
   defaultDbPath,
