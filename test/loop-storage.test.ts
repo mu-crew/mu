@@ -272,6 +272,36 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(getTask(db, "t1", "alpha")).toMatchObject({ kind: "work", wave: null });
   });
 
+  it("an otherwise-current v13 file missing only task_auto.enabled is repaired, ledger intact", () => {
+    const p = v12Copy();
+    track(openDb({ path: p })).close();
+    const snap = () =>
+      raw(p, (r) => ({
+        auto: r.prepare("SELECT * FROM task_auto ORDER BY task_id").all(),
+        stamps: stamps(p),
+        schema: r.pragma("schema_version", { simple: true }),
+      }));
+    raw(p, (r) => {
+      r.exec(
+        "UPDATE task_auto SET runs = 1, last_spawn = 'auto:receipt', cli = 'pi-x', worktree = 1, max_runs = 4",
+      );
+    });
+    const before = snap();
+    expect((before.auto as object[]).length).toBeGreaterThan(0);
+    raw(p, (r) => r.exec("ALTER TABLE task_auto DROP COLUMN enabled"));
+    expect(columns(p, "task_auto")).not.toContain("enabled");
+    track(openDb({ path: p })).close();
+    expect(columns(p, "task_auto")).toContain("enabled");
+    const after = snap();
+    expect(after.stamps).toEqual(before.stamps);
+    expect(after.auto).toEqual(
+      (before.auto as { enabled: number }[]).map((r) => ({ ...r, enabled: 1 })),
+    );
+    // A second open is idempotent.
+    track(openDb({ path: p })).close();
+    expect(snap().auto).toEqual(after.auto);
+  });
+
   it("an already-v13 file without spawn_receipts gets the table, rows intact (no version bump)", () => {
     const p = v12Copy();
     const first = track(openDb({ path: p }));

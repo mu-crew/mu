@@ -234,6 +234,27 @@ describe("refusals write nothing", () => {
     expect(getAutoConfig(db, tid("a"))).toBeUndefined();
   });
 
+  it.each(["human", "delegate"])(
+    "an authorised task that becomes %s is no longer permitted or dispatchable",
+    (kind) => {
+      add("k");
+      auto(["k"]);
+      expect(autoPermitted(db, tid("k"))).toBe(true);
+      expect(authorisedReady(db, "d").map((t) => t.name)).toEqual(["k"]);
+      db.prepare("UPDATE tasks SET kind = ? WHERE local_id = 'k'").run(kind);
+      expect(autoPermitted(db, tid("k"))).toBe(false);
+      expect(authorisedReady(db, "d")).toEqual([]);
+    },
+  );
+
+  it("an authorised task that is then parked stays permitted but is not dispatchable", () => {
+    add("p");
+    auto(["p"]);
+    parkTask(db, "p", { workstream: "d", why: "later" });
+    expect(autoPermitted(db, tid("p"))).toBe(true);
+    expect(authorisedReady(db, "d")).toEqual([]);
+  });
+
   it("the same local id in another workstream is untouched", () => {
     ensureWorkstream(db, "e");
     add("x");
@@ -267,6 +288,35 @@ describe("--blockers-of", () => {
     expect(autoPermitted(db, tid("top"))).toBe(false);
     expect(autoPermitted(db, tid("done"))).toBe(false);
     expect(autoPermitted(db, tid("leaf"))).toBe(true);
+  });
+
+  const wsId = (name: string) =>
+    (db.prepare("SELECT id FROM workstreams WHERE name = ?").get(name) as { id: number }).id;
+  // Raw edge: the table enforces neither acyclicity nor same-workstream.
+  const rawEdge = (from: number, to: number) =>
+    db
+      .prepare("INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, 'x')")
+      .run(from, to);
+
+  it("a cycle through the umbrella never lists or authorises the umbrella", () => {
+    for (const id of ["top", "a", "b"]) add(id);
+    rawEdge(tid("a"), tid("top"));
+    rawEdge(tid("b"), tid("a"));
+    rawEdge(tid("top"), tid("b"));
+    expect(openBlockersClosure(db, wsId("d"), tid("top"))).toEqual(["a", "b"]);
+    expect(auto([], { blockersOf: "top" }).ids).toEqual(["a", "b"]);
+    expect(autoPermitted(db, tid("top"))).toBe(false);
+  });
+
+  it("never walks an edge from another workstream", () => {
+    ensureWorkstream(db, "e");
+    add("top");
+    add("mine");
+    add("foreign", "e");
+    addBlockEdge(db, "d", "top", "mine");
+    rawEdge(tid("foreign", "e"), tid("top"));
+    expect(openBlockersClosure(db, wsId("d"), tid("top"))).toEqual(["mine"]);
+    expect(autoPermitted(db, tid("foreign", "e"))).toBe(false);
   });
 
   it("is not capped by the display frontier depth", () => {
