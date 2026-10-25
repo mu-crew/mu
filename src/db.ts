@@ -935,11 +935,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *                     crash-recovery journal (reservation, pane identity,
  *                     claim, send state). No FK to `agents`: it must
  *                     outlive the agent it names.
- *    remote_recovery  what a remote worker's deleted row said about its
- *                     worktree (host, path, base, aside), written by triggers
- *                     (src/db-recovery.ts). No FK: it must outlive the agent, its
- *                     workstream and its host profile. Rebuild cannot
- *                     restore it (UNREBUILDABLE_TABLES).
+ *    remote_recovery  a deleted remote worker row's worktree, written by
+ *                     triggers (src/db-recovery.ts). No FK; rebuild loses it.
  *    ops              see below — the carrier, not cargo.
  *
  *  `ops` is listed here deliberately rather than omitted. It is not
@@ -1393,7 +1390,6 @@ CREATE TABLE IF NOT EXISTS host_channels (
 );
 
 ${REMOTE_RECOVERY_DDL}
-
 -- ─── The ops log (VISION.md § 2b, VOCABULARY.md § op / ops log) ──────
 --
 -- The single append-only record of every change. Sync and
