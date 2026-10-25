@@ -375,7 +375,10 @@ describe("torn-down workstreams are invisible", () => {
   ])("%s -w <torn-down> exits 3 with the one-line message", async (_n, argv) => {
     const r = await run(...argv);
     expect(r.exitCode).toBe(3);
-    expect(r.stderr).toMatch(msg);
+    // `state` fails as its JSON document on stdout; every other verb on stderr.
+    expect(
+      argv[0] === "state" ? (JSON.parse(r.stdout) as { message: string }).message : r.stderr,
+    ).toMatch(msg);
   });
 
   it("list hides it; the SDK reader throws the typed error", async () => {

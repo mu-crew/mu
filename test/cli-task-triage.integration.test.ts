@@ -130,18 +130,19 @@ describe("triage hints on read surfaces", () => {
     expect(pairOf("review")).toBe("OPEN/todo");
   });
 
-  it("state lists the triage inbox in text and --json", async () => {
+  it("state lists the triage inbox, apart from ready", async () => {
     await addFinding("f1");
-    const text = plain((await runCli(["state", "-w", WS], dbPath)).stdout);
-    expect(text).toContain("Triage (1)");
-    expect(text).toContain("mu task accept <id>");
-    const json = (
+    const { workstreams } = (
       await runCliJson<{
-        triage: { name: string }[];
-        ready: { name: string }[];
-      }>(["state", "-w", WS, "--json"], dbPath)
+        workstreams: {
+          triage: { id: string }[];
+          ready: { id: string }[];
+          counts: { triage: number };
+        }[];
+      }>(["state", "-w", WS], dbPath)
     ).data;
-    expect(json.triage.map((t) => t.name)).toEqual(["f1"]);
-    expect(json.ready.map((t) => t.name)).toEqual([]);
+    expect(workstreams[0]?.triage.map((t) => t.id)).toEqual(["f1"]);
+    expect(workstreams[0]?.counts.triage).toBe(1);
+    expect(workstreams[0]?.ready.map((t) => t.id)).toEqual([]);
   });
 });

@@ -67,8 +67,8 @@ describe("mu state --json crash recovery", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.exitCode).toBeNull();
-    const state = result.data as { agents: unknown[] };
-    expect(state.agents).toEqual([]);
+    const state = result.data as { workstreams: { agents: unknown[] }[] };
+    expect(state.workstreams[0]?.agents).toEqual([]);
     expect(db.prepare("SELECT * FROM agents").all()).toEqual([]);
 
     const taskRows = db

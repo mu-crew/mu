@@ -694,10 +694,27 @@ export async function listLiveAgents(db: Db, opts: ListLiveAgentsOptions): Promi
     ...(opts.tmuxSession !== undefined ? { tmuxSession: opts.tmuxSession } : {}),
     ...(opts.mode !== undefined ? { mode: opts.mode } : {}),
   });
-  const baseAgents = listAgents(db, { workstream: opts.workstream });
+  return { agents: await readLiveAgents(db, opts.workstream), orphans: report.orphans, report };
+}
+
+/**
+ * The registered agents of a workstream with their computed runtime state
+ * (ctl probe, idle flag), WITHOUT reconciling: no mux read, nothing reaped,
+ * no write. The read-only half of {@link listLiveAgents}; `stateSnapshot`
+ * (and so `mu state --me` and the dashboard) uses it.
+ */
+export async function readLiveAgents(
+  db: Db,
+  workstream: string,
+  /** Only the agent of this name (`mu me` reads itself, not its neighbours' sockets). */
+  only?: string,
+): Promise<LiveAgent[]> {
+  const baseAgents = listAgents(db, { workstream }).filter(
+    (a) => only === undefined || a.name === only,
+  );
   const readings = await readAgentStates(baseAgents, { stateDir: dirname(db.name) });
   const now = Date.now();
-  const agents: LiveAgent[] = baseAgents.map((agent) => {
+  return baseAgents.map((agent) => {
     const reading = readings.get(agentKey(agent)) ?? {
       state: "unknown" as const,
       source: "none" as const,
@@ -715,5 +732,4 @@ export async function listLiveAgents(db: Db, opts: ListLiveAgentsOptions): Promi
     };
     return computeAgentIdle(db, live, now) ? { ...live, idle: true } : live;
   });
-  return { agents, orphans: report.orphans, report };
 }

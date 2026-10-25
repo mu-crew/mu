@@ -71,6 +71,7 @@ export {
   observeAgentStates,
   previewClose,
   readAgent,
+  readLiveAgents,
   resetCommandResolverForTests,
   resolveCliCommand,
   resolveCliCommandWithSource,
@@ -393,6 +394,7 @@ export {
 } from "./segments.js";
 export {
   agentStateHistogram,
+  callerWorkstreams,
   type LoadWorkstreamSnapshotOptions,
   loadWorkstreamSnapshot,
   loadWorkstreamSnapshotFast,
@@ -401,9 +403,19 @@ export {
   type OwnedTasksSummary,
   type RoiBucket,
   roiBucket,
+  type StateCounts,
+  type StateDelegate,
+  type StateHumanNeed,
+  type StateMe,
+  type StateSnapshot,
+  type StateSnapshotOptions,
+  type StateTask,
+  type StateWave,
+  stateSnapshot,
   summarizeOwnedTasks,
   type WorkstreamSnapshot,
   type WorkstreamSnapshotSlowFields,
+  type WorkstreamState,
 } from "./state.js";
 export {
   type AmbientOptions,

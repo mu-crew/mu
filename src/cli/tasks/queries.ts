@@ -45,6 +45,7 @@ import {
   listTasksByOwnerCrossWorkstream,
   type TaskRow,
 } from "../../tasks.js";
+import { resolveMeAgent } from "../me-identity.js";
 import { jsonDocument, type TaskPageOut, taskPage } from "./records.js";
 
 /** Print a page: the JSON document, or the record lines. */
@@ -73,7 +74,7 @@ export async function cmdMyTasks(
   db: Db,
   opts: { json?: boolean; includeClosed?: boolean; all?: boolean } = {},
 ): Promise<void> {
-  const self = resolveSelf(db);
+  const self = resolveMeAgent(db);
   // Scope by self.workstream so a same-named worker in another
   // workstream can't pollute this list.
   const tasks = listTasksByOwner(db, self.workstreamName, self.name, {
@@ -101,7 +102,7 @@ export async function cmdMyNext(
   db: Db,
   opts: { lines?: number; json?: boolean; all?: boolean },
 ): Promise<void> {
-  const self = resolveSelf(db);
+  const self = resolveMeAgent(db);
   const k = opts.lines ?? 1;
   const sorted = listReady(db, self.workstreamName).sort(byRoiDesc);
   const tasks = k === 0 ? sorted : sorted.slice(0, k);

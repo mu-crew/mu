@@ -1,291 +1,237 @@
-// mu — `mu state` (canonical state card).
+// mu — `mu state` and `mu me` (the canonical state read).
 //
-//   mu state                    full card: agents + orphans + tracks +
-//                               ready/in-progress/blocked/recent-closed +
-//                               recent events. Top-to-bottom,
-//                               every section gets its full table. JSON-
-//                               first by design (per Ilya's council
-//                               critique: state cards as the default
-//                               attention surface; SQL/raw verbs as the
-//                               escape hatch underneath).
+//   mu state -w <ws>[,<ws>…] | --all      tasks, agents, the caller's delegate queue
+//                                         and waves, its open human needs
+//   mu state --me                         the same, from the caller's own identity
+//   mu me                                 exactly `mu state --me`
 //
-// Both render modes load their data via loadWorkstreamSnapshot and
-// support variadic `-w X[,Y]...` / `-w X -w Y` and `--all`. N=1 renders
-// single-mode (legacy shape); N≥2 stacks per-workstream full cards.
-//
-// Static snapshots run full reconciliation: reap missing panes. Mid-spawn
-// placeholders remain protected by reconcile's pending-pane skip
-// (see PENDING_PANE_PREFIX).
+// The output is ONE JSON document (envelope included) by default: SQL column
+// names, at most RESULT_BYTES. A cut says `more=N` records left out and `cut=N`
+// characters clipped, and names the one way back: the same read with `--full`.
+// `mu state -w` reconciles first (reaps panes that are gone, lists orphans);
+// `--me` and the snapshot itself never touch the mux. Identity is
+// src/cli/me-identity.ts: the injected `<ws>/<name>` or a pi session, never a pane.
 
-import { liveAgentToOutput, workstreamIdOf } from "../agent-output.js";
-import type { LiveAgent } from "../agents.js";
+import type { Command } from "commander";
+import { spawnerFromEnv } from "../agents/spawn.js";
 import {
   emitJson,
-  formatAgentsTable,
-  formatTaskListTable,
-  formatTracks,
   handle,
   injectedWorkstream,
   JSON_OPT,
   missingWorkstreamError,
-  parseLines,
   parseWorkstreamList,
-  printLogRow,
   UsageError,
-  withRoiAll,
 } from "../cli.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../db.js";
-import { muTable, pc } from "../output.js";
+import { RESULT_BYTES } from "../output-contract.js";
+import { reconcile } from "../reconcile.js";
+import { shellWord } from "../shell-quote.js";
 import {
-  listRemoteWorkers,
-  loadWorkstreamSnapshot,
-  type RemoteWorker,
-  type WorkstreamSnapshot,
+  callerWorkstreams,
+  type StateSnapshot,
+  stateSnapshot,
+  type WorkstreamState,
 } from "../state.js";
-import { isScratchWorkstream, listWorkstreams } from "../workstream.js";
-
-// ─── Per-workstream loaded data ─────────────────────────────────────
-
-// PerWsData was the previous private shape of loadWorkstreamData.
-// Both the type and the loader now live at src/state.ts as the SDK
-// seam (WorkstreamSnapshot + loadWorkstreamSnapshot). We keep `PerWsData` as a local alias to
-// avoid touching every renderer downstream.
-type PerWsData = WorkstreamSnapshot & { remoteWorkers: RemoteWorker[] };
-
-function formatRemoteWorkersTable(rows: readonly RemoteWorker[]): string {
-  const table = muTable({
-    head: ["agent", "host", "path", "base"].map((heading) => pc.bold(heading)),
-  });
-  for (const row of rows) {
-    table.push([
-      row.agent,
-      row.host,
-      row.path ?? "",
-      row.base === null ? "" : row.base.slice(0, 8),
-    ]);
-  }
-  return table.toString();
-}
-
-// ─── Workstream-set resolution ─────────────────────────────────────
-//
-// Both render modes accept TWO mutually-exclusive shapes (plus
-// auto-resolve):
-//   -w X         | -w X,Y     | -w X -w Y      explicit set (variadic + parseCsvFlag)
-//   --all                                       every workstream on this machine
-//   (none)                                      a managed worker's injected workstream,
-//                                               else a one-line error: never a guess
-//
-// N=1 (single -w value, --all on a single-workstream machine, or
-// the injected scope) renders single-mode (legacy column shape + flat JSON).
-// N≥2 stacks per-workstream cards.
+import { listWorkstreams } from "../workstream.js";
+import { resolveMe } from "./me-identity.js";
+import { clipEscaped, jsonDocument } from "./tasks/records.js";
 
 export interface StateOpts {
-  // Variadic on every render mode.
+  /** Variadic: `-w a b`, `-w a,b`, `-w a -w b`. */
   workstream?: string[];
   all?: boolean;
+  me?: boolean;
+  /** No cap: the whole snapshot. */
+  full?: boolean;
   json?: boolean;
-  events?: number; // recent-events cap (default 20)
 }
 
-async function resolveWorkstreamSet(db: Db, opts: StateOpts): Promise<string[]> {
+/** Longest string any field of a state read keeps (code points); a clipped one counts into `cut`. */
+const FIELD_CHARS = 160;
+/** Largest per-list length tried; the loop shrinks it until the document fits. */
+const LIST_STEPS = [20, 10, 5, 3, 2, 1, 0];
+
+// ─── Scope ─────────────────────────────────────────────────────────
+
+async function resolveScope(db: Db, opts: StateOpts): Promise<string[]> {
   const explicitW = opts.workstream !== undefined && opts.workstream.length > 0;
-  const explicitAll = opts.all === true;
-  if (explicitAll && explicitW) {
+  if (opts.all === true && explicitW) {
     throw new UsageError("--all and -w/--workstream are mutually exclusive", { showHelp: false });
   }
-  if (explicitAll) {
-    const all = await listWorkstreams(db);
-    return all.map((w) => w.name);
-  }
+  if (opts.all === true) return (await listWorkstreams(db)).map((w) => w.name);
   if (explicitW) {
-    // parseWorkstreamList canonicalises repeat / comma / mixed forms into
-    // a flat string[]: structurally empty fragments are dropped, blank or
-    // padded ones are a usage error (never trimmed into another name).
-    const deduped = Array.from(new Set(parseWorkstreamList(opts.workstream ?? [])));
-    // Strict validation: every entry must exist. A typo'd name
-    // would silently render a half card.
-    for (const n of deduped) {
+    // Repeat / comma / mixed forms become one flat list; blank or padded names are a usage error.
+    const names = Array.from(new Set(parseWorkstreamList(opts.workstream ?? [])));
+    for (const n of names) {
       if (tryResolveLiveWorkstreamId(db, n) === null) throw new WorkstreamNotFoundError(n);
     }
-    if (deduped.length > 0) return deduped;
+    if (names.length > 0) return names;
+  }
+  if (opts.me === true) {
+    // Own scope: a managed agent's workstream, or where a pi session has work.
+    const me = resolveMe(db);
+    return me.agent !== null ? [me.agent.workstreamName] : callerWorkstreams(db, me.caller);
   }
   const injected = injectedWorkstream();
   if (injected !== undefined) return [injected];
-  const all = await listWorkstreams(db);
-  const first = all[0]?.name;
+  const first = (await listWorkstreams(db))[0]?.name;
   throw await missingWorkstreamError({
     orAll: true,
     ...(first ? { extra: `e.g. -w ${first}` } : {}),
   });
 }
 
-// ─── JSON shape ─────────────────────────────────────────────────────
-//
-// Unified single flat shape for `mu state --json`.
-
-function fullJsonShape(db: Db, d: PerWsData): Record<string, unknown> {
-  const wsId = workstreamIdOf(db, d.workstreamName);
-  return {
-    workstreamName: d.workstreamName,
-    agents: d.view.agents.map((a) => liveAgentToOutput(a, wsId)),
-    orphans: d.view.orphans,
-    tracks: d.tracks,
-    ready: withRoiAll(d.ready),
-    triage: withRoiAll(d.triage),
-    inProgress: withRoiAll(d.inProgress),
-    blocked: withRoiAll(d.blocked),
-    recentClosed: withRoiAll(d.recentClosed),
-    remoteWorkers: d.remoteWorkers,
-    recent: d.recent,
-  };
+/** The same read, uncapped: what a cut result names. */
+function fullCommand(opts: StateOpts, scope: readonly string[]): string {
+  const parts = ["mu", "state"];
+  if (opts.me === true) parts.push("--me");
+  if (opts.all === true) parts.push("--all");
+  else if ((opts.workstream?.length ?? 0) > 0) parts.push("-w", scope.map(shellWord).join(","));
+  parts.push("--full");
+  return parts.join(" ");
 }
 
-// ─── cmdState — dispatch ────────────────────────────────────────────
+// ─── Bounding ──────────────────────────────────────────────────────
+
+interface Bounded {
+  data: Record<string, unknown>;
+  more: number;
+  cut: number;
+}
+
+/** Every string of `value` as one inert, escaped line of at most FIELD_CHARS characters (`…` ends a clipped one); `n.cut` counts the code points dropped. */
+function clipStrings(value: unknown, n: { cut: number }): unknown {
+  if (typeof value === "string") {
+    const whole = clipEscaped(value, FIELD_CHARS);
+    if (whole.cut === 0) return whole.text;
+    const room = clipEscaped(value, FIELD_CHARS - 1);
+    n.cut += room.cut;
+    return `${room.text}…`;
+  }
+  if (Array.isArray(value)) return value.map((v) => clipStrings(v, n));
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clipStrings(v, n)]));
+  }
+  return value;
+}
+
+const LISTS = [
+  "ready",
+  "in_progress",
+  "blocked",
+  "triage",
+  "recent_closed",
+  "agents",
+  "orphans",
+  "delegates",
+  "waves",
+  "human_needs",
+] as const;
+
+/** `snap` with every list cut to `k` records, workstreams cut to `wsCount`, strings clipped. */
+function bound(snap: StateSnapshot, k: number, wsCount: number): Bounded {
+  let more = Math.max(0, snap.workstreams.length - wsCount);
+  const limit = <T>(list: readonly T[]): T[] => {
+    more += Math.max(0, list.length - k);
+    return list.slice(0, k);
+  };
+  const workstreams = snap.workstreams.slice(0, wsCount).map((w) => {
+    const out: Record<string, unknown> = { ...w };
+    for (const key of LISTS) {
+      const list = (w as unknown as Record<string, unknown[] | undefined>)[key];
+      if (list !== undefined) out[key] = limit(list);
+    }
+    return out;
+  });
+  const me = snap.me === null ? null : { ...snap.me, owned_tasks: limit(snap.me.owned_tasks) };
+  const n = { cut: 0 };
+  const data = clipStrings({ caller: snap.caller, me, workstreams }, n) as Record<string, unknown>;
+  return { data, more, cut: n.cut };
+}
+
+const sizeOf = (data: unknown): number => Buffer.byteLength(jsonDocument(data)) + 1;
+
+/** The largest read (lists, then workstreams) whose FINAL document fits RESULT_BYTES, with its cut counts and way back. */
+export function boundState(snap: StateSnapshot, retrieve: string, full: boolean): unknown {
+  if (full) return { caller: snap.caller, me: snap.me, workstreams: snap.workstreams };
+  const finish = (b: Bounded): Record<string, unknown> => ({
+    ...b.data,
+    ...(b.more > 0 ? { more: b.more } : {}),
+    ...(b.cut > 0 ? { cut: b.cut } : {}),
+    ...(b.more > 0 || b.cut > 0 ? { retrieve } : {}),
+  });
+  const count = snap.workstreams.length;
+  for (const k of LIST_STEPS) {
+    const doc = finish(bound(snap, k, count));
+    if (sizeOf(doc) <= RESULT_BYTES) return doc;
+  }
+  // Even bare counts overflow: page the workstreams themselves (none is allowed).
+  let doc = finish(bound(snap, 0, 0));
+  for (let w = count - 1; w >= 1; w--) {
+    const candidate = finish(bound(snap, 0, w));
+    if (sizeOf(candidate) > RESULT_BYTES) continue;
+    doc = candidate;
+    break;
+  }
+  return doc;
+}
+
+// ─── cmdState ──────────────────────────────────────────────────────
 
 export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
-  const workstreams = await resolveWorkstreamSet(db, opts);
+  const me = opts.me === true ? resolveMe(db) : null;
+  const caller = me?.caller ?? spawnerFromEnv();
+  const scope = await resolveScope(db, opts);
 
-  // Only `--all` on a machine with no workstreams gets here: every other
-  // path either resolved a scope or threw the one-line missing-scope error.
-  if (workstreams.length === 0) {
-    if (opts.json === true) {
-      emitJson({ workstreams: [] });
-      return;
+  // Explicit reconciliation is the CLI's (it reaps panes that are gone and
+  // finds orphans); `--me` reads no mux, and the snapshot never writes.
+  const orphans = new Map<string, WorkstreamState["orphans"]>();
+  if (me === null) {
+    for (const ws of scope) {
+      const report = await reconcile(db, { workstream: ws });
+      orphans.set(
+        ws,
+        report.orphans.map((p) => ({ pane_id: p.paneId, command: p.command })),
+      );
     }
-    console.log(pc.dim("(no workstreams) try `mu workstream init <name>`"));
-    return;
   }
 
-  const eventLimit = opts.events ?? 20;
-  const perWs: PerWsData[] = [];
-  for (const ws of workstreams) {
-    perWs.push({
-      ...(await loadWorkstreamSnapshot(db, ws, { eventLimit })),
-      remoteWorkers: listRemoteWorkers(db, ws),
-    });
-  }
-  const multi = workstreams.length > 1;
-
-  // ── JSON: full static state shape ──
-  if (opts.json === true) {
-    if (multi) emitJson({ workstreams: perWs.map((d) => fullJsonShape(db, d)) });
-    else {
-      const single = perWs[0];
-      if (single === undefined) throw new Error("invariant: workstreams non-empty");
-      emitJson(fullJsonShape(db, single));
-    }
-    return;
-  }
-
-  // ── Static human render ──
-  renderFullMode(perWs);
-}
-
-// ─── Render: full mode (default `mu state`) ────────────────────────
-
-/** Past this many tasks, a workstream that is >90% closed gets the one-per-effort hint. */
-const BIG_WORKSTREAM_TASKS = 300;
-
-/**
- * Scratch nudge: task-less helpers that sit idle past the threshold
- * (`idle` from `computeAgentIdle`) get a close hint so easy spawning
- * doesn't silently accumulate forgotten panes. Null when none.
- */
-export function scratchIdleNudge(workstreamName: string, agents: LiveAgent[]): string | null {
-  if (!isScratchWorkstream(workstreamName)) return null;
-  const lingering = agents.filter((a) => a.idle === true);
-  if (lingering.length === 0) return null;
-  const names = lingering.map((a) => a.name).join(", ");
-  return `\u26a0 ${lingering.length} idle scratch agent(s): ${names}. Preview closing when done: mu agent close ${lingering[0]?.name ?? "<name>"} -w scratch`;
-}
-
-function renderFullMode(perWs: PerWsData[]): void {
-  perWs.forEach((d, i) => {
-    if (i > 0) console.log("");
-    renderFullCard(d);
+  const snap = await stateSnapshot(db, {
+    workstreams: scope,
+    caller,
+    ...(me !== null ? { me: { agent: me.agent } } : {}),
   });
+  for (const w of snap.workstreams) {
+    const found = orphans.get(w.workstream);
+    if (found !== undefined) w.orphans = found;
+  }
+  emitJson(boundState(snap, fullCommand(opts, scope), opts.full === true));
 }
 
-function renderFullCard(d: PerWsData): void {
-  const { workstreamName, view, tracks, ready, inProgress, blocked, recentClosed, recent } = d;
-
-  console.log(pc.bold(`State of mu-${workstreamName}`));
-  console.log("");
-  console.log(pc.bold(`Agents (${view.agents.length} active, ${view.orphans.length} orphan)`));
-  console.log(formatAgentsTable(view.agents));
-  if (view.orphans.length > 0) {
-    for (const orphan of view.orphans) {
-      console.log(`  ${pc.yellow("orphan")} ${pc.dim(orphan.paneId)} cli=${orphan.command}`);
-    }
-  }
-  const nudge = scratchIdleNudge(workstreamName, view.agents);
-  if (nudge !== null) console.log(pc.yellow(nudge));
-  // One workstream per effort: a long-lived catch-all is mostly history.
-  const total = d.taskCount;
-  const open = ready.length + inProgress.length + blocked.length + d.triage.length;
-  if (total >= BIG_WORKSTREAM_TASKS && open * 10 < total) {
-    console.log(
-      pc.dim(
-        `hint: ${total} tasks, ${open} open; start the next effort in a new <project>-<purpose> workstream`,
-      ),
-    );
-  }
-  console.log("");
-  console.log(pc.bold(`Tracks (${tracks.length})`));
-  console.log(formatTracks(tracks));
-  console.log("");
-  console.log(pc.bold(`Ready (${ready.length})`));
-  console.log(ready.length === 0 ? pc.dim("  (none)") : formatTaskListTable(ready));
-  console.log("");
-  if (d.triage.length > 0) {
-    console.log(
-      `${pc.bold(`Triage (${d.triage.length})`)} ${pc.dim(`accept: mu task accept <id> -w ${workstreamName} · decline: mu task close <id> --as rejected|duplicate --why ...`)}`,
-    );
-    console.log(formatTaskListTable(d.triage));
-    console.log("");
-  }
-  console.log(pc.bold(`In progress (${inProgress.length})`));
-  console.log(inProgress.length === 0 ? pc.dim("  (none)") : formatTaskListTable(inProgress));
-  console.log("");
-  console.log(pc.bold(`Blocked (${blocked.length})`));
-  console.log(blocked.length === 0 ? pc.dim("  (none)") : formatTaskListTable(blocked));
-  console.log("");
-  console.log(pc.bold(`Recent closed (${recentClosed.length})`));
-  console.log(recentClosed.length === 0 ? pc.dim("  (none)") : formatTaskListTable(recentClosed));
-  if (d.remoteWorkers.length > 0) {
-    console.log("");
-    console.log(pc.bold(`Remote workers (${d.remoteWorkers.length})`));
-    console.log(formatRemoteWorkersTable(d.remoteWorkers));
-  }
-  console.log("");
-  console.log(pc.bold(`Recent activity (last ${recent.length} ops)`));
-  if (recent.length === 0) {
-    console.log(pc.dim("  (none)"));
-  } else {
-    for (const row of recent) printLogRow(row);
-  }
+/** `mu me`: the very same read as `mu state --me`. */
+export function cmdMe(db: Db): Promise<void> {
+  return cmdState(db, { me: true });
 }
 
-// ─── commander wiring ────────────────────────────────────────────────
-//
-// wireStateCommands is called by buildProgram() in src/cli.ts. Wired
-// here so every per-namespace builder lives next to its cmd functions.
-
-import type { Command } from "commander";
+// ─── commander wiring ──────────────────────────────────────────────
 
 export function wireStateCommands(program: Command): void {
   program
     .command("state")
     .description(
-      "Canonical state card: agents + orphans + tracks + ready/in-progress/blocked/recent-closed tasks + remote workers + recent events. The agent/API-facing static state surface. Prints the static card. -w accepts repeat or comma-separate (or both); --all is sugar for every workstream on this machine. N≥2 stacks per-workstream cards.",
+      "The canonical state read, as one JSON document: per workstream the counts, ready / in-progress / blocked / triage / recent-closed tasks (SQL column names), registered agents (host, cwd, base, collected_head included) with their runtime state, orphan panes, and THE CALLER'S OWN delegate queue, waves and open human needs. -w accepts repeat or comma-separate (or both); --all is every workstream; --me reads from the caller's own identity ($MU_AGENT_NAME in $MU_WORKSTREAM, or pi:$PI_SESSION_ID; never a pane). Capped at 4 KB: a cut names `mu state ... --full`. `mu state -w` reconciles first; --me does not.",
     )
     .option(
       "-w, --workstream <names...>",
-      "workstream(s) to render (repeat or comma-separate; or both). Required unless --all or run as a spawned worker",
+      "workstream(s) to read (repeat or comma-separate; or both). Required unless --all, --me or run as a spawned worker",
     )
     .option("--all", "include every workstream on this machine")
-    .option("--events <n>", "how many recent log entries (ops) to include (default 20)", parseLines)
+    .option(
+      "--me",
+      "the caller's own identity and owned tasks, with its delegate queue and human needs",
+    )
+    .option("--full", "no cap: the whole read (a cut result names this command)")
     .option(...JSON_OPT)
     .action(function () {
       const opts = (this as Command).opts() as StateOpts;

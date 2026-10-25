@@ -70,9 +70,7 @@ export {
   formatAgentsTable,
   formatReadyTable,
   formatTaskListTable,
-  formatTracks,
   IDLE_GLYPH,
-  printLogRow,
   relTime,
   statusIcon,
   truncate,
@@ -962,7 +960,8 @@ function applyExitOverride(cmd: Command): void {
  *    - argv after the program name is exactly one token
  *    - that token names a top-level subcommand of `mu`
  *    - that subcommand itself has its own subcommands (i.e. it's a
- *      namespace, not a leaf verb)
+ *      namespace, not a leaf verb); `me` is the exception: bare, it runs
+ *      `state --me`
  *  In that case we append `--help` so commander routes through its
  *  help printer. Bare `mu` is unaffected because
  *  the slice has length 0.
@@ -978,6 +977,8 @@ export function injectBareNamespaceHelp(
   const sub = program.commands.find((c) => c.name() === token || c.aliases().includes(token));
   if (!sub) return argv;
   if (sub.commands.length === 0) return argv;
+  // `mu me` has subcommands AND its own action (`state --me`): bare, it runs.
+  if (sub.name() === "me") return argv;
   return [...argv, "--help"];
 }
 

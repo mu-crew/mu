@@ -46,6 +46,29 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   registers prompts through `resources_discover` (the manifest ships them),
   and `MU_EXTENSION_ENTRY` is gone.
 
+### Changed
+
+- **`mu state` and `mu me` are one canonical JSON document** (`v_state_log`, slice A). `mu state` no longer prints a card:
+  by default (no `--json` needed; errors included, parse-time and handler) it prints one envelope
+  `{ caller, me, workstreams: [...] }`, one entry per workstream (`-w a,b` / `-w a -w b` / `-w a b` / `--all`, one name is
+  still an array of one) with `counts`, `ready` (ROI order), `in_progress` / `blocked` / `triage` / `recent_closed` (newest
+  activity first: raw `MAX(ops.seq)` over the task's own, its notes' and its edges' ops, so a `mu sql` write counts),
+  `agents` (the registry record, `host`, `cwd`, `base`, `collected_head` included, with its runtime state; unknown stays
+  unknown), `orphans`, and **the caller's own** `delegates` (unfinished calls), `waves` (tally of its own calls only) and
+  `human_needs`. Keys are SQL column names (`workstream`, `effort_days`, `recent_closed`; the camelCase `workstreamName`,
+  `inProgress`, `tracks`, `recent` ops and `remoteWorkers` keys and the `--events` flag are gone: `mu log` owns the ops).
+  The read is capped at 4096 final bytes: every string is one escaped line of at most 160 characters, lists shrink, then
+  whole workstreams page; a cut says `more=N` / `cut=N` and `retrieve` names `mu state ... --full`, the uncapped read. `mu state -w`
+  reconciles first (reaps gone panes, lists orphans); `--me` and the SDK read never touch the mux.
+  **`mu me` is exactly `mu state --me`** (bare `mu me` now runs instead of printing help; `me --include-closed` is gone;
+  `me tasks` and `me next` stay, `--json` explicit). Identity is the injected `<MU_WORKSTREAM>/<MU_AGENT_NAME>` row looked
+  up in that workstream, else `pi:<PI_SESSION_ID>` (a session has no agent row; its scope is where it has delegate calls or
+  human needs); `$TMUX_PANE` identifies nobody on this path, and no identity is a one-line `UsageError`. `isJsonMode` also
+  defaults `state` and bare `me` to JSON. SDK: `stateSnapshot`, `callerWorkstreams`, `readLiveAgents` (the read-only half of
+  `listLiveAgents`) and the `State*` types are exported; `verdictTally` takes an optional caller; `listRemoteWorkers`, the
+  track/ready/log card renderers and `scratchIdleNudge` are removed (the `WorkstreamSnapshot` loaders stay for doctor).
+  A workstream past 300 tasks and under 10% open carries a `hint`.
+
 ### Added
 
 - **Delegates are durable tasks: `mu delegates`, `mu_delegate_reissue`, wave tally** (`v_delegate`, part A: the mux path;

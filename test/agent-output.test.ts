@@ -177,7 +177,7 @@ describe("agent verbs emit SQL-keyed agent records", () => {
       mux = installMux("tmux", paneList);
       const r = await runCliJson(["me", "--json"], dbPath);
       expect(r.exitCode, r.stderr).toBeNull();
-      expect((r.data as { agent: object }).agent).toMatchObject({
+      expect((r.data as { me: { agent: object } }).me.agent).toMatchObject({
         name: "worker-1",
         pane_id: "%7",
         workstream: "auth",

@@ -48,9 +48,7 @@ import {
   classifyError,
   emitJson,
   formatAgentsTable,
-  formatTaskListTable,
   resolveEntityRef,
-  resolveSelf,
   resolveWorkstream,
   statusIcon,
   UsageError,
@@ -58,7 +56,6 @@ import {
 import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
-import { listTasksByOwner } from "../tasks.js";
 import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
 import { dispatchHint, waitHint } from "./dispatch-hints.js";
@@ -812,51 +809,6 @@ export async function cmdAgentShow(
   }
 }
 
-export async function cmdMe(
-  db: Db,
-  opts: { json?: boolean; includeClosed?: boolean } = {},
-): Promise<void> {
-  const self = resolveSelf(db);
-  const reading = (await readAgentStates([self], { stateDir: dirname(db.name) })).get(
-    agentKey(self),
-  );
-  const displayed = {
-    ...self,
-    state: reading?.state ?? ("unknown" as const),
-    source: reading?.source ?? ("none" as const),
-    ctl: reading?.ctl ?? ("n/a" as const),
-    since:
-      reading?.since === null || reading?.since === undefined
-        ? null
-        : new Date(reading.since).toISOString(),
-    ...(reading?.reason !== undefined ? { reason: reading.reason } : {}),
-  };
-  const owned = listTasksByOwner(db, self.workstreamName, self.name, {
-    includeClosed: opts.includeClosed ?? false,
-  });
-
-  if (opts.json) {
-    emitJson({
-      agent: liveAgentToOutput(displayed, workstreamIdOf(db, self.workstreamName)),
-      ownedTasks: owned,
-    });
-    return;
-  }
-
-  console.log(pc.bold(`${self.name}  ${statusIcon(displayed.state)} ${displayed.state}`));
-  console.log(`  workstream : ${self.workstreamName}`);
-  console.log(`  cli        : ${self.cli}`);
-  console.log(`  pane       : ${pc.dim(self.paneId)}`);
-  console.log(`  role       : ${self.role}`);
-  console.log("");
-  if (owned.length === 0) {
-    console.log(pc.dim("Currently owns no tasks. Try `mu me next` for a recommendation."));
-    return;
-  }
-  console.log(pc.bold(`Currently owns ${owned.length} task${owned.length === 1 ? "" : "s"}`));
-  console.log(formatTaskListTable(owned));
-}
-
 /**
  * `mu agent check <agent> <msgId>`: one `status {msgId}` probe. Exit 0
  * `accepted runs=<n> at=<iso>`; 3 `not-accepted` (the extension never took
@@ -1181,6 +1133,7 @@ import {
 // wireSelfCommands needs cmdMyTasks / cmdMyNext which live in cli/tasks.ts
 // (they're task queries scoped to the resolved-self agent). Lateral
 // cluster→cluster import documented as the single intentional edge.
+import { cmdState } from "./state.js";
 import { cmdMyNext, cmdMyTasks } from "./tasks.js";
 
 export function wireAgentCommands(program: Command): void {
@@ -1447,21 +1400,19 @@ export function wireAgentCommands(program: Command): void {
 }
 
 export function wireSelfCommands(program: Command): void {
-  // `mu me` is the merged self-identity verb (audit_merge_self_verbs_into_mu_me).
-  // Default action: identity block + owned tasks (was `mu whoami`).
-  // Subcommands:
-  //   mu me tasks       — just the owned-tasks table (was `mu my-tasks`)
-  //   mu me next [-n K] — top-K ready in self.workstream (was `mu my-next`)
+  // `mu me` IS `mu state --me` (src/cli/state.ts): one identity path, one JSON read.
+  //   mu me tasks       — just the owned-tasks records (paged)
+  //   mu me next [-n K] — top-K ready in the agent's workstream
   const me = program
     .command("me")
     .description(
-      "Identify the agent running this process (via the injected $MU_AGENT_NAME/$MU_WORKSTREAM; a managed tmux pane is the fallback) plus its currently-owned tasks (excludes CLOSED by default). Subcommands: `mu me tasks` for just the owned-tasks table; `mu me next [-n K]` for the top-K ready tasks in this agent's workstream.",
+      "The caller's own state: exactly `mu state --me` (JSON: identity, owned tasks, ready, its delegate queue and human needs). Identity is the injected $MU_AGENT_NAME in $MU_WORKSTREAM, or pi:$PI_SESSION_ID; a tmux pane is never guessed. Subcommands: `mu me tasks` for the owned-tasks records; `mu me next [-n K]` for the top-K ready tasks in this agent's workstream.",
     )
-    .option("--include-closed", "include CLOSED tasks in the owned-tasks list")
     .option(...JSON_OPT)
+    .option("--full", "no cap: the whole read (a cut result names `mu state --me --full`)")
     .action(function () {
-      const opts = (this as Command).opts() as { json?: boolean; includeClosed?: boolean };
-      return handle((db) => cmdMe(db, opts), this as Command)();
+      const opts = (this as Command).opts() as { full?: boolean };
+      return handle((db) => cmdState(db, { me: true, ...opts }), this as Command)();
     });
 
   me.command("tasks")
