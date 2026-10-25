@@ -22,10 +22,10 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
+import { verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const scenario: Scenario = {
@@ -105,7 +105,7 @@ const scenario: Scenario = {
       wrong.push(`rt2 closed ${block.ts - closeAt} ms before the worker settled (block printed)`);
     if (closed && !withNonce)
       wrong.push(`rt2 closed without the worker's evidence (no run=${n} in a note)`);
-    return verdict(run, closed && withNonce && merged && wrong.length === 0, {
+    return await verdictFx(sb, run, closed && withNonce && merged && wrong.length === 0, {
       wrong,
       notes: [
         `rt2 closed=${closed} evidenceFromBlock=${withNonce} merged=${merged} blockTs=${block?.ts ?? "none"} closeTs=${closeAt ?? "none"}`,

@@ -4,10 +4,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateScript, makeRepo, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
+import { verdictFx } from "../observe.ts";
 import { maxSeq, strayOps } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, isBefore, noteMoments } from "../provenance.ts";
-import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
 const IDS = ["auth_token_refresh", "auth_token_revoke", "billing_retry"];
@@ -77,7 +77,7 @@ const scenario: Scenario = {
       evidence !== undefined &&
       closeOp !== null &&
       isBefore(own, closeOp);
-    return verdict(run, completed, {
+    return await verdictFx(sb, run, completed, {
       wrong,
       notes: [
         `${TARGET} status=${target?.status} noteAt=${noteAt} closeAt=${closeAt}`,

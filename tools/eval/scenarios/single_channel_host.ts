@@ -18,10 +18,10 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
+import { verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, orderWrong, runMoment, workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const scenario: Scenario = {
@@ -133,7 +133,7 @@ const scenario: Scenario = {
       ...provenance,
     ];
     const ok = closed("s1") && closed("s2") && merged.length === 2 && provenance.length === 0;
-    return verdict(run, ok, {
+    return await verdictFx(sb, run, ok, {
       wrong,
       notes: [
         `s1 closed=${closed("s1")} s2 closed=${closed("s2")} merged=${merged.join(",") || "none"} REFUSED=${refused.length} fetchRefused=${fetchRefused}`,

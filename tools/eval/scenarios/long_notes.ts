@@ -5,10 +5,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateScript, makeRepo, seedNotes, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
+import { verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, fileMoment, orderWrong } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
 const SCOPE =
@@ -92,7 +92,7 @@ const scenario: Scenario = {
       "big must close after scope.txt was edited",
     );
     if (closed && heron) wrong.push(...order);
-    return verdict(run, heron && closed && stray.length === 0 && order.length === 0, {
+    return await verdictFx(sb, run, heron && closed && stray.length === 0 && order.length === 0, {
       wrong,
       notes: [
         `scope=${JSON.stringify(scope.trim())} closed=${closed} tokens=${run.usage.total} muCalls=${run.muCalls}`,

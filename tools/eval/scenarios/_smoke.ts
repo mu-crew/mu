@@ -1,8 +1,8 @@
 // Template scenario: copy this shape. Underscore-prefixed, so it is listed only with --include-underscore.
 import { gateScript, makeRepo, seedViaMu, workerTask, writeWorkerDriver } from "../fixtures.ts";
+import { verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const scenario: Scenario = {
@@ -27,7 +27,7 @@ const scenario: Scenario = {
     const closed = probe.task("eval", "t1")?.status === "CLOSED";
     const log = await sh(sb, "git log --format=%s main", { allowFail: true });
     const merged = log.stdout.split("\n").includes("t1");
-    return verdict(run, closed && merged, {
+    return await verdictFx(sb, run, closed && merged, {
       notes: [`t1 closed=${closed} merged=${merged}`],
     });
   },
