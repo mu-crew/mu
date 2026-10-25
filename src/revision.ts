@@ -213,7 +213,13 @@ export function withTaskFence<T>(
  *  orphan: a failed spawn or an earlier close left it) the hash is of those
  *  rows alone, so an orphan has a revision of its own and a replaced registry
  *  row moves it. Read only. */
-export function agentRevision(db: Db, workstream: string, name: string): number {
+export function agentRevision(
+  db: Db,
+  workstream: string,
+  name: string,
+  recoveryId?: number,
+): number {
+  if (recoveryId !== undefined) return recoveryRevision(db, workstream, name, recoveryId);
   const agent = db
     .prepare(
       `SELECT a.id, a.pane_id, a.cli, a.role, a.tab, a.cwd, a.base, a.command, a.command_source,
@@ -237,9 +243,28 @@ export function agentRevision(db: Db, workstream: string, name: string): number 
         WHERE workstream = ? AND agent = ? ORDER BY path`,
     )
     .all(workstream, name) as unknown[];
-  if (agent === undefined && worktrees.length === 0) return 0;
+  if (agent === undefined && worktrees.length === 0) return recoveryRevision(db, workstream, name);
   const digest = createHash("sha256")
     .update(JSON.stringify([agent ?? null, owned, worktrees]))
+    .digest();
+  return digest.readUIntBE(0, 6);
+}
+
+/** The revision of the remote recovery record(s) of `workstream/name` (`remote_recovery`, src/remote-recovery.ts): a hash of every column of the selected record (`recoveryId`) or, unselected, of every record of the name, so a second record moves it; plus the id of an agent that holds the name now, so a replacement does too. 0 when no record is selected. Read only. */
+function recoveryRevision(db: Db, workstream: string, name: string, recoveryId?: number): number {
+  const rows = db
+    .prepare(
+      `SELECT * FROM remote_recovery WHERE workstream = ? AND name = ?${recoveryId === undefined ? "" : " AND agent_id = ?"} ORDER BY agent_id`,
+    )
+    .all(...(recoveryId === undefined ? [workstream, name] : [workstream, name, recoveryId]));
+  if (rows.length === 0) return 0;
+  const live = db
+    .prepare(
+      "SELECT a.id FROM agents a JOIN workstreams w ON w.id = a.workstream_id WHERE w.name = ? AND a.name = ?",
+    )
+    .get(workstream, name) as { id: number } | undefined;
+  const digest = createHash("sha256")
+    .update(JSON.stringify(["recovery", rows, live?.id ?? null]))
     .digest();
   return digest.readUIntBE(0, 6);
 }
