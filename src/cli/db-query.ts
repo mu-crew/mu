@@ -43,6 +43,7 @@ import type { Command } from "commander";
 import {
   captureBookkeepingChanges,
   GUARD_ALREADY_OWNED,
+  GUARD_HUGE_ID,
   GUARD_NEEDS_EVIDENCE,
   GUARD_NONPOSITIVE_ID,
   GUARD_OPEN_BLOCKERS,
@@ -126,6 +127,12 @@ function guardError(err: unknown): unknown {
   if (msg === GUARD_NONPOSITIVE_ID) {
     return new UsageError(
       "explicit non-positive ids are refused: omit the id and SQLite assigns one (rolled back)",
+      { showHelp: false },
+    );
+  }
+  if (msg === GUARD_HUGE_ID) {
+    return new UsageError(
+      "explicit ids above 2^53-1 are refused: omit the id and SQLite assigns one (rolled back)",
       { showHelp: false },
     );
   }
@@ -819,13 +826,19 @@ export function countTopLevelStatements(sql: string): number {
 /** The same read, uncapped: `mu db query '<sql>' [-w <effective ws>] --all`. */
 function retrieveCommand(query: string, opts: DbQueryOptions): string {
   const ws = opts.workstream ?? injectedWorkstream();
-  return [
+  const cmd = [
     "mu db query",
     shellQuote(query),
     ...(ws === undefined ? [] : ["-w", shellWord(ws)]),
     "--all",
   ].join(" ");
+  // A huge query would make the retrieval alone bust the result cap; the
+  // caller has the text already, so say what to add instead of echoing it.
+  return Buffer.byteLength(cmd) > RETRIEVE_MAX_BYTES ? "re-run the same query with --all" : cmd;
 }
+
+/** Longest retrieval command echoed back; past it the hint is generic. */
+const RETRIEVE_MAX_BYTES = 1024;
 
 /**
  * `{items, count, more, retrieve?}`: the collection shape task lists ship, over

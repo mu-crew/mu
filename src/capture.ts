@@ -108,7 +108,7 @@ const UNRESOLVED = "<unresolved>";
  * a capture revision is upgradeable in place, so it must not be folded
  * into it (an older schema number is refused before any trigger work).
  */
-export const CAPTURE_VERSION = 3;
+export const CAPTURE_VERSION = 4;
 
 /** Lowest SQLite that mints correct HLCs: `unixepoch('subsec')` arrived
  *  in 3.42; before it the call yields NULL and every op gets a zero-time
@@ -476,6 +476,23 @@ BEGIN
   );
 }
 
+/** AFTER INSERT trigger refusing an explicit id above 2^53-1 (local writes only).
+ *
+ *  An explicit id near INT64_MAX moves the table's AUTOINCREMENT counter
+ *  there, and every later omitted-id insert then fails "database or disk is
+ *  full" with no mu-side repair (`sqlite_sequence` is protected). Ids past
+ *  2^53-1 also lose precision as JSON numbers. Aborts the statement, so the
+ *  counter bump rolls back with the row. */
+function hugeIdGuard(table: keyof typeof KEY_COLUMNS): CaptureTrigger {
+  return trigger(
+    `_cap_${table}_hugeid`,
+    `AFTER INSERT ON ${table}
+  WHEN ${NOT_APPLYING} AND ${ID_EXPR[table]} > ${MAX_SAFE_ID}
+BEGIN
+  SELECT RAISE(ABORT, '${GUARD_HUGE_ID}');`,
+  );
+}
+
 /** BEFORE UPDATE trigger: a note's kind is set once at INSERT. A change
  *  would sync as a `{kind}`-only put that no peer can match to a row (a
  *  note's identity is its content), so local writes refuse it. Gated on
@@ -509,6 +526,10 @@ export const GUARD_ALREADY_OWNED = "mu: task already owned; release it first";
 export const GUARD_NEEDS_EVIDENCE = 'mu: close needs evidence (--evidence "<command + result>")';
 /** A task went CLOSED/done while a blocker is still OPEN or IN_PROGRESS. */
 export const GUARD_OPEN_BLOCKERS = "mu: task has open blockers";
+/** The largest explicit id a local INSERT may name: 2^53-1, JS's max safe integer. */
+const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
+/** An INSERT named an id above MAX_SAFE_ID (see hugeIdGuard). */
+export const GUARD_HUGE_ID = `mu: explicit ids above 2^53-1 are refused`;
 /** An INSERT named an id <= 0 (see positiveIdGuard). */
 export const GUARD_NONPOSITIVE_ID = "mu: explicit non-positive ids are refused";
 
@@ -650,6 +671,7 @@ function buildTriggers(): CaptureTrigger[] {
     ...tables.map(keyGuard),
     ...tables.map(insertGuard),
     ...tables.map(positiveIdGuard),
+    ...tables.map(hugeIdGuard),
     NOTE_KIND_GUARD,
     ...localGuards(),
     // The singleton op_ctx row must survive: the HLC clock reads
