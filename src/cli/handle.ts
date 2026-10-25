@@ -51,6 +51,9 @@ import {
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  SpawnAttemptBusyError,
+  SpawnReceiptConflictError,
+  SpawnTrustDialogError,
 } from "../agents.js";
 import {
   type Db,
@@ -438,7 +441,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // produce a working agent" lane as the spawn failures around it.
     return { label: "ctl unreachable", exitCode: 1 };
   }
-  if (err instanceof AgentDiedOnSpawnError) {
+  if (err instanceof AgentDiedOnSpawnError || err instanceof SpawnTrustDialogError) {
     // Substrate-level failure (CLI exited at spawn). The message is
     // already rich (includes captured scrollback). Generic exit 1.
     return { label: "spawn failed", exitCode: 1 };
@@ -457,7 +460,12 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // a state conflict the operator resolves by /reload or respawn.
     return { label: "extension outdated", exitCode: 4 };
   }
-  if (err instanceof AgentReplacedError || err instanceof AgentLockBusyError) {
+  if (
+    err instanceof AgentReplacedError ||
+    err instanceof AgentLockBusyError ||
+    err instanceof SpawnAttemptBusyError ||
+    err instanceof SpawnReceiptConflictError
+  ) {
     // The name changed hands, or another mu holds the agent: retry after a preview.
     return { label: "conflict", exitCode: 4 };
   }

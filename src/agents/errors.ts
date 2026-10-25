@@ -568,9 +568,11 @@ export class AgentPaneDeadError extends Error implements HasNextSteps {
     public readonly agentName: string,
     public readonly workstream: string,
     public readonly paneId: string,
+    /** Set when a send/fresh WAS written before the pane died: it may have landed. */
+    public readonly msgId?: string,
   ) {
     super(
-      `agent ${agentName} is dead: its pane ${paneId} no longer exists, so its control socket is gone`,
+      `agent ${agentName} is dead: its pane ${paneId} no longer exists, so its control socket is gone${msgId === undefined ? "" : `; a send (msgId ${msgId}) was written first, so delivery is unknown`}`,
     );
   }
   errorNextSteps(): NextStep[] {
@@ -834,5 +836,84 @@ export class AgentSendUnsupportedError extends Error implements HasNextSteps {
         command: `mu agent close ${this.agentName} -w ${this.workstream}`,
       },
     ];
+  }
+}
+
+/**
+ * A pi extension answered a send/fresh with `ok: false`: it read the request
+ * and took nothing. (Unlike a silent socket, an explicit refusal proves the
+ * prompt was not accepted.)
+ */
+export class AgentSendRefusedError extends Error {
+  override readonly name = "AgentSendRefusedError";
+  constructor(public readonly reason: string) {
+    super(`control socket refused the send: ${reason}`);
+  }
+}
+
+/**
+ * `agent spawn --task`: another mu process is running this same attempt
+ * (task + attempt key). Nothing was done; retry once it finishes and the
+ * replay returns its outcome. Exit 4.
+ */
+export class SpawnAttemptBusyError extends Error implements HasNextSteps {
+  override readonly name = "SpawnAttemptBusyError";
+  constructor(
+    public readonly task: string,
+    public readonly attemptKey: string,
+  ) {
+    super(
+      `spawn attempt ${attemptKey} of task ${task} is running in another mu process; nothing was done. Retry when it finishes (the replay returns its outcome)`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Look at the task while the other attempt runs",
+        command: `mu task show ${this.task}`,
+      },
+    ];
+  }
+}
+
+/**
+ * `agent spawn --task` replayed an attempt key with a different request
+ * (name, text or --next-free): a second prompt must be a new attempt. Exit 4.
+ */
+export class SpawnReceiptConflictError extends Error implements HasNextSteps {
+  override readonly name = "SpawnReceiptConflictError";
+  constructor(
+    public readonly task: string,
+    public readonly attemptKey: string,
+    public readonly savedName: string,
+  ) {
+    super(
+      `attempt ${attemptKey} of task ${task} already ran with a different request (agent ${savedName}); a second prompt is a new attempt: pass --attempt <new key>`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [
+      {
+        intent: "Start a distinct attempt (a reopened task, or text you have reviewed)",
+        command: `mu agent spawn <name> --task ${this.task} --attempt <new key> --send <text>`,
+      },
+    ];
+  }
+}
+
+/**
+ * `agent spawn --task`: the agent came up but cannot take the prompt (Claude
+ * is parked at its folder-trust dialog). Nothing was sent; the spawn was
+ * rolled back. Exit 1.
+ */
+export class SpawnTrustDialogError extends Error implements HasNextSteps {
+  override readonly name = "SpawnTrustDialogError";
+  constructor(public readonly agentName: string) {
+    super(
+      `agent ${agentName} is showing Claude's folder-trust dialog (default "No, exit"); the task prompt was not sent and the spawn was rolled back`,
+    );
+  }
+  errorNextSteps(): NextStep[] {
+    return [{ intent: "Trust the folder once by hand, then spawn again", command: "claude" }];
   }
 }

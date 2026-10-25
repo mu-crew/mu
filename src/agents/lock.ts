@@ -17,6 +17,7 @@
 // The lock lives beside the DB it protects (`<db dir>/locks/`), so two
 // databases never contend and a test DB in a temp dir locks in that dir.
 
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { Db } from "../db.js";
 import { locksDir, withFileLock } from "../file-lock.js";
@@ -46,4 +47,37 @@ export async function withAgentLock<T>(
       throw new AgentLockBusyError(name, workstream);
     },
   });
+}
+
+/**
+ * The spawn-attempt lock: one cross-process lock per (task, attempt key),
+ * held for a whole `agent spawn --task` attempt (reservation to outcome), so
+ * two callers of the same attempt never both spawn or send. Strict like the
+ * agent lock (fails closed, stolen only from a dead holder), and unlike the
+ * advisory spawn lock, which runs unlocked when it cannot lock. A long DB
+ * transaction is not the mechanism: the attempt spans panes and sockets.
+ */
+export function spawnAttemptLockPath(db: Db, taskId: number, attemptKey: string): string {
+  const base = db.memory || db.name === "" ? locksDir() : join(dirname(db.name), "locks");
+  const key = createHash("sha256").update(attemptKey).digest("hex").slice(0, 16);
+  return join(base, `attempt-${taskId}.${key}.lock`);
+}
+
+export async function withSpawnAttemptLock<T>(
+  db: Db,
+  taskId: number,
+  attemptKey: string,
+  fn: () => Promise<T>,
+  onBusy: () => never,
+): Promise<T> {
+  return withFileLock(
+    spawnAttemptLockPath(db, taskId, attemptKey),
+    `task ${taskId}/${attemptKey}`,
+    fn,
+    {
+      strict: true,
+      timeoutEnvVar: "MU_AGENT_LOCK_TIMEOUT_MS",
+      onUnavailable: onBusy,
+    },
+  );
 }

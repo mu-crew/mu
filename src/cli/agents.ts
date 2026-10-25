@@ -45,6 +45,7 @@ import {
   type SpawnedAgent,
   sendToAgent,
   spawnAgent,
+  spawnForTask,
   type Transport,
   waitForAgents,
 } from "../agents.js";
@@ -67,14 +68,7 @@ import { type CtlBlocked, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
-import {
-  addNote,
-  getTask,
-  listTasksByOwner,
-  resolveActorIdentity,
-  selectTaskNotes,
-  TaskNotFoundError,
-} from "../tasks.js";
+import { listTasksByOwner } from "../tasks.js";
 import { dispatchHint, waitHint } from "./dispatch-hints.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
@@ -94,8 +88,10 @@ interface SpawnOpts {
   nextFree?: boolean;
   /** Send this text once the agent is up (`-` reads stdin). */
   send?: string;
-  /** Record the sent text as this task's brief (needs `--send`). Claims nothing. */
+  /** Bind the spawn to this task: claim it for the new agent and send the text as its brief (needs `--send`). */
   task?: string;
+  /** With `--task`: the attempt's name (default: the task id). Replays of a name never send twice. */
+  attempt?: string;
   json?: boolean;
 }
 // --from / --root only mean something with --worktree; refuse a stray one
@@ -123,14 +119,14 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
         : opts.send;
 
   assertWorktreeFlags(opts);
-  // --task is checked before any side effect: no pane for a task that is not there.
+  if (opts.attempt !== undefined && opts.task === undefined) {
+    throw new UsageError("--attempt needs --task");
+  }
   if (opts.task !== undefined) {
     if (sendText === undefined) {
       throw new UsageError("--task needs --send: the sent text is the task's brief");
     }
-    if (getTask(db, opts.task, workstream) === undefined) {
-      throw new TaskNotFoundError(opts.task, workstream);
-    }
+    return cmdSpawnTask(db, rawName, workstream, opts.task, sendText, opts);
   }
 
   const agent = await spawnAgent(db, {
@@ -189,14 +185,6 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     : sendText === undefined
       ? undefined
       : await spawnSend(db, agent, sendText);
-  // The brief is the first prompt the worker got: recorded once it landed, and
-  // never copied again when the task already has one (kept: no recursive copies).
-  const task: SpawnTask | undefined =
-    opts.task === undefined || sendText === undefined
-      ? undefined
-      : sent?.ok === true && sent.delivered
-        ? await recordBrief(db, opts.task, workstream, sendText)
-        : undefined;
   // Resolve the actual command that landed in the pane, so the operator
   // can confirm `--command 'pi-meta --no-solo'` (etc.) took effect.
   // Mirrors the resolution chain in spawnAgent: explicit --command >
@@ -256,7 +244,6 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
       ctl: agent.ctl,
       ctlSocket: agent.ctlSocket,
       ...(sent !== undefined ? { send: sent } : {}),
-      ...(task !== undefined ? { task } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
       nextSteps,
     };
@@ -307,46 +294,152 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
         : pc.red(`error: --send failed: ${sent.message}`),
     );
   }
-  if (task !== undefined) {
-    console.log(
-      pc.dim(
-        task.brief === "recorded"
-          ? `  brief recorded on ${task.id}`
-          : `  ${task.id} already has a brief; kept`,
-      ),
-    );
-  }
   printNextSteps(nextSteps);
   if (sent !== undefined && !sent.ok && sent.exitCode !== 0) throw new CliExitError(sent.exitCode);
 }
 
-/** What `spawn --task` did with the brief: wrote it, or found one and kept it. */
-interface SpawnTask {
-  id: string;
-  brief: "recorded" | "kept";
-}
-
-/** INSERT `text` as the task's `brief` note unless the task already has one. */
-async function recordBrief(
+/**
+ * `mu agent spawn --task <id> --send <text>`: spawn, claim the task for the
+ * new agent and send the brief as ONE journaled attempt (spawnForTask). A
+ * delivered attempt (now or by an earlier run) prints the same spawn record
+ * as a plain `--send`; an UNKNOWN one exits 1 with the receipt, never a
+ * resend. An unsent failure rolls back its own resources and rethrows.
+ */
+async function cmdSpawnTask(
   db: Db,
-  id: string,
+  name: string,
   workstream: string,
+  task: string,
   text: string,
-): Promise<SpawnTask> {
-  // Resolve the author first: no await may sit between the check and the INSERT.
-  const author = await resolveActorIdentity();
-  // One IMMEDIATE transaction takes the write lock before the check, so two
-  // concurrent spawns (in-process or separate CLIs) cannot both see "no brief".
-  const recorded = db
-    .transaction((): boolean => {
-      if (selectTaskNotes(db, id, { workstream }).notes.some((n) => n.kind === "brief"))
-        return false;
-      addNote(db, id, text, { workstream, kind: "brief", author });
-      return true;
-    })
-    .immediate();
-  if (!recorded) return { id, brief: "kept" };
-  return { id, brief: "recorded" };
+  opts: SpawnOpts,
+): Promise<void> {
+  const out = await spawnForTask(db, {
+    task,
+    text,
+    ...(opts.attempt !== undefined ? { attempt: opts.attempt } : {}),
+    spawn: {
+      name,
+      workstream,
+      ...(opts.cli !== undefined ? { cli: opts.cli } : {}),
+      ...(opts.command !== undefined ? { command: opts.command } : {}),
+      ...(opts.tab !== undefined ? { tab: opts.tab } : {}),
+      ...(opts.role !== undefined ? { role: opts.role } : {}),
+      ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+      ...(opts.worktree === true ? { worktree: true } : {}),
+      ...(opts.from !== undefined ? { from: opts.from } : {}),
+      ...(opts.root !== undefined ? { root: opts.root } : {}),
+      ...(opts.ctl === false ? { ctl: false } : {}),
+      ...(opts.nextFree === true ? { nextFree: true } : {}),
+    },
+  });
+  const rec = out.receipt;
+  const agentName = out.agent?.name ?? rec.name;
+  const fresh = out.agent !== undefined && "ctl" in out.agent ? out.agent : undefined;
+  const sent: SpawnSend =
+    out.state === "sent"
+      ? {
+          ok: true,
+          sentBytes: Buffer.byteLength(text),
+          transport: rec.transport ?? "ctl",
+          ...(out.send?.state !== undefined ? { state: out.send.state } : {}),
+          ...(rec.runs !== null ? { runs: rec.runs } : {}),
+          msgId: rec.msgId,
+          ...(rec.incarnation !== null ? { incarnation: rec.incarnation } : {}),
+          delivery: "delivered",
+          ...(out.send?.sessionFile !== undefined ? { sessionFile: out.send.sessionFile } : {}),
+          delivered: true,
+        }
+      : {
+          ok: false,
+          error: "AgentSendIndeterminateError",
+          message: out.reason ?? "delivery unknown",
+          exitCode: 1,
+          msgId: rec.msgId,
+          ...(rec.incarnation !== null ? { incarnation: rec.incarnation } : {}),
+          delivery: "unknown",
+        };
+  const nextSteps: NextStep[] = [];
+  if (out.state === "sent" && rec.runs !== null && out.stale === undefined) {
+    nextSteps.push(
+      waitHint(
+        { name: agentName, workstreamName: workstream },
+        rec.runs,
+        rec.incarnation ?? undefined,
+        rec.msgId,
+      ),
+    );
+  } else if (out.state === "unknown" && rec.transport === "ctl" && out.stale === undefined) {
+    nextSteps.push({
+      intent: "Ask whether it landed (a receipt check; never resend first)",
+      command: `mu agent check ${agentName} ${rec.msgId} -w ${workstream}`,
+    });
+  }
+  nextSteps.push({ intent: "Read pane", command: `mu agent read ${agentName} -w ${workstream}` });
+  const taskInfo = {
+    id: task,
+    attempt: rec.attemptKey,
+    state: rec.state,
+    replay: out.replay,
+    brief: out.brief,
+    claimed: rec.state !== "reserved" && rec.state !== "pane" && rec.state !== "failed",
+    ...(out.stale !== undefined ? { stale: out.stale } : {}),
+    ...(out.checked !== undefined ? { checked: out.checked } : {}),
+  };
+  if (opts.json) {
+    const payload = {
+      ...(out.agent !== undefined
+        ? {
+            agent: agentToOutput(out.agent, workstreamIdOf(db, workstream), {
+              ...(fresh !== undefined
+                ? {
+                    ctl: fresh.ctl,
+                    ctlSocket: fresh.ctlSocket,
+                    ...(fresh.trustDialog === true ? { trustDialog: true } : {}),
+                  }
+                : {}),
+            }),
+          }
+        : {}),
+      ...(fresh !== undefined ? { ctl: fresh.ctl, ctlSocket: fresh.ctlSocket } : {}),
+      send: sent,
+      task: taskInfo,
+      delivery: sent.delivery,
+      msgId: rec.msgId,
+      nextSteps,
+    };
+    if (!sent.ok) {
+      throw new CliExitError(1, {
+        error: sent.error,
+        message: sent.message,
+        data: payload,
+        extra: {
+          msgId: rec.msgId,
+          ...(rec.incarnation !== null ? { incarnation: rec.incarnation } : {}),
+          delivery: "unknown",
+        },
+      });
+    }
+    emitJson(payload);
+    return;
+  }
+  const verb = out.replay ? "Replayed" : "Spawned";
+  console.log(
+    `${verb} ${pc.bold(agentName)} for ${pc.bold(task)} (${rec.attemptKey}): ${
+      out.state === "sent" ? "prompt delivered" : pc.yellow("delivery UNKNOWN; never resent")
+    }`,
+  );
+  if (out.stale !== undefined) {
+    console.log(
+      pc.yellow(`  the agent of this attempt is ${out.stale}; the replacement was left alone`),
+    );
+  }
+  if (out.state === "unknown") {
+    console.error(pc.yellow(`warning: ${out.reason ?? "delivery unknown"}`));
+  }
+  if (out.brief === "pending")
+    console.log(pc.dim("  brief not recorded yet; a replay records it once delivery is confirmed"));
+  printNextSteps(nextSteps);
+  if (out.state === "unknown") throw new CliExitError(1);
 }
 
 /** `mu agent spawn --send`: the outcome of the send, as `--json` reports it. */
@@ -851,7 +944,7 @@ function printClosePreview(p: ClosePreview): void {
 /**
  * `mu agent check <agent> <msgId>`: one `status {msgId}` probe. Exit 0
  * `accepted runs=<n> at=<iso>`; 3 `not-accepted` (the extension never took
- * it: resending is safe); 1 `unreachable` (no answer: still unknown).
+ * it, or no longer remembers it: NOT proof it was never sent); 1 `unreachable` (no answer: still unknown).
  */
 export async function cmdAgentCheck(
   db: Db,
@@ -875,7 +968,7 @@ export async function cmdAgentCheck(
         message:
           check.state === "unreachable"
             ? check.reason
-            : `${name}: message ${msgId} was not accepted; resending is safe`,
+            : `${name}: message ${msgId} was not accepted (an evicted or in-flight send reads the same): read the pane before any resend`,
         data: { agentName: name, ...check },
       });
     }
@@ -1296,7 +1389,11 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--task <id>",
-      "with --send: record the sent text as this task's brief once it landed (kept when the task already has one). Claims nothing: `mu task claim` is the ownership step",
+      "with --send: bind the spawn to this task: claim it for the new agent after the pane exists, then send the text as its brief (pinned once delivered, kept when the task already has one). One journaled attempt: a failure before the send rolls back its own pane and claim; an unknown delivery keeps both and is never resent",
+    )
+    .option(
+      "--attempt <key>",
+      "with --task: name this attempt (default: the task id). The same key replays its saved outcome and never sends a second prompt; reopened work needs a new key",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
@@ -1305,6 +1402,7 @@ export function wireAgentCommands(program: Command): void {
         nextFree?: boolean;
         send?: string;
         task?: string;
+        attempt?: string;
         cli?: string;
         command?: string;
         tab?: string;
@@ -1364,7 +1462,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("check <name> <msgId>")
     .description(
-      "Ask whether a send landed: one status probe for its msgId (from `send --json`, or a delivery-unknown error). Prints `accepted runs=<n> at=<iso>` (exit 0), `not-accepted` (exit 3: it never landed, resending is safe) or `unreachable` (exit 1: still unknown).",
+      "Ask whether a send landed: one status probe for its msgId (from `send --json`, or a delivery-unknown error). Prints `accepted runs=<n> at=<iso>` (exit 0), `not-accepted` (exit 3: the extension has no such id; an evicted or in-flight send reads the same, so read the pane before resending) or `unreachable` (exit 1: still unknown).",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)

@@ -35,13 +35,42 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the CLI maps (`src/agent-output.ts`). `mu_delegate` reads the new keys in the
   same commit (`agent.id`, `agent.pane_id`, preview `id`/`pane_id`), so a
   delegate still binds its cleanup to the one agent it spawned.
-- **`mu agent spawn --task <id> --send <text>`** records the sent text as the
-  task's `brief` note once the send landed (`task: {id, brief:
-  "recorded"|"kept"}`); a task that already has a brief keeps it, so a retry
-  never stacks copies, even across concurrent spawns (the check and insert are
-  one immediate transaction). The task is checked before any pane exists (exit 3), and
-  `--task` without `--send` is a usage error. It claims nothing: ownership stays
-  `mu task claim`.
+- **`mu agent spawn --task <id> --send <text>` is one journaled attempt**
+  (`v_spawn_receipts`): spawn, **claim the task for the new agent**, send the
+  text, pin it as the task's `brief` note (kept when one exists: no recursive
+  copies, even across concurrent spawns). Each step is written to the new
+  machine-local `spawn_receipts` table first (`reserved`, `pane`, `claimed`,
+  `sending`, then `sent` or `unknown`; `failed` = definitely unsent), with the
+  registry id and pane of the agent it created, no foreign key to `agents`.
+  The same command again **replays**: the saved delivery (same `msgId`, `task:
+  {replay: true}`), never a second prompt. `--attempt <key>` names the attempt
+  (key `manual:<key>`, default the task id); a changed text or name under one
+  key exits 4, reopened work takes a new key. A strict per-attempt lock
+  excludes a second process (exit 4, `SpawnAttemptBusyError`).
+  - Fails before the prompt could be written (ctl missing/refused, Claude's
+    trust dialog, a failed claim, an extension that refuses): only the attempt's
+    own pane, worktree and claim are rolled back (the existing identity-bound
+    guards, unchanged; the claim is released only while the task is still
+    owned by that agent and not closed) and the key can run again.
+  - Delivery **unknown** (written, no reply; a pane that died after the write;
+    a pane paste with no receipt): exit 1, pane and claim are kept (deleting
+    the agent would reopen the task for another dispatch), the receipt is
+    `unknown`, and a replay asks the extension once (`status {msgId}`) and
+    never resends. An id the extension no longer remembers is still unknown.
+  - A replay after the agent was deleted or its name reused reports the
+    historical delivery with `task.stale` (`deleted` | `replaced`): the
+    replacement is never claimed or sent to.
+  - Seams: `TransportSendOptions.msgId` (a reserved id for ctl send/fresh;
+    the default and `--interrupt` still mint their own), `claimTask`'s
+    `expectedAgentId` (checked inside the immediate claim: a name deleted and
+    recreated no longer hands the task to the replacement), `releaseTask`'s
+    `expectedOwnerId`. `AgentPaneDeadError` carries the `msgId` when a send was
+    written before the pane died. `--task` refuses slash/session-command text
+    (no ctl receipt) and an already-owned task before any effect.
+  - `mu agent check`: `not-accepted` no longer reads "resending is safe": an
+    evicted or in-flight send also reads that way.
+  - Not in this change (own units): `buildTaskBrief`, `wait_registrations`,
+    the executor's `task_auto.last_spawn` attempts, batch spawn.
 
 - **Task reads are bounded records.** `task list`, `next`, `owned-by`,
   `me tasks`/`me next`, `show` and `tree` print one escaped TAB-separated

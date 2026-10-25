@@ -67,8 +67,12 @@ export {
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  SpawnAttemptBusyError,
+  SpawnReceiptConflictError,
+  SpawnTrustDialogError,
 } from "./agents/errors.js";
 export { withAgentLock } from "./agents/lock.js";
+export type { SpawnReceipt } from "./agents/receipts.js";
 export {
   type CommandResolutionResult,
   type CommandResolver,
@@ -87,6 +91,12 @@ export {
   spawnAgent,
   speaksMuCtl,
 } from "./agents/spawn.js";
+export {
+  pinBrief,
+  spawnForTask,
+  type TaskSpawnOutcome,
+  type TaskSpawnRequest,
+} from "./agents/task-spawn.js";
 export {
   agentCtlSocket,
   CTL_SLASH_COMMANDS,

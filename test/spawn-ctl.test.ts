@@ -865,13 +865,13 @@ describe("mu agent spawn (CLI)", () => {
   });
 });
 
-describe("mu agent spawn --task (brief note)", () => {
+describe("mu agent spawn --task (claim + brief, one journaled attempt)", () => {
   const seedTask = (local = "t1") =>
     addTask(db, { localId: local, workstream: "auth", title: "T", impact: 50, effortDays: 1 });
   const notes = (local = "t1") => selectTaskNotes(db, local, { workstream: "auth" }).notes;
-  const spawnTask = async (args: string[]) => {
+  const spawnTask = async (args: string[], extension: string | null = "worker-1") => {
     db.close();
-    installPanes("worker-1");
+    installPanes(extension ?? undefined);
     const r = await runCliJson(
       ["agent", "spawn", "worker-1", "-w", "auth", ...args, "--json"],
       dbPath,
@@ -880,12 +880,41 @@ describe("mu agent spawn --task (brief note)", () => {
     return r;
   };
 
-  it("--task records the sent text as the task's kind=brief note, once the send landed", async () => {
+  it("--task claims for the new agent after the pane exists, sends, and records the brief note", async () => {
     seedTask();
     const r = await spawnTask(["--task", "t1", "--send", "do the thing"]);
     expect(r.exitCode ?? 0).toBe(0);
+    const agent = getAgent(db, "worker-1", "auth");
+    expect(getTask(db, "t1", "auth")).toMatchObject({
+      ownerId: agent?.incarnation,
+      status: "IN_PROGRESS",
+    });
     expect(notes()).toMatchObject([{ kind: "brief", content: "do the thing" }]);
-    expect((r.data as { task: unknown }).task).toEqual({ id: "t1", brief: "recorded" });
+    const out = r.data as {
+      task: Record<string, unknown>;
+      send: { msgId: string; incarnation: string; delivery: string };
+    };
+    expect(out.task).toMatchObject({
+      id: "t1",
+      attempt: "manual:t1",
+      state: "sent",
+      replay: false,
+      brief: "recorded",
+      claimed: true,
+    });
+    expect(out.send).toMatchObject({ delivery: "delivered", incarnation: INC });
+  });
+
+  it("a replay (same CLI call again) returns the saved delivery: no second prompt, same msgId", async () => {
+    seedTask();
+    const first = await spawnTask(["--task", "t1", "--send", "go"]);
+    const again = await spawnTask(["--task", "t1", "--send", "go"]);
+    expect(again.exitCode ?? 0).toBe(0);
+    const a = first.data as { send: { msgId: string } };
+    const b = again.data as { send: { msgId: string }; task: { replay: boolean } };
+    expect(b.task.replay).toBe(true);
+    expect(b.send.msgId).toBe(a.send.msgId);
+    expect(notes()).toHaveLength(1);
   });
 
   it("a task that already has a brief keeps it: no second copy", async () => {
@@ -894,7 +923,7 @@ describe("mu agent spawn --task (brief note)", () => {
     const r = await spawnTask(["--task", "t1", "--send", "Read: mu task notes t1"]);
     expect(r.exitCode ?? 0).toBe(0);
     expect(notes().map((n) => [n.kind, n.content])).toEqual([["brief", "the pinned brief"]]);
-    expect((r.data as { task: unknown }).task).toEqual({ id: "t1", brief: "kept" });
+    expect((r.data as { task: { brief: string } }).task.brief).toBe("kept");
   });
 
   it("an unknown task fails before any pane or row exists", async () => {
@@ -904,30 +933,22 @@ describe("mu agent spawn --task (brief note)", () => {
     expect(mux.calls.some((c) => c[0] === "new-session" || c[0] === "new-window")).toBe(false);
   });
 
-  it("--task without --send is a usage error before any side effect", async () => {
+  it("--task without --send, and --attempt without --task, are usage errors before any side effect", async () => {
     seedTask();
     const r = await spawnTask(["--task", "t1"]);
     expect(r.exitCode).toBe(2);
+    const r2 = await spawnTask(["--attempt", "k"]);
+    expect(r2.exitCode).toBe(2);
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 
-  it("a failed send records no brief (the pane stays, as for any failed --send)", async () => {
+  it("a send that never reached pi (no extension) rolls the task spawn back: no pane kept, no claim, no brief", async () => {
     seedTask();
-    db.close();
-    const r = await runCliJson(
-      ["agent", "spawn", "worker-1", "-w", "auth", "--task", "t1", "--send", "x", "--json"],
-      dbPath,
-    );
-    db = openDb({ path: dbPath });
-    expect(r.exitCode).toBe(1); // no extension answered: the send fails
+    const r = await spawnTask(["--task", "t1", "--send", "x"], null);
+    expect(r.exitCode).toBe(1); // ctl never answered
     expect(notes()).toEqual([]);
-    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
-  });
-
-  it("--task claims nothing: ownership is not this verb's", async () => {
-    seedTask();
-    await spawnTask(["--task", "t1", "--send", "go"]);
-    expect(getTask(db, "t1", "auth")?.status).toBe("OPEN");
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(getTask(db, "t1", "auth")).toMatchObject({ ownerId: null, status: "OPEN" });
   });
 });
 

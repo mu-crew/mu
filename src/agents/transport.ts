@@ -42,6 +42,7 @@ import {
   AgentFreshNeedsCtlError,
   AgentPaneDeadError,
   AgentSendIndeterminateError,
+  AgentSendRefusedError,
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
 } from "./errors.js";
@@ -82,6 +83,13 @@ export type TransportSendOptions = SendOptions & {
   fresh?: boolean;
   /** With fresh or a session command: abandon a running turn instead of refusing. */
   force?: boolean;
+  /**
+   * Internal: a msgId the caller reserved (and journaled) BEFORE the send, so
+   * a crash leaves a receipt a later `status {msgId}` can ask about. ctl
+   * send/fresh only; absent, the send mints its own. Never reuse one that was
+   * already written: a saved id is checked, never resent.
+   */
+  msgId?: string;
 };
 
 /** The agent's derived control socket, rooted at the DB's directory (as spawn does). */
@@ -259,8 +267,16 @@ export async function ctlFailure(
   if (e instanceof CtlVersionError) return e;
   if (e instanceof CtlUnknownOpError) return extensionOutdated(agent, sock, e);
   // A silent socket on a vanished pane is a dead agent, not a link problem.
+  // A request that was WRITTEN before the pane died may still have landed:
+  // the error keeps its msgId as that evidence (a dead pane does not prove
+  // the prompt was never delivered).
   if (await paneGone(agent.paneId)) {
-    return new AgentPaneDeadError(agent.name, agent.workstreamName, agent.paneId);
+    return new AgentPaneDeadError(
+      agent.name,
+      agent.workstreamName,
+      agent.paneId,
+      e instanceof CtlDeliveryUnknownError ? msgId : undefined,
+    );
   }
   if (e instanceof CtlDeliveryUnknownError) {
     return new AgentSendIndeterminateError(
@@ -330,12 +346,14 @@ export async function ctlSendWithReceipt(
   req: Extract<CtlRequest, { msgId?: string }>,
   /** The incarnation the preflight hello named: the error carries it when delivery stays unknown. */
   incarnation?: string,
+  /** A msgId the caller reserved before the send (see TransportSendOptions.msgId). */
+  reservedMsgId?: string,
 ): Promise<{
   reply?: Extract<CtlReply, { ok: true }> | { ok: false; error: string };
   msgId: string;
   confirmed?: Extract<MessageCheck, { state: "accepted" }>;
 }> {
-  const msgId = newMsgId();
+  const msgId = reservedMsgId ?? newMsgId();
   try {
     return { reply: await ctlRequest(sock, { ...req, msgId }), msgId };
   } catch (e) {
@@ -428,13 +446,14 @@ export async function sendViaTransport(
       ? { op: "fresh", text, ...(opts.force ? { force: true } : {}) }
       : { op: "send", text, mode: opts.mode ?? "followUp" },
     inc,
+    opts.msgId,
   );
   const { reply, msgId } = sent;
   if (reply !== undefined && !reply.ok) {
     if (opts.fresh && reply.error === "busy") {
       throw new AgentBusyError(agent.name, agent.workstreamName);
     }
-    throw new Error(`control socket refused the send: ${reply.error}`);
+    throw new AgentSendRefusedError(reply.error);
   }
   if (reply === undefined) {
     // No reply, but status {msgId} says it landed: the run count is the

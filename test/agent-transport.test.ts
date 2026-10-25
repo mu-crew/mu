@@ -429,7 +429,17 @@ describe("sendViaTransport", () => {
     const path = sockFor("worker-1");
     mkdirSync(dirname(path), { recursive: true });
     const server = createServer((sock) => {
-      sock.on("data", () => sock.end());
+      sock.setEncoding("utf8");
+      sock.on("data", (chunk: string) => {
+        for (const line of chunk.split("\n").filter(Boolean)) {
+          const req = JSON.parse(line) as Record<string, unknown>;
+          if (req.op === "hello") sock.write(encode(helloReply()));
+          else {
+            received.push(req);
+            sock.end();
+          }
+        }
+      });
       sock.on("error", () => {});
     });
     servers.push(server);
@@ -438,6 +448,34 @@ describe("sendViaTransport", () => {
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(AgentPaneDeadError);
+    // The write happened before the pane check: the error keeps that evidence.
+    expect((err as AgentPaneDeadError).msgId).toBe((received[0] as { msgId: string }).msgId);
+    expect((err as Error).message).toContain("delivery is unknown");
+  });
+
+  it("a caller-reserved msgId is the id on the wire (and the receipt); default sends still mint their own", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"));
+    const reserved = await sendToAgent(db, "worker-1", "hi", {
+      workstream: "auth",
+      msgId: "reserved-id-1",
+    });
+    expect(reserved.msgId).toBe("reserved-id-1");
+    expect((received[0] as { msgId: string }).msgId).toBe("reserved-id-1");
+    const minted = await sendToAgent(db, "worker-1", "hi", { workstream: "auth" });
+    expect(minted.msgId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(minted.msgId).not.toBe("reserved-id-1");
+  });
+
+  it("a reserved msgId that goes unanswered is the id the indeterminate error names", async () => {
+    seed("worker-1");
+    await serveSilentOn("send", false);
+    const err = await sendToAgent(db, "worker-1", "hello", {
+      workstream: "auth",
+      msgId: "reserved-id-2",
+    }).catch((e: unknown) => e);
+    expect((err as AgentSendIndeterminateError).msgId).toBe("reserved-id-2");
+    expect(received[1]).toEqual({ op: "status", msgId: "reserved-id-2" });
   });
 
   it("an empty send to a pi agent over ctl is refused, pointing at the pane", async () => {

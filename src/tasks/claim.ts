@@ -55,6 +55,13 @@ export interface ReleaseTaskOptions extends AttributedEvidence {
    *  `--reopen` is the override for the rarer "un-close and hand
    *  back to the pool" workflow. */
   reopen?: boolean;
+  /**
+   * Rollback guard: release only while the task is STILL owned by this
+   * registry agent id (`agents.id`) and not CLOSED, decided inside one
+   * immediate transaction. A task another agent now owns, that was
+   * released, or that was closed meanwhile is left alone (`changed: false`).
+   */
+  expectedOwnerId?: number;
 }
 
 /**
@@ -79,9 +86,26 @@ export function releaseTask(db: Db, localId: string, opts: ReleaseTaskOptions): 
 }
 
 function releaseTaskImpl(db: Db, localId: string, opts: ReleaseTaskOptions): ReleaseResult {
+  if (opts.expectedOwnerId === undefined) return releaseTaskBody(db, localId, opts);
+  // Check and write in ONE immediate transaction: nothing can re-own the task between.
+  return db.transaction(() => releaseTaskBody(db, localId, opts)).immediate();
+}
+
+function releaseTaskBody(db: Db, localId: string, opts: ReleaseTaskOptions): ReleaseResult {
   const before = getTask(db, localId, opts.workstream);
   if (!before) throw new TaskNotFoundError(localId, opts.workstream);
   assertTaskRevision(db, before.workstreamName, localId, opts.ifRevision);
+  if (
+    opts.expectedOwnerId !== undefined &&
+    (before.ownerId !== opts.expectedOwnerId || before.status === "CLOSED")
+  ) {
+    return {
+      previousOwnerName: before.ownerName,
+      previousStatus: before.status,
+      status: before.status,
+      changed: false,
+    };
+  }
 
   // Default: auto-flip IN_PROGRESS → OPEN so the released task isn't
   // left in the structurally weird owner=NULL/IN_PROGRESS limbo.
@@ -170,6 +194,14 @@ export interface ClaimTaskOptions extends AttributedEvidence {
    * out-of-workstream.
    */
   agentWorkstream?: string;
+  /**
+   * The registry id (`agents.id`) the caller created or validated for
+   * `agentName`. Re-checked INSIDE the immediate claim transaction: when the
+   * name now belongs to another incarnation (deleted and recreated), the
+   * claim throws ClaimerNotRegisteredError and the replacement never owns
+   * the task. Absent: the name is resolved as before.
+   */
+  expectedAgentId?: number;
   /**
    * Anonymous claim: write `owner_id = NULL` instead of resolving an agent
    * name and checking the FK. Use when the actor is the orchestrator
@@ -313,6 +345,19 @@ async function claimTaskImpl(
         if (!before) throw new TaskNotFoundError(localId, opts.workstream);
         assertTaskRevision(db, before.workstreamName, localId, opts.ifRevision);
         assertNotParked(before, opts);
+        // The name was resolved before this transaction began: re-read it now
+        // and refuse an incarnation the caller did not mean.
+        if (opts.expectedAgentId !== undefined) {
+          const current = db
+            .prepare(
+              `SELECT a.id AS id FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id
+                WHERE a.name = ? AND ws.name = ?`,
+            )
+            .get(agentName, claimerWorkstream) as { id: number } | undefined;
+          if (current?.id !== opts.expectedAgentId) {
+            throw new ClaimerNotRegisteredError(agentName, null);
+          }
+        }
 
         const now = new Date().toISOString();
         let result: { changes: number };
