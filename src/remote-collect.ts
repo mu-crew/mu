@@ -26,6 +26,17 @@ import type { Db } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { runLeasedTemplate, withHostChannel } from "./hosts.js";
 import { localPaneAlive } from "./remote-agent.js";
+import {
+  assertRecoveryProfile,
+  assertRecoveryUnchanged,
+  assertRecoveryUsable,
+  pinnedByOthers,
+  type RemoteRecovery,
+  RemoteRecoveryRefusedError,
+  recoveryHolds,
+  selectRemoteRecovery,
+  setRecoveryCollectedHead,
+} from "./remote-recovery.js";
 import { git } from "./vcs/git.js";
 
 /** Budget for the local fetch (it moves objects, so it may take a while). */
@@ -64,6 +75,49 @@ export interface CollectResult {
   merge: string;
   /** False when this HEAD is the one already collected (or still the base). */
   changed: boolean;
+  /** Set when the commits were collected for a removed agent's recovery record (its id), not a live agent. */
+  recoveryId?: number;
+}
+
+/** What a collect works on: a live agent's row, or a removed agent's recovery record. */
+interface CollectTarget {
+  host: string;
+  cwd: string;
+  base: string;
+  collectedHead: string | null;
+  /** The agent or record id: never another incarnation's pin owner. */
+  ownerId: number;
+  /** Record `head` as the collected one (compare-and-set on the captured identity); false when it moved. */
+  record(head: string): boolean;
+  /** Refuse (throw) unless the target is still exactly what was captured. */
+  recheck(): void;
+  /** The refusal for a target that changed between the capture and the write. */
+  lost(): Error;
+}
+
+/** The record a collect on `<workstream>/<name>` means, when there is no live agent (or one is asked for by id). */
+function recoveryTarget(db: Db, rec: RemoteRecovery): CollectTarget {
+  return {
+    host: rec.host,
+    cwd: rec.cwd,
+    base: rec.base,
+    collectedHead: rec.collectedHead,
+    ownerId: rec.agentId,
+    record: (head) =>
+      head === rec.collectedHead ? recoveryHolds(db, rec) : setRecoveryCollectedHead(db, rec, head),
+    recheck: () => {
+      assertRecoveryUnchanged(db, rec);
+      assertRecoveryUsable(db, rec);
+    },
+    lost: () =>
+      new RemoteRecoveryRefusedError(
+        rec.workstream,
+        rec.name,
+        "changed",
+        `recovery ${rec.agentId} changed while its commits were being collected; the pin was restored`,
+        [rec.agentId],
+      ),
+  };
 }
 
 export function collectRef(workstream: string, name: string): string {
@@ -88,7 +142,7 @@ function repoLockPath(db: Db, repo: string): string {
  */
 export async function collectRemoteAgent(
   db: Db,
-  opts: { workstream: string; name: string; repo: string },
+  opts: { workstream: string; name: string; repo: string; recoveryId?: number },
 ): Promise<CollectResult> {
   const { workstream, name, repo } = opts;
   return withAgentLock(db, workstream, name, () =>
@@ -97,22 +151,29 @@ export async function collectRemoteAgent(
       `collect ${repo}`,
       async () => {
         const agent = getAgent(db, name, workstream);
-        if (agent === undefined) throw new AgentNotFoundError(name, workstream);
-        const { host, cwd, base } = agent;
-        if (host === null || cwd === null) {
-          throw new RemoteCollectUnsupportedError(name, "it is a local agent");
+        // A removed agent's worktree (`remote_recovery`): by id, or the one
+        // left when no agent holds the name. A live agent beside a named id
+        // refuses in assertRecoveryUsable.
+        const rec =
+          opts.recoveryId !== undefined || agent === undefined
+            ? selectRemoteRecovery(db, workstream, name, opts.recoveryId)
+            : undefined;
+        let target: CollectTarget;
+        if (rec !== undefined) {
+          assertRecoveryUsable(db, rec);
+          target = recoveryTarget(db, rec);
+        } else if (agent !== undefined) {
+          target = agentTarget(db, agent);
+        } else {
+          throw new AgentNotFoundError(name, workstream);
         }
-        if (base === null) {
-          throw new RemoteCollectUnsupportedError(
-            name,
-            "it was spawned with --cwd, not --worktree: there is no remote worktree of its own",
-          );
-        }
+        const { host, cwd, base } = target;
         const r = await withHostChannel(
           db,
           host,
           `collect:${workstream}/${name}`,
           async (profile, lease) => {
+            if (rec !== undefined) assertRecoveryProfile(rec, profile);
             // Under the lease, so a refused collect touches nothing. A stale
             // FETCH_HEAD must not pass for this fetch's answer.
             const fetchHead = await git(["rev-parse", "--git-path", "FETCH_HEAD"], repo);
@@ -151,15 +212,37 @@ export async function collectRemoteAgent(
             "the fetch template succeeded but left no commit in FETCH_HEAD (does it `git fetch`?); nothing recorded",
           );
         }
+        // The fetch was slow: the identity must still hold before a ref is moved.
+        target.recheck();
         const ref = collectRef(workstream, name);
         const prior = await git(["rev-parse", "--verify", "-q", ref], repo).catch(() => undefined);
+        // The ref is ONE per (workstream, name), not per incarnation: moving it
+        // would drop the pin another unresolved recovery's commit relies on.
+        if (prior !== undefined && prior !== head) {
+          const holders = pinnedByOthers(db, { workstream, name, agentId: target.ownerId }, prior);
+          if (holders.length > 0) {
+            throw new RemoteRecoveryRefusedError(
+              workstream,
+              name,
+              "pin",
+              `${ref} pins ${prior.slice(0, 12)}, the collected HEAD of recovery ${holders.join(", ")}; close that recovery first, then collect`,
+              holders,
+            );
+          }
+        }
         await git(["update-ref", ref, head], repo);
         if ((await git(["rev-parse", "--verify", ref], repo)) !== head) {
           throw new RemoteCollectError(host, `could not pin ${ref}; nothing recorded`);
         }
-        const changed = head !== (agent.collectedHead ?? base);
-        await recordCollected(db, agent, head, ref, repo, prior);
-        return { head, ref, merge: `git merge ${head}`, changed };
+        const changed = head !== (target.collectedHead ?? base);
+        await recordCollected(target, head, ref, repo, prior);
+        return {
+          head,
+          ref,
+          merge: `git merge ${head}`,
+          changed,
+          ...(rec === undefined ? {} : { recoveryId: rec.agentId }),
+        };
       },
       {
         strict: true,
@@ -171,29 +254,56 @@ export async function collectRemoteAgent(
   );
 }
 
-/** Compare-and-set the record on the agent captured before the awaits (also for an unchanged head: the fence is the same); restore the ref when it was replaced. */
+/** A live agent as a collect target: remote worktree rows only. */
+function agentTarget(db: Db, agent: AgentRow): CollectTarget {
+  const { host, cwd, base } = agent;
+  if (host === null || cwd === null) {
+    throw new RemoteCollectUnsupportedError(agent.name, "it is a local agent");
+  }
+  if (base === null) {
+    throw new RemoteCollectUnsupportedError(
+      agent.name,
+      "it was spawned with --cwd, not --worktree: there is no remote worktree of its own",
+    );
+  }
+  const fence = "id = ? AND pane_id = ? AND host IS ? AND cwd IS ? AND base IS ?";
+  const who = [agent.incarnation, agent.paneId, agent.host, agent.cwd, agent.base];
+  return {
+    host,
+    cwd,
+    base,
+    collectedHead: agent.collectedHead,
+    ownerId: agent.incarnation,
+    // An unchanged head writes nothing, but is still fenced: success names this incarnation.
+    record: (head) =>
+      head === agent.collectedHead
+        ? db.prepare(`SELECT 1 FROM agents WHERE ${fence}`).all(...who).length === 1
+        : db
+            .prepare(`UPDATE agents SET collected_head = ?, updated_at = ? WHERE ${fence}`)
+            .run(head, new Date().toISOString(), ...who).changes === 1,
+    recheck: () => {
+      const now = getAgent(db, agent.name, agent.workstreamName);
+      if (now?.incarnation !== agent.incarnation || now.paneId !== agent.paneId) {
+        throw new AgentReplacedError(agent.name, agent.workstreamName, "collected");
+      }
+    },
+    lost: () => new AgentReplacedError(agent.name, agent.workstreamName, "collected"),
+  };
+}
+
+/** Compare-and-set the record on the target captured before the awaits (also for an unchanged head: the fence is the same); restore the ref when it was replaced. */
 async function recordCollected(
-  db: Db,
-  agent: AgentRow,
+  target: CollectTarget,
   head: string,
   ref: string,
   repo: string,
   prior: string | undefined,
 ): Promise<void> {
-  const fence = "id = ? AND pane_id = ? AND host IS ? AND cwd IS ? AND base IS ?";
-  const who = [agent.incarnation, agent.paneId, agent.host, agent.cwd, agent.base];
-  // An unchanged head writes nothing, but is still fenced: success names this incarnation.
-  const n =
-    head === agent.collectedHead
-      ? db.prepare(`SELECT 1 FROM agents WHERE ${fence}`).all(...who).length
-      : db
-          .prepare(`UPDATE agents SET collected_head = ?, updated_at = ? WHERE ${fence}`)
-          .run(head, new Date().toISOString(), ...who).changes;
-  if (n === 1) return;
+  if (target.record(head)) return;
   // Undo only this attempt's pin: the ref goes back to what it held (an earlier collect's commit stays pinned).
   await (prior === undefined
     ? git(["update-ref", "-d", ref, head], repo)
     : git(["update-ref", ref, prior, head], repo)
   ).catch(() => {});
-  throw new AgentReplacedError(agent.name, agent.workstreamName, "collected");
+  throw target.lost();
 }

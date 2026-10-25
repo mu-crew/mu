@@ -90,6 +90,29 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (that is `v_wait_cli`). No schema bump: an existing v13 file gains the table
   on open (same-version additive repair).
 
+- **Close or collect the remote worktree a removed agent left (`v_remote_recovery_close`).**
+  `mu agent close <name>` with no agent row and no local orphan now selects the ONE
+  `remote_recovery` record of `<ws>/<name>` and closes THAT worktree under the unchanged remote
+  rule (`closeRemoteWorktree`: quiescence, common-git-dir check, clean + base/collected HEAD or
+  create-only `--keep-branch`, no `--force`, dirty refuses under every flag), through the
+  ORIGINAL incarnation's aside, so a close that crashed after the move and was then reaped
+  resumes from the aside it left. No agent returns and no pane or task is touched. Several records
+  of one name refuse (`RemoteRecoveryRefusedError`, exit 4) and list their ids; `--recovery <id>`
+  (SDK `recoveryId`) picks one. The preview reads only (no remote command), reports
+  `kind: "recovery"` with `recovery_id` (`id` stays the registry incarnation, null here) and a
+  `rev` derived from the record (`agentRevision(db, ws, name, recoveryId?)`), plus the refusal an
+  apply would hit now. Apply holds the agent lock, checks the revision, and compare-and-sets
+  the record and the registry before the removal; the record is deleted only when the tree is
+  removed, kept on a branch or gone, and only that record. A current agent of the name or on the same
+  host and path, a missing or replaced host profile, and a record written without a profile
+  identity refuse before any exec. `mu agent collect <name>` (also `--recovery`) works on a
+  record the same way (same fetch, repo lock and exact-SHA pin; the record's `collected_head` is
+  compare-and-set) and refuses to move the one `refs/mu/collect/<ws>/<name>` pin while another
+  record of that name relies on the commit it holds. A removed agent's `-w <ws>` or `<ws>/<name>`
+  works after a reinit or when the workstream has no live agent. `cmdClose` moved to
+  `src/cli/agent-close.ts`. SDK: `selectRemoteRecovery`, `recoveriesFor`, `getRemoteRecovery`,
+  `RemoteRecoveryRefusedError`, `CloseAgentOptions.recoveryId`, `ClosePreview.recovery`.
+
 - **A deleted remote worker row no longer takes its worktree's location with it.** A new
   machine-local table `remote_recovery` (no foreign key, no op, never synced) keeps, per
   ORIGINAL registry incarnation, the host, worktree path, base, last collected HEAD, the exact
@@ -103,7 +126,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `src/db-recovery.ts` (db.ts stays under its file cap). Teardown now
   deletes its dead rows through the same reaper step, which also fixes a task left
   `IN_PROGRESS` with no owner: it reopens with a `[reaper]` note, as after any reap. Storage
-  only: reading a record to close or collect the tree is the next change. Records are lost by
+  only here; the readers follow below. Records are lost by
   `mu rebuild` (reported with the other machine-local tables): back up the source DB. SDK:
   `listRemoteRecoveries`.
 

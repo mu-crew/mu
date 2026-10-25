@@ -28,6 +28,7 @@ import { releaseHostChannelsForAgent } from "../hosts.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import { closeRemoteWorktree, localPaneAlive } from "../remote-agent.js";
+import { selectRemoteRecovery } from "../remote-recovery.js";
 import { agentRevision, assertRevision } from "../revision.js";
 import {
   assertReleasable,
@@ -38,6 +39,7 @@ import {
   type WorktreeState,
   worktreeState,
 } from "../worktree.js";
+import { closeRecovery, recoveryPreview } from "./close-recovery.js";
 import { AgentPaneStillAliveError, AgentReplacedError } from "./errors.js";
 import { withAgentLock } from "./lock.js";
 
@@ -62,6 +64,13 @@ export interface CloseAgentOptions {
    * left to destroy. Absent: close without a preview.
    */
   ifRevision?: number;
+  /**
+   * Close the remote worktree a REMOVED agent left (`remote_recovery`, the
+   * original registry incarnation it names), not a live agent. Required when
+   * several records share the name; without it exactly one selects itself.
+   * Refuses while an agent holds the name or the path.
+   */
+  recoveryId?: number;
 }
 
 export interface CloseAgentResult {
@@ -69,6 +78,8 @@ export interface CloseAgentResult {
   deletedRow: boolean;
   /** What the close rule did to the agent's worktree (a remote one included); null when it had none. */
   worktree: ReleasedWorktree | null;
+  /** Set when a remote recovery record was closed: its id and whether the record was removed. */
+  recovery?: { id: number; deleted: boolean };
 }
 
 /** What `agent close` would do, read only. */
@@ -76,8 +87,9 @@ export interface ClosePreview {
   agentName: string;
   workstream: string;
   /** `agent`: a registry row; `orphan-worktree`: only a registered worktree
-   *  is left (a failed spawn or an earlier close); `none`: nothing. */
-  kind: "agent" | "orphan-worktree" | "none";
+   *  is left (a failed spawn or an earlier close); `recovery`: the agent row
+   *  is gone but `remote_recovery` kept its remote worktree; `none`: nothing. */
+  kind: "agent" | "orphan-worktree" | "recovery" | "none";
   /** `agentRevision`: the value for `--if`. 0 when `kind` is `none`. */
   revision: number;
   /** The registry incarnation (`AgentRow.incarnation`); null without a row. */
@@ -94,6 +106,19 @@ export interface ClosePreview {
    * holds the only channel). Null for a local or `--cwd`-only agent.
    */
   remote: { host: string; path: string; base: string; collectedHead: string | null } | null;
+  /**
+   * The selected recovery record (`kind` `recovery`), under its own id: the
+   * ORIGINAL registry incarnation, never `incarnation`. `refusal` is why an
+   * apply would refuse right now (a current agent, a changed profile), null
+   * when it would go on. Null otherwise.
+   */
+  recovery: {
+    id: number;
+    aside: string;
+    reason: string;
+    preservedAt: string;
+    refusal: string | null;
+  } | null;
   /** True when the close would refuse for uncommitted work (no `discard`). */
   refusesDirty: boolean;
   discard: boolean;
@@ -144,7 +169,7 @@ function worktreeOf(db: Db, workstream: string, name: string, agent?: AgentRow) 
 export async function previewClose(
   db: Db,
   name: string,
-  opts: { workstream: string; discard?: boolean; keepBranch?: boolean },
+  opts: { workstream: string; discard?: boolean; keepBranch?: boolean; recoveryId?: number },
 ): Promise<ClosePreview> {
   const discard = opts.discard === true;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -165,16 +190,39 @@ export async function previewClose(
       ) {
         return undefined;
       }
+      // A removed agent's remote worktree: asked for by id, or the one left
+      // when nothing else is. Several records refuse (ambiguous) here.
+      const rec =
+        opts.recoveryId !== undefined || (now === undefined && nowRow === undefined)
+          ? selectRemoteRecovery(db, opts.workstream, name, opts.recoveryId)
+          : undefined;
+      if (rec !== undefined) {
+        return {
+          agentName: name,
+          workstream: opts.workstream,
+          kind: "recovery",
+          revision: agentRevision(db, opts.workstream, name, opts.recoveryId),
+          incarnation: null,
+          paneId: null,
+          ownedTasks: [],
+          worktree: null,
+          ...recoveryPreview(db, rec),
+          refusesDirty: false,
+          discard,
+          keepBranch: opts.keepBranch === true,
+        };
+      }
       return {
         agentName: name,
         workstream: opts.workstream,
         kind: now ? "agent" : nowRow ? "orphan-worktree" : "none",
-        revision: agentRevision(db, opts.workstream, name),
+        revision: opts.recoveryId === undefined ? agentRevision(db, opts.workstream, name) : 0,
         incarnation: now?.incarnation ?? null,
         paneId: now?.paneId ?? null,
         ownedTasks: now ? ownedTasksOf(db, now) : [],
         worktree: nowRow && state ? { path: nowRow.path, state } : null,
         remote: remoteOf(now),
+        recovery: null,
         refusesDirty: state === "dirty" && !discard,
         discard,
         keepBranch: opts.keepBranch === true,
@@ -216,14 +264,22 @@ async function closeLocked(
   const discard = opts.discard === true;
   const previewCommand = `mu agent close ${name} -w ${opts.workstream}`;
   const fence = (): void => {
-    assertRevision(opts.ifRevision, agentRevision(db, opts.workstream, name), {
+    assertRevision(opts.ifRevision, agentRevision(db, opts.workstream, name, opts.recoveryId), {
       subject: `agent ${name}`,
       previewCommand,
     });
   };
   const agent = getAgentForCleanup(db, name, opts.workstream);
+  const orphan = agent ? undefined : getWorktreeFor(db, opts.workstream, name);
+  // A removed agent's remote worktree (`remote_recovery`): by id, or the one
+  // left when there is no row and no local orphan. A gone record is a no-op.
+  if (opts.recoveryId !== undefined || (agent === undefined && orphan === undefined)) {
+    const rec = selectRemoteRecovery(db, opts.workstream, name, opts.recoveryId);
+    if (rec === undefined) return { killedPane: false, deletedRow: false, worktree: null };
+    fence();
+    return closeRecovery(db, rec, { keepBranch: opts.keepBranch === true });
+  }
   if (!agent) {
-    const orphan = getWorktreeFor(db, opts.workstream, name);
     if (orphan === undefined) return { killedPane: false, deletedRow: false, worktree: null };
     fence();
     const worktree = await releaseWorktree(db, orphan, { discard });

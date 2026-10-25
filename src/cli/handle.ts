@@ -104,6 +104,7 @@ import { type Envelope, encodeEnvelope } from "../output-contract.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
 import { RemoteCloseRefusedError, RemotePrepareError } from "../remote-agent.js";
 import { RemoteCollectError, RemoteCollectUnsupportedError } from "../remote-collect.js";
+import { RemoteRecoveryRefusedError } from "../remote-recovery.js";
 import { RevisionMismatchError } from "../revision.js";
 import { syncDir } from "../segments.js";
 import {
@@ -386,6 +387,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof HostChannelBusyError ||
     // A remote worktree close refuses to remove (dirty, uncollected HEAD, moved).
     err instanceof RemoteCloseRefusedError ||
+    // A recovery record that is ambiguous, claimed, changed or pinned to another profile.
+    err instanceof RemoteRecoveryRefusedError ||
     err instanceof HostInUseError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||

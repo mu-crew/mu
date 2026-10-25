@@ -350,9 +350,13 @@ export {
   RemoteCollectUnsupportedError,
 } from "./remote-collect.js";
 export {
+  getRemoteRecovery,
   listRemoteRecoveries,
   type RemoteRecovery,
   type RemoteRecoveryReason,
+  RemoteRecoveryRefusedError,
+  recoveriesFor,
+  selectRemoteRecovery,
 } from "./remote-recovery.js";
 export {
   agentRevision,

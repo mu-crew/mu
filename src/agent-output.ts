@@ -98,10 +98,15 @@ export function agentToOutput(
   };
 }
 
-/** A close preview with its identity under the SQL names (`id`, `pane_id`); every verb-level field is kept. */
+/**
+ * A close preview with its identity under the SQL names (`id`, `pane_id`);
+ * every verb-level field is kept. `id` is the REGISTRY incarnation (null for a
+ * recovery: no row); a recovery's own id is `recovery_id` (the original
+ * incarnation it was kept from), null otherwise.
+ */
 export function closePreviewToOutput(p: ClosePreview): Record<string, unknown> {
   const { incarnation, paneId, ...rest } = p;
-  return { ...rest, id: incarnation, pane_id: paneId };
+  return { ...rest, id: incarnation, pane_id: paneId, recovery_id: p.recovery?.id ?? null };
 }
 
 /** A live agent (`list`, `state`, `show`, `me`) as its record: columns plus the computed state and ctl link. */

@@ -171,22 +171,25 @@ export class RemoteCloseRefusedError extends Error {
     public readonly workstream: string,
     public readonly reason: "dirty" | "uncollected" | "moved" | "unreadable" | "branch" | "held",
     detail: string,
+    /** The recovery record being closed (no agent row left): every hint then names it. */
+    public readonly recoveryId?: number,
   ) {
     super(`agent ${agentName}: remote worktree kept: ${detail}`);
   }
   errorNextSteps(): { intent: string; command: string }[] {
     const ws = this.workstream;
     const n = this.agentName;
+    const rec = this.recoveryId === undefined ? "" : ` --recovery ${this.recoveryId}`;
     if (this.reason === "uncollected" || this.reason === "moved") {
       return [
-        { intent: "Bring its commits home", command: `mu agent collect ${n} -w ${ws}` },
+        { intent: "Bring its commits home", command: `mu agent collect ${n} -w ${ws}${rec}` },
         {
           intent: "Or keep them on a remote branch and remove the worktree",
-          command: `mu agent close ${n} -w ${ws} --keep-branch`,
+          command: `mu agent close ${n} -w ${ws}${rec} --keep-branch`,
         },
       ];
     }
-    return [{ intent: "Preview the close again", command: `mu agent close ${n} -w ${ws}` }];
+    return [{ intent: "Preview the close again", command: `mu agent close ${n} -w ${ws}${rec}` }];
   }
 }
 
@@ -259,6 +262,10 @@ export async function closeRemoteWorktree(
     paneAlive?: (paneId: string) => Promise<boolean>;
     /** Runs between the observation and the removal; throws to stop (an identity re-check). */
     beforeRemove?: () => void;
+    /** The removed agent's recovery record (src/remote-recovery.ts) when there is no row: refusals name it. */
+    recoveryId?: number;
+    /** Runs on the ADMITTED profile before any exec; throws to stop (a recovery pins the profile it was made for). */
+    checkProfile?: (profile: HostProfile) => void;
     /** Test seam: where the quiescence scan looks (default /proc, then `lsof`). */
     probe?: { proc: string; lsof: string };
   } = {},
@@ -270,13 +277,14 @@ export async function closeRemoteWorktree(
   const asidePath = asideOf(path, agent.incarnation);
   const probe = opts.probe ?? { proc: "/proc", lsof: "lsof" };
   const refuse = (reason: RemoteCloseRefusedError["reason"], detail: string): never => {
-    throw new RemoteCloseRefusedError(name, ws, reason, detail);
+    throw new RemoteCloseRefusedError(name, ws, reason, detail, opts.recoveryId);
   };
   return withHostChannel(
     db,
     host,
     `close:${ws}/${name}`,
     async (profile, lease) => {
+      opts.checkProfile?.(profile);
       const root = remotePathWord(profile.repo);
       const wt = shellQuote(path);
       const aside = shellQuote(asidePath);
