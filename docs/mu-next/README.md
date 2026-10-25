@@ -399,14 +399,15 @@ decision). Host profiles are templates mu fills in.
   the collected HEAD. `agent close` removes the remote
   worktree only if it is clean **and** remote HEAD equals the base or
   the last collected HEAD; otherwise it refuses, or `--keep-branch`
-  leaves a remote branch `mu/<ws>/<agent>-<sha>`. The reaper never
-  deletes a remote worktree: it keeps the agent's remote metadata (a
-  durable recovery record) so `close` can still decide (`v_remote_collect`).
+  leaves a remote branch `mu/<ws>/<agent>-<sha>` (`v_remote_collect`).
+  The reaper never deletes a remote worktree; keeping a durable
+  recovery record for a reaped remote row is `v_remote_recovery`.
 - **`--max-sessions N`** counts every channel mu opened for that host:
   attached panes, `--exec`, `--fetch`. At the cap mu refuses with one
-  line naming the holder. Remote agents run in detached remote tmux,
-  so `collect` detaches the pane first and `wait`/`send` reattach
-  (the ctl forward rides the pane).
+  line naming the holder. The pane is the transport (the ctl forward
+  rides it), so at `--max-sessions 1` a live worker holds the only
+  channel and `collect` refuses until the pane is gone; raise the cap
+  to collect mid-run. Detach and reattach are `v_remote_detach`.
 - Long remote gates are panes (`spawn gate-1 --host dev --command
   'npm test'`, wait on exit), never a held `ssh dev …`. One skill line.
 
