@@ -148,6 +148,7 @@ const UNREBUILDABLE_TABLES = [
   "wait_cursors",
   "agent_settles",
   "host_profiles",
+  "spawn_receipts",
 ] as const;
 
 /** Entities that exist only in the log: there is no portable table to

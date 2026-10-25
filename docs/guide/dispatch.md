@@ -65,14 +65,41 @@ socket. Pick the mode by what the agent is doing:
   repeated: mu asks once for the `msgId` and either reports success
   (`receipt: confirmed-after-timeout`) or exits 1 naming
   `mu agent check <a> <msgId>`. That verb prints `accepted runs=<n>
-  at=<iso>` (0), `not-accepted` (3, resending is safe) or `unreachable`
-  (1, still unknown). Never resend before it says `not-accepted`.
+  at=<iso>` (0), `not-accepted` (3) or `unreachable` (1). Only `accepted`
+  is an answer: **`not-accepted` is not "unsent"**. The extension keeps
+  its last 64 ids, so an old send reads `not-accepted` after eviction,
+  and a send that is still in flight can too. Look at the pane
+  (`mu agent read`) before any resend.
 
 After a claim, spawn, or wait, the `Next:` block prints the right send.
-`mu agent spawn --send <text> [--task <id>]` spawns and sends the first prompt in one
-call; `--next-free` takes the next free name when `<name>` is taken
+`mu agent spawn --send <text>` spawns and sends the first prompt in one
+call; with `--task <id>` it is one journaled attempt (below); `--next-free` takes the next free name when `<name>` is taken
 (`worker-1` → `worker-2`; the stem is cut to keep the name within 32
 chars, and it gives up with exit 4 when no free name is near).
+
+### Spawn for a task
+
+`mu agent spawn <name> --task <id> --send <text>` spawns, **claims the task
+for the new agent**, sends the text and pins it as the task's `brief` (kept
+when the task has one), as one attempt. A journal (`spawn_receipts`) is
+written before each step, so the same command never sends a second prompt.
+
+- Same command again = replay: it returns the saved delivery
+  (`task.replay: true`, same `msgId`). `--attempt <key>` names the attempt
+  (default: the task id); a changed text or name under one key exits 4, and
+  reopened work needs a new key.
+- Fails **before** the prompt could be written (no ctl, Claude's trust
+  dialog, a claim that lost the task, the extension refused): its own pane,
+  claim and worktree are rolled back, the key is reusable.
+- Delivery **unknown** (written, no reply; the pane died after the write):
+  exit 1, the pane and the claim stay, `task.state` is `unknown`, and a
+  replay asks the extension once. Never reaped, never resent. Check it
+  with `mu agent check`, read the pane, then decide.
+- A replay after the agent was deleted, or its name reused, reports the
+  historical delivery with `task.stale` (`deleted` | `replaced`); the
+  replacement is never claimed or sent to.
+- Another mu process running the same attempt exits 4 (`SpawnAttemptBusyError`);
+  retry and the replay returns its outcome.
 
 ### Non-pi agents
 

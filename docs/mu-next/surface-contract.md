@@ -91,7 +91,9 @@ such as this page.
 | --- | --- | --- |
 | `v_output_core` (**shipped**; see [ARCHITECTURE](../ARCHITECTURE.md)) | envelope, stdout errors, `capRecords` primitive, extension envelope consumers. Left: `next` plans (`v_hints`), text records and cap enforcement for the other readers (`state`, `log`; notes and the task reads shipped), wait `data.exit`/timeout exit (`v_wait_core`), test migration (`v_output_tests`) | `src/output-contract.ts`: `Envelope<T>`, `NextPlan`, `encodeEnvelope`, `capRecords` |
 | `v_loop_storage` | schema 13: `tasks.kind/wave`; `agents.spawner/host/collected_head`; local tables | `delegate_calls`, `wait_cursors`, `agent_settles`, `host_profiles` |
-| `v_agent_surface` | task-bound spawn, replay, `wait_registrations`, `spawn_receipts` | `buildTaskBrief(db,ws,id,identity)`, `registerOwnedWait`, `attempt_key` |
+| `v_agent_surface` (**shipped**, part A) | SQL-keyed agent JSON, outside-tmux attach, `spawn --task` brief | `src/agent-output.ts` |
+| `v_spawn_receipts` (**shipped**, part B) | task-bound spawn: journaled reserve, spawn, claim, send; replay | `spawn_receipts`, `spawnForTask`, `attempt_key` (`manual:<k>`), `SendOptions.msgId`, `claimTask.expectedAgentId`, `releaseTask.expectedOwnerId` |
+| _unassigned_ (own units, blocked on B where they use its writer) | `buildTaskBrief`, `wait_registrations`/`registerOwnedWait`, `task_auto.last_spawn` attempts, batch grammar | `buildTaskBrief(db,ws,id,identity)`, `registerOwnedWait` |
 | `v_task_mutations`, `v_notes` (**notes view shipped**: `task notes`/`show`, see CHANGELOG) | aliases, report writers, pinned note view | `selectTaskNotes(db,id,opts)`, `kind` assignment at insert |
 | `v_close_apply` | CLOSE parse and exactly-once apply | `src/close-block.ts`: `parseCloseBlock`, `applySettledClose` |
 | `v_wait_core`, `v_wait_cli` | unified wait engine and CLI, signal snapshots | `src/wait.ts`: `waitForEvents`, `WaitRef`, `WaitEvent`, `WaitResult`; `wireWaitCommand` |

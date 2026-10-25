@@ -271,6 +271,13 @@ export interface SpawnAgentOptions {
   /** When `name` is taken in the workstream, take the next free one
    *  (see `nextFreeAgentName`) instead of failing with AgentExistsError. */
   nextFree?: boolean;
+  /**
+   * Called synchronously, inside the spawn lock, the moment the agent row
+   * exists for the new pane (nothing awaited between the row write and this
+   * call). A durable journal of the created registry identity (`agents.id` +
+   * pane): a throw rolls the spawn back like a failed finalize.
+   */
+  onIdentity?: (agent: AgentRow) => void;
 }
 
 /** How many taken names a `nextFree` spawn skips past before it gives up. */
@@ -674,6 +681,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         spawner,
       });
       ownedIncarnation = row.incarnation;
+      opts.onIdentity?.(row);
       return { pid, row };
     });
     paneId = created.pid;
@@ -772,7 +780,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
 }
 
 /** A worktree spawn has made and registered. */
-interface StagedWorktree {
+export interface StagedWorktree {
   path: string;
   base: string;
   root: string;
@@ -981,7 +989,7 @@ function emitSpawnFailed(db: Db, opts: SpawnAgentOptions, phase: SpawnPhase, err
   }
 }
 
-async function rollbackSpawn(
+export async function rollbackSpawn(
   db: Db,
   name: string,
   paneId: string | undefined,

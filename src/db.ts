@@ -7,7 +7,9 @@
 // Schema (v12 — v11's task substates plus the kernel additions below):
 //   - 6 entity tables: workstreams, agents, tasks, task_edges,
 //                      task_notes, worktrees
-//   - 1 machine-local table: task_auto (per-task auto-dispatch state)
+//   - 1 machine-local table: task_auto (per-task auto-dispatch state); v13
+//     adds delegate_calls, wait_cursors, agent_settles, host_profiles and
+//     spawn_receipts
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
 //   - 2 sync tables:   sync_peers (per-peer watermarks),
@@ -17,7 +19,7 @@
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
 //   - 4 views:         ready, blocked, blockers, goals
-//   => EXPECTED_TABLES is exactly 15 entries.
+//   => EXPECTED_TABLES is exactly 15 entries at v12 (20 at v13: see there).
 //
 // v12 is additive over v11: workstreams.torn_down_at (soft teardown),
 // agents.cwd / agents.base (worktree path and the commit it forked
@@ -715,6 +717,18 @@ export const DELEGATE_CALL_STATES = [
   "cancelled",
 ] as const;
 
+/** The states of a task-bound spawn attempt (`spawn_receipts.state`). */
+export const SPAWN_RECEIPT_STATES = [
+  "reserved",
+  "pane",
+  "claimed",
+  "sending",
+  "sent",
+  "unknown",
+  "failed",
+] as const;
+export type SpawnReceiptState = (typeof SPAWN_RECEIPT_STATES)[number];
+
 /**
  * Columns added to a table after a v12 DB may already exist, as
  * `[table, column, DDL]`. `CREATE TABLE IF NOT EXISTS` leaves an existing
@@ -800,7 +814,7 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 19 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 20 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
@@ -811,6 +825,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "op_dying",
   "ops",
   "schema_version",
+  "spawn_receipts",
   "sync_fingerprints",
   "sync_peers",
   "task_auto",
@@ -897,6 +912,10 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    wait_cursors     per caller and ref, the last wait result consumed.
  *    agent_settles    settled runs already applied (settle replay).
  *    host_profiles    ssh-free command templates per remote host.
+ *    spawn_receipts   one row per task-bound spawn attempt: the replay and
+ *                     crash-recovery journal (reservation, pane identity,
+ *                     claim, send state). No FK to `agents`: it must
+ *                     outlive the agent it names.
  *    ops              see below — the carrier, not cargo.
  *
  *  `ops` is listed here deliberately rather than omitted. It is not
@@ -921,6 +940,7 @@ export const MACHINE_LOCAL_TABLES = [
   "op_dying",
   "ops",
   "schema_version",
+  "spawn_receipts",
   "sync_fingerprints",
   "sync_peers",
   "task_auto",
@@ -1252,6 +1272,35 @@ CREATE TABLE IF NOT EXISTS agent_settles (
   runs        INTEGER NOT NULL,
   task_id     INTEGER,
   PRIMARY KEY (agent_id, incarnation, runs)
+);
+
+-- spawn_receipts: one row per task-bound spawn attempt (machine-local). The
+-- journal agent spawn --task writes BEFORE each external effect and that a
+-- replay reads back. agent_id/pane_id name the registry incarnation it
+-- created and carry NO foreign key on purpose: the receipt must outlive the
+-- agent (a deleted or replaced name is "stale", never the replacement).
+-- state: reserved (nothing happened yet) < pane (agent row + pane exist)
+-- < claimed (task owned by agent_id) < sending (the send MAY have been
+-- written: never resend) < sent | unknown; failed = definitely unsent and
+-- rolled back. attempt_key is 'manual:<k>' for a manual spawn.
+CREATE TABLE IF NOT EXISTS spawn_receipts (
+  task_id     INTEGER NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+  attempt_key TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  workstream  TEXT NOT NULL,
+  request_sha TEXT NOT NULL,
+  msg_id      TEXT NOT NULL,
+  agent_id    INTEGER,
+  pane_id     TEXT,
+  transport   TEXT CHECK (transport IN ('ctl', 'mux')),
+  incarnation TEXT,
+  runs        INTEGER,
+  state       TEXT NOT NULL
+              CHECK (state IN (${sqlList(SPAWN_RECEIPT_STATES)})),
+  detail      TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (task_id, attempt_key)
 );
 
 -- host_profiles: ssh-free command templates for a remote host

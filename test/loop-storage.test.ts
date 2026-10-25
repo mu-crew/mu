@@ -51,7 +51,13 @@ import { getTask, listTasks } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
-const NEW_TABLES = ["agent_settles", "delegate_calls", "host_profiles", "wait_cursors"] as const;
+const NEW_TABLES = [
+  "agent_settles",
+  "delegate_calls",
+  "host_profiles",
+  "spawn_receipts",
+  "wait_cursors",
+] as const;
 
 let dir: string;
 let n = 0;
@@ -258,6 +264,18 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
     expect(captureTriggersCurrent(db)).toBe(true);
     expect(getTask(db, "t1", "alpha")).toMatchObject({ kind: "work", wave: null });
+  });
+
+  it("an already-v13 file without spawn_receipts gets the table, rows intact (no version bump)", () => {
+    const p = v12Copy();
+    const first = track(openDb({ path: p }));
+    first.close();
+    raw(p, (r) => r.exec("DROP TABLE spawn_receipts"));
+    const db = track(openDb({ path: p }));
+    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(db.prepare("SELECT COUNT(*) AS c FROM spawn_receipts").get()).toEqual({ c: 0 });
+    expect(getAgent(db, "w1", "alpha")).toBeDefined();
+    expect(getTask(db, "t1", "alpha")).toBeDefined();
   });
 
   it("an already-v13 file missing only agents.collected_head gets it back, rows intact", () => {
@@ -582,13 +600,13 @@ describe("segments: kind and wave ride v2 lines only", () => {
 // ─── 3. Machine-local ─────────────────────────────────────────────────
 
 describe("machine-local state", () => {
-  it("the four tables are classified machine-local, never portable, and listed as expected", () => {
+  it("the five tables are classified machine-local, never portable, and listed as expected", () => {
     for (const t of NEW_TABLES) {
       expect(MACHINE_LOCAL_TABLES).toContain(t);
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(19);
+    expect(EXPECTED_TABLES).toHaveLength(20);
     expect(PORTABLE_TABLES).toEqual(["task_edges", "task_notes", "tasks", "workstreams"]);
   });
 
@@ -608,6 +626,11 @@ describe("machine-local state", () => {
     db.prepare(
       "INSERT INTO host_profiles (name, shell, exec, fetch, repo) VALUES ('h', 's', 'e', 'f', 'r')",
     ).run();
+    db.prepare(
+      `INSERT INTO spawn_receipts (task_id, attempt_key, name, workstream, request_sha, msg_id, state, created_at, updated_at)
+       VALUES (?, 'manual:a', 'w1', 'd', 'sha', 'm', 'reserved', 'n', 'n')`,
+    ).run(tid);
+    db.prepare("UPDATE spawn_receipts SET state = 'sent'").run();
     db.prepare("UPDATE agents SET spawner = 'x/y', host = 'h', collected_head = 'abc'").run();
     expect(ops()).toEqual(before);
   });
@@ -666,6 +689,31 @@ describe("machine-local state", () => {
     expect((db.prepare("SELECT id FROM agents").get() as { id: number }).id).toBeGreaterThan(agent);
   });
 
+  it("spawn_receipts: keyed per (task, attempt), state is checked, rows cascade with the task but NOT with the agent", () => {
+    const db = fresh();
+    ensureWorkstream(db, "d");
+    addTask(db, { workstream: "d", localId: "a", title: "a" });
+    const agent = insertAgent(db, { name: "w", workstream: "d", paneId: "%1" });
+    const tid = (db.prepare("SELECT id FROM tasks").get() as { id: number }).id;
+    const ins = (key: string, state: string) =>
+      db
+        .prepare(
+          `INSERT INTO spawn_receipts (task_id, attempt_key, name, workstream, request_sha, msg_id, agent_id, pane_id, state, created_at, updated_at)
+           VALUES (?, ?, 'w', 'd', 'sha', 'm', ?, '%1', ?, 'n', 'n')`,
+        )
+        .run(tid, key, agent.incarnation, state);
+    ins("manual:a", "sent");
+    expect(() => ins("manual:a", "sent")).toThrow(/UNIQUE|PRIMARY/);
+    expect(() => ins("manual:b", "bogus")).toThrow(/CHECK/);
+    // No FK to agents: the receipt outlives the agent it names.
+    db.prepare("DELETE FROM agents").run();
+    expect(db.prepare("SELECT agent_id FROM spawn_receipts").all()).toEqual([
+      { agent_id: agent.incarnation },
+    ]);
+    db.prepare("DELETE FROM tasks").run();
+    expect(db.prepare("SELECT COUNT(*) AS c FROM spawn_receipts").get()).toEqual({ c: 0 });
+  });
+
   it("host_profiles.max_sessions must be positive (or null); wait_cursors is keyed per caller and ref", () => {
     const db = fresh();
     const prof = (max: number | null) =>
@@ -692,7 +740,7 @@ describe("machine-local state", () => {
     expect(() => cur.run("a", "r")).toThrow(/UNIQUE|PRIMARY/i);
   });
 
-  it("a rebuild reports the four tables' rows as lost, not silently dropped", () => {
+  it("a rebuild reports the five tables' rows as lost, not silently dropped", () => {
     const db = fresh();
     ensureWorkstream(db, "d");
     addTask(db, { workstream: "d", localId: "a", title: "a" });
@@ -706,6 +754,10 @@ describe("machine-local state", () => {
     db.prepare(
       "INSERT INTO host_profiles (name, shell, exec, fetch, repo) VALUES ('h','s','e','f','r')",
     ).run();
+    db.prepare(
+      `INSERT INTO spawn_receipts (task_id, attempt_key, name, workstream, request_sha, msg_id, state, created_at, updated_at)
+       VALUES (?, 'manual:a', 'w', 'd', 'sha', 'm', 'sent', 'n', 'n')`,
+    ).run(tid);
     const report = rebuildInto(db, { targetPath: join(dir, `rb-${++n}.db`) });
     expect(report.machineLocalLost).toEqual(
       expect.arrayContaining([
@@ -713,6 +765,7 @@ describe("machine-local state", () => {
         { table: "wait_cursors", rows: 2 },
         { table: "agent_settles", rows: 1 },
         { table: "host_profiles", rows: 1 },
+        { table: "spawn_receipts", rows: 1 },
       ]),
     );
   });

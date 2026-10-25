@@ -34,6 +34,9 @@ import {
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  SpawnAttemptBusyError,
+  SpawnReceiptConflictError,
+  SpawnTrustDialogError,
 } from "../src/agents.js";
 import { NameAmbiguousError } from "../src/cli.js";
 import {
@@ -396,6 +399,21 @@ const cases: NextStepsCase[] = [
     error: new AgentReplacedError("alice", "auth"),
     label: "AgentReplacedError",
     expectedTokens: ["mu agent close alice", "-w auth"],
+  },
+  {
+    error: new SpawnAttemptBusyError("t1", "manual:t1"),
+    label: "SpawnAttemptBusyError",
+    expectedTokens: ["mu task show t1"],
+  },
+  {
+    error: new SpawnReceiptConflictError("t1", "manual:t1", "worker-1"),
+    label: "SpawnReceiptConflictError",
+    expectedTokens: ["--task t1", "--attempt"],
+  },
+  {
+    error: new SpawnTrustDialogError("worker-1"),
+    label: "SpawnTrustDialogError",
+    expectedTokens: ["claude"],
   },
   {
     error: new AgentLockBusyError("alice", "auth"),
