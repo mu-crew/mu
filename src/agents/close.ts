@@ -104,9 +104,10 @@ function worktreeOf(db: Db, workstream: string, name: string, agent?: AgentRow) 
 /** Preview a close: nothing is written, nothing is killed. The one read an
  *  apply is derived from, for orphans and torn-down workstreams too.
  *
- *  Identity and revision come from ONE synchronous read, taken after the
+ *  Identity and revision come from ONE read transaction, taken after the
  *  slow worktree check: the agent row, its worktree row, the owned tasks
- *  and the revision are all of the same instant. The check awaits git, so
+ *  and the revision are all of the same snapshot, also against another
+ *  process's writes. The check awaits git, so
  *  the name may be replaced meanwhile; the snapshot taken before it is then
  *  stale and the read is retried, and a name that will not hold still is
  *  refused (`AgentReplacedError`) rather than described half and half. */
@@ -120,28 +121,34 @@ export async function previewClose(
     const agent = getAgentForCleanup(db, name, opts.workstream);
     const row = worktreeOf(db, opts.workstream, name, agent);
     const state = row === undefined ? undefined : await worktreeState(row.path, row.base, row.root);
-    // No await from here to the return.
-    const now = getAgentForCleanup(db, name, opts.workstream);
-    const nowRow = worktreeOf(db, opts.workstream, name, now);
-    if (
-      now?.incarnation !== agent?.incarnation ||
-      now?.paneId !== agent?.paneId ||
-      nowRow?.path !== row?.path
-    ) {
-      continue;
-    }
-    return {
-      agentName: name,
-      workstream: opts.workstream,
-      kind: now ? "agent" : nowRow ? "orphan-worktree" : "none",
-      revision: agentRevision(db, opts.workstream, name),
-      incarnation: now?.incarnation ?? null,
-      paneId: now?.paneId ?? null,
-      ownedTasks: now ? ownedTasksOf(db, now) : [],
-      worktree: nowRow && state ? { path: nowRow.path, state } : null,
-      refusesDirty: state === "dirty" && !discard,
-      discard,
-    };
+    // No await from here to the return, and ONE read transaction: under WAL
+    // its first read pins a snapshot, so another mu process committing a
+    // replacement cannot land between the identity and the revision.
+    const preview = db.transaction((): ClosePreview | undefined => {
+      const now = getAgentForCleanup(db, name, opts.workstream);
+      const nowRow = worktreeOf(db, opts.workstream, name, now);
+      // The git check above is of the pre-await row: stale when it moved.
+      if (
+        now?.incarnation !== agent?.incarnation ||
+        now?.paneId !== agent?.paneId ||
+        nowRow?.path !== row?.path
+      ) {
+        return undefined;
+      }
+      return {
+        agentName: name,
+        workstream: opts.workstream,
+        kind: now ? "agent" : nowRow ? "orphan-worktree" : "none",
+        revision: agentRevision(db, opts.workstream, name),
+        incarnation: now?.incarnation ?? null,
+        paneId: now?.paneId ?? null,
+        ownedTasks: now ? ownedTasksOf(db, now) : [],
+        worktree: nowRow && state ? { path: nowRow.path, state } : null,
+        refusesDirty: state === "dirty" && !discard,
+        discard,
+      };
+    })();
+    if (preview !== undefined) return preview;
   }
   throw new AgentReplacedError(name, opts.workstream);
 }
