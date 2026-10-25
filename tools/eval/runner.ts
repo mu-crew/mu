@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { MetricsCollector, splitLf } from "./events.ts";
-import { REAL_PI, sandboxSkillDir } from "./sandbox.ts";
+import { REAL_PI, sandboxPi, sandboxSkillDir } from "./sandbox.ts";
 import type { Aborted, RunMetrics, Sandbox, Scenario } from "./types.ts";
 
 export { REAL_PI };
@@ -115,7 +115,7 @@ export async function runAut(
   const started = Date.now();
   const collector = new MetricsCollector();
   // detached: own process group, so a hard stop kills pi and everything it started.
-  const child = spawn(REAL_PI, args, {
+  const child = spawn(existsSync(sandboxPi(sb.dir)) ? sandboxPi(sb.dir) : REAL_PI, args, {
     cwd: sb.repoDir,
     env,
     stdio: ["pipe", "pipe", "pipe"],

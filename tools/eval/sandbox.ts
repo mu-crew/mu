@@ -286,6 +286,57 @@ exit $rc
 `.replace(/\\\$\{/g, "${");
 }
 
+const hostPiInfo: { version?: string; models?: string } = {};
+
+function hostPiOutput(arg: string, fallback: string): string {
+  try {
+    return execFileSync(REAL_PI, [arg], {
+      encoding: "utf8",
+      timeout: 15_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return fallback;
+  }
+}
+
+/** Where the sandbox keeps what the AUT must not stumble on: the real pi (as a sandbox-path symlink, so `ps` shows no host path) and the faux pi's real command line. */
+export function sandboxPi(dir: string): string {
+  return join(dir, ".rt", "pi-real");
+}
+
+/**
+ * The sandbox's `pi`: scripted workers behind a wrapper that looks like a real pi. `--version` and
+ * `--list-models` answer from the host pi's own output (captured once), so the AUT finds nothing odd
+ * and cannot learn the real pi path, the host's ~/.local/bin or the evalfaux provider from bin/pi.
+ */
+function installFauxPi(dir: string, binDir: string, surface: Surface): void {
+  const rt = join(dir, ".rt");
+  mkdirSync(rt, { recursive: true });
+  hostPiInfo.version ??= hostPiOutput("--version", "pi\n");
+  hostPiInfo.models ??= hostPiOutput(
+    "--list-models",
+    "provider  model  context  max-out  thinking  images\n",
+  );
+  writeFileSync(join(rt, "version"), hostPiInfo.version);
+  writeFileSync(join(rt, "models"), hostPiInfo.models);
+  symlinkSync(REAL_PI, sandboxPi(dir));
+  writeShim(
+    join(rt, "pi"),
+    `exec env MU_NUDGE=0 ${JSON.stringify(sandboxPi(dir))} "$@" --no-extensions -e ${JSON.stringify(surface.extension)} -e ${JSON.stringify(FAUX_EXT)} --no-skills --no-context-files --no-session --model evalfaux/worker`,
+  );
+  writeShim(
+    join(binDir, "pi"),
+    `for a in "$@"; do
+  case "$a" in
+    -v|--version) cat ${JSON.stringify(join(rt, "version"))}; exit 0;;
+    --list-models) cat ${JSON.stringify(join(rt, "models"))}; exit 0;;
+  esac
+done
+exec ${JSON.stringify(join(rt, "pi"))} "$@"`,
+  );
+}
+
 export async function createSandbox(
   surface: Surface,
   opts: { env?: Record<string, string> } = {},
@@ -334,10 +385,9 @@ export async function createSandbox(
   // from what the AUT's shell printed around it.
   writeFileSync(join(binDir, "mu"), muShim(surface.cli), { mode: 0o755 });
   // Workers and delegates are scripted: faux model, no mu nudges (they would only rerun the script).
-  writeShim(
-    join(binDir, "pi"),
-    `exec env MU_NUDGE=0 ${JSON.stringify(REAL_PI)} "$@" --no-extensions -e ${JSON.stringify(surface.extension)} -e ${JSON.stringify(FAUX_EXT)} --no-skills --no-context-files --no-session --model evalfaux/worker`,
-  );
+  // The AUT sees a plain `pi` that answers --version / --list-models like the real one; the real pi
+  // path, the extension paths and the faux model name sit one level down in <dir>/.rt (never in bin/).
+  installFauxPi(dir, binDir, surface);
 
   // Bare tmux from the AUT or a worker joins the run's private server (an explicit later -L/-S
   // still wins, but TMUX_TMPDIR keeps even that inside the sandbox).

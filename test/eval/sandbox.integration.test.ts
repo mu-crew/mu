@@ -1,11 +1,12 @@
 // Real tmux: no tmux invocation from inside a sandbox may reach the default server.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createSandbox,
+  REAL_PI,
   realTmux,
   resolveRealTmux,
   sh,
@@ -81,6 +82,20 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
     // absolute-path tmux with no -L lands on the sandbox's own default server: empty, not the user's
     const abs = await sh(sb, `${realTmux} list-sessions -F '#{session_name}'`, { allowFail: true });
     expect(abs.stdout.trim()).toBe("");
+  });
+
+  it("pi in the sandbox answers --version/--list-models like the host pi and names neither the host pi nor evalfaux", async () => {
+    if (REAL_PI === "pi") return; // no pi installed here
+    sb = await createSandbox(surface);
+    const host = (args: string[]) =>
+      execFileSync(REAL_PI, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    expect((await sh(sb, "pi --version")).stdout).toBe(host(["--version"]));
+    expect((await sh(sb, "pi --list-models")).stdout).toBe(host(["--list-models"]));
+    expect((await sh(sb, "command -v pi")).stdout.trim()).toBe(`${sb.binDir}/pi`);
+    const shim = readFileSync(join(sb.binDir, "pi"), "utf8");
+    for (const leak of [REAL_PI, "evalfaux", ".local/bin", "faux"])
+      expect(shim).not.toContain(leak);
+    expect((await sh(sb, "echo $PATH")).stdout).not.toContain(".local/bin");
   });
 
   it("tmux display -p '#{socket_path}' inside the sandbox is under the sandbox dir", async () => {
