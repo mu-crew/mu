@@ -38,7 +38,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **`mu agent spawn --task <id> --send <text>`** records the sent text as the
   task's `brief` note once the send landed (`task: {id, brief:
   "recorded"|"kept"}`); a task that already has a brief keeps it, so a retry
-  never stacks copies. The task is checked before any pane exists (exit 3), and
+  never stacks copies, even across concurrent spawns (the check and insert are
+  one immediate transaction). The task is checked before any pane exists (exit 3), and
   `--task` without `--send` is a usage error. It claims nothing: ownership stays
   `mu task claim`.
 

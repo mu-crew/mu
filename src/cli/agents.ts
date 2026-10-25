@@ -333,13 +333,19 @@ async function recordBrief(
   workstream: string,
   text: string,
 ): Promise<SpawnTask> {
-  const has = selectTaskNotes(db, id, { workstream }).notes.some((n) => n.kind === "brief");
-  if (has) return { id, brief: "kept" };
-  addNote(db, id, text, {
-    workstream,
-    kind: "brief",
-    author: await resolveActorIdentity(),
-  });
+  // Resolve the author first: no await may sit between the check and the INSERT.
+  const author = await resolveActorIdentity();
+  // One IMMEDIATE transaction takes the write lock before the check, so two
+  // concurrent spawns (in-process or separate CLIs) cannot both see "no brief".
+  const recorded = db
+    .transaction((): boolean => {
+      if (selectTaskNotes(db, id, { workstream }).notes.some((n) => n.kind === "brief"))
+        return false;
+      addNote(db, id, text, { workstream, kind: "brief", author });
+      return true;
+    })
+    .immediate();
+  if (!recorded) return { id, brief: "kept" };
   return { id, brief: "recorded" };
 }
 
