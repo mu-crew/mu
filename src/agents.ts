@@ -69,6 +69,7 @@ export {
   AgentSpawnStartupError,
   SpawnAttemptBusyError,
   SpawnReceiptConflictError,
+  SpawnTaskStateError,
   SpawnTrustDialogError,
 } from "./agents/errors.js";
 export { withAgentLock } from "./agents/lock.js";
@@ -123,7 +124,7 @@ export {
   waitForAgents,
 } from "./agents/wait.js";
 
-import { AgentExistsError, AgentNotFoundError } from "./agents/errors.js";
+import { AgentExistsError, AgentNotFoundError, AgentReplacedError } from "./agents/errors.js";
 import {
   agentCtlSocket,
   recordSend,
@@ -606,10 +607,24 @@ export async function sendToAgent(
   db: Db,
   name: string,
   text: string,
-  opts: TransportSendOptions & { workstream: string },
+  opts: TransportSendOptions & {
+    workstream: string;
+    /**
+     * The registry id + pane the caller means (a just-spawned agent): the
+     * name now holding another one is refused (AgentReplacedError), the
+     * prompt never goes to a replacement.
+     */
+    expect?: { incarnation: number; paneId: string };
+  },
 ): Promise<SendResult> {
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) throw new AgentNotFoundError(name);
+  if (
+    opts.expect !== undefined &&
+    (agent.incarnation !== opts.expect.incarnation || agent.paneId !== opts.expect.paneId)
+  ) {
+    throw new AgentReplacedError(name, opts.workstream, "sent to");
+  }
   const sent = await sendViaTransport(agent, text, {
     ...opts,
     socket: opts.socket ?? agentCtlSocket(db, agent),

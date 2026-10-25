@@ -36,6 +36,7 @@ import {
   AgentSpawnStartupError,
   SpawnAttemptBusyError,
   SpawnReceiptConflictError,
+  SpawnTaskStateError,
   SpawnTrustDialogError,
 } from "../src/agents.js";
 import { NameAmbiguousError } from "../src/cli.js";
@@ -399,6 +400,16 @@ const cases: NextStepsCase[] = [
     error: new AgentReplacedError("alice", "auth"),
     label: "AgentReplacedError",
     expectedTokens: ["mu agent close alice", "-w auth"],
+  },
+  {
+    error: new AgentReplacedError("alice", "auth", "sent to"),
+    label: "AgentReplacedError (send)",
+    expectedTokens: ["mu agent list", "-w auth"],
+  },
+  {
+    error: new SpawnTaskStateError("t1", "was closed"),
+    label: "SpawnTaskStateError",
+    expectedTokens: ["mu task show t1"],
   },
   {
     error: new SpawnAttemptBusyError("t1", "manual:t1"),

@@ -53,6 +53,7 @@ import {
   AgentSpawnStartupError,
   SpawnAttemptBusyError,
   SpawnReceiptConflictError,
+  SpawnTaskStateError,
   SpawnTrustDialogError,
 } from "../agents.js";
 import {
@@ -464,6 +465,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentReplacedError ||
     err instanceof AgentLockBusyError ||
     err instanceof SpawnAttemptBusyError ||
+    err instanceof SpawnTaskStateError ||
     err instanceof SpawnReceiptConflictError
   ) {
     // The name changed hands, or another mu holds the agent: retry after a preview.
