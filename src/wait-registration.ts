@@ -4,9 +4,10 @@
 // refs that a later `mu wait` must still answer: the tasks, agents and
 // delegate calls this caller started. Two jobs, both small:
 //
-//   1. Registration. `registerOwnedWait` merges real, validated refs into
-//      the caller's row (deduped, in one canonical order). Refs come from
-//      mu's own producers as typed values, never from parsing a shell line.
+//   1. Registration. `registerOwnedWait` merges real refs into the caller's
+//      row (deduped, in one canonical order): each must name an entity that
+//      exists when it is registered. Refs come from mu's own producers as
+//      typed values, never from parsing a shell line.
 //   2. One active wait per caller. `beginWait` bumps the row's `generation`
 //      and marks it `waiting`; `endWait` is a compare-and-set on that
 //      generation, so an older wait that finishes late (or twice) cannot
@@ -59,9 +60,8 @@ export class WaitRegistrationError extends Error {
   override readonly name = "WaitRegistrationError";
 }
 
-// A delegate call id is minted by mu (a short token); accept that alphabet only.
-const DELEGATE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const CALLER_MAX = 200;
+const ID_MAX = 512;
 
 function checkCaller(caller: string): void {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are the point
@@ -86,7 +86,7 @@ function checkRef(ref: RegisteredRef): void {
       ? isValidTaskId(ref.id)
       : ref.kind === "agent"
         ? isValidAgentName(ref.id)
-        : DELEGATE_ID_RE.test(ref.id));
+        : ref.id !== "" && ref.id.length <= ID_MAX); // a call id is whatever delegate_calls stores
   if (!ok) throw new WaitRegistrationError(`wait registration: bad ${ref.kind} id in ${where}`);
 }
 
@@ -98,6 +98,37 @@ function compareRefs(a: RegisteredRef, b: RegisteredRef): number {
     compareStrings(a.workstream, b.workstream) ||
     compareStrings(a.id, b.id)
   );
+}
+
+/**
+ * Refuse the first ref (canonical order) whose entity does not exist now:
+ * the workstream, the task or agent in it, or the delegate call exactly as
+ * `delegate_calls.call_id` stores it (and its task in that workstream).
+ * Called inside the registering transaction.
+ */
+function checkRefsExist(db: Db, refs: readonly RegisteredRef[]): void {
+  const hasWorkstream = db.prepare("SELECT 1 FROM workstreams WHERE name = ?");
+  const hasTask = db.prepare(
+    "SELECT 1 FROM tasks t JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = ? AND t.local_id = ?",
+  );
+  const hasAgent = db.prepare(
+    "SELECT 1 FROM agents a JOIN workstreams w ON w.id = a.workstream_id WHERE w.name = ? AND a.name = ?",
+  );
+  const hasCall = db.prepare(
+    "SELECT 1 FROM delegate_calls d JOIN tasks t ON t.id = d.task_id JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = ? AND d.call_id = ?",
+  );
+  for (const ref of refs) {
+    const where = `${ref.kind} ${ref.workstream}/${ref.id}`;
+    if (hasWorkstream.get(ref.workstream) === undefined) {
+      throw new WaitRegistrationError(
+        `wait registration: no workstream ${ref.workstream} (for ${where}); nothing registered`,
+      );
+    }
+    const stmt = ref.kind === "task" ? hasTask : ref.kind === "agent" ? hasAgent : hasCall;
+    if (stmt.get(ref.workstream, ref.id) === undefined) {
+      throw new WaitRegistrationError(`wait registration: no ${where}; nothing registered`);
+    }
+  }
 }
 
 /** Validate, dedupe and order `refs` (copies; the input is not touched). */
@@ -155,8 +186,10 @@ export function readWaitRegistration(db: Db, caller: string): WaitRegistration |
  * Add `refs` to what `caller` owes a wait. Merges with the refs already
  * owed (deduped, canonical order) and keeps `state` and `generation`, so
  * registering while a wait is in flight neither disturbs it nor is lost
- * when it ends. Refuses the whole call (nothing stored) on a bad caller,
- * a bad or unknown ref, an empty list, or more than
+ * when it ends. Every ref must exist now (checked in the same transaction
+ * that writes); a ref whose entity is deleted LATER stays owed. Refuses the
+ * whole call (nothing stored) on a bad caller, a bad or missing ref, an
+ * empty list, or more than
  * WAIT_REGISTRATION_MAX_REFS refs owed in total.
  */
 export function registerOwnedWait(
@@ -169,6 +202,7 @@ export function registerOwnedWait(
   const add = canonical(refs);
   return db
     .transaction((): WaitRegistration => {
+      checkRefsExist(db, add);
       const row = select(db, caller);
       const have = row === undefined ? [] : parse(row).refs;
       const merged = canonical([...have, ...add]);
