@@ -271,7 +271,7 @@ for (const where of ["inside", "outside"] as const) {
       setEnv({ ...MANAGED, TMUX_PANE: "%9" });
       const r = await runCliJson(["me", "--json"], dbPath);
       expect(r.exitCode, r.stderr).toBeNull();
-      expect(r.data.agent).toMatchObject({ name: "self-1", workstreamName: "own" });
+      expect(r.data.agent).toMatchObject({ name: "self-1", workstream: "own" });
     });
 
     it("me: injected identity works with no $TMUX_PANE at all", async () => {

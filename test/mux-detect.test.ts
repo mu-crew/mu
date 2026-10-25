@@ -273,6 +273,17 @@ describe("tmuxBackend conforms to the MuxBackend contract", () => {
 });
 
 describe("attachCommands + attachShellLine", () => {
+  // The suite runs on a private socket; these cases are about the default one.
+  let savedSocket: string | undefined;
+  beforeEach(() => {
+    savedSocket = process.env.MU_TMUX_SOCKET;
+    const key = "MU_TMUX_SOCKET";
+    delete process.env[key];
+  });
+  afterEach(() => {
+    if (savedSocket !== undefined) process.env.MU_TMUX_SOCKET = savedSocket;
+  });
+
   // src/cli/agents.ts prints the joined line and the TUI runs the steps.
   // Both come from the BACKEND: a herdr user handed `tmux attach` is
   // worse off than one handed nothing.
@@ -283,21 +294,17 @@ describe("attachCommands + attachShellLine", () => {
     expect(attachShellLine(steps)).toBe("tmux switch-client -t mu-auth:worker-1");
   });
 
-  it("outside a client, attaches then selects the window in two steps", async () => {
-    // `tmux attach -t session:window` does not reliably select the
-    // window across tmux versions, hence the explicit second step.
+  it("outside a client, ONE attach whose target names the window", async () => {
+    // The blocking attach is the last thing that runs, so the window must
+    // ride in its target: a select-window after it runs only on detach.
     const steps = await tmuxBackend.attachCommands({ session: "mu-auth", window: "worker-1" });
-    expect(steps.map((c) => c.args[0])).toEqual(["attach-session", "select-window"]);
-    // The select is decorative: failing it still leaves the user in
-    // the right session, so the runner must not report an error.
-    expect(steps[1]?.optional).toBe(true);
-    expect(steps[1]?.reason).toBeTruthy();
-    expect(attachShellLine(steps)).toBe(
-      "tmux attach-session -t mu-auth && { tmux select-window -t mu-auth:worker-1 || true; }",
-    );
+    expect(steps).toEqual([
+      { command: "tmux", args: ["attach-session", "-t", "mu-auth:worker-1"] },
+    ]);
+    expect(attachShellLine(steps)).toBe("tmux attach-session -t mu-auth:worker-1");
   });
 
-  it("a session-only target omits window selection entirely", async () => {
+  it("a session-only target attaches to the session", async () => {
     // `mu workstream init` has no agent yet, so there is no window.
     expect(await tmuxBackend.attachCommands({ session: "mu-auth" })).toHaveLength(1);
   });

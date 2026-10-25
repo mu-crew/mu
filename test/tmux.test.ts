@@ -552,23 +552,48 @@ function expectEnvFlag(args: string[], key: string, value: string): void {
 // ─── attachCommands ────────────────────────────────────────────────────
 
 describe("attachCommands", () => {
+  // The suite runs on a private socket; the default-socket cases clear it.
+  let savedSocket: string | undefined;
+  beforeEach(() => {
+    savedSocket = process.env.MU_TMUX_SOCKET;
+    const key = "MU_TMUX_SOCKET";
+    delete process.env[key];
+  });
+  afterEach(() => {
+    if (savedSocket !== undefined) process.env.MU_TMUX_SOCKET = savedSocket;
+  });
+
   it("inside a client: one switch-client step", async () => {
     expect(await attachCommands({ session: "mu-a", window: "w", inside: true })).toEqual([
       { command: "tmux", args: ["switch-client", "-t", "mu-a:w"] },
     ]);
   });
 
-  it("outside: attach-session, then a best-effort select-window carrying its reason", async () => {
-    const steps = await attachCommands({ session: "mu-a", window: "w" });
-    expect(steps.map((s) => s.args)).toEqual([
-      ["attach-session", "-t", "mu-a"],
-      ["select-window", "-t", "mu-a:w"],
+  it("outside: ONE attach-session whose target names the window (nothing after the blocking attach)", async () => {
+    expect(await attachCommands({ session: "mu-a", window: "w" })).toEqual([
+      { command: "tmux", args: ["attach-session", "-t", "mu-a:w"] },
     ]);
-    expect(steps[1]?.optional).toBe(true);
-    expect(steps[1]?.reason).toBeTruthy();
   });
 
-  it("outside with no window: attach-session only", async () => {
-    expect(await attachCommands({ session: "mu-a" })).toHaveLength(1);
+  describe("with a private socket (MU_TMUX_SOCKET)", () => {
+    beforeEach(() => {
+      process.env.MU_TMUX_SOCKET = "mu-private";
+    });
+
+    it("every step is routed with -L, outside and inside", async () => {
+      const outside = await attachCommands({ session: "mu-a", window: "w" });
+      expect(outside.map((s) => s.args)).toEqual([
+        ["-L", "mu-private", "attach-session", "-t", "mu-a:w"],
+      ]);
+      expect(await attachCommands({ session: "mu-a", window: "w", inside: true })).toEqual([
+        { command: "tmux", args: ["-L", "mu-private", "switch-client", "-t", "mu-a:w"] },
+      ]);
+    });
+  });
+
+  it("outside with no window: the session alone", async () => {
+    expect(await attachCommands({ session: "mu-a" })).toEqual([
+      { command: "tmux", args: ["attach-session", "-t", "mu-a"] },
+    ]);
   });
 });

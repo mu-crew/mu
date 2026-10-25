@@ -523,10 +523,13 @@ async function tmuxAvailable(): Promise<boolean> {
 // ─── Attach ────────────────────────────────────────────────────
 //
 // From INSIDE a tmux client the right verb is `switch-client`, which
-// repoints the existing client and returns immediately. From outside
-// it is `attach-session` followed by a separate `select-window`: `tmux
-// attach -t session:window` does not reliably select the window across
-// tmux versions, and the select must run after the attach detaches.
+// repoints the existing client and returns immediately. From outside it
+// is ONE `attach-session -t <session>:<window>`: the window half of the
+// target selects the window the client opens on. (A separate
+// `select-window` after the attach would run only once the blocking
+// client detached.) Every step carries the same `-L <socket>` as `tmux()`
+// does, so the line printed for a private `MU_TMUX_SOCKET` reaches the
+// server that holds the session, not the user's default one.
 
 function attachTargetSpec(target: AttachTarget): string {
   return target.window === undefined ? target.session : `${target.session}:${target.window}`;
@@ -534,19 +537,10 @@ function attachTargetSpec(target: AttachTarget): string {
 
 export async function attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]> {
   const spec = attachTargetSpec(target);
-  if (target.inside === true) {
-    return [{ command: "tmux", args: ["switch-client", "-t", spec] }];
-  }
-  const steps: MuxCommand[] = [{ command: "tmux", args: ["attach-session", "-t", target.session] }];
-  if (target.window !== undefined) {
-    steps.push({
-      command: "tmux",
-      args: ["select-window", "-t", spec],
-      optional: true,
-      reason: "if it fails you are still in the right session",
-    });
-  }
-  return steps;
+  const socket = process.env.MU_TMUX_SOCKET;
+  const route = socket === undefined || socket.length === 0 ? [] : ["-L", socket];
+  const verb = target.inside === true ? "switch-client" : "attach-session";
+  return [{ command: "tmux", args: [...route, verb, "-t", spec] }];
 }
 
 // ─── Diagnostics ────────────────────────────────────────────────

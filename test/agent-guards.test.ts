@@ -593,9 +593,9 @@ describe("CLI: bare close previews, --if applies", () => {
     expect(r.data).toMatchObject({
       kind: "agent",
       dryRun: true,
-      paneId: "%1",
+      pane_id: "%1",
       revision: agentRevision(db, "auth", "w1"),
-      incarnation: getAgent(db, "w1", "auth")?.incarnation,
+      id: getAgent(db, "w1", "auth")?.incarnation,
     });
     expect(r.data.nextSteps[0].command).toBe(
       `mu agent close w1 -w auth --if ${agentRevision(db, "auth", "w1")}`,

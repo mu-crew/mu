@@ -33,7 +33,7 @@ copy backend.
 | Workstream | session `mu-<ws>` | workspace labelled `mu-<ws>` |
 | Window | window | tab |
 | Pane id | `%15` | `w1:p1` |
-| Attach | `tmux attach -t mu-<ws>` | `herdr workspace focus <id>`, then `herdr` outside a herdr pane |
+| Attach | `tmux attach -t mu-<ws>` (a spawn prints `attach-session -t mu-<ws>:<agent>`, `-L <socket>` on a private socket, `switch-client` inside tmux) | `herdr workspace focus <id>`, then `herdr` outside a herdr pane |
 | pi agent state | control socket | control socket |
 | Other agents' state | murmur | herdr |
 | Send to non-pi agents | refused (exit 4) | one atomic `agent prompt` |

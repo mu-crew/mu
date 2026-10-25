@@ -288,7 +288,7 @@ describe("--json output on read verbs", () => {
     const { data } = await runCliJson(["state", "-w", "auth", "--json"], dbPath);
     const parsed = data as {
       workstreamName: string;
-      agents: Array<{ name: string; status: string; workstreamName: string }>;
+      agents: Array<{ name: string; workstream: string }>;
       orphans: unknown[];
       tracks: Array<{ roots: Array<{ name: string; title: string }>; readyCount: number }>;
       ready: Array<{ name: string; title: string; status: string; roi?: number }>;
@@ -300,7 +300,7 @@ describe("--json output on read verbs", () => {
 
     expect(parsed.workstreamName).toBe("auth");
     expect(parsed.agents).toEqual([
-      expect.objectContaining({ name: "worker-1", workstreamName: "auth" }),
+      expect.objectContaining({ name: "worker-1", workstream: "auth" }),
     ]);
     expect(parsed.orphans).toEqual([]);
     expect(parsed.ready).toEqual(
@@ -349,15 +349,16 @@ describe("--json output on read verbs", () => {
     const { data } = await runCliJson(["agent", "list", "-w", "auth", "--json"], dbPath);
     const parsed = data as {
       workstreamName: string;
-      agents: Array<{ name: string; paneId: string; status: string; workstreamName: string }>;
+      agents: Array<{ name: string; pane_id: string; workstream: string; workstream_id: number }>;
       orphans: unknown[];
     };
     expect(parsed.workstreamName).toBe("auth");
     expect(parsed.agents).toEqual([
       expect.objectContaining({
         name: "worker-1",
-        paneId: "%42",
-        workstreamName: "auth",
+        pane_id: "%42",
+        workstream: "auth",
+        workstream_id: expect.any(Number),
       }),
     ]);
     expect(parsed.orphans).toEqual([]);

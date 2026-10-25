@@ -11,6 +11,12 @@
 // stayed (with `cmdMe` formerly `cmdWhoami`).
 
 import { dirname } from "node:path";
+import {
+  agentToOutput,
+  closePreviewToOutput,
+  liveAgentToOutput,
+  workstreamIdOf,
+} from "../agent-output.js";
 import { agentKey, blockedReason, ctlRuntimeState, readAgentStates } from "../agent-state.js";
 import {
   AgentCtlUnreachableError,
@@ -61,7 +67,14 @@ import { type CtlBlocked, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
-import { listTasksByOwner } from "../tasks.js";
+import {
+  addNote,
+  getTask,
+  listTasksByOwner,
+  resolveActorIdentity,
+  selectTaskNotes,
+  TaskNotFoundError,
+} from "../tasks.js";
 import { dispatchHint, waitHint } from "./dispatch-hints.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
@@ -81,6 +94,8 @@ interface SpawnOpts {
   nextFree?: boolean;
   /** Send this text once the agent is up (`-` reads stdin). */
   send?: string;
+  /** Record the sent text as this task's brief (needs `--send`). Claims nothing. */
+  task?: string;
   json?: boolean;
 }
 // --from / --root only mean something with --worktree; refuse a stray one
@@ -108,6 +123,15 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
         : opts.send;
 
   assertWorktreeFlags(opts);
+  // --task is checked before any side effect: no pane for a task that is not there.
+  if (opts.task !== undefined) {
+    if (sendText === undefined) {
+      throw new UsageError("--task needs --send: the sent text is the task's brief");
+    }
+    if (getTask(db, opts.task, workstream) === undefined) {
+      throw new TaskNotFoundError(opts.task, workstream);
+    }
+  }
 
   const agent = await spawnAgent(db, {
     name: rawName,
@@ -165,6 +189,14 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     : sendText === undefined
       ? undefined
       : await spawnSend(db, agent, sendText);
+  // The brief is the first prompt the worker got: recorded once it landed, and
+  // never copied again when the task already has one (kept: no recursive copies).
+  const task: SpawnTask | undefined =
+    opts.task === undefined || sendText === undefined
+      ? undefined
+      : sent?.ok === true && sent.delivered
+        ? await recordBrief(db, opts.task, workstream, sendText)
+        : undefined;
   // Resolve the actual command that landed in the pane, so the operator
   // can confirm `--command 'pi-meta --no-solo'` (etc.) took effect.
   // Mirrors the resolution chain in spawnAgent: explicit --command >
@@ -210,7 +242,11 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   }
   if (opts.json) {
     const payload = {
-      agent,
+      agent: agentToOutput(agent, workstreamIdOf(db, workstream), {
+        ctl: agent.ctl,
+        ctlSocket: agent.ctlSocket,
+        ...(agent.trustDialog === true ? { trustDialog: true } : {}),
+      }),
       resolvedCommand,
       commandOverridden,
       // env-var attribution for machine consumers: present iff the
@@ -220,6 +256,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
       ctl: agent.ctl,
       ctlSocket: agent.ctlSocket,
       ...(sent !== undefined ? { send: sent } : {}),
+      ...(task !== undefined ? { task } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
       nextSteps,
     };
@@ -270,8 +307,40 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
         : pc.red(`error: --send failed: ${sent.message}`),
     );
   }
+  if (task !== undefined) {
+    console.log(
+      pc.dim(
+        task.brief === "recorded"
+          ? `  brief recorded on ${task.id}`
+          : `  ${task.id} already has a brief; kept`,
+      ),
+    );
+  }
   printNextSteps(nextSteps);
   if (sent !== undefined && !sent.ok && sent.exitCode !== 0) throw new CliExitError(sent.exitCode);
+}
+
+/** What `spawn --task` did with the brief: wrote it, or found one and kept it. */
+interface SpawnTask {
+  id: string;
+  brief: "recorded" | "kept";
+}
+
+/** INSERT `text` as the task's `brief` note unless the task already has one. */
+async function recordBrief(
+  db: Db,
+  id: string,
+  workstream: string,
+  text: string,
+): Promise<SpawnTask> {
+  const has = selectTaskNotes(db, id, { workstream }).notes.some((n) => n.kind === "brief");
+  if (has) return { id, brief: "kept" };
+  addNote(db, id, text, {
+    workstream,
+    kind: "brief",
+    author: await resolveActorIdentity(),
+  });
+  return { id, brief: "recorded" };
 }
 
 /** `mu agent spawn --send`: the outcome of the send, as `--json` reports it. */
@@ -543,7 +612,12 @@ export async function cmdList(
   const workstream = await resolveWorkstream(opts.workstream);
   const view = await listLiveAgents(db, { workstream });
   if (opts.json) {
-    emitJson({ workstreamName: workstream, agents: view.agents, orphans: view.orphans });
+    const wsId = workstreamIdOf(db, workstream);
+    emitJson({
+      workstreamName: workstream,
+      agents: view.agents.map((a) => liveAgentToOutput(a, wsId)),
+      orphans: view.orphans,
+    });
     return;
   }
   console.log(pc.bold(`mu-${workstream}`));
@@ -598,7 +672,11 @@ export async function cmdAgentShow(
   };
 
   if (opts.json) {
-    emitJson({ agent: displayed, scrollback, scrollbackLines: countLines(scrollback) });
+    emitJson({
+      agent: liveAgentToOutput(displayed, workstreamIdOf(db, agent.workstreamName)),
+      scrollback,
+      scrollbackLines: countLines(scrollback),
+    });
     return;
   }
 
@@ -647,7 +725,10 @@ export async function cmdMe(
   });
 
   if (opts.json) {
-    emitJson({ agent: displayed, ownedTasks: owned });
+    emitJson({
+      agent: liveAgentToOutput(displayed, workstreamIdOf(db, self.workstreamName)),
+      ownedTasks: owned,
+    });
     return;
   }
 
@@ -687,7 +768,7 @@ export async function cmdClose(
             },
           ];
     if (opts.json) {
-      emitJson({ ...p, dryRun: true, nextSteps: next });
+      emitJson({ ...closePreviewToOutput(p), dryRun: true, nextSteps: next });
       return;
     }
     printClosePreview(p);
@@ -1207,12 +1288,17 @@ export function wireAgentCommands(program: Command): void {
       "--send <text>",
       "send this text once the agent is up (one mu call for spawn + send; `-` reads stdin). A failed send keeps the pane and exits non-zero; --json still prints the spawn with send.error",
     )
+    .option(
+      "--task <id>",
+      "with --send: record the sent text as this task's brief once it landed (kept when the task already has one). Claims nothing: `mu task claim` is the ownership step",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string) {
       const opts = (this as Command).opts() as {
         nextFree?: boolean;
         send?: string;
+        task?: string;
         cli?: string;
         command?: string;
         tab?: string;
