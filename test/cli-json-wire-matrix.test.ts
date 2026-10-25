@@ -67,6 +67,7 @@ const ARGS: Record<string, string[]> = {
   "db backup": ["BACKUP_TARGET"],
   "db compact": [],
   "db forget": ["probe"],
+  "db query": ["SELECT 1 AS one"],
   doctor: [],
   "pi migrate": [],
 };

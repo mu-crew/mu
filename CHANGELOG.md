@@ -232,6 +232,35 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **`mu db query` replaces `mu sql`; `mu sql` stays as the same verb.**
+  In-process SQL on the capture path, as before (one `sql.write` group,
+  `--confirm-rows`, sync ingest before and flush after, even on error), now
+  with `-w` scoping `ready`/`blocked`/`blockers` to one workstream (per-connection
+  `TEMP` views carrying the resolved workstream id as a literal; same columns;
+  torn-down filtering kept; `main.ready` is still the global view; a spawned
+  worker defaults to its own). `no such column` is one line (exit 2) naming the
+  closest columns and the real columns of the tables the query names. A
+  non-positive explicit id is a one-line usage error. `mu db --shell [-w ws]`
+  runs `sqlite3 -readonly -safe` on the DB with the same views. `db backup`,
+  `compact` and `forget` stay. Hints in errors, `doctor` and `drift` now teach
+  `mu db query`. Not changed here: rows still print as a table without
+  `--json` and are not capped.
+- **SQL cannot disable or forge capture (rv6_sql_ctx_tamper).** SQLite's own
+  `EXPLAIN` listing, trigger bodies included, decides: a statement that writes
+  `op_ctx`, `op_dying`, `ops`, `schema_version` or `sqlite_master` is refused
+  before it runs, unless a main `_cap_*` trigger does it. That closes `UPDATE
+  op_ctx SET applying=1`, forged `actor`/`intent`, `UPDATE`/`DELETE` on `ops`, a
+  `TEMP` trigger that flips `applying`, a shadowing `TEMP` table, and
+  `DROP`/`CREATE TRIGGER`. Every main-schema `CREATE`/`DROP`/`ALTER` goes with
+  it; `TEMP` objects stay allowed.
+- **A PRAGMA can no longer change the connection (`foreign_keys`,
+  `busy_timeout`, `query_only` and the rest).** SQLite applies a PRAGMA when it
+  compiles it, even in a statement that then fails; the settings are compared
+  and restored around every prepare and run, and the call is refused.
+- **`; BEGIN` is refused (rv6p2_sql_leading_semicolon).** Leading `;`,
+  whitespace and comments are skipped before the transaction check, and a
+  statement SQLite cannot list now fails the call instead of passing it.
+
 - **Capture UPDATE triggers are a flat `json_group_object` over the
   changed columns.** The nested-CASE form doubled the trigger text per
   column (two columns took `_cap_tasks_upd` from 274 KB to 1.09 MB, +12 ms

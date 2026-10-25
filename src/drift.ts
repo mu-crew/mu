@@ -431,7 +431,7 @@ export function driftRemediation(): readonly string[] {
     "  1. Back up first, before anything else:  mu db backup /tmp/mu-drift-evidence.db",
     "  2. Materialize what the log believes:    mu rebuild /tmp/mu-rebuilt.db",
     "  3. Compare the two by hand for the keys named above, and decide which",
-    "     side is correct. `mu sql` against both files is the fastest way.",
+    "     side is correct. `mu db query` against both files is the fastest way.",
     "  4. Report it: drift is a capture/apply BUG, not operator error. The",
     "     named table/key/field above is the reproduction.",
   ];
@@ -468,7 +468,7 @@ export class DriftDetectedError extends Error implements HasNextSteps {
       { intent: "Materialize what the log believes", command: "mu rebuild /tmp/mu-rebuilt.db" },
       {
         intent: "Compare the named keys by hand before choosing a side",
-        command: 'mu sql "SELECT local_id, title, status, impact FROM tasks"',
+        command: 'mu db query "SELECT local_id, title, status, impact FROM tasks"',
       },
     ];
   }

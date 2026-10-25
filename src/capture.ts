@@ -472,7 +472,7 @@ function positiveIdGuard(table: keyof typeof KEY_COLUMNS): CaptureTrigger {
     `AFTER INSERT ON ${table}
   WHEN ${NOT_APPLYING} AND ${ID_EXPR[table]} <= 0
 BEGIN
-  SELECT RAISE(ABORT, 'mu: explicit non-positive ids are refused');`,
+  SELECT RAISE(ABORT, '${GUARD_NONPOSITIVE_ID}');`,
   );
 }
 
@@ -509,6 +509,8 @@ export const GUARD_ALREADY_OWNED = "mu: task already owned; release it first";
 export const GUARD_NEEDS_EVIDENCE = 'mu: close needs evidence (--evidence "<command + result>")';
 /** A task went CLOSED/done while a blocker is still OPEN or IN_PROGRESS. */
 export const GUARD_OPEN_BLOCKERS = "mu: task has open blockers";
+/** An INSERT named an id <= 0 (see positiveIdGuard). */
+export const GUARD_NONPOSITIVE_ID = "mu: explicit non-positive ids are refused";
 
 /** WHEN fragment: this UPDATE closes the task (OPEN/IN_PROGRESS -> CLOSED,
  *  or a CLOSED task reclassified to another substate). */

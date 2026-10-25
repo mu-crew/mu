@@ -132,13 +132,22 @@ import {
 } from "../worktree.js";
 
 export class UsageError extends Error {
-  override readonly name = "UsageError";
+  override readonly name: string = "UsageError";
   /** `false`: the message already names the fix, so emitError prints it
    *  alone (exit 2) instead of following it with the verb's --help. */
   readonly showHelp: boolean;
   constructor(message: string, opts: { showHelp?: boolean } = {}) {
     super(message);
     this.showHelp = opts.showHelp ?? true;
+  }
+}
+
+/** `mu db query` hit `no such column`: the message already names the columns
+ *  and the closest ones, so it is one line (exit 2, no help dump). */
+export class SqlColumnError extends UsageError {
+  override readonly name = "SqlColumnError";
+  constructor(message: string) {
+    super(message, { showHelp: false });
   }
 }
 

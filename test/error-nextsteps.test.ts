@@ -703,17 +703,17 @@ describe("TaskNotFoundError SQL recipes execute against the live schema", () => 
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('every `mu sql "SELECT ..."` recipe parses and runs (no stale columns)', () => {
+  it('every `mu db query "SELECT ..."` recipe parses and runs (no stale columns)', () => {
     const err = new TaskNotFoundError("foo");
     const steps = err.errorNextSteps();
-    const recipes = steps.map((s) => s.command).filter((c) => c.startsWith('mu sql "SELECT'));
+    const recipes = steps.map((s) => s.command).filter((c) => c.startsWith('mu db query "SELECT'));
     expect(recipes.length).toBeGreaterThan(0);
 
     const db = openDb({ path: dbPath });
     try {
       for (const recipe of recipes) {
-        // Strip `mu sql "..."` wrapper to get raw SQL.
-        const sql = recipe.replace(/^mu sql "(.*)"$/, "$1");
+        // Strip `mu db query "..."` wrapper to get raw SQL.
+        const sql = recipe.replace(/^mu db query "(.*)"$/, "$1");
         expect(() => db.prepare(sql).all()).not.toThrow();
       }
     } finally {

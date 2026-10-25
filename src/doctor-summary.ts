@@ -634,7 +634,7 @@ export function yankCommandForCheck(check: Pick<DoctorCheck, "name" | "status">)
       // must make deliberately, so yank the inspection, not a mutation.
       return "# check MU_DB_PATH / MU_SYNC_DIR; see `mu doctor` for the full explanation";
     case "name-case":
-      return 'mu sql "SELECT name FROM workstreams ORDER BY LOWER(name)"';
+      return 'mu db query "SELECT name FROM workstreams ORDER BY LOWER(name)"';
     case "schema":
     case "schema_version":
     case "capture":

@@ -53,7 +53,7 @@ export class TaskNotFoundError extends Error implements HasNextSteps {
     // hint a user sees on a missed-task lookup, so the breakage was
     // high-traffic. Mirror the join pattern used by AgentExistsError.
     const idLit = this.taskId.replace(/'/g, "''").toLowerCase();
-    const recipe = `mu sql "SELECT ws.name AS workstream, t.local_id, t.status, t.title FROM tasks t JOIN workstreams ws ON ws.id = t.workstream_id WHERE LOWER(t.local_id) LIKE '%${idLit}%' OR LOWER(t.title) LIKE '%${idLit}%'"`;
+    const recipe = `mu db query "SELECT ws.name AS workstream, t.local_id, t.status, t.title FROM tasks t JOIN workstreams ws ON ws.id = t.workstream_id WHERE LOWER(t.local_id) LIKE '%${idLit}%' OR LOWER(t.title) LIKE '%${idLit}%'"`;
     return [
       { intent: "List tasks in workstream", command: "mu task list -w <workstream>" },
       { intent: "Search every workstream by substring (id + title)", command: recipe },
