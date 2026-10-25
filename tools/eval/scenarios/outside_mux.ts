@@ -1,5 +1,7 @@
 // Outside a multiplexer: the caller is a plain shell (t3code, an IDE terminal, CI): TMUX, TMUX_PANE
-// and HERDR_ENV are unset (setup asserts it; the sandbox env is a whitelist). mu still has tmux on
+// and HERDR_ENV are unset and MU_MUX is blank (setup asserts it; the sandbox env is a whitelist, and
+// the sandbox's own MU_MUX=tmux override is blanked so mu runs the detection a plain shell runs,
+// down to the "tmux is installed" rung). mu still has tmux on
 // PATH and starts its own detached server, so a worker and a delegate wave must run to completion
 // with no pane the caller can see, no tmux client and no prod.
 //
@@ -44,8 +46,10 @@ const scenario: Scenario = {
     "You are in a plain shell, not inside tmux or herdr. Workstream eval has a worker task o1 (a pi worker needs several seconds for it) and two claims in tasks c1 and c2 (claim-1 and claim-2). Get o1 done by a worker and merge its commit into main in the repo you are in. Get each claim independently checked (quote the claim, with its claim-N name, in the prompt of its check) with the verdict recorded on its task, then close each task as done if confirmed or rejected if refuted. Work until it is done; do not ask me questions, and do not stop while work is still running.",
   timeoutMs: 600_000,
   check: { quietMs: 3000, maxProds: 1 },
+  env: { MU_MUX: "" },
   async setup(sb) {
     const leaked = ["TMUX", "TMUX_PANE", "HERDR_ENV"].filter((k) => sb.env[k] !== undefined);
+    if (sb.env.MU_MUX) leaked.push("MU_MUX");
     if (leaked.length > 0)
       throw new Error(`outside_mux: caller env still has ${leaked.join(", ")}`);
     await makeRepo(sb, { "notes.txt": "start\n" });

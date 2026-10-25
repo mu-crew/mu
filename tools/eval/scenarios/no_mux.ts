@@ -8,12 +8,14 @@
 //    the exact note, then is closed done, and nothing else was written;
 //  - the scripted check (judge, independent of the AUT's words): `doctor` and every agent verb (plus
 //    `workstream init` and `state`) refuse with exit 5 and ONE stderr line naming the install, and
-//    task add/list/close, `sql`, `db query` and `sync` succeed. 3.x refuses over several lines
-//    and `doctor` exits 1: that is carried as N/A baseline (lifecycle.native), never a pass.
+//    task add/list/close, `sql`, `db query` and `sync` succeed (sync into a real scratch dir,
+//    and a segment must land there). 3.x has no `db query`, `doctor` exits 0 with no refusal and the
+//    other refusals run over several lines: that is carried as N/A baseline (lifecycle.native), never a pass.
 import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -44,7 +46,7 @@ function noMuxEnv(sb: Sandbox, scratch: string): NodeJS.ProcessEnv {
     PATH: nomuxBin(sb),
     MU_DB_PATH: join(scratch, "mu.db"),
     MU_STATE_DIR: join(scratch, "state"),
-    MU_SYNC_DIR: "",
+    MU_SYNC_DIR: join(scratch, "sync"),
   };
   delete env.MU_MUX;
   delete env.MU_TMUX_SOCKET;
@@ -180,6 +182,16 @@ function checksIn(
         `${args.slice(0, 2).join(" ")} failed with no multiplexer (exit ${r.code}): ${lines(r.stderr)[0] ?? ""}`,
       );
   }
+  // sync really ran: a segment landed in the scratch sync dir (blank MU_SYNC_DIR would make
+  // `mu sync` print "sync is off" and exit 0, proving nothing)
+  const segments = (() => {
+    try {
+      return readdirSync(join(scratch, "sync")).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      return [];
+    }
+  })();
+  if (segments.length === 0) wrong.push("sync wrote no segment with no multiplexer");
   return { wrong, na, notes };
 }
 
@@ -221,11 +233,11 @@ const scenario: Scenario = {
       n1.substate === "done";
     // the scripted half runs on a scratch copy of the DB: the judge may run many times
     const checks = noMuxChecks(sb);
-    const v = await verdictFx(sb, run, completed, {
+    return await verdictFx(sb, run, completed, {
       wrong: [...wrong, ...checks.wrong],
+      na: checks.na,
       notes: [`n1=${n1?.status}/${n1?.substate} exact=${exact !== undefined}`, ...checks.notes],
     });
-    return checks.na.length > 0 ? { ...v, na: [...(v.na ?? []), ...checks.na] } : v;
   },
 };
 
