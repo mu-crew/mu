@@ -24,8 +24,10 @@
 
 import { type AgentRow, deleteAgent, getAgentForCleanup } from "../agents.js";
 import { type Db, tornDownAtOf } from "../db.js";
+import { releaseHostChannelsForAgent } from "../hosts.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
+import { closeRemoteWorktree, localPaneAlive } from "../remote-agent.js";
 import { agentRevision, assertRevision } from "../revision.js";
 import {
   assertReleasable,
@@ -47,6 +49,13 @@ export interface CloseAgentOptions {
    */
   discard?: boolean;
   /**
+   * A remote worktree whose HEAD was never collected: keep it as the remote
+   * branch `mu/<ws>/<agent>-<sha12>` and remove the worktree. Never overrides
+   * uncommitted work, and `discard` does not stand in for it. A local
+   * worktree always keeps its branch; the flag is ignored there.
+   */
+  keepBranch?: boolean;
+  /**
    * The `revision` of `previewClose`. Checked under the agent lock before
    * anything is killed (`RevisionMismatchError`, exit 4, nothing done). An
    * agent that no longer exists is a no-op whatever the value: nothing is
@@ -58,7 +67,7 @@ export interface CloseAgentOptions {
 export interface CloseAgentResult {
   killedPane: boolean;
   deletedRow: boolean;
-  /** What the close rule did to the agent's worktree; null when it had none. */
+  /** What the close rule did to the agent's worktree (a remote one included); null when it had none. */
   worktree: ReleasedWorktree | null;
 }
 
@@ -78,9 +87,27 @@ export interface ClosePreview {
   ownedTasks: { ref: string; status: string; reverts: boolean }[];
   /** The worktree the close rule would handle; null when none is registered. */
   worktree: { path: string; state: WorktreeState } | null;
+  /**
+   * The remote worktree of a `--host --worktree` agent that the close removes
+   * under the remote rule (`closeRemoteWorktree`), read from the row alone:
+   * a preview runs no remote command (at `--max-sessions 1` the live pane
+   * holds the only channel). Null for a local or `--cwd`-only agent.
+   */
+  remote: { host: string; path: string; base: string; collectedHead: string | null } | null;
   /** True when the close would refuse for uncommitted work (no `discard`). */
   refusesDirty: boolean;
   discard: boolean;
+  keepBranch: boolean;
+}
+
+function remoteOf(agent: AgentRow | undefined): ClosePreview["remote"] {
+  if (agent?.host == null || agent.cwd === null || agent.base === null) return null;
+  return {
+    host: agent.host,
+    path: agent.cwd,
+    base: agent.base,
+    collectedHead: agent.collectedHead,
+  };
 }
 
 function ownedTasksOf(db: Db, agent: AgentRow): ClosePreview["ownedTasks"] {
@@ -99,7 +126,7 @@ function ownedTasksOf(db: Db, agent: AgentRow): ClosePreview["ownedTasks"] {
 function worktreeOf(db: Db, workstream: string, name: string, agent?: AgentRow) {
   if (agent === undefined) return getWorktreeFor(db, workstream, name);
   // A remote agent's cwd is a path on its host: the local registry knows nothing
-  // of it (its remote worktree is the remote-collect unit's, never removed here).
+  // of it (its remote worktree is closed by `closeRemoteWorktree`).
   if (agent.host !== null) return undefined;
   return agent.cwd === null ? undefined : getWorktreeAt(db, agent.cwd);
 }
@@ -117,7 +144,7 @@ function worktreeOf(db: Db, workstream: string, name: string, agent?: AgentRow) 
 export async function previewClose(
   db: Db,
   name: string,
-  opts: { workstream: string; discard?: boolean },
+  opts: { workstream: string; discard?: boolean; keepBranch?: boolean },
 ): Promise<ClosePreview> {
   const discard = opts.discard === true;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -147,8 +174,10 @@ export async function previewClose(
         paneId: now?.paneId ?? null,
         ownedTasks: now ? ownedTasksOf(db, now) : [],
         worktree: nowRow && state ? { path: nowRow.path, state } : null,
+        remote: remoteOf(now),
         refusesDirty: state === "dirty" && !discard,
         discard,
+        keepBranch: opts.keepBranch === true,
       };
     })();
     if (preview !== undefined) return preview;
@@ -243,8 +272,20 @@ async function closeLocked(
   }
   if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   // Re-checks the state: a write after the pre-check still refuses, with
-  // the agent row kept so the close can be retried.
-  const worktree = row === undefined ? null : await releaseWorktree(db, row, { discard });
+  // the agent row kept so the close can be retried. A remote worktree is
+  // judged only now, after the kill: the pane held the host's channel (at cap
+  // 1 the only one). Its pane is dead, so admission reclaims that channel.
+  let worktree: ReleasedWorktree | null = null;
+  if (row !== undefined) worktree = await releaseWorktree(db, row, { discard });
+  else if (remoteOf(agent) !== null) {
+    // The pane is dead (probed above): free its channel by id + pane.
+    if (mux !== undefined) releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);
+    worktree = await closeRemoteWorktree(db, agent, {
+      keepBranch: opts.keepBranch === true,
+      paneAlive: localPaneAlive,
+    });
+    if (replaced()) throw new AgentReplacedError(name, opts.workstream);
+  }
   const deletedRow = deleteAgent(db, name, agent.workstreamName, {
     incarnation: agent.incarnation,
     paneId: agent.paneId,

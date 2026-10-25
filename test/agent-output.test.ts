@@ -114,8 +114,10 @@ describe("closePreviewToOutput", () => {
       paneId: "%1",
       ownedTasks: [],
       worktree: null,
+      remote: null,
       refusesDirty: false,
       discard: false,
+      keepBranch: false,
     });
     expect(out).toMatchObject({ kind: "agent", revision: 9, id: 4, pane_id: "%1", agentName: "w" });
     expect(out).not.toHaveProperty("incarnation");

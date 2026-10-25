@@ -42,8 +42,9 @@ mu agent spawn worker-1 -w big --host dev --worktree --task t1 --send 'Read: mu 
 # 2. WAIT: as for a local agent (the forward is the socket)
 mu agent wait worker-1 -w big --after-runs <runs> --json
 
-# 3. COLLECT: fetch straight from the remote worktree, then close
-git fetch "ssh://dev/<cwd from mu agent show>" HEAD && git cherry-pick FETCH_HEAD
+# 3. COLLECT (from the local repo's directory), merge the printed sha, then close
+mu agent collect worker-1 -w big
+git cherry-pick <sha>
 mu agent close worker-1 -w big --if <rev>
 ```
 
@@ -56,11 +57,16 @@ keeps it until the pane dies, so a full host refuses the spawn up front
 with the holder named, and a failed spawn removes only the worktree it
 made (still clean, still at its base) and frees the slot.
 
-Done when the worker's commits are cherry-picked locally, the merged
+`collect` runs the profile's `--fetch` locally and pins the commit as
+`refs/mu/collect/<ws>/<agent>`; a live worker holds the pane's channel, so at
+`--max-sessions 1` it is refused until the pane is gone (raise the cap to
+collect mid-run). `close` kills the pane, then removes the remote worktree
+only if clean and at its base or the collected HEAD (never `--force`); a newer
+HEAD refuses: collect again, or `--keep-branch`. Dirty always refuses.
+
+Done when the worker's commits are merged locally, the merged
 tree passes the merged-tree gates (host and local checks below), and the
-agent is closed. `agent close` does not remove the remote worktree yet:
-remove it yourself once collected
-(`ssh dev 'git -C <repo> worktree remove <cwd>'`).
+agent is closed.
 
 ### The control-socket forward
 
@@ -154,15 +160,15 @@ you read the reported sha, collect, and `mu task close`.
 ### A dropped connection is a dead agent
 
 The pane is the transport: when it dies the row is reaped, the task
-reopens, and the commits stay in the remote worktree. Fetch from its
-`cwd` (`mu agent show` before the reap, `mu state` while it lives)
-before re-dispatching.
+reopens, and the commits stay in the remote worktree (mu keeps no record
+yet). Fetch from its `cwd` (`mu agent show` before the reap, `mu state` while
+it lives) before re-dispatching.
 
 ### Stopping and cleaning up
 
 - `mu agent abort <name>` stops a pi turn through the forwarded socket.
-- `mu agent close` kills the pane and the remote pi with it, and frees the
-  host slot. It leaves the remote worktree: remove it once collected.
+- `mu agent close` kills the pane and the remote pi with it, frees the
+  host slot, and removes the remote worktree under the rule above.
 
 ## murmur
 

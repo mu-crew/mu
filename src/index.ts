@@ -301,7 +301,18 @@ export {
   type ReconcileReport,
   reconcile,
 } from "./reconcile.js";
-export { RemotePrepareError } from "./remote-agent.js";
+export {
+  closeRemoteWorktree,
+  RemoteCloseRefusedError,
+  RemotePrepareError,
+} from "./remote-agent.js";
+export {
+  type CollectResult,
+  collectRef,
+  collectRemoteAgent,
+  RemoteCollectError,
+  RemoteCollectUnsupportedError,
+} from "./remote-collect.js";
 export {
   agentRevision,
   assertRevision,

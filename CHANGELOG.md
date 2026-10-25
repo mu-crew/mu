@@ -90,7 +90,25 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   A failing remote step is exit 5 (`RemotePrepareError`). `mu state` lists
   remote workers from `agents.host/cwd/base` (`remoteWorkers[]` is now
   `{agent, host, path, base}`). Not yet: gate panes with a real exit status,
-  detach and reattach, `agent collect`, removing the remote worktree on close.
+  detach and reattach.
+
+- **`mu agent collect <agent>` and the remote close rule** (`v_remote_collect`).
+  `collect` runs the host's `--fetch` template locally in the current
+  directory's git repo, under one channel (at `--max-sessions 1` beside a live
+  pane it is refused, naming the holder: the pane is the transport; no detach).
+  FETCH_HEAD is cleared first and the commit it holds afterwards is pinned as
+  `refs/mu/collect/<ws>/<agent>` and recorded as `agents.collected_head`
+  (compare-and-set on id, pane, host, cwd and base); a failed or no-op fetch
+  records nothing. It prints `git merge <sha>`, never runs it. `agent close`
+  of a `--host --worktree` agent now kills the pane, then removes the remote
+  worktree without `--force` only when it is clean and HEAD is the base or the
+  collected HEAD, re-checking HEAD right before the removal. Otherwise it
+  refuses (exit 4, `RemoteCloseRefusedError`); `--keep-branch` first makes
+  `mu/<ws>/<agent>-<sha12>` at the observed HEAD in the remote repo; dirty
+  refuses with or without `--keep-branch` and `--discard`. A `--cwd` agent's
+  host is never touched. The close preview names the remote worktree (no
+  remote command runs). A reaped or torn-down remote row still keeps no
+  record: `v_remote_recovery`.
 
 - **Agent records are SQL-keyed.** `agent spawn`, `list`, `show`, `me` and
   `state` print each agent with the `agents` column names: `id` (the registry

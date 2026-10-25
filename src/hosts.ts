@@ -675,10 +675,13 @@ export async function runLeasedTemplate(
   field: "exec" | "fetch",
   values: HostTemplateValues,
   timeoutMs: number,
+  /** The template's LOCAL working directory (a `--fetch` runs in the repo it fetches into). */
+  localCwd?: string,
 ): Promise<HostRun> {
   const expanded = expandHostTemplate(profile[field], values);
   return execGroupCapture("/bin/sh", ["-c", expanded], {
     timeoutMs,
+    ...(localCwd !== undefined ? { cwd: localCwd } : {}),
     onSpawn: (pgid) => recordGroup(db, lease, pgid),
   });
 }
@@ -690,14 +693,15 @@ export async function runHostTemplate(
   field: "exec" | "fetch",
   holder: string,
   values: HostTemplateValues,
-  opts: ChannelOpts & { timeoutMs?: number } = {},
+  opts: ChannelOpts & { timeoutMs?: number; localCwd?: string } = {},
 ): Promise<HostRun> {
   const timeoutMs = opts.timeoutMs ?? HOST_COMMAND_TIMEOUT_MS;
   return withHostChannel(
     db,
     host,
     holder,
-    (profile, lease) => runLeasedTemplate(db, lease, profile, field, values, timeoutMs),
+    (profile, lease) =>
+      runLeasedTemplate(db, lease, profile, field, values, timeoutMs, opts.localCwd),
     opts,
   );
 }

@@ -290,7 +290,10 @@ describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
   it("the exec-made worktree path survives git: a second spawn of a used name refuses instead of reusing it", async () => {
     const { command } = addDevHost();
     await spawnForTask(db, req(command));
+    // A clean close removes the worktree (v_remote_collect); a leftover at the path is made by hand.
     await closeAgent(db, "worker-1", { workstream: ws });
+    expect(existsSync(join(wtRoot(), "worker-1"))).toBe(false);
+    gitIn(repo, "worktree", "add", "--detach", join(wtRoot(), "worker-1"));
     const err = await spawnAgent(db, {
       name: "worker-1",
       workstream: ws,

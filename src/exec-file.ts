@@ -139,16 +139,24 @@ export function execFileCapture(
 export function execGroupCapture(
   cmd: string,
   args: readonly string[],
-  opts: { timeoutMs?: number; graceMs?: number; onSpawn?: (pgid: number) => void } = {},
+  opts: {
+    timeoutMs?: number;
+    graceMs?: number;
+    onSpawn?: (pgid: number) => void;
+    /** The command's working directory (default: this process's). */
+    cwd?: string;
+  } = {},
 ): Promise<ExecFileResult> {
   return new Promise((resolve) => {
     const gated = opts.onSpawn !== undefined;
+    const spawnOpts = {
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
+      ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+    };
     const child = gated
-      ? spawn("/bin/sh", ["-c", 'IFS= read -r _ && exec "$0" "$@"', cmd, ...args], {
-          detached: true,
-          stdio: ["pipe", "pipe", "pipe"],
-        })
-      : spawn(cmd, [...args], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+      ? spawn("/bin/sh", ["-c", 'IFS= read -r _ && exec "$0" "$@"', cmd, ...args], spawnOpts)
+      : spawn(cmd, [...args], spawnOpts);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout?.on("data", (d: Buffer) => out.push(d));
