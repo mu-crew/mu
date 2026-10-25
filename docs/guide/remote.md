@@ -71,3 +71,26 @@ git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
 ```
 
 Use `mu agent abort` to stop a remote pi turn, or close the pane.
+
+## Host profiles
+
+A host profile stores your own command templates, so you stop retyping
+them. mu never connects and knows no ssh flags: it fills the templates and
+runs them with `/bin/sh -c`. `spawn --host` and `agent collect` that use
+them arrive with the remote units; today the profile, its channel cap and
+its check are in place.
+
+```bash
+mu host init dev --ssh        # prints a starter `mu host add`; runs nothing
+mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --repo '~/repo' --max-sessions 1
+mu host check dev             # host answers, repo, pi, mu extension
+mu host show dev              # templates and the holders of its channels
+```
+
+- Placeholders: `{env}` (the four `MU_*` identity variables only), `{cmd}`,
+  `{local_sock}`, `{remote_sock}`, `{cwd}`. Each value is one quoted word;
+  write `{{` and `}}` for literal braces. Anything else in braces is refused.
+- `--max-sessions N` counts every channel mu holds to the host. At the cap mu
+  refuses with one line naming the holder.
+- `host check --agent <name> -w <ws>` also probes that agent's forwarded
+  control socket.

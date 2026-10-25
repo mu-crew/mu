@@ -31,6 +31,7 @@ import {
   NameAmbiguousError,
   UsageError,
 } from "./cli/handle.js";
+import { wireHostCommands } from "./cli/host.js";
 import { wireLogCommand } from "./cli/log.js";
 import { wirePiCommand } from "./cli/pi.js";
 import { wireRebuildCommand } from "./cli/rebuild.js";
@@ -834,6 +835,7 @@ export function buildProgram(): Command {
   wireLogCommand(program);
   wireStateCommands(program);
   wireSyncCommand(program);
+  wireHostCommands(program);
   wireRebuildCommand(program);
   wireDbCommands(program);
   wireDbQueryCommand(program);

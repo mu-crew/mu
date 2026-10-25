@@ -54,6 +54,7 @@ import { rmFixtureDir } from "./_fs.js";
 const NEW_TABLES = [
   "agent_settles",
   "delegate_calls",
+  "host_channels",
   "host_profiles",
   "spawn_receipts",
   "wait_cursors",
@@ -276,6 +277,22 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(db.prepare("SELECT COUNT(*) AS c FROM spawn_receipts").get()).toEqual({ c: 0 });
     expect(getAgent(db, "w1", "alpha")).toBeDefined();
     expect(getTask(db, "t1", "alpha")).toBeDefined();
+  });
+
+  it("an already-v13 file without host_channels gets the table, host_profiles rows intact (no version bump)", () => {
+    const p = v12Copy();
+    track(openDb({ path: p })).close();
+    raw(p, (r) => {
+      r.exec(
+        "INSERT INTO host_profiles (name, shell, exec, fetch, repo) VALUES ('h','s','e','f','r')",
+      );
+      r.exec("DROP TABLE host_channels");
+    });
+    const db = track(openDb({ path: p }));
+    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(db.prepare("SELECT COUNT(*) AS c FROM host_channels").get()).toEqual({ c: 0 });
+    expect(db.prepare("SELECT name FROM host_profiles").all()).toEqual([{ name: "h" }]);
+    expect(getAgent(db, "w1", "alpha")).toBeDefined();
   });
 
   it("an already-v13 file missing only agents.collected_head gets it back, rows intact", () => {
@@ -600,13 +617,13 @@ describe("segments: kind and wave ride v2 lines only", () => {
 // ─── 3. Machine-local ─────────────────────────────────────────────────
 
 describe("machine-local state", () => {
-  it("the five tables are classified machine-local, never portable, and listed as expected", () => {
+  it("the six tables are classified machine-local, never portable, and listed as expected", () => {
     for (const t of NEW_TABLES) {
       expect(MACHINE_LOCAL_TABLES).toContain(t);
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(20);
+    expect(EXPECTED_TABLES).toHaveLength(21);
     expect(PORTABLE_TABLES).toEqual(["task_edges", "task_notes", "tasks", "workstreams"]);
   });
 
@@ -714,6 +731,28 @@ describe("machine-local state", () => {
     expect(db.prepare("SELECT COUNT(*) AS c FROM spawn_receipts").get()).toEqual({ c: 0 });
   });
 
+  it("host_channels: one row per (host, holder); kind and its identity columns are checked", () => {
+    const db = fresh();
+    const ins = (sql: string) => db.prepare(`INSERT INTO host_channels ${sql}`).run();
+    const cols = "(host, holder, kind, token, pid, agent_id, pane_id, opened_at)";
+    ins(`${cols} VALUES ('h', 'a', 'transient', 't', 1, NULL, NULL, 'n')`);
+    expect(() => ins(`${cols} VALUES ('h', 'a', 'transient', 't2', 1, NULL, NULL, 'n')`)).toThrow(
+      /UNIQUE|PRIMARY/,
+    );
+    expect(() => ins(`${cols} VALUES ('h', 'b', 'bogus', 't', 1, NULL, NULL, 'n')`)).toThrow(
+      /CHECK/,
+    );
+    expect(() => ins(`${cols} VALUES ('h', 'c', 'transient', 't', NULL, NULL, NULL, 'n')`)).toThrow(
+      /CHECK/,
+    );
+    expect(() => ins(`${cols} VALUES ('h', 'd', 'attached', 't', NULL, 1, NULL, 'n')`)).toThrow(
+      /CHECK/,
+    );
+    ins(`${cols} VALUES ('h', 'e', 'attached', 't', NULL, 1, '%1', 'n')`);
+    // Local: no ops, no FK to the profile or the agent.
+    expect(db.prepare("SELECT COUNT(*) AS c FROM ops").get()).toEqual({ c: 0 });
+  });
+
   it("host_profiles.max_sessions must be positive (or null); wait_cursors is keyed per caller and ref", () => {
     const db = fresh();
     const prof = (max: number | null) =>
@@ -758,6 +797,9 @@ describe("machine-local state", () => {
       `INSERT INTO spawn_receipts (task_id, attempt_key, name, workstream, request_sha, msg_id, state, created_at, updated_at)
        VALUES (?, 'manual:a', 'w', 'd', 'sha', 'm', 'sent', 'n', 'n')`,
     ).run(tid);
+    db.prepare(
+      "INSERT INTO host_channels (host, holder, kind, token, pid, opened_at) VALUES ('h', 'x', 'transient', 't', 1, 'n')",
+    ).run();
     const report = rebuildInto(db, { targetPath: join(dir, `rb-${++n}.db`) });
     expect(report.machineLocalLost).toEqual(
       expect.arrayContaining([
@@ -765,6 +807,7 @@ describe("machine-local state", () => {
         { table: "wait_cursors", rows: 2 },
         { table: "agent_settles", rows: 1 },
         { table: "host_profiles", rows: 1 },
+        { table: "host_channels", rows: 1 },
         { table: "spawn_receipts", rows: 1 },
       ]),
     );

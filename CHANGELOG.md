@@ -22,6 +22,25 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu host add | list | show | rm | init --ssh | check`: ssh-free host profiles.**
+  A profile is your `--shell` / `--exec` / `--fetch` templates, a `--repo` and
+  an optional `--max-sessions`, stored machine-local in the existing
+  `host_profiles`. mu fills `{env}`, `{cmd}`, `{local_sock}`, `{remote_sock}`
+  and `{cwd}` in one pass (each value one shell-quoted word, quoted for the
+  context it lands in; `{env}` only the four whitelisted identity variables,
+  never the local DB, state or sync dir; `{{` `}}` literal braces; anything
+  else refused) and runs the result with `/bin/sh -c`. It knows no ssh flags:
+  `host init <n> --ssh` only prints a starter, and `host check` runs only the
+  stored `--exec` (host answers, repo, `pi --version`, `pi list` names mu;
+  `--agent <n>` also probes that agent's forwarded socket). A failing step is
+  reported, never retried (exit 5). `host_channels` (new, machine-local) counts
+  every channel against `--max-sessions`: reserved under `BEGIN IMMEDIATE`
+  before the connection opens, released by token, and a refusal names the
+  holder (exit 4). A transient channel is reclaimed only when its pid is
+  proven gone; an attached one rides the agent's registry id and pane and is
+  reclaimed only when the pane is proven dead. `rebuild` reports its rows as
+  not rebuilt. Wiring attached channels into `spawn --host` is `v_remote_spawn`.
+
 - **Agent records are SQL-keyed.** `agent spawn`, `list`, `show`, `me` and
   `state` print each agent with the `agents` column names: `id` (the registry
   **agent incarnation**, what `agent close --if` compares), `workstream_id`
