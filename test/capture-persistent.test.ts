@@ -555,7 +555,9 @@ describe("capture version stamp", () => {
     const raw = new Database(path, { readonly: true });
     try {
       const rows = raw
-        .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")
+        .prepare(
+          "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name LIKE '\\_cap\\_%' ESCAPE '\\'",
+        )
         .all() as { name: string; sql: string }[];
       return new Map(rows.map((r) => [r.name, r.sql]));
     } finally {

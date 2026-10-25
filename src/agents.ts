@@ -565,7 +565,6 @@ function deleteAgentRow(
           if (cur?.pane_id !== want.paneId) return false;
         }
         return reapAgentRow(db, agentId, name, {
-          reason: "reap",
           preserve: opts.preserve !== false,
         });
       })
