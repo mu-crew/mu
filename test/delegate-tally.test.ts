@@ -138,11 +138,11 @@ describe("verdictTally", () => {
     expect(finding(t, "b/f1")?.refuted).toBe(1);
   });
 
-  it("contradictory text: the label on the last VERDICT line, first known word", () => {
+  it("contradictory text: the FIRST VERDICT line decides, its first known word; later ones are evidence", () => {
     judged("crew", "f1");
     done(
       reg(rec("crew", "f1")).callId,
-      "VERDICT: CONFIRMED early\nmore\nVERDICT: REFUTED (not CONFIRMED)",
+      "VERDICT: REFUTED (not CONFIRMED)\nmore\nVERDICT: CONFIRMED late",
     );
     expect(finding(verdictTally(db, "scratch", "w"), "crew/f1")).toMatchObject({
       refuted: 1,

@@ -1,6 +1,6 @@
 /**
  * The extension's side of a durable delegate call: thin wrappers over
- * `mu delegates register | mark | finish | reissue | show` (src/cli/delegates.ts).
+ * `mu delegates register | mark | finish | show` (src/cli/delegates.ts).
  * The CLI owns the lifecycle; this only builds argv and reads the envelope,
  * so a shell drives the same states (VISION § 1, rule 2).
  */
@@ -141,7 +141,7 @@ export function callsApi(run: MuRunner) {
     /** One admission step (a compare-and-set on the stored state). */
     async mark(
       callId: string,
-      to: "starting" | "running" | "refused",
+      to: "queued" | "starting" | "running" | "refused",
       extra: { agent?: string; error?: string } = {},
     ): Promise<void> {
       await call(run, "mark", [
@@ -172,10 +172,6 @@ export function callsApi(run: MuRunner) {
         o.text?.trim() ? o.text : undefined,
       );
       return data as unknown as FinishResult;
-    },
-    /** refused -> queued: the same call and task. */
-    async reissue(callId: string): Promise<void> {
-      await call(run, "reissue", [callId]);
     },
     async show(callId: string): Promise<{ call: CallInfo; state: CallState }> {
       const row = rowOf(await call(run, "show", [callId]));

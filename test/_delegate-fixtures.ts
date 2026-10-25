@@ -16,7 +16,6 @@ import {
   getDelegateCall,
   markDelegate,
   registerDelegateCall,
-  reissueDelegateCall,
 } from "../src/delegates.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask } from "../src/tasks.js";
@@ -108,7 +107,7 @@ export function delegatesVerb(db: Db, args: readonly string[], stdin?: string): 
       }
       case "mark":
         return wrap({
-          call: markDelegate(db, id, args[3] as "starting" | "running" | "refused", {
+          call: markDelegate(db, id, args[3] as "queued" | "starting" | "running" | "refused", {
             ...(flag(args, "--agent") ? { agent: flag(args, "--agent") as string } : {}),
             ...(flag(args, "--error") ? { error: flag(args, "--error") as string } : {}),
           }),
@@ -125,8 +124,6 @@ export function delegatesVerb(db: Db, args: readonly string[], stdin?: string): 
             ...(args.includes("--no-record") ? { record: false } : {}),
           }),
         );
-      case "reissue":
-        return wrap({ call: reissueDelegateCall(db, id) });
       case "show": {
         const call = getDelegateCall(db, id);
         if (!call)

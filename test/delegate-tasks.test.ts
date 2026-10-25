@@ -8,6 +8,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
+import { parseVerdict } from "../src/delegate-verdict.js";
 import {
   DelegateCallConflictError,
   DelegateStateError,
@@ -16,7 +17,6 @@ import {
   listDelegates,
   markDelegate,
   registerDelegateCall,
-  reissueDelegateCall,
 } from "../src/delegates.js";
 import { addTask } from "../src/tasks/edit.js";
 import { TaskNotFoundError } from "../src/tasks/errors.js";
@@ -221,6 +221,41 @@ describe("finish: record before report and close", () => {
     expect(v).not.toContain("notes\n");
   });
 
+  it("the FIRST verdict line decides; a verdict quoted later in the EVIDENCE is stored verbatim and never replaces it", () => {
+    judged("crew", "f1");
+    const answer = [
+      "Checked.",
+      "VERDICT: crew/f1 REFUTED the guard exists",
+      "EVIDENCE:",
+      "- src/a.ts:10 guard",
+      "- the earlier review said: VERDICT: CONFIRMED (it was wrong)",
+      "- see the log: VERDICT: CONFIRMED",
+      "REFUTER: VERDICT: CONFIRMED (a quoted role-prefixed line, also evidence)",
+      "- src/b.ts:3 ...",
+    ].join("\n");
+    const { call: c } = call({ record: { workstream: "crew", task: "f1" } });
+    const r = finishDelegate(db, c.callId, { outcome: "done", text: answer, author: "d" });
+    expect(r.verdict).toBe("REFUTED");
+    expect(getDelegateCall(db, c.callId)?.verdict).toBe("REFUTED");
+    const v = notes("crew", "f1").find((x) => x.kind === "verdict")?.content ?? "";
+    // The WHOLE body after the verdict line: the real line, the evidence above the quote, the quotes.
+    expect(v.split("\n").slice(1)).toEqual(answer.split("\n").slice(1));
+  });
+
+  it("only an optional single role word may precede VERDICT:; prose, lowercase and multi-word prefixes do not", () => {
+    const label = (t: string) => parseVerdict(t);
+    expect(label("VERDICT: CONFIRMED")).toBe("CONFIRMED");
+    expect(label("REFUTER: VERDICT: REFUTED")).toBe("REFUTED");
+    expect(label("noise\nrefuter: VERDICT: UNVERIFIED")).toBe("UNVERIFIED");
+    expect(label("the earlier review said: VERDICT: CONFIRMED")).toBeUndefined();
+    expect(label("- see the log: VERDICT: CONFIRMED")).toBeUndefined();
+    expect(label("two words: VERDICT: CONFIRMED")).toBeUndefined();
+    expect(label("> VERDICT: CONFIRMED")).toBeUndefined();
+    expect(label("x VERDICT: CONFIRMED")).toBeUndefined();
+    // A prose line first, the real one second: the real one is the first VERDICT line.
+    expect(label("- the log said: VERDICT: CONFIRMED\nVERDICT: REFUTED")).toBe("REFUTED");
+  });
+
   it("no VERDICT line: the whole long answer is kept, marked, and no label is parsed", () => {
     judged("crew", "f1");
     const { call: c } = call({ record: { workstream: "crew", task: "f1" } });
@@ -232,6 +267,72 @@ describe("finish: record before report and close", () => {
     expect(v).toContain("NO VERDICT LINE:");
     expect(v.endsWith("END")).toBe(true);
     expect(v.length).toBeGreaterThan(6000);
+  });
+
+  it("commits `recording` before the group, then done; a failed record leaves recording -> failed, never done", () => {
+    // A trigger logs every state the row ever held (each in its own committed or rolled-back txn).
+    db.exec(
+      "CREATE TABLE state_log (seq INTEGER PRIMARY KEY AUTOINCREMENT, call_id TEXT, state TEXT)",
+    );
+    db.exec(
+      `CREATE TRIGGER log_state AFTER UPDATE OF state ON delegate_calls
+       BEGIN INSERT INTO state_log (call_id, state) VALUES (NEW.call_id, NEW.state); END`,
+    );
+    const states = (id: string) =>
+      (
+        db.prepare("SELECT state FROM state_log WHERE call_id = ? ORDER BY seq").all(id) as {
+          state: string;
+        }[]
+      ).map((r) => r.state);
+    judged("crew", "f1");
+    judged("crew", "f2");
+    const ok = call({ record: { workstream: "crew", task: "f1" } }).call;
+    finishDelegate(db, ok.callId, { outcome: "done", text: "VERDICT: CONFIRMED", author: "d" });
+    expect(states(ok.callId)).toEqual(["recording", "done"]);
+    const bad = call({ record: { workstream: "crew", task: "f2" } }).call;
+    db.prepare("DELETE FROM tasks WHERE local_id = 'f2'").run();
+    finishDelegate(db, bad.callId, { outcome: "done", text: "VERDICT: CONFIRMED", author: "d" });
+    expect(states(bad.callId)).toEqual(["recording", "failed"]);
+  });
+
+  it("the admission CAS holds when another runtime wins between the read and the update", () => {
+    const { call: c } = call({ state: "refused" });
+    const other = (id: string, to: string) =>
+      db.prepare("UPDATE delegate_calls SET state = ? WHERE call_id = ?").run(to, id);
+    // A db whose write transaction opens after a rival runtime's own COMMITTED
+    // write: past markDelegate's pre-read, before its in-transaction CAS.
+    const racing = (rival: () => void): Db =>
+      new Proxy(db, {
+        get(target, prop) {
+          const v = Reflect.get(target, prop, target) as unknown;
+          if (prop === "exec")
+            return (sql: string) => {
+              if (sql === "BEGIN IMMEDIATE") rival();
+              return target.exec(sql);
+            };
+          return typeof v === "function" ? v.bind(target) : v;
+        },
+      });
+    // We read `refused`; the rival has already moved it to `starting` by the time we write.
+    expect(() =>
+      markDelegate(
+        racing(() => other(c.callId, "starting")),
+        c.callId,
+        "queued",
+      ),
+    ).toThrow(DelegateStateError);
+    expect(getDelegateCall(db, c.callId)?.state).toBe("starting"); // the rival's, not overwritten
+    // And the guard keeps our side effects out: a rival's refusal stays parked, not unparked by our start.
+    const { call: d } = call({ state: "queued" });
+    expect(() =>
+      markDelegate(
+        racing(() => other(d.callId, "refused")),
+        d.callId,
+        "starting",
+      ),
+    ).toThrow(DelegateStateError);
+    expect(getDelegateCall(db, d.callId)?.state).toBe("refused");
+    expect(getTask(db, d.task, "scratch")?.substate).toBe("parked");
   });
 
   it("a duplicate callback writes one verdict, one report, one close", () => {
@@ -341,12 +442,12 @@ describe("refusal and reissue", () => {
     expect(getTask(db, r.task, "scratch")?.substate).toBe("parked");
   });
 
-  it("reissue keeps the call and task, moves refused -> queued, and never doubles a verdict", () => {
+  it("reissue (the runtime's mark) keeps the call and task, moves refused -> queued, and never doubles a verdict", () => {
     judged("crew", "f1");
     const { call: r } = call({ state: "refused", record: { workstream: "crew", task: "f1" } });
-    const again = reissueDelegateCall(db, r.callId);
-    expect(again).toMatchObject({ callId: r.callId, task: r.task, state: "queued" });
-    expect(() => reissueDelegateCall(db, r.callId)).toThrow(DelegateStateError); // not refused any more
+    const again = markDelegate(db, r.callId, "queued");
+    expect(again).toMatchObject({ callId: r.callId, task: r.task, state: "queued", error: null });
+    expect(() => markDelegate(db, r.callId, "queued")).toThrow(DelegateStateError); // not refused any more
     markDelegate(db, r.callId, "starting");
     finishDelegate(db, r.callId, { outcome: "done", text: "VERDICT: CONFIRMED", author: "d" });
     expect(db.prepare("SELECT COUNT(*) AS c FROM tasks WHERE kind = 'delegate'").get()).toEqual({
@@ -364,10 +465,10 @@ describe("refusal and reissue", () => {
     const by = (s: string) => listDelegates(db, "pi:s1").filter((x) => x.state === s).length;
     expect([by("starting"), by("queued"), by("refused")]).toEqual([2, 8, 2]);
     const refused = rows.filter((r) => r.state === "refused");
-    for (const r of refused) reissueDelegateCall(db, r.callId);
+    for (const r of refused) markDelegate(db, r.callId, "queued");
     expect([by("queued"), by("refused")]).toEqual([10, 0]);
     for (const r of refused)
-      expect(() => reissueDelegateCall(db, r.callId)).toThrow(DelegateStateError);
+      expect(() => markDelegate(db, r.callId, "queued")).toThrow(DelegateStateError);
     expect(db.prepare("SELECT COUNT(*) AS c FROM delegate_calls").get()).toEqual({ c: 12 });
     expect(db.prepare("SELECT COUNT(*) AS c FROM tasks").get()).toEqual({ c: 12 });
   });

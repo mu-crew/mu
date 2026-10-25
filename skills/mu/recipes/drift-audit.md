@@ -57,7 +57,7 @@ VERDICT: <ws> DRIFT-AUDIT CLEAN | FINDINGS <n>
 EVIDENCE: FINDING <high|med|low> <file:line|task> <what> (check <1-7>)
 ```
 
-`record` keeps the last VERDICT line and everything after it. The note
+`record` keeps the first VERDICT line and everything after it. The note
 lands headed `REFUTER`, which decision warnings
 read as a recorded verdict; on an umbrella that is harmless.
 

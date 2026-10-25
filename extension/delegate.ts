@@ -917,7 +917,7 @@ export function registerDelegate(
     const taskRef = `${call.workstream}/${call.task}`;
     const text =
       state === "refused"
-        ? `REFUSED, not started: ${inflight.size + starting} running and ${queue.length} queued (MU_DELEGATE_MAX=${max}). The call is durable (task ${taskRef}, call ${call.callId}) and will NOT start on its own. Reissue it once slots free, as answers arrive: ${DELEGATE_REISSUE_TOOL} { call_id: "${call.callId}" } (or mu delegates reissue ${call.callId}). List: mu delegates.`
+        ? `REFUSED, not started: ${inflight.size + starting} running and ${queue.length} queued (MU_DELEGATE_MAX=${max}). The call is durable (task ${taskRef}, call ${call.callId}) and will NOT start on its own. Reissue it once slots free, as answers arrive: ${DELEGATE_REISSUE_TOOL} { call_id: "${call.callId}" }. List: mu delegates.`
         : `Queued as ${handle} (#${position}; ${inflight.size + starting} running, MU_DELEGATE_MAX=${max}; task ${taskRef}, call ${call.callId}). It starts when a slot frees, and its answer arrives as a follow-up message like any delegate's; do not wait or poll. Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${handle}" }`;
     return {
       content: [{ type: "text", text }],
@@ -1149,8 +1149,7 @@ export function registerDelegate(
         );
       if (decision === "starting") starting++;
       try {
-        await calls.reissue(callId);
-        if (decision === "starting") await calls.mark(callId, "starting");
+        await calls.mark(callId, decision === "starting" ? "starting" : "queued");
       } catch (e) {
         if (decision === "starting") {
           starting--;
@@ -1432,7 +1431,7 @@ export function registerDelegate(
     if (sessions.length > 0) parts.push(`Sessions: ${sessions.join("; ")}.`);
     if (dropped.length > 0)
       parts.push(
-        `${dropped.length} queued, never started: ${dropped.map((q) => q.handle).join(", ")}. Re-issue them${refused.length > 0 ? ` (durable and refused: mu delegates reissue <call-id>; list: mu delegates --all)` : ""}.`,
+        `${dropped.length} queued, never started: ${dropped.map((q) => q.handle).join(", ")}. Re-issue them${refused.length > 0 ? ` (durable and refused: ${DELEGATE_REISSUE_TOOL} in a new pi session; list: mu delegates --all)` : ""}.`,
       );
     const msg = parts.join(" ");
     if (ctx?.hasUI && ctx.ui) ctx.ui.notify(msg, "warning");

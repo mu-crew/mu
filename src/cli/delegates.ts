@@ -3,7 +3,8 @@
 //   mu delegates [list] [--caller c] [-w ws] [--wave w]   the calls and their states
 //   mu delegates show <call-id>                          one call, with its request
 //   mu delegates tally -w <ws> --wave <w>                 verdicts grouped per judged task
-//   mu delegates register | mark | finish | reissue       the writers the pi extension calls
+//   mu delegates register | mark | finish                 the writers the pi extension calls
+//   mu delegates reissue <call-id>                        refuses: the tool's job (see cmdDelegatesReissue)
 //
 // The extension shells out to the writers (VISION § 1: the CLI is the
 // product), so a script gets exactly the same lifecycle.
@@ -29,7 +30,6 @@ import {
   listDelegates,
   markDelegate,
   registerDelegateCall,
-  reissueDelegateCall,
   verdictTally,
 } from "../delegates.js";
 import { muTable, pc, printNextSteps } from "../output.js";
@@ -40,6 +40,9 @@ interface WsOpt {
   workstream?: string;
   json?: boolean;
 }
+
+/** Reissue is the owning pi session's: only its live runtime drains a queued call. */
+const reissueHint = (callId: string): string => `mu_delegate_reissue { call_id: "${callId}" }`;
 
 const callerFromEnv = (): string | undefined => {
   const session = process.env.PI_SESSION_ID;
@@ -81,8 +84,8 @@ export async function cmdDelegatesList(
   if (refused.length > 0)
     printNextSteps([
       {
-        intent: `${refused.length} refused past the cap: reissue each once`,
-        command: `mu delegates reissue ${refused[0]?.callId}`,
+        intent: `${refused.length} refused past the cap: reissue each once, in its pi session`,
+        command: reissueHint(refused[0]?.callId ?? ""),
       },
     ]);
 }
@@ -114,7 +117,10 @@ export async function cmdDelegatesTally(db: Db, opts: WsOpt & { wave?: string })
   console.log(`queued ${t.queued}, running ${t.running}, refused ${t.refused.length}`);
   if (t.refused.length > 0)
     printNextSteps([
-      { intent: "Reissue a refused call", command: `mu delegates reissue ${t.refused[0]}` },
+      {
+        intent: "Reissue a refused call, in its pi session",
+        command: reissueHint(t.refused[0] ?? ""),
+      },
     ]);
 }
 
@@ -186,8 +192,8 @@ export async function cmdDelegatesMark(
   to: string,
   opts: WsOpt & { agent?: string; error?: string },
 ): Promise<void> {
-  if (to !== "starting" && to !== "running" && to !== "refused")
-    throw new UsageError(`mark takes starting | running | refused, got ${to}`);
+  if (to !== "queued" && to !== "starting" && to !== "running" && to !== "refused")
+    throw new UsageError(`mark takes queued | starting | running | refused, got ${to}`);
   const call = markDelegate(db, callId, to, {
     ...(opts.agent !== undefined ? { agent: opts.agent } : {}),
     ...(opts.error !== undefined ? { error: opts.error } : {}),
@@ -226,17 +232,23 @@ export async function cmdDelegatesFinish(
   );
 }
 
-export async function cmdDelegatesReissue(db: Db, callId: string, opts: WsOpt): Promise<void> {
-  const call = reissueDelegateCall(db, callId);
-  if (opts.json) return emitJson({ call });
-  console.log(`${callId}: queued again as ${call.workstream}/${call.task}`);
+/**
+ * Always refuses. A reissued call is `queued`, and nothing drains a durable
+ * queued row except the live pi runtime that holds the queue, so a shell
+ * reissue would strand it. The tool does the whole move (start or queue).
+ */
+export async function cmdDelegatesReissue(_db: Db, callId: string, _opts: WsOpt): Promise<void> {
+  throw new UsageError(
+    `reissue runs inside the pi session that owns the call: use ${reissueHint(callId)} there (a shell would leave it queued with nothing to start it)`,
+    { showHelp: false },
+  );
 }
 
 export function wireDelegatesCommands(program: Command): void {
   const d = program
     .command("delegates")
     .description(
-      "Delegate calls as tasks: list them (default), show one, tally a wave, reissue a refused one. A `mu_delegate` call is a kind=delegate task with its brief, a durable call id and a state (queued starting running recording done failed refused cancelled)",
+      "Delegate calls as tasks: list them (default), show one, tally a wave. A refused call is reissued with the `mu_delegate_reissue` tool in its pi session. A `mu_delegate` call is a kind=delegate task with its brief, a durable call id and a state (queued starting running recording done failed refused cancelled)",
     );
   d.command("list", { isDefault: true })
     .description("List calls: of $PI_SESSION_ID's session (else every caller), or --caller, --all")
@@ -295,7 +307,7 @@ export function wireDelegatesCommands(program: Command): void {
     });
   d.command("mark <call-id> <state>")
     .description(
-      "Admission step, as a compare-and-set: starting (from queued), running (from starting), refused (from queued or starting)",
+      "Admission step, as a compare-and-set, for the pi runtime that holds the queue: starting (from queued or refused), queued (from refused: only that runtime drains it), running (from starting), refused (from queued or starting)",
     )
     .option("--agent <name>", "the agent running it (with running)")
     .option("--error <text>", "why (with refused)")
@@ -332,7 +344,7 @@ export function wireDelegatesCommands(program: Command): void {
     });
   d.command("reissue <call-id>")
     .description(
-      "Put a refused call back in the queue: same call, same task, never a second verdict",
+      "Refuses: reissue a refused call with the `mu_delegate_reissue` tool in its pi session (only that runtime can start or drain it)",
     )
     .option(...JSON_OPT)
     .action(function (callId: string) {
