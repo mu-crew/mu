@@ -613,6 +613,8 @@ export class TaskParkedError extends Error implements HasNextSteps {
  */
 export class HumanTaskError extends Error implements HasNextSteps {
   override readonly name = "HumanTaskError";
+  /** The message already names the command: one line, no Next: block. */
+  readonly inlineNext = true;
   constructor(
     public readonly taskId: string,
     public readonly workstream: string,

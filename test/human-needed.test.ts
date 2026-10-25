@@ -5,20 +5,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnerFromEnv } from "../src/agents/spawn.js";
-import { insertAgent } from "../src/agents.js";
+import { deleteAgent, insertAgent } from "../src/agents.js";
 import { applySettledClose } from "../src/close-block.js";
 import { type Db, openDb } from "../src/db.js";
 import { HumanNeededInvalidError, openHumanNeeds, recordHumanNeeded } from "../src/human-needed.js";
 import { rebuildInto } from "../src/rebuild.js";
 import { claimTask } from "../src/tasks/claim.js";
 import {
+  acceptTask,
+  addTasks,
   closeTask,
   getTask,
   HumanTaskError,
   listNotes,
   listReady,
   openTask,
+  releaseTask,
+  setTaskStatus,
   unparkTask,
+  updateTask,
 } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
@@ -63,14 +68,23 @@ describe("recordHumanNeeded", () => {
     expect(listReady(db, "a")).toEqual([]);
   });
 
-  it("is atomic: a failure after the task insert leaves no task, note or row", () => {
-    db.exec("DROP TABLE human_needs");
-    expect(() => need("a/orch", "x")).toThrow();
+  it("is atomic: a late metadata-insert failure leaves no task, note, row or op, durably", () => {
+    const counts = () =>
+      ["tasks", "task_notes", "human_needs", "ops"].map(
+        (t) => (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n,
+      );
+    const before = counts();
+    // Fails on the LAST write, after the task and brief rows exist.
     db.exec(
-      "CREATE TABLE human_needs (task_id INTEGER PRIMARY KEY REFERENCES tasks (id) ON DELETE CASCADE, caller TEXT NOT NULL)",
+      "CREATE TEMP TRIGGER boom BEFORE INSERT ON human_needs BEGIN SELECT RAISE(ABORT, 'boom'); END",
     );
-    expect(db.prepare("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 0 });
-    expect(db.prepare("SELECT COUNT(*) AS n FROM task_notes").get()).toEqual({ n: 0 });
+    expect(() => need("a/orch", "x")).toThrow(/boom/);
+    expect(counts()).toEqual(before);
+    db.close();
+    db = openDb({ path: dbPath });
+    expect(counts()).toEqual(before);
+    expect(openHumanNeeds(db, "a/orch")).toEqual([]);
+    expect(need("a/orch", "x").changed).toBe(true); // the trigger died with the connection
   });
 
   it("dedupes the same reason (no ops), appends a brief for a different one, one task", () => {
@@ -120,6 +134,25 @@ describe("recordHumanNeeded", () => {
   });
 });
 
+describe("only kind=human counts", () => {
+  it("a human_needs row on a work or delegate task is never a need (read or dedupe)", () => {
+    for (const kind of ["work", "delegate"] as const) {
+      const { ids } = addTasks(db, [{ title: `t-${kind}`, note: "n" }], { workstream: "a", kind });
+      const row = db.prepare("SELECT id FROM tasks WHERE local_id = ?").get(ids[0]) as {
+        id: number;
+      };
+      db.prepare("INSERT INTO human_needs (task_id, caller) VALUES (?, 'a/orch')").run(row.id);
+      expect(getTask(db, ids[0] ?? "", "a")).toMatchObject({ kind, status: "OPEN" });
+    }
+    expect(openHumanNeeds(db, "a/orch")).toEqual([]);
+    // Recording does not dedupe into (or append a brief to) those tasks.
+    const r = need("a/orch", "n");
+    expect(r.changed).toBe(true);
+    expect(getTask(db, r.id, "a")?.kind).toBe("human");
+    expect(openHumanNeeds(db, "a/orch")).toHaveLength(1);
+  });
+});
+
 describe("resolution: only an explicit task close", () => {
   it("close resolves it (idempotent) and a restart sees no open need; a new reason opens a NEW task", () => {
     const r = need("a/orch", "decide");
@@ -141,6 +174,75 @@ describe("resolution: only an explicit task close", () => {
     expect(getTask(db, r.id, "a")).toMatchObject({ status: "OPEN", substate: "parked" });
     expect(listReady(db, "a")).toEqual([]);
     expect(openHumanNeeds(db, "a/orch")).toHaveLength(1);
+  });
+
+  it("every path back to OPEN lands a human task in parked, never todo/ready", async () => {
+    const r = need("a/orch", "decide");
+    insertAgent(db, { name: "w1", workstream: "a", paneId: "%1" });
+    const agentId = (db.prepare("SELECT id FROM agents").get() as { id: number }).id;
+    const close = () => closeTask(db, r.id, { workstream: "a", evidence: "ok" });
+    const forceOwned = () =>
+      db
+        .prepare("UPDATE tasks SET owner_id = ?, status = 'IN_PROGRESS', substate = 'active'")
+        .run(agentId);
+    const paths: Record<string, () => unknown> = {
+      openTask: () => {
+        close();
+        openTask(db, r.id, { workstream: "a" });
+      },
+      "setTaskStatus OPEN": () => {
+        close();
+        setTaskStatus(db, r.id, "OPEN", { workstream: "a" });
+      },
+      "setTaskStatus OPEN todo": () => {
+        close();
+        setTaskStatus(db, r.id, "OPEN", { workstream: "a", substate: "todo" });
+      },
+      "release --reopen (closed)": () => {
+        close();
+        releaseTask(db, r.id, { workstream: "a", reopen: true });
+      },
+      "release (owned IN_PROGRESS)": () => {
+        forceOwned();
+        releaseTask(db, r.id, { workstream: "a" });
+      },
+      "release --reopen (owned IN_PROGRESS)": () => {
+        forceOwned();
+        releaseTask(db, r.id, { workstream: "a", reopen: true });
+      },
+      "reaper (owner agent removed)": () => {
+        forceOwned();
+        deleteAgent(db, "w1", "a");
+      },
+      acceptTask: () => acceptTask(db, r.id, { workstream: "a" }),
+      // `task update` has no status field: it must not move the task either.
+      updateTask: () => updateTask(db, r.id, { title: "renamed", impact: 70 }, { workstream: "a" }),
+    };
+    for (const [name, run] of Object.entries(paths)) {
+      run();
+      expect(getTask(db, r.id, "a"), name).toMatchObject({ status: "OPEN", substate: "parked" });
+      expect(listReady(db, "a"), name).toEqual([]);
+      if (name === "reaper (owner agent removed)")
+        insertAgent(db, { name: "w1", workstream: "a", paneId: "%1" });
+    }
+  });
+
+  it("the same paths over the CLI (release --reopen) keep it out of `task next`", async () => {
+    const r = need("a/orch", "decide");
+    await runCli(["task", "close", r.id, "-w", "a", "--evidence", "ok"], dbPath);
+    const rel = await runCli(["task", "release", r.id, "--reopen", "-w", "a"], dbPath);
+    expect(rel.exitCode).toBeNull();
+    const next = await runCli(["task", "next", "-w", "a", "--json"], dbPath);
+    expect(next.stdout).not.toContain(r.id);
+    expect(getTask(db, r.id, "a")).toMatchObject({ status: "OPEN", substate: "parked" });
+  });
+
+  it("an ordinary work task still reopens to todo", () => {
+    const { ids } = addTasks(db, [{ title: "w", note: "n" }], { workstream: "a" });
+    const id = ids[0] ?? "";
+    closeTask(db, id, { workstream: "a", evidence: "ok" });
+    releaseTask(db, id, { workstream: "a", reopen: true });
+    expect(getTask(db, id, "a")).toMatchObject({ status: "OPEN", substate: "todo" });
   });
 
   it("unpark and claim (even --force, --self) are refused with one line naming `task close`", async () => {
@@ -284,5 +386,18 @@ describe("mu human-needed (in-process CLI)", () => {
     const un = await runCli(["task", "unpark", r.id, "-w", "a"], dbPath);
     expect(un.exitCode).toBe(4);
     expect(un.stderr + un.stdout).toMatch(/mu task close/);
+  });
+
+  it("refusals print exactly one line (no Next: block) for unpark and claim --force --self", async () => {
+    const r = need("a/orch", "decide");
+    const lines = (o: { stdout: string; stderr: string }) =>
+      (o.stderr + o.stdout).split("\n").filter((l) => l.trim() !== "");
+    const un = await runCli(["task", "unpark", r.id, "-w", "a"], dbPath);
+    const cl = await runCli(["task", "claim", r.id, "--self", "--force", "-w", "a"], dbPath);
+    for (const o of [un, cl]) {
+      expect(o.exitCode).toBe(4);
+      expect(lines(o)).toHaveLength(1);
+      expect(lines(o)[0]).toMatch(new RegExp(`mu task close ${r.id} -w a`));
+    }
   });
 });

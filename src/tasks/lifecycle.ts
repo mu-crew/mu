@@ -138,10 +138,14 @@ function setTaskStatusImpl(
   status: TaskStatus,
   opts: SetStatusOptions,
 ): SetStatusResult {
-  const substate = opts.substate ?? DEFAULT_SUBSTATE[status];
-  if (!isValidPair(status, substate)) throw new InvalidSubstateError(status, substate);
   const before = getTask(db, localId, opts.workstream);
   if (!before) throw new TaskNotFoundError(localId, opts.workstream);
+  // A human task is never ready: every way back to OPEN lands it in parked.
+  const substate =
+    before.kind === "human" && status === "OPEN"
+      ? "parked"
+      : (opts.substate ?? DEFAULT_SUBSTATE[status]);
+  if (!isValidPair(status, substate)) throw new InvalidSubstateError(status, substate);
   const base = {
     previousStatus: before.status,
     status,
@@ -513,8 +517,6 @@ export function openTask(
     const before = getTask(db, localId, opts.workstream);
     const r = setTaskStatus(db, localId, "OPEN", {
       workstream: opts.workstream,
-      // A reopened human task goes back to parked: never into `ready`.
-      ...(before?.kind === "human" ? { substate: "parked" } : {}),
       ...(opts.evidence !== undefined ? { evidence: opts.evidence } : {}),
     });
     if (r.changed && before) recordEvidenceNote(db, localId, before.workstreamName, "OPEN", opts);
