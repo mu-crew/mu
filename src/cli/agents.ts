@@ -498,6 +498,7 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
   try {
     const sent = await sendToAgent(db, agent.name, text, {
       workstream: agent.workstreamName,
+      expect: { incarnation: agent.incarnation, paneId: agent.paneId },
       onUndelivered: () => {
         undelivered = true;
       },

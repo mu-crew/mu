@@ -60,6 +60,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   - A replay after the agent was deleted or its name reused reports the
     historical delivery with `task.stale` (`deleted` | `replaced`): the
     replacement is never claimed or sent to.
+  - Every send after a spawn goes to the **created registry id + pane**, task
+    or not: `agent spawn --send` (no `--task`) refuses with one line
+    (`AgentReplacedError`, exit 4) when the name holds another agent by the
+    time it writes (`sendToAgent`'s `expect`). With `--task`, one immediate
+    transaction right before the write re-checks agent id + pane AND that the
+    task is still owned by that agent and not closed (also on a resume from
+    `claimed`): otherwise `SpawnTaskStateError` (closed/unowned, exit 4) or
+    `TaskAlreadyOwnedError`, nothing is sent and only the attempt's own
+    resources are rolled back. A fresh attempt on a closed task is refused
+    before any pane exists.
   - Seams: `TransportSendOptions.msgId` (a reserved id for ctl send/fresh;
     the default and `--interrupt` still mint their own), `claimTask`'s
     `expectedAgentId` (checked inside the immediate claim: a name deleted and

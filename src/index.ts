@@ -74,6 +74,7 @@ export {
   SpawnAttemptBusyError,
   type SpawnReceipt,
   SpawnReceiptConflictError,
+  SpawnTaskStateError,
   SpawnTrustDialogError,
   sendToAgent,
   sendViaTransport,

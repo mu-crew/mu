@@ -503,11 +503,12 @@ export class AgentPaneStillAliveError extends Error implements HasNextSteps {
 }
 
 /**
- * `agent close` found the agent replaced while it worked: the name now
- * belongs to another incarnation (a respawn, or the same pane id reused),
- * so nothing more was done to it. Whatever the close already did to the
- * ORIGINAL (a pane kill) stands; the replacement's row, socket, worktree
- * and tasks are untouched. Exit 4.
+ * The name now belongs to another incarnation (a respawn, or the same pane
+ * id reused) than the one this step meant, so nothing more was done to it.
+ * `agent close`: whatever it already did to the ORIGINAL (a pane kill)
+ * stands. `agent spawn --send` / `--task`: the prompt was NOT written. In
+ * both the replacement's row, socket, worktree and tasks are untouched.
+ * Exit 4.
  */
 export class AgentReplacedError extends Error implements HasNextSteps {
   override readonly name = "AgentReplacedError";
@@ -515,18 +516,30 @@ export class AgentReplacedError extends Error implements HasNextSteps {
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
+    during: "closed" | "sent to" = "closed",
   ) {
     super(
-      `agent ${agentName} was replaced while it was being closed; the replacement was left alone. Preview it: mu agent close ${agentName} -w ${workstream}`,
+      during === "closed"
+        ? `agent ${agentName} was replaced while it was being closed; the replacement was left alone. Preview it: mu agent close ${agentName} -w ${workstream}`
+        : `agent ${agentName} was replaced before the prompt was written; nothing was sent to the replacement. Look at it: mu agent list -w ${workstream}`,
     );
+    this.during = during;
   }
+  readonly during: "closed" | "sent to";
   errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Preview the agent that holds the name now",
-        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
-      },
-    ];
+    return this.during === "closed"
+      ? [
+          {
+            intent: "Preview the agent that holds the name now",
+            command: `mu agent close ${this.agentName} -w ${this.workstream}`,
+          },
+        ]
+      : [
+          {
+            intent: "See the agent that holds the name now",
+            command: `mu agent list -w ${this.workstream}`,
+          },
+        ];
   }
 }
 
@@ -873,6 +886,24 @@ export class SpawnAttemptBusyError extends Error implements HasNextSteps {
         command: `mu task show ${this.task}`,
       },
     ];
+  }
+}
+
+/**
+ * `agent spawn --task`: the task is not claimable by this attempt any more
+ * (closed, or owned by someone else since the claim). Nothing was sent; the
+ * attempt's own pane is rolled back. Exit 4.
+ */
+export class SpawnTaskStateError extends Error implements HasNextSteps {
+  override readonly name = "SpawnTaskStateError";
+  constructor(
+    public readonly task: string,
+    reason: string,
+  ) {
+    super(`task ${task} ${reason}; nothing was sent`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [{ intent: "See the task's state", command: `mu task show ${this.task}` }];
   }
 }
 

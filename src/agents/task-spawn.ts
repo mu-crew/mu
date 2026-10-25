@@ -44,6 +44,7 @@ import {
   AgentSlashCommandUnsupportedError,
   SpawnAttemptBusyError,
   SpawnReceiptConflictError,
+  SpawnTaskStateError,
   SpawnTrustDialogError,
 } from "./errors.js";
 import { withSpawnAttemptLock } from "./lock.js";
@@ -281,6 +282,7 @@ async function fresh(
   if (task.ownerId !== null) {
     throw new TaskAlreadyOwnedError(req.task, task.ownerName ?? "<unknown>");
   }
+  if (task.status === "CLOSED") throw new SpawnTaskStateError(req.task, "is closed");
   const base = { name: req.spawn.name, requestSha: sha, msgId: newMsgId() };
   const rec = reuse
     ? resetReceipt(db, taskId, key, base)
@@ -373,22 +375,39 @@ async function drive(
       claimed = true;
       rec = updateReceipt(db, taskId, key, { state: "claimed" });
     }
-    // The delivery targets the SAVED registry id + pane, never whatever holds
-    // the name now: re-read right before the write.
-    const now = getAgentForCleanup(db, target.name, ws);
-    if (
-      now === undefined ||
-      now.incarnation !== target.incarnation ||
-      now.paneId !== target.paneId
-    ) {
-      throw new AgentReplacedError(target.name, ws);
-    }
-    row = now;
+    // One immediate transaction right before the write (no await inside):
+    // the delivery targets the SAVED registry id + pane, never whatever holds
+    // the name now, and only while the claim is still this agent's and the
+    // task still open (a resume from 'claimed' trusts no earlier view).
     // 'sending' is journaled BEFORE the write: from here a crash means "may have landed".
-    rec = updateReceipt(db, taskId, key, {
-      state: "sending",
-      transport: expectsCtl(row, agentCtlSocket(db, row)) ? "ctl" : "mux",
-    });
+    const checked = db
+      .transaction((): { row: AgentRow; rec: SpawnReceipt } => {
+        const now = getAgentForCleanup(db, target.name, ws);
+        if (
+          now === undefined ||
+          now.incarnation !== target.incarnation ||
+          now.paneId !== target.paneId
+        ) {
+          throw new AgentReplacedError(target.name, ws, "sent to");
+        }
+        const t = getTask(db, req.task, ws);
+        if (t === undefined) throw new TaskNotFoundError(req.task, ws);
+        if (t.status === "CLOSED") throw new SpawnTaskStateError(req.task, "was closed");
+        if (t.ownerId !== now.incarnation) {
+          if (t.ownerId !== null) {
+            throw new TaskAlreadyOwnedError(req.task, t.ownerName ?? "<unknown>");
+          }
+          throw new SpawnTaskStateError(req.task, `is no longer claimed by ${now.name}`);
+        }
+        const journaled = updateReceipt(db, taskId, key, {
+          state: "sending",
+          transport: expectsCtl(now, agentCtlSocket(db, now)) ? "ctl" : "mux",
+        });
+        return { row: now, rec: journaled };
+      })
+      .immediate();
+    row = checked.row;
+    rec = checked.rec;
     sending = true;
   } catch (err) {
     return unsent(err);

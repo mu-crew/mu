@@ -6,11 +6,48 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/** Seams to swap the agent (or the task) at an exact point inside one attempt. */
+const hook = vi.hoisted(() => ({
+  beforeClaim: undefined as undefined | (() => Promise<void> | void),
+  afterClaim: undefined as undefined | (() => Promise<void> | void),
+  beforeSendToAgent: undefined as undefined | (() => Promise<void> | void),
+}));
+vi.mock("../src/tasks/claim.js", async (orig) => {
+  const real = await orig<typeof import("../src/tasks/claim.js")>();
+  return {
+    ...real,
+    claimTask: async (...a: Parameters<typeof real.claimTask>) => {
+      const before = hook.beforeClaim;
+      hook.beforeClaim = undefined;
+      if (before) await before();
+      const r = await real.claimTask(...a);
+      const after = hook.afterClaim;
+      hook.afterClaim = undefined;
+      if (after) await after();
+      return r;
+    },
+  };
+});
+vi.mock("../src/agents.js", async (orig) => {
+  const real = await orig<typeof import("../src/agents.js")>();
+  return {
+    ...real,
+    sendToAgent: async (...a: Parameters<typeof real.sendToAgent>) => {
+      const before = hook.beforeSendToAgent;
+      hook.beforeSendToAgent = undefined;
+      if (before) await before();
+      return real.sendToAgent(...a);
+    },
+  };
+});
+
 import { getReceipt, requestSha, reserveReceipt, updateReceipt } from "../src/agents/receipts.js";
 import {
   AgentCtlUnreachableError,
   AgentExistsError,
+  AgentReplacedError,
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
   deleteAgent,
@@ -19,6 +56,7 @@ import {
   resetCommandResolverForTests,
   SpawnAttemptBusyError,
   SpawnReceiptConflictError,
+  SpawnTaskStateError,
   SpawnTrustDialogError,
   setCommandResolverForTests,
   spawnForTask,
@@ -26,7 +64,7 @@ import {
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
-import { claimTask } from "../src/tasks/claim.js";
+import { claimTask, releaseTask } from "../src/tasks/claim.js";
 import { addTask } from "../src/tasks/edit.js";
 import { TaskAlreadyOwnedError, TaskNotFoundError, TaskParkedError } from "../src/tasks/errors.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
@@ -287,7 +325,7 @@ describe("failures BEFORE the prompt could be written: unsent, own resources rol
     await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentCtlUnreachableError);
     rolledBack();
     expect(receipt()).toMatchObject({ state: "failed" });
-    expect(notes()).toEqual([]);
+    expect(notes().filter((n) => n.kind === "brief")).toEqual([]);
   });
 
   it("a failed attempt's key is reusable: the fixed retry sends once", async () => {
@@ -359,7 +397,7 @@ describe("AMBIGUOUS delivery: unknown, never reaped, never resent", () => {
     expect(out).toMatchObject({ state: "unknown", replay: false, brief: "pending" });
     expect(receipt()).toMatchObject({ state: "unknown", transport: "ctl" });
     keptIntact();
-    expect(notes()).toEqual([]);
+    expect(notes().filter((n) => n.kind === "brief")).toEqual([]);
   });
 
   it("replay asks ONCE and an absent id stays unknown (eviction is not 'unsent'); no resend", async () => {
@@ -546,5 +584,155 @@ describe("crash recovery: a receipt left in each stage", () => {
     expect(out.reason).toMatch(/no receipt/);
     expect(requests).toEqual([]);
     expect(getAgent(db, "worker-1", "auth")?.incarnation).toBe(ag?.incarnation);
+  });
+});
+
+// ── identity seams: the prompt and the claim go to THE spawned agent only ──
+
+/** Delete worker-1 and recreate it on a NEW pane (same name, new registry id). */
+async function swap(onDb: Db): Promise<number> {
+  deleteAgent(onDb, "worker-1", "auth");
+  const r = insertAgent(onDb, { name: "worker-1", workstream: "auth", paneId: "%77" });
+  state.panes.set("%77", { windowId: "@9", paneId: "%77", command: "pi" });
+  // A LIVE extension on the replacement: a misdirected prompt would be delivered.
+  await serveExtension(ctlSocketPath("auth", "worker-1", dir));
+  return r.incarnation;
+}
+
+describe("a replacement that appears mid-attempt gets neither claim nor prompt", () => {
+  it("swapped BEFORE the claim: refused (claim bound to the spawned id), nothing sent", async () => {
+    let inc = 0;
+    hook.beforeClaim = async () => {
+      inc = await swap(db);
+    };
+    await expect(spawnForTask(db, req())).rejects.toThrow();
+    expect(task()?.ownerId).toBeNull();
+    expect(sends()).toHaveLength(0);
+    expect(getAgent(db, "worker-1", "auth")?.incarnation).toBe(inc);
+    expect(state.panes.has("%77")).toBe(true);
+    expect(receipt()?.state).toBe("failed");
+  });
+
+  it("swapped AFTER the claim, before the write: AgentReplacedError, nothing sent, replacement kept", async () => {
+    let inc = 0;
+    hook.afterClaim = async () => {
+      inc = await swap(db);
+    };
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentReplacedError);
+    expect(task()?.ownerId).not.toBe(inc);
+    expect(sends()).toHaveLength(0);
+    expect(getAgent(db, "worker-1", "auth")?.incarnation).toBe(inc);
+    expect(state.panes.has("%77")).toBe(true);
+    expect(notes().filter((n) => n.kind === "brief")).toEqual([]);
+    expect(receipt()?.state).toBe("failed");
+  });
+
+  it("task re-owned by another agent before an unsent failure: the rollback leaves it with them", async () => {
+    hook.afterClaim = () => {
+      releaseTask(db, "t1", { workstream: "auth" });
+      insertAgent(db, { name: "other", workstream: "auth", paneId: "%88" });
+      return claimTask(db, "t1", { workstream: "auth", agentName: "other" }).then(async () => {
+        await swap(db); // an unsent failure (AgentReplacedError) follows
+      });
+    };
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentReplacedError);
+    expect(task()).toMatchObject({ ownerName: "other", status: "IN_PROGRESS" });
+    expect(sends()).toHaveLength(0);
+  });
+});
+
+describe("a resume re-verifies the claim before sending", () => {
+  const resumeAtClaimed = async () => {
+    const { spawnAgent } = await import("../src/agents.js");
+    const spawned = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    await claimTask(db, "t1", { workstream: "auth", agentName: "worker-1" });
+    const id = taskIdFor(db, "t1", "auth") ?? 0;
+    reserveReceipt(db, {
+      taskId: id,
+      attemptKey: "manual:t1",
+      name: "worker-1",
+      workstream: "auth",
+      requestSha: requestSha({ name: "worker-1", nextFree: false, text: "do the thing" }),
+      msgId: "m-claimed",
+    });
+    updateReceipt(db, id, "manual:t1", {
+      state: "claimed",
+      agentId: spawned.incarnation,
+      paneId: spawned.paneId,
+    });
+    return spawned;
+  };
+
+  it("task closed meanwhile: SpawnTaskStateError, no send, own pane rolled back", async () => {
+    await resumeAtClaimed();
+    closeTask(db, "t1", { workstream: "auth", evidence: "done elsewhere" });
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(SpawnTaskStateError);
+    expect(sends()).toHaveLength(0);
+    expect(task()?.status).toBe("CLOSED");
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(receipt()?.state).toBe("failed");
+  });
+
+  it("task released and re-owned by another: refused, the other keeps it, no send", async () => {
+    await resumeAtClaimed();
+    releaseTask(db, "t1", { workstream: "auth" });
+    insertAgent(db, { name: "other", workstream: "auth", paneId: "%88" });
+    await claimTask(db, "t1", { workstream: "auth", agentName: "other" });
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(TaskAlreadyOwnedError);
+    expect(sends()).toHaveLength(0);
+    expect(task()).toMatchObject({ ownerName: "other", status: "IN_PROGRESS" });
+  });
+
+  it("task released (unowned): refused, no send", async () => {
+    await resumeAtClaimed();
+    releaseTask(db, "t1", { workstream: "auth" });
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(SpawnTaskStateError);
+    expect(sends()).toHaveLength(0);
+  });
+
+  it("a fresh attempt on a CLOSED, unowned task is refused before any pane exists", async () => {
+    closeTask(db, "t1", { workstream: "auth", evidence: "x" });
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(SpawnTaskStateError);
+    expect(panes()).toBe(0);
+    expect(sends()).toHaveLength(0);
+    expect(receipt()).toBeUndefined();
+  });
+});
+
+describe("plain spawn --send uses the spawned registry id + pane", () => {
+  it("delete + recreate between spawn and send: refused with one line, the replacement gets nothing", async () => {
+    let inc = 0;
+    hook.beforeSendToAgent = async () => {
+      const d = openDb({ path: join(dir, "mu.db") });
+      inc = await swap(d);
+      d.close();
+    };
+    db.close();
+    const r = await runCliWire(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--send", "hello there"],
+      join(dir, "mu.db"),
+    );
+    db = openDb({ path: join(dir, "mu.db") });
+    expect(sends()).toHaveLength(0);
+    expect(getAgent(db, "worker-1", "auth")?.incarnation).toBe(inc);
+    const out = `${r.stdout}\n${r.stderr}`;
+    expect(out).toMatch(/replaced before the prompt was written/);
+    expect(r.exitCode).not.toBe(0);
+  });
+
+  it("the same refusal in --json names the error and exit class", async () => {
+    hook.beforeSendToAgent = async () => {
+      const d = openDb({ path: join(dir, "mu.db") });
+      await swap(d);
+      d.close();
+    };
+    db.close();
+    const r = await runCliWire(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--send", "hello there", "--json"],
+      join(dir, "mu.db"),
+    );
+    db = openDb({ path: join(dir, "mu.db") });
+    expect(sends()).toHaveLength(0);
+    expect(r.stdout).toMatch(/AgentReplacedError/);
   });
 });
