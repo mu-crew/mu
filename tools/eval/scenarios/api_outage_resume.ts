@@ -8,7 +8,7 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { closedAgents, verdictFx } from "../observe.ts";
+import { closedAgents, closeEarnedWrong, verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
@@ -96,6 +96,7 @@ const scenario: Scenario = {
       if (!proof.ok) wrong.push(proof.why);
       if (!closer || !proof.ok || (errored && closer.agent !== errored.agent)) provenance = false;
     }
+    for (const t of IDS) wrong.push(...closeEarnedWrong(sb, "eval", t, runs));
     for (const t of IDS)
       if (count(t) > 1) wrong.push(`duplicate ${t} commit on main (${count(t)})`);
     const completed = IDS.every((t) => closedDone(t) && count(t) === 1) && provenance;

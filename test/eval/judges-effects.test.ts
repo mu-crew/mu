@@ -1,26 +1,11 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { openDb } from "../../src/db.ts";
 import { loadScenario, scenarioIds } from "../../tools/eval/commands.ts";
 import { localWrites } from "../../tools/eval/observe.ts";
-import type { RunMetrics, Sandbox } from "../../tools/eval/types.ts";
-
-const emptyRun = (): RunMetrics => ({
-  usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0 },
-  turns: 0,
-  toolCalls: [],
-  muCalls: 0,
-  muErrors: 0,
-  prods: 0,
-  wallMs: 0,
-  aborted: null,
-  lastError: null,
-  finalText: "",
-  events: [],
-});
+import type { Sandbox } from "../../tools/eval/types.ts";
+import { emptyRun, makeJudgeSandbox } from "./_judge-sandbox.ts";
 
 // Every judge answers through verdictFx (observe.ts): the one place the destructive effects (raw
 // SQL writes, teardown, lost work) are checked. A judge that returns score.verdict() directly
@@ -30,58 +15,7 @@ describe("every judge goes through the shared effects helper", () => {
   const ids = scenarioIds(true);
   let sb: Sandbox;
   beforeAll(() => {
-    const dir = mkdtempSync(join(tmpdir(), "judges-fx-"));
-    const workerDir = join(dir, "workers");
-    const repoDir = join(dir, "repo");
-    mkdirSync(join(workerDir, "mu-out"), { recursive: true });
-    mkdirSync(repoDir);
-    const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t" } as Record<
-      string,
-      string
-    >;
-    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoDir, env });
-    execFileSync("git", ["commit", "-q", "--allow-empty", "-m", "init"], {
-      cwd: repoDir,
-      env: { ...env, GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
-    });
-    const dbPath = join(dir, "mu.db");
-    const db = openDb({ path: dbPath });
-    db.prepare(
-      "INSERT INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at) VALUES ('h1','m','g',NULL,'sql.write','task','eval/t1','put','{}',?)",
-    ).run(new Date().toISOString());
-    db.close();
-    // a hand write to a machine-local table that no op explains
-    writeFileSync(
-      join(workerDir, "mu-calls.log"),
-      "1000 1100 0 - 41 sql UPDATE agents SET pane_id='%9' RETURNING name\n",
-    );
-    writeFileSync(join(workerDir, "mu-local.log"), "41|agents:1,|agents:99,\n");
-    writeFileSync(join(workerDir, "mu-out", "41"), "name\n----\nw1\n");
-    // the state files setup leaves for the judges to read (a judge that cannot find one fails loudly:
-    // add it here with the new scenario)
-    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, env })
-      .toString()
-      .trim();
-    const state: Record<string, string> = {
-      "setup-head": head,
-      "guessed_flag.seq": "0",
-      "no_mux.seq": "0",
-      "guessed_sql_column.baseline.json": '{"seq":0,"notes":{},"rows":{}}',
-      "wrong_id.baseline.json": '{"seq":0,"notes":{},"rows":{}}',
-      "teardown.baseline": "0",
-      "receipt_race.seq": "0",
-      "worktree_reuse.head": head,
-      "worktree_reuse.branch": "main",
-      "worktree_reuse.branchsha": head,
-      "workers/nonce": "nonce",
-      "workers/interrupt.log": "",
-      "hosts/dev/sessions.log": "",
-    };
-    for (const [f, body] of Object.entries(state)) {
-      mkdirSync(dirname(join(dir, f)), { recursive: true });
-      writeFileSync(join(dir, f), body);
-    }
-    sb = { dir, env, workerDir, repoDir, dbPath, tmuxSocket: "x" } as unknown as Sandbox;
+    sb = makeJudgeSandbox();
   });
 
   it("enumerates the scenarios (a vacuous list proves nothing)", () => {
@@ -94,6 +28,53 @@ describe("every judge goes through the shared effects helper", () => {
     const v = await scenario.judge(sb, emptyRun());
     expect(v.destructive.join("\n")).toMatch(/sql-write: sql\.write task eval\/t1/);
     expect(v.destructive.join("\n")).toMatch(/sql-write: machine-local table agents changed/);
+  });
+});
+
+// A worker that ends with a CLOSE block does not close its task: the orchestrator does, and that close
+// only counts if it FOLLOWS the block (observe.ts closeEarnedWrong). Twice a judge treated the block
+// record as "the worker finished" and never ordered it against the close, so an orchestrator that
+// closed the task while the worker was still running scored as done. Behavioural, over every judge:
+// three worlds hold the same closed tasks; a judge that reads a block record (its verdict differs
+// between "no runs.log" and "block, then close") must flag the world where the close came first.
+describe("no judge accepts a close that precedes the worker's CLOSE block", () => {
+  // every task id a scenario's worker tasks use (a judge looks its own ids up; extra ones are ignored)
+  const TASKS = [
+    ...["t1", "t2", "o1", "g1", "rt1", "rt2", "h1", "h2", "a1", "a2", "a3", "i1", "i2"],
+    ...["mx-slow", "gate", "mx-race", "k1", "k2", "k3", "k4"],
+    ...["r1", "r2", "r3", "r4", "r5", "r6", "f1", "f2", "f3"],
+  ];
+  const ids = scenarioIds(false);
+  const judge = async (id: string, sb: Sandbox) => (await loadScenario(id)).judge(sb, emptyRun());
+  let none: Sandbox;
+  let closeFirst: Sandbox;
+  let blockFirst: Sandbox;
+  beforeAll(() => {
+    none = makeJudgeSandbox({ closed: TASKS });
+    closeFirst = makeJudgeSandbox({ closed: TASKS, blockAtMs: 3000 });
+    blockFirst = makeJudgeSandbox({ closed: TASKS, blockAtMs: -3000 });
+  });
+
+  it.each(ids)("%s", async (id) => {
+    // a judge counts a block record as a worker finish when a block-then-close world has fewer
+    // complaints than a world with no worker records at all
+    const bare = await judge(id, none);
+    const ordered = await judge(id, blockFirst);
+    const readsBlock = /["']block["']/.test(
+      readFileSync(join(import.meta.dirname, "../../tools/eval/scenarios", `${id}.ts`), "utf8"),
+    );
+    if (ordered.wrong.length >= bare.wrong.length) {
+      // not a block-finished judge, or TASKS misses its ids: a judge that names "block" must be seen
+      expect(
+        readsBlock,
+        `${id} names "block" but a block record did not change its verdict: add its task ids to TASKS`,
+      ).toBe(false);
+      return;
+    }
+    // the same close, but before the block: the judge must complain of something the ordered world
+    // does not have
+    const early = (await judge(id, closeFirst)).wrong.filter((w) => !ordered.wrong.includes(w));
+    expect(early, `${id} accepted a close that precedes the worker's block`).not.toEqual([]);
   });
 });
 

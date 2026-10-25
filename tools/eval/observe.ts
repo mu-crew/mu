@@ -565,11 +565,18 @@ export function delegateFor(args: Record<string, unknown>, n: number): boolean {
 
 /**
  * A `mu_delegate` call the queue refused. 3.x: the call failed (isError) while the queue was full.
- * mu-next: the refusal is a durable, non-error result ("REFUSED, not started ..."): the call is
- * not running and only a reissue starts it.
+ * mu-next: a durable, non-error result whose recorded state is `refused` (details.state, the same
+ * state delegate_calls holds); the call is not running and only a reissue starts it. The prose
+ * ("REFUSED, not started ...") is only the fallback for a result that carries no details.
  */
 export const refusedNext = (c: ToolCall): boolean =>
-  c.name === "mu_delegate" && !c.isError && /^REFUSED\b/.test(c.output);
+  c.name === "mu_delegate" &&
+  !c.isError &&
+  (c.details !== undefined ? c.details.state === "refused" : /^REFUSED\b/.test(c.output));
+
+/** The call id a refused result names: its recorded details, else the text. */
+const refusedCallId = (c: ToolCall, id: string): boolean =>
+  c.details !== undefined ? c.details.call_id === id : c.output.includes(id);
 
 /**
  * The args of every delegate call that really started or queued: accepted calls, plus a refused
@@ -582,7 +589,7 @@ export function issuedDelegateArgs(run: RunMetrics): Record<string, unknown>[] {
   for (const r of run.toolCalls) {
     if (r.name !== "mu_delegate_reissue" || r.isError) continue;
     const id = typeof r.args.call_id === "string" ? r.args.call_id : "";
-    const first = run.toolCalls.find((c) => refusedNext(c) && id !== "" && c.output.includes(id));
+    const first = run.toolCalls.find((c) => refusedNext(c) && id !== "" && refusedCallId(c, id));
     if (first) out.push(first.args);
   }
   return out;
