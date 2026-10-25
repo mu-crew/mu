@@ -102,28 +102,48 @@ function worktreeOf(db: Db, workstream: string, name: string, agent?: AgentRow) 
 }
 
 /** Preview a close: nothing is written, nothing is killed. The one read an
- *  apply is derived from, for orphans and torn-down workstreams too. */
+ *  apply is derived from, for orphans and torn-down workstreams too.
+ *
+ *  Identity and revision come from ONE synchronous read, taken after the
+ *  slow worktree check: the agent row, its worktree row, the owned tasks
+ *  and the revision are all of the same instant. The check awaits git, so
+ *  the name may be replaced meanwhile; the snapshot taken before it is then
+ *  stale and the read is retried, and a name that will not hold still is
+ *  refused (`AgentReplacedError`) rather than described half and half. */
 export async function previewClose(
   db: Db,
   name: string,
   opts: { workstream: string; discard?: boolean },
 ): Promise<ClosePreview> {
-  const agent = getAgentForCleanup(db, name, opts.workstream);
-  const row = worktreeOf(db, opts.workstream, name, agent);
-  const state = row === undefined ? undefined : await worktreeState(row.path, row.base, row.root);
   const discard = opts.discard === true;
-  return {
-    agentName: name,
-    workstream: opts.workstream,
-    kind: agent ? "agent" : row ? "orphan-worktree" : "none",
-    revision: agentRevision(db, opts.workstream, name),
-    incarnation: agent?.incarnation ?? null,
-    paneId: agent?.paneId ?? null,
-    ownedTasks: agent ? ownedTasksOf(db, agent) : [],
-    worktree: row && state ? { path: row.path, state } : null,
-    refusesDirty: state === "dirty" && !discard,
-    discard,
-  };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const agent = getAgentForCleanup(db, name, opts.workstream);
+    const row = worktreeOf(db, opts.workstream, name, agent);
+    const state = row === undefined ? undefined : await worktreeState(row.path, row.base, row.root);
+    // No await from here to the return.
+    const now = getAgentForCleanup(db, name, opts.workstream);
+    const nowRow = worktreeOf(db, opts.workstream, name, now);
+    if (
+      now?.incarnation !== agent?.incarnation ||
+      now?.paneId !== agent?.paneId ||
+      nowRow?.path !== row?.path
+    ) {
+      continue;
+    }
+    return {
+      agentName: name,
+      workstream: opts.workstream,
+      kind: now ? "agent" : nowRow ? "orphan-worktree" : "none",
+      revision: agentRevision(db, opts.workstream, name),
+      incarnation: now?.incarnation ?? null,
+      paneId: now?.paneId ?? null,
+      ownedTasks: now ? ownedTasksOf(db, now) : [],
+      worktree: nowRow && state ? { path: nowRow.path, state } : null,
+      refusesDirty: state === "dirty" && !discard,
+      discard,
+    };
+  }
+  throw new AgentReplacedError(name, opts.workstream);
 }
 
 /**
@@ -173,13 +193,26 @@ async function closeLocked(
   }
   const row = worktreeOf(db, opts.workstream, name, agent);
   if (row !== undefined) await assertReleasable(row, { discard });
-  // Right before the kill, with nothing awaited in between: the git check
-  // above is slow, and the preview must still hold when the pane dies.
-  fence();
   const mux = await activeMux().catch(() => undefined);
-  await mux?.killPane(agent.paneId).catch(() => {
-    /* idempotent — pane may already be gone, or the mux with it */
-  });
+  // The awaits above are where a replacement lands. Nothing below may act
+  // on a name that is not the incarnation this close captured.
+  const replaced = (): boolean => {
+    const now = getAgentForCleanup(db, name, opts.workstream);
+    return now !== undefined && !sameIncarnation(now, agent);
+  };
+  // Right before the kill, with nothing awaited in between: the git check
+  // above is slow, and the identity (and the preview) must still hold when
+  // the pane dies. The kill names the pane of the incarnation checked here.
+  if (replaced()) throw new AgentReplacedError(name, opts.workstream);
+  fence();
+  // (The mux is resolved first, so nothing is awaited between the checks
+  // and the kill.) A row that vanished (pruned as a ghost) has no pane left
+  // to name: nothing to kill.
+  if (getAgentForCleanup(db, name, opts.workstream) !== undefined) {
+    await mux?.killPane(agent.paneId).catch(() => {
+      /* idempotent — pane may already be gone, or the mux with it */
+    });
+  }
   // The row rule: never delete (nor release a worktree for) a row whose
   // recorded pane is alive. A pane that survives the kill (moved, or the
   // kill failed) keeps its row. In a torn-down workstream, where teardown
@@ -198,12 +231,6 @@ async function closeLocked(
       throw new AgentPaneStillAliveError(name, agent.workstreamName, agent.paneId, alive);
     }
   }
-  // The awaits above are where a replacement lands. Nothing below may act
-  // on a name that is not the incarnation this close captured.
-  const replaced = (): boolean => {
-    const now = getAgentForCleanup(db, name, opts.workstream);
-    return now !== undefined && !sameIncarnation(now, agent);
-  };
   if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   // Re-checks the state: a write after the pre-check still refuses, with
   // the agent row kept so the close can be retried.

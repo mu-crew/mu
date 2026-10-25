@@ -6,7 +6,16 @@
 // Real SQLite, mocked tmux. The race tests drive the mux executor so the
 // replacement lands exactly where a real one would: during `kill-pane`.
 
-import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -28,11 +37,13 @@ import { readFileLockMeta, withFileLock } from "../src/file-lock.js";
 import { reconcile } from "../src/reconcile.js";
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
 import { addTask, claimTask, getTask, releaseTask } from "../src/tasks.js";
+import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { teardownWorkstream, workstreamRevision } from "../src/workstream.js";
 import { registerWorktree } from "../src/worktree.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxExecutor, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
+import { freshMockState, mockTmux } from "./_verbs-mock.js";
 
 const OK = { stdout: "", stderr: "", exitCode: 0 };
 const GONE_PANE = { stdout: "", stderr: "can't find pane", exitCode: 1 };
@@ -620,5 +631,201 @@ describe("CLI: bare close previews, --if applies", () => {
     const r = await runCliJson(["agent", "close", "ghost", "-w", "auth", "--json"], dbPath);
     expect(r.data).toMatchObject({ kind: "none", revision: 0 });
     expect(r.data.nextSteps).toEqual([]);
+  });
+});
+
+describe("round 2: identity from one read, rollback and socket fenced", () => {
+  it.each(["%2", "%1"])(
+    "previewClose never mixes the original identity with a replacement's revision (replacement on %s)",
+    async (replacementPane) => {
+      // A registered worktree makes the preview await git; the name is replaced meanwhile.
+      const path = mkdtempSync(join(tmpdir(), "mu-wt-prev-"));
+      try {
+        const a = insertAgent(db, {
+          name: "worker-1",
+          workstream: "auth",
+          paneId: "%1",
+          cwd: path,
+        });
+        registerWorktree(db, {
+          path,
+          agent: "worker-1",
+          workstream: "auth",
+          root: path,
+          base: "aaa",
+          createdAt: "t",
+        });
+        const pending = previewClose(db, "worker-1", { workstream: "auth" });
+        // previewClose is parked in its worktree check: replace the agent now.
+        deleteAgent(db, "worker-1", "auth");
+        const b = insertAgent(db, {
+          name: "worker-1",
+          workstream: "auth",
+          paneId: replacementPane,
+          cwd: path,
+        });
+        const p = await pending;
+        expect(p.incarnation).toBe(b.incarnation);
+        expect(p.incarnation).not.toBe(a.incarnation);
+        expect(p.paneId).toBe(replacementPane);
+        expect(p.revision).toBe(agentRevision(db, "auth", "worker-1"));
+      } finally {
+        rmFixtureDir(path);
+      }
+    },
+  );
+
+  it("a rollback does not kill a pane id now held by another incarnation", async () => {
+    // spawn's liveness probe fails; while it does, the row is replaced by a fresh
+    // incarnation on the same pane id (a restarted mux reusing %1).
+    const prev = process.env.MU_SPAWN_LIVENESS_MS;
+    process.env.MU_SPAWN_LIVENESS_MS = "10";
+    setSleepForTests(async () => {});
+    const state = freshMockState();
+    const fake = mockTmux(state);
+    let swapped = false;
+    use(async (args) => {
+      if (args[0] === "display-message" && args[2] === "%1" && !swapped) {
+        swapped = true;
+        const cur = getAgent(db, "alice", "auth");
+        deleteAgent(db, "alice", "auth", { incarnation: cur?.incarnation ?? -1 });
+        insertAgent(db, { name: "alice", workstream: "auth", paneId: "%1" });
+        state.panes.delete("%1"); // the probe: gone
+      }
+      return fake.executor(args);
+    });
+    try {
+      await expect(
+        spawnAgent(db, { name: "alice", workstream: "auth", cli: "sh", command: "sh", ctl: false }),
+      ).rejects.toThrow();
+    } finally {
+      resetSleep();
+      if (prev === undefined) delete process.env.MU_SPAWN_LIVENESS_MS;
+      else process.env.MU_SPAWN_LIVENESS_MS = prev;
+    }
+    expect(swapped).toBe(true);
+    expect(getAgent(db, "alice", "auth")?.paneId).toBe("%1");
+    expect(fake.calls.filter((c) => c[0] === "kill-pane")).toEqual([]);
+  });
+});
+
+describe("withFileLock strict: reclaim and metadata fail closed", () => {
+  const lock = (): string => join(dir, "locks", "y.lock");
+  const unavailable = (): never => {
+    throw new Error("unavailable");
+  };
+  const age = (path: string): void => {
+    const old = new Date(Date.now() - 3_600_000);
+    utimesSync(path, old, old);
+  };
+  const deadHolder = (): void => {
+    mkdirSync(lock(), { recursive: true });
+    writeFileSync(
+      join(lock(), "meta.json"),
+      JSON.stringify({ pid: 2 ** 22 + 12345, label: "dead", acquiredAt: "t", token: "dead" }),
+    );
+    age(lock());
+  };
+
+  it("many takers racing to reclaim one dead holder's lock never overlap (two removers)", async () => {
+    for (let trial = 0; trial < 15; trial++) {
+      rmSync(lock(), { recursive: true, force: true });
+      deadHolder();
+      let inside = 0;
+      let peak = 0;
+      const taker = (i: number) =>
+        withFileLock(
+          lock(),
+          `t${i}`,
+          async () => {
+            inside++;
+            peak = Math.max(peak, inside);
+            await new Promise((r) => setTimeout(r, 15));
+            inside--;
+          },
+          { strict: true, staleLockMs: 0, acquireTimeoutMs: 5000, onUnavailable: unavailable },
+        );
+      await Promise.all([0, 1, 2, 3, 4, 5].map(taker));
+      expect(peak).toBe(1);
+    }
+  });
+
+  it("a live lock whose record is unreadable is never stolen, however old", async () => {
+    mkdirSync(lock(), { recursive: true });
+    writeFileSync(join(lock(), "meta.json"), "{not json");
+    age(lock());
+    let ran = false;
+    await expect(
+      withFileLock(
+        lock(),
+        "thief",
+        async () => {
+          ran = true;
+        },
+        { strict: true, staleLockMs: 0, acquireTimeoutMs: 80, onUnavailable: unavailable },
+      ),
+    ).rejects.toThrow("unavailable");
+    expect(ran).toBe(false);
+    expect(existsSync(lock())).toBe(true);
+  });
+
+  it("a lock dir with foreign contents and no record is not stolen either", async () => {
+    mkdirSync(lock(), { recursive: true });
+    writeFileSync(join(lock(), "other"), "");
+    age(lock());
+    await expect(
+      withFileLock(lock(), "thief", async () => {}, {
+        strict: true,
+        staleLockMs: 0,
+        acquireTimeoutMs: 80,
+        onUnavailable: unavailable,
+      }),
+    ).rejects.toThrow("unavailable");
+  });
+
+  it("an acquire that cannot publish its record runs nothing (read-only locks dir)", async () => {
+    mkdirSync(join(dir, "locks"), { recursive: true });
+    chmodSync(join(dir, "locks"), 0o555);
+    let ran = false;
+    try {
+      await expect(
+        withFileLock(
+          lock(),
+          "x",
+          async () => {
+            ran = true;
+          },
+          { strict: true, acquireTimeoutMs: 80, onUnavailable: unavailable },
+        ),
+      ).rejects.toThrow("unavailable");
+    } finally {
+      chmodSync(join(dir, "locks"), 0o755);
+    }
+    expect(ran).toBe(false);
+  });
+
+  it("a held lock never appears without its record, and leaves no staging litter", async () => {
+    await withFileLock(
+      lock(),
+      "x",
+      async () => {
+        expect((await readFileLockMeta(lock()))?.label).toBe("x");
+      },
+      { strict: true, onUnavailable: unavailable },
+    );
+    expect(readdirSync(join(dir, "locks"))).toEqual([]);
+  });
+
+  it("a stale claim file left by a crashed remover fails closed (blocks, never steals)", async () => {
+    deadHolder();
+    writeFileSync(`${lock()}.reclaim`, "999");
+    await expect(
+      withFileLock(lock(), "t", async () => {}, {
+        strict: true,
+        staleLockMs: 0,
+        acquireTimeoutMs: 80,
+        onUnavailable: unavailable,
+      }),
+    ).rejects.toThrow("unavailable");
   });
 });

@@ -4,11 +4,12 @@
 // agent. Real git; the multiplexer is the mock tmux, so no pane is real.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { withSpawnLock } from "../src/agents/spawn-lock.js";
 import {
   closeAgent,
   deleteAgent,
@@ -19,6 +20,7 @@ import {
   setCommandResolverForTests,
   spawnAgent,
 } from "../src/agents.js";
+import { ctlSocketPath } from "../src/ctl/path.js";
 import { type Db, migrateLegacyWorkspaces, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -227,6 +229,37 @@ gitDescribe("agent close: the worktree rule", () => {
     const r = await closeAgent(db, "plain-1", { workstream: "auth" });
     expect(r).toMatchObject({ killedPane: true, deletedRow: true, worktree: null });
   });
+});
+
+gitDescribe("a staged spawn parked on the session lock", () => {
+  it.each(["%77", "%pending-worker-1"])(
+    "does not unlink the socket of a replacement that took the name (placeholder closed meanwhile; replacement on %s)",
+    async (replacementPane) => {
+      const sock = ctlSocketPath("auth", "worker-1", dirname(join(tmp, "mu.db")));
+      let spawned: Promise<unknown> = Promise.resolve();
+      await withSpawnLock("mu-auth", async () => {
+        spawned = spawnAgent(db, {
+          name: "worker-1",
+          workstream: "auth",
+          worktree: true,
+          root,
+        }).catch((e) => e);
+        for (let i = 0; i < 200 && getAgent(db, "worker-1", "auth") === undefined; i++) {
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        const placeholder = getAgent(db, "worker-1", "auth");
+        expect(placeholder?.paneId).toMatch(/^%pending-/);
+        // Staging is done and its agent lock released; the close frees the name.
+        deleteAgent(db, "worker-1", "auth");
+        insertAgent(db, { name: "worker-1", workstream: "auth", paneId: replacementPane });
+        mkdirSync(dirname(sock), { recursive: true });
+        writeFileSync(sock, "");
+      });
+      await spawned;
+      expect(existsSync(sock)).toBe(true);
+      expect(getAgent(db, "worker-1", "auth")?.paneId).toBe(replacementPane);
+    },
+  );
 });
 
 gitDescribe("agent close preview: the worktree", () => {

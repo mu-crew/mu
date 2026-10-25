@@ -62,8 +62,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   act on the incarnation they saw. Close and `--worktree` staging/rollback take a
   per-agent lock that fails closed (`AgentLockBusyError`, exit 4, nothing done;
   `MU_AGENT_LOCK_TIMEOUT_MS`, default 15000): `withFileLock` gains `strict`,
-  which steals an aged lock only from a dead holder, and every release is by
-  ownership token. The spawn lock keeps its best-effort behaviour. `mu_delegate`
+  which reclaims an aged lock only from a dead holder, under an exclusive
+  claim file with a re-probe (two removers never both proceed; an unreadable
+  record or a crashed claim blocks), publishes the lock whole by `rename` (a
+  failed metadata write is unavailable, never an unlocked run), and releases
+  by ownership token. The spawn lock keeps its best-effort behaviour. Round
+  two of the review: the close preview reads identity and revision in one
+  synchronous snapshot after its git check (a replaced name is retried, then
+  refused), the close kill and the spawn-rollback kill re-check the incarnation
+  in the step that kills (a replacement on a reused pane id is left alone), and
+  a staged `--worktree` spawn unlinks the ctl socket only while its own
+  placeholder (own incarnation, still pending) holds the name. `mu_delegate`
   keeps the pane and incarnation its spawn reported and closes through
   preview, identity check, `--if` apply; a missing identity, failed preview or
   replacement keeps the pane. Printed `mu agent close` hints now say "preview".
