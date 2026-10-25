@@ -7,11 +7,14 @@ import { isAbsolute, join } from "node:path";
 
 /**
  * Resolve the canonical mu state directory:
- *   MU_STATE_DIR > $XDG_STATE_HOME/mu (absolute only) > ~/.local/state/mu
+ *   MU_STATE_DIR > $XDG_STATE_HOME/mu-next (absolute only) > ~/.local/state/mu-next
+ *
+ * `mu-next`, not `mu`: 3.x owns `<state home>/mu`, and a shared default DB,
+ * socket dir or lock dir would let the two builds corrupt each other.
  */
 export function defaultStateDir(): string {
   if (process.env.MU_STATE_DIR) return process.env.MU_STATE_DIR;
-  return join(xdgStateHome(homedir()), "mu");
+  return join(xdgStateHome(homedir()), "mu-next");
 }
 
 /**

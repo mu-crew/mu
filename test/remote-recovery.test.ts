@@ -47,7 +47,7 @@ import { installMux, type MuxHarness } from "./_mux.js";
 import { freshMockState, mockTmux } from "./_verbs-mock.js";
 
 const BASE = "b".repeat(40);
-const WT = "/home/u/.local/state/mu/remote-worktrees/auth/w1";
+const WT = "/home/u/.local/state/mu-next/remote-worktrees/auth/w1";
 
 let dir: string;
 let dbPath: string;

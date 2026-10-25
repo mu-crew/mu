@@ -104,7 +104,7 @@ bring back a global namespace.
 
 ## State of truth
 
-- The DB (`~/.local/state/mu/mu.db`, or `MU_DB_PATH`) is canonical.
+- The DB (`~/.local/state/mu-next/mu.db`, or `MU_DB_PATH`) is canonical.
   Everything else is a cache, including pane titles.
 - Writes go through the typed SDK functions, which validate, transact
   and reconcile. Op capture is the triggers' job.

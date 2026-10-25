@@ -24,7 +24,7 @@ beforeEach(() => {
   // Construct a fake HOME so we can compute a deterministic "user
   // DB" path WITHOUT the test ever pointing at the real one. The
   // guard refuses to OPEN the real path; we don't want to risk the
-  // test creating a real ~/.local/state/mu/mu.db on a clean box if
+  // test creating a real ~/.local/state/mu-next/mu.db on a clean box if
   // anything regresses.
   fakeHome = mkdtempSync(join(tmpdir(), "mu-db-guard-fake-home-"));
   process.env[homeKey] = fakeHome;
@@ -42,10 +42,15 @@ afterEach(() => {
 });
 
 describe("openDb test-guard (bug_test_flake_round_2 Layer db)", () => {
-  it("throws when path resolves to <HOME>/.local/state/mu/mu.db under VITEST", () => {
+  it("throws when path resolves to <HOME>/.local/state/mu-next/mu.db under VITEST", () => {
     expect(process.env.VITEST).toBeDefined();
-    const realDbInFakeHome = join(fakeHome, ".local", "state", "mu", "mu.db");
+    const realDbInFakeHome = join(fakeHome, ".local", "state", "mu-next", "mu.db");
     expect(() => openDb({ path: realDbInFakeHome })).toThrow(/openDb refused/);
+  });
+
+  it("still refuses the 3.x default DB (<HOME>/.local/state/mu/mu.db)", () => {
+    const threeX = join(fakeHome, ".local", "state", "mu", "mu.db");
+    expect(() => openDb({ path: threeX })).toThrow(/openDb refused/);
   });
 
   it("permits any other path (per-test temp DB stays writable)", () => {
@@ -65,8 +70,9 @@ describe("openDb test-guard (bug_test_flake_round_2 Layer db)", () => {
     const fakeXdg = mkdtempSync(join(tmpdir(), "mu-db-guard-fake-xdg-"));
     process.env[xdgKey] = fakeXdg;
     try {
-      const realDbViaXdg = join(fakeXdg, "mu", "mu.db");
-      expect(() => openDb({ path: realDbViaXdg })).toThrow(/openDb refused/);
+      for (const dir of ["mu-next", "mu"]) {
+        expect(() => openDb({ path: join(fakeXdg, dir, "mu.db") })).toThrow(/openDb refused/);
+      }
     } finally {
       rmSync(fakeXdg, { recursive: true, force: true });
     }

@@ -42,7 +42,7 @@ mu agent spawn worker-1 -w auth --host dev --worktree --task build --send 'Read:
   socket to the local derived path.
 - `--worktree` makes a detached `git worktree add` in the profile's
   `--repo` through its `--exec`, at
-  `~/.local/state/mu/remote-worktrees/<ws>/<name>` on the host. Its path
+  `~/.local/state/mu-next/remote-worktrees/<ws>/<name>` on the host. Its path
   and base commit are the agent's `cwd` and `base`. `--cwd` names an
   existing remote directory instead. `--root` is refused.
 - `--task` is the same one journaled attempt as for a local agent: claim

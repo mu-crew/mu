@@ -62,7 +62,7 @@ the answer into the parent conversation.
 
 ### 2. One DB is canonical
 
-All state lives in `~/.local/state/mu/mu.db` (SQLite WAL, safe for
+All state lives in `~/.local/state/mu-next/mu.db` (SQLite WAL, safe for
 concurrent processes). In-memory state is a cache. The extension and the
 CLI share the DB, so they cannot diverge.
 

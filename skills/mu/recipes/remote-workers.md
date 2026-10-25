@@ -49,7 +49,7 @@ mu agent close worker-1 -w big --if <rev>
 ```
 
 `--worktree` makes a detached `git worktree add` of HEAD (or `--from`) in
-the profile's `--repo`, at `~/.local/state/mu/remote-worktrees/<ws>/<name>`
+the profile's `--repo`, at `~/.local/state/mu-next/remote-worktrees/<ws>/<name>`
 on the host, through the profile's `--exec`. `--cwd` names an existing
 remote directory instead. `--root` is refused (it names a local repo).
 mu reserves the host's channel **before** its first remote command and

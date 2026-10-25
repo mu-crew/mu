@@ -22,7 +22,7 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
 │  (capture, apply, sync, drift)                                  │
 └───────────────┬──────────────────┬──────────────────┬───────────┘
                 ▼                  ▼                  ▼
-   SQLite (~/.local/state/mu/mu.db) · tmux/herdr panes · git worktrees
+   SQLite (~/.local/state/mu-next/mu.db) · tmux/herdr panes · git worktrees
                    pi agents: control socket per agent
 ```
 
@@ -104,6 +104,7 @@ are re-export hubs.
 | Module | Responsibility |
 | --- | --- |
 | `src/segments.ts` | JSONL segments: flush own ops, ingest peers from a watermark |
+| `src/sync-dir-guard.ts` | `assertSyncDirV2`: refuses a `MU_SYNC_DIR` holding a segment that opens with a v1 line (a 3.x peer); `SyncDirForeignError`, exit 4 |
 | `src/segment-line.ts` | the segment line: per-line version rules (`SEGMENT_FORMAT_VERSION`, `SEGMENT_READ_VERSIONS`), crc framing, encode and decode |
 | `src/segment-manifest.ts` | segment `.manifest` sidecar: read, write, seal, and the self-consistency check the owner's flush runs before trusting it |
 | `src/segment-resume.ts` | byte offset + running sha256 saved with a peer's caught-up fingerprint, so ingest reads only appended bytes |
@@ -184,7 +185,7 @@ are re-export hubs.
 | Module | Responsibility |
 | --- | --- |
 | `src/main.ts` | the `mu` bin (`dist/cli.js`): enables the compile cache, then `import()`s `src/cli.ts` |
-| `src/compile-cache.ts`, `src/state-dir.ts` | best-effort V8 compile cache under `<state>/compile-cache`; builtins-only state-dir resolution |
+| `src/compile-cache.ts`, `src/state-dir.ts` | best-effort V8 compile cache under `<state>/compile-cache`; builtins-only state-dir resolution (default `<state home>/mu-next`) |
 | `src/cli.ts` | Commander wiring (`buildProgram`, `runCli`) |
 | `src/cli/*.ts` | one file per verb namespace, thin wrappers over the SDK; `format.ts` renders tables, `handle.ts` maps errors to exit codes and runs ambient sync |
 | `src/cli/tasks/*.ts` | the `mu task` namespace, including `mu me tasks` / `mu me next`. `records.ts` is the task read boundary: `taskToOutput` (SQL column names, `id` = `local_id`, real `workstream_id`/`owner_id`), `taskRecordCut`/`taskItemCut` (one escaped line <= 400 characters, `cut=N` for what it clipped), `taskPage`/`pageRecords`/`footerLine` (a result serialized and grown to <= 4 KB; the `more=N cut=N next=<same command> --all` footer is reserved first and never sliced); `list`, `next`, `owned-by`, `show` and `tree` all go through it. `mu state` and `mu me` keep the table formatter |

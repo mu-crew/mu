@@ -111,7 +111,7 @@ async function until(cond: () => boolean, what: string): Promise<void> {
   }
   throw new Error(`timed out waiting for ${what}`);
 }
-const wtRoot = () => join(home, ".local", "state", "mu", "remote-worktrees", ws);
+const wtRoot = () => join(home, ".local", "state", "mu-next", "remote-worktrees", ws);
 
 function addDevHost(piCommand = `node ${join(dir, "pishim.js")}`): { command: string } {
   addHost(db, {

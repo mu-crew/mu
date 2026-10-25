@@ -71,6 +71,7 @@ import {
   segmentLineCount,
   syncDir,
 } from "./segments.js";
+import { assertSyncDirV2 } from "./sync-dir-guard.js";
 
 /** No discovered peer matches the operator's `--repair <peer>` ref.
  *  Exit 3 (not found), like every other resolve-time miss. */
@@ -334,6 +335,15 @@ export async function ambientIngest(db: Db, opts?: AmbientOptions): Promise<Ambi
   if (dir === null) return { ingested: [], warnings: [] };
   const warnings: string[] = [];
   const ingested: IngestResult[] = [];
+  // A 3.x peer shares the folder: read nothing (handle() already refused; this
+  // is the TUI tick's seam, which must stay total).
+  try {
+    assertSyncDirV2(dir);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    warn(message, opts);
+    return { ingested, warnings: [message] };
+  }
   try {
     const self = localMachineId(db);
     for (const peer of discoverPeers(dir, self)) {
@@ -387,6 +397,7 @@ export async function ambientFlush(
   const dir = syncDir();
   if (dir === null) return null;
   try {
+    assertSyncDirV2(dir);
     const result = await flushSegment(db, dir, { lockWaitMs: opts?.lockWaitMs });
     if (result.selfRepaired !== null) {
       const d = result.selfRepaired;

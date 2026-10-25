@@ -18,6 +18,13 @@ mu task add auth_fix -w app -t "Fix the auth redirect" -i 80 -e 2
 mu task close auth_fix -w app --evidence "shipped in #412"
 ```
 
+## Keep 3.x out of the sync folder
+
+mu-next writes v2 segments, which 3.x warns about on every command. So
+mu-next refuses a `MU_SYNC_DIR` where any segment opens with a v1 line
+(exit 4, nothing read or written): `MU_SYNC_DIR holds 3.x segments; give
+mu-next its own dir`. Point it at a new folder.
+
 ## Keep the DB out of the sync folder
 
 Never put `MU_DB_PATH` inside `MU_SYNC_DIR`. A live SQLite DB is three
@@ -61,7 +68,7 @@ it, and `behind`: lines you hold but have not applied. A non-zero
 
 ```bash
 mu sync --repair c8ec                              # re-read a peer's file from the start
-mu sync --from /mnt/devserver/.local/state/mu/mu.db # read a peer's DB directly
+mu sync --from /mnt/devserver/.local/state/mu-next/mu.db # read a peer's DB directly
 MU_SYNC_DIR=/media/usb-stick mu state              # one-off folder
 ```
 

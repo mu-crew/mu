@@ -663,12 +663,12 @@ describe("defaultDbPath", () => {
     });
   });
 
-  it("falls back to XDG state path (~/.local/state/mu/mu.db) when no env var is set", () => {
+  it("falls back to XDG state path (~/.local/state/mu-next/mu.db) when no env var is set", () => {
     withEnv("MU_DB_PATH", undefined, () => {
       withEnv("MU_STATE_DIR", undefined, () => {
         withEnv("XDG_STATE_HOME", undefined, () => {
           const path = defaultDbPath();
-          expect(path).toMatch(/\.local\/state\/mu\/mu\.db$/);
+          expect(path).toMatch(/\.local\/state\/mu-next\/mu\.db$/);
         });
       });
     });
@@ -678,7 +678,7 @@ describe("defaultDbPath", () => {
     withEnv("MU_DB_PATH", undefined, () => {
       withEnv("MU_STATE_DIR", undefined, () => {
         withEnv("XDG_STATE_HOME", "/custom/xdg", () => {
-          expect(defaultDbPath()).toBe("/custom/xdg/mu/mu.db");
+          expect(defaultDbPath()).toBe("/custom/xdg/mu-next/mu.db");
         });
       });
     });
@@ -689,7 +689,7 @@ describe("defaultDbPath", () => {
       withEnv("MU_STATE_DIR", undefined, () => {
         for (const value of ["", "rel/state"]) {
           withEnv("XDG_STATE_HOME", value, () => {
-            expect(defaultDbPath()).toBe(join(homedir(), ".local", "state", "mu", "mu.db"));
+            expect(defaultDbPath()).toBe(join(homedir(), ".local", "state", "mu-next", "mu.db"));
           });
         }
       });

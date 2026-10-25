@@ -16,7 +16,7 @@
   {
     "calls": [
       {
-        "bash": "git fetch \"ssh://dev/~/.local/state/mu/remote-worktrees/eval/w1\" HEAD && git cherry-pick FETCH_HEAD"
+        "bash": "git fetch \"ssh://dev/~/.local/state/mu-next/remote-worktrees/eval/w1\" HEAD && git cherry-pick FETCH_HEAD"
       }
     ]
   },

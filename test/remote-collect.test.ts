@@ -39,7 +39,7 @@ import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 const BASE = "b".repeat(40);
 const COLLECTED = "c".repeat(40);
 const OTHER = "d".repeat(40);
-const WT = "/home/u/.local/state/mu/remote-worktrees/auth/worker-1";
+const WT = "/home/u/.local/state/mu-next/remote-worktrees/auth/worker-1";
 
 let dir: string;
 let db: Db;
