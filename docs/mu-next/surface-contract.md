@@ -102,6 +102,7 @@ such as this page.
 | `v_task_mutations`, `v_notes` (**notes view shipped**: `task notes`/`show`, see CHANGELOG) | aliases, report writers, pinned note view | `selectTaskNotes(db,id,opts)`, `kind` assignment at insert |
 | `v_close_apply` | CLOSE parse and exactly-once apply | `src/close-block.ts`: `parseCloseBlock`, `applySettledClose` |
 | `v_wait_engine` (**shipped**; slice B of `v_wait_core`) | the unified wait loop; `waitForTasks`/`waitForAgents` are adapters; the frozen `WaitOptions`/`WaitResult` (callers SET, `eventScope`, `handleStall`, `humanNeeds`, `tally`); engine-owned stall detection; typed cursors and completion tokens; the producer fence (`baselines_json`); work-only CLOSE application; bounded `--until-text` regex. Stall policy and effects are slice C (`v_wait_actions`), the CLI is `v_wait_cli` | `src/wait.ts`: `waitForEvents`, `src/wait-types.ts`, `src/wait-callers.ts`, `src/wait-cursor.ts`, `src/wait-regex.ts` |
+| `v_wait_release` (**shipped**; slice C1 of `v_wait_actions`) | machine-local `wait_action_receipts` (no capture, no sync, no FK; unique task id + owner registry id + ctl incarnation + action) and the guarded release as a `handleStall`: `releaseTask(expectedOwnerId, ifRevision)` with `autoPermitted`, the callers set, spawner, pane, generation and `openHumanNeeds` rechecked in the same immediate transaction. SDK only; CLI flags are `v_wait_steer`/`v_wait_cli`'s. Guarantees: a refused release writes nothing; one release per owner incarnation (`budget-exhausted` after); never reopens, closes, spawns or kills | `src/wait-actions.ts`: `releaseStall`, `releaseStallHandler`; `src/wait-action-receipts.ts` |
 | `v_wait_core` (aggregate), `v_wait_cli` | slice C, then the `mu wait` CLI and signal snapshots | `wireWaitCommand` |
 | `v_auto`, `v_executor`, `v_hints` | authorisation, bounded executor, one hint source | `authorizeTasks`, `authorisedReady`, `executeNext`, `computeNext` |
 | `v_delegate` (part A shipped: SDK, `mu delegates`, extension on the mux path; the mux-free path is `v_delegate_nomux`), `v_settle`, `v_human` | durable delegates, every-settle waiting, human stop | `verdictTally`, `listDelegates`; state-armed settle hook; `recordHumanNeeded`, `openHumanNeeds`, `human_needs` |
@@ -115,7 +116,7 @@ such as this page.
 
 Later additive local tables: `spawn_receipts` (`v_spawn_receipts`),
 `host_channels` (`v_host_profiles`), `human_needs` (`v_human`),
-`wait_registrations` (`v_wait_reg`), `remote_recovery` (`v_remote_recovery`,
+`wait_registrations` (`v_wait_reg`), `wait_action_receipts` (`v_wait_release`), `remote_recovery` (`v_remote_recovery`,
 storage and deleters; `agent close` / `agent collect` read it back, `v_remote_recovery_close`).
 
 ## Reconciliation inventory

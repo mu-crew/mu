@@ -151,6 +151,8 @@ const UNREBUILDABLE_TABLES = [
   "host_profiles",
   "host_channels",
   "spawn_receipts",
+  // The stall actions a wait took (steer exclusion, release record): no op carries them.
+  "wait_action_receipts",
   // A remote worker's worktree, kept when its row was deleted: no op carries it.
   "remote_recovery",
   // The human task and its reason rebuild from ops; WHO recorded it does

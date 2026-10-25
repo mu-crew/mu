@@ -620,6 +620,15 @@ export {
   type WaitStallContext,
   waitForEvents,
 } from "./wait.js";
+export {
+  type ActionInfo,
+  type ActionKey,
+  type ActionReceipt,
+  getActionReceipt,
+  reserveActionReceipt,
+  transitionActionReceipt,
+} from "./wait-action-receipts.js";
+export { releaseStall, releaseStallHandler, type StallActionOptions } from "./wait-actions.js";
 export { currentCallers } from "./wait-callers.js";
 export { ctlAgentHooks } from "./wait-ctl.js";
 export {

@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **Guarded stall release and action receipts** (`v_wait_release`, slice C1 of the wait core; SDK
+  only, no CLI flags yet). New machine-local table `wait_action_receipts` (25 tables; additive,
+  same schema version, an existing file gains it on open; never captured or synced; no foreign
+  keys; a rebuild reports its rows as lost). One row per task id + owner registry id + ctl
+  incarnation + action, shared by every caller, restart and generation. `releaseStall(db, ctx)`
+  / `releaseStallHandler` implement `handleStall` for `onStall: 'release'`: in one immediate
+  transaction it rechecks the callers set, wait generation, task PK/kind/status/revision, owner
+  id, name and pane, that a caller spawned the owner, `autoPermitted` and `openHumanNeeds` of
+  every caller, then calls `releaseTask(expectedOwnerId, ifRevision)` (no reopen) and writes the
+  receipt. A failed guard writes nothing and returns the stall; a second release for the same
+  incarnation is `budget-exhausted`. The engine keeps reporting a handled `return` stall even
+  though the release removed its condition.
+
 ### Changed
 
 - **Dashboard read model** (`v_dashboard_core`): `loadDashboard(db, opts)` (`src/dashboard-data.ts`,
