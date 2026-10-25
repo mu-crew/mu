@@ -14,7 +14,7 @@ import { getTask } from "../src/tasks.js";
 import { waitForEvents } from "../src/wait.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { readCursors, recordCursors } from "../src/wait-cursor.js";
-import { registerOwnedWait } from "../src/wait-registration.js";
+import { readWaitRegistration, registerOwnedWait } from "../src/wait-registration.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { agentRef, answer, mkDelegate, mkOwnedTask, taskRef, useWaitDb } from "./_wait-fixtures.js";
 
@@ -141,21 +141,31 @@ describe("waitForEvents with the ctl hooks", () => {
     expect(pi.waits()).toBe(0);
   });
 
-  it("an owed agent's run that settled before the wait started still arrives (counted from run 0)", async () => {
+  it("an owed agent with no fence and no cursor: its historical run is NOT completion (unknown baseline, stored as the fence)", async () => {
     const caller = "pi:s3";
     await mkOwnedTask(env.db, "t1", "w1");
-    await fakePi("w1", "idle", 0).then((p) => p.settle("early answer"));
+    const pi = await fakePi("w1", "idle", 0);
+    pi.settle("OLD answer from long ago"); // runs 1, before anything was owed
     registerOwnedWait(env.db, caller, [agentRef("w1")]);
-    const r = await waitForEvents(env.db, [], {
+    const opts = {
       ...ctlAgentHooks(env.db),
       sync: false,
       pollMs: 20,
-      timeoutMs: 5000,
       callers: [caller],
       applyClose: false,
+    } as const;
+    const r = await waitForEvents(env.db, [], { ...opts, timeoutMs: 120 });
+    expect(r.timedOut).toBe(true);
+    expect(pi.waitAfter[0]).toBe(1);
+    // The probed count is now the fence: a run that settles between waits is caught.
+    expect(readWaitRegistration(env.db, caller)?.baselines["agent:w/w1"]).toMatchObject({
+      afterRuns: 1,
+      incarnation: INC,
     });
-    expect(r.event).toMatchObject({ kind: "settled", runs: 1 });
-    expect(r.refs[0]?.lastText).toBe("early answer");
+    pi.settle("the real answer");
+    const r2 = await waitForEvents(env.db, [], { ...opts, timeoutMs: 2000 });
+    expect(r2.event).toMatchObject({ kind: "settled", runs: 2 });
+    expect(r2.refs[0]?.lastText).toBe("the real answer");
   });
 
   describe("the producer fence (unconsumed baseline)", () => {
@@ -199,7 +209,7 @@ describe("waitForEvents with the ctl hooks", () => {
       expect(r.refs[0]?.lastText).toBe("the next run");
     });
 
-    it("a baseline of another incarnation or a replaced registry row is not this agent's: counted from the cursor/0", async () => {
+    it("a baseline of another incarnation or a replaced registry row is not this agent's: ignored (unknown baseline, never the old count)", async () => {
       await mkOwnedTask(env.db, "t1", "w1");
       const pi = await fakePi("w1", "idle", 0);
       pi.settle("first run of this process"); // runs 1
@@ -209,11 +219,14 @@ describe("waitForEvents with the ctl hooks", () => {
           baseline: { afterRuns: 99, incarnation: "old-process", agentId: agentId("w1") },
         },
       ]);
-      expect((await run("pi:b3")).event).toMatchObject({ kind: "settled", runs: 1 });
+      const b3 = await run("pi:b3", { timeoutMs: 120 });
+      expect(b3.timedOut).toBe(true);
+      expect(pi.waitAfter.at(-1)).toBe(1);
       registerOwnedWait(env.db, "pi:b4", [
         { ...agentRef("w1"), baseline: { afterRuns: 99, incarnation: INC, agentId: 424242 } },
       ]);
-      expect((await run("pi:b4")).event).toMatchObject({ kind: "settled", runs: 1 });
+      expect((await run("pi:b4", { timeoutMs: 120 })).timedOut).toBe(true);
+      expect(pi.waitAfter.at(-1)).toBe(1);
     });
 
     it("the consumed cursor only ever raises the baseline: a delivered run is never redelivered", async () => {

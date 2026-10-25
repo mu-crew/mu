@@ -77,3 +77,25 @@ const BLOCKERS_SQL = `
   SELECT t.local_id AS id, w.name AS ws FROM reach r
     JOIN tasks t ON t.id = r.node JOIN workstreams w ON w.id = t.workstream_id
    ORDER BY w.name, t.local_id`;
+
+/** The registry row id of an agent ref (0 when it has no row): the identity a death or dialog token is pinned to. */
+export function agentRowId(db: Db, ref: Pick<WaitRef, "workstream" | "id">): number {
+  const row = db
+    .prepare(
+      `SELECT a.id FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id
+        WHERE a.name = ? AND ws.name = ?`,
+    )
+    .get(ref.id, ref.workstream) as { id: number } | undefined;
+  return row?.id ?? 0;
+}
+
+/** The registry row id of a task's current owner (0 when it has none). */
+export function taskOwnerRowId(db: Db, ref: Pick<WaitRef, "workstream" | "id">): number {
+  const row = db
+    .prepare(
+      `SELECT COALESCE(t.owner_id, 0) AS id FROM tasks t JOIN workstreams ws ON ws.id = t.workstream_id
+        WHERE t.local_id = ? AND ws.name = ?`,
+    )
+    .get(ref.id, ref.workstream) as { id: number } | undefined;
+  return row?.id ?? 0;
+}

@@ -306,6 +306,36 @@ export function registerOwnedWait(
 }
 
 /**
+ * Store `baseline` as the unconsumed fence of an owed agent ref that has none
+ * (a ref registered with no producer baseline: the first wait probed the run
+ * count and counts from it), or whose stored fence belongs to another process
+ * or registry row. A no-op when the ref is not owed or the fence is usable. Touches neither `state` nor `generation`, so it never disturbs a
+ * wait in flight.
+ */
+export function fenceAgentRef(
+  db: Db,
+  caller: string,
+  ref: RegisteredRef,
+  baseline: RefBaseline,
+): void {
+  db.transaction(() => {
+    const row = select(db, caller);
+    if (row === undefined) return;
+    const reg = parse(row);
+    const key = refKeyOf(ref);
+    if (!reg.refs.some((r) => refKeyOf(r) === key)) return;
+    // The same fence (or an earlier one of the same process) stays; a baseline of
+    // another process or registry row, which no wait could use, is replaced.
+    const merged = mergeBaseline(reg.baselines[key], baseline);
+    if (merged === reg.baselines[key]) return;
+    db.prepare("UPDATE wait_registrations SET baselines_json = ? WHERE caller = ?").run(
+      JSON.stringify({ ...reg.baselines, [key]: merged }),
+      caller,
+    );
+  }).immediate();
+}
+
+/**
  * Start a wait for `caller`: bump the generation, mark the row `waiting`,
  * return the generation and the refs owed now. undefined (and nothing
  * written) when the caller owes nothing. An earlier wait still marked
