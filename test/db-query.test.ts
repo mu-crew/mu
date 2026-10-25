@@ -258,6 +258,89 @@ describe("db query refuses to write mu's capture bookkeeping", () => {
     );
   });
 
+  // triage_vdb_seq_peers_id: counters, watermarks and ids are not the SQL
+  // verb's to rewrite.
+  it.each([
+    [
+      "sqlite_sequence UPDATE",
+      "UPDATE sqlite_sequence SET seq = 9223372036854775807 WHERE name = 'ops'",
+      "sqlite_sequence",
+    ],
+    ["sqlite_sequence DELETE", "DELETE FROM sqlite_sequence", "sqlite_sequence"],
+    [
+      "sqlite_sequence INSERT",
+      "INSERT INTO sqlite_sequence (name, seq) VALUES ('x', 1)",
+      "sqlite_sequence",
+    ],
+    ["sync_peers UPDATE", "UPDATE sync_peers SET last_applied_seq = 1000000", "sync_peers"],
+    [
+      "sync_peers INSERT",
+      "INSERT INTO sync_peers (machine_id, last_applied_seq) VALUES ('p', 99)",
+      "sync_peers",
+    ],
+    ["sync_peers DELETE", "DELETE FROM sync_peers", "sync_peers"],
+  ])("%s", async (_name, sql, what) => {
+    db.prepare("INSERT INTO sync_peers (machine_id, last_applied_seq) VALUES ('peer', 3)").run();
+    const seq = db.prepare("SELECT * FROM sqlite_sequence ORDER BY name").all();
+    const peers = db.prepare("SELECT * FROM sync_peers ORDER BY machine_id").all();
+    await expect(cmdDbQuery(db, sql)).rejects.toThrow(new RegExp(`cannot write ${what}`));
+    expect(db.prepare("SELECT * FROM sqlite_sequence ORDER BY name").all()).toEqual(seq);
+    expect(db.prepare("SELECT * FROM sync_peers ORDER BY machine_id").all()).toEqual(peers);
+  });
+
+  it("sync_peers refusal names `mu sync --repair`", async () => {
+    await expect(cmdDbQuery(db, "UPDATE sync_peers SET last_applied_seq = 9")).rejects.toThrow(
+      /mu sync --repair/,
+    );
+  });
+
+  it("a script cannot smuggle a counter write after a legal write (rolled back whole)", async () => {
+    const titlesBefore = titles();
+    await expect(
+      cmdDbQuery(db, "UPDATE tasks SET title = 'x'; UPDATE sqlite_sequence SET seq = 1 << 62"),
+    ).rejects.toThrow(/cannot write sqlite_sequence/);
+    expect(titles()).toBe(titlesBefore);
+  });
+
+  it("AUTOINCREMENT inserts, deletes and updates keep working (they touch sqlite_sequence themselves)", async () => {
+    await cmdDbQuery(
+      db,
+      "INSERT INTO task_notes (task_id, author, content, kind, created_at) SELECT id, 'me', 'hi', 'note', 'now' FROM tasks WHERE local_id = 'a' AND workstream_id = (SELECT id FROM workstreams WHERE name = 'w')",
+    );
+    await cmdDbQuery(db, "UPDATE task_notes SET content = 'edited'");
+    await cmdDbQuery(db, "DELETE FROM task_notes");
+    await cmdDbQuery(db, "INSERT INTO workstreams (name, created_at) VALUES ('fresh', 'now')");
+    expect(count("SELECT COUNT(*) AS n FROM workstreams WHERE name = 'fresh'")).toBe(1);
+  });
+
+  it.each([
+    ["tasks.id", "UPDATE tasks SET id = -1 WHERE local_id = 'a'", "tasks"],
+    ["tasks.id to a positive id", "UPDATE tasks SET id = id + 1000", "tasks"],
+    ["tasks rowid", "UPDATE tasks SET rowid = -5", "tasks"],
+    ["tasks id in a CTE write", "WITH x AS (SELECT 1) UPDATE tasks SET id = 7", "tasks"],
+    ["workstreams.id", "UPDATE workstreams SET id = -1", "workstreams"],
+    ["task_notes.id", "UPDATE task_notes SET id = 0", "task_notes"],
+    ["task_edges rowid", "UPDATE task_edges SET rowid = -2", "task_edges"],
+  ])("refuses UPDATE of %s", async (_name, sql, table) => {
+    db.prepare(
+      "INSERT INTO task_notes (task_id, author, content, kind, created_at) VALUES (1, 'me', 'hi', 'note', 'now')",
+    ).run();
+    const before = db.prepare("SELECT id, local_id FROM tasks ORDER BY id").all();
+    const opsBefore = ops();
+    await expect(cmdDbQuery(db, sql)).rejects.toThrow(
+      new RegExp(`cannot change the id of ${table}`),
+    );
+    expect(db.prepare("SELECT id, local_id FROM tasks ORDER BY id").all()).toEqual(before);
+    expect(ops()).toBe(opsBefore);
+  });
+
+  it("still allows UPDATEs that leave the id alone", async () => {
+    await cmdDbQuery(db, "UPDATE tasks SET title = 'renamed' WHERE local_id = 'a'");
+    await cmdDbQuery(db, "UPDATE workstreams SET name = name");
+    await cmdDbQuery(db, "UPDATE task_edges SET to_task_id = to_task_id");
+    expect(count("SELECT COUNT(*) AS n FROM tasks WHERE title = 'renamed'")).toBe(2);
+  });
+
   it("allows reading the bookkeeping", async () => {
     await cmdDbQuery(db, "SELECT * FROM op_ctx");
     await cmdDbQuery(db, "SELECT COUNT(*) AS n FROM ops", { json: true });

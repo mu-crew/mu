@@ -95,7 +95,9 @@ The whole call runs in one transaction that mu opens, so `BEGIN`,
 `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT` and `RELEASE` are refused, each
 statement checked by SQLite itself (a table or column named `begin` or
 `end` is fine, a leading `;` hides nothing); a failed statement rolls the call
-back. An `INSERT` that names an `id` of 0 or below is refused too (omit it).
+back. An `INSERT` that names an `id` of 0 or below is refused too (omit it), and
+so is an `UPDATE` of `id` (or `rowid`) on `workstreams`, `tasks`, `task_notes`
+and `task_edges`: ids are set once.
 
 What it will not touch: mu's capture bookkeeping, the schema and the
 connection. The rule is a policy, so nothing has to be detected:
@@ -110,7 +112,9 @@ connection. The rule is a policy, so nothing has to be detected:
   `foreign_key_check`, `integrity_check`, `quick_check`, and a bare
   `user_version`, `foreign_keys`, `busy_timeout` or `database_list`.
   Anything else is refused before it runs.
-- No write to `op_ctx`, `op_dying`, `ops`, `schema_version` or `machine_identity`.
+- No write to `op_ctx`, `op_dying`, `ops`, `schema_version`, `machine_identity`,
+  `sqlite_sequence` (the AUTOINCREMENT counters; inserts still advance them) or
+  `sync_peers` (sync watermarks: `mu sync --repair <peer>` re-reads a peer).
 
 SQLite itself decides what a statement does (its `EXPLAIN` listing, trigger
 bodies included), never the text, so a table named `begin` is fine and a

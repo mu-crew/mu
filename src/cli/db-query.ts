@@ -20,8 +20,10 @@
 //     transaction), ATTACH/DETACH (`sqlite_attach` / `sqlite_detach`
 //     calls), DDL (any write to a sqlite_master root page, main or temp) and
 //     every table a program writes, trigger bodies included: op_ctx /
-//     op_dying / ops / schema_version / machine_identity are refused unless a MAIN `_cap_*`
-//     trigger writes them. That is capture working.
+//     op_dying / ops / schema_version / machine_identity / sync_peers are
+//     refused unless a MAIN `_cap_*` trigger writes them. That is capture
+//     working. Also refused: a statement's own write to sqlite_sequence, and
+//     an UPDATE of id/rowid on the four guarded tables (a table-less `Delete`).
 //   * The one place that reads text is the PRAGMA allowlist, because SQLite
 //     applies a PRAGMA when it COMPILES it (`PRAGMA foreign_keys=OFF` flips
 //     the connection before any .run()) and its listing does not name the
@@ -257,7 +259,13 @@ const PROTECTED_TABLES = new Set([
   "ops",
   "schema_version",
   "machine_identity",
+  "sync_peers",
 ]);
+/** AUTOINCREMENT counters. Protected only as a statement's own target (see firstProtectedWrite). */
+const SEQUENCE_TABLE = "sqlite_sequence";
+/** Tables whose ids the capture INSERT guards check (src/capture.ts positiveIdGuard). */
+const ID_GUARDED_TABLES = new Set(["workstreams", "tasks", "task_notes", "task_edges"]);
+const ID_CHANGE = "id change of ";
 
 interface ExplainRow {
   opcode: string;
@@ -319,9 +327,21 @@ export function checkStatement(db: Db, statement: string): void {
       { showHelp: false },
     );
   }
+  if (refused?.startsWith(ID_CHANGE) === true) {
+    throw new UsageError(
+      `mu db query cannot change the id of ${refused.slice(ID_CHANGE.length)}: ids are set once at INSERT (omit the id there); to renumber, DELETE and INSERT a new row`,
+      { showHelp: false },
+    );
+  }
+  if (refused === "sync_peers") {
+    throw new UsageError(
+      "mu db query cannot write sync_peers: those are sync watermarks, and a forged one skips peer ops for good (`mu sync --repair <peer>` re-reads a peer from the start)",
+      { showHelp: false },
+    );
+  }
   if (refused !== undefined) {
     throw new UsageError(
-      `mu db query cannot write ${refused}: it is mu's capture bookkeeping (op_ctx, op_dying, ops, schema_version, machine_identity)`,
+      `mu db query cannot write ${refused}: it is mu's capture bookkeeping (op_ctx, op_dying, ops, schema_version, machine_identity, sqlite_sequence)`,
       { showHelp: false },
     );
   }
@@ -357,12 +377,23 @@ function firstProtectedWrite(db: Db, rows: readonly ExplainRow[]): string | unde
     ).map((t) => t.name),
   );
   let trusted = false; // the current program is a main capture trigger
+  let mainProgram = true; // the statement's own program, not a trigger body
+  let counterWrite: string | undefined; // reported last: DDL and bookkeeping win
+  let sawWrite = false; // the main program already opened a write cursor
+  const cursorTable = new Map<number, string>(); // main program: write cursor -> table
   for (const r of rows) {
     if (r.opcode === "Init") {
       const sub = r.p4 === null ? null : /^-- TRIGGER (.+)$/.exec(r.p4);
+      mainProgram = sub === null;
       trusted =
         sub !== null && capTriggers.has(sub[1] as string) && !tempTriggers.has(sub[1] as string);
       continue;
+    }
+    // A rowid change is a Delete (no change count, no table name) of the row
+    // and a re-Insert: the capture triggers only guard INSERT ids.
+    if (r.opcode === "Delete" && mainProgram && r.p2 === 0 && r.p4 === null) {
+      const table = cursorTable.get(r.p1);
+      if (table !== undefined && ID_GUARDED_TABLES.has(table)) return ID_CHANGE + table;
     }
     // [root page, database index] a write opcode touches; main is database 0.
     let target: [number, number] | undefined;
@@ -375,8 +406,20 @@ function firstProtectedWrite(db: Db, rows: readonly ExplainRow[]): string | unde
     if (dbIndex !== 0) continue;
     const name = tableOfRoot.get(root);
     if (name !== undefined && PROTECTED_TABLES.has(name) && !trusted) return name;
+    // sqlite_sequence is also written by any AUTOINCREMENT insert, in the
+    // main program, AFTER its own target. Only a statement whose FIRST write
+    // is the counter table itself edits the counters.
+    // (DDL on an AUTOINCREMENT table clears it first; report the schema write instead.)
+    if (name === SEQUENCE_TABLE && mainProgram && !sawWrite) counterWrite = name;
+    if (mainProgram) {
+      sawWrite = true;
+      // A table cursor's P4 is its column count; an index's is a key-info "k(...)".
+      if (r.opcode === "OpenWrite" && name !== undefined && /^\d+$/.test(r.p4 ?? "")) {
+        cursorTable.set(r.p1, name);
+      }
+    }
   }
-  return undefined;
+  return counterWrite;
 }
 
 // ─── the wrong-column hint ────────────────────────────────────────────

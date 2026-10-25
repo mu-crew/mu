@@ -764,6 +764,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`mu db query` no longer writes `sqlite_sequence`, `sync_peers` or row ids.**
+  One `UPDATE sqlite_sequence` could brick every later captured write ("database or
+  disk is full"); a forged `sync_peers` watermark skipped peer ops until a repair; an
+  `UPDATE tasks SET id=-1` slipped past the INSERT-only id guard. All three are
+  refused (the `sync_peers` refusal names `mu sync --repair <peer>`);
+  AUTOINCREMENT inserts still work.
+
 - **`mu db query` no longer writes `machine_identity`.** Its HLC clock and machine id
   feed every captured op, so a forged id or clock silently unpublished later ops.
   Only a main `_cap_*` trigger writes it now.
