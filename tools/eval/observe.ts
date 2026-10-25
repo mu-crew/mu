@@ -200,10 +200,14 @@ export interface CloseOp {
   actor: string | null;
 }
 
-/** The LAST task.close op of a task: when, and by which actor (the worker's name for a worker's own close). */
+/** The ops that close a task: the verb's, and a settled CLOSE block's own (`close.apply`, actor = the worker). */
+export const CLOSE_INTENTS = ["task.close", "close.apply"];
+
+/** The LAST close op of a task: when, and by which actor (the worker's name for a worker's own or applied close). */
 export function lastCloseOp(sb: Sandbox, ws: string, task: string): CloseOp | null {
   const ops = opsAfter(sb, 0).filter(
-    (o) => o.intent === "task.close" && o.entity === "task" && o.key === `${ws}/${task}`,
+    (o) =>
+      CLOSE_INTENTS.includes(o.intent ?? "") && o.entity === "task" && o.key === `${ws}/${task}`,
   );
   const o = ops[ops.length - 1];
   return o ? { seq: o.seq, ms: o.ms, actor: o.actor } : null;
@@ -212,8 +216,10 @@ export function lastCloseOp(sb: Sandbox, ws: string, task: string): CloseOp | nu
 /**
  * Wrong entries for a task closed by someone who had not finished it. The task's finishing run is
  * the worker's last close/block record in runs.log. In verb mode the worker closes it itself (the
- * close op's actor is that worker); in block mode the orchestrator closes it after the block. A
- * task closed while its worker had not run yet shows up as the driver's "already-closed" record.
+ * close op's actor is that worker); in block mode a close counts only if the LAST close op (a verb
+ * close or a settled block's `close.apply`) comes after the block record: an earlier AUT close is
+ * wrong even when the block follows. A task closed while its worker had not run yet shows up as the
+ * driver's "already-closed" record.
  */
 export function closeEarnedWrong(
   sb: Sandbox,

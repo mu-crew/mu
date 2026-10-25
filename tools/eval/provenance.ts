@@ -114,7 +114,9 @@ function readOps(sb: Sandbox, entity: "task" | "note", ws: string, task: string)
 
 /** The LAST task.close op of a task (a reopened task is judged by its final close), or null. */
 export function closeMoment(sb: Sandbox, ws: string, task: string): Moment | null {
-  const closes = readOps(sb, "task", ws, task).filter((o) => o.intent === "task.close");
+  const closes = readOps(sb, "task", ws, task).filter((o) =>
+    ["task.close", "close.apply"].includes(o.intent ?? ""),
+  );
   return closes[closes.length - 1] ?? null;
 }
 
