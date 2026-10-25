@@ -2,6 +2,8 @@
 
 Black-box rig: a surface is a directory with a built mu, mu runs as a subprocess, and workers are scripted faux pis. Only the AUT (agent under test) costs money. Imports nothing from `src/` or `extension/`.
 
+The AUT's `pi` is a sandbox wrapper: `--version` and `--list-models` print the host pi's own output, and the real pi path, extension paths and the faux model name live under `<sandbox>/.rt/`, off the AUT's PATH. The AUT's PATH holds system dirs plus `<sandbox>/bin`; HOME is empty.
+
 - Prepare a surface: `node tools/eval/main.ts prepare 3x v3.13.3` (exports the ref into `~/.cache/mu/eval/surfaces/3x`, then `npm ci && npm run build`).
 - Selftest, zero cost (faux model): `npm run build && node tools/eval/main.ts selftest [--surface <dir>]`.
 - One scenario: `run` arrives with the scenario tasks. A scenario is a `Scenario` in `scenarios/<id>.ts`; `runAut(sandbox, scenario, opts)` runs it.
