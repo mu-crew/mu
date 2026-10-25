@@ -16,6 +16,10 @@ Rules for readers and for the units below:
   in the same commit as the code. `v_docs_final` checks nothing is left.
 - No module-map row, runnable guide snippet or `Next:` hint exists for
   code that has not shipped.
+- No import and no flag day (user decision, 2026-10-25): mu-next runs
+  beside 3.x with its own DB, state, sync dir and machine id; workstreams
+  move by `v_move_recipe`. Reading v1 segment lines and accepting a v12
+  DB are no longer required (the code stays).
 - The build-time spelling tournaments (`dec_*`) were dropped. The
   README Interface defaults plus the amendments below are the contract;
   `v_eval_next` measures it with grammar-neutral judges.
@@ -105,7 +109,7 @@ such as this page.
 | `v_task_reads` (**shipped**; see [ARCHITECTURE](../ARCHITECTURE.md) and CHANGELOG) | task list/next/owned-by/show/tree as capped records, SQL-keyed JSON items, the open-DAG frontier | `src/cli/tasks/records.ts`: `taskToOutput`, `taskRecord`, `taskPage`; `src/dag.ts`: `loadOpenTaskFrontier` |
 | `v_host_profiles`, `v_remote_spawn`, `v_remote_collect` | ssh-free host templates, remote spawn and collect | `expandHostTemplate`, `withHostChannel`, `host_channels`, `ensureRemoteForward`, `collectRemoteAgent`, `closeRemoteWorktree` |
 | `v_pi_package`, `v_dashboard_*` | pi package (no `mu link`), four-tab read-only dashboard | `loadDashboard`, `DashboardSnapshot`, `runDashboard` |
-| `v_import`, `v_cutover_runbook`, `v_dogfood` | rehearsed import, human-run swap and rollback | `importDb`; actual cut-over is human-chosen |
+| `v_move_recipe`, `v_dogfood` | model-run move of one workstream from the read-only 3.x DB (≤ 250-word recipe), isolated dogfood; no import, no flag day | none (a recipe over `sqlite3 -readonly` and batch `task add --blocks`) |
 | `v_skill`, `v_docs_final`, `v_eval_next` | prose budgets and markers, final docs and help budgets, measurement | `test/prose-budget.test.ts`, `test/help-budget.test.ts` |
 
 Later additive local tables: `spawn_receipts` (`v_spawn_receipts`),

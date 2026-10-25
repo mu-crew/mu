@@ -9,7 +9,8 @@ mistakes it cannot make.
 Minimal but still practical: the smallest layer over tmux/herdr and
 SQLite that a crew uses all day without friction. Deleting code only
 helps when what replaces it is cheaper for the agent. Built on the
-`mu-next` branch, then cut over on a flag day.
+`mu-next` branch, then run side by side with 3.x; workstreams move
+over one at a time by a model-run recipe (see Move).
 
 **Status.** This page is the design of record, not a description of
 what ships. Shipped behaviour is in [ARCHITECTURE](../ARCHITECTURE.md),
@@ -61,7 +62,7 @@ plus museum mining (2,739 sessions, 23,443 mu calls, 4% errored).
 | jj/sl/cp VCS backends, staleness, commits, orphans | 582 git workspaces, 0 jj/sl |
 | general undo | 2 uses, both un-teardown; teardown becomes soft |
 | tmux paste send, kick, adopt | 0, 2, 2 real uses |
-| migrate sidecar, legacy ops, resumable SHA | finished or replaced (see Cut-over) |
+| migrate sidecar, legacy ops, resumable SHA | finished or replaced (see Move) |
 | delegate footer extras, refute nudge, `mu link` | conveniences; pi packages ship the skill (the queue stays: admission control) |
 | ~950 words of skill explaining mu's own flags | verbs and errors explain themselves |
 
@@ -120,9 +121,8 @@ UPDATE syncs as a `{kind}`-only put that a peer cannot match):
 --report` and `task close --report <text>` write `report`; `record`
 writes `verdict`; `close` writes `close`; else `note`. With no
 `report` note, the view shows the closer's last `note` instead,
-decided at read time. Import classifies 3.x notes the same way
-(first note = brief, last non-`CLOSE:` = report, `REFUTER`/`VERDICT:`
-= verdict). 483/1,197
+decided at read time. The move recipe carries a 3.x task's brief as a
+`brief` note. 483/1,197
 worker re-reads would have lost the brief under last-5; 1,132 tasks end
 with a `CLOSE:` note, not the report (`cc_last5_hides_brief`,
 `we_last_note_wrong`).
@@ -236,10 +236,10 @@ the old one after a preview, since names are reused: `hail`,
 views `ready`, `blocked`, `blockers`, shared by agents and dashboard.
 `ready` order, used by `mu next` dispatch: scored tasks by
 impact/effort desc, then the rest oldest first (`pv_impact_effort_flags`).
-`impact`/`effort_days` stay NOT NULL with defaults until flag day
+`impact`/`effort_days` stay NOT NULL with defaults
 (`co_nullable_blocks_ingest`). Trigger-enforced for **local writes
 only** (`WHEN applying=0`): claim CAS, close needs evidence, close
-refuses open blockers. Ingest and import accept what the log says
+refuses open blockers. Ingest accepts what the log says
 (peers can merge into states no local write allows; close and its
 evidence are separate ops; 2 live CLOSED tasks have open blockers);
 doctor reports such states. A RAISE during ingest would roll back the
@@ -497,41 +497,29 @@ Plain writes are captured as a safety net, not a supported path.
 - Minimum SQLite 3.42 checked by the triggers (abort below) and by
   doctor.
 
-## Cut-over (flag day)
+## Move, not cut-over (user decision, 2026-10-25)
 
-1. Kernel on `mu-next`: schema, persistent capture, apply/HLC/segments
-   (resume kept for now), ctl, claim, mux seam; existing tests trimmed.
-2. Verbs, pi package, dashboard.
-3. Dogfood with its own `MU_DB_PATH`, `MU_STATE_DIR`, `MU_SYNC_DIR`,
-   mux namespace (`MU_TMUX_SOCKET` / a private `MU_HERDR_SESSION`) and a
-   freshly minted machine id, so it never writes the live DB, a real
-   segment, or a live `mu-<ws>` session; discard it after
+No mechanical import and no flag day. mu-next and 3.x never share state:
+
+1. mu-next runs with its own `MU_DB_PATH`, `MU_STATE_DIR`,
+   `MU_SYNC_DIR`, mux namespace (`MU_TMUX_SOCKET` / a private
+   `MU_HERDR_SESSION`) and a freshly minted machine id, so its v2
+   segments never reach a 3.x peer and 3.x never writes its DB
    (`co_dogfood_identity`).
-4. Segment format: the version is checked **per line**. mu-next reads
-   v1 and v2 and appends v2 to the same file; the manifest tolerates a
-   mixed file; self-repair never truncates lines of another version.
-   3.x refuses v2 lines loudly. (3.x checks the version by exact
-   equality, so an unchanged reader would truncate its own v1 segment
-   and stall on 14 old v1 peer segments.) Mixed-version test: a 3.x and
-   a mu-next peer exchange ops; each refuses or applies correctly.
-5. Rehearse: import a copy into a temp file and diff row counts and
-   projection with doctor's drift code before any swap.
-6. Flag day: stop all agents and release or reopen every IN_PROGRESS
-   task (doctor refuses otherwise: ownership does not survive import);
-   lock; import inside one read transaction, carrying machine id, HLC
-   clock and `sync_peers` watermarks; checkpoint; rename DB with
-   `-wal`/`-shm`; respawn agents; both machines upgrade together
-   (`co_handover_quiesce`). Rollback is restore-and-new-identity: the
-   3.x DB comes back with a fresh machine id, never the old one, since
-   peers already hold its v2 lines and its HLCs could collide. Rolling
-   back also moves every segment holding v2 lines out of `MU_SYNC_DIR`
-   on every machine (archived, not deleted); otherwise 3.x stops at the
-   first v2 line of each, including this machine's former segment, now
-   read as a peer. Rollback is all machines or none.
-7. History: old teardowns stay final (their deletes replay verbatim;
-   only teardowns after the cut-over are soft) (`co_legacy_teardowns`).
-8. Budgets: per-command overhead and import time measured against 3.x
-   (53 MB segment: 0.3 s/pass; 94k-op replay 4.5 s) (`co_resume_perf`).
+2. The 3.x DB stays untouched as a read-only archive. 3.x keeps working
+   for whatever has not moved.
+3. A workstream moves on request, from one machine only, by a recipe a
+   model runs (`v_move_recipe`, ≤ 250 words): read the old DB read-only
+   (`sqlite3 -readonly`), then one batch `task add` with `--blocks`
+   carrying titles, impact/effort, the brief as a `brief` note and a
+   `moved from 3.x <ws>/<id>` note. Check with `task tree` and compare
+   counts against the old DB. Moved tasks start OPEN: ownership, agents
+   and history do not move (the archive keeps them).
+4. Budgets: per-command overhead measured against 3.x
+   (`co_resume_perf`).
+
+No longer required (the code stays): reading v1 segment lines and
+accepting a v12 DB; they mattered only for an in-place import.
 
 ## Decisions during the build
 
@@ -550,8 +538,8 @@ root cause. The README defaults stand. The final measurement is
 not verb spellings, three reps per cell, a paired comparison, and a
 default kept unless a candidate wins by more than the rep spread.
 **The eval is the feedback loop (user decision, 2026-10-25).** mu-next
-must be provably better for its agent users than 3.x, whose surface came
-from guesses and accidents. Every unit that changes what an agent sees
+must be no worse than 3.x on agent metrics and better on kernel
+guarantees. Every unit that changes what an agent sees
 runs its scenario subset before merge: a scripted check (hard gate) and a
 small live haiku run against the same subset on 3.13.3 (blocks only on a
 destructive action or a completion drop beyond the rep spread). The
@@ -561,7 +549,7 @@ destructive actions and no completion drop as hard constraints; haiku
 with 3+ reps leads. Four scenarios (worker_dies, wrong_id,
 wait_receipt_race, single_channel_host) are a holdout never tuned
 against. Judges are frozen at v2.1 and change only when a real run
-scored wrong. After cut-over the matrix is the release gate and the
+scored wrong. Once mu-next is in use the matrix is the release gate and the
 bench for new models, and museum mining feeds new scenarios.
 
 Three hill-climbs follow (user decision, 2026-10-25), all on the
@@ -611,8 +599,8 @@ The kernel does not depend on these and is built first.
 ## Open
 
 - `kind` on notes and soft-delete teardown ride segment v2 lines
-  (shipped; mu-next reads v1 and v2); confirm both machines can upgrade
-  together at the flag day.
+  (shipped). mu-next keeps its own sync dir, so no machine has to
+  upgrade in lockstep.
 - `bug_replace_rekey` and `bug_touch_regresses` are fixed (CHANGELOG
   Unreleased).
 
