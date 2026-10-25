@@ -491,12 +491,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   most 400 characters; the parent-row touch an add-note writes stays hidden, as
   before) and one line per workstream. A result is at most 4 KB on its final bytes;
   `more=N next=<same read, continued>` and `cut=N next=<lossless read>` name the
-  way back (`mu log --since <seq> -n <n>`, `mu db query ... FROM ops WHERE seq IN
-  (...) --all`, `mu workstream list [--torn-down] --all`). `--json` items use the
+  way back; every hint runs as printed (`mu log -w <ws> <filters> --since <seq> -n <n>`; a
+  filter too long to repeat falls back to `mu db query` on the exact seqs left out;
+  `mu db query 'SELECT seq, key, actor, intent, group_id, op, entity, payload, created_at
+  FROM ops WHERE seq IN (...)' -w <ws> --all` returns every clipped column;
+  `mu workstream list [--torn-down] --all`). Every JSON item, fixed fields included, is
+  bounded to 2 KB, a page keeps no record when one would bust 4 KB, and the torn-down
+  list's `Next:` block counts in the 4 KB. `--json` items use the
   `ops` column names (`key`, `actor`, `entity`, `group_id`, `created_at`, plus
   `rendered`), not `workstreamName`/`source`/`kind`/`group`/`createdAt`; clipped
   fields count into the item's `cut`. A log write answers with one such item.
-  `workstream list` gains `--all` (every row, uncapped). The old tables are gone.
+  `workstream list` gains `--all` (every row whole, no field clipped). The old tables are gone.
 - **`mu log --tail` is always NDJSON** (no header line, `--json` not needed): one
   item per line, each bounded like a `--json` item with a `retrieve` command when
   it clipped something. Rows are written before the cursor moves; SIGINT exits 130

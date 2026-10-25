@@ -17,7 +17,7 @@ import {
   resolveWorkstream,
   UsageError,
 } from "../cli.js";
-import type { Db } from "../db.js";
+import { type Db, tryResolveWorkstreamId } from "../db.js";
 import {
   appendLog,
   GroupNotFoundError,
@@ -96,7 +96,7 @@ async function cmdLogWrite(db: Db, text: string, opts: LogWriteOpts): Promise<vo
     payload: text,
   });
   if (opts.json) {
-    emitJson(logOut(row));
+    emitJson(logOut(row, recoveryScope(db, ctx.workstream)));
     return;
   }
   console.log(
@@ -145,6 +145,7 @@ async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
     json,
     newest: listOpts.since === undefined,
     resume: (seq, n) => readCommand(opts, listOpts, workstream, seq, n),
+    workstream: recoveryScope(db, workstream),
   });
   if (page.data !== undefined) {
     emitJson(page.data);
@@ -160,7 +161,7 @@ function readCommand(
   workstream: string | undefined,
   since: number,
   n: number,
-): string {
+): string | null {
   const parts = [
     "mu log",
     ...(workstream === undefined ? ["--all"] : ["-w", shellWord(workstream)]),
@@ -171,7 +172,16 @@ function readCommand(
   if (listOpts.group !== undefined) parts.push("--group", listOpts.group);
   parts.push("--since", String(since), "-n", String(n));
   if (opts.json) parts.push("--json");
-  return boundedCommand(parts.join(" "), `mu log --since ${since} -n ${n} (with the same filters)`);
+  // A filter too long to repeat has no one-line form: the caller says the exact ops instead.
+  const cmd = parts.join(" ");
+  return boundedCommand(cmd, () => "") === cmd ? cmd : null;
+}
+
+/** The `-w` a recovery query carries: the read's workstream when `mu db query` can scope to it (live), else none. */
+function recoveryScope(db: Db, workstream: string | undefined): string | undefined {
+  return workstream !== undefined && tryResolveWorkstreamId(db, workstream) !== null
+    ? workstream
+    : undefined;
 }
 
 /**
@@ -216,18 +226,30 @@ const realSleep: TailSleep = (ms, signal) =>
  * line (no envelope, no header, nothing else on stdout), each line bounded
  * like a `--json` item with a `retrieve` command when it clipped something.
  * The cursor moves only AFTER a line is written, so an interrupt between two
- * rows loses none: a batch is written whole (the writes are synchronous)
- * before the signal is looked at. SIGINT ends it with 130, SIGTERM with 143.
+ * rows loses none: a batch is written whole (stdout writes to a pipe or file
+ * are synchronous on POSIX) before the signal is looked at, and the loop
+ * RETURNS rather than calling process.exit, so Node drains stdout before the
+ * process ends. SIGINT ends it with 130, SIGTERM with 143.
  */
 export async function cmdLogTail(
   db: Db,
   baseOpts: ListLogsOptions,
   cliOpts: LogReadOpts,
-  hooks: { signal?: AbortSignal; sleep?: TailSleep } = {},
+  hooks: {
+    signal?: AbortSignal;
+    sleep?: TailSleep;
+    /** Where a row goes (default: one NDJSON line on stdout); a test makes it fail or lag. */
+    emit?: (row: object) => void;
+    /** Mirrors the cursor: `cursor` is the seq of the last row `emit` returned from. */
+    state?: { cursor: number };
+  } = {},
 ): Promise<void> {
   // If --since wasn't given, start at "now" so the subscriber only sees
   // NEW entries. Pass `--since 0` to replay from the beginning.
   let cursor = cliOpts.since ?? latestSeq(db);
+  const emit = hooks.emit ?? emitJsonRow;
+  const state = hooks.state ?? { cursor };
+  state.cursor = cursor;
   const control = new AbortController();
   const signal = hooks.signal ?? control.signal;
   const sleep = hooks.sleep ?? realSleep;
@@ -244,19 +266,22 @@ export async function cmdLogTail(
     process.once("SIGTERM", onTerm);
   }
   const intervalMs = defaultLogTailIntervalMs();
+  const scope =
+    baseOpts.workstream === undefined || baseOpts.workstream === null
+      ? undefined
+      : recoveryScope(db, baseOpts.workstream);
   try {
     while (!signal.aborted) {
       for (const row of listLogs(db, { ...baseOpts, since: cursor })) {
-        emitJsonRow(logOut(row));
+        emit(logOut(row, scope));
         cursor = row.seq;
+        state.cursor = cursor;
       }
       await sleep(intervalMs, signal);
     }
   } finally {
     process.off("SIGINT", onInt);
     process.off("SIGTERM", onTerm);
-    // Every row written is on the wire before the process can exit.
-    await new Promise<void>((resolve) => process.stdout.write("", () => resolve()));
   }
 }
 
