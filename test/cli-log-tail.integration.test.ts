@@ -86,6 +86,49 @@ describe("mu log --tail (process)", () => {
     ]);
   }, 20_000);
 
+  it("an interrupt while the reader lags (pipe backpressure) still delivers every polled row", async () => {
+    const big = "q".repeat(1500);
+    for (let i = 0; i < 120; i++)
+      appendLog(db, { workstream: "demo", source: "user", payload: `${i}:${big}` });
+    // Start replaying from 0 but do not read stdout: the child's writes fill the pipe and block.
+    const lines: string[] = [];
+    child = spawn(
+      process.execPath,
+      ["dist/cli.js", "log", "-w", "demo", "--tail", "--since", "0"],
+      {
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: dir,
+          MU_DB_PATH: dbPath,
+          MU_SYNC_DIR: "",
+          MU_LOG_TAIL_INTERVAL_MS: "50",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const exited = new Promise<number | null>((resolve) =>
+      child?.on("exit", (code) => resolve(code)),
+    );
+    child.stdout?.pause();
+    await new Promise((r) => setTimeout(r, 400));
+    child.kill("SIGINT");
+    let buf = "";
+    child.stdout?.on("data", (d: Buffer) => {
+      buf += d.toString();
+      const parts = buf.split("\n");
+      buf = parts.pop() ?? "";
+      lines.push(...parts);
+    });
+    child.stdout?.resume();
+    expect(await exited).toBe(130);
+    await new Promise((r) => setTimeout(r, 100));
+    const payloads = lines.map((l) => (JSON.parse(l) as { payload: string }).payload);
+    // every row of the polled batch (init + 120) is whole and in order
+    expect(payloads.filter((p) => /^\d+:q/.test(p)).map((p) => Number.parseInt(p, 10))).toEqual(
+      Array.from({ length: 120 }, (_, i) => i),
+    );
+  }, 30_000);
+
   it("SIGTERM ends it with 143", async () => {
     const { lines, exited } = startTail();
     appendLog(db, { workstream: "demo", source: "user", payload: "up" });

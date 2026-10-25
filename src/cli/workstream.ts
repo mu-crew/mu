@@ -12,7 +12,7 @@ import { basename } from "node:path";
 import { emitJson, parseNonNegativeInt, resolveWorkstream, UsageError } from "../cli.js";
 import { type Db, tornDownAtOf } from "../db.js";
 import { type AttachTarget, activeMux, attachShellLine, type MuxBackend } from "../mux.js";
-import { muTable, type NextStep, pc, printNextSteps } from "../output.js";
+import { formatNextSteps, muTable, type NextStep, pc, printNextSteps } from "../output.js";
 import {
   assertWorkstreamInitable,
   ensureWorkstream,
@@ -27,7 +27,7 @@ import {
   WorkstreamRevisionMismatchError,
   workstreamRevision,
 } from "../workstream.js";
-import { clipPlain, clippedRecord, type PageOut, pageOut } from "./page-records.js";
+import { clipPlain, clippedRecord, type PageOut, pageOut, shrinkItem } from "./page-records.js";
 
 export async function cmdInit(
   db: Db,
@@ -144,13 +144,32 @@ function projectGuess(): string | undefined {
 /** Rows of `workstream list` and `--torn-down`, as text records or one capped JSON page. */
 function emitWorkstreamPage(page: PageOut): void {
   if (page.data !== undefined) {
-    // The way back to the rest is `retrieve`, as on every capped list.
-    const { resume, ...rest } = page.data;
-    emitJson(resume === undefined ? rest : { ...rest, retrieve: resume });
+    emitJson(page.data);
     return;
   }
   for (const line of page.lines) console.log(line);
 }
+
+/** `item` with each named text field clipped to `scale` x its limit (cut counted); `whole` clips nothing. */
+function clipFields<T extends object>(
+  row: T,
+  limits: { [K in keyof T]?: number },
+  scale: number,
+): { item: T; cut: number } {
+  const item = { ...row };
+  let cut = 0;
+  for (const k of Object.keys(limits) as (keyof T)[]) {
+    const v = item[k];
+    if (typeof v !== "string") continue;
+    const one = clipPlain(v, Math.floor((limits[k] ?? 0) * scale));
+    item[k] = one.text as T[keyof T];
+    cut += one.cut;
+  }
+  return { item, cut };
+}
+
+const SUMMARY_LIMITS = { name: 64, muxSession: 80 };
+const TORN_DOWN_LIMITS = { name: 64, group: 64, at: 40 };
 
 export async function cmdWorkstreamList(
   db: Db,
@@ -176,23 +195,24 @@ export async function cmdWorkstreamList(
       pageOut(gone, {
         json,
         whole,
-        text: (r) =>
+        singleRetrieve: true,
+        text: (r, all) =>
           clippedRecord(
             ["torn-down", r.name, r.group, r.at, r.kind === "soft" ? "kept" : "deleted"],
             `tasks=${r.tasks} edges=${r.edges} notes=${r.notes}${r.recreated ? " recreated" : ""}`,
+            all,
           ),
-        item: (r) => {
-          const name = clipPlain(r.name, 64);
-          return { item: { ...r, name: name.text }, cut: name.cut };
-        },
+        item: (r, all) =>
+          all ? { item: r, cut: 0 } : shrinkItem((scale) => clipFields(r, TORN_DOWN_LIMITS, scale)),
         resume: () => retrieve,
+        // The hint counts against the page: it is part of the final bytes.
+        trailer: json
+          ? []
+          : formatNextSteps([
+              { intent: "Inspect what one teardown changed", command: "mu log --group <group>" },
+            ]),
       }),
     );
-    if (!json) {
-      printNextSteps([
-        { intent: "Inspect what one teardown changed", command: "mu log --group <group>" },
-      ]);
-    }
     return;
   }
   const summaries = await listWorkstreams(db);
@@ -204,15 +224,15 @@ export async function cmdWorkstreamList(
     pageOut(summaries, {
       json,
       whole,
-      text: (r) =>
+      singleRetrieve: true,
+      text: (r, all) =>
         clippedRecord(
           ["workstream", r.name, r.muxAlive ? "alive" : "-"],
           `agents=${r.agentCount} tasks=${r.taskCount} edges=${r.edgeCount} notes=${r.noteCount}`,
+          all,
         ),
-      item: (r) => {
-        const name = clipPlain(r.name, 64);
-        return { item: { ...r, name: name.text }, cut: name.cut };
-      },
+      item: (r, all) =>
+        all ? { item: r, cut: 0 } : shrinkItem((scale) => clipFields(r, SUMMARY_LIMITS, scale)),
       resume: () => retrieve,
     }),
   );
