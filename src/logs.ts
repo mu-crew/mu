@@ -427,6 +427,8 @@ export interface ListLogsOptions {
   workstream?: string | null;
   /** Strictly > this seq. Use to resume a tail. */
   since?: number;
+  /** At most this seq (with `since`: the exact range `since+1..upTo`). */
+  upTo?: number;
   /** Cap the result. With `since`, returns the FIRST N matching (oldest
    *  first). Without `since`, returns the LAST N (most recent),
    *  re-sorted oldest-first. */
@@ -456,6 +458,10 @@ export function listLogs(db: Db, opts: ListLogsOptions = {}): LogRow[] {
   if (opts.since !== undefined) {
     conditions.push("l.seq > ?");
     params.push(opts.since);
+  }
+  if (opts.upTo !== undefined) {
+    conditions.push("l.seq <= ?");
+    params.push(opts.upTo);
   }
   if (opts.source === "system") {
     // rowFromDb renders a NULL actor as "system", so the filter must
@@ -517,6 +523,16 @@ export function listLogs(db: Db, opts: ListLogsOptions = {}): LogRow[] {
   }
   const rows = db.prepare(sql).all(...params) as RawLogRow[];
   return rows.map(rowFromDb);
+}
+
+/** True when some visible op (one `listLogs` can return) has a seq in `from..to`, whatever its scope. */
+export function anyVisibleBetween(db: Db, from: number, to: number): boolean {
+  if (from > to) return false;
+  return (
+    db
+      .prepare(`SELECT 1 FROM ops l WHERE l.seq BETWEEN ? AND ? AND ${TOUCH_OP_FILTER} LIMIT 1`)
+      .get(from, to) !== undefined
+  );
 }
 
 /**
