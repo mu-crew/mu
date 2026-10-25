@@ -1452,17 +1452,13 @@ export function wireSelfCommands(program: Command): void {
       "List tasks owned by the current agent (the second half of `mu me`'s output). Excludes CLOSED by default.",
     )
     .option("--include-closed", "include CLOSED tasks in the list")
-    .option(
-      "--from <n>",
-      "start at record <n> (a cut result names the command)",
-      parsePositiveNumber,
-    )
+    .option("--all", "no cap: every record, whole (a cut result names this command)")
     .option(...JSON_OPT)
     .action(function () {
       const opts = (this as Command).opts() as {
         json?: boolean;
         includeClosed?: boolean;
-        from?: number;
+        all?: boolean;
       };
       return handle((db) => cmdMyTasks(db, opts), this as Command)();
     });
@@ -1476,14 +1472,10 @@ export function wireSelfCommands(program: Command): void {
       "how many top-K tasks to return (default 1; 0 = all ready)",
       parseLines,
     )
-    .option(
-      "--from <n>",
-      "start at record <n> (a cut result names the command)",
-      parsePositiveNumber,
-    )
+    .option("--all", "no cap: every record, whole (a cut result names this command)")
     .option(...JSON_OPT)
     .action(function () {
-      const opts = (this as Command).opts() as { lines?: number; json?: boolean; from?: number };
+      const opts = (this as Command).opts() as { lines?: number; json?: boolean; all?: boolean };
       return handle((db) => cmdMyNext(db, opts), this as Command)();
     });
 }

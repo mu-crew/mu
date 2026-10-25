@@ -52,16 +52,11 @@ import { noteRecord, planNotes, type ShownNote, stubAuthor, stubPreview } from "
 import { readStdinText, STDIN_ARG } from "../stdin.js";
 import {
   escapeRecordText,
-  fromOffset,
-  jsonDocument,
+  footerLine,
   linesBytes,
-  moreLine,
-  pageRecords,
   SHOW_TITLE_CHARS,
-  SHOW_TITLE_ESCAPED_BYTES,
-  SHOW_TITLE_JSON_BYTES,
-  taskItem,
-  taskRecord,
+  taskItemCut,
+  taskRecordCut,
 } from "./records.js";
 
 /**
@@ -109,6 +104,8 @@ interface NotesPage {
   /** The exact command that recovers them; null when nothing is left out. */
   next: string | null;
   lines: string[];
+  /** Emitted bytes of the whole output as measured for the cap (pinned notes exempt). */
+  size: number;
 }
 
 /** The JSON record of one shown note; a stub carries a clipped author and preview, `cut` and `retrieve`. */
@@ -155,12 +152,22 @@ function buildNotesPage(
     tailLines?: readonly string[];
     /** The cap on the whole output (default RESULT_BYTES). */
     budget?: number;
+    /** The one way back a `more=` names (default: `task notes --all` / `--from`). */
+    next?: string;
+    /** The text footer, given the notes left out (`show` adds its edges and cuts); default `more=N next=…`. */
+    footer?: (notesMore: number) => string | null;
+    /** May the cap drop every ordinary note (`show`: the task and edges come first)? Default: the last one stays. */
+    allowEmpty?: boolean;
   },
 ): NotesPage {
   const budget = opts.budget ?? RESULT_BYTES;
   const ref = `${taskId} -w ${ws}`;
   const nextFor = (first: number): string =>
-    first === 1 ? `mu task notes ${ref} --all` : `mu task notes ${ref} --from ${first}`;
+    opts.next !== undefined
+      ? opts.next
+      : first === 1
+        ? `mu task notes ${ref} --all`
+        : `mu task notes ${ref} --from ${first}`;
   const isPinned = (s: ShownNote): boolean => opts.pinned.has(s.note.n);
   const pinnedShown: ShownNote[] = notes
     .filter((n) => opts.pinned.has(n.n))
@@ -175,13 +182,18 @@ function buildNotesPage(
     const first = left[0];
     return { more: left.length, next: first === undefined ? null : nextFor(first) };
   };
-  const render = (
-    shown: readonly ShownNote[],
-  ): { items: Record<string, unknown>[]; lines: string[]; more: number; next: string | null } => {
+  const footLine = (more: number, next: string | null): string | null =>
+    opts.footer !== undefined
+      ? opts.footer(more)
+      : next === null
+        ? null
+        : `more=${more} next=${next}`;
+  const render = (shown: readonly ShownNote[]): NotesPage => {
     const { more, next } = omission(shown);
     const lines = shown.map((s) => noteLine(ref, s));
-    if (next !== null) lines.push(`more=${more} next=${next}`);
-    return { items: shown.map((s) => noteItem(ref, s)), lines, more, next };
+    const foot = footLine(more, next);
+    if (foot !== null) lines.push(foot);
+    return { items: shown.map((s) => noteItem(ref, s)), lines, more, next, size: emitted(shown) };
   };
   // The cap, measured on the FINAL output (every metadata field as emitted),
   // pinned records set aside. Exact, not predicted: serialize, then shrink.
@@ -190,7 +202,8 @@ function buildNotesPage(
     const ordinary = shown.filter((s) => !isPinned(s));
     if (!opts.json) {
       const lines = [...(opts.fixedLines ?? []), ...ordinary.map((s) => noteLine(ref, s))];
-      if (next !== null) lines.push(`more=${more} next=${next}`);
+      const foot = footLine(more, next);
+      if (foot !== null) lines.push(foot);
       lines.push(...(opts.tailLines ?? []));
       return Buffer.byteLength(lines.join("\n")) + 1;
     }
@@ -214,7 +227,7 @@ function buildNotesPage(
   while (emitted(final) > budget) {
     const ordinary = final.filter((s) => !isPinned(s));
     const victim = opts.fill === "newest" ? ordinary[0] : ordinary[ordinary.length - 1];
-    if (ordinary.length <= 1 || victim === undefined) break;
+    if (ordinary.length <= (opts.allowEmpty === true ? 0 : 1) || victim === undefined) break;
     final.splice(final.indexOf(victim), 1);
   }
   return render(final);
@@ -523,8 +536,10 @@ export async function cmdTaskNote(
   printNextSteps(nextSteps);
 }
 
-/** Bytes the edge records of one `show` may take (the task, notes and hints share the rest of the 4 KB). */
+/** Bytes the edge records of one `show` may take before the notes get their share of the 4 KB. */
 const EDGE_BYTES = 1200;
+/** Title bounds `show` tries, widest first, when even the task alone does not fit. */
+const SHOW_TITLE_STEPS = [SHOW_TITLE_CHARS, 300, 150, 75, 30];
 
 /** One neighbour of a task, in the order `show` lists them: blockers then dependents, still-gating first. */
 interface EdgeRecord {
@@ -565,7 +580,7 @@ const edgeItem = (e: EdgeRecord): Record<string, unknown> => ({
 export async function cmdTaskShow(
   db: Db,
   rawId: string,
-  opts: { json?: boolean; workstream?: string; note?: number; edgesFrom?: number } = {},
+  opts: { json?: boolean; workstream?: string; note?: number; all?: boolean } = {},
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
@@ -575,6 +590,7 @@ export async function cmdTaskShow(
   const task = getTask(db, localId, ws);
   if (!task) throw new TaskNotFoundError(localId, ws);
   const json = opts.json === true;
+  const whole = opts.all === true;
   const ref = `${shellWord(task.name)} -w ${shellWord(task.workstreamName)}`;
   const edges = edgeRecords(getTaskEdgesWithStatus(db, localId, task.workstreamName));
   if (opts.note !== undefined) {
@@ -593,50 +609,11 @@ export async function cmdTaskShow(
     console.log(noteRecord(note));
     return;
   }
-  const edgesCmd = (k: number): string => `mu task show ${ref} --edges-from ${k}`;
-  if (opts.edgesFrom !== undefined) {
-    // Only the neighbours, paged like any read: the way back from a cut edge list.
-    const page = pageRecords(
-      edges,
-      fromOffset(opts.edgesFrom),
-      json
-        ? (p) =>
-            Buffer.byteLength(
-              jsonDocument({ items: p.shown.map(edgeItem), count: p.shown.length, more: p.more }),
-            ) + 600
-        : (p) => linesBytes([...p.shown.map(edgeLine), moreLine(p) ?? ""]),
-      edgesCmd,
-    );
-    if (json) {
-      console.log(
-        jsonDocument({
-          items: page.shown.map((e) => ({ kind: e.kind, ...edgeItem(e) })),
-          count: page.shown.length,
-          more: page.more,
-          ...(page.next === null ? {} : { retrieve: page.next }),
-        }),
-      );
-      return;
-    }
-    const foot = moreLine(page);
-    console.log([...page.shown.map(edgeLine), ...(foot === null ? [] : [foot])].join("\n"));
-    return;
-  }
-
-  // The neighbours that fit EDGE_BYTES, the first always (progress), the rest named by `--edges-from`.
-  const edgePage = pageRecords(
-    edges,
-    1,
-    json
-      ? (p) =>
-          Buffer.byteLength(JSON.stringify({ blockers: p.shown, more: p.more, retrieve: p.next }))
-      : (p) => linesBytes([...p.shown.map(edgeLine), moreLine(p) ?? ""]),
-    edgesCmd,
-    EDGE_BYTES,
-  );
-  const shownEdges = edgePage.shown;
-  const edgeFoot = moreLine(edgePage);
-  const view = selectTaskNotes(db, localId, { workstream: task.workstreamName });
+  // The ONE way back from a cut: this same read with --all (uncapped).
+  const allCmd = `mu task show ${ref} ${json ? "--json " : ""}--all`;
+  const view = whole
+    ? selectTaskNotes(db, localId, { workstream: task.workstreamName, all: true })
+    : selectTaskNotes(db, localId, { workstream: task.workstreamName });
 
   // When owner IS NULL but the task is IN_PROGRESS (or recently was),
   // the actor is in agent_logs. Surface it so 'who's working on this'
@@ -645,7 +622,8 @@ export async function cmdTaskShow(
     task.ownerName === null && task.status !== "OPEN"
       ? lastClaimActor(db, task.workstreamName, task.name)
       : null;
-  const lastActorShown = lastActor === null ? null : [...lastActor].slice(0, 80).join("");
+  const lastActorShown =
+    lastActor === null || whole ? lastActor : [...lastActor].slice(0, 80).join("");
   const actorCut =
     lastActor === null ? 0 : [...lastActor].length - [...(lastActorShown ?? "")].length;
   const revision = taskRevision(db, task.workstreamName, task.name);
@@ -661,60 +639,97 @@ export async function cmdTaskShow(
     hints.push(`next=mu task open ${ref}`);
   }
 
-  const taskLine = taskRecord(task, {
-    withWorkstream: true,
-    revision,
-    claimedBy: lastActor,
-    times: true,
-    titleChars: SHOW_TITLE_CHARS,
-    titleBytes: SHOW_TITLE_ESCAPED_BYTES,
-    maxChars: SHOW_TITLE_CHARS + 400,
-  });
-  const fixedLines = [
-    taskLine,
-    ...shownEdges.map(edgeLine),
-    ...(edgeFoot === null ? [] : [edgeFoot]),
-  ];
-  const taskJson = taskItem(task, {
-    withWorkstream: true,
-    revision,
-    titleChars: SHOW_TITLE_CHARS,
-    titleJsonBytes: SHOW_TITLE_JSON_BYTES,
-    extraCut: actorCut,
-    actor: lastActor !== null,
-  });
-  const edgeJson = {
-    blockers: shownEdges.filter((e) => e.kind === "blocker").map(edgeItem),
-    dependents: shownEdges.filter((e) => e.kind === "dependent").map(edgeItem),
-    ...(edgePage.next === null
-      ? { edges_more: 0 }
-      : { edges_more: edgePage.more, edges_retrieve: edgePage.next }),
+  /** The whole output for `k` neighbours and a title of `titleChars`, serialized: its lines, JSON data and emitted bytes. */
+  const build = (k: number, titleChars: number) => {
+    const shownEdges = edges.slice(0, k);
+    const more = edges.length - k;
+    const rec = taskRecordCut(task, {
+      withWorkstream: true,
+      revision,
+      claimedBy: lastActor,
+      times: true,
+      whole,
+      titleChars,
+      maxChars: titleChars + 400,
+    });
+    const itm = taskItemCut(task, {
+      withWorkstream: true,
+      revision,
+      whole,
+      titleChars,
+      extraCut: actorCut,
+    });
+    const fixedLines = [rec.line, ...shownEdges.map(edgeLine)];
+    // One footer, last: everything cut (neighbours, notes, clipped fields) and the one way back.
+    const footer = (notesMore: number): string | null =>
+      footerLine({ more: more + notesMore, cut: rec.cut }, allCmd);
+    const wrap = (items: Record<string, unknown>[], fields: Record<string, unknown>) => {
+      const notesMore = Number(fields.more ?? 0);
+      return {
+        task: itm.item,
+        blockers: shownEdges.filter((e) => e.kind === "blocker").map(edgeItem),
+        dependents: shownEdges.filter((e) => e.kind === "dependent").map(edgeItem),
+        edges_more: more,
+        notes: items,
+        notes_more: notesMore,
+        ...(itm.cut > 0 ? { cut: itm.cut } : {}),
+        ...(more + notesMore > 0 || itm.cut > 0 ? { retrieve: allCmd } : {}),
+        lastClaimActor: lastActorShown,
+      };
+    };
+    const page = buildNotesPage(localId, task.workstreamName, view.notes, {
+      pinned: new Set(view.pinned),
+      total: view.total,
+      fill: whole ? "page" : "newest",
+      explicit: whole,
+      json,
+      wrap,
+      fixedLines,
+      tailLines: hints,
+      next: allCmd,
+      footer,
+      allowEmpty: true,
+      ...(whole ? { budget: Number.POSITIVE_INFINITY } : {}),
+    });
+    return { page, fixedLines, wrap };
   };
-  const page = buildNotesPage(localId, task.workstreamName, view.notes, {
-    pinned: new Set(view.pinned),
-    total: view.total,
-    fill: "newest",
-    explicit: false,
-    json,
-    wrap: (items, fields) => ({
-      task: taskJson,
-      ...edgeJson,
-      notes: items,
-      ...prefixed(fields, "notes_"),
-      lastClaimActor: lastActorShown,
-    }),
-    fixedLines,
-    tailLines: hints,
-  });
+  // The cap is on the FINAL bytes (task, edges, footer, notes; pinned notes exempt): shrink by
+  // whole records. Neighbours first (at most their EDGE_BYTES share, then as few as the notes
+  // leave room for), the title only when the task alone does not fit.
+  let kMax = edges.length;
+  if (!whole) {
+    const edgeBytes = (k: number): number =>
+      json
+        ? Buffer.byteLength(JSON.stringify(edges.slice(0, k).map(edgeItem)))
+        : linesBytes(edges.slice(0, k).map(edgeLine));
+    kMax = 0;
+    while (kMax < edges.length && edgeBytes(kMax + 1) <= EDGE_BYTES) kMax++;
+  }
+  const fits = (k: number, t: number): boolean => whole || build(k, t).page.size <= RESULT_BYTES;
+  let out = build(kMax, SHOW_TITLE_CHARS);
+  if (!fits(kMax, SHOW_TITLE_CHARS)) {
+    let lo = 0;
+    let hi = kMax;
+    let titleChars = SHOW_TITLE_CHARS;
+    if (!fits(0, titleChars)) {
+      titleChars = SHOW_TITLE_STEPS.find((t) => fits(0, t)) ?? 30;
+      hi = 0;
+    } else {
+      // Largest k in [0, kMax) that fits (fewer neighbours never need more room).
+      hi = kMax - 1;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (fits(mid, titleChars)) lo = mid;
+        else hi = mid - 1;
+      }
+      hi = lo;
+    }
+    out = build(hi, titleChars);
+  }
+  const { page, fixedLines, wrap } = out;
 
   if (json) {
-    emitJson({
-      task: taskJson,
-      ...edgeJson,
-      notes: page.items,
-      ...pageFields(page, "notes_"),
-      lastClaimActor: lastActorShown,
-    });
+    emitJson(wrap(page.items, { more: page.more }));
     return;
   }
   // Notes keep their own records; an empty view prints none (the task record says nothing of them).

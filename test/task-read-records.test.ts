@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import {
   escapeRecordText,
+  jsonDocument,
   RECORD_CHARS,
   taskPage,
   taskRecord,
@@ -68,14 +69,19 @@ function shellSplit(line: string): string[] {
   return out;
 }
 
-/** Execute an emitted `mu sql --json ...` command through the CLI; its rows. */
-async function runEmitted(cmd: string): Promise<Record<string, unknown>[]> {
-  const argv = shellSplit(cmd);
-  expect(argv.slice(0, 2)).toEqual(["mu", "sql"]);
-  const r = await runCliJson(argv.slice(1), dbPath);
-  expect(r.exitCode).toBeNull();
-  return r.data as Record<string, unknown>[];
+/** The command a cut result prints (`next=` of the footer, or `retrieve` of the JSON data), as CLI argv. */
+function printedArgv(stdout: string): string[] {
+  const line = plain(stdout).trimEnd().split("\n").at(-1) ?? "";
+  const m = /^(?:more=\d+ ?)?(?:cut=\d+ ?)?next=(mu .*)$/.exec(line);
+  expect(m, `no footer in: ${line}`).not.toBeNull();
+  const argv = shellSplit(m?.[1] ?? "");
+  expect(argv[0]).toBe("mu");
+  return argv.slice(1);
 }
+const retrieveArgv = (data: { retrieve?: string }): string[] => {
+  expect(data.retrieve).toBeDefined();
+  return shellSplit(data.retrieve ?? "").slice(1);
+};
 
 const bytes = (s: string): number => Buffer.byteLength(s);
 const add = (id: string, title = id, extra: Record<string, unknown> = {}, ws = WS) =>
@@ -267,31 +273,25 @@ describe("list / next / owned-by records", () => {
 });
 
 describe("caps: the FINAL output is <= 4 KB, a record <= 400 characters, a cut names its way back", () => {
-  it("a long list pages: every page fits, the pages cover every task exactly once, progress is guaranteed", async () => {
+  it("a long list is cut to 4 KB; the printed next command (--all) returns every task whole", async () => {
     for (let i = 0; i < 90; i++)
       add(`t${String(i).padStart(3, "0")}`, `Title ${i} ${"w".repeat(80)}`);
-    const seen: string[] = [];
-    let argv = ["task", "list", "-w", WS];
-    for (let page = 0; page < 40; page++) {
-      const r = await runCli(argv, dbPath);
-      const lines = plain(r.stdout).trimEnd().split("\n");
-      expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
-      const footer = lines.at(-1) ?? "";
-      const records = lines.filter((l) => l.startsWith("task\t"));
-      for (const l of records) expect([...l].length).toBeLessThanOrEqual(RECORD_CHARS);
-      expect(records.length).toBeGreaterThan(0);
-      seen.push(...records.map((l) => l.split("\t")[1] ?? ""));
-      const m = /^more=(\d+) next=(.*)$/.exec(footer);
-      if (m === null) break;
-      expect(Number(m[1])).toBe(90 - seen.length);
-      // The named command is exactly what to run next.
-      argv = (m[2] ?? "").split(" ").slice(1);
-    }
-    expect(seen).toHaveLength(90);
-    expect(new Set(seen).size).toBe(90);
+    const r = await runCli(["task", "list", "-w", WS], dbPath);
+    const lines = plain(r.stdout).trimEnd().split("\n");
+    expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const records = lines.filter((l) => l.startsWith("task\t"));
+    for (const l of records) expect([...l].length).toBeLessThanOrEqual(RECORD_CHARS);
+    expect(lines.at(-1)).toBe(`more=${90 - records.length} next=mu task list -w w --all`);
+    const all = await runCli(printedArgv(r.stdout), dbPath);
+    const whole = plain(all.stdout).trimEnd().split("\n");
+    expect(whole).toHaveLength(90);
+    expect(whole.map((l) => l.split("\t")[1])).toEqual(
+      Array.from({ length: 90 }, (_, i) => `t${String(i).padStart(3, "0")}`),
+    );
+    expect(whole.every((l, i) => l.endsWith(`Title ${i} ${"w".repeat(80)}`))).toBe(true);
   });
 
-  it("--json caps the whole document, with more and retrieve; the retrieve command resumes", async () => {
+  it("--json: the document is <= 4 KB with more and retrieve; retrieve (--json --all) returns everything", async () => {
     for (let i = 0; i < 60; i++)
       add(`j${String(i).padStart(2, "0")}`, `Json ${i} ${"y".repeat(100)}`);
     const first = await runCli(["task", "list", "-w", WS, "--json"], dbPath);
@@ -303,65 +303,72 @@ describe("caps: the FINAL output is <= 4 KB, a record <= 400 characters, a cut n
     ).data;
     expect(d.count).toBe(d.items.length);
     expect(d.more).toBe(60 - d.count);
-    expect(d.retrieve).toBe(`mu task list -w w --from ${d.count + 1}`);
-    const second = await runCliJson(
-      ["task", "list", "-w", WS, "--from", String(d.count + 1), "--json"],
-      dbPath,
-    );
-    const e = second.data as { items: { id: string }[] };
-    expect(e.items[0]?.id).toBe(`j${String(d.count).padStart(2, "0")}`);
+    expect(d.retrieve).toBe("mu task list -w w --json --all");
+    const all = (await runCliJson(retrieveArgv(d), dbPath)).data as {
+      items: { id: string; title: string }[];
+      more: number;
+      retrieve?: string;
+    };
+    expect(all.items).toHaveLength(60);
+    expect(all.more).toBe(0);
+    expect(all.retrieve).toBeUndefined();
+    expect(all.items[59]?.title).toBe(`Json 59 ${"y".repeat(100)}`);
   });
 
-  it("an oversized title is clipped to the record cap with cut=N and the exact retrieval command", async () => {
+  it("an oversized title is clipped inside the record cap; footer cut=N and --all print it whole", async () => {
     add("big", "q".repeat(2000));
     const r = await runCli(["task", "list", "-w", WS], dbPath);
-    const line = plain(r.stdout).trimEnd();
+    const lines = plain(r.stdout).trimEnd().split("\n");
+    const line = lines[0] ?? "";
     expect([...line].length).toBeLessThanOrEqual(RECORD_CHARS);
-    expect(line).toMatch(
-      /…\tcut=(\d+)\tnext=mu sql --json "SELECT t\.title, t\.wave, t\.dispatch_host FROM tasks t WHERE t\.local_id = 'big' AND t\.workstream_id = \d+"$/,
-    );
-    const cut = Number(/cut=(\d+)/.exec(line)?.[1]);
+    expect(line.endsWith("…")).toBe(true);
+    const foot = /^cut=(\d+) next=mu task list -w w --all$/.exec(lines[1] ?? "");
+    expect(foot).not.toBeNull();
     const shownTitle = line.split("\t")[4] ?? "";
-    expect([...shownTitle].length - 1 + cut).toBe(2000);
-    // The retrieval command does return the whole title.
-    const whole = await runCliJson(["task", "show", "big", "-w", WS, "--json"], dbPath);
-    expect((whole.data as { task: { title: string; cut?: number } }).task.cut).toBeDefined();
+    expect([...shownTitle].length - 1 + Number(foot?.[1])).toBe(2000);
+    const all = await runCli(printedArgv(r.stdout), dbPath);
+    expect(plain(all.stdout).trimEnd()).toMatch(/\tq{2000}$/);
+    expect(plain(all.stdout)).not.toContain("cut=");
   });
 
-  it("--json clips a long title the same way: bounded item, cut and a retrieve command", async () => {
+  it("--json clips a long title the same way: bounded item, data.cut and retrieve (--json --all) returns it whole", async () => {
     add("bigj", "q".repeat(2000));
     const r = await runCli(["task", "list", "-w", WS, "--json"], dbPath);
     expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
-    const item = (
+    const data = (
       JSON.parse(r.stdout) as {
-        data: { items: { title: string; cut: number; retrieve: string }[] };
+        data: { items: { title: string }[]; cut: number; retrieve: string };
       }
-    ).data.items[0];
-    expect([...(item?.title ?? "")].length).toBeLessThan(200);
-    expect((item?.cut ?? 0) + [...(item?.title ?? "")].length - 1).toBe(2000);
-    expect(item?.retrieve).toMatch(/^mu (task show bigj -w w --json|sql )/);
+    ).data;
+    const title = data.items[0]?.title ?? "";
+    expect([...title].length).toBeLessThan(200);
+    expect(data.cut + [...title].length - 1).toBe(2000);
+    expect(data.retrieve).toBe("mu task list -w w --json --all");
+    const whole = (await runCliJson(retrieveArgv(data), dbPath)).data as {
+      items: { title: string }[];
+      cut?: number;
+    };
+    expect(whole.items[0]?.title).toBe("q".repeat(2000));
+    expect(whole.cut).toBeUndefined();
   });
 
-  it("a title too long even for show names a SQL read that returns it whole (executed through the CLI)", async () => {
+  it("a title too long even for show: show stays <= 4 KB and its --all returns the title whole", async () => {
     const title = "z".repeat(5000);
     add("huge", title);
-    const r = await runCli(["task", "list", "-w", WS], dbPath);
-    const next = /next=(mu sql .*)$/.exec(plain(r.stdout).trimEnd())?.[1];
-    expect(next).toBeDefined();
-    const rows = await runEmitted(next ?? "");
-    expect(rows[0]?.title).toBe(title);
     const show = await runCli(["task", "show", "huge", "-w", WS], dbPath);
     expect(bytes(show.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
-    expect(plain(show.stdout)).toMatch(/cut=\d+\tnext=mu sql /);
+    expect(plain(show.stdout).trimEnd()).toMatch(/\ncut=\d+ next=mu task show huge -w w --all$/);
+    const whole = await runCli(printedArgv(show.stdout), dbPath);
+    expect(plain(whole.stdout).split("\n")[0]).toMatch(/\tz{5000}$/);
   });
 
-  it("property: any mix of titles, pages and modes stays within the caps and covers every task", () => {
+  it("property: any mix of titles and modes stays within the caps; --all returns every row whole", () => {
     fc.assert(
       fc.property(
         fc.array(
           fc.record({
             len: fc.oneof(fc.integer({ min: 0, max: 30 }), fc.integer({ min: 0, max: 1500 })),
-            ch: fc.constantFrom("a", "é", "😀", "\n", "\\", "\t", "\u202e", "\u001b"),
+            ch: fc.constantFrom("a", "é", "😀", "\n", "\\", "\t", "\u202e", "\u001b", "\u0085"),
           }),
           { minLength: 1, maxLength: 60 },
         ),
@@ -373,34 +380,29 @@ describe("caps: the FINAL output is <= 4 KB, a record <= 400 characters, a cut n
             name: `p${i}`,
             title: s.ch.repeat(s.len),
           }));
-          let from = 1;
-          const covered: string[] = [];
-          for (let guard = 0; guard < rows.length + 2 && from <= rows.length; guard++) {
-            const out = taskPage(rows, {
-              from,
-              json,
-              nextFor: (k) => `mu task list -w w --from ${k}`,
-            });
-            const text = json
-              ? JSON.stringify({ ok: true, data: out.data, next: null })
-              : out.lines.join("\n");
-            expect(out.shown).toBeGreaterThan(0);
-            // A page is capped unless it is a single (bounded) record.
-            if (out.shown > 1) expect(bytes(text) + 1).toBeLessThanOrEqual(RESULT_BYTES);
-            if (!json) {
-              for (const l of out.lines.filter((x) => x.startsWith("task\t"))) {
-                expect([...l].length).toBeLessThanOrEqual(RECORD_CHARS);
-                // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting none survive
-                expect(l).not.toMatch(/[\n\r\u202e\u001b]/);
-              }
-            }
-            const items = json
-              ? (out.data?.items.map((i) => i.id) ?? [])
-              : out.lines.filter((x) => x.startsWith("task\t")).map((l) => l.split("\t")[1] ?? "");
-            covered.push(...items);
-            from += out.shown;
+          const out = taskPage(rows, { all: false, json, next: "mu task list --all" });
+          const text = json ? jsonDocument(out.data) : out.lines.join("\n");
+          expect(out.shown).toBeGreaterThan(0);
+          expect(out.shown + out.more).toBe(rows.length);
+          // The cap is on the printed bytes; the one exception is a single (bounded) record.
+          if (out.shown > 1) expect(bytes(text) + 1).toBeLessThanOrEqual(RESULT_BYTES);
+          // The footer (the way back) is never sliced.
+          if (!json && (out.more > 0 || out.lines.some((l) => l.startsWith("cut=")))) {
+            expect(out.lines.some((l) => /next=mu task list --all$/.test(l))).toBe(true);
           }
-          expect(covered).toEqual(rows.map((r) => r.name));
+          if (!json) {
+            for (const l of out.lines.filter((x) => x.startsWith("task\t"))) {
+              expect([...l].length).toBeLessThanOrEqual(RECORD_CHARS);
+              // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting none survive
+              expect(l).not.toMatch(/[\n\r\u202e\u001b\u0085]/);
+            }
+          }
+          const everything = taskPage(rows, { all: true, json, next: "x" });
+          expect(everything.shown).toBe(rows.length);
+          expect(everything.more).toBe(0);
+          if (json) {
+            expect(everything.data?.items.map((i) => i.title)).toEqual(rows.map((r) => r.title));
+          }
         },
       ),
       { numRuns: 60 },
@@ -419,7 +421,7 @@ function ensure(): string {
 }
 
 describe("show: one record, edges, notes, all under 4 KB", () => {
-  it("whole-output cap: task record, edges and ordinary notes together; pinned notes are exempt", async () => {
+  it("whole-output cap: task record, edges and ordinary notes together; pinned notes are exempt; --all returns everything", async () => {
     add("hub", "Hub");
     for (let i = 0; i < 80; i++) {
       add(`dep${String(i).padStart(2, "0")}`, `Dependent ${i} ${"d".repeat(60)}`);
@@ -434,33 +436,17 @@ describe("show: one record, edges, notes, all under 4 KB", () => {
     expect(bytes(`${rest.join("\n")}\n`)).toBeLessThanOrEqual(RESULT_BYTES);
     expect(lines[0]).toMatch(/^task\thub\tOPEN\t/);
     expect(lines.some((l) => /^brief\t.*B{3000}/.test(l))).toBe(true);
-    const edgeLines = lines.filter((l) => /^dependent\t/.test(l));
-    const foot = lines.find((l) =>
-      /^more=\d+ next=mu task show hub -w w --edges-from \d+$/.test(l),
-    );
-    expect(edgeLines.length).toBeLessThan(80);
-    expect(foot).toBeDefined();
-    // The named command returns the rest, and paging reaches every neighbour exactly once.
-    const seen = new Set(edgeLines.map((l) => l.split("\t")[1]));
-    let from = edgeLines.length + 1;
-    for (let guard = 0; guard < 80 && seen.size < 80; guard++) {
-      const p = await runCli(
-        ["task", "show", "hub", "-w", WS, "--edges-from", String(from)],
-        dbPath,
-      );
-      expect(bytes(p.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
-      const got = plain(p.stdout)
-        .trimEnd()
-        .split("\n")
-        .filter((l) => l.startsWith("dependent\t"));
-      expect(got.length).toBeGreaterThan(0);
-      for (const l of got) seen.add(l.split("\t")[1]);
-      from += got.length;
-    }
-    expect(seen.size).toBe(80);
+    expect(lines.filter((l) => /^dependent\t/.test(l)).length).toBeLessThan(80);
+    expect(lines.some((l) => /^more=\d+ next=mu task show hub -w w --all$/.test(l))).toBe(true);
+    // The printed command returns every neighbour and every note whole.
+    const all = await runCli(printedArgv(r.stdout), dbPath);
+    const whole = plain(all.stdout).trimEnd().split("\n");
+    expect(whole.filter((l) => /^dependent\t/.test(l))).toHaveLength(80);
+    expect(whole.filter((l) => /^(brief|note)\t/.test(l))).toHaveLength(7);
+    expect(whole.some((l) => l.startsWith("more="))).toBe(false);
   });
 
-  it("--json carries the whole-document cap with edges_more/edges_retrieve and keeps task.revision", async () => {
+  it("--json: the document is <= 4 KB (task, edges, retrieve, envelope), keeps task.revision; retrieve (--json --all) returns everything", async () => {
     add("hub", "Hub");
     for (let i = 0; i < 80; i++) {
       add(`d${String(i).padStart(2, "0")}`, `D${i}`);
@@ -474,25 +460,41 @@ describe("show: one record, edges, notes, all under 4 KB", () => {
       task: { revision: number; id: string; workstream: string };
       dependents: unknown[];
       edges_more: number;
-      edges_retrieve: string;
+      retrieve: string;
     };
     expect(d.task).toMatchObject({ id: "hub", workstream: "w" });
     expect(typeof d.task.revision).toBe("number");
     expect(d.edges_more).toBe(80 - d.dependents.length);
-    expect(d.edges_retrieve).toMatch(/--edges-from \d+$/);
+    expect(d.retrieve).toBe("mu task show hub -w w --json --all");
+    const all = (await runCliJson(retrieveArgv(d), dbPath)).data as {
+      dependents: unknown[];
+      edges_more: number;
+      notes: unknown[];
+    };
+    expect(all.dependents).toHaveLength(80);
+    expect(all.edges_more).toBe(0);
+    expect(all.notes).toHaveLength(6);
   });
 
-  it("a long title is clipped inside show with cut and a retrieval command; JSON agrees", async () => {
+  it("a long title is clipped inside show; footer cut=N and --all return it whole; JSON agrees", async () => {
     add("longt", "L".repeat(3000));
     const t = await runCli(["task", "show", "longt", "-w", WS], dbPath);
-    const first = plain(t.stdout).split("\n")[0] ?? "";
-    expect(first).toMatch(/…\tcut=\d+\tnext=mu sql /);
+    expect(bytes(t.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    expect(plain(t.stdout).trimEnd().split("\n").at(-1)).toMatch(
+      /^cut=\d+ next=mu task show longt -w w --all$/,
+    );
+    const whole = await runCli(printedArgv(t.stdout), dbPath);
+    expect(plain(whole.stdout).split("\n")[0]).toMatch(/\tL{3000}$/);
     const j = await runCli(["task", "show", "longt", "-w", WS, "--json"], dbPath);
     expect(bytes(j.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
-    const task = (JSON.parse(j.stdout) as { data: { task: { cut: number; retrieve: string } } })
-      .data.task;
-    expect(task.cut).toBeGreaterThan(0);
-    expect(task.retrieve).toMatch(/^mu sql /);
+    const d = (JSON.parse(j.stdout) as { data: { cut: number; retrieve: string } }).data;
+    expect(d.cut).toBeGreaterThan(0);
+    const all = (await runCliJson(retrieveArgv(d), dbPath)).data as {
+      task: { title: string };
+      cut?: number;
+    };
+    expect(all.task.title).toBe("L".repeat(3000));
+    expect(all.cut).toBeUndefined();
   });
 });
 
@@ -517,7 +519,7 @@ describe("tree: the open DAG, bounded", () => {
     expect(loadFullDag(db, WS).tasks.size).toBe(304);
   });
 
-  it("CLI: --down from a root lists the open dependents; the omitted closed count names its command", async () => {
+  it("CLI: --down from a root lists the open dependents; the footer's --all returns the closed ones", async () => {
     add("root", "R");
     for (let i = 0; i < 6; i++) {
       add(`c${i}`, `C${i}`);
@@ -529,12 +531,16 @@ describe("tree: the open DAG, bounded", () => {
     const r = await runCli(["task", "tree", "root", "--down", "-w", WS], dbPath);
     const out = plain(r.stdout);
     expect(out).toContain("task\tlive\tOPEN\t");
-    expect(out).toContain(
-      `more\troot\tclosed=${6 - FRONTIER_CLOSED_PER_NODE}\tnext=mu task tree root -w w --down --all`,
+    expect(out).toMatch(
+      new RegExp(`^task\\troot\\t.*\\bclosed=${6 - FRONTIER_CLOSED_PER_NODE}\\b`, "m"),
+    );
+    expect(out.trimEnd().split("\n").at(-1)).toBe(
+      `more=${6 - FRONTIER_CLOSED_PER_NODE} next=mu task tree root -w w --down --all`,
     );
     expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
-    const all = await runCli(["task", "tree", "root", "--down", "--all", "-w", WS], dbPath);
+    const all = await runCli(printedArgv(r.stdout), dbPath);
     expect(plain(all.stdout).match(/^task\tc\d\tCLOSED/gm)).toHaveLength(6);
+    expect(plain(all.stdout)).not.toMatch(/^more=/m);
   });
 
   it("a CLOSED root still expands; CLOSED neighbours are leaves", () => {
@@ -666,56 +672,53 @@ describe("tree: the open DAG, bounded", () => {
     ).toEqual(["mine"]);
   });
 
-  it("CLI tree: paged output covers every entry exactly once and never exceeds 4 KB", async () => {
+  it("CLI tree: a wide tree is cut to 4 KB; the printed next command (--all) lists every entry", async () => {
     add("hub", "H");
     for (let i = 0; i < 150; i++) {
       add(`s${String(i).padStart(3, "0")}`, `Spoke ${i} ${"s".repeat(60)}`);
       addBlockEdge(db, WS, `s${String(i).padStart(3, "0")}`, "hub");
     }
-    const seen = new Set<string>();
-    let argv = ["task", "tree", "hub", "--down", "-w", WS];
-    for (let page = 0; page < 60; page++) {
-      const r = await runCli(argv, dbPath);
-      expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES + 400);
-      const lines = plain(r.stdout).trimEnd().split("\n");
-      for (const l of lines) {
-        for (const m of l.matchAll(/\b(s\d{3}|hub)\b/g)) seen.add(m[1] ?? "");
-        expect([...l].length).toBeLessThanOrEqual(RECORD_CHARS + 60);
-      }
-      const foot = lines.at(-1) ?? "";
-      const m = /^more=\d+ next=(.*)$/.exec(foot);
-      if (m === null) break;
-      argv = (m[1] ?? "").split(" ").slice(1);
-    }
-    expect(seen.size).toBe(151);
+    const r = await runCli(["task", "tree", "hub", "--down", "-w", WS], dbPath);
+    expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const lines = plain(r.stdout).trimEnd().split("\n");
+    for (const l of lines) expect([...l].length).toBeLessThanOrEqual(RECORD_CHARS);
+    expect(lines.at(-1)).toMatch(/^more=\d+ next=mu task tree hub -w w --down --all$/);
+    const all = await runCli(printedArgv(r.stdout), dbPath);
+    const ids = plain(all.stdout)
+      .trimEnd()
+      .split("\n")
+      .filter((l) => l.startsWith("task\t"))
+      .map((l) => l.split("\t")[1]);
+    expect(ids).toHaveLength(151);
+    expect(new Set(ids).size).toBe(151);
   });
 });
 
-describe("tree --json pages like the text form", () => {
-  it("every page is a whole document under 4 KB; the retrieve command resumes; entries are covered once", async () => {
+describe("tree --json is cut like the text form", () => {
+  it("the document is <= 4 KB; retrieve (--json --all) is the whole tree", async () => {
     add("hub", "H");
     for (let i = 0; i < 90; i++) {
       add(`s${String(i).padStart(2, "0")}`, `Spoke ${i} ${"s".repeat(80)}`);
       addBlockEdge(db, WS, `s${String(i).padStart(2, "0")}`, "hub");
     }
-    const seen: string[] = [];
-    let argv = ["task", "tree", "hub", "--down", "-w", WS, "--json"];
-    for (let page = 0; page < 40; page++) {
-      const r = await runCli(argv, dbPath);
-      expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
-      const d = (
-        JSON.parse(r.stdout) as {
-          data: { items: { id: string }[]; more: number; retrieve?: string };
-        }
-      ).data;
-      expect(d.items.length).toBeGreaterThan(0);
-      seen.push(...d.items.map((i) => i.id));
-      if (d.retrieve === undefined) break;
-      expect(d.more).toBe(91 - seen.length);
-      argv = [...d.retrieve.split(" ").slice(1), "--json"];
-    }
-    expect(seen).toHaveLength(91);
-    expect(new Set(seen).size).toBe(91);
+    const r = await runCli(["task", "tree", "hub", "--down", "-w", WS, "--json"], dbPath);
+    expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const d = (
+      JSON.parse(r.stdout) as {
+        data: { items: { id: string }[]; count: number; more: number; retrieve?: string };
+      }
+    ).data;
+    expect(d.more).toBe(91 - d.count);
+    expect(d.retrieve).toBe("mu task tree hub -w w --down --json --all");
+    const all = (await runCliJson(retrieveArgv(d), dbPath)).data as {
+      items: { id: string }[];
+      more: number;
+      retrieve?: string;
+    };
+    expect(all.items).toHaveLength(91);
+    expect(new Set(all.items.map((i) => i.id)).size).toBe(91);
+    expect(all.more).toBe(0);
+    expect(all.retrieve).toBeUndefined();
   });
 });
 
@@ -743,73 +746,60 @@ const rawTask = (id: string, title: string, status = "OPEN", ws = WS): number =>
   );
 };
 
-describe("round 2: title recovery runs through the real CLI", () => {
-  it("list text and list --json name a command that, executed, returns the whole 2000-char title", async () => {
+describe("round 2 (simplified): every cut's one way back is the same command with --all", () => {
+  it("list: a 2000-char title is whole under the printed command, in text and JSON", async () => {
     add("long", "t".repeat(2000));
     const text = await runCli(["task", "list", "-w", WS], dbPath);
-    const textNext = /next=(mu sql .*)$/.exec(plain(text.stdout).trimEnd())?.[1] ?? "";
-    expect((await runEmitted(textNext))[0]?.title).toBe("t".repeat(2000));
+    const all = await runCli(printedArgv(text.stdout), dbPath);
+    expect(plain(all.stdout).trimEnd()).toMatch(/\tt{2000}$/);
     const json = await runCliJson(["task", "list", "-w", WS, "--json"], dbPath);
-    const retrieve = (json.data as { items: { retrieve: string }[] }).items[0]?.retrieve ?? "";
-    expect((await runEmitted(retrieve))[0]?.title).toBe("t".repeat(2000));
+    const whole = (await runCliJson(retrieveArgv(json.data as { retrieve?: string }), dbPath))
+      .data as { items: { title: string }[] };
+    expect(whole.items[0]?.title).toBe("t".repeat(2000));
     const show = await runCliJson(["task", "show", "long", "-w", WS, "--json"], dbPath);
-    const sr = (show.data as { task: { retrieve: string } }).task.retrieve;
-    expect((await runEmitted(sr))[0]?.title).toBe("t".repeat(2000));
+    const sd = (await runCliJson(retrieveArgv(show.data as { retrieve?: string }), dbPath))
+      .data as {
+      task: { title: string };
+    };
+    expect(sd.task.title).toBe("t".repeat(2000));
   });
-});
 
-describe("round 2: clipped wave / dispatch_host recover whole, with exact counts, in both modes", () => {
-  it("--json: cut counts every clipped code point and retrieve returns the whole fields", async () => {
+  it("wave / dispatch_host clipped under a short title: cut counts them, --all returns them whole (text and JSON, list and show)", async () => {
     add("fields", "Short");
     db.prepare("UPDATE tasks SET wave = ?, dispatch_host = ? WHERE local_id = 'fields'").run(
       longLit(300, "w"),
       longLit(300, "h"),
     );
-    const list = await runCliJson(["task", "list", "-w", WS, "--json"], dbPath);
-    const item = (
-      list.data as {
-        items: {
-          title: string;
-          wave: string;
-          dispatch_host: string;
-          cut: number;
-          retrieve: string;
-        }[];
-      }
-    ).items[0];
-    expect(item?.title).toBe("Short");
-    const shown = [...(item?.wave ?? "")].length + [...(item?.dispatch_host ?? "")].length;
-    // each clipped field keeps (shown-1) code points plus the ellipsis
-    expect(item?.cut).toBe(600 - (shown - 2));
-    const row = (await runEmitted(item?.retrieve ?? ""))[0];
-    expect(row?.wave).toBe(longLit(300, "w"));
-    expect(row?.dispatch_host).toBe(longLit(300, "h"));
-    // show's retrieve is no more self-referential than list's.
-    const show = await runCliJson(["task", "show", "fields", "-w", WS, "--json"], dbPath);
-    const st = (show.data as { task: { retrieve: string; cut: number } }).task;
-    expect(st.cut).toBeGreaterThan(0);
-    expect((await runEmitted(st.retrieve))[0]?.wave).toBe(longLit(300, "w"));
-  });
-
-  it("text: a clipped metadata field raises cut=N next=<command> even when the title fits", async () => {
-    add("fieldt", "Short");
-    db.prepare("UPDATE tasks SET wave = ?, dispatch_host = ? WHERE local_id = 'fieldt'").run(
-      longLit(300, "w"),
-      longLit(300, "h"),
-    );
+    // text: list and show
     for (const argv of [
       ["task", "list", "-w", WS],
-      ["task", "show", "fieldt", "-w", WS],
+      ["task", "show", "fields", "-w", WS],
     ]) {
       const r = await runCli(argv, dbPath);
-      const line = plain(r.stdout).split("\n")[0] ?? "";
-      expect(line, argv.join(" ")).toMatch(/\tcut=\d+\tnext=mu sql --json /);
-      expect(line.endsWith("\tShort") || line.includes("\tShort\t")).toBe(true);
-      const next = /next=(mu sql .*)$/.exec(line)?.[1] ?? "";
-      const row = (await runEmitted(next))[0];
-      expect(row?.wave).toBe(longLit(300, "w"));
-      const cut = Number(/cut=(\d+)/.exec(line)?.[1]);
-      expect(cut).toBe(2 * (300 - 40));
+      const lines = plain(r.stdout).trimEnd().split("\n");
+      expect(lines[0]?.endsWith("\tShort"), argv.join(" ")).toBe(true);
+      expect(lines.at(-1)).toMatch(/^cut=520 next=mu task (list|show fields) -w w( --all)?$/);
+      expect(Number(/cut=(\d+)/.exec(lines.at(-1) ?? "")?.[1])).toBe(2 * (300 - 40));
+      const all = plain((await runCli(printedArgv(r.stdout), dbPath)).stdout);
+      expect(all).toContain(`wave=${longLit(300, "w")} host=${longLit(300, "h")}`);
+      expect(all).not.toContain("cut=");
+    }
+    // JSON: list and show
+    for (const argv of [
+      ["task", "list", "-w", WS, "--json"],
+      ["task", "show", "fields", "-w", WS, "--json"],
+    ]) {
+      const d = (await runCliJson(argv, dbPath)).data as { cut: number; retrieve: string };
+      expect(d.cut).toBe(2 * (300 - 79));
+      const all = (await runCliJson(retrieveArgv(d), dbPath)).data as {
+        items?: { wave: string; dispatch_host: string }[];
+        task?: { wave: string; dispatch_host: string };
+        cut?: number;
+      };
+      const t = all.items?.[0] ?? all.task;
+      expect(t?.wave).toBe(longLit(300, "w"));
+      expect(t?.dispatch_host).toBe(longLit(300, "h"));
+      expect(all.cut).toBeUndefined();
     }
   });
 });
@@ -842,8 +832,8 @@ describe("round 2: tree text is the record grammar", () => {
   });
 });
 
-describe("round 2: node-capped tree recovery", () => {
-  it("a parent with more children than the node cap names an SQL read that returns exactly the omitted ones", async () => {
+describe("round 2: node-capped tree: --all is the way back", () => {
+  it("a parent with more children than the node cap says capped=K; --all lists every child", async () => {
     const hub = rawTask("hub", "H");
     const n = FRONTIER_MAX_NODES + 50;
     const edge = db.prepare(
@@ -857,28 +847,29 @@ describe("round 2: node-capped tree recovery", () => {
       }
     })();
     const f = loadOpenTaskFrontier(db, WS, "hub", "dependents");
-    const listed = new Set(f.entries.map((e) => e.task.name));
     expect(f.entries[0]?.capCut).toBeGreaterThan(0);
     const r = await runCliJson(["task", "tree", "hub", "--down", "-w", WS, "--json"], dbPath);
-    const root = (r.data as { items: Record<string, unknown>[] }).items[0] ?? {};
-    expect(root.capped).toBe(f.entries[0]?.capCut);
-    const rows = await runEmitted(String(root.capped_retrieve));
-    const omitted = rows.map((x) => String(x.local_id));
-    expect(omitted).toHaveLength(Number(root.capped));
-    expect(omitted.filter((id) => listed.has(id))).toEqual([]);
-    expect(listed.size - 1 + omitted.length).toBe(n);
-    // The old self-referential retrieval is gone: nothing names the same tree as the way back for the cap.
-    expect(root.kids_retrieve).toBeUndefined();
-    // Text carries the same way back.
+    const d = r.data as { items: Record<string, unknown>[]; more: number; retrieve: string };
+    expect(d.items[0]?.capped).toBe(f.entries[0]?.capCut);
+    expect(d.retrieve).toBe("mu task tree hub -w w --down --json --all");
     const t = await runCli(["task", "tree", "hub", "--down", "-w", WS], dbPath);
     expect(t.stdout).toMatch(
-      new RegExp(`^more\\thub\\tcapped=${String(root.capped)}\\tnext=mu sql --json `, "m"),
+      new RegExp(`^task\\thub\\t.*\\bcapped=${f.entries[0]?.capCut}\\b`, "m"),
     );
+    const all = (await runCliJson(retrieveArgv(d), dbPath)).data as {
+      items: { id: string }[];
+      more: number;
+    };
+    expect(all.items).toHaveLength(n + 1);
+    expect(new Set(all.items.map((i) => i.id)).size).toBe(n + 1);
+    expect(all.more).toBe(0);
+    const allText = await runCli(printedArgv(t.stdout), dbPath);
+    expect(plain(allText.stdout).match(/^task\t/gm)).toHaveLength(n + 1);
   });
 });
 
 describe("round 2: tree depth cap holds for the shared DAG's preorder walk", () => {
-  it("a chain every node of which is also a direct child never lists past FRONTIER_MAX_DEPTH; the rest is counted", async () => {
+  it("a chain every node of which is also a direct child never lists past FRONTIER_MAX_DEPTH; --all lists the rest", async () => {
     add("depthroot");
     const n = 30;
     const name = (i: number) => `d${String(i).padStart(2, "0")}`;
@@ -892,35 +883,166 @@ describe("round 2: tree depth cap holds for the shared DAG's preorder walk", () 
     const deepest = f.entries.filter((e) => e.depth === FRONTIER_MAX_DEPTH);
     expect(deepest.length).toBeGreaterThan(0);
     expect(deepest.every((e) => e.kids > 0)).toBe(true);
-    // Paged through the CLI the depth never exceeds the cap either, page by page.
-    let argv = ["task", "tree", "depthroot", "--down", "-w", WS, "--json"];
-    const seen: string[] = [];
-    for (let page = 0; page < 40; page++) {
-      const r = await runCliJson(argv, dbPath);
-      const d = r.data as { items: { id: string; depth: number }[]; retrieve?: string };
-      for (const it of d.items) {
-        expect(it.depth).toBeLessThanOrEqual(FRONTIER_MAX_DEPTH);
-        seen.push(it.id);
-      }
-      if (d.retrieve === undefined) break;
-      argv = [...shellSplit(d.retrieve).slice(1), "--json"];
-    }
-    expect(seen.length).toBe(f.entries.length);
-    // A diamond on the same level: the omitted work below the cap is counted, not dropped.
-    const total = (
-      await runCliJson(
-        ["task", "tree", "depthroot", "--down", "-w", WS, "--json", "--from", "13"],
-        dbPath,
-      )
-    ).data as {
-      items: { depth: number }[];
+    const r = await runCliJson(["task", "tree", "depthroot", "--down", "-w", WS, "--json"], dbPath);
+    const d = r.data as { items: { depth: number }[]; retrieve: string };
+    expect(Math.max(...d.items.map((i) => i.depth))).toBeLessThanOrEqual(FRONTIER_MAX_DEPTH);
+    // The way back is uncapped: every level, no node left under a cap.
+    const all = (await runCliJson(retrieveArgv(d), dbPath)).data as {
+      items: { id: string; depth: number; kids?: number }[];
+      more: number;
     };
-    expect(Math.max(...total.items.map((i) => i.depth))).toBeLessThanOrEqual(FRONTIER_MAX_DEPTH);
+    expect(Math.max(...all.items.map((i) => i.depth))).toBe(n);
+    expect(all.items.some((i) => (i.kids ?? 0) > 0)).toBe(false);
+    expect(all.more).toBe(0);
   });
 });
 
-describe("round 2: tree pages cut on whole subtrees, and bytes are the emitted bytes", () => {
-  it("each page after the first starts at an entry whose parent was listed or is the page's own top; no page splits a subtree it could fit", async () => {
+describe("round 2: a tree's one way back is --all, in either direction and either mode", () => {
+  it("a 22-deep chain: the depth-capped read names --all (--json kept); the --all read reaches the tail", async () => {
+    const name = (i: number) => `chain${String(i).padStart(2, "0")}`;
+    add("chainroot");
+    for (let i = 0; i < 22; i++) {
+      add(name(i));
+      addBlockEdge(db, WS, name(i), i === 0 ? "chainroot" : name(i - 1));
+    }
+    for (const dir of [[], ["--json"]]) {
+      const capped = await runCli(
+        ["task", "tree", "chainroot", "--down", "-w", WS, ...dir],
+        dbPath,
+      );
+      const cmd = shellSplit(
+        /next=(mu .*)$/m.exec(plain(capped.stdout))?.[1] ??
+          (JSON.parse(capped.stdout) as { data: { retrieve: string } }).data.retrieve,
+      ).slice(1);
+      expect(cmd).toEqual(["task", "tree", "chainroot", "-w", WS, "--down", ...dir, "--all"]);
+      const all = await runCli(cmd, dbPath);
+      expect(all.stdout).toContain(name(21));
+      expect(all.stdout).not.toMatch(/more=/);
+    }
+  });
+
+  it("an all-CLOSED chain: --all walks it to the tail, blockers and dependents, text and JSON", async () => {
+    const name = (i: number) => `chain${String(i).padStart(2, "0")}`;
+    add("chainroot");
+    for (let i = 0; i < 22; i++) {
+      add(name(i));
+      addBlockEdge(db, WS, name(i), i === 0 ? "chainroot" : name(i - 1));
+    }
+    for (const id of ["chainroot", ...Array.from({ length: 22 }, (_, i) => name(i))])
+      closeTask(db, id, { workstream: WS, evidence: "x" });
+    for (const dir of [[], ["--json"]]) {
+      const down = await runCli(
+        ["task", "tree", "chainroot", "--down", "--all", "-w", WS, ...dir],
+        dbPath,
+      );
+      expect(down.stdout).toContain(name(21));
+      const up = await runCli(["task", "tree", name(21), "--all", "-w", WS, ...dir], dbPath);
+      expect(up.stdout).toContain("chainroot");
+    }
+  });
+});
+
+describe("round 3: the four round-2 reviewer repros; each printed next command is run and returns the full content", () => {
+  it("tree_command_cut: maximum names and long metadata: the footer is whole and runs (text)", async () => {
+    const wsName = "x".repeat(32);
+    const rootId = `y${"y".repeat(63)}`;
+    const depId = `z${"z".repeat(63)}`;
+    ensureWorkstream(db, wsName);
+    add(rootId, "Z".repeat(5000), {}, wsName);
+    add(depId, "Q".repeat(5000), {}, wsName);
+    db.prepare(
+      "UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active', dispatch_host = ?, wave = ? WHERE local_id = ?",
+    ).run("h".repeat(300), "w".repeat(300), rootId);
+    addBlockEdge(db, wsName, depId, rootId);
+    const r = await runCli(["task", "tree", rootId, "--down", "-w", wsName], dbPath);
+    expect(r.exitCode).toBeNull();
+    const lines = plain(r.stdout).trimEnd().split("\n");
+    for (const l of lines.slice(1, -1)) expect([...l].length).toBeLessThanOrEqual(RECORD_CHARS);
+    expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    expect(lines.at(-1)).toMatch(
+      new RegExp(
+        `^(more=\\d+ )?(cut=\\d+ )?next=mu task tree ${rootId} -w ${wsName} --down --all$`,
+      ),
+    );
+    const all = await runCli(printedArgv(r.stdout), dbPath);
+    expect(all.exitCode).toBeNull();
+    const whole = plain(all.stdout);
+    expect(whole).toContain(`\t${"Z".repeat(5000)}`);
+    expect(whole).toContain(`\t${"Q".repeat(5000)}`);
+    expect(whole).toContain(`wave=${"w".repeat(300)}`);
+    expect(whole).toContain(`host=${"h".repeat(300)}`);
+    // JSON mode: the same command with --json --all.
+    const j = await runCli(["task", "tree", rootId, "--down", "-w", wsName, "--json"], dbPath);
+    expect(bytes(j.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const jd = (JSON.parse(j.stdout) as { data: { retrieve: string } }).data;
+    const jall = (await runCliJson(retrieveArgv(jd), dbPath)).data as {
+      items: { title: string; wave: string | null; dispatch_host: string | null }[];
+    };
+    expect(jall.items.map((i) => i.title)).toEqual(["Z".repeat(5000), "Q".repeat(5000)]);
+    expect(jall.items[0]?.dispatch_host).toBe("h".repeat(300));
+  });
+
+  it("edge_json_bytes: 150 IN_PROGRESS neighbours: show --json <= 4096 bytes (kind, retrieve, newline counted); --all has all 150", async () => {
+    ensureWorkstream(db, "probe");
+    add("hub", "hub", {}, "probe");
+    for (let i = 0; i < 150; i++) {
+      const id = `s${String(i).padStart(3, "0")}`;
+      add(id, "xxx", {}, "probe");
+      addBlockEdge(db, "probe", id, "hub");
+      db.prepare(
+        "UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active' WHERE local_id = ?",
+      ).run(id);
+    }
+    const j = await runCli(["task", "show", "hub", "-w", "probe", "--json"], dbPath);
+    expect(bytes(j.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const d = (JSON.parse(j.stdout) as { data: { dependents: unknown[]; retrieve: string } }).data;
+    expect(d.dependents.length).toBeLessThan(150);
+    const all = (await runCliJson(retrieveArgv(d), dbPath)).data as {
+      dependents: { id: string }[];
+    };
+    expect(all.dependents.map((e) => e.id)).toEqual(
+      Array.from({ length: 150 }, (_, i) => `s${String(i).padStart(3, "0")}`),
+    );
+    const t = await runCli(["task", "show", "hub", "-w", "probe"], dbPath);
+    expect(bytes(t.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const tall = await runCli(printedArgv(t.stdout), dbPath);
+    expect(plain(tall.stdout).match(/^dependent\t/gm)).toHaveLength(150);
+  });
+
+  it("show_json_bytes: an escape-heavy title, wave and host with 50 neighbours: JSON and text <= 4096; --all is whole", async () => {
+    ensureWorkstream(db, "cuts");
+    const title = "\u0085".repeat(600);
+    add("escaped", title, {}, "cuts");
+    db.prepare("UPDATE tasks SET dispatch_host = ?, wave = ? WHERE local_id = 'escaped'").run(
+      "\u202e".repeat(300),
+      "\u2028".repeat(300),
+    );
+    for (let i = 0; i < 50; i++) {
+      add(`edge${String(i).padStart(2, "0")}`, "e", {}, "cuts");
+      addBlockEdge(db, "cuts", `edge${String(i).padStart(2, "0")}`, "escaped");
+    }
+    const j = await runCli(["task", "show", "escaped", "-w", "cuts", "--json"], dbPath);
+    expect(bytes(j.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const d = (JSON.parse(j.stdout) as { data: { retrieve: string; cut: number } }).data;
+    expect(d.cut).toBeGreaterThan(0);
+    const all = (await runCliJson(retrieveArgv(d), dbPath)).data as {
+      task: { title: string; wave: string; dispatch_host: string };
+      dependents: unknown[];
+    };
+    expect(all.task.title).toBe(title);
+    expect(all.task.wave).toBe("\u2028".repeat(300));
+    expect(all.task.dispatch_host).toBe("\u202e".repeat(300));
+    expect(all.dependents).toHaveLength(50);
+    const t = await runCli(["task", "show", "escaped", "-w", "cuts"], dbPath);
+    expect(bytes(t.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const tall = plain((await runCli(printedArgv(t.stdout), dbPath)).stdout);
+    expect(tall).toContain("\\u{85}".repeat(600));
+    expect(tall.match(/^dependent\t/gm)).toHaveLength(50);
+  });
+});
+
+describe("round 2: records are cut whole, in preorder, and bytes are the emitted bytes", () => {
+  it("a wide two-level tree: the page is a preorder prefix (the root path first), <= 4 KB; --all lists all", async () => {
     add("hub");
     for (let i = 0; i < 12; i++) {
       const s = `s${String(i).padStart(2, "0")}`;
@@ -931,26 +1053,18 @@ describe("round 2: tree pages cut on whole subtrees, and bytes are the emitted b
         addBlockEdge(db, WS, `${s}k${j}`, s);
       }
     }
-    let argv = ["task", "tree", "hub", "--down", "-w", WS];
-    const pages: string[][] = [];
-    for (let i = 0; i < 20; i++) {
-      const r = await runCli(argv, dbPath);
-      expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
-      const lines = r.stdout.trimEnd().split("\n");
-      pages.push(lines.filter((l) => l.startsWith("task\t")));
-      const m = /^more=\d+ next=(.*)$/.exec(lines.at(-1) ?? "");
-      if (m === null) break;
-      argv = shellSplit(m[1] ?? "").slice(1);
+    const r = await runCli(["task", "tree", "hub", "--down", "-w", WS], dbPath);
+    expect(bytes(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
+    const lines = r.stdout.trimEnd().split("\n");
+    const tasks = lines.filter((l) => l.startsWith("task\t")).map((l) => l.split("\t"));
+    expect(tasks[0]?.[1]).toBe("hub");
+    for (const t of tasks.slice(1)) {
+      const parent = /parent=(\S+)/.exec(t[3] ?? "")?.[1];
+      expect(tasks.some((x) => x[1] === parent)).toBe(true);
     }
-    expect(pages.length).toBeGreaterThan(1);
-    // A spoke and its three kids are never split across a page.
-    for (const page of pages) {
-      const ids = page.map((l) => l.split("\t")[1] ?? "");
-      for (const id of ids) if (/^s\d\dk\d$/.test(id)) expect(ids).toContain(id.slice(0, 3));
-      for (const id of ids)
-        if (/^s\d\d$/.test(id)) expect(ids.filter((x) => x.startsWith(`${id}k`))).toHaveLength(3);
-    }
-    expect(pages.flat()).toHaveLength(1 + 12 * 4);
+    expect(lines.at(-1)).toMatch(/^more=\d+ next=mu task tree hub -w w --down --all$/);
+    const all = await runCli(printedArgv(r.stdout), dbPath);
+    expect(plain(all.stdout).match(/^task\t/gm)).toHaveLength(1 + 12 * 4);
   });
 
   it("no ANSI escape is ever emitted by a tree read, and the byte cap holds on the raw output", async () => {
