@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createElement } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/cli/tui/app.js";
 import { createRuntime } from "../src/cli/tui/runtime.js";
 import { type Db, openDb } from "../src/db.js";
@@ -14,6 +14,19 @@ import { addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { renderApp } from "./_ink-render.js";
+
+// Spy on the connection the projection runs on; the real loadDashboard still runs.
+const projected: Db[] = [];
+vi.mock("../src/dashboard-data.js", async (orig) => {
+  const real = await orig<typeof import("../src/dashboard-data.js")>();
+  return {
+    ...real,
+    loadDashboard: (...args: Parameters<typeof real.loadDashboard>) => {
+      projected.push(args[0]);
+      return real.loadDashboard(...args);
+    },
+  };
+});
 
 const SYNC = "MU_SYNC_DIR";
 
@@ -58,6 +71,20 @@ describe("dashboard shell", () => {
     await rt.close();
   });
 
+  it("the projection connection is read-only: it refuses writes; the sync one is not", async () => {
+    seed(a, "t1");
+    projected.length = 0;
+    const rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: a, caller: null });
+    await rt.refresh();
+    const [ro] = projected;
+    expect(ro).toBeDefined();
+    expect(ro).not.toBe(a);
+    expect(ro?.readonly).toBe(true);
+    expect(() => ro?.prepare("UPDATE tasks SET title = 'x'").run()).toThrow(/readonly/i);
+    expect(a.readonly).toBe(false);
+    await rt.close();
+  });
+
   it("ingests a peer on the writable sync connection, then projects it", async () => {
     seed(b, "peer1");
     process.env[SYNC] = syncDir;
@@ -92,14 +119,13 @@ describe("dashboard shell", () => {
     await rt.close();
   });
 
-  it("close() flushes this machine's ops once and refuses further refreshes", async () => {
+  it("close() is idempotent, refuses further refreshes and leaves the flush to shutdown", async () => {
     seed(a, "mine");
     process.env[SYNC] = syncDir;
     const rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: a, caller: null });
-    expect(readdirSync(syncDir)).toEqual([]);
     await rt.close();
-    expect(readdirSync(syncDir).filter((f) => f.endsWith(".jsonl"))).toHaveLength(1);
-    await rt.close(); // idempotent
+    await rt.close();
+    expect(readdirSync(syncDir)).toEqual([]);
     await expect(rt.refresh()).rejects.toThrow(/closed/);
   });
 

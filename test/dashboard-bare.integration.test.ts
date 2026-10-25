@@ -4,9 +4,18 @@
 // chunk is also the no-import-cycle gate (a cycle exits silently).
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { addTask } from "../src/tasks/edit.js";
@@ -20,6 +29,7 @@ const havePython = spawnSync("python3", ["--version"]).status === 0;
 const PTY_DRIVER = `
 import os, pty, select, sys, time, json
 bin_, until, keys = sys.argv[1], sys.argv[2].encode(), sys.argv[3].encode()
+sig = getattr(__import__("signal"), sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else None
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp("node", ["node", bin_])
@@ -35,7 +45,9 @@ while time.time() < deadline:
             break
         buf += chunk
     if not sent and until in buf:
-        os.write(fd, keys); sent = True
+        if sig: os.kill(pid, sig)
+        else: os.write(fd, keys)
+        sent = True
 try:
     _, status = os.waitpid(pid, 0)
 except ChildProcessError:
@@ -66,8 +78,8 @@ describe("bare mu", () => {
   });
   afterEach(() => rmFixtureDir(tmp));
 
-  const pty = (): PtyRun => {
-    const r = spawnSync("python3", ["-c", PTY_DRIVER, BIN, "q/Esc quit", pty.keys], {
+  const pty = (until = "q/Esc quit", signal = ""): PtyRun => {
+    const r = spawnSync("python3", ["-c", PTY_DRIVER, BIN, until, pty.keys, signal], {
       env,
       encoding: "utf8",
       timeout: 30_000,
@@ -100,6 +112,65 @@ describe("bare mu", () => {
       expect(run.out).toContain("mu dashboard");
       expect(run.code).toBe(0);
       expect(readdirSync(shared).filter((f) => f.endsWith(".jsonl"))).toHaveLength(1);
+    },
+  );
+
+  // A seeded DB with ops this machine has not published, and a shared sync dir.
+  const seedUnpublished = (): string => {
+    const shared = join(tmp, "shared");
+    mkdirSync(shared);
+    const db = openDb({ path: env.MU_DB_PATH as string });
+    ensureWorkstream(db, "demo");
+    addTask(db, { workstream: "demo", localId: "t1", title: "t1", impact: 50, effortDays: 1 });
+    db.close();
+    env.MU_SYNC_DIR = shared;
+    expect(readdirSync(shared)).toEqual([]);
+    return shared;
+  };
+  const segmentBytes = (dir: string): number =>
+    readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .reduce((n, f) => n + statSync(join(dir, f)).size, 0);
+
+  it.skipIf(!havePython || !existsSync(BIN))(
+    "SIGINT while loaded exits 130 after the final flush (segment bytes grew)",
+    () => {
+      const shared = seedUnpublished();
+      const run = pty("1 workstreams", "SIGINT");
+      expect(run.sent).toBe(true);
+      expect(run.code).toBe(130);
+      expect(segmentBytes(shared)).toBeGreaterThan(0);
+    },
+  );
+
+  it.skipIf(!havePython || !existsSync(BIN))("SIGTERM exits 143 after the final flush", () => {
+    const shared = seedUnpublished();
+    const run = pty("1 workstreams", "SIGTERM");
+    expect(run.code).toBe(143);
+    expect(segmentBytes(shared)).toBeGreaterThan(0);
+  });
+
+  it.skipIf(!havePython || !existsSync(BIN))(
+    "a boot error (UI chunk fails to load) reports it and still flushes",
+    () => {
+      const shared = seedUnpublished();
+      // Refuse ink at resolve time: the lazy import in the launcher then throws.
+      const hooks = join(tmp, "refuse-ink.mjs");
+      writeFileSync(
+        hooks,
+        'export async function resolve(s, c, n) { if (s === "ink") throw new Error("injected boot failure"); return n(s, c); }',
+      );
+      const reg = join(tmp, "register.mjs");
+      writeFileSync(
+        reg,
+        `import { register } from "node:module"; register(${JSON.stringify(pathToFileURL(hooks).href)});`,
+      );
+      env.NODE_OPTIONS = `--import ${pathToFileURL(reg).href}`;
+      pty.keys = "q";
+      const run = pty("never-appears");
+      expect(run.out).toContain("injected boot failure");
+      expect(run.code).not.toBe(0);
+      expect(segmentBytes(shared)).toBeGreaterThan(0);
     },
   );
 

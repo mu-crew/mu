@@ -7,6 +7,7 @@
 import type { Command } from "commander";
 import { defaultDbPath } from "../db.js";
 import { isJsonMode } from "../output.js";
+import { withShutdown } from "./dashboard-shutdown.js";
 import { handle } from "./handle.js";
 
 /** Both ends a TTY and not `--json`. */
@@ -18,13 +19,16 @@ export function dashboardLaunchable(): boolean {
 export function openDashboardOrHelp(program: Command): () => Promise<void> {
   // `handle` does the guards (DB inside MU_SYNC_DIR, sync/v1 dir), opens the
   // writable connection and maps typed errors. Ambient sync is the dashboard's
-  // own (quiet, bounded, see tui/runtime.ts), so the generic hook is off.
+  // own (quiet, bounded, see tui/runtime.ts), so the generic hook is off and
+  // `withShutdown` owns the final flush for every way out, from before the lazy
+  // import on (a failing import or RO open still publishes this machine's ops).
   const run = handle(
-    async (syncDb) => {
-      const { runDashboard } = await import("./tui/index.js");
-      const first = (program.opts() as { workstream?: string[] }).workstream?.[0];
-      await runDashboard({ dbPath: defaultDbPath(), syncDb, initialWorkstream: first });
-    },
+    (syncDb) =>
+      withShutdown(syncDb, async (shutdown) => {
+        const { runDashboard } = await import("./tui/index.js");
+        const first = (program.opts() as { workstream?: string[] }).workstream?.[0];
+        await runDashboard({ dbPath: defaultDbPath(), syncDb, shutdown, initialWorkstream: first });
+      }),
     program,
     { ambientSync: false },
   );
