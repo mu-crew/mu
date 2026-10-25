@@ -116,6 +116,7 @@ import {
   SyncSourceTooNewError,
   syncEnabled,
 } from "../sync.js";
+import { assertSyncDirV2, SyncDirForeignError } from "../sync-dir-guard.js";
 import { TaskAutoArgError, TaskAutoRefusedError } from "../task-auto.js";
 import { candidateTaskIds } from "../tasks/id.js";
 import {
@@ -421,6 +422,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SqliteTooOldError ||
     err instanceof SyncSourceTooNewError ||
     err instanceof DbInsideSyncDirError ||
+    err instanceof SyncDirForeignError ||
     err instanceof WorkstreamExistsError ||
     err instanceof WorkstreamRevisionMismatchError ||
     err instanceof RevisionMismatchError ||
@@ -710,6 +712,8 @@ export function refuseDbInsideSyncDir(): void {
   if (checkDbInsideSyncDir(dbPath, dir).severity === "fail") {
     throw new DbInsideSyncDirError(dbPath, dir);
   }
+  // A 3.x peer shares the folder: mu-next neither writes into it nor reads it.
+  assertSyncDirV2(dir);
 }
 
 /** Wrap an async handler so typed errors become specific exit codes.

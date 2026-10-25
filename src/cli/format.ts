@@ -92,7 +92,7 @@ export function truncate(s: string, max: number): string {
 
 /** Front-truncate `s` to fit `max` columns, prepending an ellipsis when
  *  truncated. Used for paths where the trailing `<workstream>/<agent>`
- *  suffix is the only useful bit (the leading `~/.local/state/mu/...`
+ *  suffix is the only useful bit (the leading `~/.local/state/mu-next/...`
  *  prefix is identical for every row). Surfaced live by `mu agent
  *  list` blowing the terminal width on the `path` column
  *  (tables_truncate_long_cols_audit). */

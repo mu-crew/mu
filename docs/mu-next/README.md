@@ -502,11 +502,19 @@ Plain writes are captured as a safety net, not a supported path.
 
 No mechanical import and no flag day. mu-next and 3.x never share state:
 
-1. mu-next runs with its own `MU_DB_PATH`, `MU_STATE_DIR`,
-   `MU_SYNC_DIR`, mux namespace (`MU_TMUX_SOCKET` / a private
+1. mu-next's default state dir is `~/.local/state/mu-next`
+   (`$XDG_STATE_HOME/mu-next`), so its DB, sockets, locks and worktrees
+   never collide with 3.x's `.../mu`. It runs with its own `MU_DB_PATH`,
+   `MU_STATE_DIR`, `MU_SYNC_DIR` (opt-in; no default), mux namespace (`MU_TMUX_SOCKET` / a private
    `MU_HERDR_SESSION`) and a freshly minted machine id, so its v2
    segments never reach a 3.x peer and 3.x never writes its DB
    (`co_dogfood_identity`).
+   Sync isolation is enforced, not only advised: mu-next refuses a
+   `MU_SYNC_DIR` where any `*.jsonl` segment opens with a v1 line (a 3.x
+   peer), for read and write, exit 4, nothing touched: `MU_SYNC_DIR holds
+   3.x segments; give mu-next its own dir`. (Incident: an inherited
+   `MU_SYNC_DIR` let a mu-next run drop a v2 segment into the real 3.x
+   folder, and 3.x warned `unknown-version` on every command.)
 2. The 3.x DB stays untouched as a read-only archive. 3.x keeps working
    for whatever has not moved.
 3. A workstream moves on request, from one machine only, by a recipe a
@@ -520,7 +528,8 @@ No mechanical import and no flag day. mu-next and 3.x never share state:
    (`co_resume_perf`).
 
 No longer required (the code stays): reading v1 segment lines and
-accepting a v12 DB; they mattered only for an in-place import.
+accepting a v12 DB; they mattered only for an in-place import. The v1
+reader is never reached from a guarded sync dir.
 
 ## Decisions during the build
 

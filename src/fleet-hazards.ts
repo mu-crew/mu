@@ -161,7 +161,7 @@ export function checkDbInsideSyncDir(dbPath: string, syncDir: string | undefined
       "writer per file, never contended, so any file-mover is adequate transport.",
       "",
       "Fix: move the DB out of the sync dir, e.g.",
-      "  export MU_DB_PATH=$HOME/.local/state/mu/mu.db",
+      "  export MU_DB_PATH=$HOME/.local/state/mu-next/mu.db",
       "and keep MU_SYNC_DIR pointing at the shared folder for segments only.",
     ],
   };
@@ -273,7 +273,7 @@ export function checkNetworkMount(
         "silent corruption with real contention from parallel mu invocations.",
         "",
         "Fix: keep the DB on local disk and sync SEGMENTS instead —",
-        "  export MU_DB_PATH=$HOME/.local/state/mu/mu.db",
+        "  export MU_DB_PATH=$HOME/.local/state/mu-next/mu.db",
         "That is what the segment design is for: append-only, single-writer files",
         "that any file-mover can carry safely.",
       ],

@@ -220,7 +220,7 @@ function closeQuietly(db: Db): void {
  * `{ path }` option). A test that forgets to override either one
  * silently mutated the dev box's live state — we observed a stray
  * 'demo' workstream row replicated from test/tui-acceptance.integration.test.ts
- * into ~/.local/state/mu/mu.db. The guard throws a useful diagnostic
+ * into ~/.local/state/mu/mu.db (now ~/.local/state/mu-next/mu.db). The guard throws a useful diagnostic
  * the moment the offending openDb() call is made; the failing test's
  * stack trace then names the leak source directly.
  *
@@ -242,8 +242,10 @@ function refuseUserDbDuringTests(path: string): void {
   const inTest = process.env.VITEST !== undefined || process.env.NODE_ENV === "test";
   if (!inTest) return;
   const home = process.env.HOME ?? homedir();
-  const realDb = resolve(join(xdgStateHome(home), "mu", "mu.db"));
-  if (resolve(path) === realDb) {
+  // mu-next's default, and 3.x's: a test must reach neither.
+  const realDbs = ["mu-next", "mu"].map((dir) => resolve(join(xdgStateHome(home), dir, "mu.db")));
+  const realDb = realDbs.find((p) => p === resolve(path));
+  if (realDb !== undefined) {
     throw new Error(
       `openDb refused: tests must NEVER write to the user DB (${realDb}). Set MU_DB_PATH to a per-test temp path (test/_runCli.ts does this automatically) or pass an explicit { path } argument. The leak source is the call site of openDb in this stack frame.`,
     );
@@ -405,11 +407,11 @@ export class SchemaTooOldError extends Error implements HasNextSteps {
       {
         intent:
           "Keep a copy of the old DB before anything else (mu cannot open it, so use sqlite3)",
-        command: `sqlite3 "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}" ".backup '$HOME/mu-v${this.detectedVersion}-backup.db'"`,
+        command: `sqlite3 "\${MU_DB_PATH:-$HOME/.local/state/mu-next/mu.db}" ".backup '$HOME/mu-v${this.detectedVersion}-backup.db'"`,
       },
       {
         intent: "Move the old DB aside without deleting it",
-        command: `mv "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}" "\${MU_DB_PATH:-$HOME/.local/state/mu/mu.db}.old"`,
+        command: `mv "\${MU_DB_PATH:-$HOME/.local/state/mu-next/mu.db}" "\${MU_DB_PATH:-$HOME/.local/state/mu-next/mu.db}.old"`,
       },
     ];
   }

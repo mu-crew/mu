@@ -67,6 +67,16 @@ with `SchemaTooNewError`. Both exit 4 and leave the file alone. Back up an old D
 it runs beside 3.x with its own DB, and workstreams move by a recipe
 (docs/mu-next/README.md, Move).
 
+## Run mu-next beside 3.x
+
+mu-next keeps its state in `~/.local/state/mu-next` (`$XDG_STATE_HOME/mu-next`);
+3.x keeps `~/.local/state/mu`. Sync stays off until you set `MU_SYNC_DIR`,
+and the folder must be mu-next's own: if any segment in it opens with a
+3.x (v1) line, every verb exits 4 with
+`MU_SYNC_DIR holds 3.x segments; give mu-next its own dir` before it
+reads or writes anything. Unset or change `MU_SYNC_DIR` in a shell that
+also runs 3.x.
+
 ## Run mu from a checkout
 
 ```bash

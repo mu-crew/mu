@@ -210,7 +210,7 @@ async function killPrivateTmuxServer(): Promise<void> {
 /**
  * Every path the user's REAL DB can live at, resolved the way
  * src/db.ts `defaultDbPath()` does: `MU_DB_PATH`, else
- * `MU_STATE_DIR/mu.db`, else `$XDG_STATE_HOME/mu/mu.db`. globalSetup
+ * `MU_STATE_DIR/mu.db`, else `$XDG_STATE_HOME/mu-next/mu.db` (and 3.x's `mu/mu.db`). globalSetup
  * runs in vitest's main process with the developer's unscrubbed env
  * (test/_setup.ts only scrubs forks), so these are the user's values.
  * We read EVERY candidate, not just the winner: the user's sessions
@@ -226,7 +226,8 @@ export function userDbPaths(env: NodeJS.ProcessEnv = process.env): readonly stri
       ? env.XDG_STATE_HOME
       : join(home, ".local", "state");
   const paths = [env.MU_DB_PATH, env.MU_STATE_DIR ? join(env.MU_STATE_DIR, "mu.db") : undefined];
-  paths.push(join(xdg, "mu", "mu.db"));
+  // mu-next's default, then 3.x's: a larger allowlist only means fewer kills.
+  paths.push(join(xdg, "mu-next", "mu.db"), join(xdg, "mu", "mu.db"));
   return [...new Set(paths.filter((p): p is string => p !== undefined && p.length > 0))];
 }
 

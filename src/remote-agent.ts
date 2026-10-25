@@ -62,7 +62,7 @@ const script = (body: string): string => `sh -c ${shellQuote(body)}`;
 
 /** Where a remote worktree lives: under the remote user's state dir, never inside the repo. */
 function remoteWorktreeWord(workstream: string, name: string): string {
-  return `"$HOME"/.local/state/mu/remote-worktrees/${shellWord(workstream)}/${shellWord(name)}`;
+  return `"$HOME"/.local/state/mu-next/remote-worktrees/${shellWord(workstream)}/${shellWord(name)}`;
 }
 
 export interface RemoteSite {

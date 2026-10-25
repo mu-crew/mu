@@ -247,7 +247,7 @@ documenting" is not a reason.
 - No render layer beyond `cli-table3` + `picocolors`, except `ink`
   inside `src/cli/tui/`. Never a second TUI stack.
 - Don't bundle pi. It is an optional peer dependency.
-- Write files only under `~/.local/state/mu/`, `~/.cache/mu/`, or the
+- Write files only under `~/.local/state/mu-next/`, `~/.cache/mu/`, or the
   repo. The cache dir holds only files mu can lose at any time.
 
 ## When you're done

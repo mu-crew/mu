@@ -67,7 +67,7 @@ the `scratch` form through `tools.bash`:
 const ws = "audit";
 const findings = ["f_auth_put", "f_sql_order"]; // finding task ids, within the cap
 const sh = async (c) => (await tools.bash({ command: c })).output;
-const dir = `${(await sh("echo $HOME")).trim()}/.local/state/mu`;
+const dir = `${(await sh("echo $HOME")).trim()}/.local/state/mu-next`;
 const json = (s) => { try { return JSON.parse(s); } catch { return {}; } };
 const el = (ms) => { const t = Math.round(ms / 1000); return t < 60 ? `${t}s` : `${Math.floor(t / 60)}m ${String(t % 60).padStart(2, "0")}s`; };
 const rows = await Promise.all(findings.map(async (id, i) => {

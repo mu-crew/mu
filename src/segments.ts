@@ -100,6 +100,7 @@ import {
   usableShaState,
 } from "./segment-resume.js";
 import { type Sha256State, sha256Digest, sha256Initial, sha256Update } from "./sha256-resumable.js";
+import { assertSyncDirV2 } from "./sync-dir-guard.js";
 
 export {
   type DecodeResult,
@@ -1395,6 +1396,7 @@ export async function syncPass(db: Db, dir: string | null = syncDir()): Promise<
       defective: false,
     };
   }
+  assertSyncDirV2(dir);
   const flushed = await flushSegment(db, dir, { verify: true });
   const self = localMachineId(db);
   const ingested = discoverPeers(dir, self).map((peer) =>

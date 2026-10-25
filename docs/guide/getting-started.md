@@ -73,7 +73,7 @@ mu agent spawn worker-1 -w auth --worktree
 
 ```
 Spawned worker-1 (pi) in window worker-1 of mu-auth, pane %15 with its own worktree
-  cwd: ~/.local/state/mu/worktrees/auth/worker-1
+  cwd: ~/.local/state/mu-next/worktrees/auth/worker-1
 ```
 
 The worker runs in a new window of the `mu-auth` session. To watch

@@ -15,7 +15,7 @@ description: >-
 
 `mu` manages long-lived AI agents in multiplexer panes (tmux or
 herdr), coordinated by a SQLite task DAG at
-`<XDG_STATE_HOME or ~/.local/state>/mu/mu.db`.
+`<XDG_STATE_HOME or ~/.local/state>/mu-next/mu.db`.
 
 **Trust `mu --help` / `mu <verb> --help` over this skill.** Verbs
 not in `--help` do not exist.

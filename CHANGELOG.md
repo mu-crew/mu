@@ -12,6 +12,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **mu-next is isolated from 3.x on disk** (`v_isolation`; after the 18:04 incident, where an
+  inherited `MU_SYNC_DIR` let a mu-next run write a v2 segment into the real 3.x sync folder
+  and 3.x warned `unknown-version` on every command). The default state dir is now
+  `$XDG_STATE_HOME/mu-next` (`~/.local/state/mu-next`), holding the DB, control sockets, locks,
+  worktrees and compile cache; `MU_STATE_DIR` and `MU_DB_PATH` are unchanged. Sync stays opt-in,
+  but mu-next refuses a `MU_SYNC_DIR` where any `*.jsonl` segment opens with a v1 line (a 3.x
+  peer), for read and write: exit 4, `MU_SYNC_DIR holds 3.x segments; give mu-next its own dir`,
+  nothing read or written (`SyncDirForeignError`; checked in `handle()` before the DB opens and
+  again in `flushSegment` / `discoverPeers`). The vitest real-DB guard and the global teardown
+  now cover both the mu-next and the 3.x default DB paths. Remote worktrees move to
+  `~/.local/state/mu-next/remote-worktrees`.
 - **mu-next design: a model-run move recipe replaces the import and the flag day.**
   mu-next runs beside 3.x with its own DB, state, sync dir and machine id; the 3.x DB
   stays a read-only archive and workstreams move one at a time
