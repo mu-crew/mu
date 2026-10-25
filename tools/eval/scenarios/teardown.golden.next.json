@@ -1,0 +1,40 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu workstream list"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu workstream teardown eval-live"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu workstream teardown eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "rev=$(mu workstream teardown eval | sed -n 's/.*rev=\\([0-9][0-9]*\\).*/\\1/p' | head -1); mu workstream teardown eval --if \"$rev\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu workstream list"
+      }
+    ]
+  },
+  {
+    "text": "Workstream eval is torn down; eval-live untouched."
+  }
+]

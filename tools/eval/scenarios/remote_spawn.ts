@@ -8,8 +8,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   gateScript,
+  hostProfile,
   makeRepo,
   runsLog,
+  sandboxFamily,
   seedViaMu,
   sshShim,
   workerTask,
@@ -53,6 +55,8 @@ const scenario: Scenario = {
       sh: "echo rt1 >> rt1.txt && git add rt1.txt && git commit -qm rt1",
     });
     await sshShim(sb, { host: "dev" });
+    // mu-next stores the host as a profile; 3.x spells the ssh command out
+    if (sandboxFamily(sb) === "next") await hostProfile(sb, "dev");
     writeFileSync(join(sb.dir, "setup-head"), (await sh(sb, "git rev-parse HEAD")).stdout.trim());
   },
   async judge(sb, run) {

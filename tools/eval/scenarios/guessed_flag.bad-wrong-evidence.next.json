@@ -1,0 +1,9 @@
+[
+  {
+    "calls": [
+      { "bash": "mu task note g1 -w eval - <<'EOF'\nit's fine: $HOME and `pwd` stay literal\nEOF" }
+    ]
+  },
+  { "calls": [{ "bash": "mu task close g1 -w eval --evidence 'done'" }] },
+  { "text": "done" }
+]

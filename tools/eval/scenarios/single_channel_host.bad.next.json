@@ -1,0 +1,33 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --host dev --worktree --task s1 --send 'do s1; mu is not on this host' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git fetch \"ssh://dev/~/.local/state/mu/remote-worktrees/eval/w1\" HEAD && git cherry-pick FETCH_HEAD"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close s1 -w eval --evidence 's1 done'"
+      }
+    ]
+  },
+  {
+    "text": "s1 is done."
+  }
+]

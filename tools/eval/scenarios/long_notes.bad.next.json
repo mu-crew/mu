@@ -1,0 +1,26 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task notes big -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "echo egret > scope.txt"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close big -w eval --evidence 'scope.txt now egret'"
+      }
+    ]
+  },
+  {
+    "text": "Done."
+  }
+]

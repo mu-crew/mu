@@ -1,0 +1,33 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --host dev --worktree --task rt1 --send 'do rt1; mu is not on this host, print your sha when done' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent collect w1 -w eval && git cherry-pick refs/mu/collect/eval/w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close rt1 -w eval --evidence 'worker on dev finished; commit cherry-picked into main'"
+      }
+    ]
+  },
+  {
+    "text": "rt1 ran on dev and is merged."
+  }
+]

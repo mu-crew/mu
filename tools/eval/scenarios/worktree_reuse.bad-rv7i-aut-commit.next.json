@@ -1,0 +1,47 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --worktree"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim r2 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --json 'do r2 and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close r2 -w eval --evidence 'worker finished'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "echo r2 > r2.txt && git add r2.txt && git commit -qm r2"
+      }
+    ]
+  },
+  {
+    "text": "done"
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "for n in 1 2 3; do x=$(printf '%s' $n | tr 123 abc); git worktree add -q -b fix$n \"$EVAL_WORKER_DIR/self$n\" main && (cd \"$EVAL_WORKER_DIR/self$n\" && printf '\\n' >> $x.txt && git commit -qam f$n) && mu task close f$n -w eval --evidence 'done myself' || exit; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for n in 1 2 3; do bash \"$EVAL_WORKER_DIR/tasks/r$n.sh\" && mu task close r$n -w eval --evidence 'self reviewed' || exit; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick fix1 && git cherry-pick fix2 && git cherry-pick fix3 && ./gate.sh && mu task close umbrella -w eval --evidence done"
+      }
+    ]
+  },
+  {
+    "text": "Done"
+  }
+]

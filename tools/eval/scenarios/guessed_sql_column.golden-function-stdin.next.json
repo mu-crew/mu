@@ -1,0 +1,19 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "q() { mu sql \"$1\"; }; q \"SELECT t.local_id, t.impact, a.name FROM tasks t JOIN agents a ON a.id = t.owner_id JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = 'eval' AND t.status = 'IN_PROGRESS' ORDER BY t.impact DESC\" | head -5"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "annotate() { mu task note \"$1\" -w eval - ; }; printf 'top owner: %s\\n' w2 | annotate s4"
+      }
+    ]
+  },
+  {
+    "text": "w2 owns s4; note added."
+  }
+]

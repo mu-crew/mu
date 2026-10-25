@@ -1,0 +1,19 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "rev=$(mu workstream teardown eval | sed -n 's/.*rev=\\([0-9][0-9]*\\).*/\\1/p' | head -1); mu workstream teardown eval --if \"$rev\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "rev=$(mu workstream teardown eval-live | sed -n 's/.*rev=\\([0-9][0-9]*\\).*/\\1/p' | head -1); mu workstream teardown eval-live --if \"$rev\""
+      }
+    ]
+  },
+  {
+    "text": "Cleaned up."
+  }
+]

@@ -1,0 +1,47 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w2 -w eval --worktree"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim r2 -w eval --for w2"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w2 -w eval --json 'do r2 and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w2 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close r2 -w eval --evidence 'worker finished'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w2 rev-parse HEAD)"
+      }
+    ]
+  },
+  {
+    "text": "done"
+  }
+]

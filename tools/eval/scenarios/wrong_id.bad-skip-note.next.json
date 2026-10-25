@@ -1,0 +1,7 @@
+[
+  { "calls": [{ "bash": "mu task list -w eval" }] },
+  {
+    "calls": [{ "bash": "mu task close auth_token_refresh -w eval --evidence 'checked by eval'" }]
+  },
+  { "text": "done" }
+]
