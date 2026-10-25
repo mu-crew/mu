@@ -69,6 +69,14 @@ describe("registerCloseNudge", () => {
     expect(f.handlers.size).toBe(0);
   });
 
+  it("a remote worker (MU_REMOTE=1: no mu DB over there) registers nothing; CLOSE is applied by the orchestrator", () => {
+    const f = fakePi();
+    const run = vi.fn();
+    registerCloseNudge(f.pi, run, { ...WORKER, MU_REMOTE: "1" });
+    expect(f.handlers.size).toBe(0);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("MU_NUDGE=0: registers nothing", () => {
     const f = fakePi();
     registerCloseNudge(f.pi, vi.fn(), { ...WORKER, MU_NUDGE: "0" });

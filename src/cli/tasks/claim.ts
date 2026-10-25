@@ -30,8 +30,6 @@ import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "..
 import { GLYPH } from "../../glyphs.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
 import { reconcile } from "../../reconcile.js";
-import { shellQuote } from "../../shell-quote.js";
-import { findRemoteDispatch } from "../../state.js";
 import { stallWaitHint } from "../../tasks/errors.js";
 import {
   claimTask,
@@ -169,22 +167,6 @@ export async function cmdClaim(
     result.ownerName === null ? undefined : getAgent(db, result.ownerName, forWorkstream ?? ws);
   if (owner !== undefined)
     nextSteps.push(dispatchHint(owner, { task: { id: localId, workstream: ws } }));
-  if (result.ownerName !== null) {
-    const remote = findRemoteDispatch(db, ws, localId, result.ownerName);
-    if (remote !== undefined) {
-      const host = shellQuote(remote.host);
-      const remoteCommand = shellQuote(
-        `cd ${remote.path} && git rev-parse HEAD 2>/dev/null || echo unreadable`,
-      );
-      const base = shellQuote(remote.baseSha);
-      const task = shellQuote(localId);
-      const workstream = shellQuote(ws);
-      nextSteps.push({
-        intent: `Poll ${result.ownerName}'s remote commit once this turn`,
-        command: `job=$(mule run --host ${host} --max-secs 30 ${remoteCommand}) && mule wait "$job" >/dev/null && sha=$(mule tail "$job") && { case "$sha" in (*[!0-9a-fA-F]*|'') :;; (*) [ "$(printf %s "$sha" | wc -c)" -eq 40 ] && { [ "$sha" = ${base} ] || mu task close ${task} --evidence "${result.ownerName} committed $sha" -w ${workstream}; };; esac; }`,
-      });
-    }
-  }
   nextSteps.push(
     {
       // Single-quoted example: shell metachars (`...`, $VAR, $(...))

@@ -212,8 +212,10 @@ export class AgentNotInWorkstreamError extends Error implements HasNextSteps {
  */
 export class AgentDiedOnSpawnError extends Error implements HasNextSteps {
   override readonly name = "AgentDiedOnSpawnError";
-  /** The spawned command is an ssh hop: remote causes, not wrapper locks. */
+  /** The pane's transport reaches another machine (a host profile, or a hand-written ssh hop): remote causes, not wrapper locks. */
   readonly remote: boolean;
+  /** The host profile the pane ran, when it was a `--host` spawn. */
+  readonly host: string | undefined;
   constructor(
     public readonly agentName: string,
     public readonly paneId: string,
@@ -222,27 +224,30 @@ export class AgentDiedOnSpawnError extends Error implements HasNextSteps {
     public readonly command?: string,
     /** When it died; default `within <MU_SPAWN_LIVENESS_MS>ms of spawn`. */
     when = `within ${defaultSpawnLivenessMs()}ms of spawn`,
+    host?: string,
   ) {
     const tail = scrollback?.trim();
     const detail = tail ? `\n\n--- pane scrollback ---\n${tail}\n--- end scrollback ---` : "";
-    const remote = /^\s*ssh\s/.test(command ?? "");
+    const remote = host !== undefined || /^\s*ssh\s/.test(command ?? "");
     const cause = remote
-      ? 'The command is an ssh hop, so the likely causes are remote: the remote binary is missing, or its env (PATH, provider keys) is absent because ssh runs a non-interactive shell that skips ~/.zshrc / ~/.bashrc (wrap it: $SHELL -ilc "pi --approve"); or sshd refused the socket forward (ExitOnForwardFailure=yes kills the connection; check AllowStreamLocalForwarding).'
+      ? `The pane is a remote transport${host === undefined ? "" : ` (host ${host})`}, so the likely causes are remote: the remote binary is missing, or its env (PATH, provider keys) is absent because a non-interactive shell skips ~/.zshrc / ~/.bashrc (the profile's shell template should run \`$SHELL -ilc\`); or the host refused the socket forward (check AllowStreamLocalForwarding).`
       : "Most common cause: the spawned CLI exited immediately (e.g. a wrapper CLI blocking on its instance lock; set MU_<UPPER_CLI>_COMMAND to a non-blocking variant to bypass).";
     super(`agent ${agentName} died ${when} (pane ${paneId}). ${cause}${detail}`);
     this.remote = remote;
+    this.host = host;
   }
   errorNextSteps(): NextStep[] {
     if (this.remote) {
       return [
-        {
-          intent: "See the ssh pieces and the interactive-login-shell recipe",
-          command: "mu agent remote-env --help",
-        },
-        {
-          intent: "Check the remote binary resolves in a login shell",
-          command: "ssh <host> '$SHELL -ilc \"command -v pi\"'",
-        },
+        this.host === undefined
+          ? {
+              intent: "Print a starter host profile (the forward, `$SHELL -ilc`, the env)",
+              command: "mu host init <host> --ssh",
+            }
+          : {
+              intent: "Check the host answers, pi and the extension resolve in a login shell",
+              command: `mu host check ${this.host}`,
+            },
         {
           intent: "Keep the pane open to read the remote error (one-off)",
           command: "export MU_SPAWN_LIVENESS_MS=0",
@@ -377,6 +382,8 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
     public readonly workstream: string,
     public readonly socket: string,
     public readonly kind: "missing" | "refused",
+    /** The host profile the agent runs on, when remote: its forward is the usual cause. */
+    public readonly host?: string | null,
   ) {
     super(
       `agent ${agentName} has no control socket (ctl: ${kind}) at ${socket}; mu cannot send to or wait on it exactly`,
@@ -399,10 +406,14 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
       ...trust,
       { intent: "Check whether the mu pi extension answers", command: "mu doctor" },
       { intent: "Install the mu pi package, then re-spawn", command: "pi install npm:@mu-crew/mu" },
-      {
-        intent: "Remote agent: forward the socket in your ssh command",
-        command: `ssh -L ${this.socket}:<remote sock> ...   (see mu agent remote-env)`,
-      },
+      ...(this.host
+        ? [
+            {
+              intent: "Remote agent: check the host's shell template forwards the socket",
+              command: `mu host check ${this.host} --agent ${this.agentName} -w ${this.workstream}`,
+            },
+          ]
+        : []),
     ];
   }
 }

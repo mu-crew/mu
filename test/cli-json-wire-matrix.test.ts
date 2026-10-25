@@ -34,7 +34,6 @@ const ARGS: Record<string, string[]> = {
   "agent show": ["worker-1"],
   "agent close": ["worker-1"],
   "agent abort": ["worker-1"],
-  "agent remote-env": ["worker-1"],
   "agent wait": ["worker-1", "--timeout", "0.05"],
   "me tasks": [],
   "me next": [],
@@ -249,21 +248,6 @@ describe("error and warning paths stay in the one document", () => {
       "--json",
     ]);
     expect(apply.doc).toMatchObject({ ok: true, data: { killedPane: true, deletedRow: true } });
-  });
-
-  it("agent remote-env --shell --json is refused as one usage document, not shell text", async () => {
-    const { r, doc } = await run([
-      "agent",
-      "remote-env",
-      "worker-1",
-      "-w",
-      "probe",
-      "--shell",
-      "--json",
-    ]);
-    expect(r.exitCode).toBe(2);
-    expect(doc).toMatchObject({ ok: false, exit: 2 });
-    expect(r.stdout).not.toContain("MU_SSH_ARGS=");
   });
 
   it("spawn with a missing control socket: the warning rides in data.warnings", async () => {

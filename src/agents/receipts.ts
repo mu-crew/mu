@@ -79,11 +79,17 @@ const fromRaw = (r: RawReceipt): SpawnReceipt => ({
   updatedAt: r.updated_at,
 });
 
-/** The request's identity: same name, same --next-free, same text. */
-export function requestSha(req: { name: string; nextFree: boolean; text: string }): string {
-  return createHash("sha256")
-    .update(JSON.stringify([req.name, req.nextFree, req.text]))
-    .digest("hex");
+/** The request's identity: same name, same --next-free, same text, same host. */
+export function requestSha(req: {
+  name: string;
+  nextFree: boolean;
+  text: string;
+  host?: string | undefined;
+}): string {
+  // A local request hashes exactly as before this field existed (saved receipts stay valid).
+  const parts: unknown[] = [req.name, req.nextFree, req.text];
+  if (req.host !== undefined) parts.push(req.host);
+  return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
 export function getReceipt(db: Db, taskId: number, attemptKey: string): SpawnReceipt | undefined {

@@ -56,8 +56,8 @@ herdr, and murmur for other CLIs on tmux:
 **The control socket.** mu's pi extension serves a unix socket inside
 each spawned pi. Send, `--fresh`, wait, abort and state for pi agents
 go through it, exactly, with no screen reading and no fallback to
-pasting. Remote agents use an ssh socket forward printed by
-`mu agent remote-env`. Non-pi agents are sent to only on herdr
+pasting. Remote agents (`spawn --host`) use a socket forward their
+host profile's shell template carries. Non-pi agents are sent to only on herdr
 ([architecture/control-socket.md](architecture/control-socket.md#no-silent-fallback)).
 
 **Sync.** With `MU_SYNC_DIR` set, every `mu` invocation ingests peer
@@ -178,9 +178,9 @@ are re-export hubs.
 | `src/cli/db-query.ts` | `mu db query` (alias `mu sql`) and `mu db --shell`. One op-context scope per write; `guardPragma` allows only read-only PRAGMAs before any compile; one `EXPLAIN` per statement (`checkStatement`) refuses transaction control (`AutoCommit`/`Savepoint`), ATTACH/DETACH, all DDL (a write to any `sqlite_master` root page, TEMP included) and any write to `op_ctx`/`op_dying`/`ops`/`schema_version` outside a main `_cap_*` trigger; `installScopedViews` (TEMP `ready`/`blocked`/`blockers`); `teachColumnError`. `src/cli/db.ts` keeps `backup`, `compact`, `forget` |
 | `src/cli/dispatch-hints.ts` | dispatch-time `Next:` hints for pi agents (`--fresh`, `--interrupt`, abort) |
 | `src/cli/stdin.ts` | `-` as a text argument: reads note / send text from stdin (heredoc prose) |
-| `src/hosts.ts` | host profiles: the template grammar (`expandHostTemplate`, one pass, per-context quoting, whitelisted `{env}`, `{name:sh}` second layer), profile CRUD, `host_channels` admission (`reserveHostChannel` / `bindHostChannel` / `releaseHostChannel` by token, `withHostChannel`, transient vs attached), `checkHost`. ssh-free: runs only the user's stored templates with `/bin/sh -c`, each as its own process group (`execGroupCapture`, reaped before its channel is released; the group id is recorded on the `host_channels` row so a dead caller cannot free a slot under a live transport) |
+| `src/hosts.ts` | host profiles: the template grammar (`expandHostTemplate`, one pass, per-context quoting, whitelisted `{env}`, `{name:sh}` second layer), profile CRUD, `host_channels` admission (`reserveHostChannel` / `bindHostChannel` / `releaseHostChannel` by token, `withHostChannel`, transient vs attached), `admitHostChannel` (spawn reserves before its pane opens), `checkHost`. ssh-free: runs only the user's stored templates with `/bin/sh -c`, each as its own process group (`execGroupCapture`, reaped before its channel is released; the group id is recorded on the `host_channels` row so a dead caller cannot free a slot under a live transport) |
 | `src/cli/host.ts` | the host verbs (add, list, show, rm, init, check) |
-| `src/cli/agents-remote.ts` | `mu agent remote-env`: prints the ssh forward and env, runs nothing |
+| `src/remote-agent.ts` | the remote half of `spawn --host`: `prepareRemote` (one `exec` makes a detached remote worktree or resolves the cwd, answer is a tagged line), `removeRemoteWorktree` (clean and at its base only), `remoteShellCommand` (the filled `shell` template as the local pane's command; five whitelisted identity vars) |
 | `src/output-contract.ts` | the `--json` wire: `Envelope<T>` (`{ok,data,next}` / `{ok:false,error,message,next,exit}`), `NextPlan`, `encodeEnvelope`, `isEnvelope`, `capRecords`. Pure. `cli.ts` `emitJson` wraps every payload once; `handle.ts` `emitError` prints the one failure document on stdout; `emitJsonRow` is the raw NDJSON row (`mu log --tail`). `extension/delegate.ts` `parseEnvelope` reads it |
 | `src/output.ts`, `src/shell-quote.ts` | `printNextSteps` / `errorNextSteps`; POSIX quoting for hints |
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |

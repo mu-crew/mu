@@ -12,6 +12,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Removed
 
+- **`mu agent remote-env` and the `REMOTE:` / `REMOTE_BASE:` note convention.**
+  A host profile's shell template carries the forward and the env now
+  (`mu host init <host> --ssh` prints a starter). `mu state` reads remote
+  workers from the registry, and `mu task claim --for` no longer prints the
+  mule poll-and-close step (the task's close is yours, once the work is collected).
+
 - **`mu link pi` and its shims.** pi now loads mu as a package: `package.json`
   declares `pi.extensions` (`./dist/extension/mu-pi.js`), `pi.skills`
   (`./skills`) and `pi.prompts` (`./prompts/*.md`), and lists
@@ -28,7 +34,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `host_profiles`. mu fills `{env}`, `{cmd}`, `{local_sock}`, `{remote_sock}`
   and `{cwd}` in one pass (each value one shell-quoted word, exactly the text
   you passed even inside your own quotes; `{cmd:sh}` etc. add a second-shell
-  layer for ssh-style remote command text; `{env}` only the four whitelisted
+  layer for ssh-style remote command text; `{env}` only the five whitelisted
   identity variables, every value shell-quoted, never the local DB, state or
   sync dir; `{{` `}}` literal braces; anything
   else refused) and runs the result with `/bin/sh -c` as its own process group, reaped on
@@ -46,7 +52,35 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   holder (exit 4). A transient channel is reclaimed only when its pid is
   proven gone; an attached one rides the agent's registry id and pane and is
   reclaimed only when the pane is proven dead. `rebuild` reports its rows as
-  not rebuilt. Wiring attached channels into `spawn --host` is `v_remote_spawn`.
+  not rebuilt. `spawn --host` reserves and binds them (below).
+
+- **`mu agent spawn --host <profile> [--worktree] [--cwd <remote dir>] [--task t --send ...]`: remote spawn, the pane is the transport.**
+  The local pane runs the profile's `--shell` template (`exec /bin/sh -c`), filled with the remote
+  identity, your `--command` (default `pi`), the derived local socket, the
+  remote socket (`/tmp/mu-<uid>/<ws>/<name>.sock`) and the remote cwd; the
+  template starts the remote pi and forwards its ctl socket to the local path,
+  so every ctl verb, receipt and handshake works unchanged and **the pane
+  dying is the agent dying** (close, reconcile, teardown need no remote case).
+  `--worktree` makes a detached `git worktree add` of HEAD (or `--from`) in the
+  profile's `--repo` through its `--exec` (one short command, reaped before the
+  shell opens, so cap 1 works), at `~/.local/state/mu/remote-worktrees/<ws>/<name>`
+  on the host; `--cwd` resolves an existing remote directory the same way. Host,
+  remote cwd and base are `agents.host/cwd/base`. The channel is reserved
+  before the first remote command and bound to the agent's registry id and
+  pane (`admitHostChannel`, `bindHostChannel`); `deleteAgent` and teardown
+  free it. `--task` goes through `spawnForTask` (the same receipts, claim and
+  incarnation-bound send as a local spawn; the receipt's request hash includes
+  the host only when there is one). A failed spawn kills its pane, frees its
+  channel and removes only the remote worktree it made, and only while that is
+  still clean and at its base. The remote gets five variables
+  (`MU_MANAGED_AGENT`, `MU_AGENT_NAME`, `MU_WORKSTREAM`, `MU_CTL_SOCK`, and new
+  `MU_REMOTE=1`), never the local DB, state or sync dir, and its extension
+  skips the close nudge (no mu DB there; you close). `--root` is refused with
+  `--host`; herdr (`runsShellCommand: false`) refuses it in one line (exit 2).
+  A failing remote step is exit 5 (`RemotePrepareError`). `mu state` lists
+  remote workers from `agents.host/cwd/base` (`remoteWorkers[]` is now
+  `{agent, host, path, base}`). Not yet: gate panes with a real exit status,
+  detach and reattach, `agent collect`, removing the remote worktree on close.
 
 - **Agent records are SQL-keyed.** `agent spawn`, `list`, `show`, `me` and
   `state` print each agent with the `agents` column names: `id` (the registry

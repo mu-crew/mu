@@ -25,6 +25,7 @@
 import { type AgentRow, getAgentForCleanup } from "../agents.js";
 import { newMsgId } from "../ctl/client.js";
 import type { Db } from "../db.js";
+import { getHost } from "../hosts.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../tasks/claim.js";
 import { addNote } from "../tasks/edit.js";
 import { TaskAlreadyOwnedError, TaskNotFoundError } from "../tasks/errors.js";
@@ -162,6 +163,22 @@ async function tryPinBrief(
 
 /** The worktree this attempt's agent runs in, as rollbackSpawn needs it (registry row at its cwd). */
 function stagedOf(db: Db, row: AgentRow): StagedWorktree | undefined {
+  // A remote worktree has no local registry row: the agent row carries host, path and base.
+  if (row.host !== null) {
+    if (row.cwd === null || row.base === null) return undefined;
+    try {
+      return {
+        path: row.cwd,
+        base: row.base,
+        root: getHost(db, row.host).repo,
+        createdAt: row.createdAt,
+        incarnation: row.incarnation,
+        host: row.host,
+      };
+    } catch {
+      return undefined; // the profile was removed: no way to reach that worktree
+    }
+  }
   const wt = row.cwd === null ? undefined : getWorktreeAt(db, row.cwd);
   if (wt === undefined || wt.agent !== row.name) return undefined;
   return {
@@ -224,6 +241,7 @@ async function run(
     name: req.spawn.name,
     nextFree: req.spawn.nextFree === true,
     text: req.text,
+    host: req.spawn.host,
   });
   const saved = getReceipt(db, taskId, key);
   if (saved === undefined) return fresh(db, req, taskId, key, sha);
@@ -367,7 +385,13 @@ async function drive(
       }
       // The pane is up but cannot take (or confirm) a prompt: nothing was sent.
       if (spawned.ctl === "missing" || spawned.ctl === "refused") {
-        throw new AgentCtlUnreachableError(spawned.name, ws, spawned.ctlSocket, spawned.ctl);
+        throw new AgentCtlUnreachableError(
+          spawned.name,
+          ws,
+          spawned.ctlSocket,
+          spawned.ctl,
+          spawned.host,
+        );
       }
       if (spawned.trustDialog === true) throw new SpawnTrustDialogError(spawned.name);
     }

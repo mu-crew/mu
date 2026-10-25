@@ -1286,6 +1286,7 @@ export async function healthCheck(): Promise<MuxHealth> {
 export const herdrBackend: MuxBackend = Object.freeze({
   name: "herdr" as const,
   spawnAgentWaitsReady: true,
+  runsShellCommand: false,
   available: herdrAvailable,
 
   isValidPaneId,

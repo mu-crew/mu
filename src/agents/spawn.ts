@@ -32,10 +32,28 @@ import {
   tornDownAtOf,
   WorkstreamTornDownError,
 } from "../db.js";
+import {
+  admitHostChannel,
+  bindHostChannel,
+  getHost,
+  type HostLease,
+  type HostProfile,
+  HostProfileError,
+  HostSpawnUnsupportedError,
+  releaseHostChannel,
+  releaseHostChannelsForAgent,
+} from "../hosts.js";
 import { emitEvent } from "../logs.js";
 import type { CommandSource } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode, type NextStep } from "../output.js";
+import {
+  localPaneAlive,
+  prepareRemote,
+  type RemoteSite,
+  remoteShellCommand,
+  removeRemoteWorktree,
+} from "../remote-agent.js";
 import { resolveActorIdentity } from "../tasks/claim.js";
 // `sleep` is the shared poll-sleep TEST SEAM (setSleepForTests), not a
 // multiplexer operation, so it stays on the tmux module rather than
@@ -265,6 +283,13 @@ export interface SpawnAgentOptions {
   /** Repo the worktree is added to (only with `worktree: true`). Defaults
    *  to the git toplevel of the caller's cwd. */
   root?: string;
+  /** Run on this host profile (`mu host add`): the pane runs the profile's
+   *  `shell` template, which starts the remote pi and forwards its ctl socket
+   *  here; `cwd` and `worktree` name REMOTE paths (the worktree is made by the
+   *  profile's `exec`). One channel is held from before the first remote
+   *  command until the pane dies. Refused on a mux that cannot run a shell
+   *  command (herdr), and with `root` (a local repo). */
+  host?: string;
   /** Run the control-socket handshake for pi agents (default true).
    *  `false` skips it and reports `ctl: "skipped"`. */
   ctl?: boolean;
@@ -487,12 +512,19 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   const windowName = opts.tab ?? opts.name;
   const cli = opts.cli ?? "pi";
   const resolved = resolveCliCommandWithSource(cli);
-  const command = opts.command ?? resolved.command;
+  // A remote command runs on the host: the local PATH and local
+  // $MU_<CLI>_COMMAND knobs say nothing about it.
+  const profile = opts.host === undefined ? undefined : await requireHostSpawn(db, opts);
+  const command = opts.command ?? (profile ? cli : resolved.command);
   // Where `command` came from. Backends that resolve the executable
   // themselves may not silently ignore an operator's choice, and need to
   // know WHICH knob to name (see `SpawnAgentPaneOptions.commandSource`).
   const commandSource =
-    opts.command !== undefined ? "explicit" : resolved.resolvedFromEnv ? "env" : "cli-key";
+    opts.command !== undefined
+      ? "explicit"
+      : !profile && resolved.resolvedFromEnv
+        ? "env"
+        : "cli-key";
 
   // Pre-flight PATH resolution. Catches `--cli does-not-exist` (and
   // typos in `MU_<UPPER>_COMMAND` overrides) before any side effect.
@@ -506,7 +538,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // first token IS on PATH but with arg-quoting that the resolver
   // would mis-parse; or a shell snippet like `bash -lc '...'`). For
   // those, the existing post-spawn liveness check is the safety net.
-  if (opts.command === undefined) {
+  if (opts.command === undefined && !profile) {
     const check = await checkCommandResolvable(command);
     if (!check.ok) {
       throw new AgentSpawnCliNotFoundError(cli, check.binary, envVarNameForCli(cli));
@@ -522,17 +554,38 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // rationale. Yields the worktree (its path is the pane's cwd) or
   // undefined when --worktree wasn't requested.
   let staged: StagedWorktree | undefined;
-  if (opts.worktree) {
-    try {
+  // A remote spawn holds its channel lease from here until the pane dies
+  // (bound to the agent's id + pane when the row exists): reserved BEFORE any
+  // remote command, so every exec below rides it and a full host refuses now.
+  let lease: HostLease | undefined;
+  let site: RemoteSite | undefined;
+  try {
+    if (profile) {
+      lease = (
+        await admitHostChannel(db, profile.name, `spawn:${opts.workstream}/${opts.name}`, {
+          paneAlive: localPaneAlive,
+        })
+      ).lease;
+      if (opts.worktree) staged = await prestageRemote(db, opts, cli, spawner, lease, profile);
+      else
+        site = await prepareRemote(db, lease, profile, {
+          workstream: opts.workstream,
+          name: opts.name,
+          worktree: false,
+          ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+        });
+    } else if (opts.worktree) {
       staged = await prestageWorktree(db, opts, cli, spawner);
-    } catch (err) {
-      emitSpawnFailed(db, opts, "worktree", err);
-      throw err;
     }
+  } catch (err) {
+    if (lease !== undefined) releaseHostChannel(db, lease); // no pane was ever opened under it
+    emitSpawnFailed(db, opts, "worktree", err);
+    throw err;
   }
   // Without a worktree the pane starts in --cwd, else the caller's cwd,
-  // and the row records it.
-  const paneCwd = staged?.path ?? resolve(opts.cwd ?? process.cwd());
+  // and the row records it. A remote agent's cwd is a REMOTE path: the
+  // local pane never starts in it.
+  const paneCwd = staged?.path ?? site?.cwd ?? resolve(opts.cwd ?? process.cwd());
 
   // Inject identity env vars into the pane so anything running inside
   // (pi extensions, claim-protocol scripts, status segments) can branch
@@ -560,14 +613,19 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // tmux server's env, not ours: pin the DB and state dir this spawn used,
   // absolute and always (the default ones too), so the worker's `mu` hits
   // the same taskgraph from any cwd.
-  const paneEnv: Record<string, string> = {
-    MU_MANAGED_AGENT: "1",
-    MU_AGENT_NAME: opts.name,
-    MU_WORKSTREAM: opts.workstream,
-    [CTL_SOCK_ENV]: ctlSocket,
-    MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
-    MU_STATE_DIR: resolve(defaultStateDir()),
-  };
+  // A remote agent's identity travels in the filled shell template (`{env}`:
+  // five whitelisted variables, never the local DB, state or sync dir); the
+  // local pane (the transport) is given none of it.
+  const paneEnv: Record<string, string> = profile
+    ? {}
+    : {
+        MU_MANAGED_AGENT: "1",
+        MU_AGENT_NAME: opts.name,
+        MU_WORKSTREAM: opts.workstream,
+        [CTL_SOCK_ENV]: ctlSocket,
+        MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
+        MU_STATE_DIR: resolve(defaultStateDir()),
+      };
   // mu sessions are created detached and may never be attached, so tmux's
   // update-environment never refreshes them and a pane would inherit a
   // stale SSH_AUTH_SOCK. Forward the caller's. File-type check only (is it
@@ -665,9 +723,17 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         window: windowName,
         name: opts.name,
         cli,
-        command,
+        command: profile
+          ? remoteShellCommand(profile, {
+              workstream: opts.workstream,
+              name: opts.name,
+              command,
+              localSock: ctlSocket,
+              cwd: paneCwd,
+            })
+          : command,
         commandSource,
-        cwd: paneCwd,
+        ...(profile ? {} : { cwd: paneCwd }),
         env: paneEnv,
         onPaneCreated: onCreated,
       });
@@ -692,8 +758,16 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         command,
         commandSource,
         spawner,
+        host: profile?.name,
       });
       ownedIncarnation = row.incarnation;
+      // The lease now rides this pane (registry id + pane): freed when it dies.
+      if (
+        lease !== undefined &&
+        !bindHostChannel(db, lease, { agentId: row.incarnation, paneId: pid })
+      ) {
+        throw new Error(`host ${lease.host}: channel ${lease.holder} was lost`);
+      }
       opts.onIdentity?.(row);
       return { pid, row };
     });
@@ -735,7 +809,14 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         const sb = await mux.capture(pid, { lines: 50 }).catch(() => undefined);
         lastScrollback = sb ?? lastScrollback;
         if (await mux.paneAlive(pid)) return;
-        throw new AgentDiedOnSpawnError(opts.name, pid, lastScrollback, command, when);
+        throw new AgentDiedOnSpawnError(
+          opts.name,
+          pid,
+          lastScrollback,
+          command,
+          when,
+          profile?.name,
+        );
       };
       const hs = await awaitCtlHandshake(ctlSocket, check ? assertPaneAlive : undefined);
       ctl = hs.ctl;
@@ -748,16 +829,25 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       // patterns apply: a shell exec-failure line in the tail is then
       // transcript text (a resumed `--session` re-renders old tool
       // output such as `grep: x: No such file or directory`).
-      if (check) trustDialog = await checkSpawnHealth(pid, opts.name, command, when, ctl === "ok");
+      if (check) {
+        trustDialog = await checkSpawnHealth(
+          pid,
+          opts.name,
+          command,
+          when,
+          ctl === "ok",
+          profile?.name,
+        );
+      }
     } else {
-      trustDialog = await awaitSpawnLiveness(paneId, opts.name, command);
+      trustDialog = await awaitSpawnLiveness(paneId, opts.name, command, profile?.name);
     }
   } catch (err) {
     // Record first: a throwing cleanup must neither skip the record nor
     // mask the original error.
     emitSpawnFailed(db, opts, phase, err);
     try {
-      await rollbackSpawn(db, opts.name, paneId, staged, ownedIncarnation, opts.workstream);
+      await rollbackSpawn(db, opts.name, paneId, staged, ownedIncarnation, opts.workstream, lease);
     } catch (cleanupErr) {
       if (err instanceof Error && err.cause === undefined) {
         try {
@@ -767,7 +857,9 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         }
       }
     }
-    if (staged !== undefined) attachOrphanCleanupHint(err, opts.name, opts.workstream, staged.path);
+    if (staged !== undefined && staged.host === undefined) {
+      attachOrphanCleanupHint(err, opts.name, opts.workstream, staged.path);
+    }
     throw err;
   }
   // Control-socket handshake when the tmux path above did not run it.
@@ -788,7 +880,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     db,
     opts.workstream,
     "agent.spawn",
-    `agent spawn ${opts.name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${paneId}, ctl=${ctl})`,
+    `agent spawn ${opts.name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${paneId}, ctl=${ctl}${profile ? `, host=${profile.name}` : ""})`,
     await resolveActorIdentity(),
   );
   // Lint-grade stderr nudge when the operator picked a name that
@@ -816,6 +908,9 @@ export interface StagedWorktree {
   createdAt: string;
   /** The placeholder row's incarnation: finalize and rollback act on it only. */
   incarnation: number;
+  /** Set for a worktree on a REMOTE host (`path` is a remote path, `root` the profile's repo
+   *  there): rollback removes it through the profile's `exec`, never through the local registry. */
+  host?: string;
 }
 
 /**
@@ -903,6 +998,71 @@ async function prestageLocked(
   }
 }
 
+/** The profile `--host` names, once the spawn is known to be runnable on it. Nothing is touched. */
+async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise<HostProfile> {
+  const host = opts.host ?? "";
+  const profile = getHost(db, host);
+  if (opts.root !== undefined) {
+    throw new HostProfileError(
+      "--root names a local repo and cannot be used with --host (the worktree is made in the profile's --repo)",
+    );
+  }
+  const mux = await activeMux();
+  if (!mux.runsShellCommand) throw new HostSpawnUnsupportedError(host, mux.name);
+  return profile;
+}
+
+/**
+ * `--worktree` on a host, the remote twin of prestageLocked: a placeholder row
+ * claims the name (host recorded), then ONE exec under the spawn's lease makes
+ * the detached worktree. Only a worktree this exec made is ever removed.
+ */
+async function prestageRemote(
+  db: Db,
+  opts: SpawnAgentOptions,
+  cli: string,
+  spawner: string | null,
+  lease: HostLease,
+  profile: HostProfile,
+): Promise<StagedWorktree> {
+  return withAgentLock(db, opts.workstream, opts.name, async () => {
+    const placeholder = insertAgent(db, {
+      name: opts.name,
+      workstream: opts.workstream,
+      cli,
+      paneId: pendingPaneIdFor(opts.name),
+      role: opts.role,
+      tab: opts.tab ?? null,
+      cwd: null,
+      spawner,
+      host: profile.name,
+    });
+    try {
+      const made = await prepareRemote(db, lease, profile, {
+        workstream: opts.workstream,
+        name: opts.name,
+        worktree: true,
+        ...(opts.from !== undefined ? { from: opts.from } : {}),
+      });
+      return {
+        path: made.cwd,
+        base: made.base ?? "",
+        root: profile.repo,
+        createdAt: new Date().toISOString(),
+        incarnation: placeholder.incarnation,
+        host: profile.name,
+      };
+    } catch (err) {
+      try {
+        deleteAgent(db, opts.name, opts.workstream, { incarnation: placeholder.incarnation });
+      } catch {
+        // best-effort: never mask the remote error
+      }
+      throw err;
+    }
+  });
+}
+
 /**
  * Who is calling spawn, for `agents.spawner`: `<MU_WORKSTREAM>/<MU_AGENT_NAME>`
  * for a managed agent (the pair, since a bare name repeats across
@@ -934,9 +1094,10 @@ function finalizeAgentRow(
     command: string;
     commandSource: CommandSource;
     spawner: string | null;
+    host: string | undefined;
   },
 ): AgentRow {
-  const { opts, cli, paneId, cwd, staged, command, commandSource, spawner } = args;
+  const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host } = args;
   if (staged === undefined) {
     return insertAgent(db, {
       name: opts.name,
@@ -949,6 +1110,7 @@ function finalizeAgentRow(
       command,
       commandSource,
       spawner,
+      host: host ?? null,
     });
   }
   // Scope the patch to the spawn's workstream so a same-named worker
@@ -958,7 +1120,7 @@ function finalizeAgentRow(
   // pending): a row replaced since is not ours to repoint.
   const patched = db
     .prepare(
-      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, updated_at = ?
+      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, updated_at = ?
       WHERE id = ? AND pane_id = ?
         AND name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
@@ -970,6 +1132,7 @@ function finalizeAgentRow(
       command,
       commandSource,
       spawner,
+      host ?? null,
       new Date().toISOString(),
       staged.incarnation,
       pendingPaneIdFor(opts.name),
@@ -1023,7 +1186,11 @@ export async function rollbackSpawn(
   staged: StagedWorktree | undefined,
   ownedIncarnation: number | undefined,
   workstream: string,
+  /** The spawn's host channel lease, while it is still the reservation (before or after its bind). */
+  lease?: HostLease,
 ): Promise<void> {
+  // Is the pane (the host transport) proven gone? A channel is freed only on that proof.
+  let paneGone = paneId === undefined;
   if (paneId !== undefined) {
     // Best-effort: rollback runs on an already-failing path and must not
     // mask the original error, even if the mux itself went away.
@@ -1036,8 +1203,12 @@ export async function rollbackSpawn(
     const foreign = db
       .prepare("SELECT 1 FROM agents WHERE pane_id = ? AND id IS NOT ? LIMIT 1")
       .get(paneId, ownedIncarnation ?? null);
-    if (foreign === undefined) await mux?.killPane(paneId).catch(() => {});
-    else {
+    if (foreign === undefined) {
+      await mux?.killPane(paneId).catch(() => {});
+      paneGone = mux !== undefined && (await mux.paneAlive(paneId).catch(() => true)) === false;
+    } else {
+      paneGone = true; // another agent holds the id: ours is not that pane
+
       try {
         emitEvent(
           db,
@@ -1050,7 +1221,40 @@ export async function rollbackSpawn(
       }
     }
   }
-  if (staged !== undefined) {
+  if (paneGone) {
+    try {
+      if (lease !== undefined) releaseHostChannel(db, lease);
+      if (paneId !== undefined && ownedIncarnation !== undefined) {
+        releaseHostChannelsForAgent(db, ownedIncarnation, paneId);
+      }
+    } catch {
+      // best-effort: the next admission reclaims a channel whose pane is dead
+    }
+  }
+  if (staged?.host !== undefined) {
+    // A worktree on a remote host: its own exec, under its own channel, once
+    // the pane's is free. Only while the name is still this spawn's.
+    const remote = staged;
+    try {
+      if (!paneGone) throw new Error("pane not proven gone");
+      await withAgentLock(db, workstream, name, async () => {
+        const cur = getAgent(db, name, workstream);
+        if (cur !== undefined && cur.incarnation !== remote.incarnation) return;
+        await removeRemoteWorktree(db, remote.host ?? "", `rollback:${workstream}/${name}`, remote);
+      });
+    } catch {
+      try {
+        emitEvent(
+          db,
+          workstream,
+          "agent.spawn_failed",
+          `agent spawn rollback ${name}: remote worktree ${staged.path} on ${staged.host} was not removed`,
+        );
+      } catch {
+        // best-effort
+      }
+    }
+  } else if (staged !== undefined) {
     try {
       // Under the agent lock, and only while the name is still this spawn's
       // (or gone) AND the registry row at the path is the one this spawn
@@ -1223,11 +1427,12 @@ async function awaitSpawnLiveness(
   paneId: string,
   agentName: string,
   command: string,
+  host?: string,
 ): Promise<boolean> {
   const ms = defaultSpawnLivenessMs();
   if (ms === 0) return false;
   await sleep(ms);
-  return checkSpawnHealth(paneId, agentName, command);
+  return checkSpawnHealth(paneId, agentName, command, undefined, false, host);
 }
 
 /**
@@ -1264,6 +1469,8 @@ async function checkSpawnHealth(
   when?: string,
   /** The CLI answered the ctl handshake; see detectSpawnStartupError. */
   cliStarted = false,
+  /** The host profile the pane's transport reaches, when remote. */
+  host?: string,
 ): Promise<boolean> {
   // Capture-pane first so we have something to attach to the error if the
   // pane is in the process of being torn down (the buffer survives a beat
@@ -1271,7 +1478,7 @@ async function checkSpawnHealth(
   const mux = await activeMux();
   const scrollback = await mux.capture(paneId, { lines: 50 }).catch(() => undefined);
   if (!(await mux.paneAlive(paneId))) {
-    throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command, when);
+    throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command, when, host);
   }
   // Pane is alive — but "alive" doesn't mean "working". Scan the tail of
   // the capture for known provider/auth startup errors

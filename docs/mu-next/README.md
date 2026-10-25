@@ -393,8 +393,8 @@ decision). Host profiles are templates mu fills in.
 - **`spawn --host dev [--worktree] [--task t]`**: fills the pane template,
   creates the remote worktree via `--exec` (`git worktree add --detach`),
   records host, path and base as agent fields (no hand-written
-  `REMOTE:` note; until `v_remote_spawn` ships, `REMOTE:` notes are how
-  3.x records it).
+  `REMOTE:` note; shipped by `v_remote_spawn`: the pane is the transport,
+  so pane death is agent death; detach and reattach are `v_remote_detach`).
 - **`agent collect <a>`**: runs `--fetch` and prints the merge; records
   the collected HEAD. `agent close` removes the remote
   worktree only if it is clean **and** remote HEAD equals the base or

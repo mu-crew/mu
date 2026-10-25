@@ -591,6 +591,7 @@ export async function healthCheck(): Promise<MuxHealth> {
 export const tmuxBackend: MuxBackend = Object.freeze({
   name: "tmux" as const,
   spawnAgentWaitsReady: false,
+  runsShellCommand: true,
   available: tmuxAvailable,
 
   isValidPaneId,

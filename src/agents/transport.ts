@@ -188,6 +188,7 @@ export function respawnCommand(agent: AgentRow): string | undefined {
     shellWord(agent.cli),
   ];
   if (agent.commandSource === "explicit") parts.push("--command", shellWord(agent.command));
+  if (agent.host !== null) parts.push("--host", shellWord(agent.host));
   if (agent.role !== "full-access") parts.push("--role", shellWord(agent.role));
   if (agent.tab !== null) parts.push("--tab", shellWord(agent.tab));
   if (agent.base !== null) parts.push("--worktree");
@@ -302,6 +303,7 @@ export async function ctlFailure(
     agent.workstreamName,
     sock,
     errCode(e) === "ENOENT" ? "missing" : "refused",
+    agent.host,
   );
 }
 

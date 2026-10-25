@@ -54,9 +54,16 @@ type PerWsData = WorkstreamSnapshot & { remoteWorkers: RemoteWorker[] };
 
 function formatRemoteWorkersTable(rows: readonly RemoteWorker[]): string {
   const table = muTable({
-    head: ["task", "host", "path"].map((heading) => pc.bold(heading)),
+    head: ["agent", "host", "path", "base"].map((heading) => pc.bold(heading)),
   });
-  for (const row of rows) table.push([row.taskName, row.host, row.path]);
+  for (const row of rows) {
+    table.push([
+      row.agent,
+      row.host,
+      row.path ?? "",
+      row.base === null ? "" : row.base.slice(0, 8),
+    ]);
+  }
   return table.toString();
 }
 

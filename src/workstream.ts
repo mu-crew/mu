@@ -23,6 +23,7 @@ import { crc32 } from "node:zlib";
 import { WORKSTREAM_OPS_WHERE } from "./compact.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, tornDownAtOf } from "./db.js";
+import { releaseHostChannelsForAgent } from "./hosts.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
 import type { HasNextSteps, NextStep } from "./output.js";
@@ -725,7 +726,12 @@ export async function teardownWorkstream(
           `DELETE FROM agents WHERE id = ? AND name = ? AND pane_id = ?
              AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
         );
-        for (const a of dead) del.run(a.incarnation, a.name, a.paneId, opts.workstream);
+        for (const a of dead) {
+          if (del.run(a.incarnation, a.name, a.paneId, opts.workstream).changes > 0) {
+            // A remote agent's pane is its host transport: its channel dies with the row.
+            releaseHostChannelsForAgent(db, a.incarnation, a.paneId);
+          }
+        }
         db.prepare(
           "UPDATE workstreams SET torn_down_at = ? WHERE name = ? AND torn_down_at IS NULL",
         ).run(tornDownAt, opts.workstream);
