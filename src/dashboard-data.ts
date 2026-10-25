@@ -56,6 +56,10 @@ export interface DashboardTask {
   effort_days: number;
   /** Owner's name; only while IN_PROGRESS. */
   owner: string | null;
+  /** The owner's registry id (`tasks.owner_id`; the identity: names repeat across workstreams). */
+  owner_id: number | null;
+  /** The owner's OWN workstream, which can differ from the task's; null when unowned. */
+  owner_workstream: string | null;
   kind: string;
   wave: string | null;
   updated_at: string;
@@ -81,6 +85,15 @@ export interface DashboardEdge {
   /** CLOSED neighbours collapsed into this count. */
   closed: number;
   cap_cut: number;
+}
+
+/** What the frontier cap left out of one workstream's DAG (per-entry `cap_cut` cannot say it). */
+export interface DashboardFrontierCut {
+  workstream: string;
+  /** Open start tasks the node cap left out: open work absent from `edges`. */
+  roots_cut: number;
+  /** Recurrence (diamond) lines the cap left out; each such task is listed elsewhere. */
+  again_cut: number;
 }
 
 /** A registry agent with its computed state; unknown stays unknown. */
@@ -133,6 +146,8 @@ export interface DashboardSnapshot {
   workstreams: DashboardWorkstream[];
   tasks: DashboardTask[];
   edges: DashboardEdge[];
+  /** One per in-scope workstream: the frontier's root/recurrence cuts, passed through. */
+  frontier: DashboardFrontierCut[];
   agents: DashboardAgent[];
   /** The newest ops, oldest first. */
   log: DashboardLogItem[];
@@ -189,7 +204,18 @@ function taskActivity(db: Db, workstream: string): Map<string, number> {
 
 const keyOf = (workstream: string, id: string): string => `${workstream}/${id}`;
 
-function dashboardTask(row: TaskRow, activity: ReadonlyMap<string, number>): DashboardTask {
+interface AgentIdentity {
+  name: string;
+  workstream: string;
+}
+
+function dashboardTask(
+  row: TaskRow,
+  activity: ReadonlyMap<string, number>,
+  agentsById: ReadonlyMap<number, AgentIdentity>,
+): DashboardTask {
+  const inProgress = row.status === "IN_PROGRESS";
+  const owner = inProgress && row.ownerId !== null ? agentsById.get(row.ownerId) : undefined;
   return {
     key: keyOf(row.workstreamName, row.name),
     workstream: row.workstreamName,
@@ -199,7 +225,9 @@ function dashboardTask(row: TaskRow, activity: ReadonlyMap<string, number>): Das
     substate: row.substate,
     impact: row.impact,
     effort_days: row.effortDays,
-    owner: row.status === "IN_PROGRESS" ? row.ownerName : null,
+    owner: inProgress ? row.ownerName : null,
+    owner_id: inProgress ? row.ownerId : null,
+    owner_workstream: owner?.workstream ?? null,
     kind: row.kind,
     wave: row.wave,
     updated_at: row.updatedAt,
@@ -238,17 +266,43 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
   const statuses =
     opts.status === undefined || opts.status.length === 0 ? DEFAULT_STATUS : opts.status;
 
+  const agentsById = new Map<number, AgentIdentity>(
+    (
+      db
+        .prepare(
+          "SELECT a.id, a.name, w.name AS workstream FROM agents a JOIN workstreams w ON w.id = a.workstream_id",
+        )
+        .all() as { id: number; name: string; workstream: string }[]
+    ).map((a) => [a.id, { name: a.name, workstream: a.workstream }]),
+  );
+  // IN_PROGRESS tasks by owner registry id, over EVERY live workstream: a task can be
+  // claimed by an agent of another workstream, and a filtered read must still show it.
+  const owned = new Map<number, string[]>();
+  for (const ws of live) {
+    for (const t of listTasks(db, ws.name, { status: "IN_PROGRESS" })) {
+      if (t.ownerId === null) continue;
+      owned.set(t.ownerId, [...(owned.get(t.ownerId) ?? []), keyOf(ws.name, t.name)]);
+    }
+  }
+
   const tasks: DashboardTask[] = [];
   const edges: DashboardEdge[] = [];
+  const frontier: DashboardFrontierCut[] = [];
   const agents: DashboardAgent[] = [];
   for (const ws of scoped) {
     const activity = taskActivity(db, ws.name);
     tasks.push(
       ...listTasks(db, ws.name, { status: statuses })
-        .map((r) => dashboardTask(r, activity))
+        .map((r) => dashboardTask(r, activity, agentsById))
         .filter((t) => matches(opts.text, t.key, t.title, t.owner, t.substate)),
     );
-    for (const e of loadOpenTaskFrontier(db, ws.name).entries) {
+    const front = loadOpenTaskFrontier(db, ws.name);
+    frontier.push({
+      workstream: ws.name,
+      roots_cut: front.rootsCut,
+      again_cut: front.againCut,
+    });
+    for (const e of front.entries) {
       edges.push({
         key: keyOf(ws.name, e.task.name),
         workstream: ws.name,
@@ -264,13 +318,8 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
         cap_cut: e.capCut,
       });
     }
-    const owned = new Map<string, string[]>();
-    for (const t of listTasks(db, ws.name, { status: "IN_PROGRESS" })) {
-      if (t.ownerName === null) continue;
-      owned.set(t.ownerName, [...(owned.get(t.ownerName) ?? []), keyOf(ws.name, t.name)]);
-    }
     for (const a of await readLiveAgents(db, ws.name)) {
-      const mine = owned.get(a.name) ?? [];
+      const mine = owned.get(a.incarnation) ?? [];
       const agent: DashboardAgent = {
         ...liveAgentToOutput(a, ws.id),
         key: keyOf(ws.name, a.name),
@@ -329,6 +378,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     })),
     tasks,
     edges,
+    frontier,
     agents,
     log,
     next: null,

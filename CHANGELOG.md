@@ -20,7 +20,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   human needs and delegate calls (a null caller sees none: `caller_scope: "none"`). It never
   reconciles, reaps, ingests or writes, and runs on a `readonly` connection. `next` (type
   `NextPlan`) is null with `next_source: "unavailable"` and an agent's `tool` is unset until
-  `v_dashboard_next`.
+  `v_dashboard_next`. Owners are identified by agent registry id (`owner_id`, with
+  `owner_workstream`; a task claimed by another workstream's same-named agent lands on that
+  agent, also on a filtered read), and the open frontier's root/recurrence cuts pass through as
+  `frontier[]` per workstream.
 - **mu-next is isolated from 3.x on disk** (`v_isolation`; after the 18:04 incident, where an
   inherited `MU_SYNC_DIR` let a mu-next run write a v2 segment into the real 3.x sync folder
   and 3.x warned `unknown-version` on every command). The default state dir is now
