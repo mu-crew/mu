@@ -59,7 +59,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `inProgress`, `tracks`, `recent` ops and `remoteWorkers` keys and the `--events` flag are gone: `mu log` owns the ops).
   The read is capped at 4096 final bytes: every string is one escaped line of at most 160 characters, lists shrink, then
   whole workstreams page; a cut says `more=N` / `cut=N` and `retrieve` names `mu state ... --full`, the uncapped read. `mu state -w`
-  reconciles first (reaps gone panes, lists orphans); `--me` and the SDK read never touch the mux.
+  reconciles first (reaps gone panes, lists orphans); `--me` and the SDK read never touch the mux. The last fallback is
+  checked too: when nothing fits, a zero-workstream envelope whose `retrieve` is the short `mu state [--me] --all --full`
+  (when the scope names are too long) and whose strings shrink below 160 characters until the final document fits.
   **`mu me` is exactly `mu state --me`** (bare `mu me` now runs instead of printing help; `me --include-closed` is gone;
   `me tasks` and `me next` stay, `--json` explicit). Identity is the injected `<MU_WORKSTREAM>/<MU_AGENT_NAME>` row looked
   up in that workstream, else `pi:<PI_SESSION_ID>` (a session has no agent row; its scope is where it has delegate calls or

@@ -5,12 +5,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AgentOutput } from "../src/agent-output.js";
 import { insertAgent } from "../src/agents.js";
+import { boundState } from "../src/cli/state.js";
+import { jsonDocument } from "../src/cli/tasks/records.js";
 import { type Db, openDb } from "../src/db.js";
-import { registerDelegateCall } from "../src/delegates.js";
+import { finishDelegate, registerDelegateCall } from "../src/delegates.js";
 import { recordHumanNeeded } from "../src/human-needed.js";
 import { isStateVerbArgv } from "../src/output.js";
-import { stateSnapshot } from "../src/state.js";
+import { type StateSnapshot, stateSnapshot } from "../src/state.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
 import { claimTask } from "../src/tasks.js";
@@ -308,6 +311,34 @@ describe("the caller's own delegate queue, waves and human needs", () => {
     expect(theirs.workstreams[0]?.waves[0]).toMatchObject({ calls: 1, refused: [] });
   });
 
+  it("finished calls (done, failed, cancelled) leave the queue but stay in the caller's wave tally once", async () => {
+    const fin = (id: string, outcome: string, text = "no") =>
+      finishDelegate(db, id, { outcome, text, author: "d", record: false });
+    reg("pi:s1:a", "pi:s1", { wave: "w" });
+    reg("pi:s1:b", "pi:s1", { wave: "w" });
+    reg("pi:s1:c", "pi:s1", { wave: "w" });
+    reg("pi:s1:q", "pi:s1", { wave: "w", state: "queued" });
+    reg("pi:s1:r", "pi:s1", { wave: "w", state: "refused" });
+    expect(fin("pi:s1:a", "done", "VERDICT: CONFIRMED yes").state).toBe("done");
+    expect(fin("pi:s1:b", "timeout").state).toBe("failed");
+    expect(fin("pi:s1:c", "cancelled").state).toBe("cancelled");
+    const w = (await stateSnapshot(db, { workstreams: ["ws"], caller: "pi:s1" })).workstreams[0];
+    expect(w?.delegates.map((d) => [d.call_id, d.state])).toEqual([
+      ["pi:s1:q", "queued"],
+      ["pi:s1:r", "refused"],
+    ]);
+    expect(w?.waves).toEqual([
+      expect.objectContaining({
+        wave: "w",
+        calls: 5,
+        confirmed: 1,
+        unverified: 2,
+        pending: 2,
+        refused: ["pi:s1:r"],
+      }),
+    ]);
+  });
+
   it("open human needs are the caller's, in their own workstream, and generic parked work is not one", async () => {
     recordHumanNeeded(db, { workstream: "ws", caller: "pi:s1", reason: "pick a licence" });
     recordHumanNeeded(db, { workstream: "other", caller: "pi:s1", reason: "elsewhere" });
@@ -365,6 +396,42 @@ describe("the cap: the FINAL document is at most 4096 bytes and names its way ba
     expect(r.data.more).toBeGreaterThan(0);
     expect(r.data.retrieve).toBe("mu state --all --full");
     expect(r.data.workstreams.length).toBeLessThan(60);
+  });
+
+  it("140 long workstream names: even the zero-workstream envelope fits, with a short fixed retrieve", async () => {
+    const names = Array.from(
+      { length: 140 },
+      (_, i) => `w${String(i).padStart(3, "0")}${"n".repeat(28)}`,
+    );
+    for (const w of names) ensureWorkstream(db, w);
+    const r = await runCliJson(["state", "-w", names.join(",")], dbPath);
+    expect(Buffer.byteLength(r.stdout)).toBeLessThanOrEqual(4096);
+    expect(r.data.more).toBeGreaterThan(0);
+    expect(r.data.retrieve).toBe("mu state --all --full");
+    const full = await runCliJson(["state", "--all", "--full"], dbPath);
+    expect(full.data.workstreams).toHaveLength(140);
+  });
+
+  it("a wide identity block shrinks its fields until the FINAL document fits", () => {
+    const wide = "日本語é".repeat(60);
+    const agent = Object.fromEntries(
+      Array.from({ length: 30 }, (_, i) => [`f${i}`, wide]),
+    ) as unknown as AgentOutput;
+    const snap: StateSnapshot = {
+      caller: wide,
+      me: { caller: wide, agent, owned_tasks: [] },
+      workstreams: [],
+    };
+    const doc = boundState(
+      snap,
+      `mu state --me -w ${"n".repeat(5000)} --full`,
+      false,
+      "mu state --me --all --full",
+    );
+    const out = `${jsonDocument(doc)}\n`;
+    expect(Buffer.byteLength(out)).toBeLessThanOrEqual(4096);
+    expect(doc).toMatchObject({ retrieve: "mu state --me --all --full" });
+    expect((doc as { cut: number }).cut).toBeGreaterThan(0);
   });
 
   it("a small read carries no more/cut/retrieve", async () => {
