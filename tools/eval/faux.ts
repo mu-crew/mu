@@ -46,7 +46,11 @@ function stepContext(context: FauxContext): StepContext {
     }
   }
   const last = msgs[msgs.length - 1];
-  return { lastUser, lastResult: last?.role === "toolResult" ? textOf(last.content) : null };
+  return {
+    lastUser,
+    lastResult: last?.role === "toolResult" ? textOf(last.content) : null,
+    messages: msgs.filter((m) => m.role !== "system").length,
+  };
 }
 
 function toMessage(action: FauxAction): FauxMessage {

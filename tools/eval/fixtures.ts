@@ -87,12 +87,12 @@ fi
 if [ -z "$T" ]; then
   sleep "$(cat "$W/delegate-delay" 2>/dev/null || echo 0)"
   if [ -n "$n" ] && [ -f "$W/answers/$n.txt" ]; then
-    cat "$W/answers/$n.txt"; exit 0
+    echo "$(date +%s%3N) $AGENT $n" >> "$W/answers.log"; cat "$W/answers/$n.txt"; exit 0
   fi
   for f in "$W"/answers/*.txt; do
     k=$(basename "$f" .txt)
     case "$k" in *[!A-Za-z0-9_]*|[0-9]*) continue ;; esac
-    if grep -qw -- "$k" "$W/last-prompt.$AGENT" 2>/dev/null; then cat "$f"; exit 0; fi
+    if grep -qw -- "$k" "$W/last-prompt.$AGENT" 2>/dev/null; then echo "$(date +%s%3N) $AGENT $k" >> "$W/answers.log"; cat "$f"; exit 0; fi
   done
   [ -f "$W/delegate-delay" ] || sleep 3
   ask=$(tr '\n' ' ' < "$W/last-prompt.$AGENT" 2>/dev/null | cut -c1-90)

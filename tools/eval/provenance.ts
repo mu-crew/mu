@@ -123,7 +123,7 @@ export function noteMoments(
   sb: Sandbox,
   ws: string,
   task: string,
-): (Moment & { content: string })[] {
+): (Moment & { content: string; intent: string | null })[] {
   return readOps(sb, "note", ws, task).map((o) => {
     let content = "";
     try {
@@ -131,7 +131,7 @@ export function noteMoments(
     } catch {
       // unreadable payload: no content, never matches
     }
-    return { label: o.label, ms: o.ms, seq: o.seq, content };
+    return { label: o.label, ms: o.ms, seq: o.seq, content, intent: o.intent };
   });
 }
 

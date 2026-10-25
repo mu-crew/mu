@@ -1,14 +1,17 @@
 // SQL against mu's database to find the owner of the highest-impact IN_PROGRESS task. The schema
 // names are easy to guess wrong (tasks.owner, tasks.workstream, agents.agent_name); `tasks.id` is
-// valid but is the integer key, not the task's name. A failed `mu sql` call is a sqlError; a valid
-// query with the wrong answer only shows in the end state (note on the wrong task / wrong agent).
+// valid but is the integer key, not the task's name. A failed query is counted; a valid query with
+// the wrong answer only shows in the end state (note on the wrong task / wrong agent).
+// Judged by effects: the query's content (tasks, impact) and what mu returned, the note op's text
+// and order, and the ops log (nothing else written). Not by the verbs the AUT spelled.
 // Setup: w1, w2 are live agents (no workspace, no script); a decoy OPEN task has the top impact.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateScript, makeRepo, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
+import { type MuCall, muCalls, muOut, verdictFx } from "../observe.ts";
 import { maxSeq, opsSince } from "../ops.ts";
 import { openProbe } from "../probe.ts";
-import { verdict } from "../score.ts";
+import { firstNote, orderWrong } from "../provenance.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
 // id, impact. s7 is the decoy (OPEN, highest overall); s4 is the highest-impact IN_PROGRESS (w2).
@@ -31,7 +34,6 @@ const TOP = (() => {
   const task = live.reduce((a, b) => ((impact.get(b) ?? 0) > (impact.get(a) ?? 0) ? b : a));
   return { task, agent: OWNED[task] as string };
 })();
-const SQL_CALL = /\bmu\s+(sql|db)\b/;
 const baselineFile = (sb: Sandbox) => join(sb.dir, "guessed_sql_column.baseline.json");
 
 const scenario: Scenario = {
@@ -91,34 +93,39 @@ const scenario: Scenario = {
     for (const o of opsSince(sb, seq))
       if (o.intent !== "task.note" || o.key.split("#")[0] !== `eval/${TOP.task}`)
         wrong.push(`stray write: ${o.intent ?? "?"} ${o.entity} ${o.key}`);
-    // The task is to use SQL: a successful `mu sql` read must come before the note.
-    const calls = run.toolCalls.filter((c) => c.name === "bash");
-    const cmd = (c: { args: Record<string, unknown> }) => String(c.args.command);
-    // The SQL must read the asked data: tasks and impact in the query, and the answer (top task
-    // and its owner) in the output. A query of sqlite_master or a task list read does not count.
-    const relevant = (c: { args: Record<string, unknown>; output: string; isError: boolean }) =>
-      !c.isError &&
-      SQL_CALL.test(cmd(c)) &&
-      /\btasks\b/i.test(cmd(c)) &&
-      /\bimpact\b/i.test(cmd(c)) &&
-      new RegExp(`\\b${TOP.task}\\b`).test(c.output) &&
-      new RegExp(`\\b${TOP.agent}\\b`).test(c.output);
-    const sqlAt = calls.findIndex(relevant);
-    const noteAt = calls.findIndex((c) => /\btask\s+note\b/.test(cmd(c)));
-    if (sqlAt < 0)
+    // The task is to use SQL: a successful read of the asked data must come before the note. The
+    // read is judged by what mu did, not by the verb or flags spelled: an AUT invocation that
+    // succeeded, whose argv carries a query over tasks and impact (the query's own content) and
+    // whose own output (tee'd before any pipe) is the answer: the top task and its owner. A task
+    // list, a sqlite_master query or a note write does not read the asked data.
+    const calls = muCalls(sb);
+    const out = (m: MuCall) => muOut(sb, m);
+    const relevant = (m: MuCall) =>
+      m.exit === 0 &&
+      /\btasks\b/i.test(m.argv) &&
+      /\bimpact\b/i.test(m.argv) &&
+      new RegExp(`\\b${TOP.task}\\b`).test(out(m)) &&
+      new RegExp(`\\b${TOP.agent}\\b`).test(out(m));
+    const read = calls.find(relevant);
+    // the note: the op that wrote the requested text on the top task (kind and verb irrelevant)
+    const note = firstNote(sb, "eval", TOP.task, (c) => c.trim() === `top owner: ${TOP.agent}`);
+    if (!read)
+      wrong.push("no successful query that read the asked tasks/impact and returned the answer");
+    else if (note)
       wrong.push(
-        "no successful mu sql call that read the asked tasks/impact and returned the answer",
+        ...orderWrong(
+          { label: "the query returned", ms: read.end },
+          note,
+          "the note must follow the query",
+        ),
       );
-    else if (noteAt >= 0 && noteAt < sqlAt) wrong.push("added the note before querying with SQL");
-    const completed = newNotes === 1 && added[0] === want && sqlAt >= 0 && sqlAt <= noteAt;
-    const sqlErrors = run.toolCalls.filter(
-      (c) => c.isError && c.name === "bash" && SQL_CALL.test(String(c.args.command)),
-    ).length;
-    return verdict(run, completed, {
+    const completed = newNotes === 1 && added[0] === want && read !== undefined && note !== null;
+    const failedQueries = calls.filter((m) => m.exit !== 0 && /\btasks\b|\bagents\b/i.test(m.argv));
+    return await verdictFx(sb, run, completed, {
       wrong,
       notes: [
         `newNotes=${newNotes} added=${JSON.stringify(added)}`,
-        `sqlErrors=${sqlErrors} muCalls=${run.muCalls} muErrors=${run.muErrors}`,
+        `failedQueries=${failedQueries.length} muCalls=${run.muCalls} muErrors=${run.muErrors}`,
       ],
     });
   },

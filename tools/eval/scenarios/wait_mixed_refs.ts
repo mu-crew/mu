@@ -7,19 +7,23 @@
 // prints GATE-READY-<nonce> after 4s and stays up. The AUT writes wait-report.txt:
 //   fast: <mx-fast's close evidence>      ready: GATE-READY-<nonce> read from the PANE named gate
 //   slow: <mx-slow's worker evidence>     gate: <the TASK gate's worker evidence>
-//   race: <mx-race's worker evidence>     timeout-exit: <mu's own exit status of a 2s wait on mx-slow>
+//   race: <mx-race's worker evidence>     timeout-exit: <the exit status of a 2s-bound wait on mx-slow>
 // Every value is derivable only from the real task/pane (nonce), so the judge compares the file to
-// the fixture truth plus the DB, runs.log and the call record, never to the AUT's claims:
-//  - each line right; report written after the workers finished; the unknown-ref call failed fast
-//    (< 5s, not a hang); `timeout-exit` is 5, not the pipe's status; no worker task closed by the AUT;
-//  - each ref class was really waited on: a successful wait call naming mx-fast (CLOSED already, answers
-//    at once), mx-race (issued after its worker was sent: the settle races the registration) and the
-//    TASK gate (with mx-slow), whose output shows the ref CLOSED and which returned only after that
-//    ref's worker run finished; a `sleep N` (N >= 3) is never a stand-in for a wait;
-//  - NATIVE (family-aware): one wait verb for task+agent refs (a single `mu wait` call naming both),
-//    mu's exit status embedded in the output (visible through a pipe), authoritative until-text /
-//    until-idle conditions. 3.x has none (separate task/agent verbs, status lost in a pipe): N/A
-//    baseline, and the goldens show the manual workaround (polling `agent read`, PIPESTATUS).
+// the fixture truth plus the DB, runs.log and what mu itself did, never to the AUT's claims.
+// Judged by observed effects (the sandbox's mu-call record, observe.ts), not by verb spellings or
+// exit codes mu-next changes:
+//  - each line right; report written after the workers finished; no worker task closed by the AUT;
+//  - the unknown ref: a mu invocation of the AUT asked about nosuch-ref, failed, and answered fast;
+//  - each ref class was really waited on: a successful mu invocation (naming the ref, or blocking)
+//    whose own output shows it CLOSED, returning after that ref's worker closed it (mx-fast: at
+//    once; mx-race: after its worker was sent, the settle racing the registration; gate/mx-slow);
+//    a long shell call that did not block in mu (a sleep) or polled the same state read repeatedly
+//    is never a stand-in for a wait;
+//  - timeout-exit: a mu invocation on mx-slow BLOCKED about 2s and reported a timeout (timedOut was
+//    observed in its own output, whatever its exit code), and the report line is the status that
+//    invocation really returned, recorded by the shim; a guess does not match;
+//  - NATIVE (family-aware): one invocation naming a task and an agent ref, and a timeout that is a
+//    reported outcome rather than an exit code. 3.x has neither as a guarantee: N/A baseline.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -32,29 +36,32 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
+import { commandOf, native, prodWrong, waitWindows } from "../lifecycle.ts";
 import {
-  commandOf,
-  isWaitCall,
-  native,
-  prodWrong,
-  waitedClosed,
-  waitWindows,
-} from "../lifecycle.ts";
+  closeEarnedWrong,
+  idleCalls,
+  muCalls,
+  muOut,
+  names,
+  observedClosed,
+  pollingCalls,
+  showsClosed,
+  timedOut,
+  toolHolds,
+  verdictFx,
+} from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, fileMoment, orderWrong } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
-const POLL_STATE = /\bmu\s+(?:task\s+(?:show|list|notes|next|ready)|agent\s+(?:list|show))\b/;
-const POLL_ANY = /\bmu\s+(?:task\s+(?:show|list|notes|next|ready)|agent\s+(?:list|show|read))\b/;
 const WORKERS = ["mx-slow", "gate", "mx-race"];
 
 const scenario: Scenario = {
   id: "wait_mixed_refs",
   title: "wait on a mix of task, agent and pane refs, closed-already, raced and piped",
   prompt:
-    "Workstream eval has: task mx-fast (already closed), worker tasks mx-slow, gate and mx-race (each needs a pi worker; use one worker per task, any names), and a non-pi build pane you must start with `mu agent spawn gate -w eval --command gate-cmd` (that agent is named gate, like the task gate; it prints a GATE-READY-<id> line when its build is ready). Wait with mu (do not sleep-poll in loops of your own if a mu wait can do it) and write wait-report.txt in the repo root with exactly these six lines: `fast: <the evidence mx-fast was closed with>`, `ready: <the GATE-READY-<id> line printed by the gate PANE>`, `slow: <evidence the worker closed mx-slow with>`, `gate: <evidence the worker closed the TASK gate with>`, `race: <evidence the worker closed mx-race with>`, and `timeout-exit: <the exit status mu itself returned for `mu task wait mx-slow -w eval --timeout 2 | tail -5` run right after you started mx-slow>`. Also check what mu says when asked to wait for the ref nosuch-ref. Work until it is done; do not ask me questions.",
+    "Workstream eval has: task mx-fast (already closed), worker tasks mx-slow, gate and mx-race (each needs a pi worker; use one worker per task, any names), and a non-pi build pane you must start with `mu agent spawn gate -w eval --command gate-cmd` (that agent is named gate, like the task gate; it prints a GATE-READY-<id> line when its build is ready). Wait with mu (do not sleep-poll in loops of your own if a mu wait can do it) and write wait-report.txt in the repo root with exactly these six lines: `fast: <the evidence mx-fast was closed with>`, `ready: <the GATE-READY-<id> line printed by the gate PANE>`, `slow: <evidence the worker closed mx-slow with>`, `gate: <evidence the worker closed the TASK gate with>`, `race: <evidence the worker closed mx-race with>`, and `timeout-exit: <the exit status mu itself returned for a wait on mx-slow that you bound to 2 seconds and ran right after you started mx-slow, with its output piped through tail -5 (the status of mu, not of tail)>`. Also check what mu says when asked to wait for the ref nosuch-ref. Work until it is done; do not ask me questions.",
   timeoutMs: 600_000,
   async setup(sb) {
     await makeRepo(sb, { "notes.txt": "start\n" });
@@ -105,7 +112,6 @@ const scenario: Scenario = {
       slow: new RegExp(`mx-slow\\.sh exit 0 run=${n}`),
       gate: new RegExp(`gate\\.sh exit 0 run=${n}`),
       race: new RegExp(`mx-race\\.sh exit 0 run=${n}`),
-      "timeout-exit": /^5$/,
     };
     let completed = true;
     for (const [k, re] of Object.entries(want)) {
@@ -125,10 +131,8 @@ const scenario: Scenario = {
       lastRun = Math.max(lastRun, rs[0]?.ts ?? 0, closeMoment(sb, "eval", id)?.ms ?? 0);
       if (!(t?.status === "CLOSED" && t.substate === "done" && rs.length === 1)) completed = false;
     }
-    for (const c of run.toolCalls) {
-      if (/\bmu\s+task\s+close\b/.test(commandOf(c)))
-        wrong.push(`the AUT closed a task itself: ${commandOf(c).slice(0, 80)}`);
-    }
+    // the AUT closes nothing a worker earns: each worker task was closed by the worker that ran it
+    for (const id of WORKERS) wrong.push(...closeEarnedWrong(sb, "eval", id, runs));
     const file = fileMoment(join(sb.repoDir, "wait-report.txt"));
     if (file && completed)
       wrong.push(
@@ -138,18 +142,21 @@ const scenario: Scenario = {
           "wait-report.txt written last",
         ),
       );
-    // the unknown ref: asked about, and answered fast (not a hang until a timeout)
-    const bad = run.toolCalls.filter((c) => /nosuch-ref/.test(commandOf(c)) && isWaitCall(c));
+    const calls = muCalls(sb);
+    // the unknown ref: asked about through mu, and answered fast (not a wait that ran to a timeout)
+    const bad = calls.filter((m) => names(m.argv, "nosuch-ref"));
     if (bad.length === 0) {
       completed = false;
-      wrong.push("never asked mu to wait for nosuch-ref");
+      wrong.push("never asked mu about nosuch-ref");
     }
-    for (const c of bad) {
-      if ((c.durationMs ?? 0) > 5000)
-        wrong.push(`wait on an unknown ref took ${c.durationMs}ms (must fail fast)`);
+    for (const m of bad) {
+      if (m.end - m.start > 5000)
+        wrong.push(`a call on an unknown ref took ${m.end - m.start}ms (must fail fast)`);
+      if (timedOut(muOut(sb, m)))
+        wrong.push("a call on an unknown ref reported a timeout instead of refusing the ref");
     }
-    // each ref class waited on, successfully, with the result in that call's own output
-    const waits = waitWindows(run);
+    // each ref class waited on, successfully, with the result in mu's own output for that call
+    const waits = waitWindows(sb);
     const closedAt = (id: string): number => closeMoment(sb, "eval", id)?.ms ?? 0;
     for (const [ref, at] of [
       ["mx-fast", 0],
@@ -157,77 +164,91 @@ const scenario: Scenario = {
       ["gate", closedAt("gate")],
       ["mx-slow", closedAt("mx-slow")],
     ] as const) {
-      if (!waitedClosed(run, ref, at)) {
+      if (!observedClosed(sb, run, ref, at)) {
         completed = false;
         wrong.push(
-          `no successful wait call returned ${ref} CLOSED (returning after its worker closed it)`,
+          `no successful mu call returned ${ref} CLOSED (returning after its worker closed it)`,
         );
       }
     }
-    for (const c of run.toolCalls) {
-      const cmd = commandOf(c).replace(/'[^']*'/g, "''");
-      const s = /\bsleep\s+(\d+)\b/.exec(cmd);
-      if (s && Number(s[1]) >= 3)
-        wrong.push(`a sleep stands in for a wait: ${commandOf(c).slice(0, 80)}`);
-      // a loop that sleeps and polls state a wait covers (task/agent state anywhere; pane text only
-      // where the surface has an authoritative until-text condition, i.e. not 3.x)
-      const loop = /\b(?:for|while|until)\b[\s\S]*\bsleep\b[\s\S]*\bdone\b/.exec(cmd)?.[0];
-      const polled = sandboxFamily(sb) === "3x" ? POLL_STATE : POLL_ANY;
-      if (loop && polled.test(loop))
-        wrong.push(`a sleep loop polls what mu wait covers: ${commandOf(c).slice(0, 80)}`);
-    }
-    // the pipe-exit subcase is measured, not guessed: a real 2s wait on mx-slow behind a pipe whose
-    // status was taken from it (PIPESTATUS/pipefail on 3.x, the embedded exit on next) and shows 5.
-    const piped = run.toolCalls.some((c) => {
-      const cmd = commandOf(c).replace(/'[^']*'/g, "''");
-      return (
-        isWaitCall(c) &&
-        /\bmx-slow\b/.test(cmd) &&
-        /--timeout[ =]2\b/.test(cmd) &&
-        /\|\s*\w/.test(cmd.replace(/\|\|/g, "")) &&
-        (/PIPESTATUS|pipefail/.test(cmd) || /"exit"\s*:\s*5\b/.test(c.output)) &&
-        /(?:exit|status|rc)\W{0,3}5\b/i.test(c.output) &&
-        (c.durationMs ?? 0) >= 1500
+    // a sleep or a poll loop is never a stand-in for a wait. Pane text has no authoritative wait
+    // condition on 3x (a family option), so polling a pane read is the manual workaround there.
+    for (const c of idleCalls(sb, run))
+      wrong.push(
+        `a long call that did not wait in mu stands in for a wait: ${commandOf(c).slice(0, 80)}`,
       );
-    });
-    if (!piped) {
+    for (const c of pollingCalls(sb, run, { allowPaneReads: sandboxFamily(sb) === "3x" }))
+      wrong.push(`a poll loop reads what a wait covers: ${commandOf(c).slice(0, 80)}`);
+    // the timeout subcase is measured, not guessed: a mu invocation on mx-slow BLOCKED about 2s and
+    // reported a timeout in its own output (timedOut observed, whatever exit code it carries); the
+    // report line is the status that invocation really returned, recorded by the shim.
+    const slowClosed = closedAt("mx-slow");
+    const bounded = calls.filter(
+      (m) =>
+        names(m.argv, "mx-slow") &&
+        !names(m.argv, "gate") &&
+        m.end - m.start >= 1500 &&
+        m.end - m.start <= 4500 &&
+        (slowClosed === 0 || m.end <= slowClosed) &&
+        timedOut(muOut(sb, m)),
+    );
+    const measured = bounded[0];
+    if (!measured) {
+      completed = false;
+      wrong.push("timeout-exit was never measured: no 2s-bound wait on mx-slow that timed out");
+    } else if (line("timeout-exit") !== String(measured.exit)) {
       completed = false;
       wrong.push(
-        "timeout-exit was never measured: no 2s wait on mx-slow behind a pipe, status taken from it",
+        `timeout-exit is "${line("timeout-exit") ?? "missing"}", the wait returned ${measured.exit}`,
       );
     }
-    // native guarantees
-    const oneVerb = run.toolCalls.some(
-      (c) =>
-        /(^|[\s;&|])mu\s+wait\b/.test(commandOf(c)) &&
-        /\bgate\b/.test(commandOf(c)) &&
-        /\bmx-/.test(commandOf(c)),
+    // native guarantees: stated over what mu itself printed
+    const oneCall = calls.some(
+      (m) =>
+        m.exit === 0 &&
+        m.end - m.start >= 1500 &&
+        names(m.argv, "gate") &&
+        names(m.argv, "mx-slow") &&
+        /\b(busy|free|needs_input|terminated|dead)\b/i.test(muOut(sb, m)) &&
+        showsClosed(muOut(sb, m), "mx-slow"),
     );
-    const exitInOut = run.toolCalls.some(
-      (c) => isWaitCall(c) && /\|\s*tail/.test(commandOf(c)) && /"exit"\s*:\s*5\b/.test(c.output),
-    );
-    const conds = run.toolCalls.some((c) => /--until-(idle|text)\b/.test(commandOf(c)));
+    const exitInOut =
+      measured !== undefined &&
+      new RegExp(`"exit"\\s*:\\s*${measured.exit}\\b`).test(muOut(sb, measured));
+    const readyCall = waits.some((w) => new RegExp(`GATE-READY-${n}`).test(muOut(sb, w.mu)));
     const nat = [
       native(
         sb,
-        "one wait verb takes task and agent refs",
-        oneVerb,
-        `${waits.length} wait call(s)`,
+        "one wait call settles task and agent refs",
+        oneCall,
+        `${waits.length} blocking call(s)`,
       ),
-      native(sb, "wait result embeds mu's exit status through a pipe", exitInOut, "timeout-exit"),
-      native(sb, "authoritative until-text / until-idle condition used", conds, "pane readiness"),
+      native(sb, "a wait result embeds the exit status it returns", exitInOut, "timeout-exit"),
+      native(sb, "pane readiness is an authoritative wait condition", readyCall, "GATE-READY"),
     ];
     wrong.push(...prodWrong(run), ...nat.flatMap((x) => x.wrong));
-    return verdict(run, completed, {
+    return await verdictFx(sb, run, completed, {
       wrong,
       na: nat.flatMap((x) => x.na),
       expectFail: [
-        { re: /^3 .*nosuch-ref/, why: "unknown ref refused (exit 3)" },
-        { re: /^5 .*--timeout 2\b/, why: "the deliberate 2s timeout (exit 5)" },
-        { re: /^1 .*nosuch-ref/, why: "unknown ref refused" },
+        // a refused unknown ref: fails fast (any exit code)
+        {
+          re: /nosuch-ref/,
+          why: "unknown ref refused",
+          when: (c) =>
+            calls.some(
+              (m) => names(m.argv, "nosuch-ref") && m.end - m.start <= 5000 && toolHolds(run, c, m),
+            ),
+        },
+        // the deliberate 2s timeout on mu-3x is a failing exit: allowed only for that bounded wait
+        {
+          re: /./,
+          why: "the deliberate 2s-bound wait timed out",
+          when: (c) => bounded.some((m) => toolHolds(run, c, m)),
+        },
       ],
       notes: [
-        `report lines=${report.split("\n").filter(Boolean).length} waits=${waits.length} badRefCalls=${bad.length}`,
+        `report lines=${report.split("\n").filter(Boolean).length} blocking=${waits.length} badRefCalls=${bad.length} measuredExit=${measured?.exit ?? "-"}`,
         ...nat.flatMap((x) => x.notes),
       ],
     });

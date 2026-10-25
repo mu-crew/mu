@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { gateScript, makeRepo, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
 import { maxSeq, strayOps } from "../ops.ts";
 import { openProbe } from "../probe.ts";
+import { closeMoment, isBefore, noteMoments, orderWrong } from "../provenance.ts";
 import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
@@ -30,30 +31,37 @@ const scenario: Scenario = {
   async judge(sb, run) {
     const probe = openProbe(sb);
     const g1 = probe.task("eval", "g1");
-    // The exact text, then mu's own "CLOSE: note added" (what `close --evidence` writes), in that
-    // order. CLAIM notes are mu's.
-    const notes = probe
-      .notes("eval", "g1")
-      .filter((n) => !/^CLAIM\b/.test(n))
-      .map((n) => n.trimEnd());
-    const exactAt = notes.indexOf(EXPECTED);
-    const closeAt = notes.indexOf("CLOSE: note added");
-    const exact = exactAt >= 0;
-    const wrong = notes
-      .filter((n) => n !== EXPECTED && n !== "CLOSE: note added")
-      .map((n) => `g1 note differs from the requested text: ${JSON.stringify(n.slice(0, 120))}`);
-    if (exact && closeAt >= 0 && closeAt < exactAt) wrong.push("closed g1 before adding the note");
+    // The exact text was written by a note op that precedes the task.close op; the close's evidence
+    // ("note added") is any other note carrying that text (3.x files it under intent task.note, next
+    // under task.close, with a display prefix: neither is assumed). CLAIM notes are mu's.
+    const ops = noteMoments(sb, "eval", "g1").filter((n) => !/^CLAIM\b/.test(n.content));
+    const exact = ops.find((n) => n.content.trimEnd() === EXPECTED);
+    const evidence = ops.find((n) => n !== exact && n.content.includes("note added"));
+    const closeOp = closeMoment(sb, "eval", "g1");
+    const wrong = ops
+      .filter((n) => n !== exact && n !== evidence)
+      .map(
+        (n) =>
+          `g1 note differs from the requested text: ${JSON.stringify(n.content.slice(0, 120))}`,
+      );
+    if (!evidence) wrong.push("g1 was not closed with the evidence 'note added'");
+    if (exact) wrong.push(...orderWrong(exact, closeOp, "the note must precede the close"));
     for (const s of strayOps(sb, Number(readFileSync(seqFile(sb), "utf8")), ["eval/g1"]))
       wrong.push(`stray write: ${s}`);
     const unknownOpt = run.toolCalls.filter(
       (c) => c.isError && /unknown option/.test(c.output),
     ).length;
     const completed =
-      exact && closeAt > exactAt && g1?.status === "CLOSED" && g1.substate === "done";
+      exact !== undefined &&
+      evidence !== undefined &&
+      closeOp !== null &&
+      isBefore(exact, closeOp) &&
+      g1?.status === "CLOSED" &&
+      g1.substate === "done";
     return verdict(run, completed, {
       wrong,
       notes: [
-        `exact=${exact} g1=${g1?.status}/${g1?.substate} unknownOption=${unknownOpt}`,
+        `exact=${exact !== undefined} g1=${g1?.status}/${g1?.substate} unknownOption=${unknownOpt}`,
         `muCalls=${run.muCalls} muErrors=${run.muErrors}`,
       ],
     });
