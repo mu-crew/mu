@@ -318,7 +318,7 @@ describe("error and warning paths stay in the one document", () => {
     expect(w.doc.ok).toBe(true);
     expect(w.doc.data).toMatchObject({
       seq: expect.any(Number),
-      kind: "message",
+      entity: "message",
       payload: "hello",
     });
   });

@@ -15,14 +15,13 @@
 import { type RuntimeState, UNKNOWN_REASON } from "../agent-state.js";
 import type { LiveAgent } from "../agents.js";
 import { agentStateGlyph, GLYPH } from "../glyphs.js";
-import { parseOpKey, renderOp } from "../log-render.js";
 import type { LogRow } from "../logs.js";
 import { muTable, pc, renderBoxTable } from "../output.js";
 import { RESULT_BYTES } from "../output-contract.js";
 import { formatPair, type TaskPair } from "../tasks/status.js";
 import type { TaskNoteRow, TaskRow } from "../tasks.js";
 import type { Track } from "../tracks.js";
-import type { TornDownWorkstream, WorkstreamSummary } from "../workstream.js";
+import { logRecord } from "./log-records.js";
 
 // ─── Status colours / icons ────────────────────────────────────────────
 
@@ -255,89 +254,11 @@ export function formatTracks(tracks: readonly Track[]): string {
   return lines.join("\n");
 }
 
-/** One op, human-formatted. Used by `mu log` (read + tail) and by the
- *  `recent events` section of `mu state`.
- *
- *  All prose comes from `renderOp` (src/log-render.ts) — the ONE
- *  formatter. This function only adds colour and column layout, so the
- *  terminal and the TUI can never drift into two phrasings of the same
- *  op. No raw JSON reaches the operator here. */
+/** One log line: the capped, escaped record `mu log` prints (src/cli/log-records.ts).
+ *  All prose comes from `renderOp` (src/log-render.ts), the ONE formatter, so
+ *  the terminal and the TUI can never drift into two phrasings of one op. */
 export function printLogRow(row: LogRow): void {
-  const time = row.createdAt.replace("T", " ").replace(/\.\d+Z$/, "Z");
-  const rendered = renderOp(row);
-  const scope = parseOpKey(row.workstreamName).workstream;
-  const where = scope === undefined ? pc.dim("—") : scope;
-  if (rendered === null) {
-    // No intent: operator prose from `mu log "<text>"` or a `--kind`
-    // ledger. Show it verbatim — inventing a verb for it would be
-    // wrong, it is already exactly what the operator typed.
-    console.log(
-      `${pc.dim(`#${row.seq}`)} ${pc.dim(time)}  ${pc.bold(row.source)}  ${pc.yellow(row.kind)}  [${where}]  ${row.payload}`,
-    );
-    return;
-  }
-  const detail = rendered.detail === "" ? "" : ` ${pc.dim(rendered.detail)}`;
-  console.log(
-    `${pc.dim(`#${row.seq}`)} ${pc.dim(time)}  ${pc.bold(row.source)}  ${pc.cyan(rendered.verb)} ${rendered.subject}${detail}  ${pc.dim(`[${where}]`)}`,
-  );
-}
-
-/**
- * Workstreams summary table renderer. Used by `mu workstream list`
- * and the bare-`mu` empty-machine discovery fallback. Both
- * render the same shape; the helper lives here so cli/workstream.ts
- * and cli.ts can both import it without a lateral cli/* dependency.
- */
-export function formatWorkstreamsTable(rows: WorkstreamSummary[]): string {
-  // Workstream names are user-chosen free-form text; everything else
-  // is a small int / fixed-shape token. Cap the name column so a long
-  // workstream name doesn't push the row counts off-screen.
-  const table = muTable({
-    head: ["name", "mux", "agents", "tasks", "edges", "notes"].map((h) => pc.bold(h)),
-    colWidths: [40, null, null, null, null, null],
-  });
-  for (const r of rows) {
-    table.push([
-      r.name,
-      r.muxAlive ? pc.green("alive") : pc.dim("—"),
-      String(r.agentCount),
-      String(r.taskCount),
-      String(r.edgeCount),
-      String(r.noteCount),
-    ]);
-  }
-  return table.toString();
-}
-
-/**
- * Torn-down workstreams (soft rows, then old hard teardowns), newest first.
- *
- * `group` leads after the name because it is the only ACTIONABLE
- * column — it feeds `mu log --group <group>` — and it is shown
- * short (8 chars), which `--group` accepts.
- */
-export function formatTornDownWorkstreamsTable(rows: readonly TornDownWorkstream[]): string {
-  const table = muTable({
-    head: ["name", "group", "torn down", "tasks", "edges", "notes", "rows", ""].map((h) =>
-      pc.bold(h),
-    ),
-    colWidths: [32, null, null, null, null, null, null, null],
-  });
-  for (const r of rows) {
-    // relTimeAgo takes an ELAPSED duration, not a timestamp.
-    const at = Date.parse(r.at);
-    table.push([
-      r.name,
-      r.group.slice(0, 8),
-      Number.isNaN(at) ? pc.dim("—") : relTimeAgo(Date.now() - at),
-      String(r.tasks),
-      String(r.edges),
-      String(r.notes),
-      r.kind === "soft" ? "kept" : pc.dim("deleted"),
-      r.recreated ? pc.dim("← recreated since") : "",
-    ]);
-  }
-  return table.toString();
+  console.log(logRecord(row).line);
 }
 
 export function formatTaskListTable(

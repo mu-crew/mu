@@ -10,27 +10,26 @@
 
 import {
   emitJson,
-  emitJsonCollection,
   emitJsonRow,
   injectedIdentity,
   injectedWorkstream,
   missingWorkstreamError,
-  printLogRow,
   resolveWorkstream,
   UsageError,
 } from "../cli.js";
 import type { Db } from "../db.js";
-import { renderOpLine } from "../log-render.js";
 import {
   appendLog,
   GroupNotFoundError,
   groupIdFromPrefix,
   type ListLogsOptions,
-  type LogRow,
   latestSeq,
   listLogs,
 } from "../logs.js";
 import { pc } from "../output.js";
+import { shellWord } from "../shell-quote.js";
+import { logOut, logPage } from "./log-records.js";
+import { boundedCommand } from "./page-records.js";
 
 export interface LogReadOpts {
   workstream?: string;
@@ -97,7 +96,7 @@ async function cmdLogWrite(db: Db, text: string, opts: LogWriteOpts): Promise<vo
     payload: text,
   });
   if (opts.json) {
-    emitJson(withRendered(row));
+    emitJson(logOut(row));
     return;
   }
   console.log(
@@ -105,17 +104,6 @@ async function cmdLogWrite(db: Db, text: string, opts: LogWriteOpts): Promise<vo
       `seq ${row.seq}  workstream=${row.workstreamName ?? "—"}  source=${row.source}  kind=${row.kind}`,
     ),
   );
-}
-
-/** Attach the formatter's prose to a JSON row.
- *
- *  Consumers should never have to re-derive prose from `payload` — that
- *  would recreate exactly the payload-parsing coupling v2-log-verb
- *  deleted. The structured fields stay alongside it, so a script can
- *  switch on `intent` and a human reading `--json` still sees what
- *  happened. */
-function withRendered(row: LogRow): LogRow & { rendered: string } {
-  return { ...row, rendered: renderOpLine(row) };
 }
 
 async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
@@ -145,15 +133,45 @@ async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
   if (opts.since === undefined && opts.lines === undefined) listOpts.limit = 50;
 
   const rows = listLogs(db, listOpts);
-  if (opts.json) {
-    emitJsonCollection(rows.map(withRendered));
-    return;
-  }
-  if (rows.length === 0) {
+  // One record per VISIBLE op: listLogs hides the parent-row touch an
+  // add-note or add-edge writes (same op group, only `updated_at`), which
+  // would print as a second line for one action. Those stay in `ops`.
+  const json = opts.json === true;
+  if (rows.length === 0 && !json) {
     console.log(pc.dim("(no log entries)"));
     return;
   }
-  for (const row of rows) printLogRow(row);
+  const page = logPage(rows, {
+    json,
+    newest: listOpts.since === undefined,
+    resume: (seq, n) => readCommand(opts, listOpts, workstream, seq, n),
+  });
+  if (page.data !== undefined) {
+    emitJson(page.data);
+    return;
+  }
+  for (const line of page.lines) console.log(line);
+}
+
+/** The same read, continued strictly after `since`, `n` records: what a cut's `next=` runs. */
+function readCommand(
+  opts: LogReadOpts,
+  listOpts: ListLogsOptions,
+  workstream: string | undefined,
+  since: number,
+  n: number,
+): string {
+  const parts = [
+    "mu log",
+    ...(workstream === undefined ? ["--all"] : ["-w", shellWord(workstream)]),
+  ];
+  if (opts.kind !== undefined) parts.push("--kind", shellWord(opts.kind));
+  if (opts.source !== undefined) parts.push("--source", shellWord(opts.source));
+  if (opts.intent !== undefined) parts.push("--intent", shellWord(opts.intent));
+  if (listOpts.group !== undefined) parts.push("--group", listOpts.group);
+  parts.push("--since", String(since), "-n", String(n));
+  if (opts.json) parts.push("--json");
+  return boundedCommand(parts.join(" "), `mu log --since ${since} -n ${n} (with the same filters)`);
 }
 
 /**
@@ -178,28 +196,67 @@ async function logReadWorkstream(opts: LogReadOpts): Promise<string | undefined>
   return resolveWorkstream(opts.workstream);
 }
 
-async function cmdLogTail(db: Db, baseOpts: ListLogsOptions, cliOpts: LogReadOpts): Promise<void> {
+/** How a tail waits between polls; a test replaces it to drive the loop without sleeping. */
+export type TailSleep = (ms: number, signal: AbortSignal) => Promise<void>;
+
+const realSleep: TailSleep = (ms, signal) =>
+  new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done);
+  });
+
+/**
+ * `--tail` is a stream, never a document: ALWAYS NDJSON, one `LogItem` per
+ * line (no envelope, no header, nothing else on stdout), each line bounded
+ * like a `--json` item with a `retrieve` command when it clipped something.
+ * The cursor moves only AFTER a line is written, so an interrupt between two
+ * rows loses none: a batch is written whole (the writes are synchronous)
+ * before the signal is looked at. SIGINT ends it with 130, SIGTERM with 143.
+ */
+export async function cmdLogTail(
+  db: Db,
+  baseOpts: ListLogsOptions,
+  cliOpts: LogReadOpts,
+  hooks: { signal?: AbortSignal; sleep?: TailSleep } = {},
+): Promise<void> {
   // If --since wasn't given, start at "now" so the subscriber only sees
   // NEW entries. Pass `--since 0` to replay from the beginning.
   let cursor = cliOpts.since ?? latestSeq(db);
-  if (!cliOpts.json) {
-    console.log(
-      pc.dim(
-        `(tailing log; cursor=${cursor}; ${baseOpts.workstream ? `workstream=${baseOpts.workstream}` : "all workstreams"}; ctrl-c to exit)`,
-      ),
-    );
+  const control = new AbortController();
+  const signal = hooks.signal ?? control.signal;
+  const sleep = hooks.sleep ?? realSleep;
+  const onInt = (): void => {
+    process.exitCode = 130;
+    control.abort();
+  };
+  const onTerm = (): void => {
+    process.exitCode = 143;
+    control.abort();
+  };
+  if (hooks.signal === undefined) {
+    process.once("SIGINT", onInt);
+    process.once("SIGTERM", onTerm);
   }
   const intervalMs = defaultLogTailIntervalMs();
-  for (;;) {
-    const rows = listLogs(db, { ...baseOpts, since: cursor });
-    for (const row of rows) {
-      // NDJSON for --tail (one object per line), per SKILL.md: it is a
-      // stream, not a document: raw op rows, no {ok,data,next} envelope.
-      if (cliOpts.json) emitJsonRow(withRendered(row));
-      else printLogRow(row);
-      cursor = row.seq;
+  try {
+    while (!signal.aborted) {
+      for (const row of listLogs(db, { ...baseOpts, since: cursor })) {
+        emitJsonRow(logOut(row));
+        cursor = row.seq;
+      }
+      await sleep(intervalMs, signal);
     }
-    await new Promise((r) => setTimeout(r, intervalMs));
+  } finally {
+    process.off("SIGINT", onInt);
+    process.off("SIGTERM", onTerm);
+    // Every row written is on the wire before the process can exit.
+    await new Promise<void>((resolve) => process.stdout.write("", () => resolve()));
   }
 }
 
@@ -250,7 +307,10 @@ export function wireLogCommand(program: Command): void {
       "filter reads to one structured intent, e.g. task.close (see `mu log` output)",
     )
     .option("--group <id>", "filter reads to one op group (every op of a single action)")
-    .option("--tail", "block and print entries as they're appended")
+    .option(
+      "--tail",
+      "block and print entries as they're appended: always NDJSON, one object per line (no envelope); ctrl-c exits 130",
+    )
     .option(
       "--since <seq>",
       "return entries with seq strictly greater than this (use 0 to replay everything)",

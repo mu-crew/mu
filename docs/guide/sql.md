@@ -27,7 +27,7 @@ Every verb takes `--json`.
   `UPDATE ... RETURNING` prints its rows whole, with no `retrieve`, since running
   it again would write again. Errors are the failure document on stdout, with or
   without `--json`.
-- `mu log --tail --json` is the exception: one raw JSON object per line.
+- `mu log --tail` (no `--json` needed) is the exception: one raw JSON object per line, keyed by the `ops` column names.
 - A failure is `{"ok": false, "error", "message", "next", "exit"}` on
   **stdout** (plus `nextSteps` and, for usage errors, `usage`, at most 3
   lines), with the same non-zero exit code. `2>/dev/null` loses nothing.

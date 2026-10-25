@@ -173,14 +173,14 @@ describe("renderOp prose", () => {
     expect(r?.detail).toBe("#2 line one line two by worker-1");
   });
 
-  it("collapses and truncates long note bodies to one line", () => {
-    const long = "x".repeat(200);
+  it("collapses a note body to one line and never shortens it (the output boundary counts the cut)", () => {
+    const long = `${"x".repeat(200)}\n\nsecond paragraph`;
     const r = renderOp(
       op({ intent: "task.note", payload: JSON.stringify({ author: "a", content: long }) }),
     );
-    expect(r?.detail).toContain("…");
     expect(r?.detail).not.toContain("\n");
-    expect((r?.detail ?? "").length).toBeLessThan(90);
+    expect(r?.detail).not.toContain("…");
+    expect(r?.detail).toContain("second paragraph");
   });
 
   it("edge intents read directionally from the key pair", () => {
@@ -240,6 +240,9 @@ describe("renderOp is never fooled by payload text", () => {
     // `mu log write` / a --kind ledger. Inventing a verb would be wrong.
     expect(renderOp(op({ intent: null, payload: "pr=1234 ci=red" }))).toBeNull();
     expect(renderOpLine(op({ intent: null, payload: "pr=1234 ci=red" }))).toBe("pr=1234 ci=red");
+    // Whole, not clipped to 120: the output boundary caps and counts.
+    const long = "p".repeat(500);
+    expect(renderOpLine(op({ intent: null, payload: long }))).toBe(long);
   });
 
   it("a non-JSON payload on a real intent degrades instead of throwing", () => {
@@ -248,12 +251,52 @@ describe("renderOp is never fooled by payload text", () => {
     expect(r?.verb).toBe("task update");
   });
 
-  it("an UNKNOWN intent from a newer mu still renders legibly", () => {
+  it("an UNKNOWN intent from a newer mu still renders legibly, as the op row says it", () => {
     // Ingested from a peer's segment. Must not vanish and must not throw:
     // a rendering gap may never block sync.
-    const r = renderOp(op({ intent: "task.futureverb", workstreamName: "demo/t9" }));
-    expect(r?.verb).toBe("task futureverb");
-    expect(r?.subject).toBe("t9");
+    const r = renderOp(
+      op({
+        intent: "task.futureverb",
+        workstreamName: "demo/t9",
+        payload: '{"shiny":1,"updated_at":"x"}',
+      }),
+    );
+    expect(r).toEqual({
+      verb: "op put",
+      subject: "demo/t9",
+      detail: "intent=task.futureverb kind=task patch=shiny",
+    });
+  });
+
+  it("an unknown intent never implies the op it did not do (put is not a delete)", () => {
+    for (const intent of ["workstream.delete", "task.delete-all", "workstream.destroy"]) {
+      const put = renderOpLine(
+        op({ intent, kind: "workstream", workstreamName: "demo", op: "put" }),
+      );
+      expect(put).toContain("op put");
+      expect(put).not.toMatch(/^(workstream|task) (delete|destroy)/);
+      expect(put).toContain(`intent=${intent}`);
+    }
+    const del = renderOp(
+      op({ intent: "migrate.v8", workstreamName: "demo", op: "del", payload: "{}" }),
+    );
+    expect(del?.verb).toBe("op del");
+    expect(del?.detail).toBe("intent=migrate.v8 kind=task");
+  });
+
+  it("an unknown intent keeps its prose payload and withholds a JSON one", () => {
+    const prose = renderOp(op({ intent: "migrate.archive", payload: "moved  3\nrows" }));
+    expect(prose?.detail).toBe("intent=migrate.archive kind=task : moved 3 rows");
+    const json = renderOp(op({ intent: "migrate.archive", payload: '{"secret":"v"}' }));
+    expect(json?.detail).not.toContain("{");
+    expect(json?.detail).not.toContain('"v"');
+  });
+
+  it("close.apply (written by the settled-run close) is a known intent", () => {
+    expect(KNOWN_INTENTS).toContain("close.apply");
+    expect(renderOpLine(op({ intent: "close.apply", payload: '{"status":"CLOSED"}' }))).toBe(
+      "close apply t1 → CLOSED",
+    );
   });
 });
 
