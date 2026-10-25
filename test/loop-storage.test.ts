@@ -48,7 +48,12 @@ import {
 } from "../src/segments.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask, listTasks } from "../src/tasks.js";
-import { beginWait, endWait, registerOwnedWait } from "../src/wait-registration.js";
+import {
+  beginWait,
+  endWait,
+  readWaitRegistration,
+  registerOwnedWait,
+} from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -346,6 +351,38 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(db.prepare("SELECT COUNT(*) AS c FROM human_needs").get()).toEqual({ c: 0 });
   });
 
+  it("a v13 file whose wait_registrations predates baselines_json gains the column, rows intact, no version bump", () => {
+    const p = v12Copy();
+    track(openDb({ path: p })).close();
+    raw(p, (r) => {
+      r.exec("DROP TABLE wait_registrations");
+      r.exec(
+        "CREATE TABLE wait_registrations (caller TEXT PRIMARY KEY, refs_json TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('armed', 'waiting')), generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0), updated_at TEXT NOT NULL)",
+      );
+      r.exec(
+        `INSERT INTO wait_registrations VALUES ('c', '[{"kind":"agent","workstream":"alpha","id":"w1"}]', 'armed', 3, 'n')`,
+      );
+    });
+    const db = track(openDb({ path: p }));
+    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(columns(p, "wait_registrations")).toContain("baselines_json");
+    expect(
+      db.prepare("SELECT caller, generation, baselines_json FROM wait_registrations").all(),
+    ).toEqual([{ caller: "c", generation: 3, baselines_json: "{}" }]);
+    // A baseline registers on the repaired table.
+    registerOwnedWait(db, "c", [
+      {
+        kind: "agent",
+        workstream: "alpha",
+        id: "w1",
+        baseline: { afterRuns: 2, incarnation: "i" },
+      },
+    ]);
+    expect(readWaitRegistration(db, "c")?.baselines).toEqual({
+      "agent:alpha/w1": { afterRuns: 2, incarnation: "i" },
+    });
+  });
+
   it("an already-v13 file without wait_registrations gets the table, wait_cursors rows intact (no version bump)", () => {
     const p = v12Copy();
     track(openDb({ path: p })).close();
@@ -361,6 +398,7 @@ describe("a populated v12 DB upgrades to v13", () => {
       "state",
       "generation",
       "updated_at",
+      "baselines_json",
     ]);
     expect(db.prepare("SELECT COUNT(*) AS c FROM wait_registrations").get()).toEqual({ c: 0 });
     expect(db.prepare("SELECT caller, ref, runs FROM wait_cursors").all()).toEqual([

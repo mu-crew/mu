@@ -162,6 +162,7 @@ export {
   finishDelegate,
   getDelegateCall,
   listDelegates,
+  listDelegatesOf,
   markDelegate,
   parseVerdict,
   type RecordRef,
@@ -587,9 +588,13 @@ export {
 } from "./tmux.js";
 export { getParallelTracks, type Track } from "./tracks.js";
 export {
+  type AgentBaseline,
   type AgentReading,
   type AgentWatchHandle,
   type CloseOutcome,
+  DEFAULT_CTL_STUCK_AFTER_MS as WAIT_DEFAULT_CTL_STUCK_AFTER_MS,
+  DEFAULT_STUCK_AFTER_MS as WAIT_DEFAULT_STUCK_AFTER_MS,
+  type StallActionResult,
   WAIT_HEARTBEAT_CAP_MS,
   type WaitEvent,
   type WaitEventKind,
@@ -599,8 +604,10 @@ export {
   WaitRefError,
   type WaitResult,
   type WaitSnapshot,
+  type WaitStallContext,
   waitForEvents,
 } from "./wait.js";
+export { currentCallers } from "./wait-callers.js";
 export { ctlAgentHooks } from "./wait-ctl.js";
 export {
   type CursorKind,
@@ -623,7 +630,9 @@ export {
 export {
   beginWait,
   endWait,
+  type RefBaseline,
   type RegisteredRef,
+  type RegisterRef,
   readWaitRegistration,
   registerOwnedWait,
   WAIT_REF_KINDS,

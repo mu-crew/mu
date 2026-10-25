@@ -45,19 +45,10 @@ import type { TaskStatus, TaskSubstate } from "./status.js";
 let currentWaitSleep: (ms: number) => Promise<void> = (ms) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Default `--stuck-after`: how long an IN_PROGRESS task's owner may sit
- *  in needs_input before the wait reports it. Short because a pi worker
- *  that settles still owning a task is already nudged once to close it;
- *  still waiting after that means it needs the orchestrator. */
-export const DEFAULT_STUCK_AFTER_MS = 120_000;
+export { DEFAULT_CTL_STUCK_AFTER_MS, DEFAULT_STUCK_AFTER_MS } from "../wait-types.js";
 
-/** Default `--stuck-after` for an owner read over its control socket.
- *  ctl's idle is exact (pi's agent_settled) and arrives only after the
- *  close nudge's continuation has run (the nudge fires in
- *  agent_before_settle, before the settle), so an idle owner still
- *  holding the task has already declined to close it. The grace only
- *  covers an orchestrator `send` racing the settle. */
-export const DEFAULT_CTL_STUCK_AFTER_MS = 5_000;
+import { DEFAULT_CTL_STUCK_AFTER_MS, DEFAULT_STUCK_AFTER_MS } from "../wait-types.js";
+
 const defaultStuckWarn: (msg: string) => void = (msg) => {
   // --json: the stall is in the document (`stuck`, nextSteps); stderr stays empty.
   if (isJsonMode()) return;
@@ -411,7 +402,10 @@ export async function waitForTasks(
     db,
     refs.map((r) => ({ kind: "task" as const, workstream: r.workstreamName, id: r.name })),
     {
-      all: opts.any !== true,
+      callers: [],
+      mode: opts.any === true ? "first" : "all",
+      eventScope: "refs",
+      stuckAfterMs: 0,
       uncapped: true,
       status: target,
       timeoutMs: opts.timeoutMs ?? 600_000,

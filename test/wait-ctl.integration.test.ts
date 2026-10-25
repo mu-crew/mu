@@ -13,7 +13,7 @@ import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { getTask } from "../src/tasks.js";
 import { waitForEvents } from "../src/wait.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
-import { readCursors } from "../src/wait-cursor.js";
+import { readCursors, recordCursors } from "../src/wait-cursor.js";
 import { registerOwnedWait } from "../src/wait-registration.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { agentRef, answer, mkDelegate, mkOwnedTask, taskRef, useWaitDb } from "./_wait-fixtures.js";
@@ -25,6 +25,8 @@ afterEach(() => {
 });
 
 interface Fake {
+  /** The `afterRuns` of every ctl `wait` request received, in order. */
+  waitAfter: (number | undefined)[];
   settle: (text: string) => void;
   waits: () => number;
 }
@@ -34,6 +36,7 @@ async function fakePi(name: string, state: "busy" | "idle", runs = 0): Promise<F
   let n = runs;
   let lastText = "";
   const held: Socket[] = [];
+  const waitAfter: (number | undefined)[] = [];
   const status = () => ({
     v: 1,
     ok: true,
@@ -54,6 +57,7 @@ async function fakePi(name: string, state: "busy" | "idle", runs = 0): Promise<F
         const req = JSON.parse(line) as { op: string; afterRuns?: number };
         if (req.op === "hello") sock.end(encode(helloReply()));
         else if (req.op === "wait") {
+          waitAfter.push(req.afterRuns);
           if (req.afterRuns !== undefined && n > req.afterRuns && st === "idle") {
             sock.end(encode({ ...status(), lastText, ended: "settled" }));
           } else {
@@ -70,6 +74,7 @@ async function fakePi(name: string, state: "busy" | "idle", runs = 0): Promise<F
   servers.push(server);
   await new Promise<void>((r) => server.listen(path, () => r()));
   return {
+    waitAfter,
     settle: (text) => {
       st = "idle";
       n++;
@@ -93,7 +98,7 @@ describe("waitForEvents with the ctl hooks", () => {
       sync: false,
       pollMs: 20,
       timeoutMs: 5000,
-      caller: "pi:s",
+      callers: ["pi:s"],
     });
     expect(r.event).toMatchObject({ kind: "settled", incarnation: INC, runs: 1 });
     expect(r.refs[0]?.close).toMatchObject({ applied: true, task: "t1" });
@@ -114,7 +119,7 @@ describe("waitForEvents with the ctl hooks", () => {
       sync: false,
       pollMs: 20,
       timeoutMs: 5000,
-      caller,
+      callers: [caller],
     });
     expect(r.event).toMatchObject({ kind: "delegate", ref: { id: call } });
     // The worker was never settled: its ctl wait was held the whole time, and is gone now.
@@ -126,7 +131,7 @@ describe("waitForEvents with the ctl hooks", () => {
       sync: false,
       pollMs: 20,
       timeoutMs: 5000,
-      caller,
+      callers: [caller],
       signal: ac.signal,
     });
     expect(again.interrupted).toBe(true);
@@ -146,10 +151,83 @@ describe("waitForEvents with the ctl hooks", () => {
       sync: false,
       pollMs: 20,
       timeoutMs: 5000,
-      caller,
+      callers: [caller],
       applyClose: false,
     });
     expect(r.event).toMatchObject({ kind: "settled", runs: 1 });
     expect(r.refs[0]?.lastText).toBe("early answer");
+  });
+
+  describe("the producer fence (unconsumed baseline)", () => {
+    const run = async (caller: string, over: { timeoutMs?: number } = {}) =>
+      waitForEvents(env.db, [], {
+        ...ctlAgentHooks(env.db),
+        sync: false,
+        pollMs: 20,
+        timeoutMs: over.timeoutMs ?? 5000,
+        callers: [caller],
+        applyClose: false,
+      });
+    const agentId = (name: string) =>
+      (env.db.prepare("SELECT id FROM agents WHERE name = ?").get(name) as { id: number }).id;
+
+    it("a send that settled before the wait started is caught: the baseline predates the run", async () => {
+      await mkOwnedTask(env.db, "t1", "w1");
+      const pi = await fakePi("w1", "idle", 4); // the run after the send already settled: runs 5
+      pi.settle("answer to the send");
+      registerOwnedWait(env.db, "pi:b1", [
+        {
+          ...agentRef("w1"),
+          baseline: { afterRuns: 4, incarnation: INC, agentId: agentId("w1") },
+        },
+      ]);
+      const r = await run("pi:b1");
+      expect(r.event).toMatchObject({ kind: "settled", runs: 5 });
+      expect(r.refs[0]?.lastText).toBe("answer to the send");
+    });
+
+    it("a baseline at the current run delivers nothing old: only the NEXT run counts", async () => {
+      await mkOwnedTask(env.db, "t1", "w1");
+      const pi = await fakePi("w1", "idle", 4);
+      pi.settle("already seen"); // runs 5
+      registerOwnedWait(env.db, "pi:b2", [
+        { ...agentRef("w1"), baseline: { afterRuns: 5, incarnation: INC, agentId: agentId("w1") } },
+      ]);
+      setTimeout(() => pi.settle("the next run"), 40);
+      const r = await run("pi:b2");
+      expect(r.event).toMatchObject({ kind: "settled", runs: 6 });
+      expect(r.refs[0]?.lastText).toBe("the next run");
+    });
+
+    it("a baseline of another incarnation or a replaced registry row is not this agent's: counted from the cursor/0", async () => {
+      await mkOwnedTask(env.db, "t1", "w1");
+      const pi = await fakePi("w1", "idle", 0);
+      pi.settle("first run of this process"); // runs 1
+      registerOwnedWait(env.db, "pi:b3", [
+        {
+          ...agentRef("w1"),
+          baseline: { afterRuns: 99, incarnation: "old-process", agentId: agentId("w1") },
+        },
+      ]);
+      expect((await run("pi:b3")).event).toMatchObject({ kind: "settled", runs: 1 });
+      registerOwnedWait(env.db, "pi:b4", [
+        { ...agentRef("w1"), baseline: { afterRuns: 99, incarnation: INC, agentId: 424242 } },
+      ]);
+      expect((await run("pi:b4")).event).toMatchObject({ kind: "settled", runs: 1 });
+    });
+
+    it("the consumed cursor only ever raises the baseline: a delivered run is never redelivered", async () => {
+      await mkOwnedTask(env.db, "t1", "w1");
+      const pi = await fakePi("w1", "idle", 0);
+      pi.settle("done"); // runs 1
+      registerOwnedWait(env.db, "pi:b5", [
+        { ...agentRef("w1"), baseline: { afterRuns: 0, incarnation: INC, agentId: agentId("w1") } },
+      ]);
+      recordCursors(env.db, "pi:b5", [{ key: "agent:w/w1", token: { incarnation: INC, runs: 1 } }]);
+      const r = await run("pi:b5", { timeoutMs: 120 });
+      expect(r.timedOut).toBe(true);
+      // The watch itself counted past the consumed run (not the older baseline).
+      expect(pi.waitAfter[0]).toBe(1);
+    });
   });
 });

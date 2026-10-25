@@ -222,7 +222,7 @@ function delegatesOf(
       updated_at: c.updatedAt,
     }));
   const labels = [...new Set(calls.flatMap((c) => (c.wave === null ? [] : [c.wave])))].reverse();
-  const waves = labels.map((wave) => waveOf(verdictTally(db, workstream, wave, caller), wave));
+  const waves = labels.map((wave) => waveOf(verdictTally(db, workstream, wave, [caller]), wave));
   return { delegates, waves };
 }
 

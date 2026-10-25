@@ -177,14 +177,21 @@ describe("verdictTally by caller (v_wait_engine)", () => {
     done(reg({ ...rec("crew", "f1"), caller: "pi:b" }).callId, "VERDICT: REFUTED");
     const all = finding(verdictTally(db, "scratch", "w"), "crew/f1");
     expect(all).toMatchObject({ confirmed: 1, refuted: 1 });
-    expect(finding(verdictTally(db, "scratch", "w", "pi:a"), "crew/f1")).toMatchObject({
+    expect(finding(verdictTally(db, "scratch", "w", ["pi:a"]), "crew/f1")).toMatchObject({
       confirmed: 1,
       refuted: 0,
     });
-    expect(finding(verdictTally(db, "scratch", "w", "pi:b"), "crew/f1")).toMatchObject({
+    expect(finding(verdictTally(db, "scratch", "w", ["pi:b"]), "crew/f1")).toMatchObject({
       confirmed: 0,
       refuted: 1,
     });
-    expect(verdictTally(db, "scratch", "w", "pi:none").findings).toEqual([]);
+    expect(verdictTally(db, "scratch", "w", ["pi:none"]).findings).toEqual([]);
+    // An empty set owns nothing: never every caller.
+    expect(verdictTally(db, "scratch", "w", []).findings).toEqual([]);
+    // A set is the union: managed ws/name and pi:session together.
+    expect(finding(verdictTally(db, "scratch", "w", ["pi:a", "pi:b"]), "crew/f1")).toMatchObject({
+      confirmed: 1,
+      refuted: 1,
+    });
   });
 });

@@ -26,7 +26,7 @@ import {
 } from "./_wait-fixtures.js";
 
 const env = useWaitDb();
-const fast = { pollMs: 1, sync: false, timeoutMs: 1000 } as const;
+const fast = { callers: [], pollMs: 1, sync: false, timeoutMs: 1000 } as const;
 const close = (id: string, ws = "w") => closeTask(env.db, id, { workstream: ws, evidence: "e" });
 const owed = (caller: string) => readWaitRegistration(env.db, caller)?.refs.map((r) => r.id) ?? [];
 
@@ -73,13 +73,13 @@ describe("closed tasks: delivered once, not replayed forever", () => {
     mkTask(env.db, "b");
     close("a");
     registerOwnedWait(env.db, "c", [taskRef("a"), taskRef("b")]);
-    const r1 = await waitForEvents(env.db, [], { ...fast, caller: "c" });
+    const r1 = await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
     expect(r1.event).toMatchObject({ kind: "closed", ref: { id: "a" } });
     expect(owed("c")).toEqual(["b"]);
     expect(Object.keys(r1.cursor)).toEqual([cursorKey("task", "w", "a")]);
     // Re-registering the history does not make it news again: the token holds.
     registerOwnedWait(env.db, "c", [taskRef("a")]);
-    const r2 = await waitForEvents(env.db, [], { ...fast, caller: "c", timeoutMs: 15 });
+    const r2 = await waitForEvents(env.db, [], { ...fast, callers: ["c"], timeoutMs: 15 });
     expect(r2.timedOut).toBe(true);
     expect(owed("c")).toEqual(["a", "b"]);
   });
@@ -88,11 +88,11 @@ describe("closed tasks: delivered once, not replayed forever", () => {
     mkTask(env.db, "a");
     close("a");
     registerOwnedWait(env.db, "c", [taskRef("a")]);
-    await waitForEvents(env.db, [], { ...fast, caller: "c" });
+    await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
     openTask(env.db, "a", { workstream: "w" });
     closeTask(env.db, "a", { workstream: "w", evidence: "second" });
     registerOwnedWait(env.db, "c", [taskRef("a")]);
-    const r = await waitForEvents(env.db, [], { ...fast, caller: "c" });
+    const r = await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
     expect(r.event).toMatchObject({ kind: "closed", ref: { id: "a" } });
   });
 
@@ -100,8 +100,8 @@ describe("closed tasks: delivered once, not replayed forever", () => {
     mkTask(env.db, "a");
     close("a");
     registerOwnedWait(env.db, "c", [taskRef("a")]);
-    await waitForEvents(env.db, [], { ...fast, caller: "c" });
-    const r = await waitForEvents(env.db, [taskRef("a")], { ...fast, caller: "c" });
+    await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
+    const r = await waitForEvents(env.db, [taskRef("a")], { ...fast, callers: ["c"] });
     expect(r.event.kind).toBe("closed");
   });
 
@@ -121,12 +121,12 @@ describe("first keeps the siblings it did not return", () => {
     close("a");
     close("b");
     registerOwnedWait(env.db, "c", [taskRef("a"), taskRef("b")]);
-    const r1 = await waitForEvents(env.db, [], { ...fast, caller: "c" });
+    const r1 = await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
     expect(r1.event.ref?.id).toBe("a");
     expect(owed("c")).toEqual(["b"]);
     expect(Object.keys(readCursors(env.db, "c"))).not.toContain(cursorKey("task", "w", "b"));
     expect(readCursors(env.db, "c").has(cursorKey("task", "w", "b"))).toBe(false);
-    const r2 = await waitForEvents(env.db, [], { ...fast, caller: "c" });
+    const r2 = await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
     expect(r2.event.ref?.id).toBe("b");
     expect(owed("c")).toEqual([]);
   });
@@ -136,12 +136,12 @@ describe("first keeps the siblings it did not return", () => {
     const d2 = mkDelegate(env.db, "c");
     answer(env.db, d1);
     answer(env.db, d2);
-    const a = await waitForEvents(env.db, [], { ...fast, caller: "c" });
-    const b = await waitForEvents(env.db, [], { ...fast, caller: "c" });
+    const a = await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
+    const b = await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
     expect([a.event.ref?.id, b.event.ref?.id]).toEqual([d1, d2]);
     expect(readCursors(env.db, "c").size).toBe(2);
     // History is quiet now: nothing owed, nothing to wait for.
-    await expect(waitForEvents(env.db, [], { ...fast, caller: "c" })).rejects.toThrow(
+    await expect(waitForEvents(env.db, [], { ...fast, callers: ["c"] })).rejects.toThrow(
       /nothing to wait/,
     );
   });
@@ -149,10 +149,10 @@ describe("first keeps the siblings it did not return", () => {
   it("a timeout and an interrupt deliver nothing: everything stays owed", async () => {
     mkTask(env.db, "a");
     registerOwnedWait(env.db, "c", [taskRef("a")]);
-    await waitForEvents(env.db, [], { ...fast, caller: "c", timeoutMs: 10 });
+    await waitForEvents(env.db, [], { ...fast, callers: ["c"], timeoutMs: 10 });
     const ac = new AbortController();
     ac.abort();
-    await waitForEvents(env.db, [], { ...fast, caller: "c", signal: ac.signal });
+    await waitForEvents(env.db, [], { ...fast, callers: ["c"], signal: ac.signal });
     expect(owed("c")).toEqual(["a"]);
     expect(readCursors(env.db, "c").size).toBe(0);
     expect(readWaitRegistration(env.db, "c")?.state).toBe("armed");
@@ -165,7 +165,7 @@ describe("first keeps the siblings it did not return", () => {
     registerOwnedWait(env.db, "c", [taskRef("a")]);
     const r = await waitForEvents(env.db, [], {
       ...fast,
-      caller: "c",
+      callers: ["c"],
       beforePoll: async () => {
         registerOwnedWait(env.db, "c", [taskRef("late")]);
       },
@@ -188,7 +188,7 @@ describe("agents: incarnation and runs", () => {
     w.settle(settled(inc, runs));
     return waitForEvents(env.db, [], {
       ...fast,
-      caller: "c",
+      callers: ["c"],
       applyClose: false,
       readAgents: async () => new Map(),
       watchAgent: async () => w.handle,
@@ -234,7 +234,7 @@ describe("agents: incarnation and runs", () => {
     w.settle(settled("i1", 5));
     await waitForEvents(env.db, [], {
       ...fast,
-      caller: "c",
+      callers: ["c"],
       applyClose: false,
       readAgents: async () => new Map(),
       watchAgent: async (_ref, _sig, ctx) => {
@@ -253,7 +253,7 @@ describe("one active wait per caller", () => {
     registerOwnedWait(env.db, "c", [taskRef("a")]);
     const r = await waitForEvents(env.db, [], {
       ...fast,
-      caller: "c",
+      callers: ["c"],
       beforePoll: async () => {
         // A newer wait of the same caller starts while this one is running.
         const { beginWait } = await import("../src/wait-registration.js");
@@ -271,8 +271,8 @@ describe("one active wait per caller", () => {
     close("a");
     registerOwnedWait(env.db, "c1", [taskRef("a")]);
     registerOwnedWait(env.db, "c2", [taskRef("a")]);
-    await waitForEvents(env.db, [], { ...fast, caller: "c1" });
-    const r = await waitForEvents(env.db, [], { ...fast, caller: "c2" });
+    await waitForEvents(env.db, [], { ...fast, callers: ["c1"] });
+    const r = await waitForEvents(env.db, [], { ...fast, callers: ["c2"] });
     expect(r.event.ref?.id).toBe("a");
   });
 });

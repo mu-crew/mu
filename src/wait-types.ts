@@ -1,15 +1,22 @@
 // mu — the types and errors of waitForEvents (src/wait.ts): refs, events,
 // snapshots, results, the options and the agent reader/watch shapes.
 
-import type { RuntimeState } from "./agent-state.js";
+import type { RuntimeState, StateReading } from "./agent-state.js";
+import type { AgentObservation } from "./agents/observe.js";
 import type { CtlBlocked } from "./ctl/protocol.js";
 import type { VerdictTally } from "./delegates.js";
+import type { HumanNeeded } from "./human-needed.js";
 import type { TaskStatus } from "./tasks/status.js";
 import type { CursorToken } from "./wait-cursor.js";
 import type { WaitRefKind } from "./wait-registration.js";
 
 /** The heartbeat cap: no wait outlives it; a requested 0 means this. */
 export const WAIT_HEARTBEAT_CAP_MS = 1_500_000;
+
+/** Default `stuckAfterMs`: how long an IN_PROGRESS task's owner may sit needs_input before the wait reports a stall. */
+export const DEFAULT_STUCK_AFTER_MS = 120_000;
+/** The same for an owner read over a working control socket: ctl's idle is exact, so only an `orchestrator send` racing the settle needs the grace. */
+export const DEFAULT_CTL_STUCK_AFTER_MS = 5_000;
 
 export interface WaitRef {
   kind: WaitRefKind;
@@ -61,12 +68,21 @@ export interface WaitSnapshot {
   sessionFile?: string;
   blocked?: CtlBlocked;
   unknownReason?: string;
+  /** Agent: the registry row id (a number; never pi's incarnation string). */
+  agentId?: number;
+  paneId?: string;
+  /** Agent: true only for a ctl run that ended `settled`. */
+  settled?: boolean;
+  /** Agent: `lastText` lost its head to the cap, so a CLOSE block in it cannot be trusted. */
+  lastTextTruncated?: boolean;
   /** Agent: the ctl run count this wait counted from. */
   afterRuns?: number;
   /** Agent: observed busy during this wait. */
   wasBusy?: boolean;
   /** Delegate: the parsed verdict label of a done answer. */
   verdict?: string | null;
+  /** Task: its owner has been stalled long enough to report (IN_PROGRESS, owner needs_input or ctl broken). */
+  stuck?: boolean;
   /** The ref's completion condition is met (task at target, agent settled, delegate terminal). */
   fired: boolean;
   dead: boolean;
@@ -74,7 +90,43 @@ export interface WaitSnapshot {
   close?: CloseOutcome;
 }
 
+/** What a handled stall did; `disposition` says whether the wait goes on. */
+export interface StallActionResult {
+  /** `continue`: keep waiting (the ref is not consumed). `return`: end the wait with the stall. */
+  disposition: "continue" | "return";
+  action: "steer" | "release";
+  state: "sent" | "released" | "refused" | "unknown" | "budget-exhausted";
+  msgId?: string;
+  incarnation?: string;
+  /** The ctl run baseline after a send: the wait counts the owner's next run from here. */
+  afterRuns?: number;
+  reason?: string;
+}
+
+/** What the engine knows when it hands a stall to `handleStall`. The hook owns policy and effects. */
+export interface WaitStallContext {
+  /** The caller that owns the stalled ref (the first of the set when none does). */
+  caller: string;
+  /** That caller's registration generation; null for an unregistered explicit wait (not a bypass of ownership). */
+  generation: number | null;
+  /** The stalled TASK (its owner is `owner`). */
+  ref: WaitRef;
+  /** `tasks.id` of the stalled task. */
+  taskId: number;
+  /** The task's revision when the stall was seen. */
+  revision: number;
+  /** The task's owner: registry id, pane and the authoritative ctl facts. */
+  owner: AgentObservation;
+  /** Stable for one observation of one stall: task, owner id, ctl incarnation, runs, since. */
+  stallToken: string;
+  /** Milliseconds left to the wait's deadline when the hook was called. */
+  deadlineMs: number;
+  /** Aborts when the wait aborts or returns: a not-yet-written action must not be written. */
+  signal: AbortSignal;
+}
+
 export interface WaitResult {
+  /** The event that ended the wait; `heartbeat` on a timeout, `interrupted` on an abort. */
   event: WaitEvent;
   /** Targets in input order, then the delivered refs that are not targets. */
   refs: WaitSnapshot[];
@@ -82,11 +134,15 @@ export interface WaitResult {
   interrupted: boolean;
   /** 0 fired or timed out, 6 dead, 7 input or stall, 130 interrupted. */
   exit: 0 | 6 | 7 | 130;
-  /** The caller's consumed tokens after this wait (empty without a caller). */
+  /** The callers' consumed tokens after this wait (empty without callers). */
   cursor: Record<string, CursorToken>;
-  /** The wave's tally, when `wave` was given. */
-  wave?: VerdictTally;
-  /** True when a newer wait of this caller superseded this one: nothing was consumed. */
+  /** Open human needs of the callers (never another caller's). */
+  humanNeeds: HumanNeeded[];
+  /** The wave's tally over the callers' calls, when `wave` was given. */
+  tally?: VerdictTally;
+  /** What `handleStall` did for a returned stall. */
+  action?: StallActionResult;
+  /** True when a newer wait of the same caller superseded this one: nothing was consumed. */
   superseded?: boolean;
   /** Everything watched is done and was already delivered: nothing is owed. */
   drained?: boolean;
@@ -106,6 +162,19 @@ export interface AgentReading {
   lastError?: string;
   sessionFile?: string;
   agentId?: number;
+  paneId?: string;
+  /** When the state began (ms epoch); stall detection reads it. */
+  since?: number | null;
+  source?: StateReading["source"];
+  /** How the control socket answered (pi agents). */
+  ctl?: StateReading["ctl"];
+}
+
+/** The unconsumed run baseline a producer registered for an agent ref. */
+export interface AgentBaseline {
+  afterRuns: number;
+  incarnation?: string;
+  agentId?: number;
 }
 
 export interface AgentWatchHandle {
@@ -116,14 +185,23 @@ export interface AgentWatchHandle {
 }
 
 export interface WaitOptions {
-  /** Whose registration, cursors and delegate calls this wait owns. Without one there are none. */
-  caller?: string;
-  /** Delegate calls of this wave (this caller's) are targets; the result carries their tally. */
+  /**
+   * Who owns this wait: a SET, because one orchestrator is known under two
+   * names: the managed `<ws>/<agent>` (spawned workers, human needs) and
+   * `pi:<session>` (delegate calls). Owned refs, delegates, human needs and
+   * the wave tally are the union over the set. `[]` is an explicit-refs wait:
+   * no registration, no cursors, no owned refs, never an all-caller fallback.
+   * See `currentCallers`.
+   */
+  callers: readonly string[];
+  /** `first` (default): the first event ends the wait. `all`: every target must be done. */
+  mode?: "first" | "all";
+  /** `owned` (default): the callers' owned refs also end the wait. `refs`: only the listed refs do. */
+  eventScope?: "owned" | "refs";
+  /** Delegate calls of this wave (the callers' only) are targets; the result carries their tally. */
   wave?: { workstream: string; name: string };
   /** The open transitive blockers of this task are targets, re-read each iteration. */
   blockersOf?: { workstream: string; id: string };
-  /** Every target must be done (default: the first event ends the wait). */
-  all?: boolean;
   /** Task target status (default CLOSED). */
   status?: TaskStatus;
   /** `idle` (default): a run ending. `text`: a bounded regex over a settled run's lastText or a done task's report. */
@@ -132,6 +210,17 @@ export interface WaitOptions {
   timeoutMs?: number;
   pollMs?: number;
   signal?: AbortSignal;
+  /**
+   * How long an IN_PROGRESS work task's owner may sit needs_input (or with a
+   * dead control socket) before the wait reports a `stall`. Default 120 s,
+   * 5 s for an owner read over a working ctl socket; an explicit value
+   * applies to both; 0 disables detection.
+   */
+  stuckAfterMs?: number;
+  /** `exit` (default): a stall ends the wait. `steer`/`release`: call `handleStall` (no handler: same as exit). */
+  onStall?: "exit" | "steer" | "release";
+  /** Raced with the loop, never awaited serially; called once per `stallToken`. */
+  handleStall?: (ctx: WaitStallContext) => Promise<StallActionResult>;
   /** Called before every iteration; a throw propagates. */
   beforePoll?: () => Promise<void>;
   /** One batched, non-blocking read per iteration, keyed `<workstream>/<name>`. */
@@ -142,14 +231,15 @@ export interface WaitOptions {
   /**
    * The blocking read of a future settle (the ctl `wait`): raced, never
    * awaited serially. undefined = poll the agent instead. `ctx.owed` marks a
-   * ref the caller only owns (registered): its unconsumed runs still count,
-   * so with no `ref.afterRuns` the hook counts past `ctx.cursor` (same
-   * incarnation) or from run 0.
+   * ref the callers only own (registered): its unconsumed runs still count.
+   * `ctx.baseline` is the producer's registered unconsumed baseline (already
+   * checked against the registry id; the hook checks the incarnation) and
+   * `ctx.cursor` the consumed token.
    */
   watchAgent?: (
     ref: WaitRef,
     signal: AbortSignal,
-    ctx: { owed: boolean; cursor?: CursorToken },
+    ctx: { owed: boolean; cursor?: CursorToken; baseline?: AgentBaseline },
   ) => Promise<AgentWatchHandle | undefined>;
   /** Apply settled CLOSE blocks (default true). Needs ctl facts: a polled reading never closes. */
   applyClose?: boolean;
@@ -157,7 +247,7 @@ export interface WaitOptions {
   sync?: boolean;
   /** Called once when every watched agent target reads unknown on the first iteration. */
   onInitialUnknown?: (agents: readonly WaitSnapshot[]) => void;
-  /** Called with the targets' snapshots every iteration, before the pick; a throw propagates (the task adapter's stuck logic). */
+  /** Called with the targets' snapshots every iteration, before the pick; a throw propagates (the task adapter's legacy stuck warning). */
   inspect?: (snaps: readonly WaitSnapshot[]) => Promise<void>;
   /** Poll sleep seam (the adapters'). Default: an abortable timer. */
   sleep?: (ms: number) => Promise<void>;

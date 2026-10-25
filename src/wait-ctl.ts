@@ -27,16 +27,24 @@ export function ctlAgentHooks(db: Db): Required<Pick<WaitOptions, "readAgents" |
       const sock = agentCtlSocket(db, agent);
       let afterRuns = ref.afterRuns;
       if (afterRuns === undefined && ctx.owed) {
-        // Owed work counts from the last consumed run of THIS pi process, else
-        // from the start: a run that finished before the wait still arrives.
+        // Owed work counts from the producer's UNCONSUMED baseline (a send that
+        // settles before this wait started is still caught), else from the last
+        // consumed run of THIS pi process, else from the start. A baseline of
+        // another incarnation or registry row is not this agent's.
         if (!expectsCtl(agent, sock)) return undefined;
         const probe = await ctlProbe(sock);
         if (probe.kind !== "ok") return undefined;
-        const same =
-          ctx.cursor !== undefined &&
-          probe.incarnation !== undefined &&
-          ctx.cursor.incarnation === probe.incarnation;
-        afterRuns = same && ctx.cursor !== undefined ? ctx.cursor.runs : 0;
+        const inc = probe.incarnation;
+        const b = ctx.baseline;
+        const baseOk =
+          b !== undefined &&
+          (b.agentId === undefined || b.agentId === agent.incarnation) &&
+          (b.incarnation === undefined || (inc !== undefined && b.incarnation === inc));
+        const cursorOk =
+          ctx.cursor !== undefined && inc !== undefined && ctx.cursor.incarnation === inc;
+        const fromCursor = cursorOk && ctx.cursor !== undefined ? ctx.cursor.runs : 0;
+        // The consumed cursor only ever raises the baseline: never re-deliver.
+        afterRuns = baseOk && b !== undefined ? Math.max(b.afterRuns, fromCursor) : fromCursor;
       }
       return watchAgentRun(agent, sock, signal, {
         ...(afterRuns !== undefined ? { afterRuns } : {}),
