@@ -549,8 +549,23 @@ root cause. The README defaults stand. The final measurement is
 `v_eval_next`: grammar-neutral judges that assert state and provenance,
 not verb spellings, three reps per cell, a paired comparison, and a
 default kept unless a candidate wins by more than the rep spread.
-Three post-build tournaments remain (user decision, 2026-10-25), all run
-on the finished code with the same harness and rule. `t_surface` goes
+**The eval is the feedback loop (user decision, 2026-10-25).** mu-next
+must be provably better for its agent users than 3.x, whose surface came
+from guesses and accidents. Every unit that changes what an agent sees
+runs its scenario subset before merge: a scripted check (hard gate) and a
+small live haiku run against the same subset on 3.13.3 (blocks only on a
+destructive action or a completion drop beyond the rep spread). The
+tournaments below are standing hill-climbs on cheap, reversible surfaces,
+scored on cost (tokens + 10 × mu errors + 50 × wrong actions) with zero
+destructive actions and no completion drop as hard constraints; haiku
+with 3+ reps leads. Four scenarios (worker_dies, wrong_id,
+wait_receipt_race, single_channel_host) are a holdout never tuned
+against. Judges are frozen at v2.1 and change only when a real run
+scored wrong. After cut-over the matrix is the release gate and the
+bench for new models, and museum mining feeds new scenarios.
+
+Three hill-climbs follow (user decision, 2026-10-25), all on the
+finished code with the same harness and score. `t_surface` goes
 first: friction mined from the `v_eval_next` transcripts plus a
 cold-guess probe (no skill loaded) pick at most six hotspot verbs,
 flags or return fields; candidates land as aliases or envelope-internal
