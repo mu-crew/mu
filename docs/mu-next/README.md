@@ -549,6 +549,11 @@ root cause. The README defaults stand. The final measurement is
 `v_eval_next`: grammar-neutral judges that assert state and provenance,
 not verb spellings, three reps per cell, a paired comparison, and a
 default kept unless a candidate wins by more than the rep spread.
+Two post-build tournaments remain (user decision, 2026-10-25), both run
+on the finished code with the same harness and rule: `t_skill` (the
+shipped skill and recipes vs three variants within the prose caps) and
+`t_errors` (one-line teaching errors with executable hints vs a terse
+style; text only, codes and envelope unchanged).
 
 **Eval harness (the judge).** ~10 scripted scenarios from real
 failures: fan-out with gates; refute with verdicts; worker dies; API
