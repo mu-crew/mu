@@ -488,6 +488,15 @@ describe("rebuildInto", () => {
       expect(report.machineLocalLost).toEqual([{ table: "task_auto", rows: 1 }]);
     });
 
+    it("counts human_needs (caller ownership cannot be rebuilt)", () => {
+      seedRealisticSource();
+      db.prepare(
+        "INSERT INTO human_needs (task_id, caller) SELECT id, 'demo/o' FROM tasks LIMIT 1",
+      ).run();
+      const report = rebuildInto(db, { targetPath: targetPath() });
+      expect(report.machineLocalLost).toEqual([{ table: "human_needs", rows: 1 }]);
+    });
+
     it("counts worktrees too", () => {
       seedRealisticSource();
       seedAgent();

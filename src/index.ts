@@ -233,6 +233,13 @@ export {
   withHostChannel,
 } from "./hosts.js";
 export {
+  type HumanNeeded,
+  HumanNeededInvalidError,
+  type HumanNeededOptions,
+  openHumanNeeds,
+  recordHumanNeeded,
+} from "./human-needed.js";
+export {
   type CaptureIntent,
   KNOWN_INTENTS,
   KNOWN_VERBS,
@@ -426,6 +433,7 @@ export {
   getTaskEdges,
   getTaskEdgesWithStatus,
   getWaitPollCount,
+  HumanTaskError,
   type IdFromTitleResult,
   InvalidSubstateError,
   idFromTitle,

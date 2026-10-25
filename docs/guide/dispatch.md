@@ -206,6 +206,9 @@ mu task release build -w auth
 - `--if-ready` closes only when every blocker is closed. Otherwise it
   lists the open blockers and exits 0.
 - A parked task leaves the ready set, and its dependents keep waiting.
+- `mu human-needed <reason>` records a parked `human` task for a decision only a
+  person can make. It never becomes ready and resolves only by `mu task close`
+  (unpark, claim and a CLOSE block are refused).
 - `release` clears the owner and returns `IN_PROGRESS` to `OPEN`.
 
 ## Authorise tasks for the executor

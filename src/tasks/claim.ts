@@ -21,6 +21,7 @@ import { withOpContext } from "../op-context.js";
 import { assertTaskRevision } from "../revision.js";
 import {
   ClaimerNotRegisteredError,
+  HumanTaskError,
   TaskAlreadyOwnedError,
   TaskInTriageError,
   TaskNotFoundError,
@@ -419,9 +420,16 @@ async function claimTaskImpl(
  *  UPDATE's `status = 'OPEN'` CASE already maps parked → active, so a
  *  forced claim needs nothing else. */
 function assertNotParked(
-  task: { name: string; status: TaskStatus; substate: string; workstreamName: string },
+  task: {
+    name: string;
+    kind: string;
+    status: TaskStatus;
+    substate: string;
+    workstreamName: string;
+  },
   opts: ClaimTaskOptions,
 ): void {
+  if (task.kind === "human") throw new HumanTaskError(task.name, task.workstreamName, "claim");
   if (task.status === "OPEN" && task.substate === "parked" && opts.force !== true) {
     throw new TaskParkedError(task.name, task.workstreamName);
   }
