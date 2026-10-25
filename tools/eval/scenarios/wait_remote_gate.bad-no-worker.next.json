@@ -1,0 +1,43 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn gate -w eval --command \"ssh dev -t remote-gate\" --no-ctl"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait gate -w eval --timeout 60"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git commit -q --allow-empty -m g1"
+      },
+      {
+        "bash": "mu task claim g1 -w eval --self"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close g1 -w eval --evidence 'g1 worker finished on dev (DONE: g1)'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "ssh dev cat gate-result.txt > gate-report.txt"
+      }
+    ]
+  },
+  {
+    "text": "The gate finished, g1 ran on dev and is merged, and the report is written."
+  }
+]

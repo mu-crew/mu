@@ -1,0 +1,118 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --task k1 --send 'do k1 and finish with the CLOSE block' --json"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval --task k2 --send 'do k2 and finish with the CLOSE block' --json"
+      },
+      {
+        "bash": "mu agent spawn w3 -w eval --task k3 --send 'do k3 and finish with the CLOSE block' --json"
+      },
+      {
+        "bash": "mu agent spawn w4 -w eval --task k4 --send 'do k4 and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c1",
+          "task": "Check claim-1: README.md in the repo root starts with the line \"# eval repo\". Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c1",
+            "workstream": "eval"
+          },
+          "wave": "claims"
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c2",
+          "task": "Check claim-2: gate.sh in the repo root is a Python script. Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c2",
+            "workstream": "eval"
+          },
+          "wave": "claims"
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c3",
+          "task": "Check claim-3: README.md in the repo root starts with the line \"# eval repo\". Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c3",
+            "workstream": "eval"
+          },
+          "wave": "claims"
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c4",
+          "task": "Check claim-4: gate.sh in the repo root is a Python script. Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c4",
+            "workstream": "eval"
+          },
+          "wave": "claims"
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c5",
+          "task": "Check claim-5: README.md in the repo root starts with the line \"# eval repo\". Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c5",
+            "workstream": "eval"
+          },
+          "wave": "claims"
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c6",
+          "task": "Check claim-6: gate.sh in the repo root is a Python script. Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c6",
+            "workstream": "eval"
+          },
+          "wave": "claims"
+        }
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait -w eval --wave claims --all --json --timeout 180"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait -w eval --all --json --timeout 180"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for n in 1 2 3 4 5 6; do v=$(mu task notes c$n -w eval 2>/dev/null | grep -o 'VERDICT: [A-Z]*' | tail -1); case \"$v\" in *CONFIRMED) mu task close c$n -w eval --evidence \"checked: $v\" ;; *REFUTED) mu task close c$n -w eval --as rejected --why \"claim refuted\" --evidence \"checked: $v\" ;; *) echo \"c$n: no verdict\" ;; esac; done"
+      }
+    ]
+  },
+  {
+    "text": "k1-k4 are done by their workers and all six claims are checked, recorded and closed."
+  }
+]

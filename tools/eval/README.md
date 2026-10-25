@@ -25,6 +25,12 @@ node tools/eval/main.ts matrix --surface 3x --surface "dec-a:next:$R" \
   --model haiku-5-5 --model sonnet-5-5 --scenarios delegate_saturation --out results.jsonl
 ```
 
+## Pending `next` scenarios
+
+A scenario whose `next` golden needs a verb that is not merged yet (the unified `mu wait`, delegate waves through it, settle) keeps its scripts as `<id>.golden.next.pending.json` and `<id>.bad[-name].next.pending.json`, written against the planned README surface, and is listed in `PENDING_NEXT` (`check-rules.ts`). `check --family next` prints `<id> pending: skipped` and runs nothing for it; `--family 3x` is never affected (its `.3x.json` proof stays). Today: `wait_interrupted`, `wait_mixed_refs`, `wait_wave_six`, `wait_wave_starvation` (the judges' native guarantees, a wait that prints the snapshot, one wait over task and agent refs, a per-wave tally inside the wait, only a unified wait can meet them).
+
+The unit that ships the verb flips its scenarios in its own commit, as its tier-1 gate: for each `<id>`, `git mv` every `*.next.pending.json` to `*.next.json`, delete the id from `PENDING_NEXT`, fix any spelling the shipped verb settled differently (the pending scripts use `mu wait [task:<id>|agent:<name>] --all --wave <w> --until-text <re> --json`), then `check --surface <build> --family next --scenarios <ids>` must pass every golden and flag every bad. `test/eval/check.test.ts` fails if a pending file has no listed id, a listed id has no golden and three distinct bads, or a live `.next.json` exists beside a pending one. The holdouts (`worker_dies`, `wait_receipt_race`, `wrong_id`, `single_channel_host`) are never tuned or flipped here.
+
 ## Native guarantees and N/A
 
 A guarantee only a candidate can give (mid-wait delivery, a snapshot printed by the wait itself, one wait verb, receipts) goes through `lifecycle.native()`. Missed on the 3x family it becomes `Verdict.na` (never a pass, never a wrong entry); missed on `next` it is wrong. `score.verdict` turns `na` into `N/A baseline 3.x:` notes plus a `manual workaround` note, `check` marks the golden `(manual workaround: n N/A native)`, and `report` shows an N/A column plus a legend line per scenario. A Completed on such a row is a manual workaround, not the guarantee.

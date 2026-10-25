@@ -1,0 +1,75 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "for w in w1 w2 w3; do mu agent spawn $w -w eval --worktree; done; mu agent list -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim a1 -w eval --for w1; mu task claim a2 -w eval --for w2; mu task claim a3 -w eval --for w3"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for p in 'w1 a1' 'w2 a2' 'w3 a3'; do set -- $p; mu agent send $1 -w eval \"do $2 and finish with the CLOSE block\"; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 w2 w3 -w eval --after-runs 0 --timeout 120 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task list -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task release a1 -w eval && mu agent spawn w4 -w eval --worktree && mu task claim a1 -w eval --for w4 && mu agent send w4 -w eval 'do a1 and finish with the CLOSE block' && mu agent send w2 -w eval 'carry on with a2 and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w4 w2 w3 -w eval --after-runs 0 --timeout 120 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for t in a1 a2 a3; do mu task close $t -w eval --evidence \"worker finished $t\"; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w4 w2 w3; do git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/$w rev-parse HEAD) || exit 1; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "rev=$(mu agent close w1 -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); if [ -n \"$rev\" ]; then mu agent close w1 -w eval --if \"$rev\"; fi"
+      }
+    ]
+  },
+  {
+    "text": "a1, a2 and a3 are done and merged into main."
+  }
+]

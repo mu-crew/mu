@@ -28,6 +28,28 @@ export function extraScripts(
 export const extraBadScripts = (dir: string, id: string, family: Family): string[] =>
   extraScripts(dir, id, family, "bad");
 
+/**
+ * Scenarios whose `next` golden is written against the PLANNED surface (the unified `mu wait`, the
+ * settle hook): their scripts are `<id>.<kind>[-name].next.pending.json`, and `check --family next`
+ * skips them. The unit that ships the verb flips its scenarios in its own commit: `git mv` each
+ * `.next.pending.json` to `.next.json`, delete the id here, and run its tier-1 gate (see
+ * tools/eval/README.md, "Pending scenarios"). 3x is never affected.
+ */
+export const PENDING_NEXT: readonly string[] = [
+  "wait_interrupted",
+  "wait_mixed_refs",
+  "wait_wave_six",
+  "wait_wave_starvation",
+];
+
+/** Pending script files of a scenario in `dir`: <id>.(golden|bad)[-name].next.pending.json, sorted. */
+export function pendingScripts(dir: string, id: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.startsWith(`${id}.`) && f.endsWith(".next.pending.json"))
+    .sort();
+}
+
 /** Notes a scenario's golden run must show (its injected failure really happened). */
 export const GOLDEN_EVIDENCE: Record<string, RegExp[]> = {
   delegate_saturation: [/\brefused=[1-9]/],

@@ -16,6 +16,7 @@ import {
   extraScripts,
   goldenOk,
   missingGoldenEvidence,
+  PENDING_NEXT,
   scriptFile,
 } from "./check-rules.ts";
 import { scenarioDir, sshShim } from "./fixtures.ts";
@@ -305,6 +306,12 @@ export async function runCheck(o: CheckOptions): Promise<number> {
   const scriptDir = mkdtempSync(join(tmpdir(), "mu-eval-check-"));
   try {
     for (const id of ids) {
+      if (o.family === "next" && PENDING_NEXT.includes(id)) {
+        console.log(
+          `${id} pending: skipped (its next scripts are written against the planned surface)`,
+        );
+        continue;
+      }
       const scenario = await loadScenario(id, surface.scenarioRoot);
       const dir = o.scriptDir ?? surface.scenarioRoot ?? scenarioDir();
       const named = (kind: "golden" | "bad") =>

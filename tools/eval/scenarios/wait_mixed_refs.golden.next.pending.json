@@ -1,0 +1,93 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval"
+      },
+      {
+        "bash": "mu agent spawn w3 -w eval"
+      },
+      {
+        "bash": "mu agent spawn gate -w eval --command gate-cmd --no-ctl"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim mx-slow -w eval --for w1"
+      },
+      {
+        "bash": "mu task claim gate -w eval --for w2"
+      },
+      {
+        "bash": "mu task claim mx-race -w eval --for w3"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do mx-slow and finish with the CLOSE block'"
+      },
+      {
+        "bash": "mu agent send w2 -w eval 'do gate and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait task:mx-slow -w eval --timeout 2 --json | tail -5; echo \"mu-exit=${PIPESTATUS[0]}\" > $EVAL_WORKER_DIR/mx-exit.txt; cat $EVAL_WORKER_DIR/mx-exit.txt"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w3 -w eval 'do mx-race and finish with the CLOSE block'; mu wait task:mx-race -w eval --timeout 60 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait task:nosuch-ref -w eval --timeout 600 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait task:mx-fast -w eval --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:gate -w eval --until-text 'GATE-READY-' --timeout 60 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait task:mx-slow task:gate -w eval --all --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "ev() { mu task notes \"$1\" -w eval | grep -o \"eval: .* run=[0-9a-f]*\\|preclosed run=[0-9a-f]*\" | tail -1; }; { echo \"fast: $(ev mx-fast)\"; echo \"ready: $(mu agent read gate -w eval -n 20 | grep -o 'GATE-READY-[0-9a-f]*' | head -1)\"; echo \"slow: $(ev mx-slow)\"; echo \"gate: $(ev gate)\"; echo \"race: $(ev mx-race)\"; echo \"timeout-exit: $(sed -n 's/mu-exit=//p' $EVAL_WORKER_DIR/mx-exit.txt)\"; } > wait-report.txt; cat wait-report.txt"
+      }
+    ]
+  },
+  {
+    "text": "The wait report is written."
+  }
+]

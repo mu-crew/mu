@@ -45,7 +45,9 @@ import {
   closeEarnedWrong,
   delegateFor,
   delegatesInFlight,
+  issuedDelegateArgs,
   QUEUE_FULL,
+  refusedNext,
   verdictFx,
 } from "../observe.ts";
 import { openProbe } from "../probe.ts";
@@ -128,14 +130,14 @@ export function wave(N: number, id: string): Scenario {
       const wrong: string[] = [];
       let completed = true;
       const delegates = run.toolCalls.filter((c) => c.name === "mu_delegate");
-      const okCalls = delegates.filter((c) => !c.isError);
+      const issuedArgs = issuedDelegateArgs(run);
       // refused: a call that failed while the delegate queue was full (2 running + 8 queued): the
       // delegate never started. Observed from the calls and the answers served, not from the prose.
       const endOf = (id: string) =>
         run.events.find((e) => e.kind === "tool_end" && e.id === id)?.t ?? 0;
       const isRefusal = (c: { id: string; isError: boolean }) =>
         c.isError && delegatesInFlight(sb, run, endOf(c.id)) >= QUEUE_FULL;
-      const refused = delegates.filter(isRefusal);
+      const refused = delegates.filter((c) => isRefusal(c) || refusedNext(c));
       const served = answersServed(sb);
       let dupNotes = 0;
       let missing = 0;
@@ -150,7 +152,7 @@ export function wave(N: number, id: string): Scenario {
           if (other !== undefined && Number(other) !== n)
             wrong.push(`c${n} carries the verdict of claim-${other}`);
         }
-        const issued = okCalls.filter((c) => delegateFor(c.args, n)).length;
+        const issued = issuedArgs.filter((a) => delegateFor(a, n)).length;
         if (issued > 1) wrong.push(`claim-${n}: ${issued} delegates issued (duplicate finding)`);
         if (mine.length > 1) {
           dupNotes++;
@@ -223,7 +225,7 @@ export function wave(N: number, id: string): Scenario {
           },
         ],
         notes: [
-          `delegate calls=${delegates.length} issued=${okCalls.length} refused=${refused.length} missingVerdict=${missing} dupNotes=${dupNotes} deliveries=${dels.length} inWait=${inWait} stops=${stopsDuringWork.length} doneAt=${doneAt}`,
+          `delegate calls=${delegates.length} issued=${issuedArgs.length} refused=${refused.length} missingVerdict=${missing} dupNotes=${dupNotes} deliveries=${dels.length} inWait=${inWait} stops=${stopsDuringWork.length} doneAt=${doneAt}`,
           ...nat.flatMap((x) => x.notes),
         ],
       });

@@ -1,0 +1,19 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn gate -w eval --command \"ssh dev -t remote-gate\" --no-ctl"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --host dev --worktree --task g1 --send 'do g1; mu is not on this host' --json"
+      }
+    ]
+  },
+  {
+    "text": "Started g1 on dev."
+  }
+]

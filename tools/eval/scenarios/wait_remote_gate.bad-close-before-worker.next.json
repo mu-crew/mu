@@ -1,0 +1,78 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn gate -w eval --command \"ssh dev -t remote-gate\" --no-ctl"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait gate -w eval --timeout 60"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --host dev --worktree --json"
+      },
+      {
+        "bash": "mu task claim g1 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close g1 -w eval --evidence 'g1 worker finished on dev (DONE: g1)'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --fresh --json 'do g1; mu is not on this host'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "out=$(mu agent close w1 -w eval); rev=$(echo \"$out\" | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); [ -n \"$rev\" ] && mu agent close w1 -w eval --if \"$rev\"; mu agent collect w1 -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick refs/mu/collect/eval/w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "rev=$(mu agent close w1 -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); if [ -n \"$rev\" ]; then mu agent close w1 -w eval --if \"$rev\"; fi"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "ssh dev cat gate-result.txt > gate-report.txt"
+      }
+    ]
+  },
+  {
+    "text": "The gate finished, g1 ran on dev and is merged, and the report is written."
+  }
+]

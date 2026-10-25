@@ -208,3 +208,39 @@ describe("extraBadScripts", () => {
     }
   });
 });
+
+describe("delegate refusal in both families", () => {
+  const call = (name: string, args: Record<string, unknown>, output: string, isError = false) =>
+    ({
+      id: `${name}-${output.length}`,
+      name,
+      args,
+      isError,
+      output,
+      exitCode: null,
+      durationMs: 1,
+    }) as const;
+  const refused = call(
+    "mu_delegate",
+    { label: "c11" },
+    "REFUSED, not started: 2 running ... call pi:s:t-12).",
+  );
+  const accepted = call("mu_delegate", { label: "c1" }, "Delegated to scratch/delegate-c1 ...");
+  const failed = call("mu_delegate", { label: "c9" }, "queue full", true);
+  const run = (toolCalls: ReturnType<typeof call>[]) => ({ toolCalls }) as unknown as RunMetrics;
+
+  it("a durable REFUSED result is a refusal, not an issued call", async () => {
+    const { refusedNext, issuedDelegateArgs } = await import("../../tools/eval/observe.ts");
+    expect(refusedNext(refused)).toBe(true);
+    expect(refusedNext(accepted)).toBe(false);
+    expect(issuedDelegateArgs(run([refused, accepted, failed]))).toEqual([{ label: "c1" }]);
+  });
+
+  it("a reissue naming the refused call's id makes it issued", async () => {
+    const { issuedDelegateArgs } = await import("../../tools/eval/observe.ts");
+    const reissue = call("mu_delegate_reissue", { call_id: "pi:s:t-12" }, "Queued as queued-3");
+    expect(issuedDelegateArgs(run([refused, reissue]))).toEqual([{ label: "c11" }]);
+    const other = call("mu_delegate_reissue", { call_id: "pi:s:t-99" }, "Queued");
+    expect(issuedDelegateArgs(run([refused, other]))).toEqual([]);
+  });
+});
