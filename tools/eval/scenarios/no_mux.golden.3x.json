@@ -1,0 +1,33 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task note n1 -w eval - <<'EOF'\nchecked without a multiplexer\nEOF"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu sql \"SELECT count(*) AS n FROM tasks t JOIN workstreams w ON w.id=t.workstream_id WHERE w.name='eval' AND t.status='OPEN'\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu sync"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close n1 -w eval --evidence 'note added'"
+      }
+    ]
+  },
+  {
+    "text": "n1 has the note and is closed."
+  }
+]

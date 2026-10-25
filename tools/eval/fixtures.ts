@@ -75,6 +75,8 @@ claimed() { SQLITE "SELECT t.local_id FROM tasks t JOIN agents a ON a.id=t.owner
 n=$(grep -oE 'claim-[0-9]+' "$W/last-prompt.$AGENT" 2>/dev/null | head -n1 | cut -d- -f2)
 [ -n "$n" ] || n=$(echo "$AGENT" | sed -nE 's/^delegate-(claim-|c)([0-9]+)(-[0-9]+)?$/\2/p')
 T=$(claimed)
+# mu-next spawns a delegate bound to its own delegate task (claimed for it): that task is not work to run.
+[ "\${AGENT#delegate-}" = "$AGENT" ] || T=""
 # A worker prompted before its task is claimed (3.x cannot claim for an agent not yet spawned, so
 # spawn --send always comes first) waits for the claim like a real pi would wait on its queue,
 # instead of answering with delegate text.

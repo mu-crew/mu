@@ -1,0 +1,50 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --workspace 2>/dev/null || mu agent spawn w1 -w eval --worktree"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task claim o1 -w eval --for w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval 'do o1 and close it'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait o1 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick $(git -C $(mu workspace path w1 -w eval 2>/dev/null || echo $MU_STATE_DIR/worktrees/eval/w1) rev-parse HEAD)"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close c1 -w eval --evidence 'looked myself: confirmed'"
+      },
+      {
+        "bash": "mu task close c2 -w eval --as rejected --why 'looked myself' --evidence 'looked myself: refuted'"
+      }
+    ]
+  },
+  {
+    "text": "done"
+  }
+]
