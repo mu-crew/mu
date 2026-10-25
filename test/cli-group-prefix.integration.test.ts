@@ -16,7 +16,7 @@ let tempDir: string;
 let dbPath: string;
 
 interface LogJson {
-  items: Array<{ seq: number; group: string; intent: string | null; rendered: string }>;
+  items: Array<{ seq: number; group_id: string; intent: string | null }>;
 }
 
 /** Strip SGR so assertions read prose, not escapes. */
@@ -40,7 +40,7 @@ afterEach(() => {
 /** The full group id of the most recent op in `demo`. */
 async function newestGroup(): Promise<string> {
   const r = await runCliJson(["log", "-w", "demo", "--json", "-n", "1"], dbPath);
-  const group = (r.data as LogJson).items[0]?.group;
+  const group = (r.data as LogJson).items[0]?.group_id;
   if (group === undefined) throw new Error("no group id");
   return group;
 }
@@ -128,6 +128,7 @@ describe("group prefix resolution errors", () => {
     const r = await runCliJson(["log", "--group", full, "-w", "demo", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
     const items = (r.data as LogJson).items;
-    expect(items.every((i) => i.group === "abc")).toBe(true);
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((i) => i.group_id === "abc")).toBe(true);
   });
 });
