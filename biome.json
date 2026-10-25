@@ -43,5 +43,11 @@
         "noExplicitAny": "warn"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["test/wait-*.ts", "test/_wait-fixtures.ts"],
+      "linter": { "rules": { "correctness": { "useHookAtTopLevel": "off" } } }
+    }
+  ]
 }

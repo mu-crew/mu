@@ -23,6 +23,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+    "jsx": "react-jsx",
 
     // tsup's bundled rollup-plugin-dts injects `baseUrl: "."` into the
     // compiler options it builds for .d.ts generation (rollup.js ~6837).

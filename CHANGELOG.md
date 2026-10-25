@@ -27,6 +27,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Dashboard shell boot** (`v_dashboard_boot`): bare `mu` on a TTY (stdin and stdout, no `--json`)
+  opens the dashboard; a pipe, script, `--json` or `--help` prints the same help as before. Adds
+  `ink` 8 and `react` 19 (no devtools), `jsx: react-jsx`, and a lazy UI chunk that neither the SDK
+  index nor any other verb loads. The UI reads on a `readonly` connection; ambient sync (ingest at
+  most every 10 s, quiet, one refresh in flight, no reconcile or reap) runs on a separate bounded
+  writable connection outside render, with the DB-inside-`MU_SYNC_DIR` and sync/v1 refusals kept
+  and a final flush on `q`/Esc/SIGTERM/error. A read-only connection cannot ingest, so one
+  connection was not an option. The shell shows counts only; tabs and rows are `v_dashboard_tabs`.
 - **Dashboard read model** (`v_dashboard_core`): `loadDashboard(db, opts)` (`src/dashboard-data.ts`,
   exported from the SDK) is the one read-only projection the dashboard tabs share: every live
   workstream (scratch included), all tasks by status (CLOSED hidden by default, uncapped when
