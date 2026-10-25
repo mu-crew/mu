@@ -16,7 +16,7 @@ mu task close <id> -w <ws> --evidence "$v"   # command + result
 - **Share once.** Common context goes on the umbrella; each brief says `Read:` and holds only what differs.
 - **State the target, not the ban**: "edit only `src/auth/`".
 - **Ask for evidence**: commands run and exit codes.
-- **Refute claims before dispatch.** A brief naming a cause, fix, threshold or code fact needs one recorded [delegate call](tasks-or-calls.md); rewrite on REFUTED. Others carry `REFUTE-EXEMPT: <why>`.
+- **Refutation.** A brief naming a cause, fix, threshold or code fact needs the recorded refutation ([SKILL](../SKILL.md)); any other carries `REFUTE-EXEMPT: <why>`.
 - Never tell a worker to `cd`: its cwd is its worktree.
 
 ## Quoting
