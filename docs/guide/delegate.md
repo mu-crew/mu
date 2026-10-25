@@ -30,9 +30,7 @@ Delegates called in one turn run in parallel.
 - Stop: `mu_delegate_cancel`, or `mu agent abort <name> -w scratch`.
 - The pane closes after a clean finish; died or timed-out panes stay
   as evidence.
-- pi's footer shows how many delegates this session is waiting on, and
-  `N results pending` for delegates that finished but whose answer has
-  not reached the conversation yet (queued behind the running turn).
+- An answer that finishes while a turn is running queues behind it.
   Escape drops those queued answers from pi. The extension then writes
   one line per answer into the conversation, without starting a turn,
   pointing at a copy under `~/.cache/mu/delegate-answers/` and
@@ -46,14 +44,12 @@ Delegates called in one turn run in parallel.
   event to `~/.cache/mu/delegate-trace.log`, for finding a lost answer.
 - Each delegate costs a pane and a pi process. A session runs at most
   `MU_DELEGATE_MAX` at once (default 16). Further calls are queued, up
-  to four times the cap: the footer reads `16 delegates running, 4 queued`,
-  each starts when a slot frees, and `mu_delegate_cancel queued-N`
+  to four times the cap: each starts when a slot frees, and `mu_delegate_cancel queued-N`
   drops one. A queued call has no pane yet, so quitting pi or `/reload`
   drops it; pi warns which ones never started.
 - A delegate that stops on an API error (overloaded, connection, auth)
   keeps its pane. The answer names the error and leaves the choice to
-  the model: re-issue, or record the check as unverified. The footer
-  counts it as `1 failed` until the pane is closed.
+  the model: re-issue, or record the check as unverified.
 - Every answer without a final text (API error, empty, timeout, died,
   `mu_delegate_cancel`) names the delegate's pi session file and, when
   it wrote anything, a copy of its last message so far under

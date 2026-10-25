@@ -676,7 +676,7 @@ export function registerDelegate(
     return text ? saveCopy(name, text, ".partial") : undefined;
   };
   /** Drop a delegate from the in-flight set, start the next queued call
-   *  into the freed slot, and refresh the footer. */
+   *  into the freed slot. */
   const forget = (name: string) => {
     inflight.delete(name);
     drain();
