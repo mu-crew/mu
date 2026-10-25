@@ -8,10 +8,12 @@ The mu pi package (`pi install npm:@mu-crew/mu`) installs the
 - "Delegate a review of src/x.ts to a helper."
 - "Have three helpers investigate A, B, and C."
 
-pi calls `mu_delegate`. It spawns a pi agent in the reserved `scratch`
-workstream and returns at once with the delegate's name and attach
-command. The answer arrives later as a follow-up message; do not poll.
-Delegates called in one turn run in parallel.
+pi calls `mu_delegate`. It registers the call as a task (`kind=delegate`,
+see [Every call is a task](#every-call-is-a-task)), spawns a pi agent in
+the reserved `scratch` workstream and returns at once with the task, the
+delegate's name and attach command. The answer arrives later as a
+follow-up message; do not poll. Delegates called in one turn run in
+parallel.
 
 | Option | Meaning |
 | ------ | ------- |
@@ -25,9 +27,13 @@ Delegates called in one turn run in parallel.
 | `model` | pi `--model` value, appended to the cli's command (`sonnet`, `<provider>/<model>:high`, copied from `pi --list-models`). Varies models across a panel. tmux only: herdr refuses a command override. |
 | `keep` | Keep the pane after it finishes, to talk to it again. |
 | `record` | `{ task, workstream? }` (or `task: "<ws>/<task>"`): write the answer's verdict onto that task as a note. See [Record a verdict](#record-a-verdict). |
+| `wave` | A label for one fan-out; `mu delegates tally` counts its verdicts per judged task. |
+| `workstream` | Holds the delegate task and runs the delegate (default `scratch`). |
 
 - Watch or steer: run the attach command.
-- Stop: `mu_delegate_cancel`, or `mu agent abort <name> -w scratch`.
+- Stop: `mu_delegate_cancel` (a delegate name, a `queued-N` handle or a
+  call id), or `mu agent abort <name> -w scratch`. A cancel is recorded:
+  the task closes `wontfix` with a report.
 - The pane closes after a clean finish; died or timed-out panes stay
   as evidence.
 - An answer that finishes while a turn is running queues behind it.
@@ -45,8 +51,13 @@ Delegates called in one turn run in parallel.
 - Each delegate costs a pane and a pi process. A session runs at most
   `MU_DELEGATE_MAX` at once (default 16). Further calls are queued, up
   to four times the cap: each starts when a slot frees, and `mu_delegate_cancel queued-N`
-  drops one. A queued call has no pane yet, so quitting pi or `/reload`
-  drops it; pi warns which ones never started.
+  drops one. Past the queue a call is **refused**, not lost: its task
+  and brief exist, its state is `refused`, and it does not start on its
+  own. Reissue it with `mu_delegate_reissue { call_id }` (or `mu
+  delegates reissue <call-id>`) once a slot frees: same call, same task,
+  never a second verdict. A refused call is not in murmur's pending
+  count. A queued call has no pane yet, so quitting pi or `/reload`
+  parks it as `refused` (reissue it); pi warns which ones.
 - A delegate that stops on an API error (overloaded, connection, auth)
   keeps its pane. The answer names the error and leaves the choice to
   the model: re-issue, or record the check as unverified.
@@ -61,6 +72,39 @@ Delegates called in one turn run in parallel.
 
 `MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
 
+### Every call is a task
+
+Each `mu_delegate` call creates, in one transaction, a task of
+`kind=delegate` in `scratch` (or the `workstream` you name) with the
+prompt as its brief, plus a call row keyed by a session-qualified
+`call_id` (`pi:<session>:<n>`). The tool result names both:
+`{ task, state, call_id }`. A repeat of the same call id with the same
+request is a no-op; a changed request under it is refused (exit 4).
+
+| State | Meaning |
+| ----- | ------- |
+| `queued` | waits for a slot (the task is parked, so it never reaches `mu task next`) |
+| `starting`, `running` | the pane is coming up, then working |
+| `recording` | the answer is being written |
+| `done` | verdict, report and close are all on record |
+| `failed` | no answer, or the record failed: the task is closed `rejected`, the answer kept as its report, the pane kept |
+| `refused` | past the queue; parked; reissue it |
+| `cancelled` | closed `wontfix` with a report |
+
+```bash
+mu delegates list --caller pi:<session>       # every call and its state
+mu delegates list --all --wave review-1       # one wave
+mu delegates tally -w scratch --wave review-1 # CONFIRMED/REFUTED/UNVERIFIED per judged task
+mu delegates reissue <call-id>                # a refused call, once
+mu task notes <task> -w scratch               # its brief, and its report: the full answer
+```
+
+The answer is the delegate task's `report`, whole; the pi follow-up is
+only an echo, so a dropped echo (Escape, compaction, `/reload`) loses
+nothing. `tally` counts one result per call: a done answer by its last
+`VERDICT:` label (none: UNVERIFIED), a failed or cancelled call as
+UNVERIFIED, queued, running and refused ones as pending.
+
 ### Record a verdict
 
 For a refuter or check, pass `record` so the verdict lands on the task
@@ -69,15 +113,21 @@ and nothing spawns. When the answer arrives, the tool runs
 `mu task note <task> -w <ws> --author <delegate>` once:
 
 - Done: `REFUTER <label> (<delegate>, <elapsed>):`, then the last
-  `VERDICT:` line and everything after it (a multi-line `EVIDENCE:`
-  body included). Without a
-  VERDICT line, the answer's last 1500 chars after `NO VERDICT LINE:`.
-  Capped at 4000 chars.
+  verdict line (`VERDICT:`, also behind a prefix such as `REFUTER:
+  VERDICT:`) and everything after it, a multi-line `EVIDENCE:` body
+  included, uncapped. Without a verdict line, the whole answer after
+  `NO VERDICT LINE:`.
 - Timeout, died, empty, error, or cancelled:
   `REFUTER <label>: no verdict (<outcome>)`.
 
+The note, the delegate task's report and its close are written together,
+in that order, in one op group (`mu delegates finish`); the delegate
+task is closed before its pane. If the record fails the call is
+`failed`, never `done`, and the answer is kept as the report.
+
 The follow-up still carries the full answer and ends with
-`Recorded on <ws>/<task> as a note.`, or the reason recording failed.
+`Recorded on <ws>/<task> as a note.` and where the report is, or the reason
+recording failed.
 
 ## Delegate without pi
 

@@ -14,6 +14,11 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { registerDelegate } from "../extension/delegate.js";
+import { openDb } from "../src/db.js";
+import { listDelegates } from "../src/delegates.js";
+import { addTask } from "../src/tasks/edit.js";
+import { selectTaskNotes } from "../src/tasks/queries.js";
+import { delegatesVerb } from "./_delegate-fixtures.js";
 
 function piRoot(): string | undefined {
   try {
@@ -107,7 +112,13 @@ const scenarios: Scenario[] = [
 ];
 
 const tmps: string[] = [];
+const dbs: { close(): void }[] = [];
 afterAll(() => {
+  for (const d of dbs) {
+    try {
+      d.close();
+    } catch {}
+  }
   for (const d of tmps) rmSync(d, { recursive: true, force: true });
 });
 
@@ -134,10 +145,17 @@ async function runScenario(s: Scenario) {
   let handle: { answerPending(): boolean } | undefined;
   let mainCall = 0;
   let abortedPromise: Promise<unknown> | undefined;
-  const run = async (args: string[]) => {
+  // The recorder is the real SDK on a real SQLite DB, as `mu delegates` runs it.
+  const db = openDb({ path: join(dir, "mu.db") });
+  dbs.push(db);
+  addTask(db, { workstream: "probe", localId: "f1", title: "judged" });
+  const run = async (args: string[], _signal?: AbortSignal, stdin?: string) => {
     const [ns, verb, name = ""] = args;
+    if (ns === "delegates") return delegatesVerb(db, args, stdin);
     if (ns === "task")
-      return ok(verb === "show" ? { task: { id: name, workstream: "probe" } } : {});
+      return ok(
+        verb === "show" ? { task: { id: name.replace(/^probe\//, ""), workstream: "probe" } } : {},
+      );
     if (verb === "spawn") {
       let actual = name;
       for (let i = 2; taken.has(actual); i++) actual = `${name}-${i}`;
@@ -284,7 +302,7 @@ async function runScenario(s: Scenario) {
     for (let i = 0; i < s.n; i++)
       await tool?.execute(
         `call-${i}`,
-        { task: "probe", label: `probe-${i}`, keep: true },
+        { task: "probe", label: `probe-${i}`, keep: true, record: { task: "probe/f1" } },
         undefined,
         undefined,
         { cwd: dir, hasUI: true, ui: { setStatus: () => {} } },
@@ -310,6 +328,7 @@ async function runScenario(s: Scenario) {
       names: [...waits.keys()],
       mainCall,
       errors,
+      db,
       session,
       send: (m: unknown, o: unknown) => session.sendCustomMessage(m, o),
       dispose: () => session.dispose(),
@@ -342,6 +361,25 @@ describe.skipIf(!root)("delegate answers on a real pi AgentSession", () => {
           expect(readFileSync(d.copy as string, "utf8")).toContain(
             "EVIDENCE:\n- source\n\n  detail",
           );
+        }
+        // Durable whatever pi did with the echo (dropped, cleared, compacted, resent):
+        // every call is done, its full multi-line EVIDENCE is on the judged task,
+        // and the same answer is the report of its delegate task.
+        const calls = listDelegates(r.db);
+        expect(calls).toHaveLength(s.n);
+        expect(calls.every((c) => c.state === "done" && c.verdict === "CONFIRMED")).toBe(true);
+        const verdicts = selectTaskNotes(r.db, "f1", {
+          workstream: "probe",
+          all: true,
+        }).notes.filter((n) => n.kind === "verdict");
+        expect(verdicts).toHaveLength(s.n);
+        for (const v of verdicts) expect(v.content).toContain("EVIDENCE:\n- source\n\n  detail");
+        for (const c of calls) {
+          const report = selectTaskNotes(r.db, c.task, {
+            workstream: c.workstream,
+            all: true,
+          }).notes.find((n) => n.kind === "report");
+          expect(report?.content).toContain("EVIDENCE:\n- source\n\n  detail");
         }
         if (s.sends !== undefined) expect(r.answerSends).toBe(s.sends);
         if (s.resendEscape) expect(r.mainCall).toBe(2); // Escape stops every later run

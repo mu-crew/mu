@@ -15,19 +15,57 @@
  * Separate from the child side (the control-socket server in mu-pi.ts):
  * that one serves a pi mu spawned; this one runs in a pi that is not.
  */
-import { execFile } from "node:child_process";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { defaultCacheDir } from "../src/state-dir.js";
 import { qualifiedRefProblem, workstreamNameProblem } from "../src/workstream-scope.js";
+import { labelStem, modelCommand, normalizeModel } from "./delegate-args.js";
+import { type CallInfo, callsApi, type FinishResult, type RecordTarget } from "./delegate-calls.js";
+import {
+  DELEGATE_TIMEOUT_S,
+  DELEGATE_WORKSTREAM,
+  type DroppedAnswer,
+  delegateMessage,
+  droppedAnswersDir,
+  droppedNote,
+  evidenceLines,
+  lastAssistantTextIn,
+  type MessageExtras,
+  type PaneFate,
+  type WaitAgent,
+} from "./delegate-format.js";
+import { delegateTraceOn, TRACE_EVENTS, trace, traceFields } from "./delegate-trace.js";
+import {
+  defaultRunner,
+  type MuResult,
+  type MuRunner,
+  parseEnvelope,
+  parseOkEnvelope,
+} from "./mu-run.js";
+
+export { recordNote } from "../src/delegate-verdict.js";
+export { labelStem, modelCommand, normalizeModel } from "./delegate-args.js";
+export {
+  DELEGATE_TIMEOUT_S,
+  DELEGATE_WORKSTREAM,
+  type DroppedAnswer,
+  delegateMessage,
+  droppedAnswersDir,
+  droppedNote,
+  formatElapsed,
+  lastAssistantTextIn,
+  type MessageExtras,
+  type PaneFate,
+  type WaitAgent,
+} from "./delegate-format.js";
+export { delegateTraceOn, delegateTracePath } from "./delegate-trace.js";
+export {
+  defaultRunner,
+  type MuResult,
+  type MuRunner,
+  parseEnvelope,
+  parseOkEnvelope,
+} from "./mu-run.js";
 
 /** The slice of pi's ExtensionAPI the delegate side uses. */
 export interface MuDelegateApi {
@@ -69,14 +107,10 @@ export interface DelegateTool {
   ): Promise<ToolResult>;
 }
 
-export type MuResult = { code: number; stdout: string; stderr: string };
-/** Runs `mu <args>`. The test seam: tests inject a fake. */
-export type MuRunner = (args: readonly string[], signal?: AbortSignal) => Promise<MuResult>;
-
 export const DELEGATE_TOOL = "mu_delegate";
 export const DELEGATE_CANCEL_TOOL = "mu_delegate_cancel";
+export const DELEGATE_REISSUE_TOOL = "mu_delegate_reissue";
 export const DELEGATE_MESSAGE_TYPE = "mu-delegate";
-export const DELEGATE_WORKSTREAM = "scratch";
 /**
  * murmur's channel for outstanding background work, as
  * `{ source, count }`. murmur shows the count on this agent's card,
@@ -87,8 +121,6 @@ export const DELEGATE_WORKSTREAM = "scratch";
  */
 export const PENDING_CHANNEL = "murmur:pending";
 
-/** Default `mu agent wait --timeout` for a delegate, in seconds. */
-export const DELEGATE_TIMEOUT_S = 3600;
 /** Default cap on delegates in flight from one pi session. */
 export const DELEGATE_MAX_DEFAULT = 16;
 /** The queue holds this many caps' worth of calls waiting for a slot. A
@@ -123,417 +155,10 @@ function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {
   return (env.PATH ?? "").split(delimiter).some((d) => d !== "" && existsSync(join(d, bin)));
 }
 
-/** The CLI this extension ships with (dist/cli.js next to dist/extension/), else `mu` on PATH. */
-export function defaultRunner(): MuRunner {
-  let cli: string | undefined;
-  try {
-    const p = fileURLToPath(new URL("../cli.js", import.meta.url));
-    if (existsSync(p)) cli = p;
-  } catch {
-    // not a file: URL; use PATH
-  }
-  return (args, signal) =>
-    new Promise((resolve) => {
-      const [cmd, argv] = cli ? [process.execPath, [cli, ...args]] : ["mu", [...args]];
-      execFile(
-        cmd,
-        argv,
-        { maxBuffer: 16 * 1024 * 1024, ...(signal ? { signal } : {}) },
-        (err, stdout, stderr) => {
-          const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
-          resolve({ code, stdout: String(stdout), stderr: String(stderr || err?.message || "") });
-        },
-      );
-    });
-}
-
-/** A `mu --json` stdout as one object: the envelope's `data` on success, its
- *  partial `data` plus `error`/`message` on failure; undefined when it is not
- *  an envelope. */
-export function parseEnvelope(stdout: string): Record<string, unknown> | undefined {
-  try {
-    const v = JSON.parse(stdout) as Record<string, unknown> | null;
-    if (typeof v !== "object" || v === null || typeof v.ok !== "boolean") return undefined;
-    const data =
-      typeof v.data === "object" && v.data !== null ? (v.data as Record<string, unknown>) : {};
-    return v.ok ? data : { ...data, error: v.error, message: v.message };
-  } catch {
-    return undefined;
-  }
-}
-
-/** A `mu --json` stdout as its `data`, only when it is a SUCCESS envelope
- *  (`ok:true`). A failure's partial data is not a success: a destructive
- *  call that acts on a read must use this, never `parseEnvelope`. */
-export function parseOkEnvelope(stdout: string): Record<string, unknown> | undefined {
-  try {
-    const v = JSON.parse(stdout) as Record<string, unknown> | null;
-    if (typeof v !== "object" || v === null || v.ok !== true) return undefined;
-    return typeof v.data === "object" && v.data !== null
-      ? (v.data as Record<string, unknown>)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /** Which agent a delegate spawned as: the registry incarnation and pane the
  *  spawn reported. A close acts on that one only, never on a replacement
  *  that took the name since. */
 export type DelegateIdentity = { paneId: string; incarnation: number };
-
-/** One agent row of `mu agent wait --json`, as far as the tool reads it. */
-export type WaitAgent = {
-  outcome?: string;
-  lastText?: string;
-  lastError?: string;
-  /** The delegate's pi session file (mu ≥ 3.11.2 on the delegate side). */
-  sessionFile?: string;
-  /** outcome `blocked`: the extension dialog the delegate's pi waits on. */
-  blocked?: { kind?: string; title?: string };
-  /** The run baseline the wait counted from; a re-wait passes it as
-   *  `--after-runs` so a run that settles in between is not missed. */
-  afterRuns?: number;
-};
-
-/** What happened to the pane after delivery, for the message. */
-export type PaneFate = { closed: true } | { closed: false; why: string };
-
-/** Extras for the follow-up message; all optional. */
-export type MessageExtras = {
-  /** `mu agent read -n 50` for the outcomes without text. */
-  tail?: string;
-  attach?: string;
-  timeoutS?: number;
-  workspace?: string;
-  /** How long the delegate ran, in ms. */
-  elapsedMs?: number;
-  /** The queue handle the caller was given (`queued-3`), if it was queued. */
-  queuedAs?: string;
-  /** The delegate's pi session file: the full transcript. */
-  sessionFile?: string;
-  /** A local copy of the delegate's last assistant text so far. */
-  partial?: string;
-};
-
-/**
- * Text of the last assistant message in a pi session file (JSONL), or
- * undefined when there is none or the file cannot be read. A delegate
- * that timed out, died or was cancelled has no final answer, but what it
- * wrote so far is here.
- */
-export function lastAssistantTextIn(sessionFile: string): string | undefined {
-  let raw: string;
-  try {
-    raw = readFileSync(sessionFile, "utf8");
-  } catch {
-    return undefined;
-  }
-  const lines = raw.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (!line?.includes('"assistant"')) continue;
-    try {
-      const e = JSON.parse(line) as { message?: { role?: unknown; content?: unknown } };
-      if (e.message?.role !== "assistant") continue;
-      const c = e.message.content;
-      const text =
-        typeof c === "string"
-          ? c
-          : Array.isArray(c)
-            ? c
-                .map((p: unknown) => {
-                  const q = p as { type?: unknown; text?: unknown };
-                  return q.type === "text" && typeof q.text === "string" ? q.text : "";
-                })
-                .join("")
-            : "";
-      if (text.trim()) return text;
-    } catch {
-      // a torn last line while pi writes: keep looking
-    }
-  }
-  return undefined;
-}
-
-/** Where to look next for a delegate with no final answer: the copy of
- *  its partial text and its session file, one line each. */
-function evidenceLines(x: { sessionFile?: string; partial?: string }): string[] {
-  return [
-    x.partial ? `Partial answer so far: ${x.partial}` : undefined,
-    x.sessionFile ? `Session: ${x.sessionFile}` : undefined,
-  ].filter((v) => v !== undefined);
-}
-
-/** `42s`, `3m 05s`, `1h 02m`. */
-export function formatElapsed(ms: number): string {
-  const t = Math.max(0, Math.round(ms / 1000));
-  if (t < 60) return `${t}s`;
-  const m = Math.floor(t / 60);
-  if (m < 60) return `${m}m ${String(t % 60).padStart(2, "0")}s`;
-  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
-}
-
-/**
- * The follow-up message for one finished wait. Pure: the CLI already
- * classified the outcome (`mu agent wait --json` → `outcome`); this only
- * words it.
- */
-export function delegateMessage(
-  name: string,
-  agent: WaitAgent | undefined,
-  pane: PaneFate,
-  x: MessageExtras = {},
-): string {
-  const timeoutS = x.timeoutS ?? DELEGATE_TIMEOUT_S;
-  const who = `Delegate ${W}/${name}${x.queuedAs ? ` (queued as ${x.queuedAs})` : ""}`;
-  const took = x.elapsedMs !== undefined ? ` after ${formatElapsed(x.elapsedMs)}` : "";
-  const fate = pane.closed ? "Pane closed." : `Pane kept (${pane.why}).`;
-  const look = [
-    x.attach ? `Attach: ${x.attach}` : undefined,
-    `Read: mu agent read ${name} -n 50 -w ${W}`,
-  ].filter((v) => v !== undefined);
-  const tailBlock = x.tail?.trim() ? `\n\nPane tail:\n${x.tail.trimEnd()}` : "";
-  const ws = x.workspace ? ` Workspace: ${x.workspace}` : "";
-  const ev = evidenceLines(x);
-  const evBlock = ev.length > 0 ? `\n${ev.join("\n")}` : "";
-  switch (agent?.outcome) {
-    case "done":
-      return `${who} finished${took}. ${fate}${ws}\n\n${agent.lastText ?? ""}`;
-    case "empty":
-      return `${who} finished${took} without a text answer. ${fate}${ws}${evBlock}${tailBlock}`;
-    case "error":
-      return [
-        `${who} stopped on an API error${took}, after pi's own retries: ${(agent.lastError ?? "unknown error").replace(/[.\s]+$/, "")}. ${fate}${ws}`,
-        "Decide: re-issue the call, or record the check as UNVERIFIED.",
-        ...ev,
-        ...look,
-        `Close: mu agent close ${name} -w ${W}`,
-      ].join("\n");
-    case "died":
-      return `${who} died${took} before answering. ${fate}${ws}${evBlock}${tailBlock}`;
-    case "blocked": {
-      const b = agent.blocked;
-      const dialog = `${b?.kind ?? "dialog"}${b?.title ? ` "${b.title}"` : ""}`;
-      const lines = [
-        `${who} is blocked on a ${dialog} dialog${took} and has NOT finished; stopped waiting, so its answer will not arrive here. ${fate}${ws}`,
-        "Answer the dialog in its pane (attach), then wait again; or close it and record the check as UNVERIFIED.",
-        ...ev,
-        ...look,
-        `Wait again: mu agent wait ${name} -w ${W} --json${agent.afterRuns !== undefined ? ` --after-runs ${agent.afterRuns}` : ""}`,
-        `Close: mu agent close ${name} -w ${W}`,
-      ];
-      return `${lines.join("\n")}${tailBlock}`;
-    }
-    case "timeout":
-    case "pending":
-      return [
-        `${who} is still running after ${timeoutS}s; stopped waiting, so its answer will not arrive here. ${fate}${ws}`,
-        ...ev,
-        ...look,
-        `Wait again: mu agent wait ${name} -w ${W} --json${agent.afterRuns !== undefined ? ` --after-runs ${agent.afterRuns}` : ""}`,
-      ].join("\n");
-    default:
-      return `${who}: mu agent wait gave no result. ${fate}${ws}${evBlock}${tailBlock}`;
-  }
-}
-
-/** A finished delegate whose answer an aborted run dropped from pi's queue. */
-export type DroppedAnswer = {
-  name: string;
-  outcome?: string;
-  elapsedMs?: number;
-  /** The local copy of the follow-up message, if writing it worked. */
-  copy?: string;
-  sessionFile?: string;
-};
-
-/** Where dropped answers are copied: `<mu cache dir>/delegate-answers`.
- *  Cache, not state: the delegate's pi session file keeps the answer. */
-export function droppedAnswersDir(): string {
-  return join(defaultCacheDir(), "delegate-answers");
-}
-
-/**
- * The note left in the conversation when Escape drops queued answers:
- * one line per delegate, pointing at the local copy and the delegate's
- * own session file. Pure.
- */
-export function droppedNote(dropped: readonly DroppedAnswer[]): string {
-  const n = dropped.length;
-  const lines = dropped.map((d) => {
-    const how = [
-      d.outcome ?? "no result",
-      d.elapsedMs !== undefined ? formatElapsed(d.elapsedMs) : undefined,
-    ]
-      .filter((x) => x !== undefined)
-      .join(", ");
-    const where = [
-      d.copy ? `answer: ${d.copy}` : undefined,
-      d.sessionFile ? `session: ${d.sessionFile}` : undefined,
-    ].filter((x) => x !== undefined);
-    if (where.length === 0) where.push(`read: mu agent read ${d.name} -n 50 -w ${W}`);
-    return `- ${W}/${d.name} (${how}) ${where.join(" · ")}`;
-  });
-  return [
-    `The interrupt dropped ${n} delegate answer${n === 1 ? "" : "s"} before ${n === 1 ? "it" : "they"} arrived:`,
-    ...lines,
-    "The answer file holds the message that would have arrived; in a session file the answer is the last assistant message.",
-  ].join("\n");
-}
-
-/** `MU_DELEGATE_TRACE=1` appends one JSON line per delivery step and pi
- *  lifecycle event to `<mu cache dir>/delegate-trace.log`: for finding
- *  where a follow-up got lost. Off (and free) by default. */
-export function delegateTraceOn(env: NodeJS.ProcessEnv = process.env): boolean {
-  return !!env.MU_DELEGATE_TRACE && env.MU_DELEGATE_TRACE !== "0";
-}
-export function delegateTracePath(): string {
-  return join(defaultCacheDir(), "delegate-trace.log");
-}
-function trace(event: string, data: Record<string, unknown> = {}): void {
-  if (!delegateTraceOn()) return;
-  try {
-    mkdirSync(defaultCacheDir(), { recursive: true });
-    const line = { t: new Date().toISOString(), pid: process.pid, event, ...data };
-    appendFileSync(delegateTracePath(), `${JSON.stringify(line)}\n`);
-  } catch {
-    // tracing must never cost a delegate its answer
-  }
-}
-
-/** pi events the trace records, with what each says about delivery. */
-const TRACE_EVENTS = [
-  "session_start",
-  "session_before_switch",
-  "session_before_fork",
-  "session_before_compact",
-  "session_compact",
-  "session_compact_failed",
-  "session_before_tree",
-  "session_tree",
-  "agent_start",
-  "agent_end",
-  "agent_settled",
-  "turn_end",
-  "message_start",
-  "message_end",
-] as const;
-
-function traceFields(event: unknown, ctx: DelegateCtx | undefined): Record<string, unknown> {
-  const e = (event ?? {}) as Record<string, unknown>;
-  const m = e.message as { role?: unknown; customType?: unknown; details?: unknown } | undefined;
-  const d = m?.details as { delivery?: unknown; name?: unknown } | undefined;
-  const out: Record<string, unknown> = {};
-  if (m?.role) out.role = m.role;
-  if (m?.customType) out.customType = m.customType;
-  if (d?.delivery !== undefined) out.delivery = d.delivery;
-  if (d?.name !== undefined) out.name = d.name;
-  for (const k of ["aborted", "reason", "willRetry"]) if (e[k] !== undefined) out[k] = e[k];
-  try {
-    if (ctx?.isIdle) out.idle = ctx.isIdle();
-    if (ctx?.hasPendingMessages) out.pendingMsgs = ctx.hasPendingMessages();
-  } catch {
-    out.ctx = "stale";
-  }
-  return out;
-}
-
-/** Where a delegate's answer is recorded: a task, resolved by `mu task show`. */
-export type RecordTarget = { workstream: string; task: string };
-
-/** Cap on a recorded note, in chars. */
-export const RECORD_NOTE_MAX = 4000;
-/** Without a VERDICT line, this much of the answer's end is recorded. */
-export const RECORD_FALLBACK_TAIL = 1500;
-
-const VERDICT_LINE = /^[\s>*_`-]*VERDICT:/;
-
-/**
- * The note a delegate's answer leaves on the task it judged. Pure. A done
- * answer keeps everything from its last `VERDICT:` line on, so a
- * multi-line EVIDENCE body survives (else its tail, marked NO VERDICT LINE); any other outcome records
- * the gap.
- */
-export function recordNote(
-  label: string,
-  name: string,
-  outcome: string | undefined,
-  lastText: string | undefined,
-  elapsedMs: number,
-): string {
-  if (outcome !== "done" || !lastText?.trim())
-    return `REFUTER ${label}: no verdict (${outcome === "done" ? "empty" : (outcome ?? "no result")})`;
-  const lines = lastText.trimEnd().split("\n");
-  let at = -1;
-  for (let i = lines.length - 1; i >= 0 && at < 0; i--)
-    if (VERDICT_LINE.test(lines[i] ?? "")) at = i;
-  const body =
-    at >= 0
-      ? lines.slice(at).join("\n")
-      : `NO VERDICT LINE: ${lastText.trimEnd().slice(-RECORD_FALLBACK_TAIL)}`;
-  const note = `REFUTER ${label} (${name}, ${formatElapsed(elapsedMs)}):\n${body}`;
-  const mark = "\n[truncated]";
-  return note.length <= RECORD_NOTE_MAX
-    ? note
-    : note.slice(0, RECORD_NOTE_MAX - mark.length) + mark;
-}
-
-/** A label → agent-name stem: lowercase, [a-z0-9-], ≤ 20 chars. */
-export function labelStem(label: unknown): string | undefined {
-  if (typeof label !== "string") return undefined;
-  const stem = label
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 20)
-    .replace(/-+$/, "");
-  return stem || undefined;
-}
-
-/** Model values that need no shell quoting inside a `--command` string. */
-const MODEL_BARE_RE = /^[A-Za-z0-9._:/@+=-]+$/;
-
-/**
- * Forgive the usual slips in a `model` value: surrounding quotes or
- * backticks, a pasted `--model ` / `--model=` prefix, stray whitespace.
- * Anything else (brackets as in `gpt-6.1-sol[1m]`, odd provider ids) is
- * kept and shell-quoted by `modelCommand`, so pi gets to judge the id.
- * Returns undefined for an empty value or one with inner whitespace,
- * which no model id has.
- */
-export function normalizeModel(raw: unknown): string | undefined {
-  if (typeof raw !== "string") return undefined;
-  let m = raw.trim();
-  for (let prev = ""; prev !== m; ) {
-    prev = m;
-    m = m
-      .replace(/^--model(?:=|\s+)/, "")
-      .replace(/^(["'`])(.*)\1$/s, "$2")
-      .trim();
-  }
-  return m && !/\s/.test(m) ? m : undefined;
-}
-
-function shellArg(s: string): string {
-  return MODEL_BARE_RE.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`;
-}
-
-/**
- * The command a delegate with `model` runs: the cli key's command
- * (`$MU_<KEY>_COMMAND`, else the key itself, as `resolveCliCommand` in
- * src/agents/spawn.ts does) plus `--model <model>`. Inlined: the extension
- * bundles standalone and spawn.ts pulls in the DB.
- */
-export function modelCommand(
-  cli: string,
-  model: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  const override = env[`MU_${cli.toUpperCase().replace(/-/g, "_")}_COMMAND`];
-  const base = override && override.trim() !== "" ? override.trim() : cli;
-  return `${base} --model ${shellArg(model)}`;
-}
 
 /**
  * One delegate this pi waits on. `cancelling` is set while a cancel's abort
@@ -543,23 +168,36 @@ export function modelCommand(
  */
 type Inflight = {
   abort: AbortController;
+  call: CallInfo;
   /** The delegate's pi session file, reported by the spawn's send. */
   sessionFile?: string;
   /** What it spawned as; closing is bound to it. */
   identity?: DelegateIdentity;
-  record?: { target: RecordTarget; label: string };
   cancelling: boolean;
   parked?: () => Promise<void>;
 };
 
 /** A call past the cap, waiting for a slot. Its delegate name is picked
- *  at spawn, so the queue hands out its own handle (`queued-3`). */
+ *  at spawn, so the queue also hands out a handle (`queued-3`); the call
+ *  id works as well. `registered` settles once its row is durable. */
 type Queued = {
   handle: string;
-  params: Record<string, unknown>;
+  call: CallInfo;
   ctx: DelegateCtx | undefined;
-  record?: RecordTarget;
+  /** Settles once the call's row is durable. */
+  registered: Promise<unknown>;
 };
+
+/** The pi session id of a ctx whose sessionManager exposes it (a stale ctx throws). */
+function piSessionId(ctx: DelegateCtx | undefined): string | undefined {
+  try {
+    const sm = (ctx as { sessionManager?: { getSessionId?: () => string } } | undefined)
+      ?.sessionManager;
+    return sm?.getSessionId?.();
+  } catch {
+    return undefined;
+  }
+}
 
 /** What the rest of the extension may ask the delegate side. */
 export interface DelegateHandle {
@@ -675,13 +313,32 @@ export function registerDelegate(
     const text = lastAssistantTextIn(sessionFile);
     return text ? saveCopy(name, text, ".partial") : undefined;
   };
+  const calls = callsApi(run);
+  /** Per runtime: two reloads of one session never reuse a call id. */
+  const token = randomBytes(3).toString("hex");
+  let callSeq = 0;
+  const inflightKey = (ws: string, name: string) => `${ws}/${name}`;
   /** Drop a delegate from the in-flight set, start the next queued call
    *  into the freed slot. */
-  const forget = (name: string) => {
-    inflight.delete(name);
+  const forget = (key: string) => {
+    inflight.delete(key);
     drain();
     reportPending();
   };
+  /** A start that failed after its tool call returned, said as a follow-up. */
+  const startFailed = (handle: string, e: unknown) =>
+    void Promise.resolve(
+      send(
+        {
+          customType: DELEGATE_MESSAGE_TYPE,
+          content: `Queued delegate ${handle} could not start: ${e instanceof Error ? e.message : String(e)}`,
+          display: true,
+          details: { name: handle, workstream: W, outcome: null, closed: false },
+        },
+        { deliverAs: "followUp", triggerTurn: true },
+        "start-failed",
+      ),
+    ).catch(() => {});
   /** Start queued calls while there is a free slot. A queued call's tool
    *  call has already returned, so a failed start becomes a follow-up. */
   function drain(): void {
@@ -689,23 +346,24 @@ export function registerDelegate(
       const q = queue.shift();
       if (!q) break;
       starting++; // held until start() takes over the slot
-      void start(q.params, undefined, q.ctx, q.handle, q.record).then(
-        () => {},
-        (e: unknown) => {
-          void Promise.resolve(
-            send(
-              {
-                customType: DELEGATE_MESSAGE_TYPE,
-                content: `Queued delegate ${q.handle} could not start: ${e instanceof Error ? e.message : String(e)}`,
-                display: true,
-                details: { name: q.handle, workstream: W, outcome: null, closed: false },
-              },
-              { deliverAs: "followUp", triggerTurn: true },
-              "start-failed",
-            ),
-          ).catch(() => {});
-        },
-      );
+      void q.registered
+        .then(async () => {
+          try {
+            await calls.mark(q.call.callId, "starting");
+          } catch (e) {
+            starting--; // start() never ran: its finally would have freed the slot
+            reportPending();
+            throw e;
+          }
+          return start(q.call, undefined, q.ctx, q.handle);
+        })
+        .then(
+          () => {},
+          (e: unknown) => {
+            startFailed(q.handle, e);
+            drain();
+          },
+        );
     }
   }
 
@@ -721,6 +379,8 @@ export function registerDelegate(
   };
   const failure = (what: string, r: MuResult) =>
     new Error(`${what} failed (exit ${r.code}): ${why(r)}`);
+  /** The words for a failed `mu delegates` write. */
+  const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
   /**
    * Close a delegate's pane, bound to the agent it spawned as. `agent close`
@@ -731,7 +391,11 @@ export function registerDelegate(
    * under the name, a stale revision) keeps the pane and says why. It never
    * previews again and never retries onto a replacement.
    */
-  async function closeDelegate(name: string, id: DelegateIdentity | undefined): Promise<PaneFate> {
+  async function closeDelegate(
+    name: string,
+    id: DelegateIdentity | undefined,
+    W: string,
+  ): Promise<PaneFate> {
     if (id === undefined) return { closed: false, why: "its spawn did not report an identity" };
     const p = await mu(["agent", "close", name, "-w", W, "--json"]);
     const d = p.code === 0 ? parseOkEnvelope(p.stdout) : undefined;
@@ -745,14 +409,26 @@ export function registerDelegate(
     return c.code === 0 ? { closed: true } : { closed: false, why: `close refused: ${why(c)}` };
   }
 
+  /** A spawn that failed. `unsent`: nothing was written to a pane, so the call
+   *  stays reissuable (refused). `kept`: a pane may be running; it is evidence. */
+  class SpawnFail extends Error {
+    constructor(
+      message: string,
+      readonly kind: "unsent" | "kept" | "unknown" | "aborted",
+    ) {
+      super(message);
+    }
+  }
+
   /**
-   * Spawn the delegate and send it the task in ONE mu call (`spawn
-   * --next-free --send`): mu picks the free name under its spawn lock, so
-   * parallel calls get distinct names with no `agent list` first. Returns
+   * Spawn the delegate bound to its task and send it the prompt in ONE mu call
+   * (`spawn --next-free --task <delegate task> --attempt <task> --send`): mu
+   * picks the free name under its spawn lock, claims the task for the new
+   * agent and journals the delivery, so a replay never sends twice. Returns
    * the name and the send's `runs`, the exact wait baseline.
    */
   async function spawn(
-    params: Record<string, unknown>,
+    call: CallInfo,
     text: string,
     cwd: string | undefined,
     signal?: AbortSignal,
@@ -764,65 +440,94 @@ export function registerDelegate(
     sessionFile?: string;
     identity?: DelegateIdentity;
   }> {
-    signal?.throwIfAborted();
-    const stem = labelStem(params.label);
+    if (signal?.aborted) throw new SpawnFail("cancelled before it spawned", "aborted");
+    const ws = call.workstream;
+    const req = call.request;
+    const stem = labelStem(req.label);
     // A label names the delegate (delegate-review, then delegate-review-2);
     // without one it is numbered (delegate-1, delegate-2).
     const base = stem ? `delegate-${stem}` : "delegate-1";
-    const args = ["agent", "spawn", base, "-w", W, "--next-free", "--send", text, "--json"];
-    if (params.workspace === true) args.push("--worktree");
+    const args = [
+      "agent",
+      "spawn",
+      base,
+      "-w",
+      ws,
+      "--next-free",
+      "--task",
+      call.task,
+      "--attempt",
+      call.task,
+      "--send",
+      text,
+      "--json",
+    ];
+    if (req.workspace === true) args.push("--worktree");
     else if (cwd) args.push("--cwd", cwd);
-    const cli = typeof params.cli === "string" && params.cli ? params.cli : undefined;
+    const cli = req.cli ? req.cli : undefined;
     if (cli) args.push("--cli", cli);
-    if (typeof params.model === "string" && params.model)
-      args.push("--command", modelCommand(cli ?? "pi", params.model));
+    if (req.model) args.push("--command", modelCommand(cli ?? "pi", req.model));
     const r = await mu(args);
     const out = json(r);
+    const stale = (out?.task as { stale?: unknown } | undefined)?.stale;
+    if (typeof stale === "string")
+      throw new SpawnFail(
+        `the attempt of ${ws}/${call.task} is stale: its agent was ${stale}; the replacement was left alone`,
+        "unsent",
+      );
     const spawned = (out?.agent as { name?: unknown } | undefined)?.name;
     // No agent in the reply: the spawn itself failed, nothing is up.
-    if (typeof spawned !== "string") throw failure("mu agent spawn", r);
+    if (typeof spawned !== "string")
+      throw new SpawnFail(failure("mu agent spawn", r).message, "unsent");
     const name = spawned;
     // The agent record's SQL keys: `id` is the registry incarnation.
-    const row = out?.agent as { pane_id?: unknown; id?: unknown } | undefined;
+    const row = out?.agent as { pane_id?: unknown; id?: unknown; cwd?: unknown } | undefined;
     const identity: DelegateIdentity | undefined =
       typeof row?.pane_id === "string" && Number.isSafeInteger(row.id)
         ? { paneId: row.pane_id, incarnation: row.id as number }
         : undefined;
     if (signal?.aborted) {
       // The user cancelled while the pane came up: take it down again.
-      await closeDelegate(name, identity);
-      signal.throwIfAborted();
+      await closeDelegate(name, identity, ws);
+      throw new SpawnFail("cancelled while it spawned", "aborted");
     }
-    if (out?.ctl !== "ok") {
-      throw new Error(
-        `${W}/${name} spawned but its control socket is ${String(out?.ctl)}, so its answer cannot come back. Pane kept; close it with: mu agent close ${name} -w ${W}`,
+    // A fresh spawn reports its control socket; a replay answers from the
+    // journal and carries none (the send below is the proof).
+    if (out?.ctl !== undefined && out.ctl !== "ok") {
+      throw new SpawnFail(
+        `${ws}/${name} spawned but its control socket is ${String(out.ctl)}, so its answer cannot come back. Pane kept; close it with: mu agent close ${name} -w ${ws}`,
+        "kept",
       );
     }
-    const sent = out.send as
+    const sent = out?.send as
       | { ok?: unknown; error?: unknown; runs?: unknown; message?: unknown; sessionFile?: unknown }
       | undefined;
     if (sent?.ok !== true && sent?.error === "AgentSendIndeterminateError") {
       // The prompt may already be running: keep the pane, never auto-retry.
       const reason = typeof sent.message === "string" ? sent.message : "no reply";
-      throw new Error(
-        `mu agent send to ${W}/${name}: delivery unknown (${reason}). Pane kept; do NOT resend blindly. Check with: mu agent read ${name} -w ${W} -n 20 (or attach), then close it with: mu agent close ${name} -w ${W}`,
+      throw new SpawnFail(
+        `mu agent send to ${ws}/${name}: delivery unknown (${reason}). Pane kept; do NOT resend blindly. Check with: mu agent read ${name} -w ${ws} -n 20 (or attach), then close it with: mu agent close ${name} -w ${ws}`,
+        "unknown",
       );
     }
     if (sent?.ok !== true) {
       // Nothing reached it: the pane is just an idle pi. Take it down.
-      const c = await closeDelegate(name, identity);
+      const c = await closeDelegate(name, identity, ws);
       const pane = c.closed
         ? "Pane closed."
-        : `Pane kept (${c.why}); close it with: mu agent close ${name} -w ${W}`;
+        : `Pane kept (${c.why}); close it with: mu agent close ${name} -w ${ws}`;
       const reason = typeof sent?.message === "string" ? sent.message : why(r);
-      throw new Error(`mu agent send to ${W}/${name} failed (exit ${r.code}): ${reason}. ${pane}`);
+      throw new SpawnFail(
+        `mu agent send to ${ws}/${name} failed (exit ${r.code}): ${reason}. ${pane}`,
+        "unsent",
+      );
     }
-    const steps = Array.isArray(out.nextSteps) ? out.nextSteps : [];
+    const steps = Array.isArray(out?.nextSteps) ? out.nextSteps : [];
     const attach = steps
-      .map((s: unknown) => s as { intent?: unknown; command?: unknown })
-      .find((s) => s.intent === "Attach the pane")?.command;
+      .map((st: unknown) => st as { intent?: unknown; command?: unknown })
+      .find((st) => st.intent === "Attach the pane")?.command;
     // The worktree is the agent's cwd (`agents.cwd`).
-    const wsPath = params.workspace === true ? (out.agent as { cwd?: unknown }).cwd : undefined;
+    const wsPath = req.workspace === true ? (row as { cwd?: unknown } | undefined)?.cwd : undefined;
     return {
       name,
       // A pi just spawned has settled no run, so 0 is exact when an older
@@ -834,10 +539,6 @@ export function registerDelegate(
       ...(typeof sent.sessionFile === "string" ? { sessionFile: sent.sessionFile } : {}),
     };
   }
-
-  /** The note label: the caller's label, else the delegate's name. */
-  const recordLabel = (params: Record<string, unknown>, name: string) =>
-    typeof params.label === "string" && params.label.trim() ? params.label.trim() : name;
 
   /** Check `record` names a real task, before anything spawns. */
   async function resolveRecord(raw: unknown): Promise<RecordTarget | undefined> {
@@ -893,66 +594,82 @@ export function registerDelegate(
     return { workstream: t.workstream, task: t.id };
   }
 
-  /** Write one note on the record task; the follow-up's line about it. */
-  async function writeRecord(rec: RecordTarget, name: string, text: string): Promise<string> {
-    const where = `${rec.workstream}/${rec.task}`;
-    try {
-      const r = await mu([
-        "task",
-        "note",
-        rec.task,
-        "-w",
-        rec.workstream,
-        "--author",
-        name,
-        "--kind",
-        "verdict",
-        text,
-      ]);
-      if (r.code === 0) return `Recorded on ${where} as a note.`;
-      return `Recording on ${where} failed (exit ${r.code}): ${why(r)}. Record it yourself.`;
-    } catch (e) {
-      return `Recording on ${where} failed: ${e instanceof Error ? e.message : String(e)}. Record it yourself.`;
-    }
-  }
+  /** The report of a run with no answer: what is known of it, uncapped. */
+  const gapDetail = (
+    agent: WaitAgent | undefined,
+    sessionFile: string | undefined,
+    tail: string | undefined,
+  ): string => {
+    const partial =
+      sessionFile && agent?.outcome !== "blocked" ? lastAssistantTextIn(sessionFile) : undefined;
+    return [
+      agent?.lastError ? `error: ${agent.lastError}` : undefined,
+      sessionFile ? `Session: ${sessionFile}` : undefined,
+      partial ? `Partial answer so far:\n${partial}` : undefined,
+      tail?.trim() ? `Pane tail:\n${tail.trimEnd()}` : undefined,
+    ]
+      .filter((v) => v !== undefined)
+      .join("\n\n");
+  };
+
+  /** The follow-up's line about where the answer is durable. */
+  const recordedLine = (call: CallInfo, fin: FinishResult | undefined, err?: string): string => {
+    const where = call.record ? `${call.record.workstream}/${call.record.task}` : undefined;
+    const taskRef = `${call.workstream}/${call.task}`;
+    if (fin === undefined)
+      return `Recording failed: ${err ?? "unknown error"}. The call ${call.callId} is still open; its answer is in this message. Record it yourself.`;
+    if (fin.state === "failed" && fin.error)
+      return `${fin.error}. The answer is kept as the report of ${taskRef}; record it yourself.`;
+    if (where && fin.recorded)
+      return `Recorded on ${where} as a note. Full answer: mu task notes ${call.task} -w ${call.workstream} (report of ${taskRef}).`;
+    return `Full answer: mu task notes ${call.task} -w ${call.workstream} (report of ${taskRef}).`;
+  };
 
   async function deliver(
+    call: CallInfo,
     name: string,
     wait: MuResult,
     keep: boolean,
     extras: MessageExtras,
     delivery: number,
-    record?: { target: RecordTarget; label: string },
     identity?: DelegateIdentity,
   ) {
+    const ws = call.workstream;
     const agent = (json(wait)?.agents as WaitAgent[] | undefined)?.[0];
     const outcome = agent?.outcome;
     const tail =
       outcome === "done" || outcome === "timeout" || outcome === "pending" || outcome === "error"
         ? undefined
-        : (await mu(["agent", "read", name, "-n", "50", "-w", W])).stdout;
-    // Close only after a clean finish: a died or timed-out pane is evidence.
+        : (await mu(["agent", "read", name, "-n", "50", "-w", ws])).stdout;
+    const sessionFile = agent?.sessionFile ?? extras.sessionFile;
+    // The call's result is made durable FIRST: the verdict on the judged
+    // task, then the delegate's report and close, in one op group (mu
+    // delegates finish). Only a `done` call may then lose its pane.
+    let fin: FinishResult | undefined;
+    let finErr: string | undefined;
+    try {
+      fin = await calls.finish(call.callId, {
+        outcome: outcome ?? "no result",
+        text: outcome === "done" ? (agent?.lastText ?? "") : gapDetail(agent, sessionFile, tail),
+        ...(extras.elapsedMs !== undefined ? { elapsedMs: extras.elapsedMs } : {}),
+        author: name,
+      });
+    } catch (e) {
+      finErr = errText(e);
+    }
+    // Close only after a clean finish that is on record: a died or timed-out
+    // pane, or one whose record failed, is evidence.
     let pane: PaneFate = { closed: false, why: "keep: true" };
-    let closing: Promise<PaneFate> | undefined;
     if (outcome === "blocked") pane = { closed: false, why: "waiting on a dialog" };
     else if (outcome !== "done" && outcome !== "empty")
       pane = { closed: false, why: "kept as evidence" };
-    else if (!keep) closing = closeDelegate(name, identity);
-    // The note never depends on the close, so the two mu calls overlap.
-    const recording = record
-      ? writeRecord(
-          record.target,
-          name,
-          recordNote(record.label, name, outcome, agent?.lastText, extras.elapsedMs ?? 0),
-        )
-      : undefined;
-    const [closed, recorded] = await Promise.all([closing, recording]);
-    if (closed) pane = closed;
+    else if (fin?.state !== "done" && outcome === "done")
+      pane = { closed: false, why: "its result is not recorded" };
+    else if (!keep) pane = await closeDelegate(name, identity, ws);
     // No final answer: point at the transcript, and copy what it wrote so
     // far. A blocked run is mid-flight: no partial copy, which could read
     // as its answer.
     if (outcome !== "done") {
-      const sessionFile = agent?.sessionFile ?? extras.sessionFile;
       const partial =
         sessionFile && outcome !== "blocked" ? partialCopy(name, sessionFile) : undefined;
       extras = {
@@ -961,12 +678,17 @@ export function registerDelegate(
         ...(partial ? { partial } : {}),
       };
     }
-    const message = delegateMessage(name, agent, pane, { ...extras, ...(tail ? { tail } : {}) });
-    const content = recorded ? `${message}\n\n${recorded}` : message;
+    const message = delegateMessage(name, agent, pane, {
+      ...extras,
+      workstream: ws,
+      ...(tail ? { tail } : {}),
+    });
+    const content = `${message}\n\n${recordedLine(call, fin, finErr)}`;
     const a = arriving.get(delivery);
     if (a)
       Object.assign(a, {
         content,
+        workstream: ws,
         ...(outcome ? { outcome } : {}),
         ...(extras.elapsedMs !== undefined ? { elapsedMs: extras.elapsedMs } : {}),
         ...(agent?.sessionFile ? { sessionFile: agent.sessionFile } : {}),
@@ -978,7 +700,9 @@ export function registerDelegate(
         display: true,
         details: {
           name,
-          workstream: W,
+          workstream: ws,
+          task: `${ws}/${call.task}`,
+          call_id: call.callId,
           outcome: outcome ?? null,
           closed: pane.closed,
           answer: outcome === "done" ? (agent?.lastText ?? null) : null,
@@ -994,15 +718,17 @@ export function registerDelegate(
     );
   }
 
-  /** Spawn, send, and watch one delegate. The caller holds one
-   *  `starting` slot; it is released once the delegate is in `inflight`
-   *  (or on failure). Returns the tool result text. */
+  /** Spawn, send, and watch one registered call. The caller holds one
+   *  `starting` slot and has already moved the call to `starting`; the slot
+   *  is released once the delegate is in `inflight` (or on failure). A
+   *  failure is made durable here: nothing sent leaves the call refused
+   *  (reissuable), a pane that may be running fails it with the pane kept.
+   *  Returns the tool result. */
   async function start(
-    params: Record<string, unknown>,
+    call: CallInfo,
     signal: AbortSignal | undefined,
     ctx: DelegateCtx | undefined,
     queuedAs?: string,
-    record?: RecordTarget,
   ): Promise<ToolResult> {
     let slotHeld = true;
     const freeSlot = () => {
@@ -1013,41 +739,47 @@ export function registerDelegate(
       slotHeld = false;
     };
     reportPending(); // the count moves at once, before the pane exists
+    const ws = call.workstream;
+    const req = call.request;
     try {
-      const task = typeof params.task === "string" ? params.task.trim() : "";
-      const brief = typeof params.brief === "string" ? params.brief.trim() : "";
-      const keep = params.keep === true;
-      const t = params.timeout;
-      if (t !== undefined && !(typeof t === "number" && Number.isFinite(t) && t > 0))
-        throw new Error(
-          `mu_delegate: timeout must be a positive number of seconds (got ${JSON.stringify(t)})`,
-        );
-      const timeoutS = typeof t === "number" ? Math.ceil(t) : DELEGATE_TIMEOUT_S;
+      const keep = req.keep === true;
+      const timeoutS = req.timeoutS ?? DELEGATE_TIMEOUT_S;
       // Without --cwd the pane inherits the mux session's start dir (wherever
       // the FIRST scratch spawn ran), and a missing dir silently becomes
       // $HOME: pin it to the caller's and check it exists.
       let cwd: string | undefined;
-      if (params.workspace !== true) {
-        cwd =
-          typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
-        if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
+      if (req.workspace !== true) {
+        cwd = req.cwd ? req.cwd : (ctx?.cwd ?? process.cwd());
+        if (!isDir(cwd))
+          throw new SpawnFail(`mu_delegate: cwd ${cwd} is not a directory`, "unsent");
       }
-      const { name, runs, attach, workspace, sessionFile, identity } = await spawn(
-        params,
-        brief ? `${brief}\n\n${task}` : task,
-        cwd,
-        signal,
-      );
+      let spawned: Awaited<ReturnType<typeof spawn>>;
+      try {
+        spawned = await spawn(call, req.text, cwd, signal);
+      } catch (e) {
+        const fail = e instanceof SpawnFail ? e : new SpawnFail(errText(e), "unsent");
+        await settleFailedStart(call, fail);
+        throw new Error(
+          fail.kind === "unsent"
+            ? `${fail.message}. The call is durable and refused: reissue it with ${DELEGATE_REISSUE_TOOL} { call_id: "${call.callId}" } (task ${ws}/${call.task}).`
+            : `${fail.message}. Recorded on ${ws}/${call.task} as failed.`,
+        );
+      }
+      const { name, runs, attach, workspace, sessionFile, identity } = spawned;
+      const key = inflightKey(ws, name);
       const entry: Inflight = {
         abort: new AbortController(),
+        call,
         cancelling: false,
         ...(sessionFile ? { sessionFile } : {}),
         ...(identity ? { identity } : {}),
-        ...(record ? { record: { target: record, label: recordLabel(params, name) } } : {}),
       };
-      inflight.set(name, entry);
+      inflight.set(key, entry);
       freeSlot(); // now counted in inflight
       reportPending();
+      await calls.mark(call.callId, "running", { agent: name }).catch((e) => {
+        trace("mark.running.failed", { call: call.callId, error: errText(e) });
+      });
       const started = Date.now();
       // The send's `runs` is pi's count before this prompt: waiting past it
       // catches the run even if it settled before this wait started.
@@ -1057,7 +789,7 @@ export function registerDelegate(
           "wait",
           name,
           "-w",
-          W,
+          ws,
           "--json",
           "--timeout",
           String(timeoutS),
@@ -1070,9 +802,10 @@ export function registerDelegate(
         const delivery = ++deliverySeq;
         trace("settle", { delivery, name, code: r.code });
         arriving.set(delivery, { sent: false, name });
-        forget(name);
+        forget(key);
         try {
           await deliver(
+            call,
             name,
             r,
             keep,
@@ -1085,13 +818,12 @@ export function registerDelegate(
               ...(entry.sessionFile ? { sessionFile: entry.sessionFile } : {}),
             },
             delivery,
-            entry.record,
             entry.identity,
           );
           markSent(delivery);
         } catch (e) {
           // A throw here would be an unhandled rejection and a lost answer.
-          const content = `Delegate ${W}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${W}`;
+          const content = `Delegate ${ws}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${ws}`;
           const a = arriving.get(delivery);
           if (a) a.content = content;
           await Promise.resolve(
@@ -1100,7 +832,7 @@ export function registerDelegate(
                 customType: DELEGATE_MESSAGE_TYPE,
                 content,
                 display: true,
-                details: { name, workstream: W, outcome: null, closed: false, delivery },
+                details: { name, workstream: ws, outcome: null, closed: false, delivery },
               },
               { deliverAs: "followUp", triggerTurn: true },
               "deliver-failed",
@@ -1115,12 +847,12 @@ export function registerDelegate(
         }
       };
       void waiting.then(async (r) => {
-        if (inflight.get(name) !== entry) return; // cancelled or shut down
+        if (inflight.get(key) !== entry) return; // cancelled or shut down
         if (entry.cancelling) entry.parked = () => settle(r);
         else await settle(r);
       });
       const lines = [
-        `Delegated to ${W}/${name}. Its answer arrives as a follow-up message when it finishes; do not wait or poll.`,
+        `Delegated to ${ws}/${name} (task ${ws}/${call.task}, call ${call.callId}). Its answer arrives as a follow-up message when it finishes, and stays on the task (mu task notes ${call.task} -w ${ws}); do not wait or poll.`,
         workspace ? `Workspace: ${workspace}` : undefined,
         attach ? `Attach: ${attach}` : undefined,
         `Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${name}" }`,
@@ -1129,7 +861,10 @@ export function registerDelegate(
         content: [{ type: "text", text: lines.join("\n") }],
         details: {
           name,
-          workstream: W,
+          workstream: ws,
+          task: `${ws}/${call.task}`,
+          state: "running",
+          call_id: call.callId,
           attach: attach ?? null,
           workspace: workspace ?? null,
           keep,
@@ -1143,10 +878,64 @@ export function registerDelegate(
     }
   }
 
+  /** Make a failed start durable: unsent -> refused (reissuable, brief kept);
+   *  a possibly-running pane -> finished as failed; a cancel -> cancelled. */
+  async function settleFailedStart(call: CallInfo, fail: SpawnFail): Promise<void> {
+    try {
+      if (fail.kind === "unsent") await calls.mark(call.callId, "refused", { error: fail.message });
+      else
+        await calls.finish(call.callId, {
+          outcome:
+            fail.kind === "aborted" ? "cancelled" : fail.kind === "unknown" ? "unknown" : "error",
+          text: fail.message,
+          author: call.caller,
+        });
+    } catch (e) {
+      trace("settleFailedStart.failed", { call: call.callId, error: errText(e) });
+    }
+  }
+
+  /** The delegate's own pi session file, for a never-started or cancelled call: none. */
+  const callIdIn = (name: string) => name.startsWith("pi:");
+
+  /** Admit a registered call: a free slot starts it now, else the queue holds
+   *  it. (Refusal past the queue is decided by the caller, before it registers.) */
+  const admission = (): "starting" | "queued" | "refused" => {
+    const max = delegateMax();
+    if (inflight.size + starting < max) return "starting";
+    return queue.length < DELEGATE_QUEUE_FACTOR * max ? "queued" : "refused";
+  };
+
+  /** The text and details of a call that was queued or refused. */
+  const queuedResult = (
+    call: CallInfo,
+    state: "queued" | "refused",
+    handle: string,
+    position: number,
+  ): ToolResult => {
+    const max = delegateMax();
+    const taskRef = `${call.workstream}/${call.task}`;
+    const text =
+      state === "refused"
+        ? `REFUSED, not started: ${inflight.size + starting} running and ${queue.length} queued (MU_DELEGATE_MAX=${max}). The call is durable (task ${taskRef}, call ${call.callId}) and will NOT start on its own. Reissue it once slots free, as answers arrive: ${DELEGATE_REISSUE_TOOL} { call_id: "${call.callId}" } (or mu delegates reissue ${call.callId}). List: mu delegates.`
+        : `Queued as ${handle} (#${position}; ${inflight.size + starting} running, MU_DELEGATE_MAX=${max}; task ${taskRef}, call ${call.callId}). It starts when a slot frees, and its answer arrives as a follow-up message like any delegate's; do not wait or poll. Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${handle}" }`;
+    return {
+      content: [{ type: "text", text }],
+      details: {
+        name: handle,
+        workstream: call.workstream,
+        task: taskRef,
+        state,
+        call_id: call.callId,
+        ...(state === "queued" ? { queued: true, position } : { refused: true }),
+      },
+    };
+  };
+
   pi.registerTool({
     name: DELEGATE_TOOL,
     label: "mu delegate",
-    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation, or a refuter of a claim, plan or fix before you act on it; call it several times to fan out in parallel (at most ${delegateMax()} run at once; up to ${DELEGATE_QUEUE_FACTOR * delegateMax()} more are queued and start as slots free). The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open. When the check judges a mu task, set record so its verdict lands on that task; leave it out when there is no task.`,
+    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation, or a refuter of a claim, plan or fix before you act on it; call it several times to fan out in parallel (at most ${delegateMax()} run at once; up to ${DELEGATE_QUEUE_FACTOR * delegateMax()} more are queued and start as slots free; past that a call is refused: durable, reissue it with ${DELEGATE_REISSUE_TOOL}). Every call is a mu task (kind delegate): the result names it, and the full answer stays on it. The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open. When the check judges a mu task, set record so its verdict lands on that task; leave it out when there is no task. Set wave to group a fan-out (mu delegates tally).`,
     promptSnippet:
       "Subagent: delegate a self-contained task to a background pi agent; its answer arrives later as a follow-up",
     parameters: {
@@ -1203,6 +992,15 @@ export function registerDelegate(
           required: ["task"],
           additionalProperties: false,
         },
+        wave: {
+          type: "string",
+          description:
+            "Label grouping the calls of one fan-out; `mu delegates tally -w <workstream> --wave <label>` counts their verdicts per judged task.",
+        },
+        workstream: {
+          type: "string",
+          description: `Workstream that holds the delegate task and runs the delegate (default: ${W}).`,
+        },
       },
       required: ["task"],
       additionalProperties: false,
@@ -1215,64 +1013,171 @@ export function registerDelegate(
         throw new Error(
           `mu_delegate: timeout must be a positive number of seconds (got ${JSON.stringify(t)})`,
         );
-      if (params.workspace !== true) {
-        const cwd =
-          typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd());
-        if (!isDir(cwd)) throw new Error(`mu_delegate: cwd ${cwd} is not a directory`);
-      }
+      const callCwd =
+        params.workspace !== true
+          ? typeof params.cwd === "string" && params.cwd
+            ? params.cwd
+            : (ctx?.cwd ?? process.cwd())
+          : undefined;
+      if (callCwd !== undefined && !isDir(callCwd))
+        throw new Error(`mu_delegate: cwd ${callCwd} is not a directory`);
+      let model: string | undefined;
       if (params.model !== undefined && params.model !== "") {
-        const m = normalizeModel(params.model);
-        if (!m)
+        model = normalizeModel(params.model);
+        if (!model)
           throw new Error(
             `mu_delegate: model must be one pi model id like 'provider/id:thinking', as listed by \`pi --list-models\` (got ${JSON.stringify(params.model)}); omit it for the cli's default`,
           );
-        params = { ...params, model: m };
       }
-      const record = await resolveRecord(params.record);
-      // Count slots synchronously, before any await: parallel calls in one
-      // turn all run this line before the first spawn returns.
-      const max = delegateMax();
-      if (inflight.size + starting < max) {
-        starting++;
-        return start(params, signal, ctx, undefined, record);
-      }
-      // Full: queue up to DELEGATE_QUEUE_FACTOR caps' worth; past that, refuse.
-      if (queue.length >= DELEGATE_QUEUE_FACTOR * max)
-        throw new Error(
-          `mu_delegate: ${inflight.size + starting} running and ${queue.length} queued (MU_DELEGATE_MAX=${max}). End your turn; issue the rest as answers arrive (each answer resumes you).`,
+      let workstream = W;
+      if (params.workstream !== undefined) {
+        const problem = workstreamNameProblem(
+          typeof params.workstream === "string" ? params.workstream : String(params.workstream),
+          "workstream",
         );
-      const handle = `queued-${++queueSeq}`;
-      queue.push({
-        handle,
-        params: {
-          ...params,
-          cwd:
-            typeof params.cwd === "string" && params.cwd ? params.cwd : (ctx?.cwd ?? process.cwd()),
-        },
-        ctx,
+        if (problem !== undefined) throw new Error(`mu_delegate: ${problem} Nothing spawned.`);
+        workstream = params.workstream as string;
+      }
+      if (
+        params.wave !== undefined &&
+        (typeof params.wave !== "string" || params.wave.trim() === "")
+      )
+        throw new Error(
+          `mu_delegate: wave must be a non-empty label (got ${JSON.stringify(params.wave)})`,
+        );
+      const record = await resolveRecord(params.record);
+      const brief = typeof params.brief === "string" ? params.brief.trim() : "";
+      const label =
+        typeof params.label === "string" && params.label.trim() ? params.label.trim() : undefined;
+      // Count slots synchronously, before any await: parallel calls in one
+      // turn all run this line before the first register returns.
+      const decision = admission();
+      const handle = decision === "starting" ? "" : `queued-${++queueSeq}`;
+      if (decision === "starting") starting++;
+      const session = piSessionId(ctx) || process.env.PI_SESSION_ID || `local-${token}`;
+      const caller = `pi:${session}`;
+      const info: Omit<CallInfo, "task"> = {
+        callId: `${caller}:${token}-${++callSeq}`,
+        caller,
+        workstream,
+        ...(typeof params.wave === "string" ? { wave: params.wave.trim() } : {}),
         ...(record ? { record } : {}),
-      });
-      reportPending();
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Queued as ${handle} (#${queue.length}; ${inflight.size + starting} running, MU_DELEGATE_MAX=${max}). It starts when a slot frees, and its answer arrives as a follow-up message like any delegate's; do not wait or poll. Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${handle}" }`,
-          },
-        ],
-        details: { name: handle, workstream: W, queued: true, position: queue.length },
+        request: {
+          text: brief ? `${brief}\n\n${task}` : task,
+          ...(label ? { label } : {}),
+          ...(typeof params.cli === "string" && params.cli ? { cli: params.cli } : {}),
+          ...(model ? { model } : {}),
+          ...(callCwd !== undefined ? { cwd: callCwd } : {}),
+          ...(params.workspace === true ? { workspace: true } : {}),
+          ...(typeof t === "number" ? { timeoutS: Math.ceil(t) } : {}),
+          ...(params.keep === true ? { keep: true } : {}),
+        },
       };
+      if (decision === "starting") {
+        // Durable before it spawns: a start that fails here frees its slot.
+        let reg: Awaited<ReturnType<typeof calls.register>>;
+        try {
+          reg = await calls.register(info, "starting");
+        } catch (e) {
+          starting--;
+          reportPending();
+          drain();
+          throw new Error(
+            `mu_delegate: could not register the call: ${errText(e)}. Nothing spawned.`,
+          );
+        }
+        return start(reg.call, signal, ctx);
+      }
+      if (decision === "refused") {
+        let reg: Awaited<ReturnType<typeof calls.register>>;
+        try {
+          reg = await calls.register(info, "refused");
+        } catch (e) {
+          throw new Error(
+            `mu_delegate: could not register the call: ${errText(e)}. Nothing spawned.`,
+          );
+        }
+        return queuedResult(reg.call, "refused", handle, 0);
+      }
+      // Full: wait in the queue (FIFO, up to DELEGATE_QUEUE_FACTOR caps' worth).
+      const entry: Queued = {
+        handle,
+        call: { ...info, task: "" },
+        ctx,
+        registered: Promise.resolve(),
+      };
+      entry.registered = calls.register(info, "queued").then((reg) => {
+        entry.call = reg.call;
+      });
+      queue.push(entry);
+      reportPending();
+      try {
+        await entry.registered;
+      } catch (e) {
+        const at = queue.indexOf(entry);
+        if (at >= 0) queue.splice(at, 1);
+        reportPending();
+        throw new Error(`mu_delegate: could not register the call: ${errText(e)}. Nothing queued.`);
+      }
+      return queuedResult(entry.call, "queued", handle, queue.indexOf(entry) + 1 || queue.length);
+    },
+  });
+
+  pi.registerTool({
+    name: DELEGATE_REISSUE_TOOL,
+    label: "mu delegate reissue",
+    description: `Run a call ${DELEGATE_TOOL} refused (the queue was full): same call, same task, never a second verdict. Takes the call_id from the refusal; starts now if a slot is free, else queues.`,
+    parameters: {
+      type: "object",
+      properties: { call_id: { type: "string", description: "The refused call's id" } },
+      required: ["call_id"],
+      additionalProperties: false,
+    },
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const callId = typeof params.call_id === "string" ? params.call_id : "";
+      if (!callId) throw new Error(`${DELEGATE_REISSUE_TOOL} needs a call_id`);
+      const shown = await calls.show(callId).catch((e: unknown) => {
+        throw new Error(`${DELEGATE_REISSUE_TOOL}: ${errText(e)}`);
+      });
+      if (shown.state !== "refused")
+        throw new Error(`${DELEGATE_REISSUE_TOOL}: call ${callId} is ${shown.state}, not refused.`);
+      // Synchronous from here to the slot count: parallel reissues cannot overfill.
+      const decision = admission();
+      if (decision === "refused")
+        throw new Error(
+          `${DELEGATE_REISSUE_TOOL}: still full (${inflight.size + starting} running, ${queue.length} queued). Nothing changed; reissue ${callId} when an answer arrives.`,
+        );
+      if (decision === "starting") starting++;
+      try {
+        await calls.reissue(callId);
+        if (decision === "starting") await calls.mark(callId, "starting");
+      } catch (e) {
+        if (decision === "starting") {
+          starting--;
+          reportPending();
+          drain();
+        }
+        throw new Error(`${DELEGATE_REISSUE_TOOL}: ${errText(e)}`);
+      }
+      if (decision === "starting") return start(shown.call, signal, ctx);
+      const handle = `queued-${++queueSeq}`;
+      queue.push({ handle, call: shown.call, ctx, registered: Promise.resolve() });
+      reportPending();
+      return queuedResult(shown.call, "queued", handle, queue.length);
     },
   });
 
   pi.registerTool({
     name: DELEGATE_CANCEL_TOOL,
     label: "mu delegate cancel",
-    description: `Stop a delegate started by ${DELEGATE_TOOL}: abort its turn and close its pane (keep: true leaves the pane open). No follow-up message is sent for it afterwards.`,
+    description: `Stop a delegate started by ${DELEGATE_TOOL}: abort its turn and close its pane (keep: true leaves the pane open). A queued or refused call is cancelled too (name it by its handle or call_id). The verdict target, if any, gets "no verdict (cancelled)". No follow-up message is sent for it afterwards.`,
     parameters: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Delegate name, e.g. delegate-1" },
+        name: {
+          type: "string",
+          description: "Delegate name (delegate-1), queue handle (queued-2) or call_id",
+        },
         keep: { type: "boolean", description: "Leave the pane open after aborting" },
       },
       required: ["name"],
@@ -1281,23 +1186,57 @@ export function registerDelegate(
     async execute(_id, params) {
       const name = typeof params.name === "string" ? params.name : "";
       if (!name) throw new Error("mu_delegate_cancel needs a name");
-      const qi = queue.findIndex((q) => q.handle === name);
+      const cancelCall = async (call: CallInfo, author: string, text?: string) => {
+        try {
+          const f = await calls.finish(call.callId, {
+            outcome: "cancelled",
+            ...(text ? { text } : {}),
+            author,
+          });
+          if (f.recorded && call.record)
+            return ` Recorded on ${call.record.workstream}/${call.record.task} as a note (no verdict: cancelled).`;
+          return f.changed ? ` Task ${call.workstream}/${call.task} closed (cancelled).` : "";
+        } catch (e) {
+          return ` Recording the cancel failed: ${errText(e)}.`;
+        }
+      };
+      const qi = queue.findIndex((q) => q.handle === name || q.call.callId === name);
       if (qi >= 0) {
         const [q] = queue.splice(qi, 1);
         reportPending();
-        const recorded = q?.record
-          ? ` ${await writeRecord(q.record, name, recordNote(recordLabel(q.params, name), name, "cancelled", undefined, 0))}`
-          : "";
+        let recorded = "";
+        if (q) {
+          await q.registered.catch(() => {});
+          recorded = await cancelCall(q.call, q.handle);
+        }
         return {
           content: [
             { type: "text", text: `Dropped ${name} from the queue; it never started.${recorded}` },
           ],
-          details: { name, workstream: W },
+          details: { name, workstream: q?.call.workstream ?? W },
         };
       }
-      const entry = inflight.get(name);
+      const found = [...inflight].find(
+        ([key, e]) =>
+          key === name || key === inflightKey(e.call.workstream, name) || e.call.callId === name,
+      );
+      if (!found && callIdIn(name)) {
+        // Not in this runtime (refused, or another session's): cancel the durable call.
+        const shown = await calls.show(name).catch((e: unknown) => {
+          throw new Error(`mu_delegate_cancel: ${errText(e)}`);
+        });
+        const recorded = await cancelCall(shown.call, name);
+        return {
+          content: [{ type: "text", text: `Cancelled ${name} (${shown.state}).${recorded}` }],
+          details: { name, workstream: shown.call.workstream },
+        };
+      }
+      const key = found?.[0];
+      const entry = found?.[1];
+      const ws = entry?.call.workstream ?? W;
+      const agentName = key ? key.slice(key.indexOf("/") + 1) : name;
       if (entry) entry.cancelling = true;
-      const ab = await mu(["agent", "abort", name, "-w", W]);
+      const ab = await mu(["agent", "abort", agentName, "-w", ws]);
       if (ab.code !== 0) {
         // Not cancelled after all: keep waiting, or deliver what settled meanwhile.
         if (entry) {
@@ -1306,29 +1245,34 @@ export function registerDelegate(
           entry.parked = undefined;
           if (parked) void parked();
         }
-        throw failure(`mu agent abort ${W}/${name}`, ab);
+        throw failure(`mu agent abort ${ws}/${agentName}`, ab);
       }
-      if (entry) {
+      if (entry && key) {
         entry.abort.abort();
-        forget(name);
+        forget(key);
       }
-      let text = `Aborted ${W}/${name}.`;
+      let text = `Aborted ${ws}/${agentName}.`;
       // What it wrote before the abort, and its transcript.
       const sessionFile = entry?.sessionFile;
-      const partial = sessionFile ? partialCopy(name, sessionFile) : undefined;
+      const partial = sessionFile ? partialCopy(agentName, sessionFile) : undefined;
       const evidence = evidenceLines({
         ...(sessionFile ? { sessionFile } : {}),
         ...(partial ? { partial } : {}),
       });
-      if (entry?.record)
-        text += ` ${await writeRecord(entry.record.target, name, recordNote(entry.record.label, name, "cancelled", undefined, 0))}`;
+      // The result is durable before the pane goes: the cancel closes the task.
+      if (entry)
+        text += await cancelCall(
+          entry.call,
+          agentName,
+          sessionFile ? lastAssistantTextIn(sessionFile) : undefined,
+        );
       if (params.keep === true) text += " Pane kept.";
       else {
-        const c = await closeDelegate(name, entry?.identity);
+        const c = await closeDelegate(agentName, entry?.identity, ws);
         text += c.closed ? " Pane closed." : ` Pane kept: ${c.why}`;
       }
       if (evidence.length > 0) text += `\n${evidence.join("\n")}`;
-      return { content: [{ type: "text", text }], details: { name, workstream: W } };
+      return { content: [{ type: "text", text }], details: { name: agentName, workstream: ws } };
     },
   });
 
@@ -1374,6 +1318,7 @@ export function registerDelegate(
       for (const o of a.opts ?? []) o.triggerTurn = false;
       dropped.push({
         name: a.name,
+        ...(a.workstream ? { workstream: a.workstream } : {}),
         ...(a.outcome ? { outcome: a.outcome } : {}),
         ...(a.elapsedMs !== undefined ? { elapsedMs: a.elapsedMs } : {}),
         ...(a.sessionFile ? { sessionFile: a.sessionFile } : {}),
@@ -1444,7 +1389,7 @@ export function registerDelegate(
   // The watchers die with this runtime (/reload, /new, quit): say which
   // delegates lose their callback, so none is lost silently. The names
   // are also in the tool results, and `mu agent wait` recovers them.
-  pi.on("session_shutdown", (_e, ctx) => {
+  pi.on("session_shutdown", async (_e, ctx) => {
     closed = true;
     clearImmediate(settleCheck);
     trace("session_shutdown.state", {
@@ -1454,22 +1399,41 @@ export function registerDelegate(
     // Answers still being delivered or queued die with this runtime.
     arriving.clear();
     if (inflight.size === 0 && queue.length === 0) return;
-    const names = [...inflight.keys()];
-    const sessions = [...inflight].flatMap(([n, e]) =>
-      e.sessionFile ? [`${n}: ${e.sessionFile}`] : [],
+    const shown = (key: string) => (key.startsWith(`${W}/`) ? key.slice(W.length + 1) : key);
+    const names = [...inflight.keys()].map(shown);
+    const sessions = [...inflight].flatMap(([k, e]) =>
+      e.sessionFile ? [`${shown(k)}: ${e.sessionFile}`] : [],
     );
-    const never = queue.splice(0).map((q) => q.handle);
+    const dropped = queue.splice(0);
     for (const e of inflight.values()) e.abort.abort();
     inflight.clear();
     reportPending();
+    // A queued call never started and nothing will drain it now: park it as
+    // refused (durable, listable, reissuable) instead of leaving it queued forever.
+    const refused: string[] = [];
+    await Promise.all(
+      dropped.map(async (q) => {
+        try {
+          await q.registered;
+          await calls.mark(q.call.callId, "refused", {
+            error: "its session ended before it started",
+          });
+          refused.push(q.call.callId);
+        } catch {
+          // best effort: `mu delegates` shows what state it stayed in
+        }
+      }),
+    );
     const parts: string[] = [];
     if (names.length > 0)
       parts.push(
         `${names.length} delegate${names.length === 1 ? "" : "s"} still running: ${names.join(", ")}. Their answers will not come back here; use mu agent wait <name> -w ${W} --json.`,
       );
     if (sessions.length > 0) parts.push(`Sessions: ${sessions.join("; ")}.`);
-    if (never.length > 0)
-      parts.push(`${never.length} queued, never started: ${never.join(", ")}. Re-issue them.`);
+    if (dropped.length > 0)
+      parts.push(
+        `${dropped.length} queued, never started: ${dropped.map((q) => q.handle).join(", ")}. Re-issue them${refused.length > 0 ? ` (durable and refused: mu delegates reissue <call-id>; list: mu delegates --all)` : ""}.`,
+      );
     const msg = parts.join(" ");
     if (ctx?.hasUI && ctx.ui) ctx.ui.notify(msg, "warning");
     else process.stderr.write(`mu: ${msg}\n`);

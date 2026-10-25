@@ -24,6 +24,7 @@ import { AgentNotInWorkstreamError, type AgentRow, getAgent, getAgentByPane } fr
 import { wireAgentCommands, wireSelfCommands } from "./cli/agents.js";
 import { wireDbCommands } from "./cli/db.js";
 import { wireDbQueryCommand } from "./cli/db-query.js";
+import { wireDelegatesCommands } from "./cli/delegates.js";
 import { wireDoctorCommand } from "./cli/doctor.js";
 import {
   emitParseError,
@@ -845,6 +846,7 @@ export function buildProgram(): Command {
   wireSyncCommand(program);
   wireHostCommands(program);
   wireHumanNeededCommand(program);
+  wireDelegatesCommands(program);
   wireRebuildCommand(program);
   wireDbCommands(program);
   wireDbQueryCommand(program);

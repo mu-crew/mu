@@ -65,6 +65,11 @@ import {
   SqliteTooOldError,
   WorkstreamNotFoundError,
 } from "../db.js";
+import {
+  DelegateCallConflictError,
+  DelegateNotFoundError,
+  DelegateStateError,
+} from "../delegates.js";
 import { DriftDetectedError } from "../drift.js";
 import { checkDbInsideSyncDir, DbInsideSyncDirError, HazardFailError } from "../fleet-hazards.js";
 import {
@@ -360,6 +365,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   }
   if (
     err instanceof AgentNotFoundError ||
+    err instanceof DelegateNotFoundError ||
     err instanceof TaskNotFoundError ||
     err instanceof TaskNoteRangeError ||
     err instanceof HostNotFoundError ||
@@ -385,6 +391,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||
     err instanceof TaskAutoRefusedError ||
+    err instanceof DelegateCallConflictError ||
+    err instanceof DelegateStateError ||
     err instanceof TaskAlreadyOwnedError ||
     err instanceof TaskHasOpenBlockersError ||
     err instanceof CloseNeedsEvidenceError ||

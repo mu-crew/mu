@@ -92,7 +92,11 @@ describe.skipIf(!ready)("pi package (real pi resolver + loader)", () => {
       readdirSync(join(root, "prompts")).filter((f) => f.endsWith(".md")).length,
     );
     expect(r.factories).toHaveLength(1);
-    expect(r.factories[0]?.tools).toEqual(["mu_delegate", "mu_delegate_cancel"]);
+    expect(r.factories[0]?.tools).toEqual([
+      "mu_delegate",
+      "mu_delegate_reissue",
+      "mu_delegate_cancel",
+    ]);
   });
 
   it("a legacy shim doubles the factories until `mu pi migrate --apply`", () => {

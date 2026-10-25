@@ -28,6 +28,33 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Delegates are durable tasks: `mu delegates`, `mu_delegate_reissue`, wave tally** (`v_delegate`, part A: the mux path;
+  delegates with no tmux or herdr are `v_delegate_nomux`). Every `mu_delegate` call is a `kind=delegate` task
+  (in `scratch` or the new `workstream` option) with the prompt as its brief and a session-qualified `call_id`
+  (`pi:<session>:<n>`), created with its `delegate_calls` row in one transaction (SDK `registerDelegateCall`; the same id
+  with the same request is a no-op, a changed request is refused, exit 4; the `record` target must exist or nothing is
+  written). The tool result is `{ task, state, call_id }`; new optional `wave` groups a fan-out. States: `queued starting
+  running recording done failed refused cancelled`. A queued or refused task is parked, so it never reaches `mu task
+  next` or an executor. The delegate is spawned through the task-bound `agent spawn --task <task> --attempt <task>`
+  (the journaled path: a replay never sends twice, and a replay or stale receipt, which carries no top-level `ctl`, is
+  handled). The one recorder, `finishDelegate` / `mu delegates finish`, commits `recording`, then writes in ONE op group
+  the verdict note on the judged task, the delegate's report and its close; the delegate task is closed before the
+  pane. A failed record leaves the call `failed` (task closed `rejected`, the answer kept as its report, the pane kept),
+  never `done`; a repeated callback writes nothing twice. **Refused, not thrown:** past `MU_DELEGATE_MAX` plus four
+  caps' worth of queue a call is recorded as `refused` with its brief and record target, outside murmur's
+  `murmur:pending` count (payload unchanged); `mu_delegate_reissue { call_id }` (or `mu delegates reissue`) moves it
+  back once, same call, same task. A `/reload` or quit parks queued calls as `refused` instead of dropping them.
+  **Full evidence:** the verdict note keeps everything from the last verdict line (now also `REFUTER: VERDICT:`), and a
+  note without one keeps the whole answer; the 4000 and 1500 character caps are gone, and the same answer is the
+  delegate task's report. New verbs: `mu delegates list [--caller|--all|--wave|-w]`, `show`, `tally -w <ws> --wave
+  <label>` (CONFIRMED/REFUTED/UNVERIFIED per judged task, one result per call, queued/running/refused counts),
+  `register`, `mark`, `finish`, `reissue`. SDK: `registerDelegateCall`, `markDelegate`, `finishDelegate`,
+  `reissueDelegateCall`, `listDelegates`, `getDelegateCall`, `verdictTally`, `parseVerdict` (package entry).
+  `addTask` takes `kind` and `wave`. `delegate_calls` gains `request`, `verdict` and `agent` (nullable; v13 is
+  unreleased, so no version bump). Unchanged: `MU_DELEGATE=0`, the managed-agent no-recursion guard, `answerPending`,
+  the arriving/stub/single-resend/Escape machinery. `extension/delegate.ts` is split (`delegate-calls`,
+  `delegate-format`, `delegate-args`, `delegate-trace`, `mu-run`).
+
 - **Wait registrations and one typed agent observation (storage and seams for
   the unified wait; no new verb).** The machine-local `wait_registrations`
   table (`caller`, `refs_json`, `state` armed|waiting, `generation`,

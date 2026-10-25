@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DELEGATE_CANCEL_TOOL, type MuResult, registerDelegate } from "../extension/delegate.js";
+import { listDelegates } from "../src/delegates.js";
+import { selectTaskNotes } from "../src/tasks/queries.js";
+import { getTask } from "../src/tasks.js";
 import {
+  type FakeMu,
   failed,
   fakeMu,
   fakePi,
@@ -14,8 +18,19 @@ import {
 installDelegateEnv();
 
 describe("record", () => {
-  const notes = (mu: ReturnType<typeof fakeMu>) =>
-    mu.calls.filter((c) => c[0] === "task" && c[1] === "note");
+  /** The `mu task note` calls: the recorder writes in-process now, so none. */
+  const noteCalls = (mu: FakeMu) => mu.calls.filter((c) => c[0] === "task" && c[1] === "note");
+  /** The notes of a task, read from the real DB. */
+  const notesOf = (mu: FakeMu, ws: string, id: string) =>
+    selectTaskNotes(mu.db, id, { workstream: ws, all: true }).notes;
+  const verdicts = (mu: FakeMu, ws: string, id: string) =>
+    notesOf(mu, ws, id).filter((n) => n.kind === "verdict");
+  /** The one delegate call of the DB. */
+  const theCall = (mu: FakeMu, i = 0) => {
+    const c = listDelegates(mu.db)[i];
+    if (!c) throw new Error("no delegate call registered");
+    return c;
+  };
   const settle = async () => {
     for (let i = 0; i < 6; i++) await flush();
   };
@@ -28,7 +43,7 @@ describe("record", () => {
     "EVIDENCE: grep -n check src/x.ts -> nothing",
   ].join("\n");
 
-  it("a done answer writes one note: REFUTER header, then the tail from the last VERDICT", async () => {
+  it("a done answer lands as ONE verdict note: REFUTER header, then the tail from the last VERDICT", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -47,19 +62,11 @@ describe("record", () => {
     ]);
     mu.waits.get("delegate-ref1")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
     await settle();
-    const ns = notes(mu);
-    expect(ns).toHaveLength(1);
-    const [, , id, w, ws, a, author, k, kind, text = ""] = ns[0] ?? [];
-    expect([id, w, ws, a, author, k, kind]).toEqual([
-      "f1",
-      "-w",
-      "audit",
-      "--author",
-      "delegate-ref1",
-      "--kind",
-      "verdict",
-    ]);
-    const lines = text.split("\n");
+    expect(noteCalls(mu)).toHaveLength(0); // no `mu task note`: one recorder (`mu delegates finish`)
+    const v = verdicts(mu, "audit", "f1");
+    expect(v).toHaveLength(1);
+    expect(v[0]?.author).toBe("delegate-ref1");
+    const lines = (v[0]?.content ?? "").split("\n");
     expect(lines[0]).toMatch(/^REFUTER ref1 \(delegate-ref1, \d+s\):$/);
     expect(lines.slice(1)).toEqual([
       "VERDICT: CONFIRMED (sev med) src/x.ts:12 skips the check",
@@ -68,6 +75,7 @@ describe("record", () => {
     ]);
     expect(sentText(p)).toContain("Recorded on audit/f1 as a note");
     expect(sentText(p)).toContain(answer); // the answer still arrives in full
+    expect(theCall(mu)).toMatchObject({ state: "done", verdict: "CONFIRMED" });
   });
 
   it("a multi-line EVIDENCE body after the header is kept, not just the EVIDENCE: lines", async () => {
@@ -86,7 +94,7 @@ describe("record", () => {
     ].join("\n");
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: refuter }] }));
     await settle();
-    const text = notes(mu)[0]?.[9] ?? "";
+    const text = verdicts(mu, "crew", "f1")[0]?.content ?? "";
     expect(text.split("\n").slice(1)).toEqual(refuter.split("\n").slice(1));
   });
 
@@ -97,42 +105,61 @@ describe("record", () => {
     await tool(p).execute("t", { task: "x", label: "r", record: { task: "audit/f2" } });
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
     await settle();
-    expect(notes(mu)[0]?.slice(0, 5)).toEqual(["task", "note", "f2", "-w", "audit"]);
+    expect(verdicts(mu, "audit", "f2")).toHaveLength(1);
+    expect(theCall(mu).record).toMatchObject({ workstream: "audit", task: "f2" });
   });
 
-  it("an answer without a VERDICT line records its tail as NO VERDICT LINE", async () => {
+  it("an answer without a VERDICT line records the WHOLE answer as NO VERDICT LINE", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
     await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
-    const long = `${"a".repeat(3000)}END`;
+    const long = `${"a".repeat(6000)}END`;
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: long }] }));
     await settle();
-    const text = notes(mu)[0]?.at(-1) ?? "";
-    const [head, second = "", ...rest] = text.split("\n");
+    const text = verdicts(mu, "crew", "f1")[0]?.content ?? "";
+    const [head, second = ""] = text.split("\n");
     expect(head).toMatch(/^REFUTER r \(delegate-r, /);
     expect(second.startsWith("NO VERDICT LINE:")).toBe(true);
-    const body = [second, ...rest].join("\n");
-    expect(body.endsWith("END")).toBe(true);
-    expect(body.length).toBeLessThan(1600);
-    expect(notes(mu)[0]?.slice(2, 5)).toEqual(["f1", "-w", "crew"]);
+    expect(text.endsWith("END")).toBe(true);
+    expect(text.length).toBeGreaterThan(6000); // nothing cut
+    expect(theCall(mu)).toMatchObject({ state: "done", verdict: null });
   });
 
-  it("caps a long verdict tail at about 4000 chars, marked [truncated]", async () => {
+  it("keeps a long verdict tail whole: no 4000 cap, no [truncated]", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
     await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
-    const long = `VERDICT: CONFIRMED\n${"EVIDENCE: x\n".repeat(800)}`;
+    const long = `VERDICT: CONFIRMED\n${"EVIDENCE: x\n".repeat(800)}END-EVIDENCE-MARKER`;
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: long }] }));
     await settle();
-    const text = notes(mu)[0]?.at(-1) ?? "";
-    expect(text.length).toBeLessThanOrEqual(4000);
-    expect(text).toContain("[truncated]");
+    const text = verdicts(mu, "crew", "f1")[0]?.content ?? "";
+    expect(text.length).toBeGreaterThan(9000);
+    expect(text).toContain("END-EVIDENCE-MARKER");
+    expect(text).not.toContain("[truncated]");
+    // the delegate task's report holds the same full answer
+    const c = theCall(mu);
+    const report = notesOf(mu, c.workstream, c.task).find((n) => n.kind === "report");
+    expect(report?.content).toContain("END-EVIDENCE-MARKER");
+  });
+
+  it("accepts the hand-written 'REFUTER: VERDICT:' shape", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
+    const hand = "notes\nREFUTER: VERDICT: REFUTED the guard exists\nEVIDENCE:\n- a\n- b";
+    mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: hand }] }));
+    await settle();
+    const text = verdicts(mu, "crew", "f1")[0]?.content ?? "";
+    expect(text).toContain("REFUTER: VERDICT: REFUTED the guard exists\nEVIDENCE:\n- a\n- b");
+    expect(text).not.toContain("NO VERDICT LINE");
+    expect(theCall(mu).verdict).toBe("REFUTED");
   });
 
   it.each(["timeout", "died", "empty", "error"])(
-    "outcome %s records a no-verdict note",
+    "outcome %s records a no-verdict note and closes the delegate task non-done",
     async (outcome) => {
       const mu = fakeMu();
       const p = fakePi();
@@ -140,8 +167,15 @@ describe("record", () => {
       await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
       mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome, lastError: "overloaded" }] }));
       await settle();
-      expect(notes(mu)).toHaveLength(1);
-      expect(notes(mu)[0]?.at(-1)).toBe(`REFUTER r: no verdict (${outcome})`);
+      expect(verdicts(mu, "crew", "f1").map((n) => n.content)).toEqual([
+        `REFUTER r: no verdict (${outcome})`,
+      ]);
+      const c = theCall(mu);
+      expect(c.state).toBe("failed");
+      expect(getTask(mu.db, c.task, c.workstream)).toMatchObject({
+        status: "CLOSED",
+        substate: "rejected",
+      });
     },
   );
 
@@ -151,7 +185,10 @@ describe("record", () => {
     registerDelegate(p.pi, mu.run);
     await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     await tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "delegate-r" });
-    expect(notes(mu)[0]?.at(-1)).toBe("REFUTER r: no verdict (cancelled)");
+    expect(verdicts(mu, "crew", "f1").map((n) => n.content)).toEqual([
+      "REFUTER r: no verdict (cancelled)",
+    ]);
+    expect(theCall(mu).state).toBe("cancelled");
   });
 
   it("a done answer that is only whitespace records a no-verdict note (empty)", async () => {
@@ -163,11 +200,12 @@ describe("record", () => {
       .get("delegate-r")
       ?.resolve(ok({ agents: [{ outcome: "done", lastText: " \n\t\n " }] }));
     await settle();
-    expect(notes(mu)).toHaveLength(1);
-    expect(notes(mu)[0]?.at(-1)).toBe("REFUTER r: no verdict (empty)");
+    expect(verdicts(mu, "crew", "f1").map((n) => n.content)).toEqual([
+      "REFUTER r: no verdict (empty)",
+    ]);
   });
 
-  it("cancelling a queued delegate records a no-verdict note on its task", async () => {
+  it("cancelling a queued delegate records a no-verdict note and closes its task", async () => {
     process.env.MU_DELEGATE_MAX = "1";
     try {
       const mu = fakeMu();
@@ -176,21 +214,15 @@ describe("record", () => {
       await tool(p).execute("a", { task: "one" });
       await tool(p).execute("b", { task: "two", label: "r", record: { task: "crew/f9" } });
       const c = await tool(p, DELEGATE_CANCEL_TOOL).execute("c", { name: "queued-1" });
-      expect(notes(mu)).toEqual([
-        [
-          "task",
-          "note",
-          "f9",
-          "-w",
-          "crew",
-          "--author",
-          "queued-1",
-          "--kind",
-          "verdict",
-          "REFUTER r: no verdict (cancelled)",
-        ],
-      ]);
-      expect(c.content[0]?.text).toContain("never started. Recorded on crew/f9 as a note.");
+      expect(verdicts(mu, "crew", "f9")).toHaveLength(1);
+      expect(verdicts(mu, "crew", "f9")[0]?.content).toBe("REFUTER r: no verdict (cancelled)");
+      expect(verdicts(mu, "crew", "f9")[0]?.author).toBe("queued-1");
+      expect(c.content[0]?.text).toContain("never started.");
+      expect(c.content[0]?.text).toContain("Recorded on crew/f9 as a note");
+      const q = theCall(mu, 1);
+      expect(q.state).toBe("cancelled");
+      expect(getTask(mu.db, q.task, q.workstream)).toMatchObject({ status: "CLOSED" });
+      expect(notesOf(mu, q.workstream, q.task).some((n) => n.kind === "report")).toBe(true);
     } finally {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];
@@ -260,20 +292,33 @@ describe("record", () => {
     expect(mu.calls).toHaveLength(0);
   });
 
-  it("a failed note write still delivers the answer and says why recording failed", async () => {
-    const mu = fakeMu({
-      task: { note: () => Promise.resolve({ code: 1, stdout: "", stderr: "db locked" }) },
-    });
+  it("a record that fails never becomes done: the answer is still delivered, the call is failed, the pane is kept", async () => {
+    const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
     await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
+    // The judged task vanishes between the call and its answer.
+    mu.db.prepare("DELETE FROM tasks WHERE local_id = 'f1'").run();
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
     await settle();
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
     const text = sentText(p);
     expect(text).toContain(answer);
-    expect(text).toMatch(/Recording on crew\/f1 failed.*db locked/);
+    expect(text).toMatch(/record crew\/f1 failed/);
+    expect(text).toContain("kept as the report");
     expect(text).not.toContain("Recorded on");
+    const c = theCall(mu);
+    expect(c.state).toBe("failed");
+    expect(getTask(mu.db, c.task, c.workstream)).toMatchObject({
+      status: "CLOSED",
+      substate: "rejected",
+    });
+    // The answer stays retrievable from the delegate task; the evidence pane is not closed.
+    expect(notesOf(mu, c.workstream, c.task).find((n) => n.kind === "report")?.content).toContain(
+      "EVIDENCE: grep -n check src/x.ts -> nothing",
+    );
+    expect(mu.calls.some((c2) => c2[1] === "close")).toBe(false);
+    expect(mu.registry.has("delegate-r")).toBe(true);
   });
 
   it("a queued delegate records too", async () => {
@@ -291,42 +336,40 @@ describe("record", () => {
       expect(q.content[0]?.text).toContain("queued-1");
       mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
       await settle();
-      expect(notes(mu)).toHaveLength(0); // the first had no record
+      expect(verdicts(mu, "crew", "f9")).toHaveLength(0); // the first had no record
       mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
       await settle();
-      expect(notes(mu)).toHaveLength(1);
-      expect(notes(mu)[0]?.slice(2, 5)).toEqual(["f9", "-w", "crew"]);
+      expect(verdicts(mu, "crew", "f9")).toHaveLength(1);
     } finally {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];
     }
   });
 
-  it("close and note overlap: both mu calls are issued before either answers", async () => {
+  it("the delegate task is closed BEFORE the pane: close waits for the recorded result", async () => {
     let releaseClose: (r: MuResult) => void = () => {};
-    let releaseNote: (r: MuResult) => void = () => {};
-    const mu = fakeMu({
-      on: { close: () => new Promise((r) => (releaseClose = r)) },
-      task: { note: () => new Promise((r) => (releaseNote = r)) },
-    });
+    const mu = fakeMu({ on: { close: () => new Promise((r) => (releaseClose = r)) } });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
     await tool(p).execute("t", { task: "x", label: "r", record: { task: "crew/f1" } });
     mu.waits.get("delegate-r")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
     await settle();
+    // The pane close is in flight, and by now the result is already durable.
     expect(mu.calls.some((c) => c[1] === "close")).toBe(true);
-    expect(notes(mu)).toHaveLength(1);
-    expect(p.sendMessage).not.toHaveBeenCalled(); // waits for both
-    releaseNote(ok("{}"));
-    await settle();
-    expect(p.sendMessage).not.toHaveBeenCalled();
+    const order = mu.calls.map((c) =>
+      c[0] === "delegates" ? `delegates ${c[1]}` : `${c[0]} ${c[1]}`,
+    );
+    expect(order.indexOf("delegates finish")).toBeLessThan(order.indexOf("agent close"));
+    expect(theCall(mu).state).toBe("done");
+    expect(verdicts(mu, "crew", "f1")).toHaveLength(1);
+    expect(p.sendMessage).not.toHaveBeenCalled(); // waits for the close
     releaseClose(ok("{}"));
     await settle();
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
     expect(sentText(p)).toContain("Recorded on crew/f1 as a note");
   });
 
-  it("a refused close (the fenced apply) and a failed note are both reported", async () => {
+  it("a refused close (the fenced apply) is reported; the result is already on record", async () => {
     const mu = fakeMu({
       on: {
         // the preview (no --if) answers; the apply is refused
@@ -335,7 +378,6 @@ describe("record", () => {
             ? Promise.resolve({ code: 4, stdout: "", stderr: "busy" })
             : undefined,
       },
-      task: { note: () => Promise.resolve({ code: 3, stdout: "", stderr: "db locked" }) },
     });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -344,7 +386,8 @@ describe("record", () => {
     await settle();
     const text = sentText(p);
     expect(text).toMatch(/close refused: busy/);
-    expect(text).toMatch(/Recording on crew\/f1 failed.*db locked/);
+    expect(text).toContain("Recorded on crew/f1 as a note");
+    expect(theCall(mu).state).toBe("done");
   });
 
   it("a failed close preview keeps the pane and never applies", async () => {
@@ -361,7 +404,7 @@ describe("record", () => {
     expect(mu.registry.has("delegate-r")).toBe(true);
   });
 
-  it("without record, no task verb is called", async () => {
+  it("without record, no task verb is called; the answer is still the delegate task's report", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -370,5 +413,11 @@ describe("record", () => {
     await settle();
     expect(mu.calls.some((c) => c[0] === "task")).toBe(false);
     expect(sentText(p)).not.toContain("Recorded on");
+    const c = theCall(mu);
+    expect(c).toMatchObject({ state: "done", record: null });
+    expect(notesOf(mu, c.workstream, c.task).find((n) => n.kind === "report")?.content).toBe(
+      answer,
+    );
+    expect(sentText(p)).toContain(`mu task notes ${c.task} -w scratch`);
   });
 });

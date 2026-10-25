@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DELEGATE_CANCEL_TOOL,
+  DELEGATE_REISSUE_TOOL,
   DELEGATE_TOOL,
   type DelegateCtx,
   delegateEnabled,
@@ -19,6 +20,7 @@ import {
   registerDelegate,
 } from "../extension/delegate.js";
 import muPi, { type MuPiContext } from "../extension/mu-pi.js";
+import { listDelegates } from "../src/delegates.js";
 import {
   fakeMu,
   fakePi,
@@ -39,10 +41,14 @@ const pendingCounts = (p: ReturnType<typeof fakePi>) =>
     .map((e) => (e.data as { source: string; count: number }).count);
 
 describe("registration guards", () => {
-  it("registers mu_delegate and mu_delegate_cancel in an unmanaged pi", () => {
+  it("registers mu_delegate, mu_delegate_reissue and mu_delegate_cancel in an unmanaged pi", () => {
     const p = fakePi();
     registerDelegate(p.pi, fakeMu().run);
-    expect([...p.tools.keys()]).toEqual([DELEGATE_TOOL, DELEGATE_CANCEL_TOOL]);
+    expect([...p.tools.keys()]).toEqual([
+      DELEGATE_TOOL,
+      DELEGATE_REISSUE_TOOL,
+      DELEGATE_CANCEL_TOOL,
+    ]);
   });
 
   it("is hidden inside a mu-managed agent (no helper-spawns-helper)", () => {
@@ -83,6 +89,8 @@ describe("mu_delegate", () => {
     // delegate-1 is taken in the list: the next free name.
     expect(res.content[0]?.text).toContain("scratch/delegate-2");
     expect(res.content[0]?.text).toContain("tmux attach -t mu-scratch");
+    // Bound to its durable delegate task, with a stable attempt: a replay never sends twice.
+    const task = (listDelegates(mu.db)[0] ?? { task: "" }).task;
     expect(mu.calls.find((c) => c[1] === "spawn")).toEqual([
       "agent",
       "spawn",
@@ -90,12 +98,17 @@ describe("mu_delegate", () => {
       "-w",
       "scratch",
       "--next-free",
+      "--task",
+      task,
+      "--attempt",
+      task,
       "--send",
       "You are terse.\n\nfind X",
       "--json",
       "--cwd",
       process.cwd(),
     ]);
+    expect(res.details).toMatchObject({ task: `scratch/${task}`, state: "running" });
     expect(p.sendMessage).not.toHaveBeenCalled();
 
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "X is 42" }] }));
@@ -109,18 +122,18 @@ describe("mu_delegate", () => {
     expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
   });
 
-  it("returns after ONE mu call (spawn --next-free --send), then waits --after-runs <runs>", async () => {
+  it("registers the call, spawns it task-bound, marks it running, then waits --after-runs <runs>", async () => {
     const mu = fakeMu({ on: { send: () => Promise.resolve(ok({ transport: "ctl", runs: 3 })) } });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
     await tool(p).execute("t", { task: "x" });
     // No agent list, no separate send, no speculative plain wait.
-    expect(mu.calls.map((c) => c[1])).toEqual(["spawn", "wait"]);
-    const wait = mu.calls[1] ?? [];
+    expect(mu.calls.map((c) => c[1])).toEqual(["register", "spawn", "mark", "wait"]);
+    const wait = mu.calls[3] ?? [];
     expect(wait[wait.indexOf("--after-runs") + 1]).toBe("3");
   });
 
-  it("with record: task show, spawn, wait (at most 2 mu calls before the tool returns)", async () => {
+  it("with record: task show, register, spawn, mark, wait before the tool returns", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -130,13 +143,15 @@ describe("mu_delegate", () => {
       .then(() => {
         returned = mu.calls.length;
       });
-    // The wait runs in the background; the tool returned after show + spawn.
-    expect(mu.calls.slice(0, 2).map((c) => c.slice(0, 2))).toEqual([
+    // The wait runs in the background; the tool returned after show, register, spawn and mark.
+    expect(mu.calls.slice(0, 4).map((c) => c.slice(0, 2))).toEqual([
       ["task", "show"],
+      ["delegates", "register"],
       ["agent", "spawn"],
+      ["delegates", "mark"],
     ]);
-    expect(returned).toBe(3);
-    expect(mu.calls[2]?.[1]).toBe("wait");
+    expect(returned).toBe(5);
+    expect(mu.calls[4]?.[1]).toBe("wait");
   });
 
   it("without runs in the send reply (older extension) waits past run 0: the pi just started", async () => {
@@ -309,28 +324,70 @@ describe("mu_delegate", () => {
     }
   });
 
-  it("the queue holds four caps' worth; past it, refuse", async () => {
+  it("the queue holds four caps' worth; past it a call is REFUSED, durable, and reissued once", async () => {
     process.env.MU_DELEGATE_MAX = "2";
     try {
       const mu = fakeMu();
       const p = fakePi();
       registerDelegate(p.pi, mu.run);
-      // 2 running + 8 queued (4 x 2) = 10 accepted; the 11th is refused.
-      const results = await Promise.allSettled(
-        Array.from({ length: 11 }, (_, i) => tool(p).execute(String(i), { task: `t${i}` })),
+      // 2 running + 8 queued (4 x 2) are accepted; the next 2 are refused, not thrown.
+      const results = await Promise.all(
+        Array.from({ length: 12 }, (_, i) =>
+          tool(p).execute(String(i), { task: `t${i}`, wave: "w" }),
+        ),
       );
-      const statuses = results.map((r) => r.status);
-      expect(statuses.filter((s) => s === "fulfilled")).toHaveLength(10);
-      expect(statuses[10]).toBe("rejected");
-      const queued = results
-        .slice(0, 10)
-        .filter(
-          (r) => r.status === "fulfilled" && (r.value.details as { queued?: boolean }).queued,
+      const state = (r: (typeof results)[number]) => (r.details as { state: string }).state;
+      expect(results.map(state)).toEqual([
+        ...Array(2).fill("running"),
+        ...Array(8).fill("queued"),
+        ...Array(2).fill("refused"),
+      ]);
+      const refused = results.slice(10);
+      for (const r of refused) {
+        const text = r.content[0]?.text ?? "";
+        expect(text).toContain("REFUSED, not started");
+        expect(text).toContain("8 queued (MU_DELEGATE_MAX=2)");
+        expect(text).toContain(DELEGATE_REISSUE_TOOL);
+      }
+      // Every call, refused ones included, is a durable delegate task.
+      const rows = listDelegates(mu.db);
+      expect(rows).toHaveLength(12);
+      expect(rows.filter((r) => r.state === "refused").map((r) => r.callId)).toEqual(
+        refused.map((r) => (r.details as { call_id: string }).call_id),
+      );
+      // murmur counts running + starting + queued, never the refused.
+      expect(pendingCounts(p).at(-1)).toBe(10);
+      // Refused tasks are parked: outside the ready view the executor reads.
+      const ready = mu.db.prepare("SELECT local_id FROM ready").all() as { local_id: string }[];
+      for (const r of rows.filter((x) => x.state === "refused"))
+        expect(ready.map((x) => x.local_id)).not.toContain(r.task);
+      // Still full: reissue says so, changes nothing.
+      const first = refused[0] as (typeof results)[number];
+      await expect(
+        tool(p, DELEGATE_REISSUE_TOOL).execute("r", {
+          call_id: (first.details as { call_id: string }).call_id,
+        }),
+      ).rejects.toThrow(/still full/);
+      // Slots free as answers arrive: 2 finish, 2 queued start, the queue has room again.
+      for (const name of [...mu.waits.keys()].slice(0, 2))
+        mu.waits.get(name)?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
+      for (let i = 0; i < 12; i++) await flush();
+      for (const r of refused) {
+        const id = (r.details as { call_id: string }).call_id;
+        const out = await tool(p, DELEGATE_REISSUE_TOOL).execute("r", { call_id: id });
+        expect((out.details as { call_id: string }).call_id).toBe(id);
+        await expect(tool(p, DELEGATE_REISSUE_TOOL).execute("r", { call_id: id })).rejects.toThrow(
+          /not refused/,
         );
-      expect(queued).toHaveLength(8);
-      const err = (results[10] as PromiseRejectedResult).reason as Error;
-      expect(err.message).toContain("8 queued (MU_DELEGATE_MAX=2)");
-      expect(err.message).toContain("issue the rest as answers arrive");
+      }
+      const after = listDelegates(mu.db);
+      expect(after).toHaveLength(12); // reissue never makes a second call or task
+      expect(after.filter((r) => r.state === "refused")).toHaveLength(0);
+      expect(
+        mu.db.prepare("SELECT COUNT(*) AS c FROM tasks WHERE kind = 'delegate'").get(),
+      ).toEqual({
+        c: 12,
+      });
     } finally {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];
@@ -563,8 +620,8 @@ describe("errors and corner cases", () => {
       tool(p).execute("a", { task: "x", label: "Code Review" }),
       tool(p).execute("b", { task: "y", label: "code review" }),
     ]);
-    expect(a.content[0]?.text).toContain("scratch/delegate-code-review.");
-    expect(b.content[0]?.text).toContain("scratch/delegate-code-review-2.");
+    expect(a.content[0]?.text).toContain("scratch/delegate-code-review ");
+    expect(b.content[0]?.text).toContain("scratch/delegate-code-review-2 ");
   });
 
   it("an invalid timeout is refused, not silently an hour", async () => {

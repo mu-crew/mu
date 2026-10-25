@@ -99,7 +99,7 @@ such as this page.
 | `v_close_apply` | CLOSE parse and exactly-once apply | `src/close-block.ts`: `parseCloseBlock`, `applySettledClose` |
 | `v_wait_core`, `v_wait_cli` | unified wait engine and CLI, signal snapshots | `src/wait.ts`: `waitForEvents`, `WaitRef`, `WaitEvent`, `WaitResult`; `wireWaitCommand` |
 | `v_auto`, `v_executor`, `v_hints` | authorisation, bounded executor, one hint source | `authorizeTasks`, `authorisedReady`, `executeNext`, `computeNext` |
-| `v_delegate`, `v_settle`, `v_human` | durable delegates, every-settle waiting, human stop | `verdictTally`, `listDelegates`; state-armed settle hook; `recordHumanNeeded`, `openHumanNeeds`, `human_needs` |
+| `v_delegate` (part A shipped: SDK, `mu delegates`, extension on the mux path; the mux-free path is `v_delegate_nomux`), `v_settle`, `v_human` | durable delegates, every-settle waiting, human stop | `verdictTally`, `listDelegates`; state-armed settle hook; `recordHumanNeeded`, `openHumanNeeds`, `human_needs` |
 | `v_guards` (**shipped**: task side and agent side, see [ARCHITECTURE](../ARCHITECTURE.md)) | revision fences on task/agent mutations | `taskRevision`, `agentRevision` (derived, no column), `assertRevision`, `AgentRow.incarnation`, `withAgentLock` |
 | `v_scope`, `v_state_log`, `v_db` | explicit `-w`, compact reads, in-process `mu db` | `installScopedViews`, `cmdDbQuery` |
 | `v_task_reads` (**shipped**; see [ARCHITECTURE](../ARCHITECTURE.md) and CHANGELOG) | task list/next/owned-by/show/tree as capped records, SQL-keyed JSON items, the open-DAG frontier | `src/cli/tasks/records.ts`: `taskToOutput`, `taskRecord`, `taskPage`; `src/dag.ts`: `loadOpenTaskFrontier` |
@@ -117,7 +117,7 @@ storage and deleters; its close/collect readers are `v_remote_recovery_close`).
 
 What this unit changed, and what stays for later owners.
 
-- Reworded as current vs planned: delegates (no task today), `lastText`
+- Reworded as current vs planned: delegates (a task per call since `v_delegate` part A), `lastText`
   (only `mu_delegate` `record` parses it today; applying a CLOSE block is planned), role (advisory), release (reopens
   IN_PROGRESS), dispatch host, revision, remote metadata (`REMOTE:`
   notes today).
