@@ -56,6 +56,7 @@ import {
   AgentDiedOnSpawnError,
   AgentExistsError,
   AgentNameExhaustedError,
+  AgentReplacedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
 } from "./errors.js";
@@ -611,6 +612,21 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       if (!hasWorktree && getAgent(db, opts.name, opts.workstream) !== undefined) {
         throw new AgentExistsError(opts.name);
       }
+      // A staged spawn holds the name through its placeholder row, which
+      // the agent lock no longer covers: a close of the placeholder frees
+      // the name, and a replacement may own it (and its socket) by now.
+      // Unlink only while the placeholder this spawn inserted is still the
+      // row, in the same step (nothing awaited between check and unlink).
+      if (staged !== undefined) {
+        const cur = getAgent(db, opts.name, opts.workstream);
+        if (
+          cur === undefined ||
+          cur.incarnation !== staged.incarnation ||
+          cur.paneId !== pendingPaneIdFor(opts.name)
+        ) {
+          throw new AgentReplacedError(opts.name, opts.workstream);
+        }
+      }
       // The name is ours: no live agent owns a socket at this path.
       rmSync(ctlSocket, { force: true });
       const mux = await activeMux();
@@ -971,9 +987,13 @@ async function rollbackSpawn(
   if (paneId !== undefined) {
     // Best-effort: rollback runs on an already-failing path and must not
     // mask the original error, even if the mux itself went away.
-    await activeMux()
-      .then((mux) => mux.killPane(paneId))
-      .catch(() => {});
+    const mux = await activeMux().catch(() => undefined);
+    // The mux is in hand before the check, and the kill is issued in the
+    // same step: a row of another incarnation on this very pane id (a
+    // replacement that reused it) means the pane is no longer ours.
+    const cur = getAgent(db, name, workstream);
+    const ours = cur === undefined || cur.paneId !== paneId || cur.incarnation === ownedIncarnation;
+    if (ours) await mux?.killPane(paneId).catch(() => {});
   }
   if (staged !== undefined) {
     try {

@@ -107,7 +107,7 @@ are re-export hubs.
 | `src/segment-resume.ts` | byte offset + running sha256 saved with a peer's caught-up fingerprint, so ingest reads only appended bytes |
 | `src/sha256-resumable.ts` | SHA-256 with a serialisable running state, so the segment manifest hashes only appended bytes |
 | `src/sync.ts` | peer status, the ambient hook, `--from`, `--repair` |
-| `src/file-lock.ts` | cross-process advisory lock through atomic `fs.mkdir`; `strict` steals only from a dead holder; release by token |
+| `src/file-lock.ts` | cross-process advisory lock through atomic `fs.mkdir`; `strict` publishes whole by rename, reclaims a dead holder's lock under an O_EXCL claim, fails closed; release by token |
 | `src/fleet-hazards.ts` | mixed-fleet checks: DB inside `MU_SYNC_DIR` (plus `DbInsideSyncDirError`, which `handle()` throws before `openDb`), network mount, case collisions, own segment written by a newer mu |
 | `src/dormant.ts` | doctor housekeeping: `finished` (all closed, idle 14 days) vs `abandoned` (idle 60 days, open tasks) workstreams; idle derived from `MAX(tasks.updated_at)` |
 | `src/disk-recon.ts` | report-only state-dir vs DB reconciliation (rows without dirs, dirs without rows, residue); `--disk` measures bytes |
