@@ -97,15 +97,27 @@ statement checked by SQLite itself (a table or column named `begin` or
 `end` is fine, a leading `;` hides nothing); a failed statement rolls the call
 back. An `INSERT` that names an `id` of 0 or below is refused too (omit it).
 
-What it will not touch: mu's capture bookkeeping. Any statement that writes
-`op_ctx`, `op_dying`, `ops`, `schema_version` or `sqlite_master` is refused
-before it runs, whether it does so directly or through a trigger. That
-includes every `CREATE`/`DROP`/`ALTER` on the main schema (a persistent
-trigger would fire inside every other writer's transaction, and the capture
-triggers are what make a plain write safe). `TEMP` tables, views and triggers
-are yours, except a `TEMP` table named like a bookkeeping table. `PRAGMA`
-reads work; a `PRAGMA` that changes `foreign_keys`, `busy_timeout` or another
-connection setting is undone and refused.
+What it will not touch: mu's capture bookkeeping, the schema and the
+connection. The rule is a policy, so nothing has to be detected:
+
+- No `CREATE`, `DROP` or `ALTER` of any kind, `TEMP` tables, views and
+  triggers included, and no `ANALYZE` or `REINDEX`. A trigger that outlives
+  one statement can fire inside mu's own bookkeeping.
+- No `ATTACH` or `DETACH`: the verb works on this one DB. Another mu DB
+  (a backup, a peer) is not for it to write.
+- `PRAGMA` only as a read: `table_info`, `table_xinfo`, `table_list`,
+  `index_list`, `index_info`, `index_xinfo`, `foreign_key_list`,
+  `foreign_key_check`, `integrity_check`, `quick_check`, and a bare
+  `user_version`, `foreign_keys`, `busy_timeout` or `database_list`.
+  Anything else is refused before it runs.
+- No write to `op_ctx`, `op_dying`, `ops` or `schema_version`.
+
+SQLite itself decides what a statement does (its `EXPLAIN` listing, trigger
+bodies included), never the text, so a table named `begin` is fine and a
+leading `;` hides nothing.
+
+Need DDL? `mu db backup`, edit the copy with `sqlite3` yourself, and leave the
+live DB to mu's verbs. `mu db forget` shrinks it.
 
 `mu db --shell [-w <ws>]` opens the `sqlite3` CLI on the same file,
 read-only and in safe mode, with the same scoped views. Plain `sqlite3`

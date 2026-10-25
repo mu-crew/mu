@@ -6,25 +6,27 @@
 //
 // Every write runs inside ONE op-context scope, which owns the
 // transaction (src/op-context.ts): one `sql.write` group, atomic, and
-// the context is never committed. SQLite itself, never the text, decides
-// what a statement is. One `EXPLAIN` per statement (checkStatement)
-// answers two questions:
+// the context is never committed. The boundary is a POLICY, not a hunt for
+// tricks: this verb never changes the schema or the connection, so no TEMP
+// trigger, shadowing table, attached DB or PRAGMA can exist to subvert capture.
 //
-//   * Is it transaction control (AutoCommit / Savepoint opcodes: BEGIN,
-//     COMMIT, END, ROLLBACK, SAVEPOINT, RELEASE)? Refused: the scope owns
-//     the transaction.
-//   * Does it write mu's capture bookkeeping? The listing names every root
-//     page a program opens for writing, trigger bodies included, so a write
-//     to op_ctx / op_dying / ops / schema_version, or to sqlite_master (any
-//     main-schema DDL: a persistent trigger can be dropped or planted, a
-//     table dropped) is refused whether the statement does it itself or a
-//     TEMP trigger does it on its behalf. Only a MAIN `_cap_*` trigger may
-//     write the bookkeeping tables: that is capture working.
-//
-// Preparing a PRAGMA already APPLIES it (`PRAGMA foreign_keys=OFF` flips the
-// connection before any .run()), so every prepare goes through `prepare()`:
-// the connection settings are read before and after and a change is undone
-// and refused.
+//   * No DDL of any kind (CREATE/DROP/ALTER, TEMP included), no ATTACH or
+//     DETACH, and only a read-only PRAGMA allowlist. Someone who needs DDL
+//     uses `mu db backup` / `forget`, or opens the file with sqlite3.
+//   * SQLite, never a keyword scan of the text, decides what a statement
+//     does: one `EXPLAIN` per statement (checkStatement). better-sqlite3 has
+//     no authorizer callback, so the listing is the authority. It names
+//     transaction control (AutoCommit / Savepoint: refused, the scope owns the
+//     transaction), ATTACH/DETACH (`sqlite_attach` / `sqlite_detach`
+//     calls), DDL (any write to a sqlite_master root page, main or temp) and
+//     every table a program writes, trigger bodies included: op_ctx /
+//     op_dying / ops / schema_version are refused unless a MAIN `_cap_*`
+//     trigger writes them. That is capture working.
+//   * The one place that reads text is the PRAGMA allowlist, because SQLite
+//     applies a PRAGMA when it COMPILES it (`PRAGMA foreign_keys=OFF` flips
+//     the connection before any .run()) and its listing does not name the
+//     pragma. It reads only the statement's FIRST tokens (a keyword at the
+//     start of a statement cannot be an identifier), before the compile.
 //
 // `--confirm-rows N` adds a safety belt on top: if the actual
 // affected-row count (FK cascades included) doesn't match N, the scope
@@ -32,7 +34,7 @@
 //
 // `-w` (or a managed worker's injected workstream) installs TEMP views
 // `ready`, `blocked`, `blockers` for that workstream over the global ones
-// (installScopedViews); `main.ready` is still reachable.
+// (installScopedViews, mu's own DDL); `main.ready` is still reachable.
 
 import { spawn } from "node:child_process";
 import type { Command } from "commander";
@@ -148,69 +150,103 @@ CREATE TEMP VIEW blockers AS SELECT * FROM main.blockers
   WHERE task_id IN (SELECT id FROM main.tasks WHERE workstream_id = ${id});`;
 }
 
-// ─── connection settings ──────────────────────────────────────────────
+// ─── PRAGMA allowlist ─────────────────────────────────────────────────
 
-/** Connection settings a PRAGMA could change. foreign_keys and busy_timeout
- *  are guarantees (cascades, waiting on a writer); the rest weaken checks or
- *  lock others out. */
-const PINNED_PRAGMAS = [
+/** Read-only PRAGMAs that may take an argument: `PRAGMA table_info(tasks)`. */
+const READ_PRAGMAS_WITH_ARG = new Set([
+  "table_info",
+  "table_xinfo",
+  "table_list",
+  "index_list",
+  "index_info",
+  "index_xinfo",
+  "foreign_key_list",
+  "foreign_key_check",
+  "integrity_check",
+  "quick_check",
+]);
+/** Read-only PRAGMAs that are only ever read bare: `PRAGMA user_version`
+ *  (`= 3` or `(3)` would write the file header). */
+const READ_PRAGMAS_BARE = new Set([
+  "user_version",
   "foreign_keys",
   "busy_timeout",
-  "ignore_check_constraints",
-  "writable_schema",
-  "recursive_triggers",
-  "trusted_schema",
-  "defer_foreign_keys",
-  "query_only",
-  "legacy_alter_table",
-  "cell_size_check",
-  "reverse_unordered_selects",
-  "automatic_index",
-  "read_uncommitted",
-  "secure_delete",
-  "synchronous",
-  "locking_mode",
-] as const;
+  "database_list",
+]);
 
-function readSettings(db: Db): Map<string, unknown> {
-  return new Map(PINNED_PRAGMAS.map((name) => [name, db.pragma(name, { simple: true })]));
+interface Token {
+  /** The word, or the unquoted text of a quoted name; the character for punctuation. */
+  text: string;
+  end: number;
+}
+
+/** The token at `from` (trivia already skipped), or undefined at the end. */
+function tokenAt(sql: string, from: number): Token | undefined {
+  const c = sql[from];
+  if (c === undefined) return undefined;
+  if (c === "'" || c === '"' || c === "`" || c === "[") {
+    const closer = c === "[" ? "]" : c;
+    let i = from + 1;
+    let text = "";
+    while (i < sql.length) {
+      if (sql[i] === closer) {
+        if (closer !== "]" && sql[i + 1] === closer) {
+          text += closer;
+          i += 2;
+          continue;
+        }
+        break;
+      }
+      text += sql[i];
+      i++;
+    }
+    return { text, end: i + 1 };
+  }
+  let i = from;
+  while (i < sql.length && /[A-Za-z0-9_$\u0080-\uffff]/.test(sql[i] as string)) i++;
+  return i === from ? { text: c, end: from + 1 } : { text: sql.slice(from, i), end: i };
 }
 
 /**
- * Run `fn`; if it changed a connection setting, undo that and refuse. Two
- * moments matter: SQLite applies a PRAGMA when it COMPILES it
- * (`PRAGMA foreign_keys=OFF; SELECT 1` throws the multi-statement error and
- * has already turned foreign keys off), and others (`busy_timeout`,
- * `writable_schema`) when it RUNS. So prepare and execution both go through
- * here. A refusal inside the op-context scope rolls the call back.
+ * Refuse a PRAGMA that is not a read-only allowlisted one, BEFORE it is
+ * compiled (compiling applies it). Looks only at the statement's first
+ * tokens: an optional `EXPLAIN [QUERY PLAN]`, `PRAGMA`, `[schema.]name`, and
+ * whether `=` or `(` follows. Any other statement is none of its business.
  */
-function pinned<T>(db: Db, fn: () => T): T {
-  const before = readSettings(db);
-  let outcome: { value: T } | { err: unknown };
-  try {
-    outcome = { value: fn() };
-  } catch (err) {
-    outcome = { err };
+function guardPragma(sql: string): void {
+  const word = (i: number): Token | undefined => tokenAt(sql, skipTrivia(sql, i, false));
+  let tok = tokenAt(sql, skipTrivia(sql, 0, true));
+  if (tok?.text.toLowerCase() === "explain") {
+    tok = word(tok.end);
+    if (tok?.text.toLowerCase() === "query") tok = word(word(tok.end)?.end ?? tok.end); // QUERY PLAN
   }
-  const changed: string[] = [];
-  for (const [name, value] of readSettings(db)) {
-    if (value === before.get(name)) continue;
-    changed.push(name);
-    try {
-      db.pragma(`${name} = ${String(before.get(name))}`);
-    } catch {}
+  if (tok?.text.toLowerCase() !== "pragma") return;
+  let name = word(tok.end);
+  let after = word(name?.end ?? tok.end);
+  if (after?.text === ".") {
+    name = word(after.end);
+    after = word(name?.end ?? after.end);
   }
-  if (changed.length > 0) {
-    throw new UsageError(
-      `mu db query keeps the connection settings fixed (${changed.join(", ")}); the PRAGMA was undone`,
-      { showHelp: false },
-    );
+  const lower = (name?.text ?? "").toLowerCase();
+  const bare = after === undefined || after.text === ";";
+  const call = after?.text === "(";
+  if (
+    (bare && (READ_PRAGMAS_BARE.has(lower) || READ_PRAGMAS_WITH_ARG.has(lower))) ||
+    (call && READ_PRAGMAS_WITH_ARG.has(lower))
+  ) {
+    return;
   }
-  if ("err" in outcome) throw outcome.err;
-  return outcome.value;
+  throw new UsageError(
+    `mu db query allows only read-only PRAGMAs (${[...READ_PRAGMAS_WITH_ARG, ...READ_PRAGMAS_BARE].join(", ")}), not PRAGMA ${name?.text ?? ""}; it never changes the connection or the file (use sqlite3 yourself for that)`,
+    { showHelp: false },
+  );
 }
 
-const prepare = (db: Db, text: string): Statement => pinned(db, () => db.prepare(text));
+/** Compile `text`, after the PRAGMA allowlist. */
+function prepare(db: Db, text: string): Statement {
+  guardPragma(text);
+  return db.prepare(text);
+}
 
 // ─── what a statement does, from SQLite's own listing ─────────────────
 
@@ -226,13 +262,13 @@ interface ExplainRow {
   p5: number;
 }
 
-/** Skip leading whitespace, `;` and comments: `prepare` accepts `; BEGIN` as one statement. */
-function skipLeadingTrivia(sql: string): string {
-  let i = 0;
+/** Index past whitespace and comments from `i` (and `;` too when `semicolons`). */
+function skipTrivia(sql: string, from: number, semicolons: boolean): number {
+  let i = from;
   while (i < sql.length) {
     const c = sql[i] as string;
     const next = sql[i + 1];
-    if (/\s|;/.test(c)) i++;
+    if (/\s/.test(c) || (semicolons && c === ";")) i++;
     else if (c === "-" && next === "-") {
       while (i < sql.length && sql[i] !== "\n") i++;
     } else if (c === "/" && next === "*") {
@@ -240,16 +276,19 @@ function skipLeadingTrivia(sql: string): string {
       i = close === -1 ? sql.length : close + 2;
     } else break;
   }
-  return sql.slice(i);
+  return i;
 }
 
+/** Skip leading whitespace, `;` and comments: `prepare` accepts `; BEGIN` as one statement. */
+const skipLeadingTrivia = (sql: string): string => sql.slice(skipTrivia(sql, 0, true));
+
 /**
- * Throw if `statement` (one compiled statement) is transaction control or
- * writes mu's bookkeeping; see the file header. Fails CLOSED: if SQLite
- * cannot list the statement, the error propagates. The one exception is a
- * statement that is itself EXPLAIN, which never runs its body.
+ * Throw if `statement` (one compiled statement) is transaction control, DDL,
+ * ATTACH/DETACH, or writes mu's bookkeeping; see the file header. Fails
+ * CLOSED: if SQLite cannot list the statement, the error propagates. The one
+ * exception is a statement that is itself EXPLAIN, which never runs its body.
  */
-function checkStatement(db: Db, statement: string): void {
+export function checkStatement(db: Db, statement: string): void {
   const text = skipLeadingTrivia(statement);
   let rows: ExplainRow[];
   try {
@@ -261,44 +300,31 @@ function checkStatement(db: Db, statement: string): void {
   if (rows.some((r) => r.opcode === "AutoCommit" || r.opcode === "Savepoint")) {
     throw new UsageError(USER_TRANSACTION_MESSAGE, { showHelp: false });
   }
-  const refused = firstBookkeepingWrite(db, rows);
+  if (rows.some((r) => r.opcode === "Function" && /^sqlite_(attach|detach)\(/.test(r.p4 ?? ""))) {
+    throw new UsageError(
+      "mu db query cannot ATTACH or DETACH a database: it works on this one only (open the file with sqlite3 yourself for that)",
+      { showHelp: false },
+    );
+  }
+  const refused = firstProtectedWrite(db, rows);
+  if (refused === SCHEMA) {
+    throw new UsageError(
+      "mu db query cannot change the schema (no CREATE/DROP/ALTER, TEMP included): `mu db backup` first and edit a copy with sqlite3, or `mu db forget`",
+      { showHelp: false },
+    );
+  }
   if (refused !== undefined) {
     throw new UsageError(
-      `mu db query cannot write ${refused}: it is mu's capture bookkeeping (op_ctx, op_dying, ops, schema_version, the capture triggers, sqlite_master); TEMP tables, views and triggers are allowed`,
+      `mu db query cannot write ${refused}: it is mu's capture bookkeeping (op_ctx, op_dying, ops, schema_version)`,
       { showHelp: false },
     );
   }
 }
 
-/**
- * A TEMP table or view named like a bookkeeping table would SHADOW it for the
- * rest of this connection (the wrappers name `op_ctx` and `ops` unqualified,
- * so the context reset or the sync flush would land in the temp copy and
- * leave the real one stamped). Checked after each statement, inside the
- * scope, so the throw rolls the shadow back.
- */
-function refuseShadowing(db: Db): void {
-  const temp = db
-    .prepare("SELECT name FROM temp.sqlite_master WHERE type IN ('table','view')")
-    .all([]);
-  for (const { name } of temp as { name: string }[]) {
-    if (!PROTECTED_TABLES.has(name.toLowerCase())) continue;
-    throw new UsageError(
-      `mu db query cannot create a TEMP ${name}: it would shadow mu's capture bookkeeping`,
-      { showHelp: false },
-    );
-  }
-}
+const SCHEMA = "the schema";
 
-/** Run a write, then refuse (and so roll back) a shadowing TEMP table. */
-function runChecked(db: Db, stmt: Statement): ReturnType<Statement["run"]> {
-  const result = pinned(db, () => stmt.run([]));
-  refuseShadowing(db);
-  return result;
-}
-
-/** The first protected thing the listing writes (a table name, or `sqlite_master`), if any. */
-function firstBookkeepingWrite(db: Db, rows: readonly ExplainRow[]): string | undefined {
+/** The first protected thing the listing writes (a bookkeeping table's name, or SCHEMA), if any. */
+function firstProtectedWrite(db: Db, rows: readonly ExplainRow[]): string | undefined {
   const tableOfRoot = new Map<number, string>();
   for (const m of db
     .prepare("SELECT tbl_name, rootpage FROM main.sqlite_master WHERE rootpage > 0")
@@ -306,7 +332,8 @@ function firstBookkeepingWrite(db: Db, rows: readonly ExplainRow[]): string | un
     tableOfRoot.set(m.rootpage, m.tbl_name);
   }
   // A trigger program may write the bookkeeping only when it is a MAIN `_cap_*`
-  // trigger; a TEMP trigger may reuse the name, so ask the main schema.
+  // trigger. The policy allows no other trigger to exist; asking the main
+  // schema (and not the temp one) keeps that true if one ever does.
   const capTriggers = new Set(
     (
       db
@@ -333,18 +360,13 @@ function firstBookkeepingWrite(db: Db, rows: readonly ExplainRow[]): string | un
     }
     // [root page, database index] a write opcode touches; main is database 0.
     let target: [number, number] | undefined;
-    if (r.opcode === "OpenWrite" && (r.p5 & 2) === 0) target = [r.p2, r.p3];
+    if (r.opcode === "OpenWrite") target = [r.p2, r.p3];
     else if (r.opcode === "Clear") target = [r.p1, r.p2];
-    else if (r.opcode === "Destroy") target = [r.p1, r.p3];
-    else if (
-      (r.opcode === "DropTable" || r.opcode === "DropTrigger" || r.opcode === "DropIndex") &&
-      r.p1 === 0
-    ) {
-      return "sqlite_master";
-    }
-    if (target === undefined || target[1] !== 0) continue;
-    const root = target[0];
-    if (root === 1) return "sqlite_master";
+    if (target === undefined) continue;
+    const [root, dbIndex] = target;
+    // Page 1 of ANY database is its sqlite_master: every CREATE/DROP/ALTER writes it.
+    if (root === 1) return SCHEMA;
+    if (dbIndex !== 0) continue;
     const name = tableOfRoot.get(root);
     if (name !== undefined && PROTECTED_TABLES.has(name) && !trusted) return name;
   }
@@ -436,8 +458,8 @@ function runScript(db: Db, sql: string): void {
   let start = 0;
   const runOne = (text: string, stmt: Statement): void => {
     checkStatement(db, text);
-    pinned(db, () => (stmt.reader ? stmt.all([]) : stmt.run([])));
-    refuseShadowing(db);
+    if (stmt.reader) stmt.all([]);
+    else stmt.run([]);
   };
   for (const end of semicolonOffsets(sql)) {
     const text = sql.slice(start, end + 1);
@@ -555,7 +577,7 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
       );
     }
     const expected = opts.confirmRows;
-    const { result, actual } = runConfirmed(db, expected, () => runChecked(db, single));
+    const { result, actual } = runConfirmed(db, expected, () => single.run([]));
     if (opts.json) {
       emitJson({
         changes: result.changes,
@@ -569,7 +591,7 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
     return;
   }
   if (single.reader) {
-    const rows = pinned(db, () => single.all([]));
+    const rows = single.all([]);
     if (opts.json) {
       emitJson(rows);
       return;
@@ -603,7 +625,7 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
     console.log(pc.dim(`(${rows.length} row${rows.length === 1 ? "" : "s"})`));
     return;
   }
-  const result = runChecked(db, single);
+  const result = single.run([]);
   if (opts.json) {
     emitJson({
       changes: result.changes,
@@ -776,7 +798,7 @@ export async function cmdDbShell(db: Db, opts: { workstream?: string } = {}): Pr
 // under its old name (live hints and scripts name it).
 
 const QUERY_HELP =
-  "Run SQL against the live mu DB, in-process: reads and writes (captured as one `sql.write` group). Runs inside mu's transaction (BEGIN/COMMIT refused); mu's capture bookkeeping (op_ctx, ops, triggers, schema) is refused. With -w, the views ready/blocked/blockers cover that workstream only (main.ready is the global one). `no such column` lists the real columns.";
+  "Run SQL against the live mu DB, in-process: reads and writes (captured as one `sql.write` group). Runs inside mu's transaction (BEGIN/COMMIT refused); mu's capture bookkeeping (op_ctx, ops) and every schema change (CREATE/DROP/ALTER, TEMP too), ATTACH/DETACH and PRAGMAs other than read-only ones are refused. With -w, the views ready/blocked/blockers cover that workstream only (main.ready is the global one). `no such column` lists the real columns.";
 
 function wireQuery(cmd: Command): void {
   cmd
@@ -797,7 +819,23 @@ function wireQuery(cmd: Command): void {
       parseLines,
     )
     .action(function (query: string) {
-      const opts = (this as Command).opts() as DbQueryOptions;
+      const cmd = this as Command;
+      const opts = cmd.opts() as DbQueryOptions;
+      // `mu db -w a query ...`: the namespace's own -w is the same flag, in
+      // another position. Honour it; two different names are a usage error.
+      const outer =
+        cmd.parent?.name() === "db"
+          ? (cmd.parent.opts() as { workstream?: string }).workstream
+          : undefined;
+      if (outer !== undefined) {
+        if (opts.workstream !== undefined && opts.workstream !== outer) {
+          throw new UsageError(
+            `-w/--workstream given twice (${outer} before the verb, ${opts.workstream} after); pass it once`,
+            { showHelp: false },
+          );
+        }
+        opts.workstream = outer;
+      }
       // Ambient sync like every other verb: peer ops are ingested BEFORE
       // the query (so a read sees fresh state and nothing lands mid-query)
       // and this call's writes are flushed after, even when it throws.
@@ -810,6 +848,16 @@ export function wireDbQueryCommand(program: Command): void {
   if (dbCmd === undefined) throw new Error("wireDbQueryCommand: wire the db namespace first");
   wireQuery(dbCmd.command("query"));
   wireQuery(program.command("sql"));
+  // `db -w` belongs to `--shell` and `query`; any other subcommand takes none,
+  // and commander would otherwise bind it to the namespace and drop it.
+  dbCmd.hook("preAction", (thisCmd, leaf) => {
+    if (leaf === thisCmd || leaf.name() === "query") return;
+    if (thisCmd.opts().workstream !== undefined) {
+      throw new UsageError(`\`db ${leaf.name()}\` takes no -w/--workstream; drop it`, {
+        showHelp: false,
+      });
+    }
+  });
   dbCmd
     .option("--shell", "open the sqlite3 CLI on this DB, read-only")
     .option(

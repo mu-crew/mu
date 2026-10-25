@@ -245,18 +245,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `compact` and `forget` stay. Hints in errors, `doctor` and `drift` now teach
   `mu db query`. Not changed here: rows still print as a table without
   `--json` and are not capped.
-- **SQL cannot disable or forge capture (rv6_sql_ctx_tamper).** SQLite's own
-  `EXPLAIN` listing, trigger bodies included, decides: a statement that writes
-  `op_ctx`, `op_dying`, `ops`, `schema_version` or `sqlite_master` is refused
-  before it runs, unless a main `_cap_*` trigger does it. That closes `UPDATE
-  op_ctx SET applying=1`, forged `actor`/`intent`, `UPDATE`/`DELETE` on `ops`, a
-  `TEMP` trigger that flips `applying`, a shadowing `TEMP` table, and
-  `DROP`/`CREATE TRIGGER`. Every main-schema `CREATE`/`DROP`/`ALTER` goes with
-  it; `TEMP` objects stay allowed.
-- **A PRAGMA can no longer change the connection (`foreign_keys`,
-  `busy_timeout`, `query_only` and the rest).** SQLite applies a PRAGMA when it
-  compiles it, even in a statement that then fails; the settings are compared
-  and restored around every prepare and run, and the call is refused.
+- **SQL cannot disable or forge capture (rv6_sql_ctx_tamper).** `mu db query`
+  refuses by policy, not by detection: no `CREATE`/`DROP`/`ALTER` of any kind
+  (`TEMP` triggers, views and tables included: a `TEMP` trigger on `op_ctx` ran
+  inside the scope's own reset and could forge `ops` or leave `applying=1` at
+  rest), no `ATTACH`/`DETACH` (a peer or backup mu DB was writable through
+  `peer.ops`), no write to `op_ctx`, `op_dying`, `ops` or `schema_version`.
+  SQLite's `EXPLAIN` listing, trigger bodies included, decides, never a regex;
+  better-sqlite3 has no authorizer callback. Need DDL: `mu db backup` and
+  `sqlite3` on the copy.
+- **Only read-only PRAGMAs run.** SQLite applies a PRAGMA when it compiles it,
+  even in a statement that then fails, so the allowlist (`table_info`,
+  `index_list`, `foreign_key_list`, bare `user_version`, `foreign_keys`,
+  `busy_timeout` and a few more) is checked on the statement's first tokens
+  before the compile. Anything else is a one-line refusal.
+- **`mu db -w a query` honours the `-w`** (it was bound to the `db` namespace and
+  dropped, so the query ran on the global views). A second, different `-w`
+  after the verb is a usage error; other `db` subcommands refuse it.
 - **`; BEGIN` is refused (rv6p2_sql_leading_semicolon).** Leading `;`,
   whitespace and comments are skipped before the transaction check, and a
   statement SQLite cannot list now fails the call instead of passing it.

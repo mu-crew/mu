@@ -9,7 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cmdDbQuery, installScopedViews } from "../src/cli/db-query.js";
+import { checkStatement, cmdDbQuery, installScopedViews } from "../src/cli/db-query.js";
 import { SqlColumnError, UsageError } from "../src/cli/handle.js";
 import { type Db, openDb, WorkstreamNotFoundError } from "../src/db.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
@@ -102,49 +102,126 @@ describe("db query refuses to write mu's capture bookkeeping", () => {
       "PRAGMA writable_schema = ON; UPDATE sqlite_master SET name = 'x'",
     ]) {
       await expect(cmdDbQuery(db, sql)).rejects.toThrow(
-        /cannot write sqlite_master|keeps the connection|may not be modified/,
+        /cannot change the schema|only read-only PRAGMAs/,
       );
     }
     expect(count("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger'")).toBe(trig);
     expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'scratch'").get()).toBeUndefined();
   });
 
-  it("refuses an INDIRECT write: a TEMP trigger that updates op_ctx, then an ordinary UPDATE", async () => {
-    // Allowed to exist (TEMP objects are the user's own) ...
-    await cmdDbQuery(
-      db,
+  // triage_vdb_ctx_temp_trigger (P1): a TEMP trigger ON op_ctx fired in the
+  // scope's own ctx reset (inside the transaction, never checked) and forged
+  // ops / left applying=1 at rest. Now no TEMP object can be created at all.
+  describe("no DDL of any kind, TEMP included (triage_vdb_ctx_temp_trigger)", () => {
+    const actors = (): string =>
+      (db.prepare("SELECT DISTINCT actor FROM ops ORDER BY 1").all() as { actor: string | null }[])
+        .map((r) => r.actor)
+        .join(",");
+
+    it.each([
+      "CREATE TEMP TRIGGER evil AFTER UPDATE ON op_ctx BEGIN UPDATE ops SET actor = 'forged'; END",
+      "CREATE TEMP TRIGGER evil AFTER UPDATE ON op_ctx BEGIN UPDATE op_ctx SET applying = 1; END",
+      "CREATE TEMP TRIGGER evil AFTER UPDATE ON op_ctx WHEN NEW.applying = 0 BEGIN UPDATE op_ctx SET actor = 'forged-ctx'; END",
+      "CREATE TEMP TRIGGER evil BEFORE UPDATE OF impact ON tasks BEGIN UPDATE op_ctx SET applying = 1; END",
+      "CREATE TEMP TRIGGER evil AFTER UPDATE ON tasks BEGIN SELECT 1; END",
+      "CREATE TEMP TABLE scratch(x)",
+      "CREATE TEMPORARY TABLE scratch(x)",
+      "CREATE TEMP VIEW v AS SELECT 1",
+      "CREATE TEMP TABLE op_ctx (id, applying)",
+      "CREATE TEMP VIEW ops AS SELECT 1 AS seq",
+      "CREATE VIEW v AS SELECT 1",
+      "CREATE INDEX i ON tasks(title)",
+      "CREATE TABLE z AS SELECT 1",
+      "CREATE VIRTUAL TABLE v USING fts5(a)",
+      "ALTER TABLE tasks RENAME TO t2",
+      "DROP VIEW ready",
+      "DROP INDEX idx_agents_status",
+      "ANALYZE",
+      "REINDEX",
+      "SELECT 1; CREATE TEMP TABLE scratch(x)",
+      "UPDATE tasks SET impact = 77; CREATE TEMP TRIGGER evil AFTER UPDATE ON op_ctx BEGIN UPDATE op_ctx SET applying = 1; END",
+    ])("%j is refused and leaves nothing behind", async (sql) => {
+      const opsBefore = ops();
+      const actorsBefore = actors();
+      const impacts = count("SELECT SUM(impact) AS n FROM tasks");
+      const temp = count("SELECT COUNT(*) AS n FROM temp.sqlite_master");
+      const main = count("SELECT COUNT(*) AS n FROM sqlite_master");
+      await expect(cmdDbQuery(db, sql)).rejects.toThrow(
+        /cannot change the schema|cannot write|ANALYZE|REINDEX/,
+      );
+      expect(ops()).toBe(opsBefore);
+      expect(actors()).toBe(actorsBefore);
+      expect(count("SELECT SUM(impact) AS n FROM tasks")).toBe(impacts);
+      expect(count("SELECT COUNT(*) AS n FROM temp.sqlite_master")).toBe(temp);
+      expect(count("SELECT COUNT(*) AS n FROM sqlite_master")).toBe(main);
+      expect(ctx()).toEqual(CTX_AT_REST);
+      expect(db.inTransaction).toBe(false);
+    });
+
+    it("an ordinary write afterwards still works and is captured (the refusal changed nothing)", async () => {
+      await expect(
+        cmdDbQuery(
+          db,
+          "CREATE TEMP TRIGGER evil AFTER UPDATE ON op_ctx BEGIN UPDATE ops SET actor = 'forged'; END",
+        ),
+      ).rejects.toThrow(/cannot change the schema/);
+      const before = ops();
+      await cmdDbQuery(db, "UPDATE tasks SET impact = 44 WHERE local_id = 'a'");
+      expect(ops()).toBe(before + 2);
+      expect(actors()).not.toContain("forged");
+      expect(ctx()).toEqual(CTX_AT_REST);
+    });
+  });
+
+  // triage_vdb_mutants (a): the trust test for a trigger program asks the MAIN
+  // schema. A TEMP trigger cannot be made through the verb, but one made on
+  // the handle (a caller that shares the connection) must not borrow a real
+  // capture trigger's name. Needs a REAL main name, not an unused one.
+  it("a TEMP trigger that reuses a real capture trigger's name is not trusted", async () => {
+    const real = (
+      db
+        .prepare(
+          "SELECT name FROM main.sqlite_master WHERE type = 'trigger' AND name LIKE '\\_cap\\_tasks%' ESCAPE '\\'",
+        )
+        .get() as { name: string }
+    ).name;
+    db.exec(
+      `CREATE TEMP TRIGGER ${real} BEFORE UPDATE ON tasks BEGIN UPDATE op_ctx SET applying = 1; END`,
+    );
+    const opsBefore = ops();
+    await expect(cmdDbQuery(db, "UPDATE tasks SET impact = 78")).rejects.toThrow(
+      /cannot write op_ctx/,
+    );
+    expect(ops()).toBe(opsBefore);
+    expect(ctx()).toEqual(CTX_AT_REST);
+  });
+
+  it("a write to a handle's TEMP table is not mistaken for bookkeeping that shares its root page number", async () => {
+    // Root pages are per database: a temp table's page 2.. can equal main's op_ctx / ops page.
+    const roots = (
+      db
+        .prepare(
+          "SELECT rootpage FROM main.sqlite_master WHERE name IN ('op_ctx','op_dying','ops','schema_version')",
+        )
+        .all() as { rootpage: number }[]
+    ).map((r) => r.rootpage);
+    const top = Math.max(...roots);
+    for (let i = 0; i < top; i++) db.exec(`CREATE TEMP TABLE scratch${i}(x)`);
+    for (let i = 0; i < top; i++) await cmdDbQuery(db, `INSERT INTO scratch${i} VALUES (1)`);
+    expect(count(`SELECT COUNT(*) AS n FROM scratch${top - 1}`)).toBe(1);
+  });
+
+  it("refuses an indirect write through a trigger that exists on the handle", async () => {
+    db.exec(
       "CREATE TEMP TRIGGER evil BEFORE UPDATE OF impact ON tasks BEGIN UPDATE op_ctx SET applying = 1; END",
     );
     const opsBefore = ops();
-    // ... but the statement that would fire it is refused: its program contains the trigger body.
     await expect(cmdDbQuery(db, "UPDATE tasks SET impact = 77")).rejects.toThrow(
       /cannot write op_ctx/,
     );
     expect(ops()).toBe(opsBefore);
     expect(count("SELECT COUNT(*) AS n FROM tasks WHERE impact = 77")).toBe(0);
     expect(ctx()).toEqual(CTX_AT_REST);
-  });
-
-  it("a TEMP trigger reusing a capture trigger's name is not trusted", async () => {
-    await cmdDbQuery(
-      db,
-      "CREATE TEMP TRIGGER _cap_sneaky AFTER UPDATE ON tasks BEGIN UPDATE op_ctx SET applying = 1; END",
-    );
-    await expect(cmdDbQuery(db, "UPDATE tasks SET impact = 78")).rejects.toThrow(
-      /cannot write op_ctx/,
-    );
-  });
-
-  it("refuses a TEMP table or view that would shadow a bookkeeping table", async () => {
-    await expect(cmdDbQuery(db, "CREATE TEMP TABLE op_ctx (id, applying)")).rejects.toThrow(
-      /shadow/,
-    );
-    await expect(cmdDbQuery(db, "CREATE TEMP VIEW ops AS SELECT 1 AS seq")).rejects.toThrow(
-      /shadow/,
-    );
-    expect(
-      db.prepare("SELECT 1 FROM temp.sqlite_master WHERE name IN ('op_ctx','ops')").get(),
-    ).toBeUndefined();
   });
 
   it("still lets capture itself write the bookkeeping (a captured write, ops and ctx at rest)", async () => {
@@ -154,16 +231,79 @@ describe("db query refuses to write mu's capture bookkeeping", () => {
     expect(ctx()).toEqual(CTX_AT_REST);
   });
 
-  it("allows reading the bookkeeping, TEMP tables, and ordinary trigger DDL on TEMP", async () => {
+  it("allows reading the bookkeeping", async () => {
     await cmdDbQuery(db, "SELECT * FROM op_ctx");
     await cmdDbQuery(db, "SELECT COUNT(*) AS n FROM ops", { json: true });
     expect(lastRows()).toEqual([{ n: ops() }]);
-    await cmdDbQuery(
-      db,
-      "CREATE TEMP TABLE scratch(x); INSERT INTO scratch VALUES (1); DROP TABLE scratch",
-    );
   });
 });
+
+describe("db query ATTACH / DETACH (triage_vdb_attach)", () => {
+  let peerPath: string;
+  const peer = <T>(fn: (p: Db) => T): T => {
+    const p = openDb({ path: peerPath });
+    try {
+      return fn(p);
+    } finally {
+      p.close();
+    }
+  };
+  let peerOps: number;
+  beforeEach(() => {
+    peerPath = join(dir, "peer.db");
+    peer((p) => {
+      ensureWorkstream(p, "pw");
+      addTask(p, { workstream: "pw", localId: "p1", title: "peer", impact: 10, effortDays: 1 });
+    });
+    peerOps = peer((p) => (p.prepare("SELECT COUNT(*) AS n FROM ops").get() as { n: number }).n);
+  });
+
+  it.each([
+    (f: string) => `ATTACH '${f}' AS peer; UPDATE peer.ops SET actor = 'forged-att'`,
+    (f: string) =>
+      `ATTACH '${f}' AS peer; UPDATE peer.op_ctx SET applying = 1; UPDATE peer.tasks SET title = 'uncaptured-attached'`,
+    (f: string) => `ATTACH '${f}' AS peer; DROP TRIGGER peer._cap_tasks_upd`,
+    (f: string) => `ATTACH '${f}' AS peer; UPDATE peer.schema_version SET capture_version = 0`,
+    (f: string) => `ATTACH DATABASE '${f}' AS peer`,
+    (f: string) => `ATTACH '${f}' AS main2; DETACH main2`,
+    () => "DETACH DATABASE temp",
+    () => "ATTACH ':memory:' AS scratch",
+  ])("refuses %#", async (mk) => {
+    const triggers = peer((p) =>
+      count2(p, "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger'"),
+    );
+    await expect(cmdDbQuery(db, mk(peerPath))).rejects.toThrow(/cannot ATTACH or DETACH/);
+    peer((p) => {
+      expect(count2(p, "SELECT COUNT(*) AS n FROM ops")).toBe(peerOps);
+      expect(count2(p, "SELECT COUNT(*) AS n FROM ops WHERE actor = 'forged-att'")).toBe(0);
+      expect(count2(p, "SELECT COUNT(*) AS n FROM tasks WHERE title = 'uncaptured-attached'")).toBe(
+        0,
+      );
+      expect(count2(p, "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger'")).toBe(
+        triggers,
+      );
+      expect(
+        p.prepare("SELECT applying, capture_version FROM op_ctx, schema_version").get(),
+      ).toEqual({
+        applying: 0,
+        capture_version: expect.any(Number),
+      });
+      expect(count2(p, "SELECT capture_version AS n FROM schema_version")).toBeGreaterThan(0);
+    });
+    expect((db.pragma("database_list") as { name: string }[]).map((d) => d.name)).not.toContain(
+      "peer",
+    );
+  });
+
+  it("ATTACH inside a script is refused with the earlier statements rolled back", async () => {
+    await expect(
+      cmdDbQuery(db, `UPDATE tasks SET impact = 91; ATTACH '${peerPath}' AS peer`),
+    ).rejects.toThrow(/cannot ATTACH or DETACH/);
+    expect(count("SELECT COUNT(*) AS n FROM tasks WHERE impact = 91")).toBe(0);
+  });
+});
+
+const count2 = (d: Db, sql: string): number => (d.prepare(sql).get() as { n: number }).n;
 
 describe("db query transaction control: SQLite decides, not the text (rv6p2_sql_leading_semicolon)", () => {
   const TX = /remove BEGIN\/COMMIT/;
@@ -204,37 +344,47 @@ describe("db query transaction control: SQLite decides, not the text (rv6p2_sql_
     await expect(cmdDbQuery(db, "; NOT SQL AT ALL")).rejects.toThrow(/syntax error/);
   });
 
-  it("keyword-named identifiers are still fine, and a trigger body with END runs (TEMP)", async () => {
+  it("keyword-named identifiers are still fine", async () => {
     await cmdDbQuery(
       db,
-      `CREATE TEMP TABLE "commit"(begin, "end", trigger);
-       CREATE TEMP TRIGGER t1 AFTER INSERT ON "commit" BEGIN UPDATE "commit" SET begin = CASE WHEN 1 THEN 'x' END; END;
-       INSERT INTO "commit"(begin, "end", trigger) VALUES (1, 2, 3);
-       SELECT begin, "end", trigger FROM "commit"`,
+      `WITH "commit"(begin, "end", trigger) AS (VALUES (1, 2, 3))
+       SELECT begin, "end", trigger, CASE WHEN 1 THEN 'x' END AS x FROM "commit"`,
+      { json: true },
     );
-    expect(db.prepare('SELECT begin FROM "commit"').get()).toEqual({ begin: "x" });
+    expect(lastRows()).toEqual([{ begin: 1, end: 2, trigger: 3, x: "x" }]);
+  });
+
+  // triage_vdb_mutants (b): the EXPLAIN is the authority; if SQLite cannot list
+  // a statement, the call fails. Only a statement that IS an EXPLAIN is let through.
+  it("checkStatement fails closed when EXPLAIN cannot list a statement", () => {
+    expect(() => checkStatement(db, "NOT SQL AT ALL")).toThrow(/syntax error/);
+    expect(() => checkStatement(db, "; NOT SQL AT ALL")).toThrow(/syntax error/);
+    expect(() => checkStatement(db, "EXPLAIN SELECT 1")).not.toThrow();
+    expect(() => checkStatement(db, "SELECT 1")).not.toThrow();
   });
 });
 
-describe("db query cannot change the connection's settings (a prepare APPLIES a PRAGMA)", () => {
+describe("db query allows only read-only PRAGMAs (a prepare APPLIES a PRAGMA)", () => {
   const fk = (): unknown => db.pragma("foreign_keys", { simple: true });
   const busy = (): unknown => db.pragma("busy_timeout", { simple: true });
+  const UNCHANGED = /only read-only PRAGMAs/;
 
   it.each([
     "PRAGMA foreign_keys = OFF",
     "PRAGMA foreign_keys = OFF; SELECT 1",
     "PRAGMA main.foreign_keys = 0",
     "EXPLAIN PRAGMA foreign_keys = OFF",
+    "EXPLAIN QUERY PLAN PRAGMA foreign_keys = OFF",
+    "; /* c */ -- x\n PRAGMA foreign_keys = OFF",
+    "pragma FOREIGN_KEYS(0)",
+    'PRAGMA "foreign_keys" = 0',
+    "PRAGMA [main] . [foreign_keys] = 0",
+    "SELECT 1; PRAGMA foreign_keys = OFF",
+    "SELECT 1; PRAGMA busy_timeout = 0",
   ])("%j leaves foreign_keys on", async (sql) => {
-    await expect(cmdDbQuery(db, sql)).rejects.toThrow(/connection settings fixed/);
+    await expect(cmdDbQuery(db, sql)).rejects.toThrow(UNCHANGED);
     expect(fk()).toBe(1);
-  });
-
-  it("a PRAGMA foreign_keys inside the call's transaction is a no-op: still on, still cascading", async () => {
-    await cmdDbQuery(db, "SELECT 1; PRAGMA foreign_keys = OFF");
-    expect(fk()).toBe(1);
-    await cmdDbQuery(db, "DELETE FROM workstreams WHERE name = 'x'");
-    expect(count("SELECT COUNT(*) AS n FROM tasks")).toBe(2);
+    expect(busy()).toBe(5000);
   });
 
   it("a DELETE after the refused PRAGMA still cascades (no orphan task)", async () => {
@@ -244,26 +394,55 @@ describe("db query cannot change the connection's settings (a prepare APPLIES a 
     expect(db.pragma("foreign_key_check")).toEqual([]);
   });
 
-  it("busy_timeout and query_only cannot be changed either; writable_schema never takes (and sqlite_master writes are refused above)", async () => {
-    for (const sql of [
-      "PRAGMA busy_timeout = 0",
-
-      "PRAGMA query_only = ON",
-    ]) {
-      await expect(cmdDbQuery(db, sql)).rejects.toThrow(/connection settings fixed/);
-    }
-    await cmdDbQuery(db, "PRAGMA writable_schema = ON").catch(() => {});
+  it.each([
+    "PRAGMA busy_timeout = 0",
+    "PRAGMA busy_timeout(0)",
+    "PRAGMA query_only = ON",
+    "PRAGMA writable_schema = ON",
+    "PRAGMA user_version = 7",
+    "PRAGMA user_version(7)",
+    "PRAGMA application_id = 7",
+    "PRAGMA journal_mode = DELETE",
+    "PRAGMA synchronous = OFF",
+    "PRAGMA wal_checkpoint",
+    "PRAGMA optimize",
+    "PRAGMA ignore_check_constraints = ON",
+    "PRAGMA recursive_triggers = ON",
+    "PRAGMA trusted_schema = ON",
+    "PRAGMA defer_foreign_keys = ON",
+    "PRAGMA temp_store = FILE",
+    "PRAGMA foreign_keys(0)",
+    "PRAGMA table_info = 1",
+  ])("%j is refused", async (sql) => {
+    await expect(cmdDbQuery(db, sql)).rejects.toThrow(UNCHANGED);
     expect(busy()).toBe(5000);
     expect(db.pragma("writable_schema", { simple: true })).toBe(0);
     expect(db.pragma("query_only", { simple: true })).toBe(0);
+    expect(db.pragma("user_version", { simple: true })).toBe(0);
     await cmdDbQuery(db, "UPDATE tasks SET impact = 5 WHERE local_id = 'a'"); // not read-only
   });
 
-  it("PRAGMA reads still work", async () => {
+  it("the refusal is one line (no help dump)", async () => {
+    const err = await cmdDbQuery(db, "PRAGMA foreign_keys = OFF").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UsageError);
+    expect(String((err as Error).message)).not.toContain("\n");
+  });
+
+  it("PRAGMA reads on the allowlist work", async () => {
     await cmdDbQuery(db, "PRAGMA table_info(tasks)", { json: true });
     expect((lastRows() as { name: string }[]).some((r) => r.name === "local_id")).toBe(true);
+    await cmdDbQuery(db, "pragma main.table_info('tasks')", { json: true });
+    expect((lastRows() as { name: string }[]).length).toBeGreaterThan(3);
     await cmdDbQuery(db, "PRAGMA foreign_keys", { json: true });
     expect(lastRows()).toEqual([{ foreign_keys: 1 }]);
+    await cmdDbQuery(db, "PRAGMA user_version", { json: true });
+    expect(lastRows()).toEqual([{ user_version: 0 }]);
+    await cmdDbQuery(db, "PRAGMA foreign_key_list(task_edges)", { json: true });
+    await cmdDbQuery(db, "PRAGMA index_list(tasks)", { json: true });
+    await cmdDbQuery(db, "PRAGMA foreign_key_check", { json: true });
+    await cmdDbQuery(db, "SELECT name FROM pragma_table_info('tasks') LIMIT 1", { json: true });
+    await cmdDbQuery(db, "PRAGMA busy_timeout", { json: true });
+    expect(lastRows()).toEqual([{ timeout: 5000 }]);
   });
 });
 

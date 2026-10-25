@@ -80,6 +80,24 @@ describe("root-position -w forwards to the verb's -w", () => {
     }
   });
 
+  // triage_vdb_db_w_swallowed: `mu db -w a query` used to bind -w to the
+  // namespace and run the query on the global views, silently.
+  it("honours -w placed on the db namespace, or refuses a second, different one", async () => {
+    const r = await runCliJson(
+      ["db", "-w", "wsa", "query", "SELECT local_id FROM ready", "--json"],
+      dbPath,
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.data).toEqual([{ local_id: "t-wsa" }]);
+    const both = await runCli(["db", "-w", "wsa", "query", "SELECT 1", "-w", "wsb"], dbPath);
+    expect(both.exitCode).toBe(2);
+    expect(both.stderr).toMatch(/given twice/);
+    expect(both.stderr.trim().split("\n")).toHaveLength(1);
+    const compact = await runCli(["db", "-w", "wsa", "compact"], dbPath);
+    expect(compact.exitCode).toBe(2);
+    expect(compact.stderr).toMatch(/takes no -w/);
+  });
+
   // f_wsstate_root_w_ignored: teardown and state read `this.opts()`, so a
   // root `--workstream=X` used to vanish and $MU_SESSION picked the
   // target. A destructive verb then tore down the WRONG workstream.
