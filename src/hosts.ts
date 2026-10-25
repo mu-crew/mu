@@ -11,20 +11,25 @@
 //   {name}      one of env, cmd, local_sock, remote_sock, cwd. The value is
 //               substituted once and never rescanned, so braces inside a
 //               value are inert.
-// A small lexer tracks '...' and "..." so every value stays ONE atomic word
-// where it lands:
-//   unquoted    the value as one single-quoted word of the local shell.
-//   '...' "..." the template is writing a command for a SECOND shell (what
-//               ssh hands the remote side), so the value is quoted for that
-//               shell first, then escaped for the enclosing quote
-//               (`'` -> `'\''`; `\ " $ \`` backslash-escaped). It is atomic at
-//               both layers.
+// A small lexer tracks '...' and "..." so every value stays exactly the text
+// the template author asked for. Quote characters never imply a second shell;
+// a second layer is always asked for by name:
+//   {name}      ONE layer, the local /bin/sh. Unquoted: the value as one
+//               single-quoted word. Inside '...' or "...": the value escaped
+//               to be literal text of that string (`'` -> `'\''`;
+//               `\ " $ \`` backslash-escaped), so `tool "{cwd}"` and
+//               `tool '{cwd}'` pass the value itself.
+//   {name:sh}   TWO layers: the value is first quoted as one word for a second
+//               shell (what the template hands command text to, e.g. ssh's
+//               remote login shell), then for the layer it lands in. Atomic
+//               at both layers.
 // A placeholder after a backslash, or inside $(...) / backticks within double
 // quotes, is refused (the lexer does not nest shells).
-// {env} is the exception: a run of KEY=VALUE assignment words, so it can
-// precede a command. Keys are the four remote identity variables only (never
-// the local DB, state or sync dir) and values a safe charset, so it is valid
-// in every context.
+// {env} is a run of KEY=VALUE assignment words, so it can precede a command.
+// Keys are the four remote identity variables only (never the local DB,
+// state or sync dir); each VALUE is shell-quoted (`hostEnvWords`). The words
+// are shell text, so in '...' or "..." they are escaped for that quote like
+// any text, and `{env:sh}` is refused (it is already text for the inner shell).
 //
 // ─── Channels ───────────────────────────────────────────────────────────
 // `max_sessions` counts every channel mu holds open to a host. A channel is
@@ -48,7 +53,7 @@ import { dirname } from "node:path";
 import { ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import type { Db } from "./db.js";
-import { execFileCapture } from "./exec-file.js";
+import { execGroupCapture } from "./exec-file.js";
 import { shellQuote } from "./shell-quote.js";
 
 // ─── Errors ─────────────────────────────────────────────────────────────
@@ -194,13 +199,13 @@ export function removeHost(db: Db, name: string): boolean {
 /**
  * The starter for `host init <name> --ssh`: printed for the user to edit,
  * never run. The shell template is a command for the remote login shell
- * (inside quotes, so each value is quoted for it): cd, env, `$SHELL -ilc`.
+ * (inside quotes, so each value asks for `:sh`, quoting for that shell): cd, env, `$SHELL -ilc`.
  */
 export function hostStarter(host: string): { shell: string; exec: string; fetch: string } {
   const ssh = "ssh -o ControlMaster=no -o ControlPath=none";
   return {
     // ControlMaster=no: a multiplexed ssh never binds the local end of the forward.
-    shell: `${ssh} -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L {local_sock}:{remote_sock} ${host} -t 'cd {cwd} && {env} "$SHELL" -ilc {cmd}'`,
+    shell: `${ssh} -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L {local_sock}:{remote_sock} ${host} -t 'cd {cwd:sh} && {env} "$SHELL" -ilc {cmd:sh}'`,
     exec: `${ssh} -o BatchMode=yes ${host} {cmd}`,
     fetch: `git fetch ssh://${host}{cwd} HEAD`,
   };
@@ -220,11 +225,12 @@ export const HOST_ENV_KEYS = [
   "MU_CTL_SOCK",
 ] as const;
 
-const ENV_WORD = `(?:${HOST_ENV_KEYS.join("|")})=[A-Za-z0-9_./@+-]+`;
-const ENV_WORDS_RE = new RegExp(`^${ENV_WORD}(?: ${ENV_WORD})*$`);
-const ENV_VALUE_RE = /^[A-Za-z0-9_./@+-]+$/;
+/** One shell-quoted value as `shellQuote` writes it: single-quoted runs and `"'"`. */
+const QUOTED = `(?:'[^']*'|"'")+`;
+const ENV_WORD = `(?:${HOST_ENV_KEYS.join("|")})=${QUOTED}`;
+const ENV_WORDS_RE = new RegExp(`^(?:${ENV_WORD}(?: ${ENV_WORD})*)?$`);
 
-/** `K=V` words for `{env}`: whitelisted keys, safe values, nothing else. */
+/** `K='v'` words for `{env}`: whitelisted keys, every value shell-quoted (any text survives), nothing else. */
 export function hostEnvWords(env: Record<string, string>): string {
   const words: string[] = [];
   for (const [k, v] of Object.entries(env)) {
@@ -233,20 +239,16 @@ export function hostEnvWords(env: Record<string, string>): string {
         `{env} may carry only ${HOST_ENV_KEYS.join(", ")}; ${k} is not forwarded`,
       );
     }
-    if (!ENV_VALUE_RE.test(v)) {
-      throw new HostTemplateError(
-        `{env} value for ${k} must match [A-Za-z0-9_./@+-]+ (got ${JSON.stringify(v)})`,
-      );
-    }
-    words.push(`${k}=${v}`);
+    if (v.includes("\0")) throw new HostTemplateError(`{env} value for ${k} contains a NUL byte`);
+    words.push(`${k}=${shellQuote(v)}`);
   }
   return words.join(" ");
 }
 
 type Ctx = "none" | "sq" | "dq";
-type Token = { lit: string } | { ph: HostPlaceholder; ctx: Ctx };
+type Token = { lit: string } | { ph: HostPlaceholder; ctx: Ctx; layers: 1 | 2 };
 
-const KNOWN = HOST_PLACEHOLDERS.map((p) => `{${p}}`).join(" ");
+const KNOWN = `${HOST_PLACEHOLDERS.map((p) => `{${p}}`).join(" ")}; {name:sh} quotes for a second shell`;
 
 function parseTemplate(t: string): Token[] {
   const out: Token[] = [];
@@ -267,7 +269,10 @@ function parseTemplate(t: string): Token[] {
         continue;
       }
       const end = t.indexOf("}", i);
-      const name = end === -1 ? "" : t.slice(i + 1, end);
+      const body = end === -1 ? "" : t.slice(i + 1, end);
+      const colon = body.indexOf(":");
+      const name = colon === -1 ? body : body.slice(0, colon);
+      const mod = colon === -1 ? undefined : body.slice(colon + 1);
       if (!(HOST_PLACEHOLDERS as readonly string[]).includes(name)) {
         throw new HostTemplateError(
           end === -1 || name === "" || /\s/.test(name)
@@ -275,11 +280,19 @@ function parseTemplate(t: string): Token[] {
             : `unknown placeholder {${name}} (known: ${KNOWN})`,
         );
       }
+      if (mod !== undefined && mod !== "sh") {
+        throw new HostTemplateError(`unknown modifier {${body}} (the only one is {${name}:sh})`);
+      }
+      if (name === "env" && mod !== undefined) {
+        throw new HostTemplateError(
+          "{env:sh} is refused: {env} is already text for the inner shell",
+        );
+      }
       if (ctx === "dq" && subst) {
         throw new HostTemplateError(`{${name}} inside $(...) or backticks in double quotes`);
       }
       flush();
-      out.push({ ph: name as HostPlaceholder, ctx });
+      out.push({ ph: name as HostPlaceholder, ctx, layers: mod === undefined ? 1 : 2 });
       i = end;
       continue;
     }
@@ -320,8 +333,9 @@ export function validateHostTemplate(template: string): void {
 }
 
 /**
- * Expand `template` in one pass. Every value is quoted for its context and
- * stays one word; {env} is whitelisted assignment words. A placeholder with
+ * Expand `template` in one pass. Every value is quoted for the layer it lands
+ * in and stays one word (`{name:sh}` adds the second-shell layer); {env} is
+ * whitelisted assignment words. A placeholder with
  * no value in this context is an error, never blanked.
  */
 export function expandHostTemplate(template: string, values: HostTemplateValues): string {
@@ -334,19 +348,21 @@ export function expandHostTemplate(template: string, values: HostTemplateValues)
     const v = values[tok.ph];
     if (v === undefined) throw new HostTemplateError(`{${tok.ph}} has no value in this template`);
     if (v.includes("\0")) throw new HostTemplateError(`{${tok.ph}} value contains a NUL byte`);
+    let text: string;
     if (tok.ph === "env") {
       if (!ENV_WORDS_RE.test(v)) {
         throw new HostTemplateError(
-          `{env} must be KEY=VALUE words of ${HOST_ENV_KEYS.join(", ")} (build it with hostEnvWords)`,
+          `{env} must be KEY='value' words of ${HOST_ENV_KEYS.join(", ")} (build it with hostEnvWords)`,
         );
       }
-      out += v;
+      text = v;
+    } else if (tok.ctx === "none") {
+      out += tok.layers === 2 ? shellQuote(shellQuote(v)) : shellQuote(v);
       continue;
-    }
-    const word = shellQuote(v);
-    if (tok.ctx === "sq") out += word.replace(/'/g, `'\\''`);
-    else if (tok.ctx === "dq") out += word.replace(/[\\"$`]/g, "\\$&");
-    else out += word;
+    } else text = tok.layers === 2 ? shellQuote(v) : v;
+    if (tok.ctx === "sq") out += text.replace(/'/g, `'\\''`);
+    else if (tok.ctx === "dq") out += text.replace(/[\\"$`]/g, "\\$&");
+    else out += text;
   }
   return out;
 }
@@ -433,17 +449,28 @@ async function probeAttached(
   return dead;
 }
 
-/** Delete proven-dead rows: transient by pid; attached only those observed dead (token + id + pane CAS). */
+/**
+ * Delete proven-dead rows: transient by pid; attached only the identity that
+ * was PROBED dead. `deadPanes` is the snapshot read before the awaited probe;
+ * a row matches only if holder, token, agent id and pane all equal it, and
+ * the DELETE binds the snapshot's values, never the re-read row's.
+ */
 function reclaim(db: Db, host: string, deadPanes: readonly HostChannel[]): void {
   const del = db.prepare(
     "DELETE FROM host_channels WHERE host = ? AND holder = ? AND token = ? AND agent_id IS ? AND pane_id IS ?",
   );
   for (const c of listHostChannels(db, host)) {
-    const gone =
-      c.kind === "transient"
-        ? c.pid !== null && pidProvenGone(c.pid, c.pid_start)
-        : deadPanes.some((d) => d.holder === c.holder && d.token === c.token);
-    if (gone) del.run(host, c.holder, c.token, c.agent_id, c.pane_id);
+    if (c.kind === "transient") {
+      if (c.pid !== null && pidProvenGone(c.pid, c.pid_start)) {
+        del.run(host, c.holder, c.token, c.agent_id, c.pane_id);
+      }
+      continue;
+    }
+    for (const d of deadPanes) {
+      if (d.holder === c.holder && d.token === c.token) {
+        del.run(host, d.holder, d.token, d.agent_id, d.pane_id);
+      }
+    }
   }
 }
 
@@ -458,33 +485,53 @@ export async function reserveHostChannel(
   holder: string,
   opts: ChannelOpts = {},
 ): Promise<HostLease> {
-  const profile = getHost(db, host);
+  return (await admit(db, host, holder, opts)).lease;
+}
+
+/**
+ * Admission: the profile is read INSIDE the BEGIN IMMEDIATE that counts, so
+ * the cap enforced is the one that exists at admission (a profile removed or
+ * re-added during the awaited probe is seen, or refused as not found, never
+ * an orphan row). The returned profile is that snapshot; run the template
+ * from it, not from a re-read.
+ */
+async function admit(
+  db: Db,
+  host: string,
+  holder: string,
+  opts: ChannelOpts,
+): Promise<{ lease: HostLease; profile: HostProfile }> {
+  getHost(db, host); // fail fast, before probing panes
   const dead = await probeAttached(db, host, opts.paneAlive);
   const token = randomUUID();
-  db.transaction(() => {
-    reclaim(db, host, dead);
-    const rows = listHostChannels(db, host);
-    if (rows.some((r) => r.holder === holder)) {
-      throw new HostChannelBusyError(
-        host,
-        [holder],
-        `host ${host}: ${holder} already holds a channel`,
-      );
-    }
-    const cap = profile.max_sessions;
-    if (cap !== null && rows.length >= cap) {
-      const names = rows.map((r) => r.holder);
-      throw new HostChannelBusyError(
-        host,
-        names,
-        `host ${host} is at --max-sessions ${cap}: held by ${names.join(", ")}`,
-      );
-    }
-    db.prepare(
-      "INSERT INTO host_channels (host, holder, kind, token, pid, pid_start, opened_at) VALUES (?, ?, 'transient', ?, ?, ?, ?)",
-    ).run(host, holder, token, process.pid, pidStart(process.pid), new Date().toISOString());
-  }).immediate();
-  return { host, holder, token };
+  const profile = db
+    .transaction(() => {
+      const profile = getHost(db, host);
+      reclaim(db, host, dead);
+      const rows = listHostChannels(db, host);
+      if (rows.some((r) => r.holder === holder)) {
+        throw new HostChannelBusyError(
+          host,
+          [holder],
+          `host ${host}: ${holder} already holds a channel`,
+        );
+      }
+      const cap = profile.max_sessions;
+      if (cap !== null && rows.length >= cap) {
+        const names = rows.map((r) => r.holder);
+        throw new HostChannelBusyError(
+          host,
+          names,
+          `host ${host} is at --max-sessions ${cap}: held by ${names.join(", ")}`,
+        );
+      }
+      db.prepare(
+        "INSERT INTO host_channels (host, holder, kind, token, pid, pid_start, opened_at) VALUES (?, ?, 'transient', ?, ?, ?, ?)",
+      ).run(host, holder, token, process.pid, pidStart(process.pid), new Date().toISOString());
+      return profile;
+    })
+    .immediate();
+  return { lease: { host, holder, token }, profile };
 }
 
 /** Free a channel by token. False when it was already gone or is another's now. */
@@ -519,17 +566,17 @@ export function releaseHostChannelsForAgent(db: Db, agentId: number, paneId: str
     .run(agentId, paneId).changes;
 }
 
-/** Hold a transient channel for the duration of `run`; released in `finally` by token. */
+/** Hold a transient channel for the duration of `run` (given the admission snapshot of the profile); released in `finally` by token. */
 export async function withHostChannel<T>(
   db: Db,
   host: string,
   holder: string,
-  run: () => Promise<T>,
+  run: (profile: HostProfile) => Promise<T>,
   opts: ChannelOpts = {},
 ): Promise<T> {
-  const lease = await reserveHostChannel(db, host, holder, opts);
+  const { lease, profile } = await admit(db, host, holder, opts);
   try {
-    return await run();
+    return await run(profile);
   } finally {
     releaseHostChannel(db, lease);
   }
@@ -547,7 +594,12 @@ export interface HostRun {
   stderr: string;
 }
 
-/** Expand `field` of `profile` and run it with /bin/sh -c. No retry, no fallback. */
+/**
+ * Expand `field` of `profile` and run it with /bin/sh -c. No retry, no
+ * fallback. The command is its own process group: on timeout or caller
+ * termination the whole group (the template's transport included) is gone
+ * before this returns, so the channel is never released under a live one.
+ */
 async function runTemplate(
   profile: HostProfile,
   field: "exec" | "fetch",
@@ -555,7 +607,7 @@ async function runTemplate(
   timeoutMs: number,
 ): Promise<HostRun> {
   const expanded = expandHostTemplate(profile[field], values);
-  return execFileCapture("/bin/sh", ["-c", expanded], { timeoutMs });
+  return execGroupCapture("/bin/sh", ["-c", expanded], { timeoutMs });
 }
 
 /** Run the profile's `exec` or `fetch` template under one transient channel. */
@@ -567,13 +619,12 @@ export async function runHostTemplate(
   values: HostTemplateValues,
   opts: ChannelOpts & { timeoutMs?: number } = {},
 ): Promise<HostRun> {
-  const profile = getHost(db, host);
   const timeoutMs = opts.timeoutMs ?? HOST_COMMAND_TIMEOUT_MS;
   return withHostChannel(
     db,
     host,
     holder,
-    () => runTemplate(profile, field, values, timeoutMs),
+    (profile) => runTemplate(profile, field, values, timeoutMs),
     opts,
   );
 }
@@ -625,45 +676,44 @@ export async function checkHost(
   host: string,
   opts: HostCheckOptions = {},
 ): Promise<HostCheckReport> {
-  const profile = getHost(db, host);
+  getHost(db, host);
   const timeoutMs = opts.timeoutMs ?? HOST_COMMAND_TIMEOUT_MS;
   const steps: HostCheckStep[] = [];
-
-  // One remote command through `exec`; `good` turns a clean exit into a detail, or undefined.
-  const step = async (
-    name: HostCheckStep["step"],
-    cmd: string,
-    good: (r: HostRun) => string | undefined,
-    unmet: string,
-  ): Promise<boolean> => {
-    let detail: string;
-    let ok = false;
-    try {
-      const r = await runTemplate(profile, "exec", { cmd, cwd: profile.repo }, timeoutMs);
-      const why = firstLine(r.stderr) || firstLine(r.stdout);
-      const good1 = r.exitCode === 0 ? good(r) : undefined;
-      ok = good1 !== undefined;
-      detail =
-        good1 ??
-        (r.exitCode === null
-          ? `timed out after ${timeoutMs}ms`
-          : r.exitCode === 0
-            ? unmet
-            : `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`);
-    } catch (e) {
-      if (!(e instanceof HostTemplateError)) throw e;
-      detail = e.message;
-    }
-    steps.push({ step: name, ok, detail });
-    return ok;
-  };
   const login = (cmd: string): string => `"\${SHELL:-sh}" -ilc ${shellQuote(cmd)}`;
 
   await withHostChannel(
     db,
     host,
     `check:${process.pid}`,
-    async () => {
+    async (profile) => {
+      // One remote command through `exec`; `good` turns a clean exit into a detail, or undefined.
+      const step = async (
+        name: HostCheckStep["step"],
+        cmd: string,
+        good: (r: HostRun) => string | undefined,
+        unmet: string,
+      ): Promise<boolean> => {
+        let detail: string;
+        let ok = false;
+        try {
+          const r = await runTemplate(profile, "exec", { cmd, cwd: profile.repo }, timeoutMs);
+          const why = firstLine(r.stderr) || firstLine(r.stdout);
+          const good1 = r.exitCode === 0 ? good(r) : undefined;
+          ok = good1 !== undefined;
+          detail =
+            good1 ??
+            (r.exitCode === null
+              ? `timed out after ${timeoutMs}ms`
+              : r.exitCode === 0
+                ? unmet
+                : `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`);
+        } catch (e) {
+          if (!(e instanceof HostTemplateError)) throw e;
+          detail = e.message;
+        }
+        steps.push({ step: name, ok, detail });
+        return ok;
+      };
       if (await step("reachable", "true", () => "exec answered", "")) {
         await step(
           "repo",

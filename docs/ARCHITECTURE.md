@@ -130,7 +130,7 @@ are re-export hubs.
 | `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `error` / `died` / `timeout` / `pending` |
 | `src/agents/wait.ts` | block until task-less agents leave `busy` |
 | `src/agents/errors.ts` | typed agent errors |
-| `src/exec-file.ts` | `execFileCapture`: child_process runner shared by the tmux, herdr and murmur executors (no execa) |
+| `src/exec-file.ts` | `execFileCapture` (+ `execGroupCapture`: own process group, reaped before it settles): child_process runner shared by the tmux, herdr and murmur executors (no execa) |
 | `src/agent-state.ts` | runtime state from ctl, herdr or murmur; `unknown` with a reason |
 | `src/reconcile.ts` | ghost prune and orphan surfacing |
 | `src/mux/index.ts` | cluster barrel that `src/mux.ts` re-exports |
@@ -178,7 +178,7 @@ are re-export hubs.
 | `src/cli/db-query.ts` | `mu db query` (alias `mu sql`) and `mu db --shell`. One op-context scope per write; `guardPragma` allows only read-only PRAGMAs before any compile; one `EXPLAIN` per statement (`checkStatement`) refuses transaction control (`AutoCommit`/`Savepoint`), ATTACH/DETACH, all DDL (a write to any `sqlite_master` root page, TEMP included) and any write to `op_ctx`/`op_dying`/`ops`/`schema_version` outside a main `_cap_*` trigger; `installScopedViews` (TEMP `ready`/`blocked`/`blockers`); `teachColumnError`. `src/cli/db.ts` keeps `backup`, `compact`, `forget` |
 | `src/cli/dispatch-hints.ts` | dispatch-time `Next:` hints for pi agents (`--fresh`, `--interrupt`, abort) |
 | `src/cli/stdin.ts` | `-` as a text argument: reads note / send text from stdin (heredoc prose) |
-| `src/hosts.ts` | host profiles: the template grammar (`expandHostTemplate`, one pass, per-context quoting, whitelisted `{env}`), profile CRUD, `host_channels` admission (`reserveHostChannel` / `bindHostChannel` / `releaseHostChannel` by token, `withHostChannel`, transient vs attached), `checkHost`. ssh-free: runs only the user's stored templates with `/bin/sh -c` |
+| `src/hosts.ts` | host profiles: the template grammar (`expandHostTemplate`, one pass, per-context quoting, whitelisted `{env}`, `{name:sh}` second layer), profile CRUD, `host_channels` admission (`reserveHostChannel` / `bindHostChannel` / `releaseHostChannel` by token, `withHostChannel`, transient vs attached), `checkHost`. ssh-free: runs only the user's stored templates with `/bin/sh -c`, each as its own process group (`execGroupCapture`, reaped before its channel is released) |
 | `src/cli/host.ts` | the host verbs (add, list, show, rm, init, check) |
 | `src/cli/agents-remote.ts` | `mu agent remote-env`: prints the ssh forward and env, runs nothing |
 | `src/output-contract.ts` | the `--json` wire: `Envelope<T>` (`{ok,data,next}` / `{ok:false,error,message,next,exit}`), `NextPlan`, `encodeEnvelope`, `isEnvelope`, `capRecords`. Pure. `cli.ts` `emitJson` wraps every payload once; `handle.ts` `emitError` prints the one failure document on stdout; `emitJsonRow` is the raw NDJSON row (`mu log --tail`). `extension/delegate.ts` `parseEnvelope` reads it |
