@@ -20,7 +20,7 @@
 //     transaction), ATTACH/DETACH (`sqlite_attach` / `sqlite_detach`
 //     calls), DDL (any write to a sqlite_master root page, main or temp) and
 //     every table a program writes, trigger bodies included: op_ctx /
-//     op_dying / ops / schema_version are refused unless a MAIN `_cap_*`
+//     op_dying / ops / schema_version / machine_identity are refused unless a MAIN `_cap_*`
 //     trigger writes them. That is capture working.
 //   * The one place that reads text is the PRAGMA allowlist, because SQLite
 //     applies a PRAGMA when it COMPILES it (`PRAGMA foreign_keys=OFF` flips
@@ -251,7 +251,13 @@ function prepare(db: Db, text: string): Statement {
 // ─── what a statement does, from SQLite's own listing ─────────────────
 
 const USER_TRANSACTION_MESSAGE = "mu db query runs inside mu's transaction; remove BEGIN/COMMIT";
-const PROTECTED_TABLES = new Set(["op_ctx", "op_dying", "ops", "schema_version"]);
+const PROTECTED_TABLES = new Set([
+  "op_ctx",
+  "op_dying",
+  "ops",
+  "schema_version",
+  "machine_identity",
+]);
 
 interface ExplainRow {
   opcode: string;
@@ -315,7 +321,7 @@ export function checkStatement(db: Db, statement: string): void {
   }
   if (refused !== undefined) {
     throw new UsageError(
-      `mu db query cannot write ${refused}: it is mu's capture bookkeeping (op_ctx, op_dying, ops, schema_version)`,
+      `mu db query cannot write ${refused}: it is mu's capture bookkeeping (op_ctx, op_dying, ops, schema_version, machine_identity)`,
       { showHelp: false },
     );
   }

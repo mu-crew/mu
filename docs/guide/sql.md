@@ -110,7 +110,7 @@ connection. The rule is a policy, so nothing has to be detected:
   `foreign_key_check`, `integrity_check`, `quick_check`, and a bare
   `user_version`, `foreign_keys`, `busy_timeout` or `database_list`.
   Anything else is refused before it runs.
-- No write to `op_ctx`, `op_dying`, `ops` or `schema_version`.
+- No write to `op_ctx`, `op_dying`, `ops`, `schema_version` or `machine_identity`.
 
 SQLite itself decides what a statement does (its `EXPLAIN` listing, trigger
 bodies included), never the text, so a table named `begin` is fine and a
