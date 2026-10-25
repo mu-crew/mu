@@ -127,6 +127,8 @@ n=$(ls '${execLog}' | wc -l)
 printf '%s' "$1" > '${execLog}'/$n
 mode=$(cat '${modeFile}' 2>/dev/null || echo ok)
 case "$1" in
+  *MU_STATE*) echo "MU_STATE clean ${SHA}" ;;
+  *MU_RM*) echo "MU_RM removed" ;;
   *'worktree add'*)
     [ "$mode" = addfail ] && { echo boom >&2; exit 3; }
     [ "$mode" = noise ] && { echo garbage; exit 0; }

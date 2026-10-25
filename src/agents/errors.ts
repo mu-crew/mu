@@ -527,16 +527,18 @@ export class AgentReplacedError extends Error implements HasNextSteps {
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
-    during: "closed" | "sent to" = "closed",
+    during: "closed" | "sent to" | "collected" = "closed",
   ) {
     super(
       during === "closed"
         ? `agent ${agentName} was replaced while it was being closed; the replacement was left alone. Preview it: mu agent close ${agentName} -w ${workstream}`
-        : `agent ${agentName} was replaced before the prompt was written; nothing was sent to the replacement. Look at it: mu agent list -w ${workstream}`,
+        : during === "collected"
+          ? `agent ${agentName} was replaced while its commits were being collected; the replacement's record was left alone. Look at it: mu agent list -w ${workstream}`
+          : `agent ${agentName} was replaced before the prompt was written; nothing was sent to the replacement. Look at it: mu agent list -w ${workstream}`,
     );
     this.during = during;
   }
-  readonly during: "closed" | "sent to";
+  readonly during: "closed" | "sent to" | "collected";
   errorNextSteps(): NextStep[] {
     return this.during === "closed"
       ? [

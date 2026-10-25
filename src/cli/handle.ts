@@ -96,7 +96,8 @@ import {
 } from "../output.js";
 import { type Envelope, encodeEnvelope } from "../output-contract.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
-import { RemotePrepareError } from "../remote-agent.js";
+import { RemoteCloseRefusedError, RemotePrepareError } from "../remote-agent.js";
+import { RemoteCollectError, RemoteCollectUnsupportedError } from "../remote-collect.js";
 import { RevisionMismatchError } from "../revision.js";
 import { syncDir } from "../segments.js";
 import {
@@ -328,6 +329,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof WorkstreamNameReservedError ||
     // A host profile field or template mu refuses: nothing is stored or run.
     err instanceof HostProfileError ||
+    // collect on an agent with no remote worktree of its own.
+    err instanceof RemoteCollectUnsupportedError ||
     // The active mux cannot run a profile's shell template: refused before any effect.
     err instanceof HostSpawnUnsupportedError ||
     // Same typed-*Invalid* class: a task id or a title the operator
@@ -369,6 +372,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // A host profile that exists, is at its channel cap, or still holds channels.
     err instanceof HostExistsError ||
     err instanceof HostChannelBusyError ||
+    // A remote worktree close refuses to remove (dirty, uncollected HEAD, moved).
+    err instanceof RemoteCloseRefusedError ||
     err instanceof HostInUseError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
@@ -506,7 +511,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // Same lane as the wait verbs' timeout: still busy, try again.
     return { label: "timeout", exitCode: 5 };
   }
-  if (err instanceof RemotePrepareError) {
+  if (err instanceof RemotePrepareError || err instanceof RemoteCollectError) {
     // The host's own exec step failed or answered nothing usable: substrate, not usage.
     return { label: "remote host", exitCode: 5 };
   }

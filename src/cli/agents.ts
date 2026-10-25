@@ -70,6 +70,7 @@ import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
 import { listTasksByOwner } from "../tasks.js";
+import { wireCollectCommand } from "./agent-collect.js";
 import { dispatchHint, waitHint } from "./dispatch-hints.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
@@ -869,22 +870,29 @@ export async function cmdMe(
 export async function cmdClose(
   db: Db,
   rawName: string,
-  opts: { workstream?: string; json?: boolean; discard?: boolean; if?: number } = {},
+  opts: {
+    workstream?: string;
+    json?: boolean;
+    discard?: boolean;
+    keepBranch?: boolean;
+    if?: number;
+  } = {},
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   const discard = opts.discard === true;
+  const keepBranch = opts.keepBranch === true;
   // Bare close is the preview: it reads, it never kills. `--if <rev>` applies.
   if (opts.if === undefined) {
-    const p = await previewClose(db, name, { workstream: ws, discard });
+    const p = await previewClose(db, name, { workstream: ws, discard, keepBranch });
     const next: NextStep[] =
       p.kind === "none" || p.refusesDirty
         ? []
         : [
             {
               intent: "Apply this close",
-              command: `mu agent close ${name} -w ${ws}${discard ? " --discard" : ""} --if ${p.revision}`,
+              command: `mu agent close ${name} -w ${ws}${discard ? " --discard" : ""}${keepBranch ? " --keep-branch" : ""} --if ${p.revision}`,
             },
           ];
     if (opts.json) {
@@ -901,10 +909,11 @@ export async function cmdClose(
     workstream: ws,
     ifRevision: opts.if,
     ...(discard ? { discard: true } : {}),
+    ...(keepBranch ? { keepBranch: true } : {}),
   });
   const next: NextStep[] = [];
   const kept = result.worktree?.branch;
-  if (kept !== undefined) {
+  if (kept !== undefined && closing?.host == null) {
     next.push({
       intent: `Its unmerged commits are on ${kept}; merge or inspect them`,
       command: `git log --oneline HEAD..${kept}`,
@@ -955,6 +964,12 @@ function printClosePreview(p: ClosePreview): void {
   );
   for (const t of p.ownedTasks) {
     console.log(`  owns ${t.ref} (${t.status}${t.reverts ? ": goes back to OPEN" : ""})`);
+  }
+  if (p.remote !== null) {
+    const head = p.remote.collectedHead;
+    console.log(
+      `  remote worktree ${p.remote.path} on ${p.remote.host}: removed after the pane dies, only if clean and at ${p.remote.base.slice(0, 12)}${head === null ? "" : ` or ${head.slice(0, 12)} (collected)`}; otherwise it refuses${p.keepBranch ? " (--keep-branch: unmerged commits go on a remote branch first; dirty still refuses)" : ""}`,
+    );
   }
   if (p.worktree !== null) {
     console.log(`  worktree ${p.worktree.path}: ${p.worktree.state}`);
@@ -1556,11 +1571,15 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("close <name>")
     .description(
-      "Close an agent. Without --if it only previews (revision, owned tasks, worktree state) and prints the apply command; with --if <rev> it kills the pane and removes its registry row (refused if the agent changed since the preview). Its worktree goes with it: removed when clean, a branch mu/<ws>/<agent>-<sha> keeps unmerged commits; a dirty worktree refuses before anything is killed.",
+      "Close an agent. Without --if it only previews (revision, owned tasks, worktree state) and prints the apply command; with --if <rev> it kills the pane and removes its registry row (refused if the agent changed since the preview). Its worktree goes with it: removed when clean, a branch mu/<ws>/<agent>-<sha> keeps unmerged commits; a dirty worktree refuses before anything is killed. A remote worktree (spawn --host --worktree) is judged after the pane dies: removed only when clean and HEAD is its base or the last collected commit, else it refuses (--keep-branch keeps unmerged commits on a remote branch); a --cwd-only remote agent's host is never touched.",
     )
     .option(
       "--discard",
       "close even with uncommitted work in the worktree (lossy: it is thrown away)",
+    )
+    .option(
+      "--keep-branch",
+      "a remote worktree whose HEAD was never collected: keep it as the remote branch mu/<ws>/<agent>-<sha12>, then remove it (dirty still refuses, with or without --discard)",
     )
     .option("--if <rev>", "apply the preview with this revision", parseNonNegativeInt)
     .option(...WORKSTREAM_OPT)
@@ -1570,10 +1589,13 @@ export function wireAgentCommands(program: Command): void {
         workstream?: string;
         json?: boolean;
         discard?: boolean;
+        keepBranch?: boolean;
         if?: number;
       };
       return handle((db) => cmdClose(db, name, opts), this as Command)();
     });
+
+  wireCollectCommand(agent);
 
   // `mu agent abort` — stop a pi agent's turn through its control socket.
   agent

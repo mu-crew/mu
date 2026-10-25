@@ -62,20 +62,41 @@ mu agent spawn worker-1 -w auth --host dev --worktree --task build --send 'Read:
 
 `mu agent send`, `wait`, `abort` and `check` go through the forwarded
 socket and behave as they do locally. `mu state` lists remote workers
-(agent, host, remote cwd, base). Collect the work by fetching from the
-remote worktree, then close the agent; `agent close` does not remove the
-remote worktree yet, so remove it once collected:
+(agent, host, remote cwd, base).
+
+## Collect and close
 
 ```bash
-git fetch "ssh://dev/<cwd>" HEAD && git cherry-pick FETCH_HEAD
+cd ~/repo                              # the local repo the commits come home to
+mu agent collect worker-1 -w auth      # runs the profile's --fetch, prints the merge
+git merge <sha>                        # mu prints the exact sha; it never merges
+mu agent close worker-1 -w auth        # preview, then --if <rev>
 ```
+
+- `collect` runs the `--fetch` template locally, in the current directory's
+  git repo, under one channel. It pins the fetched commit as
+  `refs/mu/collect/<ws>/<agent>` (gc keeps it) and records it as the
+  agent's `collected_head`. A fetch that fails, or succeeds without leaving a
+  commit, records nothing. Collecting the same HEAD again says so.
+- The pane is the transport, so a live worker holds its host's channel. At
+  `--max-sessions 1`, `collect` is refused with the holder named; raise the
+  cap to collect while the worker runs.
+- `close` kills the pane first (that frees the channel), then removes the
+  remote worktree **only if** it is clean and its HEAD is the base or the
+  collected HEAD. It never uses `--force`. A newer HEAD refuses with one line:
+  `collect` again, or `close --keep-branch` to keep the commits on the remote
+  branch `mu/<ws>/<agent>-<sha12>` and remove the worktree. Uncommitted files
+  always refuse (`--discard` and `--keep-branch` do not override that).
+- A `--cwd` agent has no remote worktree of its own: close never touches the
+  host. A reaped row (its pane died) keeps no record yet: fetch from the
+  worktree path by hand (`v_remote_recovery`).
 
 ## Host profiles
 
 A host profile stores your own command templates, so you stop retyping
 them. mu never connects and knows no ssh flags: it fills the templates and
 runs them with `/bin/sh -c`. `spawn --host` uses them (above); `agent
-collect` (the `--fetch` template) is a later unit.
+collect` runs the `--fetch` template.
 
 ```bash
 mu host init dev --ssh        # prints a starter `mu host add`; runs nothing
