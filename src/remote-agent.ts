@@ -169,7 +169,7 @@ export class RemoteCloseRefusedError extends Error {
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
-    public readonly reason: "dirty" | "uncollected" | "moved" | "unreadable" | "branch",
+    public readonly reason: "dirty" | "uncollected" | "moved" | "unreadable" | "branch" | "held",
     detail: string,
   ) {
     super(`agent ${agentName}: remote worktree kept: ${detail}`);
@@ -191,7 +191,8 @@ export class RemoteCloseRefusedError extends Error {
 }
 
 const REMOTE_STATE_RE = /^MU_STATE (clean|dirty|gone)(?: ([0-9a-f]{40,64}))?$/;
-const REMOTE_RM_RE = /^MU_RM (removed|gone|moved|dirty|branch-collision|branch-failed|failed)$/;
+const REMOTE_RM_RE =
+  /^MU_RM (removed|gone|moved|dirty|branch-collision|branch-failed|failed|stuck|unproven|held(?: (\d+))?)$/;
 const lastMatch = (out: string, re: RegExp): RegExpExecArray | null => {
   for (const l of out.split("\n").reverse()) {
     const m = re.exec(l.trim());
@@ -200,32 +201,74 @@ const lastMatch = (out: string, re: RegExp): RegExpExecArray | null => {
   return null;
 };
 
+/** Where `closeRemoteWorktree` parks a tree while it proves nothing holds it. */
+export const asideOf = (path: string, incarnation: number): string =>
+  `${path}.mu-removing-${incarnation}`;
+
+/**
+ * Remote shell lines proving nothing holds `$aside`: no process of this user
+ * has its cwd or an open file at or under it (`fail held <pid>`), and the scan
+ * demonstrably ran (it must see this very shell, else `fail unproven`). Reads
+ * /proc, else `lsof`, else refuses. `proc` and `lsof` are test seams.
+ */
+function quiescenceLines(probe: { proc: string; lsof: string }): string[] {
+  const proc = shellQuote(probe.proc);
+  const lsof = shellQuote(probe.lsof);
+  // Prints "H<pid>" per holder and "S<pid>" per process whose cwd it could read.
+  const procAwk = `A="$aside" awk 'BEGIN{a=ENVIRON["A"]} { i=index($0," -> "); if (i==0) next; t=substr($0,i+4); n=split(substr($0,1,i-1),f," "); n=split(f[n],q,"/"); if (q[n]=="cwd") print "S" q[n-1]; h=(t==a || index(t,a "/")==1); if (h && q[n]=="cwd") print "H" q[n-1]; else if (h && q[n-1]=="fd") print "H" q[n-2] }'`;
+  const lsofAwk = `A="$aside" awk 'BEGIN{a=ENVIRON["A"]} /^p/{p=substr($0,2)} /^f/{f=substr($0,2)} /^n/{t=substr($0,2); if (f=="cwd") print "S" p; if (t==a || index(t,a "/")==1) print "H" p}'`;
+  return [
+    `if [ -d ${proc}/self ]; then scan=$(find ${proc}/[0-9]*/cwd ${proc}/[0-9]*/fd -maxdepth 1 -type l -exec ls -ld {} + 2>/dev/null | ${procAwk})`,
+    `elif command -v ${lsof} >/dev/null 2>&1; then scan=$(${lsof} -w -Fpfn 2>/dev/null | ${lsofAwk})`,
+    `else fail unproven; fi`,
+    `printf '%s\\n' "$scan" | grep -qx "S$$" || fail unproven`,
+    `held=$(printf '%s\\n' "$scan" | sed -n 's/^H//p' | head -n 1)`,
+    `[ -z "$held" ] || fail held "$held"`,
+  ];
+}
+
 /**
  * The close rule for a remote worktree `spawn --host --worktree` made, run
  * AFTER the agent's pane is dead (the caller frees the channel first; at cap 1
  * the pane held it): under one lease, one exec observes the state (clean or
  * dirty, HEAD, and that the path is still a worktree of the profile's repo),
- * the rule is applied here, and a second exec re-checks HEAD and cleanliness
- * immediately before `git worktree remove` WITHOUT --force, with HEAD fenced
- * (HEAD.lock held, tree renamed aside, verified there). Never removes
- * dirty files, whatever the flags; a HEAD that is neither the base nor the
- * last collected one refuses unless `keepBranch`, which makes (or verifies)
- * `mu/<ws>/<agent>-<sha12>` at the observed HEAD first. Any doubt refuses.
+ * the rule is applied here, and a second exec removes WITHOUT --force.
+ *
+ * No git lock fences every ref backend (reftable ignores HEAD.lock), so the
+ * removal proves QUIESCENCE instead: the tree is renamed to a fixed aside name
+ * (`asideOf`, derived from the registry incarnation, so the intent survives a
+ * crash with no record to lose), every writer addressing the old path now
+ * fails, and a scan of /proc (else lsof, else refusal) proves no process has
+ * its cwd or an open file under the aside. Only then are HEAD and cleanliness
+ * re-checked (backend-neutral git commands), the `--keep-branch` branch made
+ * create-only, and the tree removed. A holder, a doubt or any mismatch moves
+ * the tree back and refuses. A retry after a crash finds the aside, moves it
+ * back and runs the whole rule again; `gone` means neither path exists.
+ * Never removes dirty files, whatever the flags; a HEAD that is neither the
+ * base nor the last collected one refuses unless `keepBranch`, which makes (or
+ * verifies) `mu/<ws>/<agent>-<sha12>` at the observed HEAD first.
  */
 export async function closeRemoteWorktree(
   db: Db,
-  agent: Pick<AgentRow, "name" | "workstreamName" | "host" | "cwd" | "base" | "collectedHead">,
+  agent: Pick<
+    AgentRow,
+    "name" | "workstreamName" | "host" | "cwd" | "base" | "collectedHead" | "incarnation"
+  >,
   opts: {
     keepBranch?: boolean;
     paneAlive?: (paneId: string) => Promise<boolean>;
     /** Runs between the observation and the removal; throws to stop (an identity re-check). */
     beforeRemove?: () => void;
+    /** Test seam: where the quiescence scan looks (default /proc, then `lsof`). */
+    probe?: { proc: string; lsof: string };
   } = {},
 ): Promise<ReleasedWorktree> {
   const { name, workstreamName: ws, host, cwd: path, base, collectedHead } = agent;
   if (host === null || path === null || base === null) {
     throw new Error(`agent ${name} has no remote worktree`);
   }
+  const asidePath = asideOf(path, agent.incarnation);
+  const probe = opts.probe ?? { proc: "/proc", lsof: "lsof" };
   const refuse = (reason: RemoteCloseRefusedError["reason"], detail: string): never => {
     throw new RemoteCloseRefusedError(name, ws, reason, detail);
   };
@@ -236,6 +279,7 @@ export async function closeRemoteWorktree(
     async (profile, lease) => {
       const root = remotePathWord(profile.repo);
       const wt = shellQuote(path);
+      const aside = shellQuote(asidePath);
       const run = async (body: string): Promise<{ out: string; why: string }> => {
         const r = await runLeasedTemplate(
           db,
@@ -256,6 +300,12 @@ export async function closeRemoteWorktree(
         [
           `root=${root}`,
           `wt=${wt}`,
+          `aside=${aside}`,
+          // A crash after the move leaves the aside: put it back, then judge it as usual.
+          `if [ -d "$aside" ]; then`,
+          `  [ ! -e "$wt" ] || { echo "$aside is parked beside $wt" >&2; exit 9; }`,
+          `  git -C "$root" worktree move "$aside" "$wt" >&2 || { echo "could not move $aside back to $wt" >&2; exit 10; }`,
+          `fi`,
           `[ -d "$wt" ] || { echo 'MU_STATE gone'; exit 0; }`,
           `[ "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)" = "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)" ] || { echo "$wt is not a worktree of $root" >&2; exit 8; }`,
           `head=$(git -C "$wt" rev-parse --verify HEAD) || exit 5`,
@@ -283,27 +333,22 @@ export async function closeRemoteWorktree(
       }
       const branch = known ? undefined : `mu/${ws}/${name}-${short}`;
       opts.beforeRemove?.();
-      // HEAD is fenced, not just checked: HEAD.lock (O_EXCL) stops any git
-      // writer from moving it (a commit or checkout fails on the lock), the
-      // tree is renamed aside (a writer that cds into the path no longer finds
-      // it), and HEAD and cleanliness are verified on the moved tree before the
-      // non-force remove. Any mismatch moves it back, drops the lock, refuses.
+      // Move aside, prove nothing holds the tree, THEN re-check and remove
+      // (see the header): a writer that raced the observation either left a
+      // changed HEAD or dirt for the re-check, or holds the tree and refuses.
       const removed = await run(
         [
           `root=${root}`,
           `wt=${wt}`,
+          `aside=${aside}`,
           `want=${shellQuote(head)}`,
-          `[ -d "$wt" ] || { echo 'MU_RM gone'; exit 0; }`,
-          `gd=$(git -C "$wt" rev-parse --path-format=absolute --git-dir) || { echo 'MU_RM failed'; exit 0; }`,
-          `lock="$gd/HEAD.lock"`,
-          `(set -C; : > "$lock") 2>/dev/null || { echo 'MU_RM moved'; exit 0; }`,
-          `aside="$wt.mu-removing-$$"`,
-          `fail() { if [ -d "$aside" ]; then git -C "$root" worktree move "$aside" "$wt" >&2; fi; rm -f "$lock"; echo "MU_RM $1"; exit 0; }`,
-          `[ "$(git -C "$wt" rev-parse --verify HEAD)" = "$want" ] || fail moved`,
-          `[ -z "$(git -C "$wt" status --porcelain)" ] || fail dirty`,
-          `git -C "$root" worktree move "$wt" "$aside" >&2 || fail failed`,
+          `[ -d "$wt" ] || { if [ -e "$aside" ]; then echo "$aside is parked" >&2; echo 'MU_RM failed'; else echo 'MU_RM gone'; fi; exit 0; }`,
+          `fail() { if [ -d "$aside" ] && [ ! -e "$wt" ]; then git -C "$root" worktree move "$aside" "$wt" >&2 || { echo 'MU_RM stuck'; exit 0; }; fi; echo "MU_RM $*"; exit 0; }`,
+          `git -C "$root" worktree move "$wt" "$aside" >&2 || { echo 'MU_RM failed'; exit 0; }`,
+          ...quiescenceLines(probe),
           `[ "$(git -C "$aside" rev-parse --verify HEAD)" = "$want" ] || fail moved`,
-          `[ -z "$(git -C "$aside" status --porcelain)" ] || fail dirty`,
+          `st=$(git -C "$aside" status --porcelain) || fail failed`,
+          `[ -z "$st" ] || fail dirty`,
           ...(branch === undefined
             ? []
             : [
@@ -327,6 +372,25 @@ export async function closeRemoteWorktree(
         return refuse("moved", `HEAD moved while closing (was ${short}); nothing was removed`);
       if (r === "dirty")
         return refuse("dirty", `${path} changed while closing; nothing was removed`);
+      if (r?.startsWith("held")) {
+        const pid = lastMatch(removed.out, REMOTE_RM_RE)?.[2];
+        return refuse(
+          "held",
+          `${pid === undefined ? "a process" : `process ${pid}`} on ${host} is still inside ${path}; stop it and close again; nothing was removed`,
+        );
+      }
+      if (r === "unproven") {
+        return refuse(
+          "unreadable",
+          `host ${host} has neither /proc nor lsof to prove nothing is using ${path}; nothing was removed`,
+        );
+      }
+      if (r === "stuck") {
+        return refuse(
+          "unreadable",
+          `could not move ${path} back from ${asidePath}; close again to resume`,
+        );
+      }
       if (r === "branch-collision") {
         return refuse(
           "branch",
