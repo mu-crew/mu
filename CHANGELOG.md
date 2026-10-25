@@ -10,6 +10,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **Skill: deep-research names pi's `web_search`, not `brave_search`.**
+  The Brave-only tool was replaced by `web_search`, which fails over
+  between Brave, Tavily and Exa.
+
 ## [3.13.3] — 2026-10-22
 
 **Test upkeep leaves a record.** An upkeep pass now ends by committing a
