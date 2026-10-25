@@ -30,10 +30,14 @@ import { closeAgent, deleteAgent, getAgent, insertAgent, previewClose } from "..
 import { type Db, openDb } from "../src/db.js";
 import { addHost, removeHost } from "../src/hosts.js";
 import { asideOf, RemoteCloseRefusedError } from "../src/remote-agent.js";
+import { collectRemoteAgent } from "../src/remote-collect.js";
 import {
+  getRemoteRecovery,
   listRemoteRecoveries,
   RemoteRecoveryRefusedError,
+  recoveryHolds,
   selectRemoteRecovery,
+  setRecoveryCollectedHead,
 } from "../src/remote-recovery.js";
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
 import { reinitWorkstream, teardownWorkstream, workstreamRevision } from "../src/workstream.js";
@@ -350,6 +354,200 @@ describe("races during the slow step", () => {
   });
 });
 
+describe("a path reused by a newer record (the newest record owns the tree)", () => {
+  it("an older record refuses to close or preview as usable; the newer one closes; nothing ran before", async () => {
+    const older = orphaned();
+    const newer = orphaned(); // same name, same deterministic path
+    const err = await close({ recoveryId: older }).catch((e) => e);
+    expect(err).toMatchObject({
+      name: "RemoteRecoveryRefusedError",
+      reason: "resource-in-use",
+      candidates: [older, newer],
+    });
+    expect(String(err.message)).toContain(`newer recovery ${newer}`);
+    await expect(close({ recoveryId: older, keepBranch: true })).rejects.toMatchObject({
+      reason: "resource-in-use",
+    });
+    const p = await previewClose(db, "worker-1", { workstream: "auth", recoveryId: older });
+    expect(p.recovery?.refusal).toContain(`newer recovery ${newer}`);
+    expect(execCalls()).toEqual([]);
+    expect(records().map((r) => r.agentId)).toEqual([older, newer]);
+    // The newest one owns the tree and closes; the older is then the sole owner.
+    expect((await close({ recoveryId: newer })).worktree).toMatchObject({ action: "removed" });
+    expect(records().map((r) => r.agentId)).toEqual([older]);
+    expect((await close({ recoveryId: older })).worktree).toMatchObject({ action: "removed" });
+  });
+
+  it("a different path or host never counts as a newer owner", async () => {
+    const older = orphaned();
+    orphaned({ cwd: `${WT}-2` });
+    expect((await close({ recoveryId: older })).worktree).toMatchObject({ action: "removed" });
+  });
+
+  it("a newer record appearing before the removal stops it (the guard reruns in beforeRemove)", async () => {
+    const older = orphaned();
+    writeFileSync(join(dir, "gate"), "");
+    const pending = close({ recoveryId: older }).catch((e: unknown) => e);
+    for (let i = 0; i < 400 && !existsSync(join(dir, "started")); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    orphaned();
+    rmSync(join(dir, "gate"));
+    expect(await pending).toMatchObject({ reason: "resource-in-use" });
+    expect(removals()).toEqual([]);
+    expect(records()).toHaveLength(2);
+  });
+
+  it("collect of an older record refuses with no fetch and no state change", async () => {
+    const older = orphaned();
+    orphaned();
+    const err = await collectRemoteAgent(db, {
+      workstream: "auth",
+      name: "worker-1",
+      repo: dir,
+      recoveryId: older,
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "RemoteRecoveryRefusedError", reason: "resource-in-use" });
+    expect(getRemoteRecovery(db, older)?.collectedHead).toBeNull();
+    expect(execCalls()).toEqual([]);
+  });
+});
+
+describe("an explicit --recovery that is gone never means the live agent", () => {
+  const live = () =>
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%50",
+      cwd: WT,
+      base: BASE,
+      host: "dev",
+    });
+
+  it("preview is kind none with revision 0 and no live fields, not the agent", async () => {
+    const id = orphaned();
+    await close({ recoveryId: id });
+    live();
+    const p = await previewClose(db, "worker-1", { workstream: "auth", recoveryId: id });
+    expect(p).toMatchObject({
+      kind: "none",
+      revision: 0,
+      incarnation: null,
+      paneId: null,
+      ownedTasks: [],
+      remote: null,
+      recovery: null,
+    });
+    // Without the id the live agent is what it is.
+    expect((await previewClose(db, "worker-1", { workstream: "auth" })).kind).toBe("agent");
+  });
+
+  it("close is a no-op that leaves the live agent and its pane alone", async () => {
+    const id = orphaned();
+    await close({ recoveryId: id });
+    live();
+    const before = mux.calls.length;
+    expect(await close({ recoveryId: id })).toMatchObject({ killedPane: false, deletedRow: false });
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+    expect(mux.calls.slice(before).filter((c) => c[0] === "kill-pane")).toEqual([]);
+  });
+
+  it("the CLI preview shows kind none and offers no apply command", async () => {
+    const id = orphaned();
+    await close({ recoveryId: id });
+    live();
+    const r = await runCliJson(
+      ["agent", "close", "-w", "auth", "worker-1", "--recovery", String(id), "--json"],
+      dbPath,
+    );
+    expect(r.exitCode).toBeNull();
+    expect(r.data).toMatchObject({ kind: "none", revision: 0, recovery_id: null });
+    expect(r.data.nextSteps).toEqual([]);
+  });
+
+  it("collect refuses (gone) and does not collect the live agent", async () => {
+    const id = orphaned();
+    await close({ recoveryId: id });
+    live();
+    const err = await collectRemoteAgent(db, {
+      workstream: "auth",
+      name: "worker-1",
+      repo: dir,
+      recoveryId: id,
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "RemoteRecoveryRefusedError", reason: "gone" });
+    expect(getAgent(db, "worker-1", "auth")?.collectedHead).toBeNull();
+    expect(execCalls()).toHaveLength(2); // only the close's own two
+  });
+});
+
+describe("guards that only a precise window or a corrupt record reaches", () => {
+  /** A mux whose liveness probe (run inside host admission, after the pre-exec guards) runs `onProbe`. */
+  function probeHook(onProbe: () => void): void {
+    mux.restore();
+    mux = installMux("tmux", async (args) => {
+      if (args[0] === "display-message") {
+        onProbe();
+        return { stdout: `${args[2]}\n`, stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    // An attached channel makes admission probe its pane; no cap, so the live pane does not block.
+    db.prepare("UPDATE host_profiles SET max_sessions = NULL").run();
+    db.prepare(
+      "INSERT INTO host_channels (host, holder, kind, token, agent_id, pane_id, opened_at) VALUES ('dev', 'x', 'attached', 't', 99, '%77', 'now')",
+    ).run();
+  }
+  const swapProfile = (): void => {
+    db.prepare("UPDATE host_profiles SET repo = '/srv/other'").run();
+  };
+
+  it("close: a profile replaced between the pre-exec guard and admission runs nothing", async () => {
+    orphaned();
+    probeHook(swapProfile);
+    await expect(close()).rejects.toMatchObject({ reason: "profile" });
+    expect(execCalls()).toEqual([]);
+    expect(records()).toHaveLength(1);
+  });
+
+  it("collect: a profile replaced between the pre-fetch guard and admission fetches nothing", async () => {
+    orphaned();
+    probeHook(swapProfile);
+    const err = await collectRemoteAgent(db, {
+      workstream: "auth",
+      name: "worker-1",
+      repo: dir,
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "RemoteRecoveryRefusedError", reason: "profile" });
+    expect(records()).toHaveLength(1);
+  });
+
+  it("a record whose aside is not its own is refused with no host command", async () => {
+    const id = orphaned();
+    db.prepare("UPDATE remote_recovery SET aside = '/elsewhere/x'").run();
+    await expect(close({ recoveryId: id })).rejects.toMatchObject({
+      name: "RemoteRecoveryRefusedError",
+      reason: "changed",
+    });
+    expect(execCalls()).toEqual([]);
+    expect(records()).toHaveLength(1);
+  });
+
+  it("recording a collected HEAD is a compare-and-set on the whole record", () => {
+    const id = orphaned();
+    const rec = getRemoteRecovery(db, id);
+    if (rec === undefined) throw new Error("record missing");
+    db.prepare("UPDATE remote_recovery SET collected_head = ? WHERE agent_id = ?").run(OTHER, id);
+    expect(setRecoveryCollectedHead(db, rec, COLLECTED)).toBe(false);
+    expect(recoveryHolds(db, rec)).toBe(false);
+    expect(getRemoteRecovery(db, id)?.collectedHead).toBe(OTHER);
+    const now = getRemoteRecovery(db, id);
+    if (now === undefined) throw new Error("record missing");
+    expect(setRecoveryCollectedHead(db, now, COLLECTED)).toBe(true);
+    expect(getRemoteRecovery(db, id)?.collectedHead).toBe(COLLECTED);
+  });
+});
+
 describe("revision", () => {
   it("is derived from the record: stable, moved by its content, 0 when nothing is there", () => {
     expect(agentRevision(db, "auth", "worker-1")).toBe(0);
@@ -361,6 +559,13 @@ describe("revision", () => {
     db.prepare("UPDATE remote_recovery SET collected_head = ?").run(OTHER);
     expect(agentRevision(db, "auth", "worker-1")).not.toBe(rev);
     expect(agentRevision(db, "auth", "worker-1", id + 1)).toBe(0);
+  });
+
+  it("an agent that takes the name moves the selected record's revision", async () => {
+    const id = orphaned();
+    const rev = agentRevision(db, "auth", "worker-1", id);
+    insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%60", cwd: "/q" });
+    expect(agentRevision(db, "auth", "worker-1", id)).not.toBe(rev);
   });
 
   it("a stale --if refuses before any host command", async () => {

@@ -33,6 +33,7 @@ import {
   pinnedByOthers,
   type RemoteRecovery,
   RemoteRecoveryRefusedError,
+  recoveryGone,
   recoveryHolds,
   selectRemoteRecovery,
   setRecoveryCollectedHead,
@@ -158,6 +159,9 @@ export async function collectRemoteAgent(
           opts.recoveryId !== undefined || agent === undefined
             ? selectRemoteRecovery(db, workstream, name, opts.recoveryId)
             : undefined;
+        if (rec === undefined && opts.recoveryId !== undefined) {
+          throw recoveryGone(workstream, name, opts.recoveryId);
+        }
         let target: CollectTarget;
         if (rec !== undefined) {
           assertRecoveryUsable(db, rec);

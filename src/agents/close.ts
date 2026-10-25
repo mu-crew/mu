@@ -196,6 +196,24 @@ export async function previewClose(
         opts.recoveryId !== undefined || (now === undefined && nowRow === undefined)
           ? selectRemoteRecovery(db, opts.workstream, name, opts.recoveryId)
           : undefined;
+      // A named record that is gone is "nothing", never the live agent.
+      if (rec === undefined && opts.recoveryId !== undefined) {
+        return {
+          agentName: name,
+          workstream: opts.workstream,
+          kind: "none",
+          revision: 0,
+          incarnation: null,
+          paneId: null,
+          ownedTasks: [],
+          worktree: null,
+          remote: null,
+          recovery: null,
+          refusesDirty: false,
+          discard,
+          keepBranch: opts.keepBranch === true,
+        };
+      }
       if (rec !== undefined) {
         return {
           agentName: name,

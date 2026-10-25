@@ -96,7 +96,7 @@ mu agent close worker-1 -w auth        # preview, then --if <rev>
   `mu agent close <name> -w <ws>` (or `<ws>/<name>`) previews and closes THAT
   worktree under the rule above (no pane, no task; the recorded host profile only), and
   `mu agent collect <name>` fetches from it. Several records of one name need
-  `--recovery <id>`; a current agent of the name or path, or a changed host profile, refuses.
+  `--recovery <id>`; a current agent of the name or path, a newer record of the same path, or a changed host profile, refuses.
 
 ## Host profiles
 

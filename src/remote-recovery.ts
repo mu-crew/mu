@@ -78,6 +78,7 @@ export class RemoteRecoveryRefusedError extends Error implements HasNextSteps {
     public readonly reason:
       | "ambiguous"
       | "mismatch"
+      | "gone"
       | "live-agent"
       | "resource-in-use"
       | "profile"
@@ -148,7 +149,8 @@ export function recoveryWorkstreams(db: Db, name: string): string[] {
 /**
  * The record `<workstream>/<name>` means. An explicit `recoveryId` must be a
  * record of that very name (`mismatch` otherwise) and is undefined once
- * removed (a retried close is a no-op). Without it exactly ONE record
+ * removed: the caller decides (a retried close is a no-op; a collect refuses
+ * with `recoveryGone`, never falling through to a live agent). Without it exactly ONE record
  * selects itself; several refuse (`ambiguous`) and list their ids, never the
  * newest one. Read only.
  */
@@ -184,6 +186,19 @@ export function selectRemoteRecovery(
   );
 }
 
+/** An explicit `--recovery <id>` that is no longer there: refused, never read as "no recovery asked". */
+export const recoveryGone = (
+  workstream: string,
+  name: string,
+  recoveryId: number,
+): RemoteRecoveryRefusedError =>
+  new RemoteRecoveryRefusedError(
+    workstream,
+    name,
+    "gone",
+    `recovery ${recoveryId} is gone (closed or never recorded); nothing was collected`,
+  );
+
 // ─── Guards ─────────────────────────────────────────────────────────────────
 
 /** The profile at the time of use must be the one the record pinned. Missing provenance refuses. */
@@ -209,8 +224,10 @@ export function assertRecoveryProfile(
 
 /**
  * Refuse unless nothing else claims what the record names: no current agent
- * of that name, no current agent on the same host and path, and the host's
- * profile is the pinned one. Read only; run before any remote command and
+ * of that name, no current agent on the same host and path, no NEWER record
+ * of the same host and path (a name reused after its tree went away is
+ * deterministically the same path: the newest record owns the tree, an older
+ * one must not act on it), and the host's profile is the pinned one. Read only; run before any remote command and
  * again before the removal.
  */
 export function assertRecoveryUsable(db: Db, rec: RemoteRecovery): void {
@@ -238,6 +255,20 @@ export function assertRecoveryUsable(db: Db, rec: RemoteRecovery): void {
       "resource-in-use",
       `current agent ${other.workstream}/${other.name} uses ${rec.cwd} on ${rec.host}`,
       [rec.agentId],
+    );
+  }
+  const newer = db
+    .prepare(
+      "SELECT agent_id FROM remote_recovery WHERE host = ? AND cwd = ? AND agent_id > ? ORDER BY agent_id DESC LIMIT 1",
+    )
+    .get(rec.host, rec.cwd, rec.agentId) as { agent_id: number } | undefined;
+  if (newer !== undefined) {
+    throw new RemoteRecoveryRefusedError(
+      rec.workstream,
+      rec.name,
+      "resource-in-use",
+      `newer recovery ${newer.agent_id} owns ${rec.cwd} on ${rec.host}; deal with it first`,
+      [rec.agentId, newer.agent_id],
     );
   }
   assertRecoveryProfile(
