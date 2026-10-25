@@ -9,15 +9,7 @@
 // Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
 import { basename } from "node:path";
-import {
-  emitJson,
-  emitJsonCollection,
-  formatTornDownWorkstreamsTable,
-  formatWorkstreamsTable,
-  parseNonNegativeInt,
-  resolveWorkstream,
-  UsageError,
-} from "../cli.js";
+import { emitJson, parseNonNegativeInt, resolveWorkstream, UsageError } from "../cli.js";
 import { type Db, tornDownAtOf } from "../db.js";
 import { type AttachTarget, activeMux, attachShellLine, type MuxBackend } from "../mux.js";
 import { muTable, type NextStep, pc, printNextSteps } from "../output.js";
@@ -35,6 +27,7 @@ import {
   WorkstreamRevisionMismatchError,
   workstreamRevision,
 } from "../workstream.js";
+import { clipPlain, clippedRecord, type PageOut, pageOut } from "./page-records.js";
 
 export async function cmdInit(
   db: Db,
@@ -148,10 +141,24 @@ function projectGuess(): string | undefined {
   return base === "" ? undefined : base;
 }
 
+/** Rows of `workstream list` and `--torn-down`, as text records or one capped JSON page. */
+function emitWorkstreamPage(page: PageOut): void {
+  if (page.data !== undefined) {
+    // The way back to the rest is `retrieve`, as on every capped list.
+    const { resume, ...rest } = page.data;
+    emitJson(resume === undefined ? rest : { ...rest, retrieve: resume });
+    return;
+  }
+  for (const line of page.lines) console.log(line);
+}
+
 export async function cmdWorkstreamList(
   db: Db,
-  opts: { json?: boolean; tornDown?: boolean } = {},
+  opts: { json?: boolean; tornDown?: boolean; all?: boolean } = {},
 ): Promise<void> {
+  const json = opts.json === true;
+  const whole = opts.all === true;
+  const retrieve = `mu workstream list${opts.tornDown === true ? " --torn-down" : ""} --all${json ? " --json" : ""}`;
   // `--torn-down` answers a DIFFERENT question ("what did I remove, and
   // how do I get it back") from the torn-down rows plus the ops log (old
   // hard teardowns), so it replaces the listing instead of adding rows to it.
@@ -159,30 +166,56 @@ export async function cmdWorkstreamList(
   // half each came from.
   if (opts.tornDown === true) {
     const gone = listTornDownWorkstreams(db);
-    if (opts.json) {
-      emitJsonCollection(gone);
-      return;
-    }
-    if (gone.length === 0) {
+    if (gone.length === 0 && !json) {
       console.log(pc.dim("no torn-down workstreams"));
       return;
     }
-    console.log(formatTornDownWorkstreamsTable(gone));
-    printNextSteps([
-      { intent: "Inspect what one teardown changed", command: "mu log --group <group>" },
-    ]);
+    // One record per teardown: `group` is the only actionable column
+    // (`mu log --group <group>`), so it leads after the name, in full.
+    emitWorkstreamPage(
+      pageOut(gone, {
+        json,
+        whole,
+        text: (r) =>
+          clippedRecord(
+            ["torn-down", r.name, r.group, r.at, r.kind === "soft" ? "kept" : "deleted"],
+            `tasks=${r.tasks} edges=${r.edges} notes=${r.notes}${r.recreated ? " recreated" : ""}`,
+          ),
+        item: (r) => {
+          const name = clipPlain(r.name, 64);
+          return { item: { ...r, name: name.text }, cut: name.cut };
+        },
+        resume: () => retrieve,
+      }),
+    );
+    if (!json) {
+      printNextSteps([
+        { intent: "Inspect what one teardown changed", command: "mu log --group <group>" },
+      ]);
+    }
     return;
   }
   const summaries = await listWorkstreams(db);
-  if (opts.json) {
-    emitJsonCollection(summaries);
-    return;
-  }
-  if (summaries.length === 0) {
+  if (summaries.length === 0 && !json) {
     console.log(pc.dim("no workstreams found"));
     return;
   }
-  console.log(formatWorkstreamsTable(summaries));
+  emitWorkstreamPage(
+    pageOut(summaries, {
+      json,
+      whole,
+      text: (r) =>
+        clippedRecord(
+          ["workstream", r.name, r.muxAlive ? "alive" : "-"],
+          `agents=${r.agentCount} tasks=${r.taskCount} edges=${r.edgeCount} notes=${r.noteCount}`,
+        ),
+      item: (r) => {
+        const name = clipPlain(r.name, 64);
+        return { item: { ...r, name: name.text }, cut: name.cut };
+      },
+      resume: () => retrieve,
+    }),
+  );
 }
 
 export async function cmdTeardown(
@@ -560,9 +593,14 @@ export function wireWorkstreamCommands(program: Command): void {
       "--torn-down",
       "instead list torn-down workstreams (and pre-cut-over teardowns from the ops log), with the op group id (`mu log --group <id>`)",
     )
+    .option("--all", "every workstream, uncapped (a list is capped at 4 KB; a cut names this)")
     .option(...JSON_OPT)
     .action(function () {
-      const opts = (this as Command).opts() as { json?: boolean; tornDown?: boolean };
+      const opts = (this as Command).opts() as {
+        json?: boolean;
+        tornDown?: boolean;
+        all?: boolean;
+      };
       return handle((db) => cmdWorkstreamList(db, opts), this as Command)();
     });
 

@@ -47,6 +47,8 @@ export type CaptureIntent =
   | "task.reparent"
   | "workstream.init"
   | "workstream.teardown"
+  // The settled-run close the executor applies (src/close-block.ts).
+  | "close.apply"
   // Any write made through `mu sql`, on whichever portable table it hit.
   | "sql.write";
 
@@ -161,6 +163,7 @@ const VERBS: Record<KnownIntent, string> = {
   "task.note": "task note",
   "task.delete": "task delete",
   "task.close": "task close",
+  "close.apply": "close apply",
   "task.open": "task open",
   "task.park": "task park",
   "task.unpark": "task unpark",
@@ -224,27 +227,26 @@ export function renderOp(row: RenderableOp): RenderedOp | null {
   }
 
   if (!isKnownIntent(intent)) {
-    // Forward-compatible: an intent written by a NEWER mu (ingested from
-    // a peer's segment) — or by a retired importer, whose 'migrate.*'
-    // ops (migrate.v8, migrate.archive, ...) deliberately do NOT claim
-    // to be typed verbs — still renders
-    // legibly instead of vanishing. Deliberately not a throw: sync must
-    // never be blocked by a rendering gap.
-    //
-    // A PROSE payload is shown as the detail, because for an unknown
-    // intent the prose is the only information the line carries and
-    // dropping it renders a bare verb with no subject at all (which is
-    // what every carried pre-1.0 log line looked like). A JSON payload is
-    // still withheld — "no raw JSON in mu log" is a hard property —
-    // and reduced to its changed field names.
-    const bag = fields(row.payload);
-    const detail = row.payload.startsWith("{")
-      ? changedFields(bag).join(" ")
-      : oneLine(row.payload, 100);
+    // An intent this build does not know: written by a NEWER mu (ingested
+    // from a peer's segment) or by a retired one ('migrate.*',
+    // 'workstream.destroy', ...). Say only what the op row itself says:
+    // the op (put or del), the key, the intent and entity verbatim, and the
+    // NAMES of the changed columns. Never turn the intent into a command
+    // verb ('workstream.delete' + op=put is not a delete), and never print a
+    // JSON payload. A prose payload is the only information such a line
+    // carries, so it follows. Not a throw: sync is never blocked by a
+    // rendering gap.
+    const parts = [`intent=${intent}`, `kind=${row.kind}`];
+    if (row.payload.startsWith("{")) {
+      const patch = changedFields(fields(row.payload));
+      if (patch.length > 0) parts.push(`patch=${patch.join(",")}`);
+    } else if (row.payload !== "") {
+      parts.push(`: ${oneLine(row.payload)}`);
+    }
     return {
-      verb: intent.replace(".", " "),
-      subject: parseOpKey(row.workstreamName).local ?? "",
-      detail,
+      verb: row.op === undefined ? "op" : `op ${row.op}`,
+      subject: row.workstreamName ?? "",
+      detail: parts.join(" "),
     };
   }
   // A note written inside another verb's op group (the close's evidence
@@ -301,6 +303,7 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
       // nothing to report beyond the fact of it.
       return { verb: VERBS[intent], subject, detail: "" };
     case "task.close":
+    case "close.apply":
     case "task.open":
     case "task.reject":
     case "task.defer": {
@@ -361,7 +364,7 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
       const changed = changedFields(bag)
         .map((f) => {
           const v = bag[f];
-          return typeof v === "object" && v !== null ? f : `${f}=${oneLine(String(v), 40)}`;
+          return typeof v === "object" && v !== null ? f : `${f}=${oneLine(String(v))}`;
         })
         .join(" ");
       return {
@@ -407,11 +410,10 @@ function pairText(bag: Record<string, unknown>, status: string): string {
   return pair === null ? status : formatPair(pair);
 }
 
-/** Collapse a multi-line string to one line, truncated. Note contents
- *  are free text and can be paragraphs; a log line is a line. */
-function oneLine(text: string, max = 60): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+/** Collapse whitespace so free text is one line. Never shortens it: a record's
+ *  length is bounded (and its cut counted) at the output boundary, not here. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -421,7 +423,7 @@ function oneLine(text: string, max = 60): string {
  */
 export function renderOpLine(row: RenderableOp): string {
   const r = renderOp(row);
-  if (r === null) return oneLine(row.payload, 120);
+  if (r === null) return row.payload;
   return [r.verb, r.subject, r.detail].filter((s) => s !== "").join(" ");
 }
 
@@ -436,7 +438,7 @@ export function opSubject(row: RenderableOp): { kind: "task" | "agent"; id: stri
   if (intent.startsWith("task.") && local !== undefined && local !== "") {
     return { kind: "task", id: local };
   }
-  if (intent.startsWith("agent.")) {
+  if (intent.startsWith("agent.") && isKnownIntent(intent)) {
     const r = renderOp(row);
     if (r !== null && r.subject !== "") return { kind: "agent", id: r.subject };
   }

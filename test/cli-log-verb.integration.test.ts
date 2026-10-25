@@ -29,11 +29,11 @@ function plain(text: string): string {
 interface LogJson {
   seq: number;
   intent: string | null;
-  group: string;
-  kind: string;
+  group_id: string;
+  entity: string;
   payload: string;
   rendered: string;
-  workstreamName: string | null;
+  key: string;
 }
 
 beforeEach(() => {
@@ -120,7 +120,7 @@ describe("mu log filters", () => {
     await seedSession();
     const j = await runCliJson(["log", "-w", "demo", "--intent", "task.close", "--json"], dbPath);
     const items = (j.data as { items: LogJson[] }).items;
-    const group = items[0]?.group;
+    const group = items[0]?.group_id;
     expect(group).toBeDefined();
     if (group === undefined) return;
     const g = await runCli(["log", "-w", "demo", "--group", group], dbPath);
@@ -156,7 +156,7 @@ describe("mu log filters", () => {
     const items = (r.data as { items: LogJson[] }).items;
     expect(items).toHaveLength(1);
     expect(items[0]?.payload).toBe("pr=1 ci=green");
-    expect(items[0]?.kind).toBe("pr-state");
+    expect(items[0]?.entity).toBe("pr-state");
     expect(items[0]?.intent).toBeNull();
   });
 });
@@ -166,12 +166,12 @@ describe("mu log --json", () => {
     await seedSession();
     const r = await runCliJson(["log", "-w", "demo", "--json"], dbPath);
     const items = (r.data as { items: LogJson[] }).items;
-    const close = items.find((i) => i.intent === "task.close" && i.kind === "task");
+    const close = items.find((i) => i.intent === "task.close" && i.entity === "task");
     expect(close).toBeDefined();
     // Structured, so scripts switch on intent rather than parsing prose...
     expect(close?.intent).toBe("task.close");
-    expect(close?.workstreamName).toBe("demo/a");
-    expect(close?.group).toBeTruthy();
+    expect(close?.key).toBe("demo/a");
+    expect(close?.group_id).toBeTruthy();
     // ...and rendered, so nobody has to re-derive prose from payload.
     expect(close?.rendered).toContain("task close a");
   });

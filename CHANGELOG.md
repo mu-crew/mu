@@ -486,6 +486,27 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **`mu log` and `mu workstream list` are capped records.** Text is one escaped
+  line per visible op (`log<TAB>seq<TAB>time<TAB>source<TAB>scope<TAB>what`, at
+  most 400 characters; the parent-row touch an add-note writes stays hidden, as
+  before) and one line per workstream. A result is at most 4 KB on its final bytes;
+  `more=N next=<same read, continued>` and `cut=N next=<lossless read>` name the
+  way back (`mu log --since <seq> -n <n>`, `mu db query ... FROM ops WHERE seq IN
+  (...) --all`, `mu workstream list [--torn-down] --all`). `--json` items use the
+  `ops` column names (`key`, `actor`, `entity`, `group_id`, `created_at`, plus
+  `rendered`), not `workstreamName`/`source`/`kind`/`group`/`createdAt`; clipped
+  fields count into the item's `cut`. A log write answers with one such item.
+  `workstream list` gains `--all` (every row, uncapped). The old tables are gone.
+- **`mu log --tail` is always NDJSON** (no header line, `--json` not needed): one
+  item per line, each bounded like a `--json` item with a `retrieve` command when
+  it clipped something. Rows are written before the cursor moves; SIGINT exits 130
+  and SIGTERM 143 with every polled row already on stdout.
+- **An op of an intent this build does not know prints as what the row says**:
+  `op put|del <key> intent=<i> kind=<entity> patch=<fields>` (a prose payload
+  follows). It no longer turns `workstream.delete` + `put` into a "workstream
+  delete". `close.apply` is a known intent. `renderOp` no longer clips free text
+  (note bodies at 60, prose at 120): the output boundary clips and counts.
+
 - **`mu db query` replaces `mu sql`; `mu sql` stays as the same verb.**
   In-process SQL on the capture path, as before (one `sql.write` group,
   `--confirm-rows`, sync ingest before and flush after, even on error), now

@@ -41,7 +41,7 @@ import { wireSyncCommand } from "./cli/sync.js";
 import { wireTaskCommands } from "./cli/tasks.js";
 import { wireWorkstreamCommands } from "./cli/workstream.js";
 import type { Db } from "./db.js";
-import { encodeEnvelope, okEnvelope } from "./output-contract.js";
+import { encodeEnvelope, okEnvelope, safeJsonLine } from "./output-contract.js";
 import { isTaskSortKey, TASK_SORT_KEYS, type TaskSortKey } from "./tasks/sort.js";
 import { TASK_SUBSTATES, type TaskSubstate } from "./tasks/status.js";
 import {
@@ -69,9 +69,7 @@ export {
   formatAgentsTable,
   formatReadyTable,
   formatTaskListTable,
-  formatTornDownWorkstreamsTable,
   formatTracks,
-  formatWorkstreamsTable,
   IDLE_GLYPH,
   printLogRow,
   relTime,
@@ -753,7 +751,7 @@ export function emitJson(value: unknown): void {
 /** One raw JSON line, NOT enveloped: the NDJSON stream rows of `mu log --tail`
  *  (a stream is not a document, and its rows keep the stored op shape). */
 export function emitJsonRow(value: unknown): void {
-  console.log(JSON.stringify(value));
+  console.log(safeJsonLine(JSON.stringify(value)));
 }
 
 /** Wrap a collection in mu's canonical `{items, count}` payload (the `data` of the envelope).
