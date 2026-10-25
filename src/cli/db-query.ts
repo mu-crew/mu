@@ -47,21 +47,29 @@ import {
   GUARD_NONPOSITIVE_ID,
   GUARD_OPEN_BLOCKERS,
 } from "../capture.js";
-import { emitJson, handle, injectedWorkstream, JSON_OPT, parseLines } from "../cli.js";
+import { emitJson, handle, injectedWorkstream, parseLines } from "../cli.js";
 import { type Db, defaultDbPath, resolveWorkstreamId } from "../db.js";
 import { currentOpContext, withOpContext } from "../op-context.js";
 import { muTable, pc } from "../output.js";
+import { RESULT_BYTES } from "../output-contract.js";
+import { shellQuote, shellWord } from "../shell-quote.js";
 import {
   CloseNeedsEvidenceError,
   TaskAlreadyOwnedError,
   TaskHasOpenBlockersError,
 } from "../tasks.js";
 import { CliExitError, SqlColumnError, UsageError } from "./handle.js";
+import { jsonDocument, pageRecords, type RecordPage } from "./tasks/records.js";
 
 type Statement = ReturnType<Db["prepare"]>;
 
 export interface DbQueryOptions {
+  /** JSON document (the default on the command line; `--table` turns it off). */
   json?: boolean;
+  /** `--table`: the human table / prose instead of the JSON document. */
+  table?: boolean;
+  /** `--all`: every row whole, no 4 KB cap. */
+  all?: boolean;
   confirmRows?: number;
   /** Scope `ready` / `blocked` / `blockers` to this workstream. Default: a
    *  managed worker's own, else the global views. */
@@ -642,7 +650,11 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
   if (single.reader) {
     const rows = single.all([]);
     if (opts.json) {
-      emitJson(rows);
+      // A read is paged to the result cap, with the way back. A write that
+      // returns rows (UPDATE .. RETURNING) already ran and cannot be replayed
+      // as a retrieval, so it prints every row, whole.
+      const whole = opts.all === true || !single.readonly;
+      emitJson(sqlRowsPayload(rows, whole, retrieveCommand(trimmed, opts)));
       return;
     }
     if (rows.length === 0) {
@@ -804,6 +816,40 @@ export function countTopLevelStatements(sql: string): number {
   return count;
 }
 
+/** The same read, uncapped: `mu db query '<sql>' [-w <effective ws>] --all`. */
+function retrieveCommand(query: string, opts: DbQueryOptions): string {
+  const ws = opts.workstream ?? injectedWorkstream();
+  return [
+    "mu db query",
+    shellQuote(query),
+    ...(ws === undefined ? [] : ["-w", shellWord(ws)]),
+    "--all",
+  ].join(" ");
+}
+
+/**
+ * `{items, count, more, retrieve?}`: the collection shape task lists ship, over
+ * rows of any shape (row keys untouched). Cells are never cut: rows are taken
+ * whole while the FINAL document (envelope included) fits RESULT_BYTES, so one
+ * row bigger than that yields zero items, `more`, and the way back.
+ */
+export function sqlRowsPayload(
+  rows: readonly unknown[],
+  whole: boolean,
+  retrieve: string,
+): { items: unknown[]; count: number; more: number; retrieve?: string } {
+  const build = (page: RecordPage<unknown>): ReturnType<typeof sqlRowsPayload> => ({
+    items: page.shown,
+    count: page.shown.length,
+    more: page.more,
+    ...(page.more > 0 ? { retrieve } : {}),
+  });
+  const page = whole
+    ? { shown: [...rows], more: 0 }
+    : pageRecords(rows, (p) => Buffer.byteLength(jsonDocument(build(p))) + 1, RESULT_BYTES, 0);
+  return build(page);
+}
+
 function formatCell(v: unknown): string {
   if (v === null || v === undefined) return pc.dim("null");
   if (typeof v === "string") return v;
@@ -861,7 +907,12 @@ function wireQuery(cmd: Command): void {
       "-w, --workstream <name>",
       "scope ready/blocked/blockers to this workstream (a spawned worker defaults to its own)",
     )
-    .option(...JSON_OPT)
+    .option("--json", "JSON document (the default here; accepted for symmetry with other verbs)")
+    .option("--table", "print a human table / prose instead of the JSON document")
+    .option(
+      "--all",
+      "no cap: every row, whole (a read over 4 KB says `more` and names this command)",
+    )
     .option(
       "--confirm-rows <n>",
       "abort if the affected-row count (ON DELETE CASCADE rows included) differs from N (rollback)",
@@ -870,6 +921,8 @@ function wireQuery(cmd: Command): void {
     .action(function (query: string) {
       const cmd = this as Command;
       const opts = cmd.opts() as DbQueryOptions;
+      // JSON unless --table; an explicit --json wins (isJsonMode reads argv the same way).
+      opts.json = opts.json === true || opts.table !== true;
       // `mu db -w a query ...`: the namespace's own -w is the same flag, in
       // another position. Honour it; two different names are a usage error.
       const outer =

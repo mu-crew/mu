@@ -753,8 +753,8 @@ export function emitJsonRow(value: unknown): void {
  *  ...) can be added without breaking every caller. Pre-1.0
  *  breaking versus the pre-audit bare-array shape.
  *
- *  Carve-out: `mu sql --json` keeps bare-array rows (it's the escape
- *  hatch; row shape is per-query, not part of the typed contract).
+ *  Carve-out: `mu sql` pages its rows as `{items, count, more, retrieve?}` (src/cli/db-query.ts;
+ *  row shape is per-query, not part of the typed contract).
  *  `mu log --tail --json` keeps NDJSON (one object per line) since
  *  it's a stream, not a collection. */
 export function emitJsonCollection<T>(items: readonly T[]): void {

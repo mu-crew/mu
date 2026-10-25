@@ -270,7 +270,27 @@ export interface HasNextSteps {
  * only use the bare `--json` flag.
  */
 export function isJsonMode(): boolean {
-  return process.argv.some((a) => a === "--json" || a.startsWith("--json="));
+  const argv = process.argv;
+  return (
+    argv.some((a) => a === "--json" || a.startsWith("--json=")) ||
+    (isSqlVerbArgv(argv) && !argv.includes("--table"))
+  );
+}
+
+/**
+ * Is this invocation `mu sql` or `mu db query`? Those two print JSON unless
+ * `--table`. Finds the verb the way the parser does: the first word that is
+ * not an option or the value of `-w`, so `mu -w sql task list` is not it.
+ * Only these verbs; every other verb needs an explicit `--json`.
+ */
+export function isSqlVerbArgv(argv: readonly string[]): boolean {
+  const words: string[] = [];
+  for (let i = 2; i < argv.length && words.length < 2; i++) {
+    const a = argv[i] as string;
+    if (a === "-w" || a === "--workstream") i++;
+    else if (!a.startsWith("-")) words.push(a);
+  }
+  return words[0] === "sql" || (words[0] === "db" && words[1] === "query");
 }
 
 /**

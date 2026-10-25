@@ -71,25 +71,22 @@ describe("root-position -w forwards to the verb's -w", () => {
 
   it("scopes db query's views by a root -w, and mu sql is the same verb", async () => {
     for (const verb of [["db", "query"], ["sql"]]) {
-      const r = await runCliJson(
-        ["-w", "wsa", ...verb, "SELECT local_id FROM ready", "--json"],
-        dbPath,
-      );
+      const r = await runCliJson(["-w", "wsa", ...verb, "SELECT local_id FROM ready"], dbPath);
       expect(r.error).toBeUndefined();
-      expect(r.data).toEqual([{ local_id: "t-wsa" }]);
+      expect(r.data).toEqual({ items: [{ local_id: "t-wsa" }], count: 1, more: 0 });
     }
   });
 
   // triage_vdb_db_w_swallowed: `mu db -w a query` used to bind -w to the
   // namespace and run the query on the global views, silently.
   it("honours -w placed on the db namespace, or refuses a second, different one", async () => {
-    const r = await runCliJson(
-      ["db", "-w", "wsa", "query", "SELECT local_id FROM ready", "--json"],
+    const r = await runCliJson(["db", "-w", "wsa", "query", "SELECT local_id FROM ready"], dbPath);
+    expect(r.error).toBeUndefined();
+    expect(r.data).toEqual({ items: [{ local_id: "t-wsa" }], count: 1, more: 0 });
+    const both = await runCli(
+      ["db", "-w", "wsa", "query", "SELECT 1", "-w", "wsb", "--table"],
       dbPath,
     );
-    expect(r.error).toBeUndefined();
-    expect(r.data).toEqual([{ local_id: "t-wsa" }]);
-    const both = await runCli(["db", "-w", "wsa", "query", "SELECT 1", "-w", "wsb"], dbPath);
     expect(both.exitCode).toBe(2);
     expect(both.stderr).toMatch(/given twice/);
     expect(both.stderr.trim().split("\n")).toHaveLength(1);

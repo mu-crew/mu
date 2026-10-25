@@ -127,11 +127,11 @@ describe("mu sync (CLI)", () => {
   it("a verb whose flush finds the segment lock held by a live process defers, then a later verb flushes once", async () => {
     await runCli(["workstream", "init", "demo"], lap);
     await seedTask(lap, "t1");
-    const { data: idRows } = await runCliJson<Array<{ id: string }>>(
-      ["sql", "SELECT machine_id AS id FROM machine_identity", "--json"],
+    const { data: idRows } = await runCliJson<{ items: Array<{ id: string }> }>(
+      ["sql", "SELECT machine_id AS id FROM machine_identity"],
       lap,
     );
-    const machineId = idRows[0]?.id ?? "";
+    const machineId = idRows.items[0]?.id ?? "";
     const segment = join(dir, `${machineId}.jsonl`);
     const stateDir = join(tempDir, "state");
     const lockName = createHash("sha256")
@@ -265,7 +265,7 @@ describe("mu sync (CLI)", () => {
     const before = await opCount(dev);
     const r = await runCliJson(["sql", "SELECT local_id FROM tasks", "--json"], dev);
     // The read saw the peer's task: ingest ran first.
-    expect(r.data).toEqual([{ local_id: "t1" }]);
+    expect(r.data).toEqual({ items: [{ local_id: "t1" }], count: 1, more: 0 });
     expect(await opCount(dev)).toBeGreaterThan(before);
   });
 

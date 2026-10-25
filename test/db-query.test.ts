@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkStatement, cmdDbQuery, installScopedViews } from "../src/cli/db-query.js";
 import { SqlColumnError, UsageError } from "../src/cli/handle.js";
 import { type Db, openDb, WorkstreamNotFoundError } from "../src/db.js";
+import { shellQuote } from "../src/shell-quote.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -49,7 +50,9 @@ const titles = (): string =>
   (db.prepare("SELECT title FROM tasks ORDER BY id").all() as { title: string }[])
     .map((r) => r.title)
     .join(",");
-const lastRows = (): unknown => envelopeData<unknown>(logSpy.mock.calls.at(-1)?.[0]);
+const lastPayload = (): { items: unknown[]; count: number; more: number; retrieve?: string } =>
+  envelopeData(logSpy.mock.calls.at(-1)?.[0]);
+const lastRows = (): unknown => lastPayload().items;
 const ctx = (): unknown => db.prepare("SELECT group_id, actor, intent, applying FROM op_ctx").get();
 const CTX_AT_REST = { group_id: null, actor: null, intent: null, applying: 0 };
 
@@ -707,5 +710,77 @@ describe("explicit non-positive ids", () => {
     expect((err as UsageError).showHelp).toBe(false);
     expect(ops()).toBe(before);
     expect(count("SELECT COUNT(*) AS n FROM tasks")).toBe(4);
+  });
+});
+
+// v_db_output: a read is {items, count, more, retrieve?}, capped by final bytes.
+describe("db query read payload is a capped collection", () => {
+  const big = "x".repeat(300);
+  const rowsSql =
+    "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 400) SELECT n, 'pad' AS pad FROM c";
+
+  it("small result: all rows, more 0, no retrieve; row keys untouched", async () => {
+    await cmdDbQuery(db, "SELECT local_id AS id, 1 AS items FROM tasks ORDER BY id LIMIT 2", {
+      json: true,
+    });
+    const p = lastPayload();
+    expect(p.count).toBe(2);
+    expect(p.more).toBe(0);
+    expect(p.retrieve).toBeUndefined();
+    expect(p.items[0]).toEqual({ id: "a", items: 1 });
+  });
+
+  it("caps by the FINAL envelope bytes and names the same query with --all", async () => {
+    await cmdDbQuery(db, rowsSql, { json: true });
+    const p = lastPayload();
+    const line = logSpy.mock.calls.at(-1)?.[0] as string;
+    expect(Buffer.byteLength(line) + 1).toBeLessThanOrEqual(4096);
+    expect(p.count).toBeGreaterThan(0);
+    expect(p.count + p.more).toBe(400);
+    expect(p.more).toBeGreaterThan(0);
+    expect(p.retrieve).toBe(`mu db query ${shellQuote(rowsSql)} --all`);
+    await cmdDbQuery(db, rowsSql, { json: true, all: true });
+    const all = lastPayload();
+    expect(all.count).toBe(400);
+    expect(all.more).toBe(0);
+    expect(all.retrieve).toBeUndefined();
+  });
+
+  it("retrieve keeps the effective -w and shell-quotes the query", async () => {
+    const q =
+      "SELECT 'it''s' || hex(zeroblob(3000)) AS s UNION ALL SELECT 'b' || hex(zeroblob(3000))";
+    await cmdDbQuery(db, q, { json: true, workstream: "w" });
+    const p = lastPayload();
+    expect(p.more).toBeGreaterThan(0);
+    expect(p.retrieve).toBe(`mu db query ${shellQuote(q)} -w w --all`);
+  });
+
+  it("one row over the cap: zero items, more 1, the retrieval, cells never cut", async () => {
+    const q = `SELECT '${big.repeat(20)}' AS huge`;
+    await cmdDbQuery(db, q, { json: true });
+    const p = lastPayload();
+    expect(p).toMatchObject({ items: [], count: 0, more: 1 });
+    expect(p.retrieve).toContain("--all");
+    await cmdDbQuery(db, q, { json: true, all: true });
+    expect((lastPayload().items[0] as { huge: string }).huge).toBe(big.repeat(20));
+  });
+
+  it("empty result is an empty page", async () => {
+    await cmdDbQuery(db, "SELECT 1 AS x WHERE 0", { json: true });
+    expect(lastPayload()).toEqual({ items: [], count: 0, more: 0 });
+  });
+
+  it("UPDATE ... RETURNING prints every row whole and never advertises a retrieval", async () => {
+    await cmdDbQuery(
+      db,
+      "UPDATE tasks SET title = title || ?1 RETURNING title".replace("?1", `'${big}'`),
+      {
+        json: true,
+      },
+    );
+    const p = lastPayload();
+    expect(p.count).toBe(4);
+    expect(p.more).toBe(0);
+    expect(p.retrieve).toBeUndefined();
   });
 });

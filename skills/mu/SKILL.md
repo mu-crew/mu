@@ -24,7 +24,7 @@ not in `--help` do not exist.
 
 Default output is a card on stdout plus a `Next:` block. Read both.
 Every verb takes `--json`: one stdout document `{ok:true,data,next}`; `data` holds
-`{items, count}` for collections, except `mu agent list` (`{agents, orphans}`); `mu sql --json` rows are `data`; `mu log --tail` is
+`{items, count}` for collections, except `mu agent list` (`{agents, orphans}`); `mu sql` is JSON by default, `data` is `{items,count,more}` and `--all` retrieves a cut; `mu log --tail` is
 raw NDJSON. Errors are `{ok:false,error,message,next,exit,nextSteps}` on **stdout**
 (validation errors add `usage`). **`nextSteps` survives in `data` and errors.**
 
