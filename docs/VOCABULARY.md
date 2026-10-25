@@ -121,6 +121,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **intent** | The semantic label on an op (`task.close`), set once per SDK function via **op context**. | "verb", "action" |
 | **group** | The ops of one user action (`group_id`), read as a unit (`mu log --group`). Any unique id prefix works. | "transaction", "batch" |
 | **op context** | The one-row `op_ctx` table that stamps intent, actor, and group onto ops. Written only by `src/op-context.ts`, inside a transaction the wrapper owns, so it holds defaults at rest. | "thread local" |
+| **scoped views** | The `TEMP` views `ready`, `blocked`, `blockers` that `mu db query -w <ws>` (or `mu db --shell -w <ws>`) installs on its own connection, cutting the global views to one workstream (id as a literal; same columns). `main.ready` stays the global one. | "filtered view", "session views" |
 | **apply** | Land one op under the **merge rules** (`src/apply.ts`). Idempotent; mints no op. | "merge", "import", "replay" |
 | **merge rules** | Notes: **grow-only set**. Tasks, workstreams: **per-field LWW**. Edges: **LWW-element-set**. Unknown entities are ignored. | "conflict resolution", "CRDT" |
 | **per-field LWW** | Each field keeps the value from the newest **HLC** that wrote it. | "row LWW" |

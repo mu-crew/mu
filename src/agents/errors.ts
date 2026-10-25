@@ -106,7 +106,7 @@ export class AgentExistsError extends Error implements HasNextSteps {
         // `agents.workstream` column. Use the join so this hint
         // actually runs against a v5 DB.
         intent: "List which workstream(s) already have an agent by this name",
-        command: `mu sql "SELECT a.name, ws.name AS workstream FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id WHERE a.name = '${this.agentName}'"`,
+        command: `mu db query "SELECT a.name, ws.name AS workstream FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id WHERE a.name = '${this.agentName}'"`,
       },
       {
         intent: "Spawn it in a different workstream (per-workstream unique → no clash)",

@@ -12,8 +12,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cmdDbQuery } from "../src/cli/db-query.js";
 import { classifyError, UsageError } from "../src/cli/handle.js";
-import { cmdSql } from "../src/cli/sql.js";
 import { type Db, openDb } from "../src/db.js";
 import { renderOpLine } from "../src/log-render.js";
 import { appendLog, LogKindReservedError, listLogs } from "../src/logs.js";
@@ -69,7 +69,7 @@ const lastJson = (): Record<string, unknown> => envelopeData(logSpy.mock.calls.a
 describe("mu sql writes share one op context", () => {
   it("a multi-row UPDATE is one sql.write group", async () => {
     const seq = maxSeq();
-    await cmdSql(db, "UPDATE tasks SET impact = 33");
+    await cmdDbQuery(db, "UPDATE tasks SET impact = 33");
     const rows = opsAfter(seq);
     expect(rows).toHaveLength(3);
     expect(new Set(rows.map((r) => r.group_id)).size).toBe(1);
@@ -78,7 +78,7 @@ describe("mu sql writes share one op context", () => {
 
   it("a multi-statement script is one group too", async () => {
     const seq = maxSeq();
-    await cmdSql(
+    await cmdDbQuery(
       db,
       "UPDATE tasks SET impact = 40 WHERE local_id = 'a'; UPDATE tasks SET impact = 41 WHERE local_id = 'b'",
     );
@@ -89,14 +89,14 @@ describe("mu sql writes share one op context", () => {
 
   it("two mu sql calls are two groups", async () => {
     const seq = maxSeq();
-    await cmdSql(db, "UPDATE tasks SET impact = 50 WHERE local_id = 'a'");
-    await cmdSql(db, "UPDATE tasks SET impact = 51 WHERE local_id = 'a'");
+    await cmdDbQuery(db, "UPDATE tasks SET impact = 50 WHERE local_id = 'a'");
+    await cmdDbQuery(db, "UPDATE tasks SET impact = 51 WHERE local_id = 'a'");
     expect(new Set(opsAfter(seq).map((r) => r.group_id)).size).toBe(2);
   });
 
   it("mu log renders the write as prose, not raw JSON", async () => {
     const seq = maxSeq();
-    await cmdSql(db, "UPDATE tasks SET impact = 33 WHERE local_id = 'a'");
+    await cmdDbQuery(db, "UPDATE tasks SET impact = 33 WHERE local_id = 'a'");
     const [row] = listLogs(db, { since: seq });
     if (!row) throw new Error("expected one log row");
     const line = renderOpLine(row);
@@ -105,7 +105,7 @@ describe("mu sql writes share one op context", () => {
   });
 
   it("leaves no context behind for the next mutation", async () => {
-    await cmdSql(db, "UPDATE tasks SET impact = 60 WHERE local_id = 'a'");
+    await cmdDbQuery(db, "UPDATE tasks SET impact = 60 WHERE local_id = 'a'");
     const seq = maxSeq();
     db.prepare("UPDATE tasks SET impact = 61 WHERE local_id = 'a'").run();
     expect(opsAfter(seq)[0]?.intent).toBeNull();
@@ -119,22 +119,22 @@ describe("mu sql --confirm-rows", () => {
   it("counts the cascade identically for a single statement and a script", async () => {
     const single = "DELETE FROM tasks WHERE local_id = 'c'";
     // Task c plus its one cascaded edge: 2 on BOTH paths.
-    await expect(cmdSql(db, single, { confirmRows: 1 })).rejects.toThrow(
+    await expect(cmdDbQuery(db, single, { confirmRows: 1 })).rejects.toThrow(
       /expected 1 rows, would have affected 2/,
     );
-    await expect(cmdSql(db, `${single}; SELECT 1`, { confirmRows: 1 })).rejects.toThrow(
+    await expect(cmdDbQuery(db, `${single}; SELECT 1`, { confirmRows: 1 })).rejects.toThrow(
       /expected 1 rows, would have affected 2/,
     );
     expect(countTasks()).toBe(3);
 
-    await cmdSql(db, single, { confirmRows: 2, json: true });
+    await cmdDbQuery(db, single, { confirmRows: 2, json: true });
     expect(lastJson()).toMatchObject({ confirmRows: 2, actualRows: 2 });
     expect(countTasks()).toBe(2);
   });
 
   it("a committed confirm-rows write is captured under one group", async () => {
     const seq = maxSeq();
-    await cmdSql(db, "UPDATE tasks SET impact = 70", { confirmRows: 3 });
+    await cmdDbQuery(db, "UPDATE tasks SET impact = 70", { confirmRows: 3 });
     const rows = opsAfter(seq);
     expect(rows).toHaveLength(3);
     expect(new Set(rows.map((r) => r.group_id)).size).toBe(1);
@@ -142,14 +142,14 @@ describe("mu sql --confirm-rows", () => {
 
   it("a mismatch rolls back and writes no op", async () => {
     const seq = maxSeq();
-    await expect(cmdSql(db, "UPDATE tasks SET impact = 71", { confirmRows: 2 })).rejects.toThrow(
-      UsageError,
-    );
+    await expect(
+      cmdDbQuery(db, "UPDATE tasks SET impact = 71", { confirmRows: 2 }),
+    ).rejects.toThrow(UsageError);
     expect(opsAfter(seq)).toEqual([]);
   });
 
   it("accepts UPDATE ... RETURNING as a write", async () => {
-    await cmdSql(db, "UPDATE tasks SET impact = 72 WHERE local_id = 'a' RETURNING local_id", {
+    await cmdDbQuery(db, "UPDATE tasks SET impact = 72 WHERE local_id = 'a' RETURNING local_id", {
       confirmRows: 1,
       json: true,
     });
@@ -165,12 +165,12 @@ describe("mu sql --confirm-rows", () => {
       "INSERT INTO task_notes (task_id, author, content, created_at) SELECT id, 'u', 'n', 'z' FROM tasks",
     );
     // 1 workstream + 3 tasks + 3 notes + 1 edge.
-    await expect(cmdSql(db, "DELETE FROM workstreams", { confirmRows: 7 })).rejects.toThrow(
+    await expect(cmdDbQuery(db, "DELETE FROM workstreams", { confirmRows: 7 })).rejects.toThrow(
       /expected 7 rows, would have affected 8/,
     );
     expect(countTasks()).toBe(3);
     const seq = maxSeq();
-    await cmdSql(db, "DELETE FROM workstreams; SELECT 1", { confirmRows: 8 });
+    await cmdDbQuery(db, "DELETE FROM workstreams; SELECT 1", { confirmRows: 8 });
     expect(countTasks()).toBe(0);
     expect(opsAfter(seq)).toHaveLength(8);
   });
@@ -197,7 +197,7 @@ describe("mu sql --confirm-rows", () => {
       const before = sum();
       const seq = maxSeq();
       try {
-        await cmdSql(db, sql, { confirmRows: 10 });
+        await cmdDbQuery(db, sql, { confirmRows: 10 });
       } catch (err) {
         expect(err).toBeInstanceOf(UsageError);
         expect(sum()).toBe(before);
@@ -215,7 +215,7 @@ describe("mu sql --confirm-rows", () => {
   });
 
   it("still refuses a read", async () => {
-    await expect(cmdSql(db, "SELECT * FROM tasks", { confirmRows: 1 })).rejects.toThrow(
+    await expect(cmdDbQuery(db, "SELECT * FROM tasks", { confirmRows: 1 })).rejects.toThrow(
       /only meaningful on write statements/,
     );
   });
@@ -244,7 +244,7 @@ describe("mu log --kind refuses projectable entities", () => {
 // ─── transaction control is refused: the scope owns the transaction ───
 
 describe("mu sql refuses user transaction control", () => {
-  const TX = "mu sql runs inside mu's transaction; remove BEGIN/COMMIT";
+  const TX = "mu db query runs inside mu's transaction; remove BEGIN/COMMIT";
 
   it.each([
     "BEGIN",
@@ -259,8 +259,8 @@ describe("mu sql refuses user transaction control", () => {
     "  -- comment first\n  COMMIT",
     "/* c */ end",
   ])("%j is refused, single statement", async (sql) => {
-    await expect(cmdSql(db, sql)).rejects.toThrow(UsageError);
-    await expect(cmdSql(db, sql)).rejects.toThrow(TX);
+    await expect(cmdDbQuery(db, sql)).rejects.toThrow(UsageError);
+    await expect(cmdDbQuery(db, sql)).rejects.toThrow(TX);
     expect(db.inTransaction).toBe(false);
   });
 
@@ -273,14 +273,14 @@ describe("mu sql refuses user transaction control", () => {
   ])("%j is refused in a script and nothing runs", async (sql) => {
     const seq = maxSeq();
     const before = db.prepare("SELECT SUM(impact) AS n FROM tasks").get();
-    await expect(cmdSql(db, sql)).rejects.toThrow(TX);
+    await expect(cmdDbQuery(db, sql)).rejects.toThrow(TX);
     expect(db.prepare("SELECT SUM(impact) AS n FROM tasks").get()).toEqual(before);
     expect(opsAfter(seq)).toEqual([]);
     expect(db.inTransaction).toBe(false);
   });
 
   it("a refused END does not leave the context committed", async () => {
-    await expect(cmdSql(db, "UPDATE tasks SET impact = 1; END")).rejects.toThrow(TX);
+    await expect(cmdDbQuery(db, "UPDATE tasks SET impact = 1; END")).rejects.toThrow(TX);
     expect(currentOpContext(db)).toEqual({
       groupId: null,
       actor: null,
@@ -290,20 +290,20 @@ describe("mu sql refuses user transaction control", () => {
   });
 
   it("does not refuse words inside strings, identifiers, comments or CASE ... END", async () => {
-    await cmdSql(db, "SELECT 'BEGIN; COMMIT' AS \"end\" -- ROLLBACK\n");
-    await cmdSql(db, "SELECT CASE WHEN 1 THEN 'x' END");
-    await cmdSql(db, "UPDATE tasks SET title = 'commit; end' WHERE local_id = 'a'");
+    await cmdDbQuery(db, "SELECT 'BEGIN; COMMIT' AS \"end\" -- ROLLBACK\n");
+    await cmdDbQuery(db, "SELECT CASE WHEN 1 THEN 'x' END");
+    await cmdDbQuery(db, "UPDATE tasks SET title = 'commit; end' WHERE local_id = 'a'");
     expect(
       (db.prepare("SELECT title FROM tasks WHERE local_id = 'a'").get() as { title: string }).title,
     ).toBe("commit; end");
   });
 
-  it("accepts a CREATE TRIGGER whose body ends with END", async () => {
-    await cmdSql(
+  it("accepts a CREATE TEMP TRIGGER whose body ends with END", async () => {
+    await cmdDbQuery(
       db,
       "CREATE TEMP TRIGGER t_x AFTER INSERT ON ops BEGIN SELECT CASE WHEN 1 THEN 1 END; END; SELECT 1",
     );
-    await cmdSql(db, "DROP TRIGGER t_x");
+    await cmdDbQuery(db, "DROP TRIGGER t_x");
   });
 
   // rv6_sql_tx_scan: transaction control is recognised by SQLite's own
@@ -314,58 +314,58 @@ describe("mu sql refuses user transaction control", () => {
       .map((r) => r.title)
       .join(",");
   const tableExists = (name: string): boolean =>
-    db.prepare("SELECT 1 FROM sqlite_master WHERE name = ?").get(name) !== undefined;
+    db.prepare("SELECT 1 FROM temp.sqlite_master WHERE name = ?").get(name) !== undefined;
 
   it.each([
     [
       "trigger table + begin column",
-      "CREATE TABLE trigger(begin TEXT); UPDATE tasks SET title='bypass'; COMMIT",
+      "CREATE TEMP TABLE trigger(begin TEXT); UPDATE tasks SET title='bypass'; COMMIT",
     ],
     [
       "trigger + begin columns",
-      "CREATE TABLE t1(trigger TEXT, begin TEXT); UPDATE tasks SET title='bypass'; COMMIT",
+      "CREATE TEMP TABLE t1(trigger TEXT, begin TEXT); UPDATE tasks SET title='bypass'; COMMIT",
     ],
     [
       "trigger + begin, then END",
-      "CREATE TABLE t2(trigger TEXT, begin TEXT); UPDATE tasks SET title='bypass'; END",
+      "CREATE TEMP TABLE t2(trigger TEXT, begin TEXT); UPDATE tasks SET title='bypass'; END",
     ],
     [
       "savepoint table",
-      "CREATE TABLE savepoint(begin TEXT); UPDATE tasks SET title='bypass'; RELEASE s",
+      "CREATE TEMP TABLE savepoint(begin TEXT); UPDATE tasks SET title='bypass'; RELEASE s",
     ],
     [
       "ROLLBACK then autocommit write",
-      "CREATE TABLE t3(trigger TEXT, begin TEXT); ROLLBACK; UPDATE tasks SET title='bypass'",
+      "CREATE TEMP TABLE t3(trigger TEXT, begin TEXT); ROLLBACK; UPDATE tasks SET title='bypass'",
     ],
     [
       "real trigger, then COMMIT",
-      "CREATE TRIGGER tg AFTER INSERT ON ops BEGIN SELECT CASE WHEN 1 THEN 1 END; END; UPDATE tasks SET title='bypass'; COMMIT",
+      "CREATE TEMP TRIGGER tg AFTER INSERT ON ops BEGIN SELECT CASE WHEN 1 THEN 1 END; END; UPDATE tasks SET title='bypass'; COMMIT",
     ],
     [
       "BEGIN after a trigger-named column",
-      "CREATE TABLE t4(trigger TEXT); BEGIN; UPDATE tasks SET title='bypass'; COMMIT",
+      "CREATE TEMP TABLE t4(trigger TEXT); BEGIN; UPDATE tasks SET title='bypass'; COMMIT",
     ],
   ])("refuses before running anything: %s", async (_name, sql) => {
     const seq = maxSeq();
     const before = titles();
     const tablesBefore = (
-      db.prepare("SELECT COUNT(*) AS n FROM sqlite_master").get() as { n: number }
+      db.prepare("SELECT COUNT(*) AS n FROM temp.sqlite_master").get() as { n: number }
     ).n;
-    await expect(cmdSql(db, sql)).rejects.toThrow(TX);
-    await expect(cmdSql(db, sql, { confirmRows: 99 })).rejects.toThrow(TX);
+    await expect(cmdDbQuery(db, sql)).rejects.toThrow(TX);
+    await expect(cmdDbQuery(db, sql, { confirmRows: 99 })).rejects.toThrow(TX);
     expect(titles()).toBe(before);
     expect(opsAfter(seq)).toEqual([]);
-    expect((db.prepare("SELECT COUNT(*) AS n FROM sqlite_master").get() as { n: number }).n).toBe(
-      tablesBefore,
-    );
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM temp.sqlite_master").get() as { n: number }).n,
+    ).toBe(tablesBefore);
     expect(db.inTransaction).toBe(false);
   });
 
   it("the committed-bypass repro leaves the data untouched, for a second connection too", async () => {
     await expect(
-      cmdSql(
+      cmdDbQuery(
         db,
-        "CREATE TABLE trigger(begin TEXT); UPDATE tasks SET title='committed-bypass'; COMMIT",
+        "CREATE TEMP TABLE trigger(begin TEXT); UPDATE tasks SET title='committed-bypass'; COMMIT",
       ),
     ).rejects.toThrow(UsageError);
     const other = openDb({ path: join(dir, "mu.db") });
@@ -382,13 +382,13 @@ describe("mu sql refuses user transaction control", () => {
   it("accepts tables and columns named after transaction keywords", async () => {
     for (const name of ["begin", "commit", "end", "trigger", "savepoint", "release", "rollback"]) {
       // quoted: `commit` is a reserved word that cannot be bare.
-      await cmdSql(db, `CREATE TABLE "${name}"("${name}" TEXT, x TEXT)`);
-      await cmdSql(db, `INSERT INTO "${name}"("${name}", x) VALUES ('v', 'w')`);
-      await cmdSql(db, `SELECT "${name}", x FROM "${name}"`);
+      await cmdDbQuery(db, `CREATE TEMP TABLE "${name}"("${name}" TEXT, x TEXT)`);
+      await cmdDbQuery(db, `INSERT INTO "${name}"("${name}", x) VALUES ('v', 'w')`);
+      await cmdDbQuery(db, `SELECT "${name}", x FROM "${name}"`);
     }
-    await cmdSql(
+    await cmdDbQuery(
       db,
-      `CREATE TABLE multi(begin, "commit", end, trigger, savepoint);
+      `CREATE TEMP TABLE multi(begin, "commit", end, trigger, savepoint);
        INSERT INTO multi(begin, "commit", end, trigger, savepoint) VALUES (1,2,3,4,5);
        UPDATE multi SET end = begin + "commit"; SELECT trigger, savepoint FROM multi`,
     );
@@ -397,17 +397,17 @@ describe("mu sql refuses user transaction control", () => {
   });
 
   it("runs a script with a real trigger followed by more statements", async () => {
-    await cmdSql(
+    await cmdDbQuery(
       db,
-      "CREATE TABLE trigger(begin TEXT); CREATE TRIGGER tg AFTER INSERT ON trigger BEGIN UPDATE trigger SET begin = CASE WHEN 1 THEN 'x' END; END; INSERT INTO trigger(begin) VALUES ('a'); SELECT 1",
+      "CREATE TEMP TABLE trigger(begin TEXT); CREATE TEMP TRIGGER tg AFTER INSERT ON trigger BEGIN UPDATE trigger SET begin = CASE WHEN 1 THEN 'x' END; END; INSERT INTO trigger(begin) VALUES ('a'); SELECT 1",
     );
     expect(db.prepare("SELECT begin FROM trigger").get()).toEqual({ begin: "x" });
   });
 
   it("refuses ROLLBACK TO, and a COMMIT after a statement naming a table the script creates", async () => {
-    await expect(cmdSql(db, "ROLLBACK TO s1")).rejects.toThrow(TX);
+    await expect(cmdDbQuery(db, "ROLLBACK TO s1")).rejects.toThrow(TX);
     await expect(
-      cmdSql(db, "CREATE TABLE later(x); INSERT INTO later VALUES (1); COMMIT"),
+      cmdDbQuery(db, "CREATE TEMP TABLE later(x); INSERT INTO later VALUES (1); COMMIT"),
     ).rejects.toThrow(TX);
     expect(tableExists("later")).toBe(false);
   });
@@ -417,7 +417,7 @@ describe("mu sql refuses user transaction control", () => {
     other.pragma("busy_timeout = 0");
     try {
       other.exec("BEGIN IMMEDIATE");
-      await expect(cmdSql(db, "SELECT COUNT(*) AS n FROM tasks", { json: true })).resolves.toBe(
+      await expect(cmdDbQuery(db, "SELECT COUNT(*) AS n FROM tasks", { json: true })).resolves.toBe(
         undefined,
       );
       other.exec("ROLLBACK");
@@ -436,7 +436,7 @@ describe("mu sql refuses explicit non-positive ids", () => {
 
   it.each([-1, 0])("INSERT INTO tasks(id) VALUES (%i) is refused and rolled back", async (id) => {
     const seq = maxSeq();
-    await expect(cmdSql(db, insertTaskWithId(id))).rejects.toThrow(
+    await expect(cmdDbQuery(db, insertTaskWithId(id))).rejects.toThrow(
       /explicit non-positive ids are refused/,
     );
     expect(opsAfter(seq)).toEqual([]);
@@ -444,8 +444,8 @@ describe("mu sql refuses explicit non-positive ids", () => {
   });
 
   it("an omitted-id insert still works after an explicit -1 attempt", async () => {
-    await expect(cmdSql(db, insertTaskWithId(-1))).rejects.toThrow(/non-positive/);
-    await cmdSql(
+    await expect(cmdDbQuery(db, insertTaskWithId(-1))).rejects.toThrow(/non-positive/);
+    await cmdDbQuery(
       db,
       `INSERT INTO tasks (workstream_id, local_id, title, status, substate, impact, effort_days, created_at, updated_at)
        SELECT id, 'ok', 't', 'OPEN', 'todo', 5, 1, 'x', 'x' FROM workstreams WHERE name = 'w'`,

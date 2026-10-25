@@ -82,7 +82,7 @@ a write, the live table holds real work that a rebuild would discard.
 ```bash
 mu db backup /tmp/mu-drift-evidence.db     # 1. keep the evidence
 mu rebuild /tmp/mu-rebuilt.db              # 2. replay the log into a new file
-MU_DB_PATH=/tmp/mu-rebuilt.db mu sql "SELECT local_id, title FROM tasks"   # 3. compare
+MU_DB_PATH=/tmp/mu-rebuilt.db mu db query "SELECT local_id, title FROM tasks"   # 3. compare
 ```
 
 Decide which side is right, then report the drift as a bug with the
@@ -108,7 +108,7 @@ directory mu never registered has no row: inspect it, then remove it with
 
 ## Rename a workstream
 
-There is no rename verb, and `mu sql` refuses to change
+There is no rename verb, and `mu db query` refuses to change
 `workstreams.name`. The name is part of the key that every op is filed
 under, so a raw rename leaves the ops log on the old name: `mu doctor`
 reports drift, and sync or `mu rebuild` brings the old name back.

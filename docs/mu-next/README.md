@@ -265,7 +265,7 @@ key, not only `id`.
 | `task tree <id> [--down]` | open-only, capped (`pv_tree_view`: one umbrella reaches 870 tasks, 3 open) |
 | `state [--me]`, `log [--tail]`, `notes`, `show` | caps; `renderOp` trimmed to the new intents |
 | `next [--dry]` | executor above |
-| `db [sql]` | in-process on better-sqlite3 like 3.x `mu sql`, inside the context wrapper: `foreign_keys=on`, `busy_timeout=5000`, per-connection TEMP views with the resolved workstream and agent as literals (SQLite rejects view parameters); user `BEGIN`/`COMMIT` refused; writes captured and flushed; `no such column` → one-line did-you-mean + column list, non-zero exit (`um_sql_column_guess`). `mu db --shell` opens the sqlite3 CLI read-only |
+| `db [sql]` | in-process on better-sqlite3 like 3.x `mu sql`, inside the context wrapper: `foreign_keys=on`, `busy_timeout=5000`, per-connection TEMP views with the resolved workstream as a literal (SQLite rejects view parameters; no agent filter: ready/blocked tasks are OPEN and unowned); user `BEGIN`/`COMMIT` refused; writes captured and flushed; `no such column` → one-line did-you-mean + column list, non-zero exit (`um_sql_column_guess`). `mu db --shell` opens the sqlite3 CLI read-only |
 | `sync`, `rebuild`, `doctor`, `host add/check/init` | doctor: mux, integrity, cycles, drift, schema/capture version, trigger checksum, sqlite3 version, network mount, case collisions |
 
 **Plain `sqlite3` is read-only.** It defaults to `foreign_keys=0` and

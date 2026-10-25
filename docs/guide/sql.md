@@ -1,7 +1,7 @@
 # How to query and script mu
 
-Use typed verbs with `--json` first. Use `mu sql` for ad-hoc joins,
-reports, and repairs that no verb covers.
+Use typed verbs with `--json` first. Use `mu db query` (alias `mu sql`) for
+ad-hoc joins, reports, and repairs that no verb covers.
 
 ## Script with `--json`
 
@@ -17,7 +17,7 @@ Every verb takes `--json`.
   IN_PROGRESS), never `name`/`effortDays`/`roi`.
 - Single objects, such as `mu task show`, put an object with named
   fields in `data`.
-- `mu sql --json` puts the array of rows in `data`.
+- `mu db query --json` puts the array of rows in `data`.
 - `mu log --tail --json` is the exception: one raw JSON object per line.
 - A failure is `{"ok": false, "error", "message", "next", "exit"}` on
   **stdout** (plus `nextSteps` and, for usage errors, `usage`, at most 3
@@ -41,7 +41,7 @@ Four tables travel between machines: `workstreams`, `tasks`,
 `task_edges`, and `task_notes`. List them all:
 
 ```bash
-mu sql "SELECT type, name FROM sqlite_master WHERE type IN ('table','view') ORDER BY type, name"
+mu db query "SELECT type, name FROM sqlite_master WHERE type IN ('table','view') ORDER BY type, name"
 ```
 
 Task ids (`local_id`) are unique per workstream only. Join
@@ -53,21 +53,21 @@ Edges and notes reference `tasks.id`, not `local_id`.
 Blocked tasks and the goals view, which replaced removed verbs:
 
 ```bash
-mu sql "SELECT b.local_id, b.title FROM blocked b JOIN workstreams w ON w.id = b.workstream_id WHERE w.name = 'auth'"
-mu sql "SELECT g.local_id, g.title FROM goals g JOIN workstreams w ON w.id = g.workstream_id WHERE w.name = 'auth'"
+mu db query "SELECT b.local_id, b.title FROM blocked b JOIN workstreams w ON w.id = b.workstream_id WHERE w.name = 'auth'"
+mu db query "SELECT g.local_id, g.title FROM goals g JOIN workstreams w ON w.id = g.workstream_id WHERE w.name = 'auth'"
 ```
 
 Search task titles:
 
 ```bash
-mu sql "SELECT t.local_id, t.status, t.title FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+mu db query "SELECT t.local_id, t.status, t.title FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
         WHERE w.name = 'auth' AND LOWER(t.title) LIKE '%token%'"
 ```
 
 Every task that blocks `launch`, directly or not:
 
 ```bash
-mu sql "WITH RECURSIVE prereqs(id) AS (
+mu db query "WITH RECURSIVE prereqs(id) AS (
           SELECT t.id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
            WHERE t.local_id = 'launch' AND w.name = 'auth'
           UNION
@@ -76,20 +76,44 @@ mu sql "WITH RECURSIVE prereqs(id) AS (
         SELECT t.local_id, t.title, t.status FROM prereqs JOIN tasks t ON t.id = prereqs.id"
 ```
 
-`mu sql` syncs like every other verb (when `MU_SYNC_DIR` is set): it
+`mu db query` syncs like every other verb (when `MU_SYNC_DIR` is set): it
 ingests peer ops before the query and flushes its own writes after, even
-when the statement fails. `mu sql` runs writes too and prints the number of rows changed. Writes
+when the statement fails. It runs writes too and prints the number of rows changed. Writes
 are captured as ops under one `sql.write` group per call, so `mu log --group`
 shows the whole call. `--confirm-rows N` counts rows removed by
 `ON DELETE CASCADE` too: deleting a task with one edge counts 2.
 
+With `-w <ws>` (a spawned worker defaults to its own), the views `ready`,
+`blocked` and `blockers` cover that workstream only, with the same columns;
+`main.ready` is still the global one. The scope is the connection's own
+(`TEMP` views), so nothing is left in the file.
+
+`no such column: x` answers in one line with the closest columns and the real
+columns of every table the query names; the SQL is never rewritten.
+
 The whole call runs in one transaction that mu opens, so `BEGIN`,
 `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT` and `RELEASE` are refused, each
 statement checked by SQLite itself (a table or column named `begin` or
-`end` is fine); a failed statement rolls the call back. An `INSERT` that names an `id` of 0
-or below is refused too (omit it).
+`end` is fine, a leading `;` hides nothing); a failed statement rolls the call
+back. An `INSERT` that names an `id` of 0 or below is refused too (omit it).
 
-`mu sql` refuses to change a natural-key column (`workstreams.name`,
+What it will not touch: mu's capture bookkeeping. Any statement that writes
+`op_ctx`, `op_dying`, `ops`, `schema_version` or `sqlite_master` is refused
+before it runs, whether it does so directly or through a trigger. That
+includes every `CREATE`/`DROP`/`ALTER` on the main schema (a persistent
+trigger would fire inside every other writer's transaction, and the capture
+triggers are what make a plain write safe). `TEMP` tables, views and triggers
+are yours, except a `TEMP` table named like a bookkeeping table. `PRAGMA`
+reads work; a `PRAGMA` that changes `foreign_keys`, `busy_timeout` or another
+connection setting is undone and refused.
+
+`mu db --shell [-w <ws>]` opens the `sqlite3` CLI on the same file,
+read-only and in safe mode, with the same scoped views. Plain `sqlite3`
+starts with `foreign_keys=0` and no capture context: use it to look, never to write.
+
+The whole-file commands stay under `mu db`: `backup`, `compact`, `forget`.
+
+`mu db query` refuses to change a natural-key column (`workstreams.name`,
 `tasks.workstream_id`, `tasks.local_id`, a note's task, or an edge's
 endpoints). The ops log files every change under that key, so changing
 it would desync sync and `mu doctor`. Add a new row instead.

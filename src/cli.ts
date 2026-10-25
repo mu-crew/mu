@@ -23,6 +23,7 @@ import { Command, InvalidArgumentError } from "commander";
 import { AgentNotInWorkstreamError, type AgentRow, getAgent, getAgentByPane } from "./agents.js";
 import { wireAgentCommands, wireSelfCommands } from "./cli/agents.js";
 import { wireDbCommands } from "./cli/db.js";
+import { wireDbQueryCommand } from "./cli/db-query.js";
 import { wireDoctorCommand } from "./cli/doctor.js";
 import {
   emitParseError,
@@ -33,7 +34,6 @@ import {
 import { wireLogCommand } from "./cli/log.js";
 import { wirePiCommand } from "./cli/pi.js";
 import { wireRebuildCommand } from "./cli/rebuild.js";
-import { wireSqlCommand } from "./cli/sql.js";
 import { wireStateCommands } from "./cli/state.js";
 import { wireSyncCommand } from "./cli/sync.js";
 import { wireTaskCommands } from "./cli/tasks.js";
@@ -833,10 +833,10 @@ export function buildProgram(): Command {
   wireTaskCommands(program);
   wireLogCommand(program);
   wireStateCommands(program);
-  wireSqlCommand(program);
   wireSyncCommand(program);
   wireRebuildCommand(program);
   wireDbCommands(program);
+  wireDbQueryCommand(program);
   wireDoctorCommand(program);
   wirePiCommand(program);
   applyAlphabeticalHelpSort(program);

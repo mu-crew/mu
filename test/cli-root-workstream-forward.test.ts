@@ -63,9 +63,21 @@ describe("root-position -w forwards to the verb's -w", () => {
   });
 
   it("rejects a root -w on a verb that takes none, instead of ignoring it", async () => {
-    const r = await runCli(["-w", "wsa", "sql", "SELECT 1"], dbPath);
+    // Whole-DB maintenance is never scoped; only `db query` takes -w.
+    const r = await runCli(["-w", "wsa", "db", "compact"], dbPath);
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(/takes no -w/);
+  });
+
+  it("scopes db query's views by a root -w, and mu sql is the same verb", async () => {
+    for (const verb of [["db", "query"], ["sql"]]) {
+      const r = await runCliJson(
+        ["-w", "wsa", ...verb, "SELECT local_id FROM ready", "--json"],
+        dbPath,
+      );
+      expect(r.error).toBeUndefined();
+      expect(r.data).toEqual([{ local_id: "t-wsa" }]);
+    }
   });
 
   // f_wsstate_root_w_ignored: teardown and state read `this.opts()`, so a
