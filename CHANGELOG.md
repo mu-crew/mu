@@ -101,10 +101,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (SDK `recoveryId`) picks one. The preview reads only (no remote command), reports
   `kind: "recovery"` with `recovery_id` (`id` stays the registry incarnation, null here) and a
   `rev` derived from the record (`agentRevision(db, ws, name, recoveryId?)`), plus the refusal an
-  apply would hit now. Apply holds the agent lock, checks the revision, and compare-and-sets
+  apply would hit now. An explicit `--recovery <id>` that is gone never falls through to a live
+  agent: close is a no-op, the preview is `kind: "none"` (rev 0, no apply hint), collect refuses. Apply holds the agent lock, checks the revision, and compare-and-sets
   the record and the registry before the removal; the record is deleted only when the tree is
   removed, kept on a branch or gone, and only that record. A current agent of the name or on the same
-  host and path, a missing or replaced host profile, and a record written without a profile
+  host and path, a NEWER record of the same host and path (a reused name lands on the same
+  deterministic path: only the newest record acts, the older refuses naming it), a missing or replaced host profile, and a record written without a profile
   identity refuse before any exec. `mu agent collect <name>` (also `--recovery`) works on a
   record the same way (same fetch, repo lock and exact-SHA pin; the record's `collected_head` is
   compare-and-set) and refuses to move the one `refs/mu/collect/<ws>/<name>` pin while another

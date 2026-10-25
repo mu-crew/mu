@@ -303,7 +303,7 @@ describe.each([
         ["agent", "collect", "auth/w1", "--recovery", String(id + 99), "--json"],
         join(dir, "mu.db"),
       );
-      expect(bad.exitCode).toBe(3);
+      expect(bad.exitCode).toBe(4);
     } finally {
       process.chdir(prev);
     }
@@ -355,6 +355,34 @@ describe.each([
       await expect(close("w1")).rejects.toMatchObject({ reason: "profile" });
       expect(existsSync(wt("w1"))).toBe(true);
       expect(listRemoteRecoveries(db)).toHaveLength(1);
+    },
+  );
+
+  it_(
+    "an agent that takes the name during the fetch stops the collect before any ref moves",
+    async () => {
+      const id = orphan("w1");
+      commitFileIn(wt("w1"), "a.txt", "a");
+      const gate = join(dir, "gate");
+      writeFileSync(gate, "");
+      db.prepare("UPDATE host_profiles SET fetch = ?").run(
+        `while [ -f '${gate}' ]; do sleep 0.02; done; git fetch -q {cwd} HEAD`,
+      );
+      const pending = collect("w1", id).catch((e: unknown) => e);
+      await new Promise((r) => setTimeout(r, 150));
+      insertAgent(db, {
+        name: "w1",
+        workstream: "auth",
+        paneId: "%990",
+        cwd: join(dir, "elsewhere"),
+      });
+      rmSync(gate);
+      expect(await pending).toMatchObject({
+        name: "RemoteRecoveryRefusedError",
+        reason: "live-agent",
+      });
+      expect(localRef("w1")).toBeUndefined();
+      expect(listRemoteRecoveries(db)[0]?.collectedHead).toBeNull();
     },
   );
 
