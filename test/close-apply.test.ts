@@ -385,3 +385,22 @@ describe("applySettledClose: atomic replay", () => {
     });
   });
 });
+
+describe("applySettledClose: delegate tasks (v_wait_engine)", () => {
+  it("refuses to close a delegate task: its recorder closes it, after the verdict", async () => {
+    addTask(db, { workstream: "w", localId: "dg", title: "dg", kind: "delegate" });
+    const id = agentId("w1");
+    db.prepare(
+      "UPDATE tasks SET owner_id = ?, status = 'IN_PROGRESS', substate = 'active' WHERE local_id = 'dg'",
+    ).run(id);
+    const r = applySettledClose(db, input({ lastText: block("dg") }));
+    expect(r.applied).toBe(false);
+    expect(r.reason).toMatch(/delegate task/);
+    expect(getTask(db, "dg", "w")?.status).toBe("IN_PROGRESS");
+    // The decision is recorded: the same settled run is not re-judged.
+    expect(settles()).toEqual([
+      { agent_id: id, incarnation: "inc-1", runs: 1, task_id: expect.any(Number) },
+    ]);
+    expect(applySettledClose(db, input({ lastText: block("dg") })).reason).toBe("already applied");
+  });
+});

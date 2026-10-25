@@ -37,7 +37,8 @@ import { getTask } from "./tasks/queries.js";
 export { parseVerdict, type VerdictLabel } from "./delegate-verdict.js";
 
 export type DelegateState = (typeof DELEGATE_CALL_STATES)[number];
-const TERMINAL: readonly DelegateState[] = ["done", "failed", "cancelled"];
+export const TERMINAL_DELEGATE_STATES: readonly DelegateState[] = ["done", "failed", "cancelled"];
+const TERMINAL = TERMINAL_DELEGATE_STATES;
 const isTerminal = (s: DelegateState): boolean => TERMINAL.includes(s);
 
 /** What a call needs to start again from nothing: the prompt and the spawn options. */
@@ -171,7 +172,7 @@ export function listDelegates(
   db: Db,
   caller?: string,
   workstream?: string,
-  opts: { wave?: string } = {},
+  opts: { wave?: string; states?: readonly DelegateState[] } = {},
 ): DelegateRow[] {
   const where: string[] = [];
   const args: string[] = [];
@@ -186,6 +187,10 @@ export function listDelegates(
   if (opts.wave !== undefined) {
     where.push("t.wave = ?");
     args.push(opts.wave);
+  }
+  if (opts.states !== undefined) {
+    where.push(`d.state IN (${opts.states.map(() => "?").join(",")})`);
+    args.push(...opts.states);
   }
   const sql = `${SELECT_CALL}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY d.task_id`;
   return (db.prepare(sql).all(...args) as RawCall[]).map(rowOf);
@@ -505,7 +510,9 @@ export interface VerdictTally {
  * delegate's own task for a call with no record target). One result per call:
  * a done answer counts its parsed label (none: UNVERIFIED); failed and
  * cancelled calls are UNVERIFIED; queued, starting, running, recording and
- * refused are pending. Reads only the call rows, never notes.
+ * refused are pending. Reads only the call rows, never notes. `caller`
+ * restricts the wave to that caller's calls: two callers may use the same wave
+ * name in the same workstream.
  */
 export function verdictTally(
   db: Db,

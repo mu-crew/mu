@@ -18,11 +18,15 @@
 // beforePoll hook so the CLI can re-detect live status each tick
 // without this SDK module importing tmux, --any/--all, and a timeout.
 // The CLI wrapper maps the result to task-wait-symmetric exit codes.
+//
+// This is an ADAPTER: the one loop is waitForEvents (src/wait.ts). The
+// types, the "busy first" rule's result shape and the hooks below are the
+// old surface, kept until `mu wait` replaces the callers (v_wait_cli).
 
 import type { RuntimeState } from "../agent-state.js";
 import type { CtlBlocked } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
-import { AgentNotFoundError } from "./errors.js";
+import { type AgentReading, type WaitSnapshot, waitForEvents } from "../wait.js";
 
 // ─── Test seam: poll-sleep (mirrors waitForTasks / tmux setSleepForTests)
 let currentWaitSleep: (ms: number) => Promise<void> = (ms) =>
@@ -156,177 +160,80 @@ export async function waitForAgents(
   opts: AgentWaitOptions,
 ): Promise<AgentWaitResult> {
   if (input.length === 0) throw new Error("waitForAgents: refs must be non-empty");
-
-  // Pre-flight existence check.
-  for (const ref of input) {
-    const row = db
-      .prepare(
-        `SELECT 1 FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id
-          WHERE a.name = ? AND ws.name = ?`,
-      )
-      .get(ref.name, ref.workstreamName);
-    if (row === undefined) throw new AgentNotFoundError(ref.name);
-  }
-
-  const pollMs = opts.pollMs ?? 1000;
-  const timeoutMs = opts.timeoutMs ?? 600_000;
-  const any = opts.any === true;
-  const startedAt = Date.now();
-
-  // Mutable per-agent tracking.
-  const state: AgentWaitAgentState[] = input.map((ref) => ({
-    workstreamName: ref.workstreamName,
-    name: ref.name,
-    status: null,
-    wasBusy: false,
-    fired: false,
-    dead: false,
-  }));
-
-  const conditionMet = (): boolean => {
-    // A dialog-blocked agent needs a human now: it ends the wait, like a
-    // stall ends `mu task wait`, whatever --any / --all says.
-    if (state.some((s) => s.blocked !== undefined)) return true;
-    const done = state.filter((s) => s.fired || s.dead);
-    return any ? done.length > 0 : done.length === state.length;
-  };
-
   const refKey = (ref: AgentWaitRef): string => `${ref.workstreamName}/${ref.name}`;
 
-  // Event-driven agents: their settle wakes the loop instead of a poll.
-  const abort = new AbortController();
-  const watched = new Set<number>();
-  // A watch that rejected: the wait cannot go on (see AgentWatch.settled).
-  let fatal: { error: unknown } | undefined;
-  let wake: () => void = () => {};
-  let woken = new Promise<void>((resolve) => {
-    wake = resolve;
+  const stateOf = (snap: WaitSnapshot | undefined, ref: AgentWaitRef): AgentWaitAgentState => ({
+    workstreamName: ref.workstreamName,
+    name: ref.name,
+    status: snap === undefined ? null : (snap.status as RuntimeState | null),
+    wasBusy: snap?.wasBusy === true,
+    fired: snap?.fired === true,
+    dead: snap?.dead === true,
+    ...(snap?.unknownReason !== undefined ? { unknownReason: snap.unknownReason } : {}),
+    ...(snap?.lastText !== undefined ? { lastText: snap.lastText } : {}),
+    ...(snap?.lastError !== undefined ? { lastError: snap.lastError } : {}),
+    ...(snap?.sessionFile !== undefined ? { sessionFile: snap.sessionFile } : {}),
+    ...(snap?.blocked !== undefined ? { blocked: snap.blocked } : {}),
+    ...(snap?.afterRuns !== undefined ? { afterRuns: snap.afterRuns } : {}),
   });
-  const rearm = (): void => {
-    woken = new Promise<void>((resolve) => {
-      wake = resolve;
-    });
+  const statesOf = (snaps: readonly WaitSnapshot[]): AgentWaitAgentState[] => {
+    const byKey = new Map(snaps.map((s) => [`${s.ref.workstream}/${s.ref.id}`, s]));
+    return input.map((ref) => stateOf(byKey.get(refKey(ref)), ref));
   };
-  if (opts.watch) {
-    const watches = await Promise.all(input.map((ref) => opts.watch?.(ref, abort.signal)));
-    watches.forEach((w, i) => {
-      const st = state[i];
-      if (w === undefined || st === undefined) return;
-      watched.add(i);
-      st.status = w.initial.status;
-      if (w.afterRuns !== undefined) st.afterRuns = w.afterRuns;
-      if (w.initial.status === "busy") st.wasBusy = true;
-      void w.settled.then(
-        (snap) => {
-          if (snap.status === null) {
-            st.dead = true;
-            st.status = null;
-          } else if (snap.blocked !== undefined) {
-            // A dialog ended the watch: the run is still open, not settled.
-            st.status = snap.status;
-            st.blocked = snap.blocked;
-          } else if (snap.status === "unknown") {
-            // No settle observed: hand the agent back to polling.
-            watched.delete(i);
-          } else {
-            st.status = snap.status;
-            st.wasBusy = true;
-            st.fired = true;
-            if (snap.lastText !== undefined) st.lastText = snap.lastText;
-            if (snap.lastError !== undefined) st.lastError = snap.lastError;
-            if (snap.sessionFile !== undefined) st.sessionFile = snap.sessionFile;
+  const toReading = (snap: AgentStatusSnapshot): AgentReading => ({
+    status: snap.status,
+    ...(snap.unknownReason !== undefined ? { reason: snap.unknownReason } : {}),
+    ...(snap.lastText !== undefined ? { lastText: snap.lastText } : {}),
+    ...(snap.lastError !== undefined ? { lastError: snap.lastError } : {}),
+    ...(snap.sessionFile !== undefined ? { sessionFile: snap.sessionFile } : {}),
+    ...(snap.blocked !== undefined ? { blocked: snap.blocked } : {}),
+  });
+  const { readStatuses, readStatus, watch } = opts;
+
+  const res = await waitForEvents(
+    db,
+    input.map((r) => ({ kind: "agent" as const, workstream: r.workstreamName, id: r.name })),
+    {
+      all: opts.any !== true,
+      uncapped: true,
+      timeoutMs: opts.timeoutMs ?? 600_000,
+      pollMs: opts.pollMs ?? 1000,
+      sync: false,
+      applyClose: false,
+      sleep: (ms) => currentWaitSleep(ms),
+      readAgents: async (refs) => {
+        const pending = refs.map((r) => ({ workstreamName: r.workstream, name: r.id }));
+        const snapshots = readStatuses ? await readStatuses(pending) : undefined;
+        if (snapshots === undefined && readStatus === undefined) {
+          throw new Error("waitForAgents: readStatuses or readStatus is required");
+        }
+        const out = new Map<string, AgentReading>();
+        for (const ref of pending) {
+          const snap = snapshots?.get(refKey(ref)) ?? (await readStatus?.(ref));
+          if (snap !== undefined) out.set(refKey(ref), toReading(snap));
+        }
+        return out;
+      },
+      ...(watch
+        ? {
+            watchAgent: async (ref: { workstream: string; id: string }, signal: AbortSignal) => {
+              const w = await watch({ workstreamName: ref.workstream, name: ref.id }, signal);
+              if (w === undefined) return undefined;
+              return {
+                initial: toReading(w.initial),
+                ...(w.afterRuns !== undefined ? { afterRuns: w.afterRuns } : {}),
+                settled: w.settled.then(toReading),
+              };
+            },
           }
-          wake();
-        },
-        (error: unknown) => {
-          fatal ??= { error };
-          wake();
-        },
-      );
-    });
-  }
-  const rethrow = (): void => {
-    if (fatal === undefined) return;
-    abort.abort();
-    throw fatal.error;
-  };
-  const finish = (timedOut: boolean): AgentWaitResult => {
-    abort.abort();
-    return { agents: state, timedOut };
-  };
-
-  // One state read over all not-yet-settled polled agents.
-  const tick = async (): Promise<void> => {
-    const pending = input.filter((_, i) => {
-      const st = state[i];
-      return st !== undefined && !st.fired && !st.dead && !watched.has(i);
-    });
-    if (pending.length === 0) return;
-    const snapshots = opts.readStatuses ? await opts.readStatuses(pending) : undefined;
-    if (snapshots === undefined && opts.readStatus === undefined) {
-      throw new Error("waitForAgents: readStatuses or readStatus is required");
-    }
-    for (let i = 0; i < input.length; i++) {
-      const st = state[i];
-      const ref = input[i];
-      if (st === undefined || ref === undefined) continue;
-      if (st.fired || st.dead || watched.has(i)) continue;
-      const snap = snapshots?.get(refKey(ref)) ?? (await opts.readStatus?.(ref));
-      if (snap === undefined) {
-        st.status = "unknown";
-        st.unknownReason = "state reader returned no row";
-        continue;
-      }
-      if (snap.status === null) {
-        st.dead = true;
-        st.status = null;
-        continue;
-      }
-      st.status = snap.status;
-      st.unknownReason = snap.status === "unknown" ? snap.unknownReason : undefined;
-      if (snap.blocked !== undefined) {
-        // An open extension dialog: the run is not finished, whatever the
-        // busy history says. Reached when a ctl watch dropped back to polling.
-        st.blocked = snap.blocked;
-      } else if (snap.status === "busy") {
-        st.wasBusy = true;
-      } else if (snap.status !== "unknown" && st.wasBusy) {
-        // Unknown is absence of a reading, not evidence that work ended.
-        st.fired = true;
-      }
-    }
-  };
-
-  // Initial pass — seeds wasBusy for agents already busy; an agent that
-  // is already idle here just sits pending (it must go busy first).
-  await tick();
-  rethrow();
-  if (state.every((agent) => agent.status === "unknown")) opts.onInitialUnknown?.(state);
-  if (conditionMet()) return finish(false);
-
-  while (true) {
-    const elapsed = Date.now() - startedAt;
-    if (timeoutMs > 0 && elapsed >= timeoutMs) return finish(true);
-    const remaining = timeoutMs > 0 ? timeoutMs - elapsed : undefined;
-    const polled = input.some((_, i) => {
-      const st = state[i];
-      return st !== undefined && !st.fired && !st.dead && !watched.has(i);
-    });
-    // Sleep, but never past the deadline (mirrors waitForTasks' clamp).
-    // A settle ends the sleep early; with nothing left to poll, only a
-    // settle or the deadline does.
-    const sleeps: Promise<unknown>[] = [woken];
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    if (polled) sleeps.push(currentWaitSleep(Math.min(pollMs, remaining ?? pollMs)));
-    else if (remaining !== undefined) {
-      sleeps.push(new Promise((resolve) => (timer = setTimeout(resolve, remaining))));
-    }
-    await Promise.race(sleeps);
-    if (timer) clearTimeout(timer);
-    rearm();
-    rethrow();
-    await tick();
-    rethrow();
-    if (conditionMet()) return finish(false);
-  }
+        : {}),
+      ...(opts.onInitialUnknown
+        ? {
+            onInitialUnknown: (snaps: readonly WaitSnapshot[]) =>
+              opts.onInitialUnknown?.(statesOf(snaps)),
+          }
+        : {}),
+    },
+  );
+  return { agents: statesOf(res.refs), timedOut: res.timedOut };
 }
