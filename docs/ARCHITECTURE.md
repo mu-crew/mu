@@ -104,7 +104,7 @@ are re-export hubs.
 | Module | Responsibility |
 | --- | --- |
 | `src/segments.ts` | JSONL segments: flush own ops, ingest peers from a watermark |
-| `src/sync-dir-guard.ts` | `assertSyncDirV2`: refuses a `MU_SYNC_DIR` holding a segment that opens with a v1 line (a 3.x peer); `SyncDirForeignError`, exit 4 |
+| `src/sync-dir-guard.ts` | `assertSyncDirV2`: refuses a `MU_SYNC_DIR` holding a segment that opens with a v1 line or a manifest with `v` < 2 (a 3.x peer); called inside `flushSegment`/`discoverPeers`/`ingestSegment` and in `handle()`; `SyncDirForeignError`, exit 4 |
 | `src/segment-line.ts` | the segment line: per-line version rules (`SEGMENT_FORMAT_VERSION`, `SEGMENT_READ_VERSIONS`), crc framing, encode and decode |
 | `src/segment-manifest.ts` | segment `.manifest` sidecar: read, write, seal, and the self-consistency check the owner's flush runs before trusting it |
 | `src/segment-resume.ts` | byte offset + running sha256 saved with a peer's caught-up fingerprint, so ingest reads only appended bytes |

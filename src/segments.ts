@@ -70,7 +70,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { applyOp, type Op, OpEntityNotSyncedError } from "./apply.js";
 import { compareStrings } from "./compare.js";
 import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
@@ -281,6 +281,8 @@ export async function flushSegment(
       foreignVersion: null,
     };
 
+  // A 3.x peer shares the folder: write nothing into it.
+  assertSyncDirV2(dir);
   const machineId = localMachineId(db);
   mkdirSync(dir, { recursive: true });
   const path = segmentPath(dir, machineId);
@@ -925,6 +927,7 @@ export interface PeerSegment {
  */
 export function discoverPeers(dir: string, selfMachineId: string): PeerSegment[] {
   if (!existsSync(dir)) return [];
+  assertSyncDirV2(dir); // a 3.x peer shares the folder: read nothing from it
   const peers: PeerSegment[] = [];
   for (const name of readdirSync(dir)) {
     if (!name.endsWith(SEGMENT_EXT)) continue;
@@ -1071,6 +1074,7 @@ export function ingestSegment(
   peer: PeerSegment,
   opts?: { verify?: boolean },
 ): IngestResult {
+  assertSyncDirV2(dirname(peer.path)); // v1 is never ingested, whoever built the peer
   const defects: SegmentDefect[] = [];
   const watermarkKey = peerWatermarkKey(peer);
   const start = getWatermark(db, watermarkKey);
@@ -1396,7 +1400,6 @@ export async function syncPass(db: Db, dir: string | null = syncDir()): Promise<
       defective: false,
     };
   }
-  assertSyncDirV2(dir);
   const flushed = await flushSegment(db, dir, { verify: true });
   const self = localMachineId(db);
   const ingested = discoverPeers(dir, self).map((peer) =>
