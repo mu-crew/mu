@@ -57,10 +57,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   machine-local table `remote_recovery` (no foreign key, no op, never synced) keeps, per
   ORIGINAL registry incarnation, the host, worktree path, base, last collected HEAD, the exact
   `.mu-removing-<id>` aside path and the profile's exec/repo of a finalized remote row, written
-  inside the transaction of every path that deletes it: the reaper (`deleteAgent`, so
-  `reconcile` too), `workstream teardown` and a peer's workstream tombstone. A failed identity
-  check or a rollback records nothing and deletes nothing; local, cwd-only and base-less rows
-  record nothing; an `agent close` that removed the tree itself records nothing. Teardown now
+  by the DATABASE: an AFTER DELETE trigger on `agents` (and a BEFORE DELETE one on `workstreams`
+  for the cascade), so every path that deletes the row is covered: the reaper (`deleteAgent`,
+  so `reconcile` too), `workstream teardown`, reinit, a peer's workstream tombstone, and plain
+  `mu sql "DELETE FROM agents"` / `"DELETE FROM workstreams"`. A failed identity check or a
+  rollback records nothing and deletes nothing; local, cwd-only and base-less rows record
+  nothing; an `agent close` that removed the tree itself records nothing. The DDL lives in
+  `src/db-recovery.ts` (db.ts stays under its file cap). Teardown now
   deletes its dead rows through the same reaper step, which also fixes a task left
   `IN_PROGRESS` with no owner: it reopens with a `[reaper]` note, as after any reap. Storage
   only: reading a record to close or collect the tree is the next change. Records are lost by

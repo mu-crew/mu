@@ -9,13 +9,15 @@
 //   reinit      records outlive the torn-down workstream they came from
 //   cascade     a peer's workstream tombstone snapshots the cascaded rows
 //   identity    one record per ORIGINAL incarnation; names and generations never merge
+//   trigger     the database writes the record: `mu db query` deletes (agent, workstream),
+//               a rollback, a missing trigger repaired on open, the aside/asideOf pin
 //   shape       no foreign key, no ops, survives reopen, profile identity pinned
 //   close       `agent close` removed the tree itself: it leaves no record
 
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   closeAgent,
   deleteAgent,
@@ -24,10 +26,12 @@ import {
   insertAgent,
 } from "../src/agents.js";
 import { applyOp, type Op } from "../src/apply.js";
+import { cmdDbQuery } from "../src/cli/db-query.js";
 import { type Db, openDb } from "../src/db.js";
 import { formatHlc } from "../src/hlc.js";
 import { addHost, removeHost } from "../src/hosts.js";
 import { reconcile } from "../src/reconcile.js";
+import { asideOf } from "../src/remote-agent.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { listNotes } from "../src/tasks/queries.js";
 import { addTask, claimTask, getTask } from "../src/tasks.js";
@@ -293,6 +297,100 @@ describe("peer workstream tombstone", () => {
       expect.objectContaining({ agentId: a.incarnation, reason: "workstream-delete" }),
     ]);
     expect(getAgent(db, "w2", "keep")?.incarnation).toBe(b.incarnation);
+  });
+});
+
+describe("the database writes the record (AFTER DELETE trigger)", () => {
+  const sql = async (q: string): Promise<void> => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await cmdDbQuery(db, q);
+    } finally {
+      log.mockRestore();
+    }
+  };
+
+  it("`mu db query DELETE FROM agents` keeps the record", async () => {
+    const row = remote();
+    insertAgent(db, { name: "loc", workstream: "auth", paneId: "%3" });
+    await sql("DELETE FROM agents");
+    expect(getAgent(db, "w1", "auth")).toBeUndefined();
+    expect(records()).toEqual([
+      expect.objectContaining({
+        agentId: row.incarnation,
+        workstream: "auth",
+        name: "w1",
+        paneId: "%1",
+        host: "dev",
+        cwd: WT,
+        base: BASE,
+        collectedHead: "c".repeat(40),
+        hostExec: "/bin/sh -c {cmd}",
+        hostRepo: "/srv/repo",
+        reason: "reap",
+      }),
+    ]);
+  });
+
+  it("`mu db query DELETE FROM workstreams` keeps the record of every cascaded remote row", async () => {
+    const a = remote();
+    const b = remote({ name: "w2", pane: "%2" });
+    remote({ name: "k", pane: "%5", workstream: "keep" });
+    insertAgent(db, { name: "loc", workstream: "auth", paneId: "%3" });
+    await sql("DELETE FROM workstreams WHERE name = 'auth'");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM agents WHERE name <> 'k'").get()).toEqual({
+      n: 0,
+    });
+    expect(records().map((r) => [r.agentId, r.workstream, r.reason])).toEqual([
+      [a.incarnation, "auth", "workstream-delete"],
+      [b.incarnation, "auth", "workstream-delete"],
+    ]);
+  });
+
+  it("a rolled-back delete rolls the record back (agent delete and cascade)", () => {
+    remote();
+    for (const q of ["DELETE FROM agents", "DELETE FROM workstreams WHERE name = 'auth'"]) {
+      expect(() =>
+        db.transaction(() => {
+          db.exec(q);
+          expect(records()).toHaveLength(1);
+          throw new Error("abort");
+        })(),
+      ).toThrow("abort");
+      expect(records()).toEqual([]);
+      expect(getAgent(db, "w1", "auth")).toBeDefined();
+    }
+  });
+
+  it("a deleted workstream's record is written once, never overwritten by the agent trigger", () => {
+    remote();
+    db.exec("DELETE FROM workstreams WHERE name = 'auth'");
+    expect(records()).toEqual([
+      expect.objectContaining({ workstream: "auth", reason: "workstream-delete" }),
+    ]);
+  });
+
+  it("the stored aside is exactly asideOf(cwd, incarnation)", () => {
+    const row = remote();
+    db.exec("DELETE FROM agents");
+    expect(records()[0]?.aside).toBe(asideOf(WT, row.incarnation));
+  });
+
+  it("an already-v13 file whose triggers are missing gets them back on open", () => {
+    remote({ name: "w1" });
+    db.exec("DROP TRIGGER remote_recovery_agent_del; DROP TRIGGER remote_recovery_workstream_del");
+    db.close();
+    db = openDb({ path: dbPath });
+    const names = (
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'remote_recovery%'",
+        )
+        .all() as { name: string }[]
+    ).map((t) => t.name);
+    expect(names.sort()).toEqual(["remote_recovery_agent_del", "remote_recovery_workstream_del"]);
+    db.exec("DELETE FROM agents");
+    expect(records()).toHaveLength(1);
   });
 });
 

@@ -89,7 +89,8 @@ mu agent close worker-1 -w auth        # preview, then --if <rev>
   always refuse (`--discard` and `--keep-branch` do not override that).
 - A `--cwd` agent has no remote worktree of its own: close never touches the
   host. When a row is deleted (its pane died and the
-  reaper took it, a workstream teardown, a peer's workstream delete) mu keeps a
+  reaper took it, a workstream teardown, a peer's workstream delete, even a raw
+  SQL delete) the database keeps a
   machine-local `remote_recovery` record of the host, path and base (`mu sql
   "select * from remote_recovery"`; `mu rebuild` loses it). Nothing reads it back
   yet: fetch from that path by hand.

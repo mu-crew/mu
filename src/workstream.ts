@@ -727,7 +727,7 @@ export async function teardownWorkstream(
         // what it owned reopens, exactly as a pane that died on its own.
         for (const a of dead) {
           if (!sameRow.get(a.incarnation, a.name, a.paneId, opts.workstream)) continue;
-          reapAgentRow(db, a.incarnation, a.name, { reason: "teardown" });
+          reapAgentRow(db, a.incarnation, a.name);
         }
         db.prepare(
           "UPDATE workstreams SET torn_down_at = ? WHERE name = ? AND torn_down_at IS NULL",
@@ -809,7 +809,7 @@ export async function reinitWorkstream(
         const agents = listAgentPanes(db, name).map((a) => a.name);
         if (agents.length > 0) throw new WorkstreamHasAgentsError(name, agents);
         // No agent row is left to cascade (checked above, same transaction):
-        // teardown already recorded each remote worktree when it reaped the row.
+        // the delete of each row recorded its remote worktree.
         db.prepare("DELETE FROM workstreams WHERE name = ?").run(name);
         ensureWorkstreamImpl(db, name);
       })

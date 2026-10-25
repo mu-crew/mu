@@ -71,6 +71,7 @@ import {
   sqliteTooOld,
   storedCaptureVersion,
 } from "./capture.js";
+import { REMOTE_RECOVERY_DDL } from "./db-recovery.js";
 import type { HasNextSteps, NextStep } from "./output.js";
 import { defaultStateDir, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
@@ -675,6 +676,7 @@ export function migrateLegacyWorkspaces(db: Db, source = "main"): void {
  *  SQLite stores for each view (the CREATE statement minus its `;`). */
 interface ExpectedObjects {
   tables: string[];
+  triggers: string[];
   indexes: string[];
   views: Map<string, string>;
 }
@@ -690,6 +692,7 @@ function expectedObjects(): ExpectedObjects {
   }
   expectedCache = {
     tables: names(/CREATE TABLE IF NOT EXISTS (\w+)/g),
+    triggers: names(/CREATE TRIGGER IF NOT EXISTS (\w+)/g),
     indexes: names(/CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)/g),
     views,
   };
@@ -775,6 +778,7 @@ function schemaIsCurrent(db: Db): boolean {
   const expected = expectedObjects();
   if (have.has("table:vcs_workspaces")) return false;
   if (expected.tables.some((t) => !have.has(`table:${t}`))) return false;
+  if (expected.triggers.some((t) => !have.has(`trigger:${t}`))) return false;
   if (ADDED_COLUMNS.some(([t, c]) => !hasColumn(db, t, c))) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {
@@ -932,8 +936,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *                     claim, send state). No FK to `agents`: it must
  *                     outlive the agent it names.
  *    remote_recovery  what a remote worker's deleted row said about its
- *                     worktree (host, path, base, aside): a deleter's
- *                     snapshot. No FK: it must outlive the agent, its
+ *                     worktree (host, path, base, aside), written by triggers
+ *                     (src/db-recovery.ts). No FK: it must outlive the agent, its
  *                     workstream and its host profile. Rebuild cannot
  *                     restore it (UNREBUILDABLE_TABLES).
  *    ops              see below — the carrier, not cargo.
@@ -1388,32 +1392,7 @@ CREATE TABLE IF NOT EXISTS host_channels (
          OR kind = 'attached' AND agent_id IS NOT NULL AND pane_id IS NOT NULL)
 );
 
--- remote_recovery: what a finalized remote worker row said about its
--- worktree, written by every path that deletes the row (machine-local). One
--- row per ORIGINAL registry incarnation (agent_id = agents.id, never reused),
--- so a name or workstream recreated later never merges with it. 'aside' is
--- the exact path asideOf(cwd, agent_id) would park the tree at. host_exec /
--- host_repo pin the profile's identity when the profile existed. No foreign
--- key on purpose: it must outlive the agent, its workstream (a peer's
--- tombstone cascades) and its host profile. It is a receipt of the
--- resource, not a live channel.
-CREATE TABLE IF NOT EXISTS remote_recovery (
-  agent_id             INTEGER PRIMARY KEY,
-  workstream           TEXT NOT NULL,
-  workstream_id        INTEGER NOT NULL,
-  workstream_created_at TEXT NOT NULL,
-  name                 TEXT NOT NULL,
-  pane_id              TEXT NOT NULL,
-  host                 TEXT NOT NULL,
-  cwd                  TEXT NOT NULL,
-  base                 TEXT NOT NULL,
-  collected_head       TEXT,
-  aside                TEXT NOT NULL,
-  host_exec            TEXT,
-  host_repo            TEXT,
-  reason               TEXT NOT NULL CHECK (reason IN ('reap', 'teardown', 'workstream-delete')),
-  preserved_at         TEXT NOT NULL
-);
+${REMOTE_RECOVERY_DDL}
 
 -- ─── The ops log (VISION.md § 2b, VOCABULARY.md § op / ops log) ──────
 --

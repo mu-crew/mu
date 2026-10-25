@@ -1,9 +1,9 @@
 // mu — the reaper's row-level step, shared by every path that deletes an agent row.
 //
 // `reapAgentRow` runs INSIDE the caller's transaction (it opens none) and
-// does, in order: snapshot the tasks the agent holds IN_PROGRESS, record its
-// remote worktree (src/remote-recovery.ts), DELETE the row (the FK sets
-// tasks.owner_id NULL), free its host channel, then reopen each snapshotted
+// does, in order: snapshot the tasks the agent holds IN_PROGRESS, DELETE the
+// row (the FK sets tasks.owner_id NULL; its trigger records a remote
+// worktree, src/db-recovery.ts), free its host channel, then reopen each snapshotted
 // task with a `[reaper]` note. A throw anywhere rolls the lot back with the
 // caller's transaction: the row stays, nothing is recorded.
 //
@@ -17,11 +17,8 @@
 import type { Db } from "../db.js";
 import { releaseHostChannelsForAgent } from "../hosts.js";
 import { withOpContext } from "../op-context.js";
-import { type RemoteRecoveryReason, snapshotRemoteAgent } from "../remote-recovery.js";
 
 export interface ReapOptions {
-  /** Why the row goes (stored with its recovery record). Default `reap`. */
-  reason?: RemoteRecoveryReason;
   /** False when the caller has itself dealt with the remote worktree (a close that removed it). Default true. */
   preserve?: boolean;
 }
@@ -43,8 +40,11 @@ export function reapAgentRow(
     | { pane_id: string }
     | undefined;
   if (pane === undefined) return false;
-  if (opts.preserve !== false) snapshotRemoteAgent(db, agentId, opts.reason ?? "reap");
+  // The row's AFTER DELETE trigger writes its remote recovery record (src/db-recovery.ts).
   if (db.prepare("DELETE FROM agents WHERE id = ?").run(agentId).changes === 0) return false;
+  // A close that has itself removed (or found gone) the tree owes no record.
+  if (opts.preserve === false)
+    db.prepare("DELETE FROM remote_recovery WHERE agent_id = ?").run(agentId);
   // A remote agent's pane IS its host transport: the row's death frees the
   // channel it held, by registry id + pane (never a name).
   releaseHostChannelsForAgent(db, agentId, pane.pane_id);

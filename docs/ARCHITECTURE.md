@@ -124,7 +124,8 @@ are re-export hubs.
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
 | `src/agents/lock.ts` | per-agent lock (`withAgentLock`): fail-closed and strict; taken by close and `--worktree` staging/rollback; `withSpawnAttemptLock`: the same strict lock per (task, attempt key) |
 | `src/agents/reap.ts` | `reapAgentRow`: the one row-level reaper step, inside the caller's transaction and op group: record the remote worktree, DELETE the row, free its host channel, reopen what it owned with a `[reaper]` note. Used by `deleteAgent` and by teardown |
-| `src/remote-recovery.ts` | `remote_recovery` storage: `snapshotRemoteAgent` / `snapshotWorkstreamRemotes` (called inside every deleter's transaction, before the delete), `listRemoteRecoveries`. One row per original registry incarnation, no FK, no op; `mu rebuild` reports it lost. Storage only: close/collect do not read it yet |
+| `src/db-recovery.ts` | DDL only, spliced into `CURRENT_SCHEMA`: the `remote_recovery` table and its triggers (AFTER DELETE on `agents`, BEFORE DELETE on `workstreams` for the cascade): the database records a remote worktree whenever its row dies, however it is deleted |
+| `src/remote-recovery.ts` | `remote_recovery` reader: `listRemoteRecoveries`. One row per original registry incarnation, no FK, no op; `mu rebuild` reports it lost. Storage only: close/collect do not read it yet |
 | `src/agents/receipts.ts` | `spawn_receipts` storage: reserve, patch, reset, read (pure SQL) |
 | `src/agents/task-spawn.ts` | `spawnForTask`: `agent spawn --task` as one journaled attempt: reserve, spawn (identity journaled in the spawn lock), claim for that registry id, send with the reserved msgId, pin the brief; unsent failures roll back only their own resources, unknown delivery keeps pane and claim; replay never resends |
 | `src/agents/close.ts` | `previewClose`, `closeAgent`: preview, `--if` fence, replacement check, incarnation CAS on the delete |
