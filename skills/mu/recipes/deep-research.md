@@ -4,7 +4,7 @@ Use when a question needs more sources than one context can read and
 checking them against each other: how a library or protocol behaves,
 what changed between versions, how competitors solve a problem, whether
 a claim in a draft holds. This is [refute](refute.md) applied to
-sources. Workers need a web search tool (pi's `brave_search`, or
+sources. Workers need a web search tool (pi's `web_search`, or
 `curl` on docs) or the code they research.
 
 **Mode:** delegates by default: the report is the result, and claims
