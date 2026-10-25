@@ -13,21 +13,28 @@
 // or recorded as "no close (malformed)": the block never closes by guess.
 //
 // Grammar (the only definition; the README names the shape, not the escapes):
-//   - Lines end in LF or CRLF. Trailing blank lines are ignored.
-//   - A block starts at a line that begins at column 0 with `CLOSE:` and is
-//     followed at once by a line that is exactly `REPORT:`. The FINAL such
-//     start is the block; earlier ones (a quoted contract, an old attempt)
-//     are ignored. The report is every line after `REPORT:` to the end.
+//   - The CLOSE block is recognised ONLY as the literal final block of the
+//     message. Trailing blank lines are dropped; the report is everything
+//     after the `REPORT:` line to there, byte for byte (leading blank lines,
+//     indentation, CRLF and all). Nothing else is normalized.
+//   - Fence state (``` / ~~~, CommonMark open/close rules) is tracked over
+//     the WHOLE message. An unclosed fence quotes the rest of it, so a message
+//     that ends inside a fence has no block at all. A line
+//     inside a fence (or a fence line) is never a block line.
+//   - A block starts at a line at column 0, outside any fence, that begins
+//     `CLOSE:` and is followed at once by a line that is exactly `REPORT:`.
+//     The FINAL such start is the block; earlier ones are ignored.
+//   - If the last non-blank line is itself such a `CLOSE:` line (outside a
+//     fence), the final block is malformed, whatever precedes it: no
+//     fallback to an earlier block.
 //   - Header: `CLOSE: task=<id> evidence="<text>"`. <id> is a task id.
 //     Inside the quotes `\"`, `\\` and `\n` are escapes; any other
 //     backslash is literal; a bare `"` ends the evidence and so must be
 //     the last character of the line, or the block is malformed.
-//   - Malformed: bad header, invalid id, empty evidence, empty report, or a
-//     `CLOSE:` last line with no `REPORT:` after it (only when no block
-//     start exists).
+//   - Malformed: bad header, invalid id, empty evidence, blank report, or a
+//     final `CLOSE:` line with no `REPORT:` after it.
 //   - The template line `CLOSE: task=<id> ...` is a quoted contract: not a
-//     start. A report with an odd number of ``` / ~~~ fence lines is a
-//     block quoted inside a fence (the closing fence is the tail): none.
+//     start.
 
 import type { Db } from "./db.js";
 import { withOpContext } from "./op-context.js";
@@ -42,23 +49,61 @@ export type CloseBlock =
 
 const HEADER = /^CLOSE:[ \t]+task=(\S+)[ \t]+evidence="/;
 
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+
+/** Per line: true when it is a fence line or sits inside a fence. */
+function quotedLines(lines: string[]): { quoted: boolean[]; unclosed: boolean } {
+  const quoted: boolean[] = [];
+  let open: { ch: string; len: number } | undefined;
+  for (const line of lines) {
+    if (open) {
+      quoted.push(true);
+      const c = FENCE_CLOSE.exec(line);
+      const run = c?.[1] ?? "";
+      if (run[0] === open.ch && run.length >= open.len) open = undefined;
+      continue;
+    }
+    const o = FENCE_OPEN.exec(line);
+    const run = o?.[1] ?? "";
+    if (o && !(run[0] === "`" && (o[2] ?? "").includes("`"))) {
+      open = { ch: run[0] as string, len: run.length };
+      quoted.push(true);
+    } else {
+      quoted.push(false);
+    }
+  }
+  return { quoted, unclosed: open !== undefined };
+}
+
+const isStart = (line: string): boolean =>
+  line.startsWith("CLOSE:") && !/^CLOSE:[ \t]+task=<[^>\s]*>/.test(line);
+
 /** Parse the CLOSE block at the tail of a settled run's final message. */
 export function parseCloseBlock(text: string): CloseBlock {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  while (lines.length > 0 && (lines[lines.length - 1] ?? "").trim() === "") lines.pop();
+  if (text.trim() === "") return { kind: "none" };
+  // Only the trailing blank lines go; the last content line keeps its bytes.
+  const body = text.replace(/(?:\r?\n[ \t\r\f\v]*)+$/, "");
+  const raw = body.split("\n");
+  const offsets: number[] = [];
+  let at = 0;
+  for (const l of raw) {
+    offsets.push(at);
+    at += l.length + 1;
+  }
+  const lines = raw.map((l) => l.replace(/\r$/, ""));
+  const { quoted, unclosed } = quotedLines(lines);
+  // A fence still open at the end quotes the tail: the message does not END
+  // with a block, whatever block-looking lines sit before it.
+  if (unclosed) return { kind: "none" };
+  const last = lines.length - 1;
+  if (!quoted[last] && isStart(lines[last] ?? "")) return { kind: "malformed" };
   let start = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (!line.startsWith("CLOSE:")) continue;
-    if ((lines[i + 1] ?? "").trimEnd() !== "REPORT:") continue;
-    if (/^CLOSE:[ \t]+task=<[^>\s]*>/.test(line)) continue; // the quoted template
-    start = i;
+  for (let i = 0; i < last; i++) {
+    if (quoted[i] || !isStart(lines[i] ?? "")) continue;
+    if ((lines[i + 1] ?? "").trimEnd() === "REPORT:") start = i;
   }
-  if (start < 0) {
-    return (lines[lines.length - 1] ?? "").startsWith("CLOSE:")
-      ? { kind: "malformed" }
-      : { kind: "none" };
-  }
+  if (start < 0) return { kind: "none" };
   const header = (lines[start] ?? "").trimEnd();
   const m = HEADER.exec(header);
   if (!m) return { kind: "malformed" };
@@ -66,13 +111,8 @@ export function parseCloseBlock(text: string): CloseBlock {
   if (!isValidTaskId(task)) return { kind: "malformed" };
   const evidence = unescapeEvidence(header.slice(m[0].length));
   if (evidence === undefined || evidence.trim() === "") return { kind: "malformed" };
-  const report = lines
-    .slice(start + 2)
-    .join("\n")
-    .trim();
-  if (report === "") return { kind: "malformed" };
-  const fences = report.split("\n").filter((l) => /^ {0,3}(```|~~~)/.test(l)).length;
-  if (fences % 2 === 1) return { kind: "none" };
+  const report = body.slice(offsets[start + 2] ?? body.length);
+  if (report.trim() === "") return { kind: "malformed" };
   return { kind: "valid", task, evidence, report };
 }
 
