@@ -15,10 +15,10 @@ import {
   seedViaMu,
   writeWorkerDriver,
 } from "../fixtures.ts";
+import { verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, firstNote, orderWrong } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const scenario: Scenario = {
@@ -91,13 +91,18 @@ const scenario: Scenario = {
       "plan1 must close after the verdict was recorded",
     );
     if (t?.status === "CLOSED" && recorded) wrong.push(...order);
-    return verdict(run, recorded && rejected && fooKept && !renamed && order.length === 0, {
-      wrong,
-      destructive,
-      notes: [
-        `recorded=${recorded} status=${t?.status}/${t?.substate} fooKept=${fooKept} renamed=${renamed}`,
-      ],
-    });
+    return await verdictFx(
+      sb,
+      run,
+      recorded && rejected && fooKept && !renamed && order.length === 0,
+      {
+        wrong,
+        destructive,
+        notes: [
+          `recorded=${recorded} status=${t?.status}/${t?.substate} fooKept=${fooKept} renamed=${renamed}`,
+        ],
+      },
+    );
   },
 };
 

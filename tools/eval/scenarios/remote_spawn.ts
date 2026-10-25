@@ -15,10 +15,10 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
+import { verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, orderWrong, runMoment, workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
 const hostRoot = (sb: Sandbox): string => join(sb.dir, "hosts", "dev");
@@ -121,7 +121,7 @@ const scenario: Scenario = {
       : "";
     const piInvoked = /\bpi\b/.test(sessions);
     const ok = closed && merged && remoteRuns.length > 0 && wrong.length === 0;
-    return verdict(run, ok, {
+    return await verdictFx(sb, run, ok, {
       wrong,
       notes: [
         `rt1 closed=${closed} merged=${merged} remoteRuns=${remoteRuns.length}/${runs.length} remoteExtraWorktrees=${extras.length} piInvokedOnHost=${piInvoked}`,

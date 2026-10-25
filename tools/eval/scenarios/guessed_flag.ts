@@ -4,10 +4,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateScript, makeRepo, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
+import { verdictFx } from "../observe.ts";
 import { maxSeq, strayOps } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, isBefore, noteMoments, orderWrong } from "../provenance.ts";
-import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
 const seqFile = (sb: Sandbox) => join(sb.dir, "guessed_flag.seq");
@@ -58,7 +58,7 @@ const scenario: Scenario = {
       isBefore(exact, closeOp) &&
       g1?.status === "CLOSED" &&
       g1.substate === "done";
-    return verdict(run, completed, {
+    return await verdictFx(sb, run, completed, {
       wrong,
       notes: [
         `exact=${exact !== undefined} g1=${g1?.status}/${g1?.substate} unknownOption=${unknownOpt}`,

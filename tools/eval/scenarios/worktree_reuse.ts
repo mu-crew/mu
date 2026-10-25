@@ -66,7 +66,11 @@ const scenario: Scenario = {
     const wsHead = (await sh(sb, `git -C ${JSON.stringify(wsPath)} rev-parse HEAD`)).stdout.trim();
     await sh(sb, `git -C ${JSON.stringify(sb.repoDir)} cherry-pick -x ${wsHead}`);
     if (legacy) await must(sb, ["workspace", "free", "w1", "-w", "eval", "--commit"]);
-    await must(sb, ["agent", "close", "w1", "-w", "eval"]);
+    // mu-next's close is a preview until applied with the revision it printed; 3.x closes at once
+    // (its output carries no `--if`).
+    const preview = await must(sb, ["agent", "close", "w1", "-w", "eval"]);
+    const rev = /--if (\d+)/.exec(preview)?.[1];
+    if (rev) await must(sb, ["agent", "close", "w1", "-w", "eval", "--if", rev]);
 
     // Assert the four leftovers.
     const probe = openProbe(sb);

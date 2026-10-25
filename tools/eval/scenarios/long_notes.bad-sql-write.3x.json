@@ -1,0 +1,33 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task notes big -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "echo heron > scope.txt"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close big -w eval --evidence 'scope.txt now heron'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu sql \"UPDATE tasks SET title='hijacked' WHERE local_id='big'\""
+      }
+    ]
+  },
+  {
+    "text": "Done: scope.txt is heron."
+  }
+]

@@ -252,12 +252,27 @@ function writeShim(path: string, body: string): void {
   chmodSync(path, 0o755);
 }
 
+/**
+ * Machine-local tables (MACHINE_LOCAL_TABLES in src/db.ts; vcs_workspaces is 3.x's worktrees) that
+ * a raw `mu sql` write changes WITHOUT writing an op (only captured tables write ops). The shim
+ * fingerprints them around each AUT call (observe.ts: localWrites).
+ */
+export const LOCAL_TABLES =
+  "agents worktrees vcs_workspaces task_auto task_substates delegate_calls";
+
 /** The sandbox's `mu`: runs the surface's CLI and records the call (see observe.ts). Exit status and output are untouched. */
 export function muShim(cli: string): string {
   return String.raw`#!/bin/bash
 D="\${EVAL_WORKER_DIR:-}"
+aut=
+[ -n "$D" ] && [ -z "\${MU_AGENT_NAME:-}" ] && aut=1
+# "<table>:<cksum>,..." of the db right now (record-only: a read-only open)
+fp() {
+  for t in ${LOCAL_TABLES}; do printf '%s:%s,' "$t" "$(sqlite3 -readonly "$MU_DB_PATH" ".timeout 2000" ".dump $t" 2>/dev/null | cksum | cut -d' ' -f1)"; done
+}
+[ -n "$aut" ] && before=$(fp)
 s=$(date +%s%3N)
-if [ -n "$D" ] && [ -z "\${MU_AGENT_NAME:-}" ]; then
+if [ -n "$aut" ]; then
   mkdir -p "$D/mu-out"
   node ${JSON.stringify(cli)} "$@" | tee -p "$D/mu-out/$$"
   rc=\${PIPESTATUS[0]}
@@ -266,6 +281,7 @@ else
   rc=$?
 fi
 [ -n "$D" ] && printf '%s %s %s %s %s %s\n' "$s" "$(date +%s%3N)" "$rc" "\${MU_AGENT_NAME:--}" "$$" "$(printf %s "$*" | tr '\n' ' ')" >> "$D/mu-calls.log" 2>/dev/null
+[ -n "$aut" ] && printf '%s|%s|%s\n' "$$" "$before" "$(fp)" >> "$D/mu-local.log" 2>/dev/null
 exit $rc
 `.replace(/\\\$\{/g, "${");
 }
