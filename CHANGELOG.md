@@ -22,6 +22,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Agent records are SQL-keyed.** `agent spawn`, `list`, `show`, `me` and
+  `state` print each agent with the `agents` column names: `id` (the registry
+  **agent incarnation**, what `agent close --if` compares), `workstream_id`
+  (the real FK) beside `workstream` (its name), `pane_id`, `command_source`,
+  `collected_head`, `created_at`, … The live facts follow, snake_cased and only
+  when read: `state`, `source`, `ctl`, `ctl_socket`, `since`, `reason`, `idle`,
+  `trust_dialog`. The deprecated `status` column is never printed. An `agent
+  close` preview names its identity `id` and `pane_id` (was `incarnation`,
+  `paneId`); verb-level keys (`send`, `nextSteps`, `workstreamName` on `list`,
+  `revision`, `kind`) are unchanged. The SDK `AgentRow` stays camelCase: only
+  the CLI maps (`src/agent-output.ts`). `mu_delegate` reads the new keys in the
+  same commit (`agent.id`, `agent.pane_id`, preview `id`/`pane_id`), so a
+  delegate still binds its cleanup to the one agent it spawned.
+- **`mu agent spawn --task <id> --send <text>`** records the sent text as the
+  task's `brief` note once the send landed (`task: {id, brief:
+  "recorded"|"kept"}`); a task that already has a brief keeps it, so a retry
+  never stacks copies. The task is checked before any pane exists (exit 3), and
+  `--task` without `--send` is a usage error. It claims nothing: ownership stays
+  `mu task claim`.
+
 - **Task reads are bounded records.** `task list`, `next`, `owned-by`,
   `me tasks`/`me next`, `show` and `tree` print one escaped TAB-separated
   record per task or entry (`task id STATE impact=… effort_days=… [owner=…]
@@ -619,6 +639,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **The attach hint works from outside tmux.** Outside a client it is ONE
+  `tmux attach-session -t mu-<ws>:<agent>` (the old line ran `select-window`
+  only after the blocking attach detached), and every tmux attach/switch line
+  carries `-L <socket>` when `MU_TMUX_SOCKET` routes mu to a private server.
+  herdr is unchanged.
 - **A delegate answer lost to the dequeue key is sent again, once.** pi's dequeue
   key (alt+up) calls `session.clearQueue()`, which silently drops custom
   follow-ups; the run then ends with `aborted: false`, so the Escape path saw

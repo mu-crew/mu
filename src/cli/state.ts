@@ -17,6 +17,7 @@
 // placeholders remain protected by reconcile's pending-pane skip
 // (see PENDING_PANE_PREFIX).
 
+import { liveAgentToOutput, workstreamIdOf } from "../agent-output.js";
 import type { LiveAgent } from "../agents.js";
 import {
   emitJson,
@@ -116,10 +117,11 @@ async function resolveWorkstreamSet(db: Db, opts: StateOpts): Promise<string[]> 
 //
 // Unified single flat shape for `mu state --json`.
 
-function fullJsonShape(d: PerWsData): Record<string, unknown> {
+function fullJsonShape(db: Db, d: PerWsData): Record<string, unknown> {
+  const wsId = workstreamIdOf(db, d.workstreamName);
   return {
     workstreamName: d.workstreamName,
-    agents: d.view.agents,
+    agents: d.view.agents.map((a) => liveAgentToOutput(a, wsId)),
     orphans: d.view.orphans,
     tracks: d.tracks,
     ready: withRoiAll(d.ready),
@@ -160,11 +162,11 @@ export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
 
   // ── JSON: full static state shape ──
   if (opts.json === true) {
-    if (multi) emitJson({ workstreams: perWs.map(fullJsonShape) });
+    if (multi) emitJson({ workstreams: perWs.map((d) => fullJsonShape(db, d)) });
     else {
       const single = perWs[0];
       if (single === undefined) throw new Error("invariant: workstreams non-empty");
-      emitJson(fullJsonShape(single));
+      emitJson(fullJsonShape(db, single));
     }
     return;
   }

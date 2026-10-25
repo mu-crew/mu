@@ -78,14 +78,14 @@ export function fakeMu(
   const waits = new Map<string, Deferred>();
   /** Agents up in scratch: delegate-1 belongs to someone else. */
   const taken = new Set(["delegate-1"]);
-  /** The registry the way `mu agent close` sees it: one incarnation per spawn,
+  /** The registry the way `mu agent close` sees it: one registry id per spawn,
    *  a revision that moves with it. `replace(name)` re-registers a name as
    *  another agent (a respawn behind the delegate's back). */
-  const registry = new Map<string, { incarnation: number; paneId: string }>();
+  const registry = new Map<string, { id: number; pane_id: string }>();
   let nextIncarnation = 100;
   const register = (name: string) => {
     const n = nextIncarnation++;
-    const row = { incarnation: n, paneId: `%${n}` };
+    const row = { id: n, pane_id: `%${n}` };
     registry.set(name, row);
     return row;
   };
@@ -148,11 +148,9 @@ export function fakeMu(
         const ifAt = args.indexOf("--if");
         if (ifAt < 0) {
           if (!cur) return Promise.resolve(ok({ kind: "none", revision: 0, dryRun: true }));
-          return Promise.resolve(
-            ok({ kind: "agent", revision: cur.incarnation * 7, dryRun: true, ...cur }),
-          );
+          return Promise.resolve(ok({ kind: "agent", revision: cur.id * 7, dryRun: true, ...cur }));
         }
-        if (!cur || Number(args[ifAt + 1]) !== cur.incarnation * 7)
+        if (!cur || Number(args[ifAt + 1]) !== cur.id * 7)
           return Promise.resolve(
             failed(4, "RevisionMismatchError", `agent ${String(name)} changed since preview`),
           );

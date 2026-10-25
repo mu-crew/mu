@@ -737,7 +737,7 @@ export function registerDelegate(
     const d = p.code === 0 ? parseOkEnvelope(p.stdout) : undefined;
     if (d === undefined) return { closed: false, why: `close preview failed: ${why(p)}` };
     if (d.kind === "none") return { closed: false, why: "it is no longer registered" };
-    if (d.kind !== "agent" || d.incarnation !== id.incarnation || d.paneId !== id.paneId)
+    if (d.kind !== "agent" || d.id !== id.incarnation || d.pane_id !== id.paneId)
       return { closed: false, why: "the name now belongs to another agent" };
     if (!Number.isSafeInteger(d.revision))
       return { closed: false, why: "close preview had no revision" };
@@ -782,10 +782,11 @@ export function registerDelegate(
     // No agent in the reply: the spawn itself failed, nothing is up.
     if (typeof spawned !== "string") throw failure("mu agent spawn", r);
     const name = spawned;
-    const row = out?.agent as { paneId?: unknown; incarnation?: unknown } | undefined;
+    // The agent record's SQL keys: `id` is the registry incarnation.
+    const row = out?.agent as { pane_id?: unknown; id?: unknown } | undefined;
     const identity: DelegateIdentity | undefined =
-      typeof row?.paneId === "string" && Number.isSafeInteger(row.incarnation)
-        ? { paneId: row.paneId, incarnation: row.incarnation as number }
+      typeof row?.pane_id === "string" && Number.isSafeInteger(row.id)
+        ? { paneId: row.pane_id, incarnation: row.id as number }
         : undefined;
     if (signal?.aborted) {
       // The user cancelled while the pane came up: take it down again.

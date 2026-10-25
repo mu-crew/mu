@@ -122,6 +122,7 @@ are re-export hubs.
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
 | `src/agents/lock.ts` | per-agent lock (`withAgentLock`): fail-closed and strict; taken by close and `--worktree` staging/rollback |
 | `src/agents/close.ts` | `previewClose`, `closeAgent`: preview, `--if` fence, replacement check, incarnation CAS on the delete |
+| `src/agent-output.ts` | the agent `--json` boundary (pure): `agentToOutput`, `liveAgentToOutput`, `closePreviewToOutput`. SQL column names, `id` = the registry incarnation, real `workstream_id`; live facts snake_cased and only when read. The CLI maps; `AgentRow` stays camelCase |
 | `src/agents/transport.ts` | send routing: ctl for pi agents; herdr `sendToPane` for others; tmux refuses (`AgentSendUnsupportedError`); no fallback; `expectsCtl` |
 | `src/agents/abort.ts` | stop a pi turn through the control socket; abort + send (`--interrupt`) |
 | `src/agents/delegate.ts` | `delegateOutcome`: one wait result to `done` / `empty` / `error` / `died` / `timeout` / `pending` |

@@ -27,7 +27,8 @@ import {
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, defaultStateDir, openDb } from "../src/db.js";
-import { addTask } from "../src/tasks/edit.js";
+import { addNote, addTask } from "../src/tasks/edit.js";
+import { getTask, selectTaskNotes } from "../src/tasks/queries.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { worktreePath } from "../src/worktree.js";
@@ -861,6 +862,108 @@ describe("mu agent spawn (CLI)", () => {
     expect(doc.data.agent.name).toBe("worker-2");
     expect(doc.data.ctl).toBe("missing");
     expect(doc.data.send.ok).toBe(false);
+  });
+});
+
+describe("mu agent spawn --task (brief note)", () => {
+  const seedTask = (local = "t1") =>
+    addTask(db, { localId: local, workstream: "auth", title: "T", impact: 50, effortDays: 1 });
+  const notes = (local = "t1") => selectTaskNotes(db, local, { workstream: "auth" }).notes;
+  const spawnTask = async (args: string[]) => {
+    db.close();
+    installPanes("worker-1");
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-1", "-w", "auth", ...args, "--json"],
+      dbPath,
+    );
+    db = openDb({ path: dbPath });
+    return r;
+  };
+
+  it("--task records the sent text as the task's kind=brief note, once the send landed", async () => {
+    seedTask();
+    const r = await spawnTask(["--task", "t1", "--send", "do the thing"]);
+    expect(r.exitCode ?? 0).toBe(0);
+    expect(notes()).toMatchObject([{ kind: "brief", content: "do the thing" }]);
+    expect((r.data as { task: unknown }).task).toEqual({ id: "t1", brief: "recorded" });
+  });
+
+  it("a task that already has a brief keeps it: no second copy", async () => {
+    seedTask();
+    addNote(db, "t1", "the pinned brief", { workstream: "auth", kind: "brief" });
+    const r = await spawnTask(["--task", "t1", "--send", "Read: mu task notes t1"]);
+    expect(r.exitCode ?? 0).toBe(0);
+    expect(notes().map((n) => [n.kind, n.content])).toEqual([["brief", "the pinned brief"]]);
+    expect((r.data as { task: unknown }).task).toEqual({ id: "t1", brief: "kept" });
+  });
+
+  it("an unknown task fails before any pane or row exists", async () => {
+    const r = await spawnTask(["--task", "nope", "--send", "x"]);
+    expect(r.exitCode).toBe(3);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(mux.calls.some((c) => c[0] === "new-session" || c[0] === "new-window")).toBe(false);
+  });
+
+  it("--task without --send is a usage error before any side effect", async () => {
+    seedTask();
+    const r = await spawnTask(["--task", "t1"]);
+    expect(r.exitCode).toBe(2);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+
+  it("a failed send records no brief (the pane stays, as for any failed --send)", async () => {
+    seedTask();
+    db.close();
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--task", "t1", "--send", "x", "--json"],
+      dbPath,
+    );
+    db = openDb({ path: dbPath });
+    expect(r.exitCode).toBe(1); // no extension answered: the send fails
+    expect(notes()).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+  });
+
+  it("--task claims nothing: ownership is not this verb's", async () => {
+    seedTask();
+    await spawnTask(["--task", "t1", "--send", "go"]);
+    expect(getTask(db, "t1", "auth")?.status).toBe("OPEN");
+  });
+});
+
+describe("mu agent spawn: the attach hint does not assume a tmux client", () => {
+  const attach = async (inside: boolean) => {
+    db.close();
+    installPanes("worker-1");
+    const saved = process.env.TMUX;
+    if (inside) process.env.TMUX = "/tmp/tmux-1/default,1,0";
+    else {
+      const key = "TMUX";
+      delete process.env[key];
+    }
+    try {
+      const r = await runCliJson(["agent", "spawn", "worker-1", "-w", "auth", "--json"], dbPath);
+      const steps = (r.data as { nextSteps: { intent: string; command: string }[] }).nextSteps;
+      return steps.find((x) => x.intent === "Attach the pane")?.command;
+    } finally {
+      if (saved === undefined) {
+        const key = "TMUX";
+        delete process.env[key];
+      } else process.env.TMUX = saved;
+      db = openDb({ path: dbPath });
+    }
+  };
+
+  it("outside tmux: one attach on the private socket, targeting the agent's window", async () => {
+    const sock = process.env.MU_TMUX_SOCKET;
+    const route = sock ? `-L ${sock} ` : "";
+    expect(await attach(false)).toBe(`tmux ${route}attach-session -t mu-auth:worker-1`);
+  });
+
+  it("inside tmux: switch-client", async () => {
+    const sock = process.env.MU_TMUX_SOCKET;
+    const route = sock ? `-L ${sock} ` : "";
+    expect(await attach(true)).toBe(`tmux ${route}switch-client -t mu-auth:worker-1`);
   });
 });
 

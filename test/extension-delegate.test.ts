@@ -1508,7 +1508,7 @@ describe("closing is bound to the agent the delegate spawned as", () => {
     const closes = mu.calls.filter((c) => c[1] === "close");
     expect(closes).toHaveLength(2);
     expect(closes[0]).not.toContain("--if"); // the read-only preview first
-    // the fixture's first spawn is incarnation 100, revision incarnation * 7
+    // the fixture's first spawn is registry id 100, revision id * 7
     expect(closes[1]?.[closes[1].indexOf("--if") + 1]).toBe("700");
     expect(mu.registry.has("delegate-2")).toBe(false);
     expect(sentText(p)).toContain("Pane closed.");
@@ -1529,8 +1529,8 @@ describe("closing is bound to the agent the delegate spawned as", () => {
 
   it("the same incarnation on another pane, or another incarnation on the same pane, is not it", async () => {
     for (const mutate of [
-      (r: { incarnation: number; paneId: string }) => ({ ...r, paneId: "%999" }),
-      (r: { incarnation: number; paneId: string }) => ({ ...r, incarnation: r.incarnation + 1 }),
+      (r: { id: number; pane_id: string }) => ({ ...r, pane_id: "%999" }),
+      (r: { id: number; pane_id: string }) => ({ ...r, id: r.id + 1 }),
     ]) {
       const mu = fakeMu();
       const p = await run(mu);
