@@ -549,8 +549,13 @@ root cause. The README defaults stand. The final measurement is
 `v_eval_next`: grammar-neutral judges that assert state and provenance,
 not verb spellings, three reps per cell, a paired comparison, and a
 default kept unless a candidate wins by more than the rep spread.
-Two post-build tournaments remain (user decision, 2026-10-25), both run
-on the finished code with the same harness and rule: `t_skill` (the
+Three post-build tournaments remain (user decision, 2026-10-25), all run
+on the finished code with the same harness and rule. `t_surface` goes
+first: friction mined from the `v_eval_next` transcripts plus a
+cold-guess probe (no skill loaded) pick at most six hotspot verbs,
+flags or return fields; candidates land as aliases or envelope-internal
+key changes, and a winner becomes the main spelling with the old one
+kept as an alias. Then `t_skill` (the
 shipped skill and recipes vs three variants within the prose caps) and
 `t_errors` (one-line teaching errors with executable hints vs a terse
 style; text only, codes and envelope unchanged).
