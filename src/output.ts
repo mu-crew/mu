@@ -115,14 +115,19 @@ export function printNextSteps(steps: readonly NextStep[]): void {
  *  paths emit to stdout. Single source of truth for the formatting
  *  (review_code_print_next_steps_duplicated). */
 export function printNextStepsTo(steps: readonly NextStep[], sink: "stdout" | "stderr"): void {
-  if (steps.length === 0) return;
-  const labelWidth = Math.max(...steps.map((s) => s.intent.length));
   const out = sink === "stderr" ? console.error : console.log;
-  out(pc.dim("Next:"));
-  for (const step of steps) {
-    const label = step.intent.padEnd(labelWidth);
-    out(pc.dim(`  ${label} : ${step.command}`));
-  }
+  for (const line of formatNextSteps(steps)) out(line);
+}
+
+/** The lines `printNextSteps` prints (none for no steps), so a verb that caps its
+ *  whole output can count them. */
+export function formatNextSteps(steps: readonly NextStep[]): string[] {
+  if (steps.length === 0) return [];
+  const labelWidth = Math.max(...steps.map((s) => s.intent.length));
+  return [
+    pc.dim("Next:"),
+    ...steps.map((step) => pc.dim(`  ${step.intent.padEnd(labelWidth)} : ${step.command}`)),
+  ];
 }
 
 // Printable ASCII plus the width-1 punctuation mu prints (dashes,

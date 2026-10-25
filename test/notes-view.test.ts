@@ -356,7 +356,9 @@ describe("mu task notes / show --note (CLI)", () => {
     expect(d.notes_more).toBe(2);
     expect(d.notes_retrieve).toBe("mu task notes t -w w --from 2");
     const text = await runCli(["task", "show", "t", "-w", WS], dbPath);
-    expect(text.stdout).toContain("Notes (6)");
+    // Record framing: the task is one record, the notes follow as records, no "Notes (n)" header.
+    expect(text.stdout.split("\n")[0]).toMatch(/^task\tt\tOPEN\t/);
+    expect(text.stdout).not.toContain("Notes (");
     expect(text.stdout).toContain("more=2 next=mu task notes t -w w --from 2");
   });
 
@@ -461,8 +463,10 @@ describe("the 4 KB cap is measured on the emitted bytes (CLI)", () => {
   it("show: the notes block honours the same cap in text", async () => {
     for (let i = 1; i <= 4; i++) note(`row-${i} ${"a".repeat(1300)}`);
     const r = await runCli(["task", "show", "t", "-w", WS], dbPath);
-    const block = r.stdout.slice(r.stdout.indexOf("Notes ("));
-    expect(bytes(block)).toBeLessThanOrEqual(4096 + 16);
+    // The WHOLE output (task record and edges included), pinned notes set aside, fits 4 KB.
+    const ordinary = r.stdout.split("\n").filter((l) => !/^(brief|report|verdict)\t/.test(l));
+    expect(bytes(ordinary.join("\n"))).toBeLessThanOrEqual(4096);
+    expect(r.stdout).toContain("more=");
   });
 });
 

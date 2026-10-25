@@ -49,8 +49,8 @@ const SYNC_DIR_KEY = "MU_SYNC_DIR";
 const WS = "fleet";
 
 interface TaskView {
-  task: { name: string; status: string; impact: number; ownerName: string | null };
-  blockers: Array<{ name: string }>;
+  task: { id: string; status: string; impact: number; owner_id: number | null; owner?: string };
+  blockers: Array<{ id: string }>;
   notes: Array<{ content: string; author: string | null }>;
 }
 
@@ -110,7 +110,7 @@ describe("mu sync — a multi-round two-machine session", () => {
 
   const names = async (db: string): Promise<string[]> => {
     const { data } = await runCliJson(["task", "list", "-w", WS, "--json"], db);
-    return (data as { items: Array<{ name: string }> }).items.map((t) => t.name).sort();
+    return (data as { items: Array<{ id: string }> }).items.map((t) => t.id).sort();
   };
 
   /** No verb is a safe probe (all ingest), so read the file directly. */
@@ -213,7 +213,7 @@ describe("mu sync — a multi-round two-machine session", () => {
       // Before the fix this was `[]`, permanently: applyEdgePut returned
       // skipped:'absent' and the watermark advanced past the line, so no
       // later sync ever retried it.
-      expect((await view(third, "child")).blockers.map((b) => b.name)).toEqual(["parent"]);
+      expect((await view(third, "child")).blockers.map((b) => b.id)).toEqual(["parent"]);
     });
 
     it("PROJECTS the note, same arrangement", async () => {
@@ -288,8 +288,8 @@ describe("mu sync — a multi-round two-machine session", () => {
     await runCli(["task", "block", "lap-2", "--by", "dev-1", "-w", WS], lap);
     await exchange(lap, dev, lap);
     for (const db of [lap, dev]) {
-      expect((await view(db, "dev-1")).blockers.map((b) => b.name)).toEqual(["lap-1"]);
-      expect((await view(db, "lap-2")).blockers.map((b) => b.name)).toEqual(["dev-1"]);
+      expect((await view(db, "dev-1")).blockers.map((b) => b.id)).toEqual(["lap-1"]);
+      expect((await view(db, "lap-2")).blockers.map((b) => b.id)).toEqual(["dev-1"]);
     }
     await record();
 
@@ -335,7 +335,7 @@ describe("mu sync — a multi-round two-machine session", () => {
     await exchange(dev, lap);
     for (const db of [lap, dev]) {
       // owner stays NULL everywhere on an anonymous claim...
-      expect((await view(db, "dev-1")).task.ownerName).toBeNull();
+      expect((await view(db, "dev-1")).task.owner_id).toBeNull();
     }
     // ...and STATUS does travel, because status is portable and the task
     // really is in progress somewhere in the fleet. Asserted rather than

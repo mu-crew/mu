@@ -130,7 +130,7 @@ export function fakeMu(
         const [ws, local] = ref.includes("/") ? ref.split("/", 2) : [undefined, ref];
         const wi = args.indexOf("-w");
         const workstreamName = ws ?? (wi >= 0 ? args[wi + 1] : "crew");
-        return Promise.resolve(ok({ task: { name: local, workstreamName } }));
+        return Promise.resolve(ok({ task: { id: local, workstream: workstreamName } }));
       }
       return Promise.resolve(ok("{}"));
     }

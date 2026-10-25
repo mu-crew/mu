@@ -1,22 +1,12 @@
-// Locks in the cli-table3 column-header rename from
-// `output_labels_human_rename` (Phase 2 of OUTPUT_LABELS_AUDIT).
+// Task read labels (was: the cli-table3 `name` column header; now records).
 //
-// Convention (per docs/OUTPUT_LABELS_AUDIT.md):
-//   - `mu task list / next / owned-by` table header `id` → `name`.
-//     (`task blocked / goals / search` were removed in
-//     audit_cleanups_post_schema_v5_wave; `task ready` was merged
-//     into `task next -n 0` in the same wave; `my-tasks` / `my-next`
-//     became `mu me tasks` / `mu me next`. The SQL escape hatches
-//     for the removed verbs live in docs/guide/sql.md.)
+// Convention (README Interface): `mu task list / next / owned-by` print one
+// record per line, `task<TAB>id<TAB>STATE<TAB>key=value...<TAB>title`, and
+// `--json` items use the SQL column names with `id` = the task's local_id.
+// No table, no `name` header, no `localId`/`name` keys.
 //
-// JSON shape is intentionally NOT touched here (the JSON rename is
-// `output_json_keys_rename_v5`, a separate breaking commit). Tests
-// elsewhere assert the `--json` shape still uses `localId` / `slug`
-// / `workstream`.
-//
-// Each assertion strips ANSI (the headers are pc.bold(...)-wrapped)
-// before substring-matching, so the tests don't depend on whether
-// picocolors is in colour mode.
+// Each assertion strips ANSI before matching so it does not depend on
+// whether picocolors is in colour mode.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,7 +21,7 @@ import { runCli, runCliJson } from "./_runCli.js";
 const ANSI = /\u001b\[[0-9;]*m/g;
 const stripAnsi = (s: string) => s.replace(ANSI, "");
 
-describe("output_labels_human_rename: cli-table3 column headers", () => {
+describe("task read labels: records, not a table", () => {
   let tempDir: string;
   let dbPath: string;
   let db: Db;
@@ -41,9 +31,7 @@ describe("output_labels_human_rename: cli-table3 column headers", () => {
     dbPath = join(tempDir, "mu.db");
     db = openDb({ path: dbPath });
     ensureWorkstream(db, "auth");
-    // 'a' is ready (no edges). 'b' depends on 'a' (so 'b' is blocked).
-    // 'c' is a standalone goal-shaped task (no parents, so qualifies
-    // as a goal). All three together cover list/next/ready/blocked/goals.
+    // 'a' is ready (no edges). 'b' depends on 'a' (so 'b' is blocked). 'c' is standalone.
     addTask(db, { localId: "a", workstream: "auth", title: "A", impact: 80, effortDays: 2 });
     addTask(db, { localId: "b", workstream: "auth", title: "B", impact: 50, effortDays: 1 });
     addTask(db, { localId: "c", workstream: "auth", title: "C", impact: 50, effortDays: 1 });
@@ -55,52 +43,54 @@ describe("output_labels_human_rename: cli-table3 column headers", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  // ── task-side verbs: header `id` → `name` ─────────────────────
+  const records = (stdout: string): string[][] =>
+    stripAnsi(stdout)
+      .trimEnd()
+      .split("\n")
+      .map((l) => l.split("\t"));
 
-  it("`mu task list` renders a `name` column header (not `id`)", async () => {
+  it("`mu task list` prints one `task<TAB>id<TAB>STATE` record per task (no table header, no box)", async () => {
     const { stdout } = await runCli(["task", "list", "-w", "auth"], dbPath);
-    const visible = stripAnsi(stdout);
-    expect(visible).toContain("name");
-    // The bare word `id` must not appear as a header. Frame the match
-    // between │ borders or whitespace so we don't false-positive on a
-    // title or workstream slug containing 'id'.
-    expect(visible).not.toMatch(/[│\s]id[│\s]/);
+    const rows = records(stdout);
+    expect(rows.map((r) => r.slice(0, 3))).toEqual([
+      ["task", "a", "OPEN"],
+      ["task", "b", "OPEN"],
+      ["task", "c", "OPEN"],
+    ]);
+    expect(stripAnsi(stdout)).not.toMatch(/[│┌─]/);
+    expect(stripAnsi(stdout)).not.toMatch(/(^|\s)name(\s|$)/m);
   });
 
-  it("`mu task next -n 0` (merged-in `task ready`) renders a `name` column header (not `id`)", async () => {
+  it("`mu task next -n 0` (merged-in `task ready`) prints records, best ROI first", async () => {
     const { stdout } = await runCli(["task", "next", "-w", "auth", "-n", "0"], dbPath);
-    const visible = stripAnsi(stdout);
-    expect(visible).toContain("name");
-    expect(visible).not.toMatch(/[│\s]id[│\s]/);
+    // c = 50/1, a = 80/2: c first; b is blocked and absent.
+    expect(records(stdout).map((r) => r[1])).toEqual(["c", "a"]);
+    expect(records(stdout).every((r) => r[0] === "task")).toBe(true);
   });
 
-  it("`mu task next` renders a `name` column header (not `id`)", async () => {
+  it("`mu task next` prints exactly one record", async () => {
     const { stdout } = await runCli(["task", "next", "-w", "auth"], dbPath);
-    const visible = stripAnsi(stdout);
-    expect(visible).toContain("name");
-    expect(visible).not.toMatch(/[│\s]id[│\s]/);
+    expect(records(stdout)).toHaveLength(1);
+    expect(records(stdout)[0]?.[0]).toBe("task");
   });
 
-  // ── --json shape preserved (this task is human-only) ──────────
-
-  // POST output_json_keys_rename_v5: --json emits the v5 `name` key.
-  // The human-rename task left the JSON shape alone; the v5 rename
-  // (this task) flipped it. Both column header AND JSON now agree.
-  //
-  // POST drop_taskrow_localid_duplicate_of_name: the `localId`
-  // duplicate field was dropped (sole user; codebase reads `.name`
-  // canonically). `name` is once again the only id key on a task.
-  it("`mu task list --json` emits `name` as the sole per-workstream id key", async () => {
+  it("`mu task list --json` emits `id` (= local_id) and SQL column names, never name/localId/effortDays", async () => {
     const { data } = await runCliJson(["task", "list", "-w", "auth", "--json"], dbPath);
-    const env = data as {
-      items: Array<Record<string, unknown>>;
-      count: number;
-    };
+    const env = data as { items: Array<Record<string, unknown>>; count: number };
     expect(env.items.length).toBeGreaterThan(0);
     expect(env.count).toBe(env.items.length);
     const first = env.items[0];
     if (!first) throw new Error("expected at least one task row");
-    expect(first).toHaveProperty("name");
-    expect(first).not.toHaveProperty("localId");
+    expect(first).toMatchObject({
+      id: "a",
+      local_id: "a",
+      effort_days: 2,
+      impact: 80,
+      status: "OPEN",
+    });
+    for (const gone of ["name", "localId", "effortDays", "workstreamName", "ownerName", "roi"]) {
+      expect(first).not.toHaveProperty(gone);
+    }
+    expect(typeof first.workstream_id).toBe("number");
   });
 });

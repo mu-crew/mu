@@ -2,7 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { formatTreeNodeLabel, loadFullDag, renderForest, renderTaskTree } from "../src/dag.js";
+import {
+  FRONTIER_MAX_DEPTH,
+  formatTreeNodeLabel,
+  loadFullDag,
+  renderForest,
+  renderTaskTree,
+} from "../src/dag.js";
 import { type Db, openDb } from "../src/db.js";
 import type { TaskStatus } from "../src/tasks/status.js";
 import { addBlockEdge, addTask, closeTask, setTaskStatus } from "../src/tasks.js";
@@ -97,37 +103,59 @@ describe("tree label rendering", () => {
     }
   });
 
-  it("renders a task subtree with a bounded number of SQL reads", () => {
+  it("renders a task subtree with a bounded number of SQL reads, and says what the depth cap left out", () => {
     const db = fixtureDb();
-    for (let i = 0; i < 100; i++) {
+    const chain = (n: number): void => {
+      for (let i = 0; i < n; i++) {
+        addTask(db, {
+          workstream: "demo",
+          localId: `t${i}`,
+          title: `T${i}`,
+          impact: 50,
+          effortDays: 1,
+          ...(i === 0 ? {} : { blockedBy: [`t${i - 1}`] }),
+        });
+      }
+    };
+    chain(100);
+    const root = getTaskRow(db, "t0");
+    const reads = (): number => {
+      let prepares = 0;
+      const countedDb = new Proxy(db, {
+        get(target, property) {
+          const value = Reflect.get(target, property);
+          if (property === "prepare") {
+            return (...args: Parameters<Db["prepare"]>) => {
+              prepares++;
+              return target.prepare(...args);
+            };
+          }
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      renderTaskTree(countedDb, "demo", root, "dependents", (t) => t.status);
+      return prepares;
+    };
+    const out = renderTaskTree(db, "demo", root, "dependents", (t) => t.status);
+    // Capped traversal: the deepest listed task is FRONTIER_MAX_DEPTH levels down...
+    expect(out).toContain(`t${FRONTIER_MAX_DEPTH}  OPEN  T${FRONTIER_MAX_DEPTH}`);
+    expect(out).not.toContain(`t${FRONTIER_MAX_DEPTH + 1}  OPEN`);
+    // ...and it says exactly one open task hangs below it.
+    expect(out.split("\n").at(-1)).toContain("(+1)");
+    // One read per level, never per node: bounded by the depth cap, not the chain.
+    const small = reads();
+    expect(small).toBeLessThanOrEqual(FRONTIER_MAX_DEPTH + 6);
+    for (let i = 100; i < 300; i++) {
       addTask(db, {
         workstream: "demo",
         localId: `t${i}`,
         title: `T${i}`,
         impact: 50,
         effortDays: 1,
-        ...(i === 0 ? {} : { blockedBy: [`t${i - 1}`] }),
+        blockedBy: [`t${i - 1}`],
       });
     }
-    const root = getTaskRow(db, "t0");
-    let prepares = 0;
-    const countedDb = new Proxy(db, {
-      get(target, property) {
-        const value = Reflect.get(target, property);
-        if (property === "prepare") {
-          return (...args: Parameters<Db["prepare"]>) => {
-            prepares++;
-            return target.prepare(...args);
-          };
-        }
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
-
-    expect(renderTaskTree(countedDb, "demo", root, "dependents", (t) => t.status)).toContain(
-      "t99  OPEN  T99",
-    );
-    expect(prepares).toBeLessThanOrEqual(4);
+    expect(reads()).toBe(small);
   });
 });
 

@@ -63,6 +63,18 @@ export interface ListTasksOptions {
   status?: TaskStatus | readonly TaskStatus[];
   /** Filter to one or more substates (ANDed with `status`). */
   substate?: TaskSubstate | readonly TaskSubstate[];
+  /** Only tasks whose `owner_id` is this agent (the real FK, so same-named agents never mix). */
+  ownerId?: number;
+}
+
+/** The agent's id by (workstream, name); null when there is no such live agent. */
+export function agentIdByRef(db: Db, workstream: string, name: string): number | null {
+  const wsId = tryResolveLiveWorkstreamId(db, workstream);
+  if (wsId === null) return null;
+  const row = db
+    .prepare("SELECT id FROM agents WHERE workstream_id = ? AND name = ?")
+    .get(wsId, name) as { id: number } | undefined;
+  return row === undefined ? null : row.id;
 }
 
 /** Normalise a one-or-many filter option to an array (undefined = no filter). */
@@ -96,6 +108,10 @@ export function listTasks(db: Db, workstream?: string, opts: ListTasksOptions = 
     where.push(`t.substate IN (${substates.map(() => "?").join(", ")})`);
     params.push(...substates);
   }
+  if (opts.ownerId !== undefined) {
+    where.push("t.owner_id = ?");
+    params.push(opts.ownerId);
+  }
   const sql =
     where.length === 0
       ? `SELECT ${SELECT_TASK_COLS} ${TASK_FROM_JOIN} ORDER BY t.local_id`
@@ -116,6 +132,7 @@ const VIEW_FROM_JOIN = (view: string) => `
 const SELECT_VIEW_COLS = `
   v.id AS id,
   v.local_id AS local_id,
+  v.workstream_id AS workstream_id,
   ws.name AS workstream,
   v.title AS title,
   v.status AS status,
@@ -126,6 +143,7 @@ const SELECT_VIEW_COLS = `
   v.dispatch_host AS dispatch_host,
   v.kind AS kind,
   v.wave AS wave,
+  v.owner_id AS owner_id,
   ag.name AS owner,
   v.created_at AS created_at,
   v.updated_at AS updated_at

@@ -115,6 +115,7 @@ export {
   weakDecisionWarning,
 } from "./tasks/lifecycle.js";
 export {
+  agentIdByRef,
   getTask,
   getTaskNote,
   getTaskOwner,

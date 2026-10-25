@@ -46,7 +46,7 @@ interface BlockJson {
 }
 
 interface ShowJson {
-  blockers: { name: string }[];
+  blockers: { id: string }[];
 }
 
 describe("flag-vs-positional parity sweep (dogfood-*)", () => {
@@ -118,7 +118,7 @@ describe("flag-vs-positional parity sweep (dogfood-*)", () => {
 
       const show = await runCliJson(["task", "show", "c", "-w", "ws", "--json"], dbPath);
       const payload = show.data as ShowJson;
-      expect(payload.blockers.map((b) => b.name).sort()).toEqual(["a", "b"]);
+      expect(payload.blockers.map((b) => b.id).sort()).toEqual(["a", "b"]);
     });
 
     it("repeated `--by a --by b` adds both edges", async () => {

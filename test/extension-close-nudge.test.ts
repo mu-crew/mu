@@ -32,7 +32,7 @@ const owned = (tasks: [string, string][]): MuResult => ({
   stdout: JSON.stringify({
     ok: true,
     data: {
-      items: tasks.map(([name, status]) => ({ name, status })),
+      items: tasks.map(([id, status]) => ({ id, status })),
       count: tasks.length,
     },
     next: null,
@@ -138,6 +138,67 @@ describe("registerCloseNudge", () => {
     expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
     expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a capped owned-by read (more=N)", () => {
+  // The first page shows only a finished task; the live one is on page two.
+  const page = (items: [string, string][], more: number): MuResult => ({
+    code: 0,
+    stdout: JSON.stringify({
+      ok: true,
+      data: { items: items.map(([id, status]) => ({ id, status })), count: items.length, more },
+      next: null,
+    }),
+    stderr: "",
+  });
+
+  it("follows --from to the next page: an IN_PROGRESS task past the cut still nudges", async () => {
+    const f = fakePi();
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] !== "task") return { code: 0, stdout: "", stderr: "" };
+      return args.includes("--from")
+        ? page([["live", "IN_PROGRESS"]], 0)
+        : page([["done", "CLOSED"]], 1);
+    });
+    registerCloseNudge(f.pi, run, WORKER);
+    const r = (await f.emit("agent_before_settle", { outcome: "completed" })) as {
+      entries: { content: string }[];
+    };
+    expect(r.entries[0]?.content).toContain("mu task close live -w auth");
+    const reads = run.mock.calls.filter((c) => c[0][0] === "task").map((c) => c[0]);
+    expect(reads[1]).toEqual([...(reads[0] ?? []), "--from", "2"]);
+  });
+
+  it("a cut that never advances is unknown, not 'owns nothing': no nudge, no endless reads", async () => {
+    const f = fakePi();
+    const run = vi.fn(async (args: readonly string[]) =>
+      args[0] === "task" ? page([], 5) : { code: 0, stdout: "", stderr: "" },
+    );
+    registerCloseNudge(f.pi, run, WORKER);
+    expect(await f.emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
+    expect(run.mock.calls.filter((c) => c[0][0] === "task")).toHaveLength(1);
+  });
+});
+
+describe("a stalled owned-by page after a real one", () => {
+  it("is unknown, not the partial list: a cut is not proof, so no nudge", async () => {
+    const f = fakePi();
+    const body = (items: [string, string][], more: number): MuResult => ({
+      code: 0,
+      stdout: JSON.stringify({
+        ok: true,
+        data: { items: items.map(([id, status]) => ({ id, status })), count: items.length, more },
+        next: null,
+      }),
+      stderr: "",
+    });
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] !== "task") return { code: 0, stdout: "", stderr: "" };
+      return args.includes("--from") ? body([], 4) : body([["live", "IN_PROGRESS"]], 4);
+    });
+    registerCloseNudge(f.pi, run, WORKER);
+    expect(await f.emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
   });
 });
 

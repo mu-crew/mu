@@ -7,6 +7,10 @@
 //
 // Extracted from src/cli/tasks.ts as part of refactor_split_large_src_files.
 //
+// Output is the mu-next record form (src/cli/tasks/records.ts): one task per
+// line or one JSON item with SQL column names, every result capped on its final
+// bytes, a cut naming the exact `--from` command that resumes.
+//
 // Removed in audit_cleanups_post_schema_v5_wave: `task blocked`,
 // `task goals`, `task search`, `task ready` (the latter merged into
 // `task next -n 0`, which now means "all ready, unlimited"). The
@@ -14,10 +18,11 @@
 // `mu state` / `mu tracks` consume them. The audit's SQL recipes for
 // the removed verbs live in docs/guide/sql.md "Run common queries".
 
+import { AgentNotFoundError } from "../../agents.js";
 import {
   byRoiDesc,
-  emitJsonCollection,
-  formatTaskListTable,
+  checkQualifiedPrefix,
+  parseQualifiedRef,
   parseSortOption,
   parseStatusesOption,
   parseSubstatesOption,
@@ -26,21 +31,43 @@ import {
   resolveWorkstream,
   sortTasks,
   type TaskSortKey,
-  withRoiAll,
+  UsageError,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
 import { pc, printNextSteps } from "../../output.js";
 import { taskRevisions } from "../../revision.js";
+import { shellWord } from "../../shell-quote.js";
 import {
+  agentIdByRef,
   listReady,
   listTasks,
   listTasksByOwner,
   listTasksByOwnerCrossWorkstream,
+  type TaskRow,
 } from "../../tasks.js";
+import { fromOffset, jsonDocument, type TaskPageOut, taskPage } from "./records.js";
+
+/** Print a page: the JSON document, or the record lines. */
+function emitPage(out: TaskPageOut, json: boolean): void {
+  if (json) {
+    console.log(jsonDocument(out.data));
+    return;
+  }
+  console.log(out.lines.join("\n"));
+}
+
+/** Flags that re-select the same rows, for the `next=` command of a cut. */
+type Flags = readonly (string | undefined)[];
+const command = (parts: readonly string[], flags: Flags, from: number): string =>
+  [...parts, ...flags.filter((f): f is string => f !== undefined), "--from", String(from)].join(
+    " ",
+  );
+
+const wsFlag = (ws: string): string => `-w ${shellWord(ws)}`;
 
 export async function cmdMyTasks(
   db: Db,
-  opts: { json?: boolean; includeClosed?: boolean } = {},
+  opts: { json?: boolean; includeClosed?: boolean; from?: number } = {},
 ): Promise<void> {
   const self = resolveSelf(db);
   // Scope by self.workstream so a same-named worker in another
@@ -48,31 +75,65 @@ export async function cmdMyTasks(
   const tasks = listTasksByOwner(db, self.workstreamName, self.name, {
     includeClosed: opts.includeClosed ?? false,
   });
-  if (opts.json) {
-    emitJsonCollection(withRoiAll(tasks));
-    return;
-  }
-  if (tasks.length === 0) {
+  if (tasks.length === 0 && !opts.json) {
     console.log(pc.dim(`(${self.name} owns no tasks)`));
     return;
   }
-  console.log(formatTaskListTable(tasks));
+  emitPage(
+    taskPage(tasks, {
+      from: fromOffset(opts.from),
+      json: opts.json === true,
+      nextFor: (k) =>
+        command(["mu", "me", "tasks"], [opts.includeClosed ? "--include-closed" : undefined], k),
+    }),
+    opts.json === true,
+  );
 }
 
-export async function cmdMyNext(db: Db, opts: { lines?: number; json?: boolean }): Promise<void> {
+export async function cmdMyNext(
+  db: Db,
+  opts: { lines?: number; json?: boolean; from?: number },
+): Promise<void> {
   const self = resolveSelf(db);
   const k = opts.lines ?? 1;
   const sorted = listReady(db, self.workstreamName).sort(byRoiDesc);
   const tasks = k === 0 ? sorted : sorted.slice(0, k);
-  if (opts.json) {
-    emitJsonCollection(withRoiAll(tasks));
-    return;
-  }
-  if (tasks.length === 0) {
+  if (tasks.length === 0 && !opts.json) {
     console.log(pc.dim(`(no ready tasks in ${self.workstreamName})`));
     return;
   }
-  console.log(formatTaskListTable(tasks));
+  emitPage(
+    taskPage(tasks, {
+      from: fromOffset(opts.from),
+      json: opts.json === true,
+      nextFor: (from) => command(["mu", "me", "next", "-n", String(k)], [], from),
+    }),
+    opts.json === true,
+  );
+}
+
+/** The agent an `--owner` / `--mine` filter names, as its real id (never matched by bare name). */
+function ownerFilter(
+  db: Db,
+  ws: string,
+  opts: { owner?: string; mine?: boolean },
+): { id: number; flag: string } | undefined {
+  if (opts.owner !== undefined && opts.mine === true) {
+    throw new UsageError("--owner and --mine pick the owner two ways; pass one of them");
+  }
+  if (opts.mine === true) {
+    const self = resolveSelf(db);
+    const id = agentIdByRef(db, self.workstreamName, self.name);
+    if (id === null) throw new AgentNotFoundError(self.name, self.workstreamName);
+    return { id, flag: `--owner ${shellWord(`${self.workstreamName}/${self.name}`)}` };
+  }
+  if (opts.owner === undefined) return undefined;
+  const ref = parseQualifiedRef(opts.owner);
+  const agentWs =
+    ref.workstream === undefined ? ws : checkQualifiedPrefix(opts.owner, ref.workstream);
+  const id = agentIdByRef(db, agentWs, ref.name);
+  if (id === null) throw new AgentNotFoundError(ref.name, agentWs);
+  return { id, flag: `--owner ${shellWord(`${agentWs}/${ref.name}`)}` };
 }
 
 export async function cmdTaskList(
@@ -83,6 +144,10 @@ export async function cmdTaskList(
     status?: string[];
     substate?: string[];
     sort?: string;
+    all?: boolean;
+    owner?: string;
+    mine?: boolean;
+    from?: number;
   },
 ): Promise<void> {
   const workstream = await resolveWorkstream(opts.workstream);
@@ -96,34 +161,49 @@ export async function cmdTaskList(
   }
   const substates = parseSubstatesOption(opts.substate);
   if (substates !== undefined) listOpts.substate = substates;
+  const owner = ownerFilter(db, workstream, opts);
+  if (owner !== undefined) listOpts.ownerId = owner.id;
+  // `--all` is the explicit every-status listing (what no filter already is); it pages like any read.
   // Default sort for `mu task list` is `id` (preserves prior
   // behaviour: SQL ORDER BY local_id). The other read verbs default
   // to `roi` because their primary use is "what should I do next".
   const sortKey: TaskSortKey = opts.sort === undefined ? "id" : parseSortOption(opts.sort);
   const tasks = sortTasks(listTasks(db, workstream, listOpts), sortKey);
-  if (opts.json) {
-    // `revision` is what `--if <rev>` on the guarded verbs repeats.
-    const revs = taskRevisions(db, workstream);
-    emitJsonCollection(withRoiAll(tasks).map((t) => ({ ...t, revision: revs.get(t.name) ?? 0 })));
+  const flags: Flags = [
+    statuses === undefined ? undefined : `--status ${statuses.join(",")}`,
+    substates === undefined ? undefined : `--substate ${substates.join(",")}`,
+    opts.sort === undefined ? undefined : `--sort ${opts.sort}`,
+    opts.all === true ? "--all" : undefined,
+    owner?.flag,
+  ];
+  const head = ["mu", "task", "list", wsFlag(workstream)];
+  const first = tasks.find((t) => t.status === "OPEN" && t.substate === "triage");
+  const trailer: string[] = [];
+  // The triage inbox is a to-do list of decisions: say how to make them.
+  if (first !== undefined && opts.json !== true) {
+    const ref = `${shellWord(first.name)} ${wsFlag(workstream)}`;
+    trailer.push(
+      `triage next=mu task accept ${ref}`,
+      `triage next=mu task close ${ref} --as rejected|duplicate --why "<reason>"`,
+      `triage next=mu task notes ${ref}`,
+    );
+  }
+  if (tasks.length === 0 && opts.json !== true) {
+    console.log(pc.dim("(no tasks)"));
     return;
   }
-  console.log(pc.bold(`mu-${workstream}`));
-  const tableOpts: Parameters<typeof formatTaskListTable>[1] = {};
-  const basis = relTimeBasisForSort(sortKey);
-  if (basis !== null) tableOpts.relTimeBasis = basis;
-  console.log(formatTaskListTable(tasks, tableOpts));
-  // The triage inbox is a to-do list of decisions: say how to make them.
-  const first = tasks.find((t) => t.status === "OPEN" && t.substate === "triage");
-  if (first !== undefined) {
-    printNextSteps([
-      { intent: "Accept as work", command: `mu task accept ${first.name} -w ${workstream}` },
-      {
-        intent: "Decline",
-        command: `mu task close ${first.name} --as rejected|duplicate --why "<reason>" -w ${workstream}`,
-      },
-      { intent: "Read the evidence", command: `mu task notes ${first.name} -w ${workstream}` },
-    ]);
-  }
+  emitPage(
+    taskPage(tasks, {
+      from: fromOffset(opts.from),
+      json: opts.json === true,
+      nextFor: (k) => command(head, flags, k),
+      basis: relTimeBasisForSort(sortKey),
+      // `revision` is what `--if <rev>` on the guarded verbs repeats.
+      ...(opts.json === true ? { revisions: taskRevisions(db, workstream) } : {}),
+      trailer,
+    }),
+    opts.json === true,
+  );
 }
 
 // ROI = impact / effort_days. Higher first. Tasks with effortDays=0
@@ -141,6 +221,7 @@ export async function cmdTaskNext(
     sort?: string;
     status?: string[];
     substate?: string[];
+    from?: number;
   },
 ): Promise<void> {
   const workstream = await resolveWorkstream(opts.workstream);
@@ -155,11 +236,7 @@ export async function cmdTaskNext(
   if (substates !== undefined) readyOpts.substate = substates;
   const sorted = sortTasks(listReady(db, workstream, readyOpts), sortKey);
   const tasks = k === 0 ? sorted : sorted.slice(0, k);
-  if (opts.json) {
-    emitJsonCollection(withRoiAll(tasks));
-    return;
-  }
-  if (tasks.length === 0) {
+  if (tasks.length === 0 && opts.json !== true) {
     const parked = listTasks(db, workstream, { substate: "parked" }).length;
     const triage = listTasks(db, workstream, { substate: "triage" }).length;
     if (parked === 0 && triage === 0) {
@@ -190,35 +267,67 @@ export async function cmdTaskNext(
     ]);
     return;
   }
-  const tableOpts: Parameters<typeof formatTaskListTable>[1] = {};
-  const basis = relTimeBasisForSort(sortKey);
-  if (basis !== null) tableOpts.relTimeBasis = basis;
-  console.log(formatTaskListTable(tasks, tableOpts));
+  const flags: Flags = [
+    "-n",
+    String(k),
+    statuses === undefined ? undefined : `--status ${statuses.join(",")}`,
+    substates === undefined ? undefined : `--substate ${substates.join(",")}`,
+    opts.sort === undefined ? undefined : `--sort ${opts.sort}`,
+  ];
+  emitPage(
+    taskPage(tasks, {
+      from: fromOffset(opts.from),
+      json: opts.json === true,
+      nextFor: (from) => command(["mu", "task", "next", wsFlag(workstream)], flags.slice(0), from),
+    }),
+    opts.json === true,
+  );
 }
 
 export async function cmdTaskOwnedBy(
   db: Db,
   agent: string,
-  opts: { json?: boolean; includeClosed?: boolean; workstream?: string; all?: boolean } = {},
+  opts: {
+    json?: boolean;
+    includeClosed?: boolean;
+    workstream?: string;
+    all?: boolean;
+    from?: number;
+  } = {},
 ): Promise<void> {
   // Default behaviour: scope to the resolved workstream (so the common
   // case 'mu task owned-by worker-1' returns only this workstream's
   // worker-1, not every workstream's). --all explicitly opts into the
   // cross-workstream view via listTasksByOwnerCrossWorkstream.
   const includeClosed = opts.includeClosed ?? false;
-  const tasks = opts.all
-    ? listTasksByOwnerCrossWorkstream(db, agent, { includeClosed })
-    : listTasksByOwner(db, await resolveWorkstream(opts.workstream), agent, { includeClosed });
-  if (opts.json) {
-    emitJsonCollection(withRoiAll(tasks));
-    return;
-  }
-  if (tasks.length === 0) {
+  const ws = opts.all ? undefined : await resolveWorkstream(opts.workstream);
+  const tasks: TaskRow[] =
+    ws === undefined
+      ? listTasksByOwnerCrossWorkstream(db, agent, { includeClosed })
+      : listTasksByOwner(db, ws, agent, { includeClosed });
+  if (tasks.length === 0 && opts.json !== true) {
     console.log(pc.dim(`(no tasks owned by ${agent})`));
     return;
   }
+  const flags: Flags = [
+    ws === undefined ? "--all" : undefined,
+    includeClosed ? "--include-closed" : undefined,
+  ];
   // Surface the workstream column when we're showing cross-workstream
   // results (--all); for the scoped (default) case the column would
   // be redundant.
-  console.log(formatTaskListTable(tasks, { withWorkstream: opts.all === true }));
+  emitPage(
+    taskPage(tasks, {
+      from: fromOffset(opts.from),
+      json: opts.json === true,
+      withWorkstream: ws === undefined,
+      nextFor: (k) =>
+        command(
+          ["mu", "task", "owned-by", shellWord(agent), ...(ws === undefined ? [] : [wsFlag(ws)])],
+          flags,
+          k,
+        ),
+    }),
+    opts.json === true,
+  );
 }

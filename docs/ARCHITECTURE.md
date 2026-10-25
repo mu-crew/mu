@@ -155,7 +155,7 @@ are re-export hubs.
 | `src/tasks/lifecycle.ts`, `status.ts` | close, open and cascade; `TaskStatus` |
 | `src/tasks/wait.ts`, `errors.ts` | `waitForTasks`; typed task errors |
 | `src/tracks.ts` | union-find tracks with diamond merge |
-| `src/dag.ts` | `loadFullDag`, `renderForest`, `renderTaskTree` for `mu task tree` |
+| `src/dag.ts` | `loadFullDag` (the whole workstream, SDK), `loadOpenTaskFrontier` (the bounded open DAG: open tasks expand, CLOSED are leaves, depth and node caps, one SQL read per level; the future dashboard reads the same query), `renderForest`, `renderTaskTree`, `renderFrontierLines` |
 | `src/workstream-scope.ts` | the one never-trimming validator for a workstream name typed as scope (`-w`, a ref prefix, a record's `workstream`); shared by the CLI and the pi extension |
 | `src/revision.ts` | task revision (`taskRevision`: derived on read from the task row, owner, both edge directions and note count; no counter, no LIKE), `agentRevision` (derived from the agent incarnation, row, owned tasks and worktree rows), `RevisionMismatchError`, `withTaskFence` (one `--if` check around a whole invocation) |
 | `src/workstream.ts` | ensure, list, summarize, revision, soft teardown, reuse of a torn-down name |
@@ -171,7 +171,7 @@ are re-export hubs.
 | `src/compile-cache.ts`, `src/state-dir.ts` | best-effort V8 compile cache under `<state>/compile-cache`; builtins-only state-dir resolution |
 | `src/cli.ts` | Commander wiring (`buildProgram`, `runCli`) |
 | `src/cli/*.ts` | one file per verb namespace, thin wrappers over the SDK; `format.ts` renders tables, `handle.ts` maps errors to exit codes and runs ambient sync |
-| `src/cli/tasks/*.ts` | the `mu task` namespace, including `mu me tasks` / `mu me next` |
+| `src/cli/tasks/*.ts` | the `mu task` namespace, including `mu me tasks` / `mu me next`. `records.ts` is the task read boundary: `taskToOutput` (SQL column names, `id` = `local_id`, real `workstream_id`/`owner_id`), `taskRecord` (one escaped line, <= 400 characters), `taskPage`/`pageRecords` (a result serialized and grown to <= 4 KB, `more`/`next`); `list`, `next`, `owned-by`, `show` and `tree` all go through it. `mu state` and `mu me` keep the table formatter |
 | `src/cli/dispatch-hints.ts` | dispatch-time `Next:` hints for pi agents (`--fresh`, `--interrupt`, abort) |
 | `src/cli/stdin.ts` | `-` as a text argument: reads note / send text from stdin (heredoc prose) |
 | `src/cli/agents-remote.ts` | `mu agent remote-env`: prints the ssh forward and env, runs nothing |

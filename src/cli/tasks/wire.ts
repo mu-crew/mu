@@ -115,6 +115,14 @@ export function wireTaskCommands(program: Command): void {
     )
     .option("--substate <substate...>", SUBSTATE_OPT_DESC)
     .option("--sort <key>", `${SORT_OPT_DESC} (default id)`)
+    .option("--all", "every status (the default; accepted so a guessed flag works)")
+    .option("--owner <agent>", "only tasks this agent owns (<agent> or <workstream>/<agent>)")
+    .option("--mine", "only tasks the calling agent owns")
+    .option(
+      "--from <n>",
+      "start at record <n> (a cut result names the command)",
+      parsePositiveNumber,
+    )
     .option(...JSON_OPT)
     .action(function () {
       const opts = (this as Command).opts() as {
@@ -123,6 +131,10 @@ export function wireTaskCommands(program: Command): void {
         status?: string[];
         substate?: string[];
         sort?: string;
+        all?: boolean;
+        owner?: string;
+        mine?: boolean;
+        from?: number;
       };
       return handle((db) => cmdTaskList(db, opts), this as Command)();
     });
@@ -138,6 +150,11 @@ export function wireTaskCommands(program: Command): void {
       parseLines,
     )
     .option(...WORKSTREAM_OPT)
+    .option(
+      "--from <n>",
+      "start at record <n> (a cut result names the command)",
+      parsePositiveNumber,
+    )
     .option("--sort <key>", `${SORT_OPT_DESC} (default roi)`)
     .option(
       "--status <status...>",
@@ -153,6 +170,7 @@ export function wireTaskCommands(program: Command): void {
         sort?: string;
         status?: string[];
         substate?: string[];
+        from?: number;
       };
       return handle((db) => cmdTaskNext(db, opts), this as Command)();
     });
@@ -170,11 +188,17 @@ export function wireTaskCommands(program: Command): void {
       "--all",
       "surface every workstream's same-named agent (cross-workstream view; default scopes to current workstream)",
     )
+    .option(
+      "--from <n>",
+      "start at record <n> (a cut result names the command)",
+      parsePositiveNumber,
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (agent: string) {
       const opts = (this as Command).optsWithGlobals() as {
         json?: boolean;
+        from?: number;
         includeClosed?: boolean;
         all?: boolean;
         workstream?: string | string[];
@@ -241,7 +265,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("show <id>")
     .description(
-      "Show a task: row + edges (blockers/dependents) + the default notes view (see `task notes`). --note <n> prints one note whole.",
+      "Show a task: one record, its edges (blockers/dependents) and the default notes view (see `task notes`), capped at 4 KB. --note <n> prints one note whole; --edges-from <n> pages the neighbours.",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
@@ -250,11 +274,17 @@ export function wireTaskCommands(program: Command): void {
       "print note <n> of this task whole (n as shown in `task notes`)",
       parsePositiveNumber,
     )
+    .option(
+      "--edges-from <n>",
+      "list only the neighbours (blockers, then dependents) from <n> on",
+      parsePositiveNumber,
+    )
     .action(function (id: string) {
       const opts = (this as Command).opts() as {
         json?: boolean;
         workstream?: string;
         note?: number;
+        edgesFrom?: number;
       };
       return handle((db) => cmdTaskShow(db, id, opts), this as Command)();
     });
@@ -262,13 +292,21 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("tree <id>")
     .description(
-      "ASCII tree of a task's blockers (default) or dependents (--down). Diamonds collapse to one render with an arrow marker.",
+      "Open tree of a task's blockers (default) or dependents (--down): open tasks expand, CLOSED are leaves, capped; `(+N next=…)` names the command for what is left. Diamonds list once, then an arrow marker.",
     )
     .option("--down", "render dependents (what this task blocks) instead of blockers")
+    .option("--all", "walk CLOSED tasks too (default: open tasks, CLOSED as leaves)")
+    .option(
+      "--from <n>",
+      "start at entry <n> (a cut result names the command)",
+      parsePositiveNumber,
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (id: string) {
       const opts = (this as Command).opts() as {
+        all?: boolean;
+        from?: number;
         down?: boolean;
         workstream?: string;
         json?: boolean;

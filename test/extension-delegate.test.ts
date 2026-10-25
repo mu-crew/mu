@@ -1325,7 +1325,7 @@ describe("nudges yield to a delegate answer on its way", () => {
     const held: (() => void)[] = [];
     let holdState = false;
     // The keep-driving nudge's only read: `mu task list --status IN_PROGRESS`.
-    const state = ok({ items: [{ name: "t1", workstreamName: "crew", status: "IN_PROGRESS" }] });
+    const state = ok({ items: [{ id: "t1", status: "IN_PROGRESS" }] });
     const isInProgressList = (args: readonly string[]) =>
       args[0] === "task" && args[1] === "list" && args.includes("IN_PROGRESS");
     const run: MuRunner = (args, signal) => {
@@ -1423,12 +1423,10 @@ describe("nudges yield to a delegate answer on its way", () => {
     const run: MuRunner = (args, signal) => {
       if (args[0] === "task" && args[1] === "list" && args.includes("IN_PROGRESS"))
         return new Promise((resolve) =>
-          heldList.push(() =>
-            resolve(ok({ items: [{ name: "t1", workstreamName: "crew", status: "IN_PROGRESS" }] })),
-          ),
+          heldList.push(() => resolve(ok({ items: [{ id: "t1", status: "IN_PROGRESS" }] }))),
         );
       if (args[0] === "task" && args[1] === "owned-by")
-        return Promise.resolve(ok({ items: [{ name: "w1-task", status: "IN_PROGRESS" }] }));
+        return Promise.resolve(ok({ items: [{ id: "w1-task", status: "IN_PROGRESS" }] }));
       return mu.run(args, signal);
     };
     const on = (e: string, h: (e: unknown, c: MuPiContext) => unknown) =>

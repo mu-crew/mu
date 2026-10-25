@@ -22,6 +22,45 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Task reads are bounded records.** `task list`, `next`, `owned-by`,
+  `me tasks`/`me next` print one escaped TAB-separated record per task
+  (`task id STATE impact=… effort_days=… [owner=…] title`, <= 400
+  characters; the title is clipped with `cut=N next=<exact command>`), and
+  the whole result stays within 4 KB, serialized and grown until it fits
+  (text lines or the JSON document, footer included). A cut ends
+  `more=N next=mu task list … --from <n>`; `--from <n>` is accepted by every
+  one of them, so the pages cover every task once. `list` takes `--all`
+  (accepted: it already lists every status), `--owner <agent|ws/agent>` and
+  `--mine` (the agent's real id, so same-named agents of two workstreams
+  never mix; `--mine` is the spawn-injected identity). The owner shows only
+  while IN_PROGRESS (`owner_id` stays the real FK, so closed history is
+  intact in the SDK). `--sort recency|age` adds the sorted timestamp to each
+  record. `--json`: items use the SQL column names (`id` = `local_id`,
+  `local_id`, `workstream_id`, `owner_id`, `effort_days`, `scored`,
+  `dispatch_host`, `kind`, `wave`, `created_at`, `updated_at`, plus
+  `revision` on `list`/`show`, `workstream` on `show`/`owned-by --all`),
+  never `name`/`workstreamName`/`effortDays`/computed `roi`; `data` is
+  `{items,count,more[,retrieve]}`. `mu state` and `mu me` keep their tables.
+  `extension/delegate.ts` and `extension/nudge.ts` read `id`/`workstream` and
+  follow `--from`: a cut owned-by/list read that cannot be completed is
+  unknown, not "owns nothing".
+- **`task show` is one 4 KB result.** The task is a record (`task id STATE
+  … ws= created= updated= rev=`), then one `blocker|dependent id STATE`
+  record per neighbour (still-gating first, CLOSED after), then the notes
+  records. The task record, edges and ordinary notes share the cap (the
+  pinned brief, report and verdicts stay exempt); edges beyond their share
+  end `more=N next=mu task show <id> --edges-from <n>`; a title too long
+  even for `show` names a `mu sql` read that returns it whole. `--json`:
+  `{task,blockers,dependents,edges_more[,edges_retrieve],notes,notes_more…}`.
+- **`task tree` is the open DAG.** `loadOpenTaskFrontier(db, ws, root?,
+  direction?)` (exported from `src/index.ts`): open tasks expand, CLOSED ones
+  are leaves (a CLOSED root still expands), at most 3 CLOSED neighbours per
+  node are listed and the rest counted (`closed+N next=… --all`), depth <= 12
+  and <= 2000 tasks, diamonds and cycles list once then `↻`, one SQL read per
+  level. `(+N next=mu task tree <node>)` names the open tasks a cap left out;
+  `--all` walks CLOSED too; `--from <n>` pages the lines. `--json` is a flat
+  preorder of `{id,depth,parent,again?,kids?,closed?}` items. `loadFullDag`
+  keeps its whole-workstream SDK semantics.
 - **Notes default view.** `mu task notes <id>` and the notes of `mu task show`
   print one escaped TAB-separated record per line (`kind n by= at= text`):
   the first `brief`, the last `report` (else the closer's last note, found
