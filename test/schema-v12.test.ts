@@ -227,7 +227,9 @@ describe("v12 shape", () => {
       "runs",
       "last_spawn",
       "created_at",
+      "enabled",
     ]);
+    expect(c.get("enabled")).toMatchObject({ notnull: 1, dflt: "1" });
     expect(c.get("worktree")).toMatchObject({ notnull: 1, dflt: "0" });
     expect(c.get("max_runs")).toMatchObject({ notnull: 1, dflt: "1" });
     expect(c.get("runs")).toMatchObject({ notnull: 1, dflt: "0" });

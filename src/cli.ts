@@ -599,6 +599,15 @@ export function parseNonNegativeInt(value: string): number {
   return n;
 }
 
+/** A whole number >= 1: run ceilings (`task auto --max`). */
+export function parsePositiveInt(value: string): number {
+  const n = NON_NEGATIVE_INT_RE.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(n) || n < 1) {
+    throw new InvalidArgumentError(`expected an integer >= 1, got ${JSON.stringify(value)}`);
+  }
+  return n;
+}
+
 /** Line counts (-n/--lines/--events): same rule as parseNonNegativeInt. */
 export const parseLines = parseNonNegativeInt;
 

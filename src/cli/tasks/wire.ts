@@ -16,6 +16,7 @@ import {
   parseImpact,
   parseLines,
   parseNonNegativeInt,
+  parsePositiveInt,
   parsePositiveNumber,
   parseSeconds,
   TASK_SORT_KEYS,
@@ -24,6 +25,7 @@ import {
 import { NOTE_KINDS, type NoteKind } from "../../db.js";
 import { TASK_SUBSTATES } from "../../tasks/status.js";
 import { TASK_STATUS_LIST } from "../../tasks.js";
+import { cmdTaskAuto } from "./auto.js";
 import { cmdClaim, cmdTaskRelease, cmdTaskWait } from "./claim.js";
 import { cmdTaskBlock, cmdTaskDelete, cmdTaskReparent, cmdTaskUnblock } from "./edges.js";
 import {
@@ -451,6 +453,31 @@ export function wireTaskCommands(program: Command): void {
         json?: boolean;
       };
       return handle((db) => cmdTaskUnpark(db, id, opts), this as Command)();
+    });
+
+  task
+    .command("auto [ids...]")
+    .description(
+      "Authorise tasks for `mu next` on THIS machine (ready alone is never permission): stores cli key, worktree mode and run ceiling, and names this machine the task's dispatch host. --off revokes; counters stay. Refuses another host's task.",
+    )
+    .option("--blockers-of <id>", "also authorise every open transitive blocker of <id> (not <id>)")
+    .option("--cli <key>", "agent CLI key to spawn (required unless --off)")
+    .option("--worktree", "give each worker its own worktree")
+    .option("--max <n>", "run ceiling per task (default 1)", parsePositiveInt)
+    .option("--off", "revoke this machine's permission (keeps runs and the replay receipt)")
+    .option(...WORKSTREAM_OPT)
+    .option(...JSON_OPT)
+    .action(function (ids: string[]) {
+      const opts = (this as Command).opts() as {
+        blockersOf?: string;
+        cli?: string;
+        worktree?: boolean;
+        max?: number;
+        off?: boolean;
+        workstream?: string;
+        json?: boolean;
+      };
+      return handle((db) => cmdTaskAuto(db, ids, opts), this as Command)();
     });
 
   task

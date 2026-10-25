@@ -50,6 +50,7 @@ const ARGS: Record<string, string[]> = {
   "task open": ["t1"],
   "task park": ["t1"],
   "task accept": ["t1"],
+  "task auto": ["t1", "--off"],
   "task unpark": ["t1"],
   "task release": ["t1"],
   "task claim": ["t1", "--self"],

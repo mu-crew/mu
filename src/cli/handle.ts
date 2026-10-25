@@ -109,6 +109,7 @@ import {
   SyncSourceTooNewError,
   syncEnabled,
 } from "../sync.js";
+import { TaskAutoArgError, TaskAutoRefusedError } from "../task-auto.js";
 import { candidateTaskIds } from "../tasks/id.js";
 import {
   ClaimerNotRegisteredError,
@@ -316,6 +317,7 @@ export class NameAmbiguousError extends Error {
 export function classifyError(err: unknown): { label: string; exitCode: number } {
   if (
     err instanceof UsageError ||
+    err instanceof TaskAutoArgError ||
     // `mu log --kind task|note|...`: a tag naming a projectable entity.
     err instanceof LogKindReservedError ||
     // abort on a non-pi agent: there is no control socket to carry it.
@@ -378,6 +380,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||
+    err instanceof TaskAutoRefusedError ||
     err instanceof TaskAlreadyOwnedError ||
     err instanceof TaskHasOpenBlockersError ||
     err instanceof CloseNeedsEvidenceError ||

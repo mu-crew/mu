@@ -208,5 +208,16 @@ mu task release build -w auth
 - A parked task leaves the ready set, and its dependents keep waiting.
 - `release` clears the owner and returns `IN_PROGRESS` to `OPEN`.
 
+## Authorise tasks for the executor
+
+```bash
+mu task auto build --cli pi --max 2 -w auth
+mu task auto --blockers-of umbrella --cli pi -w auth
+mu task auto build --off -w auth
+```
+
+Ready is not permission: the executor acts only on an `auto` task, and only on
+the machine that authorised it. `--off` keeps the run counter.
+
 To wait on something outside the repo, such as an upstream release,
 block on a placeholder task and close it when the thing lands.

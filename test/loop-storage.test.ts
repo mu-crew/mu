@@ -198,7 +198,12 @@ describe("a populated v12 DB upgrades to v13", () => {
       auto: r.prepare("SELECT * FROM task_auto").all(),
       edges: r.prepare("SELECT * FROM task_edges").all(),
     }));
-    expect(after).toEqual(before);
+    // The one change: a pre-existing task_auto row gains enabled = 1 (permission stays on).
+    expect(columns(p, "task_auto")).toContain("enabled");
+    expect(after).toEqual({
+      ...before,
+      auto: (before.auto as object[]).map((r) => ({ ...r, enabled: 1 })),
+    });
 
     // Defaults: every old task is kind 'work', no wave; the old agent has no spawner.
     expect(listTasks(db).map((t) => [t.kind, t.wave])).toEqual(Array(4).fill(["work", null]));

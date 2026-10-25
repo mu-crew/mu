@@ -747,6 +747,7 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   ["agents", "spawner", "TEXT"],
   ["agents", "host", "TEXT"],
   ["agents", "collected_head", "TEXT"],
+  ["task_auto", "enabled", "INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))"],
   // The template's process group, recorded before it runs (hosts.ts).
   ["host_channels", "pgid", "INTEGER"],
   ["host_channels", "pgid_start", "TEXT"],
@@ -1241,7 +1242,9 @@ CREATE TABLE IF NOT EXISTS task_auto (
   max_runs   INTEGER NOT NULL DEFAULT 1 CHECK (max_runs > 0),
   runs       INTEGER NOT NULL DEFAULT 0,
   last_spawn TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- 0 after \`mu task auto --off\`: the row (runs, last_spawn) outlives revoked permission.
+  enabled    INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))
 );
 
 -- delegate_calls: one row per task-backed delegate call (machine-local).
