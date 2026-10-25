@@ -122,6 +122,7 @@ async function main(argv: string[]): Promise<number> {
     child.on("exit", (c, s) => resolve(c ?? (s ? 128 + (s === "SIGHUP" ? 1 : 15) : 1)));
   });
   rmSync(slot, { force: true });
+  appendFileSync(cfg.sessionsLog, `${Date.now()} END ${process.pid}\n`);
   // ssh removes its forwarded socket when the connection ends.
   for (const l of links) {
     try {

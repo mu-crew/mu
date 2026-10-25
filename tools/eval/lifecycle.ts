@@ -4,43 +4,33 @@
 //
 //  - A *stop* is an agent_end that happens while work the AUT owns is still open (the run ended
 //    and a human prod or a late follow-up had to resume it).
-//  - A *wait window* is the tool_start..tool_end interval of a `mu wait` call.
+//  - A *wait window* is the interval a mu invocation of the AUT BLOCKED (observed by the sandbox's
+//    mu shim, observe.ts): waiting is what a call did, never what it was spelled.
 //  - A *native* guarantee (mid-wait delivery, a direct-call snapshot, one wait verb for every ref)
 //    cannot be had on 3.x: on the 3x family a miss is a note "N/A baseline 3.x", on next a wrong
 //    entry. A 3x golden may show the best manual workaround; it never claims the guarantee.
 import { sandboxFamily } from "./fixtures.ts";
+import {
+  muOut,
+  toolWindows,
+  WAIT_MS,
+  type Window,
+  waitWindows,
+  workHandedOutAt,
+} from "./observe.ts";
 import type { LifecycleEvent, RunMetrics, Sandbox, ToolCall } from "./types.ts";
-
-/** `mu wait`, `mu task wait`, `mu agent wait` as a command word (not inside a quoted note). */
-export const WAIT_CALL = /(^|[\s;&|(`$])mu\s+(?:(?:task|agent)\s+)?wait\b/;
 
 export function commandOf(call: ToolCall): string {
   return call.name === "bash" && typeof call.args.command === "string" ? call.args.command : "";
 }
 
-/** A wait command word; single-quoted text (a note's prose) is not a command. */
-export const isWaitCall = (call: ToolCall): boolean =>
-  WAIT_CALL.test(commandOf(call).replace(/'[^']*'/g, "''"));
+export { WAIT_MS, type Window, waitWindows };
 
-export interface Window {
-  call: ToolCall;
-  start: number;
-  end: number;
-}
+/** The output mu itself printed in each wait window. */
+export const waitOutputs = (sb: Sandbox): string[] => waitWindows(sb).map((w) => muOut(sb, w.mu));
 
-/** The interval each tool call (matching `pick`) ran, from tool_start/tool_end events. */
-export function windows(run: RunMetrics, pick: (c: ToolCall) => boolean): Window[] {
-  const out: Window[] = [];
-  for (const call of run.toolCalls) {
-    if (!pick(call)) continue;
-    const start = run.events.find((e) => e.kind === "tool_start" && e.id === call.id);
-    const end = run.events.find((e) => e.kind === "tool_end" && e.id === call.id);
-    if (start && end) out.push({ call, start: start.t, end: end.t });
-  }
-  return out;
-}
-
-export const waitWindows = (run: RunMetrics): Window[] => windows(run, isWaitCall);
+/** The [start,end] of every tool call (from the lifecycle record). */
+export { toolWindows };
 
 /**
  * agent_end events that ended the run while work was open: after `after` and before `doneAt`, and
@@ -52,25 +42,13 @@ export function stops(run: RunMetrics, doneAt: number, after = -Infinity): Lifec
   return open.filter((e) => e.t > after && e.t < doneAt);
 }
 
-/** A dispatch command: `agent send`, or `agent spawn ... --send`. */
-const DISPATCH = /\bagent\s+send\b|\bagent\s+spawn\b[^;&|]*--send\b/;
-
-/** The first moment work was handed out: a mu_delegate, `agent send` or `spawn --send` call finished. Null when none. */
-export function firstDispatch(run: RunMetrics): number | null {
-  for (const e of run.events) {
-    if (e.kind !== "tool_end") continue;
-    const call = run.toolCalls.find((c) => c.id === e.id);
-    if (call && (call.name === "mu_delegate" || DISPATCH.test(commandOf(call)))) return e.t;
-  }
-  return null;
-}
-
 /**
- * Turn ends between the first dispatch (any kind) and `doneAt`. No dispatch at all means no
+ * Turn ends between the moment work was first handed out (a task got an owner, or a delegate was
+ * issued: the DB and tool record, however the AUT spelled it) and `doneAt`. No hand-out means no
  * window: nothing was running yet.
  */
-export function stopsWhileWorking(run: RunMetrics, doneAt: number): LifecycleEvent[] {
-  const from = firstDispatch(run);
+export function stopsWhileWorking(sb: Sandbox, run: RunMetrics, doneAt: number): LifecycleEvent[] {
+  const from = workHandedOutAt(sb, run);
   return from === null ? [] : stops(run, doneAt, from);
 }
 
@@ -90,26 +68,6 @@ export function firstEvent(
   after = -Infinity,
 ): LifecycleEvent | null {
   return run.events.find((e) => e.kind === kind && e.t > after) ?? null;
-}
-
-/**
- * A successful wait call that names `ref` and whose own output shows it CLOSED, returning at or
- * after `notBefore` (e.g. its worker's last run). The result is read from that call, not claimed.
- */
-export function waitedClosed(run: RunMetrics, ref: string, notBefore = 0): boolean {
-  const name = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return waitWindows(run).some(({ call, end }) => {
-    if (call.isError || (call.exitCode ?? 0) !== 0 || end < notBefore) return false;
-    const args = commandOf(call)
-      .replace(/'[^']*'/g, "''")
-      .replace(/^[\s\S]*?\bmu\s+(?:(?:task|agent)\s+)?wait\b/, "");
-    return (
-      new RegExp(`(^|[\\s;&|])${name}(?![\\w-])`).test(args) &&
-      new RegExp(`${name}(?![\\w-])[^\\n]{0,60}CLOSED|"name":"${name}"[^}]*"status":"CLOSED"`).test(
-        call.output,
-      )
-    );
-  });
 }
 
 export interface NativeResult {

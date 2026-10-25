@@ -50,3 +50,39 @@ export function strayOps(sb: Sandbox, seq: number, allowed: string[]): string[] 
     .filter((o) => !allowed.includes(opTask(o)))
     .map((o) => `${o.intent ?? "?"} ${o.entity} ${o.key}`);
 }
+
+export interface OpAt extends OpRow {
+  ms: number;
+  actor: string | null;
+  payload: string;
+}
+
+/** Every op written at or after `ms` (epoch), whoever wrote it. */
+export function opsAfter(sb: Sandbox, ms: number): OpAt[] {
+  return withDb(sb, (db) =>
+    (
+      db
+        .prepare(
+          "SELECT seq, intent, entity, key, op, actor, payload, created_at AS at FROM ops ORDER BY seq",
+        )
+        .all() as (OpRow & { actor: string | null; payload: string; at: string })[]
+    )
+      .map((o) => ({ ...o, ms: Date.parse(o.at) }))
+      .filter((o) => o.ms >= ms),
+  );
+}
+
+/** When a task op handed a task to an owner (a claim, however it was spelled): payload owner_id set. */
+export function ownerOpMs(ops: OpAt[]): number[] {
+  return ops
+    .filter((o) => o.entity === "task" && o.op === "put")
+    .filter((o) => {
+      try {
+        const v = (JSON.parse(o.payload) as { owner_id?: unknown }).owner_id;
+        return v !== null && v !== undefined;
+      } catch {
+        return false;
+      }
+    })
+    .map((o) => o.ms);
+}

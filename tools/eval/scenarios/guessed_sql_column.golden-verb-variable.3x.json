@@ -1,0 +1,19 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "q=\"SELECT t.local_id, t.impact, a.name FROM tasks t JOIN agents a ON a.id = t.owner_id JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = 'eval' AND t.status = 'IN_PROGRESS' ORDER BY t.impact DESC\"; mu sql \"$q\" | cat"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "verb=note; mu task \"$verb\" s4 -w eval 'top owner: w2'"
+      }
+    ]
+  },
+  {
+    "text": "w2 owns s4; note added."
+  }
+]

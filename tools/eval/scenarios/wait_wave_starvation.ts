@@ -11,8 +11,12 @@
 //    delegate per claim, and the task closes by that verdict AFTER the note (done/rejected);
 //  - k1-k4 were done by workers (runs.log), and no agent_end happened while a dispatched worker
 //    was still running (a stop), and prods == 0;
+//  - delegates are recognised by the tool's own observed effect (a successful mu_delegate whose
+//    record names the claim, or whose served answer is the claim's), a refusal by the tool call's
+//    error (the queue was full: the call failed and no answer was served for it), never by the
+//    refusal prose or the tally's format;
 //  - NATIVE (family-aware, see lifecycle.native): every verdict reached the model inside a wait
-//    call, and a wait result carried a per-wave tally. 3.x cannot: pi delivers delegate answers
+//    call, and a wait result carried a per-wave tally (a count of CONFIRMED among the claims). 3.x cannot: pi delivers delegate answers
 //    only between turns, so the 3x golden is the best manual workaround (a bash poll loop that
 //    never ends the turn and reads the notes through the CLI) and the baseline records N/A.
 import {
@@ -33,11 +37,19 @@ import {
   native,
   prodWrong,
   stopsWhileWorking,
+  waitOutputs,
   waitWindows,
 } from "../lifecycle.ts";
+import {
+  answersServed,
+  closeEarnedWrong,
+  delegateFor,
+  delegatesInFlight,
+  QUEUE_FULL,
+  verdictFx,
+} from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, firstNote, orderWrong } from "../provenance.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const K = ["k1", "k2", "k3", "k4"];
@@ -47,7 +59,12 @@ const claimText = (n: number): string =>
     ? `CLAIM claim-${n}: README.md in the repo root starts with the line "# eval repo".`
     : `CLAIM claim-${n}: gate.sh in the repo root is a Python script.`;
 const WORDS: Record<number, string> = { 6: "six", 12: "twelve" };
-const TALLY = /\b\d+\s*\/\s*\d+\s+CONFIRMED\b/;
+/** A tally of the wave: a count against the number of claims, and the word the verdicts used. Any format. */
+const tallyOf = (out: string, N: number): boolean =>
+  new RegExp(
+    `\\b\\d+\\b[^\\n]{0,12}\\b${N}\\b[^\\n]{0,24}\\bCONFIRMED\\b|\\bCONFIRMED\\b[^\\n]{0,24}\\b\\d+\\b[^\\n]{0,12}\\b${N}\\b`,
+    "i",
+  ).test(out);
 
 /** The wave scenario for `N` claims: wait_wave_starvation (12: two calls are refused and reissued) and wait_wave_six (6). */
 export function wave(N: number, id: string): Scenario {
@@ -112,7 +129,14 @@ export function wave(N: number, id: string): Scenario {
       let completed = true;
       const delegates = run.toolCalls.filter((c) => c.name === "mu_delegate");
       const okCalls = delegates.filter((c) => !c.isError);
-      const refused = delegates.filter((c) => c.isError && /\d+ queued/.test(c.output));
+      // refused: a call that failed while the delegate queue was full (2 running + 8 queued): the
+      // delegate never started. Observed from the calls and the answers served, not from the prose.
+      const endOf = (id: string) =>
+        run.events.find((e) => e.kind === "tool_end" && e.id === id)?.t ?? 0;
+      const isRefusal = (c: { id: string; isError: boolean }) =>
+        c.isError && delegatesInFlight(sb, run, endOf(c.id)) >= QUEUE_FULL;
+      const refused = delegates.filter(isRefusal);
+      const served = answersServed(sb);
       let dupNotes = 0;
       let missing = 0;
       let doneAt = 0;
@@ -126,7 +150,7 @@ export function wave(N: number, id: string): Scenario {
           if (other !== undefined && Number(other) !== n)
             wrong.push(`c${n} carries the verdict of claim-${other}`);
         }
-        const issued = okCalls.filter((c) => re.test(String(c.args.task ?? ""))).length;
+        const issued = okCalls.filter((c) => delegateFor(c.args, n)).length;
         if (issued > 1) wrong.push(`claim-${n}: ${issued} delegates issued (duplicate finding)`);
         if (mine.length > 1) {
           dupNotes++;
@@ -151,6 +175,9 @@ export function wave(N: number, id: string): Scenario {
         doneAt = Math.max(doneAt, closeMoment(sb, "eval", `c${n}`)?.ms ?? 0);
         if (!(issued >= 1 && mine.length === 1 && closedRight && order.length === 0))
           completed = false;
+        // the answer behind the note was really served to a delegate for THIS claim
+        if (mine.length > 0 && !served.some((a) => a.key === String(n)))
+          wrong.push(`c${n}'s verdict note has no delegate answer served for claim-${n}`);
       }
       // k1-k4: done by a worker, not by the orchestrator.
       let workerEnd = 0;
@@ -161,29 +188,18 @@ export function wave(N: number, id: string): Scenario {
         else workerEnd = Math.max(workerEnd, r.ts);
         if (!(t?.status === "CLOSED" && t.substate === "done" && r)) completed = false;
       }
-      // k1-k4 are the workers' work: the orchestrator closing one itself (the driver logs
-      // already-closed when the task was closed under it) is a close nobody earned.
-      for (const k of K) {
-        const r = runs.find((x) => x.task === k && x.action === "already-closed");
-        if (r)
-          wrong.push(
-            `${k} was closed by the orchestrator before its worker finished (${r.agent} found it already CLOSED)`,
-          );
-        const c = closeMoment(sb, "eval", k);
-        // block mode (next): the orchestrator closes, and only after the worker's report
-        const blocked = runs.find((x) => x.task === k && x.action === "block");
-        if (c && blocked && c.ms < blocked.ts)
-          wrong.push(`${k} was closed before its worker reported`);
-      }
+      // k1-k4 are the workers' work: closed by the worker that ran it (or, in block mode, by the
+      // orchestrator only after the worker's report): a close nobody earned is wrong.
+      for (const k of K) wrong.push(...closeEarnedWrong(sb, "eval", k, runs));
       // never stop: no agent_end from the first dispatch of ANY kind (delegate, agent send, spawn
       // --send) until the last pending verdict or worker is done.
       const end = completed ? Math.max(workerEnd, doneAt) : Number.POSITIVE_INFINITY;
-      const stopsDuringWork = stopsWhileWorking(run, end);
+      const stopsDuringWork = stopsWhileWorking(sb, run, end);
       if (stopsDuringWork.length > 0)
         wrong.push(`${stopsDuringWork.length} turn end(s) while delegates or workers were running`);
       wrong.push(...prodWrong(run));
       // native guarantees: delivery inside a wait call, and a per-wave tally from wait.
-      const ws = waitWindows(run);
+      const ws = waitWindows(sb);
       const dels = deliveries(run, /claim-\d+/);
       const inWait = dels.filter((e) => inside(e.t, ws)).length;
       const nat = [
@@ -191,14 +207,21 @@ export function wave(N: number, id: string): Scenario {
         native(
           sb,
           "wait returns a per-wave verdict tally",
-          ws.some((w) => TALLY.test(w.call.output)),
+          waitOutputs(sb).some((o) => tallyOf(o, N)),
           `${ws.length} wait call(s)`,
         ),
       ];
-      return verdict(run, completed, {
+      return await verdictFx(sb, run, completed, {
         wrong: [...wrong, ...nat.flatMap((x) => x.wrong)],
         na: nat.flatMap((x) => x.na),
-        expectFail: [{ re: /\d+ queued/, on: "output", why: "delegate queue full" }],
+        // a refused delegate call is expected: the queue is full, the call is reissued later
+        expectFail: [
+          {
+            re: /^err mu_delegate /,
+            why: "delegate queue full",
+            when: (c) => isRefusal(c),
+          },
+        ],
         notes: [
           `delegate calls=${delegates.length} issued=${okCalls.length} refused=${refused.length} missingVerdict=${missing} dupNotes=${dupNotes} deliveries=${dels.length} inWait=${inWait} stops=${stopsDuringWork.length} doneAt=${doneAt}`,
           ...nat.flatMap((x) => x.notes),

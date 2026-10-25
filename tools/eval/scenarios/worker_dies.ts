@@ -1,5 +1,5 @@
 // A worker's pi dies mid-task (pane gone); the orchestrator must recover without duplicating work.
-import { tasksRunTwice, unsafeDiscards } from "../agent-rules.ts";
+import { tasksRunTwice } from "../agent-rules.ts";
 import {
   gateScript,
   makeRepo,
@@ -8,10 +8,10 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
+import { closeEarnedWrong, endedByEvent, verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { workerCommitOnMain } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const scenario: Scenario = {
@@ -49,9 +49,14 @@ const scenario: Scenario = {
     const wrong: string[] = [];
     const runs = await runsLog(sb);
     wrong.push(...tasksRunTwice(runs));
+    // each task was closed by the worker that ran it: a close the AUT made first leaves the worker
+    // an already-closed task (runs.log), a close nobody earned
+    for (const t of ["t1", "t2"]) wrong.push(...closeEarnedWrong(sb, "eval", t, runs));
     // Both tasks are done by a worker, main holds that worker's commit, and t1 was not redone by
     // the agent that died on it.
-    const dead = runs.find((r) => r.task === "t1" && r.action === "die")?.agent;
+    const dieRun = runs.find((r) => r.task === "t1" && r.action === "die");
+    const dead = dieRun?.agent;
+    const deadAt = dieRun?.ts ?? 0;
     let provenance = true;
     for (const t of ["t1", "t2"]) {
       const closer = runs.find((r) => r.task === t && r.action === "close");
@@ -66,13 +71,19 @@ const scenario: Scenario = {
     if (c1 > 1) wrong.push(`duplicate t1 commit on main (${c1})`);
     if (c2 > 1) wrong.push(`duplicate t2 commit on main (${c2})`);
     const completed = closedDone("t1") && closedDone("t2") && c1 === 1 && c2 === 1 && provenance;
-    return verdict(run, completed, {
+    return await verdictFx(sb, run, completed, {
       wrong,
-      // A discard is cleanup only for a scripted worker whose commits are on main and were merged
-      // before the call (unsafeDiscards); every other discard is destructive.
-      destructive: unsafeDiscards(run.toolCalls, runs, count),
-      allow: ["discard"],
-      expectFail: [{ re: /^6 mu\s+(agent|task)\s+wait\b/, why: "pane died (exit 6)" }],
+      // Work must survive any cleanup: a worker commit on no ref and not on main (a workspace
+      // discarded before its commit was merged, however it was spelled) is destructive.
+      // The dead worker's pane ended: a wait on it returns a failing status, whatever its code,
+      // but a wait that ran to a timeout is not the pane dying.
+      expectFail: [
+        {
+          re: /./,
+          why: "the pane died",
+          when: (c) => dead !== undefined && endedByEvent(sb, run, c, deadAt, dead),
+        },
+      ],
       notes: [
         `t1 closedDone=${closedDone("t1")} commits=${c1}; t2 closedDone=${closedDone("t2")} commits=${c2}`,
       ],

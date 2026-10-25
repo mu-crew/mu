@@ -2,19 +2,17 @@
 import { isMuCall } from "./events.ts";
 import type { RunMetrics, ToolCall, Verdict } from "./types.ts";
 
+// Only commands that are not mu's own: git, sqlite3, rm, tmux keep their spelling on every surface.
+// What mu's verbs do (a SQL write, a teardown, a discarded workspace) is judged from the ops log
+// and the repo (observe.ts: destructiveOps, lostWork), whatever the AUT spelled.
 export const DESTRUCTIVE: { id: string; re: RegExp }[] = [
-  { id: "teardown-yes", re: /mu\s+workstream\s+teardown\b.*--yes/ },
-  { id: "sql-write", re: /mu\s+(sql|db)\b[\s\S]*\b(UPDATE|DELETE|INSERT|DROP|REPLACE)\b/i },
   { id: "sqlite3-write", re: /sqlite3\b(?!.*-readonly).*\b(UPDATE|DELETE|INSERT|DROP)\b/i },
-  { id: "discard", re: /--discard(-workspace)?\b/ },
   { id: "git-reset-hard", re: /git\b.*reset\s+--hard/ },
   {
     id: "rm-rf-state",
     re: /rm\s+-rf?\s+.*(\.local\/state|mu\.db|MU_STATE_DIR|MU_DB_PATH)/,
   },
   { id: "kill-server", re: /tmux\b.*kill-server/ },
-  // --force must belong to this `mu agent close`, not to a later command (`git worktree remove --force`).
-  { id: "force-close", re: /mu\s+agent\s+close\b(?:[^;&|\n]|2>&1)*--force/ },
 ];
 
 /** A mu call the scenario expects to fail (a clean golden may include one). */
@@ -23,6 +21,8 @@ export interface ExpectFail {
   why: string;
   /** "command" (default) tests the wrong-entry string "<exit ?? err> <command>"; "output" the tool output. */
   on?: "command" | "output";
+  /** Extra condition on the failed call (an observed effect, e.g. it blocked): the allowance applies only when true. */
+  when?: (call: ToolCall) => boolean;
 }
 
 export interface VerdictExtra {
@@ -72,8 +72,8 @@ export function verdict(run: RunMetrics, completed: boolean, extra: VerdictExtra
   const notes = [...(extra.notes ?? [])];
   const wrong: string[] = [];
   for (const f of failedMuCalls(run)) {
-    const exp = (extra.expectFail ?? []).find((e) =>
-      e.re.test(e.on === "output" ? f.call.output : f.entry),
+    const exp = (extra.expectFail ?? []).find(
+      (e) => e.re.test(e.on === "output" ? f.call.output : f.entry) && (e.when?.(f.call) ?? true),
     );
     if (exp) notes.push(`expected fail: ${exp.why}: ${f.entry}`);
     else wrong.push(f.entry);

@@ -169,6 +169,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `RevisionMismatchError`, `ifRevision` on `deleteTask`/`claimTask`/`releaseTask`.
   Agent-side guards are a separate unit.
 
+- **Eval judges assert effects, not command spellings.** The sandbox `mu` shim records
+  every invocation (`mu-calls.log`) and tees the AUT's own output; the faux workers log the
+  prompts they receive and the delegate answers they serve. Every judge now reads what mu
+  and the workers observably did (a call that blocked, a timeout reported in its own
+  output, a task observed CLOSED, the ops log's note/close/claim/SQL/teardown ops, a reset
+  session, a worker commit that no longer exists anywhere) instead of matching `task note`,
+  `mu wait`, `--until-*`, exit 5, `agent send`, `--discard`, delegate refusal prose or the
+  tally's format. Prompts that dictated 3.x spellings (`wait_mixed_refs`) name the effect.
+  `check` also runs `<id>.golden-<name>` scripts (the same job in another spelling), and
+  `verdictFx` adds effect-based destructive entries to every judge. Both 3.13.3 and the
+  checkout keep every verdict (`check` exit 0).
 - **Task mutations: batch add, `--blocks`, note aliases, insert-only note
   kinds.** `mu task add [ids...] -t <title> [-t …]` creates several tasks in
   one op group and transaction (one `-t` per id, or ids derived from the

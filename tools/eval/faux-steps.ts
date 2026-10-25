@@ -1,6 +1,6 @@
 // Scripted faux-agent step selection. Pure logic plus the <workerDir> control files; no pi import,
 // so vitest can exercise it. faux.ts wires it to pi's fauxProvider.
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type FauxCall = { bash: string } | { tool: string; args?: Record<string, unknown> };
@@ -54,6 +54,8 @@ export interface StepContext {
   lastUser: string;
   /** Text of the latest tool result, or null when the transcript does not end in one. */
   lastResult: string | null;
+  /** Messages in the session at this model call: a prompt that sees 1 started a fresh session. */
+  messages?: number;
 }
 
 export class FauxScript {
@@ -91,6 +93,13 @@ export class FauxScript {
   next(ctx: StepContext): FauxAction {
     const prompt = this.ctl("last-prompt");
     if (prompt) writeFileSync(prompt, ctx.lastUser);
+    // Observed effect, not a claim: every prompt that reached this agent's model, with the session
+    // length it arrived into. "<ms> <agent> <messages> <text>" in <workerDir>/prompts.log.
+    if (this.workerDir && this.agent !== "aut" && ctx.lastResult === null)
+      appendFileSync(
+        join(this.workerDir, "prompts.log"),
+        `${Date.now()} ${this.agent} ${ctx.messages ?? 0} ${ctx.lastUser.replace(/\s+/g, " ").slice(0, 300)}\n`,
+      );
     if (this.consume("die-next")) return { kind: "die" };
     if (this.consume("error-next")) {
       // Re-run the calls step that just ran; before any calls step the index stays put.

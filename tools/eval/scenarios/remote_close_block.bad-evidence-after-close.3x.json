@@ -37,7 +37,7 @@
   {
     "calls": [
       {
-        "bash": "EV=$(mu agent wait w1 -w eval --after-runs 0 --json --timeout 120 | jq -r '.agents[0].lastText' | sed -n 's/^CLOSE: task=rt2 evidence=\"\\(.*\\)\"$/\\1/p'); mu task note rt2 -w eval \"worker evidence: $EV\""
+        "bash": "EV=$(mu agent wait w1 -w eval --after-runs 0 --json --timeout 120 | jq -r '(.data.agents // .agents)[0].lastText' | sed -n 's/^CLOSE: task=rt2 evidence=\"\\(.*\\)\"$/\\1/p'); mu task note rt2 -w eval \"worker evidence: $EV\""
       }
     ]
   },

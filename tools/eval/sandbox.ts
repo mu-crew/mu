@@ -252,6 +252,24 @@ function writeShim(path: string, body: string): void {
   chmodSync(path, 0o755);
 }
 
+/** The sandbox's `mu`: runs the surface's CLI and records the call (see observe.ts). Exit status and output are untouched. */
+export function muShim(cli: string): string {
+  return String.raw`#!/bin/bash
+D="\${EVAL_WORKER_DIR:-}"
+s=$(date +%s%3N)
+if [ -n "$D" ] && [ -z "\${MU_AGENT_NAME:-}" ]; then
+  mkdir -p "$D/mu-out"
+  node ${JSON.stringify(cli)} "$@" | tee -p "$D/mu-out/$$"
+  rc=\${PIPESTATUS[0]}
+else
+  node ${JSON.stringify(cli)} "$@"
+  rc=$?
+fi
+[ -n "$D" ] && printf '%s %s %s %s %s %s\n' "$s" "$(date +%s%3N)" "$rc" "\${MU_AGENT_NAME:--}" "$$" "$(printf %s "$*" | tr '\n' ' ')" >> "$D/mu-calls.log" 2>/dev/null
+exit $rc
+`.replace(/\\\$\{/g, "${");
+}
+
 export async function createSandbox(
   surface: Surface,
   opts: { env?: Record<string, string> } = {},
@@ -293,7 +311,12 @@ export async function createSandbox(
   if (existsSync(surface.skillDir))
     cpSync(surface.skillDir, sandboxSkillDir(dir), { recursive: true });
   linkTools(binDir, process.env.PATH);
-  writeShim(join(binDir, "mu"), `exec node ${JSON.stringify(surface.cli)} "$@"`);
+  // Record-only observer (see observe.ts): every mu invocation appends
+  // "<start-ms> <end-ms> <exit> <agent|-> <pid> <argv>" to <workers>/mu-calls.log, and the AUT's own
+  // calls (no MU_AGENT_NAME) also tee their stdout to <workers>/mu-out/<pid>. The shim changes
+  // neither the exit status nor the output, so a judge can tell what mu itself returned (and when)
+  // from what the AUT's shell printed around it.
+  writeFileSync(join(binDir, "mu"), muShim(surface.cli), { mode: 0o755 });
   // Workers and delegates are scripted: faux model, no mu nudges (they would only rerun the script).
   writeShim(
     join(binDir, "pi"),

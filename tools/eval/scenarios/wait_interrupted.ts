@@ -1,19 +1,24 @@
 // A `mu task wait` is killed with SIGTERM mid-run (the harness's own timeout, a user abort). The
 // orchestrator must come out knowing where things stand and carry on WITHOUT redoing work.
 //
-// Fixture: i1 (a worker task, 12s) and i2 (3s, so it is CLOSED when the SIGTERM lands). A private watcher (written to <bin>/eval-interrupter
-// in setup, detached) finds the first `cli.js [task|agent] wait` process of THIS sandbox, waits 5s, sends
-// it SIGTERM once and logs "<ms> <pid> TERM <cmdline>" to <workers>/interrupt.log. Not SIGKILL:
-// nothing can catch that.
+// Fixture: i1 (a worker task, 12s) and i2 (3s, so it is CLOSED when the SIGTERM lands). A private
+// watcher (written to <bin>/eval-interrupter in setup, detached) finds the first mu process of THIS
+// sandbox's AUT (no MU_AGENT_NAME) that has been running for 4s, whatever verb it runs, sends it
+// SIGTERM once and logs "<ms> <pid> TERM <cmdline>" to <workers>/interrupt.log. Not SIGKILL: nothing
+// can catch that. Setup code, not a judge: it keys on how long a call has been running.
 //
 // Judged from the DB, ops, runs.log, result.txt, the lifecycle record and the interrupted call's
 // own output, never from the AUT's words:
-//  - the interrupt really hit a wait of the AUT (interrupt.log), i1 and i2 each ran once in a worker
-//    and closed done, `agent send` ran once per worker (no re-dispatch), the AUT closed no task itself, result.txt quotes both workers' evidence and is written last;
-//  - SNAPSHOT: the call the SIGTERM landed in printed a parseable, non-empty JSON snapshot with
-//    the task states and a resume command. Direct (bare) `mu ... wait`: on 3.x the output is empty
-//    (native N/A baseline); on next an empty/unparseable snapshot is wrong. A shell wrapper that
-//    builds the snapshot itself is a labelled manual workaround: it must really contain one.
+//  - the interrupt really hit a blocked mu call of the AUT (interrupt.log, the shim's call record),
+//    i1 and i2 each ran once in a worker and closed done, each worker was prompted once (the
+//    workers' own prompt log: no re-dispatch), the AUT closed no task a worker earned, result.txt
+//    quotes both workers' evidence and is written last, and after the interrupt the AUT read the
+//    state through mu again and went on waiting for the open task;
+//  - SNAPSHOT: what the interrupted call itself printed (the mu process's own output when it was
+//    killed, else the AUT's wrapper output): a parseable, non-empty JSON snapshot with the REAL task
+//    states and a resume command naming both refs. The wait itself printing it is the native
+//    guarantee (3.x: empty output, N/A baseline; next: wrong). A wrapper that builds the snapshot
+//    is a labelled manual workaround: its states must match the DB at the interrupt.
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,44 +31,43 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
+import { lastJson, native, prodWrong, snapshotStates } from "../lifecycle.ts";
 import {
-  commandOf,
-  isWaitCall,
-  lastJson,
-  native,
-  prodWrong,
-  snapshotStates,
-  waitWindows,
-} from "../lifecycle.ts";
+  claimCount,
+  closeEarnedWrong,
+  deliveries,
+  muCalls,
+  muOut,
+  names,
+  toolsOf,
+  verdictFx,
+} from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, fileMoment, orderWrong } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const IDS = ["i1", "i2"];
 
 const INTERRUPTER = String.raw`#!/bin/bash
-# SIGTERM the first "cli.js [task|agent] wait" process of this sandbox, 5s after it appears; log it.
+# SIGTERM the first mu process of the AUT in this sandbox that has run for 4s; log it. Whatever
+# verb the process runs: a call that blocks that long is waiting.
 D="$EVAL_SANDBOX"
 for _ in $(seq 1 2400); do
   [ -d "$D" ] || exit 0
-  for pid in $(pgrep -f 'cli.js (task |agent )?wait ' 2>/dev/null); do
+  for pid in $(pgrep -f 'dist/cli.js' 2>/dev/null); do
     grep -aq "MU_DB_PATH=$MU_DB_PATH" "/proc/$pid/environ" 2>/dev/null || continue
+    grep -aq "MU_AGENT_NAME=" "/proc/$pid/environ" 2>/dev/null && continue
     cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
-    sleep 5
+    sleep 4
     if [ "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" = "$cmd" ]; then
       kill -TERM "$pid" && echo "$(date +%s%3N) $pid TERM $cmd" >> "$EVAL_WORKER_DIR/interrupt.log"
-    else
-      echo "$(date +%s%3N) $pid MISSED $cmd" >> "$EVAL_WORKER_DIR/interrupt.log"
+      exit 0
     fi
-    exit 0
   done
-  sleep 0.5
+  sleep 0.3
 done
 `;
-
-const BARE = /^\s*mu\s+(?:(?:task|agent)\s+)?wait\b[^;&|$`<>]*$/;
 
 const scenario: Scenario = {
   id: "wait_interrupted",
@@ -147,32 +151,45 @@ const scenario: Scenario = {
           "result.txt must be written last",
         ),
       );
-    // the workers close their own tasks: an AUT `task close` is a close nobody earned.
-    for (const c of run.toolCalls) {
-      if (/\bmu\s+task\s+close\b/.test(commandOf(c)))
-        wrong.push(`the AUT closed a task itself: ${commandOf(c).slice(0, 80)}`);
-    }
-    // no re-dispatch: one `agent send` per worker, one claim per task.
-    const sends = run.toolCalls
-      .filter((c) => !c.isError)
-      .flatMap((c) => commandOf(c).match(/\bagent\s+send\s+\S+/g) ?? []);
-    const dup = sends.filter((s, i) => sends.indexOf(s) !== i);
+    // the workers close their own tasks: a task closed by anyone else was a close nobody earned.
+    for (const id of IDS) wrong.push(...closeEarnedWrong(sb, "eval", id, runs));
+    // no re-dispatch: each worker was prompted once (the workers' own prompt log, however the
+    // prompt was sent), and each task was claimed once.
+    const ds = deliveries(sb);
+    const byAgent = new Map<string, number>();
+    for (const d of ds) byAgent.set(d.p.agent, (byAgent.get(d.p.agent) ?? 0) + 1);
+    const dup = [...byAgent].filter(([, k]) => k > 1).map(([a]) => a);
     if (dup.length > 0)
-      wrong.push(`re-sent work already in progress: ${[...new Set(dup)].join(", ")}`);
-    // the call the SIGTERM landed in
-    const ws = waitWindows(run).filter((w) => hit > 0 && w.start <= hit && hit <= w.end + 2000);
-    const call = ws[0]?.call;
-    if (hit > 0 && !call) {
+      wrong.push(`re-sent work already in progress: ${dup.join(", ")} prompted more than once`);
+    for (const id of IDS)
+      if (claimCount(sb, "eval", id) !== 1)
+        wrong.push(`${id} was claimed ${claimCount(sb, "eval", id)} times (want 1)`);
+    // the call the SIGTERM landed in: the AUT's mu invocation that was killed (its own output is the
+    // tee'd stdout), and the tool call that ran it (its output is what the AUT saw)
+    const killedCall = muCalls(sb).find(
+      (m) => hit > 0 && m.start <= hit && hit <= m.end + 2000 && m.exit >= 128,
+    );
+    const tool = killedCall
+      ? toolsOf(run, killedCall).sort((a, b) => b.start - a.start)[0]
+      : undefined;
+    const call = tool?.call;
+    if (hit > 0 && !killedCall) {
       completed = false;
-      wrong.push("the SIGTERM did not land in any wait call of the AUT (timing)");
+      wrong.push("the SIGTERM did not land in a blocked mu call of the AUT (timing)");
     }
-    if (call) {
-      const snap = lastJson(call.output);
-      const text = call.output;
+    if (killedCall && !call) {
+      completed = false;
+      wrong.push("the killed mu call is not inside any tool call of the AUT");
+    }
+    if (killedCall && call) {
+      const own = muOut(sb, killedCall);
+      // what the interrupted mu process itself printed (native), else what the AUT's wrapper printed
+      const native_ = own.trim() !== "";
+      const text = native_ ? own : call.output;
+      const snap = lastJson(text);
       // real task states: each task's status in the snapshot must match the DB at the interrupt
-      // (i2's 3s worker closed it before the SIGTERM; i1's 12s worker has not), and the command
-      // must itself read mu state after the kill (an unquoted `mu task list|show` / wait call): a
-      // hard-coded echo of plausible states is neither.
+      // (i2's 3s worker closed it before the SIGTERM; i1's 12s worker has not): a hard-coded echo
+      // of plausible states is neither
       const st = snap ? snapshotStates(snap) : new Map<string, string>();
       const stateOk = IDS.every((id) => {
         const s = st.get(id) ?? "";
@@ -181,40 +198,60 @@ const scenario: Scenario = {
         if (at <= hit) return s === "CLOSED";
         return at > hit + 1500 ? s !== "CLOSED" : true;
       });
-      const reads = /\bmu\s+(?:task\s+(?:list|show|notes)|(?:task\s+|agent\s+)?wait)\b/.test(
-        commandOf(call).replace(/'[^']*'/g, "''"),
+      // a resume command that names both refs (any verb: it is data the AUT can run)
+      const resume = /\bmu\b[^"'\n]*/.test(text) && IDS.every((id) => names(text, id));
+      // the snapshot was produced by mu after the kill (a mu invocation inside the same tool call
+      // started after the interrupt) or by the killed process itself; an echo has neither
+      const readAfter = muCalls(sb).some(
+        (m) =>
+          m !== killedCall &&
+          m.start >= hit - 50 &&
+          toolsOf(run, m).some((t) => t.call.id === call.id),
       );
-      const resume = /\bmu\s+(?:(?:task|agent)\s+)?wait\b[^"'\n]*\bi1\b[^"'\n]*\bi2\b/.test(text);
-      const bare = BARE.test(commandOf(call)) && isWaitCall(call);
       const ok =
-        snap !== null && Object.keys(snap).length > 0 && stateOk && resume && (reads || bare);
-      // A bare wait must print the snapshot itself. A wrapper that builds it is a manual workaround:
-      // right on state (checked above), but never the guarantee: N/A on 3.x, wrong on next.
-      if (!bare && !ok) {
+        snap !== null &&
+        Object.keys(snap).length > 0 &&
+        stateOk &&
+        resume &&
+        (native_ || readAfter);
+      if (!native_ && !ok) {
         wrong.push(
-          `the interrupted wrapper lost the state (no parseable snapshot with the real states of i1 and i2 and a resume wait command): ${text.slice(0, 80)}`,
+          `the interrupted wrapper lost the state (no parseable snapshot with the real states of i1 and i2, read through mu after the kill, and a resume command): ${text.slice(0, 80)}`,
         );
       } else {
         const r = native(
           sb,
-          "direct wait prints a parseable snapshot + resume command on SIGTERM",
-          bare && ok,
-          bare
-            ? `${text.length} bytes of output`
+          "the interrupted wait itself prints a parseable snapshot + resume command",
+          native_ && ok,
+          native_
+            ? `${own.length} bytes of its own output`
             : "built by the AUT's own wrapper, not by the wait",
         );
         wrong.push(...r.wrong);
         notes.push(...r.notes);
         na.push(...r.na);
       }
+      // after the interrupt the AUT carried on: it read mu again and the open task was waited to the end
+      const after = muCalls(sb).filter((m) => m.start > hit + 50);
+      if (after.length === 0) {
+        completed = false;
+        wrong.push("the AUT never invoked mu after the interrupt");
+      }
     }
     wrong.push(...prodWrong(run));
-    return verdict(run, completed, {
+    return await verdictFx(sb, run, completed, {
       wrong,
       na,
-      expectFail: [{ re: /^143 .*\bwait\b/, why: "wait SIGTERMed by the fixture" }],
+      // the tool call the fixture interrupted ends with a signal exit (>= 128)
+      expectFail: [
+        {
+          re: /./,
+          why: "mu call SIGTERMed by the fixture",
+          when: (c) => c.exitCode !== null && c.exitCode >= 128 && c.id === call?.id,
+        },
+      ],
       notes: [
-        `interrupt=${killed.split(" ").slice(1, 3).join(" ")} sends=${sends.length} muCalls=${run.muCalls}`,
+        `interrupt=${killed.split(" ").slice(1, 3).join(" ")} prompts=${ds.length} muCalls=${run.muCalls}`,
         ...notes,
       ],
     });

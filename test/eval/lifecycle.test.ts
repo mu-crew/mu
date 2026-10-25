@@ -1,20 +1,46 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { MetricsCollector } from "../../tools/eval/events.ts";
 import {
   deliveries,
-  firstDispatch,
   inside,
-  isWaitCall,
   lastJson,
   native,
   prodWrong,
   snapshotStates,
   stops,
   stopsWhileWorking,
-  waitedClosed,
   waitWindows,
 } from "../../tools/eval/lifecycle.ts";
+import {
+  idleCalls,
+  observedClosed,
+  parseMuCalls,
+  pollingCalls,
+  sessions,
+  showsClosed,
+  timedOut,
+} from "../../tools/eval/observe.ts";
 import type { RunMetrics, Sandbox } from "../../tools/eval/types.ts";
+
+/** A sandbox whose workers dir holds a mu-call log (and tee'd outputs) and an empty ops DB. */
+function sandbox(calls: string[], outs: Record<string, string> = {}): Sandbox {
+  const dir = mkdtempSync(join(tmpdir(), "lifecycle-test-"));
+  const workerDir = join(dir, "workers");
+  mkdirSync(join(workerDir, "mu-out"), { recursive: true });
+  writeFileSync(join(workerDir, "mu-calls.log"), `${calls.join("\n")}\n`);
+  for (const [pid, out] of Object.entries(outs)) writeFileSync(join(workerDir, "mu-out", pid), out);
+  const dbPath = join(dir, "mu.db");
+  const db = new Database(dbPath);
+  db.exec(
+    "CREATE TABLE ops (seq INTEGER PRIMARY KEY, actor TEXT, intent TEXT, entity TEXT, key TEXT, op TEXT, payload TEXT, created_at TEXT)",
+  );
+  db.close();
+  return { dir, workerDir, dbPath, env: {} } as unknown as Sandbox;
+}
 
 function observe(events: unknown[], clock: number[]): RunMetrics {
   let i = 0;
@@ -39,10 +65,6 @@ const end = (id: string, text = "ok", isError = false) => ({
   isError,
   result: { content: [{ type: "text", text }] },
 });
-const agentEnd = { type: "agent_end" };
-
-const agentStart = () => ({ type: "agent_start" });
-
 describe("lifecycle observer", () => {
   const run = observe(
     [
@@ -76,11 +98,54 @@ describe("lifecycle observer", () => {
     expect(deliveries(run, /claim-1/)).toHaveLength(1);
   });
 
-  it("finds wait windows and what arrived inside them", () => {
-    const ws = waitWindows(run);
-    expect(ws.map((w) => [w.start, w.end])).toEqual([[2, 4]]);
-    expect(inside(3, ws)).toBe(true);
-    expect(inside(5, ws)).toBe(false);
+  it("a wait window is a mu call that blocked, whatever its verb", () => {
+    const sb = sandbox([
+      "1000 1100 0 - 11 task show a -w eval",
+      "2000 6000 0 - 12 whatever verb the surface calls it",
+      "7000 9500 5 - 13 wait x --timeout 2",
+      "7100 12000 0 w1 14 task wait z",
+    ]);
+    const ws = waitWindows(sb);
+    expect(ws.map((w) => [w.start, w.end])).toEqual([
+      [2000, 6000],
+      [7000, 9500],
+    ]);
+    expect(inside(3000, ws)).toBe(true);
+    expect(inside(6500, ws)).toBe(false);
+  });
+
+  it("a stop window opens when work was handed out (a delegate or an owned task), whatever the verb", () => {
+    const sb = sandbox([]);
+    const afterDelegate = observe(
+      [
+        { type: "agent_start" },
+        { type: "tool_execution_start", toolCallId: "d", toolName: "mu_delegate", args: {} },
+        {
+          type: "tool_execution_end",
+          toolCallId: "d",
+          toolName: "mu_delegate",
+          isError: false,
+          result: { content: [] },
+        },
+        { type: "agent_end" },
+      ],
+      [1, 2, 3, 4],
+    );
+    expect(stopsWhileWorking(sb, afterDelegate, 100)).toHaveLength(1);
+    // nothing handed out: a stop is not a stop
+    const noWork = observe([{ type: "agent_start" }, { type: "agent_end" }], [1, 2]);
+    expect(stopsWhileWorking(sb, noWork, 100)).toHaveLength(0);
+    // an owner op after the run began is a hand-out, spelled any way
+    const dbh = new Database(sb.dbPath);
+    dbh
+      .prepare("INSERT INTO ops VALUES (1,'w1','task.claim','task','eval/t','put',?,?)")
+      .run('{"owner_id":3}', new Date(2).toISOString());
+    dbh.close();
+    const claimed = observe(
+      [{ type: "prompt" }, { type: "agent_start" }, { type: "agent_end" }],
+      [1, 3, 4],
+    );
+    expect(stopsWhileWorking(sb, claimed, 100)).toHaveLength(1);
   });
 
   it("a stop is an agent_end before the work was done", () => {
@@ -90,13 +155,12 @@ describe("lifecycle observer", () => {
     expect(stops(run, Number.POSITIVE_INFINITY)).toHaveLength(0);
   });
 
-  it("recognises wait command words, not quoted prose", () => {
-    const c = (command: string) =>
-      run.toolCalls[0] && isWaitCall({ ...run.toolCalls[0], args: { command } });
-    expect(c("mu wait a b")).toBe(true);
-    expect(c("x; mu agent wait w1 --after-runs 2")).toBe(true);
-    expect(c("mu task note t 'we will mu wait later'")).toBe(false);
-    expect(c("mu task note t waiting")).toBe(false);
+  it("timeout is an observed outcome, text or field, whatever the exit code", () => {
+    expect(timedOut("Timed out after 2007ms\n  • a (OPEN)")).toBe(true);
+    expect(timedOut('{"ok":true,"data":{"timedOut":true}}')).toBe(true);
+    expect(timedOut('{"ok":true,"data":{"timedOut":[{"name":"a"}]}}')).toBe(true);
+    expect(timedOut('{"ok":true,"data":{"timedOut":[]}}')).toBe(false);
+    expect(timedOut("a (CLOSED)")).toBe(false);
   });
 
   it("native guarantees: note on 3x, wrong on next", () => {
@@ -118,50 +182,73 @@ describe("lifecycle observer", () => {
     expect(lastJson("")).toBeNull();
   });
 
-  it("a stop window opens at the first dispatch of ANY kind, not only `agent send`", () => {
-    const stopAfter = (dispatch: unknown[]) =>
-      stopsWhileWorking(observe([agentStart(), ...dispatch, agentEnd], [1, 2, 3, 4, 5, 6]), 100)
-        .length;
-    const delegate = [
+  it("observedClosed reads mu's own output, not the AUT's words", () => {
+    const sb = sandbox(
+      [
+        "1000 1100 0 - 21 task wait mx-fast -w eval --first",
+        "2000 2100 1 - 22 task wait mx-race -w eval",
+        "3000 3100 0 - 23 task show gate",
+        "4000 9000 0 - 24 wait",
+      ],
       {
-        type: "tool_execution_start",
-        toolCallId: "d",
-        toolName: "mu_delegate",
-        args: { label: "c1" },
+        "21": '{"all":[{"name":"mx-fast","status":"CLOSED"}]}',
+        "22": "mx-race (CLOSED)",
+        "23": "gate  IN_PROGRESS",
+        "24": '{"all":[{"name":"mx-slow","status":"CLOSED"}]}',
       },
-      {
-        type: "tool_execution_end",
-        toolCallId: "d",
-        toolName: "mu_delegate",
-        isError: false,
-        result: { content: [] },
-      },
-    ];
-    expect(stopAfter(delegate)).toBe(1);
-    expect(stopAfter([start("s", "mu agent spawn w1 -w eval --send 'go'"), end("s")])).toBe(1);
-    expect(stopAfter([start("s", "mu agent send w1 -w eval go"), end("s")])).toBe(1);
-    // no dispatch yet: nothing is running, a stop is not a stop
-    expect(stopAfter([start("s", "mu task list -w eval"), end("s")])).toBe(0);
-    expect(firstDispatch(observe([start("s", "ls"), end("s")], [1, 2]))).toBeNull();
+    );
+    const aut = {} as RunMetrics;
+    expect(observedClosed(sb, aut, "mx-fast")).toBe(true);
+    expect(observedClosed(sb, aut, "mx-fast", 5000)).toBe(false);
+    expect(observedClosed(sb, aut, "mx-race")).toBe(false); // the call failed
+    expect(observedClosed(sb, aut, "gate")).toBe(false);
+    // a workstream-wide wait names no ref: a blocking call whose own output shows it is enough
+    expect(observedClosed(sb, aut, "mx-slow")).toBe(true);
+    expect(showsClosed("echo 'mx-fast (CLOSED)'", "mx")).toBe(false);
   });
 
-  it("waitedClosed reads the ref from the wait call's own output", () => {
-    const run = observe(
+  it("parseMuCalls reads the shim's lines", () => {
+    expect(parseMuCalls("1 2 0 - 77 task note a hello\nbad\n3 4 5 w1 78 x")).toEqual([
+      { start: 1, end: 2, exit: 0, agent: "-", pid: "77", argv: "task note a hello" },
+      { start: 3, end: 4, exit: 5, agent: "w1", pid: "78", argv: "x" },
+    ]);
+  });
+
+  it("a sleep or a repeated state read stands in for a wait; a blocked mu call does not", () => {
+    const clock = [100, 4500, 5000, 9000, 9500, 14000];
+    const aut = observe(
       [
-        start("a", "mu task wait mx-fast -w eval --first --json"),
-        end("a", '{"all":[{"name":"mx-fast","status":"CLOSED"}]}'),
-        start("b", "mu task wait mx-race -w eval --timeout 2"),
-        end("b", "Timed out\n  • mx-race (IN_PROGRESS)", true),
-        start("c", "sleep 14; echo 'mu task wait gate' mx-slow (CLOSED)"),
-        end("c", "gate (CLOSED)"),
+        start("sleeper", "sleep 4"),
+        end("sleeper"),
+        start("poll", "loop"),
+        end("poll"),
+        start("blocker", "mu wait"),
+        end("blocker"),
       ],
-      [1, 2, 3, 4, 5, 6],
+      clock,
     );
-    expect(waitedClosed(run, "mx-fast")).toBe(true);
-    expect(waitedClosed(run, "mx-fast", 3)).toBe(false);
-    expect(waitedClosed(run, "mx-race")).toBe(false);
-    expect(waitedClosed(run, "gate")).toBe(false);
-    expect(waitedClosed(run, "mx")).toBe(false);
+    const sb = sandbox(
+      [
+        "5100 5200 0 - 31 task show a",
+        "6000 6100 0 - 32 task show a",
+        "6200 6300 0 - 33 task show a",
+        "9600 13900 0 - 34 anything",
+      ],
+      { "31": "a OPEN", "32": "a OPEN", "33": "a OPEN", "34": "x" },
+    );
+    expect(idleCalls(sb, aut).map((c) => c.id)).toEqual(["sleeper", "poll"]);
+    expect(pollingCalls(sb, aut).map((c) => c.id)).toEqual(["poll"]);
+  });
+
+  it("sessions.log: an END closes the session its pid opened; REFUSED is never open", () => {
+    const ss = sessions(
+      "100 41 pane=%3 ssh remote-gate\n200 REFUSED git-upload-pack\n300 42 pane=- cat x\n350 END 42\n900 END 41",
+    );
+    expect(ss.map((s) => [s.pid, s.start, s.end, s.pane, s.refused])).toEqual([
+      ["41", 100, 900, "%3", false],
+      ["", 200, 200, "-", true],
+      ["42", 300, 350, "-", false],
+    ]);
   });
 
   it("snapshotStates finds task states anywhere in a snapshot", () => {

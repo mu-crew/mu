@@ -9,15 +9,24 @@ export function scriptFile(id: string, kind: "golden" | "bad", family: Family): 
   return `${id}.${kind}.${family}.json`;
 }
 
-/** Extra negative controls of a scenario: <id>.bad-<name>.<family>.json in `dir`, sorted. */
-export function extraBadScripts(dir: string, id: string, family: Family): string[] {
+/** Extra controls of a scenario: <id>.<kind>-<name>.<family>.json in `dir`, sorted. kind: bad (must be flagged) or golden (must be clean). */
+export function extraScripts(
+  dir: string,
+  id: string,
+  family: Family,
+  kind: "golden" | "bad",
+): string[] {
   if (!existsSync(dir)) return [];
-  const prefix = `${id}.bad-`;
+  const prefix = `${id}.${kind}-`;
   const suffix = `.${family}.json`;
   return readdirSync(dir)
     .filter((f) => f.startsWith(prefix) && f.endsWith(suffix))
     .sort();
 }
+
+/** Extra negative controls of a scenario: <id>.bad-<name>.<family>.json in `dir`, sorted. */
+export const extraBadScripts = (dir: string, id: string, family: Family): string[] =>
+  extraScripts(dir, id, family, "bad");
 
 /** Notes a scenario's golden run must show (its injected failure really happened). */
 export const GOLDEN_EVIDENCE: Record<string, RegExp[]> = {

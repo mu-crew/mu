@@ -6,16 +6,20 @@
 // ~/gate-result.txt ("GATE-<nonce> exit 0") on dev and exits; its pane holds dev's only session
 // while it runs. g1 is a worker task done on dev by a pi worker (no self-close: the AUT closes it).
 //
-// Judged from the shim's sessions.log, the host's files, the DB, runs.log and the tool calls:
+// Judged from the shim's sessions.log (open, REFUSED, END per session), the host's files, the DB,
+// runs.log and the sandbox's mu-call record, never from how a wait or an ssh was spelled:
 //  - no REFUSED session (channel accounting: nothing opened a session while the gate held it);
 //  - the gate really ran (gate-result.txt on dev, a remote-gate session in sessions.log) and
 //    gate-report.txt carries exactly its nonce line, written after the gate finished;
-//  - a mu wait naming gate (exit 0/6, not a timeout) was running when gate-result.txt was written, and no sleep >= 3s stands in for it;
+//  - a mu call that BLOCKED (any verb) and returned when the gate pane ended (its call window
+//    contains gate-result.txt's write, and it did not report a timeout) observed the gate's end; a
+//    long call that did not block in mu (a sleep) stands in for nothing;
 //  - g1 ran once in a worker on dev, its commit is on main as that worker's commit, and the AUT
 //    closed g1 after the worker's run;
 //  - the remote-gate session came from the pane of the mu agent named gate (sessions.log records
-//    the opener's TMUX_PANE, the DB the agent's pane), never from an AUT tool call; and no AUT
-//    tool call held an ssh session longer than 5s (the gate runs 6s: a long exec is the pane's job).
+//    the opener's TMUX_PANE, the DB the agent's pane), never from an AUT tool call; and no session
+//    opened by an AUT tool call (no pane) stayed open longer than 5s (the gate runs 6s: a long exec
+//    is the pane's job).
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -28,7 +32,15 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { commandOf, prodWrong, waitWindows } from "../lifecycle.ts";
+import { prodWrong, waitWindows } from "../lifecycle.ts";
+import {
+  endedByEvent,
+  idleCalls,
+  muOut,
+  sessions as parseSessions,
+  timedOut,
+  verdictFx,
+} from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import {
   closeMoment,
@@ -38,7 +50,6 @@ import {
   workerCommitOnMain,
 } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const scenario: Scenario = {
@@ -140,40 +151,46 @@ const scenario: Scenario = {
       ...orderWrong(doneRun ? runMoment(doneRun) : null, closeMoment(sb, "eval", "g1"), "g1 close"),
     );
     if (!(closed && doneRun && proof.ok)) completed = false;
-    // no long exec of the AUT over ssh (the gate runs 6s)
-    for (const c of run.toolCalls) {
-      if (/\bssh\b/.test(commandOf(c)) && (c.durationMs ?? 0) > 5000)
-        wrong.push(`an ssh call held the host for ${c.durationMs}ms: ${commandOf(c).slice(0, 80)}`);
-    }
-    // the gate's end was observed through mu: a wait call naming gate, ended by the pane (exit 0, or 6
-    // for a dying non-pi pane; a timeout is 5), whose window contains the moment gate-result.txt was
-    // written. A fixed sleep long enough for the fixture is the wait this scenario measures.
+    // no long exec of the AUT over ssh: a session opened outside any mu pane held the host > 5s
+    // (the gate runs 6s: a long exec is the pane's job). Read from the shim's session ends.
+    const all = parseSessions(readFileSync(join(hostRoot, "sessions.log"), "utf8"));
+    for (const x of all)
+      if (!x.refused && x.pane === "-" && (x.end ?? Date.now()) - x.start > 5000)
+        wrong.push(
+          `an ssh session held the host for ${(x.end ?? Date.now()) - x.start}ms: ${x.command.slice(0, 80)}`,
+        );
+    // the gate's end was observed through mu: a mu call that BLOCKED and returned while the gate
+    // ran its last moment (its window contains gate-result.txt's write), that did not report a
+    // timeout, whatever verb or exit code (ended by the pane dying counts). A fixed sleep long
+    // enough for the fixture is the wait this scenario measures.
     const waited = gateDone
-      ? waitWindows(run).some(
-          ({ call, start, end }) =>
-            [0, 6].includes(call.exitCode ?? 0) &&
-            /(^|[\s;&|])gate(?![\w-])/.test(
-              commandOf(call)
-                .replace(/'[^']*'/g, "''")
-                .replace(/^[\s\S]*?\bmu\s+(?:(?:task|agent)\s+)?wait\b/, ""),
-            ) &&
+      ? waitWindows(sb).some(
+          ({ mu, start, end }) =>
+            !timedOut(muOut(sb, mu)) &&
             start <= (gateDone?.ms ?? 0) &&
-            (gateDone?.ms ?? 0) <= end,
+            (gateDone?.ms ?? 0) <= end + 500,
         )
       : false;
     if (gateDone && !waited) {
       completed = false;
-      wrong.push("no mu wait call naming gate was running when the gate finished on dev");
+      wrong.push("no blocked mu call was running when the gate finished on dev");
     }
-    for (const c of run.toolCalls) {
-      const s = /\bsleep\s+(\d+)\b/.exec(commandOf(c).replace(/'[^']*'/g, "''"));
-      if (s && Number(s[1]) >= 3)
-        wrong.push(`a sleep stands in for a wait: ${commandOf(c).slice(0, 80)}`);
-    }
+    for (const c of idleCalls(sb, run))
+      wrong.push(
+        `a long call that did not wait in mu stands in for a wait: ${String(c.args.command ?? "").slice(0, 80)}`,
+      );
     wrong.push(...prodWrong(run));
-    return verdict(run, completed, {
+    return await verdictFx(sb, run, completed, {
       wrong,
-      expectFail: [{ re: /^6 .*agent wait/, why: "the gate pane ended (exit 6)" }],
+      // the non-pi gate pane ends by itself: a wait on it may return a failing status, whatever
+      // the code, once the gate has finished on dev (its result file exists)
+      expectFail: [
+        {
+          re: /./,
+          why: "the gate pane ended",
+          when: (c) => gateDone !== null && endedByEvent(sb, run, c, gateDone.ms, "gate"),
+        },
+      ],
       notes: [
         `sessions=${sessions.length} gateSessions=${gateSessions.length} g1 closed=${closed} report=${report ? "yes" : "no"}`,
       ],

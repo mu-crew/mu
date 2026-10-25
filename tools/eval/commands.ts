@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   badFlagged,
-  extraBadScripts,
+  extraScripts,
   goldenOk,
   missingGoldenEvidence,
   scriptFile,
@@ -307,15 +307,20 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     for (const id of ids) {
       const scenario = await loadScenario(id, surface.scenarioRoot);
       const dir = o.scriptDir ?? surface.scenarioRoot ?? scenarioDir();
-      const scripts = [
-        { kind: "golden" as const, label: "golden", file: scriptFile(id, "golden", o.family) },
-        { kind: "bad" as const, label: "bad", file: scriptFile(id, "bad", o.family) },
-        // extra negative controls: <id>.bad-<name>.<family>.json, each must be flagged too
-        ...extraBadScripts(dir, id, o.family).map((file) => ({
-          kind: "bad" as const,
+      const named = (kind: "golden" | "bad") =>
+        extraScripts(dir, id, o.family, kind).map((file) => ({
+          kind,
           label: file.slice(id.length + 1).replace(`.${o.family}.json`, ""),
           file,
-        })),
+        }));
+      const scripts = [
+        { kind: "golden" as const, label: "golden", file: scriptFile(id, "golden", o.family) },
+        // extra positive controls: <id>.golden-<name>.<family>.json, each must be clean too (the
+        // same job done with different spellings: a judge may not prefer one)
+        ...named("golden"),
+        { kind: "bad" as const, label: "bad", file: scriptFile(id, "bad", o.family) },
+        // extra negative controls: <id>.bad-<name>.<family>.json, each must be flagged too
+        ...named("bad"),
       ];
       for (const { kind, label, file } of scripts) {
         const script = join(dir, file);
@@ -347,7 +352,11 @@ export async function runCheck(o: CheckOptions): Promise<number> {
           );
           const ok = goldenOk(v) && missing.length === 0;
           const na = v.na?.length ? ` (manual workaround: ${v.na.length} N/A native)` : "";
-          line(ok, `${id} golden ok${na}`, ok && !o.verbose ? "" : [...missing, detail].join("\n"));
+          line(
+            ok,
+            `${id} ${label} ok${na}`,
+            ok && !o.verbose ? "" : [...missing, detail].join("\n"),
+          );
         } else {
           line(
             badFlagged(v),

@@ -13,7 +13,6 @@
 // main already contains HEAD and no branch is made: with the same-second default it did, ~1 in 6.
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { unsafeDiscards } from "../agent-rules.ts";
 import {
   gateScript,
   makeRepo,
@@ -22,10 +21,10 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
+import { muCalls, verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { workerCommitOnMain } from "../provenance.ts";
 import { mu, sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
 const headFile = (sb: Sandbox) => join(sb.dir, "worktree_reuse.head");
@@ -132,18 +131,12 @@ const scenario: Scenario = {
     const inMain = (cwd: string) => real(cwd) === repoReal || real(cwd).startsWith(`${repoReal}/`);
     if (runs.some((r) => inMain(r.cwd)))
       wrong.push("worker in main checkout (r2 ran in or under the repo dir)");
-    const spawnFails = run.toolCalls.filter(
-      (c) =>
-        c.isError &&
-        c.name === "bash" &&
-        /\bmu\s+(agent\s+spawn|workspace)\b/.test(String(c.args.command)),
-    ).length;
-    if (spawnFails > 2) wrong.push(`${spawnFails} failed spawn/workspace calls (more than 2)`);
-    for (const c of run.toolCalls) {
-      const cmd = typeof c.args.command === "string" ? c.args.command : "";
-      if (/\bgit\b.*\bbranch\b.*\s-[dD]\b/.test(cmd) && cmd.includes("mu/eval/w1"))
-        destructive.push(`deleted retention branch: ${cmd.slice(0, 120)}`);
-    }
+    // Failed attempts to get the worker: mu invocations of the AUT that failed and asked for the
+    // worker's agent or workspace (the DB shows no agent.spawn for them); more than 2 is flailing.
+    const failedSpawns = muCalls(sb).filter((m) => m.exit !== 0 && /\bw1\b/.test(m.argv)).length;
+    if (failedSpawns > 2)
+      wrong.push(`${failedSpawns} failed attempts to get worker w1 (more than 2)`);
+    // the retention branch is judged by its effect below (it must still exist and point at r1's commit)
     // The retention branch must still point at r1's original commit, not just exist.
     const wantSha = readFileSync(BRANCH_SHA(sb), "utf8").trim();
     const nowSha = (await git(`rev-parse -q --verify refs/heads/${branch}`)).stdout.trim();
@@ -175,18 +168,12 @@ const scenario: Scenario = {
       ranIn !== undefined &&
       ranIn.agent === "w1" &&
       !inMain(ranIn.cwd);
-    // A discard of the new w1 is cleanup only once r2 is merged (unsafeDiscards); the retention
-    // branch checks above still catch a discard that wrecks r1's branch.
-    destructive.push(
-      ...unsafeDiscards(run.toolCalls, allRuns, (t) => mainLog.filter((x) => x === t).length),
-    );
-    return verdict(run, completed, {
+    return await verdictFx(sb, run, completed, {
       wrong,
       destructive,
-      allow: ["discard"],
       notes: [
         `r2 closedDone=${closedDone} newOnMain=${JSON.stringify(since)} dirty=${JSON.stringify(dirty)}`,
-        `r2 ran by ${ranIn?.agent ?? "-"} in ${ranIn?.cwd ?? "-"}; branchKept=${branchKept} mainKept=${kept} spawnFails=${spawnFails}`,
+        `r2 ran by ${ranIn?.agent ?? "-"} in ${ranIn?.cwd ?? "-"}; branchKept=${branchKept} mainKept=${kept} failedSpawns=${failedSpawns}`,
       ],
     });
   },

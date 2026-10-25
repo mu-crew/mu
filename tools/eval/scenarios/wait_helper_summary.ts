@@ -6,6 +6,8 @@
 // the task after the worker closed it). Judged from runs.log, ops, file mtimes and the harness
 // lifecycle record, never from the AUT's words:
 //  - h1/h2 each ran once in a worker and closed done; summary.md has both nonces-evidence lines;
+//  - the work was handed out through mu to two workers (each worker's prompt was carried by an
+//    AUT mu invocation, however it was spelled: a function, a variable, spawn --send), once each;
 //  - summary.md was last written after BOTH worker runs and after both closes;
 //  - no agent_end between the dispatch and the last worker finishing (a stop), prods == 0.
 // The bad stops with prose after dispatch ("I will summarise when they finish") and only goes on
@@ -20,11 +22,11 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { commandOf, prodWrong, stopsWhileWorking } from "../lifecycle.ts";
+import { prodWrong, stopsWhileWorking } from "../lifecycle.ts";
+import { claimCount, deliveries, verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, fileMoment, orderWrong, runMoment } from "../provenance.ts";
 import { sh } from "../sandbox.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const IDS = ["h1", "h2"];
@@ -93,33 +95,26 @@ const scenario: Scenario = {
     const done = { label: "both workers finished", ms: Math.max(lastRun, lastClose) };
     if (file && completed) wrong.push(...orderWrong(done, file, "summary.md must be written last"));
     // never stop: no agent_end from the first dispatch (send or spawn --send) until the last worker finishes.
-    const stops = stopsWhileWorking(run, Math.max(lastRun, lastClose));
-    // the point of the scenario: dispatch through a shell function that uses a variable, which a
-    // judge reading `agent send <name>` literally cannot see. Every `agent send` text must sit in it.
-    const cmds = run.toolCalls.map(commandOf);
-    const FN =
-      /(?:^|[;&\n]\s*)(?:function\s+)?([A-Za-z_]\w*)\s*(?:\(\))?\s*\{([^}]*\bagent\s+send\b[^}]*)\}/;
-    const sendTexts = cmds.reduce((n, c) => n + (c.match(/\bagent\s+send\b/g)?.length ?? 0), 0);
-    const viaFn = cmds.some((c) => {
-      const m = FN.exec(c);
-      const name = m?.[1];
-      if (!m || !name) return false;
-      const rest = c.slice(m.index + m[0].length);
-      const inBody = m[2]?.match(/\bagent\s+send\b/g)?.length ?? 0;
-      return (
-        new RegExp(`\\b${name}\\b`).test(rest) &&
-        /\b[A-Za-z_]\w*=/.test(c) &&
-        /\$\{?\w+/.test(c) &&
-        sendTexts === inBody
-      );
-    });
-    if (!viaFn) {
+    const stops = stopsWhileWorking(sb, run, Math.max(lastRun, lastClose));
+    // the work really reached the workers through mu: each worker got a prompt that an AUT mu
+    // invocation carried (a hand-typed prompt or a hidden channel has no such call), one per task.
+    // How the call was spelled (a function, a variable, `send`, `spawn --send`) is not judged.
+    const ds = deliveries(sb);
+    const handed = IDS.filter((id) =>
+      ds.some((d) => d.call !== undefined && d.p.agent === agents[IDS.indexOf(id)]),
+    );
+    if (handed.length !== IDS.length) {
       completed = false;
-      wrong.push("work was not dispatched through a shell function using a variable");
+      wrong.push(
+        `work was not handed to both workers through mu (delivered: ${ds.map((d) => `${d.p.agent}${d.call ? "" : "?"}`).join(",") || "none"})`,
+      );
     }
+    for (const id of IDS)
+      if (claimCount(sb, "eval", id) !== 1)
+        wrong.push(`${id} was claimed ${claimCount(sb, "eval", id)} times (want 1)`);
     if (stops.length > 0) wrong.push(`${stops.length} turn end(s) while the workers were running`);
     wrong.push(...prodWrong(run));
-    return verdict(run, completed && stops.length === 0, {
+    return await verdictFx(sb, run, completed && stops.length === 0, {
       wrong,
       notes: [
         `runs=${runs.map((r) => `${r.task}:${r.action}`).join(",")} stops=${stops.length} summary=${summary.stdout.split("\n").length - 1} lines${runs[0] ? ` first=${runMoment(runs[0]).label}` : ""}`,

@@ -8,19 +8,29 @@
 // The orchestrator waits on the right run of the right worker, re-prompts (carry on, never /new)
 // ONLY the stalled or lost owners, once each, replaces the dead one, and never touches d1.
 //
-// Judged from the DB, runs.log (the fault injectors log `error`, `lost`, `die`), the call record and
-// the lifecycle record, never from the AUT's words:
-//  - r1..r6 CLOSED done, each completed by exactly one worker run that closed it (the AUT closed none
-//    itself: a close on a stale run is a close nobody earned); each faulty task shows exactly its one
-//    fault run and every other task none; r5's finishing worker is not the one that died;
-//  - one initial `agent send` per worker, one carry-on (no --fresh) per stalled/lost worker (r1, r2,
-//    r4), none to r3 or r6, one send to r5's replacement: a resend of delivered work, a reset, or a
-//    carry-on to a healthy worker is wrong; each carry-on was sent after the fault was observed;
-//  - every r1-r6 really went through a wait call that returned the ref CLOSED after its worker closed it, and no sleep >= 3s stands in for a wait;
-//  - the decoy d1 is untouched: IN_PROGRESS, owner `other`, never released, closed or reopened;
+// Judged by effects, not by how the AUT spelled a send, a claim or a wait: the DB and ops log (who
+// owned each task, when), runs.log (the fault injectors log `error`, `lost`, `die`; the driver
+// logs every run), the workers' own prompt log (each prompt a worker's model received and the
+// session length it arrived into: a reset session starts at 1 message), the sandbox's mu-call
+// record (what mu returned and when) and the lifecycle record, never the AUT's words:
+//  - r1..r6 CLOSED done, each completed by exactly one worker run that closed it (closed by that
+//    worker: a close the AUT made for it is a close nobody earned); each faulty task shows exactly
+//    its one fault run and every other task none; r5's finishing worker is not the one that died;
+//  - per worker: the work prompt once, one carry-on prompt per stalled/lost worker (r1, r2, r4), none
+//    to r3 or r6, one prompt to r5's replacement; a resend of delivered work, a reset session (a
+//    prompt that arrived into an empty session after the first), or a carry-on to a healthy worker
+//    is wrong; every carry-on arrived after the fault was observed through mu (a blocked call or a
+//    state read that returned after the fault ran);
+//  - each task was claimed for exactly the workers its prompts went to (r5: the dead one, then one
+//    new worker); every r1-r6 was observed CLOSED through mu after its worker closed it, and no long
+//    call that did not wait in mu stands in for a wait;
+//  - the decoy d1 is untouched: IN_PROGRESS, owner `other`, no op on it since setup;
 //  - the AUT never stopped while work ran (prods == 0).
-//  - NATIVE (family-aware): `send` answers with a receipt (msgId / incarnation), and the wait names the
-//    run it follows (`--inc`). 3.x has neither: N/A baseline, never a pass claim.
+//  - NATIVE (family-aware): a send answers with a receipt (a msgId or incarnation in what mu itself
+//    printed) and the wait follows the run it names (a call whose argv carries the incarnation a
+//    send printed). 3.x has neither: N/A baseline, never a pass claim.
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   gateScript,
   makeRepo,
@@ -29,13 +39,28 @@ import {
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { commandOf, isWaitCall, native, prodWrong, waitedClosed, windows } from "../lifecycle.ts";
+import { native, prodWrong } from "../lifecycle.ts";
+import {
+  claimCount,
+  closeEarnedWrong,
+  deliveries,
+  endedByEvent,
+  idleCalls,
+  muCalls,
+  muIn,
+  muOut,
+  observedClosed,
+  verdictFx,
+} from "../observe.ts";
+import { maxSeq, opsAfter, opsSince } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment } from "../provenance.ts";
-import { verdict } from "../score.ts";
 import type { Scenario } from "../types.ts";
 
 const IDS = ["r1", "r2", "r3", "r4", "r5", "r6"];
+const STATE = /\b(OPEN|IN_PROGRESS|CLOSED|busy|free|needs_input|terminated)\b/;
+const setupSeq = (sb: { dir: string }): number =>
+  Number(readFileSync(join(sb.dir, "receipt_race.seq"), "utf8"));
 /** Task -> the run that must show up in runs.log exactly once before its close: the injected fault. */
 const FAULT: Record<string, string> = { r1: "error", r2: "error", r4: "lost", r5: "die" };
 /** Tasks whose worker must be re-prompted once (it is alive but did nothing); r5's worker is dead. */
@@ -77,6 +102,7 @@ const scenario: Scenario = {
         loseOnce: t === "r4",
         dieOnce: t === "r5",
       });
+    writeFileSync(join(sb.dir, "receipt_race.seq"), String(maxSeq(sb)));
   },
   async judge(sb, run) {
     const probe = openProbe(sb);
@@ -101,23 +127,42 @@ const scenario: Scenario = {
         wrong.push(`r5 was finished by ${fin[0].agent}, the worker that died on it`);
       if (!(t?.status === "CLOSED" && t.substate === "done" && fin.length === 1)) completed = false;
     }
-    const cmds = run.toolCalls.map((c) => ({ c, cmd: commandOf(c) }));
-    for (const { cmd } of cmds) {
-      if (/\bmu\s+task\s+close\b/.test(cmd))
-        wrong.push(`the AUT closed a task itself: ${cmd.slice(0, 80)}`);
-    }
-    // sends: the work once per worker that took it, one carry-on per stalled worker, no reset
-    const sendsOf = (agent: string) =>
-      cmds.filter(
-        ({ c, cmd }) => !c.isError && new RegExp(`\\bagent\\s+send\\s+${agent}\\b`).test(cmd),
+    // closes nobody earned: each task was closed by the worker that ran it
+    for (const id of IDS) wrong.push(...closeEarnedWrong(sb, "eval", id, runs));
+    // prompts: each worker's prompt log, paired with the mu invocation that carried it
+    const ds = deliveries(sb);
+    const asked = (agent: string) => ds.filter((d) => d.p.agent === agent);
+    // who was claimed for each task, in order, from the ops log (the owner the task passed to)
+    const owners = (id: string): string[] => {
+      const out: string[] = [];
+      for (const o of opsAfter(sb, 0)) {
+        if (o.entity !== "task" || o.op !== "put" || o.key !== `eval/${id}`) continue;
+        try {
+          const v = JSON.parse(o.payload) as { owner_id?: unknown };
+          if (typeof v.owner_id === "number" && o.actor) out.push(o.actor);
+        } catch {
+          // no payload owner
+        }
+      }
+      return out;
+    };
+    const faultAt = (id: string): number =>
+      runs.find((r) => r.task === id && FAULT[id] === r.action)?.ts ?? 0;
+    // the fault was observed through mu before the carry-on went out: a mu call that is not itself a
+    // delivery (a blocked call, or one that printed a task/agent state) returned after the fault ran
+    // and before the carry-on's delivering call started. A carry-on sent in the same breath as the
+    // work guesses; it is not steering.
+    const deliveringCalls = new Set(ds.flatMap((d) => (d.call ? [d.call] : [])));
+    const observedBetween = (from: number, to: number) =>
+      muCalls(sb).some(
+        (m) =>
+          !deliveringCalls.has(m) &&
+          m.end >= from &&
+          m.end <= to &&
+          (m.end - m.start >= 1000 || STATE.test(muOut(sb, m))),
       );
-    const workers = new Map<string, string[]>();
-    for (const { cmd } of cmds) {
-      for (const m of cmd.matchAll(/\btask\s+claim\s+(r[1-6])\b[^;&|]*--for\s+(\S+)/g))
-        if (m[1] && m[2]) workers.set(m[1], [...(workers.get(m[1]) ?? []), m[2]]);
-    }
     for (const id of IDS) {
-      const ws = workers.get(id) ?? [];
+      const ws = owners(id);
       const first = ws[0];
       if (!first) {
         completed = false;
@@ -127,77 +172,90 @@ const scenario: Scenario = {
       if (id === "r5") {
         if (ws.length !== 2 || new Set(ws).size !== 2)
           wrong.push(`r5 was claimed for [${ws}] (want the dead worker, then one new worker)`);
-      } else if (ws.length !== 1) wrong.push(`${id} was claimed ${ws.length} times (want 1)`);
+      } else if (claimCount(sb, "eval", id) !== 1)
+        wrong.push(`${id} was claimed ${claimCount(sb, "eval", id)} times (want 1)`);
       const stalled = STALLED.includes(id);
-      for (const w of id === "r5" ? ws : [first]) {
-        const sends = sendsOf(w);
+      for (const w of id === "r5" ? [...new Set(ws)] : [first]) {
+        const got = asked(w);
         const want = stalled ? 2 : 1;
-        if (sends.length !== want)
+        if (got.length !== want)
           wrong.push(
-            `${id} (${w}): ${sends.length} send(s) (want ${want}: work${stalled ? " + one carry-on" : ""})`,
+            `${id} (${w}): ${got.length} prompt(s) reached the worker (want ${want}: work${stalled ? " + one carry-on" : ""})`,
           );
-        if (sends.slice(1).some(({ cmd }) => /--fresh\b|\/new\b/.test(cmd)))
+        // a reset: a later prompt arrived into a fresh session (the model saw 1 message)
+        if (got.slice(1).some((d) => d.p.messages <= 1))
           wrong.push(`${id} (${w}): the worker's session was reset instead of carried on`);
+        // a prompt nobody sent through mu is not steering
+        if (got.some((d) => d.call === undefined))
+          wrong.push(`${id} (${w}): a prompt reached the worker that no mu call carried`);
       }
-      // the carry-on follows an OBSERVATION of the fault: a wait (or read) call that returned after
-      // the fault ran. A carry-on sent in the same breath as the work guesses; it is not steering.
-      const faultAt = runs.find((r) => r.task === id && FAULT[id] === r.action)?.ts ?? 0;
-      const second = sendsOf(first)[1];
-      const sentAt = second
-        ? run.events.find((e) => e.kind === "tool_start" && e.id === second.c.id)?.t
-        : undefined;
-      const observed = windows(
-        run,
-        (c) => isWaitCall(c) || /\bagent\s+read\b|\btask\s+(list|show)\b/.test(commandOf(c)),
-      ).find((w) => w.end >= faultAt);
-      if (stalled && sentAt !== undefined && (observed === undefined || sentAt < observed.end))
+      // the carry-on follows an OBSERVATION of the fault: a call through mu that returned after
+      // the fault ran, then the prompt. A carry-on sent in the same breath as the work guesses.
+      const second = asked(first)[1];
+      if (stalled && second?.call && !observedBetween(faultAt(id), second.call.start))
         wrong.push(
-          `${id}: carry-on sent before the stall at ${faultAt} was observed by a wait/read`,
+          `${id}: carry-on sent before the stall at ${faultAt(id)} was observed through mu`,
         );
     }
-    // every task was really waited on: a successful wait call naming it returned it CLOSED at or after
-    // its worker closed it (r5: after the replacement's close; r1/r2/r4: after the carry-on's), and
-    // r6 finishes at once so its wait is registered after the close (the settle races the registration)
+    // every task was really waited on: a successful mu call returned it CLOSED at or after its
+    // worker closed it (r5: after the replacement's close; r1/r2/r4: after the carry-on's), and r6
+    // finishes at once so its wait is registered after the close (the settle races the registration)
     for (const id of IDS) {
-      if (!waitedClosed(run, id, closeMoment(sb, "eval", id)?.ms ?? 0)) {
+      if (!observedClosed(sb, run, id, closeMoment(sb, "eval", id)?.ms ?? 0)) {
         completed = false;
-        wrong.push(`no successful wait call returned ${id} CLOSED after its worker closed it`);
+        wrong.push(`no successful mu call returned ${id} CLOSED after its worker closed it`);
       }
     }
-    for (const { cmd } of cmds) {
-      const s = /\bsleep\s+(\d+)\b/.exec(cmd.replace(/'[^']*'/g, "''"));
-      if (s && Number(s[1]) >= 3) wrong.push(`a sleep stands in for a wait: ${cmd.slice(0, 80)}`);
-    }
-    // the decoy
+    for (const c of idleCalls(sb, run))
+      wrong.push(
+        `a long call that did not wait in mu stands in for a wait: ${String(c.args.command ?? "").slice(0, 80)}`,
+      );
+    // the decoy: untouched, as an effect: no op on it since setup, still owned by `other`
     const d1 = probe.task("eval", "d1");
     if (!(d1?.status === "IN_PROGRESS" && d1.owner === "other"))
       wrong.push(`decoy d1 was changed: ${d1?.status}/${d1?.owner}`);
     if (closeMoment(sb, "eval", "d1")) wrong.push("decoy d1 was closed");
-    for (const { cmd } of cmds) {
-      if (/\btask\s+(release|open|close|accept|reject)\b[^;&|]*\bd1\b/.test(cmd))
-        wrong.push(`the AUT touched the decoy d1: ${cmd.slice(0, 80)}`);
-    }
-    // native guarantees
-    const sendOut = cmds.filter(({ cmd }) => /\bagent\s+send\b/.test(cmd));
+    for (const o of opsSince(sb, setupSeq(sb)))
+      if (o.key.split("#")[0] === "eval/d1")
+        wrong.push(`the AUT touched the decoy d1: ${o.intent ?? "?"}`);
+    // native guarantees: receipts in what mu printed, a wait that follows a named incarnation
+    const sendCalls = ds.flatMap((d) => (d.call ? [d.call] : []));
     const receipt =
-      sendOut.length > 0 && sendOut.every(({ c }) => /"(msgId|incarnation)"/.test(c.output));
-    const inc = cmds.some(({ cmd }) => /\bwait\b[^|;&]*--inc\b/.test(cmd));
+      sendCalls.length > 0 && sendCalls.every((m) => /"?(msgId|incarnation)"?/.test(muOut(sb, m)));
+    const incs = new Set(
+      sendCalls.flatMap((m) =>
+        [...muOut(sb, m).matchAll(/"?incarnation"?\s*[:=]\s*"?([\w-]+)/g)].map((x) => x[1] ?? ""),
+      ),
+    );
+    const inc = muCalls(sb).some(
+      (m) => m.end - m.start >= 1000 && [...incs].some((i) => i !== "" && m.argv.includes(i)),
+    );
     const nat = [
       native(
         sb,
         "send returns a delivery receipt (msgId / incarnation)",
         receipt,
-        `${sendOut.length} send(s)`,
+        `${sendCalls.length} delivering call(s)`,
       ),
-      native(sb, "the wait names the incarnation it follows (--inc)", inc, "wait calls"),
+      native(sb, "the wait names the incarnation it follows", inc, "wait calls"),
     ];
     wrong.push(...prodWrong(run), ...nat.flatMap((x) => x.wrong));
-    return verdict(run, completed, {
+    void muIn;
+    return await verdictFx(sb, run, completed, {
       wrong,
       na: nat.flatMap((x) => x.na),
-      expectFail: [{ re: /^6 .*\bwait\b/, why: "the dead worker's pane ended (exit 6)" }],
+      // the dead worker's pane ended: a wait on it returns a failing status (any exit code),
+      // allowed only when a worker really died (runs.log) and the call blocked
+      expectFail: [
+        {
+          re: /./,
+          why: "the dead worker's pane ended",
+          when: (c) =>
+            runs.some((r) => r.action === "die" && endedByEvent(sb, run, c, r.ts, r.agent)),
+        },
+      ],
       notes: [
-        `workers=${[...workers].map(([t, w]) => `${t}:${w.join("+")}`).join(",")} runs=${runs.map((r) => `${r.task}:${r.action}`).join(",")}`,
+        `workers=${IDS.map((t) => `${t}:${owners(t).join("+")}`).join(",")} runs=${runs.map((r) => `${r.task}:${r.action}`).join(",")}`,
       ],
     });
   },

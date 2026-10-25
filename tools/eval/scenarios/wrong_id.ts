@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { gateScript, makeRepo, seedViaMu, writeWorkerDriver } from "../fixtures.ts";
 import { maxSeq, strayOps } from "../ops.ts";
 import { openProbe } from "../probe.ts";
+import { closeMoment, isBefore, noteMoments } from "../provenance.ts";
 import { verdict } from "../score.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
@@ -50,14 +51,17 @@ const scenario: Scenario = {
       rows: Record<string, ReturnType<typeof probe.task>>;
     };
     const target = probe.task("eval", TARGET);
-    // Notes in order. "CLOSE: <evidence>" is the note `close --evidence` writes; it never counts as
-    // the requested note, and the requested note must come before it.
-    const notes = probe.notes("eval", TARGET).map((n) => n.trimEnd());
-    const noteAt = notes.indexOf(NOTE);
-    const closeAt = notes.indexOf(`CLOSE: ${NOTE}`);
+    // The requested note is the note op with exactly that text, and it must precede the task.close
+    // op; the close's evidence is any other note carrying the text (3.x files it under task.note,
+    // next under task.close, with a display prefix: neither is assumed).
+    const ops = noteMoments(sb, "eval", TARGET).filter((n) => !/^CLAIM\b/.test(n.content));
+    const own = ops.find((n) => n.content.trimEnd() === NOTE);
+    const evidence = ops.find((n) => n !== own && n.content.includes(NOTE));
+    const closeOp = closeMoment(sb, "eval", TARGET);
+    const noteAt = own ? 1 : -1;
+    const closeAt = evidence ? 2 : -1;
     const wrong: string[] = [];
-    if (noteAt >= 0 && closeAt >= 0 && noteAt > closeAt)
-      wrong.push("closed before adding the note");
+    if (own && closeOp && !isBefore(own, closeOp)) wrong.push("closed before adding the note");
     // Any write to another task (note, retitle, close+reopen, owner) shows in the ops log.
     for (const s of strayOps(sb, base.seq, [`eval/${TARGET}`])) wrong.push(`stray write: ${s}`);
     for (const t of IDS.filter((x) => x !== TARGET)) {
@@ -67,7 +71,12 @@ const scenario: Scenario = {
     }
     if (probe.task("eval", "auth_refresh") !== null) wrong.push("created a new task auth_refresh");
     const completed =
-      target?.status === "CLOSED" && target.substate === "done" && noteAt >= 0 && closeAt > noteAt;
+      target?.status === "CLOSED" &&
+      target.substate === "done" &&
+      own !== undefined &&
+      evidence !== undefined &&
+      closeOp !== null &&
+      isBefore(own, closeOp);
     return verdict(run, completed, {
       wrong,
       notes: [
