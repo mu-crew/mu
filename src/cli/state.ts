@@ -51,6 +51,8 @@ export interface StateOpts {
 const FIELD_CHARS = 160;
 /** Largest per-list length tried; the loop shrinks it until the document fits. */
 const LIST_STEPS = [20, 10, 5, 3, 2, 1, 0];
+/** Field lengths the zero-item fallback tries, longest first (the identity block's fields shrink). */
+const FALLBACK_CHARS = [FIELD_CHARS, 80, 40, 20, 10, 5];
 
 // ─── Scope ─────────────────────────────────────────────────────────
 
@@ -82,11 +84,11 @@ async function resolveScope(db: Db, opts: StateOpts): Promise<string[]> {
   });
 }
 
-/** The same read, uncapped: what a cut result names. */
-function fullCommand(opts: StateOpts, scope: readonly string[]): string {
+/** The same read, uncapped: what a cut result names. `short` drops the scope names for `--all` (a superset, but a fixed-size command). */
+function fullCommand(opts: StateOpts, scope: readonly string[], short = false): string {
   const parts = ["mu", "state"];
   if (opts.me === true) parts.push("--me");
-  if (opts.all === true) parts.push("--all");
+  if (opts.all === true || short) parts.push("--all");
   else if ((opts.workstream?.length ?? 0) > 0) parts.push("-w", scope.map(shellWord).join(","));
   parts.push("--full");
   return parts.join(" ");
@@ -100,18 +102,18 @@ interface Bounded {
   cut: number;
 }
 
-/** Every string of `value` as one inert, escaped line of at most FIELD_CHARS characters (`…` ends a clipped one); `n.cut` counts the code points dropped. */
-function clipStrings(value: unknown, n: { cut: number }): unknown {
+/** Every string of `value` as one inert, escaped line of at most `chars` characters (`…` ends a clipped one); `n.cut` counts the code points dropped. */
+function clipStrings(value: unknown, n: { cut: number }, chars: number): unknown {
   if (typeof value === "string") {
-    const whole = clipEscaped(value, FIELD_CHARS);
+    const whole = clipEscaped(value, chars);
     if (whole.cut === 0) return whole.text;
-    const room = clipEscaped(value, FIELD_CHARS - 1);
+    const room = clipEscaped(value, chars - 1);
     n.cut += room.cut;
     return `${room.text}…`;
   }
-  if (Array.isArray(value)) return value.map((v) => clipStrings(v, n));
+  if (Array.isArray(value)) return value.map((v) => clipStrings(v, n, chars));
   if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clipStrings(v, n)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clipStrings(v, n, chars)]));
   }
   return value;
 }
@@ -129,8 +131,8 @@ const LISTS = [
   "human_needs",
 ] as const;
 
-/** `snap` with every list cut to `k` records, workstreams cut to `wsCount`, strings clipped. */
-function bound(snap: StateSnapshot, k: number, wsCount: number): Bounded {
+/** `snap` with every list cut to `k` records, workstreams cut to `wsCount`, strings clipped to `chars`. */
+function bound(snap: StateSnapshot, k: number, wsCount: number, chars = FIELD_CHARS): Bounded {
   let more = Math.max(0, snap.workstreams.length - wsCount);
   const limit = <T>(list: readonly T[]): T[] => {
     more += Math.max(0, list.length - k);
@@ -146,35 +148,59 @@ function bound(snap: StateSnapshot, k: number, wsCount: number): Bounded {
   });
   const me = snap.me === null ? null : { ...snap.me, owned_tasks: limit(snap.me.owned_tasks) };
   const n = { cut: 0 };
-  const data = clipStrings({ caller: snap.caller, me, workstreams }, n) as Record<string, unknown>;
+  const data = clipStrings({ caller: snap.caller, me, workstreams }, n, chars) as Record<
+    string,
+    unknown
+  >;
   return { data, more, cut: n.cut };
 }
 
 const sizeOf = (data: unknown): number => Buffer.byteLength(jsonDocument(data)) + 1;
 
-/** The largest read (lists, then workstreams) whose FINAL document fits RESULT_BYTES, with its cut counts and way back. */
-export function boundState(snap: StateSnapshot, retrieve: string, full: boolean): unknown {
+/**
+ * The largest read (lists, then workstreams) whose FINAL document fits
+ * RESULT_BYTES, with its cut counts and way back. When even bare counts
+ * overflow, the last resorts are zero-item envelopes (no workstream) whose
+ * `retrieve` is `short` if the named one is too long, and whose strings (the
+ * identity block's) shrink until the document fits: the fallback is validated
+ * like every other candidate, never returned unchecked.
+ */
+export function boundState(
+  snap: StateSnapshot,
+  retrieve: string,
+  full: boolean,
+  short = retrieve,
+): unknown {
   if (full) return { caller: snap.caller, me: snap.me, workstreams: snap.workstreams };
-  const finish = (b: Bounded): Record<string, unknown> => ({
+  const finish = (b: Bounded, way: string): Record<string, unknown> => ({
     ...b.data,
     ...(b.more > 0 ? { more: b.more } : {}),
     ...(b.cut > 0 ? { cut: b.cut } : {}),
-    ...(b.more > 0 || b.cut > 0 ? { retrieve } : {}),
+    ...(b.more > 0 || b.cut > 0 ? { retrieve: way } : {}),
   });
   const count = snap.workstreams.length;
+  const ways = retrieve === short ? [retrieve] : [retrieve, short];
+  const fit = (b: Bounded): Record<string, unknown> | null => {
+    for (const way of ways) {
+      const doc = finish(b, way);
+      if (sizeOf(doc) <= RESULT_BYTES) return doc;
+    }
+    return null;
+  };
   for (const k of LIST_STEPS) {
-    const doc = finish(bound(snap, k, count));
-    if (sizeOf(doc) <= RESULT_BYTES) return doc;
+    const doc = fit(bound(snap, k, count));
+    if (doc !== null) return doc;
   }
   // Even bare counts overflow: page the workstreams themselves (none is allowed).
-  let doc = finish(bound(snap, 0, 0));
   for (let w = count - 1; w >= 1; w--) {
-    const candidate = finish(bound(snap, 0, w));
-    if (sizeOf(candidate) > RESULT_BYTES) continue;
-    doc = candidate;
-    break;
+    const doc = fit(bound(snap, 0, w));
+    if (doc !== null) return doc;
   }
-  return doc;
+  for (const chars of FALLBACK_CHARS) {
+    const doc = fit(bound(snap, 0, 0, chars));
+    if (doc !== null) return doc;
+  }
+  return finish(bound(snap, 0, 0, 1), short);
 }
 
 // ─── cmdState ──────────────────────────────────────────────────────
@@ -206,7 +232,9 @@ export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
     const found = orphans.get(w.workstream);
     if (found !== undefined) w.orphans = found;
   }
-  emitJson(boundState(snap, fullCommand(opts, scope), opts.full === true));
+  emitJson(
+    boundState(snap, fullCommand(opts, scope), opts.full === true, fullCommand(opts, scope, true)),
+  );
 }
 
 /** `mu me`: the very same read as `mu state --me`. */
