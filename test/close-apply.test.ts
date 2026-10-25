@@ -301,6 +301,37 @@ describe("applySettledClose: no inferred close", () => {
   });
 });
 
+describe("applySettledClose: round 2 parser findings through the writer", () => {
+  const open = () => getTask(db, "t1", "w")?.status;
+
+  it("f_close_malformed_tail: a malformed final CLOSE after a valid pair closes nothing", () => {
+    const text =
+      'CLOSE: task=t1 evidence="npm test: passed"\nREPORT:\ndone\nCLOSE: task=t1 evidence=bad';
+    expect(applySettledClose(db, input({ lastText: text }))).toMatchObject({
+      applied: false,
+      reason: CLOSE_MALFORMED,
+    });
+    expect(open()).toBe("IN_PROGRESS");
+    expect(kinds("t1")).toEqual([{ kind: "note", content: CLOSE_MALFORMED }]);
+  });
+
+  it("f_close_quoted_fence: a block quoted in an unclosed fence closes nothing and writes nothing", () => {
+    const text =
+      'Reviewing this brief, not completing the work:\n```text\nCLOSE: task=t1 evidence="npm test: passed"\nREPORT:\ndone';
+    const before = opCount();
+    expect(applySettledClose(db, input({ lastText: text }))).toMatchObject({ applied: false });
+    expect(open()).toBe("IN_PROGRESS");
+    expect(opCount()).toBe(before);
+    expect(kinds("t1")).toEqual([]);
+  });
+
+  it("f_close_report_whitespace: the stored report keeps its leading indentation", () => {
+    const text = 'CLOSE: task=t1 evidence="npm test: passed"\nREPORT:\n    code\nnext\n\n';
+    expect(applySettledClose(db, input({ lastText: text }))).toMatchObject({ applied: true });
+    expect(kinds("t1")[0]).toEqual({ kind: "report", content: "    code\nnext" });
+  });
+});
+
 describe("applySettledClose: atomic replay", () => {
   it("open blockers propagate and roll back notes AND the replay row; a retry after the blocker closes succeeds", () => {
     addTask(db, { workstream: "w", localId: "b1", title: "b1" });
