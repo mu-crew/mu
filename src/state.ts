@@ -7,7 +7,7 @@
 // the rationale (`mu task notes design_sdk_seam -w tui`).
 
 import type { RuntimeState } from "./agent-state.js";
-import { type LiveAgent, type LiveAgentsView, listLiveAgents } from "./agents.js";
+import { type LiveAgent, type LiveAgentsView, listAgents, listLiveAgents } from "./agents.js";
 import type { Db } from "./db.js";
 import { type DoctorSummary, loadDoctorSummary } from "./doctor-summary.js";
 import { GLYPH } from "./glyphs.js";
@@ -27,15 +27,14 @@ import { getParallelTracks, type Track } from "./tracks.js";
 
 // ─── WorkstreamSnapshot ───────────────────────────────────────────
 
+/** An agent running on a host profile (`agent spawn --host`): `agents.host/cwd/base`. */
 export interface RemoteWorker {
-  taskName: string;
+  agent: string;
   host: string;
-  path: string;
-}
-
-export interface RemoteDispatch extends RemoteWorker {
-  agentName: string;
-  baseSha: string;
+  /** Its working directory on the host. */
+  path: string | null;
+  /** The commit its worktree was made at; null without `--worktree`. */
+  base: string | null;
 }
 
 export interface WorkstreamSnapshot {
@@ -85,73 +84,11 @@ export interface WorkstreamSnapshotSlowFields {
   doctor: DoctorSummary | null;
 }
 
-/** Notes that may carry a REMOTE: / REMOTE_BASE: line. GLOB, not LIKE:
- *  the parsers below are case-sensitive, so LIKE's case-folding only
- *  fetched notes they then dropped, and GLOB's byte compare is ~2.5x
- *  cheaper per note. Still one pass over the workstream's notes; no index
- *  can serve a substring match, and a partial index would need a schema
- *  version bump (f_remote_notes_like). */
-function remoteNoteRows(
-  db: Db,
-  workstream: string,
-  taskName?: string,
-): Array<{ task_name: string; content: string }> {
-  const filter = taskName === undefined ? "" : " AND t.local_id = ?";
-  const params: string[] = taskName === undefined ? [workstream] : [workstream, taskName];
-  return db
-    .prepare(
-      `SELECT t.local_id AS task_name, n.content AS content
-       FROM task_notes n
-       JOIN tasks t ON t.id = n.task_id
-       JOIN workstreams ws ON ws.id = t.workstream_id
-       WHERE ws.name = ?${filter}
-         AND (n.content GLOB '*REMOTE: *' OR n.content GLOB '*REMOTE_BASE: *')
-       ORDER BY n.id`,
-    )
-    .all(...params) as Array<{
-    task_name: string;
-    content: string;
-  }>;
-}
-
+/** The remote workers of a workstream: its agents with a host, read straight from the registry. */
 export function listRemoteWorkers(db: Db, workstream: string): RemoteWorker[] {
-  const remoteWorkers: RemoteWorker[] = [];
-  for (const row of remoteNoteRows(db, workstream)) {
-    for (const line of row.content.split(/\r?\n/)) {
-      const match = /^REMOTE:\s+([^:\s]+):(\S+)\s*$/.exec(line);
-      const host = match?.[1];
-      const path = match?.[2];
-      if (host !== undefined && path !== undefined) {
-        remoteWorkers.push({ taskName: row.task_name, host, path });
-      }
-    }
-  }
-  return remoteWorkers;
-}
-
-export function findRemoteDispatch(
-  db: Db,
-  workstream: string,
-  taskName: string,
-  agentName: string,
-): RemoteDispatch | undefined {
-  let dispatch: RemoteDispatch | undefined;
-  for (const row of remoteNoteRows(db, workstream, taskName)) {
-    let location: RemoteWorker | undefined;
-    let baseSha: string | undefined;
-    for (const line of row.content.split(/\r?\n/)) {
-      const remote = /^REMOTE:\s+([^:\s]+):(\S+)\s*$/.exec(line);
-      if (remote?.[1] !== undefined && remote[2] !== undefined) {
-        location = { taskName, host: remote[1], path: remote[2] };
-      }
-      const base = /^REMOTE_BASE:\s+([^:\s]+):(\S+)\s*$/.exec(line);
-      if (base?.[1] === agentName && base[2] !== undefined) baseSha = base[2];
-    }
-    if (location !== undefined && baseSha !== undefined) {
-      dispatch = { ...location, agentName, baseSha };
-    }
-  }
-  return dispatch;
+  return listAgents(db, { workstream })
+    .filter((a) => a.host !== null)
+    .map((a) => ({ agent: a.name, host: a.host ?? "", path: a.cwd, base: a.base }));
 }
 
 /**

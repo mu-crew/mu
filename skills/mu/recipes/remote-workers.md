@@ -1,112 +1,94 @@
 # Remote workers
 
 Use when an agent's process runs on another machine (a devserver, a
-bigger box) while its pane stays local. mu has no remote backend, ssh
-code, or host registry. This is a recipe plus the traps that cost time.
+bigger box) while its pane stays local. mu never connects and knows no
+ssh flags: a **host profile** holds your own command templates
+(`mu host add`) and `mu agent spawn --host` fills them.
 
-**If you read one thing:** on a session-capped host, an open attach pane
-holds the only ssh channel and silently breaks `git fetch`,
-`murmur collect`, and every other ssh. Attach to look, then
-`mu agent close`.
+**If you read one thing:** with `--max-sessions 1` the pane's own channel
+is the only one. mu holds it for the agent's life, so a bare `ssh dev ...`
+or a `git fetch` over ssh fails while an agent runs. Close the agent
+first, or run host commands through `mule`.
 
 ## The model
 
-- **The pane is local, the process is remote.** The pane's foreground
-  process is ssh. `send`, `read`, and the reaper work unchanged. The pi
-  control socket rides the same ssh as a `-L` forward, so pi state,
-  `wait`, and `abort` are exact.
-- **One orchestrator DB.** Never run a second mu on the host.
-  `tasks.owner_id` is an FK into the machine-local `agents` table, so a
-  remote mu cannot claim tasks in your DAG.
-- **mu does not know the remote worktree**: no auto-removal. You own it.
-- **Everything is orchestrator-pull.** The host usually has no route
-  back to your laptop. Push setup out, fetch commits back.
+- **The pane is the transport.** The local pane runs the profile's
+  `--shell` template: it starts the remote pi and forwards its control
+  socket to the local derived path. `send`, `read`, `wait`, `abort` and
+  the reaper work unchanged, and **the pane dying is the agent dying**
+  (close, reconcile, teardown need no remote case).
+- **One orchestrator DB.** The host has the pi package (`pi install
+  npm:@mu-crew/mu`) but no mu DB. mu gives the remote pi five variables
+  only (`MU_MANAGED_AGENT`, `MU_AGENT_NAME`, `MU_WORKSTREAM`,
+  `MU_CTL_SOCK`, `MU_REMOTE`), never your DB, state or sync dir. A remote
+  worker cannot claim or close tasks: **you close.** Its brief says so and
+  asks for the final `git rev-parse HEAD` sha.
+- **Everything is orchestrator-pull.** The host usually has no route back
+  to your laptop. Fetch commits back.
+- **Remote rows are registry fields**: `agents.host`, `cwd` (a path on the
+  host) and `base` (the worktree's start commit). `mu state` lists them;
+  there is no `REMOTE:` note.
 
 ## The recipe
 
 ```bash
-# 1. WORKTREE: you create it; --worktree is local-only
-ssh dev 'git -C ~/repo worktree add ~/ws/worker-1'
+# 0. ONCE: a profile (print a starter, edit it, add it) and a check
+mu host init dev --ssh          # prints a starter `mu host add`; runs nothing
+mu host check dev               # host, repo, pi, mu extension
 
-# 2. RECORD: location and per-worker baseline, in one note
-mu task note t1 -w big "REMOTE: dev:~/ws/worker-1
-REMOTE_BASE: worker-1:$(ssh dev 'cd ~/ws/worker-1 && git rev-parse HEAD')"
+# 1. SPAWN + CLAIM + BRIEF in one journaled attempt
+mu agent spawn worker-1 -w big --host dev --worktree --task t1 --send 'Read: mu task notes t1 -w big'
 
-# 3. SPAWN: env goes INSIDE the command (tmux -e stops at the hop).
-#    remote-env prints the socket forward and the identity env; it runs nothing.
-#    $SHELL -ilc: ssh's non-interactive shell skips ~/.zshrc (PATH, provider env).
-eval "$(mu agent remote-env worker-1 -w big --shell)"  # MU_SSH_ARGS, MU_REMOTE_ENV
-mu agent spawn worker-1 -w big --command \
-  "ssh $MU_SSH_ARGS dev -t 'cd ~/ws/worker-1 && $MU_REMOTE_ENV \$SHELL -ilc \"pi --approve\"'"
+# 2. WAIT: as for a local agent (the forward is the socket)
+mu agent wait worker-1 -w big --after-runs <runs> --json
 
-# 4. CLAIM + SEND: as for a local agent
-mu task claim t1 -w big --for worker-1 --evidence 'remote on dev'
-mu agent send worker-1 -w big --fresh '...'
-
-# 5. WAIT: pi: mu agent wait worker-1 -w big --after-runs <send's runs> --json,
-#    then the claim's Next: once, after the worker reports done.
-#    non-pi: the same, once per reported-done turn
-
-# 6. COLLECT: fetch straight from the remote worktree
-git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
+# 3. COLLECT: fetch straight from the remote worktree, then close
+git fetch "ssh://dev/<cwd from mu agent show>" HEAD && git cherry-pick FETCH_HEAD
+mu agent close worker-1 -w big --if <rev>
 ```
+
+`--worktree` makes a detached `git worktree add` of HEAD (or `--from`) in
+the profile's `--repo`, at `~/.local/state/mu/remote-worktrees/<ws>/<name>`
+on the host, through the profile's `--exec`. `--cwd` names an existing
+remote directory instead. `--root` is refused (it names a local repo).
+mu reserves the host's channel **before** its first remote command and
+keeps it until the pane dies, so a full host refuses the spawn up front
+with the holder named, and a failed spawn removes only the worktree it
+made (still clean, still at its base) and frees the slot.
 
 Done when the worker's commits are cherry-picked locally, the merged
-tree passes the merged-tree gates (host and local checks below), and the pane is
-closed.
+tree passes the merged-tree gates (host and local checks below), and the
+agent is closed. `agent close` does not remove the remote worktree yet:
+remove it yourself once collected
+(`ssh dev 'git -C <repo> worktree remove <cwd>'`).
 
-### Step 2: the note is load-bearing
-
-Keep the exact forms `REMOTE: <host>:<path>` and
-`REMOTE_BASE: <agent>:<sha>`. `mu task claim --for` builds the
-poll-and-close command from them, and `mu state` lists `REMOTE:` lines.
-For a crew, poll every path in one bounded mule job:
-
-```bash
-mule run --max-secs 30 'for d in ~/ws/*/; do printf "%s %s\\n" \
-  "$(basename $d)" "$(cd $d && git rev-parse HEAD 2>/dev/null || echo unreadable)"; done'
-mule wait <job>; mule tail <job>
-```
-
-Accept only 40 hex characters. `unreadable` or an empty field means
-retry next turn, not progress.
-
-### Step 3: the control-socket forward
+### The control-socket forward
 
 Spawn reports `ctl: ok` when all of these hold (`mu doctor` has a ctl
-row per agent):
+row per agent, `mu host check dev --agent <name> -w <ws>` probes one):
 
-- The host has the mu extension: run `pi install npm:@mu-crew/mu` there.
-- The ssh is direct. `$MU_SSH_ARGS` sets `ControlMaster=no
-  ControlPath=none`; a multiplexed ssh never binds the forward and spawn
+- The host has the mu extension: `pi install npm:@mu-crew/mu` there.
+- The shell template's transport binds the local socket and does not
+  multiplex (ssh: `ControlMaster=no ControlPath=none`; the `host init`
+  starter has them). A multiplexed ssh never binds the forward and spawn
   reports `ctl: missing`.
-- sshd allows the forward. A refused forward kills the pane at spawn
-  (`ExitOnForwardFailure=yes`). Check `AllowStreamLocalForwarding`.
+- The host allows the forward (sshd `AllowStreamLocalForwarding`). A
+  refused forward kills the pane at spawn (`ExitOnForwardFailure=yes`).
 
-A dead ssh leaves the socket file, which probes `refused`, never a
-stale `ok`. Non-pi agents get state from murmur, lagging 30 s ± 10 s
-plus a 10 s cache.
+A dead transport leaves the socket file, which probes `refused`, never a
+stale `ok`. herdr cannot run a profile's shell template: `--host` is
+refused there in one line (use tmux).
 
-### Step 5: poll once per turn
+### Wait once per reported-done turn
 
-The claim's `Next:` mule poll closes the task as done on any change of
-the remote HEAD. Run it once, only after the worker reports done (its
-close or final answer). For a pi worker, first block on
-`mu agent wait <name> --after-runs <runs> --json`, with `runs` from
-`mu agent send --json`. It settles exactly over the forwarded socket,
-and it returns at once for a run that settled before the wait started.
-Pass `<runs>` unchanged. On exit 5 (timeout), or on a wait that returns
-while the worker asks a question, do not poll: read the pane
-(`mu agent read <name> -n 20`) and answer.
+For a pi worker, block on `mu agent wait <name> --after-runs <runs>
+--json`, with `runs` from the spawn or send. It settles exactly over the
+forwarded socket, and returns at once for a run that settled before the
+wait started. On exit 5 (timeout), or a wait that returns while the
+worker asks a question, read the pane (`mu agent read <name> -n 20`) and
+answer. Never `sleep` in a tool call, and set a deadline before dispatch.
 
-- Never `sleep` in a tool call. Aborting the loop can leave remote work
-  and a capped channel running.
-- Set a deadline before dispatch. At expiry, read the pane, then release
-  or re-dispatch.
-- On a capped host, run `Next:` through mule. A refused bare ssh returns
-  an empty sha that looks like progress.
-
-### Step 6: fetch from the worktree
+### Fetch from the worktree
 
 - No shared remote or bare repo is needed. It exits 128 on failure, so
   `&&` chaining is safe.
@@ -163,30 +145,24 @@ If your local `$MU_PI_COMMAND` is a wrapper such as `pi-meta
 --pi-meta-no-solo --approve`, plain `pi` on the host gives a live pane
 with **no models configured**. Check with `ssh dev 'command -v pi-meta'`.
 
-### Tell the worker that mu is absent
+### A remote worker cannot close or claim
 
-mu is usually not on the host, so the in-pane loop cannot run. Say so
-in the prompt and have the worker print its sha. You claim, note, and
-close. Otherwise `mu task wait` hangs.
+The host has no mu DB, so the remote pi skips the close nudge
+(`MU_REMOTE=1`) and `mu task` there reads nothing. The brief says so;
+you read the reported sha, collect, and `mu task close`.
 
-### A dropped connection reaps the task, not the commit
+### A dropped connection is a dead agent
 
-The reaper reverts the task to OPEN, but the commit is still on the
-host. Fetch from the `REMOTE:` path before re-dispatching.
-
-### A dead non-pi remote agent vanishes
-
-murmur records `crashed` only when a pane outlives its process. Remotely
-tmux reaps the session with the agent, so SIGKILL gives zero rows, not
-`crashed`. (A dead pi agent probes `refused`.) Trust the `[reaper]`
-note and `ssh <host> 'tmux ls'`.
+The pane is the transport: when it dies the row is reaped, the task
+reopens, and the commits stay in the remote worktree. Fetch from its
+`cwd` (`mu agent show` before the reap, `mu state` while it lives)
+before re-dispatching.
 
 ### Stopping and cleaning up
 
 - `mu agent abort <name>` stops a pi turn through the forwarded socket.
-- For an unresponsive agent, `mu agent close` and respawn.
-- mu does not remove remote worktrees:
-  `ssh dev 'git -C ~/repo worktree remove ~/ws/worker-1'`.
+- `mu agent close` kills the pane and the remote pi with it, and frees the
+  host slot. It leaves the remote worktree: remove it once collected.
 
 ## murmur
 
@@ -202,14 +178,9 @@ report `unknown`; everything else works.
 | What is a non-pi agent doing; is anything blocked on me | murmur |
 | Which host can I reach | murmur: `peer list` |
 
-**`$MU_REMOTE_ENV` goes inside the ssh command.** Without it the agent
-reports `driver=human` and shows in your own status bar.
-
 **murmur sees the remote pane** and links it to your local pane by the
 agent name in the local argv (`attached here %N`; focus instead of a
-second connection). The detached shape carries the name only in the
-session name, so name it `mu-<agent>`. An env prefix does not help:
-macOS `ps` reports argv, not env.
+second connection).
 
 ### Picking a host
 
@@ -259,8 +230,7 @@ own ssh ControlPath. On a `MaxSessions 1` host, eight bare `rev-parse`
 polls returned one sha and seven empty results; mule ran all eight.
 
 - Use mule for long work and for any command whose refusal could look
-  like success. Keep worktree setup and `murmur collect` bare: they fail
-  loudly.
+  like success. Keep `murmur collect` bare: it fails loudly.
 - A mule job is entirely remote. It cannot fetch from, push to, or rsync
   with your laptop.
 - For an interactive agent under mule's lifecycle, use `mule run --tui`
@@ -274,36 +244,6 @@ polls returned one sha and seven empty results; mule ran all eight.
 | 5 | No result will ever arrive | Stop polling |
 
 None of these means the work failed. Full table: `mule --help`.
-
-### Run the agent in detached remote tmux
-
-Decouple the agent from the connection to release the channel:
-
-```bash
-eval "$(mu agent remote-env worker-1 -w big --shell)"
-# Agent runs detached on the host; this ssh returns at once
-ssh dev "tmux new-session -d -s mu-worker-1 -c ~/ws/worker-1 \
-  '$MU_REMOTE_ENV \$SHELL -ilc \"pi --approve\"'"
-
-# Attach a local pane (with the socket forward); claim and send as usual
-mu agent spawn worker-1 -w big --command "ssh $MU_SSH_ARGS dev -t 'tmux attach -t mu-worker-1'"
-
-# COLLECT: detach first to free the channel, then fetch
-mu agent close worker-1 -w big --if <n>   # <n>: the revision a bare close prints
-git fetch "ssh://dev/~/ws/worker-1" HEAD && git cherry-pick FETCH_HEAD
-
-# Reattach later with the same spawn command; LLM context is intact
-```
-
-- An attached pane blocks other ssh exactly like a direct one. Close it
-  before fetching, or use mule.
-- `mu agent close` detaches. It does not stop the agent. To stop it:
-  `ssh dev 'tmux kill-session -t mu-worker-1'`. `ssh dev 'tmux ls'` is
-  the only inventory of these sessions.
-- A dropped connection no longer reaps the agent. Each attach
-  re-creates the socket forward.
-- Keep the session name `mu-<agent>`: mu records neither, so it is the
-  only link. On an uncapped host this shape buys nothing.
 
 ### Use ET for your own shell
 
@@ -320,5 +260,6 @@ with `ps -o pid=,command= -ax | grep "[x]2ssh"` and kill only those of
 the aborted invocation (match its host or tty), not every x2ssh, before
 retrying.
 
-On a capped host: ET for you, mule for tooling, detached tmux for mu
-agents. None of them competes for the slot.
+On a capped host: ET for you, mule for tooling, `--max-sessions` for mu
+agents (the profile's cap counts the pane's channel). None of them
+competes for the slot.

@@ -52,10 +52,12 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_WORKSTREAM` | The agent's workstream. With `MU_MANAGED_AGENT=1` it is the scope of every verb that has no `-w` (no tmux lookup); without it, ignored. `MU_SESSION` is not read: a verb with no `-w` and no injected scope fails with `no workstream: pass -w <name>`. |
 | `MU_CTL_SOCK` | The agent's control socket path, derived from state dir, workstream, and agent. The mu pi extension serves it. |
 | `MU_MANAGED_AGENT` | `1`. Hides `mu_delegate` inside agents, so a helper cannot spawn helpers. |
+| `MU_REMOTE` | `1`, only for an agent spawned with `--host`. Tells its pi extension there is no mu DB on that host: it skips the close nudge (you close the task). |
 
-`mu agent remote-env <agent> --shell` prints `MU_SSH_ARGS` (the ssh
-socket forward) and `MU_REMOTE_ENV` (the four vars above) for a remote
-pi agent's `--command`. mu never reads them back.
+A `--host` agent gets exactly `MU_MANAGED_AGENT`, `MU_AGENT_NAME`,
+`MU_WORKSTREAM`, `MU_CTL_SOCK` (the host-side path) and `MU_REMOTE`, written
+into its profile's shell template (`{env}`). It never gets `MU_DB_PATH`,
+`MU_STATE_DIR` or `MU_SYNC_DIR`; its local pane gets none of the vars above.
 
 ## pi package and `mu pi migrate`
 

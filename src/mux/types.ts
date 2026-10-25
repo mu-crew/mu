@@ -272,6 +272,11 @@ export interface MuxBackend {
    *  agent). spawn.ts then skips its own liveness/readiness polling. A
    *  capability flag, never a backend-name check. */
   readonly spawnAgentWaitsReady: boolean;
+  /** True when `spawnAgent` runs `opts.command` as a shell command line in
+   *  the pane (tmux). herdr starts a known agent kind itself, so it cannot
+   *  run a host profile's shell template (`spawn --host`). A capability
+   *  flag, never a backend-name check. */
+  readonly runsShellCommand: boolean;
 
   /** True iff this backend can drive panes on this machine right now.
    *  Consulted by `detectMux()` in precedence order. */

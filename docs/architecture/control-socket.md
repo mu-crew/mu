@@ -153,12 +153,16 @@ therefore never reaches `capture` or the mux send.
 
 ## Remote agents
 
-The user's `ssh` command carries `-L <local derived path>:<remote path>`
-and puts `MU_CTL_SOCK=<remote path>` in the remote env.
-`mu agent remote-env` prints both and runs nothing
-(`src/cli/agents-remote.ts`). mu always connects to the local path, so
-local and remote agents share one transport, and state, send, wait and
-abort are exact without murmur.
+`mu agent spawn --host <profile>` runs the profile's `shell` template in
+the local pane (`src/remote-agent.ts`). The template carries
+`-L {local_sock}:{remote_sock}` and puts `MU_CTL_SOCK={remote_sock}` in the
+remote env (`{env}`: five whitelisted identity variables, never the local
+DB, state or sync dir). `local_sock` is the derived path and `remote_sock`
+is `/tmp/mu-<uid>/<ws>/<agent>.sock` (`remoteCtlSocketPath`). mu always
+connects to the local path, so local and remote agents share one
+transport, and state, send, wait and abort are exact without murmur. The
+pane is the transport: its death is the agent's death, and frees the
+host's channel.
 
 ssh does not create the local directory, which is why spawn makes it
 first. When ssh dies it leaves the local socket file behind. That file

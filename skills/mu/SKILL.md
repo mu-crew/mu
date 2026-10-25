@@ -116,8 +116,7 @@ repo, spawn with `--worktree` (`workspace: true` on `mu_delegate`).
 Two builds in one checkout corrupt each other; keep the main checkout
 for orchestration. Never make your own `git worktree` or copy for a
 local agent: mu cannot list, diff or free what it did not create, so it
-leaks. Remote agents are the exception
-([remote-workers](recipes/remote-workers.md)).
+leaks. (A remote agent's worktree is made by `spawn --host --worktree`.)
 
 Worktrees are git worktrees (exit 4 outside a repo). `mu agent close`
 only previews until given `--if <rev>`, and refuses a **dirty** one (`WorktreeDirtyError`) before it kills the pane;
@@ -129,10 +128,11 @@ and tell the human ([waves](recipes/waves.md) when workers share files).
 
 ### Remote agents
 
-The PANE is local, the PROCESS is remote. **One orchestrator DB**: never
-run a second mu on the host. **Read
-[recipes/remote-workers.md](recipes/remote-workers.md) before spawning
-your first remote agent, and again before waiting on one.**
+`mu agent spawn --host <profile>`: the PANE is local and is the transport,
+the PROCESS is remote, and the pane dying is the agent dying. **One
+orchestrator DB**: the remote worker has none, so you close its task.
+**Read [recipes/remote-workers.md](recipes/remote-workers.md) before
+spawning your first remote agent.**
 [mule](https://github.com/mu-crew/mule) runs remote commands without
 holding an ssh channel; **`mule` exit 3 is a HANDBACK** to the operator
 (hardware-key touch): never retry or open `ssh -MNf` yourself.

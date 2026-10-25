@@ -133,6 +133,7 @@ import {
   type TransportSendOptions,
 } from "./agents/transport.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
+import { releaseHostChannelsForAgent } from "./hosts.js";
 import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
 import { resolveActorIdentity } from "./tasks/claim.js";
 import { ensureWorkstream, isScratchWorkstream } from "./workstream.js";
@@ -555,8 +556,14 @@ function deleteAgentRow(
           )
           .all(agentId) as Array<{ taskId: number; localId: string; workstream: string }>;
 
+        const pane = db.prepare("SELECT pane_id FROM agents WHERE id = ?").get(agentId) as
+          | { pane_id: string }
+          | undefined;
         const result = db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
         if (result.changes === 0) return false;
+        // A remote agent's pane IS its host transport: the row's death frees the
+        // channel it held, by registry id + pane (never a name).
+        if (pane !== undefined) releaseHostChannelsForAgent(db, agentId, pane.pane_id);
 
         for (const t of stuck) {
           db.prepare(

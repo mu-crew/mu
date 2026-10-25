@@ -423,8 +423,6 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
     [["agent", "list", "-w", "own"]],
     [["agent", "show", "own/self-1", "--json"]],
     [["agent", "show", "self-1", "-w", "own"]],
-    [["agent", "remote-env", "self-1", "-w", "own", "--json"]],
-    [["agent", "remote-env", "self-1", "-w", "own", "--shell"]],
     [["agent", "read", "self-1", "-w", "own"]],
     [["agent", "send", "self-1", "go", "-w", "own"]],
     [["agent", "check", "self-1", "m1", "-w", "own"]],

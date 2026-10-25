@@ -70,8 +70,9 @@ first. The reaper acts only on a dead pane.
 For an idle worker, read its last answer (the same `--after-runs`
 wait for pi, else the pane), then answer, retry, or release its task.
 `MU_IDLE_THRESHOLD_MS` defaults to 5m. A remote owner: for pi,
-`mu agent wait --after-runs` first, then poll once; otherwise poll once
-per turn ([remote-workers](remote-workers.md#step-5-poll-once-per-turn)).
+`mu agent wait --after-runs` first (the forward is its socket); otherwise
+read the pane once per turn
+([remote-workers](remote-workers.md#wait-once-per-reported-done-turn)).
 
 ## Merging
 

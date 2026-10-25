@@ -26,7 +26,7 @@
 // A placeholder after a backslash, or inside $(...) / backticks within double
 // quotes, is refused (the lexer does not nest shells).
 // {env} is a run of KEY=VALUE assignment words, so it can precede a command.
-// Keys are the four remote identity variables only (never the local DB,
+// Keys are the five remote identity variables only (never the local DB,
 // state or sync dir); each VALUE is shell-quoted (`hostEnvWords`). The words
 // are shell text, so in '...' or "..." they are escaped for that quote like
 // any text, and `{env:sh}` is refused (it is already text for the inner shell).
@@ -48,7 +48,9 @@
 //               `releaseHostChannelsForAgent(id, pane)` at close. Reclaimed
 //               only when the pane is proven dead; a liveness probe that
 //               throws, or no probe, keeps the row.
-// Wiring attached channels into spawn and close is v_remote_spawn.
+// `spawn --host` reserves BEFORE its pane opens, binds the lease to the new
+// agent's id + pane, and `deleteAgent` (close, reconcile, rollback, teardown)
+// frees it: the pane IS the transport, so pane death is transport death.
 
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -108,6 +110,19 @@ export class HostInUseError extends Error {
     public readonly holders: readonly string[],
   ) {
     super(`host ${host} still holds channels (${holders.join(", ")}): close those agents first`);
+  }
+}
+
+/** The active multiplexer cannot run a host profile's shell template. One line, exit 2. */
+export class HostSpawnUnsupportedError extends Error {
+  override readonly name = "HostSpawnUnsupportedError";
+  constructor(
+    public readonly host: string,
+    public readonly mux: string,
+  ) {
+    super(
+      `--host ${host} needs a multiplexer that runs a shell command in its pane; ${mux} starts agents itself and cannot run the profile's shell template (use tmux)`,
+    );
   }
 }
 
@@ -220,12 +235,17 @@ export const HOST_PLACEHOLDERS = ["env", "cmd", "local_sock", "remote_sock", "cw
 export type HostPlaceholder = (typeof HOST_PLACEHOLDERS)[number];
 export type HostTemplateValues = Partial<Record<HostPlaceholder, string>>;
 
-/** The only variables a remote worker is given: its identity, never the local DB, state or sync dir. */
+/**
+ * The only variables a remote worker is given: its identity, never the local
+ * DB, state or sync dir. `MU_REMOTE=1` tells the remote extension there is no
+ * mu DB over there (it skips the close nudge; CLOSE is applied here).
+ */
 export const HOST_ENV_KEYS = [
   "MU_MANAGED_AGENT",
   "MU_AGENT_NAME",
   "MU_WORKSTREAM",
   "MU_CTL_SOCK",
+  "MU_REMOTE",
 ] as const;
 
 /** One shell-quoted value as `shellQuote` writes it: single-quoted runs and `"'"`. */
@@ -520,6 +540,15 @@ export async function reserveHostChannel(
  * an orphan row). The returned profile is that snapshot; run the template
  * from it, not from a re-read.
  */
+export async function admitHostChannel(
+  db: Db,
+  host: string,
+  holder: string,
+  opts: ChannelOpts = {},
+): Promise<{ lease: HostLease; profile: HostProfile }> {
+  return admit(db, host, holder, opts);
+}
+
 async function admit(
   db: Db,
   host: string,
@@ -639,7 +668,7 @@ export interface HostRun {
  * termination the whole group (the template's transport included) is gone
  * before this returns, so the channel is never released under a live one.
  */
-async function runTemplate(
+export async function runLeasedTemplate(
   db: Db,
   lease: HostLease,
   profile: HostProfile,
@@ -668,7 +697,7 @@ export async function runHostTemplate(
     db,
     host,
     holder,
-    (profile, lease) => runTemplate(db, lease, profile, field, values, timeoutMs),
+    (profile, lease) => runLeasedTemplate(db, lease, profile, field, values, timeoutMs),
     opts,
   );
 }
@@ -740,7 +769,7 @@ export async function checkHost(
         let detail: string;
         let ok = false;
         try {
-          const r = await runTemplate(
+          const r = await runLeasedTemplate(
             db,
             lease,
             profile,

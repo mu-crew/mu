@@ -198,6 +198,7 @@ export {
 } from "./hlc.js";
 export {
   addHost,
+  admitHostChannel,
   bindHostChannel,
   type ChannelOpts,
   checkHost,
@@ -216,6 +217,7 @@ export {
   HostNotFoundError,
   type HostProfile,
   HostProfileError,
+  HostSpawnUnsupportedError,
   HostTemplateError,
   type HostTemplateValues,
   hostEnvWords,
@@ -299,6 +301,7 @@ export {
   type ReconcileReport,
   reconcile,
 } from "./reconcile.js";
+export { RemotePrepareError } from "./remote-agent.js";
 export {
   agentRevision,
   assertRevision,

@@ -98,6 +98,9 @@ function ownedTasksOf(db: Db, agent: AgentRow): ClosePreview["ownedTasks"] {
  *  else (an orphan) the newest registered for the name. */
 function worktreeOf(db: Db, workstream: string, name: string, agent?: AgentRow) {
   if (agent === undefined) return getWorktreeFor(db, workstream, name);
+  // A remote agent's cwd is a path on its host: the local registry knows nothing
+  // of it (its remote worktree is the remote-collect unit's, never removed here).
+  if (agent.host !== null) return undefined;
   return agent.cwd === null ? undefined : getWorktreeAt(db, agent.cwd);
 }
 

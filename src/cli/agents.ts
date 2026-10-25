@@ -86,6 +86,8 @@ interface SpawnOpts {
   ctl?: boolean;
   /** Take the next free name when `<name>` is taken. */
   nextFree?: boolean;
+  /** Run on this host profile (`mu host add`): the pane runs its shell template. */
+  host?: string;
   /** Send this text once the agent is up (`-` reads stdin). */
   send?: string;
   /** Bind the spawn to this task: claim it for the new agent and send the text as its brief (needs `--send`). */
@@ -142,6 +144,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     ...(opts.root !== undefined ? { root: opts.root } : {}),
     ...(opts.ctl === false ? { ctl: false } : {}),
     ...(opts.nextFree === true ? { nextFree: true } : {}),
+    ...(opts.host !== undefined ? { host: opts.host } : {}),
   });
   // --next-free may have picked another name than the one asked for.
   const name = agent.name;
@@ -151,7 +154,13 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   // Under --json the warnings ride in the one document (`warnings`), never stderr.
   const warnings: string[] = [];
   if (agent.ctl === "missing" || agent.ctl === "refused") {
-    const warn = new AgentCtlUnreachableError(name, workstream, agent.ctlSocket, agent.ctl);
+    const warn = new AgentCtlUnreachableError(
+      name,
+      workstream,
+      agent.ctlSocket,
+      agent.ctl,
+      agent.host,
+    );
     warnings.push(warn.message);
     if (!opts.json) {
       console.error(pc.yellow(`warning: ${warn.message}`));
@@ -330,6 +339,7 @@ async function cmdSpawnTask(
       ...(opts.root !== undefined ? { root: opts.root } : {}),
       ...(opts.ctl === false ? { ctl: false } : {}),
       ...(opts.nextFree === true ? { nextFree: true } : {}),
+      ...(opts.host !== undefined ? { host: opts.host } : {}),
     },
   });
   const rec = out.receipt;
@@ -492,7 +502,13 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
   });
   if (agent.ctl === "missing" || agent.ctl === "refused")
     return fail(
-      new AgentCtlUnreachableError(agent.name, agent.workstreamName, agent.ctlSocket, agent.ctl),
+      new AgentCtlUnreachableError(
+        agent.name,
+        agent.workstreamName,
+        agent.ctlSocket,
+        agent.ctl,
+        agent.host,
+      ),
     );
   let undelivered = false;
   try {
@@ -1340,7 +1356,6 @@ import {
 // wireSelfCommands needs cmdMyTasks / cmdMyNext which live in cli/tasks.ts
 // (they're task queries scoped to the resolved-self agent). Lateral
 // cluster→cluster import documented as the single intentional edge.
-import { wireRemoteEnvCommand } from "./agents-remote.js";
 import { cmdMyNext, cmdMyTasks } from "./tasks.js";
 
 export function wireAgentCommands(program: Command): void {
@@ -1381,6 +1396,10 @@ export function wireAgentCommands(program: Command): void {
       "--root <repo>",
       "with --worktree: the repo to add it to (default: the git root of your cwd)",
     )
+    .option(
+      "--host <profile>",
+      "run on this host profile (mu host add): the pane runs its --shell template, which starts the remote pi and forwards its control socket here; --cwd and --worktree name REMOTE paths (the worktree is made by its --exec, under ~/.local/state/mu/remote-worktrees/<ws>/<name>); the pane dying is the agent dying. tmux only; not with --root",
+    )
     .option("--no-ctl", "skip the control-socket handshake with the mu pi extension")
     .option(
       "--next-free",
@@ -1403,6 +1422,7 @@ export function wireAgentCommands(program: Command): void {
     .action(function (name: string) {
       const opts = (this as Command).opts() as {
         nextFree?: boolean;
+        host?: string;
         send?: string;
         task?: string;
         attempt?: string;
@@ -1570,8 +1590,6 @@ export function wireAgentCommands(program: Command): void {
       };
       return handle((db) => cmdAbort(db, name, opts), this as Command)();
     });
-
-  wireRemoteEnvCommand(agent);
 
   // `mu agent wait` — the task-less counterpart to `mu task wait`. Block
   // until agents finish (busy → any other state). For scratch /

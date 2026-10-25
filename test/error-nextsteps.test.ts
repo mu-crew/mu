@@ -244,7 +244,18 @@ const cases: NextStepsCase[] = [
   {
     error: new AgentCtlUnreachableError("alice", "auth", "/s/sock/auth/alice.sock", "missing"),
     label: "AgentCtlUnreachableError",
-    expectedTokens: ["pi install npm:@mu-crew/mu", "/s/sock/auth/alice.sock"],
+    expectedTokens: ["pi install npm:@mu-crew/mu"],
+  },
+  {
+    error: new AgentCtlUnreachableError(
+      "alice",
+      "auth",
+      "/s/sock/auth/alice.sock",
+      "refused",
+      "dev",
+    ),
+    label: "AgentCtlUnreachableError (remote)",
+    expectedTokens: ["mu host check dev --agent alice -w auth"],
   },
   {
     error: new AgentSendIndeterminateError("alice", "auth", "send", "timeout"),
@@ -702,8 +713,36 @@ describe("error-specific structured-step assertions", () => {
     expect(err.message).toContain("command not found: pi");
     expect(err.message).not.toContain("instance lock");
     const cmds = err.errorNextSteps().map((s) => s.command);
-    expect(cmds).toContain("mu agent remote-env --help");
+    expect(cmds).toContain("mu host init <host> --ssh");
+    expect(cmds.join("\n")).not.toContain("remote-env");
     expect(cmds.join("\n")).not.toContain("pi-meta --no-solo");
+  });
+
+  it("AgentDiedOnSpawnError for a --host spawn names the host and its check", () => {
+    const err = new AgentDiedOnSpawnError(
+      "rw-1",
+      "%7",
+      undefined,
+      "exec /bin/sh -c x",
+      undefined,
+      "dev",
+    );
+    expect(err.message).toContain("host dev");
+    expect(err.errorNextSteps().map((s) => s.command)).toContain("mu host check dev");
+  });
+
+  it("AgentCtlUnreachableError points at the host check only for a remote agent", () => {
+    const local = new AgentCtlUnreachableError("w-1", "auth", "/s.sock", "missing");
+    expect(
+      local
+        .errorNextSteps()
+        .map((s) => s.command)
+        .join("\n"),
+    ).not.toContain("mu host");
+    const remote = new AgentCtlUnreachableError("w-1", "auth", "/s.sock", "refused", "dev");
+    expect(remote.errorNextSteps().map((s) => s.command)).toContain(
+      "mu host check dev --agent w-1 -w auth",
+    );
   });
 });
 

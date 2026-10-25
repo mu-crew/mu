@@ -642,6 +642,9 @@ export function registerCloseNudge(
   hold: SettleHold = noHold,
 ): void {
   if (!nudgeEnabled(env)) return;
+  // A remote worker has no mu DB: `mu task owned-by` there would read nothing.
+  // The orchestrator owns CLOSE (spawn --host sets MU_REMOTE=1).
+  if (env.MU_REMOTE === "1") return;
   const me = workerIdentity(env);
   if (me === undefined) return;
   let fired = false;

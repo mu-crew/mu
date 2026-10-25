@@ -74,6 +74,7 @@ import {
   HostInUseError,
   HostNotFoundError,
   HostProfileError,
+  HostSpawnUnsupportedError,
 } from "../hosts.js";
 import { GroupIdAmbiguousError, GroupNotFoundError, LogKindReservedError } from "../logs.js";
 import {
@@ -95,6 +96,7 @@ import {
 } from "../output.js";
 import { type Envelope, encodeEnvelope } from "../output-contract.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
+import { RemotePrepareError } from "../remote-agent.js";
 import { RevisionMismatchError } from "../revision.js";
 import { syncDir } from "../segments.js";
 import {
@@ -326,6 +328,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof WorkstreamNameReservedError ||
     // A host profile field or template mu refuses: nothing is stored or run.
     err instanceof HostProfileError ||
+    // The active mux cannot run a profile's shell template: refused before any effect.
+    err instanceof HostSpawnUnsupportedError ||
     // Same typed-*Invalid* class: a task id or a title the operator
     // typed that cannot become an id. isUsageClassError prints --help.
     err instanceof TaskIdInvalidError ||
@@ -501,6 +505,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   if (err instanceof AgentAbortTimeoutError) {
     // Same lane as the wait verbs' timeout: still busy, try again.
     return { label: "timeout", exitCode: 5 };
+  }
+  if (err instanceof RemotePrepareError) {
+    // The host's own exec step failed or answered nothing usable: substrate, not usage.
+    return { label: "remote host", exitCode: 5 };
   }
   if (err instanceof HostCheckFailedError) {
     // The host (or its forward) failed a check step: substrate, not usage.
