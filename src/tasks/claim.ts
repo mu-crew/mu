@@ -137,7 +137,11 @@ function releaseTaskBody(db: Db, localId: string, opts: ReleaseTaskOptions): Rel
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
   ).run(
     newStatus,
-    statusChanges ? DEFAULT_SUBSTATE[newStatus] : before.substate,
+    statusChanges
+      ? before.kind === "human" && newStatus === "OPEN"
+        ? "parked" // a human task is never ready
+        : DEFAULT_SUBSTATE[newStatus]
+      : before.substate,
     new Date().toISOString(),
     localId,
     before.workstreamName,

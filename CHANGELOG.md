@@ -60,8 +60,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   reason appends a brief. `openHumanNeeds(db, caller)` lists only that caller's
   open needs. No error or queue refusal records one. A `human` task resolves only
   by an explicit `mu task close`: `task unpark`, `task claim` (even `--force`) and
-  a settled CLOSE block are refused (exit 4, one line naming `task close`), a
-  reopened one returns to parked, and `task show` no longer hints `unpark` for it.
+  a settled CLOSE block are refused (exit 4, one line naming `task close`);
+  every path back to OPEN (`task open`, `release --reopen`, the reaper) lands it
+  in parked, never todo; `task show` no longer hints `unpark` for it.
   `human_needs` is machine-local and joins `UNREBUILDABLE_TABLES`: `mu rebuild`
   keeps the task and brief but cannot restore who recorded it, and reports the
   loss. No schema or capture version bump (an additive table; same-version

@@ -567,7 +567,7 @@ function deleteAgentRow(
 
         for (const t of stuck) {
           db.prepare(
-            "UPDATE tasks SET status = 'OPEN', substate = 'todo', updated_at = ? WHERE id = ?",
+            "UPDATE tasks SET status = 'OPEN', substate = CASE WHEN kind = 'human' THEN 'parked' ELSE 'todo' END, updated_at = ? WHERE id = ?",
           ).run(new Date().toISOString(), t.taskId);
           addNote(
             db,
