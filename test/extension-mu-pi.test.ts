@@ -637,6 +637,33 @@ describe("mu pi extension", () => {
     });
   });
 
+  describe("expectIncarnation", () => {
+    it("send/fresh naming another incarnation are refused before acting; the right one (or none) goes through", async () => {
+      await fake.emit("session_start");
+      const hello = await ctlRequest(sock, { op: "hello" });
+      const inc = hello.ok ? hello.incarnation : undefined;
+      expect(typeof inc).toBe("string");
+      for (const op of ["send", "fresh"] as const) {
+        const bad = await ctlRequest(sock, {
+          op,
+          text: "x",
+          msgId: `bad-${op}`,
+          expectIncarnation: "old-proc",
+        });
+        expect(bad).toEqual({ v: 1, ok: false, error: INCARNATION_MISMATCH, incarnation: inc });
+      }
+      expect(fake.sendUserMessage).not.toHaveBeenCalled();
+      expect(await ctlRequest(sock, { op: "status", msgId: "bad-send" })).toMatchObject({
+        msg: { accepted: false },
+      });
+      expect(
+        await ctlRequest(sock, { op: "send", text: "ok", msgId: "s1", expectIncarnation: inc }),
+      ).toMatchObject({ ok: true });
+      expect(await ctlRequest(sock, { op: "send", text: "ok2" })).toMatchObject({ ok: true });
+      expect(fake.sendUserMessage).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe("fresh msgId receipt", () => {
     it("is remembered once the fresh run started (reply), and not when it fails", async () => {
       await fake.emit("session_start");

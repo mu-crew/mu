@@ -118,6 +118,8 @@ function definitelyUnsent(err: unknown): boolean {
     err instanceof AgentSlashCommandUnsupportedError ||
     err instanceof AgentBusyError ||
     err instanceof AgentSendRefusedError ||
+    // Another pi owns the socket now: refused before (or at) the dispatch.
+    err instanceof AgentReplacedError ||
     // A pane that died WITH write evidence (a msgId) may have taken the prompt first.
     (err instanceof AgentPaneDeadError && err.msgId === undefined)
   );
@@ -359,6 +361,10 @@ async function drive(
       });
       agent = spawned;
       spawnThrew = false;
+      // The pi this spawn's handshake saw: every send below is bound to it.
+      if (spawned.ctlIncarnation !== undefined) {
+        rec = updateReceipt(db, taskId, key, { incarnation: spawned.ctlIncarnation });
+      }
       // The pane is up but cannot take (or confirm) a prompt: nothing was sent.
       if (spawned.ctl === "missing" || spawned.ctl === "refused") {
         throw new AgentCtlUnreachableError(spawned.name, ws, spawned.ctlSocket, spawned.ctl);
@@ -420,6 +426,7 @@ async function drive(
     sent = await sendViaTransport(row, req.text, {
       socket: agentCtlSocket(db, row),
       msgId: rec.msgId,
+      ...(rec.incarnation !== null ? { expectIncarnation: rec.incarnation } : {}),
       onUndelivered: (w) => {
         undelivered = w.message;
       },

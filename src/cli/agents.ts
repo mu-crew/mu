@@ -499,6 +499,8 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
     const sent = await sendToAgent(db, agent.name, text, {
       workstream: agent.workstreamName,
       expect: { incarnation: agent.incarnation, paneId: agent.paneId },
+      // Bound to the pi the spawn handshake saw: a replacement bound at the same socket path is refused.
+      ...(agent.ctlIncarnation !== undefined ? { expectIncarnation: agent.ctlIncarnation } : {}),
       onUndelivered: () => {
         undelivered = true;
       },

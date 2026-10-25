@@ -70,6 +70,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
     `TaskAlreadyOwnedError`, nothing is sent and only the attempt's own
     resources are rolled back. A fresh attempt on a closed task is refused
     before any pane exists.
+  - Those sends are also bound to the **ctl incarnation** the spawn's own
+    handshake saw (`SpawnedAgent.ctlIncarnation`, journaled in the receipt):
+    the ctl `send`/`fresh` ops take an optional `expectIncarnation` (protocol
+    additive, like `wait --inc`) and the extension refuses a mismatch with
+    `incarnation mismatch` BEFORE dispatching, so a replacement pi that binds
+    the same socket path after the registry check gets nothing (the same
+    one-line `AgentReplacedError`; with `--task` it is definitely unsent). An
+    extension that reports no incarnation is sent to unbound.
   - Seams: `TransportSendOptions.msgId` (a reserved id for ctl send/fresh;
     the default and `--interrupt` still mint their own), `claimTask`'s
     `expectedAgentId` (checked inside the immediate claim: a name deleted and

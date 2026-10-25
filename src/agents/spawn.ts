@@ -326,6 +326,13 @@ export function probeToSpawnCtl(kind: CtlProbe["kind"]): Exclude<SpawnCtl, "skip
 export type SpawnedAgent = AgentRow & {
   ctl: SpawnCtl;
   ctlSocket: string;
+  /**
+   * The pi process the handshake's hello/status named. A send right after
+   * the spawn carries it (`expectIncarnation`), so a replacement that binds
+   * the same socket path is refused instead of handed the prompt. Absent
+   * when the handshake did not run or the extension predates incarnations.
+   */
+  ctlIncarnation?: string;
   /** Set when the startup scan saw a Claude trust dialog parked in the pane. */
   trustDialog?: true;
 };
@@ -387,7 +394,7 @@ export function resetHandshakeClockForTests(): void {
 async function awaitCtlHandshake(
   sock: string,
   onMiss?: () => Promise<void>,
-): Promise<Exclude<SpawnCtl, "skipped">> {
+): Promise<{ ctl: Exclude<SpawnCtl, "skipped">; incarnation?: string }> {
   const budgetMs = defaultSpawnCtlMs();
   const deadline = handshakeClock.now() + budgetMs;
   let last: Exclude<SpawnCtl, "skipped"> = "missing";
@@ -401,7 +408,12 @@ async function awaitCtlHandshake(
         sock,
         Math.max(1, Math.min(remaining, CTL_POLL_INTERVAL_MS * 4)),
       );
-      if (probe.kind === "ok") return "ok";
+      if (probe.kind === "ok") {
+        return {
+          ctl: "ok",
+          ...(probe.incarnation !== undefined ? { incarnation: probe.incarnation } : {}),
+        };
+      }
       last = probeToSpawnCtl(probe.kind);
     }
     // The final check at the deadline always runs, throttle or not: a pane
@@ -412,7 +424,7 @@ async function awaitCtlHandshake(
       await onMiss();
     }
     const left = deadline - handshakeClock.now();
-    if (left <= 0) return last;
+    if (left <= 0) return { ctl: last };
     await handshakeClock.delay(Math.min(CTL_STAT_INTERVAL_MS, left));
   }
 }
@@ -591,6 +603,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   let ownedIncarnation: number | undefined = staged?.incarnation;
   const wantsCtl = opts.ctl !== false && speaksMuCtl(cli, command) && defaultSpawnCtlMs() !== 0;
   let ctl: SpawnCtl | undefined;
+  let ctlIncarnation: string | undefined;
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
   let phase: SpawnPhase = "pane";
   let trustDialog = false;
@@ -724,7 +737,9 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         if (await mux.paneAlive(pid)) return;
         throw new AgentDiedOnSpawnError(opts.name, pid, lastScrollback, command, when);
       };
-      ctl = await awaitCtlHandshake(ctlSocket, check ? assertPaneAlive : undefined);
+      const hs = await awaitCtlHandshake(ctlSocket, check ? assertPaneAlive : undefined);
+      ctl = hs.ctl;
+      ctlIncarnation = hs.incarnation;
       // Known gap: pi binds the socket in session_start (init), before
       // it renders startup diagnostics, so an ok on the first tick can
       // scan a pane that has not printed its error yet.
@@ -759,7 +774,13 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // Outside the rollback: a timeout means only control is missing; the
   // pane and pi are fine. The caller reports it (see
   // AgentCtlUnreachableError).
-  ctl ??= wantsCtl ? await awaitCtlHandshake(ctlSocket) : "skipped";
+  if (ctl === undefined) {
+    if (wantsCtl) {
+      const hs = await awaitCtlHandshake(ctlSocket);
+      ctl = hs.ctl;
+      ctlIncarnation = hs.incarnation;
+    } else ctl = "skipped";
+  }
   // `agents` is machine-local (it holds pane_id), so no capture trigger
   // covers it and this emit is the ONLY record. Typed intent so it
   // renders through the same formatter as captured ops.
@@ -776,7 +797,13 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // so the hint trails the spawn's own stdout output and so a partial
   // failure (rolled back above) never emits it.
   maybeWarnNonConventionalAgentName(opts.name);
-  return { ...agent, ctl, ctlSocket, ...(trustDialog ? { trustDialog: true as const } : {}) };
+  return {
+    ...agent,
+    ctl,
+    ctlSocket,
+    ...(ctlIncarnation !== undefined ? { ctlIncarnation } : {}),
+    ...(trustDialog ? { trustDialog: true as const } : {}),
+  };
 }
 
 /** A worktree spawn has made and registered. */
