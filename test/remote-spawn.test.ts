@@ -48,8 +48,9 @@ import {
   HostSpawnUnsupportedError,
   listHostChannels,
 } from "../src/hosts.js";
+import { listLogs } from "../src/logs.js";
 import { reconcile } from "../src/reconcile.js";
-import { RemotePrepareError } from "../src/remote-agent.js";
+import { LOCAL_ONLY_ENV, RemotePrepareError } from "../src/remote-agent.js";
 import { listRemoteWorkers } from "../src/state.js";
 import { claimTask } from "../src/tasks/claim.js";
 import { addTask } from "../src/tasks/edit.js";
@@ -59,7 +60,7 @@ import { ensureWorkstream, teardownWorkstream, workstreamRevision } from "../src
 import { helloReply, INC, withHello } from "./_ctl-ext.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCliJson } from "./_runCli.js";
+import { runCliJson, runCliWire } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
 const SHA = "a".repeat(40);
@@ -144,6 +145,15 @@ esac
     repo: "/srv/repo",
     max_sessions: 1,
   });
+  // The same templates with no cap: a full host's own admission refusal cannot mask a rollback guard.
+  addHost(db, {
+    name: "free",
+    shell: "echo L={local_sock} R={remote_sock} C={cwd} {env} -- {cmd}",
+    exec: `/bin/sh ${fakeExec} {cmd}`,
+    fetch: "true",
+    repo: "/srv/repo",
+    max_sessions: null,
+  });
   state = freshMockState();
   installTmux();
 });
@@ -210,13 +220,17 @@ const paneCall = (): readonly string[] => {
   if (c === undefined) throw new Error("no pane was created");
   return c;
 };
-/** The command the pane was created with: `exec /bin/sh -c '<filled template>'`. */
+/** The command the pane was created with: `exec env -u ... /bin/sh -c '<filled template>'`. */
 const paneCommand = (): string => paneCall().at(-1) ?? "";
 /** The filled shell template itself, un-quoted from the `sh -c` word. */
 const filled = (): string =>
-  execFileSync("/bin/sh", ["-c", `f() { printf %s "$3"; }; f ${paneCommand().slice(5)}`], {
-    encoding: "utf8",
-  });
+  execFileSync(
+    "/bin/sh",
+    ["-c", `f() { printf %s "$3"; }; f ${paneCommand().slice(paneCommand().indexOf("/bin/sh"))}`],
+    {
+      encoding: "utf8",
+    },
+  );
 
 const spawn = (over: Partial<Parameters<typeof spawnAgent>[1]> = {}) =>
   spawnAgent(db, { name: "worker-1", workstream: "auth", host: "dev", ...over });
@@ -253,7 +267,9 @@ describe("refusals before any effect", () => {
 describe("the pane is the transport", () => {
   it("runs the filled shell template; the remote gets the five identity vars and never a local path", async () => {
     const a = await spawn({ cwd: "~/proj" });
-    expect(paneCommand().startsWith("exec /bin/sh -c ")).toBe(true);
+    // The tmux server's own MU_* (another agent's DB, sync dir, ctl socket, identity) is unset for the transport.
+    expect(paneCommand().startsWith("exec env ")).toBe(true);
+    for (const k of LOCAL_ONLY_ENV) expect(paneCommand()).toContain(`-u ${k} `);
     const local = ctlSocketPath("auth", "worker-1", dir);
     const remote = remoteCtlSocketPath("auth", "worker-1", process.getuid?.() ?? 0);
     const cmd = filled();
@@ -275,7 +291,8 @@ describe("the pane is the transport", () => {
     const all = mux.calls
       .map((c) => c.join(" "))
       .join("\n")
-      .replaceAll(local, "");
+      .replaceAll(local, "")
+      .replace(/ -u MU_[A-Z_]+/g, ""); // the `env -u` words only UNSET them
     for (const k of ["MU_DB_PATH", "MU_STATE_DIR", "MU_SYNC_DIR", dir]) {
       expect(all).not.toContain(k);
     }
@@ -512,6 +529,62 @@ describe("failure rolls back only what this spawn made", () => {
   });
 });
 
+describe("rollback guards on an uncapped host (the cap cannot mask them)", () => {
+  const free = () => listHostChannels(db, "free");
+  const stagedFor = (incarnation: number) => ({
+    path: WT,
+    base: SHA,
+    root: "/srv/repo",
+    createdAt: "x",
+    incarnation,
+    host: "free",
+  });
+  /** tmux whose kill-pane does nothing: the pane stays alive. */
+  const installStubbornTmux = (): void => {
+    mux.restore();
+    const fake = mockTmux(state).executor;
+    mux = installMux("tmux", async (args) =>
+      args[0] === "kill-pane" ? { stdout: "", stderr: "", exitCode: 0 } : fake(args),
+    );
+  };
+
+  it("a pane that fails to open frees the lease the spawn passed to rollback", async () => {
+    mux.restore();
+    const fake = mockTmux(state).executor;
+    mux = installMux("tmux", async (args) =>
+      isPaneCall(args) ? { stdout: "", stderr: "no server", exitCode: 1 } : fake(args),
+    );
+    await expect(spawn({ host: "free", worktree: true })).rejects.toThrow();
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(free()).toEqual([]);
+  });
+
+  it("a replaced incarnation's remote worktree is not removed", async () => {
+    const a = await spawn({ host: "free", worktree: true });
+    await closeAgent(db, "worker-1", { workstream: "auth" });
+    const b = await spawn({ host: "free", cwd: "/srv/repo" });
+    const before = execCalls().length;
+    await rollbackSpawn(db, "worker-1", undefined, stagedFor(a.incarnation), a.incarnation, "auth");
+    expect(execCalls().length).toBe(before);
+    expect(getAgent(db, "worker-1", "auth")?.incarnation).toBe(b.incarnation);
+    expect(free()).toMatchObject([{ agent_id: b.incarnation }]);
+  });
+
+  it("a pane that survives the kill: row, channel and remote worktree all stay", async () => {
+    const a = await spawn({ host: "free", worktree: true });
+    installStubbornTmux();
+    const before = execCalls().length;
+    await rollbackSpawn(db, "worker-1", a.paneId, stagedFor(a.incarnation), a.incarnation, "auth");
+    expect(execCalls().length).toBe(before); // nothing removed while the pane may be live
+    expect(getAgent(db, "worker-1", "auth")?.incarnation).toBe(a.incarnation);
+    expect(free()).toMatchObject([{ agent_id: a.incarnation, pane_id: a.paneId }]);
+    expect(state.panes.has(a.paneId)).toBe(true);
+    expect(
+      listLogs(db, { workstream: "auth" }).some((l) => l.payload.includes("not proven gone")),
+    ).toBe(true);
+  });
+});
+
 describe("task-bound remote spawn goes through spawnForTask", () => {
   const req = (over: Record<string, unknown> = {}) => ({
     task: "t1",
@@ -596,6 +669,24 @@ describe("the CLI", () => {
     );
     expect(r.error).toBeUndefined();
     expect(r.data).toMatchObject({ agent: { host: "dev", cwd: WT, base: SHA } });
+  });
+
+  it("agent close's re-spawn step keeps --host; agent show prints the host", async () => {
+    await spawn({ worktree: true });
+    const shown = await runCliWire(["agent", "show", "worker-1", "-w", "auth"], dbPath());
+    expect(shown.stdout).toMatch(/host\s+: dev/);
+    const preview = await runCliJson(
+      ["agent", "close", "worker-1", "-w", "auth", "--json"],
+      dbPath(),
+    );
+    const closed = await runCliJson(
+      ["agent", "close", "worker-1", "-w", "auth", "--if", String(preview.data.revision), "--json"],
+      dbPath(),
+    );
+    const cmds = (closed.data.nextSteps as { command: string }[]).map((n) => n.command);
+    expect(
+      cmds.some((c) => c.startsWith("mu agent spawn worker-1") && c.includes("--host dev")),
+    ).toBe(true);
   });
 
   it("--host with --root is a usage error (exit 2) before any effect", async () => {

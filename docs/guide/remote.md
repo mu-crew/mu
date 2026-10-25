@@ -36,7 +36,7 @@ mu agent spawn worker-1 -w auth --host dev --worktree --task build --send 'Read:
 
 - The pane runs the profile's `--shell` template, filled with the remote
   identity (`MU_MANAGED_AGENT`, `MU_AGENT_NAME`, `MU_WORKSTREAM`,
-  `MU_CTL_SOCK`, `MU_REMOTE`, never your DB, state or sync dir), your
+  `MU_CTL_SOCK`, `MU_REMOTE`, never your DB, state or sync dir, which are unset in the pane), your
   `--command` (default `pi`), the local and remote socket paths and the
   remote cwd. The template starts the remote pi and forwards its control
   socket to the local derived path.
