@@ -11,8 +11,9 @@
 // ingest at most every `syncEveryMs` (never on each repaint), always `quiet`
 // (a stderr write would paint over the alternate screen; warnings come back in
 // the result), no reconcile, no reap. `close()` waits for the in-flight
-// refresh, then does the final flush, so ops this machine holds reach its
-// segment on exit and on error alike.
+// refresh and closes `ro`. The final flush is not here: the launcher's single
+// idempotent shutdown (`src/cli/dashboard-shutdown.ts`) runs it after every
+// step, on q/Esc, signals and boot errors alike.
 
 import {
   type DashboardOptions,
@@ -20,7 +21,7 @@ import {
   loadDashboard,
 } from "../../dashboard-data.js";
 import { type Db, openDb } from "../../db.js";
-import { ambientFlush, ambientIngest, syncEnabled } from "../../sync.js";
+import { ambientIngest, syncEnabled } from "../../sync.js";
 
 /** One refresh: the projection plus whatever sync said while producing it. */
 export interface RefreshResult {
@@ -34,7 +35,7 @@ export type DashboardQuery = Omit<DashboardOptions, "caller">;
 export interface DashboardRuntime {
   /** Ingest if due, then project. Concurrent calls share one in-flight run. */
   refresh(query?: DashboardQuery): Promise<RefreshResult>;
-  /** Drain the in-flight refresh, flush once, close `ro`. Idempotent. */
+  /** Drain the in-flight refresh, close `ro`. Idempotent. */
   close(): Promise<void>;
 }
 
@@ -84,11 +85,7 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
       try {
         await inflight?.catch(() => undefined);
       } finally {
-        try {
-          if (syncEnabled()) await ambientFlush(opts.syncDb, { quiet: true });
-        } finally {
-          ro.close();
-        }
+        ro.close();
       }
     },
   };

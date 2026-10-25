@@ -33,7 +33,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   index nor any other verb loads. The UI reads on a `readonly` connection; ambient sync (ingest at
   most every 10 s, quiet, one refresh in flight, no reconcile or reap) runs on a separate bounded
   writable connection outside render, with the DB-inside-`MU_SYNC_DIR` and sync/v1 refusals kept
-  and a final flush on `q`/Esc/SIGTERM/error. A read-only connection cannot ingest, so one
+  and one idempotent shutdown (installed before the lazy import) that restores the terminal, closes
+  the connections and flushes once on `q`/Esc, SIGINT (exit 130), SIGTERM, SIGHUP, uncaught and boot errors. A read-only connection cannot ingest, so one
   connection was not an option. The shell shows counts only; tabs and rows are `v_dashboard_tabs`.
 - **Dashboard read model** (`v_dashboard_core`): `loadDashboard(db, opts)` (`src/dashboard-data.ts`,
   exported from the SDK) is the one read-only projection the dashboard tabs share: every live
