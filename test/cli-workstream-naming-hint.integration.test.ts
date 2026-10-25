@@ -78,13 +78,13 @@ describe("mu state one-per-effort hint", () => {
 
   it("hints past 300 tasks with under 10% open", async () => {
     seed(310, 5);
-    const r = await runCli(["state", "-w", "big-ws"], dbPath);
-    expect(r.stdout).toContain("hint: 310 tasks, 5 open");
+    const r = await runCliJson(["state", "-w", "big-ws"], dbPath);
+    expect(r.data.workstreams[0].hint).toContain("310 tasks, 5 open");
   });
 
   it("stays quiet when much of the workstream is still open", async () => {
     seed(310, 100);
-    const r = await runCli(["state", "-w", "big-ws"], dbPath);
-    expect(r.stdout).not.toContain("tasks, 100 open");
+    const r = await runCliJson(["state", "-w", "big-ws"], dbPath);
+    expect(r.data.workstreams[0]).not.toHaveProperty("hint");
   });
 });

@@ -273,24 +273,42 @@ export function isJsonMode(): boolean {
   const argv = process.argv;
   return (
     argv.some((a) => a === "--json" || a.startsWith("--json=")) ||
-    (isSqlVerbArgv(argv) && !argv.includes("--table"))
+    (isSqlVerbArgv(argv) && !argv.includes("--table")) ||
+    isStateVerbArgv(argv)
   );
 }
 
-/**
- * Is this invocation `mu sql` or `mu db query`? Those two print JSON unless
- * `--table`. Finds the verb the way the parser does: the first word that is
- * not an option or the value of `-w`, so `mu -w sql task list` is not it.
- * Only these verbs; every other verb needs an explicit `--json`.
- */
-export function isSqlVerbArgv(argv: readonly string[]): boolean {
+/** The first one or two words of the invocation, found the way the parser does:
+ *  the first words that are not an option or the value of `-w`, so
+ *  `mu -w state task list` is a `task` verb. */
+function verbWords(argv: readonly string[]): string[] {
   const words: string[] = [];
   for (let i = 2; i < argv.length && words.length < 2; i++) {
     const a = argv[i] as string;
     if (a === "-w" || a === "--workstream") i++;
     else if (!a.startsWith("-")) words.push(a);
   }
+  return words;
+}
+
+/**
+ * Is this invocation `mu sql` or `mu db query`? Those two print JSON unless
+ * `--table`.
+ */
+export function isSqlVerbArgv(argv: readonly string[]): boolean {
+  const words = verbWords(argv);
   return words[0] === "sql" || (words[0] === "db" && words[1] === "query");
+}
+
+/**
+ * Is this invocation `mu state` or a bare `mu me` (its `--me` alias)? They
+ * print one JSON document, errors included (parse-time and handler), with no
+ * `--json` needed. `mu me tasks` / `mu me next` are other verbs and keep the
+ * explicit flag. Every other verb needs `--json`.
+ */
+export function isStateVerbArgv(argv: readonly string[]): boolean {
+  const [first, second] = verbWords(argv);
+  return first === "state" || (first === "me" && second !== "tasks" && second !== "next");
 }
 
 /**

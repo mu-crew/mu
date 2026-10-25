@@ -23,7 +23,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runCli, runCliJson } from "./_runCli.js";
+import { runCli, runCliJson, runCliWire } from "./_runCli.js";
 
 interface ErrorEnvelope {
   ok: false;
@@ -161,11 +161,14 @@ describe("audit_cli_validation_uniformity", () => {
     });
 
     it("--all / -w mutex on `mu state`: exit 2, one line (a scope error)", async () => {
-      const human = await runCli(["state", "--all", "-w", "probe-ws"], dbPath);
-      expect(human.exitCode).toBe(2);
-      expect(human.stderr).toMatch(/error:.*--all and -w\/--workstream are mutually exclusive/);
-      expect(human.stderr).not.toMatch(/Usage:/);
-      expect(human.stderr.trim().split("\n")).toHaveLength(1);
+      // `state` prints JSON by default: the failure is the document on stdout.
+      const r = await runCliWire(["state", "--all", "-w", "probe-ws"], dbPath);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toBe("");
+      const doc = JSON.parse(r.stdout) as { ok: boolean; message: string };
+      expect(doc.ok).toBe(false);
+      expect(doc.message).toMatch(/--all and -w\/--workstream are mutually exclusive/);
+      expect(r.stdout.trim().split("\n")).toHaveLength(1);
     });
   });
 

@@ -26,7 +26,7 @@ first, or run host commands through `mule`.
 - **Everything is orchestrator-pull.** The host usually has no route back
   to your laptop. Fetch commits back.
 - **Remote rows are registry fields**: `agents.host`, `cwd` (a path on the
-  host) and `base` (the worktree's start commit). `mu state` lists them;
+  host) and `base` (the worktree's start commit). `mu state` shows them on each agent record;
   there is no `REMOTE:` note.
 
 ## The recipe

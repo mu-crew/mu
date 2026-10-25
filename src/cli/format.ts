@@ -6,22 +6,17 @@
 // refactor signal). Co-locating them here keeps cli.ts focused on
 // argument parsing, workstream resolution, and program wiring.
 //
-// All helpers are pure (no I/O beyond returning a string) except
-// `printLogRow` which writes a single line to stdout — kept here so
-// `mu log` and the `recent events` section of `mu state` share one
-// renderer. cli.ts re-exports every symbol for back-compat with the
-// existing import surface (tests + cli/* importers).
+// All helpers are pure (no I/O beyond returning a string). cli.ts
+// re-exports every symbol for back-compat with the existing import
+// surface (tests + cli/* importers).
 
 import { type RuntimeState, UNKNOWN_REASON } from "../agent-state.js";
 import type { LiveAgent } from "../agents.js";
 import { agentStateGlyph, GLYPH } from "../glyphs.js";
-import type { LogRow } from "../logs.js";
 import { muTable, pc, renderBoxTable } from "../output.js";
 import { RESULT_BYTES } from "../output-contract.js";
 import { formatPair, type TaskPair } from "../tasks/status.js";
 import type { TaskNoteRow, TaskRow } from "../tasks.js";
-import type { Track } from "../tracks.js";
-import { logRecord } from "./log-records.js";
 
 // ─── Status colours / icons ────────────────────────────────────────────
 
@@ -238,27 +233,6 @@ export function formatReadyTable(tasks: readonly TaskRow[]): string {
     ]);
   }
   return table.toString();
-}
-
-export function formatTracks(tracks: readonly Track[]): string {
-  if (tracks.length === 0) return pc.dim("  (no open tracks)");
-  const lines: string[] = [];
-  tracks.forEach((track, i) => {
-    const rootNames = track.roots.map((r) => r.name).join(", ");
-    const verb = track.roots.length > 1 ? "merged" : "track";
-    const parked = track.parked ? ` ${pc.dim("(parked)")}` : "";
-    lines.push(
-      `  Track ${i + 1}: ${pc.bold(rootNames)} ${pc.dim(`(${track.taskIds.size} tasks, ${track.readyCount} ready, ${verb})`)}${parked}`,
-    );
-  });
-  return lines.join("\n");
-}
-
-/** One log line: the capped, escaped record `mu log` prints (src/cli/log-records.ts).
- *  All prose comes from `renderOp` (src/log-render.ts), the ONE formatter, so
- *  the terminal and the TUI can never drift into two phrasings of one op. */
-export function printLogRow(row: LogRow): void {
-  console.log(logRecord(row).line);
 }
 
 export function formatTaskListTable(

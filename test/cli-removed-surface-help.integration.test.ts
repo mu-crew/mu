@@ -25,7 +25,9 @@ describe("removed CLI surface stays removed", () => {
     const { stdout, exitCode } = await runCli(["state", "--help"], dbPath);
 
     expect(exitCode === null || exitCode === 0).toBe(true);
-    expect(stdout).toContain("--events <n>");
+    expect(stdout).toContain("--full");
+    expect(stdout).toContain("--me");
+    expect(stdout).not.toContain("--events");
     expect(stdout).not.toContain("--mission");
     expect(stdout).not.toContain("--lines");
     expect(stdout).not.toContain("-n,");
@@ -90,15 +92,16 @@ describe("removed CLI surface stays removed", () => {
   });
 
   it("removed flags fail as unknown options", async () => {
-    const mission = await runCli(["state", "--mission"], dbPath);
-    expect(mission.exitCode).toBe(2);
-    expect(mission.stderr.toLowerCase()).toContain("unknown option");
-    expect(mission.stderr).toContain("--mission");
+    // `state` fails as its JSON document on stdout.
+    const mission = JSON.parse((await runCli(["state", "--mission"], dbPath)).stdout);
+    expect(mission.exit).toBe(2);
+    expect(mission.message.toLowerCase()).toContain("unknown option");
+    expect(mission.message).toContain("--mission");
 
-    const lines = await runCli(["state", "--lines", "5"], dbPath);
-    expect(lines.exitCode).toBe(2);
-    expect(lines.stderr.toLowerCase()).toContain("unknown option");
-    expect(lines.stderr).toContain("--lines");
+    const lines = JSON.parse((await runCli(["state", "--lines", "5"], dbPath)).stdout);
+    expect(lines.exit).toBe(2);
+    expect(lines.message.toLowerCase()).toContain("unknown option");
+    expect(lines.message).toContain("--lines");
 
     const agentAll = await runCli(["agent", "list", "--all"], dbPath);
     expect(agentAll.exitCode).toBe(2);

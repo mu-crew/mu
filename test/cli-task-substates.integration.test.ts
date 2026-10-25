@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { addTask, getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { asJson, type Capture, runCli } from "./_runCli.js";
+import { asJson, type Capture, runCli, runCliJson } from "./_runCli.js";
 
 describe("mu task substates CLI", () => {
   let tempDir: string;
@@ -185,15 +185,12 @@ describe("mu task substates CLI", () => {
     expect(out).not.toContain("OPEN/todo");
   });
 
-  it("mu state marks a track whose only open task is parked", async () => {
+  it("mu state counts a parked task apart from ready (no track card)", async () => {
     await cli("park", "e", "--why", "later");
-    const r = await runCli(["state", "-w", "test"], dbPath);
+    const r = await runCliJson(["state", "-w", "test"], dbPath);
     expect(r.exitCode).toBeNull();
-    const lines = plain(r.stdout).split("\n");
-    const trackLine = lines.find((l) => /Track \d+: e\b/.test(l));
-    expect(trackLine).toBeDefined();
-    expect(trackLine).toContain("(parked)");
-    const other = lines.find((l) => /Track \d+: b\b/.test(l));
-    expect(other).not.toContain("(parked)");
+    const w = r.data.workstreams[0];
+    expect(w.counts.parked).toBe(1);
+    expect(w.ready.map((t: { id: string }) => t.id)).not.toContain("e");
   });
 });

@@ -14,7 +14,7 @@ mu doctor --disk    # add per-worktree byte usage
 
 ## An agent's pane died
 
-Run `mu agent list` or `mu state`. Each run reconciles the registry
+Run `mu agent list` or `mu state -w <ws>`. Each run reconciles the registry
 with the multiplexer:
 
 - An agent row whose pane is gone is a ghost. mu deletes the row, and

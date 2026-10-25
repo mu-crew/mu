@@ -16,7 +16,7 @@ mu agent spawn reviewer-1 --tab Review  --worktree --role read-only
 mu task add --title "Build auth" --impact 80 --effort-days 3
 mu task claim build_auth --for worker-1 --evidence "have implementation plan"
 mu agent send worker-1 "Implement build_auth per the description"
-mu state                                # canonical state card
+mu state -w <ws>                        # canonical state, one JSON document
 mu log --tail                           # subscribe to every state change
 ```
 
@@ -159,7 +159,7 @@ win32-x64) or a C++ toolchain.
 ### 8. Schema-first: typed verbs over read views, SQL as escape hatch
 
 - **Read views**: the `ready`, `blocked`, and `goals` views, and
-  `mu state` as the state card.
+  `mu state` as the state read.
 - **Typed verbs** that map to resource transitions (`task claim`,
   `task close`, `agent spawn --worktree`, `workstream teardown`).
 - **`--json` on every read verb**, so scripts use `jq`, not table parsing.
@@ -263,7 +263,7 @@ the agent choosing; mu reads none of it.
      status) and ambient sync, and its handoffs (lazygit, tuicr, attach,
      clipboard) run one foreground child each; none outlives the TUI;
    - TTY-gated: pipes, CI, and `--json` never enter the TUI, and plain
-     `mu state` prints the static card.
+     `mu state` prints the state document.
 
    The control socket is not a third exception. The pi process serves it
    and it dies with that process. Any other long-lived process needs its

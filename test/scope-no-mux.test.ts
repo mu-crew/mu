@@ -107,7 +107,8 @@ function expectJsonRefusal(r: { doc: { ok: boolean }; data: unknown }): void {
 /** Refusal of an argv that may or may not carry --json: --json gives a data-less failure
  *  document on stdout, human mode gives empty stdout. */
 function expectNothingRead(r: { stdout: string }, argv: readonly string[]): void {
-  if (!argv.includes("--json")) {
+  // `--json` verbs and `state` (JSON by default) print a data-less failure document.
+  if (!argv.includes("--json") && !argv.includes("state")) {
     expect(r.stdout).toBe("");
     return;
   }
@@ -215,23 +216,23 @@ for (const where of ["inside", "outside"] as const) {
         const r = await runCliWire(argv, dbPath);
         expect(r.exitCode, argv.join(" ")).toBe(2);
         expectNothingRead(r, argv);
-        const text = argv.includes("--json")
-          ? String((JSON.parse(r.stdout) as { message: string }).message)
-          : r.stderr;
+        const text = String((JSON.parse(r.stdout) as { message: string }).message);
         expect(text).toContain("--all");
         expect(text.trim().split("\n")).toHaveLength(1);
       }
       const all = await runCliJson(["state", "--all", "--json"], dbPath);
       expect(all.exitCode).toBeNull();
       const one = await runCliJson(["state", "-w", "own", "--json"], dbPath);
-      expect(one.data.workstreamName).toBe("own");
+      expect(one.data.workstreams.map((w: { workstream: string }) => w.workstream)).toEqual([
+        "own",
+      ]);
     });
 
     it("state: injected identity scopes a bare `mu state`", async () => {
       setEnv(MANAGED);
       const r = await runCliJson(["state", "--json"], dbPath);
       expect(r.exitCode).toBeNull();
-      expect(r.data.workstreamName).toBe("own");
+      expect(r.data.workstreams.map((w: { workstream: string }) => w.workstream)).toEqual(["own"]);
     });
 
     it("log: write and bare read need a scope; --all is the explicit global read", async () => {
@@ -271,14 +272,14 @@ for (const where of ["inside", "outside"] as const) {
       setEnv({ ...MANAGED, TMUX_PANE: "%9" });
       const r = await runCliJson(["me", "--json"], dbPath);
       expect(r.exitCode, r.stderr).toBeNull();
-      expect(r.data.agent).toMatchObject({ name: "self-1", workstream: "own" });
+      expect(r.data.me.agent).toMatchObject({ name: "self-1", workstream: "own" });
     });
 
     it("me: injected identity works with no $TMUX_PANE at all", async () => {
       setEnv(MANAGED);
       const r = await runCliJson(["me", "--json"], dbPath);
       expect(r.exitCode, r.stderr).toBeNull();
-      expect(r.data.agent.name).toBe("self-1");
+      expect(r.data.me.agent.name).toBe("self-1");
       const next = await runCliJson(["me", "next", "--json"], dbPath);
       expect(next.exitCode, next.stderr).toBeNull();
     });

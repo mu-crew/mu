@@ -21,7 +21,7 @@ milliseconds; `0` disables a wait unless noted.
 | --- | --- | --- |
 | `MU_MUX` | Force `tmux` or `herdr`, skipping mux detection. An unknown value fails the invocation. | detected |
 | `HERDR_ENV` | Read only. `1` (set by herdr in its panes) selects herdr; outranks `$TMUX`. | |
-| `TMUX`, `TMUX_PANE` | Read only. Either one (set by tmux in its panes) selects tmux. `$TMUX` gates reading the current session name, used only as the suggestion in the missing-`-w` error: it never routes a verb. `$TMUX_PANE` identifies the calling agent for `mu me` only when no `MU_AGENT_NAME` is injected. | |
+| `TMUX`, `TMUX_PANE` | Read only. Either one (set by tmux in its panes) selects tmux. `$TMUX` gates reading the current session name, used only as the suggestion in the missing-`-w` error: it never routes a verb. `mu me` / `mu state --me` never read `$TMUX_PANE` (identity is the injected `MU_AGENT_NAME` or `PI_SESSION_ID`); only `mu task list --mine` and a few older self-readers still fall back to it when no `MU_AGENT_NAME` is injected. | |
 | `HERDR_WORKSPACE_ID` | Read only. Set by herdr in its panes; pane listing with no target reads this workspace first. | |
 | `HERDR_PANE_ID` | Read only. Set by herdr in its panes. | |
 | `MU_TMUX_SOCKET` | Test isolation. Runs every tmux call on a private server (`-L <name>`) with `-f /dev/null`, so `~/.tmux.conf` is not loaded. tmux only. | unset: tmux's default server |

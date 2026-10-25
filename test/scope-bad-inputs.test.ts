@@ -106,11 +106,16 @@ describe("bad scope values: CLI entry points refuse with one line", () => {
         const before = listLogs(seeded, { limit: 100 }).length;
         seeded.close();
         const r = await runCli(argv(bad), dbPath);
-        const stderr = plain(r.stderr).trim();
+        // `state` prints its failure as the JSON document on stdout (v_state_log); every other verb, one line on stderr.
+        const isState = argv(bad).includes("state");
+        const stderr = isState
+          ? (JSON.parse(r.stdout) as { message: string }).message
+          : plain(r.stderr).trim();
         const lines = stderr.split("\n");
         expect(r.exitCode, stderr).not.toBe(0);
         expect(r.exitCode, stderr).not.toBeNull();
-        expect(r.stdout).toBe("");
+        if (isState) expect(r.stderr).toBe("");
+        else expect(r.stdout).toBe("");
         // One message line; an optional single `Next:` line may follow.
         const body = lines.filter((l) => !/^\s*(Next|→)/.test(l));
         expect(body, stderr).toHaveLength(1);

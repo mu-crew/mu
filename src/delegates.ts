@@ -507,10 +507,16 @@ export interface VerdictTally {
  * cancelled calls are UNVERIFIED; queued, starting, running, recording and
  * refused are pending. Reads only the call rows, never notes.
  */
-export function verdictTally(db: Db, workstream: string, wave: string): VerdictTally {
+export function verdictTally(
+  db: Db,
+  workstream: string,
+  wave: string,
+  /** Only this caller's calls (`mu state` never mixes in another session's identically named wave). */
+  caller?: string,
+): VerdictTally {
   const out: VerdictTally = { findings: [], queued: 0, running: 0, refused: [] };
   const byId = new Map<string, VerdictTally["findings"][number]>();
-  for (const c of listDelegates(db, undefined, workstream, { wave })) {
+  for (const c of listDelegates(db, caller, workstream, { wave })) {
     const id = c.record ? `${c.record.workstream}/${c.record.task}` : `${c.workstream}/${c.task}`;
     let f = byId.get(id);
     if (!f) {

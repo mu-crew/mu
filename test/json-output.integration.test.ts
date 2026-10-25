@@ -248,16 +248,9 @@ describe("--json output on read verbs", () => {
     expect(parsed.items.filter((e) => e.id === "a")).toHaveLength(2);
   });
 
-  it("state --json emits seeded content for each top-level collection", async () => {
-    // Real footgun discovered in real use: state used to wrap agents in
-    // `{ active, orphans }` so `.agents | length` returned 2 (the
-    // number of object keys) regardless of agent count. The fix
-    // matches the state JSON flat shape: agents is the array,
-    // orphans is its own top-level key.
-    //
-    // Keep this as a semantic contract, not just a shape check: a
-    // regression that silently drops seeded rows from agents / tracks /
-    // ready / in-progress / blocked / recent-closed / recent should fail.
+  it("state emits seeded content for each list of a workstream", async () => {
+    // A regression that silently drops seeded rows from agents / ready /
+    // in-progress / blocked / recent-closed should fail.
     const db2 = openDb({ path: dbPath });
     addTask(db2, {
       localId: "inflight",
@@ -285,64 +278,42 @@ describe("--json output on read verbs", () => {
     closeTask(db2, "done", { workstream: "auth", evidence: "seed closed row" });
     db2.close();
 
-    const { data } = await runCliJson(["state", "-w", "auth", "--json"], dbPath);
-    const parsed = data as {
-      workstreamName: string;
+    const { data } = await runCliJson(["state", "-w", "auth"], dbPath);
+    const w = data.workstreams[0] as {
+      workstream: string;
       agents: Array<{ name: string; workstream: string }>;
       orphans: unknown[];
-      tracks: Array<{ roots: Array<{ name: string; title: string }>; readyCount: number }>;
-      ready: Array<{ name: string; title: string; status: string; roi?: number }>;
-      inProgress: Array<{ name: string; ownerName: string | null; status: string }>;
-      blocked: Array<{ name: string; title: string; status: string }>;
-      recentClosed: Array<{ name: string; title: string; status: string }>;
-      recent: Array<{ kind: string; payload: string; workstreamName: string }>;
+      ready: Array<{ id: string; title: string; status: string }>;
+      in_progress: Array<{ id: string; owner: string | null; status: string }>;
+      blocked: Array<{ id: string; title: string; status: string }>;
+      recent_closed: Array<{ id: string; title: string; status: string }>;
     };
-
-    expect(parsed.workstreamName).toBe("auth");
-    expect(parsed.agents).toEqual([
-      expect.objectContaining({ name: "worker-1", workstream: "auth" }),
-    ]);
-    expect(parsed.orphans).toEqual([]);
-    expect(parsed.ready).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "a", title: "A", status: "OPEN", roi: 40 }),
-      ]),
-    );
-    expect(parsed.blocked).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ name: "b", title: "B", status: "OPEN" }),
-        expect.objectContaining({ name: "blocked_leaf", title: "Blocked leaf", status: "OPEN" }),
-      ]),
-    );
-    expect(parsed.inProgress).toEqual([
-      expect.objectContaining({ name: "inflight", ownerName: "worker-1", status: "IN_PROGRESS" }),
-    ]);
-    expect(parsed.recentClosed).toEqual([
-      expect.objectContaining({ name: "done", title: "Closed task", status: "CLOSED" }),
-    ]);
-    expect(parsed.tracks).toEqual(
+    expect(w.workstream).toBe("auth");
+    expect(w.agents).toEqual([expect.objectContaining({ name: "worker-1", workstream: "auth" })]);
+    expect(w.orphans).toEqual([]);
+    expect(w.ready).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          roots: expect.arrayContaining([
-            expect.objectContaining({ name: "c", title: "C" }),
-            expect.objectContaining({ name: "blocked_leaf", title: "Blocked leaf" }),
-          ]),
-          readyCount: expect.any(Number),
+          id: "a",
+          title: "A",
+          status: "OPEN",
+          impact: 80,
+          effort_days: 2,
         }),
       ]),
     );
-    expect((parsed as { workspaces?: unknown }).workspaces).toBeUndefined();
-    // v2-retire-log-shim: `recent` reads captured ops now, not prose
-    // events. The close of `done` is a typed op keyed by natural key.
-    expect(parsed.recent).toEqual(
+    expect(w.blocked).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          kind: "task",
-          intent: "task.close",
-          workstreamName: "auth/done",
-        }),
+        expect.objectContaining({ id: "b", title: "B", status: "OPEN" }),
+        expect.objectContaining({ id: "blocked_leaf", title: "Blocked leaf", status: "OPEN" }),
       ]),
     );
+    expect(w.in_progress).toEqual([
+      expect.objectContaining({ id: "inflight", owner: "worker-1", status: "IN_PROGRESS" }),
+    ]);
+    expect(w.recent_closed).toEqual([
+      expect.objectContaining({ id: "done", title: "Closed task", status: "CLOSED" }),
+    ]);
   });
 
   it("agent list --json emits live seeded agents, not only array shape", async () => {
@@ -423,29 +394,28 @@ describe("--json output on read verbs", () => {
     expect(closeBad.stderr).toMatch(/conflict:/);
   });
 
-  it("`mu me --json` emits { agent, ownedTasks } for a managed pane", async () => {
-    // `mu me` doesn't reconcile — it just looks the agent up by pane id
-    // — so the seeded fake pane id is fine.
+  it("`mu me` emits the agent and its owned tasks for the injected identity", async () => {
     const db2 = openDb({ path: dbPath });
     await claimTask(db2, "a", { agentName: "worker-1", workstream: "auth" });
     db2.close();
-    const originalPane = process.env.TMUX_PANE;
-    process.env.TMUX_PANE = "%42";
+    const keys = ["MU_MANAGED_AGENT", "MU_AGENT_NAME", "MU_WORKSTREAM"] as const;
+    const saved = keys.map((k) => process.env[k]);
+    process.env.MU_MANAGED_AGENT = "1";
+    process.env.MU_AGENT_NAME = "worker-1";
+    process.env.MU_WORKSTREAM = "auth";
     try {
-      const { data } = await runCliJson(["me", "--json"], dbPath);
+      const { data } = await runCliJson(["me"], dbPath);
       const parsed = data as {
-        agent: { name: string };
-        ownedTasks: Array<{ name: string }>;
+        me: { agent: { name: string }; owned_tasks: Array<{ id: string }> };
       };
-      expect(parsed.agent.name).toBe("worker-1");
-      expect(parsed.ownedTasks.map((t) => t.name)).toEqual(["a"]);
+      expect(parsed.me.agent.name).toBe("worker-1");
+      expect(parsed.me.owned_tasks.map((t) => t.id)).toEqual(["a"]);
     } finally {
-      if (originalPane === undefined) {
-        const key = "TMUX_PANE";
-        delete process.env[key];
-      } else {
-        process.env.TMUX_PANE = originalPane;
-      }
+      keys.forEach((k, i) => {
+        const v = saved[i];
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      });
     }
   });
 });

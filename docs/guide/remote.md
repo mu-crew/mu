@@ -61,8 +61,8 @@ mu agent spawn worker-1 -w auth --host dev --worktree --task build --send 'Read:
 ## Drive it like a local agent
 
 `mu agent send`, `wait`, `abort` and `check` go through the forwarded
-socket and behave as they do locally. `mu state` lists remote workers
-(agent, host, remote cwd, base).
+socket and behave as they do locally. `mu state` shows remote workers
+as agent records with `host`, `cwd`, `base` and `collected_head`.
 
 ## Collect and close
 

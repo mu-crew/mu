@@ -51,7 +51,7 @@ import {
 import { listLogs } from "../src/logs.js";
 import { reconcile } from "../src/reconcile.js";
 import { LOCAL_ONLY_ENV, RemotePrepareError } from "../src/remote-agent.js";
-import { listRemoteWorkers } from "../src/state.js";
+import { stateSnapshot } from "../src/state.js";
 import { claimTask } from "../src/tasks/claim.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask } from "../src/tasks.js";
@@ -362,9 +362,12 @@ describe("mu state reads the registry, not notes", () => {
   it("remote workers are the agents with a host: agent, host, remote cwd, base", async () => {
     insertAgent(db, { name: "loc-1", workstream: "auth", paneId: "%90" });
     await spawn({ worktree: true });
-    expect(listRemoteWorkers(db, "auth")).toEqual([
-      { agent: "worker-1", host: "dev", path: WT, base: SHA },
-    ]);
+    const snap = await stateSnapshot(db, { workstreams: ["auth"], caller: null });
+    expect(
+      snap.workstreams[0]?.agents
+        ?.filter((a) => a.host !== null)
+        .map((a) => ({ name: a.name, host: a.host, cwd: a.cwd, base: a.base })),
+    ).toEqual([{ name: "worker-1", host: "dev", cwd: WT, base: SHA }]);
   });
 });
 

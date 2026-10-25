@@ -1,13 +1,8 @@
 // Tests for the unified `mu state` verb.
 //
-// `mu state` owns the static state card:
-//
-//   mu state             default: full top-to-bottom card
-//
-// All modes accept variadic `-w X[,Y]...` / `-w X -w Y` and `--all`.
-//
-// Tests exercise: full render, cross-workstream handling, and JSON
-// shapes per spec.
+// `mu state` prints one canonical JSON document (no card). It accepts variadic
+// `-w X[,Y]...` / `-w X -w Y` and `--all`. The bounded, caller-scoped contract
+// is pinned in state-output-contract.test.ts; these drive the real CLI.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,7 +30,7 @@ afterAll(() => {
 import { runCli, runCliJson } from "./_runCli.js";
 import { softTeardown } from "./_teardown.js";
 
-// ── default mode (full top-to-bottom card) ─────────────────────────
+// ── default read ─────────────────────────
 
 describe("mu state — default (full) mode", () => {
   let tempDir: string;
@@ -61,115 +56,57 @@ describe("mu state — default (full) mode", () => {
     } catch {}
   });
 
-  it("renders every full-mode section heading top-to-bottom", async () => {
-    const { stdout, exitCode } = await runCli(["state", "-w", "ws"], dbPath);
+  it("is one JSON document by default, with the section lists under SQL column names", async () => {
+    const { data, stdout, exitCode } = await runCliJson(["state", "-w", "ws"], dbPath);
     expect(exitCode).toBeNull();
-    expect(stdout).toContain("State of mu-ws");
-    expect(stdout).toContain("Agents (");
-    expect(stdout).toContain("Tracks (");
-    expect(stdout).toContain("Ready (");
-    expect(stdout).toContain("In progress (");
-    expect(stdout).toContain("Blocked (");
-    expect(stdout).toContain("Recent closed (");
-    expect(stdout).not.toContain("Workspaces (");
-    expect(stdout).not.toContain("Remote workers (");
-    // v2-log-verb renamed the heading: it is no longer "of kind=event"
-    // (that entity is retired), it is the last N ops.
-    expect(stdout).toContain("Recent activity");
+    expect(stdout).not.toContain("State of mu-");
+    expect(data.workstreams).toHaveLength(1);
+    const w = data.workstreams[0];
+    expect(w.workstream).toBe("ws");
+    expect(w.agents).toEqual([]);
+    expect(w.orphans).toEqual([]);
+    expect(w.ready.map((t: { id: string }) => t.id)).toEqual(["beta", "alpha"]);
+    expect(w.ready[0]).toMatchObject({ title: "B", status: "OPEN", impact: 60, effort_days: 1 });
+    expect(w.blocked).toEqual([]);
+    expect(w.in_progress).toEqual([]);
+    expect(w.recent_closed).toEqual([]);
+    expect(w.counts).toMatchObject({ tasks: 2, ready: 2 });
+    // The card's old keys, tracks and recent-ops section are gone: `mu log` owns the ops.
+    for (const gone of ["workstreamName", "tracks", "recent", "remoteWorkers", "inProgress"]) {
+      expect(w).not.toHaveProperty(gone);
+    }
   });
 
-  it("--json emits the unified flat shape (single workstream)", async () => {
-    const { data, exitCode } = await runCliJson(["state", "-w", "ws", "--json"], dbPath);
-    expect(exitCode).toBeNull();
-    const parsed = data;
-    // Spec: { workstreamName, agents, orphans, tracks, ready, blocked,
-    //         inProgress, recentClosed, recent,
-    //         remoteWorkers } (flat).
-    expect(parsed.workstreamName).toBe("ws");
-    expect(parsed.agents).toEqual([]);
-    expect(parsed.orphans).toEqual([]);
-    expect(parsed.tracks).toEqual([
-      expect.objectContaining({
-        roots: [expect.objectContaining({ name: "alpha", title: "A" })],
-        readyCount: 1,
-      }),
-      expect.objectContaining({
-        roots: [expect.objectContaining({ name: "beta", title: "B" })],
-        readyCount: 1,
-      }),
-    ]);
-    expect(parsed.ready).toEqual([
-      expect.objectContaining({ name: "beta", title: "B", status: "OPEN", roi: 60 }),
-      expect.objectContaining({ name: "alpha", title: "A", status: "OPEN", roi: 50 }),
-    ]);
-    expect(parsed.blocked).toEqual([]);
-    expect(parsed.inProgress).toEqual([]);
-    expect(parsed.recentClosed).toEqual([]);
-    expect(parsed.workspaces).toBeUndefined();
-    expect(parsed.remoteWorkers).toEqual([]);
-    expect(parsed.recentCommits).toBeUndefined();
-    expect(parsed.commitsBackend).toBeUndefined();
-    expect(parsed.workspaceOrphans).toBeUndefined();
-    // v2-retire-log-shim: `recent` shows captured ops. Both task adds
-    // appear as typed ops keyed by natural key, not as prose events.
-    expect(parsed.recent).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "task",
-          intent: "task.add",
-          workstreamName: "ws/alpha",
-        }),
-        expect.objectContaining({
-          kind: "task",
-          intent: "task.add",
-          workstreamName: "ws/beta",
-        }),
-      ]),
-    );
-  });
-
-  it("a REMOTE: note is just prose now: remote workers come from agents.host (see remote-spawn.test.ts)", async () => {
+  it("a REMOTE: note is just prose: remote workers are agents with host/cwd/base (state-output-contract)", async () => {
     await runCli(
-      [
-        "task",
-        "note",
-        "alpha",
-        "-w",
-        "ws",
-        "REMOTE: dev:~/ws/worker-1\\nREMOTE_BASE: worker-1:abc",
-      ],
+      ["task", "note", "alpha", "-w", "ws", "REMOTE: dev:~/ws/worker-1\nREMOTE_BASE: worker-1:abc"],
       dbPath,
     );
-
-    const { stdout, exitCode } = await runCli(["state", "-w", "ws"], dbPath);
-    expect(exitCode).toBeNull();
-    expect(stdout).not.toContain("Remote workers (");
-
-    const json = await runCliJson(["state", "-w", "ws", "--json"], dbPath);
-    expect(json.data.remoteWorkers).toEqual([]);
+    const { data } = await runCliJson(["state", "-w", "ws"], dbPath);
+    expect(data.workstreams[0].agents).toEqual([]);
+    expect(JSON.stringify(data)).not.toContain("dev:~/ws");
   });
 
-  it("multi-ws --json wraps per-ws shapes in { workstreams: [...] }", async () => {
+  it("a multi-workstream read is the same document with one entry each, in order", async () => {
     await runCliJson(["workstream", "init", "ws2", "--json"], dbPath);
     await runCliJson(
       ["task", "add", "gamma", "-w", "ws2", "--title", "G", "-i", "10", "-e", "1", "--json"],
       dbPath,
     );
-    const { data, exitCode } = await runCliJson(["state", "-w", "ws,ws2", "--json"], dbPath);
+    const { data, exitCode } = await runCliJson(["state", "-w", "ws,ws2"], dbPath);
     expect(exitCode).toBeNull();
-    const parsed = data;
-    expect(parsed.workstreams).toEqual([
+    expect(data.workstreams).toEqual([
       expect.objectContaining({
-        workstreamName: "ws",
+        workstream: "ws",
         ready: expect.arrayContaining([
-          expect.objectContaining({ name: "alpha", title: "A", status: "OPEN" }),
-          expect.objectContaining({ name: "beta", title: "B", status: "OPEN" }),
+          expect.objectContaining({ id: "alpha", title: "A", status: "OPEN" }),
+          expect.objectContaining({ id: "beta", title: "B", status: "OPEN" }),
         ]),
         blocked: [],
       }),
       expect.objectContaining({
-        workstreamName: "ws2",
-        ready: [expect.objectContaining({ name: "gamma", title: "G", status: "OPEN" })],
+        workstream: "ws2",
+        ready: [expect.objectContaining({ id: "gamma", title: "G", status: "OPEN" })],
         blocked: [],
       }),
     ]);
@@ -201,23 +138,27 @@ describe("mu state — mutual-exclusion + cross-workstream", () => {
   });
 
   it("--all + -w errors as a UsageError (mutually exclusive)", async () => {
-    const { stderr, exitCode } = await runCli(["state", "--all", "-w", "alpha"], dbPath);
+    const { data, doc, exitCode } = await runCliJson(["state", "--all", "-w", "alpha"], dbPath);
     expect(exitCode).toBe(2);
-    expect(stderr).toContain("mutually exclusive");
+    expect(doc.ok).toBe(false);
+    expect(data).toBeUndefined();
+    expect(doc.message).toContain("mutually exclusive");
   });
 
-  it("cross-workstream works in default mode (-w X,Y stacks per-ws cards)", async () => {
-    const { stdout, exitCode } = await runCli(["state", "-w", "alpha,beta"], dbPath);
+  it("cross-workstream reads exactly the named workstreams (-w X,Y)", async () => {
+    const { data, exitCode } = await runCliJson(["state", "-w", "alpha,beta"], dbPath);
     expect(exitCode).toBeNull();
-    expect(stdout).toContain("State of mu-alpha");
-    expect(stdout).toContain("State of mu-beta");
-    expect(stdout).not.toContain("State of mu-gamma");
+    expect(data.workstreams.map((w: { workstream: string }) => w.workstream)).toEqual([
+      "alpha",
+      "beta",
+    ]);
   });
 
   it("-w with one bad name errors as WorkstreamNotFoundError", async () => {
-    const { stderr, exitCode } = await runCli(["state", "-w", "alpha,nope"], dbPath);
-    expect(exitCode).not.toBe(0);
-    expect(stderr).toContain("nope");
+    const { doc, exitCode } = await runCliJson(["state", "-w", "alpha,nope"], dbPath);
+    expect(exitCode).toBe(3);
+    expect(doc).toMatchObject({ ok: false, error: "WorkstreamNotFoundError" });
+    expect(doc.message).toContain("nope");
   });
 });
 

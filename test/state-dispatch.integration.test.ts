@@ -1,13 +1,6 @@
-// Tests for cmdState's --json / multi-workstream dispatch.
-//
-//   --json  multi-ws  →  what runs
-//   ------  --------     ----------
-//   yes     any          → static JSON
-//   no      no           → static full card
-//   no      yes          → stacked static per-ws cards
-//
-// `--tui` is gone (mu-next removed the card TUI); it is an unknown option.
-// The static renderers are exercised by test/state-render.integration.test.ts.
+// Tests for cmdState's dispatch: one JSON document (with or without --json),
+// scope errors as the JSON failure document. The removed card/TUI options stay
+// unknown options. The document's contract is test/state-output-contract.test.ts.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -74,43 +67,33 @@ describe("cmdState dispatch", () => {
     } catch {}
   });
 
-  it("--json on a non-TTY emits JSON regardless of TTY", async () => {
-    // runCli pipes stdout, so isTTY is always false in tests; the
-    // dispatch goes to renderStateStatic / renderStateJson.
-    const { data, exitCode } = await runCliJson(["state", "-w", "ws", "--json"], dbPath);
-    expect(exitCode).toBeNull();
-    const parsed = data;
-    expect(parsed.workstreamName).toBe("ws");
-  });
-
-  it("default hits the static full card", async () => {
-    const { stdout, exitCode } = await runCli(["state", "-w", "ws"], dbPath);
-    expect(exitCode).toBeNull();
-    expect(stdout).toContain("State of mu-ws");
-  });
-
-  it("multi-workstream renders stacked static cards", async () => {
+  it("prints the JSON document with or without --json, and one document for several workstreams", async () => {
+    const bare = await runCliJson(["state", "-w", "ws"], dbPath);
+    const flagged = await runCliJson(["state", "-w", "ws", "--json"], dbPath);
+    expect(bare.exitCode).toBeNull();
+    expect(bare.stdout).toBe(flagged.stdout);
+    expect(bare.data.workstreams.map((w: { workstream: string }) => w.workstream)).toEqual(["ws"]);
     await runCli(["workstream", "init", "ws2"], dbPath);
-    const { stdout, exitCode } = await runCli(["state", "-w", "ws,ws2"], dbPath);
-    expect(exitCode).toBeNull();
-    expect(stdout).toContain("State of mu-ws");
-    expect(stdout).toContain("State of mu-ws2");
+    const multi = await runCliJson(["state", "-w", "ws,ws2"], dbPath);
+    expect(multi.exitCode).toBeNull();
+    expect(multi.data.workstreams.map((w: { workstream: string }) => w.workstream)).toEqual([
+      "ws",
+      "ws2",
+    ]);
   });
 
   it("--tui option no longer exists", async () => {
-    const { stderr, exitCode } = await runCli(["state", "--tui", "-w", "ws"], dbPath);
-    expect(exitCode).not.toBeNull();
-    expect(exitCode).not.toBe(0);
-    expect(stderr.toLowerCase()).toContain("unknown option");
-    expect(stderr).toContain("--tui");
+    const { doc, exitCode } = await runCliJson(["state", "--tui", "-w", "ws"], dbPath);
+    expect(exitCode).toBe(2);
+    expect(String(doc.message).toLowerCase()).toContain("unknown option");
+    expect(String(doc.message)).toContain("--tui");
   });
 
   it("--mission option no longer exists", async () => {
-    const { stderr, exitCode } = await runCli(["state", "--mission", "-w", "ws"], dbPath);
-    expect(exitCode).not.toBeNull();
-    expect(exitCode).not.toBe(0);
-    expect(stderr.toLowerCase()).toContain("unknown option");
-    expect(stderr).toContain("--mission");
+    const { doc, exitCode } = await runCliJson(["state", "--mission", "-w", "ws"], dbPath);
+    expect(exitCode).toBe(2);
+    expect(String(doc.message).toLowerCase()).toContain("unknown option");
+    expect(String(doc.message)).toContain("--mission");
   });
 
   it("--hud option no longer exists (removed in this refactor)", async () => {
@@ -154,12 +137,13 @@ describe("cmdState empty-workstream paths", () => {
     await runCli(["workstream", "init", "beta"], dbPath);
     // A decoy $MU_SESSION must not auto-resolve into one of them.
     await withEnv("MU_SESSION", "alpha", async () => {
-      const { stdout, stderr, exitCode } = await runCli(["state"], dbPath);
+      const { doc, stdout, stderr, exitCode } = await runCliJson(["state"], dbPath);
       expect(exitCode).toBe(2);
-      expect(stdout).toBe("");
-      expect(stderr).toMatch(/no workstream: pass -w <name> or --all/);
-      expect(stderr).toContain("-w alpha");
-      expect(stderr.trim().split("\n")).toHaveLength(1);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n")).toHaveLength(1);
+      expect(doc.ok).toBe(false);
+      expect(String(doc.message)).toMatch(/no workstream: pass -w <name> or --all/);
+      expect(String(doc.message)).toContain("-w alpha");
     });
   });
 
