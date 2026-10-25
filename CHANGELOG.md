@@ -10,6 +10,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **mu-next design: a model-run move recipe replaces the import and the flag day.**
+  mu-next runs beside 3.x with its own DB, state, sync dir and machine id; the 3.x DB
+  stays a read-only archive and workstreams move one at a time
+  (docs/mu-next/README.md, Move). Docs only.
+
 ### Removed
 
 - **`mu agent remote-env` and the `REMOTE:` / `REMOTE_BASE:` note convention.**
