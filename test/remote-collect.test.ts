@@ -27,6 +27,7 @@ import {
   HostChannelBusyError,
   listHostChannels,
 } from "../src/hosts.js";
+import { resetMux } from "../src/mux.js";
 import { RemoteCloseRefusedError } from "../src/remote-agent.js";
 import { collectRemoteAgent, RemoteCollectUnsupportedError } from "../src/remote-collect.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -127,6 +128,11 @@ afterEach(() => {
   db.close();
   rmFixtureDir(dir);
 });
+
+function withEnvSync(key: string, value: string, fn: () => void): void {
+  process.env[key] = value;
+  fn();
+}
 
 describe("agent collect: admission and refusals", () => {
   it("at --max-sessions 1 beside the live pane: the one-line refusal names the holder, no fetch runs", async () => {
@@ -242,6 +248,38 @@ describe("agent close of a remote worktree row", () => {
       db.prepare("DELETE FROM agents").run();
       db.prepare("DELETE FROM host_channels").run();
     }
+  });
+
+  it("a holder, an unprovable host and a stuck move-back each refuse in one line and keep the row", async () => {
+    for (const [out, reason, text] of [
+      ["MU_RM held 4242", "held", /process 4242/],
+      ["MU_RM unproven", "unreadable", /neither \/proc nor lsof/],
+      ["MU_RM stuck", "unreadable", /close again to resume/],
+    ] as const) {
+      await remoteAgent({ name: "worker-1" });
+      answer(`MU_STATE clean ${BASE}`, out);
+      const err = await close().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(RemoteCloseRefusedError);
+      expect((err as RemoteCloseRefusedError).reason).toBe(reason);
+      expect((err as Error).message).toMatch(text);
+      expect((err as Error).message).not.toContain("\n");
+      expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+      db.prepare("DELETE FROM agents").run();
+      db.prepare("DELETE FROM host_channels").run();
+    }
+  });
+
+  it("with no multiplexer to ask, the pane is never presumed dead: its channel stays and no exec runs", async () => {
+    await remoteAgent();
+    mux.restore();
+    withEnvSync("MU_MUX", "nonsense", () => resetMux());
+    const err = await close().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HostChannelBusyError);
+    expect(execCalls()).toEqual([]);
+    expect(channels()).toHaveLength(1);
+    expect(channels()[0]).toMatchObject({ kind: "attached" });
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+    mux = installMux("tmux", mockTmux(state).executor);
   });
 
   it("an observation that fails or says nothing refuses; nothing is removed", async () => {

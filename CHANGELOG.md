@@ -102,9 +102,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   records nothing. It prints `git merge <sha>`, never runs it. `agent close`
   of a `--host --worktree` agent now kills the pane, then removes the remote
   worktree without `--force` only when it is clean and HEAD is the base or the
-  collected HEAD. HEAD is fenced for the removal: the worktree's `HEAD.lock` is held
-  (a late commit fails on it), the tree is renamed aside and re-verified, then
-  removed; a mismatch puts it back and refuses. Otherwise it
+  collected HEAD. The removal proves quiescence instead of taking a lock (reftable
+  ignores `HEAD.lock`): the tree is renamed to `<path>.mu-removing-<id>`
+  (every writer addressing the old path fails), `/proc` (else `lsof`, else a
+  refusal) must show no process with its cwd or an open file under it, and only
+  then are HEAD and cleanliness re-checked with plain git, `--keep-branch`'s
+  branch made create-only, and the tree removed. A holder (named by pid), a
+  mismatch or a doubt puts the tree back and refuses. A close killed after the
+  move is resumed by the retry (the aside name is derived from the row, so no
+  record can be lost); it never reports `gone` while the aside exists. Otherwise it
   refuses (exit 4, `RemoteCloseRefusedError`); `--keep-branch` first makes
   `mu/<ws>/<agent>-<sha12>` at the observed HEAD in the remote repo; dirty
   refuses with or without `--keep-branch` and `--discard`. A `--cwd` agent's

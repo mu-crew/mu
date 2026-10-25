@@ -7,6 +7,7 @@
 // stale fetch is refused, FETCH_HEAD is never shared, the removal is a real
 // `git worktree remove` that refuses real dirt and a real moved HEAD.
 
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -25,11 +26,11 @@ import { AgentReplacedError } from "../src/agents/errors.js";
 import { closeAgent, getAgent, insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, admitHostChannel, bindHostChannel, listHostChannels } from "../src/hosts.js";
-import { RemoteCloseRefusedError } from "../src/remote-agent.js";
+import { asideOf, closeRemoteWorktree, RemoteCloseRefusedError } from "../src/remote-agent.js";
 import { collectRef, collectRemoteAgent, RemoteCollectError } from "../src/remote-collect.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
-import { commitFileIn, gitIn, initGitRepo } from "./_git.js";
+import { commitFileIn, gitIn, gitSupportsReftable, initGitRepo } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -400,47 +401,6 @@ describe("round-2 fences", () => {
     expect(existsSync(wtPath("worker-1"))).toBe(true);
   });
 
-  it("a commit arriving after the last check cannot land: HEAD is fenced, and nothing is lost", async () => {
-    await remoteAgent("worker-1");
-    const bin = join(dir, "bin");
-    mkdirSync(bin);
-    const shim = join(bin, "git");
-    // On the SECOND `status --porcelain` (the remove exec's first), print the real status, then commit in the worktree.
-    writeFileSync(
-      shim,
-      `#!/bin/sh
-case " $* " in *' status --porcelain '*)
-  if [ -f '${dir}/status-seen' ]; then
-    /usr/bin/git "$@"
-    cd '${wtPath("worker-1")}' || exit 1
-    echo newer > newer.txt; /usr/bin/git add .
-    /usr/bin/git -c user.email=t@t -c user.name=t commit -q -m newer 2>/dev/null; echo $? > '${dir}/late-exit'
-    /usr/bin/git rev-parse HEAD > '${dir}/late-head'
-    exit 0
-  fi
-  touch '${dir}/status-seen' ;;
-esac
-exec /usr/bin/git "$@"
-`,
-    );
-    chmodSync(shim, 0o755);
-    db.prepare("UPDATE host_profiles SET exec = ? WHERE name = 'wide'").run(
-      `PATH=${bin}:$PATH /bin/sh ${join(dir, "exec.sh")} {cmd}`,
-    );
-    const outcome = await close("worker-1").catch((e: unknown) => e);
-    const lateHead = readFileSync(join(dir, "late-head"), "utf8").trim();
-    const lateExit = readFileSync(join(dir, "late-exit"), "utf8").trim();
-    gitIn(remote, "gc", "-q", "--prune=now");
-    // The writer could not move HEAD (it failed on HEAD.lock); whatever it left staged keeps the worktree.
-    expect(lateExit).not.toBe("0");
-    expect(lateHead).toBe(base);
-    expect(outcome).toBeInstanceOf(RemoteCloseRefusedError);
-    expect(existsSync(wtPath("worker-1"))).toBe(true);
-    expect(existsSync(join(wtPath("worker-1"), ".git"))).toBe(true);
-    expect(gitIn(remote, "worktree", "list")).toContain(wtPath("worker-1"));
-    expect(existsSync(join(remote, ".git", "worktrees", "worker-1", "HEAD.lock"))).toBe(false);
-  });
-
   it("--keep-branch never moves an existing branch, and the removal leaves no aside tree", async () => {
     await remoteAgent("worker-1");
     const head = commitIn("worker-1", "a.txt");
@@ -450,6 +410,215 @@ exec /usr/bin/git "$@"
     expect(readdirSync(join(dir, "wts"))).toEqual([]);
   });
 });
+
+// Close proves QUIESCENCE, not a lock (reftable ignores HEAD.lock): the tree is
+// renamed aside, no process may have its cwd or an open file under it, then
+// HEAD and cleanliness are re-checked with plain git. Both ref backends.
+const REFTABLE = gitSupportsReftable();
+describe.each([
+  ["files", true],
+  ["reftable", REFTABLE],
+] as const)("close quiescence, %s refs", (format, supported) => {
+  const holders: ChildProcess[] = [];
+  const wt = (): string => wtPath("worker-1");
+  const aside = (id: number): string => asideOf(wt(), id);
+  const gitShim = (body: string): void => {
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "git"), `#!/bin/sh\n${body}\nexec /usr/bin/git "$@"\n`);
+    chmodSync(join(bin, "git"), 0o755);
+    db.prepare("UPDATE host_profiles SET exec = ? WHERE name = 'wide'").run(
+      `PATH=${bin}:$PATH /bin/sh ${join(dir, "exec.sh")} {cmd}`,
+    );
+  };
+  /** A process whose cwd (or an open fd, with `fd`) is inside the tree. */
+  async function holder(how: "cwd" | "fd"): Promise<number> {
+    const script =
+      how === "cwd"
+        ? `cd '${wt()}' && exec sleep 60`
+        : `exec 3< '${wt()}/README'; cd /; exec sleep 60`;
+    const child = spawn("sh", ["-c", script], { stdio: "ignore" });
+    holders.push(child);
+    const pid = child.pid ?? 0;
+    await until(() => {
+      try {
+        return (
+          readdirSync(`/proc/${pid}/fd`).length > 0 &&
+          readFileSync(`/proc/${pid}/cmdline`, "utf8").startsWith("sleep")
+        );
+      } catch {
+        return false;
+      }
+    }, "the holder to start");
+    return pid;
+  }
+
+  beforeEach(() => {
+    if (!supported) return;
+    for (const d of [remote, local]) rmSync(d, { recursive: true, force: true });
+    mkdirSync(remote);
+    initGitRepo(remote, { refFormat: format });
+    base = gitIn(remote, "rev-parse", "HEAD");
+    gitIn(dir, "clone", "-q", remote, local);
+  });
+  afterEach(() => {
+    for (const h of holders.splice(0)) h.kill("SIGKILL");
+  });
+
+  const it_ = supported ? it : it.skip;
+  it_(`the repo really uses ${format} refs`, () => {
+    expect(existsSync(join(remote, ".git", "reftable"))).toBe(format === "reftable");
+  });
+
+  it_("a clean tree at its base is removed, leaving no aside", async () => {
+    await remoteAgent("worker-1");
+    expect((await close("worker-1")).worktree).toMatchObject({ action: "removed" });
+    expect(readdirSync(join(dir, "wts"))).toEqual([]);
+  });
+
+  it_(
+    "a commit landing before the removal refuses as moved, also with --keep-branch; nothing is lost",
+    async () => {
+      await remoteAgent("worker-1");
+      writeFileSync(
+        join(dir, "hook"),
+        `cd '${wt()}' && echo m > moved.txt && git add . && git -c user.email=t@t -c user.name=t commit -q -m moved\n`,
+      );
+      await expect(close("worker-1", { keepBranch: true })).rejects.toMatchObject({
+        reason: "moved",
+      });
+      expect(existsSync(wt())).toBe(true);
+      expect(readdirSync(join(dir, "wts"))).toEqual(["worker-1"]);
+      expect(gitIn(wt(), "rev-parse", "HEAD")).not.toBe(base);
+      expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+    },
+  );
+
+  it_("a file written after the observation refuses as dirty, with --keep-branch too", async () => {
+    await remoteAgent("worker-1");
+    writeFileSync(join(dir, "hook"), `echo x > '${wt()}/late.txt'\n`);
+    await expect(close("worker-1", { keepBranch: true })).rejects.toMatchObject({
+      reason: "dirty",
+    });
+    expect(existsSync(join(wt(), "late.txt"))).toBe(true);
+    expect(readdirSync(join(dir, "wts"))).toEqual(["worker-1"]);
+  });
+
+  it_.each(["cwd", "fd"] as const)(
+    "a process with its %s inside the tree is refused, never removed, naming the pid",
+    async (how) => {
+      await remoteAgent("worker-1");
+      const pid = await holder(how);
+      const err = await close("worker-1", { keepBranch: true }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(RemoteCloseRefusedError);
+      expect((err as RemoteCloseRefusedError).reason).toBe("held");
+      expect((err as Error).message).toContain(`process ${pid}`);
+      expect((err as Error).message).not.toContain("\n");
+      expect(readdirSync(join(dir, "wts"))).toEqual(["worker-1"]);
+      expect(gitIn(remote, "worktree", "list")).toContain(wt());
+      expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+      // Once the holder is gone the same close finishes.
+      holders.pop()?.kill("SIGKILL");
+      await until(() => {
+        try {
+          readdirSync(`/proc/${pid}/fd`);
+          return false;
+        } catch {
+          return true;
+        }
+      }, "the holder to die");
+      expect((await close("worker-1")).worktree).toMatchObject({ action: "removed" });
+    },
+  );
+
+  it_(
+    "a close killed right after the move is resumed by the retry, never reported gone",
+    async () => {
+      const row = await remoteAgent("worker-1");
+      const head = commitIn("worker-1", "a.txt");
+      gitShim(
+        `case " $* " in *' worktree move '*mu-removing*) if [ ! -f '${dir}/crashed' ]; then /usr/bin/git "$@"; touch '${dir}/crashed'; kill -9 $PPID; exit 0; fi ;; esac`,
+      );
+      const first = await close("worker-1", { keepBranch: true }).catch((e: unknown) => e);
+      expect(first).toBeInstanceOf(RemoteCloseRefusedError);
+      expect(existsSync(aside(row.incarnation))).toBe(true);
+      expect(existsSync(wt())).toBe(false);
+      expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+      const second = await close("worker-1", { keepBranch: true });
+      expect(second.worktree).toMatchObject({
+        action: "kept-branch",
+        branch: `mu/auth/worker-1-${head.slice(0, 12)}`,
+      });
+      expect(gitIn(remote, "rev-parse", `refs/heads/${second.worktree?.branch}`)).toBe(head);
+      expect(readdirSync(join(dir, "wts"))).toEqual([]);
+      expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    },
+  );
+
+  it_(
+    "after a crash, work added meanwhile makes the retry refuse with the tree back in place",
+    async () => {
+      const row = await remoteAgent("worker-1");
+      gitShim(
+        `case " $* " in *' worktree move '*mu-removing*) if [ ! -f '${dir}/crashed' ]; then /usr/bin/git "$@"; touch '${dir}/crashed'; kill -9 $PPID; exit 0; fi ;; esac`,
+      );
+      await expect(close("worker-1")).rejects.toBeInstanceOf(RemoteCloseRefusedError);
+      writeFileSync(join(aside(row.incarnation), "wip.txt"), "x");
+      await expect(close("worker-1")).rejects.toMatchObject({ reason: "dirty" });
+      expect(existsSync(join(wt(), "wip.txt"))).toBe(true);
+      expect(existsSync(aside(row.incarnation))).toBe(false);
+      expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+    },
+  );
+
+  it_("an aside beside a live path is never guessed at: refuse, remove nothing", async () => {
+    const row = await remoteAgent("worker-1");
+    mkdirSync(aside(row.incarnation));
+    await expect(close("worker-1")).rejects.toBeInstanceOf(RemoteCloseRefusedError);
+    expect(existsSync(wt())).toBe(true);
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+  });
+
+  it_("a host that can neither read /proc nor run lsof refuses; the tree is put back", async () => {
+    const row = await remoteAgent("worker-1", { pane: false });
+    const agent = getAgent(db, "worker-1", "auth");
+    if (agent === undefined) throw new Error("no row");
+    const err = await closeRemoteWorktree(db, agent, {
+      probe: { proc: "/nonexistent-proc", lsof: "/nonexistent-lsof" },
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RemoteCloseRefusedError);
+    expect((err as Error).message).toMatch(/neither \/proc nor lsof/);
+    expect(existsSync(wt())).toBe(true);
+    expect(existsSync(aside(row.incarnation))).toBe(false);
+  });
+
+  const lsofHere = spawnLsof();
+  (supported && lsofHere && format === "files" ? it : it.skip)(
+    "with no /proc, lsof finds the holder",
+    async () => {
+      await remoteAgent("worker-1", { pane: false });
+      await holder("cwd");
+      const agent = getAgent(db, "worker-1", "auth");
+      if (agent === undefined) throw new Error("no row");
+      const err = await closeRemoteWorktree(db, agent, {
+        probe: { proc: "/nonexistent-proc", lsof: "lsof" },
+      }).catch((e: unknown) => e);
+      expect((err as RemoteCloseRefusedError).reason).toBe("held");
+      expect(existsSync(wt())).toBe(true);
+    },
+  );
+});
+
+function spawnLsof(): boolean {
+  try {
+    execFileSync("lsof", ["-v"], { stdio: "ignore" });
+    return true;
+  } catch (e) {
+    return (
+      (e as { status?: number }).status !== undefined && (e as { code?: string }).code !== "ENOENT"
+    );
+  }
+}
 
 describe("the CLI", () => {
   it("agent collect fetches into the current directory's repo; outside a repo it is a usage error (exit 2)", async () => {
