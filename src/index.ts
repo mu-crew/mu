@@ -587,6 +587,40 @@ export {
 } from "./tmux.js";
 export { getParallelTracks, type Track } from "./tracks.js";
 export {
+  type AgentReading,
+  type AgentWatchHandle,
+  type CloseOutcome,
+  WAIT_HEARTBEAT_CAP_MS,
+  type WaitEvent,
+  type WaitEventKind,
+  WaitNothingError,
+  type WaitOptions,
+  type WaitRef,
+  WaitRefError,
+  type WaitResult,
+  type WaitSnapshot,
+  waitForEvents,
+} from "./wait.js";
+export { ctlAgentHooks } from "./wait-ctl.js";
+export {
+  type CursorKind,
+  type CursorToken,
+  closedToken,
+  cursorKey,
+  DELEGATE_TOKEN,
+  isConsumed,
+  readCursors,
+  recordCursors,
+} from "./wait-cursor.js";
+export {
+  checkRegexGrammar,
+  compileTextMatcher,
+  type TextMatcher,
+  WAIT_REGEX_MAX_LEN,
+  WAIT_TEXT_MAX,
+  WaitRegexError,
+} from "./wait-regex.js";
+export {
   beginWait,
   endWait,
   type RegisteredRef,

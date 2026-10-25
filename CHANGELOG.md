@@ -153,6 +153,44 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `src/cli/agent-close.ts`. SDK: `selectRemoteRecovery`, `recoveriesFor`, `getRemoteRecovery`,
   `RemoteRecoveryRefusedError`, `CloseAgentOptions.recoveryId`, `ClosePreview.recovery`.
 
+- **One owned-event wait engine** (`v_wait_engine`, slice B of `v_wait_core`).
+  `waitForEvents(db, refs, opts)` (`src/wait.ts`) is the only wait loop;
+  `waitForTasks` and `waitForAgents` are adapters over it and keep their
+  outputs (the `mu task wait` / `mu agent wait` / extension consumers are
+  unchanged until `mu wait`, `v_wait_cli`). One iteration reads the DB (tasks,
+  the caller's delegates and registration), makes ONE batched agent read, applies
+  settled CLOSE blocks and picks; then it races an agent ctl watch settling, the
+  poll sleep, abort and the deadline. A blocking watch is never awaited serially
+  and every read is raced with abort and deadline, so twelve delegate reports
+  surface one per wait while four workers stay busy. Refs are typed (`task`,
+  `agent`, `delegate`), exact and resolved up front; the caller's registration
+  and its delegate calls are observed even while explicit refs are waited on,
+  and another caller's work never appears. **first** returns the best event
+  (dead, input, delegate, then closed/settled; explicit refs before owned);
+  **all** returns when every target is done, and an urgent owned event (dead,
+  dialog, delegate report) ends it early without counting toward "all". Only
+  DELIVERED refs are consumed: their typed cursor tokens (`wait_cursors`:
+  an agent's ctl incarnation + settled run, a closed task's newest note id, a
+  delegate's terminal state) and their removal from the registration are one
+  transaction guarded by the registration generation, so a sibling `first` did
+  not return stays owed, history is not replayed, a stale high run count never
+  hides a new pi process, and an older wait finishing late consumes nothing
+  (`superseded`). `mu_delegate`'s `verdictTally` takes `{ caller }` so two
+  callers' waves with one name stay apart. A settled pi run's CLOSE block is
+  applied once before the snapshot returns; `applySettledClose` now refuses
+  delegate tasks like human ones, so a delegate answer ending in a CLOSE block
+  cannot close its task ahead of `finishDelegate`'s recorder. `--until-text`
+  takes a bounded regex (`src/wait-regex.ts`): at most 200 characters, no
+  backreferences or lookaround, no repeated group containing a repeat or an
+  alternation, counts up to 1000, matched on the last 8 KiB inside a 50 ms
+  `node:vm` budget; a refused or runaway pattern is a typed error before or
+  during the wait, never a hang. The result carries `event`, `refs` snapshots,
+  `timedOut`, `interrupted`, an embedded `exit` (0, 6, 7, 130), the caller's
+  `cursor` and the wave `tally`. A timeout (default and cap 1500 s; 0 means
+  the cap) is a heartbeat result, not an error. Not here: stall actions
+  (steer/release, slice C), the `mu wait` CLI and signal wiring, and arming
+  from spawn/send/claim (`v_wait_cli`).
+
 - **A deleted remote worker row no longer takes its worktree's location with it.** A new
   machine-local table `remote_recovery` (no foreign key, no op, never synced) keeps, per
   ORIGINAL registry incarnation, the host, worktree path, base, last collected HEAD, the exact

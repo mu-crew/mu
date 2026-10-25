@@ -246,6 +246,13 @@ function applyInTxn(db: Db, input: SettledCloseInput): SettledCloseResult {
       block.task,
     );
   }
+  if (task?.kind === "delegate") {
+    // The delegate's recorder (finishDelegate) writes the verdict, the report
+    // and this close in one group; a CLOSE block in a delegate's answer must
+    // never beat it to the close.
+    record(task.id);
+    return no("delegate task: its call records the answer and closes it", block.task);
+  }
   if (!task || task.owner_id !== input.agentId) {
     record(null);
     return no("task is not owned by this agent", block.task);

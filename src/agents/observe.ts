@@ -118,13 +118,28 @@ export function toStatusSnapshot(obs: AgentObservation): AgentStatusSnapshot {
   };
 }
 
+/** The facts of an observation that decide a settled close. */
+export type SettleFacts = Pick<
+  AgentObservation,
+  | "workstream"
+  | "name"
+  | "agentId"
+  | "status"
+  | "settled"
+  | "incarnation"
+  | "runs"
+  | "lastText"
+  | "lastTextTruncated"
+  | "lastError"
+>;
+
 /**
  * `applySettledClose`'s input for an observation, or undefined when it is
  * not one: it must be a ctl-settled run (`settled`), alive, with pi's
  * incarnation and the settled run count. Idle, blocked, unknown and
  * older-extension replies never qualify: a settle is never inferred.
  */
-export function settledCloseInput(obs: AgentObservation): SettledCloseInput | undefined {
+export function settledCloseInput(obs: SettleFacts): SettledCloseInput | undefined {
   if (!obs.settled || obs.status === null) return undefined;
   if (obs.incarnation === undefined || obs.runs === undefined) return undefined;
   return {

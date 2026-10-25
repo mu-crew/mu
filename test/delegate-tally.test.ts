@@ -169,3 +169,22 @@ describe("verdictTally", () => {
     expect(t.findings[0]).toMatchObject({ id: `scratch/${c.task}`, confirmed: 1 });
   });
 });
+
+describe("verdictTally by caller (v_wait_engine)", () => {
+  it("two callers using one wave name in one workstream are tallied apart", () => {
+    judged("crew", "f1");
+    done(reg({ ...rec("crew", "f1"), caller: "pi:a" }).callId, "VERDICT: CONFIRMED");
+    done(reg({ ...rec("crew", "f1"), caller: "pi:b" }).callId, "VERDICT: REFUTED");
+    const all = finding(verdictTally(db, "scratch", "w"), "crew/f1");
+    expect(all).toMatchObject({ confirmed: 1, refuted: 1 });
+    expect(finding(verdictTally(db, "scratch", "w", "pi:a"), "crew/f1")).toMatchObject({
+      confirmed: 1,
+      refuted: 0,
+    });
+    expect(finding(verdictTally(db, "scratch", "w", "pi:b"), "crew/f1")).toMatchObject({
+      confirmed: 0,
+      refuted: 1,
+    });
+    expect(verdictTally(db, "scratch", "w", "pi:none").findings).toEqual([]);
+  });
+});

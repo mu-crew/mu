@@ -9,19 +9,13 @@
 //     awk script becomes stateful (tracking 'which of N have closed?')
 //     for multi-task waits. Bad shape for SKILL examples.
 //
-// Implementation:
-//
-//   1. Initial check — if the wait condition is already satisfied,
-//      exit immediately. No subscription needed.
-//   2. Otherwise, poll the tasks table every pollMs. Same cadence as
-//      mu log --tail (default 1000ms). We don't subscribe to
-//      agent_logs because (a) we'd still need to re-query tasks to
-//      learn the current status, (b) some status changes happen via
-//      mu sql which doesn't emit events, and (c) the polling cost is
-//      one indexed SELECT every second — cheaper than parsing the
-//      log stream.
-//   3. Exit on success (all/any reached) OR timeout. Caller maps
-//      timeout to exit code 5.
+// Implementation: an ADAPTER over the one loop, waitForEvents (src/wait.ts).
+// The engine does the polling, the deadline clamp and the target check; what
+// stays here is this verb's own policy, run on each iteration through the
+// engine's `inspect` hook: the per-owner stuck detection, its stderr warning,
+// the `agent.stall` event and the `--on-stall exit` throw. Slice C of
+// v_wait_core replaces that with stall events and actions; until then the
+// output of `mu task wait` does not change.
 //
 // Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
@@ -29,9 +23,9 @@ import type { StateReading } from "../agent-state.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
 import { isJsonMode } from "../output.js";
-import { StallDetectedDuringWaitError, stallWaitHint, TaskNotFoundError } from "./errors.js";
-import { getTask, getTaskOwner } from "./queries.js";
-import { DEFAULT_SUBSTATE, type TaskStatus, type TaskSubstate } from "./status.js";
+import { type WaitSnapshot, waitForEvents } from "../wait.js";
+import { StallDetectedDuringWaitError, stallWaitHint } from "./errors.js";
+import type { TaskStatus, TaskSubstate } from "./status.js";
 
 // ─── Test seams: poll-sleep + poll counter + stuck-warn writer ─────────
 //
@@ -50,7 +44,6 @@ import { DEFAULT_SUBSTATE, type TaskStatus, type TaskSubstate } from "./status.j
 
 let currentWaitSleep: (ms: number) => Promise<void> = (ms) =>
   new Promise((resolve) => setTimeout(resolve, ms));
-let pollCount = 0;
 
 /** Default `--stuck-after`: how long an IN_PROGRESS task's owner may sit
  *  in needs_input before the wait reports it. Short because a pi worker
@@ -90,15 +83,7 @@ export function setWaitStuckWarnForTests(
   return previous;
 }
 
-/** Total number of polls performed across all `waitForTasks` calls in this
- *  process. Tests typically reset before exercising and read after. */
-export function getWaitPollCount(): number {
-  return pollCount;
-}
-
-export function resetWaitPollCount(): void {
-  pollCount = 0;
-}
+export { getWaitPollCount, resetWaitPollCount } from "../wait.js";
 
 /**
  * Human-readable age for the attention warning: `45s`, `5m`, `2h`.
@@ -276,22 +261,9 @@ export async function waitForTasks(
     return entry;
   });
   const target: TaskStatus = opts.status ?? "CLOSED";
-  const wantAny = opts.any === true;
-  const timeoutMs = opts.timeoutMs ?? 600_000;
-  const pollMs = opts.pollMs ?? 1000;
   const stuckAfterMs = opts.stuckAfterMs ?? DEFAULT_STUCK_AFTER_MS;
   const ctlStuckAfterMs = opts.ctlStuckAfterMs ?? DEFAULT_CTL_STUCK_AFTER_MS;
   const onStall: "warn" | "exit" = opts.onStall ?? "warn";
-  const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Number.POSITIVE_INFINITY;
-
-  // Pre-flight: every ref must exist in its own workstream scope.
-  // Cross-workstream waits validate each ref against its declared ws
-  // — a typo in the workstream half of `<ws>/<name>` should land here
-  // with a clear TaskNotFoundError, not silently wait forever.
-  for (const ref of refs) {
-    if (getTask(db, ref.name, ref.workstreamName) === undefined)
-      throw new TaskNotFoundError(`${ref.workstreamName}/${ref.name}`);
-  }
 
   // Per-(ws,name) dedupe: emit the STUCK warning at most ONCE per wait
   // call, not once per poll cycle. Operators don't want their stderr
@@ -306,9 +278,10 @@ export async function waitForTasks(
   const ctlOwners = new Set<string>();
   // The latest ctl run count per owner, for the stall hints.
   const ownerRuns = new Map<string, number>();
+  const stuckNow = new Set<string>();
 
   const stuckAgeMs = async (
-    status: TaskStatus,
+    status: string | null,
     owner: { name: string; workstreamName: string } | undefined,
   ): Promise<number | null> => {
     if (
@@ -342,154 +315,128 @@ export async function waitForTasks(
     return ageMs >= (viaCtl ? ctlStuckAfterMs : stuckAfterMs) ? ageMs : null;
   };
 
-  /** Read current state of all tasks; returns the result shape. */
-  const snapshot = async (): Promise<TaskWaitResult> => {
-    const refStates: TaskWaitTaskState[] = [];
-    for (const ref of refs) {
-      const row = getTask(db, ref.name, ref.workstreamName);
-      // Defensive: if a task was deleted mid-wait, treat as 'never
-      // reached' for EVERY target, OPEN included (reachedTarget below
-      // requires the row). Not the same as TaskNotFoundError pre-flight:
-      // deletion mid-wait shouldn't crash the wait; it's a legitimate
-      // state change.
-      const status = (row?.status ?? "OPEN") as TaskStatus;
-      const substate = row?.substate ?? DEFAULT_SUBSTATE[status];
+  /** One iteration's stuck pass over the watched tasks (the engine's `inspect`). */
+  const inspect = async (snaps: readonly WaitSnapshot[]): Promise<void> => {
+    stuckNow.clear();
+    for (const snap of snaps) {
+      const ref = { workstreamName: snap.ref.workstream, name: snap.ref.id };
+      const status = snap.status;
+      const owner = snap.owner ?? null;
       // The owner's own workstream, not the task's: a cross-workstream
       // owner (`task claim --for <ws>/<agent>`) is read, keyed and
       // named under the workstream it lives in.
       const ownerRef =
-        row === undefined ? undefined : getTaskOwner(db, ref.name, ref.workstreamName);
-      const owner = ownerRef?.name ?? row?.ownerName ?? null;
+        owner === null
+          ? undefined
+          : { name: owner, workstreamName: snap.ownerWorkstream ?? ref.workstreamName };
       const ownerWs = ownerRef?.workstreamName ?? ref.workstreamName;
       const ageMs = await stuckAgeMs(status, ownerRef);
-      const stuck = ageMs !== null;
       const key = refKey(ref);
-      if (ageMs !== null && !stuckWarned.has(key)) {
-        stuckWarned.add(key);
-        const ageSecs = Math.round(ageMs / 1000);
-        // State the OBSERVATION, not a cause. The predicate above only
-        // knows "needs_input for >= N" — it cannot tell a worker that
-        // finished without closing from one waiting on an answer from
-        // one sitting at a prompt, and those need opposite responses.
-        // The old text asserted the first ("likely committed but
-        // skipped mu task close"), which sent at least one operator
-        // hunting for a commit to merge while the worker was waiting
-        // on a design decision. Workers asking questions is DESIRABLE;
-        // the tooling must not frame it as negligence.
-        //
-        // The indented lines are the remedy: a pi owner's last answer
-        // (wait --after-runs) when its socket reported runs, then
-        // `mu agent read`, the next move in all three cases, because a
-        // question, dialog, or crash is in the pane, not in the task row.
-        //
-        // Yellow ANSI escape inline (no picocolors import — keeps the
-        // SDK module dep-free; the CLI layer already pulls picocolors).
-        // Prefixed `mu task wait:` so log greppers can target it, and
-        // cross-ws waits carry the qualified `<ws>/<name>`.
-        // A pi owner with a settled run also gets its last answer
-        // exactly (wait --after-runs), ahead of the pane read.
-        const ownerBit = owner ?? "<none>";
-        const runs = ownerRuns.get(`${ownerWs}/${ownerBit}`);
-        const stateBit = stuckLabel.get(`${ownerWs}/${ownerBit}`) ?? "needs_input";
-        const waitLine = stallWaitHint(ownerBit, ownerWs, runs)
-          .map((s) => `  ${s.command}\n`)
-          .join("");
-        currentStuckWarn(
-          `\x1b[33mmu task wait: ${key} needs attention — owner=${ownerBit} has been in ` +
-            `${stateBit} for ${formatStallAge(ageMs)}. It may have finished without closing, ` +
-            `be waiting on an answer, or be sitting at a prompt.\x1b[0m\n` +
-            waitLine +
-            `  mu agent read ${ownerBit} -w ${ownerWs} --lines 60\n`,
-        );
-        // Persist a corroborating kind='event' row so other consumers
-        // (mu state, mu log --kind event, dashboards) see the same
-        // signal that the new derived `idle` flag surfaces in the
-        // agents table. The stderr warning stays — observation-only,
-        // operator decides recovery. See idle_assigned_agent_detection.
-        // Pure OBSERVATION: nothing is mutated, so no trigger could
-        // ever see this. The emit is the only record.
-        emitEvent(
-          db,
+      if (ageMs === null) continue;
+      stuckNow.add(key);
+      if (stuckWarned.has(key)) continue;
+      stuckWarned.add(key);
+      const ageSecs = Math.round(ageMs / 1000);
+      // State the OBSERVATION, not a cause. The predicate above only
+      // knows "needs_input for >= N" — it cannot tell a worker that
+      // finished without closing from one waiting on an answer from
+      // one sitting at a prompt, and those need opposite responses.
+      // The old text asserted the first ("likely committed but
+      // skipped mu task close"), which sent at least one operator
+      // hunting for a commit to merge while the worker was waiting
+      // on a design decision. Workers asking questions is DESIRABLE;
+      // the tooling must not frame it as negligence.
+      //
+      // The indented lines are the remedy: a pi owner's last answer
+      // (wait --after-runs) when its socket reported runs, then
+      // `mu agent read`, the next move in all three cases, because a
+      // question, dialog, or crash is in the pane, not in the task row.
+      //
+      // Yellow ANSI escape inline (no picocolors import — keeps the
+      // SDK module dep-free; the CLI layer already pulls picocolors).
+      // Prefixed `mu task wait:` so log greppers can target it, and
+      // cross-ws waits carry the qualified `<ws>/<name>`.
+      const ownerBit = owner ?? "<none>";
+      const runs = ownerRuns.get(`${ownerWs}/${ownerBit}`);
+      const stateBit = stuckLabel.get(`${ownerWs}/${ownerBit}`) ?? "needs_input";
+      const waitLine = stallWaitHint(ownerBit, ownerWs, runs)
+        .map((s) => `  ${s.command}\n`)
+        .join("");
+      currentStuckWarn(
+        `\x1b[33mmu task wait: ${key} needs attention — owner=${ownerBit} has been in ` +
+          `${stateBit} for ${formatStallAge(ageMs)}. It may have finished without closing, ` +
+          `be waiting on an answer, or be sitting at a prompt.\x1b[0m\n` +
+          waitLine +
+          `  mu agent read ${ownerBit} -w ${ownerWs} --lines 60\n`,
+      );
+      // Persist a corroborating kind='event' row so other consumers
+      // (mu state, mu log --kind event, dashboards) see the same
+      // signal that the new derived `idle` flag surfaces in the
+      // agents table. The stderr warning stays — observation-only,
+      // operator decides recovery. See idle_assigned_agent_detection.
+      // Pure OBSERVATION: nothing is mutated, so no trigger could
+      // ever see this. The emit is the only record.
+      emitEvent(
+        db,
+        ref.workstreamName,
+        "agent.stall",
+        `agent stalled ${owner ?? "<none>"} owns ${ref.name} for ${ageSecs}s`,
+        owner ?? "system",
+      );
+      // task_wait_stall_action_flag: with `--on-stall exit` (the
+      // unattended-orchestrator escape), the same emit + persist
+      // happens but we then throw — the CLI's classifyError maps
+      // this to exit code 7 (STALL_DETECTED). The carve-out
+      // (target=CLOSED only) lives at the call site: the CLI
+      // wrapper passes `onStall: 'exit'` only when target=CLOSED.
+      // Precedence vs exit-6 (dead pane): the reaper-flip check
+      // throws inside `beforePoll` BEFORE this runs, so a watched
+      // task that's both reaper-flipped AND stale never reaches this
+      // branch (status would already be OPEN).
+      if (onStall === "exit") {
+        throw new StallDetectedDuringWaitError(
+          ref.name,
+          owner,
           ref.workstreamName,
-          "agent.stall",
-          `agent stalled ${owner ?? "<none>"} owns ${ref.name} for ${ageSecs}s`,
-          owner ?? "system",
+          ageSecs,
+          ctlOwners.has(`${ownerWs}/${owner ?? ""}`),
+          runs,
+          ownerWs,
         );
-        // task_wait_stall_action_flag: with `--on-stall exit` (the
-        // unattended-orchestrator escape), the same emit + persist
-        // happens but we then throw — the CLI's classifyError maps
-        // this to exit code 7 (STALL_DETECTED). The carve-out
-        // (target=CLOSED only) lives at the call site: the CLI
-        // wrapper passes `onStall: 'exit'` only when target=CLOSED.
-        // Precedence vs exit-6 (dead pane): the reaper-flip check
-        // throws inside `beforePoll` BEFORE snapshot() runs, so a
-        // watched task that's both reaper-flipped AND stale never
-        // reaches this branch (status would already be OPEN).
-        if (onStall === "exit") {
-          throw new StallDetectedDuringWaitError(
-            ref.name,
-            owner,
-            ref.workstreamName,
-            ageSecs,
-            ctlOwners.has(`${ownerWs}/${owner ?? ""}`),
-            runs,
-            ownerWs,
-          );
-        }
       }
-      refStates.push({
+    }
+  };
+
+  const res = await waitForEvents(
+    db,
+    refs.map((r) => ({ kind: "task" as const, workstream: r.workstreamName, id: r.name })),
+    {
+      all: opts.any !== true,
+      uncapped: true,
+      status: target,
+      timeoutMs: opts.timeoutMs ?? 600_000,
+      pollMs: opts.pollMs ?? 1000,
+      sync: false,
+      sleep: (ms) => currentWaitSleep(ms),
+      inspect,
+      ...(opts.beforePoll !== undefined ? { beforePoll: opts.beforePoll } : {}),
+    },
+  );
+  const byKey = new Map(res.refs.map((s) => [`${s.ref.workstream}/${s.ref.id}`, s]));
+  return {
+    refs: refs.map((ref): TaskWaitTaskState => {
+      const snap = byKey.get(refKey(ref));
+      const status = (snap?.status ?? "OPEN") as TaskStatus;
+      return {
         workstreamName: ref.workstreamName,
         name: ref.name,
         status,
-        substate,
-        owner,
-        reachedTarget: row !== undefined && status === target,
-        stuck,
-      });
-    }
-    return {
-      refs: refStates,
-      timedOut: false,
-    };
+        substate: (snap?.substate ?? "todo") as TaskSubstate,
+        owner: snap?.owner ?? null,
+        reachedTarget: snap?.fired === true,
+        stuck: stuckNow.has(refKey(ref)),
+      };
+    }),
+    timedOut: res.timedOut,
   };
-
-  /** Has the wait condition been met? */
-  const isDone = (snap: TaskWaitResult): boolean => {
-    const reached = snap.refs.filter((r) => r.reachedTarget).length;
-    return wantAny ? reached > 0 : reached === snap.refs.length;
-  };
-
-  // Initial check: maybe we're already done. Run beforePoll first so
-  // the CLI's per-poll reconcile (task_wait_reconcile_dead_panes) runs
-  // even on the immediate-exit path — a dead-pane worker that died
-  // BEFORE the operator typed `mu task wait` should still fail fast.
-  if (opts.beforePoll) await opts.beforePoll();
-  let snap = await snapshot();
-  if (isDone(snap)) return snap;
-
-  // Poll loop.
-  //
-  // Sleep is clamped to `min(pollMs, deadline - now)` so the function
-  // returns within `timeoutMs + small slack`, never `pollMs` later.
-  // Without the clamp, `pollMs=10000, timeoutMs=100` sleeps a full 10s
-  // before noticing the deadline expired. When the clamp goes <= 0 we
-  // skip the sleep entirely and re-snapshot before bailing on the
-  // timeout — gives the wait one last chance at a winning state right
-  // at the deadline boundary, and avoids passing 0 / negatives to
-  // setTimeout (which has implementation-defined behaviour).
-  for (;;) {
-    const now = Date.now();
-    if (now >= deadline) {
-      return { ...snap, timedOut: true };
-    }
-    const sleepMs =
-      deadline === Number.POSITIVE_INFINITY ? pollMs : Math.min(pollMs, deadline - now);
-    if (sleepMs > 0) {
-      await currentWaitSleep(sleepMs);
-    }
-    pollCount += 1;
-    if (opts.beforePoll) await opts.beforePoll();
-    snap = await snapshot();
-    if (isDone(snap)) return snap;
-  }
 }
