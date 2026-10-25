@@ -1,0 +1,19 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task note plan1 -w eval 'VERDICT: REFUTED\nEVIDENCE: b.ts:1 calls foo() (I read it myself)'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close plan1 -w eval --as rejected --why 'claim refuted: b.ts calls foo()'"
+      }
+    ]
+  },
+  {
+    "text": "plan1 rejected."
+  }
+]

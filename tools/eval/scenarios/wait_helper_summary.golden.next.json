@@ -1,0 +1,29 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "dispatch() { mu task claim \"$1\" -w eval --for \"$2\" && mu agent send \"$2\" -w eval \"do $1 and finish with the CLOSE block\"; }; TASKS=\"h1 h2\"; i=0; for t in $TASKS; do i=$((i+1)); dispatch $t w$i; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "out=$(mu agent wait w1 w2 -w eval --after-runs 0 --json --timeout 120); for t in h1 h2; do ev=$(printf '%s' \"$out\" | grep -o \"eval: $t.sh exit 0 run=[0-9a-f]*\" | head -1); mu task close $t -w eval --evidence \"$ev\"; echo \"$t: $ev\"; done > summary.md; cat summary.md"
+      }
+    ]
+  },
+  {
+    "text": "h1 and h2 were done by their workers; summary.md has their evidence."
+  }
+]

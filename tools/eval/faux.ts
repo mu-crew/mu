@@ -50,6 +50,7 @@ function stepContext(context: FauxContext): StepContext {
     lastUser,
     lastResult: last?.role === "toolResult" ? textOf(last.content) : null,
     messages: msgs.filter((m) => m.role !== "system").length,
+    results: msgs.filter((m) => m.role === "toolResult").map((m) => textOf(m.content)),
   };
 }
 

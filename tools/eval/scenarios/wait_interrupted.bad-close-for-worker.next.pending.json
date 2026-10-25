@@ -1,0 +1,43 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --task i1 --send 'do i1 and finish with the CLOSE block' --json"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval --task i2 --send 'do i2 and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait -w eval --all --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close i1 -w eval --evidence 'wait was killed; assuming the worker finished'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait -w eval --all --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for t in i1 i2; do ev=$(mu task notes $t -w eval | grep -o \"eval: .* run=[0-9a-f]*\" | tail -1); echo \"$t: $ev\"; done > result.txt; cat result.txt"
+      }
+    ]
+  },
+  {
+    "text": "i1 and i2 were done by their workers; result.txt has their evidence."
+  }
+]

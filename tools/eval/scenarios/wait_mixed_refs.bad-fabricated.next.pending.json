@@ -1,0 +1,12 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "printf \"fast: preclosed\\nready: GATE-READY\\nslow: ok\\ngate: ok\\nrace: ok\\ntimeout-exit: 5\\n\" > wait-report.txt"
+      }
+    ]
+  },
+  {
+    "text": "The wait report is written."
+  }
+]

@@ -3,7 +3,18 @@
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export type FauxCall = { bash: string } | { tool: string; args?: Record<string, unknown> };
+/**
+ * `argsFromResults` fills string args from the tool results seen so far: `key` gets the capture
+ * group of the `nth` match of `re` over every earlier tool result, in order (a scripted AUT cannot
+ * know a durable id mu printed earlier, e.g. the call id of a refused delegate).
+ */
+export type FauxCall =
+  | { bash: string }
+  | {
+      tool: string;
+      args?: Record<string, unknown>;
+      argsFromResults?: Record<string, { re: string; nth: number }>;
+    };
 
 /** One step = one assistant message. */
 export type FauxStep =
@@ -54,6 +65,8 @@ export interface StepContext {
   lastUser: string;
   /** Text of the latest tool result, or null when the transcript does not end in one. */
   lastResult: string | null;
+  /** Text of every tool result in the transcript so far, in order. */
+  results?: string[];
   /** Messages in the session at this model call: a prompt that sees 1 started a fresh session. */
   messages?: number;
 }
@@ -119,8 +132,19 @@ export class FauxScript {
       for (const c of s.calls as Array<Record<string, unknown>>) {
         if (typeof c?.bash === "string") calls.push({ name: "bash", args: { command: c.bash } });
         else if (typeof c?.tool === "string") {
-          const args =
-            c.args && typeof c.args === "object" ? (c.args as Record<string, unknown>) : {};
+          const args = {
+            ...(c.args && typeof c.args === "object" ? (c.args as Record<string, unknown>) : {}),
+          };
+          const from = (c.argsFromResults ?? {}) as Record<string, { re: string; nth: number }>;
+          for (const [key, { re, nth }] of Object.entries(from)) {
+            const found = (ctx.results ?? [])
+              .flatMap((r) => [...r.matchAll(new RegExp(re, "g"))])
+              .map((m) => m[1])
+              .filter((v): v is string => v !== undefined)[nth];
+            if (found === undefined)
+              return { kind: "text", text: `(no tool result matched ${key}: /${re}/ #${nth})` };
+            args[key] = found;
+          }
           calls.push({ name: c.tool, args });
         } else return { kind: "text", text: "(bad step)" };
       }

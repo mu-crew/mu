@@ -11,7 +11,14 @@ import {
   seedViaMu,
   writeWorkerDriver,
 } from "../fixtures.ts";
-import { delegateFor, delegatesInFlight, QUEUE_FULL, verdictFx } from "../observe.ts";
+import {
+  delegateFor,
+  delegatesInFlight,
+  issuedDelegateArgs,
+  QUEUE_FULL,
+  refusedNext,
+  verdictFx,
+} from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment, firstNote, orderWrong } from "../provenance.ts";
 import type { Scenario } from "../types.ts";
@@ -79,15 +86,15 @@ const scenario: Scenario = {
       run.events.find((e) => e.kind === "tool_end" && e.id === id)?.t ?? 0;
     const isRefusal = (c: { id: string; isError: boolean }) =>
       c.isError && delegatesInFlight(sb, run, endOf(c.id)) >= QUEUE_FULL;
-    const refused = delegates.filter(isRefusal);
-    const okCalls = delegates.filter((c) => !c.isError);
+    const refused = delegates.filter((c) => isRefusal(c) || refusedNext(c));
+    const issuedArgs = issuedDelegateArgs(run);
     for (let n = 1; n <= N; n++) {
       const re = new RegExp(`claim-${n}(?!\\d)`);
       // Independent provenance: a verdict note counts only if a delegate for this claim was
       // successfully issued (a refused call does not count). Notes alone can be copied: all
       // answers share one ref. The AUT may word the delegate's prompt freely: the call's label
       // and record.task identify the claim as well as the claim-N token does.
-      const issued = okCalls.some((c) => delegateFor(c.args, n));
+      const issued = issuedArgs.some((a) => delegateFor(a, n));
       if (!issued) neverIssued++;
       const t = probe.task("eval", `c${n}`);
       const word = expected(n);
@@ -134,7 +141,7 @@ const scenario: Scenario = {
         { re: /^err mu_delegate /, why: "delegate queue full", when: (c) => isRefusal(c) },
       ],
       notes: [
-        `mu_delegate calls=${delegates.length} refused=${refused.length} issued=${okCalls.length} neverIssued=${neverIssued} noVerdictNote=${noVerdict}`,
+        `mu_delegate calls=${delegates.length} refused=${refused.length} issued=${issuedArgs.length} neverIssued=${neverIssued} noVerdictNote=${noVerdict}`,
       ],
     });
   },

@@ -563,10 +563,35 @@ export function delegateFor(args: Record<string, unknown>, n: number): boolean {
   return new RegExp(`claim-${n}(?!\\d)`).test(String(args.task ?? ""));
 }
 
+/**
+ * A `mu_delegate` call the queue refused. 3.x: the call failed (isError) while the queue was full.
+ * mu-next: the refusal is a durable, non-error result ("REFUSED, not started ..."): the call is
+ * not running and only a reissue starts it.
+ */
+export const refusedNext = (c: ToolCall): boolean =>
+  c.name === "mu_delegate" && !c.isError && /^REFUSED\b/.test(c.output);
+
+/**
+ * The args of every delegate call that really started or queued: accepted calls, plus a refused
+ * call (mu-next) that a successful `mu_delegate_reissue` named by its call id.
+ */
+export function issuedDelegateArgs(run: RunMetrics): Record<string, unknown>[] {
+  const out = run.toolCalls
+    .filter((c) => c.name === "mu_delegate" && !c.isError && !refusedNext(c))
+    .map((c) => c.args);
+  for (const r of run.toolCalls) {
+    if (r.name !== "mu_delegate_reissue" || r.isError) continue;
+    const id = typeof r.args.call_id === "string" ? r.args.call_id : "";
+    const first = run.toolCalls.find((c) => refusedNext(c) && id !== "" && c.output.includes(id));
+    if (first) out.push(first.args);
+  }
+  return out;
+}
+
 /** Delegates in flight at `t`: calls accepted (ended OK) before `t` whose answer was not served yet. */
 export function delegatesInFlight(sb: Sandbox, run: RunMetrics, t: number): number {
   const accepted = run.toolCalls.filter((c) => {
-    if (c.name !== "mu_delegate" || c.isError) return false;
+    if (c.name !== "mu_delegate" || c.isError || refusedNext(c)) return false;
     const e = run.events.find((x) => x.kind === "tool_end" && x.id === c.id);
     return e !== undefined && e.t < t;
   }).length;

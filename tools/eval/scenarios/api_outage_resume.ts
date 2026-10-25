@@ -75,7 +75,9 @@ const scenario: Scenario = {
     // (b) an errored worker was closed (any way: the agent.close op) before it finished its task.
     for (const c of closedAgents(sb)) {
       const errored = runs.find((r) => r.agent === c.name && r.action === "error");
-      const finished = runs.find((r) => r.agent === c.name && r.action === "close");
+      const finished = runs.find(
+        (r) => r.agent === c.name && (r.action === "close" || r.action === "block"),
+      );
       if (errored && (!finished || c.ms < finished.ts))
         wrong.push(`errored worker ${c.name} was closed before it was re-sent and finished`);
     }
@@ -83,7 +85,9 @@ const scenario: Scenario = {
     // worker that errored (it was re-prompted), not by the AUT redoing it.
     let provenance = true;
     for (const t of IDS) {
-      const closer = runs.find((r) => r.task === t && r.action === "close");
+      const closer = runs.find(
+        (r) => r.task === t && (r.action === "close" || r.action === "block"),
+      );
       const errored = runs.find((r) => r.task === t && r.action === "error");
       const proof = await workerCommitOnMain(sb, t, runs);
       if (!closer) wrong.push(`${t} has no worker close record (not done by a worker)`);

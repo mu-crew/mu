@@ -67,6 +67,25 @@ describe("FauxScript", () => {
     expect(s.next(ctx())).toEqual({ kind: "text", text: "(script exhausted)" });
   });
 
+  it("argsFromResults fills an arg from the nth match over every earlier tool result", () => {
+    const step: FauxStep = {
+      calls: [
+        {
+          tool: "mu_delegate_reissue",
+          argsFromResults: { call_id: { re: "REFUSED call (\\S+)", nth: 1 } },
+        },
+      ],
+    };
+    const s = new FauxScript([step, step], null, "aut");
+    const results = ["ok", "REFUSED call a-1", "REFUSED call b-2"];
+    expect(s.next({ ...ctx(), results })).toEqual({
+      kind: "calls",
+      calls: [{ name: "mu_delegate_reissue", args: { call_id: "b-2" } }],
+    });
+    // no such match: a text step naming the miss, never a call with a guessed id
+    expect(s.next({ ...ctx(), results: ["ok"] })).toMatchObject({ kind: "text" });
+  });
+
   it("writes last-prompt.<agent> before every step", () => {
     const s = new FauxScript(worker, dir, "w1");
     s.next(ctx(null, "claim-12 please"));

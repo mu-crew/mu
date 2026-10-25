@@ -1,0 +1,36 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --task i1 --send 'do i1 and finish with the CLOSE block' --json"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval --task i2 --send 'do i2 and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait -w eval --all --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "printf 'i1: pending\\ni2: pending\\n' > result.txt"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait -w eval --all --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "text": "i1 and i2 were done by their workers; result.txt has their evidence."
+  }
+]

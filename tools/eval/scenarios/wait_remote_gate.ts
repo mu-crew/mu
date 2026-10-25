@@ -24,9 +24,11 @@ import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   gateScript,
+  hostProfile,
   makeRepo,
   nonce,
   runsLog,
+  sandboxFamily,
   seedViaMu,
   sshShim,
   workerTask,
@@ -83,6 +85,8 @@ const scenario: Scenario = {
       sh: "sleep 3; echo g1 >> g1.txt && git add g1.txt && git commit -qm g1",
     });
     const { hostRoot } = await sshShim(sb, { host: "dev", maxSessions: 1 });
+    // mu-next stores the host as a profile; 3.x spells the ssh command out
+    if (sandboxFamily(sb) === "next") await hostProfile(sb, "dev", { maxSessions: 1 });
     const n = await nonce(sb);
     writeFileSync(
       join(hostRoot, "bin", "remote-gate"),
