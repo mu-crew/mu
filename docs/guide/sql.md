@@ -17,7 +17,16 @@ Every verb takes `--json`.
   IN_PROGRESS), never `name`/`effortDays`/`roi`.
 - Single objects, such as `mu task show`, put an object with named
   fields in `data`.
-- `mu db query --json` puts the array of rows in `data`.
+- `mu db query` and `mu sql` print this document by default (`--table` gives
+  the human table). A read puts `{items, count, more}` in `data`, the same
+  shape as task lists, with your row keys untouched. It stops at 4 KB of final
+  output, cells never cut: `more` counts the rows left out and `retrieve` is the
+  same query with `--all`, which prints every row whole. One row bigger than the
+  cap gives zero `items`, `more: 1` and `retrieve`. A write prints
+  `{changes, lastInsertRowid}` (a script `{statements, multiStatement}`); an
+  `UPDATE ... RETURNING` prints its rows whole, with no `retrieve`, since running
+  it again would write again. Errors are the failure document on stdout, with or
+  without `--json`.
 - `mu log --tail --json` is the exception: one raw JSON object per line.
 - A failure is `{"ok": false, "error", "message", "next", "exit"}` on
   **stdout** (plus `nextSteps` and, for usage errors, `usage`, at most 3

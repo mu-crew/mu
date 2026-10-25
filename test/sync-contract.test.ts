@@ -99,7 +99,7 @@ describe("mu sql follows the ambient contract", () => {
     // dev has never heard of lap's task; one `mu sql` read must see it.
     const r = await runCliJson(["sql", "SELECT local_id FROM tasks", "--json"], dev);
     expect(r.exitCode, r.stderr).toBeNull();
-    expect(r.data).toEqual([{ local_id: "t1" }]);
+    expect(r.data).toEqual({ items: [{ local_id: "t1" }], count: 1, more: 0 });
   });
 
   it("a script that throws rolls back whole and leaves no op in the segment", async () => {
@@ -140,7 +140,7 @@ describe("handle() flushes on the error path", () => {
 describe("a DB inside MU_SYNC_DIR is refused before anything is written", () => {
   const verbs: string[][] = [
     ["task", "list", "-w", "demo"],
-    ["sql", "SELECT 1"],
+    ["sql", "SELECT 1", "--table"],
     ["sync"],
     ["doctor"],
   ];
@@ -159,7 +159,7 @@ describe("a DB inside MU_SYNC_DIR is refused before anything is written", () => 
 
   it("blank or unset MU_SYNC_DIR means no check", async () => {
     process.env[SYNC_KEY] = "  ";
-    const r = await runCli(["sql", "SELECT 1"], join(syncDir, "mu.db"));
+    const r = await runCli(["sql", "SELECT 1", "--table"], join(syncDir, "mu.db"));
     expect(r.exitCode, r.stderr).toBeNull();
   });
 });
@@ -472,7 +472,7 @@ describe("a busy segment lock is never silent", () => {
 
 describe("the DB-inside-MU_SYNC_DIR refusal canonicalises both sides", () => {
   const refused = async (db: string): Promise<void> => {
-    const r = await runCli(["sql", "SELECT 1"], db);
+    const r = await runCli(["sql", "SELECT 1", "--table"], db);
     expect(r.exitCode, r.stderr).toBe(4);
     expect(r.stderr).toContain("is inside MU_SYNC_DIR");
     expect(existsSync(join(syncDir, "mu.db"))).toBe(false);
@@ -502,7 +502,7 @@ describe("the DB-inside-MU_SYNC_DIR refusal canonicalises both sides", () => {
     const target = join(syncDir, "mu.db");
     writeFileSync(target, "");
     symlinkSync(target, join(tempDir, "local", "mu.db"));
-    const r = await runCli(["sql", "SELECT 1"], join(tempDir, "local", "mu.db"));
+    const r = await runCli(["sql", "SELECT 1", "--table"], join(tempDir, "local", "mu.db"));
     expect(r.exitCode, r.stderr).toBe(4);
     expect(lstatSync(target).size).toBe(0);
   });
@@ -510,7 +510,7 @@ describe("the DB-inside-MU_SYNC_DIR refusal canonicalises both sides", () => {
   it("a dangling symlink whose target would be created inside the sync dir", async () => {
     mkdirSync(join(tempDir, "local"));
     symlinkSync(join(syncDir, "mu.db"), join(tempDir, "local", "mu.db"));
-    const r = await runCli(["sql", "SELECT 1"], join(tempDir, "local", "mu.db"));
+    const r = await runCli(["sql", "SELECT 1", "--table"], join(tempDir, "local", "mu.db"));
     expect(r.exitCode, r.stderr).toBe(4);
     expect(existsSync(join(syncDir, "mu.db"))).toBe(false);
   });
@@ -519,7 +519,7 @@ describe("the DB-inside-MU_SYNC_DIR refusal canonicalises both sides", () => {
     const elsewhere = join(tempDir, "elsewhere");
     mkdirSync(elsewhere);
     symlinkSync(elsewhere, join(tempDir, "alias"));
-    const r = await runCli(["sql", "SELECT 1"], join(tempDir, "alias", "mu.db"));
+    const r = await runCli(["sql", "SELECT 1", "--table"], join(tempDir, "alias", "mu.db"));
     expect(r.exitCode, r.stderr).toBeNull();
   });
 });

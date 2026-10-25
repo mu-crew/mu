@@ -66,21 +66,15 @@ describeIfReady("mu db --shell", () => {
       "db",
       "query",
       "SELECT COUNT(*) AS n FROM tasks WHERE title = 'shell-wrote'",
-      "--json",
     ]);
-    expect(JSON.parse(check.out).data).toEqual([{ n: 0 }]);
+    expect(JSON.parse(check.out).data.items).toEqual([{ n: 0 }]);
   });
 
   it("db query writes still go through mu (captured), while the shell sees them", async () => {
     await mu(["db", "query", "UPDATE tasks SET title = 'via-mu' WHERE local_id = 't-wa'"]);
     const r = await mu(["db", "--shell"], "SELECT title FROM tasks WHERE local_id = 't-wa';\n");
     expect(r.out.trim()).toBe("via-mu");
-    const log = await mu([
-      "db",
-      "query",
-      "SELECT intent FROM ops ORDER BY seq DESC LIMIT 1",
-      "--json",
-    ]);
-    expect(JSON.parse(log.out).data).toEqual([{ intent: "sql.write" }]);
+    const log = await mu(["db", "query", "SELECT intent FROM ops ORDER BY seq DESC LIMIT 1"]);
+    expect(JSON.parse(log.out).data.items).toEqual([{ intent: "sql.write" }]);
   });
 });

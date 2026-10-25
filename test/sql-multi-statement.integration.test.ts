@@ -146,27 +146,27 @@ describe("mu sql single-statement reader detection", () => {
 
   it("routes PRAGMA table_info(...) through the row-returning path", async () => {
     const { data, stderr, exitCode, error } = await runCliJson(
-      ["sql", "PRAGMA table_info(tasks)", "--json"],
+      ["sql", "PRAGMA table_info(tasks)"],
       dbPath,
     );
 
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
     expect(stderr).toBe("");
-    const parsed = data as Array<{ name?: string }>;
+    const parsed = (data as { items: Array<{ name?: string }> }).items;
     expect(parsed.some((row) => row.name === "local_id")).toBe(true);
   });
 
   it("routes comment-prefixed SELECT through the row-returning path", async () => {
     const { data, stderr, exitCode, error } = await runCliJson(
-      ["sql", "-- a comment\nSELECT 1 AS one", "--json"],
+      ["sql", "-- a comment\nSELECT 1 AS one"],
       dbPath,
     );
 
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
     expect(stderr).toBe("");
-    expect(data).toEqual([{ one: 1 }]);
+    expect(data).toEqual({ items: [{ one: 1 }], count: 1, more: 0 });
   });
 
   it("rejects --confirm-rows on PRAGMA because it returns rows", async () => {

@@ -403,7 +403,7 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
       ["task", "tree", "own/t-own", "--json"],
       ["task", "show", "own/t-own", "--json"],
       ["task", "wait", "own/t-own", "--status", "OPEN", "--timeout", "1", "--json"],
-      ["sql", "SELECT COUNT(*) AS n FROM tasks", "--json"],
+      ["sql", "SELECT COUNT(*) AS n FROM tasks"],
     ]) {
       const r = await runCli(argv, dbPath);
       expect(r.exitCode, `${argv.join(" ")}: ${r.stderr}`).toBeNull();

@@ -28,6 +28,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu db query` / `mu sql` print JSON by default, paged like task lists.** A read's
+  `data` is `{items, count, more}` (was a bare array): rows are kept whole while the final
+  document fits 4 KB, `more` counts the rest and `retrieve` is the same query with the new
+  `--all` (every row, whole). One row over the cap gives zero items and `retrieve`; cells are
+  never cut. `--table` prints the old human table and prose. Parse-time, scope and DB-open
+  errors are the JSON failure document too (for these two verbs only; every other verb still
+  needs `--json`). Writes keep `{changes, lastInsertRowid}` / `{statements, multiStatement}`;
+  `UPDATE ... RETURNING` prints its rows whole with no `retrieve`. Callers of the bare array
+  (`.data[0]`) read `.data.items[0]`.
+
 - **`mu host add | list | show | rm | init --ssh | check`: ssh-free host profiles.**
   A profile is your `--shell` / `--exec` / `--fetch` templates, a `--repo` and
   an optional `--max-sessions`, stored machine-local in the existing

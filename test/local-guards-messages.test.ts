@@ -43,13 +43,13 @@ const lines = (s: string): string[] => s.split("\n").filter((l) => l.trim() !== 
 const count = (sql: string): number => (db.prepare(sql).get() as { n: number }).n;
 const sql = async (stmt: string) => {
   db.close();
-  const r = await runCli(["sql", stmt], path);
+  const r = await runCli(["sql", "--table", stmt], path);
   db = openDb({ path });
   return r;
 };
 const sqlJson = async (stmt: string) => {
   db.close();
-  const r = await runCliJson(["sql", "--json", stmt], path);
+  const r = await runCliJson(["sql", stmt], path);
   db = openDb({ path });
   return r;
 };

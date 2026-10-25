@@ -127,7 +127,7 @@ describe("mu sync — a multi-round two-machine session", () => {
    */
   const portable = async (db: string): Promise<string> => {
     const q = async (sql: string): Promise<string> => {
-      const { stdout, stderr } = await runCliJson(["sql", sql, "--json"], db);
+      const { stdout, stderr } = await runCliJson(["sql", sql, "--all"], db);
       expect(stderr, sql).toBe("");
       return stdout.trim();
     };
@@ -179,7 +179,7 @@ describe("mu sync — a multi-round two-machine session", () => {
       ["sql", "SELECT machine_id FROM machine_identity", "--json"],
       db,
     );
-    const rows = data as Array<{ machine_id: string }>;
+    const rows = (data as { items: Array<{ machine_id: string }> }).items;
     const id = rows[0]?.machine_id;
     if (id === undefined) throw new Error("no machine identity");
     return id;
