@@ -88,6 +88,21 @@ const ARGS: Record<string, string[]> = {
   "host check": ["dev"],
   "human-needed": ["needs a decision"],
   "pi migrate": [],
+  "delegates list": ["--all"],
+  "delegates show": ["pi:x:1"],
+  "delegates tally": ["--wave", "w"],
+  "delegates register": ["pi:x:2", "--caller", "pi:x", "--text", "t"],
+  "delegates mark": ["pi:x:1", "running"],
+  "delegates finish": [
+    "pi:x:1",
+    "--outcome",
+    "done",
+    "--author",
+    "d",
+    "--text",
+    "VERDICT: CONFIRMED",
+  ],
+  "delegates reissue": ["pi:x:1"],
 };
 
 function leafVerbs(cmd: Command, parents: string[] = []): { path: string; cmd: Command }[] {

@@ -43,6 +43,8 @@ export interface AddTaskOptions {
   triage?: boolean;
   /** Task kind (default `work`). `human` starts OPEN/parked, never ready. */
   kind?: TaskKind;
+  /** `tasks.wave`: the label grouping one fan-out of delegate calls. */
+  wave?: string;
 }
 
 /**
@@ -86,8 +88,8 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
       const now = new Date().toISOString();
       const insertResult = db
         .prepare(
-          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, kind, impact, effort_days, scored, created_at, updated_at)
-         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO tasks (workstream_id, local_id, title, status, substate, kind, wave, impact, effort_days, scored, created_at, updated_at)
+         VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           wsId,
@@ -95,6 +97,7 @@ function addTaskImpl(db: Db, opts: AddTaskOptions) {
           opts.title,
           opts.kind === "human" ? "parked" : opts.triage === true ? "triage" : "todo",
           opts.kind ?? "work",
+          opts.wave ?? null,
           opts.impact ?? DEFAULT_IMPACT,
           opts.effortDays ?? DEFAULT_EFFORT_DAYS,
           opts.impact !== undefined || opts.effortDays !== undefined ? 1 : 0,

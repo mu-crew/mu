@@ -150,6 +150,28 @@ export {
   WorkstreamTornDownError,
 } from "./db.js";
 export {
+  DelegateCallConflictError,
+  DelegateNotFoundError,
+  type DelegateRequest,
+  type DelegateRow,
+  type DelegateState,
+  DelegateStateError,
+  type FinishDelegateOptions,
+  type FinishDelegateResult,
+  finishDelegate,
+  getDelegateCall,
+  listDelegates,
+  markDelegate,
+  parseVerdict,
+  type RecordRef,
+  type RegisterDelegateOptions,
+  registerDelegateCall,
+  reissueDelegateCall,
+  type VerdictLabel,
+  type VerdictTally,
+  verdictTally,
+} from "./delegates.js";
+export {
   countProblems,
   type DoctorCheck,
   type DoctorStatus,

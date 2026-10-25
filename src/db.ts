@@ -752,6 +752,7 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   ["agents", "host", "TEXT"],
   ["agents", "collected_head", "TEXT"],
   ["task_auto", "enabled", "INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))"],
+  ...["request", "verdict", "agent"].map((c) => ["delegate_calls", c, "TEXT"] as const),
   // The template's process group, recorded before it runs (hosts.ts).
   ["host_channels", "pgid", "INTEGER"],
   ["host_channels", "pgid_start", "TEXT"],
@@ -1264,8 +1265,7 @@ CREATE TABLE IF NOT EXISTS task_auto (
   enabled    INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))
 );
 
--- delegate_calls: one row per task-backed delegate call (machine-local).
--- The brief stays in task_notes; this holds only the call's own state.
+-- delegate_calls: one row per task-backed delegate call (machine-local); the brief is a task note.
 CREATE TABLE IF NOT EXISTS delegate_calls (
   task_id          INTEGER PRIMARY KEY REFERENCES tasks (id) ON DELETE CASCADE,
   caller           TEXT NOT NULL,
@@ -1276,7 +1276,9 @@ CREATE TABLE IF NOT EXISTS delegate_calls (
   record_task      TEXT,
   record_label     TEXT,
   error            TEXT,
-  updated_at       TEXT NOT NULL
+  updated_at       TEXT NOT NULL,
+  request          TEXT,  -- spawn request (JSON)
+  verdict          TEXT, agent TEXT  -- parsed label of a done answer; the agent that ran it
 );
 
 -- human_needs: the caller that recorded a kind=human task (machine-local).

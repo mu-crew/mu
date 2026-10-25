@@ -149,7 +149,12 @@ are re-export hubs.
 | `src/ctl/protocol.ts` | protocol v1 types, `CTL_OPS`, line framing; imports nothing from mu |
 | `src/ctl/client.ts` | `ctlRequest`, `ctlProbe`, version and unknown-op errors |
 | `extension/mu-pi.ts` | pi extension, child side: serves `$MU_CTL_SOCK`; built to `dist/extension/mu-pi.js` |
-| `extension/delegate.ts` | pi extension, parent side: `mu_delegate` / `mu_delegate_cancel`, which shell out to `mu` |
+| `src/delegates.ts` | delegate calls as durable tasks: `registerDelegateCall` (kind=delegate task + brief + `delegate_calls` row, one transaction, idempotent per `call_id`), `markDelegate` (admission CAS), `finishDelegate` (the one recorder: verdict note, report, close, state in one op group; a failed record is `failed`, never `done`), `reissueDelegateCall`, `listDelegates`, `verdictTally`; typed `DelegateCallConflictError`, `DelegateStateError`, `DelegateNotFoundError` |
+| `src/delegate-verdict.ts` | `parseVerdict`, `recordNote`, `formatElapsed`: a delegate answer as a verdict. Pure and dependency-free, shared with the standalone extension |
+| `src/cli/delegates.ts` | `mu delegates` (list, show, tally, register, mark, finish, reissue) |
+| `extension/delegate.ts` | pi extension, parent side: `mu_delegate` / `mu_delegate_reissue` / `mu_delegate_cancel`: admission (running, queued, refused), spawn through `agent spawn --task`, the wait, delivery and the arriving/stub/resend machinery; all state changes go through `mu delegates` |
+| `extension/delegate-calls.ts` | the extension's wrappers over `mu delegates register / mark / finish / reissue / show` |
+| `extension/delegate-format.ts`, `delegate-args.ts`, `delegate-trace.ts`, `mu-run.ts` | pure wording of the follow-up and the dropped-answers note; label and model arguments; the `MU_DELEGATE_TRACE` log; the `mu` runner seam and envelope readers |
 | `extension/nudge.ts` | pi extension: the keep-driving nudge. Arms on a `mu` dispatch, checks `mu task list --status IN_PROGRESS --json` at `agent_before_settle`, injects the SKILL.md rule once per prompt, logs `--kind nudge`. Also the close nudge (worker settles owning a task). `parallelSettle` runs the two settle checks in parallel behind one `agent_before_settle` handler and merges their entries; `mu log` breadcrumbs are not awaited |
 | `src/pi-migrate.ts`, `src/pi-known-skills.ts`, `src/cli/pi.ts` | `mu pi migrate`: move the old link-pi shim and skill link aside, only when ownership is proven (byte-exact generated shim template, link into this install, released-skill digest). pi loads mu as a package: `package.json` `pi` manifest |
 
