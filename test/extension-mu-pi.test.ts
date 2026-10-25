@@ -340,12 +340,54 @@ describe("mu pi extension", () => {
       });
     });
 
-    it("caps a runaway answer at 64 KiB with the marker", async () => {
+    it("a runaway answer keeps its TAIL under the 64 KiB cap, marker first, and says so", async () => {
       await fake.emit("session_start");
-      const r = await run([assistant({ type: "text", text: "x".repeat(70 * 1024) })]);
+      const r = await run([assistant({ type: "text", text: `${"x".repeat(70 * 1024)}END` })]);
       const text = (r as { lastText?: string }).lastText ?? "";
-      expect(text.endsWith(`\n${LAST_TEXT_TRUNCATED}`)).toBe(true);
-      expect(text.length).toBe(LAST_TEXT_MAX_BYTES + 1 + LAST_TEXT_TRUNCATED.length);
+      expect(text.startsWith(`${LAST_TEXT_TRUNCATED}\n`)).toBe(true);
+      expect(text.endsWith("xxEND")).toBe(true);
+      expect(Buffer.byteLength(text)).toBe(
+        LAST_TEXT_MAX_BYTES + 1 + Buffer.byteLength(LAST_TEXT_TRUNCATED),
+      );
+      expect(r).toMatchObject({ lastTextTruncated: true });
+    });
+
+    it("a 70 KiB preamble keeps the final CLOSE block whole", async () => {
+      await fake.emit("session_start");
+      const block = 'CLOSE: task=t evidence="ok"\nREPORT:\ndone';
+      const r = await run([
+        assistant({ type: "text", text: `${"p".repeat(70 * 1024)}\n${block}` }),
+      ]);
+      const text = (r as { lastText?: string }).lastText ?? "";
+      expect(text.endsWith(`\n${block}`)).toBe(true);
+      expect(r).toMatchObject({ lastTextTruncated: true });
+    });
+
+    it("a 70 KiB report is flagged truncated and keeps the end of the message", async () => {
+      await fake.emit("session_start");
+      const r = await run([
+        assistant({
+          type: "text",
+          text: `CLOSE: task=t evidence="ok"\nREPORT:\n${"r".repeat(70 * 1024)}`,
+        }),
+      ]);
+      const text = (r as { lastText?: string }).lastText ?? "";
+      expect(text).not.toContain("CLOSE:");
+      expect(r).toMatchObject({ lastTextTruncated: true });
+    });
+
+    it("an answer under the cap carries no lastTextTruncated, and the flag clears on the next run", async () => {
+      await fake.emit("session_start");
+      const big = await run([assistant({ type: "text", text: "y".repeat(70 * 1024) })]);
+      expect(big).toMatchObject({ lastTextTruncated: true });
+      await fake.emit("agent_start");
+      const p = ctlRequest(sock, { op: "wait", afterRuns: 1 });
+      await new Promise((r) => setTimeout(r, 20));
+      await fake.emit("agent_end", { messages: [assistant({ type: "text", text: "small" })] });
+      await fake.emit("agent_settled");
+      const small = await p;
+      expect(small).toMatchObject({ lastText: "small" });
+      expect(small).not.toHaveProperty("lastTextTruncated");
     });
   });
 

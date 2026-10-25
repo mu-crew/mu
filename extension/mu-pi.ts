@@ -121,7 +121,9 @@ export function commandName(name: CtlCommandName): string {
 }
 /** The extension's own bound on a `command` op that never completes. */
 export const COMMAND_TIMEOUT_MS = 30_000;
-/** Cap on `lastText` in a wait reply, in UTF-8 bytes (before the marker). */
+/** Cap on `lastText` in a wait reply, in UTF-8 bytes (before the marker).
+ *  A longer message keeps its TAIL: the final lines (a CLOSE block) are
+ *  what a consumer reads, and the reply says `lastTextTruncated: true`. */
 export const LAST_TEXT_MAX_BYTES = 64 * 1024;
 export const LAST_TEXT_TRUNCATED = "[truncated, see pane]";
 /** How long session_start waits for another pi to answer on the socket path. */
@@ -212,8 +214,11 @@ type Shared = {
   runs: number;
   /** Final assistant text of the last settled run; served by `wait`. */
   lastText: string;
+  /** True when `lastText` lost its head to the tail cap. */
+  lastTextTruncated?: boolean;
   /** Captured on agent_end, published to `lastText` on agent_settled. */
   endText?: string;
+  endTextTruncated?: boolean;
   /** Error that ended the last settled run, if any; served by `wait`. */
   lastError?: string;
   endError?: string;
@@ -238,28 +243,29 @@ function sharedMap(): SharedMap {
 /**
  * Text of the last assistant message in an agent_end event's `messages`:
  * its text parts joined, no tool calls or thinking. "" when there is none.
+ * `truncated` when the tail cap cut the head off.
  */
-export function lastAssistantText(event: unknown): string {
+export function lastAssistantText(event: unknown): { text: string; truncated: boolean } {
   const msgs =
     typeof event === "object" && event !== null
       ? (event as { messages?: unknown }).messages
       : undefined;
-  if (!Array.isArray(msgs)) return "";
+  if (!Array.isArray(msgs)) return { text: "", truncated: false };
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m: unknown = msgs[i];
     if (typeof m !== "object" || m === null) continue;
     const { role, content } = m as { role?: unknown; content?: unknown };
     if (role !== "assistant") continue;
-    if (typeof content === "string") return capText(content);
-    if (!Array.isArray(content)) return "";
+    if (typeof content === "string") return capTail(content);
+    if (!Array.isArray(content)) return { text: "", truncated: false };
     const parts = content.flatMap((c: unknown) => {
       if (typeof c !== "object" || c === null) return [];
       const { type, text } = c as { type?: unknown; text?: unknown };
       return type === "text" && typeof text === "string" ? [text] : [];
     });
-    return capText(parts.join(""));
+    return capTail(parts.join(""));
   }
-  return "";
+  return { text: "", truncated: false };
 }
 
 /** The final assistant message's error, when the run stopped on one
@@ -285,6 +291,18 @@ export function lastAssistantError(event: unknown): string | undefined {
       : "unknown error";
   }
   return undefined;
+}
+
+/** Keep the last LAST_TEXT_MAX_BYTES bytes, the marker on its own first line. */
+function capTail(text: string): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(text, "utf8") <= LAST_TEXT_MAX_BYTES) return { text, truncated: false };
+  const buf = Buffer.from(text, "utf8");
+  // Cut on bytes; drop a code point split by the cut.
+  const tail = buf
+    .subarray(buf.length - LAST_TEXT_MAX_BYTES)
+    .toString("utf8")
+    .replace(/^\uFFFD/, "");
+  return { text: `${LAST_TEXT_TRUNCATED}\n${tail}`, truncated: true };
 }
 
 function capText(text: string): string {
@@ -499,7 +517,9 @@ function serveCtl(pi: MuPiApi): () => boolean {
   // A settled run can span several low-level runs (retry, follow-up):
   // the last agent_end before the settle holds the final answer.
   pi.on("agent_end", (e) => {
-    g.endText = lastAssistantText(e);
+    const cut = lastAssistantText(e);
+    g.endText = cut.text;
+    g.endTextTruncated = cut.truncated;
     g.endError = lastAssistantError(e);
   });
 
@@ -519,7 +539,9 @@ function serveCtl(pi: MuPiApi): () => boolean {
     g.since = Date.now();
     g.runs++;
     g.lastText = g.endText ?? "";
+    g.lastTextTruncated = g.endTextTruncated === true;
     g.endText = undefined;
+    g.endTextTruncated = undefined;
     g.lastError = g.endError;
     g.endError = undefined;
     g.sessionFile = sessionFileOf(c).sessionFile;
@@ -747,6 +769,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
 
   const settledRun = () => ({
     lastText: g.lastText,
+    ...(g.lastTextTruncated === true ? { lastTextTruncated: true } : {}),
     ...(g.lastError !== undefined ? { lastError: g.lastError } : {}),
     ...(g.sessionFile !== undefined ? { sessionFile: g.sessionFile } : {}),
   });
