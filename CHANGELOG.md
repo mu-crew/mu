@@ -32,7 +32,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   identity variables, every value shell-quoted, never the local DB, state or
   sync dir; `{{` `}}` literal braces; anything
   else refused) and runs the result with `/bin/sh -c` as its own process group, reaped on
-  timeout or caller exit before its channel is freed. It knows no ssh flags:
+  timeout or caller exit before its channel is freed. The group id is recorded on
+  its `host_channels` row before the command starts, and the slot stays held while
+  that group lives, even after the caller died by SIGKILL (the next admission no
+  longer reclaims it under a live transport); the exit hook stays installed until
+  the reap finishes, not just until the shell closes. It knows no ssh flags:
   `host init <n> --ssh` only prints a starter, and `host check` runs only the
   stored `--exec` (host answers, repo, `pi --version`, `pi list` names mu;
   `--agent <n>` also probes that agent's forwarded socket). A failing step is

@@ -70,15 +70,24 @@ function uninstall(): void {
   removeExitHook = undefined;
 }
 
-function track(child: ChildProcess): void {
+/**
+ * Register `child` for kill-on-parent-exit. Returns the release. A plain
+ * child releases itself on close/error; a group (`holdUntil`) is released by
+ * its caller once the reap has finished, so the hook still covers the
+ * interval where the shell is gone but the group is being reaped.
+ */
+function track(child: ChildProcess, holdUntil = false): () => void {
   if (live.size === 0) install();
   live.add(child);
   const done = (): void => {
     if (!live.delete(child)) return;
     if (live.size === 0) uninstall();
   };
-  child.once("close", done);
-  child.once("error", done);
+  if (!holdUntil) {
+    child.once("close", done);
+    child.once("error", done);
+  }
+  return done;
 }
 
 export function execFileCapture(
@@ -118,23 +127,35 @@ export function execFileCapture(
  * then KILL after `graceMs`) BEFORE the promise settles. For a shell template
  * whose descendants (a transport) must not outlive the call. The child is
  * detached from the controlling terminal. A descendant that setsid()s away is
- * out of reach.
+ * out of reach. The parent-exit hook stays installed until the reap is done,
+ * not just until the shell closes.
+ *
+ * `onSpawn(pgid)` runs before the command starts (it is gated on a byte of
+ * stdin, so a parent that dies, SIGKILL included, before `onSpawn` returns
+ * leaves nothing running): record the group so a lease can outlive this
+ * process for as long as the group does. If it throws, the group is reaped
+ * and the result is a failure.
  */
 export function execGroupCapture(
   cmd: string,
   args: readonly string[],
-  opts: { timeoutMs?: number; graceMs?: number } = {},
+  opts: { timeoutMs?: number; graceMs?: number; onSpawn?: (pgid: number) => void } = {},
 ): Promise<ExecFileResult> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, [...args], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    const gated = opts.onSpawn !== undefined;
+    const child = gated
+      ? spawn("/bin/sh", ["-c", 'IFS= read -r _ && exec "$0" "$@"', cmd, ...args], {
+          detached: true,
+          stdio: ["pipe", "pipe", "pipe"],
+        })
+      : spawn(cmd, [...args], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout?.on("data", (d: Buffer) => out.push(d));
     child.stderr?.on("data", (d: Buffer) => err.push(d));
     child.stdin?.on("error", () => {});
-    child.stdin?.end();
     groups.add(child);
-    track(child);
+    const release = track(child, true);
     let timedOut = false;
     let settled = false;
     const finish = (code: number | null): void => {
@@ -142,6 +163,7 @@ export function execGroupCapture(
       settled = true;
       if (timer) clearTimeout(timer);
       const done = (): void => {
+        release();
         child.stdout?.destroy();
         child.stderr?.destroy();
         resolve({
@@ -162,5 +184,14 @@ export function execGroupCapture(
           }, opts.timeoutMs);
     child.once("error", () => finish(null)); // spawn failure (ENOENT): no group to reap
     child.once("exit", (code) => finish(code));
+    if (opts.onSpawn !== undefined && child.pid !== undefined) {
+      try {
+        opts.onSpawn(child.pid);
+        child.stdin?.end("\n"); // open the gate: the command starts now
+      } catch {
+        finish(null);
+        child.stdin?.end();
+      }
+    } else child.stdin?.end();
   });
 }
