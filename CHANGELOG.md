@@ -42,14 +42,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   pane. A failed record leaves the call `failed` (task closed `rejected`, the answer kept as its report, the pane kept),
   never `done`; a repeated callback writes nothing twice. **Refused, not thrown:** past `MU_DELEGATE_MAX` plus four
   caps' worth of queue a call is recorded as `refused` with its brief and record target, outside murmur's
-  `murmur:pending` count (payload unchanged); `mu_delegate_reissue { call_id }` (or `mu delegates reissue`) moves it
-  back once, same call, same task. A `/reload` or quit parks queued calls as `refused` instead of dropping them.
-  **Full evidence:** the verdict note keeps everything from the last verdict line (now also `REFUTER: VERDICT:`), and a
+  `murmur:pending` count (payload unchanged); `mu_delegate_reissue { call_id }` moves it
+  back once, same call, same task (`mu delegates reissue` refuses and names the tool: only the live runtime that holds
+  the queue can start or drain a call, so a shell reissue would strand it as `queued`; `mu delegates mark <id> queued`
+  is that runtime's step). A `/reload` or quit parks queued calls as `refused` instead of dropping them.
+  **Full evidence:** the verdict is the FIRST line that is `VERDICT:` or `<WORD>: VERDICT:` (nothing else before it; later `VERDICT:` lines are
+  evidence text, kept verbatim), the verdict note keeps everything from it on, and a
   note without one keeps the whole answer; the 4000 and 1500 character caps are gone, and the same answer is the
   delegate task's report. New verbs: `mu delegates list [--caller|--all|--wave|-w]`, `show`, `tally -w <ws> --wave
   <label>` (CONFIRMED/REFUTED/UNVERIFIED per judged task, one result per call, queued/running/refused counts),
-  `register`, `mark`, `finish`, `reissue`. SDK: `registerDelegateCall`, `markDelegate`, `finishDelegate`,
-  `reissueDelegateCall`, `listDelegates`, `getDelegateCall`, `verdictTally`, `parseVerdict` (package entry).
+  `register`, `mark`, `finish`, `reissue` (refuses). SDK: `registerDelegateCall`, `markDelegate`, `finishDelegate`,
+  `listDelegates`, `getDelegateCall`, `verdictTally`, `parseVerdict` (package entry).
   `addTask` takes `kind` and `wave`. `delegate_calls` gains `request`, `verdict` and `agent` (nullable; v13 is
   unreleased, so no version bump). Unchanged: `MU_DELEGATE=0`, the managed-agent no-recursion guard, `answerPending`,
   the arriving/stub/single-resend/Escape machinery. `extension/delegate.ts` is split (`delegate-calls`,

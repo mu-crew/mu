@@ -166,7 +166,6 @@ export {
   type RecordRef,
   type RegisterDelegateOptions,
   registerDelegateCall,
-  reissueDelegateCall,
   type VerdictLabel,
   type VerdictTally,
   verdictTally,

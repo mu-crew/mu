@@ -5,11 +5,20 @@
 // for pi's own queue; this one adds /reload, which fakePi can drive.
 
 import { describe, expect, it, vi } from "vitest";
-import { registerDelegate } from "../extension/delegate.js";
+import { DELEGATE_REISSUE_TOOL, registerDelegate } from "../extension/delegate.js";
 import { getDelegateCall, listDelegates } from "../src/delegates.js";
 import { selectTaskNotes } from "../src/tasks/queries.js";
 import { getTask } from "../src/tasks.js";
-import { fakeMu, fakePi, flush, installDelegateEnv, ok, tool } from "./_delegate-fixtures.js";
+import {
+  failed,
+  fakeMu,
+  fakePi,
+  flush,
+  installDelegateEnv,
+  ok,
+  tool,
+} from "./_delegate-fixtures.js";
+import { runCliWire } from "./_runCli.js";
 
 installDelegateEnv();
 
@@ -137,10 +146,105 @@ describe("the result outlives the echo", () => {
       const [, q] = listDelegates(mu.db);
       expect(q).toMatchObject({ state: "refused", record: { task: "f9" } });
       expect(q?.error).toMatch(/session ended/);
-      expect(notify.mock.calls[0]?.[0]).toContain("mu delegates reissue");
+      expect(notify.mock.calls[0]?.[0]).toContain("mu_delegate_reissue");
     } finally {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];
     }
+  });
+});
+
+describe("spawn receipts", () => {
+  const taskOf = (mu: ReturnType<typeof fakeMu>, i = 0) => listDelegates(mu.db)[i];
+
+  it("a replayed spawn (saved agent, no top-level ctl) is a running call that records its answer once", async () => {
+    // The first spawn's send fails (unsent -> refused); the reissue replays the journal:
+    // the fixture answers a saved agent with NO ctl, exactly as the real CLI does.
+    let sends = 0;
+    const mu = fakeMu({
+      on: {
+        send: () =>
+          Promise.resolve(++sends === 1 ? failed(1, "Error", "no reply") : ok({ runs: 0 })),
+      },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("a", { task: "x", label: "r" })).rejects.toThrow(/reissue/);
+    expect(taskOf(mu)?.state).toBe("refused");
+    const out = await tool(p, DELEGATE_REISSUE_TOOL).execute("r", {
+      call_id: taskOf(mu)?.callId ?? "",
+    });
+    expect((out.details as { state: string }).state).toBe("running");
+    const spawns = mu.calls.filter((c) => c[1] === "spawn");
+    expect(spawns).toHaveLength(2);
+    expect(spawns[1]?.[spawns[1].indexOf("--attempt") + 1]).toBe(taskOf(mu)?.task); // the same attempt
+    expect(taskOf(mu)).toMatchObject({ state: "running" });
+    const name = taskOf(mu)?.agent ?? "";
+    expect(name).not.toBe("");
+    mu.waits
+      .get(name)
+      ?.resolve(ok({ agents: [{ outcome: "done", lastText: answer("CONFIRMED") }] }));
+    await settle();
+    expect(taskOf(mu)).toMatchObject({ state: "done", verdict: "CONFIRMED" });
+  });
+
+  it("a fresh spawn whose control socket is not ok still fails loudly, pane kept", async () => {
+    const mu = fakeMu({ ctl: "missing" });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("a", { task: "x" })).rejects.toThrow(/control socket is missing/);
+    expect(taskOf(mu)).toMatchObject({ state: "failed" });
+    expect(mu.calls.some((c) => c[1] === "close")).toBe(false); // the pane is kept
+  });
+
+  it("a stale receipt (its agent was closed) refuses the call: parked, reissuable, the replacement untouched", async () => {
+    const mu = fakeMu({
+      on: {
+        spawn: () =>
+          Promise.resolve(ok({ task: { id: "t", state: "sent", replay: true, stale: "closed" } })),
+      },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const err = await tool(p)
+      .execute("a", { task: "x", label: "r" })
+      .catch((e: Error) => e);
+    expect(String(err)).toMatch(/is stale: its agent was closed; the replacement was left alone/);
+    expect(String(err)).toContain(DELEGATE_REISSUE_TOOL);
+    const c = taskOf(mu);
+    expect(c?.state).toBe("refused");
+    expect(getTask(mu.db, c?.task ?? "", "scratch")).toMatchObject({
+      status: "OPEN",
+      substate: "parked",
+    });
+    expect(mu.calls.some((x) => x[1] === "close")).toBe(false); // nothing of ours to close
+  });
+});
+
+describe("reissue is the tool's", () => {
+  it("the CLI reissue refuses and leaves the call refused; the tool then runs it (same call, one verdict)", async () => {
+    let sends = 0;
+    const mu = fakeMu({
+      on: {
+        send: () =>
+          Promise.resolve(++sends === 1 ? failed(1, "Error", "no reply") : ok({ runs: 0 })),
+      },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(tool(p).execute("a", { task: "x", label: "r" })).rejects.toThrow(/reissue/);
+    const id = listDelegates(mu.db)[0]?.callId ?? "";
+    const cli = await runCliWire(["delegates", "reissue", id], mu.db.name);
+    expect(cli.exitCode).toBe(2);
+    expect(cli.stderr).toContain(DELEGATE_REISSUE_TOOL);
+    expect(getDelegateCall(mu.db, id)?.state).toBe("refused"); // never stranded queued
+    await tool(p, DELEGATE_REISSUE_TOOL).execute("r", { call_id: id });
+    expect(getDelegateCall(mu.db, id)?.state).toBe("running");
+    mu.waits
+      .get(getDelegateCall(mu.db, id)?.agent ?? "")
+      ?.resolve(ok({ agents: [{ outcome: "done", lastText: answer("CONFIRMED") }] }));
+    await settle();
+    expect(getDelegateCall(mu.db, id)).toMatchObject({ state: "done", verdict: "CONFIRMED" });
+    expect(listDelegates(mu.db)).toHaveLength(1);
   });
 });

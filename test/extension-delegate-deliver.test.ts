@@ -36,14 +36,13 @@ describe("record", () => {
   };
   const answer = [
     "I read src/x.ts.",
-    "VERDICT: early draft",
-    "more thinking",
     "VERDICT: CONFIRMED (sev med) src/x.ts:12 skips the check",
     "EVIDENCE: npm test -> 1 failed",
+    "VERDICT: REFUTED (a later line is evidence text, not a second verdict)",
     "EVIDENCE: grep -n check src/x.ts -> nothing",
   ].join("\n");
 
-  it("a done answer lands as ONE verdict note: REFUTER header, then the tail from the last VERDICT", async () => {
+  it("a done answer lands as ONE verdict note: REFUTER header, then everything from the first VERDICT", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -71,6 +70,7 @@ describe("record", () => {
     expect(lines.slice(1)).toEqual([
       "VERDICT: CONFIRMED (sev med) src/x.ts:12 skips the check",
       "EVIDENCE: npm test -> 1 failed",
+      "VERDICT: REFUTED (a later line is evidence text, not a second verdict)",
       "EVIDENCE: grep -n check src/x.ts -> nothing",
     ]);
     expect(sentText(p)).toContain("Recorded on audit/f1 as a note");

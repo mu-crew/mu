@@ -10,15 +10,16 @@
 //   registerDelegateCall   task + brief + row in ONE transaction; idempotent
 //                          per call_id; a changed request under it is refused.
 //   markDelegate           admission CAS: queued -> starting -> running, or
-//                          queued -> refused. `recording`/`done`/... are
-//                          finishDelegate's.
+//                          queued/starting -> refused, or refused -> queued |
+//                          starting (a reissue: same call, same task, by the
+//                          live runtime that will run or queue it).
+//                          `recording`/`done`/... are finishDelegate's.
 //   finishDelegate         THE recorder. `recording` is committed first, then
 //                          ONE op group writes the verdict note on the judged
 //                          task, the delegate's report and its close. If the
 //                          record fails the call is `failed`, never `done`,
 //                          and the answer is kept as the report. A duplicate
 //                          callback changes nothing.
-//   reissueDelegateCall    refused -> queued; same call, same task.
 //
 // Readers: listDelegates, getDelegateCall, verdictTally. The tally attributes
 // ONE result per call_id (its own parsed `verdict`) to the qualified judged
@@ -314,7 +315,8 @@ export function registerDelegateCall(
 
 /** The admission moves `markDelegate` allows. */
 const MOVES: Readonly<Record<string, readonly DelegateState[]>> = {
-  starting: ["queued"],
+  queued: ["refused"],
+  starting: ["queued", "refused"],
   running: ["starting"],
   refused: ["queued", "starting"],
 };
@@ -322,12 +324,14 @@ const MOVES: Readonly<Record<string, readonly DelegateState[]>> = {
 /**
  * One admission step, as a compare-and-set on the current state: two runtimes
  * cannot both start a call. `starting` unparks the task; `refused` parks it.
+ * `queued` from `refused` is the reissue: nothing drains a durable queued row
+ * but the runtime that holds it, so only that runtime may make one.
  * `done`, `failed`, `cancelled` and `recording` belong to {@link finishDelegate}.
  */
 export function markDelegate(
   db: Db,
   callId: string,
-  to: "starting" | "running" | "refused",
+  to: "queued" | "starting" | "running" | "refused",
   extra: { agent?: string; error?: string } = {},
 ): DelegateRow {
   const row = mustGet(db, callId);
@@ -339,10 +343,11 @@ export function markDelegate(
         const r = db
           .prepare(
             `UPDATE delegate_calls
-                SET state = ?, updated_at = ?, agent = COALESCE(?, agent), error = COALESCE(?, error)
+                SET state = ?, updated_at = ?, agent = COALESCE(?, agent),
+                    error = CASE WHEN ? = 'refused' THEN COALESCE(?, error) ELSE NULL END
               WHERE call_id = ? AND state = ?`,
           )
-          .run(to, now(), extra.agent ?? null, extra.error ?? null, callId, row.state);
+          .run(to, now(), extra.agent ?? null, to, extra.error ?? null, callId, row.state);
         if (r.changes !== 1) throw new DelegateStateError(callId, mustGet(db, callId).state, to);
         if (to === "starting")
           setTaskStatus(db, row.task, "OPEN", { workstream: row.workstream, substate: "todo" });
@@ -352,18 +357,6 @@ export function markDelegate(
       })
       .immediate(),
   );
-}
-
-/** A refused call back into the queue: same call, same task, same id. */
-export function reissueDelegateCall(db: Db, callId: string): DelegateRow {
-  const row = mustGet(db, callId);
-  const r = db
-    .prepare(
-      "UPDATE delegate_calls SET state = 'queued', error = NULL, updated_at = ? WHERE call_id = ? AND state = 'refused'",
-    )
-    .run(now(), callId);
-  if (r.changes !== 1) throw new DelegateStateError(callId, row.state, "queued (reissue)");
-  return mustGet(db, callId);
 }
 
 export interface FinishDelegateOptions {

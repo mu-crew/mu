@@ -53,9 +53,10 @@ parallel.
   to four times the cap: each starts when a slot frees, and `mu_delegate_cancel queued-N`
   drops one. Past the queue a call is **refused**, not lost: its task
   and brief exist, its state is `refused`, and it does not start on its
-  own. Reissue it with `mu_delegate_reissue { call_id }` (or `mu
-  delegates reissue <call-id>`) once a slot frees: same call, same task,
-  never a second verdict. A refused call is not in murmur's pending
+  own. Reissue it with `mu_delegate_reissue { call_id }` in its pi
+  session once a slot frees: same call, same task, never a second
+  verdict. Only that live runtime can start or drain a call, so
+  `mu delegates reissue` refuses and names the tool. A refused call is not in murmur's pending
   count. A queued call has no pane yet, so quitting pi or `/reload`
   parks it as `refused` (reissue it); pi warns which ones.
 - A delegate that stops on an API error (overloaded, connection, auth)
@@ -95,14 +96,13 @@ request is a no-op; a changed request under it is refused (exit 4).
 mu delegates list --caller pi:<session>       # every call and its state
 mu delegates list --all --wave review-1       # one wave
 mu delegates tally -w scratch --wave review-1 # CONFIRMED/REFUTED/UNVERIFIED per judged task
-mu delegates reissue <call-id>                # a refused call, once
 mu task notes <task> -w scratch               # its brief, and its report: the full answer
 ```
 
 The answer is the delegate task's `report`, whole; the pi follow-up is
 only an echo, so a dropped echo (Escape, compaction, `/reload`) loses
 nothing. `tally` counts one result per call: a done answer by its last
-`VERDICT:` label (none: UNVERIFIED), a failed or cancelled call as
+first `VERDICT:` label (none: UNVERIFIED), a failed or cancelled call as
 UNVERIFIED, queued, running and refused ones as pending.
 
 ### Record a verdict
@@ -112,10 +112,11 @@ it judged. The task must exist (`mu task show`), else the call fails
 and nothing spawns. When the answer arrives, the tool runs
 `mu task note <task> -w <ws> --author <delegate>` once:
 
-- Done: `REFUTER <label> (<delegate>, <elapsed>):`, then the last
-  verdict line (`VERDICT:`, also behind a prefix such as `REFUTER:
-  VERDICT:`) and everything after it, a multi-line `EVIDENCE:` body
-  included, uncapped. Without a verdict line, the whole answer after
+- Done: `REFUTER <label> (<delegate>, <elapsed>):`, then the first
+  verdict line (`VERDICT:` at the start of a line, behind at most one
+  role word such as `REFUTER:`) and everything after it, a multi-line
+  `EVIDENCE:` body included, uncapped. Later `VERDICT:` lines are
+  evidence text, kept verbatim. Without a verdict line, the whole answer after
   `NO VERDICT LINE:`.
 - Timeout, died, empty, error, or cancelled:
   `REFUTER <label>: no verdict (<outcome>)`.

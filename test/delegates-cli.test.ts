@@ -118,15 +118,18 @@ describe("mu delegates", () => {
     expect(l.data.count).toBe(1);
   });
 
-  it("a refused call is listed with its reissue command, then reissued once", async () => {
+  it("a refused call is listed with the TOOL that reissues it; the CLI reissue refuses and never strands it queued", async () => {
     await reg("pi:s:1", "--state", "refused");
     const human = await runCliWire(["delegates", "--caller", "pi:s"], db);
     expect(human.stdout).toContain("refused");
-    expect(human.stdout).toContain("mu delegates reissue pi:s:1");
-    expect(
-      (await runCliWire(["delegates", "reissue", "pi:s:1", "--json"], db)).exitCode,
-    ).toBeNull();
-    expect((await runCliWire(["delegates", "reissue", "pi:s:1", "--json"], db)).exitCode).toBe(4);
+    expect(human.stdout).toContain('mu_delegate_reissue { call_id: "pi:s:1" }');
+    expect(human.stdout).not.toContain("mu delegates reissue");
+    const r = await runCliWire(["delegates", "reissue", "pi:s:1"], db);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("mu_delegate_reissue");
+    expect(r.stderr).toContain("pi:s:1");
+    const s = await runCliJson(["delegates", "show", "pi:s:1", "--json"], db);
+    expect(s.data.call.state).toBe("refused"); // untouched: still parked, still reissuable by the tool
   });
 
   it("the prompt can come from stdin", async () => {
