@@ -79,6 +79,8 @@ export interface WaitSnapshot {
   afterRuns?: number;
   /** Agent: observed busy during this wait. */
   wasBusy?: boolean;
+  /** Agent: owed with no fence and no cursor, so counted from the run count probed now: an earlier run is NOT reported as completion. */
+  unknownBaseline?: boolean;
   /** Delegate: the parsed verdict label of a done answer. */
   verdict?: string | null;
   /** Task: its owner has been stalled long enough to report (IN_PROGRESS, owner needs_input or ctl broken). */
@@ -180,6 +182,8 @@ export interface AgentBaseline {
 export interface AgentWatchHandle {
   initial: AgentReading;
   afterRuns?: number;
+  /** Set when an owed ref had no fence and no cursor: the baseline the watch probed and counted from. */
+  unknownBaseline?: AgentBaseline;
   /** Resolves when the run ends. A REJECTION is fatal (the agent restarted). */
   settled: Promise<AgentReading>;
 }
@@ -231,7 +235,8 @@ export interface WaitOptions {
   /**
    * The blocking read of a future settle (the ctl `wait`): raced, never
    * awaited serially. undefined = poll the agent instead. `ctx.owed` marks a
-   * ref the callers only own (registered): its unconsumed runs still count.
+   * ref the callers have registered (explicit or not): its unconsumed runs
+   * still count, from the fence, else the cursor, else the probed run count.
    * `ctx.baseline` is the producer's registered unconsumed baseline (already
    * checked against the registry id; the hook checks the incarnation) and
    * `ctx.cursor` the consumed token.

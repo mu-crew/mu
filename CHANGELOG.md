@@ -204,7 +204,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `max(baseline, same-incarnation cursor)` when the baseline's registry id and
   incarnation still match, so a send that settles before any wait starts is
   caught; a baseline of another process or a replaced registry row is ignored;
-  it is dropped when its ref is delivered. A settled pi run's CLOSE block is
+  it is dropped when its ref is delivered. **Round 2 (durable, exactly-once,
+  fair)**: no per-wait memory decides what was seen. An event is consumed only
+  when it is the one returned; every kind has a cursor key (a `blockersOf`
+  blocker seen open is recorded under `open|`, so a sibling close that a `first`
+  did not return stays owed; an unchanged dialog, dead owner or stall is
+  recorded under `input|`/`dead|`/`stall|` with a token naming its state, so it
+  is news once per state change and never outranks a never-returned event, a
+  delegate report included). The fence applies to every registered agent ref,
+  explicit or owned, and an owed ref with no fence and no cursor counts from
+  the run count probed now (stored as its fence, `unknownBaseline` on the
+  snapshot): a historical run is never completion. A settled pi run's CLOSE block is
   applied once before the snapshot returns; `applySettledClose` refuses
   delegate tasks like human ones, so a delegate answer ending in a CLOSE block
   cannot close its task ahead of `finishDelegate`'s recorder. `verdictTally`

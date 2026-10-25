@@ -24,27 +24,42 @@
 // first vs all. `first` returns the best ready event over targets and owned
 // refs. `all` returns once every target is done (no targets: every owned
 // ref); an urgent event (an owned ref that died, an agent blocked on a
-// dialog, an owned delegate report) ends it early without counting toward
-// "all". Priority: dead, input, delegate, then closed/settled; targets
-// before owned refs.
+// dialog, a stall, an owned delegate report) ends it early without counting
+// toward "all". Order: never-returned events first, then dead, input, stall,
+// delegate, then closed/settled; targets before owned refs.
 //
-// Delivery. Only the DELIVERED refs are written: their typed cursor tokens
-// (src/wait-cursor.ts) and their removal from the registration, in ONE
-// short transaction guarded by the registration's generation (endWait). A
-// sibling that `first` did not return stays owed, an owned event already
-// delivered is never delivered again, and a timeout or interrupt delivers
-// nothing. Explicit refs ignore the cursor (waiting on a closed task returns
-// at once); owned refs obey it.
+// Delivery is durable, never in-memory. Every event has a cursor key
+// (src/wait-cursor.ts): a close or settle under the ref's own key, an urgent
+// observation under `input|`, `dead|` or `stall|` + the ref key with a token
+// that names ITS state (the dialog's `since`, the owner's registry id, the
+// stall token), a blockersOf blocker seen open under `open|` + key. An event
+// is consumed only when it is the one returned, in ONE short transaction
+// guarded by the registration's generation (endWait). A sibling that `first`
+// did not return stays owed (a timeout or interrupt delivers nothing), a
+// returned event is never delivered again, and an unchanged urgent
+// observation is news once per state change: it never outranks a
+// never-returned event, so it cannot starve a delegate report. Explicit refs
+// ignore the cursor of their completion (waiting on a closed task returns at
+// once); owned refs obey it.
+//
+// The fence. An agent ref the caller registered, explicit or owned, counts
+// its runs from the stored UNCONSUMED baseline, maxed with the consumed
+// cursor of the same pi process; with neither it counts from the run count
+// probed now, stores that as the fence and says `unknownBaseline`: a
+// historical run is never mistaken for completion.
 //
 // CLOSE. A settled pi run's CLOSE block is applied once (applySettledClose)
 // before the snapshot returns. The close-block refuses delegate and human
 // tasks, so a delegate answer never closes its own task ahead of
 // finishDelegate's recorder.
 //
-// Not here: stall actions (steer, release; slice C of v_wait_core), the CLI
-// and signal wiring, arming from spawn/send/claim (v_wait_cli). The `stall`
-// event kind is reserved for them; this engine never emits it, and the
-// legacy `stuck` warning stays in tasks/wait.ts behind the `inspect` hook.
+// Stalls. The engine detects them (an IN_PROGRESS work task whose owner needs
+// input or has a broken control socket, `stuckAfterMs`); `handleStall` (raced,
+// once per stallToken) owns the policy and effects. The legacy per-task
+// `stuck` warning stays in tasks/wait.ts behind the `inspect` hook.
+//
+// Not here: the CLI and signal wiring, arming from spawn/send/claim
+// (v_wait_cli).
 
 import { agentKey } from "./agent-state.js";
 import { AgentNotFoundError, AgentRestartedError } from "./agents/errors.js";
@@ -75,12 +90,19 @@ import {
   readCursors,
   recordCursors,
 } from "./wait-cursor.js";
-import { agentExists, closeSettledRun, openBlockers } from "./wait-db.js";
+import {
+  agentExists,
+  agentRowId,
+  closeSettledRun,
+  openBlockers,
+  taskOwnerRowId,
+} from "./wait-db.js";
 import { compileTextMatcher, type TextMatcher } from "./wait-regex.js";
 import {
   beginWait,
   checkCaller,
   endWait,
+  fenceAgentRef,
   type RefBaseline,
   type RegisteredRef,
   readWaitRegistration,
@@ -124,6 +146,12 @@ interface Item {
   /** The event this ref can deliver now, when any. */
   kind?: WaitEventKind;
   token?: CursorToken;
+  /** The cursor key `token` is recorded under: the ref's own key, or an urgent observation's (`input|<key>`). */
+  ckey?: string;
+  /** The event was already returned once (its token is consumed): it never outranks a never-returned one. */
+  seen?: boolean;
+  /** An owned event that was already returned: hidden until its state changes. */
+  hidden?: boolean;
   /** Completed: closed, settled, delegate terminal, dead. */
   done: boolean;
   ready: boolean;
@@ -147,6 +175,10 @@ interface AgentTrack {
   reading: AgentReading | undefined;
   latched: { kind: "settled" | "dead" | "input"; reading: AgentReading } | undefined;
   close: CloseOutcome | undefined;
+  /** The dialog already returned once is still open: not news again until it changes. */
+  muted: boolean;
+  /** Owed with no fence, no cursor: counted from now, said so in the snapshot. */
+  unknownBaseline: boolean;
 }
 
 const refKey = (r: Pick<WaitRef, "kind" | "workstream" | "id">): string =>
@@ -246,12 +278,22 @@ export async function waitForEvents(
   );
   /** Whose registration or delegate call holds `key` (else the first caller: where its token is written). */
   const ownerOfKey = new Map<string, string>();
-  const ownerOf = (key: string): string | undefined => ownerOfKey.get(key) ?? callers[0];
+  /** An urgent observation's cursor key -> the ref key it observes. */
+  const baseOfCkey = new Map<string, string>();
+  const urgentKey = (kind: string, key: string): string => {
+    const k = `${kind}|${key}`;
+    baseOfCkey.set(k, key);
+    return k;
+  };
+  const ownerOf = (key: string): string | undefined =>
+    ownerOfKey.get(baseOfCkey.get(key) ?? key) ?? callers[0];
   const cursorOf = (key: string): CursorToken | undefined => {
     const o = ownerOf(key);
     return o === undefined ? undefined : cursorsBy.get(o)?.get(key);
   };
   const baselineOf = new Map<string, RefBaseline>();
+  /** The agent refs some caller has registered (explicit or not). */
+  const ownedKeys = new Set<string>();
 
   // ─── stop signals: abort and the deadline race every await ────────
   const watchAbort = new AbortController();
@@ -289,8 +331,9 @@ export async function waitForEvents(
 
   const tracks = new Map<string, AgentTrack>();
   const ownerReadings = new Map<string, AgentReading>();
-  const openSeen = new Set<string>();
-  const priorTask = new Map<string, { status: string; owner: string | null }>();
+  /** A wait with no caller owns no durable state: its blockers seen open are remembered for this wait only. */
+  const openLocal = new Set<string>();
+  const priorTask = new Map<string, { status: string; owner: string | null; ownerId: number }>();
   const reapedOwners = new Set<string>();
   let lastItems: Item[] = [];
   let firstRefresh = true;
@@ -301,11 +344,13 @@ export async function waitForEvents(
   const ownedRefs = (): WaitRef[] => {
     if (!consumes) return [];
     const out = new Map<string, WaitRef>();
+    ownedKeys.clear();
     for (const c of callers) {
       const reg = readWaitRegistration(db, c);
       if (reg === undefined) continue;
       for (const r of reg.refs) {
         const key = refKey(r);
+        ownedKeys.add(key);
         if (!out.has(key)) {
           out.set(key, { ...r });
           ownerOfKey.set(key, c);
@@ -340,6 +385,8 @@ export async function waitForEvents(
         reading: undefined,
         latched: undefined,
         close: undefined,
+        muted: false,
+        unknownBaseline: false,
       };
       tracks.set(key, t);
     } else if (isExplicit) t.explicit = true;
@@ -361,7 +408,7 @@ export async function waitForEvents(
             { ...t.ref, ...(t.baseline !== undefined ? { afterRuns: t.baseline } : {}) },
             watchAbort.signal,
             {
-              owed: !t.explicit,
+              owed: ownedKeys.has(key),
               ...(cur !== undefined ? { cursor: cur } : {}),
               ...(base !== undefined ? { baseline: base } : {}),
             },
@@ -376,6 +423,15 @@ export async function waitForEvents(
       t.handle = h;
       t.reading = h.initial;
       if (t.baseline === undefined && h.afterRuns !== undefined) t.baseline = h.afterRuns;
+      if (h.unknownBaseline !== undefined) {
+        // Owed with no fence and no cursor: counted from what the watch probed, and
+        // that is stored as the fence so a run settling between waits is still caught.
+        t.unknownBaseline = true;
+        const key = refKey(t.ref);
+        const owner = ownerOf(key);
+        if (owner !== undefined && consumes)
+          fenceAgentRef(db, owner, registered(t.ref), h.unknownBaseline);
+      }
       if (h.initial.status === "busy") t.wasBusy = true;
       void h.settled.then(
         (r) => {
@@ -415,16 +471,37 @@ export async function waitForEvents(
   };
 
   /** Fold a watch result (`fromWatch`) or a poll reading into the track. */
+  const inputToken = (r: AgentReading): CursorToken => ({
+    incarnation: `input:${r.incarnation ?? ""}`,
+    runs: r.blocked?.since ?? 0,
+  });
+
   const advance = (t: AgentTrack, r: AgentReading, fromWatch: boolean): void => {
     if (t.latched !== undefined) return;
     const pinned = t.ref.incarnation;
     if (pinned !== undefined && r.incarnation !== undefined && r.incarnation !== pinned) {
       throw new AgentRestartedError(t.ref.id, t.ref.workstream, pinned, r.incarnation);
     }
+    if (r.blocked === undefined && t.muted) {
+      // The dialog is gone: the run goes on; count it again from the same baseline.
+      t.muted = false;
+      if (opts.watchAgent !== undefined && r.status !== null) {
+        t.needWatch = true;
+        return;
+      }
+    }
     if (r.status === null) {
       t.latched = { kind: "dead", reading: r };
     } else if (r.blocked !== undefined) {
-      t.latched = { kind: "input", reading: r };
+      if (!t.explicit && isConsumed(cursorOf(urgentKey("input", refKey(t.ref))), inputToken(r))) {
+        // This dialog was already returned once and is unchanged: not news. The
+        // run is polled (a held watch would return blocked again at once).
+        t.muted = true;
+        t.wasBusy = true;
+        t.handle = undefined;
+        t.result = undefined;
+        t.needWatch = false;
+      } else t.latched = { kind: "input", reading: r };
     } else if (fromWatch) {
       // No settle seen (`unknown`): the watch ends and the agent is polled instead.
       if (r.status === "unknown") t.handle = undefined;
@@ -525,6 +602,7 @@ export async function waitForEvents(
       ...(status === "unknown" && r?.reason !== undefined ? { unknownReason: r.reason } : {}),
       ...(t.baseline !== undefined ? { afterRuns: t.baseline } : {}),
       wasBusy: t.wasBusy,
+      ...(t.unknownBaseline ? { unknownBaseline: true } : {}),
       fired: t.latched?.kind === "settled",
       dead: t.latched?.kind === "dead",
       ...(t.close !== undefined ? { close: t.close } : {}),
@@ -602,6 +680,11 @@ export async function waitForEvents(
         snap.dead = true;
         item.kind = "dead";
         item.done = true;
+        item.ckey = urgentKey("dead", item.key);
+        item.token = {
+          incarnation: `dead:${ownerRef !== undefined ? taskOwnerRowId(db, ref) : (prior?.ownerId ?? 0)}`,
+          runs: 1,
+        };
         return item;
       }
     }
@@ -627,6 +710,8 @@ export async function waitForEvents(
         ].join("|");
         snap.stuck = true;
         item.kind = "stall";
+        item.ckey = urgentKey("stall", item.key);
+        item.token = { incarnation: `stall:${token}`, runs: 1 };
         item.stall = { token, owner: r, ownerRef };
         if (!stallEmitted.has(token)) {
           stallEmitted.add(token);
@@ -700,8 +785,20 @@ export async function waitForEvents(
   const agentItem = (t: AgentTrack, isTarget: boolean, order: number): Item => {
     const l = t.latched;
     const r = l?.reading;
+    const key = refKey(t.ref);
+    let token: CursorToken | undefined;
+    let ckey: string | undefined;
+    if (l?.kind === "settled" && r?.runs !== undefined) {
+      token = { incarnation: r.incarnation ?? "", runs: r.runs };
+    } else if (l?.kind === "input" && r !== undefined) {
+      ckey = urgentKey("input", key);
+      token = inputToken(r);
+    } else if (l?.kind === "dead") {
+      ckey = urgentKey("dead", key);
+      token = { incarnation: `dead:${agentRowId(db, t.ref)}`, runs: 1 };
+    }
     return {
-      key: refKey(t.ref),
+      key,
       ref: t.ref,
       snap: agentSnapshot(t),
       target: isTarget,
@@ -710,10 +807,19 @@ export async function waitForEvents(
       done: l?.kind === "settled" || l?.kind === "dead",
       ready: false,
       ...(l !== undefined ? { kind: l.kind } : {}),
-      ...(l?.kind === "settled" && r?.runs !== undefined
-        ? { token: { incarnation: r.incarnation ?? "", runs: r.runs } }
-        : {}),
+      ...(token !== undefined ? { token } : {}),
+      ...(ckey !== undefined ? { ckey } : {}),
     };
+  };
+
+  const OPEN_TOKEN: CursorToken = { incarnation: "open", runs: 1 };
+  /** Record (once, durably) that this caller has seen the blocker open. */
+  const markOpen = (okey: string): void => {
+    if (cursorOf(okey) !== undefined) return;
+    const owner = ownerOf(okey);
+    if (owner === undefined) return;
+    recordCursors(db, owner, [{ key: okey, token: OPEN_TOKEN }]);
+    cursorsBy.get(owner)?.set(okey, OPEN_TOKEN);
   };
 
   /** The synchronous half: the current picture, from the DB and what refresh saw. */
@@ -782,15 +888,21 @@ export async function waitForEvents(
       for (const b of rows) {
         const ref: WaitRef = { kind: "task", workstream: b.ws, id: b.id };
         const it = taskItem(ref, "CLOSED", true, !all, order++);
+        const okey = urgentKey("open", it.key);
         if (!it.done) {
           open = true;
-          openSeen.add(it.key);
-        } else if (!all && !openSeen.has(it.key)) {
+          // Seen open is durable (the caller's cursor), so a close that a `first`
+          // did not return is still owed to the next wait.
+          if (consumes) markOpen(okey);
+          else openLocal.add(it.key);
+        } else if (!all && !(consumes ? cursorOf(okey) !== undefined : openLocal.has(it.key))) {
           // First: a blocker that was never seen open is history, not news.
           it.suppressible = true;
           it.token = undefined;
           it.kind = undefined;
-        } else readyBlocker = true;
+        } else if (it.token === undefined || !isConsumed(cursorOf(it.key), it.token)) {
+          readyBlocker = true;
+        }
         push(it);
       }
       if (!open && !readyBlocker) {
@@ -805,6 +917,8 @@ export async function waitForEvents(
           kind: "closed",
           done: true,
           ready: false,
+          // A state ("nothing is left to wait on"), never news: behind every real event.
+          seen: true,
         });
       }
     }
@@ -818,7 +932,13 @@ export async function waitForEvents(
     for (const it of items) {
       if (it.ref.kind !== "task") continue;
       const owner = it.snap.owner ?? null;
-      priorTask.set(it.key, { status: it.snap.status ?? "OPEN", owner });
+      priorTask.set(it.key, {
+        status: it.snap.status ?? "OPEN",
+        owner,
+        // A reaped owner's row is gone next tick: keep its id so the death token stays one.
+        ownerId:
+          owner === null ? 0 : taskOwnerRowId(db, it.ref) || (priorTask.get(it.key)?.ownerId ?? 0),
+      });
       if (owner !== null && it.snap.ownerWorkstream !== undefined) {
         const gone = !agentExists(db, { workstream: it.snap.ownerWorkstream, id: owner });
         if (gone) reapedOwners.add(owner);
@@ -827,11 +947,17 @@ export async function waitForEvents(
     }
     const shown: Item[] = [];
     for (const it of items) {
-      const hidden =
-        it.suppressible && it.token !== undefined && isConsumed(cursorOf(it.key), it.token);
+      const consumed = it.token !== undefined && isConsumed(cursorOf(it.ckey ?? it.key), it.token);
+      it.seen ||= consumed;
+      const hidden = it.suppressible && consumed;
+      it.hidden = hidden;
       it.ready = it.kind !== undefined && !hidden;
+      const urgent = it.kind === "input" || it.kind === "stall" || it.kind === "dead";
+      // An unchanged urgent observation that was returned is not news again, and
+      // not "done": the ref is still owed its completion.
+      if (hidden && urgent) it.done = false;
       // Consumed owned history is no longer owed: it is not part of the picture.
-      if (hidden && !it.target) continue;
+      if (hidden && !it.target && !urgent) continue;
       shown.push(it);
     }
     return shown;
@@ -845,7 +971,7 @@ export async function waitForEvents(
   const driveStalls = (items: Item[]): void => {
     const handler = opts.handleStall;
     for (const it of items) {
-      if (it.stall === undefined || it.kind !== "stall") continue;
+      if (it.stall === undefined || it.kind !== "stall" || it.hidden === true) continue;
       const steering = opts.onStall === "steer" || opts.onStall === "release";
       const caller = ownerOf(it.key);
       if (!steering || handler === undefined || caller === undefined) {
@@ -932,7 +1058,12 @@ export async function waitForEvents(
 
   const select = (items: Item[]): { event: Item; fired: Item[] } | undefined => {
     const rank = (a: Item, b: Item): number =>
-      urgency(a.kind) - urgency(b.kind) || Number(b.target) - Number(a.target) || a.order - b.order;
+      // Never-returned events first: an event that was already returned once (an
+      // unchanged dialog, a dead pane, a stall) never outranks one that was not.
+      Number(a.seen === true) - Number(b.seen === true) ||
+      urgency(a.kind) - urgency(b.kind) ||
+      Number(b.target) - Number(a.target) ||
+      a.order - b.order;
     const ready = items.filter((i) => i.ready).sort(rank);
     if (!all) {
       const best = ready[0];
@@ -1072,6 +1203,8 @@ export async function waitForEvents(
     opts.signal?.removeEventListener("abort", onAbort);
     watchAbort.abort();
     if (consumes) {
+      // A returned event is consumed (its token written); a completed one also
+      // leaves the registration. An urgent one (input, stall, a dead task) stays owed.
       const completed = delivered.filter(
         (i) =>
           i.kind === "closed" ||
@@ -1085,9 +1218,11 @@ export async function waitForEvents(
       db.transaction(() => {
         for (const c of callers) {
           const mine = completed.filter((i) => ownerOf(i.key) === c);
-          const tokens = mine.flatMap((i) =>
-            i.token === undefined ? [] : [{ key: i.key, token: i.token }],
-          );
+          const tokens = delivered
+            .filter((i) => i.token !== undefined && ownerOf(i.ckey ?? i.key) === c)
+            .flatMap((i) =>
+              i.token === undefined ? [] : [{ key: i.ckey ?? i.key, token: i.token }],
+            );
           const b = begun.get(c);
           if (b !== undefined) {
             const ended = endWait(
