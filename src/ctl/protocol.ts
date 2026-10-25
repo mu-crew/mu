@@ -25,7 +25,14 @@ export type CtlRequest =
    * characters) lets the caller ask `status` later whether the request
    * was accepted, when no reply arrived.
    */
-  | { op: "send"; text: string; mode?: "steer" | "followUp"; msgId?: string }
+  | {
+      op: "send";
+      text: string;
+      mode?: "steer" | "followUp";
+      msgId?: string;
+      /** Refused before acting (INCARNATION_MISMATCH) when it is not the extension's current incarnation. */
+      expectIncarnation?: string;
+    }
   /**
    * Resolve once a run past afterRuns settles. With returnOnBlocked, also
    * resolve (ended "blocked", runs unchanged) when a dialog is open or
@@ -47,7 +54,14 @@ export type CtlRequest =
    */
   | { op: "interrupt"; text: string; timeoutMs?: number; msgId?: string }
   /** New session + prompt as one operation. Refused with error "busy" unless force. */
-  | { op: "fresh"; text: string; force?: boolean; msgId?: string }
+  | {
+      op: "fresh";
+      text: string;
+      force?: boolean;
+      msgId?: string;
+      /** As on `send`: another incarnation is refused before any state changes. */
+      expectIncarnation?: string;
+    }
   /**
    * Run one of pi's session commands inside pi (sendUserMessage cannot run
    * built-in slash commands). Refused with error "busy" unless force.
@@ -86,7 +100,7 @@ export const CTL_MSGID_MEMORY = 64;
 /** Longest msgId the extension accepts. */
 export const CTL_MSGID_MAX_LENGTH = 64;
 
-/** Error text of a `wait` that named another pi process's incarnation. */
+/** Error text of a `wait`, `send` or `fresh` that named another pi process's incarnation. */
 export const INCARNATION_MISMATCH = "incarnation mismatch";
 
 export type CtlStatus = {

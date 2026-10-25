@@ -640,6 +640,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
   }
 
   function fresh(req: Record<string, unknown>): Promise<Reply> | Reply {
+    const stale = incarnationRefusal(req, "expectIncarnation");
+    if (stale) return stale;
     const text = str(req, "text");
     if (text === undefined) return fail("fresh needs a string text");
     const id = msgIdOf(req);
@@ -664,6 +666,19 @@ function serveCtl(pi: MuPiApi): () => boolean {
         g.pi.sendUserMessage(`/${FRESH_COMMAND}`, { expandPromptTemplates: true }),
       ).catch((e: unknown) => settleFresh(fail(e instanceof Error ? e.message : String(e))));
     });
+  }
+
+  /**
+   * A request that names `expectIncarnation` is for the pi process the caller
+   * saw (its spawn handshake). Another process now bound to this socket path
+   * refuses it before anything is dispatched. Absent: no check.
+   */
+  function incarnationRefusal(
+    req: Record<string, unknown>,
+    key = "expectIncarnation",
+  ): Reply | undefined {
+    if (!(key in req) || req[key] === g.incarnation) return undefined;
+    return { ...fail(INCARNATION_MISMATCH), incarnation: g.incarnation };
   }
 
   /** The optional msgId of `req`: absent is fine; present must be a string of 1-64 characters. */
@@ -698,6 +713,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
         return { v: V, ok: true, ...status(), msg };
       }
       case "send": {
+        const stale = incarnationRefusal(req);
+        if (stale) return stale;
         const text = str(req, "text");
         if (text === undefined) return fail("send needs a string text");
         const id = msgIdOf(req);

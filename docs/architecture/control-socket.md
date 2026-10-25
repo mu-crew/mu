@@ -62,7 +62,11 @@ The CLI side: every ctl `send`, `fresh` and `interrupt` carries a fresh
 `status {msgId}` probe (5 s): accepted is a success with
 `receipt: "confirmed-after-timeout"`; anything else is
 `AgentSendIndeterminateError` (exit 1) carrying the `msgId`, whose Next
-is `mu agent check <a> <msgId>`. It never resends. `mu agent wait --inc`
+is `mu agent check <a> <msgId>`. It never resends. A send/fresh right after a spawn
+carries `expectIncarnation` (the spawn handshake's): the extension refuses
+another incarnation before dispatching (`incarnation mismatch`, nothing
+delivered), so a replacement bound at the same socket path gets no prompt.
+`mu agent wait --inc`
 sends `incarnation` with its `wait`; an `incarnation mismatch` reply, or a
 reconnect after a dropped wait that finds another incarnation, raises
 `AgentRestartedError` (exit 4) out of `waitForAgents` (a rejected watch

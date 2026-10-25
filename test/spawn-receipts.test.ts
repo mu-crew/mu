@@ -71,7 +71,7 @@ import { closeTask } from "../src/tasks/lifecycle.js";
 import { getTask, selectTaskNotes, taskIdFor } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
-import { INC, withHello } from "./_ctl-ext.js";
+import { helloReply, INC, withHello } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliWire } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -91,6 +91,10 @@ let requests: Record<string, unknown>[];
 /** The msgIds the fake extension "remembers" (status {msgId} answers from it). */
 let accepted: Set<string>;
 let onSend: Handler;
+/** Runs (once) BEFORE a fake extension answers its next `hello`: the swap window. */
+let beforeHelloReply: undefined | (() => Promise<void>);
+/** Requests a fake extension refused for naming another incarnation (nothing dispatched). */
+let refusals: Record<string, unknown>[];
 let extensionOn: boolean;
 let saved: Record<string, string | undefined>;
 let scrollback: string | undefined;
@@ -108,6 +112,8 @@ beforeEach(() => {
   setCommandResolverForTests(async (c) => ({ ok: true, binary: c, resolvedPath: `/bin/${c}` }));
   servers = [];
   requests = [];
+  refusals = [];
+  beforeHelloReply = undefined;
   accepted = new Set();
   extensionOn = true;
   scrollback = undefined;
@@ -149,8 +155,18 @@ afterEach(async () => {
   }
 });
 
-async function serveExtension(path: string): Promise<void> {
+/**
+ * A fake extension bound at `path`. Like the real one it reports `incarnation`
+ * in hello and refuses a send/fresh whose `expectIncarnation` differs, before
+ * dispatching anything. `rebind` replaces whatever is bound at the path.
+ */
+async function serveExtension(
+  path: string,
+  opts: { incarnation?: string; rebind?: boolean; noIncarnation?: boolean } = {},
+): Promise<void> {
+  const incarnation = opts.incarnation ?? INC;
   mkdirSync(dirname(path), { recursive: true });
+  if (opts.rebind === true) rmSync(path, { force: true });
   const server = createServer((sock) => {
     const dec = new LineDecoder();
     sock.setEncoding("utf8");
@@ -158,6 +174,23 @@ async function serveExtension(path: string): Promise<void> {
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
         const req = JSON.parse(line) as Record<string, unknown>;
+        if (req.op === "hello" && beforeHelloReply !== undefined) {
+          const swap = beforeHelloReply;
+          beforeHelloReply = undefined;
+          void swap().then(() => {
+            sock.end(encode(helloReply({ incarnation })));
+          });
+          continue;
+        }
+        if (
+          (req.op === "send" || req.op === "fresh") &&
+          req.expectIncarnation !== undefined &&
+          req.expectIncarnation !== incarnation
+        ) {
+          refusals.push(req);
+          sock.end(encode({ v: 1, ok: false, error: "incarnation mismatch", incarnation }));
+          continue;
+        }
         if (req.op !== "hello") requests.push(req);
         let reply: Reply;
         if (req.op === "send") {
@@ -176,7 +209,11 @@ async function serveExtension(path: string): Promise<void> {
           sock.destroy();
           continue;
         }
-        sock.end(encode(withHello(req, reply)));
+        const hello = helloReply({ incarnation });
+        if (opts.noIncarnation === true) delete hello.incarnation;
+        const answer = withHello(req, reply, hello);
+        if (opts.noIncarnation === true) delete answer.incarnation;
+        sock.end(encode(answer));
       }
     });
   });
@@ -594,8 +631,12 @@ async function swap(onDb: Db): Promise<number> {
   deleteAgent(onDb, "worker-1", "auth");
   const r = insertAgent(onDb, { name: "worker-1", workstream: "auth", paneId: "%77" });
   state.panes.set("%77", { windowId: "@9", paneId: "%77", command: "pi" });
-  // A LIVE extension on the replacement: a misdirected prompt would be delivered.
-  await serveExtension(ctlSocketPath("auth", "worker-1", dir));
+  // A LIVE extension (another pi process) now owns the path: a misdirected
+  // prompt would be delivered.
+  await serveExtension(ctlSocketPath("auth", "worker-1", dir), {
+    incarnation: "inc-replacement",
+    rebind: true,
+  });
   return r.incarnation;
 }
 
@@ -734,5 +775,89 @@ describe("plain spawn --send uses the spawned registry id + pane", () => {
     db = openDb({ path: join(dir, "mu.db") });
     expect(sends()).toHaveLength(0);
     expect(r.stdout).toMatch(/AgentReplacedError/);
+  });
+});
+
+describe("the send is bound to the ctl incarnation the spawn handshake saw", () => {
+  it("task path: a replacement binding the socket path during the send's hello gets nothing", async () => {
+    let swapped = 0;
+    hook.afterClaim = () => {
+      // the next hello is the send's: the swap lands inside that await
+      beforeHelloReply = async () => {
+        swapped = await swap(db);
+      };
+    };
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentReplacedError);
+    expect(swapped).not.toBe(0);
+    expect(sends()).toHaveLength(0);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]?.expectIncarnation).toBe(INC);
+    expect(getAgent(db, "worker-1", "auth")?.incarnation).toBe(swapped);
+    expect(receipt()?.state).toBe("failed");
+    expect(notes().filter((n) => n.kind === "brief")).toEqual([]);
+  });
+
+  it("plain spawn --send: the same swap, one-line refusal, the replacement gets nothing", async () => {
+    let swapped = 0;
+    hook.beforeSendToAgent = () => {
+      beforeHelloReply = async () => {
+        const d = openDb({ path: join(dir, "mu.db") });
+        swapped = await swap(d);
+        d.close();
+      };
+    };
+    db.close();
+    const r = await runCliWire(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--send", "hello there"],
+      join(dir, "mu.db"),
+    );
+    db = openDb({ path: join(dir, "mu.db") });
+    expect(swapped).not.toBe(0);
+    expect(sends()).toHaveLength(0);
+    expect(refusals).toHaveLength(1);
+    expect(`${r.stdout}\n${r.stderr}`).toMatch(/replaced before the prompt was written/);
+    expect(r.exitCode).not.toBe(0);
+  });
+
+  it("a replacement already bound before the send's hello is refused client-side, nothing written", async () => {
+    hook.afterClaim = async () => {
+      await serveExtension(ctlSocketPath("auth", "worker-1", dir), {
+        incarnation: "inc-replacement",
+        rebind: true,
+      });
+    };
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentReplacedError);
+    expect(requests.filter((r) => r.op === "send")).toHaveLength(0);
+    expect(refusals).toHaveLength(0);
+  });
+
+  it("the unreplaced agent still gets the prompt, carrying the handshake's incarnation", async () => {
+    await spawnForTask(db, req());
+    expect(sends()).toHaveLength(1);
+    expect(sends()[0]?.expectIncarnation).toBe(INC);
+  });
+
+  it("an extension that names no incarnation is sent to unbound (nothing to bind to)", async () => {
+    extensionOn = false;
+    state.panes.clear();
+    const origExec = mux;
+    void origExec;
+    // bind a legacy extension as soon as the pane exists
+    mux.restore();
+    const fake = mockTmux(state).executor;
+    mux = installMux("tmux", async (args) => {
+      const res = await fake(args);
+      if (args[0] === "new-session" || args[0] === "new-window" || args[0] === "split-window") {
+        const name = /MU_AGENT_NAME=(\S+)/.exec(args.join(" "))?.[1];
+        if (name !== undefined) {
+          await serveExtension(ctlSocketPath("auth", name, dir), { noIncarnation: true });
+        }
+      }
+      return res;
+    });
+    const out = await spawnForTask(db, req());
+    expect(out.state).toBe("sent");
+    expect(sends()).toHaveLength(1);
+    expect(sends()[0]).not.toHaveProperty("expectIncarnation");
   });
 });

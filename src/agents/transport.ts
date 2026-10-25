@@ -29,6 +29,7 @@ import {
   type CtlReply,
   type CtlRequest,
   type CtlState,
+  INCARNATION_MISMATCH,
 } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
@@ -41,6 +42,7 @@ import {
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
   AgentPaneDeadError,
+  AgentReplacedError,
   AgentSendIndeterminateError,
   AgentSendRefusedError,
   AgentSendUnsupportedError,
@@ -90,6 +92,13 @@ export type TransportSendOptions = SendOptions & {
    * already written: a saved id is checked, never resent.
    */
   msgId?: string;
+  /**
+   * Internal: the ctl incarnation the caller's own handshake saw (a spawn's
+   * hello). The send is refused, nothing written, when the socket's pi is
+   * another process (AgentReplacedError); the extension re-checks it
+   * atomically with the dispatch (`expectIncarnation`). ctl send/fresh only.
+   */
+  expectIncarnation?: string;
 };
 
 /** The agent's derived control socket, rooted at the DB's directory (as spawn does). */
@@ -439,17 +448,27 @@ export async function sendViaTransport(
   }
   // Receipts need an extension that remembers msgIds: refuse before writing.
   const inc = await requireFeature(agent, sock, "msgId");
+  const expect = opts.expectIncarnation;
+  // The hello already names another pi (or none): refuse before any write.
+  if (expect !== undefined && inc !== expect) {
+    throw new AgentReplacedError(agent.name, agent.workstreamName, "sent to");
+  }
+  const bound = expect !== undefined ? { expectIncarnation: expect } : {};
   const sent = await ctlSendWithReceipt(
     agent,
     sock,
     opts.fresh
-      ? { op: "fresh", text, ...(opts.force ? { force: true } : {}) }
-      : { op: "send", text, mode: opts.mode ?? "followUp" },
+      ? { op: "fresh", text, ...(opts.force ? { force: true } : {}), ...bound }
+      : { op: "send", text, mode: opts.mode ?? "followUp", ...bound },
     inc,
     opts.msgId,
   );
   const { reply, msgId } = sent;
   if (reply !== undefined && !reply.ok) {
+    // The extension's own check: bound at the socket, atomic with the dispatch.
+    if (expect !== undefined && reply.error === INCARNATION_MISMATCH) {
+      throw new AgentReplacedError(agent.name, agent.workstreamName, "sent to");
+    }
     if (opts.fresh && reply.error === "busy") {
       throw new AgentBusyError(agent.name, agent.workstreamName);
     }
