@@ -20,10 +20,10 @@
 import { readdirSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { crc32 } from "node:zlib";
+import { reapAgentRow } from "./agents/reap.js";
 import { WORKSTREAM_OPS_WHERE } from "./compact.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, tornDownAtOf } from "./db.js";
-import { releaseHostChannelsForAgent } from "./hosts.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
 import type { HasNextSteps, NextStep } from "./output.js";
@@ -722,15 +722,12 @@ export async function teardownWorkstream(
         if (now !== opts.ifRevision) {
           throw new WorkstreamRevisionMismatchError(opts.workstream, opts.ifRevision, now);
         }
-        const del = db.prepare(
-          `DELETE FROM agents WHERE id = ? AND name = ? AND pane_id = ?
-             AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
-        );
+        // Each dead row goes through THE reaper step (src/agents/reap.ts), in
+        // this transaction and group: its remote worktree is recorded and
+        // what it owned reopens, exactly as a pane that died on its own.
         for (const a of dead) {
-          if (del.run(a.incarnation, a.name, a.paneId, opts.workstream).changes > 0) {
-            // A remote agent's pane is its host transport: its channel dies with the row.
-            releaseHostChannelsForAgent(db, a.incarnation, a.paneId);
-          }
+          if (!sameRow.get(a.incarnation, a.name, a.paneId, opts.workstream)) continue;
+          reapAgentRow(db, a.incarnation, a.name, { reason: "teardown" });
         }
         db.prepare(
           "UPDATE workstreams SET torn_down_at = ? WHERE name = ? AND torn_down_at IS NULL",
@@ -811,6 +808,8 @@ export async function reinitWorkstream(
         }
         const agents = listAgentPanes(db, name).map((a) => a.name);
         if (agents.length > 0) throw new WorkstreamHasAgentsError(name, agents);
+        // No agent row is left to cascade (checked above, same transaction):
+        // teardown already recorded each remote worktree when it reaped the row.
         db.prepare("DELETE FROM workstreams WHERE name = ?").run(name);
         ensureWorkstreamImpl(db, name);
       })

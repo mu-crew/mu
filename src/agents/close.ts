@@ -276,8 +276,13 @@ async function closeLocked(
   // judged only now, after the kill: the pane held the host's channel (at cap
   // 1 the only one). Its pane is dead, so admission reclaims that channel.
   let worktree: ReleasedWorktree | null = null;
+  // Set once closeRemoteWorktree is about to run: it returns only when the tree
+  // is removed, kept on a branch or gone (anything else throws, row kept), so
+  // the row's deletion needs no recovery record.
+  let remoteHandled = false;
   if (row !== undefined) worktree = await releaseWorktree(db, row, { discard });
   else if (remoteOf(agent) !== null) {
+    remoteHandled = true;
     // The pane is dead (probed above): free its channel by id + pane.
     if (mux !== undefined) releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);
     worktree = await closeRemoteWorktree(db, agent, {
@@ -289,10 +294,13 @@ async function closeLocked(
     });
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   }
-  const deletedRow = deleteAgent(db, name, agent.workstreamName, {
-    incarnation: agent.incarnation,
-    paneId: agent.paneId,
-  });
+  const deletedRow = deleteAgent(
+    db,
+    name,
+    agent.workstreamName,
+    { incarnation: agent.incarnation, paneId: agent.paneId },
+    { preserve: !remoteHandled },
+  );
   if (!deletedRow && replaced()) throw new AgentReplacedError(name, opts.workstream);
   // Machine-local table (`agents`): no trigger, so this emit is the
   // only record.

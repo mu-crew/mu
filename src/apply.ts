@@ -60,6 +60,7 @@ import {
 } from "./fold.js";
 import { compareHlc } from "./hlc.js";
 import { withCaptureSuppressed } from "./op-context.js";
+import { snapshotWorkstreamRemotes } from "./remote-recovery.js";
 
 /** An op as applied. Mirrors the `ops` row shape, minus the local-only
  *  `seq` (meaningless on a peer) and the advisory `created_at`. */
@@ -355,7 +356,9 @@ function syncWorkstream(db: Db, log: Log, name: string): Reconciled {
   ).get(name) as { id: number; created_at: string; torn_down_at: string | null } | undefined;
   if (state === null) {
     if (row === undefined) return UNCHANGED;
-    // FK CASCADE removes the tasks, notes and edges beneath it.
+    // FK CASCADE removes the tasks, notes and edges beneath it, and the
+    // agents (agents.workstream_id): their remote worktrees are recorded first.
+    snapshotWorkstreamRemotes(db, row.id, "workstream-delete");
     prepareCached(db, "DELETE FROM workstreams WHERE id = ?").run(row.id);
     return { changed: true, fields: [] };
   }
