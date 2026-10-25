@@ -152,12 +152,13 @@ export async function collectRemoteAgent(
           );
         }
         const ref = collectRef(workstream, name);
+        const prior = await git(["rev-parse", "--verify", "-q", ref], repo).catch(() => undefined);
         await git(["update-ref", ref, head], repo);
         if ((await git(["rev-parse", "--verify", ref], repo)) !== head) {
           throw new RemoteCollectError(host, `could not pin ${ref}; nothing recorded`);
         }
         const changed = head !== (agent.collectedHead ?? base);
-        if (head !== agent.collectedHead) await recordCollected(db, agent, head, ref, repo);
+        await recordCollected(db, agent, head, ref, repo, prior);
         return { head, ref, merge: `git merge ${head}`, changed };
       },
       {
@@ -170,29 +171,29 @@ export async function collectRemoteAgent(
   );
 }
 
-/** Compare-and-set the record on the agent captured before the awaits; unpin the ref when it was replaced. */
+/** Compare-and-set the record on the agent captured before the awaits (also for an unchanged head: the fence is the same); restore the ref when it was replaced. */
 async function recordCollected(
   db: Db,
   agent: AgentRow,
   head: string,
   ref: string,
   repo: string,
+  prior: string | undefined,
 ): Promise<void> {
-  const n = db
-    .prepare(
-      `UPDATE agents SET collected_head = ?, updated_at = ?
-        WHERE id = ? AND pane_id = ? AND host IS ? AND cwd IS ? AND base IS ?`,
-    )
-    .run(
-      head,
-      new Date().toISOString(),
-      agent.incarnation,
-      agent.paneId,
-      agent.host,
-      agent.cwd,
-      agent.base,
-    ).changes;
+  const fence = "id = ? AND pane_id = ? AND host IS ? AND cwd IS ? AND base IS ?";
+  const who = [agent.incarnation, agent.paneId, agent.host, agent.cwd, agent.base];
+  // An unchanged head writes nothing, but is still fenced: success names this incarnation.
+  const n =
+    head === agent.collectedHead
+      ? db.prepare(`SELECT 1 FROM agents WHERE ${fence}`).all(...who).length
+      : db
+          .prepare(`UPDATE agents SET collected_head = ?, updated_at = ? WHERE ${fence}`)
+          .run(head, new Date().toISOString(), ...who).changes;
   if (n === 1) return;
-  await git(["update-ref", "-d", ref, head], repo).catch(() => {});
+  // Undo only this attempt's pin: the ref goes back to what it held (an earlier collect's commit stays pinned).
+  await (prior === undefined
+    ? git(["update-ref", "-d", ref, head], repo)
+    : git(["update-ref", ref, prior, head], repo)
+  ).catch(() => {});
   throw new AgentReplacedError(agent.name, agent.workstreamName, "collected");
 }

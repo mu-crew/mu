@@ -102,13 +102,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   records nothing. It prints `git merge <sha>`, never runs it. `agent close`
   of a `--host --worktree` agent now kills the pane, then removes the remote
   worktree without `--force` only when it is clean and HEAD is the base or the
-  collected HEAD, re-checking HEAD right before the removal. Otherwise it
+  collected HEAD. HEAD is fenced for the removal: the worktree's `HEAD.lock` is held
+  (a late commit fails on it), the tree is renamed aside and re-verified, then
+  removed; a mismatch puts it back and refuses. Otherwise it
   refuses (exit 4, `RemoteCloseRefusedError`); `--keep-branch` first makes
   `mu/<ws>/<agent>-<sha12>` at the observed HEAD in the remote repo; dirty
   refuses with or without `--keep-branch` and `--discard`. A `--cwd` agent's
   host is never touched. The close preview names the remote worktree (no
   remote command runs). A reaped or torn-down remote row still keeps no
-  record: `v_remote_recovery`.
+  record: `v_remote_recovery`. A failed collect restores the ref's earlier pin; an
+  unchanged collect is fenced by the same compare as a changed one.
 
 - **Agent records are SQL-keyed.** `agent spawn`, `list`, `show`, `me` and
   `state` print each agent with the `agents` column names: `id` (the registry

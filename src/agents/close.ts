@@ -283,6 +283,9 @@ async function closeLocked(
     worktree = await closeRemoteWorktree(db, agent, {
       keepBranch: opts.keepBranch === true,
       paneAlive: localPaneAlive,
+      beforeRemove: () => {
+        if (replaced()) throw new AgentReplacedError(name, opts.workstream);
+      },
     });
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   }
