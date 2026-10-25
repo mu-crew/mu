@@ -10,7 +10,7 @@ import {
 const HOST = "/tmp/mu-eval-1-2-3/hosts/dev";
 
 describe("parseSshArgs", () => {
-  it("parses the exact command mu agent remote-env prints (options after the host)", () => {
+  it("parses an ssh command with the options after the host", () => {
     const inv = parseSshArgs([
       "-o",
       "ControlMaster=no",

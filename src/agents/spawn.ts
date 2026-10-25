@@ -1272,6 +1272,21 @@ export async function rollbackSpawn(
       // the registry row stays: `mu agent close <name> --discard` finishes it
     }
   }
+  // A host row whose pane is not proven gone keeps its row: the row's death
+  // frees the channel, and the pane (the transport, with the remote pi) is live.
+  if (ownedIncarnation !== undefined && !paneGone && getAgent(db, name, workstream)?.host) {
+    try {
+      emitEvent(
+        db,
+        workstream,
+        "agent.spawn_failed",
+        `agent spawn rollback ${name}: pane ${paneId} not proven gone, row and host channel kept`,
+      );
+    } catch {
+      // best-effort
+    }
+    return;
+  }
   // Only the row this spawn inserted: never a replacement under the name.
   if (ownedIncarnation !== undefined)
     deleteAgent(db, name, workstream, { incarnation: ownedIncarnation });

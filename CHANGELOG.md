@@ -55,7 +55,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   not rebuilt. `spawn --host` reserves and binds them (below).
 
 - **`mu agent spawn --host <profile> [--worktree] [--cwd <remote dir>] [--task t --send ...]`: remote spawn, the pane is the transport.**
-  The local pane runs the profile's `--shell` template (`exec /bin/sh -c`), filled with the remote
+  The local pane runs the profile's `--shell` template (`exec env -u <local MU_* vars> /bin/sh -c`), filled with the remote
   identity, your `--command` (default `pi`), the derived local socket, the
   remote socket (`/tmp/mu-<uid>/<ws>/<name>.sock`) and the remote cwd; the
   template starts the remote pi and forwards its ctl socket to the local path,
@@ -762,6 +762,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   machine ([sync](docs/architecture/sync.md#segment-versions)).
 
 ### Fixed
+
+- **Remote spawn follow-ups.** A rollback whose pane survives the kill keeps a
+  host agent's row (and so its channel) and says so in the log, instead of
+  freeing the slot under a live pane. The transport pane runs with the local
+  `MU_DB_PATH`, `MU_STATE_DIR`, `MU_SYNC_DIR`, `MU_CTL_SOCK`, `MU_AGENT_NAME`,
+  `MU_WORKSTREAM` and `MU_MANAGED_AGENT` unset (a tmux pane inherits the
+  server's, possibly another agent's). `agent close` suggests the re-spawn with
+  `--host`, `agent show` prints the host, and stale `remote-env` mentions are gone.
 
 - **The attach hint works from outside tmux.** Outside a client it is ONE
   `tmux attach-session -t mu-<ws>:<agent>` (the old line ran `select-window`

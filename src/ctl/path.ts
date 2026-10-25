@@ -47,7 +47,7 @@ export function unlinkCtlSocket(db: Db, name: string, workstream: string): void 
  * Default socket path ON THE REMOTE HOST for a remote pi agent:
  * `/tmp/mu-<uid>/<ws>/<agent>.sock`, shortened by the same rule. `uid`
  * is the local one (mu cannot know the remote's); the extension creates
- * the directory, and `mu agent remote-env --remote-sock` overrides it.
+ * the directory.
  */
 export function remoteCtlSocketPath(workstream: string, agent: string, uid: number): string {
   return sockPathUnder(`/tmp/mu-${uid}`, workstream, agent);

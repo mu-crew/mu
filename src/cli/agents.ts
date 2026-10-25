@@ -42,6 +42,7 @@ import {
   requireFeature,
   resolveCliCommand,
   resolveCliCommandWithSource,
+  respawnCommand,
   type SpawnedAgent,
   sendToAgent,
   spawnAgent,
@@ -804,6 +805,7 @@ export async function cmdAgentShow(
   console.log(`  pane       : ${pc.dim(agent.paneId)}`);
   console.log(`  window     : ${agent.tab ?? agent.name}`);
   console.log(`  role       : ${agent.role}`);
+  if (agent.host !== null) console.log(`  host       : ${agent.host}`);
   console.log(`  cwd        : ${agent.cwd ?? pc.dim("—")}`);
   console.log(`  created    : ${pc.dim(agent.createdAt)}`);
   console.log(`  updated    : ${pc.dim(agent.updatedAt)}`);
@@ -893,6 +895,8 @@ export async function cmdClose(
     printNextSteps(next);
     return;
   }
+  // The row is gone after the close: a remote agent's re-spawn line needs its host.
+  const closing = getAgent(db, name, ws);
   const result = await closeAgent(db, name, {
     workstream: ws,
     ifRevision: opts.if,
@@ -908,7 +912,9 @@ export async function cmdClose(
   }
   next.push({
     intent: "Re-spawn under the same name",
-    command: `mu agent spawn ${name} -w ${ws}`,
+    command:
+      (closing?.host != null ? respawnCommand(closing) : undefined) ??
+      `mu agent spawn ${name} -w ${ws}`,
   });
   if (opts.json) {
     emitJson({ agentName: name, ...result, nextSteps: next });
@@ -1363,7 +1369,7 @@ export function wireAgentCommands(program: Command): void {
     .command("agent")
     .description("Agent-level commands")
     // Every agent verb needs a multiplexer, including the ones that only
-    // read a registry row (show, remote-env): no backend at all is exit 5
+    // read a registry row (show): no backend at all is exit 5
     // with the install line, before any DB or scope work.
     .hook("preAction", async () => {
       await activeMux();

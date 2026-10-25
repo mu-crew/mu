@@ -161,9 +161,25 @@ export async function removeRemoteWorktree(
 }
 
 /**
+ * The local mu variables a transport pane must not carry: a tmux pane inherits
+ * the SERVER's env, which may be another agent's (its DB, sync dir, ctl socket,
+ * identity). A template that runs `{cmd}` with the local env (a container exec,
+ * `SendEnv MU_*`, a shim) would hand them to the remote pi.
+ */
+export const LOCAL_ONLY_ENV = [
+  "MU_DB_PATH",
+  "MU_STATE_DIR",
+  "MU_SYNC_DIR",
+  "MU_CTL_SOCK",
+  "MU_AGENT_NAME",
+  "MU_WORKSTREAM",
+  "MU_MANAGED_AGENT",
+] as const;
+
+/**
  * The command the LOCAL pane runs: the profile's `shell` template filled with
  * the remote identity (never the local DB, state or sync dir), the user's
- * command and the two socket paths, as one `sh -c` word.
+ * command and the two socket paths, as one `sh -c` word, run with the local-only mu variables unset.
  */
 export function remoteShellCommand(
   profile: HostProfile,
@@ -184,7 +200,8 @@ export function remoteShellCommand(
     remote_sock: remoteSock,
     cwd: a.cwd,
   });
-  return `exec /bin/sh -c ${shellQuote(filled)}`;
+  const unset = LOCAL_ONLY_ENV.map((k) => `-u ${k}`).join(" ");
+  return `exec env ${unset} /bin/sh -c ${shellQuote(filled)}`;
 }
 
 /** The local pane's liveness probe for channel admission: unknown (a throw) keeps the channel. */

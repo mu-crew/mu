@@ -26,9 +26,10 @@ import {
 import { CTL_FEATURES, CTL_OPS } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, HostChannelBusyError, listHostChannels } from "../src/hosts.js";
+import { LOCAL_ONLY_ENV } from "../src/remote-agent.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask } from "../src/tasks.js";
-import { killSession } from "../src/tmux.js";
+import { killSession, tmux } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { gitIn, initGitRepo } from "./_git.js";
@@ -67,6 +68,7 @@ const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+fs.writeFileSync(process.env.PANE_SEEN, JSON.stringify(process.env));
 const [local, remote, cwd, , ...rest] = process.argv.slice(2);
 const cmd = rest.pop();
 const env = { PATH: process.env.PATH, HOME: process.env.HOME, SEEN: process.env.SEEN };
@@ -115,7 +117,7 @@ function addDevHost(piCommand = `node ${join(dir, "pishim.js")}`): { command: st
   addHost(db, {
     name: "dev",
     // The pane gets the tmux SERVER's env, so the fake remote's HOME is spelled in the template.
-    shell: `exec env HOME=${home} SEEN=${join(dir, "seen.json")} ${process.execPath} ${join(dir, "fakessh.js")} {local_sock} {remote_sock} {cwd} -- {env} {cmd}`,
+    shell: `exec env HOME=${home} SEEN=${join(dir, "seen.json")} PANE_SEEN=${join(dir, "pane-seen.json")} ${process.execPath} ${join(dir, "fakessh.js")} {local_sock} {remote_sock} {cwd} -- {env} {cmd}`,
     exec: "sh -c {cmd}",
     fetch: "true",
     repo,
@@ -164,6 +166,24 @@ const req = (command: string) => ({
 });
 
 describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
+  it("the transport pane's own process env carries none of the tmux server's local MU_* variables", async () => {
+    const planted = LOCAL_ONLY_ENV.filter((k) => k !== "MU_STATE_DIR");
+    for (const k of planted) await tmux(["set-environment", "-g", k, `foreign-${k}`]);
+    try {
+      const { command } = addDevHost();
+      await spawnForTask(db, req(command));
+      const pane = JSON.parse(readFileSync(join(dir, "pane-seen.json"), "utf8")) as Record<
+        string,
+        string
+      >;
+      expect(
+        Object.keys(pane).filter((k) => (LOCAL_ONLY_ENV as readonly string[]).includes(k)),
+      ).toEqual([]);
+    } finally {
+      for (const k of planted) await tmux(["set-environment", "-gu", k]).catch(() => {});
+    }
+  }, 30_000);
+
   it("--host --worktree --task: detached remote worktree, forwarded ctl, claim, delivery, only identity env", async () => {
     const { command } = addDevHost();
     const out = await spawnForTask(db, req(command));
