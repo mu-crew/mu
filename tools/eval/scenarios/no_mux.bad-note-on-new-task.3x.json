@@ -1,0 +1,26 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task add n2 -w eval -t 'note it' -i 50 -e 0.1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task note n2 -w eval - <<'EOF'\nchecked without a multiplexer\nEOF"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close n1 -w eval --evidence 'note added'"
+      }
+    ]
+  },
+  {
+    "text": "done"
+  }
+]

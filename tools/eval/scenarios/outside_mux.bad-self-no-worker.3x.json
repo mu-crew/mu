@@ -1,0 +1,66 @@
+[
+  {
+    "calls": [
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c1",
+          "task": "Check claim-1: README.md in the repo root starts with the line \"# eval repo\". Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c1",
+            "workstream": "eval"
+          }
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c2",
+          "task": "Check claim-2: gate.sh in the repo root is a Python script. Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c2",
+            "workstream": "eval"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "echo o1 >> o1.txt && git add o1.txt && git commit -qm o1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close o1 -w eval --evidence 'did o1 myself'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for i in $(seq 1 120); do c=0; for n in 1 2; do mu task notes c$n -w eval 2>/dev/null | grep -q 'VERDICT:' && c=$((c+1)); done; [ $c -ge 2 ] && break; sleep 1; done; echo verdicts=$c"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "v=$(mu task notes c1 -w eval | grep -o 'VERDICT: [A-Z]*' | tail -1); case \"$v\" in *CONFIRMED) mu task close c1 -w eval --evidence \"checked: $v\" ;; esac"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "v=$(mu task notes c2 -w eval | grep -o 'VERDICT: [A-Z]*' | tail -1); case \"$v\" in *REFUTED) mu task close c2 -w eval --as rejected --why 'claim refuted' --evidence \"checked: $v\" ;; esac"
+      }
+    ]
+  },
+  {
+    "text": "done"
+  }
+]

@@ -65,6 +65,7 @@ describe("every judge goes through the shared effects helper", () => {
     const state: Record<string, string> = {
       "setup-head": head,
       "guessed_flag.seq": "0",
+      "no_mux.seq": "0",
       "guessed_sql_column.baseline.json": '{"seq":0,"notes":{},"rows":{}}',
       "wrong_id.baseline.json": '{"seq":0,"notes":{},"rows":{}}',
       "teardown.baseline": "0",
