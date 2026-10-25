@@ -65,7 +65,7 @@ JSONL segments before the verb and flushes its own ops after it,
 through `handle()`. There is no daemon and no network code:
 [architecture/sync.md](architecture/sync.md).
 
-**Dashboard.** The 3.x card TUI is removed and bare `mu` prints help. The planned four-tab, read-only dashboard is a fresh write (`v_dashboard_*`); see [Planned](#planned-owned-by-v_).
+**Dashboard.** The 3.x card TUI is removed. Bare `mu` on a TTY (not `--json`) opens the fresh read-only ink dashboard, a lazy chunk (`src/cli/tui/`) the SDK index never reaches; anywhere else it prints help. Projections run on a `readonly` connection; ambient sync runs on the launcher's separate writable connection, outside render. The four tabs are `v_dashboard_tabs`; see [Planned](#planned-owned-by-v_).
 
 **CLI and SDK surface.** Each operation is a typed SDK function plus a
 thin Commander wrapper. Public functions take operator-facing names and
@@ -196,6 +196,7 @@ are re-export hubs.
 | `src/main.ts` | the `mu` bin (`dist/cli.js`): enables the compile cache, then `import()`s `src/cli.ts` |
 | `src/compile-cache.ts`, `src/state-dir.ts` | best-effort V8 compile cache under `<state>/compile-cache`; builtins-only state-dir resolution (default `<state home>/mu-next`) |
 | `src/cli.ts` | Commander wiring (`buildProgram`, `runCli`) |
+| `src/cli/dashboard-launch.ts`, `src/cli/tui/*` | bare `mu`: `openDashboardOrHelp` (TTY and not `--json` -> `handle()` guards + writable open + lazy `import("./tui/index.js")`, else help). `tui/runtime.ts`: the RO projection connection plus single-flight, throttled, quiet `ambientIngest` on the writable one and a final `ambientFlush` on `close()`; `use-snapshot.ts`: a sequential, cancellable poll loop; `app.tsx`: the shell (S1: counts, errors, `q`/Esc); `index.ts`: `runDashboard`. Imports only from root files, never `cli.ts` |
 | `src/cli/*.ts` | one file per verb namespace, thin wrappers over the SDK; `format.ts` renders tables, `handle.ts` maps errors to exit codes and runs ambient sync |
 | `src/cli/tasks/*.ts` | the `mu task` namespace, including `mu me tasks` / `mu me next`. `records.ts` is the task read boundary: `taskToOutput` (SQL column names, `id` = `local_id`, real `workstream_id`/`owner_id`), `taskRecordCut`/`taskItemCut` (one escaped line <= 400 characters, `cut=N` for what it clipped), `taskPage`/`pageRecords`/`footerLine` (a result serialized and grown to <= 4 KB; the `more=N cut=N next=<same command> --all` footer is reserved first and never sliced); `list`, `next`, `owned-by`, `show` and `tree` all go through it. `mu state` and `mu me` keep the table formatter |
 | `src/cli/log.ts`, `src/cli/log-records.ts`, `src/cli/page-records.ts` | `mu log`: `log-records.ts` is the read boundary (one escaped record <= 400 characters, or a `LogItem` keyed by `ops` columns, bounded to 2 KB; `shrinkItem` bounds every item field; `logPage` pages the final bytes with min 0, `more`/`cut` name `mu log --seq A..B` / `--after S` reads, digits only; `--seq`/`--after` take no scope or filter, each record whole); `--tail` is always NDJSON (`cmdLogTail`: row written, then cursor moves; a failed write throws `TailStopped` carrying the cursor; SIGINT 130, SIGTERM 143). `page-records.ts` is the generic pager `mu workstream list [--torn-down]` shares (`--all` uncapped) |

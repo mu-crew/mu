@@ -22,6 +22,7 @@ import { Command, InvalidArgumentError } from "commander";
 
 import { AgentNotInWorkstreamError, type AgentRow, getAgent, getAgentByPane } from "./agents.js";
 import { wireAgentCommands, wireSelfCommands } from "./cli/agents.js";
+import { openDashboardOrHelp } from "./cli/dashboard-launch.js";
 import { wireDbCommands } from "./cli/db.js";
 import { wireDbQueryCommand } from "./cli/db-query.js";
 import { wireDelegatesCommands } from "./cli/delegates.js";
@@ -831,9 +832,7 @@ export function buildProgram(): Command {
       forwardRootJson(root, leaf);
       forwardRootWorkstream(root, leaf);
     })
-    .action(() => {
-      program.outputHelp();
-    });
+    .action(openDashboardOrHelp(program));
 
   wireWorkstreamCommands(program);
   wireAgentCommands(program);

@@ -164,7 +164,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **operation** | A canonical mu verb, each a thin wrapper over a typed SDK function. | "command", "action" |
 | **qualified ref** | `<workstream>/<name>`, used instead of `-w`. | "prefixed name" |
 | **DB** / **registry** | `<state-dir>/mu.db` and its tables. | "store" |
-| **TUI** | The read-only ink dashboard. The 3.x card TUI (cards, popups, toasts, tick, help overlay) is removed; bare `mu` prints help until the planned dashboard lands. | "GUI" |
+| **TUI** | The read-only ink dashboard. The 3.x card TUI (cards, popups, toasts, tick, help overlay) is removed; bare `mu` on a TTY opens the dashboard (help when piped or `--json`). | "GUI" |
 
 ### Planned terms (mu-next, not shipped)
 
