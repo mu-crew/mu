@@ -26,16 +26,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   A profile is your `--shell` / `--exec` / `--fetch` templates, a `--repo` and
   an optional `--max-sessions`, stored machine-local in the existing
   `host_profiles`. mu fills `{env}`, `{cmd}`, `{local_sock}`, `{remote_sock}`
-  and `{cwd}` in one pass (each value one shell-quoted word, quoted for the
-  context it lands in; `{env}` only the four whitelisted identity variables,
-  never the local DB, state or sync dir; `{{` `}}` literal braces; anything
-  else refused) and runs the result with `/bin/sh -c`. It knows no ssh flags:
+  and `{cwd}` in one pass (each value one shell-quoted word, exactly the text
+  you passed even inside your own quotes; `{cmd:sh}` etc. add a second-shell
+  layer for ssh-style remote command text; `{env}` only the four whitelisted
+  identity variables, every value shell-quoted, never the local DB, state or
+  sync dir; `{{` `}}` literal braces; anything
+  else refused) and runs the result with `/bin/sh -c` as its own process group, reaped on
+  timeout or caller exit before its channel is freed. It knows no ssh flags:
   `host init <n> --ssh` only prints a starter, and `host check` runs only the
   stored `--exec` (host answers, repo, `pi --version`, `pi list` names mu;
   `--agent <n>` also probes that agent's forwarded socket). A failing step is
   reported, never retried (exit 5). `host_channels` (new, machine-local) counts
   every channel against `--max-sessions`: reserved under `BEGIN IMMEDIATE`
-  before the connection opens, released by token, and a refusal names the
+  (the profile's cap is read in that transaction) before the connection opens, released by token, and a refusal names the
   holder (exit 4). A transient channel is reclaimed only when its pid is
   proven gone; an attached one rides the agent's registry id and pane and is
   reclaimed only when the pane is proven dead. `rebuild` reports its rows as

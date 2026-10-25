@@ -3,7 +3,8 @@
 // node:child_process rather than execa: execa's ~110 modules cost 25-40 ms
 // of import time on every process that touches a multiplexer.
 
-import { type ChildProcess, execFile } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
 import { onExit } from "signal-exit";
 
 export interface ExecFileResult {
@@ -32,8 +33,32 @@ function stripFinalNewline(s: string): string {
 const live = new Set<ChildProcess>();
 let removeExitHook: (() => void) | undefined;
 
+/** Children spawned as their own process group leader (`execGroupCapture`). */
+const groups = new WeakSet<ChildProcess>();
+
 function killLive(): void {
-  for (const c of live) c.kill("SIGKILL");
+  for (const c of live) {
+    if (groups.has(c) && c.pid !== undefined) signalGroup(c.pid, "SIGKILL");
+    else c.kill("SIGKILL");
+  }
+}
+
+/** Signal a whole process group; false once no member is left (or it was never ours to signal). */
+function signalGroup(pgid: number, sig: NodeJS.Signals | 0): boolean {
+  try {
+    process.kill(-pgid, sig);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** TERM the group, give it `graceMs`, then KILL; resolves once no member is left. */
+async function reapGroup(pgid: number, graceMs: number): Promise<void> {
+  if (!signalGroup(pgid, 0)) return;
+  signalGroup(pgid, "SIGTERM");
+  for (let waited = 0; waited < graceMs && signalGroup(pgid, 0); waited += 10) await sleep(10);
+  while (signalGroup(pgid, "SIGKILL")) await sleep(10);
 }
 
 function install(): void {
@@ -83,5 +108,59 @@ export function execFileCapture(
     // that read stdin see EOF instead of hanging.
     child.stdin?.end();
     track(child);
+  });
+}
+
+/**
+ * Like execFileCapture, but the command owns a process group and everything it
+ * started: on timeout, when the command exits (a leftover background job
+ * included) and when the parent exits, the whole group is terminated (TERM,
+ * then KILL after `graceMs`) BEFORE the promise settles. For a shell template
+ * whose descendants (a transport) must not outlive the call. The child is
+ * detached from the controlling terminal. A descendant that setsid()s away is
+ * out of reach.
+ */
+export function execGroupCapture(
+  cmd: string,
+  args: readonly string[],
+  opts: { timeoutMs?: number; graceMs?: number } = {},
+): Promise<ExecFileResult> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, [...args], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    child.stdout?.on("data", (d: Buffer) => out.push(d));
+    child.stderr?.on("data", (d: Buffer) => err.push(d));
+    child.stdin?.on("error", () => {});
+    child.stdin?.end();
+    groups.add(child);
+    track(child);
+    let timedOut = false;
+    let settled = false;
+    const finish = (code: number | null): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      const done = (): void => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        resolve({
+          stdout: stripFinalNewline(Buffer.concat(out).toString("utf8")),
+          stderr: stripFinalNewline(Buffer.concat(err).toString("utf8")),
+          exitCode: timedOut ? null : code,
+        });
+      };
+      if (child.pid === undefined) done();
+      else void reapGroup(child.pid, opts.graceMs ?? 500).then(done);
+    };
+    const timer =
+      opts.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            finish(null);
+          }, opts.timeoutMs);
+    child.once("error", () => finish(null)); // spawn failure (ENOENT): no group to reap
+    child.once("exit", (code) => finish(code));
   });
 }

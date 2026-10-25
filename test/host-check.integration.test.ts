@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
-import { addHost } from "../src/hosts.js";
+import { addHost, listHostChannels, reserveHostChannel, runHostTemplate } from "../src/hosts.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { rmFixtureDir } from "./_fs.js";
 import { initGitRepo } from "./_git.js";
@@ -208,6 +208,115 @@ describe("mu host check", () => {
     expect(Date.now() - t).toBeLessThan(3000);
     expect(report.ok).toBe(false);
     expect(report.steps[0]).toMatchObject({ step: "reachable", ok: false });
+  });
+
+  // finding_host_timeout_orphan_channel: a compound template forks (no tail-exec),
+  // so killing only the shell would orphan the transport under a released lease.
+  describe("a timed-out template takes its whole process group with it", () => {
+    const alive = (pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const waitFor = async (f: () => boolean): Promise<boolean> => {
+      for (let i = 0; i < 100 && !f(); i++) await new Promise((r) => setTimeout(r, 50));
+      return f();
+    };
+
+    it("backgrounded and piped descendants are dead and leave no late side effect before the channel is free", async () => {
+      const pidFile = join(dir, "t.pid");
+      const marker = join(dir, "late");
+      addHost(db, {
+        name: "orph",
+        shell: "s",
+        exec: "sh -c {cmd}",
+        fetch: "f",
+        repo: dir,
+        max_sessions: 1,
+      });
+      const cmd = `sh -c 'echo $$ > ${pidFile}; sleep 1; echo x > ${marker}' & wait`;
+      const r = await runHostTemplate(db, "orph", "exec", "first", { cmd }, { timeoutMs: 150 });
+      expect(r.exitCode).toBeNull();
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      // At the moment the channel is released, nothing of the template is left.
+      expect(listHostChannels(db, "orph")).toEqual([]);
+      expect(alive(pid)).toBe(false);
+      await new Promise((res) => setTimeout(res, 1200));
+      expect(existsSync(marker)).toBe(false);
+      await reserveHostChannel(db, "orph", "second");
+    });
+
+    it("a fork-and-wait shape (`|| echo`, pipe to cat) is reaped too", async () => {
+      const pidFile = join(dir, "p.pid");
+      addHost(db, {
+        name: "pipe",
+        shell: "s",
+        exec: `sh -c 'echo $$ > ${pidFile}; exec sleep 30' || echo failed >&2; echo {cmd} | cat >/dev/null`,
+        fetch: "f",
+        repo: dir,
+        max_sessions: 1,
+      });
+      await runHostTemplate(db, "pipe", "exec", "h", { cmd: "x" }, { timeoutMs: 150 });
+      expect(alive(Number(readFileSync(pidFile, "utf8")))).toBe(false);
+    });
+
+    it("a clean exit also reaps a background leftover", async () => {
+      const pidFile = join(dir, "c.pid");
+      addHost(db, {
+        name: "clean",
+        shell: "s",
+        exec: `sh -c 'echo $$ > ${pidFile}; exec sleep 30' & while [ ! -s ${pidFile} ]; do :; done; echo {cmd}`,
+        fetch: "f",
+        repo: dir,
+        max_sessions: 1,
+      });
+      const r = await runHostTemplate(db, "clean", "exec", "h", { cmd: "ok" });
+      expect(r).toMatchObject({ exitCode: 0, stdout: "ok" });
+      expect(await waitFor(() => !alive(Number(readFileSync(pidFile, "utf8"))))).toBe(true);
+    });
+
+    // Needs the built CLI (hosts.ts imports with .js specifiers, so it cannot run from source here).
+    it.runIf(existsSync(join(process.cwd(), "dist", "cli.js")))(
+      "caller termination kills the group, not just the shell",
+      async () => {
+        const pidFile = join(dir, "k.pid");
+        addHost(db, {
+          name: "term",
+          shell: "s",
+          exec: `sh -c 'echo $$ > ${pidFile}; exec sleep 30' || echo failed >&2`,
+          fetch: "f",
+          repo: dir,
+          max_sessions: 1,
+        });
+        const parent = spawn(
+          "node",
+          [join(process.cwd(), "dist", "cli.js"), "host", "check", "term"],
+          {
+            stdio: "ignore",
+            env: { ...process.env, MU_DB_PATH: dbPath, MU_SYNC_DIR: "" },
+          },
+        );
+        const closed = new Promise((res) => parent.once("close", res));
+        try {
+          expect(
+            await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, "utf8") !== ""),
+          ).toBe(true);
+          await new Promise((r) => setTimeout(r, 100));
+          parent.kill("SIGTERM");
+          await closed;
+          expect(await waitFor(() => !alive(Number(readFileSync(pidFile, "utf8"))))).toBe(true);
+        } finally {
+          parent.kill("SIGKILL");
+          try {
+            process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
+          } catch {}
+        }
+      },
+      20_000,
+    );
   });
 
   it("at the cap: refused naming the holder, and the template is never run", async () => {

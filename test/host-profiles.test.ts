@@ -57,18 +57,38 @@ const NASTY = [
 ];
 
 describe("template grammar", () => {
-  // Two layers, like ssh: the local shell, then the remote login shell that
-  // receives the (quoted) command text. The value must survive both as ONE word.
   it.each(NASTY)("unquoted: %j reaches the program as ONE exact word", (value) => {
     expect(sh(expandHostTemplate("printf %s {cmd}", { ...V, cmd: value }))).toBe(value);
   });
 
-  it.each(NASTY)("inside single quotes (remote shell text): %j stays atomic", (value) => {
-    expect(sh(expandHostTemplate("sh -c 'printf %s {cmd}'", { ...V, cmd: value }))).toBe(value);
+  // Quote characters never imply a second shell (finding_host_template_quote_context):
+  // an ordinary quoted local argument receives the value itself.
+  it.each(NASTY)("inside single quotes, one layer: %j is the argument itself", (value) => {
+    expect(sh(expandHostTemplate("printf %s '{cwd}'", { ...V, cwd: value }))).toBe(value);
   });
 
-  it.each(NASTY)("inside double quotes (remote shell text): %j stays atomic", (value) => {
-    expect(sh(expandHostTemplate('sh -c "printf %s {cmd}"', { ...V, cmd: value }))).toBe(value);
+  it.each(NASTY)("inside double quotes, one layer: %j is the argument itself", (value) => {
+    expect(sh(expandHostTemplate('printf %s "{cwd}"', { ...V, cwd: value }))).toBe(value);
+  });
+
+  it.each(NASTY)("sh -c '...{cmd:sh}' (two layers, asked for): %j stays atomic", (value) => {
+    expect(sh(expandHostTemplate("sh -c 'printf %s {cmd:sh}'", { ...V, cmd: value }))).toBe(value);
+  });
+
+  it.each(NASTY)('sh -c "...{cmd:sh}" (two layers, asked for): %j stays atomic', (value) => {
+    expect(sh(expandHostTemplate('sh -c "printf %s {cmd:sh}"', { ...V, cmd: value }))).toBe(value);
+  });
+
+  it.each(NASTY)("unquoted {cmd:sh}: %j is one word quoted for the second shell", (value) => {
+    // The program receives the second shell's text; running that text recovers the value.
+    const text = sh(expandHostTemplate("printf %s {cmd:sh}", { ...V, cmd: value }));
+    expect(sh(`printf %s ${text}`)).toBe(value);
+  });
+
+  it("refuses an unknown modifier, and {env:sh}", () => {
+    expect(() => expandHostTemplate("{cmd:zsh}", V)).toThrow(/modifier/);
+    expect(() => expandHostTemplate("{cmd:}", V)).toThrow(HostTemplateError);
+    expect(() => expandHostTemplate("{env:sh}", V)).toThrow(/env:sh/);
   });
 
   it("one pass: braces inside a replacement are never rescanned", () => {
@@ -82,7 +102,9 @@ describe("template grammar", () => {
   });
 
   it("{{ and }} are literal braces", () => {
-    expect(sh(expandHostTemplate("sh -c 'printf %s {{{cmd}}}'", { ...V, cmd: "x" }))).toBe("{x}");
+    expect(sh(expandHostTemplate("sh -c 'printf %s {{{cmd:sh}}}'", { ...V, cmd: "x" }))).toBe(
+      "{x}",
+    );
   });
 
   it.each(["{nope}", "{CMD}", "{}", "{ cmd}", "{cmd", "cmd}", "$" + "{HOME}"])(
@@ -120,6 +142,41 @@ describe("{env}: whitelisted remote identity only", () => {
     MU_CTL_SOCK: "/tmp/mu-1000/auth/worker-1.sock",
   };
 
+  const WEIRD = [
+    "has space",
+    "it's",
+    "$HOME",
+    "line\nbreak",
+    'q"uote',
+    "`id`",
+    "back\\slash",
+    "semi; echo pwned",
+    "",
+    "{cmd}",
+  ];
+
+  it.each(WEIRD)(
+    "a MU_CTL_SOCK of %j round-trips through the local shell (unquoted {env})",
+    (v) => {
+      const env = hostEnvWords({ ...ids, MU_CTL_SOCK: v });
+      const out = sh(`env -i ${expandHostTemplate("{env}", { ...V, env })} printenv MU_CTL_SOCK`);
+      expect(out).toBe(`${v}\n`);
+    },
+  );
+
+  it.each(WEIRD)("%j round-trips through {env} written inside a second shell's text", (v) => {
+    const env = hostEnvWords({ MU_CTL_SOCK: v });
+    for (const q of ["'", '"']) {
+      const t = `sh -c ${q}env -i {env} printenv MU_CTL_SOCK${q}`;
+      expect(sh(expandHostTemplate(t, { ...V, env }))).toBe(`${v}\n`);
+    }
+  });
+
+  it("empty env is a valid fragment that expands to nothing", () => {
+    expect(hostEnvWords({})).toBe("");
+    expect(sh(expandHostTemplate("env -i {env} printenv", { ...V, env: "" }))).toBe("");
+  });
+
   it("builds assignment words that really are the only variables a command sees", () => {
     const env = hostEnvWords(ids);
     const out = sh(expandHostTemplate("env -i {env} printenv", { ...V, env }));
@@ -137,13 +194,6 @@ describe("{env}: whitelisted remote identity only", () => {
     },
   );
 
-  it.each(["a b", "a;b", "a'b", "$x", "a\nb", "", "a:b"])(
-    "refuses the unsafe value %j (it would not survive an ssh argument join)",
-    (v) => {
-      expect(() => hostEnvWords({ ...ids, MU_AGENT_NAME: v })).toThrow(HostTemplateError);
-    },
-  );
-
   it("expand refuses an {env} value that is not whitelisted assignment words", () => {
     expect(() => expandHostTemplate("{env}", { ...V, env: "MU_DB_PATH=/x" })).toThrow(
       HostTemplateError,
@@ -151,6 +201,13 @@ describe("{env}: whitelisted remote identity only", () => {
     expect(() => expandHostTemplate("{env}", { ...V, env: "MU_AGENT_NAME=a; rm -rf /" })).toThrow(
       HostTemplateError,
     );
+    expect(() =>
+      expandHostTemplate("{env}", { ...V, env: "MU_AGENT_NAME='a' MU_DB_PATH='/x'" }),
+    ).toThrow(HostTemplateError);
+    expect(() => expandHostTemplate("{env}", { ...V, env: "MU_AGENT_NAME='a'; rm -rf /" })).toThrow(
+      HostTemplateError,
+    );
+    expect(() => hostEnvWords({ MU_AGENT_NAME: "a\0b" })).toThrow(HostTemplateError);
   });
 });
 

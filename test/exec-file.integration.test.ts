@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { execFileCapture } from "../src/exec-file.js";
+import { execFileCapture, execGroupCapture } from "../src/exec-file.js";
 
 const node = process.execPath;
 
@@ -57,6 +57,83 @@ describe("execFileCapture", () => {
   });
 });
 
+describe("execGroupCapture", () => {
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const sh = (script: string, opts = {}) => execGroupCapture("/bin/sh", ["-c", script], opts);
+
+  it("captures output and the exit code like execFileCapture", async () => {
+    expect(await sh("echo out; echo err >&2; exit 3")).toEqual({
+      stdout: "out",
+      stderr: "err",
+      exitCode: 3,
+    });
+    expect((await execGroupCapture("mu-no-such-binary-xyz", [])).exitCode).toBeNull();
+  });
+
+  it("a timeout returns null only after the descendants are dead (TERM-ignoring ones get KILL)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-exec-group-"));
+    const pidFile = join(dir, "pid");
+    try {
+      const t = Date.now();
+      const r = await sh(`(trap '' TERM; echo $$ > ${pidFile}; while :; do sleep 1; done) & wait`, {
+        timeoutMs: 150,
+        graceMs: 100,
+      });
+      expect(r.exitCode).toBeNull();
+      expect(Date.now() - t).toBeLessThan(3000);
+      expect(alive(Number(readFileSync(pidFile, "utf8")))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a background leftover of a command that exited is reaped before the result", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-exec-group-"));
+    const pidFile = join(dir, "pid");
+    try {
+      const r = await sh(
+        `sh -c 'echo $$ > ${pidFile}; exec sleep 30' & while [ ! -s ${pidFile} ]; do :; done; echo done`,
+      );
+      expect(r).toMatchObject({ stdout: "done", exitCode: 0 });
+      expect(alive(Number(readFileSync(pidFile, "utf8")))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parent termination kills the whole group, descendants included", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-exec-group-"));
+    const pidFile = join(dir, "pid");
+    const mod = pathToFileURL(join(__dirname, "..", "src", "exec-file.ts")).href;
+    const script = `import { execGroupCapture } from ${JSON.stringify(mod)};
+      await execGroupCapture("/bin/sh", ["-c", ${JSON.stringify(`sh -c 'echo $$ > ${pidFile}; exec sleep 30' || echo no`)}]);`;
+    const parent = spawn(process.execPath, ["--input-type=module", "-e", script], {
+      stdio: "ignore",
+    });
+    const closed = new Promise((res) => parent.once("close", res));
+    try {
+      for (let i = 0; i < 200 && !(existsSync(pidFile) && readFileSync(pidFile, "utf8")); i++)
+        await sleep(25);
+      await sleep(100);
+      parent.kill("SIGTERM");
+      await closed;
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      for (let i = 0; i < 40 && alive(pid); i++) await sleep(25);
+      expect(alive(pid)).toBe(false);
+    } finally {
+      parent.kill("SIGKILL");
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+});
+
 // Parent termination: execa's `cleanup: true` killed in-flight children when
 // the parent died; execFileCapture must too (finding
 // high_executor_children_survive_mu_exit).
@@ -92,7 +169,7 @@ describe("execFileCapture parent-exit cleanup", () => {
       setInterval(() => {}, 1000);`;
     const parentScript = `
       ${hookSrc}
-      import { execFileCapture } from ${JSON.stringify(pathToFileURL(join(__dirname, "..", "src", "exec-file.ts")).href)};
+      import { execFileCapture, execGroupCapture } from ${JSON.stringify(pathToFileURL(join(__dirname, "..", "src", "exec-file.ts")).href)};
       const p = execFileCapture(process.execPath, ["-e", ${JSON.stringify(childScript)}], { timeoutMs: 5000 });
       ${how === "exit" ? `import { existsSync } from "node:fs"; while (!existsSync(${JSON.stringify(pidFile)})) await new Promise((r) => setTimeout(r, 20)); process.exit(0);` : "await p;"}
     `;

@@ -88,8 +88,15 @@ mu host show dev              # templates and the holders of its channels
 ```
 
 - Placeholders: `{env}` (the four `MU_*` identity variables only), `{cmd}`,
-  `{local_sock}`, `{remote_sock}`, `{cwd}`. Each value is one quoted word;
-  write `{{` and `}}` for literal braces. Anything else in braces is refused.
+  `{local_sock}`, `{remote_sock}`, `{cwd}`. Each value is one quoted word and
+  is exactly the text you passed, also inside your own `"..."` or `'...'`.
+  A template that hands command text to a second shell (ssh's remote login
+  shell) says so per placeholder: `{cmd:sh}`, `{cwd:sh}` quote the value for
+  that shell too. Write `{{` and `}}` for literal braces. Anything else in
+  braces is refused.
+- A command that times out, or whose caller is killed, takes its whole process
+  group with it before its channel is freed, so `--max-sessions` never
+  undercounts a live transport.
 - `--max-sessions N` counts every channel mu holds to the host. At the cap mu
   refuses with one line naming the holder.
 - `host check --agent <name> -w <ws>` also probes that agent's forwarded

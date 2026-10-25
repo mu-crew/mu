@@ -14,6 +14,7 @@ import {
   listHostChannels,
   releaseHostChannel,
   releaseHostChannelsForAgent,
+  removeHost,
   reserveHostChannel,
   withHostChannel,
 } from "../src/hosts.js";
@@ -240,6 +241,64 @@ describe("reclaiming dead holders (fail closed)", () => {
   });
 });
 
+describe("admission is decided against the current profile (finding_host_profile_admission_race)", () => {
+  const gate = () => {
+    let open!: () => void;
+    const p = new Promise<void>((r) => {
+      open = r;
+    });
+    return { p, open };
+  };
+
+  it("a profile removed and re-added with a cap during the probe is admitted against the NEW cap", async () => {
+    const db = conn();
+    addHost(db, profile("dev", null));
+    const old = await reserveHostChannel(db, "dev", "old");
+    bindHostChannel(db, old, { agentId: 1, paneId: "%1" });
+    const g = gate();
+    const pending = reserveHostChannel(db, "dev", "new", {
+      paneAlive: async () => {
+        await g.p;
+        return false;
+      },
+    });
+    releaseHostChannelsForAgent(db, 1, "%1");
+    expect(removeHost(db, "dev")).toBe(true);
+    addHost(db, profile("dev", 1));
+    await reserveHostChannel(db, "dev", "first");
+    g.open();
+    await expect(pending).rejects.toBeInstanceOf(HostChannelBusyError);
+    expect(holders(db)).toEqual(["first"]);
+  });
+
+  it("a profile removed during the probe leaves no orphan channel row", async () => {
+    const db = conn();
+    addHost(db, profile("dev", null));
+    const old = await reserveHostChannel(db, "dev", "old");
+    bindHostChannel(db, old, { agentId: 1, paneId: "%1" });
+    const g = gate();
+    const pending = reserveHostChannel(db, "dev", "new", {
+      paneAlive: async () => {
+        await g.p;
+        return false;
+      },
+    });
+    releaseHostChannelsForAgent(db, 1, "%1");
+    removeHost(db, "dev");
+    g.open();
+    await expect(pending).rejects.toThrow(/no host profile/);
+    expect(listHostChannels(db)).toEqual([]);
+  });
+
+  it("withHostChannel hands run the profile as admitted", async () => {
+    const db = conn();
+    addHost(db, profile("dev", 1));
+    await withHostChannel(db, "dev", "a", async (p) => {
+      expect(p).toMatchObject({ name: "dev", max_sessions: 1, repo: "/r" });
+    });
+  });
+});
+
 describe("attached channels ride a pane, not an invocation", () => {
   const live = new Map<string, boolean | "throw">();
   const paneAlive = async (p: string): Promise<boolean> => {
@@ -327,6 +386,48 @@ describe("attached channels ride a pane, not an invocation", () => {
     expect(bindHostChannel(db, { ...l, token: "wrong" }, { agentId: 1, paneId: "%1" })).toBe(false);
     releaseHostChannel(db, l);
     expect(bindHostChannel(db, l, { agentId: 1, paneId: "%1" })).toBe(false);
+  });
+
+  it("reclaim deletes only the identity that was probed dead (ABA: same token, new pane)", async () => {
+    const db = conn();
+    addHost(db, profile("dev", 1));
+    await attach(db, "agent:a", 7, "%5");
+    let open!: () => void;
+    const g = new Promise<void>((r) => {
+      open = r;
+    });
+    const pending = reserveHostChannel(db, "dev", "x", {
+      paneAlive: async () => {
+        await g;
+        return false; // %5 was dead...
+      },
+    });
+    // ...but the row now names a different live identity under the same holder+token.
+    db.prepare("UPDATE host_channels SET agent_id = 8, pane_id = '%9'").run();
+    open();
+    await expect(pending).rejects.toBeInstanceOf(HostChannelBusyError);
+    expect(listHostChannels(db, "dev")[0]).toMatchObject({ agent_id: 8, pane_id: "%9" });
+  });
+
+  it("reclaim keeps a replacement under a new token (release + re-reserve during the probe)", async () => {
+    const db = conn();
+    addHost(db, profile("dev", 1));
+    const l = await attach(db, "agent:a", 7, "%5");
+    let open!: () => void;
+    const g = new Promise<void>((r) => {
+      open = r;
+    });
+    const pending = reserveHostChannel(db, "dev", "x", {
+      paneAlive: async () => {
+        await g;
+        return false;
+      },
+    });
+    releaseHostChannel(db, l);
+    await attach(db, "agent:a", 8, "%9");
+    open();
+    await expect(pending).rejects.toBeInstanceOf(HostChannelBusyError);
+    expect(holders(db)).toEqual(["agent:a"]);
   });
 
   it("the attached lease releases by its token, like any other", async () => {
