@@ -493,12 +493,9 @@ describe("waitForTasks", () => {
   });
 
   // PRECEDENCE: deterministic SDK-level proof that a beforePoll throw
-  // (ReaperDetectedDuringWaitError equivalent here — we throw a
-  // sentinel from beforePoll) wins over the in-snapshot stuck-throw,
-  // because beforePoll runs FIRST in the wait loop. Mirrors the
-  // exit-6-vs-exit-7 precedence rule the CLI relies on (the CLI's
-  // beforePoll throws ReaperDetectedDuringWaitError; this test asserts
-  // the throw escapes BEFORE waitForTasks gets to snapshot's stuck-check).
+  // (a sentinel here) wins over the in-snapshot stuck-throw, because
+  // beforePoll runs FIRST in the wait loop; the throw escapes BEFORE
+  // waitForTasks gets to snapshot's stuck-check.
   it("--on-stall exit: a beforePoll throw pre-empts the stuck-check throw (precedence)", async () => {
     insertAgent(db, {
       name: "w-precedence",

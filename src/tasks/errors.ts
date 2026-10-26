@@ -253,62 +253,12 @@ export class CycleError extends Error implements HasNextSteps {
 }
 
 /**
- * Thrown by the `mu task wait` CLI wrapper when the per-poll
- * reconciler detects that a watched task transitioned
- * `IN_PROGRESS → OPEN` between polls (the reaper saw the owner's
- * pane was gone and flipped the task back). With `--status CLOSED`
- * (the default) the wait can never satisfy by progress — the worker
- * is dead — so we abort fast instead of running out the operator's
- * `--timeout`.
- *
- * Maps to exit code 6 (REAPER_DETECTED) via the cli.ts handler. The
- * suppression rule (only fire when target=CLOSED) lives in the
- * caller; this error type is a pure data carrier.
- *
- * Surfaced live by task_wait_reconcile_dead_panes (twice in one
- * v0.3 dispatch wave: tmux restart killed worker panes; `mu task
- * wait --timeout 1800` blocked silently for 25 min instead of
- * failing in seconds).
- */
-export class ReaperDetectedDuringWaitError extends Error implements HasNextSteps {
-  override readonly name = "ReaperDetectedDuringWaitError";
-  constructor(
-    public readonly taskId: string,
-    public readonly previousOwner: string | null,
-    public readonly workstream: string,
-  ) {
-    const ownerBit = previousOwner !== null ? `owner=${previousOwner}` : "owner=<unknown>";
-    super(
-      `task ${taskId} was IN_PROGRESS ${ownerBit} until just now; reaper detected dead pane and flipped to OPEN. wait abandoned. Re-dispatch a worker and retry.`,
-    );
-  }
-  errorNextSteps(): NextStep[] {
-    const ws = this.workstream;
-    return [
-      {
-        intent: "Inspect the task's current state",
-        command: `mu task show ${this.taskId} -w ${ws}`,
-      },
-      {
-        intent: "List live agents in the workstream (post-reap)",
-        command: `mu agent list -w ${ws}`,
-      },
-      {
-        intent: "Re-dispatch a fresh worker, then re-run the wait",
-        command: `mu agent spawn <name> -w ${ws}  &&  mu task claim ${this.taskId} --for <name> -w ${ws}`,
-      },
-    ];
-  }
-}
-
-/**
  * Thrown by the `mu task wait` CLI wrapper when `--on-stall exit` is
  * in effect and the existing `--stuck-after` predicate fires on a
  * watched task — the task is IN_PROGRESS, owned by a registered
  * agent whose detected status is `needs_input` for `>= stuckAfterMs`.
  *
- * Pairs with `ReaperDetectedDuringWaitError` (exit 6, dead pane).
- * Stall is the AMBIGUOUS sibling: the worker is alive but not
+ * Stall is the AMBIGUOUS case: the worker is alive but not
  * progressing — the operator decides whether it's transient (poke +
  * retry) or terminal (release + reopen). Exit code 7 = STALL_DETECTED
  * via classifyError, distinct from 6 so consumer scripts can branch.

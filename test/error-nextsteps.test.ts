@@ -66,7 +66,6 @@ import {
   CycleError,
   HumanTaskError,
   InvalidSubstateError,
-  ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
@@ -189,11 +188,6 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["--self", "--for"],
   },
   { error: new CycleError("a", "b"), label: "CycleError", expectedTokens: ["a", "b"] },
-  {
-    error: new ReaperDetectedDuringWaitError("wait_task", "worker-1", "wait-ws"),
-    label: "ReaperDetectedDuringWaitError",
-    expectedTokens: ["wait_task", "wait-ws"],
-  },
   {
     error: new StallDetectedDuringWaitError("wait_task", "worker-1", "wait-ws", 300),
     label: "StallDetectedDuringWaitError",

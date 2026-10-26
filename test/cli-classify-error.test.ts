@@ -30,7 +30,6 @@ import {
   CrossWorkstreamEdgeError,
   CycleError,
   InvalidSubstateError,
-  ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
@@ -119,8 +118,7 @@ describe("classifyError exit-code map", () => {
     // f_doctor_fail_row_exit0: a doctor FAIL row shares drift's lane.
     [new HazardFailError(["db-vs-sync"]), 5, "doctor"],
 
-    // switch branches 9-10: wait-specific process states
-    [new ReaperDetectedDuringWaitError("wait_task", "worker-1", "ws"), 6, "reaper"],
+    // switch branch 9: wait-specific process state
     [new StallDetectedDuringWaitError("wait_task", "worker-1", "ws", 300), 7, "stall"],
 
     // final fallthrough: generic catch-all (non-typed errors)
