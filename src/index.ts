@@ -333,8 +333,12 @@ export {
   type NextResult,
 } from "./next.js";
 export {
+  COURSE_CHECK_AGE_MS,
+  COURSE_CHECK_CLOSED,
   capPlan,
   computeNext,
+  computeNotices,
+  courseCheckHint,
   type HintMove,
   type NextContext,
   type NextOutcome,

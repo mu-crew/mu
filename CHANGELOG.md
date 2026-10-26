@@ -76,6 +76,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   POSIX quoting (a test runs each through `sh`); an unguarded destructive move throws; `capPlan` drops
   an oversized `seq` whole. `agentRefOf`, the claim prompt and `resumeCommand` now come from this one
   builder. Exported: `computeNext`, `renderArgv`, `renderPlan`, `capPlan`, `NextPlan`.
+- **Course check due** (`v_course_hint`; SDK, rule only). `courseCheckHint(db, ws)` in
+  `src/next-hints.ts` returns `course check due: <n> closed since <date> (recipes/course-correct.md)`
+  once a workstream has 10 CLOSED/done work tasks (counted by close-note time), or 24 h with at least
+  one, since its newest `COURSE CHECK` note, or since it was created if there is none. A newer note
+  clears it. The thresholds are constants (`COURSE_CHECK_CLOSED`, `COURSE_CHECK_AGE_MS`), not flags or
+  env. `computeNotices(db, ctx)` returns it as the one-line notices beside `next`; printing them in
+  `mu state` / `mu wait` is the output finalisation (`v_hint_wire`). Read-only, one query, no schema change.
 - **Switch note** (`v_cutover_runbook`, docs only). `docs/guide/upgrade.md` "Switch to mu-next" covers
   the per-machine switch with no flag day: install beside 3.x, move workstreams with the Move recipe,
   keep 3.x as a read-only archive, and roll back by going back to 3.x (`task unpark` for a moved

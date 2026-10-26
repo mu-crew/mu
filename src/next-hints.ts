@@ -207,6 +207,39 @@ function ownedWaitMove(db: Db, callers: readonly string[], ws?: string): HintMov
   return { argv: ws === undefined ? ["mu", "wait"] : ["mu", "wait", "-w", ws] };
 }
 
+/** A course check is due after this many CLOSED/done work tasks since the last one... */
+export const COURSE_CHECK_CLOSED = 10;
+/** ...or this long since it (with at least one closed since). Constants: no flag, no env. */
+export const COURSE_CHECK_AGE_MS = 24 * 3600_000;
+
+/**
+ * The course-correct trigger (docs/mu-next/skill-draft/recipes/course-correct.md), read from
+ * state, never remembered: since the newest note of `ws` starting `COURSE CHECK` (none: the
+ * workstream's creation), count the CLOSED/done work tasks by their close note's time (a later
+ * note does not move it). One line when due, else undefined.
+ * Read-only; one query.
+ */
+export function courseCheckHint(db: Db, ws: string, now = Date.now()): string | undefined {
+  const row = db
+    .prepare(
+      `WITH w AS (SELECT id, created_at FROM workstreams WHERE name = ? AND torn_down_at IS NULL),
+            a AS (SELECT COALESCE(
+              (SELECT MAX(n.created_at) FROM task_notes n JOIN tasks t ON t.id = n.task_id
+                WHERE t.workstream_id = w.id AND n.content LIKE 'COURSE CHECK%'),
+              w.created_at) AS since, w.id AS wid FROM w)
+       SELECT a.since AS since,
+              (SELECT COUNT(*) FROM tasks t WHERE t.workstream_id = a.wid AND t.status = 'CLOSED'
+                  AND t.substate = 'done' AND t.kind = 'work' AND (SELECT MAX(c.created_at)
+                    FROM task_notes c WHERE c.task_id = t.id AND c.kind = 'close') > a.since) AS closed
+         FROM a`,
+    )
+    .get(ws) as { since: string; closed: number } | undefined;
+  if (row === undefined || row.closed === 0) return undefined;
+  const old = now - Date.parse(row.since) >= COURSE_CHECK_AGE_MS;
+  if (row.closed < COURSE_CHECK_CLOSED && !old) return undefined;
+  return `course check due: ${row.closed} closed since ${row.since.slice(0, 16)}Z (recipes/course-correct.md)`;
+}
+
 /**
  * The `next` of a result: the outcome's own follow-up first, then (unless a caller has an
  * open human need, which stops everything it would start) `mu next` over authorised work and
@@ -227,4 +260,17 @@ export function computeNext(db: Db, ctx: NextContext): NextPlan {
     }
   }
   return capPlan(renderPlan("alt", moves)).next;
+}
+
+/**
+ * The one-line notices of a result, beside its `next` (they are not commands): today only
+ * `courseCheckHint` for the call's workstream. The output finalisation (`mu state`, `mu wait`)
+ * prints them; empty when nothing is due. Read-only.
+ */
+export function computeNotices(db: Db, ctx: NextContext, now = Date.now()): string[] {
+  const hint =
+    ctx.workstream === undefined || isScratchWorkstream(ctx.workstream)
+      ? undefined
+      : courseCheckHint(db, ctx.workstream, now);
+  return hint === undefined ? [] : [hint];
 }

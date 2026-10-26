@@ -11,8 +11,12 @@ import { resumeCommand } from "../src/cli/wait-output.js";
 import { type Db, openDb } from "../src/db.js";
 import { recordHumanNeeded } from "../src/human-needed.js";
 import {
+  COURSE_CHECK_AGE_MS,
+  COURSE_CHECK_CLOSED,
   capPlan,
   computeNext,
+  computeNotices,
+  courseCheckHint,
   type NextContext,
   renderArgv,
   renderPlan,
@@ -20,7 +24,8 @@ import {
 } from "../src/next-hints.js";
 import type { NextPlan } from "../src/output-contract.js";
 import { authorizeTasks } from "../src/task-auto.js";
-import { addTask } from "../src/tasks/edit.js";
+import { addNote, addTask } from "../src/tasks/edit.js";
+import { closeTask } from "../src/tasks.js";
 import { registerOwnedWait } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -265,5 +270,88 @@ describe("rendering: quoting, ranking, guards, caps", () => {
     const wide: NextPlan = { mode: "alt", commands: [long("é"), long("é")] };
     expect(capPlan(wide, 700).next?.commands).toHaveLength(1);
     expect(capPlan(null)).toEqual({ next: null, cut: 0 });
+  });
+});
+
+describe("courseCheckHint / computeNotices: the course-correct trigger", () => {
+  const H = 3600_000;
+  /** Add `n` work tasks to `ws` and close them done (each writes its close note now). */
+  const closeN = (n: number, ws = "d", from = 0): void => {
+    for (let i = from; i < from + n; i++) {
+      addTask(db, { workstream: ws, localId: `c${i}`, title: `c${i}` });
+      closeTask(db, `c${i}`, { workstream: ws, evidence: "ok" });
+    }
+  };
+  const wsCreated = (ws = "d"): number =>
+    Date.parse(
+      (
+        db.prepare("SELECT created_at FROM workstreams WHERE name = ?").get(ws) as {
+          created_at: string;
+        }
+      ).created_at,
+    );
+  const courseNote = (): void => {
+    addTask(db, { workstream: "d", localId: "cc", title: "course" });
+    addNote(db, "cc", "COURSE CHECK: on track", { workstream: "d" });
+  };
+
+  it("a fresh workstream: nothing due, even a day later", () => {
+    expect(courseCheckHint(db, "d")).toBeUndefined();
+    expect(courseCheckHint(db, "d", wsCreated() + 48 * H)).toBeUndefined();
+  });
+
+  it(`fires at ${COURSE_CHECK_CLOSED} closed work tasks, not at ${COURSE_CHECK_CLOSED - 1}`, () => {
+    closeN(COURSE_CHECK_CLOSED - 1);
+    expect(courseCheckHint(db, "d")).toBeUndefined();
+    closeN(1, "d", COURSE_CHECK_CLOSED - 1);
+    expect(courseCheckHint(db, "d")).toMatch(
+      /^course check due: 10 closed since \d{4}-\d\d-\d\dT\d\d:\d\dZ \(recipes\/course-correct\.md\)$/,
+    );
+  });
+
+  it("fires at 24 h with one closed task, not at 23 h", () => {
+    closeN(1);
+    const t0 = wsCreated();
+    expect(courseCheckHint(db, "d", t0 + 23 * H)).toBeUndefined();
+    expect(courseCheckHint(db, "d", t0 + COURSE_CHECK_AGE_MS)).toMatch(
+      /^course check due: 1 closed/,
+    );
+  });
+
+  it("a newer COURSE CHECK note clears it; a later note on an earlier close does not re-count it", async () => {
+    closeN(COURSE_CHECK_CLOSED);
+    expect(courseCheckHint(db, "d")).toBeDefined();
+    courseNote();
+    expect(courseCheckHint(db, "d")).toBeUndefined();
+    // Notes bump updated_at, never the close note's time; 5 ms so they are strictly later.
+    await new Promise((r) => setTimeout(r, 5));
+    for (let i = 0; i < COURSE_CHECK_CLOSED; i++) {
+      addNote(db, `c${i}`, "after the check", { workstream: "d" });
+    }
+    expect(courseCheckHint(db, "d")).toBeUndefined();
+    closeN(COURSE_CHECK_CLOSED, "d", COURSE_CHECK_CLOSED);
+    expect(courseCheckHint(db, "d")).toMatch(/^course check due: 10 closed/);
+  });
+
+  it("counts only CLOSED/done work tasks of THIS workstream", () => {
+    ensureWorkstream(db, "other");
+    closeN(COURSE_CHECK_CLOSED, "other");
+    expect(courseCheckHint(db, "d")).toBeUndefined();
+    for (let i = 0; i < COURSE_CHECK_CLOSED; i++) {
+      addTask(db, { workstream: "d", localId: `r${i}`, title: `r${i}` });
+      closeTask(db, `r${i}`, { workstream: "d", as: "rejected", why: "no" });
+    }
+    expect(courseCheckHint(db, "d")).toBeUndefined();
+  });
+
+  it("computeNotices: one line, scoped, well inside the 4 KB result cap; read-only", () => {
+    closeN(COURSE_CHECK_CLOSED);
+    const ops = (db.prepare("SELECT COUNT(*) AS n FROM ops").get() as { n: number }).n;
+    const lines = computeNotices(db, { callers: [], workstream: "d" });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toContain("\n");
+    expect(Buffer.byteLength(lines[0] ?? "")).toBeLessThan(200);
+    expect(computeNotices(db, { callers: [] })).toEqual([]);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM ops").get() as { n: number }).n).toBe(ops);
   });
 });
