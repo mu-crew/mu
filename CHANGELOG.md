@@ -16,6 +16,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `test/_setup.ts` points `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_CONFIG_HOME` at a per-fork temp dir
   (removed on exit), and `test/_real-dir-guard.ts` throws on any `fs` write under the real dirs, like the
   real-DB guard in `openDb`. Fixture delegate answers had been landing in `~/.cache/mu/delegate-answers`.
+- **A deliberate `mu agent close` of a finished worker is no longer a `dead` wait event**
+  (`df1_wait_stale_dead`, dogfood-1 F1). The caller's registration kept the closed agent's ref, so
+  the next wait saw an owned agent with no row and exited 6 `dead` ("the work is not done") even
+  though its task was already CLOSED. `closeAgent` now discharges the agent ref and its unconsumed
+  fence from every registration (`dischargeAgent`) when the row was deleted and the agent held no
+  IN_PROGRESS task. A busy worker closed on purpose is still reported (the reaper reopens its task,
+  exit 6), and a ghost that was pruned, not closed, stays owed. The `dead` reason no longer claims
+  unfinished work for an agent ref (it says "gone (its pane died or it was closed)"); a task whose
+  owner died keeps "the work is not done".
 
 ### Added
 

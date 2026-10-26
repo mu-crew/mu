@@ -256,7 +256,10 @@ function reasonOf(result: WaitResult, signal: string | undefined, open: number):
     case "input":
       return `${who} is blocked on a dialog${snap?.blocked !== undefined ? ` (${snap.blocked.kind})` : ""}; its run is not finished`;
     case "dead":
-      return `${who} is gone (its pane died); the work is not done`;
+      // A task's owner died before it closed: that work is not done. An agent ref says only that it is gone.
+      return e.ref?.kind === "task"
+        ? `${who} is gone (its owner's pane died); the work is not done`
+        : `${who} is gone (its pane died or it was closed)`;
     case "stall":
       return `${who}'s owner needs attention (needs_input past --stuck-after)${
         result.action === undefined

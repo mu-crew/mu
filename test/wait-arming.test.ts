@@ -520,3 +520,121 @@ describe("send --wait / claim --and-wait", () => {
     expect(isWaitVerbArgv(argv("agent", "wait", "w", "--wait"))).toBe(false);
   });
 });
+
+describe("df1_wait_stale_dead: a deliberate close of a finished worker is not a death", () => {
+  const closeTaskAs = (id: string): void => {
+    closeTask(db, id, { workstream: "auth", evidence: "done" });
+  };
+  /** Wait on `t2` (still open) for a moment: the only thing that can end it early is a false event. */
+  const waitOpen = () => as(SESSION, ["task", "wait", "t2", "-w", "auth", "--timeout", "0.3"]);
+  /** `mu agent close` as the orchestrator runs it: the preview names the revision, then the apply. */
+  async function closeWorker(): Promise<void> {
+    const p = await as(SESSION, ["agent", "close", "worker-1", "-w", "auth", "--json"]);
+    const rev = (p.data as { revision: number }).revision;
+    const done = await as(SESSION, [
+      "agent",
+      "close",
+      "worker-1",
+      "-w",
+      "auth",
+      "--if",
+      String(rev),
+      "--json",
+    ]);
+    expect(done.exitCode).toBeNull();
+    expect(done.data).toMatchObject({ deletedRow: true });
+  }
+  /** Dispatch t1 to worker-1, let it finish, and have the orchestrator take the close (a delivered wait). */
+  async function dispatchAndFinish(armBySend: boolean): Promise<void> {
+    liveMux();
+    seedAgent();
+    seedTask("t1");
+    seedTask("t2");
+    await serve("worker-1");
+    if (armBySend) await as(SESSION, ["agent", "send", "worker-1", "go", "-w", "auth", "--json"]);
+    await as(SESSION, ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"]);
+    closeTaskAs("t1");
+    const first = await as(SESSION, ["task", "wait", "t1", "-w", "auth"]);
+    expect(first.data).toMatchObject({ firing: { kind: "closed", ref: "task:auth/t1" } });
+  }
+
+  it("claim --for, task CLOSED and delivered, agent close, wait on another OPEN task: no dead event", async () => {
+    await dispatchAndFinish(false);
+    await closeWorker();
+    const r = await waitOpen();
+    expect(r.exitCode).toBeNull();
+    expect(r.data).toMatchObject({ exit: 0, timedOut: true, firing: { kind: "heartbeat" } });
+    expect(reg(CALLER)?.refs.some((x) => x.kind === "agent")).toBe(false);
+  });
+
+  it("provenance-registered worker (the caller spawned it, it claimed its own task), same flow: no dead event", async () => {
+    liveMux();
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%worker-1",
+      cli: "pi",
+      spawner: CALLER,
+    });
+    seedTask("t1");
+    seedTask("t2");
+    await serve("worker-1");
+    await as({ managed: "auth/worker-1" }, ["task", "claim", "t1", "-w", "auth", "--json"]);
+    // a wait registers the spawned worker and its task by provenance, then delivers the close
+    const t1 = await as(SESSION, ["wait", "-w", "auth", "--timeout", "0.3"]);
+    expect(reg(CALLER)?.refs.some((x) => x.kind === "agent")).toBe(true);
+    closeTaskAs("t1");
+    const first = await as(SESSION, ["wait", "-w", "auth"]);
+    expect(first.data).toMatchObject({ firing: { kind: "closed", ref: "task:auth/t1" } });
+    expect(t1.exitCode).toBeNull();
+    await closeWorker();
+    const r = await waitOpen();
+    expect((r.data as { firing: { kind: string } }).firing.kind).not.toBe("dead");
+    expect(r.data).toMatchObject({ exit: 0, timedOut: true });
+  });
+
+  it("send-armed worker (agent ref + fence), same flow: no dead event, the fence is dropped with the ref", async () => {
+    await dispatchAndFinish(true);
+    await closeWorker();
+    const r = await waitOpen();
+    expect((r.data as { firing: { kind: string } }).firing.kind).not.toBe("dead");
+    expect(r.data).toMatchObject({ exit: 0, timedOut: true });
+    expect(reg(CALLER)?.baselines).toEqual({});
+  });
+
+  it("another caller's registration for the closed agent is discharged too", async () => {
+    await dispatchAndFinish(false);
+    await as({ pi: "other" }, ["agent", "send", "worker-1", "hi", "-w", "auth", "--json"]);
+    expect(reg("pi:other")?.refs).toHaveLength(1);
+    await closeWorker();
+    expect(reg("pi:other")?.refs).toEqual([]);
+  });
+
+  it("closing a worker that still holds an UNFINISHED task: the task is reported dead (the work is not done)", async () => {
+    liveMux();
+    seedAgent();
+    seedTask("t2");
+    await serve("worker-1");
+    await as(SESSION, ["task", "claim", "t2", "--for", "worker-1", "-w", "auth", "--json"]);
+    await closeWorker();
+    const r = await waitOpen();
+    expect(r.exitCode).toBe(6);
+    expect(r.data).toMatchObject({ firing: { kind: "dead" } });
+    // the task it left unfinished is among the dead snapshots, so the loop can recover it
+    const snaps = (r.data as { snapshots: { ref: string; dead: boolean }[] }).snapshots;
+    expect(snaps.some((x) => x.ref === "task:auth/t2")).toBe(true);
+  });
+
+  it("a worker that DIES (row pruned, no agent close) still fires dead for its agent ref; the reason does not claim unfinished work", async () => {
+    liveMux();
+    seedAgent();
+    seedTask("t2");
+    await serve("worker-1");
+    await as(SESSION, ["agent", "send", "worker-1", "go", "-w", "auth", "--json"]);
+    db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
+    const r = await waitOpen();
+    expect(r.exitCode).toBe(6);
+    expect(r.data).toMatchObject({ firing: { kind: "dead", ref: "agent:auth/worker-1" } });
+    expect((r.data as { reason: string }).reason).not.toMatch(/work is not done/);
+  });
+});
