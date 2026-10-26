@@ -20,12 +20,10 @@
 // See test/README.md § "Mux tests". Short version: if you call
 // `installMux()` you are in the FAST tier and must stay pure. If you
 // need a real multiplexer you are writing an `*.integration.test.ts`
-// and must gate on `tmuxIntegrationAvailable()` /
-// `herdrIntegrationAvailable()`.
+// and must gate on `tmuxIntegrationAvailable()`.
 
 import { execa } from "execa";
 import {
-  isHerdrStatusUsable,
   type MuxBackend,
   type MuxBackendName,
   muxByName,
@@ -301,30 +299,6 @@ export async function herdrTestExec(args: readonly string[]): Promise<MuxExecRes
     stderr: result.stderr ?? "",
     exitCode: result.exitCode ?? null,
   };
-}
-
-/**
- * True iff a herdr server is RUNNING and protocol-COMPATIBLE right now.
- *
- * The herdr analogue of `$TMUX`-gating, but stricter: an installed
- * binary is not enough, because a herdr whose server is down cannot
- * drive a single pane. Mirrors `herdrBackend.available()`'s parse of
- * the one non-JSON command.
- *
- * Deliberately probes the DEFAULT server (no `--session`): the question
- * is "does this box run herdr at all", which is a property of the
- * install, not of our test session. It is a read-only `status` call —
- * the one herdr command that is safe to point anywhere.
- *
- * Reuses the BACKEND's parser rather than re-implementing the regexes.
- * The hand-rolled copy that used to live here silently stopped matching
- * when herdr 0.9.0 renamed `compatible:` to `endpoint_compatible:`,
- * which is exactly the drift one shared function prevents.
- */
-export async function herdrIntegrationAvailable(): Promise<boolean> {
-  const result = await execa("herdr", ["status"], { reject: false }).catch(() => undefined);
-  if (result === undefined || result.exitCode !== 0) return false;
-  return isHerdrStatusUsable(result.stdout ?? "");
 }
 
 /**

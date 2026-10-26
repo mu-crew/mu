@@ -20,21 +20,10 @@ import {
 
 const bytes = (s: string): number => Buffer.byteLength(s);
 
-/** Longest command a hint echoes back (one page also holds a second hint and its records). */
-export const COMMAND_MAX_BYTES = 1024;
 /** A fixed column (source, scope, ...) is clipped to this many characters. */
 const COLUMN_CHARS = 64;
 /** One JSON item's own document stays within this, so a page always has room for its metadata. */
 export const ITEM_BYTES = 2048;
-
-/** `cmd` when it is one inert line of at most `max` bytes, else `fallback()`: a hint must run as printed. */
-export function boundedCommand(
-  cmd: string,
-  fallback: () => string,
-  max = COMMAND_MAX_BYTES,
-): string {
-  return bytes(cmd) > max || escapeRecordText(cmd) !== cmd ? fallback() : cmd;
-}
 
 /** `s` clipped to `max` code points; `cut` counts the code points dropped. */
 export function clipPlain(s: string, max: number): { text: string; cut: number } {

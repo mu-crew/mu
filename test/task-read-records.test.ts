@@ -14,7 +14,7 @@ import {
   jsonDocument,
   RECORD_CHARS,
   taskPage,
-  taskRecord,
+  taskRecordCut,
   taskToOutput,
 } from "../src/cli/tasks/records.js";
 import {
@@ -93,6 +93,8 @@ const rowOf = (id: string, ws = WS) => {
 };
 // biome-ignore lint/suspicious/noControlCharactersInRegex: SGR strip
 const plain = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
+
+const taskRecord = (...a: Parameters<typeof taskRecordCut>): string => taskRecordCut(...a).line;
 
 describe("taskToOutput: the SQL-keyed boundary", () => {
   it("emits exactly the SQL columns; id is the local_id; FKs are the real numbers", () => {

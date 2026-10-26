@@ -17,7 +17,6 @@
 // line/paragraph-separator character as `\u{hex}`.
 
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../../output-contract.js";
-import { shellWord } from "../../shell-quote.js";
 import { formatPair } from "../../tasks/status.js";
 import type { TaskRow } from "../../tasks.js";
 
@@ -145,10 +144,6 @@ export function taskToOutput(
 /** Title bound of a `show` (its own 4 KB result has a task, edges and notes to share; `show` shrinks it to fit). */
 export const SHOW_TITLE_CHARS = 600;
 
-/** The way back from any clipped field of one task: `show --all` prints the task whole. */
-export const showAllCommand = (row: Pick<TaskRow, "name" | "workstreamName">): string =>
-  `mu task show ${shellWord(row.name)} -w ${shellWord(row.workstreamName)} --all`;
-
 /** What a task read says when it cut something: `more=N` records left out, `cut=N` characters clipped, and the one command that prints it all. */
 export interface Cuts {
   more: number;
@@ -189,10 +184,6 @@ export function taskItemCut(
   if (item.owner !== undefined) item.owner = clip(item.owner, JSON_FIELD_CHARS);
   return { item, cut };
 }
-
-/** `taskItemCut` for a single task (`show`, `tree`). */
-export const taskItem = (row: TaskRow, opts: Parameters<typeof taskItemCut>[1] = {}): TaskOutput =>
-  taskItemCut(row, opts).item;
 
 // ─── Text records ──────────────────────────────────────────────────────
 
@@ -286,9 +277,6 @@ export function taskRecordCut(row: TaskRow, opts: RecordOpts = {}): { line: stri
   const { text, cut } = clipEscaped(row.title, room);
   return { line: `${lean}\t${text}…`, cut: cut + dropped };
 }
-
-export const taskRecord = (row: TaskRow, opts: RecordOpts = {}): string =>
-  taskRecordCut(row, opts).line;
 
 // ─── Paging ────────────────────────────────────────────────────────────
 

@@ -117,14 +117,6 @@ export const PANE_LIST = JSON.stringify({
   },
 });
 
-export const PANE_SPLIT = JSON.stringify({
-  id: "cli:pane:split",
-  result: {
-    pane: { cwd: "/tmp", focused: false, pane_id: "w1:p3", tab_id: "w1:t1", workspace_id: "w1" },
-    type: "pane_info",
-  },
-});
-
 export const PANE_GET = JSON.stringify({
   id: "cli:pane:get",
   result: {
