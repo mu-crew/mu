@@ -262,7 +262,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (`migrateLegacyWorkspaces`) and the missing-`capture_version` repair are gone. SDK/test-only
   exports removed: `capRecords`, `formatReadyTable`, `formatTaskListTable`, `boundedCommand`,
   `COMMAND_MAX_BYTES`, `showAllCommand`, `taskItem`, `taskRecord`, `tryResolveTaskId`,
-  `tryResolveAgentId`, `isUnscheduled`, `UNSCHEDULED_SUBSTATES`, `cmdMe`,
+  `tryResolveAgentId`, `ReaperDetectedDuringWaitError` (never thrown), `isUnscheduled`, `UNSCHEDULED_SUBSTATES`, `cmdMe`,
   `getActiveCommandForTest`, `clearActiveCommandForTest`.
 
 - **`mu agent remote-env` and the `REMOTE:` / `REMOTE_BASE:` note convention.**

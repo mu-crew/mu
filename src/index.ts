@@ -547,7 +547,6 @@ export {
   openTask,
   type ParkTaskOptions,
   parkTask,
-  ReaperDetectedDuringWaitError,
   type ReleaseResult,
   type ReleaseTaskOptions,
   type RemoveBlockEdgeResult,

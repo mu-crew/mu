@@ -70,7 +70,6 @@ export {
   CycleError,
   HumanTaskError,
   InvalidSubstateError,
-  ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,

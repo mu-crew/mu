@@ -130,7 +130,6 @@ import {
   CycleError,
   HumanTaskError,
   InvalidSubstateError,
-  ReaperDetectedDuringWaitError,
   StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
@@ -548,18 +547,9 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // so one instanceof covers every multiplexer.
     return { label: "mux", exitCode: 5 };
   }
-  if (err instanceof ReaperDetectedDuringWaitError) {
-    // task_wait_reconcile_dead_panes: distinct exit code (6) so
-    // operator scripts can branch on "worker died, not a generic
-    // failure" vs the timeout (5) and the typed conflict family (4).
-    return { label: "reaper", exitCode: 6 };
-  }
   if (err instanceof StallDetectedDuringWaitError) {
     // task_wait_stall_action_flag: distinct exit code (7) so
-    // operator scripts can branch on "worker idle, ambiguous" vs
-    // the unambiguous dead-pane (6). Same precedence rule lives at
-    // the wait call site: if both fire in one poll, the
-    // ReaperDetectedDuringWaitError throw runs first, so exit 6 wins.
+    // operator scripts can branch on "worker idle, ambiguous".
     return { label: "stall", exitCode: 7 };
   }
   return { label: "error", exitCode: 1 };
