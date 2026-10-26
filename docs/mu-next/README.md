@@ -506,7 +506,8 @@ Plain writes are captured as a safety net, not a supported path.
 
 ## Move, not cut-over (user decision, 2026-10-25)
 
-No mechanical import and no flag day. mu-next and 3.x never share state:
+No mechanical import and no flag day. mu-next and 3.x never share state
+(setup for a side-by-side run: [isolated-run.md](isolated-run.md)):
 
 1. mu-next's default state dir is `~/.local/state/mu-next`
    (`$XDG_STATE_HOME/mu-next`), so its DB, sockets, locks and worktrees

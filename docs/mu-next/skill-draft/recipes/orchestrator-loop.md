@@ -15,8 +15,8 @@ Use when you dispatch tasks and merge commits.
    ```
 
    Idle worker: `mu task claim <id> -w <ws> --for <w> --evidence "..."`; `git -C <cwd> fetch && git -C <cwd> rebase <base>` (conflict: `rebase --abort`, tell the human); `mu agent send <w> -w <ws> --fresh -`.
-4. `mu task wait <ids> -w <ws> --first --on-stall exit --json`. Exit 5: timeout. 6: pane died, task reopened. 7: `mu agent read <w>`, answer. TODO(v_wait_surface): the one wait verb.
-5. Merge, then step 1 in the same turn.
+4. `mu wait -w <ws>` waits on what you started (workers, their tasks, delegate calls). `data.exit` 0: an event in `data.firing`, or `timedOut` (run `data.resume`); 6: a worker died before its task closed, re-dispatch it; 7: `mu agent read <w>`, answer.
+5. Merge. Close a finished worker: `mu agent close <w> -w <ws>` only previews (it guards unmerged commits); run its printed `--if <rev>`. Then step 1, same turn.
 
 ## Merging
 
@@ -29,10 +29,8 @@ Use when you dispatch tasks and merge commits.
 
 ## Delegate waves
 
-One `wave` label per fan-out ([tasks-or-calls](tasks-or-calls.md)); then `mu delegates tally -w <ws> --wave <label>`.
-
-Until v_settle, answers arrive as follow-ups only when your turn ends, so a blocked `task wait` starves them. Add the wave's delegate task ids (`mu delegates list -w <ws> --wave <label> --json`: `data.items[].task`) to that `task wait --first`.
+One `wave` label per fan-out ([tasks-or-calls](tasks-or-calls.md)); `mu wait -w <ws> --wave <label>` returns its tally. A bare `mu wait` ends on each answer too.
 
 ## Stopping
 
-`mu agent abort <w>`, then `mu agent close <w>` and its printed `--if <rev>`.
+`mu agent abort <w>`, then close it as in step 5.
