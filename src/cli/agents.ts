@@ -50,6 +50,7 @@ import {
   UsageError,
 } from "../cli.js";
 import type { Db } from "../db.js";
+import { say } from "../messages.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { pc } from "../output.js";
 import { type WaitRef, type WaitSnapshot, waitForEvents } from "../wait.js";
@@ -90,12 +91,12 @@ interface SpawnOpts {
 function assertWorktreeFlags(opts: SpawnOpts): void {
   if (opts.worktree) {
     if (opts.cwd !== undefined) {
-      throw new UsageError("--cwd conflicts with --worktree (the worktree is the cwd)");
+      throw new UsageError(say("agent.spawn_cwd_worktree"));
     }
     return;
   }
   for (const flag of ["from", "root"] as const) {
-    if (opts[flag] !== undefined) throw new UsageError(`--${flag} requires --worktree`);
+    if (opts[flag] !== undefined) throw new UsageError(say("agent.spawn_needs_worktree", flag));
   }
 }
 
@@ -105,15 +106,11 @@ function assertGateFlags(opts: SpawnOpts): void {
   if (!isCommandGate(opts)) return;
   for (const flag of ["task", "send", "attempt"] as const) {
     if (opts[flag] !== undefined) {
-      throw new UsageError(
-        `--${flag} cannot be used with a remote command gate (--host with a non-pi --command): it runs one command and reports its exit; wait on it`,
-      );
+      throw new UsageError(say("agent.spawn_gate_flag", flag));
     }
   }
   if (opts.worktree) {
-    throw new UsageError(
-      "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in the profile's repo or --cwd",
-    );
+    throw new UsageError(say("agent.spawn_gate_worktree"));
   }
 }
 
@@ -130,11 +127,11 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
 
   assertWorktreeFlags(opts);
   if (opts.attempt !== undefined && opts.task === undefined) {
-    throw new UsageError("--attempt needs --task");
+    throw new UsageError(say("agent.spawn_attempt_task"));
   }
   if (opts.task !== undefined) {
     if (sendText === undefined) {
-      throw new UsageError("--task needs --send: the sent text is the task's brief");
+      throw new UsageError(say("agent.spawn_task_send"));
     }
     return cmdSpawnTask(db, rawName, workstream, opts.task, sendText, opts);
   }
@@ -176,7 +173,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   // that ends a send would quit it. Keep the pane, skip the send, say why.
   const trustSkip = agent.trustDialog === true && sendText !== undefined;
   if (agent.trustDialog === true) {
-    const trustWarning = `${name} is showing Claude's folder-trust dialog (default "No, exit")${trustSkip ? "; --send skipped" : ""}`;
+    const trustWarning = say("agent.spawn_trust_warning", name, trustSkip);
     warnings.push(trustWarning);
     if (!opts.json) console.error(pc.yellow(`warning: ${trustWarning}`));
   }
@@ -595,26 +592,26 @@ export async function cmdSend(
       [opts.steer, "--steer"],
       [opts.force, "--force"],
     ] as const) {
-      if (on) throw new UsageError(`--interrupt and ${flag} are mutually exclusive`);
+      if (on) throw new UsageError(say("agent.send_interrupt_excl", flag));
     }
     if (isSlashCommand(text)) {
-      throw new UsageError("--interrupt sends a prompt, not a slash command");
+      throw new UsageError(say("agent.send_interrupt_slash"));
     }
     // Refuse before the abort: an empty prompt would kill the running turn
     // and then send nothing.
-    if (text === "") throw new UsageError("--interrupt needs a non-empty prompt");
+    if (text === "") throw new UsageError(say("agent.send_interrupt_empty"));
   } else if (opts.timeout !== undefined) {
-    throw new UsageError("--timeout only applies with --interrupt");
+    throw new UsageError(say("agent.send_timeout"));
   }
   if (opts.force && !opts.fresh && parseSessionCommand(text) === undefined) {
-    throw new UsageError("--force only applies with --fresh or a /new, /reload, /compact");
+    throw new UsageError(say("agent.send_force"));
   }
-  if (opts.fresh && opts.steer) throw new UsageError("--fresh and --steer are mutually exclusive");
+  if (opts.fresh && opts.steer) throw new UsageError(say("agent.send_fresh_steer"));
   if (opts.wait) {
-    if (sig === undefined) throw new UsageError("--wait needs the wait's signal handlers");
+    if (sig === undefined) throw new UsageError(say("agent.send_wait_sig"));
     // A slash command starts no run: there is nothing to wait for (refused before the send).
     if (isSlashCommand(text)) {
-      throw new UsageError("--wait waits for the run a prompt starts; a slash command starts none");
+      throw new UsageError(say("agent.send_wait_slash"));
     }
   }
   if (opts.interrupt) return cmdSendInterrupt(db, rawName, text, opts, sig);
@@ -729,7 +726,7 @@ async function enterSendWait(
   if (o.undelivered !== undefined) {
     throw new CliExitError(1, {
       error: "SendUndelivered",
-      message: `${o.undelivered}; not waiting for a run that may never have started`,
+      message: say("agent.send_undelivered", o.undelivered),
       data: { sent: { ...o.receipt, delivered: false } },
     });
   }
@@ -990,7 +987,7 @@ export async function cmdAgentCheck(
         message:
           check.state === "unreachable"
             ? check.reason
-            : `${name}: message ${msgId} was not accepted (an evicted or in-flight send reads the same): read the pane before any resend`,
+            : say("agent.check_not_accepted", name, msgId),
         data: { agentName: name, ...check },
       });
     }
@@ -1082,7 +1079,7 @@ export async function cmdAgentWait(
   },
 ): Promise<void> {
   if (rawNames.length === 0) {
-    throw new UsageError("mu agent wait: at least one agent name is required");
+    throw new UsageError(say("agent.wait_names"));
   }
   // --first is a CLI alias for --any with a richer output shape.
   const wantAny = opts.any === true || opts.first === true;
@@ -1105,7 +1102,7 @@ export async function cmdAgentWait(
       const agent = getAgent(db, ref.name, ref.workstreamName);
       if (agent !== undefined && !expectsCtl(agent, agentCtlSocket(db, agent))) {
         throw new UsageError(
-          `--after-runs needs a pi agent (control socket); ${ref.workstreamName}/${ref.name} runs ${agent.cli}. Drop --after-runs to wait on its pane state.`,
+          say("agent.wait_after_runs_pi", `${ref.workstreamName}/${ref.name}`, agent.cli),
         );
       }
     }
@@ -1116,7 +1113,7 @@ export async function cmdAgentWait(
   // ladder), and it only makes sense for pi agents.
   if (opts.inc !== undefined) {
     if (rawNames.length > 1) {
-      throw new UsageError("--inc names one pi process: wait on one agent at a time");
+      throw new UsageError(say("agent.wait_inc_one"));
     }
     for (const ref of refs) {
       const agent = getAgent(db, ref.name, ref.workstreamName);
@@ -1124,7 +1121,7 @@ export async function cmdAgentWait(
       const sock = agentCtlSocket(db, agent);
       if (!expectsCtl(agent, sock)) {
         throw new UsageError(
-          `--inc needs a pi agent (control socket); ${ref.workstreamName}/${ref.name} runs ${agent.cli}. Drop --inc.`,
+          say("agent.wait_inc_pi", `${ref.workstreamName}/${ref.name}`, agent.cli),
         );
       }
       await requireFeature(agent, sock, "incarnation");
@@ -1159,9 +1156,7 @@ export async function cmdAgentWait(
         if (opts.json) return;
         const names = snaps.map((s) => `${s.ref.workstream}/${s.ref.id}`).join(", ");
         const reasons = [...new Set(snaps.map((s) => s.unknownReason ?? "no reason"))].join(", ");
-        process.stderr.write(
-          `mu agent wait: state unknown for ${names} (${reasons}); waiting until --timeout\n`,
-        );
+        process.stderr.write(say("agent.wait_unknown", names, reasons));
       },
     },
   );

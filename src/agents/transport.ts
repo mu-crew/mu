@@ -34,6 +34,7 @@ import {
 } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
+import { say } from "../messages.js";
 import { activeMux, attachShellLine, type SendOptions } from "../mux.js";
 import { shellWord } from "../shell-quote.js";
 import {
@@ -258,7 +259,7 @@ export async function requireFeature(
 ): Promise<string | undefined> {
   // The write fence is for the send alone: the hello is a read.
   const hello = await ctlRequestFor(agent, sock, { op: "hello" }, withGuard(guard, false));
-  if (!hello.ok) throw new Error(`control socket refused hello: ${hello.error}`);
+  if (!hello.ok) throw new Error(say("agent.ctl_refused", "hello", hello.error));
   if (ctlServes(hello, feature)) return hello.incarnation;
   throw new AgentExtensionOutdatedError(
     agent.name,
@@ -561,7 +562,7 @@ async function runSessionCommand(
     if (reply.error === "busy") {
       throw new AgentBusyError(agent.name, agent.workstreamName, `/${cmd.name}`);
     }
-    throw new Error(`pi refused /${cmd.name}: ${reply.error}`);
+    throw new Error(say("agent.pi_refused", cmd.name, reply.error));
   }
   return {
     transport: "ctl",

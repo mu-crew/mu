@@ -44,6 +44,7 @@ import {
   releaseHostChannelsForAgent,
 } from "../hosts.js";
 import { emitEvent } from "../logs.js";
+import { say } from "../messages.js";
 import type { CommandSource } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode } from "../output.js";
@@ -108,9 +109,7 @@ const AGENT_NAME_CONVENTION_RE = /^[a-z][a-z0-9]*(?:-[0-9]+)$/;
 function maybeWarnNonConventionalAgentName(name: string): void {
   if (AGENT_NAME_CONVENTION_RE.test(name)) return;
   if (isJsonMode()) return;
-  process.stderr.write(
-    `hint: agent name "${name}" does not match the smallest-unused-suffix convention (<role>-<n>; e.g. worker-1, reviewer-2). Accepted; consider renaming if you spawn additional workers.\n`,
-  );
+  process.stderr.write(say("agent.spawn_name_hint", name));
 }
 
 /**

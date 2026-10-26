@@ -12,6 +12,7 @@ import {
   resolveWorkstream,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
+import { say } from "../../messages.js";
 import { pc } from "../../output.js";
 import { formatPair, type TaskPair } from "../../tasks/status.js";
 import {
@@ -46,7 +47,7 @@ export async function cmdTaskClose(
 ): Promise<void> {
   // `--note` is the guessed spelling of `--evidence`: one source only.
   if (rawOpts.note !== undefined && rawOpts.evidence !== undefined) {
-    throw new UsageError("--note is an alias of --evidence: pass one of them", { showHelp: false });
+    throw new UsageError(say("task.close_note_alias"), { showHelp: false });
   }
   const opts = { ...rawOpts, evidence: rawOpts.evidence ?? rawOpts.note };
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
@@ -99,10 +100,7 @@ export async function cmdTaskClose(
     (opts.evidence ?? "").trim() === ""
   ) {
     // One line, command included: no --help after it.
-    throw new UsageError(
-      `closing ${localId} as done needs evidence: mu task close ${localId} -w ${ws} --evidence "<command + result>"`,
-      { showHelp: false },
-    );
+    throw new UsageError(say("task.close_done_evidence", localId, ws), { showHelp: false });
   }
   // Read before the close: the warning is about the finding as it was.
   const warnings = decisionWarnings(db, localId, ws, sdkOpts.as ?? "done", opts.why);
@@ -191,7 +189,7 @@ async function dirtyWorktreeWarning(
     const row = getWorktreeFor(db, workstream, actor);
     if (row === undefined) return undefined;
     if ((await dirtyFiles(row.path)).length === 0) return undefined;
-    return `uncommitted changes in ${row.path}; don't forget to commit: ${commitHintCommand(row.path, taskTitle)}`;
+    return say("task.close_uncommitted", row.path, commitHintCommand(row.path, taskTitle));
   } catch {
     // Best-effort: a VCS probe failure must never make
     // `mu task close` fail after the task successfully closed.

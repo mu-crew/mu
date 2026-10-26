@@ -13,6 +13,7 @@ import {
   WORKSTREAM_OPT,
 } from "../cli.js";
 import type { Db } from "../db.js";
+import { say } from "../messages.js";
 import { pc } from "../output.js";
 import { collectRemoteAgent } from "../remote-collect.js";
 import { recoveriesFor } from "../remote-recovery.js";
@@ -32,9 +33,7 @@ export async function cmdCollect(
   }
   const repo = await gitToplevel(process.cwd());
   if (repo === undefined) {
-    throw new UsageError(
-      "agent collect fetches into the git repo of the current directory: cd into it",
-    );
+    throw new UsageError(say("agent.collect_cwd"));
   }
   const r = await collectRemoteAgent(db, {
     workstream: ws,

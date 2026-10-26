@@ -28,6 +28,7 @@ import {
 } from "../../cli.js";
 import type { Db, NoteKind } from "../../db.js";
 import { lastClaimActor } from "../../logs.js";
+import { say } from "../../messages.js";
 import { pc } from "../../output.js";
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../../output-contract.js";
 import { taskRevision } from "../../revision.js";
@@ -310,10 +311,7 @@ export async function cmdTaskAdd(
   if (localIds.length > 0 && titles.length !== localIds.length) {
     // A stray word is nearly always an apostrophe that ended '...' early
     // (the commander "too many arguments" case this used to be).
-    throw new UsageError(
-      `${localIds.length} id(s) (${localIds.join(" ")}) need ${localIds.length} -t/--title, got ${titles.length}. If text was split by an apostrophe inside '...', pass long text with a quoted heredoc: --note - <<'EOF'`,
-      { showHelp: false },
-    );
+    throw new UsageError(say("task.add_titles", localIds, titles.length), { showHelp: false });
   }
   // Ids come from the positionals, or are derived from each title via
   // slugify (collisions get _2, _3, … suffixes) and carry the truncation
@@ -361,7 +359,7 @@ export async function cmdTaskAdd(
     return t;
   });
   const task = tasks[0];
-  if (task === undefined) throw new UsageError("task add: nothing to add", { showHelp: true });
+  if (task === undefined) throw new UsageError(say("task.add_nothing"), { showHelp: true });
   const note = noteText !== undefined ? (listNotes(db, task.name, workstream)[0] ?? null) : null;
   const derivation = derivations[0] ?? { id: task.name, truncated: false, originalSlug: task.name };
   if (opts.json) {
@@ -401,9 +399,7 @@ export async function cmdTaskAdd(
   // false in that branch) since they already chose the id by hand.
   derivations.forEach((d, i) => {
     if (!d.truncated) return;
-    process.stderr.write(
-      `hint: id '${tasks[i]?.name}' truncated from a longer slug; pass <id> positional to override (mu task add <id> --title ... ).\n`,
-    );
+    process.stderr.write(say("task.add_truncated", tasks[i]?.name ?? ""));
   });
   const idHint = autoDerived ? pc.dim(" (id derived from title)") : "";
   for (const t of tasks) {
@@ -438,14 +434,15 @@ export function resolveNoteText(
   }
   if (given.length > 1) {
     throw new UsageError(
-      `note text given twice (${given.map(([n]) => n).join(" and ")}): pass it once, positionally or via -m/--message/--note/--text`,
+      say(
+        "task.note_twice",
+        given.map(([n]) => n),
+      ),
     );
   }
   const text = given[0]?.[1];
   if (text === undefined) {
-    throw new UsageError(
-      'note text required: mu task note <id> "..." (or -m/--message/--note/--text "...")',
-    );
+    throw new UsageError(say("task.note_required"));
   }
   return text;
 }
@@ -463,9 +460,7 @@ export async function cmdTaskNote(
   } = {},
 ): Promise<void> {
   if (opts.report === true && opts.kind !== undefined) {
-    throw new UsageError("--report and --kind both set the note kind: pass one", {
-      showHelp: false,
-    });
+    throw new UsageError(say("task.note_kind_twice"), { showHelp: false });
   }
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
@@ -486,9 +481,7 @@ export async function cmdTaskNote(
   const task = getTask(db, localId, ws);
   const owner = task?.status === "IN_PROGRESS" ? task.ownerName : null;
   if (owner !== null && owner !== author) {
-    warnings.push(
-      `${owner} will not see this note: send it (mu agent send ${owner} -w ${ws} --steer, or --interrupt if the note makes the current work wasted)`,
-    );
+    warnings.push(say("task.note_unseen", owner, ws));
   }
   emitWarnings(warnings, opts.json);
   if (opts.json) {
@@ -716,12 +709,10 @@ export async function cmdTaskNotes(
 ): Promise<void> {
   const filtered = opts.tail !== undefined || opts.since !== undefined || opts.sinceClaim === true;
   if ((opts.all === true || opts.from !== undefined) && filtered) {
-    throw new UsageError(
-      "--all/--from pick a page of the whole history; they do not combine with --tail/--since/--since-claim",
-    );
+    throw new UsageError(say("task.notes_all_from"));
   }
   if (opts.all === true && opts.from !== undefined) {
-    throw new UsageError("--all is --from 1; pass one of them");
+    throw new UsageError(say("task.notes_all_is_from"));
   }
   // Mutex: --since and --since-claim both define a cutoff; allowing
   // both would force one to silently win, which is a footgun. The SDK
@@ -730,9 +721,7 @@ export async function cmdTaskNotes(
   // pattern in cmdTaskUpdate where conflicting fields error rather
   // than picking one.)
   if (opts.since !== undefined && opts.sinceClaim === true) {
-    throw new UsageError(
-      "--since and --since-claim are mutually exclusive (both define a cutoff); pick one",
-    );
+    throw new UsageError(say("task.notes_since_twice"));
   }
   // --tail must be a positive integer. The commander parser
   // (parsePositiveNumber) already rejects 0 and negatives at the
@@ -742,7 +731,7 @@ export async function cmdTaskNotes(
     opts.tail !== undefined &&
     (!Number.isFinite(opts.tail) || opts.tail <= 0 || !Number.isInteger(opts.tail))
   ) {
-    throw new UsageError(`--tail must be a positive integer (got ${JSON.stringify(opts.tail)})`);
+    throw new UsageError(say("task.notes_tail", opts.tail));
   }
   // --since must parse as ISO 8601. We accept anything Date.parse
   // recognises (so '2025-01-01' and full RFC3339 both work) but
@@ -750,9 +739,7 @@ export async function cmdTaskNotes(
   if (opts.since !== undefined) {
     const parsed = Date.parse(opts.since);
     if (Number.isNaN(parsed)) {
-      throw new UsageError(
-        `--since must be an ISO 8601 timestamp (got ${JSON.stringify(opts.since)})`,
-      );
+      throw new UsageError(say("task.notes_since", opts.since));
     }
   }
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
@@ -839,9 +826,7 @@ export async function cmdTaskUpdate(
   if (opts.impact !== undefined) updateOpts.impact = opts.impact;
   if (opts.effortDays !== undefined) updateOpts.effortDays = opts.effortDays;
   if (Object.keys(updateOpts).length === 0) {
-    throw new UsageError(
-      "nothing to update; pass at least one of --title, --impact, --effort-days",
-    );
+    throw new UsageError(say("task.update_nothing"));
   }
   const r = updateTask(db, localId, updateOpts, { workstream: ws });
   if (opts.json) {

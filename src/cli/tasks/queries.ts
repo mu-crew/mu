@@ -35,6 +35,7 @@ import {
   UsageError,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
+import { say } from "../../messages.js";
 import { pc } from "../../output.js";
 import { taskRevisions } from "../../revision.js";
 import { shellWord } from "../../shell-quote.js";
@@ -128,7 +129,7 @@ function ownerFilter(
   opts: { owner?: string; mine?: boolean },
 ): { id: number; flag: string } | undefined {
   if (opts.owner !== undefined && opts.mine === true) {
-    throw new UsageError("--owner and --mine pick the owner two ways; pass one of them");
+    throw new UsageError(say("task.list_owner_mine"));
   }
   if (opts.mine === true) {
     const self = resolveSelf(db);
