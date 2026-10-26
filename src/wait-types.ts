@@ -105,7 +105,7 @@ export interface WaitSnapshot {
   /** The ref's completion condition is met (task at target, agent settled, delegate terminal). */
   fired: boolean;
   dead: boolean;
-  /** What applying the settled run's CLOSE block did (agent refs; absent when none was tried). */
+  /** What applying the settled run's CLOSE block did (agent refs; absent when none was tried). On a stuck task: the owner's refused CLOSE. */
   close?: CloseOutcome;
 }
 

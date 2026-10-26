@@ -12,6 +12,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **A malformed `CLOSE` block ends a task wait instead of hanging it** (`close_block_malformed_visible`).
+  Reproduced on the built CLI with the old driver (empty `REPORT:`): `mu task wait f1 f2 f3 --all
+  --status CLOSED` ran to its whole timeout with `3 still open` and said nothing, though the tasks
+  already carried `no close (malformed): the report is empty`. Under `--all` the owner's settled run is
+  no target and is never delivered early, so the engine's "a stall never beats an unprocessed settle"
+  guard held the stall back for good. The guard now applies to `--first` only (there the settle goes
+  first and carries the refusal); under `--all` the run's CLOSE is already applied, so a task it left
+  open is a stall (exit 7) at once. The stalled task's snapshot carries `close` (the refusal) and the
+  reason names the owner, the refusal and the fix (`mu task close ...` or resend the block). Kernel-adjacent:
+  mutation check, reverting the guard fails `test/wait-surface-engine.test.ts` (`--all`).
+
 - **`--first` with `--all` names the way out** (`matrix_fanout_close_block`). The `UsageError` now says
   to drop `--first` to wait for every ref or drop `--all` to return on the first. The matrix loss it
   came from (`fanout_gates` on next, reviewer waits never settling) was a harness defect, not a wait

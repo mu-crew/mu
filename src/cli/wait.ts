@@ -233,7 +233,7 @@ function reconcileHook(
 }
 
 /** Why the wait ended, in words (the event kind says what; this says which and why). */
-function reasonOf(result: WaitResult, signal: string | undefined, open: number): string {
+export function reasonOf(result: WaitResult, signal: string | undefined, open: number): string {
   const e = result.event;
   const snap = result.refs.find(
     (s) =>
@@ -259,12 +259,19 @@ function reasonOf(result: WaitResult, signal: string | undefined, open: number):
       return e.ref?.kind === "task"
         ? `${who} is gone (its owner's pane died); the work is not done`
         : `${who} is gone (its pane died or it was closed)`;
-    case "stall":
+    case "stall": {
+      // The owner's settled run may have left the task open: a refused
+      // CLOSE block names why and the two ways out.
+      const refused = snap?.close?.applied === false ? snap.close : undefined;
+      if (refused !== undefined && e.ref !== null) {
+        return `${who}'s owner ${snap?.owner} finished its run without closing it: ${refused.reason === "already applied" ? `its CLOSE block was refused on an earlier wait (see the task notes: mu task show ${e.ref.id} -w ${e.ref.workstream})` : refused.reason}. Fix: mu task close ${e.ref.id} -w ${e.ref.workstream} --evidence "<what you verified>", or have ${snap?.owner} resend the block (mu agent send ${snap?.owner} -w ${snap?.ownerWorkstream ?? e.ref.workstream} ...)`;
+      }
       return `${who}'s owner needs attention (needs_input past --stuck-after)${
         result.action === undefined
           ? ""
           : `; --on-stall ${result.action.action}: ${result.action.state}${result.action.reason !== undefined ? ` (${result.action.reason})` : ""}`
       }`;
+    }
     case "delegate":
       return `${who} reached ${snap?.status ?? "a final state"}${snap?.verdict ? ` (${snap.verdict})` : ""}`;
     case "interrupted":
