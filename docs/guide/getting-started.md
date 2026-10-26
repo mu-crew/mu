@@ -130,7 +130,8 @@ The exit code tells you what happened:
 
 `--on-stall exit` is the default; it is spelled out above so older mu
 versions behave the same. With `--on-stall warn`, a stalled worker only
-prints a warning and the wait keeps running.
+prints a warning and the wait keeps running. `--on-stall steer|release` (`mu wait`,
+`mu task wait`) act on a worker you spawned; see [dispatch](dispatch.md).
 
 A pi worker that ends its turn while it still owns an `IN_PROGRESS`
 task gets one reminder to close it or say why not, so exit 7 mostly

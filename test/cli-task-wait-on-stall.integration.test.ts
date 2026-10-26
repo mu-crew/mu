@@ -523,15 +523,13 @@ describe("mu task wait --on-stall warn|exit", () => {
     expect(JSON.parse(stdout).message).toMatch(/--on-stall/);
   });
 
-  it("--on-stall steer|release: not in this build, named as such", async () => {
+  it("--on-stall nope: a usage error naming the four actions", async () => {
     addTask(db, { localId: "y", workstream, title: "Y", impact: 50, effortDays: 1 });
-    for (const action of ["steer", "release"]) {
-      const { exitCode, stdout } = await runCli(
-        ["task", "wait", "y", "-w", workstream, "--on-stall", action],
-        dbPath,
-      );
-      expect(exitCode).toBe(2);
-      expect(JSON.parse(stdout).message).toMatch(/not available in this build/);
-    }
+    const { exitCode, stdout } = await runCli(
+      ["task", "wait", "y", "-w", workstream, "--on-stall", "nope"],
+      dbPath,
+    );
+    expect(exitCode).toBe(2);
+    expect(JSON.parse(stdout).message).toMatch(/'exit', 'warn', 'steer' or 'release'/);
   });
 });

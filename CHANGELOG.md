@@ -12,6 +12,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`--on-stall steer|release`** on `mu wait` and `mu task wait` (`f_steer_cli_wiring`). `runWait` now
+  calls `waitWithActions` with the merged `steerStallHandler` / `releaseStallHandler`. The stall
+  result names what was done (`sent`, `released`, `refused`, `unknown`, `budget-exhausted`): one
+  stderr line per handled stall, `data.action`, and the `reason` text. `steer` continues the wait;
+  `release` and every non-sent outcome end it with exit 7. Both act only on workers the caller
+  spawned and on tasks permitted with `mu task auto`. `--resume` replays the action. The usage
+  error for an unknown value names all four.
+
 - **Guarded stall release and action receipts** (`v_wait_release`, slice C1 of the wait core; SDK
   only, no CLI flags yet). New machine-local table `wait_action_receipts` (25 tables; additive,
   same schema version, an existing file gains it on open; never captured or synced; no foreign

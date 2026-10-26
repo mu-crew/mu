@@ -25,7 +25,7 @@ export interface ResumeSpec {
   status?: string;
   untilText?: string;
   stuckAfter?: number;
-  onStall: "exit" | "warn";
+  onStall: "exit" | "warn" | "steer" | "release";
   wave?: string;
   blockersOf?: { workstream: string; id: string };
   /** Seconds as the caller gave them; absent = the default. */

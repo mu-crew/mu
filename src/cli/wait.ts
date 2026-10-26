@@ -1,7 +1,7 @@
 // mu — `mu wait`: the one orchestrator wait, over waitForEvents (src/wait.ts).
 //
 //   mu wait [<ref>...] [--first | --all] [-w ws] [--until-text re] [--status s]
-//           [--stuck-after s] [--on-stall exit|warn] [--wave w] [--blockers-of t]
+//           [--stuck-after s] [--on-stall exit|warn|steer|release] [--wave w] [--blockers-of t]
 //           [--timeout s]
 //
 // A ref is typed: `task:[ws/]id`, `agent:[ws/]name[@runs][#incarnation]`,
@@ -43,7 +43,14 @@ import { TaskNotFoundError } from "../tasks/errors.js";
 import { getTask, getTaskOwner } from "../tasks/queries.js";
 import { TASK_STATUS_LIST } from "../tasks/status.js";
 import { waitSleepOverride } from "../tasks/wait.js";
-import { type WaitRef, type WaitResult, type WaitSnapshot, waitForEvents } from "../wait.js";
+import type {
+  StallActionResult,
+  WaitRef,
+  WaitResult,
+  WaitSnapshot,
+  WaitStallContext,
+} from "../wait.js";
+import { releaseStallHandler, steerStallHandler, waitWithActions } from "../wait-actions.js";
 import { currentCallers } from "../wait-callers.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
 import { compileTextMatcher } from "../wait-regex.js";
@@ -249,7 +256,11 @@ function reasonOf(result: WaitResult, signal: string | undefined, open: number):
     case "dead":
       return `${who} is gone (its pane died); the work is not done`;
     case "stall":
-      return `${who}'s owner needs attention (needs_input past --stuck-after)`;
+      return `${who}'s owner needs attention (needs_input past --stuck-after)${
+        result.action === undefined
+          ? ""
+          : `; --on-stall ${result.action.action}: ${result.action.state}${result.action.reason !== undefined ? ` (${result.action.reason})` : ""}`
+      }`;
     case "delegate":
       return `${who} reached ${snap?.status ?? "a final state"}${snap?.verdict ? ` (${snap.verdict})` : ""}`;
     case "interrupted":
@@ -352,6 +363,39 @@ function nextStepsOf(result: WaitResult, ws: string | undefined): Step[] {
   return out;
 }
 
+/** What a handled stall did, in one stderr line (a sent nudge continues the wait, so the document may never carry it). */
+export function stallActionLine(key: string, owner: string, a: StallActionResult): string {
+  const what =
+    a.state === "sent"
+      ? `sent the reminder to ${owner}`
+      : a.state === "released"
+        ? `released the task from ${owner}`
+        : a.state === "unknown"
+          ? `unknown whether the ${a.action} reached ${owner} (not repeated)`
+          : a.state === "budget-exhausted"
+            ? `${a.action} already used for this owner (not repeated)`
+            : `${a.action} refused`;
+  const tail = a.disposition === "continue" ? "; still waiting" : "";
+  return `mu wait: ${key}: --on-stall ${a.action}: ${what}${a.reason !== undefined && a.state !== "sent" ? ` (${a.reason})` : ""}${tail}\n`;
+}
+
+/** `handleStall` for --on-stall steer|release: the merged action, plus the stderr line that names what it did. */
+function stallHandler(
+  db: Db,
+  action: "steer" | "release",
+  callers: readonly string[],
+): (ctx: WaitStallContext) => Promise<StallActionResult> {
+  const run =
+    action === "steer" ? steerStallHandler(db, { callers }) : releaseStallHandler(db, { callers });
+  return async (ctx) => {
+    const res = await run(ctx);
+    process.stderr.write(
+      stallActionLine(`${ctx.ref.workstream}/${ctx.ref.id}`, ctx.owner.name, res),
+    );
+    return res;
+  };
+}
+
 /** Run one wait and print its one document. Throws CliExitError(exit) after printing when the exit is not 0. */
 export async function runWait(
   db: Db,
@@ -404,7 +448,7 @@ export async function runWait(
 
   let result: WaitResult;
   try {
-    result = await waitForEvents(db, spec.refs, {
+    result = await waitWithActions(db, spec.refs, {
       callers,
       mode: spec.mode,
       eventScope: "owned",
@@ -413,6 +457,9 @@ export async function runWait(
       ...(spec.untilText !== undefined ? { until: { text: spec.untilText } } : {}),
       ...(spec.stuckAfter !== undefined ? { stuckAfterMs: spec.stuckAfter * 1000 } : {}),
       onStall: spec.onStall,
+      ...(spec.onStall === "steer" || spec.onStall === "release"
+        ? { handleStall: stallHandler(db, spec.onStall, callers) }
+        : {}),
       ...(spec.wave !== undefined ? { wave: { name: spec.wave } } : {}),
       ...(spec.blockersOf !== undefined ? { blockersOf: spec.blockersOf } : {}),
       timeoutMs: Math.round(timeoutS * 1000),
@@ -533,19 +580,14 @@ export function waitMode(
   return all ? "all" : "first";
 }
 
-/** `--on-stall`: exit or warn. steer and release belong to the stall-action units. */
-export function parseOnStall(raw: string | undefined): "exit" | "warn" {
+/** `--on-stall`: exit, warn, steer or release. */
+export function parseOnStall(raw: string | undefined): "exit" | "warn" | "steer" | "release" {
   const v = raw ?? "exit";
-  if (v === "exit" || v === "warn") return v;
-  if (v === "steer" || v === "release") {
-    throw new UsageError(
-      `--on-stall ${v} is not available in this build (only exit and warn); use exit and handle the stall`,
-      { showHelp: false },
-    );
-  }
-  throw new UsageError(`--on-stall: expected 'exit' or 'warn', got ${JSON.stringify(v)}`, {
-    showHelp: false,
-  });
+  if (v === "exit" || v === "warn" || v === "steer" || v === "release") return v;
+  throw new UsageError(
+    `--on-stall: expected 'exit', 'warn', 'steer' or 'release', got ${JSON.stringify(v)}`,
+    { showHelp: false },
+  );
 }
 
 /** `--blockers-of [<ws>/]<task>` as a checked task ref. */
@@ -693,7 +735,7 @@ export function wireWaitCommand(program: Command): void {
     )
     .option(
       "--on-stall <action>",
-      "exit (default): a stall ends the wait; warn: flag it (`stuck` on the snapshot) and keep waiting",
+      "exit (default): a stall ends the wait; warn: flag it (`stuck` on the snapshot) and keep waiting; steer: send the stalled owner ONE fixed reminder (once per task and owner) and keep waiting; release: free the stalled task for another worker and end the wait (`data.action` says what was done). steer and release act only on workers this caller spawned",
     )
     .option(
       "--wave <name>",

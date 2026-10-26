@@ -178,7 +178,11 @@ mu wait task:auth/build task:auth/docs
   sat in `needs_input` for `--stuck-after` seconds (default 120, or 5 for a pi
   worker read over its control socket), `130`/`143` SIGINT/SIGTERM (the
   snapshot and `resume` are still printed). `--on-stall warn` flags the stall
-  on the snapshot and keeps waiting. `mu task wait` is the same wait over task
+  on the snapshot and keeps waiting; `steer` sends the stalled pi worker you
+  spawned one fixed reminder and keeps waiting; `release` frees its task and
+  ends the wait. `data.action` (and a stderr line) says `sent`, `released`,
+  `refused` or `unknown`; both refuse a worker you did not spawn or a task not
+  permitted with `mu task auto`. `mu task wait` is the same wait over task
   refs.
 - `--all` waits for every ref; `--until-text <re>` waits for a run's final
   text; `--wave <name>` waits on your delegate wave and `data.tally` says
