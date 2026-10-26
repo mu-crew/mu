@@ -99,6 +99,8 @@ import {
   agentRowId,
   closeSettledRun,
   openBlockers,
+  opsHead,
+  reapFlip,
   taskOwnerRowId,
 } from "./wait-db.js";
 import { agentOwed, hasDoneMark, setAgentDone } from "./wait-owed.js";
@@ -258,6 +260,9 @@ export async function waitForEvents(
       ? WAIT_HEARTBEAT_CAP_MS
       : Math.min(requested, WAIT_HEARTBEAT_CAP_MS);
   const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Number.POSITIVE_INFINITY;
+  // A reaper flip after this ops seq is news to this wait even if no tick of it saw the owner (a
+  // death between two waits, or across a resume): a resume replays the stored anchor.
+  const sinceSeq = opts.sinceSeq ?? opsHead(db);
 
   // ─── resolve every ref upfront: typed, exact, nothing ambiguous ───
   for (const ref of input) {
@@ -837,22 +842,28 @@ export async function waitForEvents(
     if (watchDeaths && want === "CLOSED" && status !== "CLOSED") {
       const prior = priorTask.get(item.key);
       const ownerKey = ownerRef === undefined ? undefined : agentKey(ownerRef);
+      // The reaper's flip in the ops log (durable): the task's latest status change, after the anchor.
+      // A ref a caller registered owes every flip since it was registered (its cursor hides the
+      // delivered one); an explicit or blocker ref, those since this wait (or the handle) began.
+      const flip =
+        status === "OPEN" ? reapFlip(db, ref, ownedKeys.has(item.key) ? 0 : sinceSeq) : undefined;
       const dead =
         (ownerKey !== undefined && ownerReadings.get(ownerKey)?.status === null) ||
-        // The reaper flip: IN_PROGRESS -> OPEN while the owner's row (that very row) is gone.
-        // A release leaves the owner registered; a replaced agent is another row.
+        // The reaper flip seen live: IN_PROGRESS -> OPEN while the owner's row (that very row) is
+        // gone. A release leaves the owner registered; a replaced agent is another row.
         (prior?.status === "IN_PROGRESS" &&
           status === "OPEN" &&
           prior.owner !== null &&
           prior.ownerId !== 0 &&
-          agentRowId(db, { workstream: prior.ownerWs, id: prior.owner }) !== prior.ownerId);
+          agentRowId(db, { workstream: prior.ownerWs, id: prior.owner }) !== prior.ownerId) ||
+        flip !== undefined;
       if (dead) {
         snap.dead = true;
         item.kind = "dead";
         item.done = true;
         item.ckey = urgentKey("dead", item.key);
         item.token = {
-          incarnation: `dead:${ownerRef !== undefined ? taskOwnerRowId(db, ref) : (prior?.ownerId ?? 0)}`,
+          incarnation: `dead:${ownerRef !== undefined ? taskOwnerRowId(db, ref) : prior?.ownerId || flip?.ownerId || 0}`,
           runs: 1,
         };
         return item;
@@ -1351,6 +1362,7 @@ export async function waitForEvents(
         ? { action: stallStates.get(e.stall.token)?.result as StallActionResult }
         : {}),
       humanNeeds: callers.flatMap((c) => openHumanNeeds(db, c)),
+      sinceSeq,
       ...(tally !== undefined ? { tally } : {}),
       ...(drained ? { drained: true } : {}),
     };

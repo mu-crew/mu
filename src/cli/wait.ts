@@ -343,13 +343,20 @@ function nextStepsOf(result: WaitResult, ws: string | undefined): Step[] {
     out.push(...stuckSteps(snap));
   } else if (e.kind === "dead") {
     const owner = snap?.owner;
-    out.push({
-      intent: "See what the dead worker left",
-      command:
-        e.ref.kind === "task" && owner
-          ? `mu agent read ${owner} -w ${snap?.ownerWorkstream ?? w} --lines 60`
-          : `mu task show ${e.ref.id} -w ${w}`,
-    });
+    out.push(
+      e.ref.kind === "task"
+        ? {
+            intent: "See what the dead worker left",
+            command: owner
+              ? `mu agent read ${owner} -w ${snap?.ownerWorkstream ?? w} --lines 60`
+              : `mu task show ${e.ref.id} -w ${w}`,
+          }
+        : // An agent ref names an agent, never a task: the reaper's lines name the tasks it reopened.
+          {
+            intent: `See which tasks the reaper reopened for ${e.ref.id}`,
+            command: `mu log -w ${w} --source reaper -n 10`,
+          },
+    );
   } else if (e.kind === "delegate") {
     out.push({
       intent: "Read the delegate's answer",
@@ -474,6 +481,7 @@ export async function runWait(
       ...(spec.wave !== undefined ? { wave: { name: spec.wave } } : {}),
       ...(spec.blockersOf !== undefined ? { blockersOf: spec.blockersOf } : {}),
       timeoutMs: Math.round(timeoutS * 1000),
+      ...(spec.since !== undefined ? { sinceSeq: spec.since } : {}),
       signal: sig.signal,
       ...ctlAgentHooks(db, { paneText: spec.untilText !== undefined }),
       beforePoll: reconcileHook(db, spec, () =>
@@ -522,6 +530,7 @@ export async function runWait(
           ...(spec.wave !== undefined ? { wave: spec.wave } : {}),
           ...(spec.blockersOf !== undefined ? { blockersOf: spec.blockersOf } : {}),
           ...(spec.timeout !== undefined ? { timeout: spec.timeout } : {}),
+          ...(result.sinceSeq !== undefined ? { since: result.sinceSeq } : {}),
         }),
         spec.scope,
       )
