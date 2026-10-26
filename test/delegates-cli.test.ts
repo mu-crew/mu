@@ -170,3 +170,24 @@ describe("mu delegates", () => {
     expect((await runCliJson(args, db)).data.changed).toBe(false);
   });
 });
+
+describe("mu delegates run", () => {
+  it("refuses an unknown call and reports a finished one as already done", async () => {
+    const bad = await runCliWire(["delegates", "run", "pi:s:nope", "--json"], db);
+    expect(bad.exitCode).not.toBeNull();
+    expect(bad.stderr + bad.stdout).toContain("no such delegate call");
+    await reg("pi:s:9", "--state", "starting");
+    await runCliJson(
+      ["delegates", "finish", "pi:s:9", "--outcome", "cancelled", "--author", "pi:s", "--json"],
+      db,
+    );
+    const r = await runCliJson(["delegates", "run", "pi:s:9", "--json"], db);
+    expect(r.exitCode).toBeNull();
+    expect(r.data).toMatchObject({
+      ran: false,
+      state: "cancelled",
+      transport: "process",
+      attach: null,
+    });
+  });
+});

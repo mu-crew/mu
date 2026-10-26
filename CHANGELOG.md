@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **`mu delegates run <call-id>`: the mux-free delegate runner, part 1** (`v_nomux_runner`, split of
+  `v_delegate_nomux`; the `mu_delegate` hookup is part 2). One child `pi --mode rpc` (detached
+  process group, retained stdin, log and session under `<state dir>/delegate-process/<hash of call
+  id>/`), the shipped mu extension loaded explicitly, a call-id-derived ctl socket and agent name.
+  No pane, no agents row, no daemon: `delegate_calls` and the task stay the authority, and the
+  verdict, report and close go through `finishDelegate` before the child's stdin is closed.
+  The prompt is sent once with a stable msgId and the handshake's incarnation; a reply lost after
+  the write is confirmed by `status {msgId}`, and an unconfirmable delivery or a leftover attempt
+  receipt finishes `unknown` (evidence kept, never respawned or resent). A failure before the send
+  refuses the call (reissuable). `workspace` reuses `src/worktree.ts` (dirty or unmerged work is
+  kept), `keep` holds the live child, SIGINT cancels. Result: `transport: "process"`,
+  `attach: null`, log and session paths. Code: `src/delegate-process.ts`, `src/cli/delegates.ts`.
+
 ### Removed
 
 - **Dead-code sweep on the merged tree (`k_cut_leftovers`).** knip over `src/` and `extension/`
