@@ -13,14 +13,14 @@ one-shot reviewer:
 mu task claim build -w auth --for worker-1
 ```
 
-`mu task wait` watches tasks, and the reaper returns a claimed task to
+`mu wait` watches tasks, and the reaper returns a claimed task to
 `OPEN` when its pane dies. An unclaimed task gets neither. If no task
 exists, create one with `mu task add --note '<brief>'`.
 
 - `--for` takes a worker name or a qualified `<workstream>/<name>`.
   The worker stays in its own workstream. Only the ownership crosses.
-- Inside a worker's pane, bare `mu task claim <id>` uses the pane
-  title as the worker name.
+- Inside a worker's pane, bare `mu task claim <id>` claims for
+  `$MU_AGENT_NAME`, which spawn injects.
 - To do the task yourself, use `mu task claim <id> --self`.
 
 ## Pick the send mode
@@ -173,7 +173,14 @@ mu wait task:auth/build task:auth/docs
 - `data.firing` is the event: `closed`, `settled`, `input`, `dead`, `stall`,
   `delegate`, or `heartbeat` on a timeout (`ok:true`, `timedOut`, exit 0).
 - `data.snapshots` are the refs' real states; `data.resume` is the command
-  that keeps waiting, with every flag you gave. Run it as printed.
+  that keeps waiting, with every flag you gave. Run it as printed: it takes
+  no other flag (only a matching `-w`). When two watched owners die in one
+  wait, only the first fires; follow `resume` to hear the second. A fresh
+  `mu wait` with the same refs starts a new anchor and reports the earlier
+  death as history.
+- `data.cursor` is what this result consumed per ref (`incarnation`, `runs`);
+  the next wait starts after it, so the same event is never reported twice.
+  `cursorCut` counts entries dropped to fit the 4 KB result.
 - `next` is the stored resume while something is still owed, else null.
 - Exit codes: `0` event or timeout, `6` the owner's pane died, `7` the owner
   sat in `needs_input` for `--stuck-after` seconds (default 120, or 5 for a pi

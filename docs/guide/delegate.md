@@ -21,7 +21,7 @@ parallel.
 | `label` | Names the delegate: `review` gives `delegate-review`. |
 | `brief` | Ad hoc persona or ground rules, sent first. Not enforced. |
 | `cwd` | Start directory. Default: the caller's. Must exist. |
-| `timeout` | Seconds to wait for the answer (default 3600). After it, the answer does not come back; the follow-up gives the `mu agent wait` command. |
+| `timeout` | Seconds to wait for the answer (default 3600). After it, the answer does not come back to pi; it still lands on the delegate task, and the follow-up names a wait command. |
 | `workspace` | Own git worktree, for delegates that edit files. The follow-up names its path. It isolates repository edits only. |
 | `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`). Only keys set in pi's environment exist. |
 | `model` | pi `--model` value, appended to the cli's command (`sonnet`, `<provider>/<model>:high`, copied from `pi --list-models`). Varies models across a panel. tmux only: herdr refuses a command override. |
@@ -132,36 +132,36 @@ recording failed.
 
 ## Delegate without pi
 
-From a script or other shell, run what the tool runs:
+From a script or another shell, spawn a helper bound to a task and wait
+for the run it starts:
 
 ```bash
-mu agent spawn helper-1 -w scratch
-runs=$(mu agent send helper-1 -w scratch --fresh --json 'Investigate why foo.spec.ts fails. Report the cause.' | jq .runs)
-mu agent wait helper-1 -w scratch --after-runs "$runs" --json
+mu task add check_foo -w scratch -t 'Why does foo.spec.ts fail?' --note 'Investigate why foo.spec.ts fails. Report the cause.'
+mu agent spawn helper-1 -w scratch --task check_foo --send 'Do task check_foo. Read: mu task notes check_foo -w scratch'
+mu wait agent:scratch/helper-1
 ```
 
-`--after-runs` waits for the first run past the count the send
-reported, so a run that settles before the wait starts still counts.
+The send's `next` names the exact ref (`agent:scratch/helper-1@<runs>#<inc>`),
+so a run that settles before the wait starts still counts, and a
+restarted pi is refused rather than read. The result's
+`data.snapshots[].lastText` is the answer (its tail if long; the whole
+text is in `sessionFile`), and `data.firing.kind` says how the run ended:
+`settled`, `input` (it stopped to ask), `dead` (exit 6) or `heartbeat`.
+Non-pi agents have no `lastText`; read the pane with
+`mu agent read helper-1 -w scratch -n 80`.
 
-Use `--fresh`: a plain send to a reused agent carries the previous
-task's context.
+Use a fresh agent or `send --fresh`: a plain send to a reused agent
+carries the previous task's context.
 
-`mu agent wait` fires when the agent leaves busy (including to
-`needs_input`), never on an already idle agent unless it finished a run
-past `--after-runs`. For pi, the `--json`
-row carries:
+### With no multiplexer
 
-- `outcome`: `done`, `empty`, `error`, `died`, `blocked`, `timeout`, or
-  `pending`. `error` means the run stopped on an API error after pi's
-  own retries; `lastError` holds the message and the pane is kept.
-  `blocked` means pi is waiting on an extension dialog (`blocked` holds
-  its kind and title); the run is not finished.
-- `lastText`: the final message, capped at 64 KiB.
-- `sessionFile`: the agent's pi session file, holding the full
-  transcript (absent for an ephemeral pi or an older extension).
-
-Exit codes: `0` met, `5` timeout, `6` pane died, `7` blocked on a dialog. Non-pi agents have no
-`lastText`; read the pane with `mu agent read helper-1 -w scratch -n 80`.
+`mu delegates run <call-id>` runs one registered call in a child
+`pi --mode rpc` in the foreground: no tmux, no herdr, no pane. Register
+the call first (`mu delegates register <call-id> --caller <id> --text -`),
+then run it; it sends once, waits, records the verdict, report and close
+on the call's task, and prints the child's log and session paths.
+SIGINT cancels. `mu_delegate` itself still needs tmux or herdr on `PATH`.
+<!-- TODO(v_delegate_nomux): the tool routes through the runner once part 2 merges; rewrite this paragraph from the merged code. -->
 
 ## Keep a helper
 
@@ -216,7 +216,7 @@ log, which is permanent and syncs to every machine.
 Move to a workstream when the findings become work agents will fix, or
 the job has dependencies or several stages: see
 [Getting started](getting-started.md) and
-[How to dispatch work](dispatch.md). There, `mu task wait` keys on the
+[How to dispatch work](dispatch.md). There, `mu wait` keys on the
 task and has `--on-stall`. The agent-facing rules for both are in
 [recipes/findings.md](../../skills/mu/recipes/findings.md) and
 [recipes/tasks-or-calls.md](../../skills/mu/recipes/tasks-or-calls.md).

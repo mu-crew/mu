@@ -243,7 +243,7 @@ export function wireStateCommands(program: Command): void {
   program
     .command("state")
     .description(
-      "The canonical state read, as one JSON document: per workstream the counts, ready / in-progress / blocked / triage / recent-closed tasks (SQL column names), registered agents (host, cwd, base, collected_head included) with their runtime state, orphan panes, and THE CALLER'S OWN delegate queue, waves and open human needs. -w accepts repeat or comma-separate (or both); --all is every workstream; --me reads from the caller's own identity ($MU_AGENT_NAME in $MU_WORKSTREAM, or pi:$PI_SESSION_ID; never a pane). Capped at 4 KB: a cut names `mu state ... --full`. `mu state -w` reconciles first; --me does not.",
+      "ONE JSON document of canonical state: per workstream task counts and lists, agents with runtime state, orphan panes, and the CALLER'S delegates and human needs. -w repeats; --all; --me (own identity). 4 KB cap; a cut names --full.",
     )
     .option(
       "-w, --workstream <names...>",

@@ -171,7 +171,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("owned-by <agent>")
     .description(
-      "List tasks owned by an agent. Defaults to the current workstream (v5: agent names are per-workstream unique). Pass --all to surface every workstream's same-named worker. Excludes CLOSED by default — pass --include-closed for the full historical owner list.",
+      "List tasks owned by an agent in the current workstream; --all spans every workstream's same-named agent, --include-closed adds CLOSED ones, --full lifts the 4 KB cap.",
     )
     .option(
       "--include-closed",
@@ -277,7 +277,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("tree <id>")
     .description(
-      "Open tree of a task's blockers (default) or dependents (--down), one record per entry (`depth=` `parent=`): open tasks expand, CLOSED are leaves, capped at 4 KB; a cut names the same command with --all (every level, CLOSED included, whole). Diamonds list once, then `again=1`.",
+      "Open tree of a task's blockers (--down: dependents), one record per entry: open tasks expand, CLOSED are leaves, diamonds list once then `again=1`. 4 KB cap; a cut names the same command with --all.",
     )
     .option("--down", "render dependents (what this task blocks) instead of blockers")
     .option("--all", "no cap: every level, CLOSED tasks too, whole")
@@ -301,7 +301,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("notes <id>")
     .description(
-      "Notes of a task, one line each, oldest first: the brief, the report, every verdict, then the last 3 ordinary notes after the report; `more=N next=…` names the rest. --all / --from <n> page the whole history; --tail N, --since <iso>, --since-claim filter it.",
+      "A task's notes, one line each: the brief, the report, every verdict, then the last 3 ordinary notes; `more=N next=…` names the rest. --all/--from <n> page the whole history; --tail, --since, --since-claim filter.",
     )
     .option("--all", "every note, from the first (the default view leaves some out)")
     .option("--from <n>", "every note from note <n> on", parsePositiveNumber)
@@ -512,8 +512,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("claim <id>")
     .description(
-      "Claim a task. Default: the claiming agent is $MU_AGENT_NAME (injected at spawn; must be a registered worker). " +
-        "Use --for <worker> to dispatch. Use --self for orchestrator-direct work (anonymous claim, owner=NULL, actor recorded in agent_logs).",
+      "Claim a task. Default: the claimer is $MU_AGENT_NAME (a registered worker). --for <worker> dispatches; --self is an anonymous orchestrator claim (owner NULL).",
     )
     .option(
       "-f, --for <agent>",
@@ -682,7 +681,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("wait <ids...>")
     .description(
-      "Alias of `mu wait` over task refs: block until the FIRST listed task reaches --status (default CLOSED), or every one with --all. Same engine, same ONE JSON result (always JSON): `data.firing.ref`, `data.exit`, `data.snapshots`, `data.resume`. Each <id> may be bare (needs -w, or the worker's injected workstream) or qualified `<workstream>/<name>`. Exit 0 = event or heartbeat (timedOut:true); 6 = an owner died; 7 = an owner needs attention; 130/143 = SIGINT/SIGTERM, with the snapshot and `resume` printed. Prefer `mu wait`, which also takes agents and delegates.",
+      "Alias of `mu wait` over task refs: the FIRST task to reach --status (default CLOSED), or every one with --all. Same ONE JSON result and exits (6 owner died, 7 needs you, 130/143 signal). Ids: bare with -w, or <ws>/<id>.",
     )
     .option(
       "--status <status>",

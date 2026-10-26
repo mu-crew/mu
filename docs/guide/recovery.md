@@ -18,7 +18,7 @@ Run `mu agent list` or `mu state -w <ws>`. Each run reconciles the registry
 with the multiplexer:
 
 - An agent row whose pane is gone is a ghost. mu deletes the row, and
-  its `IN_PROGRESS` task returns to `OPEN`. A `mu task wait` on that
+  its `IN_PROGRESS` task returns to `OPEN`. A `mu wait` on that
   task exits 6.
 - A pane in the session that runs an agent CLI but has no row is an
   orphan. mu lists it and does not register it. Close the pane with

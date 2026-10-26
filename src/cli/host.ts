@@ -176,7 +176,7 @@ export function wireHostCommands(program: Command): void {
   host
     .command("add <name>")
     .description(
-      "Store a host profile (machine-local). Templates may use {env} {cmd} {local_sock} {remote_sock} {cwd}; each value is one shell-quoted word (inside your own quotes, the value itself; {cmd:sh} etc. also quote for a second shell such as the remote login shell), {{ }} are literal braces, anything else in braces is refused. --shell is the pane command, --exec runs one remote command, --fetch runs locally and brings commits back (git fetch ssh://dev{cwd} HEAD).",
+      "Store a machine-local host profile of command templates: --shell opens the pane, --exec runs one remote command, --fetch brings commits home. Placeholders {env} {cmd} {local_sock} {remote_sock} {cwd}; grammar in docs/guide/remote.md.",
     )
     .requiredOption("--shell <template>", "pane command template (opens the remote shell)")
     .requiredOption("--exec <template>", "template that runs one remote command ({cmd})")
@@ -227,7 +227,7 @@ export function wireHostCommands(program: Command): void {
   host
     .command("check <name>")
     .description(
-      "Run the profile's own --exec template under one channel: the host answers, the repo is a git repo, pi runs, `pi list` names mu. With --agent, also probe that agent's forwarded control socket. Each failure is reported, nothing is retried; exit 5 when a step fails",
+      "Run the profile's --exec under one channel: host answers, repo is git, pi runs, `pi list` names mu. --agent also probes that agent's forwarded control socket. Reports each failure, retries nothing; exit 5 if a step fails.",
     )
     .option("--agent <name>", "also probe this agent's control socket (the forward rides its pane)")
     .option(...WORKSTREAM_OPT)

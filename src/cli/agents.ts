@@ -1358,7 +1358,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("send <name> <text>")
     .description(
-      "Send text to an agent. pi agents: through the control socket (fails loud if it does not answer; no paste fallback); '/new', '/reload' and '/compact [instructions]' run inside pi over the socket (refused while busy unless --force), any other slash command is refused. Non-pi CLIs: herdr only (atomic `agent prompt`); on tmux the send is refused. --fresh (pi only): start a new session and send the text into it as one operation; returns once the prompt's run has started, so an immediate next send cannot be lost. Use it instead of sending '/new' then the prompt. Text `-` reads stdin: single-quote short text; pipe prose (apostrophes, $, backticks) as a quoted heredoc: mu agent send <name> - <<'EOF'",
+      "Send text to an agent: pi through its control socket (no paste fallback), other CLIs on herdr only. --fresh = new session + send in one step. Text `-` reads stdin: mu agent send <name> - <<'EOF' for prose.",
     )
     .option(
       "--steer",
@@ -1407,7 +1407,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("check <name> <msgId>")
     .description(
-      "Ask whether a send landed: one status probe for its msgId (from `send --json`, or a delivery-unknown error). Prints `accepted runs=<n> at=<iso>` (exit 0), `not-accepted` (exit 3: the extension has no such id; an evicted or in-flight send reads the same, so read the pane before resending) or `unreachable` (exit 1: still unknown).",
+      "Ask whether a send landed: one status probe for its msgId. Prints `accepted runs=<n> at=<iso>` (0), `not-accepted` (3; an evicted or in-flight send reads the same: read the pane before resending) or `unreachable` (1).",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
@@ -1476,7 +1476,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("abort <name>")
     .description(
-      "Stop a pi agent's current turn through its control socket (what Esc does in the pane), then wait until pi settles. Kills the running tool. A follow-up queued before the abort does not run: pi puts it back into the pane's editor unsent. Idle agents are left alone (exit 0). Exit 5 when still busy after --timeout; then use `mu agent close`. Works for remote agents through the forwarded socket. Non-pi agents have no socket: use `mu agent close`.",
+      "Stop a pi agent's current turn over its control socket (Esc) and wait for pi to settle; idle agents are left alone; a queued follow-up returns to the editor unsent. Exit 5 if still busy after --timeout. Non-pi: `mu agent close`.",
     )
     .option(
       "--timeout <seconds>",
@@ -1500,7 +1500,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("wait <names...>")
     .description(
-      "Block until agents finish working (busy → any other state). Keys on AGENTS, so it fires on needs_input too — a worker that stopped to ask a question satisfies it. For task-driven work prefer `mu task wait`, which keys on the task reaching CLOSED and has `--stuck-after` / `--on-stall` for the needs_input case; reach for this verb when the agent owns no task to wait on. A pi agent that opens an extension dialog (a confirm or question) ends the wait early with outcome `blocked`: its run is not finished. Exit 0 = met; 5 = timeout; 6 = a pane died; 7 = a pi agent is waiting on a dialog.",
+      "Block until agents leave busy; fires on needs_input too. For task work prefer `mu wait`. A pi agent opening a dialog ends it as `blocked`. Exit 0 met, 5 timeout, 6 pane died, 7 dialog.",
     )
     .option("--any", "succeed as soon as ONE listed agent finishes (default: all)")
     .option("--first", "alias for --any that also prints the firing agent's ref")
@@ -1550,7 +1550,7 @@ export function wireSelfCommands(program: Command): void {
   const me = program
     .command("me")
     .description(
-      "The caller's own state: exactly `mu state --me` (JSON: identity, owned tasks, ready, its delegate queue and human needs). Identity is the injected $MU_AGENT_NAME in $MU_WORKSTREAM, or pi:$PI_SESSION_ID; a tmux pane is never guessed. Subcommands: `mu me tasks` for the owned-tasks records; `mu me next [-n K]` for the top-K ready tasks in this agent's workstream.",
+      "The caller's own state, exactly `mu state --me`: identity ($MU_AGENT_NAME in $MU_WORKSTREAM, or pi:$PI_SESSION_ID; never a pane), owned and ready tasks, its delegates and human needs. `mu me tasks` / `mu me next [-n K]` list them.",
     )
     .option(...JSON_OPT)
     .option("--full", "no cap: the whole read (a cut result names `mu state --me --full`)")

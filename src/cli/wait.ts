@@ -624,15 +624,10 @@ async function cmdWaitResume(
 
 export function wireWaitCommand(program: Command): void {
   program
-    .command("wait [refs...]")
+    .command("wait")
+    .argument("[refs...]", `typed: ${TYPED_FORMS}; none = what this caller started`)
     .description(
-      [
-        "Block until the first event you own, then print ONE JSON result (always JSON; `data.firing`, `data.exit`, `data.snapshots`, `data.resume`).",
-        `Refs are typed: ${TYPED_FORMS}. No refs: the wait owns what this caller started (agents it spawned and their tasks, its delegate calls).`,
-        "An event is a task closing, an owner dying (exit 6), an agent finishing its run, a dialog or stall needing you (exit 7), a delegate answer, or the heartbeat cap (--timeout, default 1500 s; ok:true with timedOut, exit 0). SIGINT/SIGTERM print the final snapshot and `resume` (exit 130/143); SIGKILL cannot.",
-        "Delegate answers (`mu_delegate`) arrive here: your delegate calls end the wait as `delegate` events, and `--wave <name>` waits on a wave and returns `data.tally` (`6/12 CONFIRMED, ...`) instead of N follow-ups.",
-        "Read `data.firing.kind` and `data.exit`; to keep waiting run `data.resume` (`mu wait --resume <id>`, a stored handle; null when nothing is left). First event is the default; --all waits for every ref. Parse it: `mu wait task:a task:b | jq -r .data.firing.ref`.",
-      ].join(" "),
+      "Block until the first event you own, then print ONE JSON result: `data.firing`, `exit` (6 owner died, 7 needs you), `snapshots`, `cursor` (what it consumed), `resume`. --all waits for every ref; --wave returns a `tally`.",
     )
     .option("--first", "end on the first event (default)")
     .option("--first-of", "alias for --first")
@@ -683,7 +678,7 @@ export function wireWaitCommand(program: Command): void {
     .option("--inc <incarnation>", "agent refs: pin the pi process; another one is refused")
     .option(
       "--resume <id>",
-      "continue the wait a result's `resume` handle names, with every stored condition (refs with their run baseline and pi incarnation, mode, filters, deadline, callers); nothing else may be passed",
+      "continue the wait a result's `resume` handle names, with every stored condition (refs with their run baseline and pi incarnation, mode, filters, deadline, callers); only -w may be added (it must match the stored scope)",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)

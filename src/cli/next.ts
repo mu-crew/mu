@@ -123,11 +123,7 @@ export function wireNextCommand(program: Command): void {
   program
     .command("next")
     .description(
-      [
-        "Do the judgement-free moves for tasks authorised HERE (`mu task auto`): retry dead and API-errored workers, resume stored attempts, spawn+claim+brief ready ones. Prints ONE JSON result (`data.moves`, `data.used`, `data.stopped`, `data.exit`).",
-        "Never grants permission, accepts, merges or tears down. A dead local worker is reaped (its task reopens and is retried as a new attempt); a LIVE worker whose run ended in an API error is sent its brief again IN PLACE (same pane, never duplicated); a remote worker's tree is never touched (`attention`). Every retry costs one run of the task's ceiling; an `attention` move needs you.",
-        "--refute (opt-in) launches ONE checker per CLOSED/done task and records its verdict on the task; it never accepts, reopens or closes. --dry plans with zero writes (no pane, socket or receipt read). --cap bounds effects (default 5, max 100; replays, probes, retries and reaps count). --hold then waits (bounded by --timeout, default 1500 s) for the first event on its workers: a death or API error is recovered and the wait goes on, anything else (a worker finishing, a stall, a dialog) returns it. SIGINT/SIGTERM stop between effects and print the one result.",
-      ].join(" "),
+      "Do the judgement-free moves for tasks authorised HERE (`mu task auto`): recover dead or errored workers, spawn ready ones. ONE JSON result; never accepts or merges. --dry plans, --hold waits (docs/guide/dispatch.md).",
     )
     .option("--dry", "plan only: zero writes, no mux, no ctl")
     .option(

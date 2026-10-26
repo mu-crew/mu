@@ -80,7 +80,7 @@ it, run `tmux attach -t mu-auth`. Detach with `Ctrl+b d`.
 ## Claim the task for the worker
 
 Assign the task before you send any text. The claim is what
-`mu task wait` watches.
+`mu wait` watches.
 
 ```bash
 mu task note design -w auth 'SCOPE: write docs/auth.md with the token design'
@@ -118,15 +118,15 @@ The exit code tells you what happened:
 
 | Exit | Meaning | Next move |
 | ---- | ------- | --------- |
-| `0` | the task closed | merge the work |
-| `5` | `--timeout` expired (default 600 s) | wait again |
+| `0` | the task closed (`firing.kind` `closed`), or the heartbeat cap passed (`heartbeat`, `timedOut: true`; default 1500 s) | merge the work, or run `data.resume` to keep waiting |
 | `6` | the worker's pane died and the task went back to `OPEN` | spawn and claim again |
-| `7` | the worker sat in `needs_input` for `--stuck-after` seconds (120, or 5 for a pi worker read over its control socket) | read it (for a pi worker, `mu wait agent:auth/worker-1@<runs-1>` returns the last answer; otherwise `mu agent read worker-1 -w auth`), then answer it |
+| `7` | the worker sat in `needs_input` for `--stuck-after` seconds (120, or 5 for a pi worker read over its control socket) | read it (`mu agent read worker-1 -w auth`), then answer it |
 
-`--on-stall exit` is the default; it is spelled out above so older mu
-versions behave the same. With `--on-stall warn`, a stalled worker only
-prints a warning and the wait keeps running. `--on-stall steer|release` (`mu wait`,
-`mu task wait`) act on a worker you spawned; see [dispatch](dispatch.md).
+To keep waiting, run `data.resume` as printed (`mu wait --resume <id> -w auth`):
+it replays the stored wait whole, and refuses any other flag. With
+`--on-stall warn`, a stalled worker only prints a warning and the wait
+keeps running. `--on-stall steer|release` act on a worker you spawned;
+see [dispatch](dispatch.md).
 
 A pi worker that ends its turn while it still owns an `IN_PROGRESS`
 task gets one reminder to close it or say why not, so exit 7 mostly

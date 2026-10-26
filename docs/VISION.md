@@ -56,9 +56,10 @@ three rules keep it thin:
 3. **The skill teaches the CLI.** A pi session without the extension
    still gets a working mu from [skills/mu/SKILL.md](../skills/mu/SKILL.md).
 
-Delegation is CLI: `mu agent spawn -w scratch`, `mu agent send`, and
-`mu agent wait --json`. `mu_delegate` only adds the callback that puts
-the answer into the parent conversation.
+Delegation is CLI: a `kind=delegate` task (`mu delegates register`), a
+spawn bound to it, and `mu wait`. `mu_delegate` only adds admission
+control and the callback that echoes the answer into the parent
+conversation; the answer itself is the delegate task's report.
 
 ### 2. One DB is canonical
 
@@ -209,8 +210,8 @@ the agent choosing; mu reads none of it.
 - **Visible crews.** Spawn agents once and send them work all day. Each
   sits in a pane you can attach to.
 - **Isolation.** Each agent gets a git worktree, freed by `mu agent close`.
-- **Wakeups without a daemon.** `mu log --tail` and event-driven
-  `mu agent wait` replace polling.
+- **Wakeups without a daemon.** `mu log --tail` and the event-driven
+  `mu wait` replace polling.
 - **Crash recovery.** The reaper reopens a dead agent's IN_PROGRESS
   tasks with a note.
 
@@ -227,10 +228,9 @@ the agent choosing; mu reads none of it.
   pane and one pi process. A hidden subagent is lighter for many tiny
   calls. mu bets that visibility and steering are worth the cost. There
   are no agent types: the brief is plain text. A delegate's answer is
-  not recorded in mu; only what the caller writes back (a note, a state
-  change) is. The one extension-held list with no pane is the delegate
-  queue: bounded, shown in pi's footer, cancellable, and named at
-  shutdown when it is dropped.
+  its task's report, recorded in mu. The one extension-held list with no
+  pane is the delegate queue: bounded, cancellable, and parked as
+  `refused` (reissuable) when pi quits.
 - **DB-only history.** The ops log records rows. It does not revive
   killed panes or removed worktree directories. Reconciliation reports
   ghosts and orphans.
@@ -242,7 +242,7 @@ the agent choosing; mu reads none of it.
 2. **The agent never acknowledges a send.** For pi, the control socket
    confirms that pi accepted the message. On the mux path, mu confirms
    only that the text reached the pane and warns when it cannot confirm
-   submission. Use `mu agent wait` or `mu log --tail` to see the effect.
+   submission. Use `mu wait` or `mu log --tail` to see the effect.
 3. **Recursion is opt-in.** `mu_delegate` is hidden in agents mu spawned
    (`MU_MANAGED_AGENT`). Agents have `mu` on PATH, but the skill tells
    them they are not the orchestrator.
