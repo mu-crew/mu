@@ -80,7 +80,7 @@ export function surfaceVocab(surface: Surface): Set<string> {
  * and determiners (`--for`, `--from`, `--by`, `--on`, `--if`, `--as`, `--no`, `--all`, `--only`).
  * Anything with a content meaning is not here; add a word only if it is grammar.
  */
-export const GRAMMAR = new Set(["for", "from", "by", "on", "if", "as", "no", "all", "only", "of"]);
+export const GRAMMAR = new Set(["for", "from", "by", "on", "if", "as", "no", "all", "only", "of", "and"]);
 
 export interface Leak {
   intent: string;
