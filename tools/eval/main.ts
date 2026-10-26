@@ -4,6 +4,8 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readRows, runCold, runColdCheck } from "./cold-guess.ts";
+import { toColdMarkdown } from "./cold-report.ts";
 import {
   appendResult,
   loadScenario,
@@ -32,6 +34,9 @@ const USAGE = `usage: node tools/eval/main.ts <command>
   matrix --surface <spec>... --model <m>... [--family 3x|next] [--scenario-root <dir>] [--scenarios a,b] [--reps 1] [--concurrency 4] [--budget-tokens N] --out <results.jsonl>
   report <results.jsonl> [--out file.md]
   check [--surface <spec>] [--scenarios a,b] [--family 3x|next] [--scenario-root <dir>] [--include-underscore] [--no-preflight] [--verbose]
+  cold-guess run --surface [label=]<spec>... --model <m>... [--reps 3] [--intents a,b] [--concurrency 4] [--provider-ext p] --out <cold-guess.jsonl>
+  cold-guess check [--surface <spec>] [--intents a,b] [--concurrency 4]
+  cold-guess report <cold-guess.jsonl> [--out file.md]
 <spec> = <dir|name>[:<3x|next>[:<scenario-root>]]. A name is a surface under ~/.cache/mu/eval/surfaces. Family and scenario root are per
 surface; --family/--scenario-root only fill specs that leave them out (defaults: 3x, tools/eval/scenarios). A scenario root holds
 <id>.<golden|bad|bad-x>.<family>.json and optional <id>.ts overrides, and must be outside ~/.cache/mu/eval/surfaces.`;
@@ -297,6 +302,49 @@ async function main(argv: string[]): Promise<number> {
         verbose: rest.includes("--verbose"),
         root: REPO_ROOT,
       });
+    }
+    case "cold-guess": {
+      const [sub, ...args] = rest;
+      const only = flag(args, "--intents");
+      const intents = only ? only.split(",") : null;
+      if (sub === "report") {
+        const [file] = args;
+        if (!file) throw new Error(USAGE);
+        const md = toColdMarkdown(readRows(file));
+        const o = flag(args, "--out");
+        if (o) writeFileSync(o, md);
+        else process.stdout.write(md);
+        return 0;
+      }
+      if (sub === "check") {
+        const surface = resolveSurface(flag(args, "--surface") ?? REPO_ROOT, {
+          family: "next",
+          ...surfaceDefaults(args),
+        });
+        return runColdCheck(surface, intents, Number(flag(args, "--concurrency") ?? 4));
+      }
+      if (sub === "run") {
+        const models = flagAll(args, "--model");
+        const out = flag(args, "--out");
+        const specs = flagAll(args, "--surface").map((s) => {
+          const eq = s.indexOf("=");
+          const spec = eq > 0 ? s.slice(eq + 1) : s;
+          const surface = resolveSurface(spec, surfaceDefaults(args));
+          return { label: eq > 0 ? s.slice(0, eq) : surface.name, surface };
+        });
+        if (specs.length === 0 || models.length === 0 || !out) throw new Error(USAGE);
+        await runCold({
+          surfaces: specs,
+          models,
+          reps: Number(flag(args, "--reps") ?? 3),
+          intents,
+          concurrency: Number(flag(args, "--concurrency") ?? 4),
+          out,
+          providerExt: flag(args, "--provider-ext") ?? DEFAULT_PROVIDER_EXT,
+        });
+        return 0;
+      }
+      throw new Error(USAGE);
     }
     default:
       console.error(USAGE);
