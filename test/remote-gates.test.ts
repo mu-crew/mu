@@ -453,29 +453,19 @@ describe("the legacy agent wait adapter", () => {
 });
 
 describe("the CLI: the exact README form", () => {
-  // Commander defaults --cli to "pi" (src/cli/agents.ts), so the CLI cannot yet tell an omitted --cli
-  // from an explicit one: dropping that default is f_gates_cli_flags (worker-4 owns the file). The SDK
-  // form with --cli omitted is pinned above; the CLI form below names --cli sh.
-  it("`mu agent spawn gate-1 --host dev --cli sh --command '...'`, then `mu wait agent:auth/gate-1` exits with the command's status", async () => {
+  it("`mu agent spawn gate-1 --host dev --command '...'` (no --cli) is a gate; its hint and `mu wait` give the command's status", async () => {
     // The fake host runs the command text itself (never a real `npm test`).
     const spawned = await runCliJson(
-      [
-        "agent",
-        "spawn",
-        "gate-1",
-        "-w",
-        "auth",
-        "--host",
-        "dev",
-        "--cli",
-        "sh",
-        "--command",
-        "exit 23",
-        "--json",
-      ],
+      ["agent", "spawn", "gate-1", "-w", "auth", "--host", "dev", "--command", "exit 23", "--json"],
       join(dir, "mu.db"),
     );
     expect(spawned.exitCode).toBeNull();
+    const data = spawned.data as {
+      agent: { gate_token: string | null };
+      nextSteps: { command: string }[];
+    };
+    expect(data.agent.gate_token).not.toBeNull();
+    expect(data.nextSteps[0]?.command).toBe("mu wait agent:auth/gate-1");
     const waited = await runCliJson(
       ["wait", "agent:auth/gate-1", "-w", "auth"],
       join(dir, "mu.db"),
@@ -486,6 +476,35 @@ describe("the CLI: the exact README form", () => {
       firing: { kind: "exited", ref: "agent:auth/gate-1" },
       snapshots: [{ ref: "agent:auth/gate-1", exit: 23, fired: true, dead: false }],
     });
+  });
+
+  it.each([
+    ["--send", ["--send", "hi"]],
+    ["--task", ["--task", "t1", "--send", "hi"]],
+    ["--attempt", ["--attempt", "k"]],
+    ["--worktree", ["--worktree"]],
+  ])("a gate with %s is refused before any effect", async (flag, extra) => {
+    const r = await runCliJson(
+      [
+        "agent",
+        "spawn",
+        "g",
+        "-w",
+        "auth",
+        "--host",
+        "dev",
+        "--command",
+        "exit 0",
+        "--json",
+        ...extra,
+      ],
+      join(dir, "mu.db"),
+    );
+    expect(r.exitCode).toBe(2);
+    expect(JSON.stringify(r.data ?? r)).toContain(
+      `${flag} cannot be used with a remote command gate`,
+    );
+    expect(getAgent(db, "g", "auth")).toBeUndefined();
   });
 
   it("--all: each gate's code is exposed and the first nonzero is the exit", async () => {
