@@ -25,6 +25,9 @@ vi.mock("../src/agents/spawn.js", async (importOriginal) => {
       db: import("../src/db.js").Db,
       opts: { name: string; workstream: string; onIdentity?: (a: unknown) => void },
     ) => {
+      // Import HERE, not in the factory body: agents.js imports spawn.js, which is being
+      // mocked, so awaiting it while the factory runs deadlocks collection (0% CPU, and
+      // no test timeout can fire because no test has started).
       const { insertAgent } = await import("../src/agents.js");
       hook.spawns.push(opts.name);
       if (hook.spawnFails !== undefined) throw hook.spawnFails();
