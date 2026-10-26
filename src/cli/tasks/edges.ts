@@ -16,6 +16,7 @@ import {
   UsageError,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
+import { say } from "../../messages.js";
 import { pc } from "../../output.js";
 import { withTaskFence } from "../../revision.js";
 import { candidateTaskIds } from "../../tasks/id.js";
@@ -37,7 +38,7 @@ import { setNextOutcome } from "../handle.js";
 export function parseByFlag(by: string | readonly string[]): string[] {
   const blockers = parseCsvFlag(typeof by === "string" ? [by] : by, "-b/--by");
   if (blockers.length === 0) {
-    throw new UsageError("-b/--by requires at least one blocker task id");
+    throw new UsageError(say("task.by_required"));
   }
   // De-dupe so `--by a,a` is a single edge attempt rather than an
   // added-then-no-op pair that would read as a confusing partial.

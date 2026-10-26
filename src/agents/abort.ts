@@ -13,6 +13,7 @@ import { getAgent } from "../agents.js";
 import { type CtlState, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
+import { say } from "../messages.js";
 import { resolveActorIdentity } from "../tasks/claim.js";
 import {
   AgentAbortNeedsCtlError,
@@ -67,7 +68,7 @@ export async function abortAgent(
   const base = { agent: name, workstream: opts.workstream };
 
   const st = await request(agent, sock, { op: "status" });
-  if (!st.ok) throw new Error(`control socket refused status: ${st.error}`);
+  if (!st.ok) throw new Error(say("agent.ctl_refused", "status", st.error));
   const before = st.state ?? "idle";
   const pending = st.pending ?? false;
   if (before !== "busy") {
@@ -83,7 +84,7 @@ export async function abortAgent(
   }
 
   const ab = await request(agent, sock, { op: "abort" });
-  if (!ab.ok) throw new Error(`control socket refused the abort: ${ab.error}`);
+  if (!ab.ok) throw new Error(say("agent.ctl_refused", "the abort", ab.error));
   // Only a real abort is logged. wasBusy=false: the run settled between the
   // status probe and the abort, so pi did nothing. Absent: older extension.
   const aborted = ab.wasBusy !== false;
@@ -110,7 +111,7 @@ export async function abortAgent(
       throw new AgentRestartedError(name, opts.workstream, st.incarnation, w.incarnation);
     }
     if (w.error === "timeout") throw new AgentAbortTimeoutError(name, opts.workstream, timeoutMs);
-    throw new Error(`control socket refused the wait: ${w.error}`);
+    throw new Error(say("agent.ctl_refused", "the wait", w.error));
   }
   return {
     ...base,
@@ -197,7 +198,7 @@ async function interruptAgentImpl(
   }
   if (!r.ok) {
     if (r.error === "timeout") throw new AgentAbortTimeoutError(name, opts.workstream, timeoutMs);
-    throw new Error(`control socket refused the interrupt: ${r.error}`);
+    throw new Error(say("agent.ctl_refused", "the interrupt", r.error));
   }
   return {
     wasBusy: r.wasBusy ?? false,

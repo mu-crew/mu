@@ -139,6 +139,80 @@ export const MESSAGES = {
     `attempt ${key} of task ${task} already ran with a different request (agent ${savedName}); a second prompt is a new attempt: pass --attempt <new key>`,
   "agent.trust_dialog": (name: string) =>
     `agent ${name} is showing Claude's folder-trust dialog (default "No, exit"); the task prompt was not sent and the spawn was rolled back`,
+  // ── task verbs (src/cli/tasks/*) ──
+  "task.add_titles": (ids: readonly string[], titles: number) =>
+    `${ids.length} id(s) (${ids.join(" ")}) need ${ids.length} -t/--title, got ${titles}. If text was split by an apostrophe inside '...', pass long text with a quoted heredoc: --note - <<'EOF'`,
+  "task.add_nothing": () => "task add: nothing to add",
+  "task.add_truncated": (id: string) =>
+    `hint: id '${id}' truncated from a longer slug; pass <id> positional to override (mu task add <id> --title ... ).\n`,
+  "task.note_twice": (names: readonly string[]) =>
+    `note text given twice (${names.join(" and ")}): pass it once, positionally or via -m/--message/--note/--text`,
+  "task.note_required": () =>
+    'note text required: mu task note <id> "..." (or -m/--message/--note/--text "...")',
+  "task.note_kind_twice": () => "--report and --kind both set the note kind: pass one",
+  "task.note_unseen": (owner: string, ws: string) =>
+    `${owner} will not see this note: send it (mu agent send ${owner} -w ${ws} --steer, or --interrupt if the note makes the current work wasted)`,
+  "task.notes_all_from": () =>
+    "--all/--from pick a page of the whole history; they do not combine with --tail/--since/--since-claim",
+  "task.notes_all_is_from": () => "--all is --from 1; pass one of them",
+  "task.notes_since_twice": () =>
+    "--since and --since-claim are mutually exclusive (both define a cutoff); pick one",
+  "task.notes_tail": (tail: unknown) =>
+    `--tail must be a positive integer (got ${JSON.stringify(tail)})`,
+  "task.notes_since": (since: unknown) =>
+    `--since must be an ISO 8601 timestamp (got ${JSON.stringify(since)})`,
+  "task.update_nothing": () =>
+    "nothing to update; pass at least one of --title, --impact, --effort-days",
+  "task.by_required": () => "-b/--by requires at least one blocker task id",
+  "task.claim_and_wait": () =>
+    "--and-wait needs --for <worker>: a dispatch has something to wait on; --self and a worker's own claim would wait on the caller's own work",
+  "task.claim_actor": () => "--actor only meaningful with --self (it overrides the actor name)",
+  "task.wait_ids": () => "mu task wait: at least one task id is required",
+  "task.close_note_alias": () => "--note is an alias of --evidence: pass one of them",
+  "task.close_done_evidence": (id: string, ws: string) =>
+    `closing ${id} as done needs evidence: mu task close ${id} -w ${ws} --evidence "<command + result>"`,
+  "task.close_uncommitted": (path: string, commit: string) =>
+    `uncommitted changes in ${path}; don't forget to commit: ${commit}`,
+  "task.list_owner_mine": () => "--owner and --mine pick the owner two ways; pass one of them",
+
+  // ── agent verbs (src/cli/agents.ts, agent-collect.ts, src/agents/*) ──
+  "agent.spawn_cwd_worktree": () => "--cwd conflicts with --worktree (the worktree is the cwd)",
+  "agent.spawn_needs_worktree": (flag: string) => `--${flag} requires --worktree`,
+  "agent.spawn_gate_flag": (flag: string) =>
+    `--${flag} cannot be used with a remote command gate (--host with a non-pi --command): it runs one command and reports its exit; wait on it`,
+  "agent.spawn_gate_worktree": () =>
+    "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in the profile's repo or --cwd",
+  "agent.spawn_attempt_task": () => "--attempt needs --task",
+  "agent.spawn_task_send": () => "--task needs --send: the sent text is the task's brief",
+  "agent.spawn_name_hint": (name: string) =>
+    `hint: agent name "${name}" does not match the smallest-unused-suffix convention (<role>-<n>; e.g. worker-1, reviewer-2). Accepted; consider renaming if you spawn additional workers.\n`,
+  "agent.spawn_trust_warning": (name: string, skipped: boolean) =>
+    `${name} is showing Claude's folder-trust dialog (default "No, exit")${skipped ? "; --send skipped" : ""}`,
+  "agent.send_interrupt_excl": (flag: string) => `--interrupt and ${flag} are mutually exclusive`,
+  "agent.send_interrupt_slash": () => "--interrupt sends a prompt, not a slash command",
+  "agent.send_interrupt_empty": () => "--interrupt needs a non-empty prompt",
+  "agent.send_timeout": () => "--timeout only applies with --interrupt",
+  "agent.send_force": () => "--force only applies with --fresh or a /new, /reload, /compact",
+  "agent.send_fresh_steer": () => "--fresh and --steer are mutually exclusive",
+  "agent.send_wait_sig": () => "--wait needs the wait's signal handlers",
+  "agent.send_wait_slash": () =>
+    "--wait waits for the run a prompt starts; a slash command starts none",
+  "agent.send_undelivered": (why: string) =>
+    `${why}; not waiting for a run that may never have started`,
+  "agent.check_not_accepted": (name: string, msgId: string) =>
+    `${name}: message ${msgId} was not accepted (an evicted or in-flight send reads the same): read the pane before any resend`,
+  "agent.wait_names": () => "mu agent wait: at least one agent name is required",
+  "agent.wait_after_runs_pi": (ref: string, cli: string) =>
+    `--after-runs needs a pi agent (control socket); ${ref} runs ${cli}. Drop --after-runs to wait on its pane state.`,
+  "agent.wait_inc_one": () => "--inc names one pi process: wait on one agent at a time",
+  "agent.wait_inc_pi": (ref: string, cli: string) =>
+    `--inc needs a pi agent (control socket); ${ref} runs ${cli}. Drop --inc.`,
+  "agent.wait_unknown": (names: string, reasons: string) =>
+    `mu agent wait: state unknown for ${names} (${reasons}); waiting until --timeout\n`,
+  "agent.collect_cwd": () =>
+    "agent collect fetches into the git repo of the current directory: cd into it",
+  "agent.ctl_refused": (what: string, error: unknown) => `control socket refused ${what}: ${error}`,
+  "agent.pi_refused": (cmd: string, error: unknown) => `pi refused /${cmd}: ${error}`,
 } as const satisfies Record<string, (...facts: never[]) => string>;
 
 export type MessageKey = keyof typeof MESSAGES;

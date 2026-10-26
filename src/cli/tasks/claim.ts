@@ -23,6 +23,7 @@ import {
   UsageError,
 } from "../../cli.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../../db.js";
+import { say } from "../../messages.js";
 import { pc } from "../../output.js";
 import { getTaskOwner } from "../../tasks/queries.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../../tasks.js";
@@ -96,15 +97,13 @@ export async function cmdClaim(
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   if (opts.andWait === true && opts.for === undefined) {
-    throw new UsageError(
-      "--and-wait needs --for <worker>: a dispatch has something to wait on; --self and a worker's own claim would wait on the caller's own work",
-    );
+    throw new UsageError(say("task.claim_and_wait"));
   }
   if (opts.self === true && opts.for !== undefined) {
-    throw new UsageError("--self and --for are mutually exclusive");
+    throw new UsageError(say("task.claim_self_and_for"));
   }
   if (opts.actor !== undefined && opts.self !== true) {
-    throw new UsageError("--actor only meaningful with --self (it overrides the actor name)");
+    throw new UsageError(say("task.claim_actor"));
   }
   // Parse `--for` for an optional qualified ref: bare `<name>`
   // resolves the agent in the task's workstream (today); qualified
@@ -240,7 +239,7 @@ export async function cmdTaskWait(
   sig: WaitSignals,
 ): Promise<void> {
   if (ids.length === 0) {
-    throw new UsageError("mu task wait: at least one task id is required");
+    throw new UsageError(say("task.wait_ids"));
   }
   const mode = waitMode(opts);
   const onStall = parseOnStall(opts.onStall);
