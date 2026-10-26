@@ -22,6 +22,7 @@ import {
 } from "../../dashboard-data.js";
 import { type Db, openDb } from "../../db.js";
 import { ambientIngest, syncEnabled } from "../../sync.js";
+import { type SelectedNotes, selectTaskNotes } from "../../tasks.js";
 
 /** One refresh: the projection plus whatever sync said while producing it. */
 export interface RefreshResult {
@@ -35,6 +36,8 @@ export type DashboardQuery = Omit<DashboardOptions, "caller">;
 export interface DashboardRuntime {
   /** Ingest if due, then project. Concurrent calls share one in-flight run. */
   refresh(query?: DashboardQuery): Promise<RefreshResult>;
+  /** A task's notes (the CLI's default selection, or all of them), read on `ro`. */
+  notes(workstream: string, id: string, all: boolean): SelectedNotes;
   /** Drain the in-flight refresh, close `ro`. Idempotent. */
   close(): Promise<void>;
 }
@@ -89,6 +92,10 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
         });
       inflight = mine;
       return mine;
+    },
+    notes(workstream, id, all) {
+      if (closed) throw new Error("dashboard runtime is closed");
+      return selectTaskNotes(ro, id, { workstream, all });
     },
     async close() {
       if (closed) return;

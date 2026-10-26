@@ -163,6 +163,7 @@ describe("dashboard shell", () => {
     const flaky = {
       refresh: (q?: Parameters<typeof rt.refresh>[0]) =>
         ++calls === 1 ? rt.refresh(q) : Promise.reject(new Error("boom")),
+      notes: rt.notes,
       close: rt.close,
     };
     const ui = await renderApp(createElement(App, { runtime: flaky, pollMs: 0 }));

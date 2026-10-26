@@ -22,7 +22,10 @@ class FakeStdout extends EventEmitter {
 
 class FakeStdin extends PassThrough {
   readonly isTTY = true;
-  setRawMode(): this {
+  /** Every `setRawMode(on)` call, in order: evidence of who owned the terminal. */
+  readonly rawModes: boolean[] = [];
+  setRawMode(on: boolean): this {
+    this.rawModes.push(on);
     return this;
   }
   ref(): this {
@@ -38,6 +41,10 @@ export interface InkHarness {
   screen(): string;
   /** Type `keys`, then let React commit (state set by one key is seen by the next press). */
   press(keys: string): Promise<void>;
+  /** Raw mode as Ink last set it (true = Ink owns the keyboard); null before any call. */
+  rawMode(): boolean | null;
+  /** Everything written to the terminal, in order (frames, mode switches, OSC sequences). */
+  writes(): readonly string[];
   /** Resize the fake terminal; Ink re-renders on the `resize` event. */
   resize(columns: number, rows: number): void;
   /** Yield to the event loop until `predicate` holds (bounded; no sleeps). */
@@ -59,6 +66,8 @@ export async function renderApp(
     stdin: stdin as never,
     stderr: new PassThrough() as never,
     debug: true,
+    interactive: true,
+    alternateScreen: true,
     patchConsole: false,
     exitOnCtrlC: false,
   });
@@ -73,6 +82,8 @@ export async function renderApp(
       stdin.write(keys);
       for (let i = 0; i < 5; i++) await tick();
     },
+    rawMode: () => stdin.rawModes.at(-1) ?? null,
+    writes: () => stdout.frames,
     resize: (columns, rows) => {
       stdout.columns = columns;
       stdout.rows = rows;
