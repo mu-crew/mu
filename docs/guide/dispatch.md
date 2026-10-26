@@ -239,5 +239,13 @@ attempt; a live worker whose run ended in an API error is sent its brief again i
 reaped, never duplicated). Each retry costs one run of the ceiling; a remote worker's tree is never
 touched. At the ceiling, or for anything it will not guess, it reports an `attention` move.
 
+`mu next --refute [--refute-cli <key>]` also launches ONE checker per task a worker closed as `done`
+(a delegate call in `scratch`, wave `refute-<ws>`, briefed from the task's pinned brief and its
+report). Its `VERDICT:` is recorded on the task before the call closes; the checker never accepts,
+reopens or closes the work, and a wontfix/rejected close gets none. It needs a caller identity
+(`PI_SESSION_ID` or a managed agent) and a cli that speaks ctl (default: the task's own). A repeat
+`mu next --refute` reads a running checker and records its answer (or its death or timeout as
+UNVERIFIED); `--dry` lists the owed checks. `mu delegates tally --wave refute-<ws>` counts them.
+
 To wait on something outside the repo, such as an upstream release,
 block on a placeholder task and close it when the thing lands.
