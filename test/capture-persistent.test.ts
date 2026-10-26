@@ -639,19 +639,6 @@ describe("capture version stamp", () => {
     expect(busy(() => insertTask(a, "works-again"))).toBe("no error");
   });
 
-  it("a DB with no capture_version column (older v12 file) gets it, with its triggers", () => {
-    a.close();
-    b.close();
-    const raw = new Database(path);
-    raw.exec("DROP TRIGGER _cap_tasks_ins");
-    raw.pragma("legacy_alter_table = ON"); // DROP COLUMN otherwise re-parses every trigger (~2s)
-    raw.exec("ALTER TABLE schema_version DROP COLUMN capture_version");
-    raw.close();
-    reopen();
-    expect(rawStamp()).toBe(CAPTURE_VERSION);
-    expect(captureTriggersCurrent(a)).toBe(true);
-  });
-
   it("a hand-edited trigger under an equal stamp is reported by captureTriggersCurrent", () => {
     a.close();
     b.close();

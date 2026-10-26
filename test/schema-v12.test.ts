@@ -2,12 +2,11 @@
 // the ready order, the note-kind guard, capture/apply of the new fields, the
 // torn-down filter, and the rule that new fields only ride v2 segment lines.
 
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getAgent, insertAgent } from "../src/agents.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Op } from "../src/apply.js";
 import {
   CURRENT_SCHEMA_VERSION,
@@ -101,7 +100,7 @@ const taskRow = (ws: string, id: string) =>
     .get(ws, id) as Record<string, unknown> | undefined;
 
 describe("v12 shape", () => {
-  it("stamps v13 (v12 upgrades in place; see loop-storage.test.ts) and refuses a v11 DB untouched", () => {
+  it("stamps v13 and refuses a v11 DB untouched (v12 too: see loop-storage.test.ts)", () => {
     expect(CURRENT_SCHEMA_VERSION).toBe(13);
     expect(db.prepare("SELECT version FROM schema_version").get()).toEqual({ version: 13 });
     const p = join(tempDir, "v11.db");
@@ -112,77 +111,6 @@ describe("v12 shape", () => {
     );
     raw.close();
     expect(() => openDb({ path: p })).toThrow(SchemaTooOldError);
-  });
-
-  // An existing v12 DB (written before agents.command existed) must upgrade
-  // in place: CREATE TABLE IF NOT EXISTS leaves its agents table alone, so
-  // openDb adds the columns (and the agent verbs' SELECT would otherwise throw).
-  describe("a v12 DB that predates agents.command / command_source", () => {
-    // DROP COLUMN re-parses every trigger and view (~2s each under the full
-    // capture schema), so strip once per file and copy the file per test.
-    // legacy_alter_table skips that re-parse and leaves the same stored SQL.
-    let template: string | undefined;
-    let templateDir: string | undefined;
-    afterAll(() => {
-      if (templateDir) rmFixtureDir(templateDir);
-    });
-    const stripped = (): string => {
-      if (template) return template;
-      const dir = mkdtempSync(join(tmpdir(), "mu-schema-v12-tpl-"));
-      templateDir = dir;
-      template = join(dir, "mu.db");
-      const seed = openDb({ path: template });
-      ensureWorkstream(seed, "w");
-      insertAgent(seed, { name: "a1", workstream: "w", paneId: "%1", cli: "pi" });
-      seed.close();
-      const raw = new Database(template);
-      raw.pragma("legacy_alter_table = ON");
-      raw.exec(
-        "ALTER TABLE agents DROP COLUMN command; ALTER TABLE agents DROP COLUMN command_source;",
-      );
-      raw.close();
-      return template;
-    };
-    const strip = (): void => {
-      db.close();
-      for (const ext of ["", "-wal", "-shm"]) rmSync(dbPath + ext, { force: true });
-      copyFileSync(stripped(), dbPath);
-    };
-
-    it("reopening adds the columns; agent reads work; rows and the stamp survive", () => {
-      strip();
-      const raw = new Database(dbPath);
-      expect(
-        (raw.prepare("PRAGMA table_info(agents)").all() as { name: string }[]).map((c) => c.name),
-      ).not.toContain("command");
-      raw.close();
-      db = openDb({ path: dbPath });
-      expect(cols("agents").get("command")).toMatchObject({ type: "TEXT", notnull: 0 });
-      expect(cols("agents").get("command_source")).toMatchObject({ type: "TEXT", notnull: 0 });
-      expect(db.prepare("SELECT version FROM schema_version").get()).toEqual({ version: 13 });
-      const a = getAgent(db, "a1", "w");
-      expect(a).toMatchObject({ name: "a1", paneId: "%1", command: null, commandSource: null });
-    });
-
-    it("a second reopen changes nothing (idempotent, no write lock needed)", () => {
-      strip();
-      db = openDb({ path: dbPath });
-      const cookie = (db.pragma("schema_version", { simple: true }) as number) ?? 0;
-      db.close();
-      db = openDb({ path: dbPath });
-      expect(db.pragma("schema_version", { simple: true })).toBe(cookie);
-    });
-
-    it("only one of the two missing: the other is left alone and the missing one is added", () => {
-      strip();
-      // Only command is back: command_source is the one missing column.
-      const raw = new Database(dbPath);
-      raw.exec("ALTER TABLE agents ADD COLUMN command TEXT");
-      raw.close();
-      db = openDb({ path: dbPath });
-      expect(cols("agents").get("command_source")).toBeDefined();
-      expect(cols("agents").get("command")).toBeDefined();
-    });
   });
 
   it("adds the new columns with their defaults and constraints", () => {

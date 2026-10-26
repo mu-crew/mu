@@ -19,7 +19,7 @@ Rules for readers and for the units below:
 - No import and no flag day (user decision, 2026-10-25): mu-next runs
   beside 3.x with its own DB, state, sync dir and machine id; workstreams
   move by `v_move_recipe`. Reading v1 segment lines and accepting a v12
-  DB are no longer required (the code stays).
+  DB are cut.
 - The build-time spelling tournaments (`dec_*`) were dropped. The
   README Interface defaults plus the amendments below are the contract;
   `v_eval_next` measures it with grammar-neutral judges.
