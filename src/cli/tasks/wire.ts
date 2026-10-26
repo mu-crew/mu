@@ -701,7 +701,7 @@ export function wireTaskCommands(program: Command): void {
     )
     .option(
       "--on-stall <action>",
-      "exit (default): a stall ends the wait; warn: flag it and keep waiting",
+      "exit (default): a stall ends the wait; warn: flag it and keep waiting; steer: send the stalled owner one fixed reminder and keep waiting; release: free the stalled task and end the wait",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)

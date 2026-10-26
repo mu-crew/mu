@@ -219,14 +219,10 @@ describe("modes and conditions", () => {
     expect(r.exitCode).toBe(2);
   });
 
-  it("--on-stall steer|release is not in this build; anything else is a usage error", async () => {
-    for (const v of ["steer", "release"]) {
-      const r = await runCli(["wait", "task:a", "-w", "w", "--on-stall", v], dbPath);
-      expect(r.exitCode).toBe(2);
-      expect(JSON.parse(r.stdout).message).toMatch(/not available in this build/);
-    }
+  it("--on-stall takes exit|warn|steer|release; anything else is a usage error naming all four", async () => {
     const r = await runCli(["wait", "task:a", "-w", "w", "--on-stall", "nope"], dbPath);
-    expect(JSON.parse(r.stdout).message).toMatch(/expected 'exit' or 'warn'/);
+    expect(r.exitCode).toBe(2);
+    expect(JSON.parse(r.stdout).message).toMatch(/'exit', 'warn', 'steer' or 'release'/);
   });
 
   it("--blockers-of waits on the open blockers of a task", async () => {
