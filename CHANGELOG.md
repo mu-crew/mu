@@ -25,6 +25,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`mu_delegate` with `workspace: true` honours `cwd` as the repo** (`bug_delegate_workspace_root`).
+  It spawns `--worktree --root <cwd>`, so a pi session in a parent of several repos can name the one
+  to branch; without `cwd` the caller's directory stays the repo. A queued or reissued call replays
+  the root from the stored request. A spawn refusal that cannot change on retry
+  (`WorktreeVcsRequiredError`, `UsageError`) is recorded as failed with the CLI's message and the fix
+  (`Pass cwd: <a git repo>`), no longer as a refused call to reissue.
+
 - **Tests no longer write to the real `~/.cache/mu` or `~/.local/state/mu(-next)`.**
   `test/_setup.ts` points `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_CONFIG_HOME` at a per-fork temp dir
   (removed on exit), and `test/_real-dir-guard.ts` throws on any `fs` write under the real dirs, like the
