@@ -141,8 +141,8 @@ describe("dashboard shell", () => {
     seed(a, "t1");
     const rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: a, caller: null });
     const ui = await renderApp(createElement(App, { runtime: rt, pollMs: null }));
-    await ui.until((s) => s.includes("1 workstreams · 1 tasks"));
-    ui.press("q");
+    await ui.until((s) => s.includes("t1"));
+    await ui.press("q");
     await ui.exited;
     await rt.close();
   });
@@ -150,8 +150,8 @@ describe("dashboard shell", () => {
   it("Esc exits too", async () => {
     const rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: a, caller: null });
     const ui = await renderApp(createElement(App, { runtime: rt, pollMs: null }));
-    await ui.until((s) => s.includes("0 workstreams"));
-    ui.press("\u001b");
+    await ui.until((s) => s.includes("no workstreams"));
+    await ui.press("\u001b");
     await ui.exited;
     await rt.close();
   });
@@ -166,7 +166,7 @@ describe("dashboard shell", () => {
       close: rt.close,
     };
     const ui = await renderApp(createElement(App, { runtime: flaky, pollMs: 0 }));
-    await ui.until((s) => s.includes("error: boom") && s.includes("1 tasks"));
+    await ui.until((s) => s.includes("error: boom") && s.includes("t1"));
     ui.unmount();
     await ui.exited;
     await rt.close();

@@ -36,15 +36,23 @@ class FakeStdin extends PassThrough {
 export interface InkHarness {
   /** The screen as plain text (the last frame). */
   screen(): string;
-  press(keys: string): void;
+  /** Type `keys`, then let React commit (state set by one key is seen by the next press). */
+  press(keys: string): Promise<void>;
+  /** Resize the fake terminal; Ink re-renders on the `resize` event. */
+  resize(columns: number, rows: number): void;
   /** Yield to the event loop until `predicate` holds (bounded; no sleeps). */
   until(predicate: (screen: string) => boolean): Promise<void>;
   unmount(): void;
   exited: Promise<void>;
 }
 
-export async function renderApp(node: ReactElement): Promise<InkHarness> {
+export async function renderApp(
+  node: ReactElement,
+  size: { columns?: number; rows?: number } = {},
+): Promise<InkHarness> {
   const stdout = new FakeStdout();
+  stdout.columns = size.columns ?? stdout.columns;
+  stdout.rows = size.rows ?? stdout.rows;
   const stdin = new FakeStdin();
   const app = render(node, {
     stdout: stdout as never,
@@ -56,15 +64,24 @@ export async function renderApp(node: ReactElement): Promise<InkHarness> {
   });
   const screen = (): string => stdout.frames.at(-1) ?? "";
   const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+  // A lone ESC is held by Ink's input parser until a short timer flushes it, so
+  // `until` waits in 2 ms steps (bounded: 200 steps) rather than only yielding.
+  const step = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 2));
   return {
     screen,
-    press: (keys) => {
+    press: async (keys) => {
       stdin.write(keys);
+      for (let i = 0; i < 5; i++) await tick();
+    },
+    resize: (columns, rows) => {
+      stdout.columns = columns;
+      stdout.rows = rows;
+      stdout.emit("resize");
     },
     async until(predicate) {
       for (let i = 0; i < 200; i++) {
         if (predicate(screen())) return;
-        await tick();
+        await step();
       }
       throw new Error(`screen never matched:\n${screen()}`);
     },

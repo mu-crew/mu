@@ -78,7 +78,7 @@ describe("bare mu", () => {
   });
   afterEach(() => rmFixtureDir(tmp));
 
-  const pty = (until = "q/Esc quit", signal = ""): PtyRun => {
+  const pty = (until = "Agents", signal = ""): PtyRun => {
     const r = spawnSync("python3", ["-c", PTY_DRIVER, BIN, until, pty.keys, signal], {
       env,
       encoding: "utf8",
@@ -91,7 +91,7 @@ describe("bare mu", () => {
   it.skipIf(!havePython || !existsSync(BIN))("opens on a PTY, q exits 0", () => {
     pty.keys = "q";
     const run = pty();
-    expect(run.out).toContain("mu dashboard");
+    expect(run.out).toContain("Agents");
     expect(run.sent).toBe(true);
     expect(run.code).toBe(0);
   });
@@ -109,7 +109,7 @@ describe("bare mu", () => {
       expect(readdirSync(shared)).toEqual([]);
       pty.keys = "\u001b";
       const run = pty();
-      expect(run.out).toContain("mu dashboard");
+      expect(run.out).toContain("Agents");
       expect(run.code).toBe(0);
       expect(readdirSync(shared).filter((f) => f.endsWith(".jsonl"))).toHaveLength(1);
     },
@@ -136,7 +136,7 @@ describe("bare mu", () => {
     "SIGINT while loaded exits 130 after the final flush (segment bytes grew)",
     () => {
       const shared = seedUnpublished();
-      const run = pty("1 workstreams", "SIGINT");
+      const run = pty("[demo]", "SIGINT");
       expect(run.sent).toBe(true);
       expect(run.code).toBe(130);
       expect(segmentBytes(shared)).toBeGreaterThan(0);
@@ -145,7 +145,7 @@ describe("bare mu", () => {
 
   it.skipIf(!havePython || !existsSync(BIN))("SIGTERM exits 143 after the final flush", () => {
     const shared = seedUnpublished();
-    const run = pty("1 workstreams", "SIGTERM");
+    const run = pty("[demo]", "SIGTERM");
     expect(run.code).toBe(143);
     expect(segmentBytes(shared)).toBeGreaterThan(0);
   });

@@ -41,6 +41,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Dashboard tabs** (`v_dashboard_shell`, slice S2): the dashboard shows a workstream row and
+  four tabs: Tasks (newest activity first, CLOSED hidden, owner on IN_PROGRESS), DAG (the open
+  frontier; its root and repeat cuts always listed), Agents and Log (every workstream, scratch
+  marked `*`). Starts on `-w`, else the mux session's workstream, else the most recently active one
+  (never the alphabetical first). Status (`s`) and text (`/`) filters persist per tab and
+  workstream; the cursor follows its row key, not its index, so activity reordering never moves
+  it. Next reads `unavailable` until the Next slice computes it (never "no authorised work");
+  an agent whose tool is not reported shows `tool ?`. The runtime now runs one refresh at a time
+  across queries: a changed query waits for the in-flight one. Read-only; drill (Enter, `a`) is the
+  next unit.
 - **Dashboard shell boot** (`v_dashboard_boot`): bare `mu` on a TTY (stdin and stdout, no `--json`)
   opens the dashboard; a pipe, script, `--json` or `--help` prints the same help as before. Adds
   `ink` 8 and `react` 19 (no devtools), `jsx: react-jsx`, and a lazy UI chunk that neither the SDK
@@ -49,7 +59,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   writable connection outside render, with the DB-inside-`MU_SYNC_DIR` and sync/v1 refusals kept
   and one idempotent shutdown (installed before the lazy import) that restores the terminal, closes
   the connections and flushes once on `q`/Esc, SIGINT (exit 130), SIGTERM, SIGHUP, uncaught and boot errors. A read-only connection cannot ingest, so one
-  connection was not an option. The shell shows counts only; tabs and rows are `v_dashboard_tabs`.
+  connection was not an option. The shell shows counts only; tabs and rows are `v_dashboard_shell`.
 - **Dashboard read model** (`v_dashboard_core`): `loadDashboard(db, opts)` (`src/dashboard-data.ts`,
   exported from the SDK) is the one read-only projection the dashboard tabs share: every live
   workstream (scratch included), all tasks by status (CLOSED hidden by default, uncapped when

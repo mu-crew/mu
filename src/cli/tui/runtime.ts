@@ -58,6 +58,7 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
   const now = opts.now ?? Date.now;
   const every = opts.syncEveryMs ?? DEFAULT_SYNC_EVERY_MS;
   let inflight: Promise<RefreshResult> | null = null;
+  let inflightQuery = "";
   let lastSync = Number.NEGATIVE_INFINITY;
   let closed = false;
 
@@ -74,10 +75,20 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
   return {
     refresh(query = {}) {
       if (closed) return Promise.reject(new Error("dashboard runtime is closed"));
-      inflight ??= run(query).finally(() => {
-        inflight = null;
-      });
-      return inflight;
+      const key = JSON.stringify(query);
+      // Same query: share the run. A different one (the user changed a filter)
+      // waits for the in-flight run, then runs: never two at once, never a
+      // result for the wrong query.
+      if (inflight !== null && inflightQuery === key) return inflight;
+      const prior = inflight?.catch(() => undefined) ?? Promise.resolve();
+      inflightQuery = key;
+      const mine: Promise<RefreshResult> = prior
+        .then(() => run(query))
+        .finally(() => {
+          if (inflight === mine) inflight = null;
+        });
+      inflight = mine;
+      return mine;
     },
     async close() {
       if (closed) return;
