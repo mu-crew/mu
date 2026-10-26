@@ -138,7 +138,7 @@ export function useYank(): (target: DrillTarget, all?: boolean) => Promise<strin
 export interface DrillProps {
   target: DrillTarget;
   runtime: DashboardRuntime;
-  /** Lines to show above the body (an attach failure and the outside-client line). */
+  /** Lines pinned under the title, outside the scrolled body (an attach failure and the outside-client line). */
   notice: readonly string[];
   /** True while the terminal belongs to an attach: a key is ignored (the hook stays active). */
   busy: { readonly current: boolean };
@@ -210,9 +210,13 @@ export function Drill({ target, runtime, notice, busy, onClose, onAttach }: Dril
     return { head, body };
   }, [load, notice, flash, columns]);
 
-  const height = Math.max(0, rows - 1 - (rows >= 3 ? 1 : 0));
-  const all_ = [...lines.head, ...lines.body];
-  const first = clampTop(top, all_.length, height);
+  // The head (notices, attach failure, yank confirmation) is pinned under the title, never part of
+  // the scrolled body: a long scrollback opens at its END and must not push the reason out of view.
+  // It takes at most half of the room, so the body always keeps some rows.
+  const room = Math.max(0, rows - 1 - (rows >= 3 ? 1 : 0));
+  const pinned = lines.head.slice(0, Math.floor(room / 2));
+  const height = room - pinned.length;
+  const first = clampTop(top, lines.body.length, height);
   topSeen.current = first;
   const hint =
     target.kind === "notes"
@@ -238,20 +242,25 @@ export function Drill({ target, runtime, notice, busy, onClose, onAttach }: Dril
     else if (input === "y") void yank(target, all).then(setFlash);
   });
 
-  const visible = all_.slice(first, first + height);
-  const noticeCount = lines.head.length;
+  const visible = lines.body.slice(first, first + height);
   const where =
-    all_.length === 0
+    lines.body.length === 0
       ? ""
-      : `${first + 1}-${Math.min(all_.length, first + height)}/${all_.length}  `;
+      : `${first + 1}-${Math.min(lines.body.length, first + height)}/${lines.body.length}  `;
   return (
     <Box flexDirection="column">
       <Text wrap="truncate" inverse bold>
         {cell(titleOf(target), columns)}
       </Text>
+      {pinned.map((l, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: lines have no identity; the index IS the position
+        <Text key={`p${i}`} wrap="truncate" bold>
+          {cell(l, columns)}
+        </Text>
+      ))}
       {visible.map((l, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: lines have no identity; the index IS the position
-        <Text key={first + i} wrap="truncate" dimColor={first + i < noticeCount}>
+        <Text key={first + i} wrap="truncate">
           {cell(l, columns)}
         </Text>
       ))}

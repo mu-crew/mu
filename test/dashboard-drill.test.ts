@@ -432,20 +432,38 @@ describe("attach", () => {
         mux = installMux("tmux", calm);
         const ran: MuxCommand[] = [];
         let during: boolean | null = null;
+        let leftScreen: boolean | null = null;
+        let before = 0;
         const holder: { ui?: Awaited<ReturnType<typeof open>> } = {};
         const ui = await open(async (s) => {
           ran.push(s);
           during = holder.ui?.rawMode() ?? null; // false while the step owns the terminal
+          // Ink must have left the alternate screen BEFORE the step runs (raw mode alone also
+          // drops when the hooks go inactive, so it cannot prove the handoff).
+          leftScreen =
+            holder.ui
+              ?.writes()
+              .slice(before)
+              .some((w) => w.includes(`${ESC}[?1049l`)) ?? null;
           return { code: 0, stderr: "" };
         });
         holder.ui = ui;
         await toAgents(ui);
+        before = ui.writes().length;
         await ui.press("a");
         await ui.until(() => ran.length === 1);
         expect(ran).toEqual([
           { command: "tmux", args: ["-L", "mu-private", "attach-session", "-t", "mu-ws:w1tab"] },
         ]);
         expect(during).toBe(false);
+        expect(leftScreen).toBe(true);
+        // ...and takes it back afterwards.
+        await ui.until(() =>
+          ui
+            .writes()
+            .slice(before)
+            .some((w) => w.includes(`${ESC}[?1049h`)),
+        );
         await ui.until(() => ui.rawMode() === true); // Ink owns the keyboard again
         await ui
           .until((s) => s.includes("Agents") && !s.includes("could not attach"))
@@ -526,6 +544,92 @@ describe("attach", () => {
         ui.unmount();
       }),
     );
+  });
+
+  // A real agent's output is long: the scrollback opens at its END, so a notice that is
+  // part of the scrolled body is out of sight. These tests use 70 lines.
+  const longPane = async (args: readonly string[]) => ({
+    stdout:
+      args[0] === "capture-pane"
+        ? Array.from({ length: 70 }, (_, i) => `output line ${i + 1}`).join("\n")
+        : "",
+    stderr: "",
+    exitCode: 0,
+  });
+
+  it("long scrollback: the attach failure and outside line are on screen without scrolling", async () => {
+    await withEnv("TMUX", undefined, () =>
+      withEnv("MU_TMUX_SOCKET", "mu-private", async () => {
+        mux = installMux("tmux", longPane);
+        const ui = await open(async () => ({ code: 1, stderr: "no server running" }));
+        await toAgents(ui);
+        await ui.press("a");
+        await ui.until((s) => s.includes("output line 70"));
+        const f = flat(ui);
+        expect(f).toContain("could not attach");
+        expect(f).toContain("(exit 1: no server running)");
+        expect(f).toContain("tmux -L mu-private attach-session -t mu-ws:w1tab");
+        expect(f).toContain("output line 70");
+        // Scrolling the body never moves the notice.
+        await ui.press("");
+        await ui.press("g");
+        expect(flat(ui)).toContain("could not attach");
+        expect(flat(ui)).toContain("output line 1 ");
+        ui.unmount();
+      }),
+    );
+  });
+
+  it("long scrollback: the yank confirmation (the command) is visible at once", async () => {
+    await withEnv("TMUX", undefined, () =>
+      withEnv("MU_TMUX_SOCKET", "mu-private", async () => {
+        mux = installMux("tmux", longPane);
+        const ui = await open(async () => ({ code: 0, stderr: "" }));
+        await toAgents(ui);
+        await ui.press(ENTER);
+        await ui.until((s) => s.includes("output line 70"));
+        await ui.press("");
+        await ui.press("y");
+        await ui.until((s) => s.includes("copied:"));
+        expect(flat(ui)).toContain("copied: tmux -L mu-private attach-session -t mu-ws:w1tab");
+        expect(flat(ui)).toContain("output line 70");
+        ui.unmount();
+      }),
+    );
+  });
+
+  it("a short terminal keeps body rows: the pinned head is capped", async () => {
+    await withEnv("TMUX", undefined, async () => {
+      mux = installMux("tmux", longPane);
+      const ui = await open(async () => ({ code: 1, stderr: "gone" }));
+      ui.resize(30, 8);
+      await toAgents(ui);
+      await ui.press("a");
+      await ui.until((s) => s.includes("could not attach") && s.includes("output line 70"));
+      ui.unmount();
+    });
+  });
+
+  it("inside herdr the copied line opens a client from outside, TMUX set or not", async () => {
+    for (const tmuxEnv of [undefined, "/tmp/tmux-1/x,1,0"]) {
+      await withEnv("TMUX", tmuxEnv, () =>
+        withEnv("HERDR_ENV", "1", () =>
+          withEnv("MU_HERDR_SESSION", "priv", async () => {
+            mux = installMux("herdr", [
+              ["workspace list", WORKSPACE_LIST.replace("mu-topotest", "mu-ws")],
+              ["tab list --workspace w1", TAB_LIST],
+            ]);
+            const plan = await planAttach({ workstream: "ws", name: "w1", tab: "mytab" });
+            if (!plan.ok) throw new Error(plan.reason);
+            // Executed here (inside a client): focus only. Copied: focus, then a client.
+            expect(plan.steps).toHaveLength(1);
+            expect(plan.line).toBe("herdr --session priv tab focus w1:t2 && herdr --session priv");
+            mux.restore();
+            mux = undefined;
+          }),
+        ),
+      );
+    }
   });
 
   it("no multiplexer at all: scrollback opens with the reason, nothing runs", async () => {
