@@ -47,3 +47,7 @@ A judge never matches a verb, a flag, a hint string or an exit code that a surfa
 - **Family options only.** A guarantee only a candidate gives goes through `lifecycle.native()` (3x: N/A, next: wrong); a spelled regex is never a family switch.
 
 Every scenario with more than one valid spelling ships extra goldens, `<id>.golden-<name>.3x.json` (the same job through a variable, a function, another verb): `check` runs them all and each must be clean. Prompts that need a mu behaviour name the effect, not the 3.x command.
+
+## Cold-guess probe
+
+`node tools/eval/main.ts cold-guess run|check|report` (`cold-guess.ts`, `cold-intents.ts`, `cold-report.ts`). Not a scenario: a one-shot reading test of a surface. The model gets only that build's `mu --help` (no skill, no tools: `pi -p --no-tools`, empty HOME) and one short intent, and answers with a single command; the command runs in a fresh seeded sandbox and the intent's judge reads the state and the command's own output, never its spelling (`hit` also needs no stray op beyond what the intent allows). `check` proves every judge with a golden, a plausible bad and a no-op per intent (zero model cost; run it on each family before a `run`). `run` appends one row per guess to a JSONL and skips rows already in it (`--out` is resumable); `report` renders the tables of `docs/mu-next/eval/cold-guess.md`. `--surface [label=]<spec>` can repeat; the label keys the rows. An intent only some families can express lists them in `families` (delegates exist only on `next`).
