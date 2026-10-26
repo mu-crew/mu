@@ -163,4 +163,34 @@ describe("sendViaTransport ctlGuard", () => {
       }),
     ).rejects.toBeInstanceOf(AgentSendUnsupportedError);
   });
+
+  it("a fence on a session-command text (/new) refuses instead of skipping it", async () => {
+    let fenced = false;
+    await expect(
+      sendViaTransport(agent, "/new", {
+        socket: sock,
+        ctlGuard: {
+          beforeWrite: () => {
+            fenced = true;
+            return false;
+          },
+        },
+      }),
+    ).rejects.toBeInstanceOf(AgentSendUnsupportedError);
+    expect(fenced).toBe(false);
+    expect(ext.sends).toHaveLength(0);
+  });
+
+  it("a fence on a herdr non-ctl agent refuses and never prompts the pane", async () => {
+    mux.restore();
+    mux = installMux("herdr", async () => ({ stdout: "{}", stderr: "", exitCode: 0 }));
+    const plain = insertAgent(db, { name: "c2", workstream: "auth", paneId: "p2", cli: "claude" });
+    await expect(
+      sendViaTransport(plain, "x", {
+        socket: ctlSocketPath("auth", "c2", dir),
+        ctlGuard: { beforeWrite: () => true },
+      }),
+    ).rejects.toBeInstanceOf(AgentSendUnsupportedError);
+    expect(mux.calls).toEqual([]);
+  });
 });

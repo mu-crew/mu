@@ -380,6 +380,18 @@ async function probeSteer(
   } catch {
     // Storage failed: the row keeps its state (still an exclusion); the fact stands.
   }
+  // The steer's run is still ahead of the stall observation only when the
+  // receipt's run count has not fallen behind the owner's: otherwise that run
+  // already settled and the owner is idle again, so return the stall (a
+  // continue would wait on a token that can never change).
+  if (check.runs !== undefined && ctx.owner.runs !== undefined && check.runs < ctx.owner.runs) {
+    return steerResult("sent", "return", {
+      msgId: plan.msgId,
+      incarnation: plan.key.incarnation,
+      afterRuns: check.runs,
+      reason: "nudged earlier, owner idle again",
+    });
+  }
   return sentResult(plan.msgId, plan.key.incarnation, check.runs);
 }
 

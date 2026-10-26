@@ -107,7 +107,7 @@ export type TransportSendOptions = SendOptions & {
    * never resent); `timeoutMs` bounds each ctl request; `beforeWrite` runs
    * synchronously on connect, immediately before the one write: false or a
    * throw writes nothing and the send throws CtlWriteVetoedError. ctl
-   * send only; a route that cannot honour it (mux) refuses rather than skip it.
+   * send only; a route that cannot honour it (mux, session command) refuses rather than skip it.
    */
   ctlGuard?: CtlGuard;
 };
@@ -472,7 +472,13 @@ export async function sendViaTransport(
   if (text === "") throw new AgentEmptySendError(agent.name, agent.workstreamName);
   if (!opts.fresh) {
     const cmd = parseSessionCommand(text);
-    if (cmd) return runSessionCommand(agent, sock, cmd, opts.force === true);
+    if (cmd) {
+      // The command route has no write fence: refuse rather than skip it.
+      if (opts.ctlGuard?.beforeWrite !== undefined) {
+        throw new AgentSendUnsupportedError(agent.name, agent.workstreamName, agent.cli);
+      }
+      return runSessionCommand(agent, sock, cmd, opts.force === true);
+    }
     if (isSlashCommand(text)) {
       throw new AgentSlashCommandUnsupportedError(
         agent.name,
