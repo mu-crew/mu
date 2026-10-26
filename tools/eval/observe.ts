@@ -296,7 +296,7 @@ export function deliveries(sb: Sandbox): { p: PromptRec; call: MuCall | undefine
   const calls = muCalls(sb);
   const used = new Set<MuCall>();
   return prompts(sb)
-    .filter((p) => !p.agent.startsWith("delegate-"))
+    .filter((p) => !/^delegate[-_]/.test(p.agent))
     .sort((a, b) => a.ts - b.ts)
     .map((p) => {
       const sn = flat(p.text).slice(0, 40);

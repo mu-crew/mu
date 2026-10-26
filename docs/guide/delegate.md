@@ -30,6 +30,11 @@ parallel.
 | `wave` | A label for one fan-out; `mu delegates tally` counts its verdicts per judged task. |
 | `workstream` | Holds the delegate task and runs the delegate (default `scratch`). |
 
+- No tmux or herdr: the same tool runs the delegate as a child pi
+  (`mu delegates run <call-id>`), with no pane and no attach command.
+  Its follow-up names the session file and, when it fails, the log.
+  `keep` is dropped. Cancel stops the child. `/reload` lets it finish
+  onto its task; quitting pi cancels it.
 - Watch or steer: run the attach command.
 - Stop: `mu_delegate_cancel` (a delegate name, a `queued-N` handle or a
   call id), or `mu agent abort <name> -w scratch`. A cancel is recorded:
@@ -160,8 +165,8 @@ carries the previous task's context.
 the call first (`mu delegates register <call-id> --caller <id> --text -`),
 then run it; it sends once, waits, records the verdict, report and close
 on the call's task, and prints the child's log and session paths.
-SIGINT cancels. `mu_delegate` itself still needs tmux or herdr on `PATH`.
-<!-- TODO(v_delegate_nomux): the tool routes through the runner once part 2 merges; rewrite this paragraph from the merged code. -->
+SIGINT cancels. `mu_delegate` does this by itself when no tmux or
+herdr is installed (see above).
 
 ## Keep a helper
 

@@ -186,4 +186,9 @@ wait result to `done`, `empty`, `error`, `died`, `timeout` or `pending`.
 The extension imports nothing from pi; it types pi's API structurally.
 A delegate answer on its way cancels only the orchestrator's settle wait
 (`DelegateHandle.onAnswer`); the answer's own settle waits again.
-<!-- TODO(v_delegate_nomux): the mux-free route changes this paragraph; rewrite from the merged code. -->
+With no multiplexer the spawn fails `NoMultiplexerError` (only that
+error falls back), and the call runs as `mu delegates run <call-id>
+--no-keep` instead: the runner (`src/delegate-process.ts`) drives one
+child `pi --mode rpc` over this same ctl socket protocol and finishes the
+call itself, and the extension only words its one result as the
+follow-up. Cancel and quit SIGTERM that run, which cancels the call.

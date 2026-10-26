@@ -7,7 +7,9 @@
  *
  * Everything is the `mu` CLI (spawn / send / wait --json / read / abort /
  * close): the tool only orders the calls and formats the result, so a
- * shell gets the same delegation (VISION § 1, rule 2). The one
+ * shell gets the same delegation (VISION § 1, rule 2). With no multiplexer
+ * the spawn fails NoMultiplexerError and the call runs as a child pi under
+ * `mu delegates run <call-id>` instead (src/delegate-process.ts). The one
  * thing only an extension can do is the callback into the parent
  * conversation, and that is presentation. No extension-only state: the
  * in-flight set below is the list of `mu agent wait` children this pi owns.
@@ -16,8 +18,8 @@
  * that one serves a pi mu spawned; this one runs in a pi that is not.
  */
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { qualifiedRefProblem, workstreamNameProblem } from "../src/workstream-scope.js";
 import { labelStem, modelCommand, normalizeModel } from "./delegate-args.js";
 import { type CallInfo, callsApi, type FinishResult, type RecordTarget } from "./delegate-calls.js";
@@ -34,6 +36,12 @@ import {
   type PaneFate,
   type WaitAgent,
 } from "./delegate-format.js";
+import {
+  type ProcessRun,
+  processFailedText,
+  processMessage,
+  processStarted,
+} from "./delegate-process-format.js";
 import { delegateTraceOn, TRACE_EVENTS, trace, traceFields } from "./delegate-trace.js";
 import {
   defaultRunner,
@@ -137,12 +145,11 @@ export function delegateMax(env: NodeJS.ProcessEnv = process.env): number {
 }
 const W = DELEGATE_WORKSTREAM;
 
-/** Registration guards: unmanaged pi, a mux in reach, not switched off. */
+/** Registration guards: an unmanaged pi, not switched off. No mux needed:
+ *  without one a delegate runs as a child pi process (`mu delegates run`). */
 export function delegateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env.MU_MANAGED_AGENT) return false; // no helper-spawns-helper
-  if (env.MU_DELEGATE === "0") return false;
-  if (env.MU_MUX || env.HERDR_ENV === "1" || env.TMUX || env.TMUX_PANE) return true;
-  return onPath("tmux", env) || onPath("herdr", env);
+  return env.MU_DELEGATE !== "0";
 }
 
 function isDir(p: string): boolean {
@@ -151,10 +158,6 @@ function isDir(p: string): boolean {
   } catch {
     return false;
   }
-}
-
-function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {
-  return (env.PATH ?? "").split(delimiter).some((d) => d !== "" && existsSync(join(d, bin)));
 }
 
 /** Which agent a delegate spawned as: the registry incarnation and pane the
@@ -177,6 +180,9 @@ type Inflight = {
   identity?: DelegateIdentity;
   cancelling: boolean;
   parked?: () => Promise<void>;
+  /** Mux-free: the `mu delegates run` of a child pi, no pane. Aborting
+   *  `abort` SIGTERMs it, which cancels the call durably before it exits. */
+  process?: Promise<MuResult>;
 };
 
 /** A call past the cap, waiting for a slot. Its delegate name is picked
@@ -332,12 +338,12 @@ export function registerDelegate(
     reportPending();
   };
   /** A start that failed after its tool call returned, said as a follow-up. */
-  const startFailed = (handle: string, e: unknown) =>
+  const startFailed = (handle: string, e: unknown, what = "Queued delegate") =>
     void Promise.resolve(
       send(
         {
           customType: DELEGATE_MESSAGE_TYPE,
-          content: `Queued delegate ${handle} could not start: ${e instanceof Error ? e.message : String(e)}`,
+          content: `${what} ${handle} could not start: ${e instanceof Error ? e.message : String(e)}`,
           display: true,
           details: { name: handle, workstream: W, outcome: null, closed: false },
         },
@@ -420,7 +426,7 @@ export function registerDelegate(
   class SpawnFail extends Error {
     constructor(
       message: string,
-      readonly kind: "unsent" | "kept" | "unknown" | "aborted" | "refused",
+      readonly kind: "unsent" | "kept" | "unknown" | "aborted" | "refused" | "nomux",
     ) {
       super(message);
     }
@@ -484,6 +490,10 @@ export function registerDelegate(
         "unsent",
       );
     const spawned = (out?.agent as { name?: unknown } | undefined)?.name;
+    // No multiplexer, nothing spawned: start() runs it as a child pi instead.
+    // Only this error: any other failure is not a licence to start it twice.
+    if (typeof spawned !== "string" && out?.error === "NoMultiplexerError")
+      throw new SpawnFail("no multiplexer", "nomux");
     // No agent in the reply: the spawn itself failed, nothing is up.
     if (typeof spawned !== "string" && signal?.aborted)
       throw new SpawnFail("cancelled while it spawned; the spawn rolled back", "aborted");
@@ -769,6 +779,10 @@ export function registerDelegate(
       try {
         spawned = await spawn(call, req.text, cwd, signal);
       } catch (e) {
+        if (e instanceof SpawnFail && e.kind === "nomux") {
+          freeSlot(); // startProcess counts it in inflight at once
+          return startProcess(call, queuedAs);
+        }
         const fail = e instanceof SpawnFail ? e : new SpawnFail(errText(e), "unsent");
         await settleFailedStart(call, fail);
         throw new Error(
@@ -891,6 +905,91 @@ export function registerDelegate(
     }
   }
 
+  /**
+   * No multiplexer: run the call as a child `pi --mode rpc` through
+   * `mu delegates run <call-id>`, which sends once, waits, finishes the call
+   * durably (verdict, report, close) and stops the child before it prints its
+   * one result. The delegate is named by its task; there is no pane to attach
+   * or close, and `keep` needs a pane (the run would hold its child forever),
+   * so it is dropped here. A refused run (nothing sent) stays reissuable.
+   */
+  /** A run that exited without finishing its call (killed before its own
+   *  signal handler, or a crash) must not leave it starting: finish it. A
+   *  finished call ignores this, so the normal path writes nothing. */
+  const finishOrphan = (call: CallInfo, outcome: string, text: string) =>
+    calls.finish(call.callId, { outcome, text, author: call.caller }).catch((e: unknown) => {
+      trace("finishOrphan.failed", { call: call.callId, error: errText(e) });
+      return undefined;
+    });
+
+  function startProcess(call: CallInfo, queuedAs?: string): ToolResult {
+    const ws = call.workstream;
+    const name = call.task;
+    const key = inflightKey(ws, name);
+    const entry: Inflight = { abort: new AbortController(), call, cancelling: false };
+    inflight.set(key, entry);
+    reportPending();
+    const started = Date.now();
+    const settle = async (r: MuResult) => {
+      const o = (json(r) ?? {}) as ProcessRun;
+      forget(key);
+      if (o.outcome === undefined || o.state === "refused") {
+        const text = processFailedText(call, o, why(r), r.code, DELEGATE_REISSUE_TOOL);
+        if (o.state !== "refused") await finishOrphan(call, "error", text);
+        startFailed(name, new Error(text), "Delegate");
+        return;
+      }
+      const delivery = ++deliverySeq;
+      arriving.set(delivery, { sent: false, name });
+      for (const w of [...wakes]) w();
+      const done = o.outcome === "done";
+      const fin: FinishResult = {
+        changed: true,
+        state: (o.state ?? "failed") as FinishResult["state"],
+        recorded: call.record !== undefined && o.state !== "failed",
+        verdict: null,
+      };
+      const elapsedMs = Date.now() - started;
+      const content = processMessage(call, o, elapsedMs, recordedLine(call, fin), queuedAs);
+      const a = arriving.get(delivery);
+      if (a) Object.assign(a, { content, workstream: ws, outcome: o.outcome });
+      const details = {
+        name,
+        workstream: ws,
+        task: `${ws}/${call.task}`,
+        call_id: call.callId,
+        outcome: o.outcome,
+        closed: true,
+        transport: "process",
+        answer: done ? (o.answer ?? null) : null,
+        elapsedMs,
+        workspace: o.workspace ?? null,
+        sessionFile: o.sessionFile ?? null,
+        log: o.logPath ?? null,
+        delivery,
+      };
+      const msg = { customType: DELEGATE_MESSAGE_TYPE, content, display: true, details };
+      await Promise.resolve(send(msg, { deliverAs: "followUp", triggerTurn: true }, "answer")).then(
+        () => markSent(delivery),
+        () => arriving.delete(delivery),
+      );
+    };
+    // A cancel's SIGTERM aborts the turn, finishes the call, then stops the
+    // child (up to ~11 s); SIGKILL before that would orphan the child pi.
+    const running = mu(
+      ["delegates", "run", call.callId, "--no-keep", "--json"],
+      entry.abort.signal,
+      undefined,
+      { drainMs: 20_000 },
+    );
+    entry.process = running;
+    void running.then(async (r) => {
+      if (inflight.get(key) !== entry) return; // cancelled or shut down
+      await settle(r);
+    });
+    return processStarted(call, DELEGATE_CANCEL_TOOL);
+  }
+
   /** Make a failed start durable: unsent -> refused (reissuable, brief kept);
    *  a possibly-running pane -> finished as failed; a cancel -> cancelled. */
   async function settleFailedStart(call: CallInfo, fail: SpawnFail): Promise<void> {
@@ -948,7 +1047,7 @@ export function registerDelegate(
   pi.registerTool({
     name: DELEGATE_TOOL,
     label: "mu delegate",
-    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation, or a refuter of a claim, plan or fix before you act on it; call it several times to fan out in parallel (at most ${delegateMax()} run at once; up to ${DELEGATE_QUEUE_FACTOR * delegateMax()} more are queued and start as slots free; past that a call is refused: durable, reissue it with ${DELEGATE_REISSUE_TOOL}). Every call is a mu task (kind delegate): the result names it, and the full answer stays on it. The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open. When the check judges a mu task, set record so its verdict lands on that task; leave it out when there is no task. Set wave to group a fan-out (mu delegates tally).`,
+    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream; with no tmux or herdr, a child pi process with no pane) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation, or a refuter of a claim, plan or fix before you act on it; call it several times to fan out in parallel (at most ${delegateMax()} run at once; up to ${DELEGATE_QUEUE_FACTOR * delegateMax()} more are queued and start as slots free; past that a call is refused: durable, reissue it with ${DELEGATE_REISSUE_TOOL}). Every call is a mu task (kind delegate): the result names it, and the full answer stays on it. The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open (needs a mux). When the check judges a mu task, set record so its verdict lands on that task; leave it out when there is no task. Set wave to group a fan-out (mu delegates tally).`,
     promptSnippet:
       "Subagent: delegate a self-contained task to a background pi agent; its answer arrives later as a follow-up",
     parameters: {
@@ -992,7 +1091,8 @@ export function registerDelegate(
         },
         keep: {
           type: "boolean",
-          description: "Keep the pane after it finishes, to talk to it again",
+          description:
+            "Keep the pane after it finishes, to talk to it again (needs a mux; ignored without one)",
         },
         record: {
           type: "object",
@@ -1183,7 +1283,7 @@ export function registerDelegate(
   pi.registerTool({
     name: DELEGATE_CANCEL_TOOL,
     label: "mu delegate cancel",
-    description: `Stop a delegate started by ${DELEGATE_TOOL}: abort its turn and close its pane (keep: true leaves the pane open). A queued or refused call is cancelled too (name it by its handle or call_id). The verdict target, if any, gets "no verdict (cancelled)". No follow-up message is sent for it afterwards.`,
+    description: `Stop a delegate started by ${DELEGATE_TOOL}: abort its turn and close its pane (keep: true leaves the pane open; a mux-free one's child pi is stopped). A queued or refused call is cancelled too (name it by its handle or call_id). The verdict target, if any, gets "no verdict (cancelled)". No follow-up message is sent for it afterwards.`,
     parameters: {
       type: "object",
       properties: {
@@ -1248,6 +1348,27 @@ export function registerDelegate(
       const entry = found?.[1];
       const ws = entry?.call.workstream ?? W;
       const agentName = key ? key.slice(key.indexOf("/") + 1) : name;
+      if (entry?.process && key) {
+        // SIGTERM the run: it aborts the child's turn, finishes the call
+        // cancelled and stops the child; its log and session file stay.
+        entry.abort.abort();
+        forget(key);
+        await entry.process;
+        await finishOrphan(entry.call, "cancelled", "cancelled");
+        const shown = await calls.show(entry.call.callId).catch(() => undefined);
+        const where = entry.call.record
+          ? ` Recorded on ${entry.call.record.workstream}/${entry.call.record.task} as a note (no verdict: cancelled).`
+          : "";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Cancelled ${ws}/${agentName} (child pi stopped; call ${shown?.state ?? "cancelling"}).${where}`,
+            },
+          ],
+          details: { name: agentName, workstream: ws },
+        };
+      }
       if (entry) entry.cancelling = true;
       const ab = await mu(["agent", "abort", agentName, "-w", ws]);
       if (ab.code !== 0) {
@@ -1402,7 +1523,7 @@ export function registerDelegate(
   // The watchers die with this runtime (/reload, /new, quit): say which
   // delegates lose their callback, so none is lost silently. The names
   // are also in the tool results, and `mu agent wait` recovers them.
-  pi.on("session_shutdown", async (_e, ctx) => {
+  pi.on("session_shutdown", async (e, ctx) => {
     closed = true;
     clearImmediate(settleCheck);
     trace("session_shutdown.state", {
@@ -1413,14 +1534,29 @@ export function registerDelegate(
     arriving.clear();
     if (inflight.size === 0 && queue.length === 0) return;
     const shown = (key: string) => (key.startsWith(`${W}/`) ? key.slice(W.length + 1) : key);
-    const names = [...inflight.keys()].map(shown);
+    const names = [...inflight].flatMap(([k, e]) => (e.process ? [] : [shown(k)]));
+    const procs = [...inflight].flatMap(([k, e]) => (e.process ? [shown(k)] : []));
     const sessions = [...inflight].flatMap(([k, e]) =>
       e.sessionFile ? [`${shown(k)}: ${e.sessionFile}`] : [],
     );
     const dropped = queue.splice(0);
-    for (const e of inflight.values()) e.abort.abort();
+    // A mux-free run is this pi's child: quit cancels it (durably), while a
+    // reload or session switch leaves it to finish onto its task.
+    const reason = (e as { reason?: unknown } | undefined)?.reason;
+    const replacing =
+      reason === "reload" || reason === "new" || reason === "resume" || reason === "fork";
+    const stopping: Promise<unknown>[] = [];
+    for (const f of inflight.values())
+      if (!f.process || !replacing) {
+        f.abort.abort();
+        const call = f.call;
+        if (f.process)
+          stopping.push(f.process.then(() => finishOrphan(call, "cancelled", "pi quit")));
+      }
     inflight.clear();
     reportPending();
+    // Quit: each run has cancelled its call and stopped its child before it exits.
+    await Promise.all(stopping);
     // A queued call never started and nothing will drain it now: park it as
     // refused (durable, listable, reissuable) instead of leaving it queued forever.
     const refused: string[] = [];
@@ -1441,6 +1577,12 @@ export function registerDelegate(
     if (names.length > 0)
       parts.push(
         `${names.length} delegate${names.length === 1 ? "" : "s"} still running: ${names.join(", ")}. Their answers will not come back here; use mu agent wait <name> -w ${W} --json.`,
+      );
+    if (procs.length > 0)
+      parts.push(
+        replacing
+          ? `${procs.length} mux-free delegate${procs.length === 1 ? "" : "s"} still running: ${procs.join(", ")}. Each finishes onto its task (mu task notes <name> -w ${W}); the answer will not come back here.`
+          : `${procs.length} mux-free delegate${procs.length === 1 ? "" : "s"} cancelled: ${procs.join(", ")}.`,
       );
     if (sessions.length > 0) parts.push(`Sessions: ${sessions.join("; ")}.`);
     if (dropped.length > 0)

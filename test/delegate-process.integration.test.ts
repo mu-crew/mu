@@ -16,13 +16,20 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type DelegateTool, registerDelegate } from "../extension/delegate.js";
+import { type MuRunner, runChild } from "../extension/mu-run.js";
 import { type Db, openDb } from "../src/db.js";
 import {
   type DelegateRunResult,
   delegateProcessPaths,
   runDelegateProcess,
 } from "../src/delegate-process.js";
-import { getDelegateCall, markDelegate, registerDelegateCall } from "../src/delegates.js";
+import {
+  getDelegateCall,
+  listDelegates,
+  markDelegate,
+  registerDelegateCall,
+} from "../src/delegates.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask } from "../src/tasks.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -105,7 +112,7 @@ function register(extra: Record<string, unknown> = {}, request: object = {}) {
 const run = (
   callId: string,
   mode: string,
-  o: { startupMs?: number; signal?: AbortSignal } = {},
+  o: { startupMs?: number; signal?: AbortSignal; keep?: boolean } = {},
 ) => {
   process.env.FAKE_PI = mode;
   return runDelegateProcess(db, callId, { extension: FAKE, startupMs: 3000, ...o });
@@ -223,6 +230,15 @@ describe("runDelegateProcess (no mux)", () => {
     expect(running(r.pid)).toBe(false);
   });
 
+  it("keep: false (the extension's --no-keep) overrides the call's keep and returns the answer", async () => {
+    const { callId } = register({}, { keep: true });
+    const r = await run(callId, "answer", { keep: false });
+    expect(r).toMatchObject({ state: "done", outcome: "done" });
+    expect(r.answer).toBeTruthy();
+    expect(r.live).toBeUndefined();
+    expect(running(r.pid)).toBe(false);
+  });
+
   it("workspace: true uses a registered git worktree and removes it when clean", async () => {
     const repo = join(dir, "repo");
     mkdirSync(repo);
@@ -236,5 +252,82 @@ describe("runDelegateProcess (no mux)", () => {
     expect(r.workspace).toContain("worktrees");
     expect(r.worktree).toMatchObject({ action: "removed" });
     expect(existsSync(r.workspace ?? "")).toBe(false);
+  });
+});
+
+describe("mu_delegate with no multiplexer (extension -> real `mu delegates run`)", () => {
+  const CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "cli.js");
+  /** The extension's runner on the built CLI, against this test's DB and the fake pi. */
+  const runner = (): MuRunner => (args, signal, stdin, opts) =>
+    runChild(process.execPath, [CLI, ...args], signal, stdin, {
+      ...opts,
+      env: {
+        ...opts?.env,
+        MU_DB_PATH: join(dir, "mu.db"),
+        MU_SYNC_DIR: "",
+      },
+    });
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 50));
+  };
+  const fakePi = () => {
+    const tools = new Map<string, DelegateTool>();
+    const sent: { content: string }[] = [];
+    registerDelegate(
+      {
+        registerTool: (t) => void tools.set(t.name, t),
+        sendMessage: (m) => void sent.push(m),
+        on: () => {},
+        events: { emit: () => {} },
+      },
+      runner(),
+    );
+    const tool = (name: string) => {
+      const t = tools.get(name);
+      if (!t) throw new Error(`${name} not registered`);
+      return t;
+    };
+    return { tool, sent };
+  };
+
+  it("answers: the runner records the verdict, the follow-up names no pane", async () => {
+    if (!existsSync(CLI)) return; // needs `npm run build`
+    process.env.FAKE_PI = "answer";
+    addTask(db, { localId: "f1", workstream: "crew", title: "f1" });
+    const p = fakePi();
+    const res = await p.tool("mu_delegate").execute("t", {
+      task: "check it",
+      record: { task: "crew/f1" },
+      cwd: dir,
+    });
+    expect(res.details).toMatchObject({ transport: "process", attach: null, state: "running" });
+    await until(() => p.sent.length > 0);
+    expect(p.sent[0]?.content).toMatch(/finished .*Child pi stopped/s);
+    expect(p.sent[0]?.content).not.toMatch(/Pane|attach/);
+    const [call] = listDelegates(db);
+    expect(call?.state).toBe("done");
+    expect(sends()).toBe(1);
+  });
+
+  it("cancel SIGTERMs the run: the call is cancelled and the child pi is gone", async () => {
+    if (!existsSync(CLI)) return;
+    process.env.FAKE_PI = "hang";
+    const p = fakePi();
+    const res = await p.tool("mu_delegate").execute("t", { task: "check it", cwd: dir });
+    const name = (res.details as { name: string }).name;
+    await until(() => sends() === 1);
+    const pid = Number(
+      (
+        JSON.parse(
+          readFileSync(delegateProcessPaths(db, listDelegates(db)[0] as never).receipt, "utf8"),
+        ) as {
+          pid: number;
+        }
+      ).pid,
+    );
+    const c = await p.tool("mu_delegate_cancel").execute("c", { name });
+    expect(c.content[0]?.text).toContain("call cancelled");
+    expect(running(pid)).toBe(false);
+    expect(p.sent).toHaveLength(0);
   });
 });

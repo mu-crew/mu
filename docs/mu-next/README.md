@@ -17,7 +17,7 @@ what ships. Shipped behaviour is in [ARCHITECTURE](../ARCHITECTURE.md),
 [VOCABULARY](../VOCABULARY.md) and the [CHANGELOG](../../CHANGELOG.md);
 the contract as built is
 [surface-contract.md](surface-contract.md), which also names the
-units still landing (the rest of `v_settle`, `v_delegate_nomux`). Where this page and
+units still landing (the rest of `v_settle`). Where this page and
 the shipped docs disagree, the shipped docs win.
 
 Revision 2 (2026-10-23) folds in an ultrathink run over revision 1:
@@ -199,10 +199,19 @@ PATH. What breaks today:
   the pane stays attachable for anyone who wants it.
 - **No mux at all** (no tmux, no herdr): `mu doctor` and every agent
   verb fail with one line naming the install, and task/DAG/db/sync
-  verbs keep working.
+  verbs keep working. Delegates still run (shipped, `v_delegate_nomux`):
+  when the spawn fails `NoMultiplexerError`, and only then, `mu_delegate`
+  runs the call through `mu delegates run <call-id>`, one child
+  `pi --mode rpc` with no pane and no agents row (`transport: process`,
+  `attach: null`). Same admission, record and cancel as on a mux; the
+  follow-up names the session file and log. `keep` needs a pane and
+  is dropped. `/reload` leaves the run going and its answer lands on
+  its task; quitting pi cancels it.
 
-Eval scenario: the full orchestrator loop and a delegate wave from a
-caller with `TMUX`, `TMUX_PANE` and `HERDR_ENV` unset.
+Eval scenarios: `outside_mux` (the full orchestrator loop and a delegate
+wave from a caller with `TMUX`, `TMUX_PANE` and `HERDR_ENV` unset, tmux
+installed) and `no_mux_delegate` (a delegate wave with tmux and herdr
+absent from the caller, its mu and the delegate).
 
 ## Scope and identity
 

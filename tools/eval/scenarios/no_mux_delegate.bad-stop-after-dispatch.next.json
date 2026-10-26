@@ -1,0 +1,31 @@
+[
+  {
+    "calls": [
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c1",
+          "task": "Check claim-1: README.md in the repo root starts with the line \"# eval repo\". Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c1",
+            "workstream": "eval"
+          }
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "c2",
+          "task": "Check claim-2: gate.sh in the repo root is a Python script. Answer with a line 'VERDICT: CONFIRMED' or 'VERDICT: REFUTED' and a line 'EVIDENCE: ...'.",
+          "record": {
+            "task": "c2",
+            "workstream": "eval"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "text": "Both checks are running; I will close the tasks when they answer."
+  }
+]

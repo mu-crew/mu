@@ -76,11 +76,12 @@ n=$(grep -oE 'claim-[0-9]+' "$W/last-prompt.$AGENT" 2>/dev/null | head -n1 | cut
 [ -n "$n" ] || n=$(echo "$AGENT" | sed -nE 's/^delegate-(claim-|c)([0-9]+)(-[0-9]+)?$/\2/p')
 T=$(claimed)
 # mu-next spawns a delegate bound to its own delegate task (claimed for it): that task is not work to run.
-[ "\${AGENT#delegate-}" = "$AGENT" ] || T=""
+# A mux-free delegate is a child pi named after that task (delegate_<id>).
+isdel=; case "$AGENT" in delegate-*|delegate_*) isdel=1; T="" ;; esac
 # A worker prompted before its task is claimed (3.x cannot claim for an agent not yet spawned, so
 # spawn --send always comes first) waits for the claim like a real pi would wait on its queue,
 # instead of answering with delegate text.
-if [ -z "$T" ] && [ -z "$n" ] && [ "\${AGENT#delegate-}" = "$AGENT" ] && ! grep -q " $AGENT " "$W/runs.log" 2>/dev/null; then
+if [ -z "$T" ] && [ -z "$n" ] && [ -z "$isdel" ] && ! grep -q " $AGENT " "$W/runs.log" 2>/dev/null; then
   for _ in $(seq 1 "$(cat "$W/claim-wait" 2>/dev/null || echo 30)"); do
     T=$(claimed); [ -n "$T" ] && break; sleep 1
   done

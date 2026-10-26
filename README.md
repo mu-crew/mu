@@ -21,10 +21,7 @@ mu persists state and coordinates handoffs. Every read path has
 **Status:** this branch is mu-next (`mu --version` prints `4.0.0-next.0`),
 unreleased. It runs beside mu 3.x with its own DB and state dir and never
 imports a 3.x DB; workstreams move over one at a time
-([Switch to mu-next](docs/guide/upgrade.md#switch-to-mu-next)). One part
-is still landing: routing `mu_delegate` with no multiplexer
-(`v_delegate_nomux`; `mu delegates run` already works without one).
-<!-- TODO(v_delegate_nomux): drop that sentence once it merges. -->
+([Switch to mu-next](docs/guide/upgrade.md#switch-to-mu-next)).
 
 ## Install
 
@@ -40,8 +37,9 @@ skill with `npx skills add mu-crew/mu` instead of the pi package.
 You need:
 
 - Node 22.12–26 (see `.nvmrc`).
-- tmux ≥ 3.0 or [herdr](https://github.com/herdrdev/herdr). `mu doctor`
-  reports which one is active.
+- tmux ≥ 3.0 or [herdr](https://github.com/herdrdev/herdr) for agents.
+  `mu doctor` reports which one is active. Without either, task verbs
+  and pi's `mu_delegate` still work (a delegate runs as a child pi).
 - pi, or another agent CLI.
 - git on `PATH` for `--worktree`.
 

@@ -73,6 +73,8 @@ export interface DelegateRunOptions {
   extension?: string;
   /** Budget for the child to serve its control socket. Default `MU_SPAWN_CTL_MS`, else 30 s. */
   startupMs?: number;
+  /** Overrides the call's `keep`: false stops the child after the finish (the extension waits for the exit). */
+  keep?: boolean;
 }
 
 export interface DelegateRunResult {
@@ -95,6 +97,8 @@ export interface DelegateRunResult {
   /** What the close rule did with it; absent while the work is not clean and recorded. */
   worktree?: ReleasedWorktree | { kept: string };
   error?: string;
+  /** The recorded answer, when `outcome` is `done`. */
+  answer?: string;
   /** With `keep: true` after a clean finish: the live child. `stop()` closes its stdin, then its process group. */
   live?: { exited: Promise<void>; stop(): Promise<void> };
 }
@@ -474,9 +478,11 @@ export async function runDelegateProcess(
       ...(sessionFile ? { sessionFile } : {}),
       ...(workspace ? { workspace } : {}),
       ...(fin.error ? { error: fin.error } : {}),
+      ...(outcome === "done" ? { answer: text } : {}),
     };
     const clean = fin.state === "done";
-    if (clean && req.keep === true) return result(outcome, { ...info, live: { exited, stop } });
+    if (clean && (opts.keep ?? req.keep) === true)
+      return result(outcome, { ...info, live: { exited, stop } });
     // Durable first; only now does the child lose its stdin. A failed or
     // timed-out run keeps its log, session and worktree as evidence, not a process.
     if (!clean) await ctlRequest(p.sock, { op: "abort" }, { timeoutMs: 2000 }).catch(() => {});

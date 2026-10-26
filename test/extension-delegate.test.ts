@@ -67,9 +67,8 @@ describe("registration guards", () => {
     expect(delegateEnabled()).toBe(false);
   });
 
-  it("is hidden when no mux is in reach", () => {
-    expect(delegateEnabled({ PATH: "/nonexistent" })).toBe(false);
-    expect(delegateEnabled({ PATH: "/nonexistent", TMUX: "/tmp/x,1,0" })).toBe(true);
+  it("is registered with no mux in reach (it runs mux-free)", () => {
+    expect(delegateEnabled({ PATH: "/nonexistent" })).toBe(true);
   });
 
   it("the default export carries it (not optional)", () => {

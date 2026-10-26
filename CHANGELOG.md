@@ -24,6 +24,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   refuses the call (reissuable). `workspace` reuses `src/worktree.ts` (dirty or unmerged work is
   kept), `keep` holds the live child, SIGINT cancels. Result: `transport: "process"`,
   `attach: null`, log and session paths. Code: `src/delegate-process.ts`, `src/cli/delegates.ts`.
+- **`mu_delegate` works with no tmux or herdr, part 2 (`v_delegate_nomux`).** The tool registers
+  in any unmanaged pi (`MU_MANAGED_AGENT` and `MU_DELEGATE=0` still hide it). When the spawn fails
+  `NoMultiplexerError` (that error only; any other spawn failure is refused as before) the call runs
+  through `mu delegates run <call-id> --no-keep`: same admission, queue, refusal and reissue; the
+  runner records the verdict, report and close; the follow-up names the session and, on failure,
+  the log; it has no pane and no attach line (`details.transport: "process"`, `attach: null`).
+  `keep` needs a pane and is dropped (the result says so). `mu_delegate_cancel` SIGTERMs the run
+  (20 s before SIGKILL, so the runner can stop its child), which cancels the call durably; a run
+  killed before its handler, or one that dies without a result, is finished by the extension
+  (`cancelled` / `failed`), never left `starting`. `/reload`, `/new` and resume leave a run going
+  (its answer lands on its task); quit cancels it. `delegates run --no-keep` overrides a call's `keep`, and
+  its result carries `answer`. Eval: `no_mux_delegate` (tmux and herdr absent from the caller, its
+  mu and the delegate; next family). The faux worker driver also treats `delegate_<id>` (a mux-free
+  delegate's name) as a delegate.
 
 - **`mu next --refute`: an opt-in durable checker per closed attempt** (`v_exec_refute`, slice C of
   `v_executor`; `src/next-refute.ts`). For each authorised task a worker closed as `done`, one
