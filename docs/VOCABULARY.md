@@ -53,7 +53,10 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **outdated extension** | A running pi whose loaded extension is older than mu (exit 4 on a missing op). pi's `/reload` fixes it. | |
 | **lastText** | A pi run's final assistant message, returned verbatim by `wait`. `mu_delegate` `record` finds its first `VERDICT:` line (also behind one role word such as `REFUTER:`) and writes everything from it, uncapped, as a `verdict` task note, then the call's report; mu applies no close or status change to the judged task from it. Planned: only a valid **CLOSE block** at its end is applied. | "result", "output" (alone) |
 | **ghost** | An `agents` row whose `pane_id` no longer exists. Pruned by **reconcile**. | "dead agent", "stale row" |
-| **reaper** | The part of reconcile that releases a ghost's tasks to `OPEN`. Makes `mu task wait` exit 6. | "garbage collector", "janitor" |
+| **reaper** | The part of reconcile that releases a ghost's tasks to `OPEN`. Makes `mu wait` exit 6 (a `dead` event). | "garbage collector", "janitor" |
+| **wait event** | What ends a `mu wait`: `closed`, `settled`, `input`, `dead`, `stall`, `delegate`, `heartbeat` (the timeout, `ok:true`, `timedOut`), `interrupted` (SIGINT/SIGTERM). It is `data.firing` of the one JSON result, beside `exit`, `snapshots`, `cursor` and `resume`. | "wait result" (alone), "firing task" |
+| **typed ref** | A `mu wait` argument that names its kind: `task:[<ws>/]<id>`, `agent:[<ws>/]<name>[@<runs>][#<incarnation>]`, `delegate:<call id>`. A bare word is refused. | "bare ref" |
+| **resume** | `data.resume` of a wait result: the command that continues it, every condition repeated, refs typed and POSIX-quoted. | "retry command" |
 | **needs attention** | An `IN_PROGRESS` task whose owner has been `needs_input` for `--stuck-after` seconds. Check with `mu agent read <owner>`. | "stuck", "stalled" (kept only in the `stuck` JSON field and exit-7 `STALL_DETECTED`) |
 | **reconcile** | Re-derive registry rows from the mux. Runs in `mu agent list` and `mu doctor`. | "sync", "refresh" |
 | **extension** | The pi extension shipped in the mu package. | "plugin" |

@@ -1,5 +1,6 @@
-// Unit tests for `mu task wait --on-stall <warn|exit>`
-// (task_wait_stall_action_flag).
+// `mu task wait --on-stall <warn|exit>` (task_wait_stall_action_flag) through the unified
+// wait: a stall is an event (kind `stall`, exit 7) in the one JSON document; `warn` flags the
+// snapshot (`stuck`) and one stderr line, and keeps waiting.
 //
 // Real SQLite (in-temp-dir), no tmux. Drives the CLI in-process via
 // runCli — same pattern as test/cli-task-wait-cross-ws.integration.test.ts.
@@ -10,8 +11,8 @@
 // status + updated_at) takes the spotlight.
 //
 // What we cover:
-//   1. --on-stall exit (target=CLOSED): stuck task → exit 7;
-//      stderr names the task + agent + needs_input phrase.
+//   1. --on-stall exit (target=CLOSED): stuck task → exit 7; the event names the task,
+//      the snapshot names the owner and why.
 //   2. --on-stall exit + --status OPEN carve-out: behaves as warn-only.
 //   3. --stuck-after 0 disables both warn AND exit.
 //   4. Multi-ref --on-stall exit fires on the FIRST stalled ref (argv
@@ -154,11 +155,26 @@ describe("mu task wait --on-stall warn|exit", () => {
     ).run(agentName, new Date().toISOString(), taskName);
   }
 
-  it("--on-stall exit: stall → exit 7; stderr names task + agent + needs_input", async () => {
+  interface Doc {
+    firing: { kind: string; ref: string | null };
+    exit: number;
+    timedOut: boolean;
+    snapshots: {
+      ref: string;
+      owner?: string;
+      stuck?: boolean;
+      stuckWhy?: string;
+      fired: boolean;
+    }[];
+    nextSteps?: { intent: string; command: string }[];
+  }
+  const doc = (stdout: string): Doc => JSON.parse(stdout).data as Doc;
+
+  it("--on-stall exit: stall → exit 7; the event names the task, the snapshot the owner and why", async () => {
     setupStalledWorker("alice", "build");
 
     const start = Date.now();
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout, stderr } = await runCli(
       [
         "task",
         "wait",
@@ -177,23 +193,21 @@ describe("mu task wait --on-stall warn|exit", () => {
     const elapsedMs = Date.now() - start;
 
     expect(exitCode).toBe(7);
-    expect(stderr).toContain("build");
-    expect(stderr).toContain("alice");
-    expect(stderr).toMatch(/needs_input/i);
-    // Fail-fast property: well under --timeout. The 10ms sleep clamp
-    // means we land in <1s in practice.
+    expect(stderr).toBe("");
+    const d = doc(stdout);
+    expect(d).toMatchObject({ exit: 7, timedOut: false });
+    expect(d.firing).toEqual({ kind: "stall", ref: `task:${workstream}/build` });
+    expect(d.snapshots[0]).toMatchObject({ owner: "alice", stuck: true, stuckWhy: "needs_input" });
+    // Fail-fast property: well under --timeout.
     expect(elapsedMs).toBeLessThan(5_000);
   });
 
-  it("--on-stall exit + --status OPEN: warn-only (carve-out mirrors exit-6)", async () => {
-    // The carve-out rule: --on-stall exit is suppressed when the
-    // wait target is anything other than CLOSED. Same logic as
-    // exit-6's reaper-flip suppression — with --status OPEN the
-    // worker reaching needs_input might BE the success path, so
-    // exiting on stall would race the wait-condition check.
+  it("--on-stall exit + --status OPEN: no stall (a non-CLOSED target is not stalled by its owner)", async () => {
+    // The carve-out rule: a stall is only reported when the wait target is CLOSED. With
+    // --status OPEN the worker reaching needs_input might BE the success path.
     setupStalledWorker("carol", "review");
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       [
         "task",
         "wait",
@@ -212,16 +226,16 @@ describe("mu task wait --on-stall warn|exit", () => {
       dbPath,
     );
 
-    expect(exitCode).toBe(5); // timed out, NOT exit 7
-    // Stderr STILL got the warning — the SDK still emits + persists
-    // when --on-stall is downgraded to warn-only.
-    expect(stderr).toMatch(/needs attention/i);
+    expect(exitCode).toBeNull(); // the heartbeat, NOT exit 7
+    const d = doc(stdout);
+    expect(d).toMatchObject({ timedOut: true, exit: 0 });
+    expect(d.snapshots[0]?.stuck).toBeUndefined();
   });
 
-  it("--stuck-after 0 disables both warn and exit (--on-stall exit no-ops)", async () => {
+  it("--stuck-after 0 disables stall detection (--on-stall exit no-ops)", async () => {
     setupStalledWorker("eve", "audit");
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout, stderr } = await runCli(
       [
         "task",
         "wait",
@@ -238,16 +252,16 @@ describe("mu task wait --on-stall warn|exit", () => {
       dbPath,
     );
 
-    expect(exitCode).toBe(5); // timed out, never fired stall
-    expect(stderr).not.toMatch(/needs attention/i);
-    expect(stderr).not.toMatch(/mu agent read/);
+    expect(exitCode).toBeNull();
+    expect(stderr).toBe("");
+    expect(doc(stdout)).toMatchObject({ timedOut: true, exit: 0 });
   });
 
   it("multi-ref --on-stall exit fires on the FIRST stalled task (argv order)", async () => {
     setupStalledWorker("w1", "t1");
     setupStalledWorker("w2", "t2");
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       [
         "task",
         "wait",
@@ -267,30 +281,31 @@ describe("mu task wait --on-stall warn|exit", () => {
 
     expect(exitCode).toBe(7);
     // Names t1 (first in argv), not t2.
-    expect(stderr).toContain("t1");
-    expect(stderr).toContain("w1");
+    expect(doc(stdout).firing).toEqual({ kind: "stall", ref: `task:${workstream}/t1` });
   });
 
-  it("--on-stall exit (default): stuck task → exit 7 without the flag", async () => {
+  it("--on-stall exit is the default: a stuck task → exit 7 without the flag", async () => {
     // Orchestrators kept forgetting --on-stall exit and polled past a
     // worker that needed them until --timeout. The flag is now the default.
     setupStalledWorker("dave", "ship");
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       ["task", "wait", "ship", "-w", workstream, "--stuck-after", "1", "--timeout", "30"],
       dbPath,
     );
 
     expect(exitCode).toBe(7);
-    expect(stderr).toContain("ship");
-    expect(stderr).toContain("dave");
-    expect(stderr).toContain("mu agent read dave");
+    const d = doc(stdout);
+    expect(d.firing.kind).toBe("stall");
+    expect(d.nextSteps?.map((x) => x.command)).toContain(
+      `mu agent read dave -w ${workstream} --lines 60`,
+    );
   });
 
-  it("--on-stall warn: warns, keeps polling, times out (exit 5)", async () => {
+  it("--on-stall warn: one stderr line, keeps waiting, times out ok:true", async () => {
     setupStalledWorker("frank", "deploy");
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout, stderr } = await runCli(
       [
         "task",
         "wait",
@@ -307,22 +322,22 @@ describe("mu task wait --on-stall warn|exit", () => {
       dbPath,
     );
 
-    expect(exitCode).toBe(5); // timed out, warn-only
+    expect(exitCode).toBeNull(); // timed out, warn-only
     expect(stderr).toMatch(/needs attention/i);
+    expect(stderr.trim().split("\n")).toHaveLength(1); // once, not once per poll
+    expect(doc(stdout)).toMatchObject({ timedOut: true, exit: 0 });
   });
 
-  // agent_attention_required defect 3: on a timeout, nextSteps used to
-  // offer `mu task show <id>` for every unmet ref. For a stuck ref that
-  // is the wrong first move — the task row looks healthy and
-  // IN_PROGRESS, while the reason it is not progressing (a question, a
-  // prompt, a finished-but-unclosed worker) is only in the pane.
-  it("--json timeout: a stuck ref's nextStep reads the owner's pane, not the task row", async () => {
+  // agent_attention_required defect 3: on a timeout, nextSteps used to offer `mu task show <id>`
+  // for every unmet ref. For a stuck ref that is the wrong first move — the task row looks
+  // healthy and IN_PROGRESS, while the reason it is not progressing is only in the pane.
+  it("timeout: a stuck ref's next step reads the owner's pane, not the task row", async () => {
     setupStalledWorker("grace", "stalled_task");
     // A second unmet ref with NO owner: still gets the task-show step,
     // proving the redirect is scoped to the stuck case.
     addTask(db, { localId: "plain_task", workstream, title: "P", impact: 50, effortDays: 1 });
 
-    const { exitCode, data } = await runCliJson(
+    const { exitCode, stdout } = await runCliJson(
       [
         "task",
         "wait",
@@ -330,39 +345,36 @@ describe("mu task wait --on-stall warn|exit", () => {
         "plain_task",
         "-w",
         workstream,
+        "--all",
         "--stuck-after",
         "1",
         "--on-stall",
         "warn",
         "--timeout",
         "0.3",
-        "--json",
       ],
       dbPath,
-    );
+    ).then((r) => ({ exitCode: r.exitCode, stdout: r.stdout }));
 
-    expect(exitCode).toBe(5);
-    const payload = data as {
-      timedOut: Array<{ name: string; stuck: boolean }>;
-      nextSteps: Array<{ intent: string; command: string }>;
-    };
-    expect(payload.timedOut.find((t) => t.name === "stalled_task")?.stuck).toBe(true);
+    expect(exitCode).toBeNull();
+    const d = doc(stdout);
+    expect(d.snapshots.find((x) => x.ref.endsWith("/stalled_task"))?.stuck).toBe(true);
 
-    const commands = payload.nextSteps.map((s) => s.command);
+    const commands = (d.nextSteps ?? []).map((x) => x.command);
     expect(commands).toContain(`mu agent read grace -w ${workstream} --lines 60`);
     // The stuck ref must NOT also get the misleading task-show step…
     expect(commands).not.toContain(`mu task show stalled_task -w ${workstream}`);
     // …while the ownerless unmet ref keeps it.
     expect(commands).toContain(`mu task show plain_task -w ${workstream}`);
     // A mux owner has no ctl runs: no exact-answer wait hint.
-    expect(commands.some((c) => c.includes("--after-runs"))).toBe(false);
+    expect(commands.some((c) => c.includes("@"))).toBe(false);
   });
 
-  it("--json timeout: a stuck pi owner's nextSteps lead with wait --after-runs runs-1, then the read", async () => {
+  it("timeout: a stuck pi owner's next steps lead with the answer wait (runs-1), then the read", async () => {
     setupStalledWorker("piwarn", "pi_stuck", "pi");
     await serveCtl("piwarn", Date.now() - 10 * 60_000, 3);
 
-    const { exitCode, data } = await runCliJson(
+    const { exitCode, stdout } = await runCli(
       [
         "task",
         "wait",
@@ -375,16 +387,13 @@ describe("mu task wait --on-stall warn|exit", () => {
         "warn",
         "--timeout",
         "0.3",
-        "--json",
       ],
       dbPath,
     );
 
-    expect(exitCode).toBe(5);
-    const commands = (data as { nextSteps: Array<{ command: string }> }).nextSteps.map(
-      (s) => s.command,
-    );
-    const wait = commands.indexOf(`mu agent wait piwarn --after-runs 2 --json -w ${workstream}`);
+    expect(exitCode).toBeNull();
+    const commands = (doc(stdout).nextSteps ?? []).map((x) => x.command);
+    const wait = commands.indexOf(`mu wait agent:${workstream}/piwarn@2`);
     const read = commands.indexOf(`mu agent read piwarn -w ${workstream} --lines 60`);
     expect(wait).toBeGreaterThanOrEqual(0);
     expect(read).toBe(wait + 1);
@@ -394,7 +403,7 @@ describe("mu task wait --on-stall warn|exit", () => {
     setupStalledWorker("piper", "pi_task", "pi");
     await serveCtl("piper", Date.now() - 10 * 60_000);
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       [
         "task",
         "wait",
@@ -412,33 +421,33 @@ describe("mu task wait --on-stall warn|exit", () => {
     );
 
     expect(exitCode).toBe(7);
-    expect(stderr).toContain("piper");
-    expect(stderr).toMatch(/needs_input/);
+    expect(doc(stdout).snapshots[0]).toMatchObject({ owner: "piper", stuckWhy: "needs_input" });
   });
 
   it("pi owner: without --stuck-after, ctl idle for 10 s → exit 7 (ctl default is 5 s)", async () => {
     setupStalledWorker("pip", "pi_quick", "pi");
     await serveCtl("pip", Date.now() - 10_000);
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       ["task", "wait", "pi_quick", "-w", workstream, "--timeout", "30"],
       dbPath,
     );
 
     expect(exitCode).toBe(7);
-    expect(stderr).toContain("pip");
+    expect(doc(stdout).snapshots[0]?.owner).toBe("pip");
   });
 
   it("pi owner: an explicit --stuck-after overrides the ctl default", async () => {
     setupStalledWorker("pat", "pi_slow", "pi");
     await serveCtl("pat", Date.now() - 10_000);
 
-    const { exitCode } = await runCli(
+    const { exitCode, stdout } = await runCli(
       ["task", "wait", "pi_slow", "-w", workstream, "--stuck-after", "60", "--timeout", "0.3"],
       dbPath,
     );
 
-    expect(exitCode).toBe(5); // 10 s idle < 60 s: timeout, not a stall
+    expect(exitCode).toBeNull();
+    expect(doc(stdout).timedOut).toBe(true); // 10 s idle < 60 s: the heartbeat, not a stall
   });
 
   it("pi owner with no control socket: needs attention, not a dead pane", async () => {
@@ -446,7 +455,7 @@ describe("mu task wait --on-stall warn|exit", () => {
     // the stall predicate fires (age from when the wait first saw it).
     setupStalledWorker("nosock", "orphan_task", "pi");
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       [
         "task",
         "wait",
@@ -464,14 +473,16 @@ describe("mu task wait --on-stall warn|exit", () => {
     );
 
     expect(exitCode).toBe(7); // stall, NOT exit 6
-    expect(stderr).toContain("nosock");
-    expect(stderr).toMatch(/needs attention|ctl missing/);
+    const d = doc(stdout);
+    expect(d.firing.kind).toBe("stall");
+    expect(d.snapshots[0]).toMatchObject({ owner: "nosock" });
+    expect(d.snapshots[0]?.stuckWhy).toMatch(/ctl missing|ctl/);
   });
 
-  it("pi owner with no control socket, --on-stall warn: warns, then times out (exit 5)", async () => {
+  it("pi owner with no control socket, --on-stall warn: warns, then times out ok:true", async () => {
     setupStalledWorker("nosock2", "orphan2", "pi");
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout, stderr } = await runCli(
       [
         "task",
         "wait",
@@ -488,11 +499,12 @@ describe("mu task wait --on-stall warn|exit", () => {
       dbPath,
     );
 
-    expect(exitCode).toBe(5);
-    expect(stderr).toMatch(/nosock2 has been in ctl missing/);
+    expect(exitCode).toBeNull();
+    expect(stderr).toMatch(/nosock2 needs attention \(ctl/);
+    expect(doc(stdout)).toMatchObject({ timedOut: true, exit: 0 });
   });
 
-  it("--on-stall <bad>: usage error", async () => {
+  it("--on-stall <bad>: usage error as one JSON document", async () => {
     addTask(db, {
       localId: "x",
       workstream,
@@ -501,12 +513,25 @@ describe("mu task wait --on-stall warn|exit", () => {
       effortDays: 1,
     });
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       ["task", "wait", "x", "-w", workstream, "--on-stall", "bogus"],
       dbPath,
     );
 
-    expect(exitCode).not.toBe(0);
-    expect(stderr).toMatch(/--on-stall/);
+    expect(exitCode).toBe(2);
+    expect(JSON.parse(stdout)).toMatchObject({ ok: false, exit: 2 });
+    expect(JSON.parse(stdout).message).toMatch(/--on-stall/);
+  });
+
+  it("--on-stall steer|release: not in this build, named as such", async () => {
+    addTask(db, { localId: "y", workstream, title: "Y", impact: 50, effortDays: 1 });
+    for (const action of ["steer", "release"]) {
+      const { exitCode, stdout } = await runCli(
+        ["task", "wait", "y", "-w", workstream, "--on-stall", action],
+        dbPath,
+      );
+      expect(exitCode).toBe(2);
+      expect(JSON.parse(stdout).message).toMatch(/not available in this build/);
+    }
   });
 });

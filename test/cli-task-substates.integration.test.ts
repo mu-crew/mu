@@ -162,18 +162,22 @@ describe("mu task substates CLI", () => {
     expect(plain((await cli("show", "a")).stdout)).toContain("mu task open a -w test");
   });
 
-  it("wait prints the pair and skips cherry-pick for a non-done close", async () => {
+  it("wait names the pair and skips cherry-pick for a non-done close", async () => {
     await cli("close", "a", "--as", "duplicate", "--why", "see e");
     const r = await cli("wait", "a", "--first");
     expect(r.exitCode).toBeNull();
-    const out = plain(r.stdout);
-    expect(out).toContain("a (CLOSED/duplicate)");
-    expect(out).not.toContain("cherry-pick");
-    expect(out).toContain("mu task notes a -w test");
-    const j = asJson<{ firing: { substate: string } }>(
-      await cli("wait", "a", "--first", "--json"),
-    ).data;
-    expect(j.firing.substate).toBe("duplicate");
+    const out = asJson<{
+      firing: { kind: string; ref: string };
+      reason: string;
+      snapshots: { substate: string }[];
+      nextSteps: { command: string }[];
+    }>(r).data;
+    expect(out.firing).toEqual({ kind: "closed", ref: "task:test/a" });
+    expect(out.reason).toContain("CLOSED/duplicate");
+    expect(out.snapshots[0]?.substate).toBe("duplicate");
+    const commands = out.nextSteps.map((n) => n.command);
+    expect(commands.join("\n")).not.toContain("cherry-pick");
+    expect(commands).toContain("mu task notes a -w test");
   });
 
   it("list renders CLOSED/wontfix and bare OPEN", async () => {

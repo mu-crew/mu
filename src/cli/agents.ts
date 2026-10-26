@@ -921,7 +921,6 @@ export async function cmdAgentWait(
   }
   // --first is a CLI alias for --any with a richer output shape.
   const wantAny = opts.any === true || opts.first === true;
-  const wantFirstShape = opts.first === true;
 
   // Resolve each ref — cross-workstream-aware via `<ws>/<name>`; bare
   // names resolve through -w or the injected worker scope.
@@ -1031,7 +1030,8 @@ export async function cmdAgentWait(
   const dead = result.agents.filter((a) => a.dead);
   const blocked = result.agents.filter((a) => a.blocked !== undefined);
   const fired = result.agents.filter((a) => a.fired);
-  const firing = wantFirstShape && fired.length > 0 ? fired[0] : null;
+  // --any and --first share one contract: the result names the agent that fired.
+  const firing = wantAny && fired.length > 0 ? fired[0] : null;
   const qualified = (a: { workstreamName: string; name: string }): string =>
     `${a.workstreamName}/${a.name}`;
   // A pi run that settled with its final text already returned it:

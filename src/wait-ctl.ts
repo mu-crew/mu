@@ -10,16 +10,44 @@ import { agentCtlSocket, expectsCtl } from "./agents/transport.js";
 import { getAgent } from "./agents.js";
 import { ctlProbe } from "./ctl/client.js";
 import type { Db } from "./db.js";
-import type { AgentBaseline, WaitOptions } from "./wait-types.js";
+import { activeMux } from "./mux.js";
+import { WAIT_TEXT_MAX } from "./wait-regex.js";
+import type { AgentBaseline, AgentReading, WaitOptions } from "./wait-types.js";
 
-export function ctlAgentHooks(db: Db): Required<Pick<WaitOptions, "readAgents" | "watchAgent">> {
+/**
+ * `paneText` (a wait with `--until-text`): also read the pane tail of an agent whose control
+ * socket does not answer (a non-pi command, a `--no-ctl` pane). A pi agent that answers has
+ * authoritative ctl `lastText` and is never read from its pane. Best effort: a pane the mux
+ * cannot read just has no text and never matches.
+ */
+export function ctlAgentHooks(
+  db: Db,
+  opts: { paneText?: boolean } = {},
+): Required<Pick<WaitOptions, "readAgents" | "watchAgent">> {
   return {
     readAgents: async (refs) => {
       const agents = refs.flatMap((r) => {
         const a = getAgent(db, r.id, r.workstream);
         return a === undefined ? [] : [a];
       });
-      return observeAgentStates(db, agents);
+      const observed = await observeAgentStates(db, agents);
+      if (opts.paneText !== true) return observed;
+      const out = new Map<string, AgentReading>(observed);
+      for (const a of agents) {
+        const key = `${a.workstreamName}/${a.name}`;
+        const base = out.get(key);
+        if (base === undefined || base.status === null) continue;
+        // A pi agent whose control socket ANSWERS has authoritative ctl text: never its pane.
+        // Only an agent with no answering socket (a non-pi command, `--no-ctl`) has none.
+        if (base.ctl === "ok") continue;
+        try {
+          const text = await (await activeMux()).capture(a.paneId, { lines: 200 });
+          out.set(key, { ...base, lastText: text.slice(-WAIT_TEXT_MAX), textSource: "pane" });
+        } catch {
+          // no pane text: the agent just never matches
+        }
+      }
+      return out;
     },
     watchAgent: async (ref, signal, ctx) => {
       const agent = getAgent(db, ref.id, ref.workstream);

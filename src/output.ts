@@ -274,7 +274,8 @@ export function isJsonMode(): boolean {
   return (
     argv.some((a) => a === "--json" || a.startsWith("--json=")) ||
     (isSqlVerbArgv(argv) && !argv.includes("--table")) ||
-    isStateVerbArgv(argv)
+    isStateVerbArgv(argv) ||
+    isWaitVerbArgv(argv)
   );
 }
 
@@ -309,6 +310,17 @@ export function isSqlVerbArgv(argv: readonly string[]): boolean {
 export function isStateVerbArgv(argv: readonly string[]): boolean {
   const [first, second] = verbWords(argv);
   return first === "state" || (first === "me" && second !== "tasks" && second !== "next");
+}
+
+/**
+ * Is this invocation `mu wait` or its alias `mu task wait`? The wait prints one JSON
+ * document for every outcome, errors and parse-time errors included, with no
+ * `--json` needed. Found the way the parser finds the verb, so `mu -w x task list`
+ * is not a wait and `mu -w x wait` is.
+ */
+export function isWaitVerbArgv(argv: readonly string[]): boolean {
+  const [first, second] = verbWords(argv);
+  return first === "wait" || (first === "task" && second === "wait");
 }
 
 /**

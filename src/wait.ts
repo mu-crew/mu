@@ -70,8 +70,8 @@ import {
   getDelegateCall,
   listDelegatesOf,
   TERMINAL_DELEGATE_STATES,
+  tallyCalls,
   type VerdictTally,
-  verdictTally,
 } from "./delegates.js";
 import { openHumanNeeds } from "./human-needed.js";
 import { emitEvent } from "./logs.js";
@@ -106,6 +106,7 @@ import {
   type RefBaseline,
   type RegisteredRef,
   readWaitRegistration,
+  registerOwnedWait,
 } from "./wait-registration.js";
 import {
   type AgentReading,
@@ -160,6 +161,8 @@ interface Item {
     token: string;
     owner: AgentReading;
     ownerRef: { name: string; workstreamName: string };
+    /** How long the owner had been stalled when seen (the snapshot's `stuckSecs`). */
+    ageSecs: number;
   };
 }
 
@@ -220,12 +223,21 @@ export async function waitForEvents(
     stuckExplicit !== 0 && opts.status !== "OPEN" && opts.status !== "IN_PROGRESS";
   const stuckAfter = (viaCtl: boolean): number =>
     stuckExplicit ?? (viaCtl ? DEFAULT_CTL_STUCK_AFTER_MS : DEFAULT_STUCK_AFTER_MS);
-  // Owners of watched tasks are read for death (callers) and for stalls.
-  const observeOwners =
-    ((callers.length > 0 && ownedScope) || stuckEnabled) && opts.readAgents !== undefined;
+  // A wait that owns events (a caller set, or any owned-scope wait: a plain shell or CI
+  // naming refs) sees an owner die; the refs-scope adapters never did.
+  const watchDeaths = callers.length > 0 || ownedScope;
+  const scope = opts.scope;
+  const inScope = (workstream: string): boolean => scope === undefined || workstream === scope;
+  /** A delegate call is in scope by its own workstream or the workstream of the task it records on. */
+  const callInScope = (c: DelegateRow): boolean =>
+    scope === undefined || c.workstream === scope || c.record?.workstream === scope;
+  // Owners of watched tasks are read for death and for stalls.
+  const observeOwners = (watchDeaths || stuckEnabled) && opts.readAgents !== undefined;
   /** The callers consume what they are handed (cursors, registration) only for owned-scope waits. */
   const consumes = ownedScope && callers.length > 0;
+  /** An owned-scope wait owns what its callers spawned: the provenance discovery. */
   const target: TaskStatus = opts.status ?? "CLOSED";
+  const discover = consumes && target === "CLOSED";
   const matcher: TextMatcher | undefined =
     typeof opts.until === "object" ? compileTextMatcher(opts.until.text) : undefined;
   const applyClose = opts.applyClose !== false;
@@ -340,12 +352,68 @@ export async function waitForEvents(
   const ownerReadings = new Map<string, AgentReading>();
   /** A wait with no caller owns no durable state: its blockers seen open are remembered for this wait only. */
   const openLocal = new Set<string>();
-  const priorTask = new Map<string, { status: string; owner: string | null; ownerId: number }>();
-  const reapedOwners = new Set<string>();
-  let lastItems: Item[] = [];
+  const priorTask = new Map<
+    string,
+    { status: string; owner: string | null; ownerWs: string; ownerId: number }
+  >();
   let firstRefresh = true;
   let inspected = false;
   const delivered: Item[] = [];
+
+  /**
+   * Provenance: the agents a caller spawned (`agents.spawner`) that own an IN_PROGRESS
+   * work task, and those tasks, are owed to that caller. They are registered (durably,
+   * with a zero run baseline: a worker the caller spawned has no earlier run it must
+   * not be handed), so a worker that dies and is reaped is still seen dead.
+   */
+  const discoverSpawned = (): void => {
+    if (!discover) return;
+    const rows = db
+      .prepare(
+        `SELECT a.name AS agent, a.id AS agentId, a.spawner AS spawner, aws.name AS agentWs,
+                t.local_id AS task, tws.name AS taskWs
+           FROM agents a
+           JOIN workstreams aws ON aws.id = a.workstream_id
+           JOIN tasks t ON t.owner_id = a.id AND t.status = 'IN_PROGRESS' AND t.kind = 'work'
+           JOIN workstreams tws ON tws.id = t.workstream_id AND tws.torn_down_at IS NULL
+          WHERE a.spawner IN (${callers.map(() => "?").join(",")})
+          ORDER BY a.id, t.id`,
+      )
+      .all(...callers) as {
+      agent: string;
+      agentId: number;
+      spawner: string;
+      agentWs: string;
+      task: string;
+      taskWs: string;
+    }[];
+    const bySpawner = new Map<string, (RegisteredRef & { baseline?: RefBaseline })[]>();
+    for (const r of rows) {
+      if (!inScope(r.taskWs) && !inScope(r.agentWs)) continue;
+      const list = bySpawner.get(r.spawner) ?? [];
+      list.push(
+        {
+          kind: "agent",
+          workstream: r.agentWs,
+          id: r.agent,
+          baseline: { afterRuns: 0, agentId: r.agentId },
+        },
+        { kind: "task", workstream: r.taskWs, id: r.task },
+      );
+      bySpawner.set(r.spawner, list);
+    }
+    for (const [spawner, refs] of bySpawner) {
+      const reg = readWaitRegistration(db, spawner);
+      const have = new Set((reg?.refs ?? []).map((r) => refKey(r)));
+      const fresh = refs.filter((r) => !have.has(refKey(r)));
+      if (fresh.length === 0) continue;
+      try {
+        registerOwnedWait(db, spawner, fresh);
+      } catch {
+        // A full or refused registration never fails the wait: what it holds is still waited on.
+      }
+    }
+  };
 
   /** The callers' registered refs, merged (each ref once); records which caller owes which. */
   const ownedRefs = (): WaitRef[] => {
@@ -356,6 +424,7 @@ export async function waitForEvents(
       const reg = readWaitRegistration(db, c);
       if (reg === undefined) continue;
       for (const r of reg.refs) {
+        if (r.kind !== "delegate" && !inScope(r.workstream)) continue;
         const key = refKey(r);
         ownedKeys.add(key);
         if (!out.has(key)) {
@@ -509,6 +578,16 @@ export async function waitForEvents(
         t.result = undefined;
         t.needWatch = false;
       } else t.latched = { kind: "input", reading: r };
+    } else if (
+      !fromWatch &&
+      matcher !== undefined &&
+      r.textSource === "pane" &&
+      r.lastText !== undefined &&
+      matcher.test(r.lastText)
+    ) {
+      // A non-pi pane has no settle and no ctl text: what it printed is the only condition
+      // there is. It matches once (the tail), and it never closes a task (settled stays unset).
+      t.latched = { kind: "settled", reading: r };
     } else if (fromWatch) {
       // No settle seen (`unknown`): the watch ends and the agent is polled instead.
       if (r.status === "unknown") t.handle = undefined;
@@ -527,6 +606,7 @@ export async function waitForEvents(
       if (b.lost) return;
     }
     if (opts.sync !== false) await ambientIngest(db, { quiet: true });
+    discoverSpawned();
     const owned = ownedRefs();
     for (const r of explicit.values()) if (r.kind === "agent") track(r, true);
     for (const r of owned) if (r.kind === "agent") track(r, explicit.has(refKey(r)));
@@ -566,7 +646,7 @@ export async function waitForEvents(
         if (r === undefined) {
           // A caller's own refs: an agent that is gone is dead, not unknown.
           r =
-            callers.length > 0 && !agentExists(db, ref)
+            watchDeaths && !agentExists(db, ref)
               ? { status: null, reason: "agent is no longer registered" }
               : { status: "unknown", reason: "state reader returned no row" };
         }
@@ -600,6 +680,7 @@ export async function waitForEvents(
       ...(r?.paneId !== undefined ? { paneId: r.paneId } : {}),
       ...(r?.settled !== undefined ? { settled: r.settled } : {}),
       ...(r?.lastTextTruncated !== undefined ? { lastTextTruncated: r.lastTextTruncated } : {}),
+      ...(r?.textSource !== undefined ? { textSource: r.textSource } : {}),
       ...(r?.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
       ...(r?.runs !== undefined ? { runs: r.runs } : {}),
       ...(r?.lastText !== undefined ? { lastText: r.lastText } : {}),
@@ -650,7 +731,14 @@ export async function waitForEvents(
 
   /** Make `item` the stall `stall` describes (also how a handled stall outlives its own effect). */
   const markStall = (item: Item, stall: NonNullable<Item["stall"]>): void => {
+    const r = stall.owner;
     item.snap.stuck = true;
+    item.snap.stuckWhy =
+      r.ctl === "missing" || r.ctl === "refused"
+        ? (r.reason ?? `ctl ${r.ctl}`)
+        : (r.status ?? "needs_input");
+    item.snap.stuckSecs = stall.ageSecs;
+    if (r.runs !== undefined) item.snap.ownerRuns = r.runs;
     item.kind = "stall";
     item.ckey = urgentKey("stall", item.key);
     item.token = { incarnation: `stall:${stall.token}`, runs: 1 };
@@ -690,15 +778,18 @@ export async function waitForEvents(
     };
     if (row === undefined) return item;
     // The owner died before the task closed: reaper precedence over closure.
-    if (callers.length > 0 && want === "CLOSED" && status !== "CLOSED") {
+    if (watchDeaths && want === "CLOSED" && status !== "CLOSED") {
       const prior = priorTask.get(item.key);
       const ownerKey = ownerRef === undefined ? undefined : agentKey(ownerRef);
       const dead =
         (ownerKey !== undefined && ownerReadings.get(ownerKey)?.status === null) ||
+        // The reaper flip: IN_PROGRESS -> OPEN while the owner's row (that very row) is gone.
+        // A release leaves the owner registered; a replaced agent is another row.
         (prior?.status === "IN_PROGRESS" &&
           status === "OPEN" &&
           prior.owner !== null &&
-          reapedOwners.has(prior.owner));
+          prior.ownerId !== 0 &&
+          agentRowId(db, { workstream: prior.ownerWs, id: prior.owner }) !== prior.ownerId);
       if (dead) {
         snap.dead = true;
         item.kind = "dead";
@@ -721,7 +812,22 @@ export async function waitForEvents(
     ) {
       const ownerKey = agentKey(ownerRef);
       const r = ownerReadings.get(ownerKey);
-      const age = stallAgeMs(ownerKey, r);
+      // An owner whose settled run is still on its way (a watched agent with runs past its
+      // baseline) is not stalled: the watch delivers that run, and with it the CLOSE block
+      // that may close this very task. A stall must never beat an unprocessed settle.
+      const watched = tracks.get(
+        refKey({ kind: "agent", workstream: ownerRef.workstreamName, id: ownerRef.name }),
+      );
+      const settleOwed =
+        watched !== undefined &&
+        // the settle is in hand but not delivered yet: it goes first, the stall (if the
+        // task is still open after its CLOSE block) is the NEXT wait's news
+        (watched.latched?.kind === "settled" ||
+          (watched.latched === undefined &&
+            watched.handle !== undefined &&
+            r?.runs !== undefined &&
+            (watched.baseline ?? 0) < r.runs));
+      const age = settleOwed ? null : stallAgeMs(ownerKey, r);
       if (age !== null && r !== undefined) {
         const token = [
           row.workstreamId,
@@ -731,7 +837,7 @@ export async function waitForEvents(
           r.runs ?? "",
           r.since ?? "",
         ].join("|");
-        markStall(item, { token, owner: r, ownerRef });
+        markStall(item, { token, owner: r, ownerRef, ageSecs: Math.round(age / 1000) });
         if (!stallEmitted.has(token)) {
           stallEmitted.add(token);
           emitEvent(
@@ -785,6 +891,12 @@ export async function waitForEvents(
         status: call.state,
         verdict: call.verdict,
         owner: call.agent,
+        // Which finding this is: the delegate's own task, the task it judges, its wave.
+        callTask: call.task,
+        ...(call.record !== null
+          ? { record: `${call.record.workstream}/${call.record.task}` }
+          : {}),
+        ...(call.wave !== null ? { wave: call.wave } : {}),
         fired: terminal,
         dead: false,
       },
@@ -878,18 +990,23 @@ export async function waitForEvents(
       else addCall(getDelegateCall(db, r.id), true, false);
     }
     if (opts.wave !== undefined) {
-      for (const c of listDelegatesOf(db, callers, opts.wave.workstream, {
+      // The caller's own calls of the wave, narrowed to the scope: a delegate lives in
+      // `scratch` unless told otherwise, and records on the workstream the scope names.
+      const waveCalls = listDelegatesOf(db, callers, opts.wave.workstream, {
         wave: opts.wave.name,
-      })) {
-        addCall(c, true, !all);
-      }
-      tally = verdictTally(db, opts.wave.workstream, opts.wave.name, callers);
+      }).filter(callInScope);
+      for (const c of waveCalls) addCall(c, true, !all);
+      tally = tallyCalls(waveCalls);
     }
-    for (const r of owned)
-      if (r.kind === "delegate") addCall(getDelegateCall(db, r.id), false, true);
+    for (const r of owned) {
+      if (r.kind !== "delegate") continue;
+      const c = getDelegateCall(db, r.id);
+      if (c !== undefined && callInScope(c)) addCall(c, false, true);
+    }
     // Every call the callers made is owed its report; the cursor hides the consumed ones.
     if (consumes) {
       for (const c of listDelegatesOf(db, callers)) {
+        if (!callInScope(c)) continue;
         addCall(c, false, true);
         ownerOfKey.set(
           refKey({ kind: "delegate", workstream: c.workstream, id: c.callId }),
@@ -951,18 +1068,15 @@ export async function waitForEvents(
     for (const it of items) {
       if (it.ref.kind !== "task") continue;
       const owner = it.snap.owner ?? null;
+      const before = priorTask.get(it.key);
+      // Only a tick that SAW an owner records it: after the flip the owner is null.
+      const keep = owner === null && it.snap.status === "OPEN" ? before : undefined;
       priorTask.set(it.key, {
         status: it.snap.status ?? "OPEN",
-        owner,
-        // A reaped owner's row is gone next tick: keep its id so the death token stays one.
-        ownerId:
-          owner === null ? 0 : taskOwnerRowId(db, it.ref) || (priorTask.get(it.key)?.ownerId ?? 0),
+        owner: owner ?? keep?.owner ?? null,
+        ownerWs: it.snap.ownerWorkstream ?? keep?.ownerWs ?? it.ref.workstream,
+        ownerId: owner === null ? (keep?.ownerId ?? 0) : taskOwnerRowId(db, it.ref),
       });
-      if (owner !== null && it.snap.ownerWorkstream !== undefined) {
-        const gone = !agentExists(db, { workstream: it.snap.ownerWorkstream, id: owner });
-        if (gone) reapedOwners.add(owner);
-        else reapedOwners.delete(owner);
-      }
     }
     const shown: Item[] = [];
     for (const it of items) {
@@ -1005,6 +1119,11 @@ export async function waitForEvents(
     }
     for (const it of items) {
       if (it.stall === undefined || it.kind !== "stall" || it.hidden === true) continue;
+      // `warn`: flagged (`stuck`, the agent.stall event), never returned: the wait goes on.
+      if (opts.onStall === "warn") {
+        it.ready = false;
+        continue;
+      }
       const steering = opts.onStall === "steer" || opts.onStall === "release";
       const caller = ownerOf(it.key);
       if (!steering || handler === undefined || caller === undefined) {
@@ -1101,8 +1220,19 @@ export async function waitForEvents(
     const ready = items.filter((i) => i.ready).sort(rank);
     if (!all) {
       const best = ready[0];
-      if (best !== undefined) return { event: best, fired: [best] };
-      return undefined;
+      if (best === undefined) return undefined;
+      // One fact, one event: a settled run whose CLOSE block closed task T, and T's own close,
+      // are the same news. Delivering either consumes the other, so the second is not owed.
+      const same = (a: Item, b: Item): boolean =>
+        a.kind === "settled" &&
+        a.ref.kind === "agent" &&
+        a.snap.close?.applied === true &&
+        a.snap.close.task === b.ref.id &&
+        a.ref.workstream === b.ref.workstream &&
+        b.ref.kind === "task" &&
+        b.kind === "closed";
+      const companions = ready.filter((i) => i !== best && (same(i, best) || same(best, i)));
+      return { event: best, fired: [best, ...companions] };
     }
     const urgent = ready.find(
       (i) =>
@@ -1165,7 +1295,9 @@ export async function waitForEvents(
   try {
     for (;;) {
       if (stopReason === "abort") {
-        result = build("interrupted", lastItems.length > 0 ? lastItems : evaluate());
+        // The final snapshot is the state NOW (a DB read), not the last tick's picture:
+        // a task that closed while the signal was on its way is reported closed.
+        result = build("interrupted", evaluate());
         break;
       }
       if (stopReason === "deadline" || Date.now() >= deadline) {
@@ -1188,7 +1320,7 @@ export async function waitForEvents(
       if (stopReason === "abort") continue;
       const items = evaluate();
       driveStalls(items);
-      lastItems = items;
+      opts.onPicture?.(items.map((i) => i.snap));
       if (opts.inspect) {
         inspected = true;
         await opts.inspect(items.filter((i) => i.target).map((i) => i.snap));
@@ -1209,7 +1341,7 @@ export async function waitForEvents(
       // registration and polled agents. All agents watched: sleep until a
       // settle, the deadline or an abort.
       const polled =
-        callers.length > 0 ||
+        watchDeaths ||
         observeOwners ||
         items.some((i) => i.ref.kind !== "agent") ||
         [...tracks.values()].some((t) => t.latched === undefined && t.handle === undefined);

@@ -41,6 +41,7 @@ import { wireRebuildCommand } from "./cli/rebuild.js";
 import { wireStateCommands } from "./cli/state.js";
 import { wireSyncCommand } from "./cli/sync.js";
 import { wireTaskCommands } from "./cli/tasks.js";
+import { wireWaitCommand } from "./cli/wait.js";
 import { wireWorkstreamCommands } from "./cli/workstream.js";
 import type { Db } from "./db.js";
 import { encodeEnvelope, okEnvelope, safeJsonLine } from "./output-contract.js";
@@ -838,6 +839,7 @@ export function buildProgram(): Command {
   wireAgentCommands(program);
   wireSelfCommands(program);
   wireTaskCommands(program);
+  wireWaitCommand(program);
   wireLogCommand(program);
   wireStateCommands(program);
   wireSyncCommand(program);

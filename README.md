@@ -56,7 +56,7 @@ mu task add build_auth  -w auth --title "Build auth"  --impact 80 --effort-days 
 mu agent spawn worker-1 -w auth --worktree
 mu task claim design_auth -w auth --for worker-1
 mu agent send worker-1 -w auth --fresh 'Do task design_auth. Close it with evidence.'
-mu task wait design_auth -w auth --first --on-stall exit   # exit 7 = worker needs you
+mu wait task:design_auth -w auth   # one JSON result; exit 7 = worker needs you
 mu workstream teardown auth                         # preview (rev=<n>); apply with --if <n>
 ```
 

@@ -37,7 +37,6 @@ import {
   native,
   prodWrong,
   stopsWhileWorking,
-  waitOutputs,
   waitWindows,
 } from "../lifecycle.ts";
 import {
@@ -46,6 +45,8 @@ import {
   delegateFor,
   delegatesInFlight,
   issuedDelegateArgs,
+  muCalls,
+  muOut,
   QUEUE_FULL,
   refusedNext,
   verdictFx,
@@ -203,14 +204,37 @@ export function wave(N: number, id: string): Scenario {
       // native guarantees: delivery inside a wait call, and a per-wave tally from wait.
       const ws = waitWindows(sb);
       const dels = deliveries(run, /claim-\d+/);
-      const inWait = dels.filter((e) => inside(e.t, ws)).length;
+      // A verdict reaches the model inside a wait two ways: the pi follow-up echo lands in the
+      // wait's window (3x cannot: pi delivers it only between turns), or the wait's OWN result
+      // carries it, as the wave tally's finding for that claim (the unified wait's delivery path:
+      // the echo is optional). Observed from what mu printed, never from the AUT's words.
+      // Every AUT mu call's own output (not only calls that blocked: a wave read after the work
+      // finished returns at once and still carries its tally).
+      const outs = muCalls(sb).map((m) => muOut(sb, m));
+      const viaResult = (n: number): boolean =>
+        outs.some((o) =>
+          new RegExp(`"id":"[^"]*/c${n}","confirmed":(\\d+),"refuted":(\\d+)`).test(o)
+            ? (() => {
+                const m = new RegExp(`"id":"[^"]*/c${n}","confirmed":(\\d+),"refuted":(\\d+)`).exec(
+                  o,
+                );
+                return m !== null && Number(m[1]) + Number(m[2]) >= 1;
+              })()
+            : false,
+        );
+      const echoes = dels.filter((e) => inside(e.t, ws));
+      let inWait = 0;
+      for (let n = 1; n <= N; n++) {
+        const echoed = echoes.some((e) => new RegExp(`claim-${n}(?!\\d)`).test(e.text ?? ""));
+        if (echoed || viaResult(n)) inWait++;
+      }
       const nat = [
         native(sb, "every verdict delivered inside a wait", inWait === N, `${inWait}/${N}`),
         native(
           sb,
           "wait returns a per-wave verdict tally",
-          waitOutputs(sb).some((o) => tallyOf(o, N)),
-          `${ws.length} wait call(s)`,
+          outs.some((o) => tallyOf(o, N)),
+          `${ws.length} blocking call(s)`,
         ),
       ];
       return await verdictFx(sb, run, completed, {

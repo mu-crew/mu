@@ -107,8 +107,9 @@ function expectJsonRefusal(r: { doc: { ok: boolean }; data: unknown }): void {
 /** Refusal of an argv that may or may not carry --json: --json gives a data-less failure
  *  document on stdout, human mode gives empty stdout. */
 function expectNothingRead(r: { stdout: string }, argv: readonly string[]): void {
-  // `--json` verbs and `state` (JSON by default) print a data-less failure document.
-  if (!argv.includes("--json") && !argv.includes("state")) {
+  // `--json` verbs, `state` and the wait (JSON by default) print a data-less failure document.
+  const isWait = argv.includes("wait") && !argv.includes("agent");
+  if (!argv.includes("--json") && !argv.includes("state") && !isWait) {
     expect(r.stdout).toBe("");
     return;
   }

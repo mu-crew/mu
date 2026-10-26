@@ -109,7 +109,7 @@ and closes the task.
 ## Wait for the task to close
 
 ```bash
-mu task wait design -w auth --first --on-stall exit
+mu wait task:design -w auth
 ```
 
 ```

@@ -10,43 +10,32 @@
 // Extracted from src/cli/tasks.ts as part of the wire-out follow-up
 // to refactor_split_large_src_files.
 
-import { dirname } from "node:path";
-import { agentKey, readAgentStates, type StateReading } from "../../agent-state.js";
 import { AgentNotFoundError } from "../../agents/errors.js";
-import { type AgentRow, getAgent } from "../../agents.js";
+import { getAgent } from "../../agents.js";
 import {
   assertTaskInWorkstream,
-  CliExitError,
   checkQualifiedPrefix,
   checkWorkstreamName,
   emitJson,
   parseQualifiedRef,
-  parseStatusOption,
   resolveEntityRef,
   resolveWorkstream,
   UsageError,
 } from "../../cli.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../../db.js";
-import { GLYPH } from "../../glyphs.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
-import { reconcile } from "../../reconcile.js";
-import { stallWaitHint } from "../../tasks/errors.js";
-import {
-  claimTask,
-  DEFAULT_STUCK_AFTER_MS,
-  formatPair,
-  getTask,
-  getTaskOwner,
-  ReaperDetectedDuringWaitError,
-  releaseTask,
-  resolveActorIdentity,
-  TaskNotFoundError,
-  type TaskWaitRef,
-  type TaskWaitTaskState,
-  waitForTasks,
-} from "../../tasks.js";
+import { claimTask, releaseTask, resolveActorIdentity } from "../../tasks.js";
+import type { WaitRef, WaitResult } from "../../wait.js";
 import { getWorktreeFor, upstreamRefs } from "../../worktree.js";
 import { dispatchHint, nextDispatchHint } from "../dispatch-hints.js";
+import {
+  parseOnStall,
+  parseWaitRef,
+  runWait,
+  type WaitSignals,
+  type WaitSpec,
+  waitMode,
+} from "../wait.js";
 
 export async function cmdTaskRelease(
   db: Db,
@@ -199,425 +188,82 @@ export async function cmdClaim(
   printNextSteps(nextSteps);
 }
 
-/** Qualified id `<ws>/<name>` for a watched ref — used in messages,
- *  --json output, and stuck-task hints. */
-function qualifiedId(ref: { workstreamName: string; name: string }): string {
-  return `${ref.workstreamName}/${ref.name}`;
-}
-
-/** A CLOSED ref whose substate says the work was not done. */
-function isUndelivered(ref: TaskWaitTaskState): boolean {
-  return ref.status === "CLOSED" && ref.substate !== "done";
-}
-
-/** Resolve a single `<ws>/<name>` or bare id into a TaskWaitRef.
- *  - Qualified refs use their prefix; -w is NOT consulted (so a
- *    cross-workstream wait can name two different workstreams).
- *  - Bare refs use -w or the injected scope via resolveWorkstream.
- *  - When neither qualifier nor -w / the injected worker scope gives a
- *    workstream for a bare ref, surface the canonical UsageError from
- *    resolveWorkstream so the operator gets the same diagnostic as
- *    every other task verb.
- *  - Existence is asserted up-front: a typo in either half throws
- *    TaskNotFoundError listing the qualified form. (waitForTasks
- *    repeats this check; we duplicate here so the error names the
- *    raw arg the operator typed, not the normalised internal form.)
+/**
+ * `mu task wait <ids...>`: the same wait as `mu wait`, over `task:` refs. A bare
+ * id needs -w (or the worker's injected workstream); `<ws>/<id>` carries its own.
+ * One engine (src/wait.ts), one JSON result; the only thing added here is the
+ * hint after a closed task: the worker's worktree commits to pick from.
  */
-async function resolveWaitRef(
-  db: Db,
-  raw: string,
-  fallbackWs: string | undefined,
-): Promise<TaskWaitRef> {
-  const parsed = parseQualifiedRef(raw);
-  let workstreamName: string;
-  if (parsed.workstream !== undefined) {
-    workstreamName = checkQualifiedPrefix(raw, parsed.workstream);
-  } else {
-    // Bare ref — -w or the injected worker scope. resolveWorkstream
-    // throws the one-line UsageError if neither is present: the same
-    // error every other task verb gives.
-    workstreamName = await resolveWorkstream(fallbackWs);
-  }
-  if (getTask(db, parsed.name, workstreamName) === undefined) {
-    // Use the raw form (qualified or bare) so the error message
-    // matches what the operator typed.
-    throw new TaskNotFoundError(
-      parsed.workstream !== undefined ? raw : parsed.name,
-      workstreamName,
-      parsed.name,
-    );
-  }
-  return { workstreamName, name: parsed.name };
-}
-
 export async function cmdTaskWait(
   db: Db,
   ids: readonly string[],
   opts: {
     status?: string;
     any?: boolean;
-    /** --first is a CLI alias for --any with a richer return shape
-     *  (prints the firing ref's qualified id; --json gains a
-     *  `firing` field). task_wait_cross_workstream. */
     first?: boolean;
+    all?: boolean;
+    allOf?: boolean;
+    firstOf?: boolean;
     timeout?: number;
     stuckAfter?: number;
-    onStall?: "warn" | "exit";
+    onStall?: string;
     workstream?: string;
     json?: boolean;
   },
+  sig: WaitSignals,
 ): Promise<void> {
   if (ids.length === 0) {
     throw new UsageError("mu task wait: at least one task id is required");
   }
-  // task_wait_stall_action_flag: validate --on-stall up-front so a
-  // typo errors loud at the verb boundary instead of being silently
-  // ignored by the SDK. Default 'exit': an orchestrator that forgets the
-  // flag would otherwise poll past a worker that needs it until --timeout.
-  const onStallRaw = opts.onStall ?? "exit";
-  if (onStallRaw !== "warn" && onStallRaw !== "exit") {
-    throw new UsageError(`--on-stall: expected 'warn' or 'exit', got '${onStallRaw}'`);
-  }
-  // Validate status (default CLOSED). Same parser as mu task list --status.
-  const statusOpt = opts.status !== undefined ? parseStatusOption(opts.status) : undefined;
-
-  // --first is a CLI alias for --any (same exit-condition; differs
-  // only in output shape: --first emphasises WHICH ref fired so the
-  // operator can pipe the qualified id into the next step).
-  const wantAny = opts.any === true || opts.first === true;
-  // emphasise WHICH ref fired in stdout / --json. ONLY --first opts
-  // into this richer shape; --any keeps the per-task summary as-is
-  // (matches the help text + the --first inline contract). Promoting
-  // --any to the --first shape would surprise scripts that pass --any
-  // and parse the ordinary summary.
-  const wantFirstShape = opts.first === true;
-
-  // Resolve every ref — cross-workstream-aware. Each ref carries its
-  // own workstream so the wait set can span multiple workstreams.
-  // Pre-flight existence check is inside resolveWaitRef; failures
-  // throw before any waiting begins.
-  // An explicit -w is validated even when every ref is qualified (and so
-  // never consults it): a blank or padded -w is a usage error on every path.
+  const mode = waitMode(opts);
+  const onStall = parseOnStall(opts.onStall);
+  // An explicit -w is validated even when every ref is qualified.
   if (opts.workstream !== undefined) checkWorkstreamName(opts.workstream);
-  const refs: TaskWaitRef[] = [];
+  const refs: WaitRef[] = [];
   for (const id of ids) {
-    refs.push(await resolveWaitRef(db, id, opts.workstream));
+    // `task wait` takes bare or qualified task ids; the typed form is accepted too.
+    refs.push(await parseWaitRef(db, id.startsWith("task:") ? id : `task:${id}`, opts.workstream));
   }
-  // Workstream set: every workstream we'll reconcile per poll. May be
-  // 1 (legacy single-ws wait) or N (cross-ws). Used both for the
-  // reconcile-each-poll path and for the human output below.
-  const workstreamSet = new Set(refs.map((r) => r.workstreamName));
-
-  // --timeout in seconds for shell ergonomics; SDK takes ms.
-  // 0 in the SDK = wait forever; same convention here.
-  const timeoutMs = opts.timeout !== undefined ? opts.timeout * 1000 : 600_000;
-  // --stuck-after also in seconds; 0 disables. Default mirrors the SDK.
-  const stuckAfterMs =
-    opts.stuckAfter !== undefined ? opts.stuckAfter * 1000 : DEFAULT_STUCK_AFTER_MS;
-
-  const sdkOpts: {
-    status?: TaskWaitTaskState["status"];
-    any?: boolean;
-    timeoutMs: number;
-    stuckAfterMs: number;
-    onStall?: "warn" | "exit";
-    readOwnerState?: (owner: {
-      name: string;
-      workstreamName: string;
-    }) => Promise<StateReading | null>;
-    beforePoll?: () => Promise<void>;
-    ctlStuckAfterMs?: number;
-  } = { timeoutMs, stuckAfterMs };
-  // An explicit --stuck-after applies to every owner, ctl ones included.
-  if (opts.stuckAfter !== undefined) sdkOpts.ctlStuckAfterMs = stuckAfterMs;
-  if (statusOpt !== undefined) sdkOpts.status = statusOpt;
-  if (wantAny) sdkOpts.any = true;
-  let ownerReadings = new Map<string, StateReading>();
-  sdkOpts.readOwnerState = async (owner) => ownerReadings.get(agentKey(owner)) ?? null;
-
-  // task_wait_reconcile_dead_panes (extended for cross-workstream by
-  // task_wait_cross_workstream): per-poll reconcile + reaper-flip
-  // detection. We keep a snapshot of each watched task's prior
-  // (status, owner) so that AFTER reconcile (which may have flipped
-  // IN_PROGRESS → OPEN for a dead-pane worker) we can spot the
-  // transition and abort with exit 6 instead of running out the
-  // operator's --timeout.
-  //
-  //   - Reconcile runs on EVERY poll regardless of target, and once
-  //     per workstream in the wait set (NOT just the resolved -w —
-  //     cross-ws waits span multiple workstreams). The reaper is
-  //     exactly what we want to fire, and it only does so during a
-  //     `"full"` reconcile (the prune deletes the agent row which
-  //     triggers the IN_PROGRESS → OPEN flip).
-  //   - Exit-6 suppression: only when the wait target is CLOSED.
-  //     Other targets treat reaper-flip as a legitimate state change
-  //     (target=OPEN: it's the success; target=IN_PROGRESS: an
-  //     operator polling for the next worker to claim doesn't want
-  //     a dead predecessor to abort their wait).
-  //   - Cross-ws scoping: a reaper-flip in workstream B while we're
-  //     waiting on A's task does NOT trigger exit 6 — the
-  //     priorState/check loop runs ONLY over the watched refs. A
-  //     reconcile of B is harmless to A's wait.
-  //   - First-iteration coverage: beforePoll runs BEFORE the initial
-  //     snapshot too (waitForTasks contract), so a worker that died
-  //     BEFORE the operator typed `mu task wait` still triggers exit
-  //     6 on the first tick.
-  const target = statusOpt ?? "CLOSED";
-  const reaperExitEnabled = target === "CLOSED";
-  // task_wait_stall_action_flag: same target=CLOSED carve-out as
-  // exit-6's reaper-flip suppression. With --status OPEN/IN_PROGRESS
-  // the worker reaching needs_input might BE the success path —
-  // exiting on stall would race the wait-condition check. Operators
-  // who pass --on-stall exit + --status OPEN get warn-only behaviour
-  // (the SDK still emits the stderr warning + agent_logs event).
-  if (onStallRaw === "exit" && target === "CLOSED") sdkOpts.onStall = "exit";
-  // The owner is read by owner_id, not by name in the task's
-  // workstream: `task claim --for <ws>/<agent>` assigns an owner from
-  // another workstream.
-  const ownerOf = (ref: TaskWaitRef): AgentRow | undefined => {
-    const owner = getTaskOwner(db, ref.name, ref.workstreamName);
-    return owner === undefined ? undefined : getAgent(db, owner.name, owner.workstreamName);
+  const spec: WaitSpec = {
+    refs,
+    mode,
+    onStall,
+    verb: "mu task wait",
+    ...(opts.workstream !== undefined ? { scope: opts.workstream } : {}),
+    ...(opts.status !== undefined ? { status: opts.status } : {}),
+    ...(opts.stuckAfter !== undefined ? { stuckAfter: opts.stuckAfter } : {}),
+    ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
   };
-  const priorState = new Map<
-    string,
-    { status: string; owner: { name: string; workstream: string } | null }
-  >();
-  sdkOpts.beforePoll = async () => {
-    // Reconcile each unique workstream in the wait set, plus the
-    // workstream of each watched task's current owner: a
-    // cross-workstream owner's dead pane is pruned (and its task
-    // reaped) only by a reconcile of the owner's own workstream.
-    // Each call is a cheap (~few ms) mux pane listing; it captures no
-    // pane text. Full mode prunes dead panes, which fires the reaper
-    // that flips tasks back to OPEN.
-    const reconcileSet = new Set(workstreamSet);
-    for (const ref of refs) {
-      const owner = getTaskOwner(db, ref.name, ref.workstreamName);
-      if (owner !== undefined) reconcileSet.add(owner.workstreamName);
-    }
-    for (const wsName of reconcileSet) {
-      try {
-        await reconcile(db, { workstream: wsName, mode: "full" });
-      } catch {
-        // Tmux substrate hiccup mid-wait: don't crash the wait. The
-        // next iteration retries; the exit-6 path stays correct
-        // because the prior-state map only fires on a real flip we
-        // observed.
-      }
-    }
-    const owners = refs.flatMap((ref) => {
-      const agent = ownerOf(ref);
-      return agent === undefined ? [] : [agent];
-    });
-    ownerReadings = await readAgentStates(owners, { stateDir: dirname(db.name) });
-    if (!reaperExitEnabled) return;
-    for (const ref of refs) {
-      const key = qualifiedId(ref);
-      const row = getTask(db, ref.name, ref.workstreamName);
-      const status = row?.status ?? "OPEN";
-      const ownerRow = ownerOf(ref);
-      const owner =
-        ownerRow === undefined
-          ? null
-          : { name: ownerRow.name, workstream: ownerRow.workstreamName };
-      const prior = priorState.get(key);
-      // Reaper-flip detected on a watched task: IN_PROGRESS → OPEN AND
-      // the prior owner's agent row is gone. The reaper is the agent
-      // row's delete, so a vanished owner is what tells it apart from
-      // a `mu task release` (owner still registered), a `--self` claim
-      // (no owner to reap) or a deleted task (no row): those are
-      // ordinary state changes, not a dead pane. The FK
-      // CASCADE-SET-NULL has already cleared the current row's owner,
-      // so the owner comes from the previous tick's snapshot.
-      if (
-        row !== undefined &&
-        prior !== undefined &&
-        prior.status === "IN_PROGRESS" &&
-        status === "OPEN" &&
-        prior.owner !== null &&
-        getAgent(db, prior.owner.name, prior.owner.workstream) === undefined
-      ) {
-        throw new ReaperDetectedDuringWaitError(ref.name, prior.owner.name, ref.workstreamName);
-      }
-      priorState.set(key, { status, owner });
-    }
-  };
+  await runWait(db, spec, sig, {
+    extraNextSteps: (result) => worktreeHints(db, result),
+  });
+}
 
-  const startedAt = Date.now();
-  const result = await waitForTasks(db, refs, sdkOpts);
-  const elapsedMs = Date.now() - startedAt;
-
-  // ─── WHICH-result shaping ────────────────────────────────────────
-  // "firing" = the first ref that reached the target on the closing
-  // snapshot. Set ONLY for --first. NULL for --any (which reports that
-  // one ref fired, not which), for --all (every ref reached; no "first"
-  // to single out), and on timeout (nothing reached).
-  //
-  // The --any case is the one that reads like a bug and is not: it
-  // exits 0 with firing:null, so a consumer doing `.firing.name` after
-  // --any crashes on a SUCCESSFUL wait. It was documented as "--first /
-  // --any" for a while, which is what made that look supported. Use
-  // --first when you need to know which.
-  //
-  // The `?? null` is unreachable, not defensive-for-a-real-case: both
-  // of waitForTasks' non-timeout returns are guarded by isDone(), and
-  // --first implies any:true, so isDone means at least one ref has
-  // reachedTarget and find() cannot miss. Kept because the types
-  // cannot express that, and null is the honest fallback if the
-  // invariant ever breaks.
-  const firingRef: TaskWaitTaskState | null =
-    wantFirstShape && !result.timedOut ? (result.refs.find((t) => t.reachedTarget) ?? null) : null;
-  const reachedRefs = result.refs.filter((t) => t.reachedTarget);
-  const unmetRefs = result.refs.filter((t) => !t.reachedTarget);
-
-  // Build nextSteps. The structure differs by exit shape:
-  //   - --first / --any success: name the firing ref, suggest
-  //     cherry-pick + verify + refresh (the dispatch-pipeline
-  //     recipe). The cherry-pick command uses the firing ref's owner
-  //     as the worker name when known.
-  //   - --all success: list closed refs, suggest verify.
-  //   - timeout / partial: list unmet refs, suggest mu task show.
-  const nextSteps: NextStep[] = [];
-  if (!result.timedOut && firingRef !== null && isUndelivered(firingRef)) {
-    // wontfix / duplicate / superseded: nothing to cherry-pick. The
-    // reason note says what happened instead.
-    nextSteps.push({
-      intent: `Read why ${firingRef.name} closed ${formatPair(firingRef)} (no deliverable)`,
-      command: `mu task notes ${firingRef.name} -w ${firingRef.workstreamName}`,
-    });
-  } else if (!result.timedOut && firingRef !== null) {
-    const owner = firingRef.owner;
-    if (owner !== null) {
-      // The worker's worktree, when it has one: list what it committed
-      // beyond the upstream refs, and the orchestrator picks.
-      const wt = getWorktreeFor(db, firingRef.workstreamName, owner);
-      if (wt !== undefined) {
-        // Own commits = HEAD minus everything already upstream (base is the
-        // spawn-time fork; a manual rebase moves it).
-        const not = wt.base !== "" ? await upstreamRefs(wt.root, wt.base).catch(() => []) : [];
-        nextSteps.push({
-          intent: `Inspect ${owner}'s commits, then cherry-pick what you want`,
-          command: `git -C ${wt.path} log --oneline${not.length > 0 ? ` HEAD --not ${not.join(" ")}` : ""}`,
-        });
-      }
-    }
-    nextSteps.push({
-      intent: "Verify the cherry-pick",
-      command: "<your project verify command — e.g. npm run test, cargo test, uv run pytest>",
-    });
-    if (owner !== null) {
-      const ownerRow = getAgent(db, owner, firingRef.workstreamName);
-      const dispatch =
-        ownerRow === undefined ? null : nextDispatchHint(ownerRow, firingRef.workstreamName);
-      if (dispatch !== null) nextSteps.push(dispatch);
-    }
-  } else if (!result.timedOut && wantFirstShape === false) {
-    // --all success path — every ref reached. No single "firing"
-    // worker to cherry-pick; the operator presumably already
-    // picked along the way (or runs a single verify here).
-    nextSteps.push({
-      intent: "Verify the merged work",
-      command: "<your project verify command — e.g. npm run test, cargo test, uv run pytest>",
+/** After a task closed with a deliverable: the worker's own commits, the verify step, the next dispatch. */
+async function worktreeHints(
+  db: Db,
+  result: WaitResult,
+): Promise<{ intent: string; command: string }[]> {
+  const e = result.event;
+  if (e.kind !== "closed" || e.ref === null || e.ref.kind !== "task") return [];
+  const snap = result.refs.find(
+    (s) => s.ref.id === e.ref?.id && s.ref.workstream === e.ref?.workstream,
+  );
+  if (snap === undefined || snap.substate !== "done") return [];
+  const out: { intent: string; command: string }[] = [];
+  const owner = snap.owner;
+  if (owner === null || owner === undefined) return out;
+  const ownerWs = snap.ownerWorkstream ?? e.ref.workstream;
+  const wt = getWorktreeFor(db, ownerWs, owner);
+  if (wt !== undefined) {
+    const not = wt.base !== "" ? await upstreamRefs(wt.root, wt.base).catch(() => []) : [];
+    out.push({
+      intent: `Inspect ${owner}'s commits, then cherry-pick what you want`,
+      command: `git -C ${wt.path} log --oneline${not.length > 0 ? ` HEAD --not ${not.join(" ")}` : ""}`,
     });
   }
-  for (const t of unmetRefs) {
-    // A task whose owner needs attention (`stuck`) is the one case
-    // where `mu task show` is the wrong first step: the task row looks
-    // healthy and IN_PROGRESS, while the reason it is not progressing
-    // — a question, a prompt, or a finished-but-unclosed worker — is
-    // only visible in the pane. Point at the pane instead.
-    if (t.stuck && t.owner !== null) {
-      // The owner's own workstream: a `--for <ws>/<agent>` owner lives
-      // outside the task's workstream.
-      const ownerWs =
-        getTaskOwner(db, t.name, t.workstreamName)?.workstreamName ?? t.workstreamName;
-      const runs = ownerReadings.get(agentKey({ name: t.owner, workstreamName: ownerWs }))?.runs;
-      nextSteps.push(...stallWaitHint(t.owner, ownerWs, runs));
-      nextSteps.push({
-        intent: `Read ${t.owner}'s pane — ${qualifiedId(t)} is IN_PROGRESS but its owner needs attention`,
-        command: `mu agent read ${t.owner} -w ${ownerWs} --lines 60`,
-      });
-      continue;
-    }
-    nextSteps.push({
-      intent: `Investigate ${qualifiedId(t)} (status=${t.status})`,
-      command: `mu task show ${t.name} -w ${t.workstreamName}`,
-    });
-  }
-  if (!result.timedOut) {
-    // Surface the next-ready hint for each workstream we waited on —
-    // a cross-ws operator wants both `mu task next` candidates.
-    for (const wsName of workstreamSet) {
-      nextSteps.push({
-        intent: `Pick the next ready task in ${wsName}`,
-        command: `mu task next -w ${wsName}`,
-      });
-    }
-  }
-
-  if (opts.json) {
-    // JSON envelope (task_wait_cross_workstream). Built explicitly
-    // (no spread of the SDK return) so the operator-facing contract
-    // stays narrow:
-    //   firing   — the firing ref on --first/--any success, else null
-    //   all      — refs that REACHED target (every ref on --all
-    //              success; just the firing ref for --first/--any;
-    //              the partial set on timeout)
-    //   timedOut — refs that did NOT reach target. ALWAYS [] on a
-    //              clean exit; populated on actual timeout. Callers
-    //              branch on `firing === null && timedOut.length > 0`
-    //              for the partial-progress case.
-    //   nextSteps— the same hint list printed to stdout.
-    const firingJson =
-      firingRef === null
-        ? null
-        : {
-            workstreamName: firingRef.workstreamName,
-            name: firingRef.name,
-            qualifiedId: qualifiedId(firingRef),
-            status: firingRef.status,
-            substate: firingRef.substate,
-            owner: firingRef.owner,
-          };
-    const timedOutArray = result.timedOut
-      ? unmetRefs.map((t) => ({ ...t, qualifiedId: qualifiedId(t) }))
-      : [];
-    emitJson({
-      firing: firingJson,
-      all: reachedRefs.map((t) => ({
-        ...t,
-        qualifiedId: qualifiedId(t),
-      })),
-      timedOut: timedOutArray,
-      nextSteps,
-    });
-    if (result.timedOut) throw new CliExitError(5);
-    return;
-  }
-
-  // Human output:
-  //   --first / --any success: print qualified id of firing ref on
-  //     stdout (so `... | head -1` and `read REF < <(mu task wait
-  //     ...)` both work), then a dim summary + per-task lines.
-  //   --all success / timeout: today's summary line + per-task list.
-  const targetStatus = statusOpt ?? "CLOSED";
-  if (firingRef !== null) {
-    console.log(qualifiedId(firingRef));
-  }
-  const summary = result.timedOut
-    ? pc.yellow(`Timed out after ${elapsedMs}ms`)
-    : pc.green(
-        `${wantAny ? "any-of" : "all-of"} ${refs.length} reached ${targetStatus} in ${elapsedMs}ms`,
-      );
-  console.log(summary);
-  for (const t of result.refs) {
-    const marker = t.reachedTarget ? pc.green(GLYPH.ok) : pc.dim("•");
-    // Cross-ws: show the qualified id so a mixed list is unambiguous.
-    // Single-ws (workstreamSet.size === 1) keeps today's bare-name
-    // output to avoid noise.
-    const label = workstreamSet.size > 1 ? qualifiedId(t) : t.name;
-    console.log(`  ${marker} ${pc.bold(label)} ${pc.dim(`(${formatPair(t)})`)}`);
-  }
-  printNextSteps(nextSteps);
-  if (result.timedOut) throw new CliExitError(5);
+  const row = getAgent(db, owner, ownerWs);
+  const dispatch = row === undefined ? null : nextDispatchHint(row, e.ref.workstream);
+  if (dispatch !== null) out.push(dispatch);
+  return out;
 }

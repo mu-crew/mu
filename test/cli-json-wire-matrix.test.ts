@@ -60,6 +60,7 @@ const ARGS: Record<string, string[]> = {
   "task update": ["t1", "-t", "Renamed"],
   "task reparent": ["t1", "--parent", "t2"],
   "task wait": ["t1", "--timeout", "0.05"],
+  wait: ["task:probe/t1", "--timeout", "0.05"],
   log: ["a log line"],
   state: [],
   sql: ["SELECT 1 AS one"],

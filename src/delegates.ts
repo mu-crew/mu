@@ -540,17 +540,23 @@ export interface VerdictTally {
  */
 export function verdictTally(
   db: Db,
-  workstream: string,
+  /** The delegates' workstream; undefined = the wave in every workstream. */
+  workstream: string | undefined,
   wave: string,
   /** Only these callers' calls (`mu state` never mixes in another session's identically named wave); `[]` is none. */
   callers?: readonly string[],
 ): VerdictTally {
-  const out: VerdictTally = { findings: [], queued: 0, running: 0, refused: [] };
-  const byId = new Map<string, VerdictTally["findings"][number]>();
-  const calls =
+  return tallyCalls(
     callers === undefined
       ? listDelegates(db, undefined, workstream, { wave })
-      : listDelegatesOf(db, callers, workstream, { wave });
+      : listDelegatesOf(db, callers, workstream, { wave }),
+  );
+}
+
+/** The tally of exactly these calls (a wave a caller already narrowed). */
+export function tallyCalls(calls: readonly DelegateRow[]): VerdictTally {
+  const out: VerdictTally = { findings: [], queued: 0, running: 0, refused: [] };
+  const byId = new Map<string, VerdictTally["findings"][number]>();
   for (const c of calls) {
     const id = c.record ? `${c.record.workstream}/${c.record.task}` : `${c.workstream}/${c.task}`;
     let f = byId.get(id);

@@ -1,14 +1,8 @@
-// Regression: `mu task wait --any` and `--first` share the SAME
-// exit-condition (succeed when ONE listed task reaches target) but
-// MUST NOT share the same output shape. The help text and the
-// --first inline contract promise that ONLY --first emphasises WHICH
-// ref fired (prints the qualified id to stdout / adds a `firing`
-// field to --json); --any keeps the ordinary per-task summary.
-//
-// finding_task_wait_any_emits_first: the implementation had
-// `wantFirstShape = opts.first || opts.any`, so --any leaked the
-// firing-id line and the `firing` JSON field. These tests pin that
-// --any stays summary-shaped while --first carries the firing ref.
+// `mu task wait --any`, `--first` and the default are ONE contract: the first event ends
+// the wait, and the result names it. (Before the unified wait, --any left `firing` null
+// and only --first named the ref; a consumer doing `.firing.name` after a successful
+// --any crashed. wait-json-firing-null-exit0.) A clean exit with an event always names
+// the ref; a timeout is ok:true with timedOut and a heartbeat event, never an error exit.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,9 +15,12 @@ import { ensureWorkstream } from "../src/workstream.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 interface WaitJsonPayload {
-  firing: { qualifiedId: string } | null;
-  all: Array<{ qualifiedId: string }>;
-  timedOut: unknown[];
+  firing: { kind: string; ref: string | null };
+  event: { kind: string; ref: string | null };
+  exit: number;
+  timedOut: boolean;
+  snapshots: Array<{ ref: string; fired: boolean }>;
+  resume: string;
 }
 
 describe("mu task wait — --any vs --first output shape", () => {
@@ -58,88 +55,52 @@ describe("mu task wait — --any vs --first output shape", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("--first prints the firing ref's qualified id on stdout; --any does not", async () => {
-    const first = await runCli(["task", "wait", "a", "b", "--first", "-w", "test"], dbPath);
-    const any = await runCli(["task", "wait", "a", "b", "--any", "-w", "test"], dbPath);
-
-    expect(first.error).toBeUndefined();
-    expect(any.error).toBeUndefined();
-    // --first leads with the bare qualified id line.
-    expect(first.stdout.split("\n")[0]).toBe("test/a");
-    // --any never emits the firing-id line.
-    expect(any.stdout.split("\n")[0]).not.toBe("test/a");
-    // Both still print the any-of summary.
-    expect(first.stdout).toContain("any-of");
-    expect(any.stdout).toContain("any-of");
+  it("--first, --any and the default all return the same event, naming the ref", async () => {
+    const outs: WaitJsonPayload[] = [];
+    for (const flag of [["--first"], ["--any"], ["--first-of"], []]) {
+      const r = await runCliJson(["task", "wait", "a", "b", ...flag, "-w", "test"], dbPath);
+      expect(r.error).toBeUndefined();
+      expect(r.exitCode).toBeNull();
+      outs.push(r.data as WaitJsonPayload);
+    }
+    for (const o of outs) {
+      expect(o.firing).toEqual({ kind: "closed", ref: "task:test/a" });
+      expect(o.event).toEqual(o.firing);
+      expect(o.exit).toBe(0);
+      expect(o.timedOut).toBe(false);
+      // b is still open: the resume command waits for it, not for a.
+      expect(o.resume).toContain("task:test/b");
+      expect(o.resume).not.toContain("task:test/a");
+    }
   });
 
-  it("--first --json sets `firing`; --any --json leaves it null", async () => {
-    const first = await runCliJson(
-      ["task", "wait", "a", "b", "--first", "--json", "-w", "test"],
-      dbPath,
-    );
-    const any = await runCliJson(
-      ["task", "wait", "a", "b", "--any", "--json", "-w", "test"],
-      dbPath,
-    );
-
-    expect(first.error).toBeUndefined();
-    expect(any.error).toBeUndefined();
-
-    const firstPayload = first.data as WaitJsonPayload;
-    const anyPayload = any.data as WaitJsonPayload;
-
-    expect(firstPayload.firing).not.toBeNull();
-    expect(firstPayload.firing?.qualifiedId).toBe("test/a");
-    expect(anyPayload.firing).toBeNull();
+  it("always one JSON document, with no --json flag", async () => {
+    const r = await runCli(["task", "wait", "a", "-w", "test"], dbPath);
+    expect(r.stderr).toBe("");
+    expect(r.stdout.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(r.stdout)).toMatchObject({
+      ok: true,
+      data: { firing: { ref: "task:test/a" } },
+    });
   });
 
-  // wait-json-firing-null-exit0: filed as "--first can exit 0 with
-  // firing:null". It cannot — see the two tests below. What CAN do
-  // that is --any, on a perfectly successful wait, which is what the
-  // docs described as "--first / --any" and what a consumer doing
-  // `.firing.name` crashes on. Pinning both halves so neither the
-  // real shape nor the invariant can drift back.
-
-  it("--any exits 0 with firing:null on SUCCESS (the null is not a failure signal)", async () => {
-    const any = await runCliJson(
-      ["task", "wait", "a", "b", "--any", "--json", "-w", "test"],
-      dbPath,
-    );
-
-    expect(any.error).toBeUndefined();
-    const payload = any.data as WaitJsonPayload;
-    // The wait genuinely succeeded: `a` reached CLOSED and is in `all`,
-    // and nothing is outstanding — yet `firing` is null. Exit 0 plus
-    // firing:null therefore means "success, ref unidentified", never
-    // "something went wrong".
-    expect(payload.firing).toBeNull();
-    expect(payload.all.map((t) => t.qualifiedId)).toEqual(["test/a"]);
-    expect(payload.timedOut).toEqual([]);
+  it("--first and --all together are a usage error, not a silent pick", async () => {
+    const r = await runCli(["task", "wait", "a", "--first", "--all", "-w", "test"], dbPath);
+    expect(r.exitCode).toBe(2);
+    expect(JSON.parse(r.stdout)).toMatchObject({ ok: false, exit: 2 });
   });
 
-  it("--first never exits 0 with firing:null: a clean exit always names the ref", async () => {
-    // The invariant behind the unreachable `?? null` in claim.ts:
-    // --first implies any:true, and both non-timeout returns in
-    // waitForTasks are guarded by isDone(), which for any:true means
-    // >=1 ref reachedTarget. So a zero exit must carry a firing ref.
-    const success = await runCliJson(
-      ["task", "wait", "a", "b", "--first", "--json", "-w", "test"],
-      dbPath,
-    );
-    expect(success.error).toBeUndefined();
-    expect((success.data as WaitJsonPayload).firing).not.toBeNull();
+  it("a clean exit names the ref; a timeout is ok:true, timedOut, exit 0, a heartbeat event", async () => {
+    const hit = await runCliJson(["task", "wait", "a", "b", "--first", "-w", "test"], dbPath);
+    expect((hit.data as WaitJsonPayload).firing.ref).not.toBeNull();
 
-    // The complement: when nothing reaches the target, firing is null
-    // — but the exit is 5 (timeout), never 0. `b` is the only ref and
-    // it stays OPEN.
-    const timedOut = await runCliJson(
-      ["task", "wait", "b", "--first", "--json", "-w", "test", "--timeout", "0.3"],
-      dbPath,
-    );
-    expect(timedOut.exitCode).toBe(5);
-    const payload = timedOut.data as WaitJsonPayload;
-    expect(payload.firing).toBeNull();
-    expect(payload.timedOut).toHaveLength(1);
+    const miss = await runCliJson(["task", "wait", "b", "-w", "test", "--timeout", "0.3"], dbPath);
+    expect(miss.exitCode).toBeNull();
+    expect(miss.doc.ok).toBe(true);
+    const payload = miss.data as WaitJsonPayload;
+    expect(payload).toMatchObject({ timedOut: true, exit: 0 });
+    expect(payload.firing).toEqual({ kind: "heartbeat", ref: null });
+    expect(payload.snapshots.map((s) => s.ref)).toEqual(["task:test/b"]);
+    expect(payload.resume).toContain("task:test/b");
   });
 });

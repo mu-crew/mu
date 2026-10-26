@@ -791,7 +791,14 @@ export function handle(
         // best effort
       }
     }
-    if (exitCode !== undefined) process.exit(exitCode);
+    if (exitCode !== undefined) {
+      // A document piped to a slow reader is still in the stream's buffer: drain it,
+      // or process.exit truncates the one result a caller is waiting for.
+      if (process.stdout.writableLength > 0) {
+        await new Promise<void>((resolve) => process.stdout.write("", () => resolve()));
+      }
+      process.exit(exitCode);
+    }
   };
 }
 

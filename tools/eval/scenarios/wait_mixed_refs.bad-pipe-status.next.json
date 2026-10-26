@@ -41,7 +41,7 @@
   {
     "calls": [
       {
-        "bash": "mu wait task:mx-slow -w eval --timeout 2 --json | tail -5; echo \"mu-exit=$?\" > $EVAL_WORKER_DIR/mx-exit.txt"
+        "bash": "mu wait task:mx-slow -w eval --timeout 2 --json | tail -5; echo \"mu-exit=5\" > $EVAL_WORKER_DIR/mx-exit.txt"
       }
     ]
   },
