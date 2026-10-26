@@ -725,30 +725,23 @@ describe("local writes: kind and wave", () => {
   });
 });
 
-describe("segments: kind and wave ride v2 lines only", () => {
-  const line = (payload: Record<string, unknown>, v?: number) =>
-    encodeSegmentLine(
-      {
-        hlc: h(1),
-        machineId: M,
-        groupId: "g",
-        intent: null,
-        actor: null,
-        entity: "task",
-        key: "d/a",
-        op: "put",
-        payload: JSON.stringify(payload),
-      },
-      v,
-    );
+describe("segments: kind and wave ride v2 lines", () => {
+  const line = (payload: Record<string, unknown>) =>
+    encodeSegmentLine({
+      hlc: h(1),
+      machineId: M,
+      groupId: "g",
+      intent: null,
+      actor: null,
+      entity: "task",
+      key: "d/a",
+      op: "put",
+      payload: JSON.stringify(payload),
+    });
 
-  it.each(["kind", "wave"])("a v1 line carrying %s is refused; v2 round-trips it", (field) => {
-    expect(() => line({ [field]: "x" }, 1)).toThrow(
-      new RegExp(`v1 segment line carrying ${field}`),
-    );
-    const d = decodeLine(line({ [field]: "x" }, 2));
+  it.each(["kind", "wave"])("a v2 line round-trips %s", (field) => {
+    const d = decodeLine(line({ [field]: "x" }));
     expect(d.ok && JSON.parse(d.payloadText)).toEqual({ [field]: "x" });
-    expect(() => line({ title: "plain" }, 1)).not.toThrow();
   });
 
   it("schema 13 is still segment format 2", () => {

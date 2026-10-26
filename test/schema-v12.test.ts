@@ -593,14 +593,9 @@ describe("new fields only ride v2 segment lines", () => {
     payload: JSON.stringify(payload),
   });
 
-  it.each(["scored", "dispatch_host", "kind", "torn_down_at"])(
-    "encoding %s at v1 is refused; v2 and fieldless v1 are fine",
-    (field) => {
-      expect(() => encodeSegmentLine(sample({ [field]: 1 }), 1)).toThrow(/v1/);
-      expect(decodeLine(encodeSegmentLine(sample({ [field]: 1 }), 2)).ok).toBe(true);
-      expect(decodeLine(encodeSegmentLine(sample({ impact: 3 }), 1)).ok).toBe(true);
-    },
-  );
+  it.each(["scored", "dispatch_host", "kind", "torn_down_at"])("a v2 line carries %s", (field) => {
+    expect(decodeLine(encodeSegmentLine(sample({ [field]: 1 }))).ok).toBe(true);
+  });
 
   it("flush writes the new fields on v2 lines and a peer ingests them", async () => {
     const dir = join(tempDir, "sync");

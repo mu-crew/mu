@@ -392,23 +392,13 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
     }
     if (existing.defect !== null) {
       selfRepaired = existing.defect;
-      // Valid lines of another KNOWN version (v1 history) after the damage
-      // are kept byte for byte when the DB holds exactly the ops the
-      // damage removed; otherwise truncate and regenerate everything after.
-      const entries = entriesOf(path);
-      const kept = keepsOtherVersions(entries, existing.count)
-        ? repairKeepingLines(db, path, machineId, entries)
-        : null;
-      if (kept !== null) {
-        count = kept.lines;
-        since = kept.lastHlc;
-      } else {
-        writeFileSync(
-          path,
-          existing.goodLines.length > 0 ? `${existing.goodLines.join("\n")}\n` : "",
-          "utf8",
-        );
-      }
+      // Truncate back to the last verified-good line; everything after
+      // is regenerated from `ops`.
+      writeFileSync(
+        path,
+        existing.goodLines.length > 0 ? `${existing.goodLines.join("\n")}\n` : "",
+        "utf8",
+      );
     }
   }
 
@@ -448,64 +438,6 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
       : null,
   );
   return result;
-}
-
-/** One line of the own segment, classified. `bad` is damage; a line of a
- *  version this build cannot read never reaches here (the segment is
- *  read-only then, see `flushLocked`). */
-type OwnLine = { kind: "ok"; raw: string; hlc: string; version: number } | { kind: "bad" };
-
-function entriesOf(path: string): OwnLine[] {
-  return segmentLines(readFileSync(path, "utf8")).map((raw): OwnLine => {
-    const decoded = raw.trim() === "" ? null : decodeLine(raw);
-    return decoded?.ok === true
-      ? { kind: "ok", raw, hlc: decoded.line.hlc, version: decoded.line.v }
-      : { kind: "bad" };
-  });
-}
-
-/** True when a valid line AFTER the first defect (index `from`) is of a
- *  version other than the one this build writes (v1 history): truncating
- *  would rewrite it as v2, so repair tries to keep it. */
-function keepsOtherVersions(entries: readonly OwnLine[], from: number): boolean {
-  return entries.slice(from).some((e) => e.kind === "ok" && e.version !== SEGMENT_FORMAT_VERSION);
-}
-
-/** Repair that keeps every valid line byte for byte. Each damaged run
- *  between two valid lines is re-emitted from `ops` when the DB holds
- *  exactly the ops it removed; a damaged tail is dropped, as truncation
- *  would. Returns null (nothing written) when some run cannot be
- *  regenerated exactly: the caller then truncates and regenerates. */
-function repairKeepingLines(
-  db: Db,
-  path: string,
-  machineId: string,
-  entries: readonly OwnLine[],
-): { lines: number; lastHlc: string | null } | null {
-  let lastValid = entries.length - 1;
-  while (lastValid >= 0 && entries[lastValid]?.kind === "bad") lastValid -= 1;
-  const out: string[] = [];
-  let lastHlc: string | null = null;
-  for (let i = 0; i <= lastValid; i++) {
-    const e = entries[i];
-    if (e === undefined) break;
-    if (e.kind === "ok") {
-      lastHlc = e.hlc;
-      out.push(e.raw);
-      continue;
-    }
-    let end = i;
-    while (entries[end + 1]?.kind === "bad") end += 1;
-    const before = entries[i - 1];
-    const after = entries[end + 1];
-    if (after?.kind !== "ok" || (i > 0 && before?.kind !== "ok")) return null;
-    const missing = opsBetween(db, machineId, before?.kind === "ok" ? before.hlc : null, after.hlc);
-    if (missing.length !== end - i + 1) return null;
-    out.push(...missing);
-    i = end;
-  }
-  writeFileSync(path, out.length > 0 ? `${out.join("\n")}\n` : "", "utf8");
-  return { lines: out.length, lastHlc };
 }
 
 const SYNCED_ENTITIES_SQL = SYNCED_ENTITIES.map((e) => `'${e}'`).join(", ");
@@ -596,43 +528,6 @@ function pendingLines(
     return { lines, lastHlc, skippedLocal: 0 };
   }
   return { lines, lastHlc, skippedLocal: row.n - lines.length };
-}
-
-/** Own synced ops strictly between two hlcs (`null` = unbounded), as
- *  segment lines: what a damaged run of lines between two valid ones
- *  held, when the DB still has them. */
-function opsBetween(db: Db, machineId: string, after: string | null, before: string): string[] {
-  const rows = prepareCached(
-    db,
-    `SELECT hlc, machine_id, group_id, intent, actor, entity, key, op, payload
-       FROM ops
-      WHERE machine_id = @machineId AND entity IN (${SYNCED_ENTITIES_SQL})
-        AND hlc > @after AND hlc < @before
-      ORDER BY hlc`,
-  ).all({ machineId, after: after ?? "", before }) as Array<{
-    hlc: string;
-    machine_id: string;
-    group_id: string;
-    intent: string | null;
-    actor: string | null;
-    entity: string;
-    key: string;
-    op: string;
-    payload: string;
-  }>;
-  return rows.map((row) =>
-    encodeSegmentLine({
-      hlc: row.hlc,
-      machineId: row.machine_id,
-      groupId: row.group_id,
-      intent: row.intent,
-      actor: row.actor,
-      entity: row.entity,
-      key: row.key,
-      op: row.op === "del" ? "del" : "put",
-      payload: row.payload,
-    }),
-  );
 }
 
 /**

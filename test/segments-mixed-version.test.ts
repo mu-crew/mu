@@ -1,8 +1,6 @@
-// Segment versions are checked PER LINE (mu-next README Cut-over §4).
-// mu-next reads v1 and v2 and appends v2 to the same file; a line of a
-// version this build does not know is refused loudly and is never
-// truncated or appended after; a "3.x reader" (exact-equality on v1)
-// stops at the first v2 line instead of misreading it.
+// Segment versions are checked PER LINE. This build reads and writes v2
+// only; a line of any other version (v1 included, a future v3) is refused
+// loudly and its segment is never truncated or appended after.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { checkSegmentVersion } from "../src/fleet-hazards.js";
 import { manifestSelfConsistent, writeManifestFile } from "../src/segment-manifest.js";
-import { decodeFingerprint } from "../src/segment-resume.js";
 import {
   decodeLine,
   discoverPeers,
@@ -39,7 +36,7 @@ describe("segment versions are checked per line", () => {
   let b: Db;
 
   beforeEach(() => {
-    // These tests exercise the kept v1 reader on purpose; the guard has its own file.
+    // These tests write foreign-version lines on purpose; the guard has its own file.
     setSyncDirGuardForTests(true);
     tempDir = mkdtempSync(join(tmpdir(), "mu-seg-mixed-"));
     dir = join(tempDir, "sync");
@@ -78,13 +75,6 @@ describe("segment versions are checked per line", () => {
   const reencode = (raw: string, version: number): string => {
     const d = decodeLine(raw);
     if (!d.ok) throw new Error(`cannot re-encode: ${d.detail}`);
-    // A real v1 writer (3.x) never wrote the schema-12/13 fields.
-    let payload = d.payloadText;
-    if (version === 1) {
-      const body = JSON.parse(payload) as Record<string, unknown>;
-      for (const f of ["scored", "dispatch_host", "kind", "wave", "torn_down_at"]) delete body[f];
-      payload = JSON.stringify(body);
-    }
     return encodeSegmentLine(
       {
         hlc: d.line.hlc,
@@ -95,17 +85,17 @@ describe("segment versions are checked per line", () => {
         entity: d.line.entity,
         key: d.line.key,
         op: d.line.op,
-        payload,
+        payload: d.payloadText,
       },
       version,
     );
   };
 
-  /** A's current history as a segment whose first `n` lines are v1 and
-   *  the rest v2, with a manifest as an older build would have left it. */
-  const writeMixed = async (n: number, versions?: readonly number[]): Promise<string[]> => {
+  /** A's current history as a segment whose line i is written at
+   *  `versions[i]` (default v2), with a fresh manifest. */
+  const writeVersions = async (versions?: readonly number[]): Promise<string[]> => {
     await flushSegment(a, dir);
-    const lines = linesOf(segA()).map((l, i) => reencode(l, versions?.[i] ?? (i < n ? 1 : 2)));
+    const lines = linesOf(segA()).map((l, i) => reencode(l, versions?.[i] ?? 2));
     writeFileSync(segA(), `${lines.join("\n")}\n`);
     stampManifest(2, lines.length);
     return lines;
@@ -131,85 +121,19 @@ describe("segment versions are checked per line", () => {
     return peer;
   };
 
-  it("writes v2 and reads v1 and v2", () => {
+  it("writes and reads v2 only; a v1 line is refused as an unknown version", async () => {
     expect(SEGMENT_FORMAT_VERSION).toBe(2);
-    expect(SEGMENT_READ_VERSIONS).toEqual([1, 2]);
-  });
-
-  it("(a) a file with v1 lines then v2 lines ingests all of them", async () => {
-    seed(a, "t1", "t2", "t3", "t4");
-    const lines = await writeMixed(3);
-    expect(lines.length).toBeGreaterThan(3);
-
-    const result = ingestSegment(b, peerOfA());
-    expect(result.defects).toEqual([]);
-    expect(result.watermark).toBe(lines.length);
-    for (const id of ["t1", "t2", "t3", "t4"]) expect(hasTask(b, id)).toBe(true);
-  });
-
-  it("(b) a 3.x reader (read versions [1]) refuses the first v2 line and applies the v1 lines before it", async () => {
-    seed(a, "t1", "t2", "t3", "t4");
-    const lines = await writeMixed(3);
-    const only1 = [1] as const;
-
-    for (const l of lines.slice(0, 3)) expect(decodeLine(l, only1).ok).toBe(true);
-    const refused = decodeLine(lines[3] ?? "", only1);
-    expect(refused).toMatchObject({ ok: false, kind: "unknown-version", version: 2 });
-    if (!refused.ok) expect(refused.detail).toBe("segment format v2, this mu understands v1");
-  });
-
-  it("(c) own segment with v1 history gets v2 appends and a clean manifest", async () => {
+    expect(SEGMENT_READ_VERSIONS).toEqual([2]);
     seed(a, "t1", "t2");
-    await writeMixed(Number.POSITIVE_INFINITY);
-    const before = readFileSync(segA());
-    const n = linesOf(segA()).length;
-    stampManifest(1, n);
-
-    seed(a, "t3");
-    const flushed = await flushSegment(a, dir);
-
-    expect(flushed).toMatchObject({ appended: 1, selfRepaired: null, foreignVersionAt: null });
-    const after = readFileSync(segA());
-    expect(after.subarray(0, before.length).equals(before)).toBe(true); // v1 bytes untouched
-    const lines = linesOf(segA());
-    expect(lines).toHaveLength(n + 1);
-    expect(JSON.parse(lines.at(-1) ?? "").v).toBe(2);
-    expect(JSON.parse(lines[0] ?? "").v).toBe(1);
-
-    const m = readManifest(segA());
-    expect(m?.count).toBe(n + 1);
-    expect(m && manifestSelfConsistent(m)).toBe(true);
-    expect(m?.shaState).toEqual(sha256Update(sha256Initial(), after));
-    expect(verifyAgainstManifest(segA())).toMatchObject({ ok: true });
-    // Nothing else pending: a second flush is a clean no-op.
-    expect(await flushSegment(a, dir, { verify: true })).toMatchObject({
-      appended: 0,
-      selfRepaired: null,
-      foreignVersionAt: null,
+    const lines = await writeVersions([1]);
+    expect(decodeLine(lines[0] ?? "")).toMatchObject({
+      ok: false,
+      kind: "unknown-version",
+      version: 1,
     });
-  });
-
-  it("a peer that read the v1 part resumes over the appended v2 lines", async () => {
-    seed(a, "t1", "t2");
-    await writeMixed(Number.POSITIVE_INFINITY);
-    stampManifest(1, linesOf(segA()).length);
-    const peer = peerOfA();
-    expect(ingestSegment(b, peer).defects).toEqual([]);
-
-    seed(a, "t3", "t4");
-    await flushSegment(a, dir);
-    const second = ingestSegment(b, peer);
-
-    expect(second).toMatchObject({ defects: [], truncatedAt: null });
-    expect(second.applied).toBeGreaterThanOrEqual(2);
-    expect(hasTask(b, "t4")).toBe(true);
-    const row = b
-      .prepare("SELECT fingerprint FROM sync_fingerprints WHERE machine_id = ?")
-      .get(localMachineId(a)) as { fingerprint: string };
-    expect(decodeFingerprint(row.fingerprint).resume).toMatchObject({
-      lines: linesOf(segA()).length,
-      size: statSync(segA()).size,
-    });
+    expect(ingestSegment(b, peerOfA()).defects).toEqual([
+      expect.objectContaining({ kind: "unknown-version", line: 1, version: 1 }),
+    ]);
   });
 
   const rot = (raw: string): string => raw.replace('"crc":"', '"crc":"0');
@@ -234,10 +158,7 @@ describe("segment versions are checked per line", () => {
       seed(a, "t1", "t2");
       await flushSegment(a, dir);
       const n = linesOf(segA()).length;
-      await writeMixed(
-        Number.POSITIVE_INFINITY,
-        Array.from({ length: n }, (_, i) => (i === n - 1 ? 3 : 2)),
-      );
+      await writeVersions(Array.from({ length: n }, (_, i) => (i === n - 1 ? 3 : 2)));
       const bytes = readFileSync(segA());
 
       seed(a, "t3");
@@ -257,7 +178,7 @@ describe("segment versions are checked per line", () => {
 
     it("the message names the segment and tells the operator to upgrade", async () => {
       seed(a, "t1");
-      await writeMixed(Number.POSITIVE_INFINITY, [3]);
+      await writeVersions([3]);
       const flushed = await flushSegment(a, dir, { verify: true });
       expect(foreignVersionMessage(flushed)).toBe(
         `segment ${segA()} has a v3 line written by a newer mu; upgrade mu on this machine`,
@@ -268,7 +189,7 @@ describe("segment versions are checked per line", () => {
       seed(a, "t1");
       await flushSegment(a, dir);
       expect(checkSegmentVersion(a, dir)).toMatchObject({ severity: "ok" });
-      await writeMixed(Number.POSITIVE_INFINITY, [3]);
+      await writeVersions([3]);
       expect(checkSegmentVersion(a, dir)).toMatchObject({
         name: "segment-version",
         severity: "warn",
@@ -278,7 +199,7 @@ describe("segment versions are checked per line", () => {
 
     it("rv6r2_segments_placeholder_loss: [v2, corrupt v2, v3, v2] is untouched; after the upgrade the corrupt op is regenerated, nothing lost", async () => {
       seed(a, "t1", "t2", "t3");
-      const lines = await writeMixed(Number.POSITIVE_INFINITY, [2, 2, 3, 2]);
+      const lines = await writeVersions([2, 2, 3, 2]);
       expect(lines.length).toBeGreaterThanOrEqual(4);
       const damaged = [lines[0], rot(lines[1] ?? ""), ...lines.slice(2)];
       writeFileSync(segA(), `${damaged.join("\n")}\n`);
@@ -310,7 +231,7 @@ describe("segment versions are checked per line", () => {
 
     it("rv6r2_segments_foreign_manifest: a manifest that vouches for a v3 file is dropped by the scan and never trusted again", async () => {
       seed(a, "t1", "t2");
-      await writeMixed(Number.POSITIVE_INFINITY, [1, 3, 2]);
+      await writeVersions([2, 3, 2]);
       expect(existsSync(manifestFile())).toBe(true); // vouching, as an earlier build wrote it
       const bytes = readFileSync(segA());
 
@@ -329,7 +250,7 @@ describe("segment versions are checked per line", () => {
 
     it("a foreign line after a corrupt one is found: nothing is repaired or truncated", async () => {
       seed(a, "t1", "t2", "t3");
-      const lines = await writeMixed(Number.POSITIVE_INFINITY, [1, 1, 3, 2]);
+      const lines = await writeVersions([2, 2, 3, 2]);
       writeFileSync(segA(), `${[lines[0], rot(lines[1] ?? ""), ...lines.slice(2)].join("\n")}\n`);
       const bytes = readFileSync(segA());
 
@@ -343,10 +264,7 @@ describe("segment versions are checked per line", () => {
       seed(a, "t1", "t2");
       await flushSegment(a, dir);
       const n = linesOf(segA()).length;
-      await writeMixed(
-        Number.POSITIVE_INFINITY,
-        Array.from({ length: n }, (_, i) => (i === n - 1 ? 3 : 2)),
-      );
+      await writeVersions(Array.from({ length: n }, (_, i) => (i === n - 1 ? 3 : 2)));
       seed(a, "p1", "p2");
       expect(await flushSegment(a, dir)).toMatchObject({ appended: 0, foreignVersionAt: n });
       expect(await flushSegment(a, dir, { verify: true })).toMatchObject({ appended: 0 });
@@ -366,10 +284,10 @@ describe("segment versions are checked per line", () => {
     });
   });
 
-  describe("repair of a segment with only known versions", () => {
+  describe("repair of a segment with only readable lines", () => {
     it("a damaged line between valid lines is regenerated from ops, at its own position", async () => {
       seed(a, "t1", "t2", "t3");
-      const lines = await writeMixed(Number.POSITIVE_INFINITY, [1, 1, 1, 2]);
+      const lines = await writeVersions([2, 2, 2, 2]);
       writeFileSync(segA(), `${[lines[0], rot(lines[1] ?? ""), ...lines.slice(2)].join("\n")}\n`);
 
       await flushSegment(a, dir, { verify: true });
@@ -387,30 +305,9 @@ describe("segment versions are checked per line", () => {
       expect(linesOf(segA())[3]).toBe(lines[3]);
     });
 
-    it("a valid v1 suffix after a corrupt v2 line is preserved byte for byte", async () => {
-      seed(a, "t1", "t2", "t3");
-      const lines = await writeMixed(Number.POSITIVE_INFINITY);
-      const suffix = lines.slice(2).map((l) => reencode(l, 1));
-      writeFileSync(segA(), `${[lines[0], rot(lines[1] ?? ""), ...suffix].join("\n")}\n`);
-
-      const flushed = await flushSegment(a, dir, { verify: true });
-
-      expect(flushed.selfRepaired).toMatchObject({ kind: "crc-mismatch", line: 2 });
-      expect(flushed.foreignVersionAt).toBeNull();
-      expect(linesOf(segA())).toHaveLength(lines.length);
-      expect(linesOf(segA()).slice(2)).toEqual(suffix);
-      expect(
-        versionsOf(segA())
-          .slice(2)
-          .every((v) => v === 1),
-      ).toBe(true);
-      manifestOk();
-      expect(ingestSegment(b, peerOfA(), { verify: true }).defects).toEqual([]);
-    });
-
     it("a damaged line the DB cannot regenerate falls back to truncate-and-regenerate", async () => {
       seed(a, "t1", "t2", "t3");
-      const lines = await writeMixed(Number.POSITIVE_INFINITY, [1, 1, 1, 2]);
+      const lines = await writeVersions([2, 2, 2, 2]);
       const lostOp = decodeLine(lines[1] ?? "");
       if (!lostOp.ok) throw new Error("setup");
       a.prepare("DELETE FROM ops WHERE hlc = ?").run(lostOp.line.hlc);
@@ -427,7 +324,7 @@ describe("segment versions are checked per line", () => {
 
   it("a corrupt line with NO foreign line later is still truncated and regenerated", async () => {
     seed(a, "t1", "t2", "t3");
-    const lines = await writeMixed(Number.POSITIVE_INFINITY);
+    const lines = await writeVersions();
     const corrupt = (lines[1] ?? "").replace('"crc":"', '"crc":"0');
     writeFileSync(segA(), `${[lines[0], corrupt, ...lines.slice(2)].join("\n")}\n`);
 
@@ -441,7 +338,7 @@ describe("segment versions are checked per line", () => {
 
   it("peer ingest of a v3 line is an unknown-version defect, stops there, watermark not advanced past it", async () => {
     seed(a, "t1", "t2", "t3", "t4");
-    const lines = await writeMixed(Number.POSITIVE_INFINITY, [1, 1, 1, 3, 2]);
+    const lines = await writeVersions([2, 2, 2, 3, 2]);
 
     const result = ingestSegment(b, peerOfA());
 
