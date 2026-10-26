@@ -4,7 +4,8 @@
 
 import { describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
-import { closeTask } from "../src/tasks.js";
+import { reasonOf } from "../src/cli/wait.js";
+import { closeTask, listNotes } from "../src/tasks.js";
 import { type AgentReading, WAIT_HEARTBEAT_CAP_MS, waitForEvents } from "../src/wait.js";
 import { readWaitRegistration } from "../src/wait-registration.js";
 import {
@@ -286,6 +287,57 @@ describe("a stall never beats an unprocessed settle", () => {
     });
     expect(second.event).toMatchObject({ kind: "stall", ref: { kind: "task", id: "t1" } });
   });
+});
+
+describe("a malformed CLOSE block surfaces on a task wait (close_block_malformed_visible)", () => {
+  for (const mode of ["first", "all"] as const) {
+    it(`--${mode} on the owned task: a settled owner left t1 open: the wait ends, not at the cap`, async () => {
+      await mkOwnedTask(env.db, "t1", "a1");
+      spawnedBy("a1", "w/boss");
+      const idle = {
+        status: "needs_input",
+        since: Date.now() - 60_000,
+        source: "ctl",
+        ctl: "ok",
+        runs: 1,
+        incarnation: "inc",
+        agentId: agentRowOf("a1"),
+      } as const;
+      const w = controllableWatch({ status: "busy" });
+      w.settle({
+        ...idle,
+        settled: true,
+        lastText: 'CLOSE: task=t1 evidence="e"\nREPORT:\n',
+      });
+      const r = await waitForEvents(env.db, [taskRef("t1")], {
+        ...base,
+        timeoutMs: 400,
+        mode,
+        ...reads("needs_input", idle),
+        watchAgent: async () => ({ ...w.handle, afterRuns: 0 }),
+        callers: ["w/boss"],
+        stuckAfterMs: 1000,
+      });
+      if (mode === "all") {
+        expect(r.event).toMatchObject({ kind: "stall", ref: { kind: "task", id: "t1" } });
+        expect(r.exit).toBe(7);
+        // The words name the owner, the refusal and the fix.
+        const why = reasonOf(r, undefined, 1);
+        expect(why).toContain("a1");
+        expect(why).toContain("no close (malformed): the report is empty");
+        expect(why).toContain("mu task close t1 -w w");
+      } else {
+        // --first: the owner's settle goes first and carries the refused close.
+        expect(r.event).toMatchObject({ kind: "settled", ref: { kind: "agent", id: "a1" } });
+        expect(r.refs.find((x) => x.ref.kind === "agent")?.close?.reason).toMatch(
+          /^no close \(malformed\): /,
+        );
+      }
+      expect(listNotes(env.db, "t1", "w").map((n) => n.content)).toEqual(
+        expect.arrayContaining([expect.stringContaining("no close (malformed)")]),
+      );
+    });
+  }
 });
 
 describe("one fact, one event: a settle whose CLOSE closed the task, and the task's close", () => {

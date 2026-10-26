@@ -887,9 +887,11 @@ export async function waitForEvents(
       );
       const settleOwed =
         watched !== undefined &&
-        // the settle is in hand but not delivered yet: it goes first, the stall (if the
-        // task is still open after its CLOSE block) is the NEXT wait's news
-        (watched.latched?.kind === "settled" ||
+        // the settle is in hand but not delivered yet: under --first it goes first, the stall
+        // (if the task is still open after its CLOSE block) is the NEXT wait's news. Under --all
+        // a settle is no target and is never delivered before the end: its CLOSE is already
+        // applied (settle()), so a task it left open (a malformed block) is a stall NOW.
+        ((!all && watched.latched?.kind === "settled") ||
           (watched.latched === undefined &&
             watched.handle !== undefined &&
             r?.runs !== undefined &&
@@ -905,6 +907,8 @@ export async function waitForEvents(
           r.since ?? "",
         ].join("|");
         markStall(item, { token, owner: r, ownerRef, ageSecs: Math.round(age / 1000) });
+        // The owner's settled run was refused its CLOSE (a malformed block): say why on the task.
+        if (watched?.close?.applied === false) item.snap.close = watched.close;
         if (!stallEmitted.has(token)) {
           stallEmitted.add(token);
           emitEvent(
