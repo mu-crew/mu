@@ -35,6 +35,10 @@ export const closedToken = (noteId: number): CursorToken => ({
   runs: noteId,
 });
 
+/** The cursor key of an agent's DONE mark (src/wait-owed.ts): nothing is owed for the agent any more. */
+export const doneKey = (workstream: string, name: string): string =>
+  `done|${cursorKey("agent", workstream, name)}`;
+
 export const DELEGATE_TOKEN: CursorToken = { incarnation: "delegate", runs: 1 };
 
 /** Has this caller already consumed `token`'s event (or a later one)? */

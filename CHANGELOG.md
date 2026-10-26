@@ -16,15 +16,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `test/_setup.ts` points `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_CONFIG_HOME` at a per-fork temp dir
   (removed on exit), and `test/_real-dir-guard.ts` throws on any `fs` write under the real dirs, like the
   real-DB guard in `openDb`. Fixture delegate answers had been landing in `~/.cache/mu/delegate-answers`.
-- **A deliberate `mu agent close` of a finished worker is no longer a `dead` wait event**
-  (`df1_wait_stale_dead`, dogfood-1 F1). The caller's registration kept the closed agent's ref, so
-  the next wait saw an owned agent with no row and exited 6 `dead` ("the work is not done") even
-  though its task was already CLOSED. `closeAgent` now discharges the agent ref and its unconsumed
-  fence from every registration (`dischargeAgent`) when the row was deleted and the agent held no
-  IN_PROGRESS task. A busy worker closed on purpose is still reported (the reaper reopens its task,
-  exit 6), and a ghost that was pruned, not closed, stays owed. The `dead` reason no longer claims
-  unfinished work for an agent ref (it says "gone (its pane died or it was closed)"); a task whose
-  owner died keeps "the work is not done".
+- **A finished worker is not `dead`: an agent ref is owed only while it owns open work or an
+  unsettled run** (`df1_wait_stale_dead`, dogfood-1 F1; round 2 of `v_wait_arming`). With arming, the
+  orchestrator's `claim --for` + `send` left the worker's agent ref registered after its task closed;
+  a deliberate `mu agent close` then made the next wait (bare, explicit task, or `send --wait`) exit 6
+  `dead`, "the work is not done". One rule now lives in `src/wait-owed.ts`: an agent ref is DONE when
+  every task the agent owned is CLOSED (or released), nothing it was sent is unsettled and it is idle.
+  Every wait tick keeps a DONE mark per owned agent (a `wait_cursors` row `done|agent:<ws>/<name>`,
+  machine-local) true to what it read, and `agent close` sets it when the agent holds no open task
+  and no run in flight. A registered agent whose row is gone and which carries the mark is dropped
+  from the registration with no event. `dead` is left for a pane lost while work or a run is owed
+  (a task still open, a run busy or unsettled, or never read at all). New work armed for the agent
+  clears the mark. The `dead` reason for an agent ref no longer says "the work is not done" ("gone
+  (its pane died or it was closed)"); a task whose owner died keeps it.
 
 ### Added
 

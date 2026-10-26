@@ -4,7 +4,7 @@
 // pi extension; the mux is the fake tmux harness; the caller is whoever the env says.
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { createServer, type Server } from "node:net";
+import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -36,7 +36,16 @@ let db: Db;
 let mux: MuxHarness;
 let servers: Server[];
 /** The fake pi: its completed-run count and state, and every op it was asked. */
-let pi: { runs: number; state: "idle" | "busy"; ops: string[] };
+let pi: {
+  runs: number;
+  state: "idle" | "busy";
+  ops: string[];
+  /** A send starts a run that settles at once (the count moves), and `wait` honours `afterRuns`. */
+  real?: boolean;
+  /** A send is written, then the connection drops with no answer: delivery UNKNOWN. */
+  dropSend?: boolean;
+};
+let sockets: Socket[];
 let saved: Record<string, string | undefined>;
 
 beforeEach(() => {
@@ -49,6 +58,7 @@ beforeEach(() => {
   setSleepForTests(async () => {});
   setCommandResolverForTests(async (c) => ({ ok: true, binary: c, resolvedPath: `/bin/${c}` }));
   servers = [];
+  sockets = [];
   pi = { runs: 3, state: "idle", ops: [] };
   ensureWorkstream(db, "auth");
   ensureWorkstream(db, "other");
@@ -60,6 +70,7 @@ afterEach(async () => {
   resetSleep();
   resetCommandResolverForTests();
   setWaitSleepForTests(undefined);
+  for (const sock of sockets) sock.destroy();
   await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
   try {
     db.close();
@@ -86,6 +97,7 @@ async function serve(agent: string, ws = "auth", onSend?: () => void): Promise<v
     pending: false,
   });
   const server = createServer((sock) => {
+    sockets.push(sock);
     const dec = new LineDecoder();
     sock.setEncoding("utf8");
     sock.on("error", () => {});
@@ -94,7 +106,21 @@ async function serve(agent: string, ws = "auth", onSend?: () => void): Promise<v
         const req = JSON.parse(line) as { op: string; afterRuns?: number };
         if (req.op !== "hello") pi.ops.push(req.op);
         if (req.op === "hello") sock.end(encode(helloReply()));
-        else if (req.op === "wait") {
+        else if (req.op === "wait" && pi.real) {
+          // Honours the fence: answers only once a run past `afterRuns` has settled.
+          if (pi.runs > (req.afterRuns ?? 0)) {
+            sock.end(
+              encode({
+                v: 1,
+                ok: true,
+                ...status(),
+                state: "idle",
+                ended: "settled",
+                lastText: "the answer",
+              }),
+            );
+          }
+        } else if (req.op === "wait") {
           // The run past the baseline already settled: answer at once.
           sock.end(
             encode({
@@ -113,8 +139,12 @@ async function serve(agent: string, ws = "auth", onSend?: () => void): Promise<v
           if (wasBusy) pi.runs++;
           pi.state = "idle";
           sock.end(encode({ v: 1, ok: true, ...status(), wasBusy, pending: false }));
+        } else if (req.op === "send" && pi.dropSend) {
+          sock.destroy();
         } else if (req.op === "send" || req.op === "command") {
           sock.end(encode(withHello(req, { v: 1, ok: true, ...status() })));
+          // the reply carries the count BEFORE the run it started, which then settles
+          if (pi.real && req.op === "send") pi.runs++;
           onSend?.();
         } else sock.end(encode(withHello(req, { v: 1, ok: true, ...status() })));
       }
@@ -602,11 +632,13 @@ describe("df1_wait_stale_dead: a deliberate close of a finished worker is not a 
     expect(reg(CALLER)?.baselines).toEqual({});
   });
 
-  it("another caller's registration for the closed agent is discharged too", async () => {
+  it("another caller's registration for the closed agent is dropped by ITS next wait, not reported", async () => {
     await dispatchAndFinish(false);
     await as({ pi: "other" }, ["agent", "send", "worker-1", "hi", "-w", "auth", "--json"]);
     expect(reg("pi:other")?.refs).toHaveLength(1);
     await closeWorker();
+    const r = await as({ pi: "other" }, ["task", "wait", "t2", "-w", "auth", "--timeout", "0.3"]);
+    expect(r.data).toMatchObject({ exit: 0, timedOut: true });
     expect(reg("pi:other")?.refs).toEqual([]);
   });
 
@@ -637,4 +669,220 @@ describe("df1_wait_stale_dead: a deliberate close of a finished worker is not a 
     expect(r.data).toMatchObject({ firing: { kind: "dead", ref: "agent:auth/worker-1" } });
     expect((r.data as { reason: string }).reason).not.toMatch(/work is not done/);
   });
+});
+
+describe("owed vs done: an agent ref is owed only while it owns open work or an unsettled run", () => {
+  beforeEach(liveMux);
+
+  /** The reviewer's sequence: claim --for + send, the task closes, a wait delivers it, `agent close`, then more work. */
+  async function finishedThenClosed(): Promise<void> {
+    seedAgent("worker-1");
+    seedAgent("worker-2");
+    seedTask("t1");
+    seedTask("t2");
+    await serve("worker-1");
+    await serve("worker-2");
+    await as(SESSION, ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"]);
+    await as(SESSION, ["agent", "send", "worker-1", "do t1", "-w", "auth", "--json"]);
+    closeTask(db, "t1", { workstream: "auth", evidence: "done" });
+    const first = await as(SESSION, ["wait", "-w", "auth", "--timeout", "2"]);
+    expect(first.data).toMatchObject({ exit: 0, firing: { kind: "closed", ref: "task:auth/t1" } });
+    // the first-mode wait delivered only the task: the agent ref is still registered
+    expect(reg(CALLER)?.refs.some((x) => x.kind === "agent")).toBe(true);
+    const p = await as(SESSION, ["agent", "close", "worker-1", "-w", "auth", "--json"]);
+    const rev = (p.data as { revision: number }).revision;
+    await as(SESSION, ["agent", "close", "worker-1", "-w", "auth", "--if", String(rev), "--json"]);
+    await as(SESSION, ["task", "claim", "t2", "--for", "worker-2", "-w", "auth", "--json"]);
+    closeTask(db, "t2", { workstream: "auth", evidence: "done" });
+  }
+
+  it("a bare wait after the close returns the real event, exit 0", async () => {
+    await finishedThenClosed();
+    const r = await as(SESSION, ["wait", "-w", "auth", "--timeout", "2"]);
+    expect(r.data).toMatchObject({ exit: 0, firing: { kind: "closed", ref: "task:auth/t2" } });
+    expect((r.data as { reason: string }).reason).not.toMatch(/gone|not done/);
+  });
+
+  it("an explicit task wait after the close returns the real event, exit 0", async () => {
+    await finishedThenClosed();
+    const r = await as(SESSION, ["wait", "task:auth/t2", "-w", "auth", "--timeout", "2"]);
+    expect(r.data).toMatchObject({ exit: 0, firing: { kind: "closed", ref: "task:auth/t2" } });
+  });
+
+  it("send --wait to another worker after the close returns settled, exit 0", async () => {
+    await finishedThenClosed();
+    const r = await as(SESSION, ["agent", "send", "worker-2", "go", "--wait", "-w", "auth"]);
+    expect(r.data).toMatchObject({
+      exit: 0,
+      firing: { kind: "settled", ref: "agent:auth/worker-2" },
+    });
+  });
+
+  it("a pane lost MID-RUN (seen busy, row gone, no agent close) is dead, exit 6", async () => {
+    seedAgent("worker-1");
+    seedTask("t2");
+    pi.state = "busy";
+    await serve("worker-1");
+    await as(SESSION, ["agent", "send", "worker-1", "go", "-w", "auth", "--json"]);
+    pi.real = true; // the run never settles: a wait holds on it
+    // a wait sees it working, then the pane dies
+    const seen = await as(SESSION, ["wait", "-w", "auth", "--timeout", "0.3"]);
+    expect(seen.data).toMatchObject({ exit: 0, timedOut: true });
+    db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
+    const r = await as(SESSION, ["task", "wait", "t2", "-w", "auth", "--timeout", "0.3"]);
+    expect(r.exitCode).toBe(6);
+    expect(r.data).toMatchObject({ firing: { kind: "dead", ref: "agent:auth/worker-1" } });
+  });
+
+  it("agent close while its run is still going is NOT the end of the work: dead", async () => {
+    seedAgent("worker-1");
+    seedTask("t2");
+    pi.state = "busy";
+    await serve("worker-1");
+    await as(SESSION, ["agent", "send", "worker-1", "go", "-w", "auth", "--json"]);
+    const p = await as(SESSION, ["agent", "close", "worker-1", "-w", "auth", "--json"]);
+    const rev = (p.data as { revision: number }).revision;
+    await as(SESSION, ["agent", "close", "worker-1", "-w", "auth", "--if", String(rev), "--json"]);
+    const r = await as(SESSION, ["task", "wait", "t2", "-w", "auth", "--timeout", "0.3"]);
+    expect(r.exitCode).toBe(6);
+    expect(r.data).toMatchObject({ firing: { kind: "dead", ref: "agent:auth/worker-1" } });
+  });
+
+  it("agent close with NO wait in between still ends the work (the close itself marks)", async () => {
+    seedAgent("worker-1");
+    seedTask("t1");
+    seedTask("t2");
+    await serve("worker-1");
+    await as(SESSION, ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"]);
+    closeTask(db, "t1", { workstream: "auth", evidence: "done" });
+    const p = await as(SESSION, ["agent", "close", "worker-1", "-w", "auth", "--json"]);
+    const rev = (p.data as { revision: number }).revision;
+    await as(SESSION, ["agent", "close", "worker-1", "-w", "auth", "--if", String(rev), "--json"]);
+    const r = await as(SESSION, ["task", "wait", "t2", "-w", "auth", "--timeout", "0.3"]);
+    // the undelivered close of t1 is the news; the closed agent is not
+    expect(r.data).toMatchObject({ exit: 0, firing: { kind: "closed", ref: "task:auth/t1" } });
+  });
+
+  it("a pane that dies AFTER the work finished (no agent close) is not dead either: the wait saw it done", async () => {
+    seedAgent("worker-1");
+    seedTask("t1");
+    seedTask("t2");
+    await serve("worker-1");
+    await as(SESSION, ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"]);
+    closeTask(db, "t1", { workstream: "auth", evidence: "done" });
+    await as(SESSION, ["wait", "-w", "auth", "--timeout", "2"]);
+    db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
+    const r = await as(SESSION, ["task", "wait", "t2", "-w", "auth", "--timeout", "0.3"]);
+    console.log(JSON.stringify(r.data).slice(0, 600));
+    expect(r.data).toMatchObject({ exit: 0, timedOut: true });
+    expect(reg(CALLER)?.refs.some((x) => x.kind === "agent")).toBe(false);
+  });
+
+  it("an idle agent that still owns an OPEN task is owed, whatever else it finished: its pane dying is dead", async () => {
+    seedAgent("worker-1");
+    seedTask("t1");
+    seedTask("t2");
+    await serve("worker-1");
+    await as(SESSION, ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"]);
+    closeTask(db, "t1", { workstream: "auth", evidence: "done" });
+    await as(SESSION, ["task", "claim", "t2", "--for", "worker-1", "-w", "auth", "--json"]);
+    const seen = await as(SESSION, ["wait", "-w", "auth", "--timeout", "0.5"]);
+    expect(seen.data).toMatchObject({ firing: { kind: "closed", ref: "task:auth/t1" } });
+    db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
+    const r = await as(SESSION, ["wait", "-w", "auth", "--timeout", "0.5"]);
+    expect(r.exitCode).toBe(6);
+  });
+
+  it("new work (a send) for a finished agent owes again: dead if its pane then dies", async () => {
+    seedAgent("worker-1");
+    seedTask("t1");
+    seedTask("t2");
+    await serve("worker-1");
+    await as(SESSION, ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"]);
+    closeTask(db, "t1", { workstream: "auth", evidence: "done" });
+    await as(SESSION, ["wait", "-w", "auth", "--timeout", "2"]);
+    pi.real = true;
+    await as(SESSION, ["agent", "send", "worker-1", "more", "-w", "auth", "--json"]);
+    pi.runs = 3; // the run it started never counted: it is still unsettled when the pane dies
+    db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
+    const r = await as(SESSION, ["task", "wait", "t2", "-w", "auth", "--timeout", "0.3"]);
+    expect(r.exitCode).toBe(6);
+    expect(r.data).toMatchObject({ firing: { kind: "dead", ref: "agent:auth/worker-1" } });
+  });
+});
+
+describe("arming guards", () => {
+  /** A pane creation starts the stand-in extension for the agent it names. */
+  function installPanes(): void {
+    mux.restore();
+    const fake = mockTmux(freshMockState()).executor;
+    mux = installMux("tmux", async (args) => {
+      const res = await fake(args);
+      if (args[0] === "new-session" || args[0] === "new-window" || args[0] === "split-window") {
+        const name = /MU_AGENT_NAME=(\S+)/.exec(args.join(" "))?.[1];
+        if (name !== undefined) await serve(name);
+      }
+      return res;
+    });
+  }
+  const spawnTask = (id: string) =>
+    as(SESSION, [
+      "agent",
+      "spawn",
+      "worker-1",
+      "-w",
+      "auth",
+      "--task",
+      id,
+      "--send",
+      `do ${id}`,
+      "--json",
+    ]);
+
+  it("a replay whose agent was REPLACED arms nothing (never a replacement under the old receipt)", async () => {
+    seedTask("t5");
+    installPanes();
+    await spawnTask("t5");
+    expect(reg(CALLER)?.refs).toHaveLength(2);
+    db.prepare("DELETE FROM wait_registrations").run();
+    db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
+    seedAgent("worker-1");
+    const again = await spawnTask("t5");
+    expect(again.data).toMatchObject({ task: { replay: true, stale: "replaced" } });
+    expect(reg(CALLER)).toBeUndefined();
+  });
+
+  it("a replay whose agent was DELETED arms nothing", async () => {
+    seedTask("t5");
+    installPanes();
+    await spawnTask("t5");
+    db.prepare("DELETE FROM wait_registrations").run();
+    db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
+    const again = await spawnTask("t5");
+    expect(again.data).toMatchObject({ task: { replay: true, stale: "deleted" } });
+    expect(reg(CALLER)).toBeUndefined();
+  });
+
+  it("a delivery-UNKNOWN attempt arms the task only: the prompt may be running, nothing is fenced", async () => {
+    seedTask("t5");
+    installPanes();
+    pi.dropSend = true;
+    const r = await spawnTask("t5");
+    expect(r.exitCode).toBe(1);
+    expect(reg(CALLER)?.refs).toEqual([{ kind: "task", workstream: "auth", id: "t5" }]);
+    expect(reg(CALLER)?.baselines).toEqual({});
+  });
+
+  it("send --wait on a run that settles DURING the send returns settled (the fence is the send's run count)", async () => {
+    liveMux();
+    seedAgent();
+    pi.real = true;
+    await serve("worker-1");
+    const r = await as({}, ["agent", "send", "worker-1", "go", "--wait", "-w", "auth"]);
+    expect(r.data).toMatchObject({
+      exit: 0,
+      firing: { kind: "settled", ref: "agent:auth/worker-1" },
+    });
+    expect(pi.ops).toContain("wait");
+  }, 15_000);
 });

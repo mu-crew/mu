@@ -30,7 +30,7 @@ import { activeMux } from "../mux.js";
 import { closeRemoteWorktree, localPaneAlive } from "../remote-agent.js";
 import { selectRemoteRecovery } from "../remote-recovery.js";
 import { agentRevision, assertRevision } from "../revision.js";
-import { dischargeAgent } from "../wait-registration.js";
+import { runInFlight, setAgentDone, workOf } from "../wait-owed.js";
 import {
   assertReleasable,
   getWorktreeAt,
@@ -309,6 +309,8 @@ async function closeLocked(
   const row = worktreeOf(db, opts.workstream, name, agent);
   if (row !== undefined) await assertReleasable(row, { discard });
   const mux = await activeMux().catch(() => undefined);
+  // Before the kill (the pane then answers nothing): is its run still going?
+  const running = await runInFlight(agent);
   // The awaits above are where a replacement lands. Nothing below may act
   // on a name that is not the incarnation this close captured.
   const replaced = (): boolean => {
@@ -378,9 +380,7 @@ async function closeLocked(
     await cleanGateResult(db, agent);
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   }
-  // Read before the delete: the reaper reopens what the agent held IN_PROGRESS, and a close of a
-  // busy worker is still news to a wait (its work is not done); a finished one is not.
-  const heldUnfinished = ownedTasksOf(db, agent).some((t) => t.reverts);
+  const openAtClose = workOf(db, agent.incarnation).open;
   const deletedRow = deleteAgent(
     db,
     name,
@@ -389,8 +389,10 @@ async function closeLocked(
     { preserve: !remoteHandled },
   );
   if (!deletedRow && replaced()) throw new AgentReplacedError(name, opts.workstream);
-  // A deliberate close of a finished worker is not a death: no caller owes a wait for it any more.
-  if (deletedRow && !heldUnfinished) dischargeAgent(db, agent.workstreamName, name);
+  // A deliberate close of a worker with no open task and no run in flight is the end of its work,
+  // not a death: the wait engine drops its ref (src/wait-owed.ts). A busy one is still news.
+  if (deletedRow && !running && openAtClose === 0)
+    setAgentDone(db, agent.workstreamName, name, true);
   // Machine-local table (`agents`): no trigger, so this emit is the
   // only record.
   emitEvent(db, agent.workstreamName, "agent.close", closeLine(name, agent.paneId, worktree));

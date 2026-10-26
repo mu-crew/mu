@@ -42,6 +42,11 @@
 // ignore the cursor of their completion (waiting on a closed task returns at
 // once); owned refs obey it.
 //
+// Owed vs done (src/wait-owed.ts). An owned agent ref is owed only while the agent owns open work or a
+// run it was sent is unsettled. Each tick keeps a DONE mark per owned agent true to what it read; a
+// registered agent whose row is gone and which is marked done is dropped from the registration with
+// no event. `dead` is a pane lost while work or a run is owed (or never read).
+//
 // The fence. An agent ref the caller registered, explicit or owned, counts
 // its runs from the stored UNCONSUMED baseline, maxed with the consumed
 // cursor of the same pi process; with neither it counts from the run count
@@ -97,10 +102,12 @@ import {
   openBlockers,
   taskOwnerRowId,
 } from "./wait-db.js";
+import { agentOwed, hasDoneMark, setAgentDone } from "./wait-owed.js";
 import { compileTextMatcher, type TextMatcher } from "./wait-regex.js";
 import {
   beginWait,
   checkCaller,
+  dropOwnedRefs,
   endWait,
   fenceAgentRef,
   type RefBaseline,
@@ -425,7 +432,14 @@ export async function waitForEvents(
     for (const c of callers) {
       const reg = readWaitRegistration(db, c);
       if (reg === undefined) continue;
+      // Owed only while work or a run is owed (src/wait-owed.ts): an agent whose row is gone and
+      // which was marked finished is DONE, not dead. Its ref leaves the registration, no event.
+      const done = reg.refs.filter(
+        (r) => r.kind === "agent" && !agentExists(db, r) && hasDoneMark(db, c, r),
+      );
+      if (done.length > 0) dropOwnedRefs(db, c, done);
       for (const r of reg.refs) {
+        if (done.includes(r)) continue;
         if (r.kind !== "delegate" && !inScope(r.workstream)) continue;
         const key = refKey(r);
         ownedKeys.add(key);
@@ -604,6 +618,30 @@ export async function waitForEvents(
     }
   };
 
+  /**
+   * Keep each owned agent's DONE mark true to what this tick read (src/wait-owed.ts): done when it
+   * owes nothing more (a lost pane is then not a death), cleared when it owes again, left alone
+   * when the reading cannot say.
+   */
+  const ownerOfAgent = (t: AgentTrack): { name: string; workstreamName: string } => ({
+    name: t.ref.id,
+    workstreamName: t.ref.workstream,
+  });
+  const markOwed = (): void => {
+    if (!consumes) return;
+    for (const t of tracks.values()) {
+      const key = refKey(t.ref);
+      const caller = ownerOfKey.get(key);
+      const r = t.latched === undefined ? ownerReadings.get(agentKey(ownerOfAgent(t))) : undefined;
+      if (caller === undefined || !ownedKeys.has(key) || r === undefined) continue;
+      const id = agentRowId(db, t.ref);
+      if (id === 0) continue;
+      const owed = agentOwed(db, id, r, baselineOf.get(key), t.unknownBaseline, t.wasBusy);
+      if (owed !== "unsure")
+        setAgentDone(db, t.ref.workstream, t.ref.id, owed === "done", [caller]);
+    }
+  };
+
   /** The async half of an iteration: everything that may take time. */
   const refresh = async (): Promise<void> => {
     if (opts.beforePoll) {
@@ -621,6 +659,14 @@ export async function waitForEvents(
     const reads = new Map<string, WaitRef>();
     for (const t of tracks.values()) {
       if (t.latched === undefined && t.handle === undefined) reads.set(refKey(t.ref), t.ref);
+    }
+    // Owned agents are read for real too (a watch's `initial` is only "busy"): what a reading says
+    // decides whether the ref is still owed (src/wait-owed.ts).
+    if (consumes && opts.readAgents !== undefined) {
+      for (const r of owned) {
+        const t = r.kind === "agent" ? tracks.get(refKey(r)) : undefined;
+        if (t !== undefined && t.latched === undefined) reads.set(refKey(r), r);
+      }
     }
     if (observeOwners) {
       const taskRefs = [...explicit.values(), ...owned].filter((r) => r.kind === "task");
@@ -663,6 +709,7 @@ export async function waitForEvents(
         }
       }
     }
+    markOwed();
     if (firstRefresh) {
       firstRefresh = false;
       const watched = [...tracks.values()].filter((t) => t.explicit);
