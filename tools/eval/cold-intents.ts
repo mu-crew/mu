@@ -41,7 +41,19 @@ export interface ColdIntent {
   id: string;
   /** The verb family it exercises, for the per-surface table. */
   group: "tasks" | "agents" | "state" | "log" | "db" | "host" | "workstream" | "delegates";
+  /**
+   * The request, in words that name no command, subcommand or flag of either surface
+   * (`neutralityLeaks` in cold-guess.ts fails a run otherwise): a cold reader finds the verb in
+   * --help, not in us.
+   */
   text: string;
+  /** Data the request quotes verbatim (a SQL statement, a piece of evidence): exempt from that lint. */
+  payload?: string;
+  /**
+   * `headline`: pre-registered, counted in the headline comparison. `control`: added to separate one
+   * cause of a miss from another; reported apart, never in the headline.
+   */
+  role: "headline" | "control";
   /** Families that have a way to do it at all (delegates exist only on next). */
   families: Family[];
   seed(sb: Sandbox, family: Family): Promise<Record<string, string>>;
@@ -179,6 +191,8 @@ async function reachable(sb: Sandbox, sha: string): Promise<boolean> {
 
 // ---- the intents -------------------------------------------------------------------------------
 
+const PROOF = "gate green: npm test exit 0";
+const SQL = "SELECT local_id, title FROM tasks WHERE impact = 77";
 const BRIEF_END = "BRIEF-END-7731";
 const LOGS = 24;
 const log = (i: number): string => `LOGREC-${String(i).padStart(2, "0")}`;
@@ -188,7 +202,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "owner_of",
     group: "tasks",
-    text: "Who owns task t3 in workstream auth?",
+    text: "Which worker is assigned t3 in the auth initiative?",
+    role: "headline",
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [
@@ -209,7 +224,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "task_brief",
     group: "tasks",
-    text: "Show me the brief of task t3 in workstream auth.",
+    text: "Print the original brief that t3 in the auth initiative was given.",
+    role: "headline",
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [init(), add("t3", "implement-token-refresh")]);
@@ -226,7 +242,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "blocked_by_t1",
     group: "tasks",
-    text: "List the open tasks in workstream auth that are blocked by t1.",
+    text: "Which unfinished items in the auth initiative are held up by t1?",
+    role: "headline",
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [
@@ -251,7 +268,9 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "close_with_evidence",
     group: "tasks",
-    text: "Close task t4 in workstream auth; the evidence is: gate green: npm test exit 0.",
+    text: `Declare t4 in the auth initiative complete; the proof is: ${PROOF}.`,
+    role: "headline",
+    payload: PROOF,
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [init(), add("t4", "close me"), add("t5", "leave me")]);
@@ -264,19 +283,20 @@ export const INTENTS: ColdIntent[] = [
       const why: string[] = [];
       if (t?.status !== "CLOSED" || t.substate !== "done")
         why.push(`t4 is ${t?.status}/${t?.substate}`);
-      if (!notes.includes("gate green: npm test exit 0")) why.push("evidence not recorded");
+      if (!notes.includes(PROOF)) why.push("evidence not recorded");
       return done(why);
     },
     golden: {
-      "3x": `mu task close t4 -w ${WS} --evidence 'gate green: npm test exit 0'`,
-      next: `mu task close t4 -w ${WS} --evidence 'gate green: npm test exit 0'`,
+      "3x": `mu task close t4 -w ${WS} --evidence '${PROOF}'`,
+      next: `mu task close t4 -w ${WS} --evidence '${PROOF}'`,
     },
-    bad: `mu task close t5 -w ${WS} --evidence 'gate green: npm test exit 0'`,
+    bad: `mu task close t5 -w ${WS} --evidence '${PROOF}'`,
   },
   {
     id: "spawn_remote",
     group: "host",
-    text: "Spawn a worker for task t5 (workstream auth) on the remote host dev.",
+    text: "Launch a worker for t5 (auth initiative) on the other machine dev, so that it works there.",
+    role: "headline",
     families: ALL,
     async seed(sb, f) {
       await seedViaMu(sb, [init(), add("t5", "remote job")]);
@@ -304,7 +324,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "spawn_remote_named",
     group: "host",
-    text: "Spawn a worker named worker-1 for task t5 (workstream auth) on the remote host dev.",
+    text: "Launch a worker called worker-1 for t5 (auth initiative) on the other machine dev, so that it works there.",
+    role: "control",
     families: ALL,
     async seed(sb, f) {
       await seedViaMu(sb, [init(), add("t5", "remote job")]);
@@ -332,7 +353,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "collect_commits",
     group: "host",
-    text: "Collect worker-2's commits (workstream auth) into this repo; worker-2 runs on host dev.",
+    text: "Bring worker-2's unmerged work from machine dev into the git repository here; the worker belongs to the auth initiative.",
+    role: "headline",
     families: ALL,
     async seed(sb, f) {
       await seedViaMu(sb, [init()]);
@@ -359,7 +381,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "log_tail",
     group: "log",
-    text: "Read the last 20 log records of workstream auth.",
+    text: "Print the 20 newest entries of the auth initiative's journal.",
+    role: "headline",
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [init()]);
@@ -373,7 +396,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "needs_human",
     group: "state",
-    text: "What in workstream auth needs a human?",
+    text: "Is anything in the auth initiative awaiting a person's decision?",
+    role: "headline",
     families: ALL,
     async seed(sb, f) {
       await seedViaMu(sb, [init(), add("t1", "ordinary work")]);
@@ -394,7 +418,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "add_three",
     group: "tasks",
-    text: "Add three tasks to workstream auth, n1, n2 and n3, where n2 blocks n3.",
+    text: "Create three items in the auth initiative: n1, n2 and n3, with n2 required before n3.",
+    role: "headline",
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [init(), add("t1", "existing")]);
@@ -420,7 +445,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "add_three_titled",
     group: "tasks",
-    text: "Add three tasks to workstream auth: n1 titled parse, n2 titled index, n3 titled ship, where n2 blocks n3.",
+    text: "Create three items in the auth initiative: n1 headed parse, n2 headed index, n3 headed ship, with n2 required before n3.",
+    role: "control",
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [init(), add("t1", "existing")]);
@@ -446,7 +472,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "reopen",
     group: "tasks",
-    text: "Reopen task t6 in workstream auth.",
+    text: "Make t6 in the auth initiative workable again; it was declared complete by mistake.",
+    role: "headline",
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [
@@ -468,7 +495,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "delegates_wave",
     group: "delegates",
-    text: "Show the delegates in wave w1 (workstream auth).",
+    text: "Which helper calls in the auth initiative were sent out in batch w1?",
+    role: "headline",
     families: ["next"],
     async seed(sb) {
       await seedViaMu(sb, [
@@ -500,7 +528,9 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "sql_read",
     group: "db",
-    text: "Run this SQL read against mu's database: SELECT local_id, title FROM tasks WHERE impact = 77",
+    text: `Execute this statement against mu's database: ${SQL}`,
+    role: "headline",
+    payload: SQL,
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [init(), add("t2", "sql-marker-q", 77), add("t3", "decoy", 76)]);
@@ -508,15 +538,16 @@ export const INTENTS: ColdIntent[] = [
     },
     judge: async (c) => reads(c, ["sql-marker-q"], ["decoy"]),
     golden: {
-      "3x": `mu sql "SELECT local_id, title FROM tasks WHERE impact = 77"`,
-      next: `mu sql "SELECT local_id, title FROM tasks WHERE impact = 77"`,
+      "3x": `mu sql "${SQL}"`,
+      next: `mu sql "${SQL}"`,
     },
     bad: `mu sql "SELECT local_id, title FROM tasks"`,
   },
   {
     id: "stop_worker",
     group: "agents",
-    text: "Stop worker-3 in workstream auth safely: it has a commit that is not merged yet.",
+    text: "Stop worker-3 in the auth initiative safely: it has work that is not merged yet.",
+    role: "headline",
     families: ALL,
     async seed(sb, f) {
       await seedViaMu(sb, [init()]);
@@ -543,7 +574,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "worker_doing",
     group: "agents",
-    text: "What is worker-1 doing right now (workstream auth)?",
+    text: "What is worker-1 doing right now (auth initiative)?",
+    role: "headline",
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [init(), add("t3", "implement-token-refresh"), add("t4", "other")]);
@@ -565,7 +597,8 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "list_workstreams",
     group: "workstream",
-    text: "List the workstreams.",
+    text: "Which separate initiatives does mu currently track?",
+    role: "headline",
     families: ALL,
     async seed(sb) {
       await seedViaMu(sb, [init(), ["workstream", "init", "billing-ui"]]);
