@@ -3,11 +3,20 @@
 // Read-only. Drill (Enter, a) is the next unit. Plain text only: every line is
 // cleaned and cut/padded by visual width (text.ts), never ANSI inside <Text>.
 
-import { Box, Text, useApp, useInput, useWindowSize } from "ink";
+import { Box, Text, useApp, useInput, useStdin, useWindowSize } from "ink";
 import { useEffect, useRef, useState } from "react";
 import type { DashboardSnapshot } from "../../dashboard-data.js";
 import {
+  type AttachResult,
+  planAttach,
+  runAttach,
+  type StepRunner,
+  spawnStep,
+} from "./commands.js";
+import { Drill, useYank } from "./drill.js";
+import {
   cursorIndex,
+  type DrillTarget,
   type Filter,
   moveCursor,
   NO_FILTER,
@@ -34,6 +43,8 @@ export interface AppProps {
   pollMs: number | null;
   /** Clock seam for elapsed times. */
   now?: () => number;
+  /** Runs one attach step with the terminal handed over (a test seam; default spawns). */
+  runStep?: StepRunner;
 }
 
 // Every screen line is one row tall (cut by width), so the layout is exactly `rows`
@@ -51,7 +62,10 @@ export function layout(rows: number): { shown: ReadonlySet<FixedLine>; height: n
   return { shown, height: Math.max(0, rows - TOP_LINES - shown.size) };
 }
 
-const HINT = "←/→ tab  [/] workstream  j/k PgUp/PgDn g/G move  s status  / filter  c clear  q quit";
+const HINT =
+  "←/→ tab  [/] workstream  j/k move  Enter open  s status  / filter  c clear  y copy  q quit";
+const HINT_AGENTS =
+  "←/→ tab  [/] workstream  j/k move  Enter scrollback  a attach  / filter  c clear  y copy  q quit";
 
 /** The workstream labels as one line of `width` columns, scrolled so the selected one shows. */
 export function workstreamLine(labels: readonly string[], selected: number, width: number): string {
@@ -70,8 +84,26 @@ interface View {
   cursor: string | null;
 }
 
-export function App({ runtime, initialWorkstream, pollMs, now = Date.now }: AppProps) {
-  const { exit } = useApp();
+/** An open drill, and what to say above it (an attach that fell back to it). */
+interface Open {
+  target: DrillTarget;
+  notice: readonly string[];
+}
+type ScrollTarget = Extract<DrillTarget, { kind: "scrollback" }>;
+
+export function App({
+  runtime,
+  initialWorkstream,
+  pollMs,
+  now = Date.now,
+  runStep = spawnStep,
+}: AppProps) {
+  const { exit, suspendTerminal } = useApp();
+  const { stdin } = useStdin();
+  const yank = useYank();
+  const [drill, setDrill] = useState<Open | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
   const { columns, rows: screenRows } = useWindowSize();
   const [tab, setTab] = useState<TabId>("tasks");
   const [chosen, setChosen] = useState<string | null>(null);
@@ -133,42 +165,94 @@ export function App({ runtime, initialWorkstream, pollMs, now = Date.now }: AppP
       ? null
       : (list[(Math.max(0, list.indexOf(cur ?? "")) + d + list.length) % list.length] ?? null);
 
-  useInput((input, key) => {
-    if (editing !== null) {
-      if (key.return) setEditing(null);
-      else if (key.escape) {
-        setFilter({ text: editing.before });
-        setEditing(null);
-      } else if (key.backspace || key.delete) setFilter({ text: view.filter.text.slice(0, -1) });
-      else if (input !== "" && !key.ctrl && !key.meta)
-        setFilter({ text: view.filter.text + clean(input) });
-      return;
+  // Attach runs ONLY from an explicit `a`. The backend's ordered steps get the real
+  // terminal (Ink suspends: alternate screen and raw mode off, restored after). If no
+  // client can open (no server, no workspace, a required step fails) the user lands on
+  // that agent's scrollback with the reason and the line for a shell outside.
+  const attach = async (t: ScrollTarget): Promise<void> => {
+    if (attaching) return;
+    setAttaching(true);
+    setFlash(null);
+    let outcome: AttachResult;
+    const plan = await planAttach(t);
+    if (!plan.ok) outcome = { ok: false, reason: plan.reason, warnings: [] };
+    else {
+      outcome = { ok: false, reason: "terminal unavailable", warnings: [] };
+      try {
+        await suspendTerminal(async () => {
+          outcome = await runAttach(plan.steps, runStep);
+        });
+      } catch (e) {
+        outcome = { ok: false, reason: e instanceof Error ? e.message : String(e), warnings: [] };
+      }
     }
-    if (input === "q" || key.escape) return exit();
-    const ids = TABS.map((t) => t.id);
-    if (key.tab || key.rightArrow || key.leftArrow) {
-      const back = key.leftArrow || (key.tab && key.shift);
-      setTab((cycle(ids, tab, back ? -1 : 1) ?? tab) as TabId);
-    } else if (input === "[" || input === "]") {
-      const next = cycle(
-        names.map((w) => w.name),
-        ws,
-        input === "]" ? 1 : -1,
-      );
-      if (next !== null) setChosen(next);
-    } else if (key.downArrow || input === "j") move(1);
-    else if (key.upArrow || input === "k") move(-1);
-    else if (key.pageDown) move(height);
-    else if (key.pageUp) move(-height);
-    else if (input === "g" || key.home) move(-all.length);
-    else if (input === "G" || key.end) move(all.length);
-    else if (input === "s" && tab === "tasks")
-      setFilter({ status: nextStatusLabel(view.filter.status) });
-    else if (input === "/") setEditing({ before: view.filter.text });
-    else if (input === "c")
-      setFilter({ text: "", ...(tab === "tasks" ? { status: "active" as const } : {}) });
-    else if (input === "r") state.refresh();
-  });
+    // Typeahead from while the child owned the terminal sits in stdin's buffer and
+    // would be read by whichever screen listens next: drop it, never replay it.
+    await new Promise<void>((r) => setImmediate(r)); // Ink's own read of it runs while App is inactive
+    while (stdin.read() !== null) {}
+    setAttaching(false);
+    if (!outcome.ok)
+      setDrill({
+        target: t,
+        notice: [
+          `could not attach: ${outcome.reason}`,
+          ...(plan.line === null ? [] : [`from a shell outside the mux: ${plan.line}`]),
+        ],
+      });
+    else if (outcome.warnings.length > 0) setFlash(`attach: ${outcome.warnings.join("; ")}`);
+  };
+
+  useInput(
+    (input, key) => {
+      setFlash(null);
+      if (editing !== null) {
+        if (key.return) setEditing(null);
+        else if (key.escape) {
+          setFilter({ text: editing.before });
+          setEditing(null);
+        } else if (key.backspace || key.delete) setFilter({ text: view.filter.text.slice(0, -1) });
+        else if (input !== "" && !key.ctrl && !key.meta)
+          setFilter({ text: view.filter.text + clean(input) });
+        return;
+      }
+      if (input === "q" || key.escape) return exit();
+      const ids = TABS.map((t) => t.id);
+      if (key.tab || key.rightArrow || key.leftArrow) {
+        const back = key.leftArrow || (key.tab && key.shift);
+        setTab((cycle(ids, tab, back ? -1 : 1) ?? tab) as TabId);
+      } else if (input === "[" || input === "]") {
+        const next = cycle(
+          names.map((w) => w.name),
+          ws,
+          input === "]" ? 1 : -1,
+        );
+        if (next !== null) setChosen(next);
+      } else if (key.downArrow || input === "j") move(1);
+      else if (key.upArrow || input === "k") move(-1);
+      else if (key.pageDown) move(height);
+      else if (key.pageUp) move(-height);
+      else if (input === "g" || key.home) move(-all.length);
+      else if (input === "G" || key.end) move(all.length);
+      else if (input === "s" && tab === "tasks")
+        setFilter({ status: nextStatusLabel(view.filter.status) });
+      else if (input === "/") setEditing({ before: view.filter.text });
+      else if (input === "c")
+        setFilter({ text: "", ...(tab === "tasks" ? { status: "active" as const } : {}) });
+      else if (input === "r") state.refresh();
+      else if (key.return) {
+        const target = all[sel]?.drill;
+        if (target !== undefined) setDrill({ target, notice: [] });
+      } else if (input === "a" && tab === "agents") {
+        const target = all[sel]?.drill;
+        if (target?.kind === "scrollback") void attach(target);
+      } else if (input === "y") {
+        const target = all[sel]?.drill;
+        if (target !== undefined) void yank(target).then(setFlash);
+      }
+    },
+    // A drill, or an attach holding the terminal, owns the keys: App reads none.
+    { isActive: drill === null && !attaching },
+  );
 
   const text = (s: string) => cell(s, columns);
   const lineOf = (r: Row, i: number): string => `${i === sel ? "> " : "  "}${r.text}`;
@@ -200,11 +284,32 @@ export function App({ runtime, initialWorkstream, pollMs, now = Date.now }: AppP
           : "nothing here"
         : "";
   const warn = state.warnings[0];
-  const footer = state.error
-    ? { text: `error: ${state.error}`, color: "red" as const }
-    : warn
-      ? { text: `sync: ${warn}`, color: "yellow" as const }
-      : { text: editing ? "type to filter  Enter keep  Esc cancel" : HINT, color: undefined };
+  const footer = flash
+    ? { text: flash, color: undefined }
+    : state.error
+      ? { text: `error: ${state.error}`, color: "red" as const }
+      : warn
+        ? { text: `sync: ${warn}`, color: "yellow" as const }
+        : {
+            text: editing
+              ? "type to filter  Enter keep  Esc cancel"
+              : tab === "agents"
+                ? HINT_AGENTS
+                : HINT,
+            color: undefined,
+          };
+
+  if (drill !== null)
+    return (
+      <Drill
+        target={drill.target}
+        notice={drill.notice}
+        runtime={runtime}
+        active={!attaching}
+        onClose={() => setDrill(null)}
+        onAttach={(t) => void attach(t)}
+      />
+    );
 
   return (
     <Box flexDirection="column">

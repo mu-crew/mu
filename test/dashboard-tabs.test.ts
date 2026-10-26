@@ -417,6 +417,7 @@ describe("tabs (Ink over a real snapshot)", () => {
     rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });
     const real = rt;
     const computed: DashboardRuntime = {
+      notes: real.notes,
       close: real.close,
       refresh: async (q) => {
         const r = await real.refresh(q);

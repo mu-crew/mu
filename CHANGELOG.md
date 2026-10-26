@@ -44,6 +44,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Dashboard drills** (`v_dashboard_drill`): Enter opens a read-only full-screen body: Tasks the
+  task's notes (the CLI's default selection, pinned notes marked `*`; `A` shows all, whole), Agents
+  the pane scrollback (last 2000 lines, `r` reloads), Log one op with every field. `j/k`, PgUp/PgDn,
+  `g/G` scroll (clamped, wrapped by visual width, no ANSI in the text); Esc or `q` returns to the
+  tab with its filters and cursor. `y` copies the row's command with OSC 52 (no clipboard
+  dependency) and prints it; control characters and over 1 KB are refused. `a` on an agent is the
+  one key that runs anything: the backend's `attachCommands` steps, in order, with Ink's terminal
+  suspended and restored (`$TMUX` picks `switch-client` or `attach-session`; `-L` routing kept). A
+  failed required step stops, an optional one is a warning; no mux, no workspace or no client opens
+  the scrollback with the reason and the attach line for a shell outside the mux (yankable).
+  Typeahead typed during an attach is dropped. Adds `DashboardRuntime.notes` (read-only
+  connection). Read-only otherwise: no task or agent mutation.
 - **Dashboard tabs** (`v_dashboard_shell`, slice S2): the dashboard shows a workstream row and
   four tabs: Tasks (newest activity first, CLOSED hidden, owner on IN_PROGRESS), DAG (the open
   frontier; root, repeat and per-entry cap cuts always listed, even when a text filter hides the
@@ -55,8 +67,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   terminal keeps the workstream row and tabs (then one data row, filter, hint, Next); tabs
   collapse to the active one when four labels do not fit. Next reads `unavailable` until the Next slice computes it (never "no authorised work");
   an agent whose tool is not reported shows `tool ?`. The runtime now runs one refresh at a time
-  across queries: a changed query waits for the in-flight one. Read-only; drill (Enter, `a`) is the
-  next unit.
+  across queries: a changed query waits for the in-flight one. Read-only.
 - **Dashboard shell boot** (`v_dashboard_boot`): bare `mu` on a TTY (stdin and stdout, no `--json`)
   opens the dashboard; a pipe, script, `--json` or `--help` prints the same help as before. Adds
   `ink` 8 and `react` 19 (no devtools), `jsx: react-jsx`, and a lazy UI chunk that neither the SDK

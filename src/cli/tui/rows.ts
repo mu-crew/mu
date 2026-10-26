@@ -9,6 +9,7 @@
 import type {
   DashboardAgent,
   DashboardEdge,
+  DashboardLogItem,
   DashboardSnapshot,
   DashboardTask,
 } from "../../dashboard-data.js";
@@ -23,9 +24,17 @@ export const TABS: readonly { id: TabId; label: string }[] = [
   { id: "log", label: "Log" },
 ];
 
+/** What Enter opens on a row (a tagged union; the DAG tab has no drill). */
+export type DrillTarget =
+  | { kind: "notes"; workstream: string; id: string; title: string }
+  | { kind: "scrollback"; workstream: string; name: string; paneId: string; tab: string | null }
+  | { kind: "log"; item: DashboardLogItem };
+
 export interface Row {
   key: string;
   text: string;
+  /** Enter opens this; absent = nothing to open. */
+  drill?: DrillTarget;
   /** Not a cursor stop's data (a cut notice): shown, never filtered out. */
   notice?: boolean;
 }
@@ -131,6 +140,7 @@ function taskRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] 
     return {
       key: t.key,
       text: `${cell(t.id, idw)}  ${cell(statusText(t.status, t.substate), stw)}  ${t.title}${owner}`,
+      drill: { kind: "notes", workstream: t.workstream, id: t.id, title: t.title },
     };
   });
 }
@@ -220,6 +230,13 @@ function agentRows(snap: DashboardSnapshot, f: Filter, now: number): Row[] {
   return agents.map((a) => ({
     key: a.key,
     text: `${cell(a.key, kw)}  ${cell(a.state ?? "?", sw)}  ${cell(a.task ?? "-", tw)}  ${toolText(a, now)}`,
+    drill: {
+      kind: "scrollback" as const,
+      workstream: a.workstream,
+      name: a.name,
+      paneId: a.pane_id,
+      tab: a.tab,
+    },
   }));
 }
 
@@ -228,7 +245,11 @@ function logRows(snap: DashboardSnapshot, f: Filter): Row[] {
     .filter((l) => textMatch(f.text, l.rendered, l.actor, l.scope))
     .map((l) => {
       const time = /T(\d\d:\d\d:\d\d)/.exec(l.created_at)?.[1] ?? l.created_at;
-      return { key: String(l.seq), text: `${l.seq}  ${time}  ${l.scope ?? "-"}  ${l.rendered}` };
+      return {
+        key: String(l.seq),
+        text: `${l.seq}  ${time}  ${l.scope ?? "-"}  ${l.rendered}`,
+        drill: { kind: "log", item: l },
+      };
     });
 }
 
