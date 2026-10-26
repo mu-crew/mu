@@ -1,19 +1,25 @@
 // v_dashboard_core: loadDashboard, the one READ-ONLY projection the dashboard
 // tabs share. Real SQLite, mocked mux (fast tier).
 
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
+import { ctlSocketPath } from "../src/ctl/path.js";
+import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { FRONTIER_MAX_NODES } from "../src/dag.js";
 import { type DashboardSnapshot, loadDashboard } from "../src/dashboard-data.js";
 import { type Db, openDb } from "../src/db.js";
 import { markDelegate, registerDelegateCall } from "../src/delegates.js";
 import { recordHumanNeeded } from "../src/human-needed.js";
+import { computeNext } from "../src/next-hints.js";
+import { authorizeTasks } from "../src/task-auto.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
 import { claimTask, closeTask, parkTask } from "../src/tasks.js";
+import { registerOwnedWait } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
@@ -311,7 +317,7 @@ describe("frontier: the cuts are passed through, never dropped", () => {
 });
 
 describe("agents: registry fields, scratch included, unknown stays unknown", () => {
-  it("lists agents of every live workstream with state, owned task and the reserved tool slot", async () => {
+  it("lists agents of every live workstream with state and owned task", async () => {
     ensureWorkstream(db, "scratch");
     insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1", host: "dev", cwd: "/wt" });
     insertAgent(db, { name: "s1", workstream: "scratch", paneId: "%2" });
@@ -329,7 +335,7 @@ describe("agents: registry fields, scratch included, unknown stays unknown", () 
       task: "ws/a",
     });
     expect(w1?.state).toBe("unknown"); // no pane state source: never guessed idle or busy
-    expect(w1?.tool).toBeUndefined();
+    expect(w1).not.toHaveProperty("tool");
     expect(snap.agents.find((a) => a.key === "scratch/s1")?.task).toBeNull();
   });
 
@@ -370,12 +376,76 @@ describe("log: the canonical op tail, rendered by the one formatter", () => {
   });
 });
 
-describe("next and tool: types reserved, honestly unavailable", () => {
-  it("next is null with an explicit unavailable source (not 'no authorised work')", async () => {
+describe("next: computeNext, the CLI's rule set", () => {
+  it("equals computeNext for the same callers and scope; null is computed, not unavailable", async () => {
     task("a");
-    const snap = await loadDashboard(db, { caller: "pi:s1" });
-    expect(snap.next).toBeNull();
-    expect(snap.next_source).toBe("unavailable");
+    const none = await loadDashboard(db, { caller: "pi:s1", workstream: "ws" });
+    expect(none).toMatchObject({ next: null, next_source: "computed" });
+    authorizeTasks(db, ["a"], { workstream: "ws", cli: "pi", worktree: false, maxRuns: 1 });
+    const snap = await loadDashboard(db, { caller: null, workstream: "ws" });
+    expect(snap.next).toEqual(computeNext(db, { callers: [], workstream: "ws" }));
+    expect(snap.next?.commands).toEqual(["mu next -w ws"]);
+    expect(snap.next_source).toBe("computed");
+    // No workstream filter: no scope, no executor move (the CLI's rule).
+    expect((await loadDashboard(db, { caller: null })).next).toBeNull();
+  });
+
+  it("callers decide owned-wait moves; default is the caller alone", async () => {
+    task("a");
+    registerOwnedWait(db, "ws/orch", [{ kind: "task", workstream: "ws", id: "a" }]);
+    const own = { caller: "ws/orch", workstream: "ws" };
+    expect((await loadDashboard(db, own)).next?.commands).toEqual(["mu wait -w ws"]);
+    expect((await loadDashboard(db, { ...own, callers: ["pi:x"] })).next).toBeNull();
+  });
+});
+
+describe("tool: the ctl status field, elapsed at read, old extension unknown", () => {
+  const servers: Server[] = [];
+  afterEach(() => {
+    for (const s of servers.splice(0)) s.close();
+  });
+  function serve(name: string, status: Record<string, unknown>): Promise<void> {
+    const path = ctlSocketPath("ws", name, dir);
+    mkdirSync(dirname(path), { recursive: true });
+    const server = createServer((sock) => {
+      const dec = new LineDecoder();
+      sock.setEncoding("utf8");
+      sock.on("error", () => {});
+      sock.on("data", (chunk: string) => {
+        for (const _ of dec.push(chunk)) {
+          sock.end(
+            encode({ v: 1, ok: true, state: "busy", since: 1, runs: 0, pending: false, ...status }),
+          );
+        }
+      });
+    });
+    servers.push(server);
+    return new Promise((r) => server.listen(path, () => r()));
+  }
+  const agentTool = async (name: string) =>
+    (await loadDashboard(db, { caller: null })).agents.find((a) => a.name === name);
+
+  it("a running tool carries name, since and elapsed_ms (now - since); none is null", async () => {
+    insertAgent(db, { name: "run", workstream: "ws", paneId: "%1", cli: "pi" });
+    insertAgent(db, { name: "idle", workstream: "ws", paneId: "%2", cli: "pi" });
+    const since = Date.now() - 5_000;
+    await serve("run", { tool: { name: "bash", since } });
+    await serve("idle", { tool: null });
+    const run = await agentTool("run");
+    expect(run?.tool).toMatchObject({ name: "bash", since });
+    expect(run?.tool?.elapsed_ms).toBeGreaterThanOrEqual(5_000);
+    expect(run?.tool?.elapsed_ms).toBeLessThan(15_000);
+    expect((await agentTool("idle"))?.tool).toBeNull();
+  });
+
+  it("an old extension (no tool field) or an unreachable ctl stays unknown, never none", async () => {
+    insertAgent(db, { name: "old", workstream: "ws", paneId: "%1", cli: "pi" });
+    insertAgent(db, { name: "gone", workstream: "ws", paneId: "%2", cli: "pi" });
+    await serve("old", {});
+    const old = await agentTool("old");
+    expect(old?.state).toBe("busy");
+    expect(old).not.toHaveProperty("tool");
+    expect(await agentTool("gone")).not.toHaveProperty("tool");
   });
 });
 

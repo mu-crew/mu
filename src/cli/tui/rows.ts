@@ -204,9 +204,10 @@ export function formatElapsed(ms: number): string {
   return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
 }
 
-/** Running tool + elapsed; an agent whose tool is not reported is `?` (unknown), never "none". */
+/** Running tool + elapsed; `-` = none running; an agent whose tool is not reported is `?` (unknown), never "none". */
 function toolText(a: DashboardAgent, now: number): string {
   if (a.tool === undefined) return "tool ?";
+  if (a.tool === null) return "tool -";
   const ms = a.tool.elapsed_ms ?? now - a.tool.since;
   return `${a.tool.name} ${formatElapsed(ms)}`;
 }

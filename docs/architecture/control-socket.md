@@ -28,7 +28,7 @@ reply carries `v: 1`; the client (`src/ctl/client.ts`) throws
 | op | does |
 | --- | --- |
 | `hello` | identity plus `ops` (served ops), `features` (`incarnation`, `msgId`) and `extVersion` (the mu version the extension was built from) |
-| `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending`, and pi's `sessionFile` when it has one. With `msgId`, also `msg: { id, accepted, runs?, at? }`: whether that `send`/`fresh`/`interrupt` was accepted (`runs` is the baseline its reply carried) |
+| `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending`, pi's `sessionFile` when it has one, and `tool` (`{name, since}` of the innermost running tool, `null` when none; absent from older extensions, which reads as unknown). With `msgId`, also `msg: { id, accepted, runs?, at? }`: whether that `send`/`fresh`/`interrupt` was accepted (`runs` is the baseline its reply carried) |
 | `send` | `pi.sendUserMessage`; when busy, `mode` is `steer` or `followUp` (default). Replies with the `status` fields measured before the dispatch, so `runs` is the baseline for a later `wait` |
 | `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` and pi's `sessionFile`. With `incarnation` that differs from the current one, replies `incarnation mismatch` (plus the current `incarnation`) at once, without waiting |
 | `abort` | `ctx.abort()` (pi's Esc) |

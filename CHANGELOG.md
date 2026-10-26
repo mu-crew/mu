@@ -313,12 +313,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   asked) under `<workstream>/<id>` keys ordered by raw `MAX(ops.seq)` activity, the open
   frontier, registry agents with their owned task, the canonical op log, and the caller's own
   human needs and delegate calls (a null caller sees none: `caller_scope: "none"`). It never
-  reconciles, reaps, ingests or writes, and runs on a `readonly` connection. `next` (type
-  `NextPlan`) is null with `next_source: "unavailable"` and an agent's `tool` is unset until
-  `v_dashboard_next`. Owners are identified by agent registry id (`owner_id`, with
+  reconciles, reaps, ingests or writes, and runs on a `readonly` connection. `next` is
+  `computeNext` (see `v_dashboard_next` below). Owners are identified by agent registry id (`owner_id`, with
   `owner_workstream`; a task claimed by another workstream's same-named agent lands on that
   agent, also on a filtered read), and the open frontier's root/recurrence cuts pass through as
   `frontier[]` per workstream.
+- **Dashboard Next and running tool** (`v_dashboard_next`): `loadDashboard`'s `next` is
+  `computeNext` for the caller set (`next_source: "computed"`, so null now means "no authorised
+  work"; `"unavailable"` only if it throws), and the dashboard passes `currentCallers()`. The pi
+  extension's ctl `status` gains an optional `tool: {name, since} | null` (innermost running tool,
+  cleared on settle; additive, no new op or feature), which `ctlProbe`, `readAgentStates` and
+  `readLiveAgents` carry. An agent's `tool` is `{name, since, elapsed_ms}` (elapsed at read),
+  `null` (none running, shown `tool -`), or absent (old extension or no ctl, shown `tool ?`).
 - **`mu wait`: the one orchestrator wait** (`v_wait_surface`, slice A of `v_wait_cli`; over the
   `waitForEvents` engine). `mu wait [<ref>...]` returns on the first event its caller owns and
   prints ONE JSON document with no `--json` flag, errors and parse-time errors included. Refs are

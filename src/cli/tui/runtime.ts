@@ -23,6 +23,7 @@ import {
 import { type Db, openDb } from "../../db.js";
 import { ambientIngest, syncEnabled } from "../../sync.js";
 import { type SelectedNotes, selectTaskNotes } from "../../tasks.js";
+import { currentCallers } from "../../wait-callers.js";
 
 /** One refresh: the projection plus whatever sync said while producing it. */
 export interface RefreshResult {
@@ -48,6 +49,8 @@ export interface RuntimeOptions {
   syncDb: Db;
   /** `spawnerFromEnv()`; null for a human shell. */
   caller: string | null;
+  /** Who `next` is computed for; default `currentCallers()`. */
+  callers?: readonly string[];
   /** Minimum gap between ingests (default 10 s). */
   syncEveryMs?: number;
   /** Clock seam for tests. */
@@ -71,7 +74,11 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
       lastSync = now();
       warnings = (await ambientIngest(opts.syncDb, { quiet: true })).warnings;
     }
-    const snapshot = await loadDashboard(ro, { ...query, caller: opts.caller });
+    const snapshot = await loadDashboard(ro, {
+      ...query,
+      caller: opts.caller,
+      callers: opts.callers ?? currentCallers(),
+    });
     return { snapshot, warnings };
   }
 

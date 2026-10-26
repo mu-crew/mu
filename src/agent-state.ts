@@ -4,7 +4,7 @@ import { delimiter, join } from "node:path";
 import { expectsCtl } from "./agents/transport.js";
 import { ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
-import type { CtlBlocked, CtlState } from "./ctl/protocol.js";
+import type { CtlBlocked, CtlState, CtlTool } from "./ctl/protocol.js";
 import { execFileCapture } from "./exec-file.js";
 import { activeMux } from "./mux/detect.js";
 import { tmux } from "./tmux.js";
@@ -31,6 +31,8 @@ export interface StateReading {
   incarnation?: string;
   /** ctl only: the extension dialog pi is waiting on (state needs_permission). */
   blocked?: CtlBlocked;
+  /** ctl only: the running tool, null when none; absent from older extensions (unknown). */
+  tool?: CtlTool | null;
 }
 
 export interface StateAgentRef {
@@ -359,6 +361,7 @@ async function readNonGateStates(
         pending: probe.status.pending,
         runs: probe.status.runs,
         ...(probe.incarnation !== undefined ? { incarnation: probe.incarnation } : {}),
+        ...(probe.status.tool !== undefined ? { tool: probe.status.tool } : {}),
       });
     } else {
       failed.set(agentKey(agent), probe?.kind === "missing" ? "missing" : "refused");
