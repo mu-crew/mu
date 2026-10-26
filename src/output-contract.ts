@@ -89,31 +89,3 @@ export function okEnvelope<T>(data: T): Extract<Envelope<T>, { ok: true }> {
 
 /** Default byte budget for one result. */
 export const RESULT_BYTES = 4096;
-
-/**
- * Keep records, in order, while their UTF-8 bytes (plus one newline each) fit
- * `bytes`. Cuts only on a record boundary, always keeps the first record, and
- * never cuts a `pinned` record (the brief, report and verdict are the content).
- * `cut` counts the records dropped; the caller names the retrieval command.
- */
-export function capRecords(
-  records: readonly string[],
-  bytes: number = RESULT_BYTES,
-  pinned: (record: string) => boolean = () => false,
-): { records: string[]; cut: number } {
-  const kept: string[] = [];
-  let used = 0;
-  let cut = 0;
-  let full = false;
-  for (const r of records) {
-    const size = Buffer.byteLength(r) + 1;
-    if (pinned(r) || (!full && (kept.length === 0 || used + size <= bytes))) {
-      kept.push(r);
-      used += size;
-    } else {
-      full = true;
-      cut++;
-    }
-  }
-  return { records: kept, cut };
-}

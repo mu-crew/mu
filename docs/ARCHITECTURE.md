@@ -219,7 +219,7 @@ are re-export hubs.
 | `src/remote-collect.ts` | `collectRemoteAgent`: the `fetch` template run in the LOCAL repo under one channel, the fetched commit resolved from FETCH_HEAD (cleared first) and pinned under `refs/mu/collect/<ws>/<agent>`, `agents.collected_head` set by compare-and-set on id, pane, host, cwd and base |
 | `src/cli/agent-close.ts` | `mu agent close`, recovery-aware scope (`closeScope`: live agent or recovery record) |
 | `src/cli/agent-collect.ts` | `mu agent collect` |
-| `src/output-contract.ts` | the `--json` wire: `Envelope<T>` (`{ok,data,next}` / `{ok:false,error,message,next,exit}`), `NextPlan`, `encodeEnvelope`, `isEnvelope`, `capRecords`. Pure. `cli.ts` `emitJson` wraps every payload once; `handle.ts` `emitError` prints the one failure document on stdout; `emitJsonRow` is the raw NDJSON row (`mu log --tail`, inert like an envelope). `extension/delegate.ts` `parseEnvelope` reads it |
+| `src/output-contract.ts` | the `--json` wire: `Envelope<T>` (`{ok,data,next}` / `{ok:false,error,message,next,exit}`), `NextPlan`, `encodeEnvelope`, `isEnvelope`. Pure. `cli.ts` `emitJson` wraps every payload once; `handle.ts` `emitError` prints the one failure document on stdout; `emitJsonRow` is the raw NDJSON row (`mu log --tail`, inert like an envelope). `extension/delegate.ts` `parseEnvelope` reads it |
 | `src/output.ts`, `src/shell-quote.ts` | `printNextSteps` / `errorNextSteps`; POSIX quoting for hints |
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
 | `src/index.ts` | SDK entry point |

@@ -1,13 +1,7 @@
 // Pure tests for src/output-contract.ts: the wire envelope and the cap helper.
 
 import { describe, expect, it } from "vitest";
-import {
-  capRecords,
-  type Envelope,
-  encodeEnvelope,
-  isEnvelope,
-  okEnvelope,
-} from "../src/output-contract.js";
+import { type Envelope, encodeEnvelope, isEnvelope, okEnvelope } from "../src/output-contract.js";
 
 describe("encodeEnvelope", () => {
   it("encodes a success as one line {ok,data,next}", () => {
@@ -95,47 +89,5 @@ describe("isEnvelope / okEnvelope", () => {
     const env = okEnvelope(inner);
     expect(env).toEqual({ ok: true, data: inner, next: null });
     expect(okEnvelope(env)).toBe(env);
-  });
-});
-
-describe("capRecords", () => {
-  const rec = (n: number) => `r${n} ${"x".repeat(8)}`; // 11 bytes + newline
-
-  it("returns everything when it fits", () => {
-    expect(capRecords([rec(1), rec(2)], 100)).toEqual({ records: [rec(1), rec(2)], cut: 0 });
-  });
-
-  it("cuts the tail on a record boundary and counts what it dropped", () => {
-    const r = capRecords([rec(1), rec(2), rec(3), rec(4)], 30);
-    expect(r.records).toEqual([rec(1), rec(2)]);
-    expect(r.cut).toBe(2);
-  });
-
-  it("counts UTF-8 bytes, not characters", () => {
-    const wide = "é".repeat(10); // 20 bytes
-    const r = capRecords([wide, wide, wide], 45);
-    expect(r.records).toHaveLength(2);
-    expect(r.cut).toBe(1);
-  });
-
-  it("always keeps the first record, even when it alone is over the budget", () => {
-    const big = "y".repeat(500);
-    expect(capRecords([big, "z"], 10)).toEqual({ records: [big], cut: 1 });
-  });
-
-  it("never cuts a pinned record and keeps the order", () => {
-    const records = [`pinned-brief ${"b".repeat(100)}`, rec(1), rec(2), "pinned-report"];
-    const r = capRecords(records, 30, (s) => s.startsWith("pinned"));
-    expect(r.records).toEqual([records[0], records[3]]);
-    expect(r.cut).toBe(2);
-  });
-
-  it("defaults to a 4 KB budget", () => {
-    const many = Array.from({ length: 1000 }, (_, i) => rec(i));
-    const r = capRecords(many);
-    const bytes = r.records.reduce((n, s) => n + Buffer.byteLength(s) + 1, 0);
-    expect(bytes).toBeLessThanOrEqual(4096);
-    expect(r.cut).toBe(1000 - r.records.length);
-    expect(r.cut).toBeGreaterThan(0);
   });
 });
