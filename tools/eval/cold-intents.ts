@@ -202,7 +202,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "owner_of",
     group: "tasks",
-    text: "Which worker is assigned t3 in the auth initiative?",
+    text: "Which worker is assigned t3 in the initiative called auth?",
     role: "headline",
     families: ALL,
     async seed(sb) {
@@ -224,7 +224,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "task_brief",
     group: "tasks",
-    text: "Print the original brief that t3 in the auth initiative was given.",
+    text: "Print the original brief that t3 in the initiative called auth was given.",
     role: "headline",
     families: ALL,
     async seed(sb) {
@@ -242,7 +242,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "blocked_by_t1",
     group: "tasks",
-    text: "Which unfinished items in the auth initiative are held up by t1?",
+    text: "Which unfinished items in the initiative called auth are held up by t1?",
     role: "headline",
     families: ALL,
     async seed(sb) {
@@ -268,7 +268,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "close_with_evidence",
     group: "tasks",
-    text: `Declare t4 in the auth initiative complete; the proof is: ${PROOF}.`,
+    text: `Declare t4 in the initiative called auth complete; the proof is: ${PROOF}.`,
     role: "headline",
     payload: PROOF,
     families: ALL,
@@ -295,7 +295,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "spawn_remote",
     group: "host",
-    text: "Launch a worker for t5 (auth initiative) on the other machine dev, so that it works there.",
+    text: "Launch a worker for t5 (initiative called auth) on the other machine dev, so that it works there.",
     role: "headline",
     families: ALL,
     async seed(sb, f) {
@@ -324,7 +324,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "spawn_remote_named",
     group: "host",
-    text: "Launch a worker called worker-1 for t5 (auth initiative) on the other machine dev, so that it works there.",
+    text: "Launch a worker called worker-1 for t5 (initiative called auth) on the other machine dev, so that it works there.",
     role: "control",
     families: ALL,
     async seed(sb, f) {
@@ -353,7 +353,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "collect_commits",
     group: "host",
-    text: "Bring worker-2's unmerged work from machine dev into the git repository here; the worker belongs to the auth initiative.",
+    text: "Bring worker-2's unmerged work from machine dev into the git repository here; the worker belongs to the initiative called auth.",
     role: "headline",
     families: ALL,
     async seed(sb, f) {
@@ -381,7 +381,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "log_tail",
     group: "log",
-    text: "Print the 20 newest entries of the auth initiative's journal.",
+    text: "Print the 20 newest entries of the initiative called auth's journal.",
     role: "headline",
     families: ALL,
     async seed(sb) {
@@ -396,7 +396,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "needs_human",
     group: "state",
-    text: "Is anything in the auth initiative awaiting a person's decision?",
+    text: "Is anything in the initiative called auth awaiting a person's decision?",
     role: "headline",
     families: ALL,
     async seed(sb, f) {
@@ -418,7 +418,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "add_three",
     group: "tasks",
-    text: "Create three items in the auth initiative: n1, n2 and n3, with n2 required before n3.",
+    text: "Create three items in the initiative called auth: n1, n2 and n3, with n2 required before n3.",
     role: "headline",
     families: ALL,
     async seed(sb) {
@@ -445,7 +445,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "add_three_titled",
     group: "tasks",
-    text: "Create three items in the auth initiative: n1 headed parse, n2 headed index, n3 headed ship, with n2 required before n3.",
+    text: "Create three items in the initiative called auth: n1 headed parse, n2 headed index, n3 headed ship, with n2 required before n3.",
     role: "control",
     families: ALL,
     async seed(sb) {
@@ -472,7 +472,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "reopen",
     group: "tasks",
-    text: "Make t6 in the auth initiative workable again; it was declared complete by mistake.",
+    text: "Make t6 in the initiative called auth workable again; it was declared complete by mistake.",
     role: "headline",
     families: ALL,
     async seed(sb) {
@@ -495,7 +495,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "delegates_wave",
     group: "delegates",
-    text: "Which helper calls in the auth initiative were sent out in batch w1?",
+    text: "Which helper calls in the initiative called auth were sent out in batch w1?",
     role: "headline",
     families: ["next"],
     async seed(sb) {
@@ -546,7 +546,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "stop_worker",
     group: "agents",
-    text: "Stop worker-3 in the auth initiative safely: it has work that is not merged yet.",
+    text: "Stop worker-3 in the initiative called auth safely: it has work that is not merged yet.",
     role: "headline",
     families: ALL,
     async seed(sb, f) {
@@ -574,7 +574,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "worker_doing",
     group: "agents",
-    text: "What is worker-1 doing right now (auth initiative)?",
+    text: "What is worker-1 doing right now (initiative called auth)?",
     role: "headline",
     families: ALL,
     async seed(sb) {

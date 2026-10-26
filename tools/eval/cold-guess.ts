@@ -146,7 +146,7 @@ export function systemPrompt(help: string): string {
     help.trimEnd(),
     "</help>",
     "",
-    "You cannot run anything now and you cannot ask questions. For each request, answer with the ONE shell command you would run, in a single ```sh fenced block and nothing else. Commit to your best guess of the real command: a `--help` command is not an answer. Names in the request (workstream, task and agent ids, hosts) are exact. mu is on PATH and you are in the project's git repo.",
+    "You cannot run anything now and you cannot ask questions. For each request, answer with the ONE shell command you would run, in a single ```sh fenced block and nothing else. Commit to your best guess of the real command: a `--help` command is not an answer. Names in the request (the initiative, task and agent ids, hosts) are exact: use them as written. mu is on PATH and you are in the project's git repo.",
   ].join("\n");
 }
 
