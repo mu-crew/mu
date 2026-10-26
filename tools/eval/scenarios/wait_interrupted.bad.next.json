@@ -19,10 +19,10 @@
   {
     "calls": [
       {
-        "bash": "mu agent spawn w1 -w eval --task i1 --send 'do i1 and finish with the CLOSE block' --json"
+        "bash": "mu agent send w1 -w eval 'do i1 and finish with the CLOSE block'"
       },
       {
-        "bash": "mu agent spawn w2 -w eval --task i2 --send 'do i2 and finish with the CLOSE block' --json"
+        "bash": "mu agent send w2 -w eval 'do i2 and finish with the CLOSE block'"
       }
     ]
   },

@@ -126,7 +126,7 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
     const start = Date.now();
     // Generous --timeout (60s); if exit 6 doesn't fire fast we'd
     // notice the test taking >> a second.
-    const { exitCode, stderr, error } = await runCli(
+    const { exitCode, stdout, error } = await runCli(
       ["task", "wait", "build", "-w", workstream, "--timeout", "60"],
       dbPath,
     );
@@ -134,9 +134,14 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
 
     expect(error).toBeUndefined();
     expect(exitCode).toBe(6);
-    expect(stderr).toMatch(/reaper/i);
-    expect(stderr).toContain("build");
-    expect(stderr).toContain("alice");
+    // One document: the dead event names the task, and the exit is embedded.
+    const doc = JSON.parse(stdout) as {
+      data: { firing: { kind: string; ref: string }; exit: number };
+    };
+    expect(doc.data).toMatchObject({
+      firing: { kind: "dead", ref: `task:${workstream}/build` },
+      exit: 6,
+    });
     // Fail-fast property: well under any reasonable --timeout. Allow
     // a generous 10s ceiling for slow CI; the real number is <1s.
     expect(elapsedMs).toBeLessThan(10_000);
@@ -163,13 +168,13 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
 
     runDuringFirstWaitSleep(() => killPane(agent.paneId));
 
-    const { exitCode, stderr, error } = await runCli(
+    const { exitCode, stdout, error } = await runCli(
       ["task", "wait", "deploy", "-w", workstream, "--status", "OPEN", "--timeout", "60"],
       dbPath,
     );
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull(); // clean return; no process.exit
-    expect(stderr).not.toMatch(/reaper/i);
+    expect(JSON.parse(stdout).data.firing.kind).toBe("closed");
     expect(getTask(db, "deploy", workstream)?.status).toBe("OPEN");
   });
 
@@ -196,13 +201,13 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
       closeTask(db, "review", { workstream, evidence: "test" });
     });
 
-    const { exitCode, stderr, error } = await runCli(
+    const { exitCode, stdout, error } = await runCli(
       ["task", "wait", "review", "-w", workstream, "--timeout", "60"],
       dbPath,
     );
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
-    expect(stderr).not.toMatch(/reaper/i);
+    expect(JSON.parse(stdout).data.firing.kind).toBe("closed");
     expect(getTask(db, "review", workstream)?.status).toBe("CLOSED");
   });
 
@@ -230,14 +235,16 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
     // is target=CLOSED, which is the default).
     runDuringFirstWaitSleep(() => killPane(a1.paneId));
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       ["task", "wait", "t1", "t2", "--any", "-w", workstream, "--timeout", "60"],
       dbPath,
     );
     expect(exitCode).toBe(6);
-    // Should name t1 (the dead one) — not t2.
-    expect(stderr).toContain("t1");
-    expect(stderr).toMatch(/reaper/i);
+    // Names t1 (the dead one), not t2.
+    expect(JSON.parse(stdout).data.firing).toMatchObject({
+      kind: "dead",
+      ref: `task:${workstream}/t1`,
+    });
   });
 });
 
@@ -338,7 +345,7 @@ describeIfTmux("mu task wait — cross-workstream reaper isolation", () => {
       await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 25)));
     });
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       // Bare ref + -w wsA (NOT a cross-ws wait — the cross-ws part
       // here is the side-effect: B's reaper firing during a wsA wait
       // must NOT bleed into the wsA exit code).
@@ -346,7 +353,7 @@ describeIfTmux("mu task wait — cross-workstream reaper isolation", () => {
       dbPath,
     );
     expect(exitCode).toBeNull(); // clean exit, NOT exit 6
-    expect(stderr).not.toMatch(/reaper/i);
+    expect(JSON.parse(stdout).data.firing).toMatchObject({ kind: "closed" });
   });
 
   it("cross-ws qualified refs: reaper on a watched ref in B fires exit 6", async () => {
@@ -373,14 +380,15 @@ describeIfTmux("mu task wait — cross-workstream reaper isolation", () => {
 
     runDuringFirstWaitSleep(() => killPane(beta.paneId));
 
-    const { exitCode, stderr } = await runCli(
+    const { exitCode, stdout } = await runCli(
       ["task", "wait", `${wsA}/alphatask`, `${wsB}/betatask`, "--timeout", "30"],
       dbPath,
     );
     expect(exitCode).toBe(6);
-    // Names the dead ref's bare id (the typed error names the local
-    // task id; the wait set is qualified-aware).
-    expect(stderr).toContain("betatask");
-    expect(stderr).toMatch(/reaper/i);
+    // The dead ref is the qualified one in B.
+    expect(JSON.parse(stdout).data.firing).toMatchObject({
+      kind: "dead",
+      ref: `task:${wsB}/betatask`,
+    });
   });
 });

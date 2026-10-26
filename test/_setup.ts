@@ -55,6 +55,13 @@ for (const key of Object.keys(process.env)) {
   }
 }
 
+// A test run from inside a pi session inherits its identity: `mu wait` would own
+// (and spawn would stamp) a real session's work. Tests that need one set it.
+{
+  const key = "PI_SESSION_ID";
+  delete process.env[key];
+}
+
 // Baseline: no spawn-time control-socket handshake. No test pane runs
 // the mu pi extension, so the 30s default would stall every pi spawn.
 // test/spawn-ctl.test.ts opts back in with a small budget.

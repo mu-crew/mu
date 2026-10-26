@@ -51,7 +51,7 @@ describe("pending next scenarios", () => {
   const dir = join(import.meta.dirname, "../../tools/eval/scenarios");
 
   it("every pending scenario has a golden and three distinct bads, and no live next script", () => {
-    expect(PENDING_NEXT.length).toBeGreaterThan(0);
+    // Empty once a unit has flipped them all (v_wait_surface did); the checks bind whatever is listed.
     for (const id of PENDING_NEXT) {
       const files = pendingScripts(dir, id);
       const golden = files.filter((f) => f.startsWith(`${id}.golden`));
@@ -89,21 +89,40 @@ describe("pending next scenarios", () => {
     }
   });
 
-  it("check --family next skips a pending scenario and still runs 3x on it", async () => {
+  it("check --family next skips a listed pending scenario", async () => {
     const out: string[] = [];
     vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
       out.push(a.join(" "));
     });
-    const code = await runCheck({
-      surface,
-      scenarios: ["wait_wave_six"],
-      includeUnderscore: false,
-      family: "next",
-      preflight: false,
-      verbose: false,
-      root: "/s",
-    });
-    expect(code).toBe(0);
-    expect(out.join("\n")).toContain("wait_wave_six pending: skipped");
+    // The list is empty now: list one for this test only (it is a plain array at runtime).
+    const list = PENDING_NEXT as string[];
+    list.push("wait_wave_six");
+    try {
+      const code = await runCheck({
+        surface,
+        scenarios: ["wait_wave_six"],
+        includeUnderscore: false,
+        family: "next",
+        preflight: false,
+        verbose: false,
+        root: "/s",
+      });
+      expect(code).toBe(0);
+      expect(out.join("\n")).toContain("wait_wave_six pending: skipped");
+    } finally {
+      list.pop();
+    }
+  });
+
+  it("the four wait scenarios are live: no pending file is left for them", () => {
+    for (const id of [
+      "wait_interrupted",
+      "wait_mixed_refs",
+      "wait_wave_six",
+      "wait_wave_starvation",
+    ]) {
+      expect(pendingScripts(dir, id), id).toEqual([]);
+      expect(existsSync(join(dir, `${id}.golden.next.json`)), id).toBe(true);
+    }
   });
 });

@@ -12,7 +12,7 @@
   {
     "calls": [
       {
-        "bash": "f=$(mktemp); mu wait -w eval --all --json --timeout 120 >$f 2>&1; rc=$?; if [ $rc -ge 128 ] || [ ! -s $f ]; then echo '{\"interrupted\":true,\"tasks\":[{\"name\":\"i1\",\"status\":\"CLOSED\"},{\"name\":\"i2\",\"status\":\"CLOSED\"}],\"resume\":\"mu wait -w eval --all --json\"}'; else cat $f; fi; rm -f $f"
+        "bash": "echo '{\"ok\":true,\"data\":{\"firing\":{\"kind\":\"interrupted\",\"ref\":null},\"interrupted\":true,\"snapshots\":[{\"id\":\"i1\",\"status\":\"CLOSED\"},{\"id\":\"i2\",\"status\":\"CLOSED\"}],\"resume\":\"mu wait task:eval/i1 task:eval/i2 --all -w eval\"}}'"
       }
     ]
   },

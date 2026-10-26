@@ -75,6 +75,8 @@ export interface WaitSnapshot {
   settled?: boolean;
   /** Agent: `lastText` lost its head to the cap, so a CLOSE block in it cannot be trusted. */
   lastTextTruncated?: boolean;
+  /** Agent: `pane` when `lastText` is a non-pi pane's tail (no ctl text exists for it). */
+  textSource?: "pane";
   /** Agent: the ctl run count this wait counted from. */
   afterRuns?: number;
   /** Agent: observed busy during this wait. */
@@ -83,8 +85,17 @@ export interface WaitSnapshot {
   unknownBaseline?: boolean;
   /** Delegate: the parsed verdict label of a done answer. */
   verdict?: string | null;
+  /** Delegate: its own task's local id (the answer is that task's report note), the `<ws>/<task>` it judges, its wave. */
+  callTask?: string;
+  record?: string;
+  wave?: string;
   /** Task: its owner has been stalled long enough to report (IN_PROGRESS, owner needs_input or ctl broken). */
   stuck?: boolean;
+  /** Task, stuck: why (`needs_input`, or the broken control socket's reason) and how long, in seconds. */
+  stuckWhy?: string;
+  stuckSecs?: number;
+  /** Task, stuck: the owner's ctl settled-run count, when its socket answered (pi owners). */
+  ownerRuns?: number;
   /** The ref's completion condition is met (task at target, agent settled, delegate terminal). */
   fired: boolean;
   dead: boolean;
@@ -161,6 +172,8 @@ export interface AgentReading {
   blocked?: CtlBlocked;
   lastText?: string;
   lastTextTruncated?: boolean;
+  /** `pane`: `lastText` is the tail of a NON-pi pane (it has no control socket, so no ctl text): matched by `until.text` only, never a CLOSE source. */
+  textSource?: "pane";
   lastError?: string;
   sessionFile?: string;
   agentId?: number;
@@ -203,7 +216,7 @@ export interface WaitOptions {
   /** `owned` (default): the callers' owned refs also end the wait. `refs`: only the listed refs do. */
   eventScope?: "owned" | "refs";
   /** Delegate calls of this wave (the callers' only) are targets; the result carries their tally. */
-  wave?: { workstream: string; name: string };
+  wave?: { workstream?: string; name: string };
   /** The open transitive blockers of this task are targets, re-read each iteration. */
   blockersOf?: { workstream: string; id: string };
   /** Task target status (default CLOSED). */
@@ -221,8 +234,18 @@ export interface WaitOptions {
    * applies to both; 0 disables detection.
    */
   stuckAfterMs?: number;
-  /** `exit` (default): a stall ends the wait. `steer`/`release`: call `handleStall` (no handler: same as exit). */
-  onStall?: "exit" | "steer" | "release";
+  /**
+   * `exit` (default): a stall ends the wait. `warn`: the stall is flagged
+   * (`stuck` on the snapshot, an `agent.stall` event) and the wait goes on.
+   * `steer`/`release`: call `handleStall` (no handler: same as exit).
+   */
+  onStall?: "exit" | "warn" | "steer" | "release";
+  /**
+   * Narrow what the callers OWN to one workstream: registered and discovered
+   * refs by their workstream, delegate calls by their own or their record's.
+   * Explicit refs, a wave and `blockersOf` are never narrowed.
+   */
+  scope?: string;
   /** Raced with the loop, never awaited serially; called once per `stallToken`. */
   handleStall?: (ctx: WaitStallContext) => Promise<StallActionResult>;
   /** Called before every iteration; a throw propagates. */
@@ -250,6 +273,8 @@ export interface WaitOptions {
   applyClose?: boolean;
   /** Ingest peers every iteration and flush before returning (default true). */
   sync?: boolean;
+  /** Called every iteration with the snapshots of everything the wait is watching (the CLI's heartbeat and stall warning). */
+  onPicture?: (snaps: readonly WaitSnapshot[]) => void;
   /** Called once when every watched agent target reads unknown on the first iteration. */
   onInitialUnknown?: (agents: readonly WaitSnapshot[]) => void;
   /** Called with the targets' snapshots every iteration, before the pick; a throw propagates (the task adapter's legacy stuck warning). */

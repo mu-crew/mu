@@ -162,28 +162,27 @@ and apply it with `--if <n>`.
 Wait on every in-flight task and handle the first one that closes:
 
 ```bash
-mu task wait auth/build auth/docs --first --on-stall exit --json
+mu wait task:auth/build task:auth/docs
 ```
 
-- `--first` prints the closed ref and fills `firing` in `--json`.
-  `--any` leaves `firing` null even on success.
-- `nextSteps[0]` is the cherry-pick command for the worker's new
+`mu wait` prints ONE JSON document, with no `--json` flag. Refs are typed
+(`task:`, `agent:`, `delegate:`); with none, it waits on what you started.
+
+- `data.firing` is the event: `closed`, `settled`, `input`, `dead`, `stall`,
+  `delegate`, or `heartbeat` on a timeout (`ok:true`, `timedOut`, exit 0).
+- `data.snapshots` are the refs' real states; `data.resume` is the command
+  that keeps waiting, with every flag you gave. Run it as printed.
+- `data.nextSteps[0]` is the cherry-pick command for the worker's new
   commits. If the worker closed without committing, it says so.
-- Exit codes: `0` met, `5` timeout, `6` the owner's pane died,
-  `7` the owner sat in `needs_input` for `--stuck-after` seconds
-  (default 120, or 5 for a pi worker read over its control socket). Exit 7 is the default; `--on-stall warn` keeps
-  polling instead.
-
-Exit 7 has several causes: the worker finished but did not close, it
-asked a question, or it hit a prompt. In each case, run the exit's
-`Next:` first. For a pi owner, it starts with
-`mu agent wait <owner> --after-runs <runs-1> --json`, which prints the
-last answer at once. Then it shows `mu agent read <owner>`, for the
-dialogs and crashes that only the pane shows.
-
-Pipeline the work: merge one task, run your tests on the merged tree,
-then dispatch the next task. Waiting for a whole wave hides partial
-progress.
+- Exit codes: `0` event or timeout, `6` the owner's pane died, `7` the owner
+  sat in `needs_input` for `--stuck-after` seconds (default 120, or 5 for a pi
+  worker read over its control socket), `130`/`143` SIGINT/SIGTERM (the
+  snapshot and `resume` are still printed). `--on-stall warn` flags the stall
+  on the snapshot and keeps waiting. `mu task wait` is the same wait over task
+  refs.
+- `--all` waits for every ref; `--until-text <re>` waits for a run's final
+  text; `--wave <name>` waits on your delegate wave and `data.tally` says
+  `6/12 CONFIRMED, ...`.
 
 ## Close and park tasks
 

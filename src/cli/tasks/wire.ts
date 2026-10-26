@@ -25,6 +25,7 @@ import {
 import { NOTE_KINDS, type NoteKind } from "../../db.js";
 import { TASK_SUBSTATES } from "../../tasks/status.js";
 import { TASK_STATUS_LIST } from "../../tasks.js";
+import { installWaitSignals } from "../wait.js";
 import { cmdTaskAuto } from "./auto.js";
 import { cmdClaim, cmdTaskRelease, cmdTaskWait } from "./claim.js";
 import { cmdTaskBlock, cmdTaskDelete, cmdTaskReparent, cmdTaskUnblock } from "./edges.js";
@@ -674,33 +675,33 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("wait <ids...>")
     .description(
-      "Block until the listed tasks reach --status (default CLOSED). Each <id> may be bare (needs -w, or the worker's injected workstream) or qualified `<workstream>/<name>` (cross-workstream waits don't need -w). Default: every task must reach the target. --any / --first exit on the first one that does; --first additionally prints the firing ref's qualified id to stdout. A worker needing attention terminates the wait with exit 7 (--on-stall exit, the default). Exit 0 = condition met; 5 = timeout; 6 = a watched task was reaper-flipped IN_PROGRESS→OPEN (target=CLOSED only); 7 = a worker needs attention (target=CLOSED, unless --on-stall warn).",
+      "Alias of `mu wait` over task refs: block until the FIRST listed task reaches --status (default CLOSED), or every one with --all. Same engine, same ONE JSON result (always JSON): `data.firing.ref`, `data.exit`, `data.snapshots`, `data.resume`. Each <id> may be bare (needs -w, or the worker's injected workstream) or qualified `<workstream>/<name>`. Exit 0 = event or heartbeat (timedOut:true); 6 = an owner died; 7 = an owner needs attention; 130/143 = SIGINT/SIGTERM, with the snapshot and `resume` printed. Prefer `mu wait`, which also takes agents and delegates.",
     )
     .option(
       "--status <status>",
       `target status (${TASK_STATUS_LIST}, case-insensitive); default CLOSED`,
     )
+    .option("--first", "end on the first event (the default)")
+    .option("--any", "alias for --first")
+    .option("--first-of", "alias for --first")
     .option(
-      "--any",
-      "succeed as soon as ONE listed task reaches the target (default: all must). Reports THAT one fired, not which: --json leaves `firing` null even on success, so use --first if you need to identify the ref.",
+      "--all",
+      "end when every listed task reached the target (an owner dying or stalling still ends it early)",
     )
-    .option(
-      "--first",
-      "alias for --any that ALSO prints the firing ref's qualified id to stdout and populates `firing` in --json (which --any leaves null). Use to drive a single-shot dispatch loop: `closed=$(mu task wait a b --first --json | jq -r .firing.qualifiedId)`.",
-    )
+    .option("--all-of", "alias for --all")
     .option(
       "--timeout <seconds>",
-      "max seconds to wait, fractions allowed (0 = forever, default 600)",
+      "heartbeat deadline, fractions allowed (default 1500, which is also the cap; 0 = the cap)",
       parseSeconds,
     )
     .option(
       "--stuck-after <seconds>",
-      "the TRIGGER: mark an IN_PROGRESS task as needing attention when its owner has been in needs_input for >= N seconds since their last status change (0 = disable; default 120, or 5 for a pi owner read over its control socket, whose idle is exact and comes after the close nudge; an explicit value applies to every owner). needs_input has several causes — the worker may have finished without closing, be waiting on an answer, or be sitting at a prompt — so the warning names the observation and points at `mu agent read <owner>`, which is the next move in every case. The default ACTION is `exit` (exit 7); see --on-stall warn to keep polling instead.",
+      "report an owner stalled after this long in needs_input (0 = never; default 120, or 5 for a pi owner read over its control socket); a stall is an event with exit 7",
       parseSeconds,
     )
     .option(
       "--on-stall <action>",
-      "the ACTION when --stuck-after fires: 'exit' (default; yellow attention warning naming the owner + age, plus a corroborating agent_logs event, then exit 7 = STALL_DETECTED so an orchestrator can branch on the idle-vs-dead distinction) or 'warn' (same emit + persist; wait keeps polling). Suppressed when --status is anything other than CLOSED (mirrors exit-6's carve-out). If exit-6 (dead pane) and exit-7 (stall) would fire in the same poll, exit 6 wins (dead pane is unambiguous; stall is ambiguous).",
+      "exit (default): a stall ends the wait; warn: flag it and keep waiting",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
@@ -709,12 +710,18 @@ export function wireTaskCommands(program: Command): void {
         status?: string;
         any?: boolean;
         first?: boolean;
+        firstOf?: boolean;
+        all?: boolean;
+        allOf?: boolean;
         timeout?: number;
         stuckAfter?: number;
-        onStall?: "warn" | "exit";
+        onStall?: string;
         workstream?: string;
         json?: boolean;
       };
-      return handle((db) => cmdTaskWait(db, ids, opts), this as Command)();
+      const sig = installWaitSignals();
+      return handle((db) => cmdTaskWait(db, ids, opts, sig), this as Command)().finally(() =>
+        sig.dispose(),
+      );
     });
 }

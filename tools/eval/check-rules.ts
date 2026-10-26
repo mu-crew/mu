@@ -35,12 +35,7 @@ export const extraBadScripts = (dir: string, id: string, family: Family): string
  * `.next.pending.json` to `.next.json`, delete the id here, and run its tier-1 gate (see
  * tools/eval/README.md, "Pending scenarios"). 3x is never affected.
  */
-export const PENDING_NEXT: readonly string[] = [
-  "wait_interrupted",
-  "wait_mixed_refs",
-  "wait_wave_six",
-  "wait_wave_starvation",
-];
+export const PENDING_NEXT: readonly string[] = [];
 
 /** Pending script files of a scenario in `dir`: <id>.(golden|bad)[-name].next.pending.json, sorted. */
 export function pendingScripts(dir: string, id: string): string[] {

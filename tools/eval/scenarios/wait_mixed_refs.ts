@@ -215,7 +215,15 @@ const scenario: Scenario = {
     const exitInOut =
       measured !== undefined &&
       new RegExp(`"exit"\\s*:\\s*${measured.exit}\\b`).test(muOut(sb, measured));
-    const readyCall = waits.some((w) => new RegExp(`GATE-READY-${n}`).test(muOut(sb, w.mu)));
+    // The condition is met by the wait's own result (a wait document carrying the pane line), however
+    // long it blocked: the pane may already have printed it when the AUT asks.
+    const readyCall = muCalls(sb).some(
+      (m) =>
+        m.exit === 0 &&
+        names(m.argv, "gate") &&
+        /"firing"\s*:/.test(muOut(sb, m)) &&
+        new RegExp(`GATE-READY-${n}`).test(muOut(sb, m)),
+    );
     const nat = [
       native(
         sb,

@@ -93,6 +93,47 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `owner_workstream`; a task claimed by another workstream's same-named agent lands on that
   agent, also on a filtered read), and the open frontier's root/recurrence cuts pass through as
   `frontier[]` per workstream.
+- **`mu wait`: the one orchestrator wait** (`v_wait_surface`, slice A of `v_wait_cli`; over the
+  `waitForEvents` engine). `mu wait [<ref>...]` returns on the first event its caller owns and
+  prints ONE JSON document with no `--json` flag, errors and parse-time errors included. Refs are
+  typed: `task:[<ws>/]<id>`, `agent:[<ws>/]<name>[@<runs>][#<incarnation>]`, `delegate:<call id>`
+  (a bare word is refused with the spelling that works). No refs: the wait owns what the caller
+  started (the agents it spawned, by `agents.spawner`, and their tasks; its delegate calls).
+  `data` is `firing` (= `event`: `kind`, `ref`, `incarnation`, `runs`; `closed settled input dead
+  stall delegate heartbeat interrupted`), `exit` (0, 6 dead, 7 input or stall, 130/143 signal),
+  `timedOut`, `interrupted`, `open`, `snapshots`, `tally` (with a `6/12 CONFIRMED` summary),
+  `cursor`, `resume`. A timeout is `ok:true`, `timedOut`, exit 0. SIGINT/SIGTERM print the final
+  snapshot (the state read at that moment) and `resume`, then exit 130/143; SIGKILL cannot print.
+  The result is bounded to 4096 bytes: texts shrink first (tail kept, `lastTextCut`), then
+  snapshots (`snapshotsCut`, `retrieve`); firing, exit and resume are never cut. `resume` repeats
+  every condition with its real value, refs typed, POSIX-quoted. Flags: `--first`/`--first-of`
+  (default), `--all`/`--all-of`, `--until-idle`, `--until-text <re>` (the bounded regex; a pi
+  agent's ctl `lastText`, or the tail of a non-pi pane whose socket does not answer, marked
+  `textSource: pane` and never a CLOSE source), `--status`, `--stuck-after`, `--on-stall exit|warn`
+  (`steer`/`release` arrive with the stall-action units and are refused by name), `--wave`,
+  `--blockers-of`, `--timeout` (default and cap 1500 s; 0 = the cap; one warning when below 300 s),
+  `--after-runs`, `--inc`. One stderr heartbeat line a minute; never ANSI. The engine gains
+  provenance discovery of a caller's spawned workers, a `scope` that narrows what a caller owns to
+  one workstream, owner-death detection for a plain-shell wait, and `onStall: warn`.
+
+### Changed
+
+- **BREAKING: `mu task wait` is now an alias of `mu wait` over task refs.** It prints the one JSON
+  result (no `--json` needed) instead of the table and the old `{firing, all, timedOut[]}` shape;
+  the default is the FIRST event, not all-of (`--all` keeps the all-of loop); `--any`, `--first` and
+  the default are one contract and always name the firing ref; the default timeout is 1500 s (the
+  cap; `0` means the cap, no longer forever; it was 600 s); a timeout is `ok:true` with `timedOut`
+  and exit 0, no longer exit 5; the reaper flip and the stall are events (`dead`, `stall`) in the
+  document, no longer stderr text and a thrown error. `--on-stall warn` still keeps waiting and now
+  prints one stderr line per stalled task. The help example `jq -r .firing.qualifiedId` is now
+  `.data.firing.ref`.
+- **`mu agent wait --any` fills `firing`** like `--first` (one contract). Its output is otherwise
+  unchanged: the delegate recorder (`extension/delegate.ts`) reads `data.agents[0]` as before, over
+  the same engine with `eventScope: refs`.
+- `mu wait` and `mu task wait` default to JSON (`isWaitVerbArgv`, verb-aware like `state`), so a
+  parse-time error is one stdout document too. `handle()` drains stdout before `process.exit`, so a
+  piped result is never truncated.
+- The poll-sleep test seam is shared by every wait entry point (`setWaitSleepForTests`).
 - **mu-next is isolated from 3.x on disk** (`v_isolation`; after the 18:04 incident, where an
   inherited `MU_SYNC_DIR` let a mu-next run write a v2 segment into the real 3.x sync folder
   and 3.x warned `unknown-version` on every command). The default state dir is now

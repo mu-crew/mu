@@ -42,8 +42,13 @@ import type { TaskStatus, TaskSubstate } from "./status.js";
 // intercept it via setWaitStuckWarnForTests so they can assert
 // exactly-once dedupe without scraping process.stderr.
 
-let currentWaitSleep: (ms: number) => Promise<void> = (ms) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+let currentWaitSleep: (ms: number) => Promise<void> = realSleep;
+
+/** The poll sleep a test installed, or undefined (the engine then sleeps on an abortable timer): the one seam every wait entry point shares. */
+export function waitSleepOverride(): ((ms: number) => Promise<void>) | undefined {
+  return currentWaitSleep === realSleep ? undefined : currentWaitSleep;
+}
 
 export { DEFAULT_CTL_STUCK_AFTER_MS, DEFAULT_STUCK_AFTER_MS } from "../wait-types.js";
 
@@ -60,7 +65,7 @@ export function setWaitSleepForTests(
   impl: ((ms: number) => Promise<void>) | undefined,
 ): (ms: number) => Promise<void> {
   const previous = currentWaitSleep;
-  currentWaitSleep = impl ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  currentWaitSleep = impl ?? realSleep;
   return previous;
 }
 

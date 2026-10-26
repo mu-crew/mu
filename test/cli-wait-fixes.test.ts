@@ -2,8 +2,8 @@
 //   - --timeout / --stuck-after take fractional seconds and reject
 //     suffixes (parseInt read "0.5" as 0 = wait forever, "10m" as 10).
 //   - a task deleted mid-wait never counts as reaching --status OPEN.
-//   - exit 6 fires only when the reaper removed the owner's agent row,
-//     not on a manual release or delete of the watched task.
+//   - the owner-dead event (exit 6) fires only when the reaper removed the owner's
+//     agent row, not on a manual release or delete of the watched task.
 //   - agent wait reports a dead pane (and exits 6) even when another
 //     watched agent finished, and --any does not claim "All N finished".
 //   - task notes --since compares instants, not raw strings.
@@ -109,7 +109,9 @@ describe("mu task wait --timeout", () => {
     setWaitSleepForTests(shortSleep);
     const res = await runCli(["task", "wait", "t1", "-w", WS, "--timeout", "0.05"], dbPath);
     expect(res.error).toBeUndefined();
-    expect(res.exitCode).toBe(5);
+    // A timeout is a reported outcome (ok:true, timedOut), not an exit code.
+    expect(res.exitCode).toBeNull();
+    expect(JSON.parse(res.stdout).data).toMatchObject({ timedOut: true, exit: 0 });
   });
 
   it("a suffixed timeout is a usage error, not N seconds", async () => {
@@ -120,26 +122,24 @@ describe("mu task wait --timeout", () => {
     expect(stuck.exitCode).toBe(2);
   });
 
-  it("--json does not fabricate a reachedAt stamp on reached refs", async () => {
+  it("does not fabricate a reachedAt stamp on reached refs", async () => {
     // The wait result records no per-ref time, so a stamp would be
     // emit time, not when the ref reached the target.
     addT("t1");
     closeTask(db, "t1", { workstream: WS, evidence: "test" });
-    const res = await runCliJson(
-      ["task", "wait", "t1", "-w", WS, "--json", "--timeout", "1"],
-      dbPath,
-    );
+    const res = await runCliJson(["task", "wait", "t1", "-w", WS, "--timeout", "1"], dbPath);
     expect(res.error).toBeUndefined();
     expect(res.exitCode).toBeNull();
-    const out = res.data as { all: Array<Record<string, unknown>> };
-    expect(out.all).toHaveLength(1);
-    expect(out.all[0]?.qualifiedId).toBe(`${WS}/t1`);
-    expect(out.all[0]).not.toHaveProperty("reachedAt");
+    const out = res.data as { snapshots: Array<Record<string, unknown>> };
+    expect(out.snapshots).toHaveLength(1);
+    expect(out.snapshots[0]?.ref).toBe(`task:${WS}/t1`);
+    expect(out.snapshots[0]).not.toHaveProperty("reachedAt");
   });
 
-  it("--help does not advertise a nonexistent --all flag", async () => {
+  it("--help does not advertise a nonexistent flag, and shows the envelope's jq path", async () => {
     const res = await runCli(["task", "wait", "--help"], dbPath);
     expect(res.stdout).not.toContain("(--all)");
+    expect(res.stdout).not.toContain("--json | jq -r .firing");
   });
 });
 
@@ -174,21 +174,21 @@ describe("mu task wait exit 6 (reaper)", () => {
     onFirstSleep(setWaitSleepForTests, () => panes.delete("%1"));
     const res = await wait();
     expect(res.exitCode).toBe(6);
-    expect(res.stderr).toMatch(/reaper/i);
+    expect(JSON.parse(res.stdout).data.firing).toEqual({ kind: "dead", ref: `task:${WS}/t1` });
   });
 
   it("does not fire on a manual release (owner still registered)", async () => {
     onFirstSleep(setWaitSleepForTests, () => releaseTask(db, "t1", { workstream: WS }));
     const res = await wait();
-    expect(res.exitCode).toBe(5);
-    expect(res.stderr).not.toMatch(/reaper/i);
+    expect(res.exitCode).toBeNull();
+    expect(JSON.parse(res.stdout).data.firing.kind).not.toBe("dead");
   });
 
   it("does not fire when the watched task is deleted", async () => {
     onFirstSleep(setWaitSleepForTests, () => deleteTask(db, "t1", WS));
     const res = await wait();
-    expect(res.exitCode).toBe(5);
-    expect(res.stderr).not.toMatch(/reaper/i);
+    expect(res.exitCode).toBeNull();
+    expect(JSON.parse(res.stdout).data.firing.kind).not.toBe("dead");
   });
 
   it("does not fire on a manual release of a cross-workstream owner", async () => {
@@ -205,8 +205,8 @@ describe("mu task wait exit 6 (reaper)", () => {
       ["task", "wait", "x1", "-w", "task-ws", "--timeout", "0.2", "--stuck-after", "0"],
       dbPath,
     );
-    expect(res.exitCode).toBe(5);
-    expect(res.stderr).not.toMatch(/reaper/i);
+    expect(res.exitCode).toBeNull();
+    expect(JSON.parse(res.stdout).data.firing.kind).not.toBe("dead");
   });
 
   it("fires when a cross-workstream owner's pane dies", async () => {
@@ -224,7 +224,10 @@ describe("mu task wait exit 6 (reaper)", () => {
       dbPath,
     );
     expect(res.exitCode).toBe(6);
-    expect(res.stderr).toMatch(/reaper/i);
+    expect(JSON.parse(res.stdout).data.firing).toEqual({
+      kind: "dead",
+      ref: "task:task-ws/x1",
+    });
   });
 
   it("still fires when the owner row is removed directly (agent close)", async () => {
@@ -263,9 +266,14 @@ describe("mu task wait --on-stall exit (exit 7)", () => {
       dbPath,
     );
     expect(res.exitCode).toBe(7);
-    expect(res.stderr).toContain("mu agent read w2 -w agent-ws");
-    expect(res.stderr).not.toContain("mu agent read w2 -w task-ws");
-    expect(res.stderr).toContain("mu task close x1 -w task-ws");
+    const out = JSON.parse(res.stdout).data as {
+      snapshots: { owner?: string; ownerWorkstream?: string }[];
+      nextSteps: { command: string }[];
+    };
+    expect(out.snapshots[0]).toMatchObject({ owner: "w2", ownerWorkstream: "agent-ws" });
+    const commands = out.nextSteps.map((x) => x.command);
+    expect(commands).toContain("mu agent read w2 -w agent-ws --lines 60");
+    expect(commands).not.toContain("mu agent read w2 -w task-ws --lines 60");
   });
 });
 
@@ -289,15 +297,14 @@ describe("mu agent wait summary and exit code", () => {
     expect(process.exitCode).toBe(6);
   });
 
-  it("--any names the agent that finished instead of 'All N finished'", async () => {
+  it("--any names the agent that finished (one contract with --first), not 'All N finished'", async () => {
     onFirstSleep(setAgentWaitSleepForTests, () => panes.set("%1", "idle"));
-    const res = await runCli(
-      ["agent", "wait", "a1", "a2", "-w", WS, "--any", "--timeout", "5"],
+    const res = await runCliJson(
+      ["agent", "wait", "a1", "a2", "-w", WS, "--any", "--timeout", "5", "--json"],
       dbPath,
     );
     expect(res.error).toBeUndefined();
-    expect(res.stdout).toContain(`${WS}/a1 finished (1/2)`);
-    expect(res.stdout).not.toContain("All 2");
+    expect((res.data as { firing: unknown }).firing).toEqual({ workstream: WS, name: "a1" });
     expect(process.exitCode ?? 0).toBe(0);
   });
 

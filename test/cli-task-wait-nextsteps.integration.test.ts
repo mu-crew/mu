@@ -1,5 +1,4 @@
-// Integration coverage for `mu task wait --first --json` nextSteps
-// against real git worktrees.
+// Integration coverage for `mu task wait`'s nextSteps against real git worktrees.
 //
 // The wait hint names the worker's worktree and lists its own commits
 // (`git log HEAD --not <upstream refs>`); the orchestrator picks what to keep.
@@ -141,10 +140,7 @@ gitDescribe("mu task wait nextSteps — git worktree commits", () => {
   async function closeAndWait(firingTask: string, otherTask: string): Promise<WaitJsonPayload> {
     closeTask(db, firingTask, { workstream: "test", evidence: "done" });
     closeTask(db, otherTask, { workstream: "test", evidence: "done" });
-    const r = await runCliJson(
-      ["task", "wait", firingTask, otherTask, "-w", "test", "--first", "--json"],
-      dbPath,
-    );
+    const r = await runCliJson(["task", "wait", firingTask, otherTask, "-w", "test"], dbPath);
     expect(r.error).toBeUndefined();
     expect(r.exitCode).toBeNull();
     return r.data as WaitJsonPayload;

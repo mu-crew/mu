@@ -51,6 +51,8 @@ export function muCalls(sb: Sandbox, who: "aut" | "all" = "aut"): MuCall[] {
 
 /** A mu invocation of the AUT that blocked at least this long may have been waiting. */
 export const WAIT_MS = 1500;
+/** A call that wrote an agent.spawn op and ran shorter than this is a spawn (its liveness check), not a wait. */
+const SPAWN_CALL_MS = 3500;
 
 export interface Window {
   start: number;
@@ -70,8 +72,13 @@ export function waitWindows(sb: Sandbox): Window[] {
   const spawns = opsAfter(sb, 0)
     .filter((o) => o.intent === "agent.spawn")
     .map((o) => o.ms);
+  // A spawn blocks for its liveness check: a short call with an agent.spawn op inside it. A
+  // long wait during which a DELEGATE spawns agents has such ops inside its window too, but it
+  // is still a wait.
   return calls
-    .filter((m) => !spawns.some((t) => t >= m.start && t <= m.end))
+    .filter(
+      (m) => !(m.end - m.start < SPAWN_CALL_MS && spawns.some((t) => t >= m.start && t <= m.end)),
+    )
     .map((m) => ({ start: m.start, end: m.end, mu: m }));
 }
 
