@@ -8,13 +8,28 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export type MuResult = { code: number; stdout: string; stderr: string };
+/** Per-call options. `env` is merged over this process's env for that child only
+ *  (undefined deletes a key). `drainMs` bounds how long an aborted child (SIGTERM'd,
+ *  its final document kept: a `mu wait` snapshot) may run before SIGKILL; default 10 s. */
+export type MuRunOpts = { env?: Record<string, string | undefined>; drainMs?: number };
 /** Runs `mu <args>`. The test seam: tests inject a fake. */
 export type MuRunner = (
   args: readonly string[],
   signal?: AbortSignal,
   /** Written to the child's stdin (a `--text -` argument reads it). */
   stdin?: string,
+  opts?: MuRunOpts,
 ) => Promise<MuResult>;
+
+function childEnv(over: MuRunOpts["env"]): NodeJS.ProcessEnv | undefined {
+  if (over === undefined) return undefined;
+  const env = { ...process.env };
+  for (const [k, v] of Object.entries(over)) {
+    if (v === undefined) delete env[k];
+    else env[k] = v;
+  }
+  return env;
+}
 
 /** The CLI this extension ships with (dist/cli.js next to dist/extension/), else `mu` on PATH. */
 export function defaultRunner(): MuRunner {
@@ -25,33 +40,36 @@ export function defaultRunner(): MuRunner {
   } catch {
     // not a file: URL; use PATH
   }
-  return (args, signal, stdin) =>
+  return (args, signal, stdin, opts) =>
     cli
-      ? runChild(process.execPath, [cli, ...args], signal, stdin)
-      : runChild("mu", args, signal, stdin);
+      ? runChild(process.execPath, [cli, ...args], signal, stdin, opts)
+      : runChild("mu", args, signal, stdin, opts);
 }
 
-/** How long an aborted mu gets to roll back (a spawn removes its worktree) before SIGKILL. */
+/** How long an aborted mu gets to exit (a spawn rolls back its worktree; a wait prints its snapshot) before SIGKILL. */
 const ABORT_GRACE_MS = 10_000;
 
 /**
- * Run one child. An abort sends SIGTERM and resolves only once the child has
- * EXITED (SIGKILL after ABORT_GRACE_MS): mu rolls back on SIGTERM, and a
- * caller told "cancelled" while that runs would report a spawn gone that is
- * still removing its pane and worktree.
+ * Run one child. The ONE terminate path: an abort sends SIGTERM and resolves
+ * only once the child has EXITED, with its final stdout kept. mu rolls back on
+ * SIGTERM, and a caller told "cancelled" while that runs would report a spawn
+ * gone that is still removing its pane and worktree. SIGKILL follows after
+ * `opts.drainMs` (default ABORT_GRACE_MS).
  */
 export function runChild(
   cmd: string,
   argv: readonly string[],
   signal?: AbortSignal,
   stdin?: string,
+  opts: MuRunOpts = {},
 ): Promise<MuResult> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const env = childEnv(opts.env);
     const child = execFile(
       cmd,
       [...argv],
-      { maxBuffer: 16 * 1024 * 1024 },
+      { maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}) },
       (err, stdout, stderr) => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
@@ -61,7 +79,7 @@ export function runChild(
     );
     function onAbort(): void {
       child.kill("SIGTERM");
-      timer = setTimeout(() => child.kill("SIGKILL"), ABORT_GRACE_MS);
+      timer = setTimeout(() => child.kill("SIGKILL"), opts.drainMs ?? ABORT_GRACE_MS);
     }
     if (signal?.aborted) onAbort();
     else signal?.addEventListener("abort", onAbort, { once: true });

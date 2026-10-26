@@ -1,22 +1,23 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MuResult } from "../extension/delegate.js";
+import type { MuResult, MuRunOpts } from "../extension/mu-run.js";
 import {
-  dispatchedWorkstreams,
   keepDrivingRule,
   type MuNudgeCtx,
-  NUDGE_LOG_KIND,
   NUDGE_MESSAGE_TYPE,
-  nudgeText,
+  parallelSettle,
   registerNudge,
+  SETTLE_DRAIN_MS,
+  SETTLE_WAIT_ARGS,
+  type SettleWake,
 } from "../extension/nudge.js";
 
 const SKILL = readFileSync(join(import.meta.dirname, "..", "skills", "mu", "SKILL.md"), "utf8");
 
 type Handler = (event: unknown, ctx: MuNudgeCtx) => unknown;
 
-function fakePi() {
+function fakePi(ctx: MuNudgeCtx = {}) {
   const handlers = new Map<string, Handler[]>();
   const pi = {
     on(event: string, h: Handler) {
@@ -26,53 +27,79 @@ function fakePi() {
   };
   const emit = async (event: string, extra: Record<string, unknown> = {}) => {
     let last: unknown;
-    for (const h of handlers.get(event) ?? []) last = await h({ type: event, ...extra }, {});
+    for (const h of handlers.get(event) ?? []) last = await h({ type: event, ...extra }, ctx);
     return last;
   };
   return { pi, emit, handlers };
 }
 
-// `mu task list --status IN_PROGRESS --json -w <ws>`: one answer per
-// workstream, built from a { workstream: names } table.
-type Table = Record<string, string[]>;
-const card = (ws: string, names: string[]): Table => ({ [ws]: names });
-const multi = (cards: [string, string[]][]): Table => Object.fromEntries(cards);
-const listAnswer = (table: Table, args: readonly string[]): MuResult => {
-  const ws = args[args.indexOf("-w") + 1] ?? "";
-  return {
-    code: 0,
-    stdout: JSON.stringify({
-      ok: true,
-      data: {
-        items: (table[ws] ?? []).map((id) => ({ id, status: "IN_PROGRESS" })),
-      },
-      next: null,
-    }),
-    stderr: "",
+const out = (v: unknown, code = 0): MuResult => ({ code, stdout: JSON.stringify(v), stderr: "" });
+const okWait = (data: Record<string, unknown>) =>
+  out({ ok: true, data: { firing: { kind: "closed" }, exit: 0, ...data }, next: null });
+const NOTHING = out({ ok: false, error: "WaitNothingError", message: "nothing", next: null }, 1);
+const stateDoc = (needs: number) =>
+  out({
+    ok: true,
+    data: {
+      caller: "pi:s1",
+      workstreams: [{ workstream: "ws", human_needs: Array(needs).fill({}) }],
+    },
+    next: null,
+  });
+const settled = { outcome: "completed" };
+
+type Call = { args: string[]; signal?: AbortSignal; opts?: MuRunOpts };
+
+/** A mu whose `wait` answers come from `waits` in order (a function may block on the signal). */
+function fakeMu(waits: (MuResult | ((signal?: AbortSignal) => Promise<MuResult>))[], needs = 0) {
+  const calls: Call[] = [];
+  const run = async (
+    args: readonly string[],
+    signal?: AbortSignal,
+    _stdin?: string,
+    opts?: MuRunOpts,
+  ): Promise<MuResult> => {
+    calls.push({ args: [...args], ...(signal ? { signal } : {}), ...(opts ? { opts } : {}) });
+    if (args[0] === "state") return stateDoc(needs);
+    if (args[0] !== "wait") return out({ ok: true, data: {}, next: null });
+    const next = waits.shift() ?? NOTHING;
+    return typeof next === "function" ? next(signal) : next;
   };
-};
+  return { run, calls, waits: () => calls.filter((c) => c.args[0] === "wait") };
+}
 
-const bash = (command: string) => ({ toolName: "bash", toolCallId: "t1", input: { command } });
+/** A wait that blocks until its signal aborts, then prints its interrupted snapshot (the drain). */
+const blocking = (signal?: AbortSignal) =>
+  new Promise<MuResult>((resolve) =>
+    signal?.addEventListener("abort", () =>
+      resolve(okWait({ firing: { kind: "interrupted" }, interrupted: true, exit: 143 })),
+    ),
+  );
 
-let saved: string | undefined;
+const SESSION: MuNudgeCtx = { sessionManager: { getSessionId: () => "s1" } };
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+let saved: Record<string, string | undefined>;
+const KEYS = ["MU_NUDGE", "MU_REMOTE", "MU_MANAGED_AGENT", "MU_WORKSTREAM", "MU_AGENT_NAME"];
 beforeEach(() => {
-  saved = process.env.MU_NUDGE;
-  delete process.env.MU_NUDGE;
+  saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+  for (const k of KEYS) delete process.env[k];
 });
 afterEach(() => {
-  if (saved === undefined) delete process.env.MU_NUDGE;
-  else process.env.MU_NUDGE = saved;
+  for (const k of KEYS) {
+    const v = saved[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
 });
 
-function setup(state: Table, fixed?: MuResult) {
-  const f = fakePi();
-  const run = vi.fn(async (args: readonly string[]) => {
-    if (args[0] !== "task") return { code: 0, stdout: "", stderr: "" };
-    return fixed ?? listAnswer(state, args);
-  });
-  registerNudge(f.pi, run, SKILL);
-  return { ...f, run };
+function setup(mu: ReturnType<typeof fakeMu>, ctx: MuNudgeCtx = SESSION, wake?: SettleWake) {
+  const f = fakePi(ctx);
+  registerNudge(f.pi, mu.run, SKILL, undefined, undefined, wake);
+  return f;
 }
+
+type Settle = { entries?: { customType: string; content: string }[]; continue?: boolean };
 
 describe("keep-driving rule source", () => {
   it("SKILL.md carries the markers and a non-empty paragraph", () => {
@@ -90,285 +117,245 @@ describe("keep-driving rule source", () => {
   });
 });
 
-describe("dispatchedWorkstreams", () => {
-  it.each([
-    ["mu agent send worker-1 -w auth --fresh 'x'", ["auth"]],
-    ["mu agent spawn worker-1 --worktree -w=ignored --workstream auth", ["auth"]],
-    ["mu task claim build -w auth --for worker-1", ["auth"]],
-    ["mu task claim auth/build --for worker-1", ["auth"]],
-    ["cd x && mu agent send a -w one 'p' && mu agent send b -w two 'q'", ["one", "two"]],
-    ["node dist/cli.js agent send a -w x", undefined],
-    ["/usr/bin/mu agent send a -w x 'p'", ["x"]],
-    // Separators inside quotes are part of the word, before and after --for.
-    ["mu agent send w1 'do a && b; c | d' -w auth", ["auth"]],
-    ["mu task claim --evidence 'brief; refuted' --for w1 build -w auth", ["auth"]],
-    ["mu task claim build --for w1 --evidence 'a | b' -w auth", ["auth"]],
-    ["mu agent send a 'x; y' -w one && mu agent send b -w two 'p'", ["one", "two"]],
-    // The claim parse: -f, --for=, a leading --for.
-    ["mu task claim t1 -f w1 -w ws", ["ws"]],
-    ["mu task claim t1 --for=w1 -w ws", ["ws"]],
-    ["mu task claim --for w1 ws/t1", ["ws"]],
-    ["MU_X=1 mu task claim t1 --for w1 -w ws", ["ws"]],
-    ["mu agent send w1 \\\n  -w ws 'go'", ["ws"]],
-    ["grep x <<< foo\nmu task claim t1 --for w1 -w ws", ["ws"]],
-    ["echo $((1<<2))\nmu agent send w1 -w ws 'go'", ["ws"]],
-    ["((cd /tmp && cat) <<EOF\nmu agent send w1 -w ws 'go'\nEOF\n)", undefined],
-    ["# see ((note\ncat <<EOF\nmu agent send w1 -w ws 'go'\nEOF", undefined],
-  ])("%s", (cmd, want) => {
-    expect(dispatchedWorkstreams(cmd)).toEqual(want);
+describe("the settle wait", () => {
+  it("runs the one wait as this session, with a graceful drain; nothing owed lets the turn end", async () => {
+    const mu = fakeMu([NOTHING]);
+    const f = setup(mu);
+    expect(await f.emit("agent_before_settle", settled)).toBeUndefined();
+    const state = mu.calls.find((c) => c.args[0] === "state");
+    expect(state?.args).toEqual(["state", "--me", "--all", "--full", "--json"]);
+    expect(state?.opts?.env).toEqual({ MU_MANAGED_AGENT: undefined, PI_SESSION_ID: "s1" });
+    const [w] = mu.waits();
+    expect(w?.args).toEqual([...SETTLE_WAIT_ARGS]);
+    expect(w?.args).toEqual(["wait", "--first", "--on-stall", "exit", "--json"]);
+    expect(w?.opts).toEqual({ env: { PI_SESSION_ID: "s1" }, drainMs: SETTLE_DRAIN_MS });
   });
 
-  it.each([
-    "mu task claim build -w auth --self",
-    "mu state -w auth",
-    "mu agent send helper-1 -w scratch --fresh 'x'",
-    "echo mu",
-    "echo 'x && mu agent send w1 -w auth go'",
-    // mu as an argument, or inside a heredoc body, is not a command.
-    "grep mu agent send foo",
-    "cat <<'EOF'\nmu agent send w1 x -w ws\nEOF",
-    "cat <<-EOF > brief.md\n\tmu task claim t1 --for w1 -w ws\n\tEOF",
-  ])("not a dispatch: %s", (cmd) => {
-    expect(dispatchedWorkstreams(cmd)).toBeUndefined();
-  });
-});
-
-describe("registerNudge", () => {
-  it("no dispatch in the run: no nudge, no mu call", async () => {
-    const { emit, run } = setup(card("auth", ["build"]));
-    await emit("tool_call", bash("ls"));
-    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it("dispatch + nothing in progress: no nudge", async () => {
-    const { emit, run } = setup(card("auth", []));
-    await emit("tool_call", bash("mu agent send worker-1 -w auth --fresh 'go'"));
-    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls[0]?.[0]).toEqual([
-      "task",
-      "list",
-      "--status",
-      "IN_PROGRESS",
-      "--json",
-      "--sort",
-      "recency",
-      "-w",
-      "auth",
-      "--all",
+  it("an event continues the turn with the rule and the wait's own result", async () => {
+    const mu = fakeMu([
+      okWait({ firing: { kind: "closed", ref: { workstream: "ws", id: "t1" } } }),
     ]);
-  });
-
-  it("dispatch + work in progress: one visible entry, continue, one log line", async () => {
-    const { emit, run } = setup(card("auth", ["build", "docs"]));
-    await emit("tool_call", bash("mu agent send worker-1 -w auth --fresh 'go'"));
-    const r = (await emit("agent_before_settle", { outcome: "completed" })) as {
-      entries: { type: string; customType: string; content: string; display: boolean }[];
-      continue: boolean;
-    };
+    const r = (await setup(mu).emit("agent_before_settle", settled)) as Settle;
     expect(r.continue).toBe(true);
     expect(r.entries).toHaveLength(1);
-    const e = r.entries[0];
-    expect(e).toMatchObject({
-      type: "custom_message",
-      customType: NUDGE_MESSAGE_TYPE,
-      display: true,
-    });
-    expect(e?.content).toContain(keepDrivingRule(SKILL) ?? "unreachable");
-    expect(e?.content).toContain(
-      "mu task wait auth/build auth/docs --first --on-stall exit --json",
-    );
-    const log = run.mock.calls.find((c) => c[0][0] === "log")?.[0];
-    expect(log).toEqual([
-      "log",
-      "-w",
-      "auth",
-      "--kind",
-      NUDGE_LOG_KIND,
-      "keep-driving: 2 in progress",
+    expect(r.entries?.[0]?.customType).toBe(NUDGE_MESSAGE_TYPE);
+    expect(r.entries?.[0]?.content).toContain(keepDrivingRule(SKILL) ?? "unreachable");
+    expect(r.entries?.[0]?.content).toContain('"id":"t1"');
+  });
+
+  it("every completed settle waits again: no once-per-prompt latch, no dispatch to parse", async () => {
+    const ev = okWait({});
+    const mu = fakeMu([ev, ev, NOTHING]);
+    const f = setup(mu);
+    expect(await f.emit("agent_before_settle", settled)).toMatchObject({ continue: true });
+    expect(await f.emit("agent_before_settle", settled)).toMatchObject({ continue: true });
+    expect(await f.emit("agent_before_settle", settled)).toBeUndefined();
+    expect(mu.waits()).toHaveLength(3);
+  });
+
+  it("a heartbeat timeout with work still owed waits again (and rereads the human stops)", async () => {
+    const mu = fakeMu([okWait({ firing: { kind: "heartbeat" }, timedOut: true }), okWait({})]);
+    expect(await setup(mu).emit("agent_before_settle", settled)).toMatchObject({ continue: true });
+    expect(mu.waits()).toHaveLength(2);
+    expect(mu.calls.filter((c) => c.args[0] === "state")).toHaveLength(2);
+  });
+
+  it("drained (everything already delivered) lets the turn end", async () => {
+    const mu = fakeMu([okWait({ firing: { kind: "heartbeat" }, drained: true })]);
+    expect(await setup(mu).emit("agent_before_settle", settled)).toBeUndefined();
+  });
+
+  it("an open human stop ends the turn before any wait", async () => {
+    const mu = fakeMu([okWait({})], 1);
+    expect(await setup(mu).emit("agent_before_settle", settled)).toBeUndefined();
+    expect(mu.waits()).toHaveLength(0);
+  });
+
+  it("a human stop in the wait's result shows the result but does not continue", async () => {
+    const mu = fakeMu([okWait({ humanNeeds: [{ workstream: "ws", id: "h1", reason: "spend" }] })]);
+    const r = (await setup(mu).emit("agent_before_settle", settled)) as Settle;
+    expect(r.continue).toBeUndefined();
+    expect(r.entries?.[0]?.content).toContain("spend");
+  });
+
+  it.each([
+    ["an error envelope", out({ ok: false, error: "MuxError", message: "boom", next: null }, 5)],
+    ["no envelope", { code: 1, stdout: "", stderr: "crashed" }],
+  ])("%s is shown, never treated as nothing owed, never continued", async (_n, res) => {
+    const r = (await setup(fakeMu([res])).emit("agent_before_settle", settled)) as Settle;
+    expect(r.continue).toBeUndefined();
+    expect(r.entries?.[0]?.content).toMatch(/mu wait failed \(exit [15]\): .*(boom|crashed)/);
+  });
+
+  it("an unreadable human-stop read is shown and nothing waits", async () => {
+    const mu = fakeMu([okWait({})]);
+    const run: typeof mu.run = (args, ...rest) =>
+      args[0] === "state"
+        ? Promise.resolve({ code: 1, stdout: "", stderr: "x" })
+        : mu.run(args, ...rest);
+    const f = fakePi(SESSION);
+    registerNudge(f.pi, run, SKILL);
+    const r = (await f.emit("agent_before_settle", settled)) as Settle;
+    expect(r.entries?.[0]?.content).toContain("could not read");
+    expect(mu.waits()).toHaveLength(0);
+  });
+
+  it("a managed orchestrator reads each identity's human stops apart", async () => {
+    Object.assign(process.env, { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "ws", MU_AGENT_NAME: "o" });
+    const mu = fakeMu([NOTHING]);
+    await setup(mu).emit("agent_before_settle", settled);
+    expect(mu.calls.filter((c) => c.args[0] === "state").map((c) => c.opts?.env)).toEqual([
+      { PI_SESSION_ID: undefined },
+      { MU_MANAGED_AGENT: undefined, PI_SESSION_ID: "s1" },
     ]);
   });
 
-  it("lists each dispatched workstream, in parallel", async () => {
-    const { emit, run } = setup(
-      multi([
-        ["one", ["a"]],
-        ["two", ["b"]],
-      ]),
-    );
-    await emit("tool_call", bash("mu agent send x -w one 'p' && mu agent send y -w two 'q'"));
-    const r = (await emit("agent_before_settle", { outcome: "completed" })) as {
-      entries: { content: string }[];
-    };
-    expect(r.entries[0]?.content).toContain("mu task wait one/a two/b");
-    expect(
-      run.mock.calls.filter((c) => c[0][0] === "task").map((c) => c[0][c[0].indexOf("-w") + 1]),
-    ).toEqual(["one", "two"]);
+  it("no caller identity (no session, not managed): nothing runs", async () => {
+    const mu = fakeMu([okWait({})]);
+    expect(await setup(mu, {}).emit("agent_before_settle", settled)).toBeUndefined();
+    expect(mu.calls).toHaveLength(0);
   });
 
-  it("a dispatch with no -w names no workstream: it arms nothing and never reads without -w", async () => {
-    const { emit, run } = setup(card("small", ["a1"]));
-    await emit("tool_call", bash("mu agent send w1 go"));
-    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
-    expect(run).not.toHaveBeenCalled();
+  it.each(["aborted", "error"])("outcome %s: no wait", async (outcome) => {
+    const mu = fakeMu([okWait({})]);
+    expect(await setup(mu).emit("agent_before_settle", { outcome })).toBeUndefined();
+    expect(mu.calls).toHaveLength(0);
   });
 
-  it("a managed pi's no-`-w` dispatch is its injected workstream, counted once with an explicit one", () => {
-    const env = { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "small" };
-    const cmd = "mu agent send w1 go && mu agent send w2 -w small go && mu agent send w3 -w two go";
-    expect(dispatchedWorkstreams(cmd, env)).toEqual(["small", "two"]);
-    expect(dispatchedWorkstreams("mu agent send w1 go", {})).toBeUndefined();
-    expect(
-      dispatchedWorkstreams("mu agent send w1 go", { MU_WORKSTREAM: "small" }),
-    ).toBeUndefined();
-    expect(dispatchedWorkstreams("mu task claim t1 --for w1", env)).toEqual(["small"]);
+  it("a nested pi or a held settle runs nothing", async () => {
+    const mu = fakeMu([okWait({})]);
+    const f = fakePi(SESSION);
+    registerNudge(f.pi, mu.run, SKILL, () => true);
+    registerNudge(f.pi, mu.run, SKILL, undefined, () => "blocked");
+    expect(await f.emit("agent_before_settle", settled)).toBeUndefined();
+    expect(mu.calls).toHaveLength(0);
   });
 
-  it("scope is the CLI's: qualified refs and root -w name it, explicit beats injected", () => {
-    const env = { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "decoy" };
-    for (const [cmd, want] of [
-      ["mu agent send own/worker-1 go", ["own"]],
-      ["mu -w own agent send worker-1 go", ["own"]],
-      ["mu --workstream=own agent send worker-1 go", ["own"]],
-      ["mu --json -w own agent send worker-1 go", ["own"]],
-      ["mu -wown agent send worker-1 go", ["own"]],
-      ["mu agent send worker-1 go -wown", ["own"]],
-      ["mu -w own task claim t1 --for worker-1", ["own"]],
-      ["mu task claim own/t1 --for worker-1", ["own"]],
-      ["mu agent send own/worker-1 go -w own", ["own"]],
-      ["mu agent send worker-1 go -w own", ["own"]],
-      ["mu agent send worker-1 go", ["decoy"]],
-    ] as const) {
-      expect(dispatchedWorkstreams(cmd, env), cmd).toEqual(want);
-    }
-  });
-
-  it("an invalid or conflicting explicit scope dispatches nothing, even with an injected one", () => {
-    const env = { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "decoy" };
-    for (const cmd of [
-      "mu agent send worker-1 go -w ''",
-      "mu agent send worker-1 go -w ' own'",
-      "mu agent send worker-1 go -w 'own '",
-      "mu -w '' agent send worker-1 go",
-      "mu -w ' own' agent send worker-1 go",
-      "mu -w own agent send worker-1 go -w own",
-      "mu -w a,b agent send worker-1 go",
-      "mu agent send ' own/worker-1' go",
-      "mu agent send /worker-1 go",
-      "mu agent send own/worker-1 go -w other",
-      "mu -w other agent send own/worker-1 go",
-      "mu task claim t1 --for w1 -w ''",
-      "mu task claim ' own/t1' --for w1",
-    ]) {
-      expect(dispatchedWorkstreams(cmd, env), cmd).toBeUndefined();
-    }
-  });
-
-  it("asks for newest-first so the capped wait hint keeps the latest tasks", async () => {
-    const { emit, run } = setup(card("auth", ["build"]));
-    await emit("tool_call", bash("mu agent send worker-1 -w auth 'go'"));
-    await emit("agent_before_settle", { outcome: "completed" });
-    const args = run.mock.calls[0]?.[0] ?? [];
-    expect(args.slice(args.indexOf("--sort"), args.indexOf("--sort") + 2)).toEqual([
-      "--sort",
-      "recency",
-    ]);
-  });
-
-  it("fires at most once per prompt", async () => {
-    const { emit } = setup(card("auth", ["build"]));
-    await emit("tool_call", bash("mu agent send worker-1 -w auth 'go'"));
-    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeDefined();
-    await emit("tool_call", bash("mu agent send worker-1 -w auth 'again'"));
-    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
-  });
-
-  it("a new input re-arms it, but only after a fresh dispatch", async () => {
-    const { emit } = setup(card("auth", ["build"]));
-    await emit("tool_call", bash("mu agent send worker-1 -w auth 'go'"));
-    await emit("agent_before_settle", { outcome: "completed" });
-    await emit("input", { text: "status?", source: "interactive" });
-    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
-    await emit("tool_call", bash("mu agent send worker-1 -w auth 'go'"));
-    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeDefined();
-  });
-
-  it.each(["aborted", "error"])("outcome %s: no nudge", async (outcome) => {
-    const { emit, run } = setup(card("auth", ["build"]));
-    await emit("tool_call", bash("mu agent send worker-1 -w auth 'go'"));
-    expect(await emit("agent_before_settle", { outcome })).toBeUndefined();
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it("a failing mu task list: no nudge, and no retry within the prompt", async () => {
-    const { emit, run } = setup({}, { code: 3, stdout: "", stderr: "no such workstream" });
-    await emit("tool_call", bash("mu agent send worker-1 -w auth 'go'"));
-    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
-    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
-    expect(run).toHaveBeenCalledTimes(1);
-  });
-
-  it("MU_NUDGE=0: registers nothing", () => {
-    process.env.MU_NUDGE = "0";
+  it.each(["MU_NUDGE=0", "MU_REMOTE=1"])("%s registers nothing", (kv) => {
+    const [k, v] = kv.split("=");
+    process.env[k ?? ""] = v;
     const f = fakePi();
     registerNudge(f.pi, vi.fn(), SKILL);
     expect(f.handlers.size).toBe(0);
   });
 });
 
-describe("a capped list read (more=N)", () => {
-  const page = (ids: string[], more: number): MuResult => ({
-    code: 0,
-    stdout: JSON.stringify({
-      ok: true,
-      data: {
-        items: ids.map((id) => ({ id, status: "IN_PROGRESS" })),
-        count: ids.length,
-        more,
+describe("cancelling the settle wait", () => {
+  /** A settle blocked in its wait, with the hooks a cancel can come from. */
+  function blocked() {
+    let onInput: ((d: string) => undefined) | undefined;
+    const off = vi.fn();
+    let onWake: (() => void) | undefined;
+    const wakeOff = vi.fn();
+    const ctx: MuNudgeCtx = {
+      ...SESSION,
+      ui: {
+        onTerminalInput: (h) => {
+          onInput = h;
+          return off;
+        },
       },
-      next: null,
-    }),
-    stderr: "",
-  });
-
-  it("reads uncapped (--all) and a result that still says more is unknown, never a short list", async () => {
-    const f = fakePi();
-    const run = vi.fn(async (args: readonly string[]) =>
-      args[0] !== "task"
-        ? { code: 0, stdout: "", stderr: "" }
-        : args.includes("--all")
-          ? page(["a", "b", "c", "d"], 0)
-          : page(["a", "b"], 2),
-    );
-    registerNudge(f.pi, run, SKILL);
-    await f.emit("tool_call", bash("mu agent send w1 -w auth 'x'"));
-    const r = (await f.emit("agent_before_settle", { outcome: "completed" })) as {
-      entries: { content: string }[];
     };
-    expect(r.entries[0]?.content).toContain("4 task(s) IN_PROGRESS");
-    expect(r.entries[0]?.content).toContain("auth/a auth/b auth/c auth/d");
+    const mu = fakeMu([blocking]);
+    const f = setup(mu, ctx, (w) => {
+      onWake = w;
+      return wakeOff;
+    });
+    const settling = f.emit("agent_before_settle", settled);
+    return {
+      f,
+      mu,
+      settling,
+      key: (d: string) => onInput?.(d),
+      wake: () => onWake?.(),
+      off,
+      wakeOff,
+    };
+  }
+
+  it.each([
+    ["Esc", (b: ReturnType<typeof blocked>) => b.key("\u001b")],
+    ["Esc (kitty)", (b: ReturnType<typeof blocked>) => b.key("\u001b[27u")],
+    ["typed input", (b: ReturnType<typeof blocked>) => b.f.emit("input")],
+    ["a dialog", (b: ReturnType<typeof blocked>) => b.f.emit("ui_prompt_start")],
+    ["shutdown", (b: ReturnType<typeof blocked>) => b.f.emit("session_shutdown")],
+    ["a delegate answer", (b: ReturnType<typeof blocked>) => b.wake()],
+  ])("%s aborts only the owned wait, which drains; the turn may end", async (_n, act) => {
+    const b = blocked();
+    await flush();
+    expect(b.mu.waits()).toHaveLength(1);
+    expect(b.mu.waits()[0]?.signal?.aborted).toBe(false);
+    await act(b);
+    expect(await b.settling).toBeUndefined();
+    expect(b.mu.waits()[0]?.signal?.aborted).toBe(true);
+    expect(b.mu.waits()).toHaveLength(1); // not waited again
+    expect(b.off).toHaveBeenCalledTimes(1);
+    expect(b.wakeOff).toHaveBeenCalledTimes(1);
   });
 
-  it("an uncapped read that still says more is unknown (no nudge), never a short list", async () => {
-    const f = fakePi();
-    const run = vi.fn(async (args: readonly string[]) =>
-      args[0] === "task" ? page(["a"], 3) : { code: 0, stdout: "", stderr: "" },
-    );
-    registerNudge(f.pi, run, SKILL);
-    await f.emit("tool_call", bash("mu agent send w1 -w auth 'x'"));
-    expect(await f.emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
+  it("other keys never cancel and are never consumed", async () => {
+    const b = blocked();
+    await flush();
+    expect(b.key("a")).toBeUndefined();
+    expect(b.mu.waits()[0]?.signal?.aborted).toBe(false);
+    b.wake();
+    await b.settling;
+  });
+
+  it("a cancel after the wait finished touches no later wait", async () => {
+    const mu = fakeMu([okWait({}), blocking]);
+    const f = setup(mu);
+    await f.emit("agent_before_settle", settled);
+    await f.emit("input"); // nothing running: a no-op
+    const next = f.emit("agent_before_settle", settled);
+    await flush();
+    expect(mu.waits()[1]?.signal?.aborted).toBe(false);
+    await f.emit("input");
+    expect(await next).toBeUndefined();
   });
 });
 
-describe("nudgeText", () => {
-  it("caps the wait hint and counts the rest", () => {
-    const refs = Array.from({ length: 10 }, (_, i) => `w/t${i}`);
-    const t = nudgeText("RULE", refs);
-    expect(t.startsWith("[mu] RULE\n")).toBe(true);
-    expect(t).toContain("10 task(s) IN_PROGRESS");
-    expect(t).toContain("w/t7 --first");
-    expect(t).not.toContain("w/t8 ");
-    expect(t).toContain("(+2 more)");
+describe("parallelSettle keeps a consumed receipt", () => {
+  it("a wait event consumed while an answer queued still reaches the transcript", async () => {
+    let late: "answer" | undefined;
+    const mu = fakeMu([
+      okWait({ firing: { kind: "closed", ref: { workstream: "ws", id: "t9" } } }),
+    ]);
+    const run: typeof mu.run = async (args, ...rest) => {
+      const r = await mu.run(args, ...rest);
+      if (args[0] === "wait") late = "answer"; // an answer queued during the wait
+      return r;
+    };
+    const handlers: Handler[] = [];
+    const on = (e: string, h: Handler) => (e === "agent_before_settle" ? handlers.push(h) : 0);
+    const settle = parallelSettle({ on }, () => late);
+    registerNudge(settle.api, run, SKILL, undefined, () => late);
+    settle.flush();
+    const r = (await handlers[0]?.({ entries: [], ...settled }, SESSION)) as Settle;
+    expect(r.continue).toBeUndefined(); // the answer's turn comes first
+    expect(r.entries?.[0]?.content).toContain('"id":"t9"');
+  });
+
+  it("a late hold drops the wait's continuation, never its entries", async () => {
+    const handlers: Handler[] = [];
+    let late: "answer" | "blocked" | undefined;
+    const settle = parallelSettle({ on: (_e: string, h: Handler) => handlers.push(h) }, () => late);
+    settle.api.on("agent_before_settle", () => ({
+      entries: ["event"],
+      continue: true,
+      receipt: true,
+    }));
+    settle.flush();
+    for (const h of ["answer", "blocked"] as const) {
+      late = h;
+      expect(await handlers[0]?.({ entries: ["prior"] }, {})).toEqual({
+        entries: ["prior", "event"],
+      });
+    }
+    late = undefined;
+    expect(await handlers[0]?.({ entries: [] }, {})).toEqual({
+      entries: ["event"],
+      continue: true,
+    });
   });
 });

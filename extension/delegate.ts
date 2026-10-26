@@ -87,6 +87,8 @@ export interface DelegateCtx {
   hasPendingMessages?(): boolean;
   ui?: {
     notify(message: string, type?: "info" | "warning" | "error"): void;
+    /** Raw terminal input, non-consuming here (the settle wait's Esc). */
+    onTerminalInput?(handler: (data: string) => undefined): () => void;
   };
 }
 
@@ -205,13 +207,17 @@ export interface DelegateHandle {
    *  queue: it will resume the agent itself. pi's hasPendingMessages()
    *  does not count custom follow-ups, so this is the only signal. */
   answerPending(): boolean;
+  /** Call `onWake` each time an answer starts on its way; returns the unsubscribe.
+   *  The settle wait cancels on it, and the answer's own settle waits again. */
+  onAnswer(onWake: () => void): () => void;
 }
 
 export function registerDelegate(
   pi: MuDelegateApi,
   run: MuRunner = defaultRunner(),
 ): DelegateHandle {
-  if (!delegateEnabled()) return { answerPending: () => false };
+  if (!delegateEnabled()) return { answerPending: () => false, onAnswer: () => () => {} };
+  const wakes = new Set<() => void>();
   if (delegateTraceOn())
     for (const ev of TRACE_EVENTS)
       pi.on(ev, (e, ctx) => {
@@ -808,6 +814,7 @@ export function registerDelegate(
         const delivery = ++deliverySeq;
         trace("settle", { delivery, name, code: r.code });
         arriving.set(delivery, { sent: false, name });
+        for (const w of [...wakes]) w();
         forget(key);
         try {
           await deliver(
@@ -1445,5 +1452,11 @@ export function registerDelegate(
     else process.stderr.write(`mu: ${msg}\n`);
   });
 
-  return { answerPending: () => arriving.size > 0 };
+  return {
+    answerPending: () => arriving.size > 0,
+    onAnswer: (w) => {
+      wakes.add(w);
+      return () => wakes.delete(w);
+    },
+  };
 }

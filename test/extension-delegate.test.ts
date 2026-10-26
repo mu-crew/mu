@@ -1481,159 +1481,102 @@ describe("evidence when there is no final answer", () => {
   });
 });
 
-describe("nudges yield to a delegate answer on its way", () => {
-  // The real wiring: muPi registers the delegate and the nudges, and the
-  // keep-driving nudge would continue the run while dispatched work is
-  // IN_PROGRESS. pi's hasPendingMessages() does not count the answer.
-  function setup() {
+describe("the settle wait yields to a delegate answer on its way", () => {
+  // The real wiring: muPi registers the delegate and the nudges; the settle
+  // wait would continue the run while owned work runs. pi's
+  // hasPendingMessages() does not count the answer.
+  const SESSION = { sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s1" } };
+  const EVENT = ok({ firing: { kind: "closed" }, exit: 0 });
+  async function setup(opts: { holdWait?: boolean; worker?: boolean } = {}) {
     const mu = fakeMu();
     const p = fakePi();
-    const held: (() => void)[] = [];
-    let holdState = false;
-    // The keep-driving nudge's only read: `mu task list --status IN_PROGRESS`.
-    const state = ok({ items: [{ id: "t1", status: "IN_PROGRESS" }] });
-    const isInProgressList = (args: readonly string[]) =>
-      args[0] === "task" && args[1] === "list" && args.includes("IN_PROGRESS");
-    const run: MuRunner = (args, signal) => {
-      if (!isInProgressList(args)) return mu.run(args, signal);
-      if (!holdState) return Promise.resolve(state);
-      return new Promise((resolve) => held.push(() => resolve(state)));
+    /** Settle waits in flight: their signal, and how to answer them. */
+    const settleWaits: { signal?: AbortSignal; resolve: (r: MuResult) => void }[] = [];
+    const run: MuRunner = (args, signal, stdin) => {
+      if (args[0] === "state") return Promise.resolve(ok({ workstreams: [] }));
+      if (args[0] === "wait") {
+        if (!opts.holdWait) return Promise.resolve(EVENT);
+        return new Promise((resolve) => {
+          settleWaits.push({ resolve, ...(signal ? { signal } : {}) });
+          signal?.addEventListener("abort", () =>
+            resolve(ok({ firing: { kind: "interrupted" }, interrupted: true, exit: 143 })),
+          );
+        });
+      }
+      if (args[0] === "task" && args[1] === "owned-by")
+        return Promise.resolve(ok({ items: [{ id: "w1-task", status: "IN_PROGRESS" }] }));
+      return mu.run(args, signal, stdin);
     };
-    // The fake fires every handler with an empty ctx: no handler here reads it.
     const on = (e: string, h: (e: unknown, c: MuPiContext) => unknown) =>
       p.pi.on(e, h as (e: unknown, c: DelegateCtx) => unknown);
-    muPi({ ...p.pi, on, sendUserMessage: () => {}, registerCommand: () => {} }, run);
-    /** One settle through every handler: the merged nudge result, if any. */
+    const api = { ...p.pi, on, sendUserMessage: () => {}, registerCommand: () => {} };
+    if (opts.worker)
+      // The close nudge reads its identity at registration.
+      await withEnv("MU_AGENT_NAME", "w1", () =>
+        withEnv("MU_WORKSTREAM", "crew", async () => muPi(api, run)),
+      );
+    else muPi(api, run);
+    /** One settle through every handler: the merged result, if any. */
     const settle = async (ctx: Partial<MuPiContext> = {}) => {
       let out: unknown;
       for (const h of p.handlers.get("agent_before_settle") ?? []) {
-        const r = await h(
-          { type: "agent_before_settle", outcome: "completed" },
-          ctx as DelegateCtx,
-        );
+        const r = await h({ type: "agent_before_settle", outcome: "completed" }, {
+          ...SESSION,
+          hasUI: true,
+          ...ctx,
+        } as DelegateCtx);
         if (r !== undefined) out = r;
       }
-      return out as { continue?: boolean } | undefined;
+      return out as { continue?: boolean; entries?: { customType?: string }[] } | undefined;
     };
-    const dispatch = () =>
-      p.fire("tool_call", {
-        toolName: "bash",
-        input: { command: "mu agent send worker-1 go -w crew" },
-      });
-    return {
-      mu,
-      p,
-      run,
-      settle,
-      dispatch,
-      held,
-      holdState: () => {
-        holdState = true;
-      },
-    };
+    return { mu, p, settle, settleWaits };
   }
 
   /** Start a delegate and let its answer reach pi's follow-up queue. */
-  async function answerQueued(t: ReturnType<typeof setup>) {
+  async function answerQueued(t: Awaited<ReturnType<typeof setup>>) {
     await tool(t.p).execute("d", { task: "check it" });
     t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
     await flush();
     await flush();
   }
 
-  it("no continuation while the answer is queued; the answer's own turn is nudged", async () => {
-    const t = setup();
+  it("no wait while the answer is queued; the answer's own settle waits", async () => {
+    const t = await setup();
     t.p.state.busy = true;
-    await t.dispatch();
     await answerQueued(t);
     expect(t.p.sendMessage).toHaveBeenCalledTimes(1);
     // Without the hold this settle continues the run ahead of the answer.
     expect(await t.settle()).toBeUndefined();
     await t.p.drainQueue(); // the answer enters the conversation
-    // The held settle was not the prompt's one nudge.
     expect(await t.settle()).toMatchObject({ continue: true });
   });
 
-  it("no continuation while an ordinary user message is queued", async () => {
-    const t = setup();
-    t.p.state.busy = true;
-    await t.dispatch();
-    // pi counts a queued user follow-up itself: its turn comes next.
+  it("no wait while an ordinary user message is queued", async () => {
+    const t = await setup();
     expect(await t.settle({ hasPendingMessages: () => true })).toBeUndefined();
     expect(await t.settle({ hasPendingMessages: () => false })).toMatchObject({ continue: true });
   });
 
-  it("re-checks after the nudge's read: an answer that lands meanwhile wins", async () => {
-    const t = setup();
+  it("an answer that arrives during the wait wakes it: drained, no continuation ahead of it", async () => {
+    const t = await setup({ holdWait: true, worker: true });
     t.p.state.busy = true;
-    t.holdState();
-    await t.dispatch();
     await tool(t.p).execute("d", { task: "check it" });
     const settling = t.settle();
     await flush();
-    expect(t.held).toHaveLength(1); // the nudge is reading mu state
+    expect(t.settleWaits).toHaveLength(1);
+    expect(t.settleWaits[0]?.signal?.aborted).toBe(false);
     t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
     await flush();
     await flush();
-    t.held[0]?.();
+    // The wake aborted only the settle wait; the close nudge yielded to the answer too.
+    expect(t.settleWaits[0]?.signal?.aborted).toBe(true);
     expect(await settling).toBeUndefined();
-  });
-
-  // reviewer-3's interleaving (high_parallel_settle_merge_continues): the
-  // owned-by read answers first, the keep-driving task-list read is held,
-  // the delegate answer queues, then the list read is released.
-  it("the fast nudge's result yields to an answer that queues during a slower nudge's read", async () => {
-    const mu = fakeMu();
-    const p = fakePi();
-    const heldList: (() => void)[] = [];
-    const run: MuRunner = (args, signal) => {
-      if (args[0] === "task" && args[1] === "list" && args.includes("IN_PROGRESS"))
-        return new Promise((resolve) =>
-          heldList.push(() => resolve(ok({ items: [{ id: "t1", status: "IN_PROGRESS" }] }))),
-        );
-      if (args[0] === "task" && args[1] === "owned-by")
-        return Promise.resolve(ok({ items: [{ id: "w1-task", status: "IN_PROGRESS" }] }));
-      return mu.run(args, signal);
-    };
-    const on = (e: string, h: (e: unknown, c: MuPiContext) => unknown) =>
-      p.pi.on(e, h as (e: unknown, c: DelegateCtx) => unknown);
-    // The close nudge reads its identity at registration.
-    await withEnv("MU_AGENT_NAME", "w1", () =>
-      withEnv("MU_WORKSTREAM", "crew", async () => {
-        muPi({ ...p.pi, on, sendUserMessage: () => {}, registerCommand: () => {} }, run);
-      }),
-    );
-    const settle = async () => {
-      let out: unknown;
-      for (const h of p.handlers.get("agent_before_settle") ?? []) {
-        const r = await h({ type: "agent_before_settle", outcome: "completed" }, {});
-        if (r !== undefined) out = r;
-      }
-      return out as { continue?: boolean; entries?: { customType?: string }[] } | undefined;
-    };
-    p.state.busy = true;
-    // Arms keep-driving, whose task-list read is held.
-    await p.fire("tool_call", {
-      toolName: "bash",
-      input: { command: "mu task claim t1 -w crew --for worker-1" },
-    });
-    await tool(p).execute("d", { task: "check it" });
-    const settling = settle();
+    await t.p.drainQueue();
+    t.settleWaits.length = 0;
+    const again = t.settle();
     await flush();
-    // The close nudge is done; keep-driving still reads.
-    expect(heldList).toHaveLength(1);
-    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
-    await flush();
-    await flush();
-    heldList[0]?.();
-    // Without the merge's late check, the fast nudge's result wins here.
-    expect(await settling).toBeUndefined();
-    await p.drainQueue(); // the answer enters the conversation
-    // The dropped nudge was not the prompt's one nudge.
-    const settled = settle();
-    await flush();
-    for (const release of heldList.splice(0)) release();
-    const r = await settled;
+    t.settleWaits[0]?.resolve(EVENT);
+    const r = await again;
     expect(r).toMatchObject({ continue: true });
     expect(r?.entries?.map((e) => e.customType).sort()).toEqual([
       "mu-close-task",
@@ -1641,9 +1584,8 @@ describe("nudges yield to a delegate answer on its way", () => {
     ]);
   });
 
-  it("no continuation while an extension dialog is open", async () => {
-    const t = setup();
-    await t.dispatch();
+  it("no wait while an extension dialog is open", async () => {
+    const t = await setup();
     await t.p.fire("ui_prompt_start", { kind: "confirm" });
     try {
       expect(await t.settle()).toBeUndefined();

@@ -99,8 +99,8 @@ describe("mu pi extension", () => {
       [
         "agent_before_settle",
         "input",
+        "session_shutdown",
         "session_start",
-        "tool_call",
         "ui_prompt_end",
         "ui_prompt_start",
       ].sort(),
@@ -775,7 +775,7 @@ describe("mu pi extension", () => {
       expect(readdirSync(dirname(sock))).toEqual(["a.sock"]);
     });
 
-    /** A mu that says the parent agent owns an IN_PROGRESS task and dispatched another. */
+    /** A mu that says the parent agent owns an IN_PROGRESS task, and whose settle wait fires. */
     const busyMu = () =>
       vi.fn<MuRunner>(async (args) => {
         const [noun, verb] = args;
@@ -789,27 +789,28 @@ describe("mu pi extension", () => {
             }),
             stderr: "",
           };
-        if (noun === "task" && verb === "list")
-          return {
-            code: 0,
-            stdout: JSON.stringify({
-              ok: true,
-              data: { items: [{ id: "t1", status: "IN_PROGRESS" }] },
-              next: null,
-            }),
-            stderr: "",
-          };
+        const okDoc = (data: unknown) => ({
+          code: 0,
+          stdout: JSON.stringify({ ok: true, data, next: null }),
+          stderr: "",
+        });
+        if (noun === "state") return okDoc({ workstreams: [] });
+        if (noun === "wait") return okDoc({ firing: { kind: "closed" }, exit: 0 });
         return { code: 0, stdout: "", stderr: "" };
       });
-    /** Run one prompt: input, a dispatching bash call, then settle; the settle results. */
+    /** Run one prompt: input, then settle in a pi session; the settle results. */
     async function prompt(p: ReturnType<typeof fakePi>, ctx: object = p.ctx) {
       for (const h of p.handlers.get("input") ?? []) await h({ type: "input" }, p.ctx);
-      const call = { toolName: "bash", input: { command: "mu task claim t2 -w ws --for w2" } };
-      for (const h of p.handlers.get("tool_call") ?? []) await h(call, p.ctx);
+      const session = {
+        sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s1" },
+      };
       const out: unknown[] = [];
       for (const h of p.handlers.get("agent_before_settle") ?? [])
         out.push(
-          await h({ type: "agent_before_settle", outcome: "completed" }, ctx as MuPiContext),
+          await h({ type: "agent_before_settle", outcome: "completed" }, {
+            ...session,
+            ...ctx,
+          } as MuPiContext),
         );
       return out.filter((r) => r !== undefined);
     }

@@ -1,16 +1,14 @@
 // One table of bad scope values, fed to EVERY entry point that takes a
 // workstream: CLI flags (scalar, root, list, positional), qualified refs
-// (task, agent, `--for`), the injected env, the pi extension's delegate
-// record, and the nudge's command parser. Each must refuse the same way:
-// exit non-zero (CLI), nothing written, ONE stderr line (plus at most one
-// `Next:` line), no help dump. A new entry point is one row in ENTRIES.
+// (task, agent, `--for`), the injected env, and the pi extension's delegate
+// record. Each must refuse the same way: exit non-zero (CLI), nothing
+// written, ONE stderr line (plus at most one `Next:` line), no help dump. A new entry point is one row in ENTRIES.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerDelegate } from "../extension/delegate.js";
-import { dispatchedWorkstreams } from "../extension/nudge.js";
 import { insertAgent } from "../src/agents.js";
 import { openDb } from "../src/db.js";
 import { listLogs } from "../src/logs.js";
@@ -22,9 +20,6 @@ import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
 const BAD = ["", " a", "a ", "a,, b", "a/ b", "a\nb"] as const;
-
-/** A shell word for `value` (single-quoted). */
-const sh = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching SGR escapes is the point
 const plain = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, "");
@@ -150,24 +145,6 @@ describe("bad scope values: pi extension entry points refuse", () => {
           /Nothing spawned/,
         );
         expect(mu.calls).toHaveLength(0);
-      });
-    }
-  }
-
-  const env = { MU_MANAGED_AGENT: "1", MU_WORKSTREAM: "decoy" };
-  const commands: [string, (b: string) => string][] = [
-    ["root -w", (b) => `mu -w ${sh(b)} agent send w1 go`],
-    ["verb -w", (b) => `mu agent send w1 go -w ${sh(b)}`],
-    ["agent ref", (b) => `mu agent send ${sh(ref(b, "w1"))} go`],
-    ["claim ref", (b) => `mu task claim ${sh(ref(b, "t1"))} --for w1`],
-    ["claim --for ref", (b) => `mu task claim t1 -w own --for ${sh(ref(b, "w1"))}`],
-    ["claim -f ref", (b) => `mu task claim t1 -w own -f${sh(ref(b, "w1"))}`],
-    ["claim --for=ref", (b) => `mu task claim t1 -w own --for=${sh(ref(b, "w1"))}`],
-  ];
-  for (const [entry, command] of commands) {
-    for (const bad of BAD) {
-      it(`nudge ${entry} ${JSON.stringify(bad)} dispatches nothing`, () => {
-        expect(dispatchedWorkstreams(command(bad), env), command(bad)).toBeUndefined();
       });
     }
   }

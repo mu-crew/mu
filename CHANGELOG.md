@@ -275,6 +275,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `cli/{wait,delegates,db-query,log,me-identity,host,sync,db}.ts` and the run-time hint strings of
   `handle.ts`/`doctor.ts` are the remaining inventory.
 
+- **The keep-driving nudge is now the settle wait** (`v_settle_wait`, slice A of `v_settle`). Every
+  completed settle of an orchestrator pi runs the one wait, `mu wait --first --on-stall exit --json`,
+  as its callers (the inherited managed identity plus `PI_SESSION_ID` from the session, passed through
+  a per-call child env), and continues the turn with the wait's own result under the SKILL.md rule.
+  No shell line is parsed (producers arm the wait from state) and there is no once-per-prompt latch.
+  The turn ends only when nothing is owed (`WaitNothingError`, or `drained`), a `mu human-needed`
+  stop is open (read per identity with `mu state --me` before each wait, and in the result), the
+  user cancels (Esc, typed input, a dialog, shutdown), or the wait fails, which is shown and never
+  read as "nothing owed". A heartbeat timeout with work still owed waits again. A delegate answer
+  on its way cancels only the settle wait (`DelegateHandle.onAnswer`); the answer's own settle waits
+  again. A cancelled wait drains: the runner's one terminate path (SIGTERM, resolve once the child
+  exited, final stdout kept; also what rolls back a cancelled spawn) with a SIGKILL after 3 s here
+  (`MuRunOpts.drainMs`, default 10 s). A wait result consumed while an answer queued keeps its
+  entry and drops only its continuation. Removed: `dispatchedWorkstreams`, `shellSegments`,
+  `nudgeText` and the `mu task list --status IN_PROGRESS` read. Skipped on a remote host
+  (`MU_REMOTE=1`) and in a nested pi; `MU_NUDGE=0` still turns it off.
+
 - **One wait hint.** The `Next:` line after a send, `spawn --send`, `spawn --task` and
   `send --interrupt` is now `mu wait 'agent:<ws>/<name>@<runs>#<incarnation>'` (one POSIX-quoted
   typed ref, no `--json`: `mu wait` always prints JSON, the answer is `snapshots[].lastText`),

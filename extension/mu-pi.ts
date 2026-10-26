@@ -58,8 +58,8 @@ const EXT_VERSION = typeof __MU_VERSION__ === "string" ? __MU_VERSION__ : undefi
 
 /** The slice of pi's ExtensionContext this extension uses. */
 export interface MuPiContext extends DelegateCtx {
-  /** pi's session manager; only the session file is read. */
-  sessionManager?: { getSessionFile(): string | undefined };
+  /** pi's session manager: the session file, and the id the settle wait runs as. */
+  sessionManager?: { getSessionFile(): string | undefined; getSessionId?(): string };
   isIdle(): boolean;
   hasPendingMessages(): boolean;
   abort(): void;
@@ -420,14 +420,15 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
   // Identity follows the bind: a pi that finds MU_CTL_SOCK served by
   // another pi is nested and gets none of the agent's nudges.
   const nested = serveCtl(pi);
-  // The two nudges' settle checks run in parallel, as one handler.
-  // A delegate answer on its way resumes the agent itself; an open
-  // dialog means nobody is driving. Either holds the nudges.
+  // The settle wait and the close nudge run in parallel, as one handler.
+  // A delegate answer on its way resumes the agent itself (and wakes a
+  // running settle wait); an open dialog means nobody is driving. Either
+  // holds the nudges.
   const hold = withQueuedInput(() =>
     delegates.answerPending() ? "answer" : isUiBlocked() ? "blocked" : undefined,
   );
   const settle = parallelSettle(pi, hold);
-  registerNudge(settle.api, run, undefined, nested, hold);
+  registerNudge(settle.api, run, undefined, nested, hold, delegates.onAnswer);
   registerCloseNudge(settle.api, run, process.env, nested, hold);
   settle.flush();
 }
