@@ -10,6 +10,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tests no longer write to the real `~/.cache/mu` or `~/.local/state/mu(-next)`.**
+  `test/_setup.ts` points `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_CONFIG_HOME` at a per-fork temp dir
+  (removed on exit), and `test/_real-dir-guard.ts` throws on any `fs` write under the real dirs, like the
+  real-DB guard in `openDb`. Fixture delegate answers had been landing in `~/.cache/mu/delegate-answers`.
+
 ### Added
 
 - **`--on-stall steer|release`** on `mu wait` and `mu task wait` (`f_steer_cli_wiring`). `runWait` now
