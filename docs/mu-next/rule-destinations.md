@@ -1,12 +1,13 @@
 # Rule inventory: 3.x skill and recipes → mu-next default
 
-Slice A of `v_skill` (`v_skill_draft`). Source: `skills/mu/SKILL.md` (2,468
-words) and `skills/mu/recipes/*.md` (26 files, 15,519 words). Surface: the
+Drafted in `v_skill_draft`, shipped in `v_skill_ship`. Source: the 3.x
+`skills/mu/SKILL.md` (2,468 words) and 26 recipes (15,519 words). Surface: the
 merged `dist/cli.js` at `a4e2eeb`, checked against `--help` and a scratch DB.
-Prose only; `skills/mu`, `src` and the prompts are untouched.
+Destinations are the shipped `skills/mu/` files; the dropped 3.x recipes are
+in git history.
 
 **Dispositions.** **K** keep: the rule survives, at the cited place in
-`skill-draft/`. **C** code: a verb, guard or hint now enforces it; the cited
+`skills/mu/`. **C** code: a verb, guard or hint now enforces it; the cited
 file is the proof, and the prose is gone. **D** drop: the reason follows.
 `K*` means kept shorter, with the cut named.
 

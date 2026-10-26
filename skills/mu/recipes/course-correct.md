@@ -12,7 +12,7 @@ Use when a hint says `course check due: <n> closed since <date>`, or a human ask
    mu task tree <umbrella> -w <ws>
    ```
 
-2. **A second delegate refutes the numbers** before any proposal.
+2. **Second delegate refutes the numbers** before any proposal.
 3. **Compare with the spec**: stale text, then:
    - Switch line: which open critical-path units can move after the switch?
    - Review cost: rounds per unit, findings by severity. Bar: high = fix + re-review; medium = fix, evidence in the close note; low = one batch.

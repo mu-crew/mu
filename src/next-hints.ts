@@ -213,7 +213,7 @@ export const COURSE_CHECK_CLOSED = 10;
 export const COURSE_CHECK_AGE_MS = 24 * 3600_000;
 
 /**
- * The course-correct trigger (docs/mu-next/skill-draft/recipes/course-correct.md), read from
+ * The course-correct trigger (skills/mu/recipes/course-correct.md), read from
  * state, never remembered: since the newest note of `ws` starting `COURSE CHECK` (none: the
  * workstream's creation), count the CLOSED/done work tasks by their close note's time (a later
  * note does not move it). One line when due, else undefined.

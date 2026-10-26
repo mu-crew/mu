@@ -1,308 +1,85 @@
 ---
 name: mu
 description: >-
-  Fresh-context delegates (mu's counterpart to hidden subagents) and crews
-  in tmux/herdr panes. Check before you
-  commit: before acting on a claim, root cause, plan, fix or brief, have a
-  `mu_delegate` call refute it. Also for a fresh delegate's second look at
-  your own work or diff; parallel read-only research, investigation or fan-out
-  over files; background helpers (watchers, soak runs, agents you keep talking
-  to); persistent crews with a task graph, review gates and merges. Outside
-  pi, delegate through the reserved `scratch` workstream.
+  Fresh-context delegates and crews in tmux/herdr panes. Check before you
+  commit: have a `mu_delegate` call refute a claim, root cause, plan, fix or
+  brief before you act on it. Also parallel read-only research, fan-out,
+  background helpers, and persistent crews with a task DAG, review gates and
+  merges. Outside pi, delegate through the `scratch` workstream.
 ---
 
-# mu — Multi-agent orchestration
+# mu
 
-`mu` manages long-lived AI agents in multiplexer panes (tmux or
-herdr), coordinated by a SQLite task DAG at
-`<XDG_STATE_HOME or ~/.local/state>/mu-next/mu.db`.
+Agents in tmux/herdr panes, coordinated by a SQLite task DAG. **`mu --help` and
+`mu <verb> --help` outrank this skill**; a verb they omit does not exist. A verb takes
+`-w <workstream>` only if its `--help` lists it (`doctor`, `sync`, `delegates
+show` do not); workers: injected.
 
-**Trust `mu --help` / `mu <verb> --help` over this skill.** Verbs
-not in `--help` do not exist.
+`--json` returns `{ok,data,next}`; errors come on stdout as
+`{ok:false,error,message,next,exit}`. `next` is null today; hints are in
+`data.nextSteps` (errors: top-level `nextSteps`). Collections are
+`{items,count}`; `agent list` is `{workstreamName,agents,orphans}`. Keys are SQL
+column names; `id` is the task's name. A capped reader names its way back
+(`more=N next=<command>`).
 
-## Output + JSON shapes
-
-Default output is a card on stdout, plus a `next:` line when there is a move to make.
-Every verb takes `--json`: one stdout document `{ok:true,data,next}`; `data` holds
-`{items, count}` for collections, except `mu agent list` (`{agents, orphans}`); `mu sql` is JSON by default, `data` is `{items,count,more}` and `--all` retrieves a cut; `mu log --tail` is
-raw NDJSON. Errors are `{ok:false,error,message,next,exit}` on **stdout**
-(validation errors add `usage`). `next` is usually null; when set, run it as printed.
-
-## Vocabulary
-
-- **workstream** — one **mux session** `mu-<name>` (tmux session or
-  herdr workspace) and one DB partition.
-- **agent** — named process in a pane (you may be one); a **worker** is an agent claiming tasks.
-- **mux** — tmux or herdr, one per invocation. `mu doctor` names it;
-  `MU_MUX` forces it. tmux cannot send to non-pi agents; herdr can.
-- **control socket (ctl)** — how mu drives a pi agent: the mu pi
-  extension (pi package) serves exact send, state, wait and abort
-  inside pi's own TUI. `ctl missing|refused` means it does not answer.
-- **task** — DAG node with mandatory `impact` (1–100) and
-  `effort_days`. Shown as status/substate: `OPEN/todo|parked|triage`,
-  `IN_PROGRESS/active`, `CLOSED/done|rejected|wontfix|duplicate|superseded`.
-  Any `CLOSED/*` satisfies `--blocked-by`.
-- **claim / release** — atomic take/clear of `tasks.owner`.
-- **note** — append-only task context; survives sessions.
-- **track** — tasks connected by `block` edges (`mu task block B --by A`
-  puts B on A's track). Spawn one agent per ready task, not per track:
-  an umbrella puts all its units on one track.
-- **worktree** — per-agent git worktree under
-  `<state-dir>/worktrees/<workstream>/<agent>/`; it is the agent's cwd.
-
-Recipe words, the same in every recipe:
-
-- **umbrella** — the parent task of one job, blocked by every unit,
-  finding and round; holds the brief, criteria and stop rule; closes
-  with `mu task close <umbrella> --if-ready`.
-- **unit** — one piece of the job, one task (a file, a call site, a fix).
-- **fast gate / slow gate / gate budget / gate record / test upkeep** —
-  repo-defined verification and its upkeep ([test-health](recipes/test-health.md#gate-contract));
-  a **review gate** (`review_x` blocked by `x`) decides whether `x` counts.
-- **wave** — the units dispatched from one main revision; refresh
-  worktrees before the next.
-- **finding** — one reported problem, recorded as an `OPEN/triage` task.
-- **verdict** — a check's answer: `VERDICT: <id> CONFIRMED | REFUTED |
-  UNVERIFIED <one line>` plus `EVIDENCE:` lines (or ACCEPT | REJECT for
-  a review gate). REFUTED on a brief means it holds a false claim: rewrite it.
-- **stop rule** — the command and condition that end a loop, written on
-  the umbrella first ([loop-until-done](recipes/loop-until-done.md)).
-
-## When to use mu
-
-Use mu for persistent helpers, parallel work, dependencies, gated review, or
-work that must survive context compaction. Stay in one context for tiny edits
-or inspection.
-
-### Quick checks and off-the-cuff helpers (`scratch`)
-
-Before you act on a claim, root cause, plan, fix or brief, or to get a second
-look at your own work or diff, make a [delegate call](recipes/tasks-or-calls.md#delegate-call)
-that tries to refute it, on another model family ([models](recipes/models.md#checkers); briefs: see
-Orchestrator rules; many claims: [refute](recipes/refute.md)).
-
-For one-shot work inside pi, call `mu_delegate` (in the pi package). Outside pi: spawn
-into the reserved `scratch` workstream (no task DAG, auto-created), as in
-[delegate call](recipes/tasks-or-calls.md#delegate-call). Recipes call either form a **delegate call**. A check judging a mu
-task lands its verdict there: `record: { task: "<ws>/<id>" }` on `mu_delegate`, a hand-written
-`REFUTER` note on the spawn path; with no task, skip both.
-
-- `mu agent wait <names...> --first` waits for busy → idle instead of a
-  `sleep` loop; exit 0 met, 5 timeout, 6 pane died.
-- For a watcher (PR, CI, a log), follow [recipes/watcher.md](recipes/watcher.md).
-- One agent per independent unit; `--worktree` for any helper that may edit,
-  build, or test the shared repo.
-
-A pi helper showing `unknown (ctl missing)` right after spawn (spawn
-warns after 30 s) likely sits at pi's project trust prompt (through a
-wrapper whose argv0 is not `pi`/`pi-meta` it shows `needs_input`): add
-`--approve` to `MU_<CLI>_COMMAND`. Move off
-`scratch` when work gains dependencies or review gates.
-
-## Mental model
-
-### Workstreams, DAGs, tracks
-
-The DAG has one edge: `mu task block A --by B` means **B blocks A**.
-Tracks sharing a prerequisite collapse into one, so an umbrella every
-unit blocks makes the whole job one track. Parallelism is the ready
-set: tasks that edit the same files get a `block` edge between them,
-so only one is ready at a time.
-
-### Worktrees prevent trampling
-
-If an agent may edit, build, or test while another is active in the same
-repo, spawn with `--worktree` (`workspace: true` on `mu_delegate`).
-Two builds in one checkout corrupt each other; keep the main checkout
-for orchestration. Never make your own `git worktree` or copy for a
-local agent: mu cannot list, diff or free what it did not create, so it
-leaks. (A remote agent's worktree is made by `spawn --host --worktree`.)
-
-Worktrees are git worktrees (exit 4 outside a repo). `mu agent close`
-only previews until given `--if <rev>`, and refuses a **dirty** one (`WorktreeDirtyError`) before it kills the pane;
-unmerged commits are kept on `mu/<ws>/<agent>-<sha>`. Cherry-pick what to
-keep, and pass `--discard` only to throw uncommitted edits away. Before a `--fresh` send,
-`git -C <cwd> fetch && git -C <cwd> rebase <base>` (base: `origin/HEAD`, or
-local main when merged locally); on conflict `git -C <cwd> rebase --abort`
-and tell the human ([waves](recipes/waves.md) when workers share files).
-
-### Remote agents
-
-`mu agent spawn --host <profile>`: the PANE is local and is the transport,
-the PROCESS is remote, and the pane dying is the agent dying. **One
-orchestrator DB**: the remote worker has none, so you close its task.
-**Read [recipes/remote-workers.md](recipes/remote-workers.md) before
-spawning your first remote agent.**
-[mule](https://github.com/mu-crew/mule) runs remote commands without
-holding an ssh channel; **`mule` exit 3 is a HANDBACK** to the operator
-(hardware-key touch): never retry or open `ssh -MNf` yourself.
-
-### Workstream names
-
-`<project>-<purpose>` (`hail-auth`), one per effort, torn down when it
-ships. Reviews nobody will track run as `scratch` delegates.
-
-### Agent names
-
-Use roles with the smallest unused suffix: `worker-1`, `reviewer-1`,
-`scout-1`, `auditor-1`, `planner-1`. No human names.
-
-### Task note contract
-
-End every delegated task with a note holding the applicable fields
-(write the brief that asks for it per [brief](recipes/brief.md)):
-
-```text
-FILES:    paths inspected/changed (line ranges if precise)
-COMMANDS: commands run + exit codes
-FINDINGS: what you observed
-DECISION: what you chose, and why
-NEXT:     follow-on tasks
-VERIFIED: tests/checks/output
-ODDITIES: weird things not acted on
-```
-
-Then close with grounding:
-`mu task close <id> -w <ws> --evidence "tests pass: cargo test exit 0"`.
+- **umbrella**: the parent task of a job, blocked by every unit; holds brief,
+  criteria and stop rule.
+- **finding**: an `OPEN/triage` task. **verdict**: `VERDICT: <id>
+  CONFIRMED|REFUTED|UNVERIFIED <line>` plus `EVIDENCE:`.
+- `mu task block A --by B`: B blocks A. Chain tasks that edit the same files.
 
 ## Orchestrator rules
 
 <!-- mu:keep-driving -->
-**While workers run, keep driving.** Your turn ends only when every
-task is closed, or when a decision only a human can make blocks all
-progress (scope, spend, irreversible or external actions, a hardware-key
-handback). A status summary is a log line, not a stopping point: write
-it with `mu log`, then go straight back to `mu task wait`. Ending a
-turn to report progress while workers are busy stalls the whole crew.
+**While workers run, keep driving.** Your turn ends only when everything you own
+is closed, or only a human can decide (scope, spend, irreversible or external
+action, hardware-key handback): record it with `mu human-needed -w <ws>
+"<reason>"`, then stop. A status summary is a `mu log` line, not a stopping
+point: one per wave, then back to waiting. An error never means a
+human is needed. Ending a turn mid-run stalls the crew.
 <!-- /mu:keep-driving -->
 
-Before you dispatch, read [recipes/orchestrator-loop.md](recipes/orchestrator-loop.md):
-the every-turn loop, waiting, merging, and stopping workers. These
-rules hold even when you skip it:
+Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch.
+These hold regardless:
 
-- **Claim before sending**, even one-shot reviewers. Ownership is
-  durable and waitable; agent state is not.
-- **Pipeline; don't barrier.** Merge accepted tasks as they close; verify
-  one pinned merge batch without pausing independent workers.
-- **Verify the merge, not the worker's rerun.** Only `CLOSED/done` ships.
-- **Push after merged-tree gates pass.** Run full slow once per batch, plus
-  fast if needed; queue [test upkeep](recipes/test-health.md#upkeep-loop) at milestones or budget crossings.
-- **Define done before a long run**: the completion criterion goes in
-  the task note first ([long-run](recipes/long-run.md)).
-- **New work to pi is `mu agent send --fresh`.** Never chain `/new` and
-  a prompt as two sends: the prompt can land mid-reset and vanish.
-- **`mu task wait --first --on-stall exit`**; exit 7 means read the
-  owner's pane and answer it.
-- **Stop a worker gently**: `mu agent abort`, then `close`.
-  To redirect a busy pi now: `send --interrupt` (`--steer` waits for
-  the running tool).
-- **Send, don't note, a running worker**: it never sees new notes. The note is the durable copy
-  ([how to send](recipes/orchestrator-loop.md#sending)).
-- **Refute a brief claiming a cause, fix, threshold or code fact** before dispatch:
-  one `record`ed refuter call; rewrite on REFUTED. Others get a `REFUTE-EXEMPT: <why>` note.
-- **Checks are calls, not tasks.** Refuters, claim checkers, judges and
-  skeptics are [delegate calls](recipes/tasks-or-calls.md#delegate-call)
-  (`mu_delegate`, or a `scratch` spawn without it), all issued in one
-  turn. Refuters and claim checkers pass `record` (or hand-write the
-  `REFUTER` note) to land the verdict on the task; judges report
-  `WINNER:`. `MU_DELEGATE_MAX` (16) run at once; the rest queue.
-- **Leave no scratch files.** With tasks, briefs and answers live in
-  mu (task notes, `mu log`); for pure delegate calls, pass them through
-  stdin (`-` plus a quoted heredoc). A job that needs files
-  (diffs, a brief shared by a panel, reviewer outputs) keeps them in
-  one `mktemp -d` directory and `rm -rf`s it once the results are in
-  notes or your answer, before the turn ends.
-- **Findings are tasks.** A reviewer's or auditor's findings become
-  `mu task add --triage` tasks blocking the review, decided with
-  `mu task accept` or `close --as rejected|duplicate`. A review nobody
-  will track (someone's PR, a doc) runs as delegates instead. Rules:
-  [recipes/findings.md](recipes/findings.md).
+- **Claim before work is sent.** `agent spawn --task <id> --send ...` does both.
+- **Wait with `mu wait`, never `sleep` loops** (exits:
+  [orchestrator-loop](recipes/orchestrator-loop.md)).
+- **A send that timed out is unknown, never resent**: `mu agent check <a> <msgId>`.
+- **New work to pi: `send --fresh`.** A running worker never sees a note: send
+  ([modes](recipes/orchestrator-loop.md#sending)).
+- **`unknown` is not dead.** Read the pane and `mu doctor` before you release.
+- **Only `CLOSED/done` ships.** Verify the merged tree.
+- **Checks are calls, not tasks** ([tasks-or-calls](recipes/tasks-or-calls.md)).
+  Before you act on a claim, cause, plan, fix or brief, have a recorded call
+  refute it; rewrite on REFUTED.
+- **Findings are tasks** ([findings](recipes/findings.md)); each shipping unit gets a
+  [review gate](recipes/adversarial-review.md).
+- **Stop rule on the umbrella first.**
+- **Edit or build: `--worktree`.** Never make your own.
 
-## CLI gotchas
+## Gotchas
 
-- **`task close --as rejected|wontfix --why ...`** unblocks dependents
-  (listed in the output). `rejected` = the claim is false; `wontfix` =
-  true, not worth doing. To keep dependents waiting, `task park --why` instead.
-- **For waits use `task wait`, not `log --tail`.** `mu log --kind <k>`
-  entries are your own durable state (a ledger); `--intent` filters what
-  mu recorded.
-- **Prose in notes, prompts, `--why` or `--evidence`**: an apostrophe
-  ends `'...'`; use a quoted heredoc ([brief](recipes/brief.md#quoting)).
-- **Never put `MU_DB_PATH` inside `MU_SYNC_DIR`**: it corrupts the DB (every verb refuses, exit 4).
-- Before rebuild, teardown (preview, then `--if <rev>`), sync setup,
-  a `doctor --deep` DRIFT, or `doctor` cleanup output, read
-  [recipes/recovery.md](recipes/recovery.md).
-
-## Models and thinking effort
-
-mu passes the model through; you pick it. Before you choose one for a
-spawn or a delegate call, read [recipes/models.md](recipes/models.md):
-tiers, which roles need which, and local models as a last resort.
-
-- `mu_delegate` takes `model`; a spawn takes `--command "pi --model <id>"`.
-- A checker (reviewer, refuter, judge, auditor) runs at the author's tier
-  or higher, from another family when one exists. A delegate with no
-  `model` runs the cli's default model; pass `model` when it matters.
-
-## Reaper and agent state
-
-If an agent pane dies, or `mu agent close` kills it mid-task, its
-IN_PROGRESS tasks revert to OPEN with a `[reaper]` note. No manual
-release after crashes.
-
-pi agents report state through the control socket and need no murmur.
-Other CLIs report through [murmur](https://github.com/mu-crew/murmur) on
-tmux, or herdr on herdr. `unknown` means no state source; `mu doctor`
-says why. Before you merge, close `--as rejected`, abort, or tear down, read the pane
-(`mu agent read worker-1 -n 100`), `mu log -w <ws> --tail`, and
-`mu task notes <id>`.
-
-## You are a worker
-
-If a task was claimed for you, follow [recipes/worker.md](recipes/worker.md).
-Close the task as your last action, or the orchestrator's wait hangs.
-
-## Guardrails
-
-Task ownership outranks agent state. Coordinate through task notes and
-the ops log (`mu log`). Keep edges within one workstream. Give workers
-bounded paths and commands.
+- `close --as rejected|wontfix --why` unblocks dependents; `park --why` keeps them waiting.
+- Prose goes through `-` and a quoted heredoc ([brief](recipes/brief.md)).
+- Model and checker family: [models](recipes/models.md).
+- Teardown, rebuild, sync, `doctor` DRIFT: [recovery](recipes/recovery.md) first.
+- Claimed for you: [worker](recipes/worker.md). Remote host:
+  [remote-workers](recipes/remote-workers.md).
 
 ## Recipes
 
-Read the recipe before starting the shape it names. For a large or
-risky job that needs several of them, start with
-[ultrathink](recipes/ultrathink.md).
-
 | Recipe | Read when |
 | --- | --- |
-| [ultrathink](recipes/ultrathink.md) | a job is too large or risky for one context; composes the rest |
-| [orchestrator-loop](recipes/orchestrator-loop.md) | you dispatch tasks and merge results |
-| [brief](recipes/brief.md) | you write a task note or prompt a worker will read |
-| [plan](recipes/plan.md) | you turn a spec or requirements into a task DAG |
+| [orchestrator-loop](recipes/orchestrator-loop.md) | you dispatch and merge |
+| [brief](recipes/brief.md) | you write what a worker reads |
+| [tasks-or-calls](recipes/tasks-or-calls.md) | a step spawns an agent |
+| [findings](recipes/findings.md) | a check reports problems |
+| [adversarial-review](recipes/adversarial-review.md) | a unit needs a gate |
+| [test-health](recipes/test-health.md) | you set gates or verify a merge |
+| [models](recipes/models.md) | you pick a model |
+| [remote-workers](recipes/remote-workers.md) | an agent runs on another host |
+| [recovery](recipes/recovery.md) | teardown, rebuild, sync |
 | [worker](recipes/worker.md) | a task was claimed for you |
-| [test-health](recipes/test-health.md) | define gates, choose verification, add tests, or upkeep at milestones/budget crossings |
-| [recovery](recipes/recovery.md) | rebuild, teardown, sync setup, `doctor` cleanup |
-| [remote-workers](recipes/remote-workers.md) | an agent runs on another machine |
-| [waves](recipes/waves.md) | more than one worker edits the same repo at once |
-| [long-run](recipes/long-run.md) | a task or proof runs for hours, or must survive flakes |
-| [drift-audit](recipes/drift-audit.md) | hours into a long run, after a batch, compaction or resume, before a stop rule |
-| [watcher](recipes/watcher.md) | a helper polls a PR, CI, or log for change |
-| [findings](recipes/findings.md) | any review, audit, or check reports problems: where they live, how they are triaged |
-| [models](recipes/models.md) | you pick a model for a spawn or delegate call |
-| [tasks-or-calls](recipes/tasks-or-calls.md) | a recipe step spawns an agent: DAG task or delegate call |
-| [adversarial-review](recipes/adversarial-review.md) | gate each unit you dispatch before it merges (a review task per unit) |
-| [fan-out](recipes/fan-out.md) | a sweep or migration: the same change over many files or call sites |
-| [refute](recipes/refute.md) | you start an audit, bug hunt, or fact-check |
-| [hypothesis-panel](recipes/hypothesis-panel.md) | debugging: "why does X", a regression, a flaky test, an intermittent bug |
-| [tournament](recipes/tournament.md) | several answers are possible and the best is a judgement call |
-| [loop-until-done](recipes/loop-until-done.md) | fix until a check is clean (tsc, lint, tests), or search until nothing new |
-| [backlog-triage](recipes/backlog-triage.md) | a backlog of external items needs classifying and acting on |
-| [deep-research](recipes/deep-research.md) | a question needs many sources read and cross-checked |
-| [review-panel](recipes/review-panel.md) | code review of a PR, branch, or diff |
-| [rules-audit](recipes/rules-audit.md) | a change must follow AGENTS.md rule by rule, or rules keep being restated |
-| [codemode-driver](recipes/codemode-driver.md) | you have the `codemode` tool and one step dispatches many workers or delegate calls |
-
-## See also
-
-- `mu --help`, `mu <verb> --help` — canonical CLI reference.
+| [course-correct](recipes/course-correct.md) | a `course check due` hint, or a human asks |
+| [move](recipes/move.md) | a human asks to move a 3.x workstream |

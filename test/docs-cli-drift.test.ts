@@ -47,32 +47,14 @@ const DOC_FILES = [
   "docs/VISION.md",
   "docs/ROADMAP.md",
   "skills/mu/SKILL.md",
-  "skills/mu/recipes/remote-workers.md",
-  "skills/mu/recipes/waves.md",
-  "skills/mu/recipes/long-run.md",
-  "skills/mu/recipes/watcher.md",
-  "skills/mu/recipes/orchestrator-loop.md",
-  "skills/mu/recipes/worker.md",
-  "skills/mu/recipes/test-health.md",
-  "skills/mu/recipes/recovery.md",
-  "skills/mu/recipes/adversarial-review.md",
-  "skills/mu/recipes/fan-out.md",
-  "skills/mu/recipes/refute.md",
-  "skills/mu/recipes/hypothesis-panel.md",
-  "skills/mu/recipes/tournament.md",
-  "skills/mu/recipes/loop-until-done.md",
-  "skills/mu/recipes/backlog-triage.md",
-  "skills/mu/recipes/codemode-driver.md",
-  "skills/mu/recipes/ultrathink.md",
-  "skills/mu/recipes/brief.md",
-  "skills/mu/recipes/plan.md",
-  "skills/mu/recipes/deep-research.md",
-  "skills/mu/recipes/review-panel.md",
-  "skills/mu/recipes/rules-audit.md",
-  "skills/mu/recipes/findings.md",
-  "skills/mu/recipes/tasks-or-calls.md",
-  "skills/mu/recipes/drift-audit.md",
-  "skills/mu/recipes/models.md",
+  ...readdirSync(join(ROOT, "skills/mu/recipes"))
+    .filter((f) => f.endsWith(".md"))
+    .sort()
+    .map((f) => `skills/mu/recipes/${f}`),
+  ...readdirSync(join(ROOT, "prompts"))
+    .filter((f) => f.endsWith(".md"))
+    .sort()
+    .map((f) => `prompts/${f}`),
 ];
 
 describe("docs name only real CLI surface", () => {
@@ -128,13 +110,6 @@ describe("docs name only real CLI surface", () => {
     const first = found[0];
     if (!first) throw new Error("unreachable");
     expect(checkDocCommand(program, first)).toBeNull();
-  });
-
-  it("covers every skills/mu recipe", () => {
-    const recipes = readdirSync(join(ROOT, "skills/mu/recipes"))
-      .filter((f) => f.endsWith(".md"))
-      .map((f) => `skills/mu/recipes/${f}`);
-    expect(recipes.filter((r) => !DOC_FILES.includes(r))).toEqual([]);
   });
 
   it("honours the skip region so historical sections can name dead verbs", () => {

@@ -85,7 +85,7 @@ There is no flag day. Each machine switches when its human decides:
    two DBs, sockets and worktrees never meet. Give it a separate
    `MU_SYNC_DIR`, or none.
 2. Move workstreams one at a time, from the machine that holds each
-   one, with the [Move recipe](../mu-next/skill-draft/recipes/move.md).
+   one, with the [Move recipe](../../skills/mu/recipes/move.md).
    Only open tasks move. Owners, agents and history stay behind.
 3. The 3.x DB stays as a read-only archive. 3.x keeps running whatever
    has not moved. The recipe's only 3.x write is the last step, which

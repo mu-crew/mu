@@ -95,26 +95,23 @@ Not every review needs a record. Reviewing someone's PR or a doc runs
 as delegates only: findings come back in their answers, and nothing
 lands in the ops log.
 
-Ask your orchestrator to *ultrathink* a job, and it follows
-[skills/mu/recipes/ultrathink.md](skills/mu/recipes/ultrathink.md).
-That recipe composes smaller ones you can also use on their own:
+Ask your orchestrator to *ultrathink* a job, and it follows the
+[orchestrator loop](skills/mu/recipes/orchestrator-loop.md): every unit,
+review and round is a task, and checks are calls. The recipes it composes
+you can also use on their own:
 
 | Recipe | Shape |
 | ------ | ----- |
-| [fan-out](skills/mu/recipes/fan-out.md) | one task per unit, merged as each closes |
+| [orchestrator-loop](skills/mu/recipes/orchestrator-loop.md) | dispatch, wait, merge; also sweeps and loops until a stop rule holds |
 | [adversarial-review](skills/mu/recipes/adversarial-review.md) | a review gate per unit: a fresh agent tries to reject it before it ships |
-| [refute](skills/mu/recipes/refute.md) | finders record findings, one refuter call per finding, report from the graph |
-| [hypothesis-panel](skills/mu/recipes/hypothesis-panel.md) | independent theories from separate evidence, each attacked |
-| [tournament](skills/mu/recipes/tournament.md) | competing attempts, judged in pairs |
-| [loop-until-done](skills/mu/recipes/loop-until-done.md) | rounds until a stop rule written up front holds |
-| [backlog-triage](skills/mu/recipes/backlog-triage.md) | quarantined readers classify, a trusted actor acts |
-| [deep-research](skills/mu/recipes/deep-research.md) | searchers by angle, one checker per claim, a cited report |
-| [review-panel](skills/mu/recipes/review-panel.md) | one reviewer per angle on a diff; delegates by default, tasks when fixes follow |
-| [rules-audit](skills/mu/recipes/rules-audit.md) | one checker per AGENTS.md rule plus a skeptic; or mine repeated corrections into new rules |
+| [findings](skills/mu/recipes/findings.md) | reviewers record findings, one refuter call per finding, report from the graph |
+| [tasks-or-calls](skills/mu/recipes/tasks-or-calls.md) | refuters, judges and checkers as delegate calls |
+| [course-correct](skills/mu/recipes/course-correct.md) | a periodic look at whether a long job is on course |
+| [move](skills/mu/recipes/move.md) | move a 3.x workstream to mu-next |
 
 In pi, the package adds them as commands: `/ultrathink <job>`,
 `/mu-research <question>`, `/mu-review [target]`, `/mu-refute <scope>`,
-`/mu-tournament <task>`, `/mu-rules-audit [check <target> | mine]`,
+`/mu-tournament <task>`, `/mu-rules-audit [target]`,
 `/mu-debug <symptom>`, `/mu-sweep <change>`, and `/mu-until <stop rule>`.
 
 All recipes, including the orchestrator loop and remote workers, are

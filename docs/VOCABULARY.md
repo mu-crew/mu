@@ -101,7 +101,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **test upkeep** | Ordinary DAG work to profile, speed up, move down, merge or remove tests while preserving coverage; see [test-health](../skills/mu/recipes/test-health.md). | "coverage reduction" |
 | **test level** | Unit < integration < e2e; use the lowest level that catches the guarded failure. | |
 | **review gate** | A review task blocked by a work task, deciding whether its commits count. | "gate command" |
-| **course check** | A periodic look at whether a long job is still on course ([course-correct](mu-next/skill-draft/recipes/course-correct.md)), recorded as a task note starting `COURSE CHECK`. `courseCheckHint` reports one due after 10 CLOSED/done work tasks, or 24 h with at least one, since the last such note. | "retro" |
+| **course check** | A periodic look at whether a long job is still on course ([course-correct](../skills/mu/recipes/course-correct.md)), recorded as a task note starting `COURSE CHECK`. `courseCheckHint` reports one due after 10 CLOSED/done work tasks, or 24 h with at least one, since the last such note. | "retro" |
 | **merge batch** | Accepted commits combined into one pinned tree for full merge verification, without a crew-wide barrier. | "wave" (when only verification is batched) |
 
 ### Worktrees and housekeeping

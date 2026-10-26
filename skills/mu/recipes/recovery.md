@@ -1,31 +1,11 @@
-# Recovery: rebuild, sync
+# Recovery
 
-Use before you rebuild the DB, tear down a workstream,
-set up sync, or act on `mu doctor` output. Each of these can lose work
-when done in the wrong order.
+Use before you tear down a workstream, rebuild the DB, set up sync, or act on `mu doctor` output. Each can lose work in the wrong order.
 
-- **`workstream teardown`** is soft (rows stay, hidden); `workstream list
-  --torn-down` lists them and their group ids. Preview first, then
-  apply with `--if <rev>`; reusing the name later deletes the old rows.
-- **`mu rebuild <file>`** writes a new DB from the ops log, without
-  agents or worktrees; re-spawn after the swap. Recovery is
-  `mu rebuild`, not `mu db backup`.
-- **Sync:** set `MU_SYNC_DIR` on each machine to a shared folder
-  (Syncthing). Every command flushes and ingests ops, merged per field.
-  mu never runs ssh or rsync; `mu sync` prints the line.
-  `--repair <peer>` is always safe. Agents, worktrees, and task
-  ownership never travel.
-- **`mu db forget <ws...>`** deletes torn-down workstreams' ops for
-  good; `mu db compact` only blanks redundant tombstones. Both
-  back up beside the DB first. Forget only what the human named.
-- **`mu doctor --deep` DRIFT** (exit 5) is a capture bug: back up and
-  report it. Do not rebuild; the live rows may hold work the log missed.
-- The `doctor` `disk` section is report-only: an orphan dir may hold the
-  only copy of uncommitted work, so mu prints cleanup commands and runs
-  none. Read before you run them.
+- **Teardown** is soft: `mu workstream teardown <ws>` previews with `rev=<n>`; apply with `--if <n>`. Rows stay hidden, worktrees stay (`mu agent close` removes them). Reusing a name later permanently deletes the old rows, after its own preview.
+- **`mu rebuild <file>`** writes a new DB from the ops log, without agents or worktrees; swap it in with the printed command, then re-spawn. Recovery is `rebuild`, not `mu db backup`.
+- **Sync:** set `MU_SYNC_DIR` on each machine to a shared folder; every verb ingests and flushes. mu runs no ssh or rsync. `mu sync --repair <peer>` is safe. Agents, worktrees and ownership never travel.
+- **`mu db forget <ws...>`** deletes torn-down workstreams' ops for good. Forget only what the human named; it backs up first.
+- **`mu doctor --deep` DRIFT** is a capture bug: back up and report it. Do not rebuild; live rows may hold work the log missed.
+- **Doctor's `disk` section** prints cleanup commands and runs none. An orphan dir may hold the only copy of uncommitted work; read each command before you run it.
 
-Done when, per operation: teardown was previewed, then applied
-with `--if <rev>`; rebuild was swapped in and agents re-spawned; `mu sync`
-lists the peer; forget touched only the named workstreams. Any
-`doctor --deep` DRIFT is backed up and reported to the human, and you
-read every cleanup command before you ran it.
