@@ -68,6 +68,8 @@ export {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   SpawnAttemptBusyError,
+  SpawnAttemptFailedError,
+  SpawnAttemptGuardError,
   SpawnReceiptConflictError,
   SpawnTaskStateError,
   SpawnTrustDialogError,
@@ -103,7 +105,9 @@ export {
   speaksMuCtl,
 } from "./agents/spawn.js";
 export {
+  type AutoAttemptRequest,
   pinBrief,
+  spawnAutoAttempt,
   spawnForTask,
   type TaskSpawnOutcome,
   type TaskSpawnRequest,

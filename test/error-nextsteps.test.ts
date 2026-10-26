@@ -35,6 +35,8 @@ import {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   SpawnAttemptBusyError,
+  SpawnAttemptFailedError,
+  SpawnAttemptGuardError,
   SpawnReceiptConflictError,
   SpawnTaskStateError,
   SpawnTrustDialogError,
@@ -56,6 +58,7 @@ import {
 } from "../src/mux/herdr.js";
 import { MuxError, NoMultiplexerError, tmuxBackend } from "../src/mux.js";
 import { hasNextSteps } from "../src/output.js";
+import { TaskBriefMissingError } from "../src/task-brief.js";
 import {
   ClaimerNotRegisteredError,
   CloseNeedsEvidenceError,
@@ -429,6 +432,21 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["mu task show t1"],
   },
   {
+    error: new SpawnAttemptFailedError("t1", "auto:1", "it failed"),
+    label: "SpawnAttemptFailedError",
+    expectedTokens: ["task show t1"],
+  },
+  {
+    error: new SpawnAttemptGuardError("t1", "auto:1", "no longer authorised"),
+    label: "SpawnAttemptGuardError",
+    expectedTokens: ["task show t1"],
+  },
+  {
+    error: new TaskBriefMissingError("t1", "ws", "it has no brief note"),
+    label: "TaskBriefMissingError",
+    expectedTokens: ["task note t1", "-w ws"],
+  },
+  {
     error: new SpawnAttemptBusyError("t1", "manual:t1"),
     label: "SpawnAttemptBusyError",
     expectedTokens: ["mu task show t1"],
@@ -533,6 +551,7 @@ describe("typed errors all carry actionable errorNextSteps()", () => {
     const modules = await Promise.all([
       import("../src/agents.js"),
       import("../src/tasks.js"),
+      import("../src/task-brief.js"),
       import("../src/worktree.js"),
       import("../src/db.js"),
       import("../src/workstream.js"),

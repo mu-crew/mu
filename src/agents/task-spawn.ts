@@ -44,6 +44,7 @@ import {
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
   SpawnAttemptBusyError,
+  SpawnAttemptFailedError,
   SpawnReceiptConflictError,
   SpawnTaskStateError,
   SpawnTrustDialogError,
@@ -107,6 +108,21 @@ export interface TaskSpawnOutcome {
 }
 
 const manualKey = (req: TaskSpawnRequest): string => `manual:${req.attempt ?? req.task}`;
+
+/**
+ * The executor's `auto:<n>` namespace (src/auto-attempt.ts reserves it and
+ * charges the run). Guarded replay: the receipt must already be reserved, a
+ * failed (or stale-identity) attempt is NEVER reset or reused (it throws
+ * `SpawnAttemptFailedError`; the next attempt is a new key and a new charge),
+ * and `guard` is asked before the pane exists (`spawn`) and again inside the
+ * transaction just before the prompt is written (`send`): a throw there is an
+ * unsent failure, rolled back like any other.
+ */
+export interface AutoAttemptRequest extends Omit<TaskSpawnRequest, "attempt"> {
+  /** `auto:<n>`. */
+  key: string;
+  guard: (phase: "spawn" | "send") => void;
+}
 
 /** Errors raised BEFORE any byte of the prompt could have been written. */
 function definitelyUnsent(err: unknown): boolean {
@@ -223,9 +239,29 @@ export async function spawnForTask(db: Db, req: TaskSpawnRequest): Promise<TaskS
     db,
     taskId,
     key,
-    () => run(db, req, taskId, key),
+    () => run(db, req, taskId, key, undefined),
     () => {
       throw new SpawnAttemptBusyError(req.task, key);
+    },
+  );
+}
+
+/** Run or resume one reserved executor attempt (see {@link AutoAttemptRequest}). */
+export async function spawnAutoAttempt(db: Db, req: AutoAttemptRequest): Promise<TaskSpawnOutcome> {
+  const ws = req.spawn.workstream;
+  const taskId = taskIdFor(db, req.task, ws);
+  if (taskId === null) throw new TaskNotFoundError(req.task, ws);
+  if (req.text === "") throw new AgentEmptySendError(req.spawn.name, ws);
+  if (parseSessionCommand(req.text) !== undefined || isSlashCommand(req.text)) {
+    throw new AgentSlashCommandUnsupportedError(req.spawn.name, ws, req.text, []);
+  }
+  return withSpawnAttemptLock(
+    db,
+    taskId,
+    req.key,
+    () => run(db, req, taskId, req.key, req.guard),
+    () => {
+      throw new SpawnAttemptBusyError(req.task, req.key);
     },
   );
 }
@@ -235,6 +271,7 @@ async function run(
   req: TaskSpawnRequest,
   taskId: number,
   key: string,
+  guard: AutoAttemptRequest["guard"] | undefined,
 ): Promise<TaskSpawnOutcome> {
   const ws = req.spawn.workstream;
   const sha = requestSha({
@@ -244,9 +281,18 @@ async function run(
     host: req.spawn.host,
   });
   const saved = getReceipt(db, taskId, key);
-  if (saved === undefined) return fresh(db, req, taskId, key, sha);
+  const auto = guard !== undefined;
+  const failedAttempt = (why: string): never => {
+    throw new SpawnAttemptFailedError(req.task, key, why);
+  };
+  if (saved === undefined) {
+    if (auto) return failedAttempt("it was never reserved");
+    return fresh(db, req, taskId, key, sha);
+  }
   if (saved.state === "failed") {
-    // Nothing was sent: the key may run again, with this request.
+    // Nothing was sent: a manual key may run again, with this request. An
+    // executor attempt never does: its run was charged, the next one is new.
+    if (auto) return failedAttempt(saved.detail ?? "it failed before anything was sent");
     return fresh(db, req, taskId, key, sha, true);
   }
   if (saved.requestSha !== sha) throw new SpawnReceiptConflictError(req.task, key, saved.name);
@@ -266,6 +312,10 @@ async function run(
 
   if (saved.state === "sending" || saved.state === "unknown") return reconcile(db, req, saved, id);
 
+  if (saved.state === "reserved" && auto) {
+    // Nothing happened yet (the executor spawns `nextFree`, so a taken name is skipped).
+    return drive(db, req, taskId, key, saved, undefined, guard);
+  }
   if (saved.state === "reserved") {
     // No identity journaled: a name that exists now is not provably ours.
     if (req.spawn.nextFree !== true && getAgentForCleanup(db, saved.name, ws) !== undefined) {
@@ -277,13 +327,12 @@ async function run(
 
   // pane | claimed: resume at the next step on the saved identity, or start over.
   if (id.agent === undefined) {
-    updateReceipt(db, taskId, key, {
-      state: "failed",
-      detail: `saved agent ${saved.agentId ?? "?"} is ${id.stale ?? "gone"}; nothing was sent`,
-    });
+    const why = `saved agent ${saved.agentId ?? "?"} is ${id.stale ?? "gone"}; nothing was sent`;
+    updateReceipt(db, taskId, key, { state: "failed", detail: why });
+    if (auto) return failedAttempt(why);
     return fresh(db, req, taskId, key, sha, true);
   }
-  return drive(db, req, taskId, key, saved, id.agent);
+  return drive(db, req, taskId, key, saved, id.agent, guard);
 }
 
 /** Reserve, then spawn and drive a brand new attempt (or a reset failed one). */
@@ -307,7 +356,7 @@ async function fresh(
   const rec = reuse
     ? resetReceipt(db, taskId, key, base)
     : reserveReceipt(db, { taskId, attemptKey: key, workstream: ws, ...base });
-  return drive(db, req, taskId, key, rec, undefined);
+  return drive(db, req, taskId, key, rec, undefined, undefined);
 }
 
 /**
@@ -321,8 +370,11 @@ async function drive(
   key: string,
   start: SpawnReceipt,
   resumed: AgentRow | undefined,
+  guard: AutoAttemptRequest["guard"] | undefined,
 ): Promise<TaskSpawnOutcome> {
   const ws = req.spawn.workstream;
+  // Before any effect: a refusal leaves the reservation as it is (resumable).
+  if (resumed === undefined) guard?.("spawn");
   let rec = start;
   let agent: SpawnedAgent | AgentRow | undefined = resumed;
   let claimed = rec.state === "claimed";
@@ -420,6 +472,7 @@ async function drive(
         ) {
           throw new AgentReplacedError(target.name, ws, "sent to");
         }
+        guard?.("send");
         const t = getTask(db, req.task, ws);
         if (t === undefined) throw new TaskNotFoundError(req.task, ws);
         if (t.status === "CLOSED") throw new SpawnTaskStateError(req.task, "was closed");

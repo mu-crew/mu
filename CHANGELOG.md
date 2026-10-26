@@ -345,6 +345,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `UPDATE ... RETURNING` prints its rows whole with no `retrieve`. Callers of the bare array
   (`.data[0]`) read `.data.items[0]`.
 
+- **Executor slice A: attempt reservation, `buildTaskBrief`, guarded replay, dry run and cap
+  (`v_exec_dispatch`; SDK only, the `mu next` verb, recovery and `--hold` are slice B).**
+  `executeNext(db, {workstream, caller, dry?, cap?})` resumes stored attempts, then spawns, claims
+  and briefs `authorisedReady` tasks; it never calls `authorizeTasks`. An attempt is
+  `auto:<n>` in `spawn_receipts` with its record (name, cli, worktree, pinned brief/report note
+  numbers) in `task_auto.last_spawn`. `reserveAttempt` charges the run, writes the record and the
+  `reserved` receipt in ONE immediate transaction that re-plans first (revision CAS), so two `mu next`
+  mint one attempt. A run is charged once per new attempt, never for a replay, receipt check or
+  UNKNOWN probe; an unsent failure keeps its charge and its failed key is never reset (the next
+  attempt is a new key and a new charge), so real spawns never exceed `max_runs`. Stored attempts
+  (even a final one, which `authorisedReady` no longer lists) are resumed under their own key
+  before anything new is allocated. `spawnAutoAttempt` (task-spawn.ts) is the guarded replay:
+  permission is re-read before the pane and inside the pre-send transaction (a revoke is an unsent
+  rollback). `buildTaskBrief` is the first `brief` note verbatim + the latest `report` note + one
+  task/CLOSE footer, pinned by note number so a replay rebuilds the same text; no brief, no
+  attempt. `cap` is an integer 1..100 (default 5) counting every effect (replays, spawns,
+  failures); `dry` is the same selection over the read-only planner (no ingest, lock, mux call,
+  receipt probe or write; tested on a readonly DB handle). This caller's open human need stops
+  dispatch. New errors: `SpawnAttemptFailedError`, `SpawnAttemptGuardError` (exit 4),
+  `TaskBriefMissingError` (4), `NextArgError` (2).
 - **`mu task auto <ids…> | --blockers-of <u> --cli <key> [--worktree] [--max N] | --off`:
   explicit, host-fenced permission for `mu next`.** Ready is never permission.
   `auto` stores the cli key, worktree mode and run ceiling in the machine-local

@@ -903,6 +903,46 @@ export class SpawnAttemptBusyError extends Error implements HasNextSteps {
 }
 
 /**
+ * `mu next`: an executor attempt (`auto:<n>`) cannot be run or resumed: it
+ * failed before anything was sent (its run stays charged), was never
+ * reserved, or its saved identity is gone. It is never reset; the next
+ * attempt is a new key and a new charge. Exit 4.
+ */
+export class SpawnAttemptFailedError extends Error implements HasNextSteps {
+  override readonly name = "SpawnAttemptFailedError";
+  constructor(
+    public readonly task: string,
+    public readonly attemptKey: string,
+    reason: string,
+  ) {
+    super(`attempt ${attemptKey} of task ${task} cannot run: ${reason}; nothing was sent`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [{ intent: "See the task's state", command: `mu task show ${this.task}` }];
+  }
+}
+
+/**
+ * `mu next`: permission, readiness or the revision changed between the
+ * reservation and an effect (revoked `mu task auto`, another host
+ * designated, the task claimed or closed). Nothing was spawned or sent past
+ * this point; a reservation made earlier stays resumable. Exit 4.
+ */
+export class SpawnAttemptGuardError extends Error implements HasNextSteps {
+  override readonly name = "SpawnAttemptGuardError";
+  constructor(
+    public readonly task: string,
+    public readonly attemptKey: string,
+    reason: string,
+  ) {
+    super(`attempt ${attemptKey} of task ${task} was stopped: ${reason}`);
+  }
+  errorNextSteps(): NextStep[] {
+    return [{ intent: "See the task's state", command: `mu task show ${this.task}` }];
+  }
+}
+
+/**
  * `agent spawn --task`: the task is not claimable by this attempt any more
  * (closed, or owned by someone else since the claim). Nothing was sent; the
  * attempt's own pane is rolled back. Exit 4.
