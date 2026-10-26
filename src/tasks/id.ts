@@ -1,27 +1,18 @@
 // mu — task id validation and title slug helpers.
 
 import type { Db } from "../db.js";
-import type { HasNextSteps, NextStep } from "../output.js";
 import { getTask } from "./queries.js";
 
 /** Thrown when a title has no ASCII letter or digit, so no id can be
  *  derived from it (any non-ASCII script, or pure punctuation). Exit 2
  *  (usage) with the verb's --help; the fix is the `<id>` positional.
  *  Lives here, not in errors.ts, because errors.ts imports this file. */
-export class TaskTitleSlugEmptyError extends Error implements HasNextSteps {
+export class TaskTitleSlugEmptyError extends Error {
   override readonly name = "TaskTitleSlugEmptyError";
   constructor(public readonly title: string) {
     super(
       `title yields empty slug: ${JSON.stringify(title)} (no ASCII letter or digit to derive an id from)`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Pass the id explicitly as the positional",
-        command: 'mu task add <id> --title "..." --impact <n> --effort-days <n>',
-      },
-    ];
   }
 }
 
@@ -213,30 +204,6 @@ export function idFromTitleVerbose(
     if (free(candidate)) return { id: candidate, truncated, originalSlug };
   }
   throw new Error(`could not derive a unique id from title in workstream ${workstream}: ${title}`);
-}
-
-/**
- * Sanitise a free-form string into a candidate task id.
- *
- * Lowercases, replaces every non-`[a-z0-9_-]` char with `_`, trims any
- * leading non-letter (the schema requires the first char to be a
- * letter), truncates to 64 chars. Returns `"task"` when the input has
- * no usable letters at all so the suggestion in
- * `TaskIdInvalidError.errorNextSteps()` is always a runnable command.
- *
- * Mirrors `slugifyTitle`'s prefix corrections so suggested ids will
- * pass `isValidTaskId` if the user runs them verbatim. Lives next to
- * `slugifyTitle` rather than in `tasks/errors.ts` because it's a slug
- * helper, not an error helper — the only caller happens to be
- * `TaskIdInvalidError.errorNextSteps()`.
- */
-export function sanitiseTaskId(input: string): string {
-  const s = input
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "_")
-    .replace(/^[^a-z]+/, "")
-    .slice(0, SLUG_HARD_CAP);
-  return s.length === 0 ? "task" : s;
 }
 
 /** Ids compared without case and separators: `Fix-Auth` ≡ `fix_auth`. */

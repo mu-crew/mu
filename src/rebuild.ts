@@ -66,40 +66,23 @@ import { projectLog } from "./apply.js";
 import { type Db, openDb, SYNCED_ENTITIES } from "./db.js";
 import { compareHlc } from "./hlc.js";
 import { withCaptureSuppressed } from "./op-context.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 
 /** Raised when the rebuild target already exists. Never overwrite: the
  *  operator may have pointed at their live DB by mistake, and a rebuild
  *  is supposed to be the SAFE recovery path. */
-export class RebuildTargetExistsError extends Error implements HasNextSteps {
+export class RebuildTargetExistsError extends Error {
   constructor(readonly path: string) {
     super(`rebuild target already exists: ${path}`);
     this.name = "RebuildTargetExistsError";
-  }
-
-  errorNextSteps(): NextStep[] {
-    return [
-      { intent: "Pick a path that does not exist", command: "mu rebuild /tmp/mu-rebuilt.db" },
-      { intent: "Or remove the stale target first", command: `rm -f ${this.path}` },
-    ];
   }
 }
 
 /** Raised when the target path resolves to the source DB. Rebuilding a
  *  DB onto itself would truncate the very log being replayed. */
-export class RebuildTargetIsSourceError extends Error implements HasNextSteps {
+export class RebuildTargetIsSourceError extends Error {
   constructor(readonly path: string) {
     super(`rebuild target is the source DB: ${path}`);
     this.name = "RebuildTargetIsSourceError";
-  }
-
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Rebuild writes a NEW file; pick a different path",
-        command: "mu rebuild /tmp/mu-rebuilt.db",
-      },
-    ];
   }
 }
 

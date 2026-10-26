@@ -16,10 +16,11 @@ import {
   UsageError,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
-import { type NextStep, pc, printNextSteps } from "../../output.js";
+import { pc } from "../../output.js";
 import { withTaskFence } from "../../revision.js";
 import { candidateTaskIds } from "../../tasks/id.js";
 import { addBlockEdge, deleteTask, getTask, removeBlockEdge, reparentTask } from "../../tasks.js";
+import { setNextOutcome } from "../handle.js";
 
 /** Canonicalise the `-b/--by` value into a non-empty blocker list.
  *
@@ -52,7 +53,6 @@ export async function cmdTaskBlock(
   assertTaskInWorkstream(db, blocked, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
   const blockers = parseByFlag(opts.by);
-  const byList = blockers.join(",");
   // Sequential, fail-fast: the first bad blocker throws its typed
   // error (not-found / cycle / cross-workstream) and earlier edges
   // stay added. Same semantics as running the single-blocker form N
@@ -66,10 +66,6 @@ export async function cmdTaskBlock(
     })),
   );
   const added = results.filter((r) => r.added).length;
-  const nextSteps: NextStep[] = [
-    { intent: "Show the dependency tree", command: `mu task tree ${blocked} -w ${ws}` },
-    { intent: "Remove these edges", command: `mu task unblock ${blocked} --by ${byList} -w ${ws}` },
-  ];
   if (opts.json) {
     const first = results[0];
     emitJson({
@@ -80,7 +76,6 @@ export async function cmdTaskBlock(
       results,
       added: added > 0,
       addedEdges: added,
-      nextSteps,
     });
     return;
   }
@@ -91,7 +86,6 @@ export async function cmdTaskBlock(
     }
     console.log(`Added edge ${pc.bold(r.blockerName)} → ${pc.bold(blocked)}`);
   }
-  printNextSteps(nextSteps);
 }
 
 export async function cmdTaskUnblock(
@@ -106,7 +100,6 @@ export async function cmdTaskUnblock(
   // same edge operation, so a multi-blocker block is a single
   // invocation too.
   const blockers = parseByFlag(opts.by);
-  const byList = blockers.join(",");
   const results = withTaskFence(db, ws, blocked, opts.if, () =>
     blockers.map((blocker) => ({
       blockerName: blocker,
@@ -123,10 +116,6 @@ export async function cmdTaskUnblock(
         .flatMap((id) => candidateTaskIds(db, ws, id)),
     ),
   ];
-  const nextSteps: NextStep[] = [
-    { intent: "Show what now blocks this task", command: `mu task tree ${blocked} -w ${ws}` },
-    { intent: "Re-add the edges", command: `mu task block ${blocked} --by ${byList} -w ${ws}` },
-  ];
   if (opts.json) {
     const first = results[0];
     emitJson({
@@ -137,7 +126,6 @@ export async function cmdTaskUnblock(
       removed: removed > 0,
       removedEdges: removed,
       ...(candidates.length > 0 ? { candidate_ids: candidates } : {}),
-      nextSteps,
     });
     return;
   }
@@ -149,7 +137,6 @@ export async function cmdTaskUnblock(
     console.log(`Removed edge ${pc.bold(r.blockerName)} → ${pc.bold(blocked)}`);
   }
   if (candidates.length > 0) console.log(pc.dim(`  similar: ${candidates.join(", ")}`));
-  printNextSteps(nextSteps);
 }
 
 export async function cmdTaskReparent(
@@ -167,18 +154,13 @@ export async function cmdTaskReparent(
   const r = withTaskFence(db, ws, localId, opts.if, () =>
     reparentTask(db, localId, blockers, { workstream: ws }),
   );
-  const nextSteps: NextStep[] = [
-    { intent: "Show the new dependency tree", command: `mu task tree ${localId} -w ${ws}` },
-    { intent: "Show the task", command: `mu task show ${localId} -w ${ws}` },
-  ];
   if (opts.json) {
-    emitJson({ taskName: localId, blockerNames: blockers, ...r, nextSteps });
+    emitJson({ taskName: localId, blockerNames: blockers, ...r });
     return;
   }
   console.log(
     `Reparented ${pc.bold(localId)} ${pc.dim(`(removed ${r.removedEdges} edges, added ${r.addedEdges})`)}`,
   );
-  printNextSteps(nextSteps);
 }
 
 export async function cmdTaskDelete(
@@ -203,22 +185,13 @@ export async function cmdTaskDelete(
     dryRun,
     ...(opts.if !== undefined ? { ifRevision: opts.if } : {}),
   });
-  const commitNextSteps: NextStep[] = [
-    {
-      intent: "List remaining tasks",
-      command: `mu task list -w ${ws}`,
-    },
-  ];
-  const dryRunNextSteps: NextStep[] = [
-    {
-      intent: "Confirm and actually delete (cascades to edges + notes)",
-      command: `mu task delete ${localId} -w ${ws} --if ${r.revision}`,
-    },
-    {
-      intent: "Inspect the task + edges before deciding",
-      command: `mu task show ${localId} -w ${ws}`,
-    },
-  ];
+  if (r.present && r.dryRun && r.revision !== undefined) {
+    setNextOutcome({
+      kind: "preview",
+      apply: ["mu", "task", "delete", localId, "-w", ws],
+      revision: r.revision,
+    });
+  }
 
   // Missing row — idempotent no-op (same outcome whether dry-run or
   // --yes). The `present: false` discriminator keeps this distinct
@@ -231,7 +204,6 @@ export async function cmdTaskDelete(
         taskName: localId,
         ...r,
         ...(candidates.length > 0 ? { candidate_ids: candidates } : {}),
-        nextSteps: commitNextSteps,
       });
       return;
     }
@@ -244,7 +216,7 @@ export async function cmdTaskDelete(
   // checked above); zero edges + zero notes is a real cascade-of-one.
   if (r.dryRun) {
     if (opts.json) {
-      emitJson({ taskName: localId, ...r, nextSteps: dryRunNextSteps });
+      emitJson({ taskName: localId, ...r });
       return;
     }
     console.log(
@@ -254,17 +226,15 @@ export async function cmdTaskDelete(
     );
     console.log("");
     console.log(pc.dim(`(dry-run; rerun with --if ${r.revision} (or --yes) to actually delete)`));
-    printNextSteps(dryRunNextSteps);
     return;
   }
 
   // Commit path.
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, nextSteps: commitNextSteps });
+    emitJson({ taskName: localId, ...r });
     return;
   }
   console.log(
     `Deleted ${pc.bold(localId)} ${pc.dim(`(edges: ${r.deletedEdges}, notes: ${r.deletedNotes})`)}`,
   );
-  printNextSteps(commitNextSteps);
 }

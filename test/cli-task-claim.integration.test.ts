@@ -125,8 +125,7 @@ describe("mu task claim --for: cross-workstream qualified ref", () => {
     );
     expect(error).toBeUndefined();
     expect(exitCode).toBeNull();
-    const out = data as { nextSteps: { intent: string; command: string }[] };
-    expect(JSON.stringify(out.nextSteps)).not.toMatch(/mule|remote commit/);
+    expect(JSON.stringify(data)).not.toMatch(/mule|remote commit/);
   });
 
   it("--for <ws>/<name> with non-existent agent in named ws → AgentNotFoundError, nothing committed", async () => {

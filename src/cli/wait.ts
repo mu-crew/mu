@@ -54,7 +54,7 @@ import { currentCallers } from "../wait-callers.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
 import { compileTextMatcher } from "../wait-regex.js";
 import { loadResume, type ResumeSpec, saveResume } from "../wait-resume.js";
-import { CliExitError } from "./handle.js";
+import { CliExitError, setNextOutcome } from "./handle.js";
 import { owedRefs, resumeCommand, waitData } from "./wait-output.js";
 
 /** Heartbeat to stderr every this many ms while a wait is open. */
@@ -278,107 +278,6 @@ function reasonOf(result: WaitResult, signal: string | undefined, open: number):
   }
 }
 
-type Step = { intent: string; command: string };
-
-/** What to do about a task whose owner needs attention: its last answer (pi), then its pane. */
-function stuckSteps(snap: WaitSnapshot): Step[] {
-  const owner = snap.owner;
-  if (owner === null || owner === undefined) return [];
-  const ownerWs = snap.ownerWorkstream ?? snap.ref.workstream;
-  const out: Step[] = [];
-  // A pi owner that settled a run already answered: its final text is one wait away.
-  if (snap.ownerRuns !== undefined && snap.ownerRuns >= 1) {
-    out.push({
-      intent: "Read the worker's last answer (its final text, at once)",
-      command: `mu wait agent:${ownerWs}/${owner}@${snap.ownerRuns - 1}`,
-    });
-  }
-  out.push({
-    intent: `Read ${owner}'s pane: ${snap.ref.workstream}/${snap.ref.id} is IN_PROGRESS but its owner needs attention`,
-    command: `mu agent read ${owner} -w ${ownerWs} --lines 60`,
-  });
-  return out;
-}
-
-/** The few next moves worth printing for an event (the legacy `nextSteps`, until per-verb plans land). */
-function nextStepsOf(result: WaitResult, ws: string | undefined): Step[] {
-  const e = result.event;
-  const out: Step[] = [];
-  if (e.ref === null) {
-    // A timeout or interrupt: each still-open ref's next look. A stuck one reads the pane,
-    // not the task row (the row looks healthy); an open one is a task show.
-    for (const s of result.refs) {
-      if (s.fired || s.dead || s.ref.kind !== "task") continue;
-      if (s.stuck === true) out.push(...stuckSteps(s));
-      else
-        out.push({
-          intent: `Investigate ${s.ref.workstream}/${s.ref.id} (status=${s.status})`,
-          command: `mu task show ${s.ref.id} -w ${s.ref.workstream}`,
-        });
-    }
-    return out;
-  }
-  const snap = result.refs.find(
-    (s) =>
-      s.ref.kind === e.ref?.kind && s.ref.workstream === e.ref.workstream && s.ref.id === e.ref.id,
-  );
-  const w = e.ref.workstream;
-  if (
-    e.kind === "settled" &&
-    snap !== undefined &&
-    (!snap.lastText || snap.lastError !== undefined)
-  ) {
-    out.push({ intent: "Read the finished agent", command: `mu agent read ${e.ref.id} -w ${w}` });
-  } else if (e.kind === "input") {
-    out.push(
-      { intent: "Read the dialog pi is waiting on", command: `mu agent read ${e.ref.id} -w ${w}` },
-      { intent: "Wait again once it is answered", command: "the `resume` command" },
-    );
-  } else if (e.kind === "exited") {
-    out.push(
-      { intent: "Read the gate's output", command: `mu agent read ${e.ref.id} -w ${w} --lines 60` },
-      { intent: "Free its pane and remote result", command: `mu agent close ${e.ref.id} -w ${w}` },
-    );
-  } else if (e.kind === "stall" && snap !== undefined) {
-    out.push(...stuckSteps(snap));
-  } else if (e.kind === "dead") {
-    const owner = snap?.owner;
-    out.push(
-      e.ref.kind === "task"
-        ? {
-            intent: "See what the dead worker left",
-            command: owner
-              ? `mu agent read ${owner} -w ${snap?.ownerWorkstream ?? w} --lines 60`
-              : `mu task show ${e.ref.id} -w ${w}`,
-          }
-        : // An agent ref names an agent, never a task: the reaper's lines name the tasks it reopened.
-          {
-            intent: `See which tasks the reaper reopened for ${e.ref.id}`,
-            command: `mu log -w ${w} --source reaper -n 10`,
-          },
-    );
-  } else if (e.kind === "delegate") {
-    out.push({
-      intent: "Read the delegate's answer",
-      command: `mu delegates show ${e.ref.id}`,
-    });
-  } else if (
-    e.kind === "closed" &&
-    e.ref.kind === "task" &&
-    snap?.substate !== undefined &&
-    snap.substate !== "done"
-  ) {
-    // wontfix / duplicate / superseded: nothing to cherry-pick; the notes say what happened instead.
-    out.push({
-      intent: `Read why ${e.ref.id} closed ${snap.status}/${snap.substate} (no deliverable)`,
-      command: `mu task notes ${e.ref.id} -w ${w}`,
-    });
-  } else if (e.kind === "closed" && ws !== undefined) {
-    out.push({ intent: `Pick the next ready task in ${ws}`, command: `mu task next -w ${ws}` });
-  }
-  return out;
-}
-
 /** What a handled stall did, in one stderr line (a sent nudge continues the wait, so the document may never carry it). */
 export function stallActionLine(key: string, owner: string, a: StallActionResult): string {
   const what =
@@ -418,7 +317,6 @@ export async function runWait(
   spec: WaitSpec,
   sig: WaitSignals,
   opts: {
-    extraNextSteps?: (result: WaitResult) => Promise<{ intent: string; command: string }[]>;
     /** A resume runs for the callers the stored wait ran for, not for whoever types it. */
     callers?: readonly string[];
     /** The producer's receipt (`sent`, `claimed`, `warnings`) when a verb entered the wait: see WaitDataInput.extra. */
@@ -517,26 +415,30 @@ export async function runWait(
     callers.length > 0 ||
     spec.wave !== undefined ||
     spec.blockersOf !== undefined;
-  const resume = resumable
-    ? resumeCommand(
-        saveResume(db, callers, {
-          refs: owed,
-          mode: spec.mode,
-          onStall: spec.onStall,
-          ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
-          ...(status !== undefined ? { status } : {}),
-          ...(spec.untilText !== undefined ? { untilText: spec.untilText } : {}),
-          ...(spec.stuckAfter !== undefined ? { stuckAfter: spec.stuckAfter } : {}),
-          ...(spec.wave !== undefined ? { wave: spec.wave } : {}),
-          ...(spec.blockersOf !== undefined ? { blockersOf: spec.blockersOf } : {}),
-          ...(spec.timeout !== undefined ? { timeout: spec.timeout } : {}),
-          ...(result.sinceSeq !== undefined ? { since: result.sinceSeq } : {}),
-        }),
-        spec.scope,
-      )
+  const resumeId = resumable
+    ? saveResume(db, callers, {
+        refs: owed,
+        mode: spec.mode,
+        onStall: spec.onStall,
+        ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
+        ...(status !== undefined ? { status } : {}),
+        ...(spec.untilText !== undefined ? { untilText: spec.untilText } : {}),
+        ...(spec.stuckAfter !== undefined ? { stuckAfter: spec.stuckAfter } : {}),
+        ...(spec.wave !== undefined ? { wave: spec.wave } : {}),
+        ...(spec.blockersOf !== undefined ? { blockersOf: spec.blockersOf } : {}),
+        ...(spec.timeout !== undefined ? { timeout: spec.timeout } : {}),
+        ...(result.sinceSeq !== undefined ? { since: result.sinceSeq } : {}),
+      })
     : null;
-  const extra = opts.extraNextSteps === undefined ? [] : await opts.extraNextSteps(result);
-  const nextSteps = [...extra, ...nextStepsOf(result, spec.scope)];
+  const resume = resumeId === null ? null : resumeCommand(resumeId, spec.scope);
+  // A wait that ended with something still owed: `next` is its stored resume.
+  if (resumeId !== null && openNow > 0) {
+    setNextOutcome({
+      kind: "waited",
+      resumeId,
+      ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
+    });
+  }
   const short =
     result.timedOut && spec.timeout !== undefined && spec.timeout > 0 && spec.timeout < 300
       ? `--timeout ${spec.timeout} is below the ${WAIT_DEFAULT_TIMEOUT_S}s default: the wait ended at your deadline, not on an event; run the resume command`
@@ -554,7 +456,6 @@ export async function runWait(
         : {}),
       ...(signal !== undefined ? { signal } : {}),
       reason: reasonOf(result, signal, openNow),
-      nextSteps,
       ...(short !== undefined ? { warning: short } : {}),
       ...(opts.extraData !== undefined ? { extra: opts.extraData } : {}),
     }),

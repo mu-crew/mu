@@ -97,9 +97,6 @@ export class HostChannelBusyError extends Error {
   ) {
     super(message);
   }
-  errorNextSteps(): { intent: string; command: string }[] {
-    return [{ intent: "See what holds the host", command: `mu host show ${this.host}` }];
-  }
 }
 
 /** `host rm` of a host that still holds a channel. */

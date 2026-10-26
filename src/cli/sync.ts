@@ -42,7 +42,7 @@
 
 import { emitJson, handle, JSON_OPT } from "../cli.js";
 import type { Db } from "../db.js";
-import { muTable, type NextStep, pc, printNextSteps } from "../output.js";
+import { muTable, pc } from "../output.js";
 import { type IngestResult, syncDir, syncPass } from "../segments.js";
 import {
   foreignVersionMessage,
@@ -51,7 +51,6 @@ import {
   type PeerStatus,
   peerStatuses,
   repairPeer,
-  transportNextSteps,
 } from "../sync.js";
 import { relTime } from "./format.js";
 
@@ -67,33 +66,20 @@ function lastSeen(peer: PeerStatus): string {
   return `${relTime(peer.ageMs)} ago`;
 }
 
-function setupNextSteps(): NextStep[] {
-  return [
-    {
-      intent: "Turn sync on (one env var, on every machine)",
-      command: "export MU_SYNC_DIR=$HOME/Sync/mu",
-    },
-    {
-      intent: "Then share that folder (Syncthing, rsync, a USB stick)",
-      command: "# any file-mover works: segments are append-only, single-writer",
-    },
-  ];
-}
-
-function nextSteps(dir: string, peers: readonly PeerStatus[]): NextStep[] {
-  const steps: NextStep[] = [...transportNextSteps(dir, peers)];
-  const damaged = peers.filter((p) => p.behind > 0);
-  const first = damaged[0];
-  if (first !== undefined) {
-    steps.push({
-      intent: "Re-read a peer's segment from zero",
-      command: `mu sync --repair ${first.short}`,
-    });
+/** Peer advice in prose (stale transport, a damaged segment): the data is in `peers`. */
+function peerAdvice(peers: readonly PeerStatus[]): string[] {
+  const out: string[] = [];
+  const stale = peers.filter((p) => p.stale).length;
+  if (stale > 0) {
+    out.push(
+      `${stale} stale peer${stale === 1 ? "" : "s"}: move their segments in (Syncthing, rsync, a USB stick)`,
+    );
   }
-  if (steps.length === 0) {
-    steps.push({ intent: "See what landed", command: "mu log -n 20" });
+  const damaged = peers.find((p) => p.behind > 0);
+  if (damaged !== undefined) {
+    out.push(`re-read a damaged segment from zero: mu sync --repair ${damaged.short}`);
   }
-  return steps;
+  return out;
 }
 
 function renderPeerTable(peers: readonly PeerStatus[]): string {
@@ -143,12 +129,14 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
         flushed: 0,
         ingested: [],
         peers: [],
-        nextSteps: setupNextSteps(),
       });
       return;
     }
-    console.log(pc.dim("sync is off (MU_SYNC_DIR is not set)"));
-    printNextSteps(setupNextSteps());
+    console.log(
+      pc.dim(
+        "sync is off: export MU_SYNC_DIR=<folder> on every machine, then share that folder (Syncthing, rsync, a USB stick)",
+      ),
+    );
     return;
   }
 
@@ -184,7 +172,6 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
         defects: r.defects,
       })),
       peers,
-      nextSteps: nextSteps(dir, peers),
     });
     return;
   }
@@ -214,7 +201,7 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
       );
     }
   }
-  printNextSteps(nextSteps(dir, peers));
+  for (const line of peerAdvice(peers)) console.log(pc.dim(line));
 }
 
 function emitFrom(
@@ -233,7 +220,6 @@ function emitFrom(
       skippedLocal: result.skippedLocal,
       flushed,
       peers,
-      nextSteps: [{ intent: "See what landed", command: "mu log -n 20" }],
     });
     return;
   }
@@ -243,7 +229,6 @@ function emitFrom(
   if (result.skippedLocal > 0) {
     console.log(pc.dim(`  skipped ${result.skippedLocal} machine-local ops (they never travel)`));
   }
-  printNextSteps([{ intent: "See what landed", command: "mu log -n 20" }]);
 }
 
 // ─── commander wiring ────────────────────────────────────────────────

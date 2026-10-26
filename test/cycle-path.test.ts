@@ -38,7 +38,6 @@ describe("cycle path", () => {
     expect(err).toBeInstanceOf(CycleError);
     const e = err as CycleError;
     expect(e.message).toBe("adding edge c -> a would create a cycle: c -> a -> b -> c");
-    expect(e.errorNextSteps()[0]?.command).toBe(`mu task unblock b --by a -w ${WS}`);
   });
 
   it("findCyclePath terminates on pre-existing cycles", () => {

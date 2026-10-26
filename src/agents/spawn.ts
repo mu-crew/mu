@@ -46,7 +46,7 @@ import {
 import { emitEvent } from "../logs.js";
 import type { CommandSource } from "../mux/types.js";
 import { activeMux } from "../mux.js";
-import { isJsonMode, type NextStep } from "../output.js";
+import { isJsonMode } from "../output.js";
 import {
   localPaneAlive,
   prepareRemote,
@@ -888,9 +888,6 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         }
       }
     }
-    if (staged !== undefined && staged.host === undefined) {
-      attachOrphanCleanupHint(err, opts.name, opts.workstream, staged.path);
-    }
     throw err;
   }
   // Control-socket handshake when the tmux path above did not run it.
@@ -1323,47 +1320,6 @@ export async function rollbackSpawn(
   // Only the row this spawn inserted: never a replacement under the name.
   if (ownedIncarnation !== undefined)
     deleteAgent(db, name, workstream, { incarnation: ownedIncarnation });
-}
-
-/**
- * After a failed spawn that prestaged a worktree, augment the thrown
- * error with cleanup hints. rollbackSpawn is best-effort — if the removal
- * failed, the worktree survives and the operator needs to know how to
- * clean it up.
- *
- * Uses the duck-typed `errorNextSteps()` convention (see
- * `hasNextSteps()` in src/output.ts) so this works whether the inner
- * error is a typed mu error already exposing nextSteps
- * (AgentDiedOnSpawnError) or a bare TmuxError / Error from
- * mux.spawnAgent that has none. Existing hints (if any) are
- * preserved and listed first; the orphan-cleanup hints are appended
- * so the diagnostic-first ordering of typed errors is kept.
- */
-function attachOrphanCleanupHint(
-  err: unknown,
-  agent: string,
-  workstream: string,
-  path: string,
-): void {
-  if (typeof err !== "object" || err === null) return;
-  const target = err as { errorNextSteps?: () => NextStep[] };
-  const existing =
-    typeof target.errorNextSteps === "function" ? target.errorNextSteps.bind(target) : null;
-  const orphanHints: NextStep[] = [
-    {
-      intent: "Check for a leftover worktree (rollback is best-effort; may have failed)",
-      command: `ls ${dirname(path)}`,
-    },
-    {
-      intent: "Remove it if it survived the rollback (the registry still names it)",
-      command: `mu agent close ${agent} -w ${workstream} --discard`,
-    },
-  ];
-  // Best-effort: a frozen or non-extensible error must still reach the
-  // caller as itself, just without the extra hints.
-  try {
-    target.errorNextSteps = () => [...(existing ? existing() : []), ...orphanHints];
-  } catch {}
 }
 
 /**

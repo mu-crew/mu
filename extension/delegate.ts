@@ -528,10 +528,7 @@ export function registerDelegate(
         "unsent",
       );
     }
-    const steps = Array.isArray(out?.nextSteps) ? out.nextSteps : [];
-    const attach = steps
-      .map((st: unknown) => st as { intent?: unknown; command?: unknown })
-      .find((st) => st.intent === "Attach the pane")?.command;
+    const attach: unknown = out?.attach;
     // The worktree is the agent's cwd (`agents.cwd`).
     const wsPath = req.workspace === true ? (row as { cwd?: unknown } | undefined)?.cwd : undefined;
     return {

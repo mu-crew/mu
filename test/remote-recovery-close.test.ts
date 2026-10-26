@@ -237,8 +237,8 @@ describe("apply", () => {
     expect(records()).toHaveLength(1);
   });
 
-  it("every refusal and failure keeps the record, and its hint names the recovery", async () => {
-    const id = orphaned();
+  it("every refusal and failure keeps the record", async () => {
+    orphaned();
     for (const [observe, remove] of [
       [`MU_STATE clean ${OTHER}`, "MU_RM removed"], // uncollected
       [`MU_STATE clean ${BASE}`, "MU_RM moved"],
@@ -252,8 +252,6 @@ describe("apply", () => {
       answer(observe, remove);
       const err = await close({ keepBranch: remove.includes("collision") }).catch((e) => e);
       expect(err).toBeInstanceOf(RemoteCloseRefusedError);
-      const steps = (err as RemoteCloseRefusedError).errorNextSteps().map((s) => s.command);
-      expect(steps.every((c) => c.includes(`--recovery ${id}`))).toBe(true);
       expect(records()).toHaveLength(1);
     }
   });
@@ -462,7 +460,7 @@ describe("an explicit --recovery that is gone never means the live agent", () =>
     );
     expect(r.exitCode).toBeNull();
     expect(r.data).toMatchObject({ kind: "none", revision: 0, recovery_id: null });
-    expect(r.data.nextSteps).toEqual([]);
+    expect(r.doc.next).toBeNull();
   });
 
   it("collect refuses (gone) and does not collect the live agent", async () => {
@@ -603,7 +601,7 @@ describe("cli", () => {
       id: null,
       recovery_id: live.incarnation,
     });
-    const next = (p.data.nextSteps as { command: string }[])[0]?.command ?? "";
+    const next = p.doc.next?.commands[0] ?? "";
     expect(next).toContain(`--recovery ${live.incarnation}`);
     expect(next).toContain(`--if ${p.data.revision}`);
     const applied = await cli(
@@ -645,14 +643,12 @@ describe("cli", () => {
     expect(p.data.kind).toBe("recovery");
   });
 
-  it("ambiguous records exit 4 and the hints name every id", async () => {
+  it("ambiguous records exit 4 and the message names every id", async () => {
     const a = orphaned();
     const b = orphaned();
     const r = await cli("-w", "auth", "worker-1");
     expect(r.exitCode).toBe(4);
-    const text = JSON.stringify(r.doc);
-    expect(text).toContain(`--recovery ${a}`);
-    expect(text).toContain(`--recovery ${b}`);
+    expect(r.doc.message).toContain(`recoveries ${a}, ${b}`);
   });
 
   it("a refusal (live agent) exits 4", async () => {

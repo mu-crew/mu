@@ -72,7 +72,6 @@ import {
   storedCaptureVersion,
 } from "./capture.js";
 import { REMOTE_RECOVERY_DDL } from "./db-recovery.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 import { defaultStateDir, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
 
@@ -263,19 +262,10 @@ function refuseUserDbDuringTests(path: string): void {
 // `resolveWorkstreamId` throws a typed error from this leaf module —
 // `WorkstreamNotFoundError` is defined here, so there is no cycle.
 
-export class WorkstreamNotFoundError extends Error implements HasNextSteps {
+export class WorkstreamNotFoundError extends Error {
   override readonly name: string = "WorkstreamNotFoundError";
   constructor(public readonly workstream: string) {
     super(`no such workstream: ${workstream}`);
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      { intent: "List workstreams", command: "mu workstream list" },
-      {
-        intent: "Initialise this workstream",
-        command: `mu workstream init ${this.workstream}`,
-      },
-    ];
   }
 }
 
@@ -284,20 +274,12 @@ export class WorkstreamNotFoundError extends Error implements HasNextSteps {
  *  the name back: `workstream init` previews, then `--if <rev>` reuses it. */
 export class WorkstreamTornDownError extends WorkstreamNotFoundError {
   override readonly name: string = "WorkstreamTornDownError";
-  /** The message names the command: one stderr line. */
-  readonly inlineNext = true;
   constructor(
     workstream: string,
     public readonly tornDownAt: string,
   ) {
     super(workstream);
     this.message = `workstream ${workstream} is torn down (at ${tornDownAt}); \`mu workstream init ${workstream}\` to reuse the name`;
-  }
-  override errorNextSteps(): NextStep[] {
-    return [
-      { intent: "Preview reusing the name", command: `mu workstream init ${this.workstream}` },
-      { intent: "List workstreams", command: "mu workstream list" },
-    ];
   }
 }
 
@@ -355,7 +337,7 @@ export function tryResolveLiveWorkstreamId(db: Db, workstream: string): number |
  * schema. There is no in-place migration ladder; the old DB is left
  * untouched. Maps to exit code 4 (conflict) in cli.ts handle().
  */
-export class SchemaTooOldError extends Error implements HasNextSteps {
+export class SchemaTooOldError extends Error {
   override readonly name = "SchemaTooOldError";
   constructor(
     public readonly detectedVersion: number,
@@ -365,26 +347,13 @@ export class SchemaTooOldError extends Error implements HasNextSteps {
       `Detected v${detectedVersion} schema; v${requiredVersion} is required. mu ships NO in-place migration — your v${detectedVersion} DB is untouched. Back it up or move it aside, then start a fresh v${requiredVersion} DB.`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent:
-          "Keep a copy of the old DB before anything else (mu cannot open it, so use sqlite3)",
-        command: `sqlite3 "\${MU_DB_PATH:-$HOME/.local/state/mu-next/mu.db}" ".backup '$HOME/mu-v${this.detectedVersion}-backup.db'"`,
-      },
-      {
-        intent: "Move the old DB aside without deleting it",
-        command: `mv "\${MU_DB_PATH:-$HOME/.local/state/mu-next/mu.db}" "\${MU_DB_PATH:-$HOME/.local/state/mu-next/mu.db}.old"`,
-      },
-    ];
-  }
 }
 
 /**
  * Thrown by openDb when the on-disk DB was written by a NEWER mu.
  * The DB is left untouched. Maps to exit code 4 (conflict).
  */
-export class SchemaTooNewError extends Error implements HasNextSteps {
+export class SchemaTooNewError extends Error {
   override readonly name = "SchemaTooNewError";
   constructor(
     public readonly detectedVersion: number,
@@ -398,9 +367,6 @@ export class SchemaTooNewError extends Error implements HasNextSteps {
         : `DB's capture triggers are revision ${detectedVersion}; this mu understands up to ${supportedVersion}. Upgrade mu.`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "Check which mu is on PATH", command: "which mu && mu --version" }];
-  }
 }
 
 /**
@@ -408,21 +374,12 @@ export class SchemaTooNewError extends Error implements HasNextSteps {
  * triggers mint HLCs with `unixepoch('subsec')`, which older versions
  * return NULL for. Maps to exit code 4 (conflict). Nothing was touched.
  */
-export class SqliteTooOldError extends Error implements HasNextSteps {
+export class SqliteTooOldError extends Error {
   override readonly name = "SqliteTooOldError";
   constructor(public readonly sqliteVersion: string) {
     super(
       `SQLite ${sqliteVersion} is too old; mu needs >= 3.42 (unixepoch('subsec') for the op clock). The DB was not touched.`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Check the SQLite mu is using (better-sqlite3 bundles its own; reinstall mu)",
-        command:
-          "node -e \"console.log(new (require('better-sqlite3'))(':memory:').prepare('select sqlite_version() v').get())\"",
-      },
-    ];
   }
 }
 
@@ -511,8 +468,7 @@ function refuseUnusableStamps(version: number | null, capture: number | null): v
     throw new SchemaTooNewError(capture, CAPTURE_VERSION, "capture");
   }
   if (version !== null && version < MIN_ACCEPTED_SCHEMA_VERSION) {
-    // Loud-fail: leave the old file untouched and tell the operator how
-    // to preserve it (see SchemaTooOldError.errorNextSteps).
+    // Loud-fail: leave the old file untouched; the message says how to preserve it.
     throw new SchemaTooOldError(version, MIN_ACCEPTED_SCHEMA_VERSION);
   }
 }

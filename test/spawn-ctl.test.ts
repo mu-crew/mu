@@ -742,25 +742,11 @@ describe("mu agent spawn (CLI)", () => {
     const out = r.data as {
       ctl: string;
       ctlSocket: string;
-      nextSteps: { command: string }[];
     };
     expect(out.ctl).toBe("ok");
     expect(out.ctlSocket).toBe(sockFor("worker-1"));
-    expect(out.nextSteps[0]?.command).toBe("mu agent send worker-1 --fresh '...' -w auth");
-  });
-
-  it("a non-pi CLI keeps the plain Send work hint", async () => {
-    db.close();
-    const r = await runCliJson(
-      ["agent", "spawn", "worker-1", "--cli", "claude", "-w", "auth", "--json"],
-      dbPath,
-    );
-    db = openDb({ path: dbPath });
-    const out = r.data as { nextSteps: { intent: string; command: string }[] };
-    expect(out.nextSteps[0]).toEqual({
-      intent: "Send work",
-      command: "mu agent send worker-1 '...' -w auth",
-    });
+    // A bare spawn owes nothing mu can fill (the brief is the caller's): no placeholder send.
+    expect(r.doc.next).toBeNull();
   });
 
   it("exits 0 with the warning in the document (stderr empty) when ctl is missing", async () => {
@@ -813,7 +799,6 @@ describe("mu agent spawn (CLI)", () => {
     expect(r.exitCode ?? 0).toBe(0);
     const out = r.data as {
       send: { ok: boolean; runs?: number; transport: string; sentBytes: number };
-      nextSteps: { command: string }[];
     };
     expect(out.send).toMatchObject({
       ok: true,
@@ -823,7 +808,7 @@ describe("mu agent spawn (CLI)", () => {
       incarnation: INC,
       msgId: expect.any(String),
     });
-    expect(out.nextSteps[0]?.command).toBe(`mu wait 'agent:auth/worker-1@0#${INC}'`);
+    expect(r.doc.next?.commands).toEqual([`mu wait 'agent:auth/worker-1@0#${INC}'`]);
   });
 
   it("--send to a pi whose socket never answered keeps the pane and exits non-zero", async () => {
@@ -950,7 +935,7 @@ describe("mu agent spawn --task (claim + brief, one journaled attempt)", () => {
   });
 });
 
-describe("mu agent spawn: the attach hint does not assume a tmux client", () => {
+describe("mu agent spawn: the attach line does not assume a tmux client", () => {
   const attach = async (inside: boolean) => {
     db.close();
     installPanes("worker-1");
@@ -962,8 +947,7 @@ describe("mu agent spawn: the attach hint does not assume a tmux client", () => 
     }
     try {
       const r = await runCliJson(["agent", "spawn", "worker-1", "-w", "auth", "--json"], dbPath);
-      const steps = (r.data as { nextSteps: { intent: string; command: string }[] }).nextSteps;
-      return steps.find((x) => x.intent === "Attach the pane")?.command;
+      return (r.data as { attach?: string }).attach;
     } finally {
       if (saved === undefined) {
         const key = "TMUX";

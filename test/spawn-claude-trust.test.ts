@@ -88,12 +88,9 @@ describe("claude trust dialog", () => {
     );
     db = openDb({ path: dbPath });
     expect(r.exitCode ?? 0).toBe(0);
-    const out = r.data as {
-      send: { ok: boolean; error: string };
-      nextSteps: { command: string }[];
-    };
+    const out = r.data as { send: { ok: boolean; error: string } };
     expect(out.send).toMatchObject({ ok: false, error: "TrustDialogPending" });
-    expect(out.nextSteps[0]?.command).toContain("mu agent send w-1");
+    expect(r.doc.next).toBeNull(); // a skipped send owes no wait
     expect(r.stderr).toBe(""); // --json: the warning rides in the document
     expect((r.data as { warnings: string[] }).warnings.join("\n")).toContain("folder-trust dialog");
     expect(sent).toEqual([]);

@@ -29,8 +29,7 @@
 //
 // Extracted from src/agents.ts as part of refactor_split_large_src_files.
 
-import type { HasNextSteps, NextStep } from "../output.js";
-import { defaultSpawnLivenessMs, isExecFailureLine } from "./spawn.js";
+import { defaultSpawnLivenessMs } from "./spawn.js";
 
 /**
  * Pre-flight failure: the command mu would have spawned in the new
@@ -52,7 +51,7 @@ import { defaultSpawnLivenessMs, isExecFailureLine } from "./spawn.js";
  * liveness window). All three carry different remediation hints, so
  * they're separate types.
  */
-export class AgentSpawnCliNotFoundError extends Error implements HasNextSteps {
+export class AgentSpawnCliNotFoundError extends Error {
   override readonly name = "AgentSpawnCliNotFoundError";
   constructor(
     public readonly cli: string,
@@ -63,33 +62,16 @@ export class AgentSpawnCliNotFoundError extends Error implements HasNextSteps {
     public readonly binary: string,
     /** Name of the env var that mu consulted before falling back to
      *  the bare `cli` value (e.g. `MU_PI_META_COMMAND`). Always set
-     *  to the conventional name so the nextSteps hint can recommend
-     *  exporting it. */
+     *  to the conventional name so the message can name it. */
     public readonly envVarChecked: string,
   ) {
     super(
-      `--cli ${cli} resolved to binary "${binary}" which is not on PATH (and not an executable absolute/relative path). Refusing to spawn — would create a pane that dies immediately on "command not found".`,
+      `--cli ${cli} resolved to binary "${binary}" which is not on PATH (and not an executable absolute/relative path). Refusing to spawn — would create a pane that dies immediately on "command not found". For a custom alias, set ${envVarChecked} to its real path.`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Try the default CLI (the one mu's substrate ships against)",
-        command: "mu agent spawn <name> --cli pi",
-      },
-      {
-        intent: "If you meant a custom alias, set the env var to its real path",
-        command: `export ${this.envVarChecked}="<absolute-path-to-binary> [args...]"`,
-      },
-      {
-        intent: "List installed CLIs typically supported by mu",
-        command: "which pi pi-meta claude codex",
-      },
-    ];
   }
 }
 
-export class AgentExistsError extends Error implements HasNextSteps {
+export class AgentExistsError extends Error {
   override readonly name = "AgentExistsError";
   constructor(public readonly agentName: string) {
     // v5: agent names are UNIQUE per (workstream, name) — the same
@@ -99,30 +81,10 @@ export class AgentExistsError extends Error implements HasNextSteps {
     // agent when the actual fix is `-w <other-ws>`.
     super(`agent already exists in this workstream: ${agentName}`);
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        // v5: agents.workstream_id → workstreams.id; there is no
-        // `agents.workstream` column. Use the join so this hint
-        // actually runs against a v5 DB.
-        intent: "List which workstream(s) already have an agent by this name",
-        command: `mu db query "SELECT a.name, ws.name AS workstream FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id WHERE a.name = '${this.agentName}'"`,
-      },
-      {
-        intent: "Spawn it in a different workstream (per-workstream unique → no clash)",
-        command: `mu agent spawn ${this.agentName} -w <other-workstream>`,
-      },
-      {
-        intent: "Or preview closing the existing agent in this workstream, then re-spawn",
-        command: `mu agent close ${this.agentName}  &&  mu agent spawn ${this.agentName}`,
-      },
-      { intent: "Or pick a different name", command: "mu agent spawn <new-name>" },
-    ];
-  }
 }
 
 /** `spawn --next-free` found no free valid name near the asked one. */
-export class AgentNameExhaustedError extends Error implements HasNextSteps {
+export class AgentNameExhaustedError extends Error {
   override readonly name = "AgentNameExhaustedError";
   constructor(
     public readonly agentName: string,
@@ -130,18 +92,9 @@ export class AgentNameExhaustedError extends Error implements HasNextSteps {
   ) {
     super(`no free agent name after ${agentName}: ${reason}`);
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Pick a shorter or different name",
-        command: "mu agent spawn <new-name> --next-free",
-      },
-      { intent: "Or close agents you no longer need", command: "mu agent list" },
-    ];
-  }
 }
 
-export class AgentNotFoundError extends Error implements HasNextSteps {
+export class AgentNotFoundError extends Error {
   override readonly name = "AgentNotFoundError";
   constructor(
     public readonly agentName: string,
@@ -159,16 +112,6 @@ export class AgentNotFoundError extends Error implements HasNextSteps {
         : `no such agent: ${agentName} (in workstream ${workstream})`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      { intent: "List agents in current workstream", command: "mu agent list" },
-      { intent: "List workstreams to choose the right scope", command: "mu workstream list" },
-      {
-        intent: "Spawn it now",
-        command: `mu agent spawn ${this.agentName} -w <workstream>`,
-      },
-    ];
-  }
 }
 
 /**
@@ -179,7 +122,7 @@ export class AgentNotFoundError extends Error implements HasNextSteps {
  * "the agent doesn't exist anywhere" (which surfaces as
  * `AgentNotFoundError`).
  */
-export class AgentNotInWorkstreamError extends Error implements HasNextSteps {
+export class AgentNotInWorkstreamError extends Error {
   override readonly name = "AgentNotInWorkstreamError";
   constructor(
     public readonly agentName: string,
@@ -187,18 +130,6 @@ export class AgentNotInWorkstreamError extends Error implements HasNextSteps {
     public readonly actualWorkstream: string,
   ) {
     super(`agent ${agentName} is in workstream ${actualWorkstream}, not ${expectedWorkstream}`);
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Use the agent's actual workstream",
-        command: `mu agent show ${this.agentName} -w ${this.actualWorkstream}`,
-      },
-      {
-        intent: "List agents in the requested workstream",
-        command: `mu agent list -w ${this.expectedWorkstream}`,
-      },
-    ];
   }
 }
 
@@ -210,7 +141,7 @@ export class AgentNotInWorkstreamError extends Error implements HasNextSteps {
  * lock, `claude` rejecting an invalid API key, etc. The agent's last
  * scrollback (when capturable) is attached to help diagnose.
  */
-export class AgentDiedOnSpawnError extends Error implements HasNextSteps {
+export class AgentDiedOnSpawnError extends Error {
   override readonly name = "AgentDiedOnSpawnError";
   /** The pane's transport reaches another machine (a host profile, or a hand-written ssh hop): remote causes, not wrapper locks. */
   readonly remote: boolean;
@@ -235,51 +166,6 @@ export class AgentDiedOnSpawnError extends Error implements HasNextSteps {
     super(`agent ${agentName} died ${when} (pane ${paneId}). ${cause}${detail}`);
     this.remote = remote;
     this.host = host;
-  }
-  errorNextSteps(): NextStep[] {
-    if (this.remote) {
-      return [
-        this.host === undefined
-          ? {
-              intent: "Print a starter host profile (the forward, `$SHELL -ilc`, the env)",
-              command: "mu host init <host> --ssh",
-            }
-          : {
-              intent: "Check the host answers, pi and the extension resolve in a login shell",
-              command: `mu host check ${this.host}`,
-            },
-        {
-          intent: "Keep the pane open to read the remote error (one-off)",
-          command: "export MU_SPAWN_LIVENESS_MS=0",
-        },
-        { intent: "Run health check", command: "mu doctor" },
-      ];
-    }
-    return [
-      {
-        intent: "Inspect the dead pane's scrollback for the underlying error",
-        command: `mu agent read ${this.agentName} -n 100`,
-      },
-      {
-        // agent_spawn_liveness_check_trips_on: per-spawn override is
-        // the right scope for one-offs (e.g. wrapper CLIs blocking
-        // on a per-project solo lock). Listed first so operators
-        // reach for it before exporting an env var that leaks into
-        // every subsequent spawn in the shell.
-        intent: "Override per spawn (one-off; no env-var leak)",
-        command: `mu agent spawn ${this.agentName} --command "<cli> <bypass-flag>"   (e.g. pi-meta --no-solo)`,
-      },
-      {
-        intent:
-          "Make the override the default for this CLI (applies to every subsequent spawn in this shell)",
-        command: 'export MU_PI_COMMAND="pi-alt --some-flag"',
-      },
-      {
-        intent: "Disable the liveness check (CI / known long-lived sh subprocess)",
-        command: "export MU_SPAWN_LIVENESS_MS=0",
-      },
-      { intent: "Run health check", command: "mu doctor" },
-    ];
   }
 }
 
@@ -308,7 +194,7 @@ export class AgentDiedOnSpawnError extends Error implements HasNextSteps {
  * the CLI's first ~1.5s of output (not arbitrary later prompts the
  * agent might type into).
  */
-export class AgentSpawnStartupError extends Error implements HasNextSteps {
+export class AgentSpawnStartupError extends Error {
   override readonly name = "AgentSpawnStartupError";
   constructor(
     public readonly agentName: string,
@@ -327,45 +213,6 @@ export class AgentSpawnStartupError extends Error implements HasNextSteps {
       `agent ${agentName} reported a startup error ${when} (pane ${paneId}). The pane is alive but the spawned CLI parked at an error prompt instead of becoming a working agent.\n\nMatched line: ${matchedLine.trim()}\n\n--- pane scrollback ---\n${scrollback.trim()}\n--- end scrollback ---`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    const inspect: NextStep = {
-      intent: "Inspect the parked pane's scrollback for the full error",
-      command: `mu agent read ${this.agentName} -n 100`,
-    };
-    const disable: NextStep = {
-      intent:
-        "Disable the startup-error scan if you actually wanted that prompt (CI / scripted recovery)",
-      command: "export MU_SPAWN_LIVENESS_MS=0",
-    };
-    if (isExecFailureLine(this.matchedLine.trim())) {
-      // A shell exec failure, not a provider error: the API-key hints
-      // below would point the operator at the wrong problem.
-      return [
-        inspect,
-        {
-          intent: "Check the spawned command resolves in the pane's shell (PATH, typo)",
-          command: `mu agent spawn ${this.agentName} --command "<full path to the CLI>"`,
-        },
-        disable,
-      ];
-    }
-    return [
-      inspect,
-      {
-        // Most common today: the operator picked a model whose
-        // provider has no credentials in this env. Default Anthropic
-        // is the safe fallback for pi-meta.
-        intent: "Re-spawn with a CLI command whose provider credentials are present",
-        command: `mu agent spawn ${this.agentName} --command "pi-meta --no-solo"   # default Anthropic`,
-      },
-      {
-        intent: "Or set the missing API key env var for the provider you wanted, then re-spawn",
-        command:
-          "export ANTHROPIC_API_KEY=...   # or AWS_BEARER_TOKEN_BEDROCK, OPENAI_API_KEY, ...",
-      },
-      disable,
-    ];
-  }
 }
 
 /**
@@ -375,7 +222,7 @@ export class AgentSpawnStartupError extends Error implements HasNextSteps {
  * throw it — the agent is usable by hand — but prints it as a warning;
  * verbs that need the socket throw it.
  */
-export class AgentCtlUnreachableError extends Error implements HasNextSteps {
+export class AgentCtlUnreachableError extends Error {
   override readonly name = "AgentCtlUnreachableError";
   constructor(
     public readonly agentName: string,
@@ -389,33 +236,6 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
       `agent ${agentName} has no control socket (ctl: ${kind}) at ${socket}; mu cannot send to or wait on it exactly`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    // A pi at its trust prompt has not bound the socket yet, so it reads
-    // "missing"; a "refused" socket exists, so trust is not the cause.
-    const trust: NextStep[] =
-      this.kind === "missing"
-        ? [
-            {
-              intent:
-                "Just spawned? pi may sit at its project trust prompt: answer /trust in the pane, or respawn with --command 'pi --approve'",
-              command: `mu agent read ${this.agentName} -w ${this.workstream}`,
-            },
-          ]
-        : [];
-    return [
-      ...trust,
-      { intent: "Check whether the mu pi extension answers", command: "mu doctor" },
-      { intent: "Install the mu pi package, then re-spawn", command: "pi install npm:@mu-crew/mu" },
-      ...(this.host
-        ? [
-            {
-              intent: "Remote agent: check the host's shell template forwards the socket",
-              command: `mu host check ${this.host} --agent ${this.agentName} -w ${this.workstream}`,
-            },
-          ]
-        : []),
-    ];
-  }
 }
 
 /**
@@ -423,7 +243,7 @@ export class AgentCtlUnreachableError extends Error implements HasNextSteps {
  * written to a live agent's socket, then no reply arrived (timeout or
  * close). pi may have queued the prompt, so a blind resend can duplicate it.
  */
-export class AgentSendIndeterminateError extends Error implements HasNextSteps {
+export class AgentSendIndeterminateError extends Error {
   override readonly name = "AgentSendIndeterminateError";
   constructor(
     public readonly agentName: string,
@@ -434,26 +254,12 @@ export class AgentSendIndeterminateError extends Error implements HasNextSteps {
     public readonly msgId?: string,
     /** The pi process the send was written to (hello's), when the extension reports one. */
     public readonly incarnation?: string,
+    /** The registry row the send went to (`AgentRow.incarnation`): its receipt check is offered only while that row stands. */
+    public readonly agentId?: number,
   ) {
     super(
       `agent ${agentName}: ${op} was written to its control socket but no reply arrived (${reason}); delivery unknown${msgId === undefined ? "" : `, msgId ${msgId}`}. Never resend blindly`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    if (this.msgId !== undefined) {
-      return [
-        {
-          intent: "Ask whether it landed (a receipt check; never resend first)",
-          command: `mu agent check ${this.agentName} ${this.msgId} -w ${this.workstream}`,
-        },
-      ];
-    }
-    return [
-      {
-        intent: "Precaution before resending: pi may already have received it, so check first",
-        command: `mu agent read ${this.agentName} -w ${this.workstream} -n 20`,
-      },
-    ];
   }
 }
 
@@ -462,7 +268,7 @@ export class AgentSendIndeterminateError extends Error implements HasNextSteps {
  * the agent restarted, and the run the caller waits on died with the old
  * process. Waiting more cannot recover it.
  */
-export class AgentRestartedError extends Error implements HasNextSteps {
+export class AgentRestartedError extends Error {
   override readonly name = "AgentRestartedError";
   constructor(
     public readonly agentName: string,
@@ -474,14 +280,6 @@ export class AgentRestartedError extends Error implements HasNextSteps {
       `agent ${agentName} restarted (incarnation ${expected} → ${actual ?? "unknown"}); its earlier run is gone: re-send the brief`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Re-send the brief to the restarted agent (fresh session)",
-        command: `mu agent send ${this.agentName} --fresh '...' -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
 /**
@@ -490,9 +288,8 @@ export class AgentRestartedError extends Error implements HasNextSteps {
  * workstream. The row stays: no row is deleted while its pane may run.
  * Exit 4; the message names the retry.
  */
-export class AgentPaneStillAliveError extends Error implements HasNextSteps {
+export class AgentPaneStillAliveError extends Error {
   override readonly name = "AgentPaneStillAliveError";
-  readonly inlineNext = true;
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
@@ -502,14 +299,6 @@ export class AgentPaneStillAliveError extends Error implements HasNextSteps {
     super(
       `agent ${agentName}: pane ${paneId} ${state === true ? "is still alive after the kill" : "could not be checked"}; its row is kept. Close the pane in your multiplexer, then preview: mu agent close ${agentName} -w ${workstream}`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Once the pane is gone, preview the close (it prints the --if apply)",
-        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
-      },
-    ];
   }
 }
 
@@ -521,9 +310,8 @@ export class AgentPaneStillAliveError extends Error implements HasNextSteps {
  * both the replacement's row, socket, worktree and tasks are untouched.
  * Exit 4.
  */
-export class AgentReplacedError extends Error implements HasNextSteps {
+export class AgentReplacedError extends Error {
   override readonly name = "AgentReplacedError";
-  readonly inlineNext = true;
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
@@ -539,21 +327,6 @@ export class AgentReplacedError extends Error implements HasNextSteps {
     this.during = during;
   }
   readonly during: "closed" | "sent to" | "collected";
-  errorNextSteps(): NextStep[] {
-    return this.during === "closed"
-      ? [
-          {
-            intent: "Preview the agent that holds the name now",
-            command: `mu agent close ${this.agentName} -w ${this.workstream}`,
-          },
-        ]
-      : [
-          {
-            intent: "See the agent that holds the name now",
-            command: `mu agent list -w ${this.workstream}`,
-          },
-        ];
-  }
 }
 
 /**
@@ -561,9 +334,8 @@ export class AgentReplacedError extends Error implements HasNextSteps {
  * spawn staging the name) and did not release it in time. Nothing was
  * done: a destructive agent step never runs unlocked. Exit 4.
  */
-export class AgentLockBusyError extends Error implements HasNextSteps {
+export class AgentLockBusyError extends Error {
   override readonly name = "AgentLockBusyError";
-  readonly inlineNext = true;
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
@@ -571,14 +343,6 @@ export class AgentLockBusyError extends Error implements HasNextSteps {
     super(
       `agent ${agentName} is being changed by another mu process (its lock is held); nothing was done. Retry: mu agent close ${agentName} -w ${workstream}`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Retry once the other command finishes",
-        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
-      },
-    ];
   }
 }
 
@@ -588,7 +352,7 @@ export class AgentLockBusyError extends Error implements HasNextSteps {
  * mu's back), so there is nothing to link or forward. Raised
  * instead of AgentCtlUnreachableError, which is for a live pane.
  */
-export class AgentPaneDeadError extends Error implements HasNextSteps {
+export class AgentPaneDeadError extends Error {
   override readonly name = "AgentPaneDeadError";
   constructor(
     public readonly agentName: string,
@@ -601,29 +365,13 @@ export class AgentPaneDeadError extends Error implements HasNextSteps {
       `agent ${agentName} is dead: its pane ${paneId} no longer exists, so its control socket is gone${msgId === undefined ? "" : `; a send (msgId ${msgId}) was written first, so delivery is unknown`}`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Read the log for why it exited (a bad model or missing API key is common)",
-        command: `mu log -w ${this.workstream}`,
-      },
-      {
-        intent: "Preview dropping the dead registry row (it prints the --if apply), then respawn",
-        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
-      },
-      {
-        intent: "Respawn it",
-        command: `mu agent spawn ${this.agentName} -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
 /**
  * `mu agent abort` on an agent that does not run pi: there is no control
  * socket to carry the abort, and mu does not silently signal the pane.
  */
-export class AgentAbortNeedsCtlError extends Error implements HasNextSteps {
+export class AgentAbortNeedsCtlError extends Error {
   override readonly name = "AgentAbortNeedsCtlError";
   constructor(
     public readonly agentName: string,
@@ -634,18 +382,10 @@ export class AgentAbortNeedsCtlError extends Error implements HasNextSteps {
       `agent ${agentName} runs ${cli}, not pi: abort needs the mu pi extension; close the agent instead`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Preview closing the agent (it prints the --if apply that kills its pane)",
-        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
 /** The abort was delivered but pi did not settle within the timeout. */
-export class AgentAbortTimeoutError extends Error implements HasNextSteps {
+export class AgentAbortTimeoutError extends Error {
   override readonly name = "AgentAbortTimeoutError";
   constructor(
     public readonly agentName: string,
@@ -654,25 +394,13 @@ export class AgentAbortTimeoutError extends Error implements HasNextSteps {
   ) {
     super(`agent ${agentName} was still busy ${timeoutMs}ms after the abort`);
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Read the pane to see what it is stuck on",
-        command: `mu agent read ${this.agentName} -n 30 -w ${this.workstream}`,
-      },
-      {
-        intent: "Or preview closing the agent (it prints the --if apply that kills its pane)",
-        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
 /**
  * `mu agent send --fresh` on an agent without a control socket (non-pi
  * CLI): there is no one-operation new session.
  */
-export class AgentFreshNeedsCtlError extends Error implements HasNextSteps {
+export class AgentFreshNeedsCtlError extends Error {
   override readonly name = "AgentFreshNeedsCtlError";
   constructor(
     public readonly agentName: string,
@@ -682,14 +410,6 @@ export class AgentFreshNeedsCtlError extends Error implements HasNextSteps {
     super(
       `agent ${agentName} runs ${cli} without a control socket: --fresh needs the mu pi extension`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Reset the session through the pane, then send (verify it landed)",
-        command: `mu agent send ${this.agentName} '/new' -w ${this.workstream}`,
-      },
-    ];
   }
 }
 
@@ -701,7 +421,7 @@ export class AgentFreshNeedsCtlError extends Error implements HasNextSteps {
  * respawn always works. An extension that serves op `command` takes
  * `/reload` over ctl; an older one cannot be reloaded by mu: respawn it.
  */
-export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
+export class AgentExtensionOutdatedError extends Error {
   override readonly name = "AgentExtensionOutdatedError";
   constructor(
     public readonly agentName: string,
@@ -725,42 +445,13 @@ export class AgentExtensionOutdatedError extends Error implements HasNextSteps {
       `agent ${agentName}'s mu pi extension (${extVersion ?? "version unknown"}) predates ${recovery.feature === true ? "feature" : "op"} ${op}: its pi loaded an older mu build; reload or respawn it`,
     );
   }
-  /** The ladder (README, Ctl versioning): ctl /reload, else the mux reload, else respawn. */
-  errorNextSteps(): NextStep[] {
-    const w = `-w ${this.workstream}`;
-    const close = `mu agent close ${this.agentName} ${w}`;
-    const respawn: NextStep = {
-      intent: "Respawn the agent (loses its context)",
-      command: this.recovery.respawn === undefined ? close : `${close} && ${this.recovery.respawn}`,
-    };
-    // Only an extension that serves op command runs /reload over ctl.
-    if (this.ops?.includes("command")) {
-      return [
-        {
-          intent: "Reload pi's extensions (keeps the session and context)",
-          command: `mu agent send ${this.agentName} /reload ${w}`,
-        },
-        { ...respawn, intent: "Or respawn the agent (loses its context)" },
-      ];
-    }
-    if (this.recovery.muxReload !== undefined) {
-      return [
-        {
-          intent: "Reload pi's extensions through the multiplexer (keeps the session)",
-          command: this.recovery.muxReload,
-        },
-        { ...respawn, intent: "Or respawn the agent (loses its context)" },
-      ];
-    }
-    return [respawn];
-  }
 }
 
 /**
  * `send --fresh` or a session command (`/new`, `/reload`, `/compact`)
  * refused: pi is mid-turn, and running it would abandon the turn.
  */
-export class AgentBusyError extends Error implements HasNextSteps {
+export class AgentBusyError extends Error {
   override readonly name = "AgentBusyError";
   constructor(
     public readonly agentName: string,
@@ -770,19 +461,6 @@ export class AgentBusyError extends Error implements HasNextSteps {
   ) {
     super(`agent ${agentName} is busy: ${command ?? "--fresh"} would abandon its running turn`);
   }
-  errorNextSteps(): NextStep[] {
-    const retry =
-      this.command === undefined
-        ? `mu agent send ${this.agentName} --fresh --force '...' -w ${this.workstream}`
-        : `mu agent send ${this.agentName} '${this.command}' --force -w ${this.workstream}`;
-    return [
-      {
-        intent: "Stop the turn first, then retry",
-        command: `mu agent abort ${this.agentName} -w ${this.workstream}`,
-      },
-      { intent: "Or abandon the turn in one step", command: retry },
-    ];
-  }
 }
 
 /**
@@ -791,7 +469,7 @@ export class AgentBusyError extends Error implements HasNextSteps {
  * hand it to the model as text), and mu has no paste into a pi pane:
  * the operator types it in the pane.
  */
-export class AgentSlashCommandUnsupportedError extends Error implements HasNextSteps {
+export class AgentSlashCommandUnsupportedError extends Error {
   override readonly name = "AgentSlashCommandUnsupportedError";
   constructor(
     public readonly agentName: string,
@@ -803,14 +481,6 @@ export class AgentSlashCommandUnsupportedError extends Error implements HasNextS
       `agent ${agentName} runs pi: over the control socket mu runs only ${supported.join(", ")}; ${JSON.stringify(text.split("\n")[0])} is not one of them; type it in the pane yourself`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Look at the pane, then type the command in it yourself",
-        command: `mu agent read ${this.agentName} -n 20 -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
 /**
@@ -818,7 +488,7 @@ export class AgentSlashCommandUnsupportedError extends Error implements HasNextS
  * pi.sendUserMessage("") is meaningless; a bare Enter is a pane
  * keystroke, which mu does not send.
  */
-export class AgentEmptySendError extends Error implements HasNextSteps {
+export class AgentEmptySendError extends Error {
   override readonly name = "AgentEmptySendError";
   constructor(
     public readonly agentName: string,
@@ -828,14 +498,6 @@ export class AgentEmptySendError extends Error implements HasNextSteps {
       `agent ${agentName} runs pi: an empty message cannot go over the control socket; press Enter in the pane yourself`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Look at the pane, then press Enter in it yourself",
-        command: `mu agent read ${this.agentName} -n 20 -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
 /**
@@ -843,7 +505,7 @@ export class AgentEmptySendError extends Error implements HasNextSteps {
  * (tmux): its bracketed paste cannot be confirmed, so mu refuses. Maps to
  * exit code 4 (conflict).
  */
-export class AgentSendUnsupportedError extends Error implements HasNextSteps {
+export class AgentSendUnsupportedError extends Error {
   override readonly name = "AgentSendUnsupportedError";
   constructor(
     public readonly agentName: string,
@@ -853,15 +515,6 @@ export class AgentSendUnsupportedError extends Error implements HasNextSteps {
     super(
       `agent ${agentName} runs ${cli}, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr) or use pi`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent:
-          "Preview closing it (the --if apply follows), then respawn on herdr (MU_MUX=herdr) or with pi",
-        command: `mu agent close ${this.agentName} -w ${this.workstream}`,
-      },
-    ];
   }
 }
 
@@ -882,7 +535,7 @@ export class AgentSendRefusedError extends Error {
  * (task + attempt key). Nothing was done; retry once it finishes and the
  * replay returns its outcome. Exit 4.
  */
-export class SpawnAttemptBusyError extends Error implements HasNextSteps {
+export class SpawnAttemptBusyError extends Error {
   override readonly name = "SpawnAttemptBusyError";
   constructor(
     public readonly task: string,
@@ -892,14 +545,6 @@ export class SpawnAttemptBusyError extends Error implements HasNextSteps {
       `spawn attempt ${attemptKey} of task ${task} is running in another mu process; nothing was done. Retry when it finishes (the replay returns its outcome)`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Look at the task while the other attempt runs",
-        command: `mu task show ${this.task}`,
-      },
-    ];
-  }
 }
 
 /**
@@ -908,7 +553,7 @@ export class SpawnAttemptBusyError extends Error implements HasNextSteps {
  * reserved, or its saved identity is gone. It is never reset; the next
  * attempt is a new key and a new charge. Exit 4.
  */
-export class SpawnAttemptFailedError extends Error implements HasNextSteps {
+export class SpawnAttemptFailedError extends Error {
   override readonly name = "SpawnAttemptFailedError";
   constructor(
     public readonly task: string,
@@ -916,9 +561,6 @@ export class SpawnAttemptFailedError extends Error implements HasNextSteps {
     reason: string,
   ) {
     super(`attempt ${attemptKey} of task ${task} cannot run: ${reason}; nothing was sent`);
-  }
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "See the task's state", command: `mu task show ${this.task}` }];
   }
 }
 
@@ -928,7 +570,7 @@ export class SpawnAttemptFailedError extends Error implements HasNextSteps {
  * designated, the task claimed or closed). Nothing was spawned or sent past
  * this point; a reservation made earlier stays resumable. Exit 4.
  */
-export class SpawnAttemptGuardError extends Error implements HasNextSteps {
+export class SpawnAttemptGuardError extends Error {
   override readonly name = "SpawnAttemptGuardError";
   constructor(
     public readonly task: string,
@@ -937,9 +579,6 @@ export class SpawnAttemptGuardError extends Error implements HasNextSteps {
   ) {
     super(`attempt ${attemptKey} of task ${task} was stopped: ${reason}`);
   }
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "See the task's state", command: `mu task show ${this.task}` }];
-  }
 }
 
 /**
@@ -947,7 +586,7 @@ export class SpawnAttemptGuardError extends Error implements HasNextSteps {
  * (closed, or owned by someone else since the claim). Nothing was sent; the
  * attempt's own pane is rolled back. Exit 4.
  */
-export class SpawnTaskStateError extends Error implements HasNextSteps {
+export class SpawnTaskStateError extends Error {
   override readonly name = "SpawnTaskStateError";
   constructor(
     public readonly task: string,
@@ -955,16 +594,13 @@ export class SpawnTaskStateError extends Error implements HasNextSteps {
   ) {
     super(`task ${task} ${reason}; nothing was sent`);
   }
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "See the task's state", command: `mu task show ${this.task}` }];
-  }
 }
 
 /**
  * `agent spawn --task` replayed an attempt key with a different request
  * (name, text or --next-free): a second prompt must be a new attempt. Exit 4.
  */
-export class SpawnReceiptConflictError extends Error implements HasNextSteps {
+export class SpawnReceiptConflictError extends Error {
   override readonly name = "SpawnReceiptConflictError";
   constructor(
     public readonly task: string,
@@ -975,14 +611,6 @@ export class SpawnReceiptConflictError extends Error implements HasNextSteps {
       `attempt ${attemptKey} of task ${task} already ran with a different request (agent ${savedName}); a second prompt is a new attempt: pass --attempt <new key>`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Start a distinct attempt (a reopened task, or text you have reviewed)",
-        command: `mu agent spawn <name> --task ${this.task} --attempt <new key> --send <text>`,
-      },
-    ];
-  }
 }
 
 /**
@@ -990,14 +618,11 @@ export class SpawnReceiptConflictError extends Error implements HasNextSteps {
  * is parked at its folder-trust dialog). Nothing was sent; the spawn was
  * rolled back. Exit 1.
  */
-export class SpawnTrustDialogError extends Error implements HasNextSteps {
+export class SpawnTrustDialogError extends Error {
   override readonly name = "SpawnTrustDialogError";
   constructor(public readonly agentName: string) {
     super(
       `agent ${agentName} is showing Claude's folder-trust dialog (default "No, exit"); the task prompt was not sent and the spawn was rolled back`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "Trust the folder once by hand, then spawn again", command: "claude" }];
   }
 }

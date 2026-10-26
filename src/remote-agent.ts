@@ -41,11 +41,6 @@ export class RemotePrepareError extends Error {
   ) {
     super(`host ${host}: ${what}${detail === "" ? "" : `: ${detail}`}`);
   }
-  errorNextSteps(): { intent: string; command: string }[] {
-    return [
-      { intent: "Check the host answers and has the repo", command: `mu host check ${this.host}` },
-    ];
-  }
 }
 
 /** Budget for the one remote step that may clone-sized work (a worktree add). */
@@ -175,21 +170,6 @@ export class RemoteCloseRefusedError extends Error {
     public readonly recoveryId?: number,
   ) {
     super(`agent ${agentName}: remote worktree kept: ${detail}`);
-  }
-  errorNextSteps(): { intent: string; command: string }[] {
-    const ws = this.workstream;
-    const n = this.agentName;
-    const rec = this.recoveryId === undefined ? "" : ` --recovery ${this.recoveryId}`;
-    if (this.reason === "uncollected" || this.reason === "moved") {
-      return [
-        { intent: "Bring its commits home", command: `mu agent collect ${n} -w ${ws}${rec}` },
-        {
-          intent: "Or keep them on a remote branch and remove the worktree",
-          command: `mu agent close ${n} -w ${ws}${rec} --keep-branch`,
-        },
-      ];
-    }
-    return [{ intent: "Preview the close again", command: `mu agent close ${n} -w ${ws}${rec}` }];
   }
 }
 

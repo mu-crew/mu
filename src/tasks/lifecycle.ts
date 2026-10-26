@@ -232,9 +232,8 @@ export interface CloseSkippedResult {
 export interface CloseTaskOptions extends EvidenceOption {
   workstream: string;
   /** When true, no-op the close unless every blocker is CLOSED.
-   *   Returns a `CloseSkippedResult` carrying the still-blocking ids;
-   *   the CLI renders the skip with a Next: hint pointing at
-   *   `mu task wait`. When false / omitted, behaves as bare `closeTask`
+   *   Returns a `CloseSkippedResult` carrying the still-blocking ids.
+   *   When false / omitted, behaves as bare `closeTask`
    *   (closes regardless of blocker status). */
   ifReady?: boolean;
   /** Optional actor identity attributed to the synthetic `CLOSE: …`

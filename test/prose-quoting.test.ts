@@ -110,10 +110,8 @@ describe("too-many-arguments quoting hint", () => {
   it("task note and agent send carry it too", async () => {
     const note = await runCli(["task", "note", "a", "it", "s", "broken", "-w", "ws"], dbPath);
     expect(note.stderr).toMatch(HINT);
-    expect(note.stderr).toContain("mu task note a - <<'EOF'");
     const send = await runCli(["agent", "send", "w1", "it", "s", "-w", "ws"], dbPath);
     expect(send.stderr).toMatch(HINT);
-    expect(send.stderr).toContain("mu agent send w1 - <<'EOF'");
   });
 
   it("other verbs' parse errors do not", async () => {

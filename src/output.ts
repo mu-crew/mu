@@ -1,14 +1,7 @@
-// mu — self-documenting output helpers.
+// mu — output helpers: colour, tables, JSON-mode detection, usage lines.
 //
-// Every successful verb output should answer "what changed AND what's
-// the natural next step?". Every error should answer "why AND what are
-// the actionable resolutions?". The same data shape feeds both human
-// (dim text) and JSON (`nextSteps` array) consumers.
-//
-// Why a separate module: this is shared by cli.ts (success-path
-// rendering), the typed errors in src/agents.ts / src/tasks.ts /
-// src/workstream.ts (error nextSteps), and tests. Keeping the type +
-// helpers in one place avoids circular imports.
+// A result's follow-up is its `next` plan (src/next-hints.ts), finalised
+// once in src/cli/handle.ts; nothing here builds a hint.
 
 import Table from "cli-table3";
 import tableUtils from "cli-table3/src/utils.js";
@@ -76,59 +69,6 @@ export function colorEnabled(): boolean {
 // picocolors is still used as the renderer (createColors honors the
 // flag we pass), but the *decision* of whether to render is ours.
 export const pc = picocolors.createColors(colorEnabled());
-
-/**
- * One actionable next step. The `intent` is human-prose ("Drop notes
- * as you work"); the `command` is a literal shell command the user (or
- * an LLM) can copy-paste or `eval` directly.
- *
- * Used both for success-path hints (post-verb) and for typed-error
- * resolutions (in the error message + JSON output).
- */
-export interface NextStep {
-  /** Short human-prose label, e.g. "Drop notes as you work". */
-  intent: string;
-  /** Literal shell command, e.g. `mu task note foo "..."`. */
-  command: string;
-}
-
-/**
- * Print a block of next-step hints to stdout, dimmed so humans can
- * skim past them but agents reading the captured output still get
- * them. No-op when the array is empty.
- *
- * Format:
- *
- *   Next:
- *     <intent padded>: <command>
- *     <intent padded>: <command>
- *
- * The padding aligns the colons so visual scanning is easy.
- */
-export function printNextSteps(steps: readonly NextStep[]): void {
-  printNextStepsTo(steps, "stdout");
-}
-
-/** Same as `printNextSteps` but routes to either stdout or stderr.
- *  Errors emit nextSteps to stderr (so success vs failure paths
- *  capture cleanly when scripts redirect them separately); success
- *  paths emit to stdout. Single source of truth for the formatting
- *  (review_code_print_next_steps_duplicated). */
-export function printNextStepsTo(steps: readonly NextStep[], sink: "stdout" | "stderr"): void {
-  const out = sink === "stderr" ? console.error : console.log;
-  for (const line of formatNextSteps(steps)) out(line);
-}
-
-/** The lines `printNextSteps` prints (none for no steps), so a verb that caps its
- *  whole output can count them. */
-export function formatNextSteps(steps: readonly NextStep[]): string[] {
-  if (steps.length === 0) return [];
-  const labelWidth = Math.max(...steps.map((s) => s.intent.length));
-  return [
-    pc.dim("Next:"),
-    ...steps.map((step) => pc.dim(`  ${step.intent.padEnd(labelWidth)} : ${step.command}`)),
-  ];
-}
 
 // Printable ASCII plus the width-1 punctuation mu prints (dashes,
 // quotes, "…", "∞"), after stripping picocolors' SGR codes. Such a line
@@ -246,20 +186,6 @@ export function muTable(opts: {
 }
 
 /**
- * Marker interface for typed errors that carry actionable resolutions.
- * The handler checks this with a duck-typed `typeof err.errorNextSteps
- * === "function"` rather than instanceof so cross-realm errors (e.g.
- * thrown from a different module instance after a hot-reload) still
- * surface their nextSteps.
- */
-export interface HasNextSteps {
-  errorNextSteps(): NextStep[];
-  /** True when the message already names the command: the human path prints
-   *  the message alone (one line); `--json` keeps `nextSteps`. */
-  readonly inlineNext?: boolean;
-}
-
-/**
  * Detect whether the current invocation requested `--json`. Used by the
  * error handler to decide between human-prose stderr and structured
  * a JSON document on stdout. Reads `process.argv` directly because commander has
@@ -327,18 +253,6 @@ export function isWaitVerbArgv(argv: readonly string[]): boolean {
     // `send --wait` / `claim --and-wait` enter the same wait: one JSON document too.
     (first === "agent" && second === "send" && argv.includes("--wait")) ||
     (first === "task" && second === "claim" && argv.includes("--and-wait"))
-  );
-}
-
-/**
- * Has the current err object produced its own actionable nextSteps?
- * Encapsulates the duck-type check so the handler stays readable.
- */
-export function hasNextSteps(err: unknown): err is HasNextSteps {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    typeof (err as { errorNextSteps?: unknown }).errorNextSteps === "function"
   );
 }
 

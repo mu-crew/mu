@@ -105,12 +105,14 @@ describe("audit_cli_validation_uniformity", () => {
       expect(env.usage?.length).toBeLessThanOrEqual(3);
     });
 
-    it("unknown subcommand: exit 2 + parent help + JSON usage", async () => {
+    it("unknown subcommand: exit 2, one line naming the parent's --help", async () => {
       const human = await runCli(["task", "bogus"], dbPath);
       expect(human.exitCode).toBe(2);
       expect(human.stderr).toMatch(/error:.*unknown command.*bogus/);
-      // The parent's help is shown (the subcommand "bogus" doesn't exist).
-      expect(human.stderr).toMatch(/Usage: mu task/);
+      // One line naming the parent's --help, not the help itself (the subcommand "bogus" doesn't exist).
+      expect(human.stderr).toContain("see mu task --help");
+      expect(human.stderr).not.toMatch(/Usage: mu task/);
+      expect(human.stderr.trim().split("\n")).toHaveLength(1);
     });
 
     it("missing positional argument: exit 2 + help block", async () => {

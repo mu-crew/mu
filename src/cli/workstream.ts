@@ -12,7 +12,7 @@ import { basename } from "node:path";
 import { emitJson, parseNonNegativeInt, resolveWorkstream, UsageError } from "../cli.js";
 import { type Db, tornDownAtOf } from "../db.js";
 import { type AttachTarget, activeMux, attachShellLine, type MuxBackend } from "../mux.js";
-import { formatNextSteps, muTable, type NextStep, pc, printNextSteps } from "../output.js";
+import { muTable, pc } from "../output.js";
 import {
   assertWorkstreamInitable,
   ensureWorkstream,
@@ -27,6 +27,7 @@ import {
   WorkstreamRevisionMismatchError,
   workstreamRevision,
 } from "../workstream.js";
+import { setNextOutcome } from "./handle.js";
 import { clipPlain, clippedRecord, type PageOut, pageOut, shrinkItem } from "./page-records.js";
 
 export async function cmdInit(
@@ -41,7 +42,11 @@ export async function cmdInit(
   // nothing and creates no session.
   const reuse = previewReinit(db, name);
   if (reuse !== null && opts.if === undefined) {
-    const cmd = `mu workstream init ${name} --if ${reuse.revision}`;
+    setNextOutcome({
+      kind: "preview",
+      apply: ["mu", "workstream", "init", name],
+      revision: reuse.revision,
+    });
     if (opts.json) {
       emitJson({
         workstreamName: name,
@@ -52,16 +57,12 @@ export async function cmdInit(
         notes: reuse.notes,
         edges: reuse.edges,
         revision: reuse.revision,
-        nextSteps: [{ intent: "Permanently delete the old rows and reuse the name", command: cmd }],
       });
       return;
     }
     console.log(
       `will permanently delete torn-down ${name}: ${reuse.tasks} tasks, ${reuse.notes} notes; rev=${reuse.revision}`,
     );
-    printNextSteps([
-      { intent: "Permanently delete the old rows and reuse the name", command: cmd },
-    ]);
     return;
   }
   if (reuse !== null && opts.if !== undefined) await reinitWorkstream(db, name, opts.if);
@@ -82,15 +83,7 @@ export async function cmdInit(
   const nameHint = name.includes("-")
     ? undefined
     : `name workstreams <project>-<purpose> (e.g. ${projectGuess() ?? "repo"}-${name}); one per effort`;
-  const nextSteps: NextStep[] = [
-    ...(await attachNextStep(mux, { session: sessionName })),
-    {
-      intent: "Plan tasks",
-      command: `mu task add -w ${name} --title "..." --impact 50 --effort-days 1`,
-    },
-    { intent: "Spawn an agent", command: `mu agent spawn <name> -w ${name}` },
-    { intent: "See state", command: `mu state -w ${name}` },
-  ];
+  const attach = await attachLine(mux, { session: sessionName });
   if (opts.json) {
     emitJson({
       workstreamName: name,
@@ -100,7 +93,7 @@ export async function cmdInit(
       dbRowAlreadyExisted: !dbCreated,
       muWindowRepaired,
       ...(nameHint && created ? { hint: nameHint } : {}),
-      nextSteps,
+      ...(attach !== undefined ? { attach } : {}),
     });
     return;
   }
@@ -111,23 +104,20 @@ export async function cmdInit(
         `workstream "${name}" already exists (mux session ${sessionName}, DB row registered)${repaired}`,
       ),
     );
-    printNextSteps(nextSteps);
     return;
   }
   console.log(`Created workstream ${pc.bold(name)} (mux session ${pc.bold(sessionName)})`);
   if (nameHint && created) console.log(pc.dim(`hint: ${nameHint}`));
-  printNextSteps(nextSteps);
+  if (attach !== undefined) console.log(pc.dim(`attach: ${attach}`));
 }
 
-/** The "Attach" next step, or none when the backend cannot resolve the
- *  target (herdr: no such workspace): the line is a hint, never a failure. */
-async function attachNextStep(mux: MuxBackend, target: AttachTarget): Promise<NextStep[]> {
+/** The attach line, or none when the backend cannot resolve the target
+ *  (herdr: no such workspace): it is information, never a failure. */
+async function attachLine(mux: MuxBackend, target: AttachTarget): Promise<string | undefined> {
   try {
-    return [
-      { intent: "Attach the session", command: attachShellLine(await mux.attachCommands(target)) },
-    ];
+    return attachShellLine(await mux.attachCommands(target));
   } catch {
-    return [];
+    return undefined;
   }
 }
 
@@ -205,12 +195,6 @@ export async function cmdWorkstreamList(
         item: (r, all) =>
           all ? { item: r, cut: 0 } : shrinkItem((scale) => clipFields(r, TORN_DOWN_LIMITS, scale)),
         resume: () => retrieve,
-        // The hint counts against the page: it is part of the final bytes.
-        trailer: json
-          ? []
-          : formatNextSteps([
-              { intent: "Inspect what one teardown changed", command: "mu log --group <group>" },
-            ]),
       }),
     );
     return;
@@ -291,12 +275,11 @@ export async function cmdTeardown(
 
   const revision = workstreamRevision(db, workstream);
   if (opts.if === undefined) {
-    const dryRunNextSteps: NextStep[] = [
-      {
-        intent: "Apply this preview",
-        command: `mu workstream teardown ${workstream} --if ${revision}`,
-      },
-    ];
+    setNextOutcome({
+      kind: "preview",
+      apply: ["mu", "workstream", "teardown", workstream],
+      revision,
+    });
     if (opts.json) {
       emitJson({
         workstreamName: workstream,
@@ -304,7 +287,6 @@ export async function cmdTeardown(
         dryRun: true,
         revision,
         summary,
-        nextSteps: dryRunNextSteps,
       });
       return;
     }
@@ -322,7 +304,6 @@ export async function cmdTeardown(
     console.log(`  rev=${revision}`);
     console.log("");
     console.log(pc.dim("(preview; nothing changed. Apply with --if <rev>)"));
-    printNextSteps(dryRunNextSteps);
     return;
   }
 
@@ -355,23 +336,22 @@ export async function cmdTeardown(
         `KEPT ${result.orphanedAgents.length} agent row(s): the recorded pane is still alive (or could not be checked): ${result.orphanedAgents.map((o) => `${o.name} (${o.paneId})`).join(", ")}`,
       ),
     );
-    printNextSteps(
-      result.orphanedAgents.map((o) => ({
-        intent: `Preview closing ${o.name} once its pane is gone (the row is kept while the pane lives)`,
-        command: `mu agent close ${o.name} -w ${workstream}`,
-      })),
-    );
+    for (const o of result.orphanedAgents) {
+      console.log(
+        pc.dim(
+          `  once its pane is gone, preview its close: mu agent close ${o.name} -w ${workstream}`,
+        ),
+      );
+    }
   }
   if (result.keptWorktrees.length > 0) {
     console.log("");
     console.log(pc.yellow("Worktrees are never removed by teardown; they are still registered:"));
-    for (const w of result.keptWorktrees) console.log(`  - ${w.agent}: ${w.path}`);
-    printNextSteps(
-      result.keptWorktrees.map((w) => ({
-        intent: `Preview closing ${w.agent}'s worktree by the close rule (dirty refuses; --discard is lossy)`,
-        command: `mu agent close ${w.agent} -w ${workstream}`,
-      })),
-    );
+    for (const w of result.keptWorktrees) {
+      console.log(
+        `  - ${w.agent}: ${w.path} (preview its close: mu agent close ${w.agent} -w ${workstream})`,
+      );
+    }
   }
 }
 
@@ -438,6 +418,13 @@ async function cmdTeardownEmpty(
   const revision = sweepRevision(snapshot);
 
   if (opts.if === undefined) {
+    if (empties.length > 0) {
+      setNextOutcome({
+        kind: "preview",
+        apply: ["mu", "workstream", "teardown", "--empty"],
+        revision,
+      });
+    }
     if (opts.json) {
       emitJson({ items: empties, count: empties.length, revision });
       return;
@@ -464,12 +451,6 @@ async function cmdTeardownEmpty(
         `${empties.length} empty workstream${empties.length === 1 ? "" : "s"} would be torn down (preview; rev=${revision}).`,
       ),
     );
-    printNextSteps([
-      {
-        intent: "Apply this preview to every empty workstream",
-        command: `mu workstream teardown --empty --if ${revision}`,
-      },
-    ]);
     return;
   }
 
@@ -543,14 +524,6 @@ async function cmdTeardownEmpty(
   }
   console.log("");
   console.log(pc.dim(`Sweep complete: tornDown=${results.length}, failed=${failed.length}.`));
-  if (results.length > 0) {
-    printNextSteps([
-      {
-        intent: "One op group per torn-down workstream",
-        command: "mu workstream list --torn-down",
-      },
-    ]);
-  }
 }
 
 // ─── commander wiring ────────────────────────────────────────────────

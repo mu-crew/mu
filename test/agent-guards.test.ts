@@ -594,7 +594,7 @@ describe("CLI: bare close previews, --if applies", () => {
     use(tmux(() => ["%1"]));
   });
 
-  it("bare close is ONE ok envelope with the revision, an --if apply hint, and no kill", async () => {
+  it("bare close is ONE ok envelope with the revision, the --if apply as next, and no kill", async () => {
     const r = await runCliJson(["agent", "close", "w1", "-w", "auth", "--json"], dbPath);
     expect(r.doc.ok).toBe(true);
     expect(r.data).toMatchObject({
@@ -604,9 +604,10 @@ describe("CLI: bare close previews, --if applies", () => {
       revision: agentRevision(db, "auth", "w1"),
       id: getAgent(db, "w1", "auth")?.incarnation,
     });
-    expect(r.data.nextSteps[0].command).toBe(
-      `mu agent close w1 -w auth --if ${agentRevision(db, "auth", "w1")}`,
-    );
+    expect(r.doc.next).toEqual({
+      mode: "alt",
+      commands: [`mu agent close w1 -w auth --if ${agentRevision(db, "auth", "w1")}`],
+    });
     expect(kills()).toEqual([]);
   });
 
@@ -637,7 +638,7 @@ describe("CLI: bare close previews, --if applies", () => {
   it("an unknown name previews as kind none with no apply hint", async () => {
     const r = await runCliJson(["agent", "close", "ghost", "-w", "auth", "--json"], dbPath);
     expect(r.data).toMatchObject({ kind: "none", revision: 0 });
-    expect(r.data.nextSteps).toEqual([]);
+    expect(r.doc.next).toBeNull();
   });
 });
 

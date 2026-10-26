@@ -51,12 +51,12 @@ import {
 } from "../cli.js";
 import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
-import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
+import { pc } from "../output.js";
 import { type WaitRef, type WaitSnapshot, waitForEvents } from "../wait.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
 import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
-import { dispatchHint, gateWaitHint, waitHint } from "./dispatch-hints.js";
+import { setNextOutcome } from "./handle.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 import { installWaitSignals, runWait, type WaitSignals } from "./wait.js";
 import { armSend, taskRef } from "./wait-arm.js";
@@ -170,10 +170,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
       agent.host,
     );
     warnings.push(warn.message);
-    if (!opts.json) {
-      console.error(pc.yellow(`warning: ${warn.message}`));
-      printNextStepsTo(warn.errorNextSteps(), "stderr");
-    }
+    if (!opts.json) console.error(pc.yellow(`warning: ${warn.message}`));
   }
   // Claude parks at a trust dialog whose default is "No, exit": the Enter
   // that ends a send would quit it. Keep the pane, skip the send, say why.
@@ -183,15 +180,6 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     warnings.push(trustWarning);
     if (!opts.json) console.error(pc.yellow(`warning: ${trustWarning}`));
   }
-  const trustNext: NextStep[] =
-    agent.trustDialog === true
-      ? [
-          {
-            intent: "Answer the trust dialog by hand (attach the pane), then send",
-            command: `mu agent send ${name} <text> -w ${workstream}`,
-          },
-        ]
-      : [];
   const sent: SpawnSend | undefined = trustSkip
     ? {
         ok: false,
@@ -232,41 +220,30 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   // priority and is shown via the existing `(cmd: ...)` suffix below.
   const envSourced =
     opts.command === undefined ? resolveCliCommandWithSource(agent.cli) : undefined;
-  const nextSteps: NextStep[] = [
-    ...trustNext,
-    // After --send the next step is the wait (or the pane read below).
-    ...(agent.gateToken != null
-      ? [gateWaitHint(agent)]
-      : !sent?.ok
-        ? [dispatchHint(agent)]
-        : sent.runs !== undefined
-          ? [
-              waitHint(
-                { name, workstreamName: workstream },
-                sent.runs,
-                sent.incarnation,
-                sent.msgId,
-              ),
-            ]
-          : []),
-    { intent: "Read pane", command: `mu agent read ${name} -w ${workstream}` },
-    { intent: "Watch live events", command: `mu log -w ${workstream} --tail` },
-    {
-      intent: "Preview closing it (prints the --if apply that kills the pane)",
-      command: `mu agent close ${name} -w ${workstream}`,
-    },
-  ];
-  // Best-effort: the pane exists, so a mux is up; the hint is decoration.
+  // What the spawn owes next: a gate's wait, or the exact wait of a delivered --send.
+  if (agent.gateToken != null) {
+    setNextOutcome({ kind: "gate-spawned", agent: { name, workstream } });
+  } else if (sent?.ok && sent.runs !== undefined) {
+    setNextOutcome({
+      kind: "sent",
+      agent: { name, workstream },
+      runs: sent.runs,
+      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
+    });
+  }
+  // The attach line is data (the delegate tool prints it), not a hint. Best effort.
+  let attach: string | undefined;
   try {
     const mux = await activeMux();
-    const steps = await mux.attachCommands({
-      session: `mu-${workstream}`,
-      window: agent.tab ?? name,
-      inside: Boolean(process.env.TMUX),
-    });
-    nextSteps.push({ intent: "Attach the pane", command: attachShellLine(steps) });
+    attach = attachShellLine(
+      await mux.attachCommands({
+        session: `mu-${workstream}`,
+        window: agent.tab ?? name,
+        inside: Boolean(process.env.TMUX),
+      }),
+    );
   } catch {
-    // no hint
+    // no attach line
   }
   if (opts.json) {
     const payload = {
@@ -285,7 +262,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
       ctlSocket: agent.ctlSocket,
       ...(sent !== undefined ? { send: sent } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
-      nextSteps,
+      ...(attach !== undefined ? { attach } : {}),
     };
     // A failed --send is ONE failure document: the spawn evidence (the pane is
     // up) rides in `data` with the nested `send.ok:false`, and the delivery
@@ -334,7 +311,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
         : pc.red(`error: --send failed: ${sent.message}`),
     );
   }
-  printNextSteps(nextSteps);
+  if (attach !== undefined) console.log(pc.dim(`  attach: ${attach}`));
   if (sent !== undefined && !sent.ok && sent.exitCode !== 0) throw new CliExitError(sent.exitCode);
 }
 
@@ -425,23 +402,24 @@ async function cmdSpawnTask(
       if (!opts.json) console.error(pc.yellow(`warning: ${armed.warning}`));
     }
   }
-  const nextSteps: NextStep[] = [];
   if (out.state === "sent" && rec.runs !== null && out.stale === undefined) {
-    nextSteps.push(
-      waitHint(
-        { name: agentName, workstreamName: workstream },
-        rec.runs,
-        rec.incarnation ?? undefined,
-        rec.msgId,
-      ),
-    );
-  } else if (out.state === "unknown" && rec.transport === "ctl" && out.stale === undefined) {
-    nextSteps.push({
-      intent: "Ask whether it landed (a receipt check; never resend first)",
-      command: `mu agent check ${agentName} ${rec.msgId} -w ${workstream}`,
+    setNextOutcome({
+      kind: "sent",
+      agent: { name: agentName, workstream },
+      runs: rec.runs,
+      ...(rec.incarnation !== null ? { incarnation: rec.incarnation } : {}),
     });
+  } else if (out.state === "unknown" && rec.transport === "ctl" && out.stale === undefined) {
+    const row = getAgent(db, agentName, workstream);
+    if (row !== undefined) {
+      setNextOutcome({
+        kind: "send-unknown",
+        agent: { name: agentName, workstream },
+        msgId: rec.msgId,
+        agentId: row.incarnation,
+      });
+    }
   }
-  nextSteps.push({ intent: "Read pane", command: `mu agent read ${agentName} -w ${workstream}` });
   const taskInfo = {
     id: task,
     attempt: rec.attemptKey,
@@ -473,7 +451,6 @@ async function cmdSpawnTask(
       delivery: sent.delivery,
       msgId: rec.msgId,
       ...(warnings.length > 0 ? { warnings } : {}),
-      nextSteps,
     };
     if (!sent.ok) {
       throw new CliExitError(1, {
@@ -506,7 +483,6 @@ async function cmdSpawnTask(
   }
   if (out.brief === "pending")
     console.log(pc.dim("  brief not recorded yet; a replay records it once delivery is confirmed"));
-  printNextSteps(nextSteps);
   if (out.state === "unknown") throw new CliExitError(1);
 }
 
@@ -682,17 +658,14 @@ export async function cmdSend(
       warnings,
     });
   }
-  // ONE next hint. A ctl reply with runs gives the exact wait baseline: the
-  // wait returns the run's final text, so no pane read is needed.
-  const nextSteps: NextStep[] = [
-    sent.transport === "ctl" && sent.runs !== undefined
-      ? waitHint({ name, workstreamName: ws }, sent.runs, sent.incarnation, sent.msgId)
-      : { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
-  ];
-  if (undelivered !== undefined) {
-    nextSteps.unshift({
-      intent: "VERIFY the prompt landed before waiting on it",
-      command: `mu agent read ${name} -n 30 -w ${ws}`,
+  // ONE next: a delivered ctl reply with runs gives the exact wait baseline (the wait
+  // returns the run's final text). An undelivered or mux send owes no wait.
+  if (sent.transport === "ctl" && sent.runs !== undefined && undelivered === undefined) {
+    setNextOutcome({
+      kind: "sent",
+      agent: { name, workstream: ws },
+      runs: sent.runs,
+      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
     });
   }
   if (opts.json) {
@@ -712,7 +685,6 @@ export async function cmdSend(
         ? { undelivered: { reason: undelivered.reason, message: undelivered.message } }
         : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
-      nextSteps,
     });
     return;
   }
@@ -733,7 +705,6 @@ export async function cmdSend(
       sent.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
     console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (${how}${receipt})`));
   }
-  printNextSteps(nextSteps);
 }
 
 /**
@@ -833,15 +804,12 @@ async function cmdSendInterrupt(
       },
     );
   }
-  const nextSteps: NextStep[] = [
-    r.runs !== undefined
-      ? waitHint({ name, workstreamName: ws }, r.runs, r.incarnation, r.msgId)
-      : { intent: "Read response", command: `mu agent read ${name} -n 50 -w ${ws}` },
-  ];
-  if (r.pending) {
-    nextSteps.push({
-      intent: "Queued messages went back to the pane's editor unsent: read them there",
-      command: `mu agent read ${name} -n 30 -w ${ws}`,
+  if (r.runs !== undefined) {
+    setNextOutcome({
+      kind: "sent",
+      agent: { name, workstream: ws },
+      runs: r.runs,
+      ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
     });
   }
   if (opts.json) {
@@ -853,7 +821,6 @@ async function cmdSendInterrupt(
       ...r,
       ...(r.msgId !== undefined ? { delivery: "delivered" } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
-      nextSteps,
     });
     return;
   }
@@ -864,7 +831,6 @@ async function cmdSendInterrupt(
     pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (via ctl, ${what}${runs}${receipt})`),
   );
   if (r.pending) console.log(pc.yellow("queued messages went back to the pane's editor unsent"));
-  printNextSteps(nextSteps);
 }
 
 /** Lines in captured scrollback: a final newline ends the last line, it
@@ -1053,18 +1019,8 @@ export async function cmdAbort(
     workstream: ws,
     ...(opts.timeout === undefined ? {} : { timeoutMs: Math.round(opts.timeout * 1000) }),
   });
-  // An abort that reported idle is the exact after state: no pane read.
-  const nextSteps: NextStep[] = [
-    {
-      intent: "Steer it with the next instruction",
-      command: `mu agent send ${name} '...' -w ${ws}`,
-    },
-    ...(result.after === "idle"
-      ? []
-      : [{ intent: "Read the pane", command: `mu agent read ${name} -n 30 -w ${ws}` }]),
-  ];
   if (opts.json) {
-    emitJson({ ...result, nextSteps });
+    emitJson(result);
     return;
   }
   console.log(
@@ -1072,7 +1028,6 @@ export async function cmdAbort(
       ? `Aborted ${pc.bold(name)} ${pc.dim(`(${result.before} → ${result.after} in ${result.elapsedMs}ms)`)}`
       : `${pc.bold(name)} was ${result.before}; nothing to abort`,
   );
-  printNextSteps(nextSteps);
 }
 
 /** One agent of the `mu agent wait` document (the extension reads these fields; JSON drops the undefined ones). A gate that exited nonzero is a failure here: never a clean finish. */
@@ -1223,31 +1178,6 @@ export async function cmdAgentWait(
   const firing = wantAny && fired.length > 0 ? fired[0] : null;
   const qualified = (a: { workstreamName: string; name: string }): string =>
     `${a.workstreamName}/${a.name}`;
-  // A pi run that settled with its final text already returned it:
-  // read the pane only when the text is empty or the run errored.
-  const readHint: NextStep[] =
-    firing && (!firing.lastText || firing.lastError !== undefined)
-      ? [
-          {
-            intent: "Read the finished agent",
-            command: `mu agent read ${firing.name} -w ${firing.workstreamName}`,
-          },
-        ]
-      : [];
-  // A blocked run is not finished: point at the dialog and the re-wait.
-  for (const a of blocked) {
-    readHint.push(
-      {
-        intent: "Read the dialog pi is waiting on",
-        command: `mu agent read ${a.name} -w ${a.workstreamName}`,
-      },
-      {
-        intent: "Wait again once it is answered",
-        command: `mu agent wait ${a.name} -w ${a.workstreamName}${a.afterRuns !== undefined ? ` --after-runs ${a.afterRuns}` : ""}`,
-      },
-    );
-  }
-
   if (opts.json) {
     emitJson({
       agents: result.agents.map((a) => ({
@@ -1257,7 +1187,6 @@ export async function cmdAgentWait(
       timedOut: result.timedOut,
       ...(firing ? { firing: { workstream: firing.workstreamName, name: firing.name } } : {}),
       ...(dead.length > 0 ? { dead: dead.map(qualified) } : {}),
-      nextSteps: readHint,
     });
   } else {
     // A dead pane is reported whenever one happened, even beside agents
@@ -1270,20 +1199,18 @@ export async function cmdAgentWait(
       const why = a.blocked ? blockedReason(a.blocked) : "dialog";
       console.log(pc.magenta(`${qualified(a)} is waiting on a ${why}; its run is not finished`));
     }
-    if (blocked.length > 0) {
-      printNextSteps(readHint);
-    } else if (result.timedOut) {
+    // A blocked run is not finished: the dialog lines above say so.
+    if (blocked.length === 0 && result.timedOut) {
       console.log(
         pc.yellow(
           `Timed out after ${opts.timeout ?? 600}s; ${fired.length}/${result.agents.length} finished`,
         ),
       );
-    } else if (firing) {
+    } else if (blocked.length === 0 && firing) {
       console.log(`${pc.bold(qualified(firing))} finished`);
-      printNextSteps(readHint);
-    } else if (fired.length === result.agents.length) {
+    } else if (blocked.length === 0 && fired.length === result.agents.length) {
       console.log(`All ${result.agents.length} agent(s) finished`);
-    } else if (fired.length > 0) {
+    } else if (blocked.length === 0 && fired.length > 0) {
       // --any, or --all where the rest died: name who finished.
       console.log(
         `${fired.map(qualified).join(", ")} finished (${fired.length}/${result.agents.length})`,

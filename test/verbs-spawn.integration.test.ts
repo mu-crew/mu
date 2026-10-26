@@ -24,7 +24,6 @@ import {
   spawnAgent,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { hasNextSteps } from "../src/output.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import {
   freshMockState,
@@ -539,30 +538,6 @@ describe("spawn startup-error scan", () => {
     expect(caught).toBeInstanceOf(AgentSpawnStartupError);
     if (!(caught instanceof AgentSpawnStartupError)) throw new Error("unreachable");
     expect(caught.matchedLine).toMatch(expectedFragment);
-  });
-
-  it("AgentSpawnStartupError carries actionable nextSteps (default-Anthropic recipe)", async () => {
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(executor);
-    injectScrollbackOnSleep("Error: No API key found for amazon-bedrock");
-
-    let caught: unknown;
-    try {
-      await spawnAgent(db, { name: "worker-1", workstream: "auth" });
-    } catch (err) {
-      caught = err;
-    }
-    expect(hasNextSteps(caught)).toBe(true);
-    if (!hasNextSteps(caught)) throw new Error("unreachable");
-    const commands = caught
-      .errorNextSteps()
-      .map((s) => s.command)
-      .join("\n");
-    // Must point at the safe pi-meta default + name the agent.
-    expect(commands).toMatch(/mu agent spawn worker-1/);
-    expect(commands).toMatch(/pi-meta --no-solo/);
-    // Must mention setting an API key as the alternative fix.
-    expect(commands).toMatch(/API_KEY/);
   });
 
   it("healthy spawn (clean scrollback) is NOT tripped by the scan", async () => {

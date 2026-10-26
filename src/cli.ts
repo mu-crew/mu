@@ -29,8 +29,11 @@ import { wireDelegatesCommands } from "./cli/delegates.js";
 import { wireDoctorCommand } from "./cli/doctor.js";
 import {
   emitParseError,
+  finalNext,
   findCommandForArgv,
+  fitNext,
   NameAmbiguousError,
+  setNextScope,
   UsageError,
 } from "./cli/handle.js";
 import { wireHostCommands } from "./cli/host.js";
@@ -166,10 +169,10 @@ export async function missingWorkstreamError(
  * cheap error.
  */
 export async function resolveWorkstream(explicit?: string): Promise<string> {
-  if (explicit !== undefined) return checkWorkstreamName(explicit);
-  const injected = injectedWorkstream();
-  if (injected !== undefined) return injected;
-  throw await missingWorkstreamError();
+  const ws = explicit !== undefined ? checkWorkstreamName(explicit) : injectedWorkstream();
+  if (ws === undefined) throw await missingWorkstreamError();
+  setNextScope(ws);
+  return ws;
 }
 
 // ─── Qualified entity refs (cross-workstream verb args) ────────────────
@@ -740,12 +743,18 @@ export function normalizeInheritedWorkstream(
 }
 
 /** The one JSON document of a successful `--json` invocation: the payload in
- *  a `{ok:true,data,next:null}` envelope (src/output-contract.ts), one line.
- *  An explicit success envelope passes through, never `data.ok`. `next` stays
- *  null until per-verb plans land; the legacy `nextSteps` ride inside `data`.
- *  Exported so cli/*.ts modules share one formatter. */
+ *  a `{ok:true,data,next}` envelope (src/output-contract.ts), one line. `next`
+ *  is the one finalisation (`finalNext`, src/cli/handle.ts), fitted to what the
+ *  result budget leaves. An explicit success envelope passes through, never
+ *  `data.ok`. Exported so cli/*.ts modules share one formatter. */
 export function emitJson(value: unknown): void {
-  console.log(encodeEnvelope(okEnvelope(value)));
+  const env = okEnvelope(value);
+  const base = encodeEnvelope(env);
+  if (env.next !== null || value === env) {
+    console.log(base);
+    return;
+  }
+  console.log(encodeEnvelope({ ...env, next: fitNext(finalNext(), Buffer.byteLength(base)) }));
 }
 
 /** One raw JSON line, NOT enveloped: the NDJSON stream rows of `mu log --tail`

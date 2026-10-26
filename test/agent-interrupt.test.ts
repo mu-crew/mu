@@ -144,14 +144,10 @@ describe("mu agent send --interrupt", () => {
     expect(sent()).toEqual([
       { op: "interrupt", text: "stop, do X", timeoutMs: 30_000, msgId: expect.any(String) },
     ]);
-    const body = r.data as Record<string, unknown> & {
-      nextSteps: Array<{ command: string }>;
-    };
+    const body = r.data as Record<string, unknown>;
     expect(body).toMatchObject({ transport: "ctl", wasBusy: true, pending: true, runs: 4 });
     expect(body).toMatchObject({ incarnation: INC, msgId: expect.any(String) });
-    expect(body.nextSteps.map((s) => s.command)).toContain(
-      `mu wait 'agent:auth/worker-1@4#${INC}'`,
-    );
+    expect(r.doc.next?.commands).toEqual([`mu wait 'agent:auth/worker-1@4#${INC}'`]);
     expect(pasted()).toBe(false);
   });
 
@@ -186,7 +182,7 @@ describe("mu agent send --interrupt", () => {
     await serve({ settles: false });
     const r = await send("--interrupt", "--timeout", "0.1", "x");
     expect(r.exitCode).toBe(5);
-    expect(JSON.stringify(r.doc)).toContain("mu agent close worker-1");
+    expect(r.doc).toMatchObject({ error: "AgentAbortTimeoutError", next: null });
   });
 
   it("an extension without the msgId feature: refused before anything is aborted or sent", async () => {
@@ -217,15 +213,15 @@ describe("mu agent send --interrupt", () => {
     await serve({ silent: true, accepts: false });
     const r = await send("--interrupt", "stop");
     expect(r.exitCode).toBe(1);
-    const env = r.doc as unknown as {
-      error: string;
-      message: string;
-      nextSteps: { command: string }[];
-    };
+    const env = r.doc as unknown as { error: string; message: string; next: unknown };
     expect(env.error).toBe("AgentSendIndeterminateError");
     const id = (ops.find((o) => o.op === "interrupt") as { msgId: string }).msgId;
     expect(env.message).toContain(id);
-    expect(env.nextSteps.map((n) => n.command)).toEqual([`mu agent check worker-1 ${id} -w auth`]);
+    // The receipt check, never a resend: the registry row the send went to still stands.
+    expect(env.next).toEqual({
+      mode: "alt",
+      commands: [`mu agent check worker-1 ${id} -w auth --json`],
+    });
     expect(opNames()).toEqual(["interrupt", "status"]);
   });
 
@@ -281,7 +277,7 @@ describe("mu agent send --interrupt", () => {
     seed("claude");
     const r = await send("--interrupt", "x");
     expect(r.exitCode).toBe(2);
-    expect(JSON.stringify(r.doc)).toContain("mu agent close");
+    expect(r.doc).toMatchObject({ error: "AgentAbortNeedsCtlError" });
     expect(pasted()).toBe(false);
   });
 });

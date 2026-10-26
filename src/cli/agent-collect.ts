@@ -13,7 +13,7 @@ import {
   WORKSTREAM_OPT,
 } from "../cli.js";
 import type { Db } from "../db.js";
-import { type NextStep, pc, printNextSteps } from "../output.js";
+import { pc } from "../output.js";
 import { collectRemoteAgent } from "../remote-collect.js";
 import { recoveriesFor } from "../remote-recovery.js";
 import { gitToplevel } from "../vcs/git.js";
@@ -42,9 +42,8 @@ export async function cmdCollect(
     repo,
     ...(opts.recovery === undefined ? {} : { recoveryId: opts.recovery }),
   });
-  const next: NextStep[] = [{ intent: "Merge it (mu never merges)", command: r.merge }];
   if (opts.json) {
-    emitJson({ agentName: name, ...r, nextSteps: next });
+    emitJson({ agentName: name, ...r });
     return;
   }
   console.log(
@@ -52,7 +51,7 @@ export async function cmdCollect(
       ? `Collected ${pc.bold(name)} at ${r.head.slice(0, 12)} (pinned as ${r.ref})`
       : `${pc.bold(name)} has nothing new: still ${r.head.slice(0, 12)} (pinned as ${r.ref})`,
   );
-  printNextSteps(next);
+  console.log(pc.dim(`  merge it yourself (mu never merges): ${r.merge}`));
 }
 
 export function wireCollectCommand(agent: Command): void {

@@ -947,9 +947,7 @@ describe("pending reports and delivery tracking", () => {
     await flush();
     // The spawn has not returned: the call is already outstanding.
     expect(pendingCounts(p)).toEqual([1]);
-    releaseSpawn(
-      ok({ agent: { name: "delegate-2" }, ctl: "ok", send: { ok: true, runs: 0 }, nextSteps: [] }),
-    );
+    releaseSpawn(ok({ agent: { name: "delegate-2" }, ctl: "ok", send: { ok: true, runs: 0 } }));
     await call;
     expect(pendingCounts(p)).toEqual([1]); // starting -> running is not a second delegate
   });
@@ -1776,7 +1774,6 @@ describe("closing is bound to the agent the delegate spawned as", () => {
               agent: { name: "delegate-2", cwd: null },
               ctl: "ok",
               send: { ok: true, runs: 0 },
-              nextSteps: [],
             }),
           ),
       },

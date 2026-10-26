@@ -30,8 +30,8 @@ Every verb takes `--json`.
 - `mu state` and bare `mu me` print the document by default too (no `--json` needed); a read over 4 KB is cut and names `mu state ... --full`.
 - `mu log --tail` (no `--json` needed) is the exception: one raw JSON object per line, keyed by the `ops` column names.
 - A failure is `{"ok": false, "error", "message", "next", "exit"}` on
-  **stdout** (plus `nextSteps` and, for usage errors, `usage`, at most 3
-  lines), with the same non-zero exit code. `2>/dev/null` loses nothing.
+  **stdout** (plus, for usage errors, `usage`, at most 3 lines), with
+  the same non-zero exit code. `2>/dev/null` loses nothing.
 
 ```bash
 mu state -w auth

@@ -10,13 +10,7 @@
 
 import type { Command } from "commander";
 import { closePreviewToOutput } from "../agent-output.js";
-import {
-  type ClosePreview,
-  closeAgent,
-  getAgent,
-  previewClose,
-  respawnCommand,
-} from "../agents.js";
+import { type ClosePreview, closeAgent, previewClose } from "../agents.js";
 import {
   applyQualifiedRef,
   assertAgentInWorkstream,
@@ -31,9 +25,9 @@ import {
   WORKSTREAM_OPT,
 } from "../cli.js";
 import type { Db } from "../db.js";
-import { type NextStep, pc, printNextSteps } from "../output.js";
+import { pc } from "../output.js";
 import { recoveriesFor, recoveryWorkstreams } from "../remote-recovery.js";
-import { NameAmbiguousError } from "./handle.js";
+import { NameAmbiguousError, setNextOutcome } from "./handle.js";
 
 interface CloseOpts {
   workstream?: string;
@@ -84,27 +78,30 @@ export async function cmdClose(db: Db, rawName: string, opts: CloseOpts = {}): P
       keepBranch,
       ...(recoveryId === undefined ? {} : { recoveryId }),
     });
-    const apply = [
-      `mu agent close ${name} -w ${ws}`,
-      p.recovery === null ? "" : ` --recovery ${p.recovery.id}`,
-      discard ? " --discard" : "",
-      keepBranch ? " --keep-branch" : "",
-      ` --if ${p.revision}`,
-    ].join("");
-    const next: NextStep[] =
-      p.kind === "none" || p.refusesDirty || p.recovery?.refusal != null
-        ? []
-        : [{ intent: "Apply this close", command: apply }];
+    if (p.kind !== "none" && !p.refusesDirty && p.recovery?.refusal == null) {
+      setNextOutcome({
+        kind: "preview",
+        apply: [
+          "mu",
+          "agent",
+          "close",
+          name,
+          "-w",
+          ws,
+          ...(p.recovery === null ? [] : ["--recovery", String(p.recovery.id)]),
+          ...(discard ? ["--discard"] : []),
+          ...(keepBranch ? ["--keep-branch"] : []),
+        ],
+        revision: p.revision,
+      });
+    }
     if (opts.json) {
-      emitJson({ ...closePreviewToOutput(p), dryRun: true, nextSteps: next });
+      emitJson({ ...closePreviewToOutput(p), dryRun: true });
       return;
     }
     printClosePreview(p);
-    printNextSteps(next);
     return;
   }
-  // The row is gone after the close: a remote agent's re-spawn line needs its host.
-  const closing = getAgent(db, name, ws);
   const result = await closeAgent(db, name, {
     workstream: ws,
     ifRevision: opts.if,
@@ -112,30 +109,12 @@ export async function cmdClose(db: Db, rawName: string, opts: CloseOpts = {}): P
     ...(keepBranch ? { keepBranch: true } : {}),
     ...(recoveryId === undefined ? {} : { recoveryId }),
   });
-  const next: NextStep[] = [];
-  const kept = result.worktree?.branch;
-  if (kept !== undefined && closing?.host == null && result.recovery === undefined) {
-    next.push({
-      intent: `Its unmerged commits are on ${kept}; merge or inspect them`,
-      command: `git log --oneline HEAD..${kept}`,
-    });
-  }
-  // Closing a leftover worktree brought nothing down: re-spawning is only offered for a closed agent.
-  if (result.recovery === undefined) {
-    next.push({
-      intent: "Re-spawn under the same name",
-      command:
-        (closing?.host != null ? respawnCommand(closing) : undefined) ??
-        `mu agent spawn ${name} -w ${ws}`,
-    });
-  }
   if (opts.json) {
-    emitJson({ agentName: name, ...result, nextSteps: next });
+    emitJson({ agentName: name, ...result });
     return;
   }
   if (!result.killedPane && !result.deletedRow && result.worktree === null) {
     console.log(pc.dim(`no agent named ${name} (already closed?)`));
-    printNextSteps(next);
     return;
   }
   console.log(
@@ -157,7 +136,6 @@ export async function cmdClose(db: Db, rawName: string, opts: CloseOpts = {}): P
       ),
     );
   }
-  printNextSteps(next);
 }
 
 function printClosePreview(p: ClosePreview): void {

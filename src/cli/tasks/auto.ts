@@ -17,7 +17,7 @@ import {
   resolveWorkstream,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
-import { type NextStep, pc, printNextSteps } from "../../output.js";
+import { pc } from "../../output.js";
 import { authorizeTasks, TaskAutoArgError } from "../../task-auto.js";
 import { resolveActorIdentity } from "../../tasks.js";
 
@@ -68,14 +68,12 @@ export async function cmdTaskAuto(
     ...(blockersOf !== undefined ? { blockersOf } : {}),
     actor: await resolveActorIdentity(),
   });
-  const nextSteps: NextStep[] = [{ intent: "List ready tasks", command: `mu task next -w ${ws}` }];
   if (opts.json) {
-    emitJson({ ids: r.ids, changed: r.changed, off, nextSteps });
+    emitJson({ ids: r.ids, changed: r.changed, off });
     return;
   }
   const verb = off ? "Revoked auto on" : "Authorised auto for";
   console.log(
     `${verb} ${r.ids.length} task${r.ids.length === 1 ? "" : "s"}: ${pc.bold(r.ids.join(", "))}${r.changed ? "" : pc.dim(" (no change)")}`,
   );
-  printNextSteps(nextSteps);
 }

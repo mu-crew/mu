@@ -58,7 +58,7 @@ socket. Pick the mode by what the agent is doing:
   pastes nothing.
 - A send's `--json` carries `msgId`, `incarnation` and `delivery`
   (`delivered`, or `unknown` in the error JSON of a send that got no
-  reply). Its `Next:` block is ONE line, the exact wait: `mu wait 'agent:<ws>/<a>@<n>#<inc>'`.
+  reply). Its `next` is ONE line, the exact wait: `mu wait 'agent:<ws>/<a>@<n>#<inc>'`.
   The `#<inc>` pin refuses (exit 4) when the agent restarted: its run is gone, so
   re-send the brief. `--wait` enters that wait at once: one JSON document, the wait's, with the
   send's receipt as `data.sent`. A delivered send (also `spawn --send`, `spawn --task`,
@@ -66,15 +66,16 @@ socket. Pick the mode by what the agent is doing:
   finds it with no ref; `mu task claim <id> --for <w> --and-wait` dispatches and waits.
 - A send written to the socket but never answered is checked, not
   repeated: mu asks once for the `msgId` and either reports success
-  (`receipt: confirmed-after-timeout`) or exits 1 naming
-  `mu agent check <a> <msgId>`. That verb prints `accepted runs=<n>
+  (`receipt: confirmed-after-timeout`) or exits 1 with `next` the receipt
+  check `mu agent check <a> <msgId> -w <ws> --json` (only while the agent the
+  send went to is still registered). That verb prints `accepted runs=<n>
   at=<iso>` (0), `not-accepted` (3) or `unreachable` (1). Only `accepted`
   is an answer: **`not-accepted` is not "unsent"**. The extension keeps
   its last 64 ids, so an old send reads `not-accepted` after eviction,
   and a send that is still in flight can too. Look at the pane
   (`mu agent read`) before any resend.
 
-After a claim, spawn, or wait, the `Next:` block prints the right send.
+After `mu task claim <id> --for <w>`, `next` is the send that hands the task over (`--fresh` for a pi worker).
 `mu agent spawn --send <text>` spawns and sends the first prompt in one
 call; with `--task <id>` it is one journaled attempt (below); `--next-free` takes the next free name when `<name>` is taken
 (`worker-1` → `worker-2`; the stem is cut to keep the name within 32
@@ -175,8 +176,7 @@ mu wait task:auth/build task:auth/docs
   `delegate`, or `heartbeat` on a timeout (`ok:true`, `timedOut`, exit 0).
 - `data.snapshots` are the refs' real states; `data.resume` is the command
   that keeps waiting, with every flag you gave. Run it as printed.
-- `data.nextSteps[0]` is the cherry-pick command for the worker's new
-  commits. If the worker closed without committing, it says so.
+- `next` is the stored resume while something is still owed, else null.
 - Exit codes: `0` event or timeout, `6` the owner's pane died, `7` the owner
   sat in `needs_input` for `--stuck-after` seconds (default 120, or 5 for a pi
   worker read over its control socket), `130`/`143` SIGINT/SIGTERM (the

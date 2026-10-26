@@ -23,13 +23,12 @@ import {
   UsageError,
 } from "../../cli.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../../db.js";
-import { type NextStep, pc, printNextSteps } from "../../output.js";
+import { pc } from "../../output.js";
 import { getTaskOwner } from "../../tasks/queries.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../../tasks.js";
-import type { WaitRef, WaitResult } from "../../wait.js";
+import type { WaitRef } from "../../wait.js";
 import { currentCallers } from "../../wait-callers.js";
-import { getWorktreeFor, upstreamRefs } from "../../worktree.js";
-import { dispatchHint, nextDispatchHint } from "../dispatch-hints.js";
+import { setNextOutcome } from "../handle.js";
 import {
   parseOnStall,
   parseWaitRef,
@@ -62,27 +61,18 @@ export async function cmdTaskRelease(
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
   const r = releaseTask(db, localId, sdkOpts);
-  const nextSteps: NextStep[] = [
-    {
-      intent: "Reclaim",
-      command: `mu task claim ${localId} -w ${ws}  (--self / --for <worker>)`,
-    },
-    { intent: "Show current state", command: `mu task show ${localId} -w ${ws}` },
-  ];
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, nextSteps });
+    emitJson({ taskName: localId, ...r });
     return;
   }
   if (!r.changed) {
     console.log(pc.dim(`${localId} already unowned (no-op)`));
-    printNextSteps(nextSteps);
     return;
   }
   const ownerBit = r.previousOwnerName ? `was ${pc.bold(r.previousOwnerName)}` : "was unowned";
   const statusBit = r.previousStatus !== r.status ? ` (${r.previousStatus} → ${r.status})` : "";
   console.log(`Released ${pc.bold(localId)} ${pc.dim(`(${ownerBit})${statusBit}`)}`);
   if (opts.evidence) console.log(pc.dim(`  evidence: ${opts.evidence}`));
-  printNextSteps(nextSteps);
 }
 
 export async function cmdClaim(
@@ -201,30 +191,16 @@ export async function cmdClaim(
     );
   }
   if (!opts.json) for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
-  const nextSteps: NextStep[] = [];
-  // claim-before-send: a --for claim is the moment of dispatch, so the
-  // first hint is the send that hands the task over.
-  const owner =
-    result.ownerName === null ? undefined : getAgent(db, result.ownerName, forWorkstream ?? ws);
-  if (owner !== undefined)
-    nextSteps.push(dispatchHint(owner, { task: { id: localId, workstream: ws } }));
-  nextSteps.push(
-    {
-      // Single-quoted example: shell metachars (`...`, $VAR, $(...))
-      // inside a double-quoted string expand in YOUR shell before mu
-      // sees the note (mufeedback note #257). Single quotes defer
-      // expansion to the agent.
-      intent: "Drop a note (single-quote to defer shell expansion)",
-      command: `mu task note ${localId} 'FILES: ...\\nDECISION: ...' -w ${ws}`,
-    },
-    {
-      intent: "Close with grounding",
-      command: `mu task close ${localId} --evidence "..." -w ${ws}`,
-    },
-    { intent: "Release if blocked", command: `mu task release ${localId} -w ${ws}` },
-  );
+  // claim-before-send: a --for claim is the moment of dispatch; the owner is sent the task next.
+  if (result.ownerName !== null && opts.for !== undefined) {
+    setNextOutcome({
+      kind: "claimed-for",
+      task: { workstream: ws, id: localId },
+      owner: { name: result.ownerName, workstream: forWorkstream ?? ws },
+    });
+  }
   if (opts.json) {
-    emitJson({ ...result, ...(warnings.length > 0 ? { warnings } : {}), nextSteps });
+    emitJson({ ...result, ...(warnings.length > 0 ? { warnings } : {}) });
     return;
   }
   if (result.ownerName === null) {
@@ -237,7 +213,6 @@ export async function cmdClaim(
     );
   }
   if (opts.evidence) console.log(pc.dim(`  evidence: ${opts.evidence}`));
-  printNextSteps(nextSteps);
 }
 
 /**
@@ -286,36 +261,5 @@ export async function cmdTaskWait(
     ...(opts.stuckAfter !== undefined ? { stuckAfter: opts.stuckAfter } : {}),
     ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
   };
-  await runWait(db, spec, sig, {
-    extraNextSteps: (result) => worktreeHints(db, result),
-  });
-}
-
-/** After a task closed with a deliverable: the worker's own commits, the verify step, the next dispatch. */
-async function worktreeHints(
-  db: Db,
-  result: WaitResult,
-): Promise<{ intent: string; command: string }[]> {
-  const e = result.event;
-  if (e.kind !== "closed" || e.ref === null || e.ref.kind !== "task") return [];
-  const snap = result.refs.find(
-    (s) => s.ref.id === e.ref?.id && s.ref.workstream === e.ref?.workstream,
-  );
-  if (snap === undefined || snap.substate !== "done") return [];
-  const out: { intent: string; command: string }[] = [];
-  const owner = snap.owner;
-  if (owner === null || owner === undefined) return out;
-  const ownerWs = snap.ownerWorkstream ?? e.ref.workstream;
-  const wt = getWorktreeFor(db, ownerWs, owner);
-  if (wt !== undefined) {
-    const not = wt.base !== "" ? await upstreamRefs(wt.root, wt.base).catch(() => []) : [];
-    out.push({
-      intent: `Inspect ${owner}'s commits, then cherry-pick what you want`,
-      command: `git -C ${wt.path} log --oneline${not.length > 0 ? ` HEAD --not ${not.join(" ")}` : ""}`,
-    });
-  }
-  const row = getAgent(db, owner, ownerWs);
-  const dispatch = row === undefined ? null : nextDispatchHint(row, e.ref.workstream);
-  if (dispatch !== null) out.push(dispatch);
-  return out;
+  await runWait(db, spec, sig);
 }

@@ -336,7 +336,7 @@ describe("worktree_retention: teardown never removes a worktree", () => {
   });
 });
 
-describe("error_lines: each refusal is one stderr line (--json keeps nextSteps)", () => {
+describe("error_lines: each refusal is one stderr line", () => {
   it("stale revision", async () => {
     seed("ws");
     const stale = workstreamRevision(db, "ws");
@@ -373,15 +373,16 @@ describe("error_lines: each refusal is one stderr line (--json keeps nextSteps)"
     expect(stderrLines(r.stderr)).toHaveLength(1);
   });
 
-  it("--json still carries nextSteps", async () => {
+  it("--json: one failure document naming the preview, next null", async () => {
     seed("ws");
     const stale = workstreamRevision(db, "ws");
     addTask(db, { workstream: "ws", localId: "b", title: "B", impact: 50, effortDays: 1 });
     const r = await run("workstream", "teardown", "ws", "--if", String(stale), "--json");
-    const env = asJson(r).doc as unknown as {
-      nextSteps: { command: string }[];
-    };
-    expect(env.nextSteps.map((n) => n.command)).toEqual(["mu workstream teardown ws"]);
+    expect(asJson(r).doc).toMatchObject({
+      error: "WorkstreamRevisionMismatchError",
+      message: expect.stringContaining("preview again: mu workstream teardown ws"),
+      next: null,
+    });
   });
 });
 

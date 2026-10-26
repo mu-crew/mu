@@ -5,7 +5,7 @@ import { spawnerFromEnv } from "../agents/spawn.js";
 import { emitJson, handle, JSON_OPT, resolveWorkstream, WORKSTREAM_OPT } from "../cli.js";
 import type { Db } from "../db.js";
 import { recordHumanNeeded } from "../human-needed.js";
-import { type NextStep, pc, printNextSteps } from "../output.js";
+import { pc } from "../output.js";
 
 async function cmdHumanNeeded(
   db: Db,
@@ -14,14 +14,8 @@ async function cmdHumanNeeded(
 ): Promise<void> {
   const ws = await resolveWorkstream(opts.workstream);
   const r = recordHumanNeeded(db, { workstream: ws, caller: spawnerFromEnv() ?? "", reason });
-  const nextSteps: NextStep[] = [
-    {
-      intent: "Close it once the human has decided",
-      command: `mu task close ${r.id} -w ${ws} --evidence "<the decision>"`,
-    },
-  ];
   if (opts.json) {
-    emitJson({ workstream: ws, id: r.id, changed: r.changed, nextSteps });
+    emitJson({ workstream: ws, id: r.id, changed: r.changed });
     return;
   }
   console.log(
@@ -29,7 +23,6 @@ async function cmdHumanNeeded(
       ? `Recorded human-needed ${pc.bold(r.id)} in ${ws}`
       : pc.dim(`${r.id} already records this reason (no-op)`),
   );
-  printNextSteps(nextSteps);
 }
 
 export function wireHumanNeededCommand(program: Command): void {

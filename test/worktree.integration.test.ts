@@ -279,7 +279,7 @@ gitDescribe("agent close preview: the worktree", () => {
       refusesDirty: true,
       worktree: { path: wt.path, state: "dirty" },
     });
-    expect(r.data.nextSteps).toEqual([]);
+    expect(r.doc.next).toBeNull();
     expect(getAgent(db, "worker-1", "auth")).toBeDefined();
     expect(existsSync(wt.path)).toBe(true);
   });
@@ -289,9 +289,9 @@ gitDescribe("agent close preview: the worktree", () => {
     writeFileSync(join(wt.path, "u.txt"), "x");
     const r = await preview("worker-1", "--discard");
     expect(r.data.refusesDirty).toBe(false);
-    expect(r.data.nextSteps[0].command).toBe(
+    expect(r.doc.next?.commands).toEqual([
       `mu agent close worker-1 -w auth --discard --if ${r.data.revision}`,
-    );
+    ]);
     expect(existsSync(wt.path)).toBe(true); // still a preview
   });
 
@@ -543,7 +543,7 @@ gitDescribe("spawn --worktree", () => {
       expect(kept?.cwd).toBeNull(); // not patched with this spawn's worktree
     });
 
-    it("a failed removal keeps the registry row; `agent close --discard` then finishes it", async () => {
+    it("a failed removal keeps the worktree registered; `agent close --discard` then finishes it", async () => {
       // pane creation fails AND the worktree is locked, so the rollback's removal fails too
       mux.restore();
       const inner = mockTmux(tmuxState).executor;
@@ -552,9 +552,7 @@ gitDescribe("spawn --worktree", () => {
         gitIn(root, "worktree", "lock", worktreePath("auth", "worker-1"));
         return { stdout: "", stderr: "mock: new-session refused", exitCode: 1 };
       });
-      const err = await spawn().catch((e) => e);
-      const cmds = (err.errorNextSteps() as { command: string }[]).map((s) => s.command).join("\n");
-      expect(cmds).toContain("mu agent close worker-1 -w auth --discard");
+      await expect(spawn()).rejects.toThrow();
       expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
       expect(listWorktrees(db)).toHaveLength(1); // still registered
       gitIn(root, "worktree", "unlock", worktreePath("auth", "worker-1"));

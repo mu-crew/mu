@@ -2,7 +2,7 @@
 // (`mu log`, `mu workstream list`).
 //
 // Pure (no I/O, no DB). A page is bounded on its FINAL bytes (RESULT_BYTES,
-// envelope, footer and trailer included). A cut is counted (`more=N` records
+// envelope and footer included). A cut is counted (`more=N` records
 // left out, `cut=N` characters clipped) and names its way back as a command that
 // runs as printed.
 
@@ -65,8 +65,6 @@ export interface PageSpec<T> {
   resume(shown: readonly T[], more: number): string;
   /** The command that reads the clipped rows whole; defaults to `resume`. */
   retrieve?(clipped: readonly T[]): string;
-  /** Lines printed after the footer (a `Next:` block), counted in the page's final bytes. */
-  trailer?: readonly string[];
   /** JSON: name the one way back `retrieve`, with no separate `resume`. */
   singleRetrieve?: boolean;
 }
@@ -123,7 +121,6 @@ export function pageOut<T>(rows: readonly T[], spec: PageSpec<T>): PageOut {
       if (resume !== undefined) lines.push(`more=${page.more} next=${resume}`);
       if (retrieve !== undefined) lines.push(`cut=${cut} next=${retrieve}`);
     }
-    lines.push(...(spec.trailer ?? []));
     const single = spec.singleRetrieve === true;
     const way = retrieve ?? (single ? resume : undefined);
     return {

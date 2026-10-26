@@ -461,7 +461,6 @@ export {
   SyncSourceNotFoundError,
   SyncSourceTooNewError,
   syncEnabled,
-  transportNextSteps,
 } from "./sync.js";
 export { assertSyncDirV2, SyncDirForeignError } from "./sync-dir-guard.js";
 export {

@@ -55,7 +55,7 @@
 // halves.
 
 import { execFileCapture } from "../exec-file.js";
-import { isJsonMode, type NextStep } from "../output.js";
+import { isJsonMode } from "../output.js";
 import { sleep } from "./tmux.js";
 import {
   type AttachTarget,
@@ -93,16 +93,6 @@ export class HerdrError extends MuxError {
     const detail = parseErrorEnvelope(stderr)?.message ?? (stderr.trim() || stdout.trim());
     super(`herdr ${args.join(" ")} failed (exit ${exitCode}): ${detail || "no output"}`);
     this.name = "HerdrError";
-  }
-  override errorNextSteps(): NextStep[] {
-    return [
-      { intent: "Run health check", command: "mu doctor" },
-      { intent: "Verify the herdr server is running", command: "herdr status" },
-      {
-        intent: "Check the failing herdr command in isolation",
-        command: `herdr ${this.args.join(" ")}`,
-      },
-    ];
   }
 }
 
@@ -154,22 +144,6 @@ export class HerdrUnsupportedCliError extends Error {
       `herdr does not recognise --cli ${cli} as an interactive agent kind, so it cannot classify that pane's status. herdr said: ${detail}`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "List the agent kinds this herdr knows",
-        command: "herdr agent start --help",
-      },
-      {
-        intent: "Spawn with a kind herdr supports",
-        command: "mu agent spawn <name> --cli pi -w <workstream>",
-      },
-      {
-        intent: "Or spawn this cli under tmux, which runs any command",
-        command: `MU_MUX=tmux mu agent spawn <name> --cli ${this.cli}`,
-      },
-    ];
-  }
 }
 
 /**
@@ -203,27 +177,6 @@ export class HerdrCommandOverrideError extends Error {
         `: 'herdr agent start --kind ${cli}' resolves the executable itself and has no override flag. ` +
         `mu refuses rather than starting a different binary than you asked for.`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      ...(this.envVar === undefined
-        ? [
-            {
-              intent: "Spawn without --command so herdr resolves the agent itself",
-              command: `mu agent spawn <name> --cli ${this.cli} -w <workstream>`,
-            },
-          ]
-        : [
-            {
-              intent: `Unset the override so herdr resolves ${this.cli} itself`,
-              command: `unset ${this.envVar}`,
-            },
-          ]),
-      {
-        intent: "Or spawn under tmux, which runs the command you name",
-        command: `MU_MUX=tmux mu agent spawn <name> --cli ${this.cli}`,
-      },
-    ];
   }
 }
 
@@ -260,22 +213,6 @@ export class HerdrWorkspaceGroupCloseError extends Error {
       `herdr refused to close workspace ${workspaceId} (${session}): it has linked worktree workspaces, ` +
         `which mu did not create and will not close on your behalf. herdr said: ${detail}`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "See which workspaces are linked as a group",
-        command: "herdr workspace list",
-      },
-      {
-        intent: "Remove the worktree workspaces you no longer want",
-        command: "herdr worktree remove <workspace-id>",
-      },
-      {
-        intent: "Or close the whole group yourself, then re-run the teardown",
-        command: `herdr workspace close ${this.workspaceId} --group`,
-      },
-    ];
   }
 }
 
@@ -1233,21 +1170,6 @@ export async function attachCommands(target: AttachTarget): Promise<readonly Mux
   return steps;
 }
 
-// ─── Diagnostics ────────────────────────────────────────────────────────
-
-export function paneNotFoundNextSteps(paneId: string): NextStep[] {
-  return [
-    {
-      intent: `Verify the pane id ${paneId} actually exists`,
-      command: `herdr pane get ${paneId}`,
-    },
-    {
-      intent: "List panes in the current workspace",
-      command: 'herdr pane list --workspace "$HERDR_WORKSPACE_ID"',
-    },
-  ];
-}
-
 /**
  * Version probe plus the ambient facts herdr injects into every managed
  * pane. Returns DATA; `mu doctor` owns the strings.
@@ -1309,7 +1231,5 @@ export const herdrBackend: MuxBackend = Object.freeze({
   paneStatus,
   sendToPane,
   currentSessionName,
-
-  paneNotFoundNextSteps,
   healthCheck,
 });

@@ -50,14 +50,13 @@ function pairOf(id: string): string {
 }
 
 describe("mu task add --triage / accept", () => {
-  it("add --triage lands in OPEN/triage and points at accept, not claim", async () => {
+  it("add --triage lands in OPEN/triage and hints no claim", async () => {
     const r = await runCli(
       ["task", "add", "f1", "-w", WS, "--triage", "-t", "high: x", "-i", "70", "-e", "0.5"],
       dbPath,
     );
     expect(pairOf("f1")).toBe("OPEN/triage");
-    expect(plain(r.stdout)).toContain(`mu task accept f1 -w ${WS}`);
-    expect(plain(r.stdout)).not.toContain("Claim and start");
+    expect(plain(r.stdout)).not.toContain("mu task claim");
   });
 
   it("accept moves it to OPEN/todo with --json, then is a no-op", async () => {
@@ -74,15 +73,13 @@ describe("mu task add --triage / accept", () => {
     expect(plain(again.stdout)).toContain("not in triage (no-op)");
   });
 
-  it("claim refuses a triage task with exit 4 and accept / decline / --force hints", async () => {
+  it("claim refuses a triage task with exit 4 naming accept and --force", async () => {
     await addFinding("f1");
     const r = await runCli(["task", "claim", "f1", "-w", WS, "--self"], dbPath);
     expect(r.exitCode).toBe(4);
     const out = plain(r.stdout + r.stderr);
     expect(out).toContain("is in triage");
-    expect(out).toContain(`mu task accept f1 -w ${WS}`);
-    expect(out).toContain("--as rejected");
-    expect(out).toContain("--force");
+    expect(out).toContain("accept it or claim with --force");
     expect(pairOf("f1")).toBe("OPEN/triage");
   });
 });
@@ -96,37 +93,27 @@ describe("triage hints on read surfaces", () => {
     expect(out).toContain(`mu task list --substate triage -w ${WS}`);
   });
 
-  it("task list with a triage task prints accept / decline / notes", async () => {
-    await addFinding("f1");
-    const r = await runCli(["task", "list", "-w", WS, "--substate", "triage"], dbPath);
-    const out = plain(r.stdout);
-    expect(out).toContain(`mu task accept f1 -w ${WS}`);
-    expect(out).toContain("--as rejected|duplicate");
-    expect(out).toContain(`mu task notes f1 -w ${WS}`);
-  });
-
   it("task list without triage tasks prints no triage hint", async () => {
     const r = await runCli(["task", "list", "-w", WS], dbPath);
     expect(plain(r.stdout)).not.toContain("mu task accept");
   });
 
-  it("task show on a triage task offers accept and decline", async () => {
+  it("task show on a triage task offers accept", async () => {
     await addFinding("f1");
     const r = await runCli(["task", "show", "f1", "-w", WS], dbPath);
     const out = plain(r.stdout);
     expect(out).toContain(`mu task accept f1 -w ${WS}`);
-    expect(out).toContain("--as rejected");
+    expect(out).not.toContain("<reason>");
   });
 
-  it("close --if-ready on a review blocked by findings leads with the triage inbox", async () => {
+  it("close --if-ready on a review blocked by findings skips it", async () => {
     await addFinding("f1");
     const r = await runCliJson(
       ["task", "close", "review", "-w", WS, "--if-ready", "--evidence", "test", "--json"],
       dbPath,
     );
-    const payload = r.data as { skipped: string; nextSteps: { command: string }[] };
+    const payload = r.data as { skipped: string };
     expect(payload.skipped).toBe("not_ready");
-    expect(payload.nextSteps[0]?.command).toBe(`mu task list --substate triage -w ${WS}`);
     expect(pairOf("review")).toBe("OPEN/todo");
   });
 

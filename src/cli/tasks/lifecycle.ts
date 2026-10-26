@@ -12,7 +12,7 @@ import {
   resolveWorkstream,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
-import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../../output.js";
+import { pc } from "../../output.js";
 import { formatPair, type TaskPair } from "../../tasks/status.js";
 import {
   acceptTask,
@@ -72,7 +72,7 @@ export async function cmdTaskClose(
   // non-empty. Resolve the actor identity once per close so the note is
   // attributed to the closing worker (mu-spawned worker via
   // MU_AGENT_NAME, adopted pane via title, otherwise $USER /
-  // 'orchestrator') and so the success Next: hints can inspect that
+  // 'orchestrator') and so the dirty-worktree warning can inspect that
   // actor's worktree without resolving identity a second time.
   if (opts.evidence !== undefined && opts.evidence !== "") {
     sdkOpts.author = actor;
@@ -110,26 +110,8 @@ export async function cmdTaskClose(
   // --if-ready can return a CloseSkippedResult (no mutation). Branch
   // first so the typed `skipped` field stays in scope below.
   if ("skipped" in r) {
-    // A blocker in triage closes only when someone decides it: waiting on
-    // it would hang, so lead with the triage inbox.
-    const inTriage = r.blockingIds.filter((id) => getTask(db, id, ws)?.substate === "triage");
-    const blockingNextSteps: NextStep[] = [
-      ...(inTriage.length > 0
-        ? [
-            {
-              intent: `Triage ${inTriage.length} blocking finding(s) (accept, or close --as rejected|duplicate)`,
-              command: `mu task list --substate triage -w ${ws}`,
-            },
-          ]
-        : []),
-      {
-        intent: "Watch the remaining blockers (returns when one closes)",
-        command: `mu task wait ${r.blockingIds.join(" ")} -w ${ws} --first --any --on-stall exit`,
-      },
-      { intent: "Show the umbrella + blockers", command: `mu task show ${localId} -w ${ws}` },
-    ];
     if (opts.json) {
-      emitJson({ taskName: localId, ...r, nextSteps: blockingNextSteps });
+      emitJson({ taskName: localId, ...r });
       return;
     }
     const total = r.blockingIds.length;
@@ -140,40 +122,25 @@ export async function cmdTaskClose(
         `Skipped ${pc.bold(localId)}: blocked by ${total} task(s) (${shown}${tail}); close again once they are CLOSED`,
       ),
     );
-    printNextSteps(blockingNextSteps);
     return;
   }
-  const pickNext: NextStep = {
-    intent: r.unblocked.length > 0 ? "Pick up an unblocked task" : "Pick the next ready task",
-    command: `mu task next -w ${ws}`,
-  };
-  const reopen: NextStep = {
-    intent: "Reopen if needed",
-    command: `mu task open ${localId} -w ${ws}`,
-  };
-  // A non-done close that released dependents leads with them.
-  const nextSteps: NextStep[] = [
-    ...(r.unblocked.length > 0 ? [pickNext, reopen] : [reopen, pickNext]),
-    { intent: "See full state", command: `mu state -w ${ws}` },
-  ];
   if (r.changed && r.status === "CLOSED") {
-    await maybeAppendDirtyWorktreeCommitHint(db, nextSteps, actor, ws, taskRow?.title ?? localId);
+    const commit = await dirtyWorktreeWarning(db, actor, ws, taskRow?.title ?? localId);
+    if (commit !== undefined) warnings.push(commit);
   }
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, warnings, nextSteps });
+    emitJson({ taskName: localId, ...r, warnings });
     return;
   }
-  printDecisionWarnings(warnings, localId, ws);
+  printDecisionWarnings(warnings);
   if (!r.changed) {
     console.log(pc.dim(`${localId} already CLOSED (no-op)`));
-    printNextSteps(nextSteps);
     return;
   }
   const ev = opts.evidence ? pc.dim(`  evidence: ${opts.evidence}`) : "";
   console.log(`Closed ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
   if (ev) console.log(ev);
   if (r.unblocked.length > 0) console.log(`Unblocked: ${r.unblocked.join(", ")}`);
-  printNextSteps(nextSteps);
 }
 
 /** The weak-decision warning for this accept / close, as a 0-or-1 list
@@ -189,18 +156,8 @@ function decisionWarnings(
   return w === undefined ? [] : [w];
 }
 
-function printDecisionWarnings(warnings: readonly string[], localId: string, ws: string): void {
-  if (warnings.length === 0) return;
+function printDecisionWarnings(warnings: readonly string[]): void {
   for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
-  printNextStepsTo(
-    [
-      {
-        intent: "Record what confirmed it",
-        command: `mu task note ${localId} -w ${ws} "EVIDENCE: <command + result>"`,
-      },
-    ],
-    "stderr",
-  );
 }
 
 /** "OPEN → CLOSED/wontfix": the pair transition a lifecycle verb made. */
@@ -214,34 +171,31 @@ function transition(r: {
   return `${from} → ${formatPair({ status: r.status, substate: r.substate })}`;
 }
 
-/** The "Don't forget to commit" command for a dirty worktree. Picks up
- *  untracked files (`git commit -am` alone would refuse with "nothing
- *  added"), and names the path so it works from any cwd. Exported for the
- *  fast-tier test. */
+/** The commit command for a dirty worktree. Picks up untracked files
+ *  (`git commit -am` alone would refuse with "nothing added"), and names
+ *  the path so it works from any cwd. Exported for the fast-tier test. */
 export function commitHintCommand(worktree: string, taskTitle: string): string {
   const dir = shellSingleQuote(worktree);
   return `git -C ${dir} add -A && git -C ${dir} commit -m ${shellSingleQuote(taskTitle)}`;
 }
 
-async function maybeAppendDirtyWorktreeCommitHint(
+/** The closer's worktree has uncommitted changes: a warning naming the commit. */
+async function dirtyWorktreeWarning(
   db: Db,
-  nextSteps: NextStep[],
   actor: string,
   workstream: string,
   taskTitle: string,
-): Promise<void> {
-  if (actor.length === 0) return;
+): Promise<string | undefined> {
+  if (actor.length === 0) return undefined;
   try {
     const row = getWorktreeFor(db, workstream, actor);
-    if (row === undefined) return;
-    if ((await dirtyFiles(row.path)).length === 0) return;
-    nextSteps.push({
-      intent: "Don't forget to commit",
-      command: commitHintCommand(row.path, taskTitle),
-    });
+    if (row === undefined) return undefined;
+    if ((await dirtyFiles(row.path)).length === 0) return undefined;
+    return `uncommitted changes in ${row.path}; don't forget to commit: ${commitHintCommand(row.path, taskTitle)}`;
   } catch {
-    // Best-effort hint only: a VCS probe failure must never make
+    // Best-effort: a VCS probe failure must never make
     // `mu task close` fail after the task successfully closed.
+    return undefined;
   }
 }
 
@@ -261,26 +215,17 @@ export async function cmdTaskOpen(
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
   const r = openTask(db, localId, sdkOpts);
-  const nextSteps: NextStep[] = [
-    {
-      intent: "Claim it",
-      command: `mu task claim ${localId} -w ${ws}  (--self / --for <worker>)`,
-    },
-    { intent: "Close again", command: `mu task close ${localId} -w ${ws}` },
-  ];
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, nextSteps });
+    emitJson({ taskName: localId, ...r });
     return;
   }
   if (!r.changed) {
     console.log(pc.dim(`${localId} already OPEN (no-op)`));
-    printNextSteps(nextSteps);
     return;
   }
   const ev = opts.evidence ? pc.dim(`  evidence: ${opts.evidence}`) : "";
   console.log(`Reopened ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
   if (ev) console.log(ev);
-  printNextSteps(nextSteps);
 }
 
 export async function cmdTaskPark(
@@ -298,12 +243,8 @@ export async function cmdTaskPark(
   };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   const r = parkTask(db, localId, sdkOpts);
-  const nextSteps: NextStep[] = [
-    { intent: "Unpark it later", command: `mu task unpark ${localId} -w ${ws}` },
-    { intent: "List parked tasks", command: `mu task list --substate parked -w ${ws}` },
-  ];
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, nextSteps });
+    emitJson({ taskName: localId, ...r });
     return;
   }
   if (!r.changed) {
@@ -311,7 +252,6 @@ export async function cmdTaskPark(
   } else {
     console.log(`Parked ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
   }
-  printNextSteps(nextSteps);
 }
 
 export async function cmdTaskAccept(
@@ -327,25 +267,17 @@ export async function cmdTaskAccept(
   if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
   const warnings = decisionWarnings(db, localId, ws, "accept", opts.evidence);
   const r = acceptTask(db, localId, sdkOpts);
-  const nextSteps: NextStep[] = [
-    {
-      intent: "Claim it",
-      command: `mu task claim ${localId} -w ${ws}  (--self / --for <worker>)`,
-    },
-    { intent: "Triage the next one", command: `mu task list --substate triage -w ${ws}` },
-  ];
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, warnings, nextSteps });
+    emitJson({ taskName: localId, ...r, warnings });
     return;
   }
-  printDecisionWarnings(warnings, localId, ws);
+  printDecisionWarnings(warnings);
   if (!r.changed) {
     const pair = formatPair({ status: r.status, substate: r.substate });
     console.log(pc.dim(`${localId} is ${pair}, not in triage (no-op)`));
   } else {
     console.log(`Accepted ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
   }
-  printNextSteps(nextSteps);
 }
 
 export async function cmdTaskUnpark(
@@ -360,15 +292,8 @@ export async function cmdTaskUnpark(
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
   const r = unparkTask(db, localId, sdkOpts);
-  const nextSteps: NextStep[] = [
-    {
-      intent: "Claim it",
-      command: `mu task claim ${localId} -w ${ws}  (--self / --for <worker>)`,
-    },
-    { intent: "Pick the next ready task", command: `mu task next -w ${ws}` },
-  ];
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, nextSteps });
+    emitJson({ taskName: localId, ...r });
     return;
   }
   if (!r.changed) {
@@ -377,5 +302,4 @@ export async function cmdTaskUnpark(
   } else {
     console.log(`Unparked ${pc.bold(localId)} ${pc.dim(`(${transition(r)})`)}`);
   }
-  printNextSteps(nextSteps);
 }

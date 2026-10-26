@@ -293,12 +293,14 @@ describe("send arms the run it started", () => {
     expect(b).toMatchObject({ afterRuns: 4, incarnation: INC });
   });
 
-  it("the hint is ONE executable `mu wait` on the same ref the registration holds", async () => {
+  it("next is ONE executable `mu wait` on the same ref the registration holds", async () => {
     seedAgent();
     await serve("worker-1");
     const r = await as(SESSION, ["agent", "send", "worker-1", "go", "-w", "auth", "--json"]);
-    const steps = (r.data as { nextSteps: { command: string }[] }).nextSteps;
-    expect(steps.map((s) => s.command)).toEqual([`mu wait 'agent:auth/worker-1@3#${INC}'`]);
+    expect(r.doc.next).toEqual({
+      mode: "alt",
+      commands: [`mu wait 'agent:auth/worker-1@3#${INC}'`],
+    });
   });
 });
 
@@ -381,7 +383,7 @@ describe("spawn --send arms the ACTUAL agent", () => {
     });
   }
 
-  it("--next-free renamed it: the registration and the hint name the returned agent", async () => {
+  it("--next-free renamed it: the registration and next name the returned agent", async () => {
     seedAgent("worker-1");
     installPanes();
     db.close();
@@ -395,9 +397,7 @@ describe("spawn --send arms the ACTUAL agent", () => {
     db = openDb({ path: dbPath });
     expect(r?.exitCode ?? 0).toBe(0);
     expect(reg(CALLER)?.refs).toEqual([{ kind: "agent", workstream: "auth", id: "worker-2" }]);
-    const steps = ((r as NonNullable<typeof r>).data as { nextSteps: { command: string }[] })
-      .nextSteps;
-    expect(steps[0]?.command).toBe(`mu wait 'agent:auth/worker-2@3#${INC}'`);
+    expect(r?.doc.next?.commands).toEqual([`mu wait 'agent:auth/worker-2@3#${INC}'`]);
   });
 
   it("without --send nothing is owed yet", async () => {
@@ -730,18 +730,17 @@ describe("df2_wait_dead_after_reap: a death between two waits is still dead (CLI
     expect(r.data).toMatchObject({ firing: { kind: "heartbeat" }, exit: 0 });
   });
 
-  it("df2_dead_hint_agent_ref: a dead AGENT ref never hints `task show <agent name>`", async () => {
+  it("df2_dead_hint_agent_ref: a dead AGENT ref never gets `task show <agent name>` as its next", async () => {
     ownedThenPaneDies();
     await serve("worker-1");
     await as(SESSION, ["agent", "send", "worker-1", "go", "-w", "auth", "--json"]);
     killPane();
     const r = await as(SESSION, ["wait", "-w", "auth", "--timeout", "2"]);
     expect(r.exitCode).toBe(6);
-    const data = r.data as { firing: { ref: string }; nextSteps: { command: string }[] };
-    const hints = data.nextSteps.map((s) => s.command);
+    const data = r.data as { firing: { ref: string } };
+    const hints: string[] = r.doc.next?.commands ?? [];
     expect(hints.some((c) => /task show worker-1/.test(c))).toBe(false);
     expect(data.firing.ref).toBe("agent:auth/worker-1");
-    expect(hints).toContain("mu log -w auth --source reaper -n 10");
   });
 });
 

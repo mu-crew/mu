@@ -12,6 +12,30 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Removed
 
+- **Legacy `nextSteps` hints are deleted, not wrapped; every result's `next` is computed once**
+  (`v_hint_wire`, slice B of `v_hints`; README "Next contract"). `handle()` finalises `next` for
+  success JSON (`emitJson`), failure JSON (`emitError`, `CliExitError` partial failures) and human
+  text (one dim `next:` line, stderr on failure) from `computeNext` over the open DB after the verb's
+  writes. A verb only declares what it did (`setNextOutcome`: a delivered send's exact wait, an
+  unknown delivery's receipt check, a gate's wait, a `claim --for` brief, a preview's `--if <rev>`
+  apply, a wait's stored resume); `resolveWorkstream` records the scope. Outside `handle()` (parse
+  errors) `next` is null. The plan is cut to what the 4 KB result leaves (a `seq` dropped whole).
+  Gone: `NextStep`, `HasNextSteps`, `hasNextSteps`, `printNextSteps(To)`, `formatNextSteps`, every
+  `errorNextSteps()` and `inlineNext`, `paneNotFoundNextSteps`, `transportNextSteps`,
+  `src/cli/dispatch-hints.ts`, the wait's `nextSteps`/`nextStepsCut`, the spawn orphan-cleanup hint
+  and the triage `next=` trailer on `task list`. Reads, placeholders (`<id>`, `'...'`) and `a|b`
+  are no longer printed as hints. Facts some hints carried survive as data or one-line prose:
+  `agent spawn --json` and `workstream init --json` carry `attach` (the delegate tool reads it
+  there), the dirty-worktree commit line on `task close` and the unseen-note send on `task note` are
+  `warnings`, `mu rebuild` prints the swap command, a wrong task id prints `similar:` (human) beside
+  `candidate_ids` (JSON), an ambiguous name adds `candidates`, and the prose-quoting and missing-CLI
+  advice moved into the error message.
+- **An unknown verb is one line, not the root help** (`df1_unknown_verb_dumps_help`, dogfood-1 F5).
+  `mu next` used to print "too many arguments" plus 7.6 KB of help; it now prints
+  `unknown command 'next' (closest: mu me next); see mu --help` (70 bytes for a word with no near
+  verb). The closest verb is matched one level deep (`mu claim` → `mu task claim`); a namespace says
+  `see mu task --help`. `--json` keeps `usage`.
+
 - **The pre-engine wait code is deleted, not wrapped** (`v_wait_delete_old`). `src/tasks/wait.ts`
   (`waitForTasks`) and `src/agents/wait.ts` (`waitForAgents`) were adapters over `waitForEvents`;
   `mu agent wait` now calls `waitForEvents` directly (`src/cli/agents.ts`, with `ctlAgentHooks`) and

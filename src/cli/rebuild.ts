@@ -6,8 +6,8 @@
 // without a human-shaped summary getting in the way.
 
 import { type Db, defaultDbPath } from "../db.js";
-import { type NextStep, pc, printNextSteps } from "../output.js";
-import { type RebuildReport, rebuildInto } from "../rebuild.js";
+import { pc } from "../output.js";
+import { rebuildInto } from "../rebuild.js";
 
 export interface RebuildCmdOptions {
   json?: boolean;
@@ -19,24 +19,6 @@ export interface RebuildCmdOptions {
 function swapCommand(targetPath: string): string {
   const live = defaultDbPath();
   return `mv ${targetPath} ${live}`;
-}
-
-function nextSteps(report: RebuildReport): NextStep[] {
-  const steps: NextStep[] = [
-    { intent: "Swap the rebuilt DB into place", command: swapCommand(report.targetPath) },
-    {
-      intent: "Inspect it first",
-      command: `MU_DB_PATH=${report.targetPath} mu state`,
-    },
-  ];
-  if (report.machineLocalLost.length > 0) {
-    // Only suggest re-spawning when there was actually something to lose.
-    steps.push({
-      intent: "Re-spawn agents after the swap (registry is not rebuildable)",
-      command: "mu agent spawn <name> -w <workstream>",
-    });
-  }
-  return steps;
 }
 
 export async function cmdRebuild(
@@ -60,7 +42,6 @@ export async function cmdRebuild(
       rebuiltRows: report.rebuiltRows,
       machineLocalLost: report.machineLocalLost,
       swapCommand: swapCommand(report.targetPath),
-      nextSteps: nextSteps(report),
     });
     return;
   }
@@ -99,7 +80,7 @@ export async function cmdRebuild(
     console.log(pc.dim("  Re-spawn agents once you have swapped the DB in."));
   }
 
-  printNextSteps(nextSteps(report));
+  console.log(pc.dim(`  swap it in: ${swapCommand(report.targetPath)}`));
 }
 
 // ─── commander wiring ────────────────────────────────────────────────

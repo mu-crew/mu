@@ -21,7 +21,6 @@
 // them); nothing here runs a host command.
 
 import type { Db } from "./db.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 
 /** Why the row went away: `reap` (any plain delete), a `teardown`, or its workstream's deletion. */
 export type RemoteRecoveryReason = "reap" | "teardown" | "workstream-delete";
@@ -70,7 +69,7 @@ interface RawRow {
 // ─── Selection: which record a close or collect means ───────────────────────
 
 /** A recovery operation refused: nothing was changed on the host or in the record. Exit 4. */
-export class RemoteRecoveryRefusedError extends Error implements HasNextSteps {
+export class RemoteRecoveryRefusedError extends Error {
   override readonly name = "RemoteRecoveryRefusedError";
   constructor(
     public readonly workstream: string,
@@ -89,12 +88,6 @@ export class RemoteRecoveryRefusedError extends Error implements HasNextSteps {
     public readonly candidates: readonly number[] = [],
   ) {
     super(`agent ${workstream}/${agentName}: remote recovery refused: ${detail}`);
-  }
-  errorNextSteps(): NextStep[] {
-    return this.candidates.map((id) => ({
-      intent: `Preview recovery ${id}`,
-      command: `mu agent close ${this.agentName} -w ${this.workstream} --recovery ${id}`,
-    }));
   }
 }
 

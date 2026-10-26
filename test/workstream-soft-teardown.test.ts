@@ -161,12 +161,16 @@ describe("preview writes nothing", () => {
     expect((db.prepare("SELECT COUNT(*) AS n FROM agents").get() as { n: number }).n).toBe(1);
   });
 
-  it("--json preview carries revision and nextSteps with --if", async () => {
+  it("--json preview carries revision and next is the --if apply", async () => {
     seed("ws");
     const r = await run("workstream", "teardown", "ws", "--json");
-    const j = asJson(r).data as { revision: number; dryRun: boolean; nextSteps: unknown[] };
+    const doc = asJson(r);
+    const j = doc.data as { revision: number; dryRun: boolean };
     expect(j.dryRun).toBe(true);
-    expect(JSON.stringify(j.nextSteps)).toContain(`--if ${j.revision}`);
+    expect(doc.doc.next).toEqual({
+      mode: "alt",
+      commands: [`mu workstream teardown ws --if ${j.revision}`],
+    });
   });
 });
 

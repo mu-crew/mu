@@ -282,8 +282,6 @@ describe("herdr sessions (= workspaces, addressed by label)", () => {
     if (!(err instanceof HerdrWorkspaceGroupCloseError)) throw new Error("expected the refusal");
     expect(err.workspaceId).toBe("w1");
     expect(err.session).toBe("mu-topotest");
-    const commands = err.errorNextSteps().map((s) => s.command);
-    expect(commands.some((c) => c.includes("workspace close w1 --group"))).toBe(true);
   });
 
   it("the group-close refusal exits 2 (usage), not 5 (mux down)", () => {

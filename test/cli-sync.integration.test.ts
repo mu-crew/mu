@@ -438,7 +438,7 @@ describe("mu sync (CLI)", () => {
   // ─── the report itself ────────────────────────────────────────────
 
   describe("the peer report", () => {
-    it("prints a copy-pasteable rsync NextStep for a stale peer", async () => {
+    it("names a stale peer and that moving its segments is the operator's", async () => {
       await runCli(["workstream", "init", "demo"], lap);
       await seedTask(lap, "t1");
       // Backdate the laptop's segment past the staleness threshold.
@@ -448,10 +448,7 @@ describe("mu sync (CLI)", () => {
       for (const name of segment) utimesSync(join(dir, name), old, old);
 
       const { stdout } = await runCli(["sync"], dev);
-      expect(stdout).toContain("stale");
-      expect(stdout).toContain("Next:");
-      expect(stdout).toContain("rsync");
-      expect(stdout).toContain(dir);
+      expect(stdout).toContain("1 stale peer: move their segments in");
     });
 
     it("never shells out to ssh/scp/rsync — the operator owns transport", async () => {
@@ -463,22 +460,18 @@ describe("mu sync (CLI)", () => {
       expect(exitCode).toBeNull();
     });
 
-    it("emits a Next: block and valid --json on the ordinary path", async () => {
+    it("emits valid --json on the ordinary path", async () => {
       await runCli(["workstream", "init", "demo"], lap);
-      const human = await runCli(["sync"], dev);
-      expect(human.stdout).toContain("Next:");
       const { data } = await runCliJson(["sync", "--json"], dev);
       const parsed = data as {
         syncDir: string;
         enabled: boolean;
         flushed: number;
         peers: unknown[];
-        nextSteps: Array<{ intent: string; command: string }>;
       };
       expect(parsed.syncDir).toBe(dir);
       expect(parsed.enabled).toBe(true);
       expect(Array.isArray(parsed.peers)).toBe(true);
-      expect(parsed.nextSteps.length).toBeGreaterThan(0);
     });
 
     it("reports zero peers honestly rather than pretending", async () => {

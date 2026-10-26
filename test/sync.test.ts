@@ -45,7 +45,6 @@ import {
   SyncSourceNotFoundError,
   SyncSourceTooNewError,
   syncEnabled,
-  transportNextSteps,
 } from "../src/sync.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, updateTask } from "../src/tasks/edit.js";
@@ -289,7 +288,6 @@ describe("sync", () => {
         stale: true,
       };
       expect(resolvePeerRef([oldShape], "aaaa").machineId).toBe("aaaa1111-x");
-      expect(transportNextSteps("/mnt/sync", [oldShape]).length).toBeGreaterThan(0);
     });
 
     it("names the known peers when nothing matches", () => {
@@ -553,43 +551,6 @@ describe("sync", () => {
         const row = taskRow(db, "t1");
         expect(row?.impact).toBe(95);
         expect(row?.status).toBe("CLOSED");
-      }
-    });
-  });
-
-  // ─── transport hints ───────────────────────────────────────────────
-
-  describe("transportNextSteps", () => {
-    const stalePeer = {
-      machineId: "aaaa1111",
-      short: "aaaa1111",
-      path: "/tmp/aaaa1111.jsonl",
-      conflictCopy: false,
-      watermarkKey: "aaaa1111",
-      watermark: 0,
-      total: 0,
-      behind: 0,
-      lastSeenMs: 0,
-      ageMs: PEER_STALE_MS + 1,
-      stale: true,
-    };
-
-    it("prints a copy-pasteable rsync line for a stale peer", () => {
-      const steps = transportNextSteps("/mnt/sync", [stalePeer]);
-      expect(steps.length).toBeGreaterThan(0);
-      expect(steps[0]?.command).toContain("rsync");
-      expect(steps[0]?.command).toContain("/mnt/sync");
-    });
-
-    it("says nothing when every peer is fresh", () => {
-      expect(transportNextSteps("/mnt/sync", [{ ...stalePeer, stale: false }])).toEqual([]);
-    });
-
-    it("never shells out: the hint is a STRING, not an invocation", () => {
-      // The pledge, as a test: mu prints transport, it does not run it.
-      const steps = transportNextSteps("/mnt/sync", [stalePeer]);
-      for (const step of steps) {
-        expect(typeof step.command).toBe("string");
       }
     });
   });

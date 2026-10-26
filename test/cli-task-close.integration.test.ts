@@ -29,7 +29,7 @@ const GIT = (() => {
 const gitDescribe = GIT ? describe : describe.skip;
 
 interface JsonClosePayload {
-  nextSteps: { intent: string; command: string }[];
+  warnings: string[];
 }
 
 function initGitRepo(root: string): void {
@@ -96,7 +96,7 @@ gitDescribe("mu task close dirty-worktree commit hint", () => {
     return worktree;
   }
 
-  it("adds the commit hint to human stdout and --json nextSteps when the actor's worktree is dirty", async () => {
+  it("warns with the commit command (stderr; --json warnings) when the actor's worktree is dirty", async () => {
     const worktree = await seedDb({ withWorktree: true });
     expect(worktree).toBeDefined();
     if (worktree === undefined) return;
@@ -109,8 +109,8 @@ gitDescribe("mu task close dirty-worktree commit hint", () => {
       );
       expect(human.error).toBeUndefined();
       expect(human.exitCode).toBeNull();
-      expect(human.stdout).toContain("Don't forget to commit");
-      expect(human.stdout).toContain(
+      expect(human.stderr).toContain("don't forget to commit");
+      expect(human.stderr).toContain(
         `git -C '${worktree.path}' add -A && git -C '${worktree.path}' commit -m 'Implement Helpful Thing'`,
       );
 
@@ -121,10 +121,9 @@ gitDescribe("mu task close dirty-worktree commit hint", () => {
       expect(json.error).toBeUndefined();
       expect(json.exitCode).toBeNull();
       const payload = json.data as JsonClosePayload;
-      expect(payload.nextSteps).toContainEqual({
-        intent: "Don't forget to commit",
-        command: `git -C '${worktree.path}' add -A && git -C '${worktree.path}' commit -m 'Emit JSON Hint'`,
-      });
+      expect(payload.warnings.join("\n")).toContain(
+        `git -C '${worktree.path}' add -A && git -C '${worktree.path}' commit -m 'Emit JSON Hint'`,
+      );
     });
   });
 
@@ -138,7 +137,7 @@ gitDescribe("mu task close dirty-worktree commit hint", () => {
       );
       expect(json.error).toBeUndefined();
       const payload = json.data as JsonClosePayload;
-      expect(payload.nextSteps.map((s) => s.intent)).not.toContain("Don't forget to commit");
+      expect(payload.warnings.join("\n")).not.toContain("forget to commit");
       expect(json.stdout).not.toContain("git commit -m");
     });
   });
@@ -153,7 +152,7 @@ gitDescribe("mu task close dirty-worktree commit hint", () => {
       );
       expect(json.error).toBeUndefined();
       const payload = json.data as JsonClosePayload;
-      expect(payload.nextSteps.map((s) => s.intent)).not.toContain("Don't forget to commit");
+      expect(payload.warnings.join("\n")).not.toContain("forget to commit");
       expect(json.stdout).not.toContain("git commit -m");
     });
   });

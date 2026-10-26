@@ -26,7 +26,6 @@ import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, tornDownAtOf } from "./db.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 import { listWorktrees } from "./worktree.js";
 
 /**
@@ -111,58 +110,20 @@ export function isValidWorkstreamName(name: string): boolean {
  *  4 (conflict) by `classifyError`; no mu verb throws it today
  *  (`ensureWorkstream` is idempotent). Invalid names throw
  *  `WorkstreamNameInvalidError`. */
-export class WorkstreamExistsError extends Error implements HasNextSteps {
+export class WorkstreamExistsError extends Error {
   override readonly name: string = "WorkstreamExistsError";
   constructor(public readonly workstream: string) {
     super(`workstream already exists: ${workstream}`);
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      { intent: "List existing workstreams", command: "mu workstream list" },
-      {
-        intent: "Tear down the existing workstream first",
-        command: `mu workstream teardown -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
-export class WorkstreamNameInvalidError extends Error implements HasNextSteps {
+export class WorkstreamNameInvalidError extends Error {
   override readonly name = "WorkstreamNameInvalidError";
   constructor(public readonly attempted: string) {
     const reason = attempted.startsWith(RESERVED_WORKSTREAM_PREFIX)
       ? `the 'mu-' prefix is reserved (mu auto-prepends 'mu-' to derive the tmux session name; '${attempted}' would produce session 'mu-${attempted}', which is double-prefixed and almost never what you want). Drop the 'mu-' from the workstream name.`
       : `must match /^[a-z][a-z0-9_-]{0,31}$/. tmux silently rewrites '.' to '_' and reserves ':' as a target separator, so workstream names containing those characters would create tmux sessions mu couldn't look up afterwards. Use letters, digits, '_', and '-' only.`;
     super(`invalid workstream name ${JSON.stringify(attempted)}: ${reason}`);
-  }
-  errorNextSteps(): NextStep[] {
-    // Suggest a sanitized form: lowercase; strip the mu- prefix; map
-    // every char outside [a-z0-9_-] (dots, colons, slashes, spaces) to
-    // '_'; drop leading non-letters; cap at 32. A result that still
-    // fails validation becomes the `<name>` placeholder, so the hint
-    // never suggests a command that fails the same check.
-    const candidate = this.attempted
-      .toLowerCase()
-      .replace(/^mu-/, "")
-      .replace(/[^a-z0-9_-]/g, "_")
-      .replace(/^[^a-z]+/, "")
-      .slice(0, 32);
-    const sanitized = isValidWorkstreamName(candidate) ? candidate : "<name>";
-    // Branch the intent label on the failure class. For the mu-prefix
-    // case the correction is unambiguous (drop the prefix), so phrase
-    // the next-step as a direct action — "Try a … (best guess)" reads
-    // as a hedge and dogfooding showed agents skip past the rationale
-    // line entirely (workstream_init_name_rejected_mu in feedback ws).
-    // For the regex/mangle branch the sanitiser really is guessing
-    // (`.`/`:`/case all collapse), so the hedge stays honest there.
-    const isPrefixCase = this.attempted.toLowerCase().startsWith(RESERVED_WORKSTREAM_PREFIX);
-    const intent = isPrefixCase
-      ? "Retry without the 'mu-' prefix"
-      : "Try a sanitized name (best guess)";
-    return [
-      { intent, command: `mu workstream init ${sanitized}` },
-      { intent: "List existing workstreams", command: "mu workstream list" },
-    ];
   }
 }
 
@@ -173,21 +134,12 @@ function assertValidWorkstreamName(name: string): void {
 /** Thrown by `mu workstream init` when the operator tries to create a
  *  reserved workstream (e.g. `scratch`) explicitly. The name is not
  *  invalid — it auto-creates on spawn — it just can't be `init`ed. */
-export class WorkstreamNameReservedError extends Error implements HasNextSteps {
+export class WorkstreamNameReservedError extends Error {
   override readonly name = "WorkstreamNameReservedError";
   constructor(public readonly attempted: string) {
     super(
       `workstream name ${JSON.stringify(attempted)} is reserved: it is the off-the-cuff bucket and auto-creates on first spawn. Don't 'init' it.`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Just spawn into it (auto-creates)",
-        command: `mu agent spawn <name> -w ${this.attempted}`,
-      },
-      { intent: "Use a durable workstream instead", command: "mu workstream init <name>" },
-    ];
   }
 }
 
@@ -195,9 +147,8 @@ export class WorkstreamNameReservedError extends Error implements HasNextSteps {
  *  the workstream (its ops, agents or worktrees) changed since the preview.
  *  Exit 4, nothing was done. One stderr line: the message names the
  *  preview command (`inlineNext`). */
-export class WorkstreamRevisionMismatchError extends Error implements HasNextSteps {
+export class WorkstreamRevisionMismatchError extends Error {
   override readonly name = "WorkstreamRevisionMismatchError";
-  readonly inlineNext = true;
   constructor(
     public readonly workstream: string,
     public readonly expected: number,
@@ -209,17 +160,13 @@ export class WorkstreamRevisionMismatchError extends Error implements HasNextSte
       `workstream ${workstream} changed since preview (rev ${expected} → ${actual}); preview again: ${previewCommand}`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "Preview again", command: this.previewCommand }];
-  }
 }
 
 /** `workstream init --if` over a torn-down name would hard-delete rows
  *  while this machine still has agent rows (so possibly live panes) in it.
  *  A peer's teardown can reach a machine that still runs its agents. Exit 4. */
-export class WorkstreamHasAgentsError extends Error implements HasNextSteps {
+export class WorkstreamHasAgentsError extends Error {
   override readonly name = "WorkstreamHasAgentsError";
-  readonly inlineNext = true;
   constructor(
     public readonly workstream: string,
     public readonly agents: readonly string[],
@@ -228,23 +175,13 @@ export class WorkstreamHasAgentsError extends Error implements HasNextSteps {
       `torn-down workstream ${workstream} still has ${agents.length} local agent row${agents.length === 1 ? "" : "s"} (${agents.join(", ")}); close each once its pane is gone (preview, then apply with --if): mu agent close ${agents[0]} -w ${workstream}`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent:
-          "Preview closing the agent (the --if apply kills its pane; the row stays while it lives)",
-        command: `mu agent close ${this.agents[0]} -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
 /** A teardown found registered panes still alive outside its session
  *  (moved by hand): killing the session would not stop them, and deleting
  *  their rows would orphan them. Exit 4, nothing was done. */
-export class WorkstreamPanesLiveError extends Error implements HasNextSteps {
+export class WorkstreamPanesLiveError extends Error {
   override readonly name = "WorkstreamPanesLiveError";
-  readonly inlineNext = true;
   constructor(
     public readonly workstream: string,
     public readonly agents: readonly string[],
@@ -253,21 +190,12 @@ export class WorkstreamPanesLiveError extends Error implements HasNextSteps {
       `workstream ${workstream} has live panes outside its session (${agents.join(", ")}); close them first (preview, then apply with --if): mu agent close ${agents[0]} -w ${workstream}`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Preview closing the stray agent",
-        command: `mu agent close ${this.agents[0]} -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
 /** `workstream init --if` over a torn-down name found its mux session still
  *  alive: the old rows are not deleted while panes may run. Exit 4. */
-export class WorkstreamSessionLiveError extends Error implements HasNextSteps {
+export class WorkstreamSessionLiveError extends Error {
   override readonly name = "WorkstreamSessionLiveError";
-  readonly inlineNext = true;
   constructor(
     public readonly workstream: string,
     public readonly session: string,
@@ -275,11 +203,6 @@ export class WorkstreamSessionLiveError extends Error implements HasNextSteps {
     super(
       `torn-down workstream ${workstream} still has a live mux session ${session}; kill it first: mu workstream teardown ${workstream}`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      { intent: "Preview the local cleanup", command: `mu workstream teardown ${this.workstream}` },
-    ];
   }
 }
 

@@ -45,16 +45,14 @@
 // small hat (ssh config, jump hosts, ProxyCommand, ports, identity
 // files, interactive prompts inside a TUI tick, network-vs-auth error
 // mapping), and it violates the standing ROADMAP pledge that the user
-// owns transport. Instead, when a peer looks stale we PRINT a
-// copy-pasteable rsync line through the ordinary NextStep convention and
-// let the operator paste it, alias it, or run Syncthing and never see
-// it.
+// owns transport. `mu sync` reports a stale peer (`stale: true`); moving
+// its segment (Syncthing, rsync, a USB stick) is the operator's.
 
 import { existsSync, statSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { Op } from "./apply.js";
 import { CURRENT_SCHEMA_VERSION, type Db, SYNCED_ENTITIES } from "./db.js";
-import { isJsonMode, type NextStep } from "./output.js";
+import { isJsonMode } from "./output.js";
 import {
   applyIncomingOp,
   discoverPeers,
@@ -540,30 +538,4 @@ export function ingestFromDb(db: Db, path: string): IngestFromDbResult {
       // best effort
     }
   }
-}
-
-// ─── transport hints ──────────────────────────────────────────────────
-
-/**
- * Copy-pasteable transport for a stale peer, via the ordinary NextStep
- * convention. This is what mu does INSTEAD of moving bytes itself.
- *
- * `<host>` is a literal placeholder on purpose: mu has no host list and
- * is not growing one (a peer list would be a config file with extra
- * steps, and one that must be kept consistent on every machine — the
- * very drift it looks like it solves).
- */
-export function transportNextSteps(dir: string, peers: readonly PeerStatus[]): NextStep[] {
-  const stale = peers.filter((p) => p.stale);
-  if (stale.length === 0) return [];
-  return [
-    {
-      intent: `Pull fresh segments (${stale.length} stale peer${stale.length === 1 ? "" : "s"})`,
-      command: `rsync -av <host>:${dir}/ ${dir}/`,
-    },
-    {
-      intent: "Or stop doing it by hand",
-      command: `# share ${dir} with Syncthing on every machine`,
-    },
-  ];
 }

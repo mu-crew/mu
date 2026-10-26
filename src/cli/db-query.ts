@@ -59,7 +59,7 @@ import {
   TaskAlreadyOwnedError,
   TaskHasOpenBlockersError,
 } from "../tasks.js";
-import { CliExitError, SqlColumnError, UsageError } from "./handle.js";
+import { CliExitError, editDistance, SqlColumnError, UsageError } from "./handle.js";
 import { jsonDocument, pageRecords, type RecordPage } from "./tasks/records.js";
 
 type Statement = ReturnType<Db["prepare"]>;
@@ -484,24 +484,6 @@ function teachColumnError(db: Db, query: string, err: unknown): unknown {
       ? "name a table to see its columns"
       : [...tables].map(([t, cs]) => `${t}(${cs.join(", ")})`).join("; ");
   return new SqlColumnError(`no such column: ${wanted}${mean}. columns: ${cols}`);
-}
-
-function editDistance(a: string, b: string): number {
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const row = [i];
-    for (let j = 1; j <= b.length; j++) {
-      row.push(
-        Math.min(
-          (prev[j] as number) + 1,
-          (row[j - 1] as number) + 1,
-          (prev[j - 1] as number) + (a[i - 1] === b[j - 1] ? 0 : 1),
-        ),
-      );
-    }
-    prev = row;
-  }
-  return prev[b.length] as number;
 }
 
 /**

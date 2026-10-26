@@ -18,7 +18,6 @@
 // Same shape as src/vcs/: a types module, one file per impl, and an
 // index that dispatches. See docs/VOCABULARY.md § "mux backend".
 
-import type { HasNextSteps, NextStep } from "../output.js";
 import { shellWord } from "../shell-quote.js";
 
 /** The multiplexers mu can drive. */
@@ -206,11 +205,8 @@ export function attachShellLine(steps: readonly MuxCommand[]): string {
  * subclasses it (tmux → `TmuxError`) so `handle()` can map the whole
  * family to exit code 5 (substrate unavailable) with one `instanceof`.
  */
-export class MuxError extends Error implements HasNextSteps {
+export class MuxError extends Error {
   override name: string = "MuxError";
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "Run health check", command: "mu doctor" }];
-  }
 }
 
 /**
@@ -226,26 +222,13 @@ export class MuxError extends Error implements HasNextSteps {
  * already hold the active backend, so passing it is free; the
  * no-backend form degrades to mu's own verbs only.
  */
-export class PaneNotFoundError extends Error implements HasNextSteps {
+export class PaneNotFoundError extends Error {
   override readonly name = "PaneNotFoundError";
   constructor(
     public readonly paneId: string,
-    private readonly backend?: MuxDiagnostics,
+    backend?: MuxDiagnostics,
   ) {
     super(`${backend?.name ?? "mux"} pane not found: ${paneId}`);
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      ...(this.backend?.paneNotFoundNextSteps(this.paneId) ?? []),
-      {
-        intent: "List workstreams to choose the right scope",
-        command: "mu workstream list",
-      },
-      {
-        intent: "List registered agents and orphan panes in that scope",
-        command: "mu agent list -w <workstream>",
-      },
-    ];
   }
 }
 
@@ -253,7 +236,6 @@ export class PaneNotFoundError extends Error implements HasNextSteps {
  *  error type doesn't depend on the whole backend contract. */
 export interface MuxDiagnostics {
   readonly name: MuxBackendName;
-  paneNotFoundNextSteps(paneId: string): NextStep[];
 }
 
 /**
@@ -262,17 +244,12 @@ export interface MuxDiagnostics {
  * installed but the server is unreachable", because from the caller's
  * point of view both mean "mu cannot reach a pane right now".
  */
-export class NoMultiplexerError extends Error implements HasNextSteps {
+export class NoMultiplexerError extends Error {
   override readonly name = "NoMultiplexerError";
-  /** The message names the install: the human path prints it alone. */
-  readonly inlineNext = true;
   constructor(public readonly tried: readonly string[]) {
     super(
       `no supported multiplexer found (tried: ${tried.join(", ")}); install tmux ≥ 3.0 (task, DAG and sql verbs work without one)`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "Check the install", command: "tmux -V" }];
   }
 }
 
@@ -367,11 +344,6 @@ export interface MuxBackend {
    * @deprecated scope fallback, removed by the -w unit.
    */
   currentSessionName(): Promise<string | undefined>;
-
-  // — diagnostics —
-
-  /** Backend-specific `PaneNotFoundError` remediation. */
-  paneNotFoundNextSteps(paneId: string): NextStep[];
   /** Version + ambient facts for `mu doctor`. Never throws: an
    *  unreachable backend reports `ok: false`. */
   healthCheck(): Promise<MuxHealth>;

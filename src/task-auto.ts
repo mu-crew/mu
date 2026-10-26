@@ -18,7 +18,6 @@
 
 import type { Db } from "./db.js";
 import { withOpContext } from "./op-context.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 import { localMachineId } from "./segments.js";
 import { type TaskRow, taskIdFor } from "./tasks/core.js";
 import { TaskNotFoundError } from "./tasks/errors.js";
@@ -29,7 +28,7 @@ import { RESERVED_WORKSTREAM_NAMES } from "./workstream.js";
 const CLI_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /** A refusal that leaves everything unwritten (exit 4). */
-export class TaskAutoRefusedError extends Error implements HasNextSteps {
+export class TaskAutoRefusedError extends Error {
   override readonly name = "TaskAutoRefusedError";
   constructor(
     message: string,
@@ -37,14 +36,6 @@ export class TaskAutoRefusedError extends Error implements HasNextSteps {
     public readonly taskId: string,
   ) {
     super(message);
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Read the task (read-only)",
-        command: `mu task show ${this.taskId} -w ${this.workstream}`,
-      },
-    ];
   }
 }
 

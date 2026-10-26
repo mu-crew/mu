@@ -456,12 +456,14 @@ describe("the fence reads and writes in ONE transaction", () => {
 });
 
 describe("CLI: task delete", () => {
-  it("preview carries data.revision and the apply hint is --if <rev>", async () => {
+  it("preview carries data.revision and next is the --if <rev> apply", async () => {
     const ops = opCount();
     const r = await runCliJson(["task", "delete", "t", "-w", "demo", "--json"], path);
     expect(r.data).toMatchObject({ dryRun: true, present: true, revision: rev("t") });
-    const cmds = (r.data.nextSteps as { command: string }[]).map((s) => s.command);
-    expect(cmds).toContain(`mu task delete t -w demo --if ${rev("t")}`);
+    expect(r.doc.next).toEqual({
+      mode: "alt",
+      commands: [`mu task delete t -w demo --if ${rev("t")}`],
+    });
     expect(opCount()).toBe(ops);
   });
 
@@ -799,10 +801,10 @@ describe("candidate_ids: read-only, exact partition", () => {
     expect("candidate_ids" in none.doc).toBe(false);
   });
 
-  it("human output names the candidates in the next-step hint, as read-only commands", async () => {
+  it("human output names the candidates as a read-only similar: line", async () => {
     const r = await runCli(["task", "show", "fix-auth", "-w", "demo"], path);
     expect(r.exitCode).toBe(3);
-    expect(r.stderr).toContain("mu task show fix_auth -w demo");
+    expect(r.stderr).toContain("similar: fix_auth");
     expect(r.stderr).not.toMatch(/mu (task (delete|block|close)|sql)/);
   });
 

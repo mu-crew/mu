@@ -34,13 +34,11 @@ mu workstream init auth
 
 ```
 Created workstream auth (mux session mu-auth)
-Next:
-  Attach the session : tmux attach -t mu-auth
-  ...
+attach: tmux attach -t mu-auth
 ```
 
-Every verb ends with a `Next:` block of follow-up commands. We use
-them as we go.
+When a verb leaves a move to make (a wait a send owes, the `--if` apply
+of a preview), it ends with a `next:` line you can run as printed.
 
 ## Plan two tasks
 
@@ -113,10 +111,7 @@ mu wait task:design -w auth
 ```
 
 ```
-auth/design
-any-of 1 reached CLOSED in 41094ms
-Next:
-  Inspect worker-1's commits, then cherry-pick what you want : git -C <path> log --oneline HEAD --not 26278f1
+{"ok":true,"data":{"firing":{"kind":"closed","ref":"task:auth/design"},...},"next":null}
 ```
 
 The exit code tells you what happened:
@@ -126,7 +121,7 @@ The exit code tells you what happened:
 | `0` | the task closed | merge the work |
 | `5` | `--timeout` expired (default 600 s) | wait again |
 | `6` | the worker's pane died and the task went back to `OPEN` | spawn and claim again |
-| `7` | the worker sat in `needs_input` for `--stuck-after` seconds (120, or 5 for a pi worker read over its control socket) | run its `Next:` (for a pi worker, `mu wait agent:auth/worker-1@<runs-1>` returns the last answer; otherwise `mu agent read worker-1 -w auth`), then answer it |
+| `7` | the worker sat in `needs_input` for `--stuck-after` seconds (120, or 5 for a pi worker read over its control socket) | read it (for a pi worker, `mu wait agent:auth/worker-1@<runs-1>` returns the last answer; otherwise `mu agent read worker-1 -w auth`), then answer it |
 
 `--on-stall exit` is the default; it is spelled out above so older mu
 versions behave the same. With `--on-stall warn`, a stalled worker only
@@ -139,8 +134,8 @@ means it is blocked or asking something.
 
 ## Merge the commit
 
-Run the cherry-pick command from the `Next:` block, then run your
-tests on the result:
+Inspect the worker's commits (`git -C <worktree> log --oneline`),
+cherry-pick what you want, then run your tests on the result:
 
 ```bash
 git cherry-pick 26278f1

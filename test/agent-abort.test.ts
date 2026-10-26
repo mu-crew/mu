@@ -183,40 +183,20 @@ describe("abortAgent", () => {
     expect(r).toMatchObject({ before: "idle", after: "idle", settled: true, aborted: false });
   });
 
-  it("never settles: timeout error with a close next step", async () => {
+  it("never settles: timeout error", async () => {
     seed("worker-1");
     await serve("worker-1", "busy", false);
     const err = await abortAgent(db, "worker-1", { workstream: "auth", timeoutMs: 200 }).catch(
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(AgentAbortTimeoutError);
-    const steps = (err as AgentAbortTimeoutError).errorNextSteps().map((s) => s.command);
-    expect(steps).toContain("mu agent close worker-1 -w auth");
   });
 
-  it("no socket: AgentCtlUnreachableError points at the extension link", async () => {
+  it("no socket: AgentCtlUnreachableError (missing)", async () => {
     seed("worker-1");
     const err = await abortAgent(db, "worker-1", { workstream: "auth" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AgentCtlUnreachableError);
     expect((err as AgentCtlUnreachableError).kind).toBe("missing");
-    const steps = (err as AgentCtlUnreachableError).errorNextSteps().map((s) => s.command);
-    expect(steps).toContain("pi install npm:@mu-crew/mu");
-    expect(steps.some((c) => c.includes("kick"))).toBe(false);
-    const trust = (err as AgentCtlUnreachableError)
-      .errorNextSteps()
-      .find((s) => /trust prompt/.test(s.intent));
-    // command is literal and runnable; the prose fix lives in intent.
-    expect(trust).toEqual({
-      intent: expect.stringMatching(/\/trust.*--approve/),
-      command: "mu agent read worker-1 -w auth",
-    });
-  });
-
-  it("ctl refused: no trust-prompt step (a pi at its trust prompt has no socket)", () => {
-    const err = new AgentCtlUnreachableError("worker-1", "auth", "/tmp/x.sock", "refused");
-    const steps = err.errorNextSteps();
-    expect(steps.some((s) => /trust/.test(s.intent) || /trust/.test(s.command))).toBe(false);
-    expect(steps.map((s) => s.command)).toContain("pi install npm:@mu-crew/mu");
   });
 
   it("custom cli key running pi (its socket answers): aborts through ctl", async () => {
@@ -245,22 +225,12 @@ describe("mu agent abort (CLI)", () => {
     expect(r.data).toMatchObject({ before: "busy", after: "idle", aborted: true });
   });
 
-  it("an abort that reported idle drops the read-the-pane hint", async () => {
+  it("an abort is never hinted at a read: next is null either way", async () => {
     seed("worker-1");
     await serve("worker-1", "busy");
     const r = await runCliJson(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
-    const body = r.data as { after: string; nextSteps: Array<{ command: string }> };
-    expect(body.after).toBe("idle");
-    expect(body.nextSteps.some((s) => s.command.startsWith("mu agent read"))).toBe(false);
-  });
-
-  it("an abort that ends busy (a queued run started) keeps the read-the-pane hint", async () => {
-    seed("worker-1");
-    await serve("worker-1", "busy", true, "busy");
-    const r = await runCliJson(["agent", "abort", "worker-1", "-w", "auth", "--json"], dbPath);
-    const body = r.data as { after: string; nextSteps: Array<{ command: string }> };
-    expect(body.after).toBe("busy");
-    expect(body.nextSteps.map((s) => s.command)).toContain("mu agent read worker-1 -n 30 -w auth");
+    expect(r.data).toMatchObject({ after: "idle" });
+    expect(r.doc.next).toBeNull();
   });
 
   it("exit 5 on timeout", async () => {
@@ -271,7 +241,7 @@ describe("mu agent abort (CLI)", () => {
       dbPath,
     );
     expect(r.exitCode).toBe(5);
-    expect(JSON.stringify(r.doc)).toContain("mu agent close worker-1");
+    expect(r.doc).toMatchObject({ error: "AgentAbortTimeoutError", next: null });
   });
 
   it("exit 2 for a non-pi agent", async () => {

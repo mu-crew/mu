@@ -9,7 +9,6 @@
 // (src/agents/transport.ts); herdr has its own atomic `agent prompt`.
 
 import { execFileCapture } from "../exec-file.js";
-import type { NextStep } from "../output.js";
 import {
   type AttachTarget,
   type CaptureOptions,
@@ -51,19 +50,6 @@ export class TmuxError extends MuxError {
     const detail = stderr.trim() || stdout.trim() || "no output";
     super(`tmux ${args.join(" ")} failed (exit ${exitCode}): ${detail}`);
     this.name = "TmuxError";
-  }
-  override errorNextSteps(): NextStep[] {
-    return [
-      { intent: "Run health check", command: "mu doctor" },
-      {
-        intent: "Verify tmux is running and reachable",
-        command: "tmux info | head",
-      },
-      {
-        intent: "Check the failing tmux command in isolation",
-        command: `tmux ${this.args.join(" ")}`,
-      },
-    ];
   }
 }
 
@@ -599,22 +585,6 @@ export async function attachCommands(target: AttachTarget): Promise<readonly Mux
   return [{ command: "tmux", args: [...route, verb, "-t", spec] }];
 }
 
-// ─── Diagnostics ────────────────────────────────────────────────
-
-export function paneNotFoundNextSteps(paneId: string): NextStep[] {
-  return [
-    {
-      intent: `Verify the pane id ${paneId} actually exists`,
-      command: `tmux display-message -t ${paneId} -p '#{pane_id}'`,
-    },
-    {
-      intent: "List all live panes across all sessions",
-      command:
-        "tmux list-panes -a -F '#{session_name}:#{window_id}.#{pane_id}\\t#{pane_current_command}'",
-    },
-  ];
-}
-
 /**
  * Version probe + the two ambient env facts tmux exposes. Returns DATA;
  * `mu doctor` owns every string the user sees, so a second backend
@@ -666,7 +636,5 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   attachCommands,
 
   currentSessionName,
-
-  paneNotFoundNextSteps,
   healthCheck,
 });

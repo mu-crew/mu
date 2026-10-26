@@ -29,7 +29,7 @@ import {
 import type { Db } from "../db.js";
 import { formatBytes } from "../disk-recon.js";
 import { checkDrift, DriftDetectedError } from "../drift.js";
-import { isJsonMode, muTable, pc, printNextSteps } from "../output.js";
+import { isJsonMode, muTable, pc } from "../output.js";
 import { UsageError } from "./handle.js";
 
 export function cmdDbBackup(db: Db, file: string, opts: { json?: boolean } = {}): void {
@@ -43,19 +43,12 @@ export function cmdDbBackup(db: Db, file: string, opts: { json?: boolean } = {})
   mkdirSync(dirname(target), { recursive: true });
   db.prepare("VACUUM INTO ?").run(target);
 
-  const nextSteps = [
-    {
-      intent: "Inspect the copy without touching the live DB",
-      command: `MU_DB_PATH=${target} mu state`,
-    },
-    { intent: "Disaster recovery is a rebuild, not a copy", command: "mu rebuild <file>" },
-  ];
   if (opts.json === true) {
-    emitJson({ path: target, nextSteps });
+    emitJson({ path: target });
     return;
   }
   console.log(`Backed up to ${pc.bold(target)}`);
-  printNextSteps(nextSteps);
+  console.log(pc.dim(`  inspect it without touching the live DB: MU_DB_PATH=${target} mu state`));
 }
 
 /** Backup next to the DB, named so it sorts with it: `mu.db.pre-<verb>-<ts>`. */
@@ -107,18 +100,15 @@ const CHECKPOINT_PENDING =
 export function cmdDbCompact(db: Db, opts: { yes?: boolean; json?: boolean } = {}): void {
   const plan = planCompact(db);
   if (opts.yes !== true || plan.tombstones === 0) {
-    const nextSteps =
-      plan.tombstones === 0 ? [] : [{ intent: "Apply it", command: "mu db compact --yes" }];
     if (opts.json === true) {
-      emitJson({ dryRun: true, ...plan, nextSteps });
+      emitJson({ dryRun: true, ...plan });
       return;
     }
     console.log(
       plan.tombstones === 0
         ? pc.dim("nothing to compact: no redundant note tombstones")
-        : `${plan.tombstones} note tombstones repeat a put already in the log (${formatBytes(plan.bytes)}). Dry run; nothing changed.`,
+        : `${plan.tombstones} note tombstones repeat a put already in the log (${formatBytes(plan.bytes)}). Dry run; nothing changed (--yes applies).`,
     );
-    printNextSteps(nextSteps);
     return;
   }
   const backup = backupBeside(db, "compact");
@@ -157,18 +147,14 @@ export function cmdDbForget(
   const ops = plan.candidates.reduce((n, c) => n + c.ops, 0);
   const bytes = plan.candidates.reduce((n, c) => n + c.bytes, 0);
   if (opts.yes !== true) {
-    const nextSteps = [
-      { intent: "Forget them (irreversible)", command: `mu db forget ${names.join(" ")} --yes` },
-    ];
     if (opts.json === true) {
-      emitJson({ dryRun: true, candidates: plan.candidates, ops, bytes, nextSteps });
+      emitJson({ dryRun: true, candidates: plan.candidates, ops, bytes });
       return;
     }
     printForgetTable(plan);
     console.log(
-      `${ops} ops (${formatBytes(bytes)} of payload). Forgetting deletes their history. Dry run; nothing changed.`,
+      `${ops} ops (${formatBytes(bytes)} of payload). Forgetting deletes their history. Dry run; nothing changed (--yes applies; irreversible).`,
     );
-    printNextSteps(nextSteps);
     return;
   }
   const backup = backupBeside(db, "forget");

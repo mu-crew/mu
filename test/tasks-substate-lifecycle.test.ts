@@ -209,7 +209,6 @@ describe("parkTask / unparkTask", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(TaskParkStateError);
-    expect((err as TaskParkStateError).errorNextSteps()[0]?.command).toContain("mu task release");
   });
 
   it("refuses CLOSED with an open next step", () => {
@@ -222,7 +221,6 @@ describe("parkTask / unparkTask", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(TaskParkStateError);
-    expect((err as TaskParkStateError).errorNextSteps()[0]?.command).toContain("mu task open");
   });
 
   it("unpark returns OPEN/todo; a no-op on other pairs", () => {
@@ -270,9 +268,6 @@ describe("claim on a parked task", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(TaskParkedError);
-    const cmds = (err as TaskParkedError).errorNextSteps().map((s) => s.command);
-    expect(cmds[0]).toContain("mu task unpark a");
-    expect(cmds[1]).toContain("--force");
     expect(getTask(db, "a", WS)?.ownerName).toBeNull();
     await claimTask(db, "a", { workstream: WS, agentName: "alice", force: true });
     expect(pair("a")).toBe("IN_PROGRESS/active");
@@ -337,9 +332,6 @@ describe("triage: add --triage, accept, and the claim guard", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(TaskInTriageError);
-    const cmds = (err as TaskInTriageError).errorNextSteps().map((x) => x.command);
-    expect(cmds[0]).toContain("mu task accept f1");
-    expect(cmds.some((c) => c.includes("--as rejected"))).toBe(true);
     expect(pair("f1")).toBe("OPEN/triage");
     await claimTask(db, "f1", { workstream: WS, self: true, actor: "me", force: true });
     expect(pair("f1")).toBe("IN_PROGRESS/active");

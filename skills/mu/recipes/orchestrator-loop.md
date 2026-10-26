@@ -57,11 +57,10 @@ keeps it.
 Use `--first --on-stall exit`: `--first` populates `.firing`, and
 `--on-stall exit` stops an unattended wait when a worker needs attention.
 Exit 6: the owner's pane died and the reaper reopened the task; exit 7:
-the owner sat in `needs_input`. Run the exit's `Next:` and answer: the
-worker may be waiting on you. For a pi owner it leads with
-`mu agent wait <owner> --after-runs <runs-1> --json`, which returns the
-last answer at once. The pane read follows because dialogs and crashes
-show only in the pane.
+the owner sat in `needs_input`. Read it and answer: the worker may be
+waiting on you. For a pi owner, `mu wait agent:<ws>/<owner>@<runs-1>`
+returns the last answer at once; then read the pane, because dialogs and
+crashes show only there.
 
 Never release or reassign a task because its owner reads `unknown`:
 that is degraded reading, not absence. Read the pane or run `mu doctor`
