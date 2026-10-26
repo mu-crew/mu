@@ -206,7 +206,7 @@ describe("closeNudgeText", () => {
 });
 
 describe("close nudge and a settle hold", () => {
-  it.each(["answer", "blocked"] as const)(
+  it.each(["wake", "blocked"] as const)(
     "skips while held (%s), and the held settle is not the prompt's one nudge",
     async (why) => {
       const f = fakePi();
@@ -222,9 +222,9 @@ describe("close nudge and a settle hold", () => {
 
   it("drops the nudge when a hold starts during its read", async () => {
     const f = fakePi();
-    let h: "answer" | undefined;
+    let h: "wake" | undefined;
     const run = vi.fn(async () => {
-      if (run.mock.calls.length === 1) h = "answer"; // lands during the first read
+      if (run.mock.calls.length === 1) h = "wake"; // lands during the first read
       return owned([["a", "IN_PROGRESS"]]);
     });
     registerCloseNudge(f.pi, run, WORKER, undefined, () => h);

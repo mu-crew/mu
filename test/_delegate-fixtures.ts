@@ -14,10 +14,12 @@ import { type Db, openDb } from "../src/db.js";
 import {
   finishDelegate,
   getDelegateCall,
+  listDelegates,
   markDelegate,
   registerDelegateCall,
 } from "../src/delegates.js";
 import { addTask } from "../src/tasks/edit.js";
+import { selectTaskNotes } from "../src/tasks/queries.js";
 import { getTask } from "../src/tasks.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -124,6 +126,12 @@ export function delegatesVerb(db: Db, args: readonly string[], stdin?: string): 
             ...(args.includes("--no-record") ? { record: false } : {}),
           }),
         );
+      case "list":
+        return wrap({
+          items: listDelegates(db, undefined, undefined, {
+            ...(flag(args, "--wave") ? { wave: flag(args, "--wave") as string } : {}),
+          }),
+        });
       case "show": {
         const call = getDelegateCall(db, id);
         if (!call)
@@ -274,6 +282,14 @@ export function fakeMu(
           addTask(db, { workstream: workstreamName, localId: local, title: local });
         return Promise.resolve(ok({ task: { id: local, workstream: workstreamName } }));
       }
+      if (verb === "notes") {
+        const wi = args.indexOf("-w");
+        const items = selectTaskNotes(db, String(name), {
+          workstream: String(args[wi + 1]),
+          all: true,
+        }).notes.map((n) => ({ kind: n.kind, author: n.author, content: n.content }));
+        return Promise.resolve(ok({ items, count: items.length, more: 0 }));
+      }
       return Promise.resolve(ok("{}"));
     }
     if (ns !== "agent") return Promise.resolve(ok(""));
@@ -363,4 +379,12 @@ export function tool(p: ReturnType<typeof fakePi>, name = DELEGATE_TOOL): Delega
   const t = p.tools.get(name);
   if (!t) throw new Error(`${name} not registered`);
   return t;
+}
+
+/** The report note (the full recorded answer) of the `i`th delegate call, from the real DB. */
+export function reportOf(mu: FakeMu, i = 0): string {
+  const c = listDelegates(mu.db)[i];
+  if (!c) return "";
+  const n = selectTaskNotes(mu.db, c.task, { workstream: c.workstream, all: true }).notes;
+  return n.filter((x) => x.kind === "report").at(-1)?.content ?? "";
 }

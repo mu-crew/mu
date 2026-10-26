@@ -3,7 +3,6 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { droppedAnswersDir } from "../extension/delegate-format.js";
 import { defaultCacheDir, defaultStateDir } from "../src/state-dir.js";
 import { withEnv } from "./_env.js";
 
@@ -11,12 +10,11 @@ import { withEnv } from "./_env.js";
 // ~/.cache/mu/delegate-answers because test/_setup.ts left XDG_* alone.
 
 describe("test XDG isolation", () => {
-  it("resolves the cache, state and delegate-answers dirs under a temp root", async () => {
+  it("resolves the cache and state dirs under a temp root", async () => {
     const tmp = tmpdir();
     await withEnv("MU_STATE_DIR", undefined, async () => {
       expect(defaultCacheDir().startsWith(tmp)).toBe(true);
       expect(defaultStateDir().startsWith(tmp)).toBe(true);
-      expect(droppedAnswersDir().startsWith(tmp)).toBe(true);
     });
     expect(process.env.XDG_CONFIG_HOME?.startsWith(tmp)).toBe(true);
   });

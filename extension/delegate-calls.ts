@@ -173,9 +173,15 @@ export function callsApi(run: MuRunner) {
       );
       return data as unknown as FinishResult;
     },
-    async show(callId: string): Promise<{ call: CallInfo; state: CallState }> {
+    async show(
+      callId: string,
+    ): Promise<{ call: CallInfo; state: CallState; verdict: string | null }> {
       const row = rowOf(await call(run, "show", [callId]));
-      return { call: callInfoOf(row), state: row.state as CallState };
+      return {
+        call: callInfoOf(row),
+        state: row.state as CallState,
+        verdict: typeof row.verdict === "string" ? row.verdict : null,
+      };
     },
   };
 }

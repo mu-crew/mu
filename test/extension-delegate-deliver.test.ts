@@ -73,8 +73,9 @@ describe("record", () => {
       "VERDICT: REFUTED (a later line is evidence text, not a second verdict)",
       "EVIDENCE: grep -n check src/x.ts -> nothing",
     ]);
-    expect(sentText(p)).toContain("Recorded on audit/f1 as a note");
-    expect(sentText(p)).toContain(answer); // the answer still arrives in full
+    // The pi message is only a wake: a pointer, never the answer (the settle shows it).
+    expect(sentText(p)).toContain("recorded on audit/f1");
+    expect(sentText(p)).not.toContain("EVIDENCE");
     expect(theCall(mu)).toMatchObject({ state: "done", verdict: "CONFIRMED" });
   });
 
@@ -303,10 +304,8 @@ describe("record", () => {
     await settle();
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
     const text = sentText(p);
-    expect(text).toContain(answer);
-    expect(text).toMatch(/record crew\/f1 failed/);
-    expect(text).toContain("kept as the report");
-    expect(text).not.toContain("Recorded on");
+    expect(text).toMatch(/NOT recorded: record crew\/f1 failed/);
+    expect(text).not.toContain("recorded on crew/f1");
     const c = theCall(mu);
     expect(c.state).toBe("failed");
     expect(getTask(mu.db, c.task, c.workstream)).toMatchObject({
@@ -366,7 +365,7 @@ describe("record", () => {
     releaseClose(ok("{}"));
     await settle();
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
-    expect(sentText(p)).toContain("Recorded on crew/f1 as a note");
+    expect(sentText(p)).toContain("recorded on crew/f1");
   });
 
   it("a refused close (the fenced apply) is reported; the result is already on record", async () => {
@@ -386,7 +385,7 @@ describe("record", () => {
     await settle();
     const text = sentText(p);
     expect(text).toMatch(/close refused: busy/);
-    expect(text).toContain("Recorded on crew/f1 as a note");
+    expect(text).toContain("recorded on crew/f1");
     expect(theCall(mu).state).toBe("done");
   });
 
@@ -412,7 +411,7 @@ describe("record", () => {
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: answer }] }));
     await settle();
     expect(mu.calls.some((c) => c[0] === "task")).toBe(false);
-    expect(sentText(p)).not.toContain("Recorded on");
+    expect(sentText(p)).not.toContain("recorded on");
     const c = theCall(mu);
     expect(c).toMatchObject({ state: "done", record: null });
     expect(notesOf(mu, c.workstream, c.task).find((n) => n.kind === "report")?.content).toBe(

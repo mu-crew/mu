@@ -11,8 +11,8 @@ The mu pi package (`pi install npm:@mu-crew/mu`) installs the
 pi calls `mu_delegate`. It registers the call as a task (`kind=delegate`,
 see [Every call is a task](#every-call-is-a-task)), spawns a pi agent in
 the reserved `scratch` workstream and returns at once with the task, the
-delegate's name and attach command. The answer arrives later as a
-follow-up message; do not poll. Delegates called in one turn run in
+delegate's name and attach command. The answer arrives later, with
+pi's next settle; do not poll. Delegates called in one turn run in
 parallel.
 
 | Option | Meaning |
@@ -21,8 +21,8 @@ parallel.
 | `label` | Names the delegate: `review` gives `delegate-review`. |
 | `brief` | Ad hoc persona or ground rules, sent first. Not enforced. |
 | `cwd` | Start directory. Default: the caller's. Must exist. |
-| `timeout` | Seconds to wait for the answer (default 3600). After it, the answer does not come back to pi; it still lands on the delegate task, and the follow-up names a wait command. |
-| `workspace` | Own git worktree, for delegates that edit files. The follow-up names its path. It isolates repository edits only. |
+| `timeout` | Seconds to wait for the answer (default 3600). After it, the answer does not come back to pi; it still lands on the delegate task, whose report names a wait command. |
+| `workspace` | Own git worktree, for delegates that edit files. The tool result names its path. It isolates repository edits only. |
 | `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`). Only keys set in pi's environment exist. |
 | `model` | pi `--model` value, appended to the cli's command (`sonnet`, `<provider>/<model>:high`, copied from `pi --list-models`). Varies models across a panel. tmux only: herdr refuses a command override. |
 | `keep` | Keep the pane after it finishes, to talk to it again. |
@@ -41,17 +41,25 @@ parallel.
   the task closes `wontfix` with a report.
 - The pane closes after a clean finish; died or timed-out panes stay
   as evidence.
-- An answer that finishes while a turn is running queues behind it.
-  Escape drops those queued answers from pi. The extension then writes
-  one line per answer into the conversation, without starting a turn,
-  pointing at a copy under `~/.cache/mu/delegate-answers/` and
-  at the delegate's own pi session file. An answer that lands after
-  Escape arrives as usual. The dequeue key (alt+up) clears the same
-  queue without aborting; the run then ends normally, so the extension
-  sends each answer lost that way once more, one at a time, when pi is
-  idle. A repeat of an answer that already arrived shows as a one-line
-  "already handled" stub.
-- `MU_DELEGATE_TRACE=1` logs every follow-up send and pi lifecycle
+- The answer reaches the model through the settle wait, never as a
+  copy in a pi message. When a delegate finishes, its answer is
+  recorded (verdict, report, close); the keep-driving settle wait then
+  returns it as a `delegate` event, and the continuation shows that
+  call's report (capped at 4000 characters, with the
+  `mu task notes <task> -w <ws>` pointer to the rest). A recorded check
+  with a verdict shows only its header: the verdict is on its task.
+- A delegate of a `wave` is shown with the rest of the wave: the settle
+  keeps waiting while siblings run, then shows ONE summary (counts per
+  verdict, a line per call, the answers). A refused call is listed for
+  reissue and never waited on. Any other event (a worker closing, a
+  dialog) ends that early and is shown after the summary so far.
+- When no settle wait will show an answer (pi is idle, `MU_NUDGE=0`, the
+  wait failed), the extension sends one **wake**: a pointer per answer,
+  no answer text, that starts a turn. A wake lost from pi's queue (the
+  dequeue key, alt+up) is sent once more; lost twice, or dropped by
+  Escape, it leaves one line per answer and starts nothing. The report
+  stays recorded either way, so the next settle shows it.
+- `MU_DELEGATE_TRACE=1` logs every wake send and pi lifecycle
   event to `~/.cache/mu/delegate-trace.log`, for finding a lost answer.
 - Each delegate costs a pane and a pi process. A session runs at most
   `MU_DELEGATE_MAX` at once (default 16). Further calls are queued, up
@@ -68,13 +76,9 @@ parallel.
   keeps its pane. The answer names the error and leaves the choice to
   the model: re-issue, or record the check as unverified.
 - Every answer without a final text (API error, empty, timeout, died,
-  `mu_delegate_cancel`) names the delegate's pi session file and, when
-  it wrote anything, a copy of its last message so far under
-  `~/.cache/mu/delegate-answers/` (`*.partial.md`). Quitting pi or
-  `/reload` lists each running delegate's session file.
-- Answers arrive as follow-up messages when pi would otherwise stop,
-  never mid-turn. To get several at once, set pi's `followUpMode` to
-  `"all"`.
+  `mu_delegate_cancel`) records the delegate's pi session file and,
+  when it wrote anything, its last message so far, in the report.
+  Quitting pi or `/reload` lists each running delegate's session file.
 
 `MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
 
@@ -104,8 +108,8 @@ mu delegates tally -w scratch --wave review-1 # CONFIRMED/REFUTED/UNVERIFIED per
 mu task notes <task> -w scratch               # its brief, and its report: the full answer
 ```
 
-The answer is the delegate task's `report`, whole; the pi follow-up is
-only an echo, so a dropped echo (Escape, compaction, `/reload`) loses
+The answer is the delegate task's `report`, whole; the settle shows it
+from there, so a lost wake (Escape, compaction, `/reload`) loses
 nothing. `tally` counts one result per call: a done answer by its last
 first `VERDICT:` label (none: UNVERIFIED), a failed or cancelled call as
 UNVERIFIED, queued, running and refused ones as pending.
@@ -131,9 +135,9 @@ in that order, in one op group (`mu delegates finish`); the delegate
 task is closed before its pane. If the record fails the call is
 `failed`, never `done`, and the answer is kept as the report.
 
-The follow-up still carries the full answer and ends with
-`Recorded on <ws>/<task> as a note.` and where the report is, or the reason
-recording failed.
+The settle then shows the verdict and where the report is. A call whose
+record failed is shown with its whole report and the reason, so you can
+record it yourself.
 
 ## Delegate without pi
 
