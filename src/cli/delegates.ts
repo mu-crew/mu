@@ -11,6 +11,7 @@
 
 import type { Command } from "commander";
 import {
+  CliExitError,
   emitJson,
   emitJsonCollection,
   handle,
@@ -22,6 +23,7 @@ import {
   WORKSTREAM_OPT,
 } from "../cli.js";
 import type { Db } from "../db.js";
+import { type DelegateRunResult, runDelegateProcess } from "../delegate-process.js";
 import {
   type DelegateRequest,
   type DelegateRow,
@@ -231,6 +233,44 @@ export async function cmdDelegatesFinish(
 }
 
 /**
+ * Run one call in a child pi with no multiplexer, in the foreground, until it
+ * is finished durably (SIGINT/SIGTERM cancel it). Exit 0 only for a recorded
+ * answer; a refused, unknown, failed or cancelled call exits 1 and says why.
+ * `keep` holds the live child (its stdin is its lifeline) until Ctrl-C.
+ */
+export async function cmdDelegatesRun(db: Db, callId: string, opts: WsOpt): Promise<void> {
+  const ac = new AbortController();
+  const onSignal = () => ac.abort();
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  let r: DelegateRunResult;
+  try {
+    r = await runDelegateProcess(db, callId, { signal: ac.signal });
+    const { live, ...shown } = r;
+    if (opts.json) emitJson(shown);
+    else {
+      console.log(
+        r.ran
+          ? `${callId}: ${r.outcome} (${r.state}), task ${r.workstream}/${r.task}, log ${r.logPath}${r.sessionFile ? `, session ${r.sessionFile}` : ""}`
+          : `${callId}: already ${r.state}; nothing run`,
+      );
+      if (r.error) console.log(pc.yellow(r.error));
+      if (r.workspace) console.log(`workspace: ${r.workspace}`);
+      if (live)
+        console.log(pc.dim("keep: holding the child until Ctrl-C (its stdin is its lifeline)"));
+    }
+    if (live) {
+      ac.signal.addEventListener("abort", () => void live.stop(), { once: true });
+      await live.exited;
+    }
+  } finally {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+  }
+  if (r.ran && r.state !== "done") throw new CliExitError(1);
+}
+
+/**
  * Always refuses. A reissued call is `queued`, and nothing drains a durable
  * queued row except the live pi runtime that holds the queue, so a shell
  * reissue would strand it. The tool does the whole move (start or queue).
@@ -339,6 +379,15 @@ export function wireDelegatesCommands(program: Command): void {
         record?: boolean;
       };
       return handle((db) => cmdDelegatesFinish(db, callId, opts), this as Command)();
+    });
+  d.command("run <call-id>")
+    .description(
+      "Run a queued or starting call in a child `pi --mode rpc` with no tmux or herdr, in the foreground: send once, wait, record the verdict, report and close, then stop the child. No pane or agent row (transport process, attach none): the log and session paths are printed. SIGINT cancels. Exit 0 only for a recorded answer; a refused call can be reissued, an unknown delivery never is resent",
+    )
+    .option(...JSON_OPT)
+    .action(function (callId: string) {
+      const opts = (this as Command).optsWithGlobals() as WsOpt;
+      return handle((db) => cmdDelegatesRun(db, callId, opts), this as Command)();
     });
   d.command("reissue <call-id>")
     .description(

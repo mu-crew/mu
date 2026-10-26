@@ -104,6 +104,7 @@ const ARGS: Record<string, string[]> = {
     "--text",
     "VERDICT: CONFIRMED",
   ],
+  "delegates run": ["pi:x:1"],
   "delegates reissue": ["pi:x:1"],
 };
 
