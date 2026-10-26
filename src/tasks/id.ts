@@ -1,6 +1,7 @@
 // mu — task id validation and title slug helpers.
 
 import type { Db } from "../db.js";
+import { say } from "../messages.js";
 import { getTask } from "./queries.js";
 
 /** Thrown when a title has no ASCII letter or digit, so no id can be
@@ -10,9 +11,7 @@ import { getTask } from "./queries.js";
 export class TaskTitleSlugEmptyError extends Error {
   override readonly name = "TaskTitleSlugEmptyError";
   constructor(public readonly title: string) {
-    super(
-      `title yields empty slug: ${JSON.stringify(title)} (no ASCII letter or digit to derive an id from)`,
-    );
+    super(say("task.slug_empty", title));
   }
 }
 

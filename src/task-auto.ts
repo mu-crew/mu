@@ -17,6 +17,7 @@
 //   authorisedReady(db, ws)    ready AND permitted AND runs < max_runs.
 
 import type { Db } from "./db.js";
+import { say } from "./messages.js";
 import { withOpContext } from "./op-context.js";
 import { localMachineId } from "./segments.js";
 import { type TaskRow, taskIdFor } from "./tasks/core.js";
@@ -197,18 +198,14 @@ export function authorizeTasks(
 ): AuthorizeTasksResult {
   const ws = opts.workstream;
   if (RESERVED_WORKSTREAM_NAMES.has(ws)) {
-    throw new TaskAutoArgError(
-      `workstream '${ws}' is the delegate queue; it is never auto-dispatched`,
-    );
+    throw new TaskAutoArgError(say("task.auto_reserved_ws", ws));
   }
   if (!opts.off) {
     if (!CLI_KEY_RE.test(opts.cli)) {
-      throw new TaskAutoArgError(
-        `--cli must be a model key like pi or pi-big (got ${JSON.stringify(opts.cli)})`,
-      );
+      throw new TaskAutoArgError(say("task.auto_cli_key", opts.cli));
     }
     if (!Number.isSafeInteger(opts.maxRuns) || opts.maxRuns < 1) {
-      throw new TaskAutoArgError(`--max must be an integer >= 1 (got ${opts.maxRuns})`);
+      throw new TaskAutoArgError(say("task.auto_max", opts.maxRuns));
     }
   }
   return withOpContext(
@@ -226,8 +223,8 @@ export function authorizeTasks(
       if (names.length === 0) {
         throw new TaskAutoArgError(
           opts.blockersOf !== undefined
-            ? `${opts.blockersOf} has no open blockers to authorise`
-            : "no tasks given",
+            ? say("task.auto_no_blockers", opts.blockersOf)
+            : say("task.auto_none_given"),
         );
       }
 

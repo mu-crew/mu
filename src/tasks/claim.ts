@@ -17,6 +17,7 @@
 
 import { GUARD_ALREADY_OWNED } from "../capture.js";
 import type { Db } from "../db.js";
+import { say } from "../messages.js";
 import { withOpContext } from "../op-context.js";
 import { assertTaskRevision } from "../revision.js";
 import {
@@ -301,7 +302,7 @@ async function claimTaskImpl(
   opts: ClaimTaskOptions,
 ): Promise<ClaimResult> {
   if (opts.self === true && opts.agentName !== undefined) {
-    throw new Error("claimTask: --self and --for are mutually exclusive");
+    throw new Error(say("task.claim_self_and_for"));
   }
 
   if (opts.self === true) {
@@ -311,9 +312,7 @@ async function claimTaskImpl(
   // ── Worker claim path (registered agent owns the task) ──
   const agentName = opts.agentName ?? (await resolveWorkerIdentity());
   if (!agentName) {
-    throw new Error(
-      "claimTask: no agent name (pass opts.agentName, run inside an mu-spawned pane with $MU_AGENT_NAME set, or pass --self for an anonymous claim)",
-    );
+    throw new Error(say("task.claim_no_agent"));
   }
 
   // Resolve the claiming agent to its surrogate id within the agent's

@@ -29,6 +29,7 @@
 //
 // Extracted from src/agents.ts as part of refactor_split_large_src_files.
 
+import { say } from "../messages.js";
 import { defaultSpawnLivenessMs } from "./spawn.js";
 
 /**
@@ -65,9 +66,7 @@ export class AgentSpawnCliNotFoundError extends Error {
      *  to the conventional name so the message can name it. */
     public readonly envVarChecked: string,
   ) {
-    super(
-      `--cli ${cli} resolved to binary "${binary}" which is not on PATH (and not an executable absolute/relative path). Refusing to spawn — would create a pane that dies immediately on "command not found". For a custom alias, set ${envVarChecked} to its real path.`,
-    );
+    super(say("agent.cli_not_found", cli, binary, envVarChecked));
   }
 }
 
@@ -79,7 +78,7 @@ export class AgentExistsError extends Error {
     // pre-v5 message claimed global uniqueness, which (a) lied about
     // the schema and (b) misled operators into closing the existing
     // agent when the actual fix is `-w <other-ws>`.
-    super(`agent already exists in this workstream: ${agentName}`);
+    super(say("agent.exists", agentName));
   }
 }
 
@@ -90,7 +89,7 @@ export class AgentNameExhaustedError extends Error {
     public readonly agentName: string,
     reason: string,
   ) {
-    super(`no free agent name after ${agentName}: ${reason}`);
+    super(say("agent.name_exhausted", agentName, reason));
   }
 }
 
@@ -106,11 +105,7 @@ export class AgentNotFoundError extends Error {
      *  one-line message. */
     public readonly workstream?: string,
   ) {
-    super(
-      workstream === undefined
-        ? `no such agent: ${agentName}`
-        : `no such agent: ${agentName} (in workstream ${workstream})`,
-    );
+    super(say("agent.not_found", agentName, workstream));
   }
 }
 
@@ -129,7 +124,7 @@ export class AgentNotInWorkstreamError extends Error {
     public readonly expectedWorkstream: string,
     public readonly actualWorkstream: string,
   ) {
-    super(`agent ${agentName} is in workstream ${actualWorkstream}, not ${expectedWorkstream}`);
+    super(say("agent.not_in_workstream", agentName, expectedWorkstream, actualWorkstream));
   }
 }
 
@@ -158,12 +153,10 @@ export class AgentDiedOnSpawnError extends Error {
     host?: string,
   ) {
     const tail = scrollback?.trim();
-    const detail = tail ? `\n\n--- pane scrollback ---\n${tail}\n--- end scrollback ---` : "";
+    const detail = tail ? say("agent.scrollback", tail) : "";
     const remote = host !== undefined || /^\s*ssh\s/.test(command ?? "");
-    const cause = remote
-      ? `The pane is a remote transport${host === undefined ? "" : ` (host ${host})`}, so the likely causes are remote: the remote binary is missing, or its env (PATH, provider keys) is absent because a non-interactive shell skips ~/.zshrc / ~/.bashrc (the profile's shell template should run \`$SHELL -ilc\`); or the host refused the socket forward (check AllowStreamLocalForwarding).`
-      : "Most common cause: the spawned CLI exited immediately (e.g. a wrapper CLI blocking on its instance lock; set MU_<UPPER_CLI>_COMMAND to a non-blocking variant to bypass).";
-    super(`agent ${agentName} died ${when} (pane ${paneId}). ${cause}${detail}`);
+    const cause = remote ? say("agent.died_cause_remote", host) : say("agent.died_cause_local");
+    super(say("agent.died_on_spawn", agentName, when, paneId, cause, detail));
     this.remote = remote;
     this.host = host;
   }
@@ -210,7 +203,14 @@ export class AgentSpawnStartupError extends Error {
     when = `within ${defaultSpawnLivenessMs()}ms of spawn`,
   ) {
     super(
-      `agent ${agentName} reported a startup error ${when} (pane ${paneId}). The pane is alive but the spawned CLI parked at an error prompt instead of becoming a working agent.\n\nMatched line: ${matchedLine.trim()}\n\n--- pane scrollback ---\n${scrollback.trim()}\n--- end scrollback ---`,
+      say(
+        "agent.startup_error",
+        agentName,
+        when,
+        paneId,
+        matchedLine.trim(),
+        say("agent.scrollback", scrollback.trim()),
+      ),
     );
   }
 }
@@ -232,9 +232,7 @@ export class AgentCtlUnreachableError extends Error {
     /** The host profile the agent runs on, when remote: its forward is the usual cause. */
     public readonly host?: string | null,
   ) {
-    super(
-      `agent ${agentName} has no control socket (ctl: ${kind}) at ${socket}; mu cannot send to or wait on it exactly`,
-    );
+    super(say("agent.ctl_unreachable", agentName, kind, socket));
   }
 }
 
@@ -257,9 +255,7 @@ export class AgentSendIndeterminateError extends Error {
     /** The registry row the send went to (`AgentRow.incarnation`): its receipt check is offered only while that row stands. */
     public readonly agentId?: number,
   ) {
-    super(
-      `agent ${agentName}: ${op} was written to its control socket but no reply arrived (${reason}); delivery unknown${msgId === undefined ? "" : `, msgId ${msgId}`}. Never resend blindly`,
-    );
+    super(say("agent.send_indeterminate", agentName, op, reason, msgId));
   }
 }
 
@@ -276,9 +272,7 @@ export class AgentRestartedError extends Error {
     public readonly expected: string,
     public readonly actual?: string,
   ) {
-    super(
-      `agent ${agentName} restarted (incarnation ${expected} → ${actual ?? "unknown"}); its earlier run is gone: re-send the brief`,
-    );
+    super(say("agent.restarted", agentName, expected, actual));
   }
 }
 
@@ -296,9 +290,7 @@ export class AgentPaneStillAliveError extends Error {
     public readonly paneId: string,
     public readonly state: true | "unknown",
   ) {
-    super(
-      `agent ${agentName}: pane ${paneId} ${state === true ? "is still alive after the kill" : "could not be checked"}; its row is kept. Close the pane in your multiplexer, then preview: mu agent close ${agentName} -w ${workstream}`,
-    );
+    super(say("agent.pane_still_alive", agentName, workstream, paneId, state));
   }
 }
 
@@ -317,13 +309,7 @@ export class AgentReplacedError extends Error {
     public readonly workstream: string,
     during: "closed" | "sent to" | "collected" = "closed",
   ) {
-    super(
-      during === "closed"
-        ? `agent ${agentName} was replaced while it was being closed; the replacement was left alone. Preview it: mu agent close ${agentName} -w ${workstream}`
-        : during === "collected"
-          ? `agent ${agentName} was replaced while its commits were being collected; the replacement's record was left alone. Look at it: mu agent list -w ${workstream}`
-          : `agent ${agentName} was replaced before the prompt was written; nothing was sent to the replacement. Look at it: mu agent list -w ${workstream}`,
-    );
+    super(say("agent.replaced", agentName, workstream, during));
     this.during = during;
   }
   readonly during: "closed" | "sent to" | "collected";
@@ -340,9 +326,7 @@ export class AgentLockBusyError extends Error {
     public readonly agentName: string,
     public readonly workstream: string,
   ) {
-    super(
-      `agent ${agentName} is being changed by another mu process (its lock is held); nothing was done. Retry: mu agent close ${agentName} -w ${workstream}`,
-    );
+    super(say("agent.lock_busy", agentName, workstream));
   }
 }
 
@@ -361,9 +345,7 @@ export class AgentPaneDeadError extends Error {
     /** Set when a send/fresh WAS written before the pane died: it may have landed. */
     public readonly msgId?: string,
   ) {
-    super(
-      `agent ${agentName} is dead: its pane ${paneId} no longer exists, so its control socket is gone${msgId === undefined ? "" : `; a send (msgId ${msgId}) was written first, so delivery is unknown`}`,
-    );
+    super(say("agent.pane_dead", agentName, paneId, msgId));
   }
 }
 
@@ -378,9 +360,7 @@ export class AgentAbortNeedsCtlError extends Error {
     public readonly workstream: string,
     public readonly cli: string,
   ) {
-    super(
-      `agent ${agentName} runs ${cli}, not pi: abort needs the mu pi extension; close the agent instead`,
-    );
+    super(say("agent.abort_needs_ctl", agentName, cli));
   }
 }
 
@@ -392,7 +372,7 @@ export class AgentAbortTimeoutError extends Error {
     public readonly workstream: string,
     public readonly timeoutMs: number,
   ) {
-    super(`agent ${agentName} was still busy ${timeoutMs}ms after the abort`);
+    super(say("agent.abort_timeout", agentName, timeoutMs));
   }
 }
 
@@ -407,9 +387,7 @@ export class AgentFreshNeedsCtlError extends Error {
     public readonly workstream: string,
     public readonly cli: string,
   ) {
-    super(
-      `agent ${agentName} runs ${cli} without a control socket: --fresh needs the mu pi extension`,
-    );
+    super(say("agent.fresh_needs_ctl", agentName, cli));
   }
 }
 
@@ -442,7 +420,13 @@ export class AgentExtensionOutdatedError extends Error {
     } = {},
   ) {
     super(
-      `agent ${agentName}'s mu pi extension (${extVersion ?? "version unknown"}) predates ${recovery.feature === true ? "feature" : "op"} ${op}: its pi loaded an older mu build; reload or respawn it`,
+      say(
+        "agent.extension_outdated",
+        agentName,
+        extVersion ?? "version unknown",
+        recovery.feature === true,
+        op,
+      ),
     );
   }
 }
@@ -459,7 +443,7 @@ export class AgentBusyError extends Error {
     /** The session command refused, e.g. "/new". Absent: `--fresh`. */
     public readonly command?: string,
   ) {
-    super(`agent ${agentName} is busy: ${command ?? "--fresh"} would abandon its running turn`);
+    super(say("agent.busy", agentName, command ?? "--fresh"));
   }
 }
 
@@ -477,9 +461,7 @@ export class AgentSlashCommandUnsupportedError extends Error {
     public readonly text: string,
     public readonly supported: readonly string[],
   ) {
-    super(
-      `agent ${agentName} runs pi: over the control socket mu runs only ${supported.join(", ")}; ${JSON.stringify(text.split("\n")[0])} is not one of them; type it in the pane yourself`,
-    );
+    super(say("agent.slash_unsupported", agentName, supported, text));
   }
 }
 
@@ -494,9 +476,7 @@ export class AgentEmptySendError extends Error {
     public readonly agentName: string,
     public readonly workstream: string,
   ) {
-    super(
-      `agent ${agentName} runs pi: an empty message cannot go over the control socket; press Enter in the pane yourself`,
-    );
+    super(say("agent.empty_send", agentName));
   }
 }
 
@@ -512,9 +492,7 @@ export class AgentSendUnsupportedError extends Error {
     public readonly workstream: string,
     public readonly cli: string,
   ) {
-    super(
-      `agent ${agentName} runs ${cli}, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr) or use pi`,
-    );
+    super(say("agent.send_unsupported", agentName, cli));
   }
 }
 
@@ -526,7 +504,7 @@ export class AgentSendUnsupportedError extends Error {
 export class AgentSendRefusedError extends Error {
   override readonly name = "AgentSendRefusedError";
   constructor(public readonly reason: string) {
-    super(`control socket refused the send: ${reason}`);
+    super(say("agent.send_refused", reason));
   }
 }
 
@@ -541,9 +519,7 @@ export class SpawnAttemptBusyError extends Error {
     public readonly task: string,
     public readonly attemptKey: string,
   ) {
-    super(
-      `spawn attempt ${attemptKey} of task ${task} is running in another mu process; nothing was done. Retry when it finishes (the replay returns its outcome)`,
-    );
+    super(say("agent.attempt_busy", task, attemptKey));
   }
 }
 
@@ -560,7 +536,7 @@ export class SpawnAttemptFailedError extends Error {
     public readonly attemptKey: string,
     reason: string,
   ) {
-    super(`attempt ${attemptKey} of task ${task} cannot run: ${reason}; nothing was sent`);
+    super(say("agent.attempt_failed", task, attemptKey, reason));
   }
 }
 
@@ -577,7 +553,7 @@ export class SpawnAttemptGuardError extends Error {
     public readonly attemptKey: string,
     reason: string,
   ) {
-    super(`attempt ${attemptKey} of task ${task} was stopped: ${reason}`);
+    super(say("agent.attempt_stopped", task, attemptKey, reason));
   }
 }
 
@@ -592,7 +568,7 @@ export class SpawnTaskStateError extends Error {
     public readonly task: string,
     reason: string,
   ) {
-    super(`task ${task} ${reason}; nothing was sent`);
+    super(say("agent.task_state", task, reason));
   }
 }
 
@@ -607,9 +583,7 @@ export class SpawnReceiptConflictError extends Error {
     public readonly attemptKey: string,
     public readonly savedName: string,
   ) {
-    super(
-      `attempt ${attemptKey} of task ${task} already ran with a different request (agent ${savedName}); a second prompt is a new attempt: pass --attempt <new key>`,
-    );
+    super(say("agent.receipt_conflict", task, attemptKey, savedName));
   }
 }
 
@@ -621,8 +595,6 @@ export class SpawnReceiptConflictError extends Error {
 export class SpawnTrustDialogError extends Error {
   override readonly name = "SpawnTrustDialogError";
   constructor(public readonly agentName: string) {
-    super(
-      `agent ${agentName} is showing Claude's folder-trust dialog (default "No, exit"); the task prompt was not sent and the spawn was rolled back`,
-    );
+    super(say("agent.trust_dialog", agentName));
   }
 }

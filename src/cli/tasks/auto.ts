@@ -17,6 +17,7 @@ import {
   resolveWorkstream,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
+import { say } from "../../messages.js";
 import { pc } from "../../output.js";
 import { authorizeTasks, TaskAutoArgError } from "../../task-auto.js";
 import { resolveActorIdentity } from "../../tasks.js";
@@ -36,9 +37,7 @@ export async function cmdTaskAuto(
 ): Promise<void> {
   const off = opts.off === true;
   if (!off && (opts.cli === undefined || opts.cli === "")) {
-    throw new TaskAutoArgError(
-      "--cli <key> is required (the model key `mu next` spawns); or --off",
-    );
+    throw new TaskAutoArgError(say("task.auto_cli_required"));
   }
   const cli = opts.cli ?? "";
   // Qualified refs carry their workstream; resolve each against the same -w.
