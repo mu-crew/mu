@@ -61,6 +61,7 @@ import { type HumanNeeded, openHumanNeeds, recordHumanNeeded } from "./human-nee
 import { NoMultiplexerError } from "./mux/types.js";
 import {
   exhaustedAfterDeath,
+  idleOnCtl,
   inFlightWorkers,
   liveWorkers,
   OBSERVE_MS,
@@ -713,10 +714,7 @@ async function recover(
   ).get(workerKey(row));
   if (
     now === undefined ||
-    now.status !== "needs_input" ||
-    now.ctl !== "ok" ||
-    now.pending === true ||
-    now.blocked !== undefined ||
+    !idleOnCtl(now) ||
     now.incarnation !== act.target.pi ||
     now.runs !== act.target.errorRuns ||
     now.lastError === undefined
