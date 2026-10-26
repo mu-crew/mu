@@ -16,7 +16,6 @@ import {
   ctlSocketsDoctorCheck,
   MURMUR_NOT_NEEDED_DETAIL,
   murmurDoctorCheck,
-  remediationParagraph,
 } from "../src/doctor-summary.js";
 
 const HOME_KEY = "MU_PI_HOME";
@@ -301,14 +300,6 @@ describe("ctl row", () => {
     });
     expect(r.agents[0]).toMatchObject({ reloadVia: "ctl" });
     expect(r.agents[1]).toMatchObject({ reloadVia: "respawn" });
-  });
-
-  it("ctl remediation: trust prompt for missing, ctl /reload when op command is served", () => {
-    const text = remediationParagraph({ name: "ctl", status: "warn", detail: "" }).join(" ");
-    expect(text).toContain("/trust");
-    expect(text).toContain("--approve");
-    expect(text).toContain("mu agent send <a> '/reload'`");
-    expect(text).toContain("op command");
   });
 
   it("skips non-pi agents (same rule as spawn's handshake)", async () => {

@@ -127,7 +127,7 @@ are re-export hubs.
 | `src/fleet-hazards.ts` | mixed-fleet checks: DB inside `MU_SYNC_DIR` (plus `DbInsideSyncDirError`, which `handle()` throws before `openDb`), network mount, case collisions, own segment written by a newer mu |
 | `src/dormant.ts` | doctor housekeeping: `finished` (all closed, idle 14 days) vs `abandoned` (idle 60 days, open tasks) workstreams; idle derived from `MAX(tasks.updated_at)` |
 | `src/disk-recon.ts` | report-only state-dir vs DB reconciliation (rows without dirs, dirs without rows, residue); `--disk` measures bytes |
-| `src/doctor-summary.ts` | cheap doctor slice for `mu state`; ctl, extension and skill checks; remediation text |
+| `src/doctor-summary.ts` | `DoctorCheck` row shape; murmur, pi-extension and ctl-socket checks used by `mu doctor` |
 
 ### Agents, multiplexer and control socket
 
@@ -189,13 +189,13 @@ are re-export hubs.
 | `src/tasks/lifecycle.ts`, `status.ts` | close, open and cascade; `TaskStatus` |
 | `src/tasks/wait.ts`, `errors.ts` | `waitForTasks` (an SDK adapter over `waitForEvents`; owns the poll-sleep test seam every wait shares); typed task errors |
 | `src/tracks.ts` | union-find tracks with diamond merge |
-| `src/dag.ts` | `loadFullDag` (the whole workstream, SDK), `loadOpenTaskFrontier` (the bounded open DAG: open tasks expand, CLOSED are leaves, depth and node caps, one SQL read per level; the future dashboard reads the same query), `renderForest`, `renderTaskTree`, `renderFrontierLines` |
+| `src/dag.ts` | `loadOpenTaskFrontier` (the bounded open DAG: open tasks expand, CLOSED are leaves, depth and node caps, one SQL read per level; `task tree` and the dashboard read the same query), `renderFrontierLines` |
 | `src/workstream-scope.ts` | the one never-trimming validator for a workstream name typed as scope (`-w`, a ref prefix, a record's `workstream`); shared by the CLI and the pi extension |
 | `src/revision.ts` | task revision (`taskRevision`: derived on read from the task row, owner, both edge directions and note count; no counter, no LIKE), `agentRevision` (derived from the agent incarnation, row, owned tasks and worktree rows), `RevisionMismatchError`, `withTaskFence` (one `--if` check around a whole invocation) |
 | `src/workstream.ts` | ensure, list, summarize, revision, soft teardown, reuse of a torn-down name |
 | `src/vcs/git.ts` | git primitives (plain functions, git only): toplevel, `worktree add --detach` / remove, dirty files, the upstream ref set, `isAncestor`, `createBranch` |
 | `src/worktree.ts` | per-agent worktrees: `createWorktree`, `removeWorktree`, `worktreeState`, the machine-local `worktrees` registry (outlives the agent; the reaper never touches it), the one close rule (`releaseWorktree`), name reuse (`reclaimWorktreePath`); `WorktreeDirtyError`, `WorktreePathNotEmptyError`, `WorktreeVcsRequiredError` |
-| `src/state.ts` | `stateSnapshot`: the canonical READ-ONLY state read (SQL column names; no reconcile, no reap, no write; async only for ctl probes) of tasks (ordered by raw `MAX(ops.seq)` activity), registry agents (host/cwd/base/collected_head), the caller's own delegate queue and waves (`verdictTally(..., caller)`), and its open human needs; `mu state`, `mu me` and the dashboard share it. The older fast/slow `WorkstreamSnapshot` loaders stay for `mu doctor` and SDK callers until doctor migrates |
+| `src/state.ts` | `stateSnapshot`: the canonical READ-ONLY state read (SQL column names; no reconcile, no reap, no write; async only for ctl probes) of tasks (ordered by raw `MAX(ops.seq)` activity), registry agents (host/cwd/base/collected_head), the caller's own delegate queue and waves (`verdictTally(..., caller)`), and its open human needs; `mu state`, `mu me` and the dashboard share it |
 | `src/dashboard-data.ts` | `loadDashboard`: the dashboard's ONE read-only projection (live workstreams incl. scratch; every task by status with qualified keys and raw `MAX(ops.seq)` activity; open frontier; registry agents with owned task; canonical log items; the caller's own human needs and delegates, empty for a null caller). No reconcile, reap, ingest or write. `next` is typed `NextPlan` but always null with `next_source: "unavailable"`, and an agent's `tool` is never set, until `v_dashboard_next` |
 
 ### CLI, output and packaging
