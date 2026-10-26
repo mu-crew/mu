@@ -554,6 +554,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `UPDATE ... RETURNING` prints its rows whole with no `retrieve`. Callers of the bare array
   (`.data[0]`) read `.data.items[0]`.
 
+- **`mu next --workers <n>`: the worker ceiling is enforced, not prose (`df1_ceiling_not_enforced`).**
+  No new pane while `n` workers are WORKING: an agent that owns an IN_PROGRESS task, or holds an
+  executor attempt in flight (`pane`/`claimed`/`sending`/`unknown`) for a task that is not CLOSED.
+  An idle worker whose task is CLOSED (its close applied, its pane not yet closed) is free, so a
+  third worker may start the moment the second's task closes. Checked at the loop and again in the
+  spawn guard (a slot taken by a peer after the check rolls the reservation back unsent, charge
+  kept, resumable); a reserved attempt that has no pane waits for a slot, one that has its pane is
+  replayed regardless, and an in-place API-error retry needs no pane so the ceiling never holds it.
+  A refusal is free (an `attention` move, `stopped: "workers"`, nothing reserved or charged);
+  `--hold` waits at the ceiling and dispatches when a task closes. No ceiling by default.
 - **Executor slice B: `mu next`, dead versus live-error recovery, bounded `--hold`, signals
   (`v_exec_recover`).** `mu next [--dry] [--hold] [--cap N] [--timeout s] [--on-stall
   exit|warn|steer|release] [-w ws]` prints ONE JSON envelope (`data.moves`, `used`, `stopped`,

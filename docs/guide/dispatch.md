@@ -231,6 +231,7 @@ the machine that authorised it. `--off` keeps the run counter.
 ```bash
 mu next --dry -w auth              # the plan; no pane, socket or write
 mu next --hold -w auth             # dispatch, then wait; recover deaths and API errors
+mu next --workers 2 -w auth        # never more than 2 working; a CLOSED task's idle pane is free
 ```
 
 `mu next` also recovers. A worker whose pane died is reaped and its task retried as a new

@@ -288,3 +288,27 @@ export async function scanRecovery(
   }
   return out;
 }
+
+/**
+ * Workers occupying a slot of `workstream`: registered agents that own an
+ * IN_PROGRESS task, or hold an executor attempt in flight (pane up, not yet
+ * delivered or unconfirmed) for a task that is not CLOSED. An idle worker whose
+ * task is CLOSED (its close not yet reaped) is FREE: the slot is what is
+ * working, not what still has a pane. A dead pane counts until reaped (the
+ * recovery scan runs first).
+ */
+export function liveWorkers(db: Db, workstream: string): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM agents a
+         JOIN workstreams w ON w.id = a.workstream_id AND w.name = ?
+        WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.owner_id = a.id AND t.status = 'IN_PROGRESS')
+           OR EXISTS (SELECT 1 FROM spawn_receipts r JOIN tasks t ON t.id = r.task_id
+                       WHERE r.agent_id = a.id AND r.pane_id = a.pane_id
+                         AND r.attempt_key LIKE 'auto:%'
+                         AND r.state IN ('pane', 'claimed', 'sending', 'unknown')
+                         AND t.status != 'CLOSED')`,
+    )
+    .get(workstream) as { n: number };
+  return row.n;
+}

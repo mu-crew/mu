@@ -88,7 +88,7 @@ const ARGS: Record<string, string[]> = {
   "host init": ["dev", "--ssh"],
   "host check": ["dev"],
   "human-needed": ["needs a decision"],
-  next: ["--dry"],
+  next: ["--dry", "--workers", "2"],
   "pi migrate": [],
   "delegates list": ["--all"],
   "delegates show": ["pi:x:1"],
