@@ -54,7 +54,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   suspended and restored (`$TMUX` picks `switch-client` or `attach-session`; `-L` routing kept). A
   failed required step stops, an optional one is a warning; no mux, no workspace or no client opens
   the scrollback with the reason and the attach line for a shell outside the mux (yankable).
-  Typeahead typed during an attach is dropped. Adds `DashboardRuntime.notes` (read-only
+  Typeahead typed during an attach is dropped. A drill's failure reason, outside-client line and
+  yank confirmation are pinned under the title (at most half the screen), not part of the scrolled
+  body, so a long scrollback that opens at its end still shows them. `AttachTarget.outside` asks a
+  backend for the line to run from a shell outside any client: herdr then always appends the
+  client step (inside herdr the executed steps stay focus-only). Adds `DashboardRuntime.notes` (read-only
   connection). Read-only otherwise: no task or agent mutation.
 - **Dashboard tabs** (`v_dashboard_shell`, slice S2): the dashboard shows a workstream row and
   four tabs: Tasks (newest activity first, CLOSED hidden, owner on IN_PROGRESS), DAG (the open

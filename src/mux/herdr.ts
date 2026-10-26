@@ -1202,7 +1202,8 @@ async function herdrAvailable(): Promise<boolean> {
 // client. Inside a herdr pane (`$HERDR_ENV=1`, the signal detect.ts
 // uses) the caller's client already shows it. Outside, a second step
 // opens a client. `target.inside` is tmux's evidence (`$TMUX`) and is
-// ignored here.
+// ignored here; `target.outside` (a line for a shell outside any client) is
+// not: it always carries the client step.
 
 /** The focus argv for `target` in workspace `workspaceId`. Prefers the
  *  agent's tab (`tab focus` also switches the workspace) and falls back
@@ -1227,7 +1228,8 @@ export async function attachCommands(target: AttachTarget): Promise<readonly Mux
   const focus = await attachFocusArgs(await requireWorkspaceId(target.session), target);
   const steps: MuxCommand[] = [{ command: "herdr", args: [...flags, ...focus] }];
   // Bare `herdr` launches a client attached to the (named) server.
-  if (!insideHerdrClient()) steps.push({ command: "herdr", args: [...flags] });
+  if (target.outside === true || !insideHerdrClient())
+    steps.push({ command: "herdr", args: [...flags] });
   return steps;
 }
 

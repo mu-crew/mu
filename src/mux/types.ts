@@ -105,6 +105,10 @@ export interface AttachTarget {
   /** True when the caller is already inside a client of this mux, which
    *  on tmux means `switch-client` rather than `attach-session`. */
   inside?: boolean;
+  /** True when the steps are for a shell OUTSIDE any client of this mux (the line a
+   *  dashboard copies): they must open a client, whatever the ambient env says.
+   *  Wins over `inside` and over a backend's own env detection. */
+  outside?: boolean;
 }
 
 /** One argv the caller may execute to hand the terminal to the mux. */

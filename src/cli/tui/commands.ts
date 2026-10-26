@@ -43,7 +43,8 @@ export async function planAttach(t: AttachSubject): Promise<AttachPlan> {
     const target = { session: `mu-${t.workstream}`, window: t.tab ?? t.name };
     const inside = insideClient();
     const steps = await mux.attachCommands({ ...target, inside });
-    const outside = inside ? await mux.attachCommands({ ...target, inside: false }) : steps;
+    // The copied line is for a shell outside any client, whatever this one is inside of.
+    const outside = await mux.attachCommands({ ...target, inside: false, outside: true });
     return { ok: true, steps, line: attachShellLine(outside) };
   } catch (e) {
     return { ok: false, reason: message(e), line: null };

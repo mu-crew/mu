@@ -539,7 +539,8 @@ export async function attachCommands(target: AttachTarget): Promise<readonly Mux
   const spec = attachTargetSpec(target);
   const socket = process.env.MU_TMUX_SOCKET;
   const route = socket === undefined || socket.length === 0 ? [] : ["-L", socket];
-  const verb = target.inside === true ? "switch-client" : "attach-session";
+  const verb =
+    target.inside === true && target.outside !== true ? "switch-client" : "attach-session";
   return [{ command: "tmux", args: [...route, verb, "-t", spec] }];
 }
 
