@@ -600,7 +600,7 @@ export function wireWorkstreamCommands(program: Command): void {
   workstream
     .command("teardown [name]")
     .description(
-      "Tear down a workstream (soft): kill its mux session, delete its agent rows and mark it torn down; its tasks, edges and notes are kept; worktrees are never removed (use `mu agent close`). A live pane moved out of the session blocks it. The target may be given positionally (matching `workstream init <name>`) or via -w. Without --if prints a preview with `rev=<n>`; apply with --if <n> (refused if the workstream changed since). With --empty, previews or sweeps every empty workstream (zero tasks/agents/worktrees) except scratch.",
+      "Soft teardown: kill the mux session, delete agent rows, mark the workstream torn down (tasks, notes, worktrees stay). Without --if it previews `rev=<n>`; apply with --if <n>. --empty sweeps empty workstreams, never scratch.",
     )
     .option(...WORKSTREAM_OPT)
     .option("--if <rev>", "apply the preview with this revision", parseNonNegativeInt)

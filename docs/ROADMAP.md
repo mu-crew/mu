@@ -42,10 +42,11 @@ mu does not add these unless one earns its way back under the criteria:
 
 The mu-next build is approved as a whole and is exempt from the
 promotion criteria: its design of record is
-[mu-next/README.md](mu-next/README.md), its planned contract and the
-unit that delivers each part are in
-[mu-next/surface-contract.md](mu-next/surface-contract.md). Nothing
-beyond that list is approved; anything else follows the criteria above.
+[mu-next/README.md](mu-next/README.md) and the contract as built is
+[mu-next/surface-contract.md](mu-next/surface-contract.md). Two units
+are still landing: the rest of `v_settle` (its slice A, the settle wait, has
+merged) and `mu_delegate` with no multiplexer (`v_delegate_nomux`). Nothing beyond
+them is approved; anything else follows the criteria above.
 
 ## Candidates
 
@@ -60,7 +61,6 @@ track them; delete the row when one ships.
 | **Global delegate cap** | `MU_DELEGATE_MAX` applies per pi session. Several orchestrators, plus workers running `mu agent spawn -w scratch`, are not capped in total. | Count live `scratch` agents from the DB in the queue check. | ~30 LOC |
 | **Wait for a non-pi CLI's prompt** | `spawn --send` treats a blank or booting screen as calm and can paste before the CLI is ready. | Settle only once the CLI has drawn its input prompt. This needs a screen pattern for each CLI, so it waits for real friction. | ~40 LOC |
 | **Absolute deadline in `wait`** | A delegate re-armed after `/reload` restarts its countdown. | Report `deadline` (epoch ms) alongside `timeoutS`. | ~20 LOC |
-| **Bounded `task tree`** | No depth or node limit. | Cap depth, nodes and edges, and report which cap was hit. | ~30 LOC |
 | **Design-doc review angles** | `review-panel`'s angles are for diffs. | Add rollout and back-compat, alternatives, and integration angles. Synthesize into unanimous findings, tensions, and the strongest objection. | recipe |
 | **Sender framing on sends** | The receiving agent cannot tell a peer's message from its human's. | Prefix text sent by a mu agent with `[mu: from <agent>]`. This touches prompts, so it follows logging the sender. | ~20 LOC |
 | **A third mux backend** | None: tmux and herdr are the two implementations that justify `MuxBackend`. | zellij, wezterm or kitty. A third needs its own friction evidence; the existing interface is not evidence. | — |
@@ -68,8 +68,8 @@ track them; delete the row when one ships.
 
 ## Next breaking release
 
-- **Schema v12 drops `agents.status`.** In v11 it stays for
-  compatibility and always holds `spawning`.
+- **Drop `agents.status`.** Schema 13 still carries it for
+  compatibility; it always holds `spawning` and nothing reads it.
 - **`mu agent list --json` becomes `{items, count}`.** It emits
   `{workstreamName, agents, orphans}`, the one collection off the
   documented shape (SKILL.md notes the exception). Conforming breaks

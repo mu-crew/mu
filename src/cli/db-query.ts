@@ -888,7 +888,7 @@ export async function cmdDbShell(db: Db, opts: { workstream?: string } = {}): Pr
 // under its old name (live hints and scripts name it).
 
 const QUERY_HELP =
-  "Run SQL against the live mu DB, in-process: reads and writes (captured as one `sql.write` group). Runs inside mu's transaction (BEGIN/COMMIT refused); mu's capture bookkeeping (op_ctx, ops) and every schema change (CREATE/DROP/ALTER, TEMP too), ATTACH/DETACH and PRAGMAs other than read-only ones are refused. With -w, the views ready/blocked/blockers cover that workstream only (main.ready is the global one). `no such column` lists the real columns.";
+  "Run SQL in-process on the live DB (writes captured as one `sql.write` group). Refused: BEGIN/COMMIT, DDL, ATTACH, capture bookkeeping writes, non-read-only PRAGMAs. -w scopes the ready/blocked/blockers views.";
 
 function wireQuery(cmd: Command): void {
   cmd

@@ -70,7 +70,7 @@ through `handle()`. There is no daemon and no network code:
 **CLI and SDK surface.** Each operation is a typed SDK function plus a
 thin Commander wrapper. Public functions take operator-facing names and
 resolve them to surrogate ids exactly once. Typed errors map to exit
-codes 0-7. The same page covers testing layers and packaging:
+codes 0-7; a wait or a stream adds 130/143 on a signal. The same page covers testing layers and packaging:
 [architecture/sdk.md](architecture/sdk.md).
 
 ## Module map
@@ -191,6 +191,7 @@ are re-export hubs.
 | `src/next-recover.ts` | the recovery scan: `observeWorkers` (a status read plus the ctl `wait` that carries `lastError`, bounded), `inFlightWorkers`, `scanRecovery` (dead local → reap, live API error → retry in place, else nothing or `attention`; remote never), `exhaustedAfterDeath`, `liveWorkers` (the worker-ceiling count) |
 | `src/next-refute.ts` | `executeNext --refute` (slice C): `nextCheck` (CLOSED/done permitted attempts with no call, or this caller's unfinished call), `runCheck` (register `starting` → `spawnForTask` → `running`; or read once and `finishDelegate`), `checkerRefs`; the call id `refute:<ws>:<task>:<attempt>` is the once-key |
 | `src/cli/next.ts` | `mu next`: signals before the DB, one bounded envelope (`nextData`), exit mapping (`nextExit`) |
+| `src/close-block.ts` | the CLOSE block of a settled pi run: `parseCloseBlock` (one grammar: last column-0 `CLOSE:` line outside a fence, exact marker lines, escaped evidence) and `applySettledClose` (report note, close note and status flip in ONE op group, once per (agent, incarnation, runs) through `agent_settles`; refuses delegate and human tasks; malformed reads "no close (malformed)") |
 | `src/tasks/claim.ts` | atomic claim and release; `resolveWorkerIdentity` |
 | `src/tasks/lifecycle.ts`, `status.ts` | close, open and cascade; `TaskStatus` |
 | `src/tasks/errors.ts` | typed task errors |
@@ -217,6 +218,7 @@ are re-export hubs.
 | `src/cli/log.ts`, `src/cli/log-records.ts`, `src/cli/page-records.ts` | `mu log`: `log-records.ts` is the read boundary (one escaped record <= 400 characters, or a `LogItem` keyed by `ops` columns, bounded to 2 KB; `shrinkItem` bounds every item field; `logPage` pages the final bytes with min 0, `more`/`cut` name `mu log --seq A..B` / `--after S` reads, digits only; `--seq`/`--after` take no scope or filter, each record whole); `--tail` is always NDJSON (`cmdLogTail`: row written, then cursor moves; a failed write throws `TailStopped` carrying the cursor; SIGINT 130, SIGTERM 143). `page-records.ts` is the generic pager `mu workstream list [--torn-down]` shares (`--all` uncapped) |
 | `src/cli/db-query.ts` | `mu db query` (alias `mu sql`) and `mu db --shell`. One op-context scope per write; `guardPragma` allows only read-only PRAGMAs before any compile; one `EXPLAIN` per statement (`checkStatement`) refuses transaction control (`AutoCommit`/`Savepoint`), ATTACH/DETACH, all DDL (a write to any `sqlite_master` root page, TEMP included) and any write to `op_ctx`/`op_dying`/`ops`/`schema_version`/`machine_identity`/`sync_peers` outside a main `_cap_*` trigger, a statement's own write to `sqlite_sequence`, and an UPDATE of `id`/`rowid` on the four guarded tables (a rowid-changing `Delete` with no table name); `installScopedViews` (TEMP `ready`/`blocked`/`blockers`); `teachColumnError`; output is JSON by default (`--table` for prose; `isSqlVerbArgv` in `src/output.ts` makes parse-time errors JSON too) and a read is `{items,count,more,retrieve?}` paged by `pageRecords` (min 0) over the final document bytes (`sqlRowsPayload`), `--all` whole. `src/cli/db.ts` keeps `backup`, `compact`, `forget` |
 | `src/cli/state.ts`, `src/cli/me-identity.ts` | `mu state` / `mu me` (one JSON document, no card): scope (variadic/comma/repeated `-w`, `--all`, `--me`), explicit reconcile for `-w` reads, bounding to 4096 final bytes (lists shrink, then workstreams page, min 0; a cut names `mu state ... --full`). `me-identity.ts` is the one identity path: the injected `<ws>/<name>` row, else `pi:<session>`, never `$TMUX_PANE` (`mu me tasks` / `next` use its managed-agent form) |
+| `src/cli/sync.ts` | `mu sync`: peer status, `--from`, `--repair` over `src/sync.ts` |
 | `src/cli/stdin.ts` | `-` as a text argument: reads note / send text from stdin (heredoc prose) |
 | `src/hosts.ts` | host profiles: the template grammar (`expandHostTemplate`, one pass, per-context quoting, whitelisted `{env}`, `{name:sh}` second layer), profile CRUD, `host_channels` admission (`reserveHostChannel` / `bindHostChannel` / `releaseHostChannel` by token, `withHostChannel`, transient vs attached), `admitHostChannel` (spawn reserves before its pane opens), `checkHost`. ssh-free: runs only the user's stored templates with `/bin/sh -c`, each as its own process group (`execGroupCapture`, reaped before its channel is released; the group id is recorded on the `host_channels` row so a dead caller cannot free a slot under a live transport) |
 | `src/cli/host.ts` | the host verbs (add, list, show, rm, init, check) |
@@ -225,21 +227,19 @@ are re-export hubs.
 | `src/cli/agent-close.ts` | `mu agent close`, recovery-aware scope (`closeScope`: live agent or recovery record) |
 | `src/cli/agent-collect.ts` | `mu agent collect` |
 | `src/output-contract.ts` | the `--json` wire: `Envelope<T>` (`{ok,data,next}` / `{ok:false,error,message,next,exit}`), `NextPlan`, `encodeEnvelope`, `isEnvelope`. Pure. `cli.ts` `emitJson` wraps every payload once; `handle.ts` `emitError` prints the one failure document on stdout; both take `next` from `finalNext()` (the ONE finalisation: `computeNext` over the DB `handle()` holds, the verb's `setNextOutcome` and the scope `resolveWorkstream` records, fitted to the 4 KB result by `fitNext`; human text gets one dim `next:` line); `emitJsonRow` is the raw NDJSON row (`mu log --tail`, inert like an envelope). `extension/delegate.ts` `parseEnvelope` reads it |
-| `src/output.ts`, `src/shell-quote.ts` | `printNextSteps` / `errorNextSteps`; POSIX quoting for hints |
+| `src/output.ts`, `src/shell-quote.ts` | colour, `muTable`/`renderBoxTable`, JSON-mode and verb-argv probes (`isJsonMode`, `isSqlVerbArgv`, `isWaitVerbArgv`), `usageLines`; POSIX quoting for `next` commands |
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
 | `src/index.ts` | SDK entry point |
 | `skills/mu/` | the skill loaded into an agent's context (`SKILL.md` ≤ 600 words, 12 recipes ≤ 250 each and ≤ 4,000 together, pinned by `test/prose-budget.test.ts`, with failure-backed markers); `mu --help` owns the verb reference; every dropped 3.x rule has a destination in [rule-destinations](mu-next/rule-destinations.md) |
 | `scripts/check-doc-links.mjs` | relative-link and anchor checker for every markdown file, run by `test/doc-links.test.ts` |
 | `test/` | vitest suites; `*.integration.test.ts` touch real tmux, herdr or VCS ([sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
 
-## Planned (owned by `v_*`)
+## Not yet merged
 
-The rows above describe what ships. The mu-next surface (one unified wait verb,
-delegates as tasks, `{ok,data,next}` output, task-bound spawn, executor,
-hosts, dashboard, schema 13 additions) is not in this module map: a row
-is added in the commit that adds the module. The planned module and
-signature names, the unit that delivers each, and the current-versus-
-planned boundary live in
+One unit is still landing and has no row above: `v_delegate_nomux`
+part 2 (routing `mu_delegate` through `src/delegate-process.ts`).
+<!-- TODO(v_delegate_nomux): replace this section with its rows from the merged code. -->
+The shipped contract is
 [mu-next/surface-contract.md](mu-next/surface-contract.md).
 
 ## Key seams
@@ -249,7 +249,7 @@ A new implementation of each is small.
 | Seam | Add one by |
 | --- | --- |
 | `MuxBackend` | implementing the interface in `src/mux/`; a backend without an equivalent no-ops, and a backend-only feature is an optional method callers test for |
-| typed verb | an SDK function; a `cmd<Verb>` in `src/cli/<namespace>.ts`; one Commander block in `buildProgram()` wrapped in `handle()` and routed through `printNextSteps` |
+| typed verb | an SDK function; a `cmd<Verb>` in `src/cli/<namespace>.ts`; one Commander block in `buildProgram()` wrapped in `handle()`; the verb declares what it did (`setNextOutcome`) and `next` is computed for it |
 | schema change | bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror `CURRENT_SCHEMA`; startup stays migration-free |
 | syncable field | add the column to a portable table, extend the UPDATE trigger's changed-column comparison, confirm apply writes it; a full-row payload regresses merge to row-level LWW |
 | cross-machine sync | nothing: every invocation already flushes and ingests |

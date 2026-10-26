@@ -15,9 +15,10 @@ over one at a time by a model-run recipe (see Move).
 **Status.** This page is the design of record, not a description of
 what ships. Shipped behaviour is in [ARCHITECTURE](../ARCHITECTURE.md),
 [VOCABULARY](../VOCABULARY.md) and the [CHANGELOG](../../CHANGELOG.md);
-the planned contract, with the unit that delivers each part, is in
-[surface-contract.md](surface-contract.md). Where they disagree today,
-the shipped docs win.
+the contract as built is
+[surface-contract.md](surface-contract.md), which also names the
+units still landing (the rest of `v_settle`, `v_delegate_nomux`). Where this page and
+the shipped docs disagree, the shipped docs win.
 
 Revision 2 (2026-10-23) folds in an ultrathink run over revision 1:
 12 finders, 85 findings (53 accepted, 24 rejected, 8 duplicate), and a
@@ -140,7 +141,7 @@ with a `CLOSE:` note, not the report (`cc_last5_hides_brief`,
 - safe before destructive; lists are marked `seq` or `alt`; sequences
   are never truncated; destructive moves carry `--if <rev>`
   (`np_ranking_is_policy`);
-- reference hint: after `send`, `agent wait <a> --after-runs <n> --inc <i>`.
+- reference hint: after `send`, `mu wait 'agent:<ws>/<a>@<n>#<inc>'`.
 
 **Guards.** `--if <rev>` on membership-changing and destructive verbs;
 teardown needs a preview revision; wrong ids return read-only
@@ -319,12 +320,14 @@ Skill and prompts ship in the package.
 
 ## The orchestrator's loop: never stop, never starve
 
-*Planned.* Everything in this section is owned by `v_wait_core`,
-`v_wait_cli`, `v_loop_storage`, `v_delegate`, `v_settle` and `v_human`,
-and supersedes the older separate task/agent waits and follow-up-only
-delegate delivery described elsewhere. Today delegate answers arrive as
-pi follow-ups and `task wait` is a separate all-of wait. The guarantees
-are unchanged: a send is never resent, and an answer is never lost.
+*Shipped.* `mu wait`, delegates as tasks, wave tallies, `mu human-needed`
+and the settle wait ship. Every completed settle of an orchestrator pi
+runs one `mu wait`, as its callers, and continues the turn with the
+event; a delegate answer on its way cancels only that wait, and the
+answer's own settle waits again. Delegate answers still arrive as pi
+follow-ups.
+The guarantees are unchanged: a send is never resent, and an answer is
+never lost.
 
 Two traps pull against each other. Ending the turn while work runs
 stalls the crew until a human prods (85 stalls mined, never after a
@@ -460,9 +463,9 @@ Target ~2k LOC written fresh against this list, not trimmed from 3.x's
 
 ## Prose budget
 
-Targets, not facts: no shipped prose meets them yet. `v_skill` owns the
-prose-budget, marker and rule-destination tests; `v_docs_final` owns the
-help-budget test. They do not cap canonical docs (this page, VOCABULARY,
+Met and tested, except the remote recipe (239 words; untested).
+`test/prose-budget.test.ts` pins the skill and recipe caps and markers;
+`test/help-budget.test.ts` pins the help cap (at 80 columns). They do not cap canonical docs (this page, VOCABULARY,
 `surface-contract.md`). Output budgets (a 4 KB result, 400-char list
 record, pinned content exempt, no truncated `seq` Next) are separate;
 see the Interface section.

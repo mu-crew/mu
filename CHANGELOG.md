@@ -25,119 +25,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   kept), `keep` holds the live child, SIGINT cancels. Result: `transport: "process"`,
   `attach: null`, log and session paths. Code: `src/delegate-process.ts`, `src/cli/delegates.ts`.
 
-### Changed
-
-- **The capped skill ships (`v_skill_ship`).** `skills/mu/SKILL.md` goes from 2,477 to 596 words and the
-  26 recipes (15.5k words) become 12 of at most 250 words each (2,823 together; cap 4,000): orchestrator-loop,
-  brief, tasks-or-calls, findings, adversarial-review, test-health, models, remote-workers, recovery, worker,
-  course-correct, move. The dropped recipes (ultrathink, plan, fan-out, loop-until-done, refute, review-panel,
-  tournament, hypothesis-panel, deep-research, rules-audit, waves, long-run, drift-audit, watcher,
-  backlog-triage, codemode-driver) live in git history; the nine `prompts/` now point at a shipped recipe and
-  carry their one-line shape. `docs/mu-next/rule-destinations.md` records where every 3.x rule went.
-  `test/prose-budget.test.ts` pins the word caps (the `wc -w` tokenizer), the recipe index, prompt targets,
-  retired-surface absence and six failure-backed markers (keep-driving, record, remote-collect,
-  error-receipt, reviewer-evidence, claim-before-send), each checked to fail when its guard is deleted;
-  `test/docs-cli-drift.test.ts` discovers recipes and prompts by directory and validates their `mu` snippets.
-  Prose, tests and links only: no `src/` change beyond one comment path.
-
-### Removed
-
-- **Dead-code sweep on the merged tree (`k_cut_leftovers`).** knip over `src/` and `extension/`
-  found no unused file and no orphan beyond `terminalWidth`, `evidenceSuffix` and
-  `isExecFailureLine`; all three are deleted. Doctor's human and `--json` collectors stay
-  separate: a shared collector measured +7 code lines.
-
-- **Legacy `nextSteps` hints are deleted, not wrapped; every result's `next` is computed once**
-  (`v_hint_wire`, slice B of `v_hints`; README "Next contract"). `handle()` finalises `next` for
-  success JSON (`emitJson`), failure JSON (`emitError`, `CliExitError` partial failures) and human
-  text (one dim `next:` line, stderr on failure) from `computeNext` over the open DB after the verb's
-  writes. A verb only declares what it did (`setNextOutcome`: a delivered send's exact wait, an
-  unknown delivery's receipt check, a gate's wait, a `claim --for` brief, a preview's `--if <rev>`
-  apply, a wait's stored resume); `resolveWorkstream` records the scope. Outside `handle()` (parse
-  errors) `next` is null. The plan is cut to what the 4 KB result leaves (a `seq` dropped whole).
-  Gone: `NextStep`, `HasNextSteps`, `hasNextSteps`, `printNextSteps(To)`, `formatNextSteps`, every
-  `errorNextSteps()` and `inlineNext`, `paneNotFoundNextSteps`, `transportNextSteps`,
-  `src/cli/dispatch-hints.ts`, the wait's `nextSteps`/`nextStepsCut`, the spawn orphan-cleanup hint
-  and the triage `next=` trailer on `task list`. Reads, placeholders (`<id>`, `'...'`) and `a|b`
-  are no longer printed as hints. Facts some hints carried survive as data or one-line prose:
-  `agent spawn --json` and `workstream init --json` carry `attach` (the delegate tool reads it
-  there), the dirty-worktree commit line on `task close` and the unseen-note send on `task note` are
-  `warnings`, `mu rebuild` prints the swap command, a wrong task id prints `similar:` (human) beside
-  `candidate_ids` (JSON), an ambiguous name adds `candidates`, and the prose-quoting and missing-CLI
-  advice moved into the error message.
-- **An unknown verb is one line, not the root help** (`df1_unknown_verb_dumps_help`, dogfood-1 F5).
-  `mu next` used to print "too many arguments" plus 7.6 KB of help; it now prints
-  `unknown command 'next' (closest: mu me next); see mu --help` (70 bytes for a word with no near
-  verb). The closest verb is matched one level deep (`mu claim` → `mu task claim`); a namespace says
-  `see mu task --help`. `--json` keeps `usage`.
-
-- **The pre-engine wait code is deleted, not wrapped** (`v_wait_delete_old`). `src/tasks/wait.ts`
-  (`waitForTasks`) and `src/agents/wait.ts` (`waitForAgents`) were adapters over `waitForEvents`;
-  `mu agent wait` now calls `waitForEvents` directly (`src/cli/agents.ts`, with `ctlAgentHooks`) and
-  `mu task wait` / `mu wait` already did. Gone from the SDK: `waitForTasks`, `waitForAgents`,
-  `setWaitStuckWarnForTests`, `setAgentWaitSleepForTests`, `getWaitPollCount`, `resetWaitPollCount`,
-  the `TaskWait*` / `AgentWait*` / `AgentStatusSnapshot` / `AgentWatch` types, `toStatusSnapshot`, the
-  `inspect` wait option, and the never-thrown `ReaperDetectedDuringWaitError` and
-  `StallDetectedDuringWaitError` (exit 6 and 7 are `WaitResult.exit`, never an error class).
-  `setWaitSleepForTests` now lives in `src/wait.ts`. `mu agent wait` output and exit codes are unchanged.
-  The tests that guarded the old adapters now guard the engine (`test/wait-events.test.ts`).
-
-### Fixed
-
-- **A remote command gate no longer lists as `unknown: murmur has no row`.** `mu agent list`,
-  `mu agent show` and `mu state` read a gate from its pane (running reads `busy`, an ended one
-  `unknown` with `exited <n>`), never through a host exec. `readGate` drops its pre-read channel
-  release: the result read's admission already reclaims a dead pane's channel.
-
-- **A worker that dies between two waits is `dead` (exit 6), not a heartbeat**
-  (`df2_wait_dead_after_reap`, dogfood-2 F1). A wait used to see a reaper flip only if one of its own
-  ticks had seen the owner first (in memory), so a wait started after the death, or a `mu wait
-  --resume` run after it, got a heartbeat with the task OPEN. The flip is now read from the ops log:
-  a watched task whose latest status change is the reaper's (`task.reap`) is dead when the flip came
-  after the wait's anchor. The anchor is the ops head when the wait starts; `--resume` replays the
-  stored one (`wait_resumes.spec.since`); a ref a caller registered owes every flip until its cursor
-  consumes it. A later claim, release, park or close is a decision and is not reported dead.
-- **A dead agent ref no longer hints `mu task show <agent name>`** (`df2_dead_hint_agent_ref`,
-  dogfood-2 F2). The hint now names the reaper's log lines, `mu log -w <ws> --source reaper -n 10`,
-  which list the tasks it reopened.
-- **A spawn killed during worktree creation rolls back** (`bug_spawn_worktree_abort_cleanup`).
-  `mu agent spawn` now handles SIGINT/SIGTERM (exit 130/143, a `SpawnInterruptedError` document
-  under `--json`): `git worktree add` runs in its own process group and is killed with its hooks,
-  the half-made worktree is removed (`git worktree remove --force --force`, it is locked
-  `initializing`), and the placeholder and registry rows are dropped, as for a thrown error. Before,
-  the placeholder row, a registered worktree and a live git child were left behind, and the name
-  refused (`AgentExistsError`). A SIGKILL leftover (a **dead staging**) is listed by `mu doctor`
-  (`ws-staging`) and removed by the next spawn in its workstream. The pi extension's runner, on
-  abort, SIGTERMs mu and returns only once it exited (SIGKILL after 10 s), so `mu_delegate` no
-  longer reports a cancelled spawn while it is still rolling back.
-
-- **`mu_delegate` with `workspace: true` honours `cwd` as the repo** (`bug_delegate_workspace_root`).
-  It spawns `--worktree --root <cwd>`, so a pi session in a parent of several repos can name the one
-  to branch; without `cwd` the caller's directory stays the repo. A queued or reissued call replays
-  the root from the stored request. A spawn refusal that cannot change on retry
-  (`WorktreeVcsRequiredError`, `UsageError`) is recorded as failed with the CLI's message and the fix
-  (`Pass cwd: <a git repo>`), no longer as a refused call to reissue.
-
-- **Tests no longer write to the real `~/.cache/mu` or `~/.local/state/mu(-next)`.**
-  `test/_setup.ts` points `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_CONFIG_HOME` at a per-fork temp dir
-  (removed on exit), and `test/_real-dir-guard.ts` throws on any `fs` write under the real dirs, like the
-  real-DB guard in `openDb`. Fixture delegate answers had been landing in `~/.cache/mu/delegate-answers`.
-- **A finished worker is not `dead`: an agent ref is owed only while it owns open work or an
-  unsettled run** (`df1_wait_stale_dead`, dogfood-1 F1; round 2 of `v_wait_arming`). With arming, the
-  orchestrator's `claim --for` + `send` left the worker's agent ref registered after its task closed;
-  a deliberate `mu agent close` then made the next wait (bare, explicit task, or `send --wait`) exit 6
-  `dead`, "the work is not done". One rule now lives in `src/wait-owed.ts`: an agent ref is DONE when
-  every task the agent owned is CLOSED (or released), nothing it was sent is unsettled and it is idle.
-  Every wait tick keeps a DONE mark per owned agent (a `wait_cursors` row `done|agent:<ws>/<name>`,
-  machine-local) true to what it read, and `agent close` sets it when the agent holds no open task
-  and no run in flight. A registered agent whose row is gone and which carries the mark is dropped
-  from the registration with no event. `dead` is left for a pane lost while work or a run is owed
-  (a task still open, a run busy or unsettled, or never read at all). New work armed for the agent
-  clears the mark. The `dead` reason for an agent ref no longer says "the work is not done" ("gone
-  (its pane died or it was closed)"); a task whose owner died keeps it.
-
-### Added
-
 - **`mu next --refute`: an opt-in durable checker per closed attempt** (`v_exec_refute`, slice C of
   `v_executor`; `src/next-refute.ts`). For each authorised task a worker closed as `done`, one
   delegate call (`refute:<ws>:<task>:<attempt key>`, workstream `scratch`, wave `refute-<ws>`) is
@@ -264,233 +151,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   A probe-confirmed earlier steer whose run already settled (receipt runs below the owner's) returns
   the stall ("nudged earlier, owner idle again") instead of a silent continue; a fence on a
   session-command text (`/new`, …) is refused, not skipped.
-
-### Changed
-
-- **The keyed message table (`v_hint_messages`, slice C of `v_hints`).** Every error line, usage
-  refusal, warning and stderr hint of the task, agent, db, mux, sync, host, remote, workstream,
-  worktree, log and delegate domains is a function in `src/messages.ts` (`MESSAGES["task.parked"]`,
-  rendered with `say(key, ...facts)`), so `t_errors` rewrites one line at a time. Wording, typed
-  classes, exit codes and structured fields are unchanged. The `UsageError` sites of `cli.ts`,
-  `cli/{wait,delegates,db-query,log,me-identity,host,sync,db}.ts` and the run-time hint strings of
-  `handle.ts`/`doctor.ts` are the remaining inventory.
-
-- **The keep-driving nudge is now the settle wait** (`v_settle_wait`, slice A of `v_settle`). Every
-  completed settle of an orchestrator pi runs the one wait, `mu wait --first --on-stall exit --json`,
-  as its callers (the inherited managed identity plus `PI_SESSION_ID` from the session, passed through
-  a per-call child env), and continues the turn with the wait's own result under the SKILL.md rule.
-  No shell line is parsed (producers arm the wait from state) and there is no once-per-prompt latch.
-  The turn ends only when nothing is owed (`WaitNothingError`, or `drained`), a `mu human-needed`
-  stop is open (read per identity with `mu state --me` before each wait, and in the result), the
-  user cancels (Esc, typed input, a dialog, shutdown), or the wait fails, which is shown and never
-  read as "nothing owed". A heartbeat timeout with work still owed waits again. A delegate answer
-  on its way cancels only the settle wait (`DelegateHandle.onAnswer`); the answer's own settle waits
-  again. A cancelled wait drains: the runner's one terminate path (SIGTERM, resolve once the child
-  exited, final stdout kept; also what rolls back a cancelled spawn) with a SIGKILL after 3 s here
-  (`MuRunOpts.drainMs`, default 10 s). A wait result consumed while an answer queued keeps its
-  entry and drops only its continuation. Removed: `dispatchedWorkstreams`, `shellSegments`,
-  `nudgeText` and the `mu task list --status IN_PROGRESS` read. Skipped on a remote host
-  (`MU_REMOTE=1`) and in a nested pi; `MU_NUDGE=0` still turns it off.
-
-- **One wait hint.** The `Next:` line after a send, `spawn --send`, `spawn --task` and
-  `send --interrupt` is now `mu wait 'agent:<ws>/<name>@<runs>#<incarnation>'` (one POSIX-quoted
-  typed ref, no `--json`: `mu wait` always prints JSON, the answer is `snapshots[].lastText`),
-  replacing `mu agent wait <a> -w <ws> --after-runs <n> --inc <i> --json`.
-
-- **Dashboard drills** (`v_dashboard_drill`): Enter opens a read-only full-screen body: Tasks the
-  task's notes (the CLI's default selection, pinned notes marked `*`; `A` shows all, whole), Agents
-  the pane scrollback (last 2000 lines, `r` reloads), Log one op with every field. `j/k`, PgUp/PgDn,
-  `g/G` scroll (clamped, wrapped by visual width, no ANSI in the text); Esc or `q` returns to the
-  tab with its filters and cursor. `y` copies the row's command with OSC 52 (no clipboard
-  dependency) and prints it; control characters and over 1 KB are refused. `a` on an agent is the
-  one key that runs anything: the backend's `attachCommands` steps, in order, with Ink's terminal
-  suspended and restored (`$TMUX` picks `switch-client` or `attach-session`; `-L` routing kept). A
-  failed required step stops, an optional one is a warning; no mux, no workspace or no client opens
-  the scrollback with the reason and the attach line for a shell outside the mux (yankable).
-  Typeahead typed during an attach is dropped. A drill's failure reason, outside-client line and
-  yank confirmation are pinned under the title (at most half the screen), not part of the scrolled
-  body, so a long scrollback that opens at its end still shows them. `AttachTarget.outside` asks a
-  backend for the line to run from a shell outside any client: herdr then always appends the
-  client step (inside herdr the executed steps stay focus-only). Adds `DashboardRuntime.notes` (read-only
-  connection). Read-only otherwise: no task or agent mutation.
-- **Dashboard tabs** (`v_dashboard_shell`, slice S2): the dashboard shows a workstream row and
-  four tabs: Tasks (newest activity first, CLOSED hidden, owner on IN_PROGRESS), DAG (the open
-  frontier; root, repeat and per-entry cap cuts always listed, even when a text filter hides the
-  entry), Agents and Log (every workstream, scratch
-  marked `*`). Starts on `-w`, else the mux session's workstream, else the most recently active one
-  (never the alphabetical first). Status (`s`) and text (`/`) filters persist per tab and
-  workstream; the cursor follows its row key, not its index, so activity reordering never moves
-  it, including the default row on first view and after a filter reset. A short or narrow
-  terminal keeps the workstream row and tabs (then one data row, filter, hint, Next); tabs
-  collapse to the active one when four labels do not fit. Next reads `unavailable` until the Next slice computes it (never "no authorised work");
-  an agent whose tool is not reported shows `tool ?`. The runtime now runs one refresh at a time
-  across queries: a changed query waits for the in-flight one. Read-only.
-- **Dashboard shell boot** (`v_dashboard_boot`): bare `mu` on a TTY (stdin and stdout, no `--json`)
-  opens the dashboard; a pipe, script, `--json` or `--help` prints the same help as before. Adds
-  `ink` 8 and `react` 19 (no devtools), `jsx: react-jsx`, and a lazy UI chunk that neither the SDK
-  index nor any other verb loads. The UI reads on a `readonly` connection; ambient sync (ingest at
-  most every 10 s, quiet, one refresh in flight, no reconcile or reap) runs on a separate bounded
-  writable connection outside render, with the DB-inside-`MU_SYNC_DIR` and sync/v1 refusals kept
-  and one idempotent shutdown (installed before the lazy import) that restores the terminal, closes
-  the connections and flushes once on `q`/Esc, SIGINT (exit 130), SIGTERM, SIGHUP, uncaught and boot errors. A read-only connection cannot ingest, so one
-  connection was not an option. The shell shows counts only; tabs and rows are `v_dashboard_shell`.
-- **Dashboard read model** (`v_dashboard_core`): `loadDashboard(db, opts)` (`src/dashboard-data.ts`,
-  exported from the SDK) is the one read-only projection the dashboard tabs share: every live
-  workstream (scratch included), all tasks by status (CLOSED hidden by default, uncapped when
-  asked) under `<workstream>/<id>` keys ordered by raw `MAX(ops.seq)` activity, the open
-  frontier, registry agents with their owned task, the canonical op log, and the caller's own
-  human needs and delegate calls (a null caller sees none: `caller_scope: "none"`). It never
-  reconciles, reaps, ingests or writes, and runs on a `readonly` connection. `next` is
-  `computeNext` (see `v_dashboard_next` below). Owners are identified by agent registry id (`owner_id`, with
-  `owner_workstream`; a task claimed by another workstream's same-named agent lands on that
-  agent, also on a filtered read), and the open frontier's root/recurrence cuts pass through as
-  `frontier[]` per workstream.
-- **Dashboard Next and running tool** (`v_dashboard_next`): `loadDashboard`'s `next` is
-  `computeNext` for the caller set (`next_source: "computed"`, so null now means "no authorised
-  work"; `"unavailable"` only if it throws), and the dashboard passes `currentCallers()`. The pi
-  extension's ctl `status` gains an optional `tool: {name, since} | null` (innermost running tool,
-  cleared on settle; additive, no new op or feature), which `ctlProbe`, `readAgentStates` and
-  `readLiveAgents` carry. An agent's `tool` is `{name, since, elapsed_ms}` (elapsed at read),
-  `null` (none running, shown `tool -`), or absent (old extension or no ctl, shown `tool ?`).
-- **`mu wait`: the one orchestrator wait** (`v_wait_surface`, slice A of `v_wait_cli`; over the
-  `waitForEvents` engine). `mu wait [<ref>...]` returns on the first event its caller owns and
-  prints ONE JSON document with no `--json` flag, errors and parse-time errors included. Refs are
-  typed: `task:[<ws>/]<id>`, `agent:[<ws>/]<name>[@<runs>][#<incarnation>]`, `delegate:<call id>`
-  (a bare word is refused with the spelling that works). No refs: the wait owns what the caller
-  started (the agents it spawned, by `agents.spawner`, and their tasks; its delegate calls).
-  `data` is `firing` (= `event`: `kind`, `ref`, `incarnation`, `runs`; `closed settled input dead
-  stall delegate pane-text heartbeat interrupted`), `exit` (0, 6 dead, 7 input or stall, 130/143 signal),
-  `timedOut`, `interrupted`, `open`, `snapshots`, `tally` (with a `6/12 CONFIRMED` summary),
-  `cursor`, `resume`. A timeout is `ok:true`, `timedOut`, exit 0. SIGINT/SIGTERM print the final
-  snapshot (the state read at that moment) and `resume`, then exit 130/143; SIGKILL cannot print.
-  The result is bounded to 4096 bytes on its FINAL bytes, `nextSteps`, `humanNeeds` and `warning`
-  included: texts shrink first (tail kept, `lastTextCut`), then the hints (`nextStepsCut`) and
-  human needs (`humanNeedsCut`), the tally's findings, and the snapshots (`snapshotsCut`,
-  `retrieve`; the shared `pageRecords`); firing, exit, open and resume are never cut. `resume` is a
-  stored handle, `mu wait --resume <id>` (+ `-w`): the new machine-local `wait_resumes` table holds
-  the refs still owed (each agent with the run baseline and pi incarnation it was last SEEN at, so a
-  restarted pi is refused, not miscounted), mode, every filter, the deadline as given and the
-  callers the wait ran for, so a resume is lossless whatever its size (30 refs, 24 was the old
-  silent cut) and runs for the same caller from any shell. `--resume` takes nothing else (a flag or
-  ref beside it is a usage error); an unknown or older-than-14-days handle is exit 3. With nothing
-  left to wait for and no caller (a plain shell whose named refs all fired) `resume` is `null` with
-  `resumeWhy`, never a command that fails. Flags: `--first`/`--first-of`
-  (default), `--all`/`--all-of`, `--until-idle`, `--until-text <re>` (the bounded regex; a pi
-  agent's ctl `lastText`, never its pane. A non-pi pane (no answering socket) has no run to settle:
-  its tail is matched and the wait ends as the distinct `pane-text` event, `textSource: pane`, never
-  `settled` and never a CLOSE source), `--status`, `--stuck-after`, `--on-stall exit|warn`
-  (`steer`/`release` arrive with the stall-action units and are refused by name), `--wave`,
-  `--blockers-of`, `--timeout` (default and cap 1500 s; 0 = the cap; one warning when below 300 s),
-  `--after-runs`, `--inc`. One stderr heartbeat line a minute; never ANSI. The engine gains
-  provenance discovery of a caller's spawned workers, a `scope` that narrows what a caller owns to
-  one workstream, owner-death detection for a plain-shell wait, and `onStall: warn`.
-
-### Changed
-
-- **BREAKING: `mu task wait` is now an alias of `mu wait` over task refs.** It prints the one JSON
-  result (no `--json` needed) instead of the table and the old `{firing, all, timedOut[]}` shape;
-  the default is the FIRST event, not all-of (`--all` keeps the all-of loop); `--any`, `--first` and
-  the default are one contract and always name the firing ref; the default timeout is 1500 s (the
-  cap; `0` means the cap, no longer forever; it was 600 s); a timeout is `ok:true` with `timedOut`
-  and exit 0, no longer exit 5; the reaper flip and the stall are events (`dead`, `stall`) in the
-  document, no longer stderr text and a thrown error. `--on-stall warn` still keeps waiting and now
-  prints one stderr line per stalled task. The help example `jq -r .firing.qualifiedId` is now
-  `.data.firing.ref`.
-- **`mu agent wait --any` fills `firing`** like `--first` (one contract). Its output is otherwise
-  unchanged: the delegate recorder (`extension/delegate.ts`) reads `data.agents[0]` as before, over
-  the same engine with `eventScope: refs`.
-- `mu wait` and `mu task wait` default to JSON (`isWaitVerbArgv`, verb-aware like `state`), so a
-  parse-time error is one stdout document too. `handle()` drains stdout before `process.exit`, so a
-  piped result is never truncated.
-- The poll-sleep test seam is shared by every wait entry point (`setWaitSleepForTests`).
-- **mu-next is isolated from 3.x on disk** (`v_isolation`; after the 18:04 incident, where an
-  inherited `MU_SYNC_DIR` let a mu-next run write a v2 segment into the real 3.x sync folder
-  and 3.x warned `unknown-version` on every command). The default state dir is now
-  `$XDG_STATE_HOME/mu-next` (`~/.local/state/mu-next`), holding the DB, control sockets, locks,
-  worktrees and compile cache; `MU_STATE_DIR` and `MU_DB_PATH` are unchanged. Sync stays opt-in,
-  but mu-next refuses a `MU_SYNC_DIR` where any file is 3.x evidence: a `*.jsonl` segment opening
-  with a v1 line, or a `*.manifest` with `"v"` below 2 (a 3.x peer with no ops yet leaves an empty
-  segment and a v1 manifest). Read and write: exit 4, `MU_SYNC_DIR holds 3.x segments; give
-  mu-next its own dir`, nothing read or written (`SyncDirForeignError`; checked in `handle()`
-  before the DB opens and again inside `flushSegment`, `discoverPeers` and `ingestSegment`
-  themselves, so SDK callers are covered). The vitest real-DB guard and the global teardown
-  now cover both the mu-next and the 3.x default DB paths. Remote worktrees move to
-  `~/.local/state/mu-next/remote-worktrees`.
-- **mu-next design: a model-run move recipe replaces the import and the flag day.**
-  mu-next runs beside 3.x with its own DB, state, sync dir and machine id; the 3.x DB
-  stays a read-only archive and workstreams move one at a time
-  (docs/mu-next/README.md, Move). Docs only.
-
-- **Root `-w` reaches every verb as its own shape** (`bug_delegates_global_w_not_a_string`):
-  `mu -w auth delegates tally --wave w1` (and `delegates register`) died `value.trim is not a
-  function`, because `optsWithGlobals()` let the root's raw array overwrite the verb's `-w`. The
-  forwarding hook now settles the root to what the verb holds. A test walks every verb with a `-w`.
-
-- **`mu log --tail 20` no longer writes** (`bug_log_tail_n_writes`): `--tail` is a boolean, so the
-  guessed `20` was logged as text. A positional with a read flag (`--tail`, `--all`, `--since`,
-  `--after`, `--seq`, `-n`, `--source`, `--intent`, `--group`) now exits 2 and writes nothing; an
-  integer gets "did you mean -n 20?".
-
-### Removed
-
-- **Leftovers (`k_cut_now`).** Segment lines are v2 only: the v1 reader, the encoder's
-  v1 field guard and the keep-other-versions repair (`entriesOf`, `repairKeepingLines`,
-  `opsBetween`) are gone, and a v1 line is refused like any unknown version. `openDb`
-  accepts only schema 13 (v12 is `SchemaTooOldError`); the `vcs_workspaces` migration
-  (`migrateLegacyWorkspaces`) and the missing-`capture_version` repair are gone. SDK/test-only
-  exports removed: `capRecords`, `formatReadyTable`, `formatTaskListTable`, `boundedCommand`,
-  `COMMAND_MAX_BYTES`, `showAllCommand`, `taskItem`, `taskRecord`, `tryResolveTaskId`,
-  `tryResolveAgentId`, `ReaperDetectedDuringWaitError` (never thrown), `isUnscheduled`, `UNSCHEDULED_SUBSTATES`, `cmdMe`,
-  `getActiveCommandForTest`, `clearActiveCommandForTest`.
-  **SDK removal (no product caller):** the old doctor summary (`loadDoctorSummary`,
-  `loadDoctorChecks`, `countProblems`, `yankCommandForCheck`, `remediationParagraph`,
-  `DoctorSummary`), the old `WorkstreamSnapshot` loaders and helpers
-  (`loadWorkstreamSnapshot[Fast|Slow]`, `mergeSnapshotFastSlow`, `roiBucket`,
-  `agentStateHistogram`, `summarizeOwnedTasks`, and their types) and the old DAG
-  renderers (`loadFullDag`, `renderForest`, `renderTaskTree`). `mu state` reads
-  `stateSnapshot`, `mu doctor` runs its own checks, `mu task tree` reads
-  `loadOpenTaskFrontier`.
-
-- **`mu agent remote-env` and the `REMOTE:` / `REMOTE_BASE:` note convention.**
-  A host profile's shell template carries the forward and the env now
-  (`mu host init <host> --ssh` prints a starter). `mu state` reads remote
-  workers from the registry, and `mu task claim --for` no longer prints the
-  mule poll-and-close step (the task's close is yours, once the work is collected).
-
-- **`mu link pi` and its shims.** pi now loads mu as a package: `package.json`
-  declares `pi.extensions` (`./dist/extension/mu-pi.js`), `pi.skills`
-  (`./skills`) and `pi.prompts` (`./prompts/*.md`), and lists
-  `@earendil-works/pi-coding-agent` as an optional `*` peer (never bundled).
-  Install with `pi install npm:@mu-crew/mu`. The extension no longer
-  registers prompts through `resources_discover` (the manifest ships them),
-  and `MU_EXTENSION_ENTRY` is gone.
-
-### Changed
-
-- **`mu state` and `mu me` are one canonical JSON document** (`v_state_log`, slice A). `mu state` no longer prints a card:
-  by default (no `--json` needed; errors included, parse-time and handler) it prints one envelope
-  `{ caller, me, workstreams: [...] }`, one entry per workstream (`-w a,b` / `-w a -w b` / `-w a b` / `--all`, one name is
-  still an array of one) with `counts`, `ready` (ROI order), `in_progress` / `blocked` / `triage` / `recent_closed` (newest
-  activity first: raw `MAX(ops.seq)` over the task's own, its notes' and its edges' ops, so a `mu sql` write counts),
-  `agents` (the registry record, `host`, `cwd`, `base`, `collected_head` included, with its runtime state; unknown stays
-  unknown), `orphans`, and **the caller's own** `delegates` (unfinished calls), `waves` (tally of its own calls only) and
-  `human_needs`. Keys are SQL column names (`workstream`, `effort_days`, `recent_closed`; the camelCase `workstreamName`,
-  `inProgress`, `tracks`, `recent` ops and `remoteWorkers` keys and the `--events` flag are gone: `mu log` owns the ops).
-  The read is capped at 4096 final bytes: every string is one escaped line of at most 160 characters, lists shrink, then
-  whole workstreams page; a cut says `more=N` / `cut=N` and `retrieve` names `mu state ... --full`, the uncapped read. `mu state -w`
-  reconciles first (reaps gone panes, lists orphans); `--me` and the SDK read never touch the mux. The last fallback is
-  checked too: when nothing fits, a zero-workstream envelope whose `retrieve` is the short `mu state [--me] --all --full`
-  (when the scope names are too long) and whose strings shrink below 160 characters until the final document fits.
-  **`mu me` is exactly `mu state --me`** (bare `mu me` now runs instead of printing help; `me --include-closed` is gone;
-  `me tasks` and `me next` stay, `--json` explicit). Identity is the injected `<MU_WORKSTREAM>/<MU_AGENT_NAME>` row looked
-  up in that workstream, else `pi:<PI_SESSION_ID>` (a session has no agent row; its scope is where it has delegate calls or
-  human needs); `$TMUX_PANE` identifies nobody on this path, and no identity is a one-line `UsageError`. `isJsonMode` also
-  defaults `state` and bare `me` to JSON. SDK: `stateSnapshot`, `callerWorkstreams`, `readLiveAgents` (the read-only half of
-  `listLiveAgents`) and the `State*` types are exported; `verdictTally` takes an optional caller; `listRemoteWorkers`, the
-  track/ready/log card renderers and `scratchIdleNudge` are removed (the `WorkstreamSnapshot` loaders stay for doctor).
-  A workstream past 300 tasks and under 10% open carries a `hint`.
-
-### Added
 
 - **Delegates are durable tasks: `mu delegates`, `mu_delegate_reissue`, wave tally** (`v_delegate`, part A: the mux path;
   delegates with no tmux or herdr are `v_delegate_nomux`). Every `mu_delegate` call is a `kind=delegate` task
@@ -1152,6 +812,220 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Final docs pass on the merged surface (`v_docs_final`).** `mu --version` prints
+  `4.0.0-next.0`, so a checkout no longer reads like the installed 3.13.3 (dogfood-1 F4).
+  Every verb's `--help` description is at most 3 lines at 80 columns, pinned by the new
+  `test/help-budget.test.ts` (22 verbs trimmed; the dropped detail lives in `docs/guide/`).
+  `mu wait --help` names `cursor`, and its `--resume` says that only a matching `-w` may be
+  added, as the printed `resume` handle does (dogfood-2 F3, F4). The surface contract states
+  what ships and names the two units still landing (`v_settle`, `v_delegate_nomux`) instead
+  of a stale "kernel today" list; ARCHITECTURE gains `src/close-block.ts` and
+  `src/cli/sync.ts` and drops the deleted `printNextSteps`/`paneNotFoundNextSteps`;
+  VOCABULARY's "planned" section is retitled, now that it ships; the guides, VISION and the
+  architecture pages say `mu wait` where they said `mu task wait`/`mu agent wait`, and the
+  dispatch guide says to follow `resume` after one death when two owners die (reviewer-6). The
+  README gains a Status line. This Unreleased section repeated its headings (3 Added, 5 Changed, 3 Removed, 2 Fixed
+  blocks); they are merged. `test/wait-dead-after-reap.test.ts` adds the
+  reap-reclaim-reap case that kills the surviving `prior?.ownerId || 0` mutant.
+
+- **The capped skill ships (`v_skill_ship`).** `skills/mu/SKILL.md` goes from 2,477 to 596 words and the
+  26 recipes (15.5k words) become 12 of at most 250 words each (2,823 together; cap 4,000): orchestrator-loop,
+  brief, tasks-or-calls, findings, adversarial-review, test-health, models, remote-workers, recovery, worker,
+  course-correct, move. The dropped recipes (ultrathink, plan, fan-out, loop-until-done, refute, review-panel,
+  tournament, hypothesis-panel, deep-research, rules-audit, waves, long-run, drift-audit, watcher,
+  backlog-triage, codemode-driver) live in git history; the nine `prompts/` now point at a shipped recipe and
+  carry their one-line shape. `docs/mu-next/rule-destinations.md` records where every 3.x rule went.
+  `test/prose-budget.test.ts` pins the word caps (the `wc -w` tokenizer), the recipe index, prompt targets,
+  retired-surface absence and six failure-backed markers (keep-driving, record, remote-collect,
+  error-receipt, reviewer-evidence, claim-before-send), each checked to fail when its guard is deleted;
+  `test/docs-cli-drift.test.ts` discovers recipes and prompts by directory and validates their `mu` snippets.
+  Prose, tests and links only: no `src/` change beyond one comment path.
+
+- **The keyed message table (`v_hint_messages`, slice C of `v_hints`).** Every error line, usage
+  refusal, warning and stderr hint of the task, agent, db, mux, sync, host, remote, workstream,
+  worktree, log and delegate domains is a function in `src/messages.ts` (`MESSAGES["task.parked"]`,
+  rendered with `say(key, ...facts)`), so `t_errors` rewrites one line at a time. Wording, typed
+  classes, exit codes and structured fields are unchanged. The `UsageError` sites of `cli.ts`,
+  `cli/{wait,delegates,db-query,log,me-identity,host,sync,db}.ts` and the run-time hint strings of
+  `handle.ts`/`doctor.ts` are the remaining inventory.
+
+- **The keep-driving nudge is now the settle wait** (`v_settle_wait`, slice A of `v_settle`). Every
+  completed settle of an orchestrator pi runs the one wait, `mu wait --first --on-stall exit --json`,
+  as its callers (the inherited managed identity plus `PI_SESSION_ID` from the session, passed through
+  a per-call child env), and continues the turn with the wait's own result under the SKILL.md rule.
+  No shell line is parsed (producers arm the wait from state) and there is no once-per-prompt latch.
+  The turn ends only when nothing is owed (`WaitNothingError`, or `drained`), a `mu human-needed`
+  stop is open (read per identity with `mu state --me` before each wait, and in the result), the
+  user cancels (Esc, typed input, a dialog, shutdown), or the wait fails, which is shown and never
+  read as "nothing owed". A heartbeat timeout with work still owed waits again. A delegate answer
+  on its way cancels only the settle wait (`DelegateHandle.onAnswer`); the answer's own settle waits
+  again. A cancelled wait drains: the runner's one terminate path (SIGTERM, resolve once the child
+  exited, final stdout kept; also what rolls back a cancelled spawn) with a SIGKILL after 3 s here
+  (`MuRunOpts.drainMs`, default 10 s). A wait result consumed while an answer queued keeps its
+  entry and drops only its continuation. Removed: `dispatchedWorkstreams`, `shellSegments`,
+  `nudgeText` and the `mu task list --status IN_PROGRESS` read. Skipped on a remote host
+  (`MU_REMOTE=1`) and in a nested pi; `MU_NUDGE=0` still turns it off.
+
+- **One wait hint.** The `Next:` line after a send, `spawn --send`, `spawn --task` and
+  `send --interrupt` is now `mu wait 'agent:<ws>/<name>@<runs>#<incarnation>'` (one POSIX-quoted
+  typed ref, no `--json`: `mu wait` always prints JSON, the answer is `snapshots[].lastText`),
+  replacing `mu agent wait <a> -w <ws> --after-runs <n> --inc <i> --json`.
+
+- **Dashboard drills** (`v_dashboard_drill`): Enter opens a read-only full-screen body: Tasks the
+  task's notes (the CLI's default selection, pinned notes marked `*`; `A` shows all, whole), Agents
+  the pane scrollback (last 2000 lines, `r` reloads), Log one op with every field. `j/k`, PgUp/PgDn,
+  `g/G` scroll (clamped, wrapped by visual width, no ANSI in the text); Esc or `q` returns to the
+  tab with its filters and cursor. `y` copies the row's command with OSC 52 (no clipboard
+  dependency) and prints it; control characters and over 1 KB are refused. `a` on an agent is the
+  one key that runs anything: the backend's `attachCommands` steps, in order, with Ink's terminal
+  suspended and restored (`$TMUX` picks `switch-client` or `attach-session`; `-L` routing kept). A
+  failed required step stops, an optional one is a warning; no mux, no workspace or no client opens
+  the scrollback with the reason and the attach line for a shell outside the mux (yankable).
+  Typeahead typed during an attach is dropped. A drill's failure reason, outside-client line and
+  yank confirmation are pinned under the title (at most half the screen), not part of the scrolled
+  body, so a long scrollback that opens at its end still shows them. `AttachTarget.outside` asks a
+  backend for the line to run from a shell outside any client: herdr then always appends the
+  client step (inside herdr the executed steps stay focus-only). Adds `DashboardRuntime.notes` (read-only
+  connection). Read-only otherwise: no task or agent mutation.
+- **Dashboard tabs** (`v_dashboard_shell`, slice S2): the dashboard shows a workstream row and
+  four tabs: Tasks (newest activity first, CLOSED hidden, owner on IN_PROGRESS), DAG (the open
+  frontier; root, repeat and per-entry cap cuts always listed, even when a text filter hides the
+  entry), Agents and Log (every workstream, scratch
+  marked `*`). Starts on `-w`, else the mux session's workstream, else the most recently active one
+  (never the alphabetical first). Status (`s`) and text (`/`) filters persist per tab and
+  workstream; the cursor follows its row key, not its index, so activity reordering never moves
+  it, including the default row on first view and after a filter reset. A short or narrow
+  terminal keeps the workstream row and tabs (then one data row, filter, hint, Next); tabs
+  collapse to the active one when four labels do not fit. Next reads `unavailable` until the Next slice computes it (never "no authorised work");
+  an agent whose tool is not reported shows `tool ?`. The runtime now runs one refresh at a time
+  across queries: a changed query waits for the in-flight one. Read-only.
+- **Dashboard shell boot** (`v_dashboard_boot`): bare `mu` on a TTY (stdin and stdout, no `--json`)
+  opens the dashboard; a pipe, script, `--json` or `--help` prints the same help as before. Adds
+  `ink` 8 and `react` 19 (no devtools), `jsx: react-jsx`, and a lazy UI chunk that neither the SDK
+  index nor any other verb loads. The UI reads on a `readonly` connection; ambient sync (ingest at
+  most every 10 s, quiet, one refresh in flight, no reconcile or reap) runs on a separate bounded
+  writable connection outside render, with the DB-inside-`MU_SYNC_DIR` and sync/v1 refusals kept
+  and one idempotent shutdown (installed before the lazy import) that restores the terminal, closes
+  the connections and flushes once on `q`/Esc, SIGINT (exit 130), SIGTERM, SIGHUP, uncaught and boot errors. A read-only connection cannot ingest, so one
+  connection was not an option. The shell shows counts only; tabs and rows are `v_dashboard_shell`.
+- **Dashboard read model** (`v_dashboard_core`): `loadDashboard(db, opts)` (`src/dashboard-data.ts`,
+  exported from the SDK) is the one read-only projection the dashboard tabs share: every live
+  workstream (scratch included), all tasks by status (CLOSED hidden by default, uncapped when
+  asked) under `<workstream>/<id>` keys ordered by raw `MAX(ops.seq)` activity, the open
+  frontier, registry agents with their owned task, the canonical op log, and the caller's own
+  human needs and delegate calls (a null caller sees none: `caller_scope: "none"`). It never
+  reconciles, reaps, ingests or writes, and runs on a `readonly` connection. `next` is
+  `computeNext` (see `v_dashboard_next` below). Owners are identified by agent registry id (`owner_id`, with
+  `owner_workstream`; a task claimed by another workstream's same-named agent lands on that
+  agent, also on a filtered read), and the open frontier's root/recurrence cuts pass through as
+  `frontier[]` per workstream.
+- **Dashboard Next and running tool** (`v_dashboard_next`): `loadDashboard`'s `next` is
+  `computeNext` for the caller set (`next_source: "computed"`, so null now means "no authorised
+  work"; `"unavailable"` only if it throws), and the dashboard passes `currentCallers()`. The pi
+  extension's ctl `status` gains an optional `tool: {name, since} | null` (innermost running tool,
+  cleared on settle; additive, no new op or feature), which `ctlProbe`, `readAgentStates` and
+  `readLiveAgents` carry. An agent's `tool` is `{name, since, elapsed_ms}` (elapsed at read),
+  `null` (none running, shown `tool -`), or absent (old extension or no ctl, shown `tool ?`).
+- **`mu wait`: the one orchestrator wait** (`v_wait_surface`, slice A of `v_wait_cli`; over the
+  `waitForEvents` engine). `mu wait [<ref>...]` returns on the first event its caller owns and
+  prints ONE JSON document with no `--json` flag, errors and parse-time errors included. Refs are
+  typed: `task:[<ws>/]<id>`, `agent:[<ws>/]<name>[@<runs>][#<incarnation>]`, `delegate:<call id>`
+  (a bare word is refused with the spelling that works). No refs: the wait owns what the caller
+  started (the agents it spawned, by `agents.spawner`, and their tasks; its delegate calls).
+  `data` is `firing` (= `event`: `kind`, `ref`, `incarnation`, `runs`; `closed settled input dead
+  stall delegate pane-text heartbeat interrupted`), `exit` (0, 6 dead, 7 input or stall, 130/143 signal),
+  `timedOut`, `interrupted`, `open`, `snapshots`, `tally` (with a `6/12 CONFIRMED` summary),
+  `cursor`, `resume`. A timeout is `ok:true`, `timedOut`, exit 0. SIGINT/SIGTERM print the final
+  snapshot (the state read at that moment) and `resume`, then exit 130/143; SIGKILL cannot print.
+  The result is bounded to 4096 bytes on its FINAL bytes, `nextSteps`, `humanNeeds` and `warning`
+  included: texts shrink first (tail kept, `lastTextCut`), then the hints (`nextStepsCut`) and
+  human needs (`humanNeedsCut`), the tally's findings, and the snapshots (`snapshotsCut`,
+  `retrieve`; the shared `pageRecords`); firing, exit, open and resume are never cut. `resume` is a
+  stored handle, `mu wait --resume <id>` (+ `-w`): the new machine-local `wait_resumes` table holds
+  the refs still owed (each agent with the run baseline and pi incarnation it was last SEEN at, so a
+  restarted pi is refused, not miscounted), mode, every filter, the deadline as given and the
+  callers the wait ran for, so a resume is lossless whatever its size (30 refs, 24 was the old
+  silent cut) and runs for the same caller from any shell. `--resume` takes nothing else (a flag or
+  ref beside it is a usage error); an unknown or older-than-14-days handle is exit 3. With nothing
+  left to wait for and no caller (a plain shell whose named refs all fired) `resume` is `null` with
+  `resumeWhy`, never a command that fails. Flags: `--first`/`--first-of`
+  (default), `--all`/`--all-of`, `--until-idle`, `--until-text <re>` (the bounded regex; a pi
+  agent's ctl `lastText`, never its pane. A non-pi pane (no answering socket) has no run to settle:
+  its tail is matched and the wait ends as the distinct `pane-text` event, `textSource: pane`, never
+  `settled` and never a CLOSE source), `--status`, `--stuck-after`, `--on-stall exit|warn`
+  (`steer`/`release` arrive with the stall-action units and are refused by name), `--wave`,
+  `--blockers-of`, `--timeout` (default and cap 1500 s; 0 = the cap; one warning when below 300 s),
+  `--after-runs`, `--inc`. One stderr heartbeat line a minute; never ANSI. The engine gains
+  provenance discovery of a caller's spawned workers, a `scope` that narrows what a caller owns to
+  one workstream, owner-death detection for a plain-shell wait, and `onStall: warn`.
+
+- **BREAKING: `mu task wait` is now an alias of `mu wait` over task refs.** It prints the one JSON
+  result (no `--json` needed) instead of the table and the old `{firing, all, timedOut[]}` shape;
+  the default is the FIRST event, not all-of (`--all` keeps the all-of loop); `--any`, `--first` and
+  the default are one contract and always name the firing ref; the default timeout is 1500 s (the
+  cap; `0` means the cap, no longer forever; it was 600 s); a timeout is `ok:true` with `timedOut`
+  and exit 0, no longer exit 5; the reaper flip and the stall are events (`dead`, `stall`) in the
+  document, no longer stderr text and a thrown error. `--on-stall warn` still keeps waiting and now
+  prints one stderr line per stalled task. The help example `jq -r .firing.qualifiedId` is now
+  `.data.firing.ref`.
+- **`mu agent wait --any` fills `firing`** like `--first` (one contract). Its output is otherwise
+  unchanged: the delegate recorder (`extension/delegate.ts`) reads `data.agents[0]` as before, over
+  the same engine with `eventScope: refs`.
+- `mu wait` and `mu task wait` default to JSON (`isWaitVerbArgv`, verb-aware like `state`), so a
+  parse-time error is one stdout document too. `handle()` drains stdout before `process.exit`, so a
+  piped result is never truncated.
+- The poll-sleep test seam is shared by every wait entry point (`setWaitSleepForTests`).
+- **mu-next is isolated from 3.x on disk** (`v_isolation`; after the 18:04 incident, where an
+  inherited `MU_SYNC_DIR` let a mu-next run write a v2 segment into the real 3.x sync folder
+  and 3.x warned `unknown-version` on every command). The default state dir is now
+  `$XDG_STATE_HOME/mu-next` (`~/.local/state/mu-next`), holding the DB, control sockets, locks,
+  worktrees and compile cache; `MU_STATE_DIR` and `MU_DB_PATH` are unchanged. Sync stays opt-in,
+  but mu-next refuses a `MU_SYNC_DIR` where any file is 3.x evidence: a `*.jsonl` segment opening
+  with a v1 line, or a `*.manifest` with `"v"` below 2 (a 3.x peer with no ops yet leaves an empty
+  segment and a v1 manifest). Read and write: exit 4, `MU_SYNC_DIR holds 3.x segments; give
+  mu-next its own dir`, nothing read or written (`SyncDirForeignError`; checked in `handle()`
+  before the DB opens and again inside `flushSegment`, `discoverPeers` and `ingestSegment`
+  themselves, so SDK callers are covered). The vitest real-DB guard and the global teardown
+  now cover both the mu-next and the 3.x default DB paths. Remote worktrees move to
+  `~/.local/state/mu-next/remote-worktrees`.
+- **mu-next design: a model-run move recipe replaces the import and the flag day.**
+  mu-next runs beside 3.x with its own DB, state, sync dir and machine id; the 3.x DB
+  stays a read-only archive and workstreams move one at a time
+  (docs/mu-next/README.md, Move). Docs only.
+
+- **Root `-w` reaches every verb as its own shape** (`bug_delegates_global_w_not_a_string`):
+  `mu -w auth delegates tally --wave w1` (and `delegates register`) died `value.trim is not a
+  function`, because `optsWithGlobals()` let the root's raw array overwrite the verb's `-w`. The
+  forwarding hook now settles the root to what the verb holds. A test walks every verb with a `-w`.
+
+- **`mu log --tail 20` no longer writes** (`bug_log_tail_n_writes`): `--tail` is a boolean, so the
+  guessed `20` was logged as text. A positional with a read flag (`--tail`, `--all`, `--since`,
+  `--after`, `--seq`, `-n`, `--source`, `--intent`, `--group`) now exits 2 and writes nothing; an
+  integer gets "did you mean -n 20?".
+
+- **`mu state` and `mu me` are one canonical JSON document** (`v_state_log`, slice A). `mu state` no longer prints a card:
+  by default (no `--json` needed; errors included, parse-time and handler) it prints one envelope
+  `{ caller, me, workstreams: [...] }`, one entry per workstream (`-w a,b` / `-w a -w b` / `-w a b` / `--all`, one name is
+  still an array of one) with `counts`, `ready` (ROI order), `in_progress` / `blocked` / `triage` / `recent_closed` (newest
+  activity first: raw `MAX(ops.seq)` over the task's own, its notes' and its edges' ops, so a `mu sql` write counts),
+  `agents` (the registry record, `host`, `cwd`, `base`, `collected_head` included, with its runtime state; unknown stays
+  unknown), `orphans`, and **the caller's own** `delegates` (unfinished calls), `waves` (tally of its own calls only) and
+  `human_needs`. Keys are SQL column names (`workstream`, `effort_days`, `recent_closed`; the camelCase `workstreamName`,
+  `inProgress`, `tracks`, `recent` ops and `remoteWorkers` keys and the `--events` flag are gone: `mu log` owns the ops).
+  The read is capped at 4096 final bytes: every string is one escaped line of at most 160 characters, lists shrink, then
+  whole workstreams page; a cut says `more=N` / `cut=N` and `retrieve` names `mu state ... --full`, the uncapped read. `mu state -w`
+  reconciles first (reaps gone panes, lists orphans); `--me` and the SDK read never touch the mux. The last fallback is
+  checked too: when nothing fits, a zero-workstream envelope whose `retrieve` is the short `mu state [--me] --all --full`
+  (when the scope names are too long) and whose strings shrink below 160 characters until the final document fits.
+  **`mu me` is exactly `mu state --me`** (bare `mu me` now runs instead of printing help; `me --include-closed` is gone;
+  `me tasks` and `me next` stay, `--json` explicit). Identity is the injected `<MU_WORKSTREAM>/<MU_AGENT_NAME>` row looked
+  up in that workstream, else `pi:<PI_SESSION_ID>` (a session has no agent row; its scope is where it has delegate calls or
+  human needs); `$TMUX_PANE` identifies nobody on this path, and no identity is a one-line `UsageError`. `isJsonMode` also
+  defaults `state` and bare `me` to JSON. SDK: `stateSnapshot`, `callerWorkstreams`, `readLiveAgents` (the read-only half of
+  `listLiveAgents`) and the `State*` types are exported; `verdictTally` takes an optional caller; `listRemoteWorkers`, the
+  track/ready/log card renderers and `scratchIdleNudge` are removed (the `WorkstreamSnapshot` loaders stay for doctor).
+  A workstream past 300 tasks and under 10% open carries a `hint`.
+
 - **`mu log` and `mu workstream list` are capped records.** Text is one escaped
   line per visible op (`log<TAB>seq<TAB>time<TAB>source<TAB>scope<TAB>what`, at
   most 400 characters; the parent-row touch an add-note writes stays hidden, as
@@ -1566,82 +1440,79 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   back means moving v2-holding segments out of `MU_SYNC_DIR` on every
   machine ([sync](docs/architecture/sync.md#segment-versions)).
 
-### Fixed
-
-- **Explicit ids above 2^53-1 are refused (`CAPTURE_VERSION` 4).** An `INSERT`
-  naming `id = 9223372036854775807` moved the AUTOINCREMENT counter to the max and
-  bricked every later insert ("database or disk is full") with no `mu` repair, now
-  that `sqlite_sequence` is protected. Local writes refuse it
-  (`mu: explicit ids above 2^53-1 are refused`, one usage line from `mu db query`);
-  ingest is unaffected. A `mu db query` whose retrieval command would exceed 1 KB
-  now says "re-run the same query with --all" instead of echoing the query.
-
-- **`mu db query` no longer writes `sqlite_sequence`, `sync_peers` or row ids.**
-  One `UPDATE sqlite_sequence` could brick every later captured write ("database or
-  disk is full"); a forged `sync_peers` watermark skipped peer ops until a repair; an
-  `UPDATE tasks SET id=-1` slipped past the INSERT-only id guard. All three are
-  refused (the `sync_peers` refusal names `mu sync --repair <peer>`);
-  AUTOINCREMENT inserts still work.
-
-- **`mu db query` no longer writes `machine_identity`.** Its HLC clock and machine id
-  feed every captured op, so a forged id or clock silently unpublished later ops.
-  Only a main `_cap_*` trigger writes it now.
-
-- **Remote spawn follow-ups.** A rollback whose pane survives the kill keeps a
-  host agent's row (and so its channel) and says so in the log, instead of
-  freeing the slot under a live pane. The transport pane runs with the local
-  `MU_DB_PATH`, `MU_STATE_DIR`, `MU_SYNC_DIR`, `MU_CTL_SOCK`, `MU_AGENT_NAME`,
-  `MU_WORKSTREAM` and `MU_MANAGED_AGENT` unset (a tmux pane inherits the
-  server's, possibly another agent's). `agent close` suggests the re-spawn with
-  `--host`, `agent show` prints the host, and stale `remote-env` mentions are gone.
-
-- **The attach hint works from outside tmux.** Outside a client it is ONE
-  `tmux attach-session -t mu-<ws>:<agent>` (the old line ran `select-window`
-  only after the blocking attach detached), and every tmux attach/switch line
-  carries `-L <socket>` when `MU_TMUX_SOCKET` routes mu to a private server.
-  herdr is unchanged.
-- **A delegate answer lost to the dequeue key is sent again, once.** pi's dequeue
-  key (alt+up) calls `session.clearQueue()`, which silently drops custom
-  follow-ups; the run then ends with `aborted: false`, so the Escape path saw
-  nothing and the answer never arrived. Each answer has a delivery id from
-  `sendMessage` to its `message_start`. After a normal settle, one tick later,
-  and only if pi is idle and no answer was accepted since, the extension resends
-  ONE unstarted answer (the next settle finds the next). Escape never resends:
-  it drops what is pending with copies and one note, and defuses those answers'
-  sends that pi deferred while settling (no turn; a stub if they start). A
-  second start of an id (pi can still do that) is rewritten in place to a
-  one-line "already handled" stub, so a repeat costs the model no answer text.
-  `MU_DELEGATE_TRACE=1` logs every follow-up send and pi lifecycle event to
-  `<cache dir>/delegate-trace.log`. Tested against pi's real `AgentSession`
-  (`test/extension-delegate-pi.integration.test.ts`).
-
-- **`mu_delegate` `record` kept an empty `EVIDENCE:` header.** `recordNote` kept
-  only lines that start with `EVIDENCE:`, so a refuter's multi-line evidence
-  body was dropped. It now keeps everything from the last `VERDICT:` line on
-  (still capped at 4000 chars).
-
-- **Test runs no longer leak `/tmp/<id>/ssr`.** vitest 5 never removes the root
-  Vitest instance's tmp dir (`<tmpdir>/<nanoid>`, 6-17 MB of transformed
-  modules per run), which filled a tmpfs `/tmp`. `test/_global-teardown.ts`
-  (shared by both vitest configs) now removes it in teardown.
-  `test/dag.integration.test.ts` also removes its `mu-dag-*` temp dirs.
-
-- **ultrathink closes on no *unfixed* high finding.** A final refuter pass
-  that finds highs which are then fixed now satisfies the stop rule.
-
-- **`touchTask` is monotonic.** A note or edge write whose clock read earlier
-  than the stored `updated_at` no longer moves it backwards.
-
-- **`mu sql` `INSERT OR REPLACE` can no longer re-key a row without a
-  tombstone.** A BEFORE INSERT guard on `workstreams`, `tasks`,
-  `task_notes` and `task_edges` refuses an insert whose id or natural key
-  already exists. `ensureWorkstream` and `addBlockEdge` now insert with
-  `WHERE NOT EXISTS`, since the guard also aborts `INSERT OR IGNORE`. The
-  `task_edges` guard also refuses a colliding hidden rowid. The id check
-  ignores SQLite's `-1` placeholder for an omitted id, so a raw `id = -1`
-  row no longer blocks every later insert.
-
 ### Removed
+
+- **Dead-code sweep on the merged tree (`k_cut_leftovers`).** knip over `src/` and `extension/`
+  found no unused file and no orphan beyond `terminalWidth`, `evidenceSuffix` and
+  `isExecFailureLine`; all three are deleted. Doctor's human and `--json` collectors stay
+  separate: a shared collector measured +7 code lines.
+
+- **Legacy `nextSteps` hints are deleted, not wrapped; every result's `next` is computed once**
+  (`v_hint_wire`, slice B of `v_hints`; README "Next contract"). `handle()` finalises `next` for
+  success JSON (`emitJson`), failure JSON (`emitError`, `CliExitError` partial failures) and human
+  text (one dim `next:` line, stderr on failure) from `computeNext` over the open DB after the verb's
+  writes. A verb only declares what it did (`setNextOutcome`: a delivered send's exact wait, an
+  unknown delivery's receipt check, a gate's wait, a `claim --for` brief, a preview's `--if <rev>`
+  apply, a wait's stored resume); `resolveWorkstream` records the scope. Outside `handle()` (parse
+  errors) `next` is null. The plan is cut to what the 4 KB result leaves (a `seq` dropped whole).
+  Gone: `NextStep`, `HasNextSteps`, `hasNextSteps`, `printNextSteps(To)`, `formatNextSteps`, every
+  `errorNextSteps()` and `inlineNext`, `paneNotFoundNextSteps`, `transportNextSteps`,
+  `src/cli/dispatch-hints.ts`, the wait's `nextSteps`/`nextStepsCut`, the spawn orphan-cleanup hint
+  and the triage `next=` trailer on `task list`. Reads, placeholders (`<id>`, `'...'`) and `a|b`
+  are no longer printed as hints. Facts some hints carried survive as data or one-line prose:
+  `agent spawn --json` and `workstream init --json` carry `attach` (the delegate tool reads it
+  there), the dirty-worktree commit line on `task close` and the unseen-note send on `task note` are
+  `warnings`, `mu rebuild` prints the swap command, a wrong task id prints `similar:` (human) beside
+  `candidate_ids` (JSON), an ambiguous name adds `candidates`, and the prose-quoting and missing-CLI
+  advice moved into the error message.
+- **An unknown verb is one line, not the root help** (`df1_unknown_verb_dumps_help`, dogfood-1 F5).
+  `mu next` used to print "too many arguments" plus 7.6 KB of help; it now prints
+  `unknown command 'next' (closest: mu me next); see mu --help` (70 bytes for a word with no near
+  verb). The closest verb is matched one level deep (`mu claim` → `mu task claim`); a namespace says
+  `see mu task --help`. `--json` keeps `usage`.
+
+- **The pre-engine wait code is deleted, not wrapped** (`v_wait_delete_old`). `src/tasks/wait.ts`
+  (`waitForTasks`) and `src/agents/wait.ts` (`waitForAgents`) were adapters over `waitForEvents`;
+  `mu agent wait` now calls `waitForEvents` directly (`src/cli/agents.ts`, with `ctlAgentHooks`) and
+  `mu task wait` / `mu wait` already did. Gone from the SDK: `waitForTasks`, `waitForAgents`,
+  `setWaitStuckWarnForTests`, `setAgentWaitSleepForTests`, `getWaitPollCount`, `resetWaitPollCount`,
+  the `TaskWait*` / `AgentWait*` / `AgentStatusSnapshot` / `AgentWatch` types, `toStatusSnapshot`, the
+  `inspect` wait option, and the never-thrown `ReaperDetectedDuringWaitError` and
+  `StallDetectedDuringWaitError` (exit 6 and 7 are `WaitResult.exit`, never an error class).
+  `setWaitSleepForTests` now lives in `src/wait.ts`. `mu agent wait` output and exit codes are unchanged.
+  The tests that guarded the old adapters now guard the engine (`test/wait-events.test.ts`).
+
+- **Leftovers (`k_cut_now`).** Segment lines are v2 only: the v1 reader, the encoder's
+  v1 field guard and the keep-other-versions repair (`entriesOf`, `repairKeepingLines`,
+  `opsBetween`) are gone, and a v1 line is refused like any unknown version. `openDb`
+  accepts only schema 13 (v12 is `SchemaTooOldError`); the `vcs_workspaces` migration
+  (`migrateLegacyWorkspaces`) and the missing-`capture_version` repair are gone. SDK/test-only
+  exports removed: `capRecords`, `formatReadyTable`, `formatTaskListTable`, `boundedCommand`,
+  `COMMAND_MAX_BYTES`, `showAllCommand`, `taskItem`, `taskRecord`, `tryResolveTaskId`,
+  `tryResolveAgentId`, `ReaperDetectedDuringWaitError` (never thrown), `isUnscheduled`, `UNSCHEDULED_SUBSTATES`, `cmdMe`,
+  `getActiveCommandForTest`, `clearActiveCommandForTest`.
+  **SDK removal (no product caller):** the old doctor summary (`loadDoctorSummary`,
+  `loadDoctorChecks`, `countProblems`, `yankCommandForCheck`, `remediationParagraph`,
+  `DoctorSummary`), the old `WorkstreamSnapshot` loaders and helpers
+  (`loadWorkstreamSnapshot[Fast|Slow]`, `mergeSnapshotFastSlow`, `roiBucket`,
+  `agentStateHistogram`, `summarizeOwnedTasks`, and their types) and the old DAG
+  renderers (`loadFullDag`, `renderForest`, `renderTaskTree`). `mu state` reads
+  `stateSnapshot`, `mu doctor` runs its own checks, `mu task tree` reads
+  `loadOpenTaskFrontier`.
+
+- **`mu agent remote-env` and the `REMOTE:` / `REMOTE_BASE:` note convention.**
+  A host profile's shell template carries the forward and the env now
+  (`mu host init <host> --ssh` prints a starter). `mu state` reads remote
+  workers from the registry, and `mu task claim --for` no longer prints the
+  mule poll-and-close step (the task's close is yours, once the work is collected).
+
+- **`mu link pi` and its shims.** pi now loads mu as a package: `package.json`
+  declares `pi.extensions` (`./dist/extension/mu-pi.js`), `pi.skills`
+  (`./skills`) and `pi.prompts` (`./prompts/*.md`), and lists
+  `@earendil-works/pi-coding-agent` as an optional `*` peer (never bundled).
+  Install with `pi install npm:@mu-crew/mu`. The extension no longer
+  registers prompts through `resources_discover` (the manifest ships them),
+  and `MU_EXTENSION_ENTRY` is gone.
 
 - **`mu workspace` and the workspace flags.** The `mu workspace` namespace
   (`list`, `path`, `free`) is gone: `list` is `mu agent list` (cwd column),
@@ -1752,6 +1623,133 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the "already handled" stub), and `murmur:pending` `{source,count}`.
   `docs/guide/delegate.md` still describes the footer; its pruning is
   tracked for the docs consolidation.
+
+### Fixed
+
+- **A remote command gate no longer lists as `unknown: murmur has no row`.** `mu agent list`,
+  `mu agent show` and `mu state` read a gate from its pane (running reads `busy`, an ended one
+  `unknown` with `exited <n>`), never through a host exec. `readGate` drops its pre-read channel
+  release: the result read's admission already reclaims a dead pane's channel.
+
+- **A worker that dies between two waits is `dead` (exit 6), not a heartbeat**
+  (`df2_wait_dead_after_reap`, dogfood-2 F1). A wait used to see a reaper flip only if one of its own
+  ticks had seen the owner first (in memory), so a wait started after the death, or a `mu wait
+  --resume` run after it, got a heartbeat with the task OPEN. The flip is now read from the ops log:
+  a watched task whose latest status change is the reaper's (`task.reap`) is dead when the flip came
+  after the wait's anchor. The anchor is the ops head when the wait starts; `--resume` replays the
+  stored one (`wait_resumes.spec.since`); a ref a caller registered owes every flip until its cursor
+  consumes it. A later claim, release, park or close is a decision and is not reported dead.
+- **A dead agent ref no longer hints `mu task show <agent name>`** (`df2_dead_hint_agent_ref`,
+  dogfood-2 F2). The hint now names the reaper's log lines, `mu log -w <ws> --source reaper -n 10`,
+  which list the tasks it reopened.
+- **A spawn killed during worktree creation rolls back** (`bug_spawn_worktree_abort_cleanup`).
+  `mu agent spawn` now handles SIGINT/SIGTERM (exit 130/143, a `SpawnInterruptedError` document
+  under `--json`): `git worktree add` runs in its own process group and is killed with its hooks,
+  the half-made worktree is removed (`git worktree remove --force --force`, it is locked
+  `initializing`), and the placeholder and registry rows are dropped, as for a thrown error. Before,
+  the placeholder row, a registered worktree and a live git child were left behind, and the name
+  refused (`AgentExistsError`). A SIGKILL leftover (a **dead staging**) is listed by `mu doctor`
+  (`ws-staging`) and removed by the next spawn in its workstream. The pi extension's runner, on
+  abort, SIGTERMs mu and returns only once it exited (SIGKILL after 10 s), so `mu_delegate` no
+  longer reports a cancelled spawn while it is still rolling back.
+
+- **`mu_delegate` with `workspace: true` honours `cwd` as the repo** (`bug_delegate_workspace_root`).
+  It spawns `--worktree --root <cwd>`, so a pi session in a parent of several repos can name the one
+  to branch; without `cwd` the caller's directory stays the repo. A queued or reissued call replays
+  the root from the stored request. A spawn refusal that cannot change on retry
+  (`WorktreeVcsRequiredError`, `UsageError`) is recorded as failed with the CLI's message and the fix
+  (`Pass cwd: <a git repo>`), no longer as a refused call to reissue.
+
+- **Tests no longer write to the real `~/.cache/mu` or `~/.local/state/mu(-next)`.**
+  `test/_setup.ts` points `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_CONFIG_HOME` at a per-fork temp dir
+  (removed on exit), and `test/_real-dir-guard.ts` throws on any `fs` write under the real dirs, like the
+  real-DB guard in `openDb`. Fixture delegate answers had been landing in `~/.cache/mu/delegate-answers`.
+- **A finished worker is not `dead`: an agent ref is owed only while it owns open work or an
+  unsettled run** (`df1_wait_stale_dead`, dogfood-1 F1; round 2 of `v_wait_arming`). With arming, the
+  orchestrator's `claim --for` + `send` left the worker's agent ref registered after its task closed;
+  a deliberate `mu agent close` then made the next wait (bare, explicit task, or `send --wait`) exit 6
+  `dead`, "the work is not done". One rule now lives in `src/wait-owed.ts`: an agent ref is DONE when
+  every task the agent owned is CLOSED (or released), nothing it was sent is unsettled and it is idle.
+  Every wait tick keeps a DONE mark per owned agent (a `wait_cursors` row `done|agent:<ws>/<name>`,
+  machine-local) true to what it read, and `agent close` sets it when the agent holds no open task
+  and no run in flight. A registered agent whose row is gone and which carries the mark is dropped
+  from the registration with no event. `dead` is left for a pane lost while work or a run is owed
+  (a task still open, a run busy or unsettled, or never read at all). New work armed for the agent
+  clears the mark. The `dead` reason for an agent ref no longer says "the work is not done" ("gone
+  (its pane died or it was closed)"); a task whose owner died keeps it.
+
+- **Explicit ids above 2^53-1 are refused (`CAPTURE_VERSION` 4).** An `INSERT`
+  naming `id = 9223372036854775807` moved the AUTOINCREMENT counter to the max and
+  bricked every later insert ("database or disk is full") with no `mu` repair, now
+  that `sqlite_sequence` is protected. Local writes refuse it
+  (`mu: explicit ids above 2^53-1 are refused`, one usage line from `mu db query`);
+  ingest is unaffected. A `mu db query` whose retrieval command would exceed 1 KB
+  now says "re-run the same query with --all" instead of echoing the query.
+
+- **`mu db query` no longer writes `sqlite_sequence`, `sync_peers` or row ids.**
+  One `UPDATE sqlite_sequence` could brick every later captured write ("database or
+  disk is full"); a forged `sync_peers` watermark skipped peer ops until a repair; an
+  `UPDATE tasks SET id=-1` slipped past the INSERT-only id guard. All three are
+  refused (the `sync_peers` refusal names `mu sync --repair <peer>`);
+  AUTOINCREMENT inserts still work.
+
+- **`mu db query` no longer writes `machine_identity`.** Its HLC clock and machine id
+  feed every captured op, so a forged id or clock silently unpublished later ops.
+  Only a main `_cap_*` trigger writes it now.
+
+- **Remote spawn follow-ups.** A rollback whose pane survives the kill keeps a
+  host agent's row (and so its channel) and says so in the log, instead of
+  freeing the slot under a live pane. The transport pane runs with the local
+  `MU_DB_PATH`, `MU_STATE_DIR`, `MU_SYNC_DIR`, `MU_CTL_SOCK`, `MU_AGENT_NAME`,
+  `MU_WORKSTREAM` and `MU_MANAGED_AGENT` unset (a tmux pane inherits the
+  server's, possibly another agent's). `agent close` suggests the re-spawn with
+  `--host`, `agent show` prints the host, and stale `remote-env` mentions are gone.
+
+- **The attach hint works from outside tmux.** Outside a client it is ONE
+  `tmux attach-session -t mu-<ws>:<agent>` (the old line ran `select-window`
+  only after the blocking attach detached), and every tmux attach/switch line
+  carries `-L <socket>` when `MU_TMUX_SOCKET` routes mu to a private server.
+  herdr is unchanged.
+- **A delegate answer lost to the dequeue key is sent again, once.** pi's dequeue
+  key (alt+up) calls `session.clearQueue()`, which silently drops custom
+  follow-ups; the run then ends with `aborted: false`, so the Escape path saw
+  nothing and the answer never arrived. Each answer has a delivery id from
+  `sendMessage` to its `message_start`. After a normal settle, one tick later,
+  and only if pi is idle and no answer was accepted since, the extension resends
+  ONE unstarted answer (the next settle finds the next). Escape never resends:
+  it drops what is pending with copies and one note, and defuses those answers'
+  sends that pi deferred while settling (no turn; a stub if they start). A
+  second start of an id (pi can still do that) is rewritten in place to a
+  one-line "already handled" stub, so a repeat costs the model no answer text.
+  `MU_DELEGATE_TRACE=1` logs every follow-up send and pi lifecycle event to
+  `<cache dir>/delegate-trace.log`. Tested against pi's real `AgentSession`
+  (`test/extension-delegate-pi.integration.test.ts`).
+
+- **`mu_delegate` `record` kept an empty `EVIDENCE:` header.** `recordNote` kept
+  only lines that start with `EVIDENCE:`, so a refuter's multi-line evidence
+  body was dropped. It now keeps everything from the last `VERDICT:` line on
+  (still capped at 4000 chars).
+
+- **Test runs no longer leak `/tmp/<id>/ssr`.** vitest 5 never removes the root
+  Vitest instance's tmp dir (`<tmpdir>/<nanoid>`, 6-17 MB of transformed
+  modules per run), which filled a tmpfs `/tmp`. `test/_global-teardown.ts`
+  (shared by both vitest configs) now removes it in teardown.
+  `test/dag.integration.test.ts` also removes its `mu-dag-*` temp dirs.
+
+- **ultrathink closes on no *unfixed* high finding.** A final refuter pass
+  that finds highs which are then fixed now satisfies the stop rule.
+
+- **`touchTask` is monotonic.** A note or edge write whose clock read earlier
+  than the stored `updated_at` no longer moves it backwards.
+
+- **`mu sql` `INSERT OR REPLACE` can no longer re-key a row without a
+  tombstone.** A BEFORE INSERT guard on `workstreams`, `tasks`,
+  `task_notes` and `task_edges` refuses an insert whose id or natural key
+  already exists. `ensureWorkstream` and `addBlockEdge` now insert with
+  `WHERE NOT EXISTS`, since the guard also aborts `INSERT OR IGNORE`. The
+  `task_edges` guard also refuses a colliding hidden rowid. The id check
+  ignores SQLite's `-1` placeholder for an omitted id, so a raw `id = -1`
+  row no longer blocks every later insert.
 
 ## [3.13.3] — 2026-10-22
 

@@ -183,7 +183,7 @@ export function wireCloseCommand(agent: Command): void {
   agent
     .command("close <name>")
     .description(
-      "Close an agent. Without --if it only previews (revision, owned tasks, worktree state) and prints the apply command; with --if <rev> it kills the pane and removes its registry row (refused if the agent changed since the preview). Its worktree goes with it: removed when clean, a branch mu/<ws>/<agent>-<sha> keeps unmerged commits; a dirty worktree refuses before anything is killed. A remote worktree (spawn --host --worktree) is judged after the pane dies: removed only when clean and HEAD is its base or the last collected commit, else it refuses (--keep-branch keeps unmerged commits on a remote branch); a --cwd-only remote agent's host is never touched. When the agent's row is already gone (reaped, torn down) but its remote worktree was kept as a recovery record, the same name closes that worktree under the same rule: no pane, no task, the recorded host profile only; several records of one name need --recovery <id>, and a current agent or path holder refuses.",
+      "Close an agent: previews without --if; --if <rev> kills the pane, removes the row and its clean worktree (unmerged commits keep a branch; a dirty tree refuses first). Remote and recovery-record rules: docs/guide/remote.md.",
     )
     .option(
       "--discard",

@@ -82,7 +82,9 @@ also runs 3.x.
 There is no flag day. Each machine switches when its human decides:
 
 1. Install mu-next beside 3.x. Its default state dir is its own, so the
-   two DBs, sockets and worktrees never meet. Give it a separate
+   two DBs, sockets and worktrees never meet. `mu --version` tells the two
+   builds apart: mu-next prints `4.0.0-next.<n>`, 3.x prints `3.x.y`. Check
+   which `mu` is first on `PATH` before you run the Move recipe. Give it a separate
    `MU_SYNC_DIR`, or none.
 2. Move workstreams one at a time, from the machine that holds each
    one, with the [Move recipe](../../skills/mu/recipes/move.md).

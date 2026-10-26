@@ -66,14 +66,14 @@ is `mu agent check <a> <msgId>`. It never resends. A send/fresh right after a sp
 carries `expectIncarnation` (the spawn handshake's): the extension refuses
 another incarnation before dispatching (`incarnation mismatch`, nothing
 delivered), so a replacement bound at the same socket path gets no prompt.
-`mu agent wait --inc`
+A wait on `agent:<ws>/<a>#<inc>` (or `mu agent wait --inc`)
 sends `incarnation` with its `wait`; an `incarnation mismatch` reply, or a
 reconnect after a dropped wait that finds another incarnation, raises
 `AgentRestartedError` (exit 4) out of `waitForEvents` (a rejected watch
 is fatal, never "unknown, poll it"). `abortAgent`'s own wait carries the
 status's incarnation too.
 
-These back `mu agent send` (`--fresh`, `--steer`, `--interrupt`, session commands), `mu agent wait`,
+These back `mu agent send` (`--fresh`, `--steer`, `--interrupt`, session commands), `mu wait` and `mu agent wait`,
 `mu agent abort`, the agent state reading, and `mu_delegate`.
 
 ## Version skew
@@ -170,16 +170,20 @@ probes `refused`, and `mu agent close` or the reaper deletes it.
 
 ## Parent side: `mu_delegate`
 
-`extension/delegate.ts` registers the `mu_delegate` and
-`mu_delegate_cancel` tools in the operator's own pi. They are hidden
+`extension/delegate.ts` registers `mu_delegate`, `mu_delegate_reissue`
+and `mu_delegate_cancel` in the operator's own pi. They are hidden
 when `MU_MANAGED_AGENT` is set (inside a mu-spawned pane) or
-`MU_DELEGATE=0`. The tools shell out to the `mu` CLI (spawn, send,
-`wait --json`, read, abort, close) and only format the CLI's
-`outcome` into a follow-up message. A call runs one
-`mu agent spawn --next-free --send <task> --json` (mu picks the free
-name under its spawn lock and returns the send's `runs`), then one
-`mu agent wait --after-runs <runs>` in the background; with `record`,
-a `mu task show` comes first. `delegateOutcome`
-(`src/agents/delegate.ts`) maps one wait result to `done`, `empty`,
-`error`, `died`, `timeout` or `pending`. The extension imports nothing from pi;
-it types pi's API structurally.
+`MU_DELEGATE=0`, and when neither tmux nor herdr is reachable. The tools
+shell out to the `mu` CLI and keep no state of their own: a call runs
+`mu delegates register` (the `kind=delegate` task and call row), then one
+`mu agent spawn --next-free --task <task> --attempt <task> --send <text> --json`
+(mu picks the free name under its spawn lock, claims the task and journals
+the delivery; the send's `runs` is the wait baseline), then one
+`mu agent wait --after-runs <runs>` in the background, and finally
+`mu delegates finish` (verdict, report and close in one op group) before
+the follow-up echo. `delegateOutcome` (`src/agents/delegate.ts`) maps one
+wait result to `done`, `empty`, `error`, `died`, `timeout` or `pending`.
+The extension imports nothing from pi; it types pi's API structurally.
+A delegate answer on its way cancels only the orchestrator's settle wait
+(`DelegateHandle.onAnswer`); the answer's own settle waits again.
+<!-- TODO(v_delegate_nomux): the mux-free route changes this paragraph; rewrite from the merged code. -->

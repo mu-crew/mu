@@ -55,5 +55,5 @@ do one of these:
   them, and no branch is made.
 
 If the worker owned a task, its pane is gone, so the reaper returns
-the task to `OPEN` on the next reconcile. A `mu task wait` on that task
+the task to `OPEN` on the next reconcile. A `mu wait` on that task
 exits 6.

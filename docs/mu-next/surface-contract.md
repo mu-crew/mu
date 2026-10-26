@@ -1,42 +1,73 @@
-# mu-next surface contract and ownership
+# mu-next surface contract
 
-Status: **planned, except where a row says shipped.** This page is the
-compact contract the `v_*` units build against, copied from their briefs
-and the binding amendments on them. It adds no design. The design of
-record is [README.md](README.md); terms are in
-[VOCABULARY](../VOCABULARY.md#planned-terms-mu-next-not-shipped);
-shipped behaviour is in [ARCHITECTURE](../ARCHITECTURE.md) and
-[CHANGELOG](../../CHANGELOG.md). Where this page and shipped source
-disagree, the source describes today and this page describes the target.
+Status: **shipped, except the two rows marked TODO below.** This page is
+the compact contract the mu-next build was made against: output, wait,
+delegates, the CLOSE block and the prose and help budgets. It adds no
+design. The design of record is [README.md](README.md); terms are in
+[VOCABULARY](../VOCABULARY.md); the module map is in
+[ARCHITECTURE](../ARCHITECTURE.md); what changed is in
+[CHANGELOG](../../CHANGELOG.md). Where this page and the source
+disagree, the source is right and this page is a bug.
 
-Rules for readers and for the units below:
+Rules for readers and for the units that touch it:
 
-- A unit that ships a contract moves its rows out of this page into
-  ARCHITECTURE (module map) and VOCABULARY (term, no "planned" label)
-  in the same commit as the code. `v_docs_final` checks nothing is left.
-- No module-map row, runnable guide snippet or `Next:` hint exists for
+- A unit that ships a contract updates ARCHITECTURE (module map) and
+  VOCABULARY (term) in the same commit as the code.
+- No module-map row, runnable guide snippet or `next` hint exists for
   code that has not shipped.
 - No import and no flag day (user decision, 2026-10-25): mu-next runs
   beside 3.x with its own DB, state, sync dir and machine id; workstreams
-  move by `v_move_recipe`. Reading v1 segment lines and accepting a v12
-  DB are cut.
-- The build-time spelling tournaments (`dec_*`) were dropped. The
-  README Interface defaults plus the amendments below are the contract;
+  move by the [move recipe](../../skills/mu/recipes/move.md). Reading v1
+  segment lines and accepting a v12 DB are cut.
+- The build-time spelling tournaments (`dec_*`) were dropped. The README
+  Interface defaults plus the amendments below are the contract;
   `v_eval_next` measures it with grammar-neutral judges.
 
-## Where the kernel is today (shipped)
+## What ships
 
-Schema v12, `CAPTURE_VERSION` 4, 15 classified tables plus SQLite's
-`sqlite_sequence`. Shipped: persistent capture triggers, local-write
-guards, `NOTE_KINDS`, `tasks.scored`, `tasks.dispatch_host`,
-`task_auto`, `agents.cwd/base/command/command_source`, `worktrees`,
-soft teardown with a preview revision, ctl `msgId`/incarnation/`runs`,
-`mu agent check`, per-line segment versions, the `MuxBackend` seam
-(`spawnAgent(opts: SpawnAgentPaneOptions)`). Not shipped: everything in
-the tables below. Today `mu wait` is shipped (`v_wait_surface`: typed refs, first event, one JSON result, SIGINT/SIGTERM snapshots, `--on-stall exit|warn`; `steer`/`release` and producer arming are later units) and `task wait` is its alias over task refs. The `task` aliases, batch add, `--blocks`, `--report` and note kinds shipped with `v_task_mutations`; JSON
-errors go to stdout in the envelope (shipped; `next` is always null, the legacy `nextSteps` ride beside it), delegate answers arrive as pi follow-ups.
+Schema 13, `CAPTURE_VERSION` 4, 26 classified tables and 4 views
+(`PORTABLE_TABLES`: `workstreams`, `tasks`, `task_edges`, `task_notes`;
+every other table is machine-local, see `src/db.ts`). The verbs and
+their guarantees:
 
-## Fixed contract (planned)
+- **Output.** `{ok,data,next}` on stdout for every `--json` verb and
+  every failure; `next` is computed once per result (`computeNext`).
+  Task, log, state and notes reads are capped records.
+- **Wait.** `mu wait` (typed refs, first event, one JSON result,
+  `resume`, `--all`, `--until-text`, `--wave`, `--blockers-of`,
+  `--on-stall exit|warn|steer|release`); `mu task wait` is its alias over
+  task refs; `mu agent wait` is the agent-keyed form over the same engine. Producers
+  (`spawn`, `send`, `claim --for`) arm a registered wait from real state.
+- **Tasks and agents.** Batch `task add`, `--blocks`, note kinds,
+  `--if <rev>` fences on membership changes and destructive verbs,
+  task-bound spawn with receipts and replay, `mu agent check`, soft
+  teardown with a preview revision, `mu human-needed`.
+- **Executor.** `mu task auto` and `mu next` (`--dry`, `--hold`,
+  `--workers`, `--refute`), `dispatch_host`.
+- **Delegates.** A `mu_delegate` call is a `kind=delegate` task with a
+  durable `call_id` (`mu delegates`, wave tally, `mu_delegate_reissue`),
+  and `mu delegates run <call-id>` runs one with no multiplexer.
+- **CLOSE block.** A pi worker's final `CLOSE:` lines are applied once
+  per settled run by the wait engine (`src/close-block.ts`).
+- **Remote.** Host profiles, remote spawn, `agent collect`, the close
+  rule, remote command gates, recovery records.
+- **Surfaces.** In-process `mu db query` (alias `mu sql`), four-tab
+  read-only dashboard, pi package (no `mu link`), `mu pi migrate`.
+
+- **Settle wait.** The pi extension's keep-driving nudge is the settle
+  wait (`extension/nudge.ts`): every completed settle of an orchestrator
+  runs `mu wait --first --on-stall exit --json` as its callers (no shell
+  line parsed, no once-per-prompt latch) and continues the turn with the
+  event. It stops when nothing is owed, a `mu human-needed` stop is open,
+  the user cancels, or the wait fails. A cancelled wait drains through
+  `MuRunOpts.drainMs`. Skipped under `MU_REMOTE=1` and in a nested pi.
+
+**TODO(v_delegate_nomux).** `mu delegates run` ships; `mu_delegate`
+still refuses to register without tmux or herdr on `PATH` and spawns
+through `mu agent spawn`. The hookup that routes the tool through the
+runner has not merged.
+
+## Fixed contract
 
 **Output.** Success `{ok:true,data,next}`; error `{ok:false,error,message,next,exit}`
 on stdout with the real non-zero exit. `next` is `NextPlan`
@@ -85,66 +116,21 @@ report + close in one op group; malformed writes "no close (malformed)".
 `mu task close` stays. No automatic human decisions: the loop stops
 only for a caller-scoped human-needed task or when nothing it owns runs.
 
-**Budgets (targets owned by `v_skill` and `v_docs_final`; not met by any
-shipped prose yet).** SKILL <= 600 words; each recipe <= 250; all
-recipes <= 4000; remote recipe <= 200; each `Next`/error one line;
-per-verb help <= 3 descriptive lines. They do not cap canonical docs
-such as this page.
+**Budgets (pinned by tests).** SKILL 600 words, each recipe 250, all
+recipes 4,000 (`test/prose-budget.test.ts`; the remote recipe's separate
+200-word target is not met and not tested: it is 239); per-verb `--help` description at most 3 lines at 80 columns
+(`test/help-budget.test.ts`); each `next` and error one line
+(`src/messages.ts`). They do not cap canonical docs such as this page.
 
-## Ownership inventory
+## Where each part lives
 
-| Unit | Delivers | Key names |
-| --- | --- | --- |
-| `v_output_core` (**shipped**; see [ARCHITECTURE](../ARCHITECTURE.md)) | envelope, stdout errors, extension envelope consumers. Left: `next` plans (`v_hints`), text records and cap enforcement for the other readers (`state`, `log`; notes and the task reads shipped), wait `data.exit`/timeout exit (`v_wait_core`), test migration (`v_output_tests`) | `src/output-contract.ts`: `Envelope<T>`, `NextPlan`, `encodeEnvelope` |
-| `v_loop_storage` | schema 13: `tasks.kind/wave`; `agents.spawner/host/collected_head`; local tables | `delegate_calls`, `wait_cursors`, `agent_settles`, `host_profiles` |
-| `v_agent_surface` (**shipped**, part A) | SQL-keyed agent JSON, outside-tmux attach, `spawn --task` brief | `src/agent-output.ts` |
-| `v_spawn_receipts` (**shipped**, part B) | task-bound spawn: journaled reserve, spawn, claim, send; replay | `spawn_receipts`, `spawnForTask`, `attempt_key` (`manual:<k>`), `SendOptions.msgId`, `claimTask.expectedAgentId`, `releaseTask.expectedOwnerId` |
-| `v_exec_dispatch` (slice A of `v_executor`) | `buildTaskBrief`, `task_auto.last_spawn` attempts and run accounting, guarded `auto:<n>` replay, dry run, effect cap. Batch grammar stays unassigned | `src/task-brief.ts`: `buildTaskBrief(db,ws,task,{retry,pin})`; `src/auto-attempt.ts`: `planAttempt`, `reserveAttempt`; `src/next.ts`: `executeNext`; `spawnAutoAttempt` |
-| `v_exec_recover` (slice B of `v_executor`) | `mu next` verb; dead versus live-error recovery, bounded `--hold`, signals; remote trees never touched | `src/next-recover.ts`: `scanRecovery`, `observeWorkers`; `src/auto-attempt.ts`: `reserveRetry`; `src/cli/next.ts`: `wireNextCommand` |
-| `v_wait_reg` (**shipped**; slice A of `v_wait_core`) | machine-local `wait_registrations`, `registerOwnedWait`/`beginWait`/`endWait`, the one typed agent observation. `v_agent_surface` never shipped the table. Arming from spawn/send/claim is `v_wait_cli`'s | `src/wait-registration.ts`, `src/agents/observe.ts`: `AgentObservation`, `watchAgentRun`, `settledCloseInput` |
-| `v_task_mutations`, `v_notes` (**notes view shipped**: `task notes`/`show`, see CHANGELOG) | aliases, report writers, pinned note view | `selectTaskNotes(db,id,opts)`, `kind` assignment at insert |
-| `v_close_apply` | CLOSE parse and exactly-once apply | `src/close-block.ts`: `parseCloseBlock`, `applySettledClose` |
-| `v_wait_engine` (**shipped**; slice B of `v_wait_core`) | the unified wait loop; `waitForTasks`/`waitForAgents` are adapters; the frozen `WaitOptions`/`WaitResult` (callers SET, `eventScope`, `handleStall`, `humanNeeds`, `tally`); engine-owned stall detection; typed cursors and completion tokens; the producer fence (`baselines_json`); work-only CLOSE application; bounded `--until-text` regex. Stall policy and effects are slice C (`v_wait_actions`), the CLI is `v_wait_cli` | `src/wait.ts`: `waitForEvents`, `src/wait-types.ts`, `src/wait-callers.ts`, `src/wait-cursor.ts`, `src/wait-regex.ts` |
-| `v_wait_release` (**shipped**; slice C1 of `v_wait_actions`) | machine-local `wait_action_receipts` (no capture, no sync, no FK; unique task id + owner registry id + ctl incarnation + action) and the guarded release as a `handleStall`: `releaseTask(expectedOwnerId, ifRevision)` with `autoPermitted`, the callers set, spawner, pane, generation and `openHumanNeeds` rechecked in the same immediate transaction. SDK only; CLI flags are `v_wait_steer`/`v_wait_cli`'s. Guarantees: a refused release writes nothing; one release per owner incarnation (`budget-exhausted` after); never reopens, closes, spawns or kills | `src/wait-actions.ts`: `releaseStall`, `releaseStallHandler`; `src/wait-action-receipts.ts` |
-| `v_wait_steer` (**shipped**; slice C2 of `v_wait_actions`) | the crash-safe ctl steer as a `handleStall` (`onStall: 'steer'`) and `waitWithActions` (a composition over `waitForEvents` that picks the handler `onStall` names). One fixed, bounded plain-text reminder, `mode=steer`, the reserved msgId, the saved registry id + pane, `expectIncarnation`; ctl only, never fresh/interrupt/mux. Opt-in transport fence: `ctlRequest` `beforeWrite` (synchronous, on connect, right before the write) and `ctlGuard` on `sendViaTransport` (signal, timeout, fence); defaults unchanged. Guarantees: at most ONE write per task + owner + ctl incarnation, shared by callers, restarts and generations, enforced by SQLite (reserve, then compare-and-set `reserved -> sending` inside the fence), never by the msgId (the real extension does not dedupe sends); `sending` after a crash is `unknown`, probed on the same saved registry id, pane and incarnation, never resent, never replaced by a release; an accepted nudge continues the same wait from the receipt's run baseline; refused, unknown, aborted or exhausted returns the stall with the action | `src/wait-actions.ts`: `steerStall`, `steerStallHandler`, `steerText`, `waitWithActions`; `src/ctl/client.ts`; `src/agents/transport.ts` |
-| `v_wait_surface` (**shipped**; slice A of `v_wait_cli`) | `mu wait`: typed refs, first event (`--all`), one JSON result bounded to 4 KB with `resume`, SIGINT/SIGTERM snapshots, `--until-text`, `--status`, `--stuck-after`, `--on-stall exit\|warn`, `--wave`, `--blockers-of`; `task wait` is the alias; the engine gained provenance discovery, `scope`, plain-shell death and `onStall: warn`. Producer arming, `send --wait`, `claim --and-wait` and the one wait hint are `v_wait_arming` | `src/cli/wait.ts`: `wireWaitCommand`, `src/cli/wait-output.ts` |
-| `v_wait_arming` (slice B of `v_wait_cli`) | producer arming from spawn (plain, `--next-free`, `--task`), send (incl. `--interrupt`) and `claim --for` with the unconsumed run fence; the one `mu wait '<agent ref>'` hint; `send --wait`, `claim --and-wait`. SDK calls do not arm (provenance discovery is the fallback) | `armWait`, `armSend` (`src/cli/wait-arm.ts`) |
-| `v_wait_core` (aggregate), `v_wait_cli` | slices A and B shipped; the stall-action CLI flags (`--on-stall steer\|release`) remain | `wireWaitCommand` |
-| `v_auto`, `v_executor`, `v_hints` | authorisation, bounded executor, one hint source | `authorizeTasks`, `authorisedReady`, `executeNext`, `computeNext` |
-| `v_delegate` (part A shipped: SDK, `mu delegates`, extension on the mux path; the mux-free path is `v_delegate_nomux`), `v_settle`, `v_human` | durable delegates, every-settle waiting, human stop | `verdictTally`, `listDelegates`; state-armed settle hook; `recordHumanNeeded`, `openHumanNeeds`, `human_needs` |
-| `v_guards` (**shipped**: task side and agent side, see [ARCHITECTURE](../ARCHITECTURE.md)) | revision fences on task/agent mutations | `taskRevision`, `agentRevision` (derived, no column), `assertRevision`, `AgentRow.incarnation`, `withAgentLock` |
-| `v_scope`, `v_state_log`, `v_db` | explicit `-w`, compact reads, in-process `mu db` | `installScopedViews`, `cmdDbQuery` |
-| `v_task_reads` (**shipped**; see [ARCHITECTURE](../ARCHITECTURE.md) and CHANGELOG) | task list/next/owned-by/show/tree as capped records, SQL-keyed JSON items, the open-DAG frontier | `src/cli/tasks/records.ts`: `taskToOutput`, `taskRecord`, `taskPage`; `src/dag.ts`: `loadOpenTaskFrontier` |
-| `v_host_profiles`, `v_remote_spawn`, `v_remote_collect` | ssh-free host templates, remote spawn and collect | `expandHostTemplate`, `withHostChannel`, `host_channels`, `ensureRemoteForward`, `collectRemoteAgent`, `closeRemoteWorktree` |
-| `v_pi_package`, `v_dashboard_*` | pi package (no `mu link`), four-tab read-only dashboard | `loadDashboard`, `DashboardSnapshot`, `runDashboard` |
-| `v_move_recipe`, `v_dogfood` | model-run move of one workstream from the read-only 3.x DB (≤ 250-word recipe), isolated dogfood; no import, no flag day | none (a recipe over `sqlite3 -readonly` and batch `task add --blocks`) |
-| `v_skill`, `v_docs_final`, `v_eval_next` | prose budgets and markers, final docs and help budgets, measurement | `test/prose-budget.test.ts`, `test/help-budget.test.ts` |
-
-Later additive local tables: `spawn_receipts` (`v_spawn_receipts`),
-`host_channels` (`v_host_profiles`), `human_needs` (`v_human`),
-`wait_registrations` (`v_wait_reg`), `wait_resumes` (`v_wait_surface`: the stored condition set behind `mu wait --resume <id>`), `wait_action_receipts` (`v_wait_release`), `remote_recovery` (`v_remote_recovery`,
-storage and deleters; `agent close` / `agent collect` read it back, `v_remote_recovery_close`).
-
-## Reconciliation inventory
-
-What this unit changed, and what stays for later owners.
-
-- Reworded as current vs planned: delegates (a task per call since `v_delegate` part A), `lastText`
-  (only `mu_delegate` `record` parses it today; applying a CLOSE block is planned), role (advisory), release (reopens
-  IN_PROGRESS), dispatch host, revision, remote metadata (`REMOTE:`
-  notes today).
-- Removed: card, popup, toast, tick, help overlay, footer,
-  glanceable/drill-down (retired with the card TUI). Kept: track and
-  diamond merge while `src/tracks.ts` ships.
-- README: reaper never deletes a remote worktree; capture wording
-  (`schema_version.capture_version`, outermost `BEGIN IMMEDIATE`);
-  `spawnAgent(opts)` signature; fixed bugs removed from Open.
-- CHANGELOG Unreleased consolidated (duplicate sections and baseline
-  entries merged, obsolete `--yes`, `VcsBackend`, `freedWorktrees` and
-  `failedWorktrees` wording fixed; decorative delegate footer and failed
-  pruning recorded as removed).
-- Left to `v_docs_final`: `docs/guide/delegate.md` display claims
-  (footer counts, failed count; tracked as `rv5f_footer_docs_stale`),
-  guide snippets, help budgets. Left to `v_skill`: all skill prose.
-  Passing `test/doc-links.test.ts` and `test/docs-cli-drift.test.ts`
-  proves links and flag names, not that a sentence is still true.
+Every shipped unit has its modules in the
+[ARCHITECTURE module map](../ARCHITECTURE.md#module-map) and its what-and-why
+in the [CHANGELOG](../../CHANGELOG.md) (unit ids such as `v_wait_surface`
+appear in both). Machine-local tables (`spawn_receipts`, `host_channels`,
+`human_needs`, `wait_registrations`, `wait_resumes`, `wait_action_receipts`,
+`remote_recovery`, and the older `delegate_calls`, `wait_cursors`,
+`agent_settles`, `host_profiles`, `task_auto`, `worktrees`) are classified in
+`MACHINE_LOCAL_TABLES` (`src/db.ts`); `test/entities.test.ts` fails on an
+unclassified one. The build-time ownership table and reconciliation notes
+are in git history.

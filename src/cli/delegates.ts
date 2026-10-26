@@ -286,7 +286,7 @@ export function wireDelegatesCommands(program: Command): void {
   const d = program
     .command("delegates")
     .description(
-      "Delegate calls as tasks: list them (default), show one, tally a wave. A refused call is reissued with the `mu_delegate_reissue` tool in its pi session. A `mu_delegate` call is a kind=delegate task with its brief, a durable call id and a state (queued starting running recording done failed refused cancelled)",
+      "Delegate calls as tasks: list (default), show, tally a wave. Each call is a kind=delegate task with a call id and a state (queued starting running recording done failed refused cancelled); reissue with the `mu_delegate_reissue` tool.",
     );
   d.command("list", { isDefault: true })
     .description("List calls: of $PI_SESSION_ID's session (else every caller), or --caller, --all")
@@ -382,7 +382,7 @@ export function wireDelegatesCommands(program: Command): void {
     });
   d.command("run <call-id>")
     .description(
-      "Run a queued or starting call in a child `pi --mode rpc` with no tmux or herdr, in the foreground: send once, wait, record the verdict, report and close, then stop the child. No pane or agent row (transport process, attach none): the log and session paths are printed. SIGINT cancels. Exit 0 only for a recorded answer; a refused call can be reissued, an unknown delivery never is resent",
+      "Run a queued or starting call in a foreground child `pi --mode rpc`, no mux needed: send once, wait, record verdict, report and close. No pane or agent row. SIGINT cancels; an unknown delivery is never resent.",
     )
     .option(...JSON_OPT)
     .action(function (callId: string) {

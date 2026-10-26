@@ -75,6 +75,24 @@ describe("a reaper flip the wait never saw live", () => {
     expect(again.event.kind).not.toBe("dead");
   });
 
+  it("reaped, reclaimed by another worker, reaped again: a registered caller hears BOTH deaths", async () => {
+    // The dead token names the reaped owner row: one per death, so the second is news.
+    await mkOwnedTask(env.db, "t1", "w1");
+    const caller = "pi:reap2";
+    registerOwnedWait(env.db, caller, [taskRef("t1")]);
+    const opts = { ...fast, callers: [caller], ...alive() };
+    deleteAgent(env.db, "w1", "w");
+    const first = await waitForEvents(env.db, [], opts);
+    expect(first.event).toMatchObject({ kind: "dead", ref: { kind: "task", id: "t1" } });
+    await mkOwnedTask(env.db, "t2", "w2");
+    await claimTask(env.db, "t1", { workstream: "w", agentName: "w2" });
+    registerOwnedWait(env.db, caller, [taskRef("t1")]);
+    deleteAgent(env.db, "w2", "w");
+    const second = await waitForEvents(env.db, [], opts);
+    expect(second.event).toMatchObject({ kind: "dead", ref: { kind: "task", id: "t1" } });
+    expect(second.exit).toBe(6);
+  });
+
   it("a flip from before an explicit wait's own anchor is history, not news", async () => {
     await mkOwnedTask(env.db, "t1", "w1");
     deleteAgent(env.db, "w1", "w");

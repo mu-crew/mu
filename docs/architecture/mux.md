@@ -73,13 +73,14 @@ in-progress tasks. Identity needs no mux: `$MU_AGENT_NAME` only.
 
 The `MuxBackend` surface is `available`, `ensureSession`,
 `killSession`, `spawnAgent`, `listPanes`, `paneAlive`, `killPane`,
-`capture`, `attachCommands`, `healthCheck` and
-`paneNotFoundNextSteps`, plus optional `paneStatus` and `sendToPane`
-(herdr only) and `currentSessionName` (deprecated scope fallback).
+`capture`, `attachCommands` and `healthCheck`, plus optional `paneStatus`
+and `sendToPane` (herdr only), `paneResult` (an exited pane's status, for
+remote command gates) and `reloadCommands`, and `currentSessionName`
+(only the suggestion in the missing-`-w` error).
 The mux holds no workstream list: the DB owns it, and `mu-*` sessions
 with no row are not discovered.
 
-Three concerns belong to the backend, because each would otherwise
+Two concerns belong to the backend, because each would otherwise
 hardcode a tmux string a herdr user sees:
 
 - `attachCommands()`: ordered argv steps that attach to a session, some `optional`
@@ -88,8 +89,6 @@ hardcode a tmux string a herdr user sees:
   printed line (`&&` between steps, an optional step as `{ step || true; }`); callers omit the
   line when the call throws.
 - `healthCheck()`: version and env facts as data; `mu doctor` renders.
-- `paneNotFoundNextSteps()`: borrowed by `PaneNotFoundError` from the
-  backend that raised it.
 
 `src/tmux.ts` survives as a re-export for tmux-only concerns: the
 `MU_TMUX_SOCKET` test-isolation seam and the shared `sleep` /

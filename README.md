@@ -18,6 +18,14 @@ mu persists state and coordinates handoffs. Every read path has
 `--json`, and every change goes through a typed CLI verb. See
 [What mu is not](#what-mu-is-not).
 
+**Status:** this branch is mu-next (`mu --version` prints `4.0.0-next.0`),
+unreleased. It runs beside mu 3.x with its own DB and state dir and never
+imports a 3.x DB; workstreams move over one at a time
+([Switch to mu-next](docs/guide/upgrade.md#switch-to-mu-next)). One part
+is still landing: routing `mu_delegate` with no multiplexer
+(`v_delegate_nomux`; `mu delegates run` already works without one).
+<!-- TODO(v_delegate_nomux): drop that sentence once it merges. -->
+
 ## Install
 
 ```bash
@@ -39,7 +47,7 @@ You need:
 
 [murmur](https://github.com/mu-crew/murmur) is optional for pi agents.
 Non-pi agents on tmux need it for state: without it their state is
-`unknown`, so `mu agent wait` and stall detection never fire for them.
+`unknown`, so a wait never sees them finish and stall detection never fires.
 On herdr, herdr reports state.
 
 To update or run from a checkout, see

@@ -127,8 +127,9 @@ codes:
 | 3 | not found (agent, task) |
 | 4 | conflict (name collision, double claim, dirty tree, schema too old or new, outdated extension) |
 | 5 | substrate unavailable or unsafe (no multiplexer, mux or VCS failure, DB locked, ops-log drift, a `mu doctor` FAIL row, timeout) |
-| 6 | `mu task wait`: the reaper reopened a watched task (its pane died) |
-| 7 | `mu task wait`: a watched task stalled (`--on-stall exit`) |
+| 6 | `mu wait` (and its aliases): a watched owner died (the reaper reopened its task, or its pane is gone with work owed) |
+| 7 | `mu wait`: a watched owner needs you (a stall under `--on-stall exit`, or a pi dialog) |
+| 130, 143 | `mu wait`, `mu next`, `mu log --tail`: SIGINT, SIGTERM (a wait still prints its snapshot and `resume`) |
 
 Errors carry structured context (operation, target, attempted action)
 so `mu doctor` can show them readably.

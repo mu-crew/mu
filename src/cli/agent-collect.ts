@@ -57,7 +57,7 @@ export function wireCollectCommand(agent: Command): void {
   agent
     .command("collect <name>")
     .description(
-      "Fetch a remote worker's commits into the git repo of the current directory (the profile's --fetch template, run locally) and pin the fetched commit as refs/mu/collect/<ws>/<agent>. Records it as the collected HEAD (what `agent close` accepts) and prints the merge command with the exact sha; mu never merges. At --max-sessions 1 a live worker holds the host's only channel: refused with the holder named until its pane is gone or the cap is raised. Local and --cwd-only agents have nothing to collect (exit 2). When the agent's row is gone (reaped, torn down) but its remote worktree was kept as a recovery record, the same name collects from that worktree (a record only; --recovery <id> when several share the name), and a collect that would move the ref another record's collected commit relies on refuses.",
+      "Fetch a remote worker's commits into this repo (the profile's --fetch), pin them as refs/mu/collect/<ws>/<agent>, print the merge command; mu never merges. Channel and recovery-record rules: docs/guide/remote.md.",
     )
     .option(
       "--recovery <id>",
