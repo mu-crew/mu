@@ -290,7 +290,7 @@ describe("mu_delegate with no multiplexer (extension -> real `mu delegates run`)
     return { tool, sent };
   };
 
-  it("answers: the runner records the verdict, the follow-up names no pane", async () => {
+  it("answers: the runner records the verdict; the wake points at the report, names no pane", async () => {
     if (!existsSync(CLI)) return; // needs `npm run build`
     process.env.FAKE_PI = "answer";
     addTask(db, { localId: "f1", workstream: "crew", title: "f1" });
@@ -302,9 +302,9 @@ describe("mu_delegate with no multiplexer (extension -> real `mu delegates run`)
     });
     expect(res.details).toMatchObject({ transport: "process", attach: null, state: "running" });
     await until(() => p.sent.length > 0);
-    expect(p.sent[0]?.content).toMatch(/finished .*Child pi stopped/s);
-    expect(p.sent[0]?.content).not.toMatch(/Pane|attach/);
     const [call] = listDelegates(db);
+    expect(p.sent[0]?.content).toContain(`mu task notes ${call?.task} -w scratch`);
+    expect(p.sent[0]?.content).not.toMatch(/Pane|attach/);
     expect(call?.state).toBe("done");
     expect(sends()).toBe(1);
   });

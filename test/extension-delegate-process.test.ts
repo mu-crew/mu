@@ -17,6 +17,7 @@ import {
   flush,
   installDelegateEnv,
   ok,
+  reportOf,
   sentText,
   tool,
 } from "./_delegate-fixtures.js";
@@ -82,7 +83,7 @@ function muxFree(o: { killedEarly?: boolean } = {}) {
 }
 
 describe("mu_delegate with no multiplexer", () => {
-  it("runs the call as a child pi: no pane, no attach, the answer as a follow-up", async () => {
+  it("runs the call as a child pi: no pane, no attach; the recorded answer wakes an idle pi", async () => {
     const f = muxFree();
     const p = fakePi();
     registerDelegate(p.pi, f.run);
@@ -112,11 +113,13 @@ describe("mu_delegate with no multiplexer", () => {
     f.answer(id, "done", "VERDICT: CONFIRMED\nEVIDENCE: ok");
     await flush();
     await flush();
+    await flush();
+    // One wake: a pointer to the report (the settle shows it), never the answer.
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
     const text = sentText(p);
-    expect(text).toContain("finished");
-    expect(text).toContain("VERDICT: CONFIRMED");
-    expect(text).toContain("Recorded on crew/f1");
+    expect(text).toContain(`(done, CONFIRMED, recorded on crew/f1; call ${id})`);
+    expect(text).toContain(`mu task notes ${task} -w scratch`);
+    expect(text).not.toContain("EVIDENCE");
     expect(text).not.toMatch(/Pane|attach|mu agent/);
     // The runner finished it; the extension never closes a pane or finishes twice.
     expect(f.mu.calls.some((c) => c[1] === "close" || c[1] === "finish")).toBe(false);
@@ -148,7 +151,7 @@ describe("mu_delegate with no multiplexer", () => {
     expect(getDelegateCall(f.mu.db, id)?.state).toBe("refused");
   });
 
-  it("a failed run delivers the outcome with its session and log, unrecorded as an answer", async () => {
+  it("a failed run is recorded failed with its words as the report; the wake names the outcome", async () => {
     const f = muxFree();
     const p = fakePi();
     registerDelegate(p.pi, f.run);
@@ -156,11 +159,10 @@ describe("mu_delegate with no multiplexer", () => {
     f.answer(f.callId(), "unknown", "delivery unknown: socket closed");
     await flush();
     await flush();
-    const text = sentText(p);
-    expect(text).toContain("ended unknown");
-    expect(text).toContain("Session: /s/session.jsonl");
-    expect(text).toContain("Log: /s/pi.log");
+    await flush();
+    expect(sentText(p)).toMatch(/\(unknown; call /);
     expect(getDelegateCall(f.mu.db, f.callId())?.state).toBe("failed");
+    expect(reportOf(f.mu)).toContain("delivery unknown: socket closed");
   });
 
   it("cancel SIGTERMs the run, which cancels the call durably; no follow-up", async () => {
