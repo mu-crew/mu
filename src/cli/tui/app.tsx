@@ -102,7 +102,10 @@ export function App({
   const { stdin } = useStdin();
   const yank = useYank();
   const [drill, setDrill] = useState<Open | null>(null);
-  const [attaching, setAttaching] = useState(false);
+  // A ref, not state or `isActive`: deactivating useInput would drop Ink's raw-mode count,
+  // and Ink could not restore raw mode on resume (a key right after the repaint would
+  // arrive line-buffered and be lost). The hooks stay active; the handlers just return.
+  const busy = useRef(false);
   const [flash, setFlash] = useState<string | null>(null);
   const { columns, rows: screenRows } = useWindowSize();
   const [tab, setTab] = useState<TabId>("tasks");
@@ -170,8 +173,8 @@ export function App({
   // client can open (no server, no workspace, a required step fails) the user lands on
   // that agent's scrollback with the reason and the line for a shell outside.
   const attach = async (t: ScrollTarget): Promise<void> => {
-    if (attaching) return;
-    setAttaching(true);
+    if (busy.current) return;
+    busy.current = true;
     setFlash(null);
     let outcome: AttachResult;
     const plan = await planAttach(t);
@@ -181,16 +184,18 @@ export function App({
       try {
         await suspendTerminal(async () => {
           outcome = await runAttach(plan.steps, runStep);
+          // Still suspended: Ink has not resumed input, so nothing reads stdin yet.
+          // Drop what is buffered (typeahead must not replay into the next screen);
+          // Ink then restores raw mode for the hooks that own it, before it repaints.
+          await new Promise<void>((r) => setImmediate(r));
+          while (stdin.read() !== null) {}
+          busy.current = false;
         });
       } catch (e) {
         outcome = { ok: false, reason: e instanceof Error ? e.message : String(e), warnings: [] };
       }
     }
-    // Typeahead from while the child owned the terminal sits in stdin's buffer and
-    // would be read by whichever screen listens next: drop it, never replay it.
-    await new Promise<void>((r) => setImmediate(r)); // Ink's own read of it runs while App is inactive
-    while (stdin.read() !== null) {}
-    setAttaching(false);
+    busy.current = false;
     if (!outcome.ok)
       setDrill({
         target: t,
@@ -204,6 +209,7 @@ export function App({
 
   useInput(
     (input, key) => {
+      if (busy.current) return;
       setFlash(null);
       if (editing !== null) {
         if (key.return) setEditing(null);
@@ -250,8 +256,8 @@ export function App({
         if (target !== undefined) void yank(target).then(setFlash);
       }
     },
-    // A drill, or an attach holding the terminal, owns the keys: App reads none.
-    { isActive: drill === null && !attaching },
+    // A drill owns the keys while it is open: App reads none.
+    { isActive: drill === null },
   );
 
   const text = (s: string) => cell(s, columns);
@@ -305,7 +311,7 @@ export function App({
         target={drill.target}
         notice={drill.notice}
         runtime={runtime}
-        active={!attaching}
+        busy={busy}
         onClose={() => setDrill(null)}
         onAttach={(t) => void attach(t)}
       />

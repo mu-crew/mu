@@ -447,7 +447,21 @@ describe("attach", () => {
         ]);
         expect(during).toBe(false);
         await ui.until(() => ui.rawMode() === true); // Ink owns the keyboard again
-        await ui.until((s) => s.includes("Agents") && !s.includes("could not attach"));
+        await ui
+          .until((s) => s.includes("Agents") && !s.includes("could not attach"))
+          .catch((e) => {
+            console.log(
+              "SCR",
+              JSON.stringify(
+                ui
+                  .writes()
+                  .slice(-8)
+                  .map((w) => w.slice(0, 30)),
+              ),
+              ui.rawMode(),
+            );
+            throw e;
+          });
         await ui.press("j"); // and keys work again
         ui.unmount();
       }),
@@ -584,8 +598,8 @@ describe("attach", () => {
       await ui.until(() => finish !== undefined);
       await ui.press("q"); // would quit the app if App still read keys
       finish?.();
-
       await ui.until((s) => s.includes("could not attach"));
+      await ui.press(""); // let the new screen's input hook register (an effect, after the paint)
       await ui.press(ESC);
       await ui.until((s) => s.includes("Agents") && !s.includes("could not attach"));
       ui.unmount();

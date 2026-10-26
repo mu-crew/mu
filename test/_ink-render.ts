@@ -71,7 +71,8 @@ export async function renderApp(
     patchConsole: false,
     exitOnCtrlC: false,
   });
-  const screen = (): string => stdout.frames.at(-1) ?? "";
+  // The last NON-empty write: debug mode also writes an empty chunk after a resume redraw.
+  const screen = (): string => [...stdout.frames].reverse().find((f) => f !== "") ?? "";
   const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
   // A lone ESC is held by Ink's input parser until a short timer flushes it, so
   // `until` waits in 2 ms steps (bounded: 200 steps) rather than only yielding.
