@@ -81,4 +81,4 @@ These hold even if you skip it:
 | [remote-workers](recipes/remote-workers.md) | an agent runs on another host |
 | [recovery](recipes/recovery.md) | teardown, rebuild, sync |
 | [worker](recipes/worker.md) | a task was claimed for you |
-| [course-correct](recipes/course-correct.md) | a job has run a day, or ~10 units merged |
+| [course-correct](recipes/course-correct.md) | a `course check due` hint, or a human asks |

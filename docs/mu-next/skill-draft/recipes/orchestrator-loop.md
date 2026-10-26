@@ -16,7 +16,7 @@ Use when you dispatch tasks and merge commits.
 
    Idle worker: `mu task claim <id> -w <ws> --for <w> --evidence "..."`; `git -C <cwd> fetch && git -C <cwd> rebase <base>` (conflict: `rebase --abort`, tell the human); `mu agent send <w> -w <ws> --fresh -`.
 4. `mu wait -w <ws>` waits on what you started (workers, their tasks, delegate calls). `data.exit` 0: an event in `data.firing`, or `timedOut` (run `data.resume`); 6: a worker died before its task closed, re-dispatch it; 7: `mu agent read <w>`, answer.
-5. Merge. Close a finished worker: `mu agent close <w> -w <ws>` only previews (it guards unmerged commits); run its printed `--if <rev>`. Then step 1, same turn.
+5. Merge. Close a finished worker: `mu agent close <w> -w <ws>` only previews (it guards unmerged commits); run its printed `--if <rev>`. Then step 1, same turn. If `mu state` says a course check is due, finish merging, then follow [course-correct](course-correct.md) before dispatching more.
 
 ## Merging
 
