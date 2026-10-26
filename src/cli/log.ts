@@ -68,10 +68,36 @@ export async function cmdLog(
   opts: LogReadOpts & LogWriteOpts,
 ): Promise<void> {
   if (text !== undefined && text.length > 0) {
+    refuseWriteWithReadFlags(text, opts);
     await cmdLogWrite(db, text, opts);
     return;
   }
   await cmdLogRead(db, opts);
+}
+
+/**
+ * A write never carries a read flag. `--tail`/`--all` are booleans, so a guessed
+ * `mu log --tail 20` parses 20 as the text to log: a read that writes. Refuse it
+ * (nothing is written); a write is the text with no read flag.
+ */
+function refuseWriteWithReadFlags(text: string, opts: LogReadOpts): void {
+  const flag = [
+    opts.tail === true && "--tail",
+    opts.allWorkstreams === true && "--all",
+    opts.since !== undefined && "--since",
+    opts.after !== undefined && "--after",
+    opts.seq !== undefined && "--seq",
+    opts.lines !== undefined && "-n",
+    opts.source !== undefined && "--source",
+    opts.intent !== undefined && "--intent",
+    opts.group !== undefined && "--group",
+  ].find((x) => x !== false);
+  if (flag === undefined) return;
+  const hint = /^\d+$/.test(text) ? `did you mean -n ${text}? ` : "";
+  throw new UsageError(
+    `${flag} reads the log but ${JSON.stringify(text)} would be written to it; ${hint}to log the text, drop ${flag}`,
+    { showHelp: false },
+  );
 }
 
 /**
