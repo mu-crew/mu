@@ -3,10 +3,10 @@
 // note; one footer naming the task and the CLOSE line. Nothing generated is
 // ever stored back, so a retry can never quote an earlier footer.
 //
-// The notes are PINNED by their `n` (1-based position, `selectTaskNotes`):
-// the executor stores `{brief, report}` with the reservation and rebuilds the
-// identical text from them on a replay, after newer notes or a newer report
-// arrived. Pure SQL: no mux, no ctl.
+// The executor stores the built TEXT with the reservation and a replay sends
+// those exact bytes: it never calls this again, so a deleted note, a newer
+// report or a changed footer cannot alter a stored request. Pure SQL: no mux,
+// no ctl.
 
 import type { Db } from "./db.js";
 import type { HasNextSteps, NextStep } from "./output.js";
@@ -14,7 +14,7 @@ import { taskIdFor } from "./tasks/core.js";
 import { TaskNotFoundError } from "./tasks/errors.js";
 import { getTaskNote } from "./tasks/queries.js";
 
-/** The task has no `brief` note (or a pinned note is not what it was): nothing is built. */
+/** The task has no `brief` note : nothing is built. */
 export class TaskBriefMissingError extends Error implements HasNextSteps {
   override readonly name = "TaskBriefMissingError";
   constructor(
@@ -34,21 +34,12 @@ export class TaskBriefMissingError extends Error implements HasNextSteps {
   }
 }
 
-export interface TaskBriefPin {
-  /** `n` of the brief note. */
-  brief: number;
-  /** `n` of the report note, or null for none. */
-  report: number | null;
-}
-
 export interface TaskBriefOptions {
   /** The previous attempt died: say so. */
   retry?: boolean;
-  /** Rebuild from exactly these notes instead of the first brief + latest report. */
-  pin?: TaskBriefPin;
 }
 
-export interface TaskBrief extends TaskBriefPin {
+export interface TaskBrief {
   text: string;
 }
 
@@ -66,18 +57,13 @@ export function buildTaskBrief(
       kind: string;
     }[]
   ).map((r) => r.kind);
-  const pin: TaskBriefPin = opts.pin ?? {
-    brief: kinds.indexOf("brief") + 1,
-    report: kinds.lastIndexOf("report") + 1 || null,
-  };
-  if (pin.brief < 1 || kinds[pin.brief - 1] !== "brief") {
+  const briefN = kinds.indexOf("brief") + 1;
+  const reportN = kinds.lastIndexOf("report") + 1;
+  if (briefN < 1) {
     throw new TaskBriefMissingError(task, workstream, "it has no brief note (kind brief)");
   }
-  if (pin.report !== null && kinds[pin.report - 1] !== "report") {
-    throw new TaskBriefMissingError(task, workstream, `note ${pin.report} is not a report`);
-  }
-  const brief = getTaskNote(db, task, workstream, pin.brief).content;
-  const report = pin.report === null ? null : getTaskNote(db, task, workstream, pin.report).content;
+  const brief = getTaskNote(db, task, workstream, briefN).content;
+  const report = reportN < 1 ? null : getTaskNote(db, task, workstream, reportN).content;
 
   const parts = [brief.trimEnd()];
   if (report !== null) parts.push(`Latest report on this task:\n${report.trimEnd()}`);
@@ -88,5 +74,5 @@ export function buildTaskBrief(
     `Work only on task ${task} (workstream ${workstream}). Commit, then end your final message with:\n` +
       `CLOSE: task=${task} evidence="<command + result>"\nREPORT:\n<what you did>`,
   );
-  return { text: parts.join("\n\n"), ...pin };
+  return { text: parts.join("\n\n") };
 }

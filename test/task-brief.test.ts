@@ -35,8 +35,6 @@ describe("buildTaskBrief", () => {
     expect(b.text.startsWith("Do the thing.\n\nScope: src/x.ts only.")).toBe(true);
     expect(b.text).toContain("t1");
     expect(b.text.match(/CLOSE:/g)).toHaveLength(1);
-    expect(b.brief).toBe(1);
-    expect(b.report).toBeNull();
   });
 
   it("a later brief note never replaces the first", () => {
@@ -56,21 +54,7 @@ describe("buildTaskBrief", () => {
     expect(b.text).toContain("newer report");
     expect(b.text).not.toContain("old report");
     expect(b.text).not.toContain("previous attempt died");
-    expect(b.report).toBe(4);
     expect(buildTaskBrief(db, "d", "t1", { retry: true }).text).toContain("previous attempt died");
-  });
-
-  it("a pin rebuilds the same text after newer notes arrive", () => {
-    note("brief", "brief");
-    note("report one", "report");
-    const first = buildTaskBrief(db, "d", "t1");
-    note("report two", "report");
-    note("another brief", "brief");
-    const again = buildTaskBrief(db, "d", "t1", {
-      pin: { brief: first.brief, report: first.report },
-    });
-    expect(again.text).toBe(first.text);
-    expect(buildTaskBrief(db, "d", "t1").text).not.toBe(first.text);
   });
 
   it("is never recursive: the footer is not part of what a later brief quotes", () => {

@@ -14,28 +14,38 @@
 //   2. else the first `authorisedReady` task gets a NEW attempt: the run is
 //      charged and the attempt reserved in one transaction (src/auto-attempt.ts),
 //      then spawned through the guarded `spawnAutoAttempt`.
-// The cap counts every effect (replays, probes, spawns, failures); the
-// default is finite. `dry` is the same selection over the shared read-only
-// planner: no ingest, lock, mux call, receipt probe or write.
+// Every stored attempt reaches a terminal state on the FIRST invocation that
+// sees it unreconcilable (`endAttempt`): `abandoned` (task closed, agent gone
+// before anything was sent) or `needs_human` (the prompt may have landed and
+// cannot be confirmed: never resent; a one-line human need is recorded for
+// the caller). It is then never replayed and never counted again. A replay
+// sends the STORED prompt, never a rebuild. The cap counts every effect
+// (replays, probes, spawns, failures, a spawn rolled back by the guard); the
+// default is finite. This caller's human need is checked at the top of the
+// loop AND right before each spawn and send. `dry` is the same selection over
+// the shared read-only planner: no ingest, lock, mux call, receipt probe or
+// write.
 
 import { SpawnAttemptBusyError, SpawnAttemptGuardError } from "./agents/errors.js";
-import { spawnAutoAttempt, type TaskSpawnOutcome } from "./agents/task-spawn.js";
+import { getReceipt, type SpawnReceipt } from "./agents/receipts.js";
+import { savedIdentity, spawnAutoAttempt, type TaskSpawnOutcome } from "./agents/task-spawn.js";
 import {
-  type AttemptPlan,
+  type AttemptEnd,
   type AttemptRecord,
+  endAttempt,
+  IN_FLIGHT_STATES,
   pendingAttempts,
   planAttempt,
   readAttempt,
   reserveAttempt,
 } from "./auto-attempt.js";
 import type { Db } from "./db.js";
-import { type HumanNeeded, openHumanNeeds } from "./human-needed.js";
+import { type HumanNeeded, openHumanNeeds, recordHumanNeeded } from "./human-needed.js";
 import { NoMultiplexerError } from "./mux/types.js";
 import { ambientIngest } from "./sync.js";
 import { authorisedReady, autoPermitted } from "./task-auto.js";
-import { buildTaskBrief } from "./task-brief.js";
 import { taskIdFor } from "./tasks/core.js";
-import { listReady } from "./tasks/queries.js";
+import { getTask, listReady } from "./tasks/queries.js";
 
 /** Bad `--cap`: exit 2, nothing done. */
 export class NextArgError extends Error {
@@ -60,8 +70,14 @@ export interface ExecuteNextOptions {
 }
 
 export interface NextMove {
-  /** `spawn` (new attempt), `replay` (stored attempt resumed), `skip` (nothing done), `failed` (unsent). */
-  kind: "spawn" | "replay" | "skip" | "failed";
+  /**
+   * `spawn` (new attempt), `replay` (stored attempt resumed), `skip` (nothing
+   * done), `failed` (unsent), `rolled_back` (a pane was spawned, then the guard
+   * stopped the send: undone, charged), `abandoned` (a stored attempt ended:
+   * nothing left to do), `needs_human` (a stored attempt that may have landed
+   * and cannot be confirmed: never resent, a human need recorded).
+   */
+  kind: "spawn" | "replay" | "skip" | "failed" | "rolled_back" | "abandoned" | "needs_human";
   task: string;
   attempt?: number;
   key?: string;
@@ -71,6 +87,8 @@ export interface NextMove {
   state?: string;
   reason?: string;
   stale?: "deleted" | "replaced";
+  /** The one receipt probe a replay made, when it made one. */
+  checked?: "accepted" | "not-accepted" | "unreachable";
 }
 
 export interface NextResult {
@@ -105,6 +123,22 @@ function select(
   return ready === undefined ? undefined : { task: ready.name, resume: false };
 }
 
+/** Does this move cost an external effect (a spawn, send, probe or rollback)? */
+function counts(m: NextMove): boolean {
+  if (m.kind === "skip" || m.kind === "abandoned") return false;
+  if (m.kind === "needs_human") return m.checked !== undefined;
+  return true;
+}
+
+/** What one live invocation shares with its steps. */
+interface Ctx {
+  db: Db;
+  ws: string;
+  caller: string;
+  /** This caller's open human need? Records the stop on the result when so. */
+  humanStop: () => boolean;
+}
+
 export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<NextResult> {
   const cap = checkCap(opts.cap);
   const ws = opts.workstream;
@@ -118,10 +152,11 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
     out.human_needed = needs;
     return true;
   };
+  const ctx: Ctx = { db, ws, caller: opts.caller, humanStop };
 
   for (;;) {
     if (out.used >= cap) {
-      if (select(db, ws, done) !== undefined) out.stopped = "cap";
+      if (out.stopped === undefined && select(db, ws, done) !== undefined) out.stopped = "cap";
       return out;
     }
     if (!out.dry) await ingest();
@@ -129,17 +164,14 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
     const next = select(db, ws, done);
     if (next === undefined) return out;
     done.add(next.task);
-    if (out.dry) {
-      const move = planMove(db, ws, next.task, next.resume);
-      out.moves.push(move);
-      if (move.kind !== "skip") out.used++;
-      continue;
-    }
-    const move = next.resume ? await resume(db, ws, next.task) : await allocate(db, ws, next.task);
+    const move = out.dry
+      ? planMove(db, ws, next.task, next.resume)
+      : next.resume
+        ? await resume(ctx, next.task)
+        : await allocate(ctx, next.task);
     out.moves.push(move);
-    if (move.kind === "skip") continue; // nothing was done: no budget spent, and `done` ends the retry
-    out.used++;
-    if (move.kind === "failed") {
+    if (counts(move)) out.used++;
+    if (move.kind === "failed" && !out.dry) {
       out.stopped = "failed";
       return out;
     }
@@ -151,15 +183,15 @@ function planMove(db: Db, ws: string, task: string, resume: boolean): NextMove {
   const taskId = taskIdFor(db, task, ws);
   if (resume && taskId !== null) {
     const { record, receipt } = readAttempt(db, taskId);
-    if (record !== undefined) {
+    if (record !== undefined && receipt !== undefined) {
+      const base = { task, attempt: record.attempt, key: record.key, cli: record.cli };
+      const end = unreconcilable(db, ws, task, receipt);
+      if (end !== undefined) return { kind: end.state, ...base, reason: end.reason };
       return {
         kind: "replay",
-        task,
-        attempt: record.attempt,
-        key: record.key,
-        agent: receipt?.name ?? record.name,
-        cli: record.cli,
-        ...(receipt !== undefined ? { state: receipt.state } : {}),
+        ...base,
+        agent: receipt.name,
+        state: receipt.state,
       };
     }
   }
@@ -169,20 +201,81 @@ function planMove(db: Db, ws: string, task: string, resume: boolean): NextMove {
   return { kind: "spawn", task, attempt: p.attempt, key: p.key, agent: p.name, cli: p.cli };
 }
 
-/** The guard of an attempt: permission (and, before the pane, still ready) just before each effect. */
-function guardOf(db: Db, ws: string, task: string, key: string) {
-  return (phase: "spawn" | "send"): void => {
-    const taskId = taskIdFor(db, task, ws);
+/**
+ * Can the stored attempt never progress? Read-only. `abandoned`: nothing was
+ * sent, or the task is over. `needs_human`: the prompt may have landed and
+ * there is nothing to ask. Undefined: it can still be resumed (or probed).
+ */
+function unreconcilable(
+  db: Db,
+  ws: string,
+  task: string,
+  receipt: SpawnReceipt,
+): AttemptEnd | undefined {
+  const t = getTask(db, task, ws);
+  if (t === undefined) return { state: "abandoned", reason: "the task is gone" };
+  if (t.status === "CLOSED") return { state: "abandoned", reason: "the task is closed" };
+  const sent = receipt.state === "sending" || receipt.state === "unknown";
+  const lost = (reason: string): AttemptEnd => ({
+    state: sent ? "needs_human" : "abandoned",
+    reason,
+  });
+  if (receipt.state === "reserved") {
+    return t.ownerId === null ? undefined : lost("the task is owned by another agent");
+  }
+  const id = savedIdentity(db, receipt);
+  if (id.stale !== undefined) {
+    return lost(`the agent of this attempt is ${id.stale}`);
+  }
+  if (sent && receipt.transport !== "ctl") {
+    return lost("the send went through the pane: there is no receipt to ask");
+  }
+  return undefined;
+}
+
+/**
+ * End a stored attempt (terminal: never replayed or counted again). A
+ * `needs_human` end first records the caller's one-line human need (a repeat
+ * is a no-op), so a crash between the two leaves the attempt retryable.
+ */
+function park(ctx: Ctx, task: string, record: AttemptRecord, end: AttemptEnd): NextMove {
+  if (end.state === "needs_human") {
+    recordHumanNeeded(ctx.db, {
+      workstream: ctx.ws,
+      caller: ctx.caller,
+      reason: `attempt ${record.key} of task ${task} may have been delivered and cannot be confirmed (${end.reason}); never resent`,
+    });
+  }
+  const taskId = taskIdFor(ctx.db, task, ctx.ws);
+  if (taskId !== null) endAttempt(ctx.db, taskId, record.key, end);
+  return {
+    kind: end.state,
+    task,
+    attempt: record.attempt,
+    key: record.key,
+    cli: record.cli,
+    reason: end.reason,
+  };
+}
+
+/** The guard of an attempt: this caller's human need and permission (and, before the pane, still ready) just before each effect. */
+function guardOf(ctx: Ctx, task: string, key: string) {
+  let refusedAt: "spawn" | "send" | undefined;
+  const guard = (phase: "spawn" | "send"): void => {
     const stop = (why: string): never => {
+      refusedAt = phase;
       throw new SpawnAttemptGuardError(task, key, why);
     };
-    if (taskId === null || !autoPermitted(db, taskId)) {
+    if (ctx.humanStop()) stop("this caller has an open human need");
+    const taskId = taskIdFor(ctx.db, task, ctx.ws);
+    if (taskId === null || !autoPermitted(ctx.db, taskId)) {
       stop("it is no longer authorised for this machine");
     }
-    if (phase === "spawn" && !listReady(db, ws).some((t) => t.name === task)) {
+    if (phase === "spawn" && !listReady(ctx.db, ctx.ws).some((t) => t.name === task)) {
       stop("it is no longer ready");
     }
   };
+  return { guard, refusedAt: () => refusedAt };
 }
 
 function outcomeMove(
@@ -202,24 +295,25 @@ function outcomeMove(
     state: out.state,
     ...(out.stale !== undefined ? { stale: out.stale } : {}),
     ...(reason !== undefined ? { reason } : {}),
+    ...(out.checked !== undefined ? { checked: out.checked } : {}),
   };
 }
 
-/** Run one reserved or stored attempt through the guarded spawn; map its unsent errors to moves. */
+/** Run one reserved or stored attempt through the guarded spawn, sending its STORED prompt; map its errors to moves. */
 async function drive(
-  db: Db,
-  ws: string,
+  ctx: Ctx,
   task: string,
   kind: "spawn" | "replay",
   rec: AttemptRecord,
-  text: string,
 ): Promise<NextMove> {
+  const { db, ws } = ctx;
+  const g = guardOf(ctx, task, rec.key);
   try {
     const out = await spawnAutoAttempt(db, {
       task,
-      text,
+      text: rec.text,
       key: rec.key,
-      guard: guardOf(db, ws, task, rec.key),
+      guard: g.guard,
       spawn: {
         name: rec.name,
         workstream: ws,
@@ -228,7 +322,18 @@ async function drive(
         nextFree: true,
       },
     });
-    return outcomeMove(kind, task, rec, out);
+    const move = outcomeMove(kind, task, rec, out);
+    // A replay's probe that still cannot say: the attempt is parked, not probed again.
+    if (kind === "replay" && out.state === "unknown") {
+      return {
+        ...park(ctx, task, rec, {
+          state: "needs_human",
+          reason: out.reason ?? "the send could not be confirmed",
+        }),
+        ...(out.checked !== undefined ? { checked: out.checked } : {}),
+      };
+    }
+    return move;
   } catch (err) {
     if (err instanceof NoMultiplexerError) throw err;
     const base = { task, attempt: rec.attempt, key: rec.key, cli: rec.cli };
@@ -237,29 +342,39 @@ async function drive(
       return { kind: "skip", ...base, reason: `attempt in flight: ${err.message}` };
     }
     if (err instanceof SpawnAttemptGuardError) {
-      // Permission or readiness moved. Before the pane the reservation stays
-      // resumable; at the send the attempt was rolled back and failed (charged).
-      return { kind: "skip", ...base, reason: err.message };
+      // Before the pane nothing was done and the reservation stays resumable.
+      // At the send a pane was spawned and rolled back: an effect, charged.
+      const kind = g.refusedAt() === "send" ? "rolled_back" : "skip";
+      return { kind, ...base, reason: err.message };
     }
     const reason = err instanceof Error ? err.message : String(err);
+    // An error before any effect (a receipt that disagrees with its stored
+    // request, a bad row) leaves the receipt in flight: end it now, or it
+    // would be selected and fail on every invocation.
+    const taskId = taskIdFor(db, task, ws);
+    const left = taskId === null ? undefined : getReceipt(db, taskId, rec.key);
+    if (left !== undefined && IN_FLIGHT_STATES.has(left.state)) {
+      const sent = left.state === "sending" || left.state === "unknown";
+      park(ctx, task, rec, { state: sent ? "needs_human" : "abandoned", reason });
+    }
     return { kind: "failed", ...base, reason };
   }
 }
 
-async function resume(db: Db, ws: string, task: string): Promise<NextMove> {
+async function resume(ctx: Ctx, task: string): Promise<NextMove> {
+  const { db, ws } = ctx;
   const taskId = taskIdFor(db, task, ws);
-  const { record } = taskId === null ? {} : readAttempt(db, taskId);
-  if (record === undefined) return { kind: "skip", task, reason: "no stored attempt" };
-  // The stored pins, not the newest notes: the replay must be the request that was reserved.
-  const brief = buildTaskBrief(db, ws, task, {
-    retry: record.retry,
-    pin: { brief: record.brief, report: record.report },
-  });
-  return drive(db, ws, task, "replay", record, brief.text);
+  const { record, receipt } = taskId === null ? {} : readAttempt(db, taskId);
+  if (record === undefined || receipt === undefined) {
+    return { kind: "skip", task, reason: "no stored attempt" };
+  }
+  const end = unreconcilable(db, ws, task, receipt);
+  if (end !== undefined) return park(ctx, task, record, end);
+  return drive(ctx, task, "replay", record);
 }
 
-async function allocate(db: Db, ws: string, task: string): Promise<NextMove> {
-  const reserved = reserveAttempt(db, ws, task);
+async function allocate(ctx: Ctx, task: string): Promise<NextMove> {
+  const reserved = reserveAttempt(ctx.db, ctx.ws, task);
   if (!reserved.ok) {
     return {
       kind: "skip",
@@ -267,6 +382,5 @@ async function allocate(db: Db, ws: string, task: string): Promise<NextMove> {
       reason: `attempt ${reserved.code === "in-flight" ? "in flight" : reserved.code}: ${reserved.reason}`,
     };
   }
-  const p: AttemptPlan = reserved.plan;
-  return drive(db, ws, task, "spawn", p, p.text);
+  return drive(ctx, task, "spawn", reserved.plan);
 }

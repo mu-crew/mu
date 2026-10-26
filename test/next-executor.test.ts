@@ -64,14 +64,15 @@ vi.mock("../src/agents/transport.js", async (importOriginal) => {
 
 import { getReceipt } from "../src/agents/receipts.js";
 import { getAgent } from "../src/agents.js";
-import { planAttempt, readAttempt, reserveAttempt } from "../src/auto-attempt.js";
+import { pendingAttempts, planAttempt, readAttempt, reserveAttempt } from "../src/auto-attempt.js";
 import { type Db, openDb } from "../src/db.js";
-import { recordHumanNeeded } from "../src/human-needed.js";
+import { openHumanNeeds, recordHumanNeeded } from "../src/human-needed.js";
 import { executeNext, NextArgError, type NextResult } from "../src/next.js";
 import { localMachineId } from "../src/segments.js";
 import { authorisedReady, authorizeTasks } from "../src/task-auto.js";
 import { taskIdFor } from "../src/tasks/core.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
+import { closeTask } from "../src/tasks/lifecycle.js";
 import { getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -274,6 +275,7 @@ describe("attempt accounting", () => {
     const r1 = await run();
     expect(r1.moves[0]).toMatchObject({ kind: "failed", task: "a", key: "auto:1" });
     expect(r1.stopped).toBe("failed");
+    expect(r1.used).toBe(1); // a failed move is an effect: it counts against the cap
     expect(runsOf("a")).toBe(1);
     expect(receiptOf("a", "auto:1")?.state).toBe("failed");
     const r2 = await run();
@@ -299,8 +301,9 @@ describe("attempt accounting", () => {
         off: true,
       });
     const r = await run();
-    expect(r.moves[0]).toMatchObject({ kind: "skip", task: "a", key: "auto:1" });
+    expect(r.moves[0]).toMatchObject({ kind: "rolled_back", task: "a", key: "auto:1" });
     expect(r.moves[0]?.reason).toMatch(/no longer authorised/);
+    expect(r.used).toBe(1);
     expect(hook.sends).toEqual([]);
     expect(receiptOf("a", "auto:1")?.state).toBe("failed");
     expect(getAgent(db, "a-1", "d")).toBeUndefined();
@@ -315,17 +318,34 @@ describe("attempt accounting", () => {
     expect(r1.moves[0]).toMatchObject({ kind: "spawn", state: "unknown" });
     expect(runsOf("a")).toBe(1);
     hook.sendMode = "ok";
+    hook.checkState = "accepted";
     const r2 = await run();
-    expect(r2.moves[0]).toMatchObject({ kind: "replay", state: "unknown" });
+    expect(r2.moves[0]).toMatchObject({ kind: "replay", state: "sent" });
     expect(hook.checks).toHaveLength(1);
     expect(hook.sends).toHaveLength(1);
     expect(runsOf("a")).toBe(1);
-    hook.checkState = "accepted";
-    const r3 = await run();
-    expect(r3.moves[0]).toMatchObject({ kind: "replay", state: "sent" });
+    expect((await run()).moves).toEqual([]);
+  });
+
+  it("UNKNOWN that the one probe cannot confirm becomes needs_human with a human need: never resent, never probed again", async () => {
+    task("a", { max: 3 });
+    task("b");
+    hook.sendMode = "throws";
+    await run({ cap: 1 });
+    hook.sendMode = "ok";
+    const r2 = await run();
+    expect(r2.moves[0]).toMatchObject({ kind: "needs_human", task: "a", checked: "unreachable" });
+    expect(r2.used).toBe(1); // the probe was an effect
+    expect(hook.checks).toHaveLength(1);
+    expect(openHumanNeeds(db, "orch")).toHaveLength(1);
+    expect(r2.stopped).toBe("human");
+    // Parked: no further probe, send or charge, however often it is invoked.
+    for (let i = 0; i < 3; i++) await run();
+    expect(hook.checks).toHaveLength(1);
     expect(hook.sends).toHaveLength(1);
     expect(runsOf("a")).toBe(1);
-    expect((await run()).moves).toEqual([]);
+    expect(runsOf("b")).toBe(0);
+    expect(planAttempt(db, "d", "a")).toMatchObject({ ok: false, code: "parked" });
   });
 
   it("two invocations at once (two connections): one spawn, one charge", async () => {
@@ -449,6 +469,18 @@ describe("stops and fences between effects", () => {
 });
 
 describe("dry run", () => {
+  it("never ingests", async () => {
+    task("a");
+    let ingests = 0;
+    await run({
+      dry: true,
+      ingest: async () => {
+        ingests++;
+      },
+    });
+    expect(ingests).toBe(0);
+  });
+
   it("writes nothing: readonly handle, identical tables, no mux, no locks, no spawn", async () => {
     task("a", { max: 3 });
     task("b");
@@ -491,5 +523,223 @@ describe("dry run", () => {
     const r = await run({ dry: true });
     expect(r.moves).toEqual([]);
     expect(r.stopped).toBe("human");
+  });
+});
+
+describe("every stored attempt reaches a terminal state", () => {
+  /** An UNKNOWN attempt on `id` (the send threw), pane and claim kept. */
+  async function unknownAttempt(_id: string): Promise<void> {
+    hook.sendMode = "throws";
+    await run({ cap: 1 });
+    hook.sendMode = "ok";
+  }
+  const deleteAgents = () => void db.prepare("DELETE FROM agents").run();
+
+  it("a CLOSED task's unknown attempt is abandoned once, free, and never starves fresh work at cap 1", async () => {
+    task("a", { max: 3 });
+    await unknownAttempt("a");
+    closeTask(db, "a", { workstream: "d", evidence: "done elsewhere" });
+    deleteAgents();
+    task("b");
+    const r = await run({ cap: 1 });
+    expect(r.moves.map((m) => `${m.kind}:${m.task}`)).toEqual(["abandoned:a", "spawn:b"]);
+    expect(r.used).toBe(1); // only b's spawn
+    expect(runsOf("a")).toBe(1);
+    expect(hook.checks).toEqual([]);
+    expect(pendingAttempts(db, "d")).toEqual([]);
+    expect(readAttempt(db, tid("a")).record?.end).toMatchObject({ state: "abandoned" });
+    expect((await run()).moves).toEqual([]); // never reported again
+  });
+
+  it("an open task whose agent is gone (sent, unconfirmable) is needs_human on the first sight, free", async () => {
+    task("a", { max: 3 });
+    await unknownAttempt("a");
+    deleteAgents();
+    const r = await run({ cap: 1 });
+    expect(r.moves).toEqual([expect.objectContaining({ kind: "needs_human", task: "a" })]);
+    expect(r.used).toBe(0);
+    expect(hook.checks).toEqual([]);
+    expect(hook.sends).toHaveLength(1);
+    expect(openHumanNeeds(db, "orch")).toHaveLength(1);
+    expect(pendingAttempts(db, "d")).toEqual([]);
+  });
+
+  it("five unresolvable attempts never eat the default cap; fresh work is dispatched", async () => {
+    for (let i = 0; i < 5; i++) task(`s${i}`, { max: 3 });
+    hook.sendMode = "throws";
+    expect((await run()).moves).toHaveLength(5); // five UNKNOWN sends
+    hook.sendMode = "ok";
+    for (let i = 0; i < 5; i++) closeTask(db, `s${i}`, { workstream: "d", evidence: "x" });
+    deleteAgents();
+    task("fresh");
+    const r = await run();
+    expect(r.moves.filter((m) => m.kind === "abandoned")).toHaveLength(5);
+    expect(r.moves.at(-1)).toMatchObject({ kind: "spawn", task: "fresh" });
+    expect(r.used).toBe(1);
+    expect(r.stopped).toBeUndefined();
+  });
+
+  it("a reserved attempt whose task was closed is abandoned (its receipt failed), not replayed", async () => {
+    task("a", { max: 3 });
+    expect(reserveAttempt(db, "d", "a").ok).toBe(true);
+    closeTask(db, "a", { workstream: "d", evidence: "x" });
+    const r = await run();
+    expect(r.moves).toEqual([expect.objectContaining({ kind: "abandoned", task: "a" })]);
+    expect(receiptOf("a", "auto:1")?.state).toBe("failed");
+    expect(hook.spawns).toEqual([]);
+    expect(pendingAttempts(db, "d")).toEqual([]);
+  });
+
+  it("dry run reports the same terminal outcome without writing it", async () => {
+    task("a", { max: 3 });
+    expect(reserveAttempt(db, "d", "a").ok).toBe(true);
+    closeTask(db, "a", { workstream: "d", evidence: "x" });
+    const r = await run({ dry: true });
+    expect(kinds(r)).toEqual(["abandoned:a"]);
+    expect(readAttempt(db, tid("a")).record?.end).toBeUndefined();
+  });
+});
+
+describe("a replay sends the stored request", () => {
+  it("note deletion and a newer brief between reserve and replay change nothing sent", async () => {
+    task("a", { max: 2 });
+    task("b");
+    addNote(db, "a", "report ONE", { workstream: "d", kind: "report" });
+    const plan = reserveAttempt(db, "d", "a");
+    if (!plan.ok) throw new Error(plan.reason);
+    db.prepare("DELETE FROM task_notes WHERE task_id = ?").run(tid("a"));
+    addNote(db, "a", "a plain note", { workstream: "d" });
+    const r = await run();
+    expect(kinds(r)).toEqual(["replay:a", "spawn:b"]);
+    expect(hook.sends[0]?.text).toBe(plan.plan.text);
+  });
+
+  it("a receipt that disagrees with the stored request ends the attempt once; the executor moves on", async () => {
+    task("a", { max: 3 });
+    task("b");
+    expect(reserveAttempt(db, "d", "a").ok).toBe(true);
+    db.prepare("UPDATE spawn_receipts SET request_sha = 'x' WHERE task_id = ?").run(tid("a"));
+    const r1 = await run();
+    expect(r1.moves[0]).toMatchObject({ kind: "failed", task: "a", key: "auto:1" });
+    expect(readAttempt(db, tid("a")).record?.end).toMatchObject({ state: "abandoned" });
+    expect(pendingAttempts(db, "d")).toEqual([]);
+    expect(hook.sends).toEqual([]);
+    // Not replayed again: the next attempt is a NEW key and a new charge, under the ceiling.
+    const r2 = await run();
+    expect(kinds(r2)).toEqual(["spawn:a", "spawn:b"]);
+    expect(r2.moves[0]).toMatchObject({ key: "auto:2" });
+    expect(runsOf("a")).toBe(2);
+  });
+});
+
+describe("the cap counts every external effect", () => {
+  it("a spawn rolled back by the send guard is an effect: cap 1 spawns exactly one pane", async () => {
+    task("a", { max: 3 });
+    task("b", { max: 3 });
+    task("c", { max: 3 });
+    hook.afterSpawn = () =>
+      void db
+        .prepare("UPDATE task_auto SET enabled = 0 WHERE task_id IN (?, ?, ?)")
+        .run(tid("a"), tid("b"), tid("c"));
+    const r = await run({ cap: 1 });
+    expect(hook.spawns).toHaveLength(1);
+    expect(r.used).toBe(1);
+    expect(r.moves[0]).toMatchObject({ kind: "rolled_back" });
+  });
+
+  it("a guard refusal before the pane stays a free skip", async () => {
+    task("a", { max: 3 });
+    expect(reserveAttempt(db, "d", "a").ok).toBe(true);
+    db.prepare("UPDATE tasks SET substate = 'parked' WHERE local_id = 'a'").run();
+    const r = await run();
+    expect(r.used).toBe(0);
+    expect(hook.spawns).toEqual([]);
+  });
+});
+
+describe("this caller's human need before each effect", () => {
+  it("a need recorded while the pane starts stops the send: 0 sends, rolled back, stopped human", async () => {
+    task("a", { max: 3 });
+    task("b");
+    hook.afterSpawn = () =>
+      void recordHumanNeeded(db, { workstream: "d", caller: "orch", reason: "during spawn" });
+    const r = await run();
+    expect(hook.sends).toEqual([]);
+    expect(r.moves[0]).toMatchObject({ kind: "rolled_back", task: "a" });
+    expect(r.stopped).toBe("human");
+    expect(r.human_needed).toHaveLength(1);
+    expect(receiptOf("a", "auto:1")?.state).toBe("failed");
+    expect(getTask(db, "a", "d")).toMatchObject({ ownerId: null });
+    expect(hook.spawns).toHaveLength(1); // b was never started
+  });
+});
+
+describe("spawnAutoAttempt, called directly", () => {
+  let textOf = "PROMPT";
+  const req = (key: string, guard: (p: "spawn" | "send") => void = () => {}) => ({
+    task: "a",
+    text: textOf,
+    key,
+    guard,
+    spawn: { name: "a-1", workstream: "d", cli: "pi", nextFree: true },
+  });
+
+  it("a failed auto key is never reset or reused: SpawnAttemptFailedError, no spawn", async () => {
+    task("a", { max: 3 });
+    hook.spawnFails = () => new Error("tmux said no");
+    await run();
+    expect(receiptOf("a", "auto:1")?.state).toBe("failed");
+    hook.spawnFails = undefined;
+    hook.spawns = [];
+    const { spawnAutoAttempt } = await import("../src/agents/task-spawn.js");
+    const { SpawnAttemptFailedError } = await import("../src/agents/errors.js");
+    await expect(spawnAutoAttempt(db, req("auto:1"))).rejects.toBeInstanceOf(
+      SpawnAttemptFailedError,
+    );
+    expect(hook.spawns).toEqual([]);
+    expect(receiptOf("a", "auto:1")?.state).toBe("failed");
+  });
+
+  it("a revoke between reserve and pane stops before any spawn (guard asked at 'spawn')", async () => {
+    task("a", { max: 3 });
+    const plan = reserveAttempt(db, "d", "a");
+    if (!plan.ok) throw new Error(plan.reason);
+    textOf = plan.plan.text;
+    const phases: string[] = [];
+    const { spawnAutoAttempt } = await import("../src/agents/task-spawn.js");
+    const { SpawnAttemptGuardError } = await import("../src/agents/errors.js");
+    await expect(
+      spawnAutoAttempt(
+        db,
+        req("auto:1", (p) => {
+          phases.push(p);
+          throw new SpawnAttemptGuardError("a", "auto:1", "revoked");
+        }),
+      ),
+    ).rejects.toBeInstanceOf(SpawnAttemptGuardError);
+    expect(phases).toEqual(["spawn"]);
+    expect(hook.spawns).toEqual([]);
+    expect(receiptOf("a", "auto:1")?.state).toBe("reserved");
+  });
+
+  it("an unreserved key is refused", async () => {
+    task("a", { max: 3 });
+    const { spawnAutoAttempt } = await import("../src/agents/task-spawn.js");
+    const { SpawnAttemptFailedError } = await import("../src/agents/errors.js");
+    await expect(spawnAutoAttempt(db, req("auto:9"))).rejects.toBeInstanceOf(
+      SpawnAttemptFailedError,
+    );
+    expect(hook.spawns).toEqual([]);
+  });
+});
+
+describe("reserveAttempt at the ceiling", () => {
+  it("refuses an exhausted task even after its attempt failed, and charges nothing", () => {
+    task("a", { max: 1 });
+    expect(reserveAttempt(db, "d", "a").ok).toBe(true);
+    db.prepare("UPDATE spawn_receipts SET state = 'failed' WHERE task_id = ?").run(tid("a"));
+    expect(reserveAttempt(db, "d", "a")).toMatchObject({ ok: false, code: "ceiling" });
+    expect(runsOf("a")).toBe(1);
+    expect(receiptOf("a", "auto:2")).toBeUndefined();
   });
 });

@@ -207,7 +207,7 @@ function stagedOf(db: Db, row: AgentRow): StagedWorktree | undefined {
 }
 
 /** The agent now holding the saved name, when it IS the saved incarnation. */
-function savedIdentity(
+export function savedIdentity(
   db: Db,
   rec: SpawnReceipt,
 ): { agent?: AgentRow; stale?: "deleted" | "replaced" } {

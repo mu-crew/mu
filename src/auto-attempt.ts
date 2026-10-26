@@ -7,7 +7,9 @@
 // ONE immediate transaction that re-plans first, so two `mu next` (two
 // processes) cannot mint different attempts for a task, and a crash leaves
 // either nothing or a reservation that a later `mu next` resumes under the
-// SAME key. Replays, UNKNOWN probes and receipt checks never charge. A
+// SAME key. The record stores the EXACT prompt, so a replay sends those bytes
+// and never rebuilds (nothing can drift). Replays, UNKNOWN probes and receipt
+// checks never charge. A
 // definitely-unsent failure keeps its charge and its failed key (never
 // reset): the next attempt is a new key and a new charge, so real spawns can
 // never exceed `max_runs`.
@@ -15,7 +17,13 @@
 // `planAttempt` is the read-only half (also the dry run); `reserveAttempt`
 // re-runs it inside the write transaction. No await, no ctl, no mux here.
 
-import { getReceipt, requestSha, reserveReceipt, type SpawnReceipt } from "./agents/receipts.js";
+import {
+  getReceipt,
+  requestSha,
+  reserveReceipt,
+  type SpawnReceipt,
+  updateReceipt,
+} from "./agents/receipts.js";
 import { MAX_AGENT_NAME_LEN } from "./agents.js";
 import { newMsgId } from "./ctl/client.js";
 import type { Db } from "./db.js";
@@ -26,7 +34,18 @@ import { buildTaskBrief, TaskBriefMissingError } from "./task-brief.js";
 import { taskIdFor } from "./tasks/core.js";
 import { listReady } from "./tasks/queries.js";
 
-/** `task_auto.last_spawn`: the latest attempt, enough to rebuild its request. */
+/**
+ * How a stored attempt ended without a delivery: `abandoned` (nothing left to
+ * do: the task closed, the agent is gone) or `needs_human` (the prompt may
+ * have landed and cannot be confirmed: never resent, parked behind a human
+ * need). Either is terminal: never replayed, never counted again.
+ */
+export interface AttemptEnd {
+  state: "abandoned" | "needs_human";
+  reason: string;
+}
+
+/** `task_auto.last_spawn`: the latest attempt, with its exact request. */
 export interface AttemptRecord {
   v: 1;
   attempt: number;
@@ -36,11 +55,12 @@ export interface AttemptRecord {
   name: string;
   cli: string;
   worktree: boolean;
-  /** Pinned notes (`n`): the prompt is rebuilt from these, never from newer notes. */
-  brief: number;
-  report: number | null;
+  /** The exact prompt, stored at reservation: a replay sends these bytes. */
+  text: string;
   /** The previous attempt died (slice B sets it). */
   retry: boolean;
+  /** Set once the attempt reached a terminal state without a delivery. */
+  end?: AttemptEnd;
 }
 
 export interface AttemptPlan extends AttemptRecord {
@@ -49,14 +69,13 @@ export interface AttemptPlan extends AttemptRecord {
   workstream: string;
   /** The task's derived revision the plan was made at. */
   revision: number;
-  /** The exact prompt (not stored: rebuilt from the pins). */
-  text: string;
 }
 
 export type PlanCode =
   | "not-found"
   | "not-permitted"
   | "in-flight"
+  | "parked"
   | "delivered"
   | "ceiling"
   | "not-ready"
@@ -76,13 +95,23 @@ export const IN_FLIGHT_STATES: ReadonlySet<string> = new Set([
   "unknown",
 ]);
 
+/** Receipt states from which nothing has been written to the agent. */
+const UNSENT_STATES: ReadonlySet<string> = new Set(["reserved", "pane", "claimed"]);
+
 const refuse = (code: PlanCode, reason: string): PlanResult => ({ ok: false, code, reason });
 
 export function parseAttempt(raw: string | null): AttemptRecord | undefined {
   if (raw === null) return undefined;
   try {
     const r = JSON.parse(raw) as Partial<AttemptRecord>;
-    if (r.v !== 1 || typeof r.key !== "string" || typeof r.attempt !== "number") return undefined;
+    if (
+      r.v !== 1 ||
+      typeof r.key !== "string" ||
+      typeof r.attempt !== "number" ||
+      typeof r.text !== "string"
+    ) {
+      return undefined;
+    }
     return r as AttemptRecord;
   } catch {
     return undefined;
@@ -106,8 +135,9 @@ export function readAttempt(
 
 /**
  * Local ids of the permitted tasks of `workstream` whose latest attempt is
- * in flight (reserved … unknown): to be RESUMED before anything new is
- * allocated, even at their run ceiling. Revoked or foreign tasks are absent.
+ * in flight (reserved … unknown) and not ended: to be RESUMED before anything
+ * new is allocated, even at their run ceiling. Revoked, foreign and ended
+ * (abandoned / needs_human) attempts are absent.
  */
 export function pendingAttempts(db: Db, workstream: string): string[] {
   const rows = db
@@ -120,6 +150,8 @@ export function pendingAttempts(db: Db, workstream: string): string[] {
           AND r.attempt_key = json_extract(a.last_spawn, '$.key')
         WHERE a.enabled = 1 AND t.kind = 'work' AND t.dispatch_host = ?
           AND r.state IN ('reserved', 'pane', 'claimed', 'sending', 'unknown')
+          AND json_extract(a.last_spawn, '$.end') IS NULL
+          AND json_extract(a.last_spawn, '$.text') IS NOT NULL
         ORDER BY t.id`,
     )
     .all(workstream, localMachineId(db)) as { id: number; local_id: string }[];
@@ -155,7 +187,13 @@ export function planAttempt(
   }
   const { auto, record, receipt } = readAttempt(db, taskId);
   if (auto === undefined) return refuse("not-permitted", `${task} has no auto config`);
-  if (record !== undefined && receipt !== undefined) {
+  if (record?.end?.state === "needs_human") {
+    return refuse(
+      "parked",
+      `${record.key} of ${task} may have been delivered and waits for a human (${record.end.reason})`,
+    );
+  }
+  if (record !== undefined && receipt !== undefined && record.end === undefined) {
     if (IN_FLIGHT_STATES.has(receipt.state)) {
       return refuse("in-flight", `${record.key} of ${task} is ${receipt.state}: resume it`);
     }
@@ -197,14 +235,12 @@ export function planAttempt(
       name,
       cli: auto.cli,
       worktree: auto.worktree,
-      brief: brief.brief,
-      report: brief.report,
+      text: brief.text,
       retry: false,
       task,
       taskId,
       workstream,
       revision,
-      text: brief.text,
     },
   };
 }
@@ -225,7 +261,7 @@ export function reserveAttempt(
       const planned = planAttempt(db, workstream, task, opts);
       if (!planned.ok) return planned;
       const { plan } = planned;
-      const { text, task: _t, taskId, workstream: _w, revision: _r, ...record } = plan;
+      const { task: _t, taskId, workstream: _w, revision: _r, ...record } = plan;
       const charged = db
         .prepare(
           "UPDATE task_auto SET runs = runs + 1, last_spawn = ? WHERE task_id = ? AND runs = ? AND enabled = 1",
@@ -237,10 +273,34 @@ export function reserveAttempt(
         attemptKey: plan.key,
         name: plan.name,
         workstream,
-        requestSha: attemptSha(plan.name, text),
+        requestSha: attemptSha(plan.name, plan.text),
         msgId: newMsgId(),
       });
       return planned;
+    })
+    .immediate();
+}
+
+/**
+ * Move the stored attempt `key` of a task to a terminal state (compare and
+ * set on the key, so a newer attempt is never overwritten). A receipt that
+ * never reached the send (reserved, pane, claimed) is failed with the reason;
+ * a sending / unknown one is left as the evidence it is. False when the
+ * record moved on.
+ */
+export function endAttempt(db: Db, taskId: number, key: string, end: AttemptEnd): boolean {
+  return db
+    .transaction((): boolean => {
+      const { record, receipt } = readAttempt(db, taskId);
+      if (record === undefined || record.key !== key || record.end !== undefined) return false;
+      const changed = db
+        .prepare("UPDATE task_auto SET last_spawn = ? WHERE task_id = ?")
+        .run(JSON.stringify({ ...record, end }), taskId).changes;
+      if (changed !== 1) return false;
+      if (receipt !== undefined && UNSENT_STATES.has(receipt.state)) {
+        updateReceipt(db, taskId, key, { state: "failed", detail: `${end.state}: ${end.reason}` });
+      }
+      return true;
     })
     .immediate();
 }
