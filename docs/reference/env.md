@@ -52,7 +52,7 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_WORKSTREAM` | The agent's workstream. With `MU_MANAGED_AGENT=1` it is the scope of every verb that has no `-w` (no tmux lookup); without it, ignored. `MU_SESSION` is not read: a verb with no `-w` and no injected scope fails with `no workstream: pass -w <name>`. |
 | `MU_CTL_SOCK` | The agent's control socket path, derived from state dir, workstream, and agent. The mu pi extension serves it. |
 | `MU_MANAGED_AGENT` | `1`. Hides `mu_delegate` inside agents, so a helper cannot spawn helpers. |
-| `MU_REMOTE` | `1`, only for an agent spawned with `--host`. Tells its pi extension there is no mu DB on that host: it skips the close nudge (you close the task). |
+| `MU_REMOTE` | `1`, only for an agent spawned with `--host`. Tells its pi extension there is no mu DB on that host: it skips the close nudge (you close the task) and the settle wait. |
 
 A `--host` agent gets exactly `MU_MANAGED_AGENT`, `MU_AGENT_NAME`,
 `MU_WORKSTREAM`, `MU_CTL_SOCK` (the host-side path) and `MU_REMOTE`, written
@@ -66,7 +66,7 @@ into its profile's shell template (`{env}`). It never gets `MU_DB_PATH`,
 | `MU_DELEGATE` | `0` hides the `mu_delegate` tool. `mu doctor` reports it. | unset: shown |
 | `MU_DELEGATE_TRACE` | `1` appends one JSON line per delegate delivery step and pi lifecycle event to `<cache dir>/delegate-trace.log`. For debugging a lost follow-up. | unset: off |
 | `MU_DELEGATE_MAX` | Most delegates one pi session runs at once. Further calls queue, up to four times this; past that a call is recorded as `refused` and reissued with `mu_delegate_reissue` in its session. A positive integer. | `16` |
-| `MU_NUDGE` | `0` turns off the two nudges: the keep-driving nudge (one reminder when an orchestrator ends a turn with dispatched work still IN_PROGRESS) and the close nudge (one reminder when a mu-spawned pi worker ends a turn still owning an IN_PROGRESS task). A pi nested in an agent's pane (it found `MU_CTL_SOCK` served by another pi) gets neither; a pi without UI (`pi -p`, json mode) gets no close nudge. `mu doctor` reports it. | unset: on |
+| `MU_NUDGE` | `0` turns off the two nudges: the keep-driving settle wait (every completed settle of an orchestrator runs `mu wait` for the work it owns and continues the turn on an event) and the close nudge (one reminder when a mu-spawned pi worker ends a turn still owning an IN_PROGRESS task). A pi nested in an agent's pane (it found `MU_CTL_SOCK` served by another pi) gets neither; a pi without UI (`pi -p`, json mode) gets no close nudge. `mu doctor` reports it. | unset: on |
 | `MU_PI_HOME` | Root under which `mu pi migrate` looks for the old `.pi/` shim and `.agents/` skill link. | `$HOME` |
 | `PI_CODING_AGENT_DIR` | Read only. pi's agent dir, checked for a linked murmur extension. | `~/.pi/agent` |
 

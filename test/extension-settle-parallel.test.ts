@@ -23,8 +23,8 @@ const json = (v: unknown): MuResult => ({
 
 function answer(args: readonly string[]): MuResult {
   const [noun, verb] = args;
-  if (noun === "task" && verb === "list")
-    return json({ items: [{ id: "t1", status: "IN_PROGRESS" }] });
+  if (noun === "state") return json({ workstreams: [] });
+  if (noun === "wait") return json({ firing: { kind: "closed" }, exit: 0 });
   if (noun === "task" && verb === "owned-by")
     return json({ items: [{ id: "t1", status: "IN_PROGRESS" }] });
   return json({});
@@ -54,6 +54,8 @@ function setup() {
     calls.push([...args]);
     // A breadcrumb never answers: a settle that awaited one would hang.
     if (args[0] === "log") return new Promise(() => {});
+    // The human-stop read answers at once; the wait and owned-by are held.
+    if (args[0] === "state") return Promise.resolve(answer(args));
     return new Promise((resolve) => held.push(() => resolve(answer(args))));
   };
   const settle = parallelSettle(pi);
@@ -63,7 +65,10 @@ function setup() {
   const emit = async (event: string, extra: object = {}) => {
     let last: unknown;
     for (const h of handlers.get(event) ?? []) {
-      const r = await h({ type: event, ...extra }, { hasUI: true });
+      const r = await h(
+        { type: event, ...extra },
+        { hasUI: true, sessionManager: { getSessionId: () => "s1" } },
+      );
       if (r !== undefined) last = r;
     }
     return last;
@@ -79,27 +84,26 @@ describe("parallelSettle", () => {
     expect(setup().handlers.get("agent_before_settle")).toHaveLength(3);
   });
 
-  it("starts every nudge's mu read at once and does not wait for the log breadcrumbs", async () => {
+  it("runs the settle wait and the close read at once and does not wait for the log breadcrumb", async () => {
     const f = setup();
     await f.emit("input");
-    await f.emit("tool_call", {
-      toolName: "bash",
-      input: { command: "mu task claim a -w ws --for w2 && mu task claim b -w ws --for w3" },
-    });
     const settled = f.emit("agent_before_settle", { outcome: "completed", entries: [] });
     await flush();
-    // list + owned-by reads, both in flight before any answers.
-    expect(f.calls.map((c) => c.slice(0, 2).join(" ")).sort()).toEqual([
-      "task list",
-      "task owned-by",
-    ]);
+    // the wait + owned-by, both in flight before either answers.
+    expect(f.held).toHaveLength(2);
+    expect(
+      f.calls
+        .filter((c) => c[0] !== "state")
+        .map((c) => c.slice(0, 2).join(" "))
+        .sort(),
+    ).toEqual(["task owned-by", "wait --first"]);
     for (const release of f.held.splice(0)) release();
     const r = (await settled) as { entries: { customType: string }[]; continue?: boolean };
     // Every nudge's entry survives the merge (pi replaces entries per handler).
     expect(r.entries.map((e) => e.customType).sort()).toEqual(["mu-close-task", "mu-keep-driving"]);
     expect(r.continue).toBe(true);
-    // The breadcrumbs were still written, just not awaited.
-    expect(f.calls.filter((c) => c[0] === "log")).toHaveLength(2);
+    // The close nudge's breadcrumb was still written, just not awaited.
+    expect(f.calls.filter((c) => c[0] === "log")).toHaveLength(1);
   });
 
   it("re-reads the hold after the slowest nudge: blocked drops continuations, answer drops all", async () => {
