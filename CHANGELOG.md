@@ -264,6 +264,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `COMMAND_MAX_BYTES`, `showAllCommand`, `taskItem`, `taskRecord`, `tryResolveTaskId`,
   `tryResolveAgentId`, `ReaperDetectedDuringWaitError` (never thrown), `isUnscheduled`, `UNSCHEDULED_SUBSTATES`, `cmdMe`,
   `getActiveCommandForTest`, `clearActiveCommandForTest`.
+  **SDK removal (no product caller):** the old doctor summary (`loadDoctorSummary`,
+  `loadDoctorChecks`, `countProblems`, `yankCommandForCheck`, `remediationParagraph`,
+  `DoctorSummary`), the old `WorkstreamSnapshot` loaders and helpers
+  (`loadWorkstreamSnapshot[Fast|Slow]`, `mergeSnapshotFastSlow`, `roiBucket`,
+  `agentStateHistogram`, `summarizeOwnedTasks`, and their types) and the old DAG
+  renderers (`loadFullDag`, `renderForest`, `renderTaskTree`). `mu state` reads
+  `stateSnapshot`, `mu doctor` runs its own checks, `mu task tree` reads
+  `loadOpenTaskFrontier`.
 
 - **`mu agent remote-env` and the `REMOTE:` / `REMOTE_BASE:` note convention.**
   A host profile's shell template carries the forward and the env now

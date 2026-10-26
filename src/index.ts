@@ -127,15 +127,10 @@ export {
   FRONTIER_MAX_NODES,
   type FrontierDirection,
   type FrontierEntry,
-  type FullDag,
-  type LoadFullDagOptions,
-  loadFullDag,
   loadOpenTaskFrontier,
   type OpenTaskFrontier,
   type OpenTaskFrontierOptions,
-  renderForest,
   renderFrontierLines,
-  renderTaskTree,
 } from "./dag.js";
 export {
   type AgentTool,
@@ -196,15 +191,9 @@ export {
   type VerdictTally,
   verdictTally,
 } from "./delegates.js";
-export {
-  countProblems,
-  type DoctorCheck,
-  type DoctorStatus,
-  type DoctorSummary,
-  loadDoctorChecks,
-  loadDoctorSummary,
-  remediationParagraph,
-  yankCommandForCheck,
+export type {
+  DoctorCheck,
+  DoctorStatus,
 } from "./doctor-summary.js";
 export {
   type CheapDriftReport,
@@ -427,16 +416,7 @@ export {
   verifyAgainstManifest,
 } from "./segments.js";
 export {
-  agentStateHistogram,
   callerWorkstreams,
-  type LoadWorkstreamSnapshotOptions,
-  loadWorkstreamSnapshot,
-  loadWorkstreamSnapshotFast,
-  loadWorkstreamSnapshotSlow,
-  mergeSnapshotFastSlow,
-  type OwnedTasksSummary,
-  type RoiBucket,
-  roiBucket,
   type StateCounts,
   type StateDelegate,
   type StateHumanNeed,
@@ -446,9 +426,6 @@ export {
   type StateTask,
   type StateWave,
   stateSnapshot,
-  summarizeOwnedTasks,
-  type WorkstreamSnapshot,
-  type WorkstreamSnapshotSlowFields,
   type WorkstreamState,
 } from "./state.js";
 export {

@@ -21,7 +21,6 @@ import {
   FRONTIER_CLOSED_PER_NODE,
   FRONTIER_MAX_DEPTH,
   FRONTIER_MAX_NODES,
-  loadFullDag,
   loadOpenTaskFrontier,
 } from "../src/dag.js";
 import { type Db, openDb } from "../src/db.js";
@@ -517,8 +516,6 @@ describe("tree: the open DAG, bounded", () => {
     expect(ids.filter((id) => id.startsWith("open"))).toHaveLength(3);
     expect(ids.filter((id) => id.startsWith("done"))).toHaveLength(FRONTIER_CLOSED_PER_NODE);
     expect(f.entries[0]?.closed).toBe(300 - FRONTIER_CLOSED_PER_NODE);
-    // loadFullDag keeps its whole-workstream SDK semantics.
-    expect(loadFullDag(db, WS).tasks.size).toBe(304);
   });
 
   it("CLI: --down from a root lists the open dependents; the footer's --all returns the closed ones", async () => {
