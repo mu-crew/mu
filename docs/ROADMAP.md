@@ -43,10 +43,10 @@ mu does not add these unless one earns its way back under the criteria:
 The mu-next build is approved as a whole and is exempt from the
 promotion criteria: its design of record is
 [mu-next/README.md](mu-next/README.md) and the contract as built is
-[mu-next/surface-contract.md](mu-next/surface-contract.md). Two units
-are still landing: the rest of `v_settle` (its slice A, the settle wait, has
-merged) and `mu_delegate` with no multiplexer (`v_delegate_nomux`). Nothing beyond
-them is approved; anything else follows the criteria above.
+[mu-next/surface-contract.md](mu-next/surface-contract.md). Its units
+have merged, `v_settle` (the settle wait and delegate delivery through it)
+and `mu_delegate` with no multiplexer (`v_delegate_nomux`) last. Nothing
+beyond them is approved; anything else follows the criteria above.
 
 ## Candidates
 

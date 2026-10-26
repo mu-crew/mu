@@ -32,7 +32,7 @@ parallel.
 
 - No tmux or herdr: the same tool runs the delegate as a child pi
   (`mu delegates run <call-id>`), with no pane and no attach command.
-  Its follow-up names the session file and, when it fails, the log.
+  Its report names the session file and, when it fails, the log tail.
   `keep` is dropped. Cancel stops the child. `/reload` lets it finish
   onto its task; quitting pi cancels it.
 - Watch or steer: run the attach command.

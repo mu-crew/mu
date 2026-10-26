@@ -180,15 +180,17 @@ shell out to the `mu` CLI and keep no state of their own: a call runs
 (mu picks the free name under its spawn lock, claims the task and journals
 the delivery; the send's `runs` is the wait baseline), then one
 `mu agent wait --after-runs <runs>` in the background, and finally
-`mu delegates finish` (verdict, report and close in one op group) before
-the follow-up echo. `delegateOutcome` (`src/agents/delegate.ts`) maps one
+`mu delegates finish` (verdict, report and close in one op group). The
+answer reaches the model through the orchestrator's settle wait (a
+`delegate` event shows that call's report; a wave's, one summary); the
+extension sends a pi message only as a one-line **wake** when no settle
+wait will show it. `delegateOutcome` (`src/agents/delegate.ts`) maps one
 wait result to `done`, `empty`, `error`, `died`, `timeout` or `pending`.
 The extension imports nothing from pi; it types pi's API structurally.
-A delegate answer on its way cancels only the orchestrator's settle wait
-(`DelegateHandle.onAnswer`); the answer's own settle waits again.
+The settle reports which answers it showed (`DelegateHandle.delivered`),
+so an answer is never shown twice.
 With no multiplexer the spawn fails `NoMultiplexerError` (only that
 error falls back), and the call runs as `mu delegates run <call-id>
 --no-keep` instead: the runner (`src/delegate-process.ts`) drives one
 child `pi --mode rpc` over this same ctl socket protocol and finishes the
-call itself, and the extension only words its one result as the
-follow-up. Cancel and quit SIGTERM that run, which cancels the call.
+call itself; its answer is owed to the settle wait like any other. Cancel and quit SIGTERM that run, which cancels the call.
