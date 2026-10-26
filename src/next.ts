@@ -178,7 +178,7 @@ export interface NextResult {
     /** The event that ended the hold: the engine's kind, or `none` (nothing in flight). */
     event: string;
     ref: string | null;
-    exit: 0 | 6 | 7 | 130;
+    exit: number;
     timedOut: boolean;
     /** The ended wait's snapshots of the in-flight workers, cut to what a reader needs. */
     open: { ref: string; status: string | null; lastError?: string }[];
