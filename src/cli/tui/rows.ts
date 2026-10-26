@@ -148,14 +148,26 @@ function edgeText(e: DashboardEdge): string {
 /**
  * The open DAG of one workstream, preorder. The text filter hides entry lines
  * (an entry's parent may vanish: the line keeps its indent); the status filter
- * does not apply (the DAG is the OPEN work and its frontier by definition). The
- * frontier's cuts are ALWAYS listed: a filter must not hide that open work was
- * left out.
+ * does not apply (the DAG is the OPEN work and its frontier by definition). Cuts
+ * are ALWAYS listed, per-entry ones included (a hidden entry leaves a notice): a
+ * filter must not hide that open work was left out.
  */
 function dagRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
-  const rows: Row[] = snap.edges
-    .filter((e) => e.workstream === ws && textMatch(f.text, e.key, e.title, e.substate))
-    .map((e) => ({ key: `${e.parent ?? ""}>${e.key}`, text: edgeText(e) }));
+  const rows: Row[] = [];
+  for (const e of snap.edges) {
+    if (e.workstream !== ws) continue;
+    if (textMatch(f.text, e.key, e.title, e.substate)) {
+      rows.push({ key: `${e.parent ?? ""}>${e.key}`, text: edgeText(e) });
+    } else if (e.cap_cut > 0) {
+      // Its line is filtered out, and the line is the only place its cap cut was
+      // said: keep the warning as a notice naming the entry.
+      rows.push({
+        key: `cut:cap:${e.key}`,
+        text: `… ${e.cap_cut} open task${e.cap_cut === 1 ? "" : "s"} under ${e.id} left out by the node cap`,
+        notice: true,
+      });
+    }
+  }
   const cut = snap.frontier.find((c) => c.workstream === ws);
   if (cut !== undefined && cut.roots_cut > 0) {
     rows.push({
