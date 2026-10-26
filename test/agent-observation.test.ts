@@ -14,7 +14,6 @@ import {
   observationFromReading,
   observeAgentStates,
   settledCloseInput,
-  toStatusSnapshot,
   watchAgentRun,
 } from "../src/agents/observe.js";
 import { agentCtlSocket } from "../src/agents/transport.js";
@@ -403,49 +402,6 @@ describe("settledCloseInput", () => {
     expect(applySettledClose(db, input)).toMatchObject({
       applied: false,
       reason: "already applied",
-    });
-  });
-});
-
-describe("toStatusSnapshot", () => {
-  it("maps to the legacy snapshot: only the fields waitForAgents reads, none invented", () => {
-    const obs: AgentObservation = {
-      workstream: WS,
-      name: "pia",
-      agentId: 1,
-      paneId: "%1",
-      status: "needs_input",
-      source: "ctl",
-      since: 1,
-      incarnation: "i",
-      runs: 2,
-      pending: false,
-      settled: true,
-      lastText: "t",
-      lastTextTruncated: true,
-      lastError: "e",
-      sessionFile: "/f",
-    };
-    expect(toStatusSnapshot(obs)).toEqual({
-      status: "needs_input",
-      lastText: "t",
-      lastError: "e",
-      sessionFile: "/f",
-    });
-    expect(
-      toStatusSnapshot({
-        ...obs,
-        status: "unknown",
-        reason: "why",
-        lastText: undefined,
-        lastError: undefined,
-        sessionFile: undefined,
-      }),
-    ).toEqual({ status: "unknown", unknownReason: "why" });
-    const blocked = { kind: "confirm", since: 1 };
-    expect(toStatusSnapshot({ ...obs, status: "needs_permission", blocked })).toMatchObject({
-      status: "needs_permission",
-      blocked,
     });
   });
 });

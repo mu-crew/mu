@@ -14,9 +14,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetAgentStateCacheForTests, setMurmurRunnerForTests } from "../src/agent-state.js";
-import { deleteAgent, insertAgent, setAgentWaitSleepForTests } from "../src/agents.js";
+import { deleteAgent, insertAgent } from "../src/agents.js";
 import { parseSeconds } from "../src/cli.js";
 import { type Db, openDb } from "../src/db.js";
 import {
@@ -27,9 +27,8 @@ import {
   deleteTask,
   listNotes,
   releaseTask,
-  setWaitSleepForTests,
-  waitForTasks,
 } from "../src/tasks.js";
+import { setWaitSleepForTests } from "../src/wait.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
@@ -65,7 +64,6 @@ beforeEach(() => {
 
 afterEach(() => {
   setWaitSleepForTests(undefined);
-  setAgentWaitSleepForTests(undefined);
   setMurmurRunnerForTests(null);
   resetAgentStateCacheForTests();
   mux.restore();
@@ -143,19 +141,31 @@ describe("mu task wait --timeout", () => {
   });
 });
 
-describe("waitForTasks: a task deleted mid-wait", () => {
+describe("mu wait: a task deleted mid-wait", () => {
   it("does not count as reaching --status OPEN", async () => {
     addT("a");
+    panes.set("%1", "working");
     insertAgent(db, { name: "w1", workstream: WS, paneId: "%1", cli: "sh" });
     await claimTask(db, "a", { workstream: WS, agentName: "w1" });
     onFirstSleep(setWaitSleepForTests, () => deleteTask(db, "a", WS));
-    const r = await waitForTasks(db, [{ workstreamName: WS, name: "a" }], {
-      status: "OPEN",
-      timeoutMs: 60,
-      pollMs: 10,
-    });
-    expect(r.timedOut).toBe(true);
-    expect(r.refs[0]?.reachedTarget).toBe(false);
+    const res = await runCli(
+      [
+        "task",
+        "wait",
+        "a",
+        "-w",
+        WS,
+        "--status",
+        "OPEN",
+        "--timeout",
+        "0.06",
+        "--stuck-after",
+        "0",
+      ],
+      dbPath,
+    );
+    expect(JSON.parse(res.stdout).data).toMatchObject({ timedOut: true });
+    expect(JSON.parse(res.stdout).data.firing.kind).toBe("heartbeat");
   });
 });
 
@@ -286,7 +296,7 @@ describe("mu agent wait summary and exit code", () => {
   });
 
   it("a pane that died beside a finished agent is reported and exits 6", async () => {
-    onFirstSleep(setAgentWaitSleepForTests, () => {
+    onFirstSleep(setWaitSleepForTests, () => {
       panes.set("%1", "idle");
       panes.delete("%2");
     });
@@ -298,7 +308,7 @@ describe("mu agent wait summary and exit code", () => {
   });
 
   it("--any names the agent that finished (one contract with --first), not 'All N finished'", async () => {
-    onFirstSleep(setAgentWaitSleepForTests, () => panes.set("%1", "idle"));
+    onFirstSleep(setWaitSleepForTests, () => panes.set("%1", "idle"));
     const res = await runCliJson(
       ["agent", "wait", "a1", "a2", "-w", WS, "--any", "--timeout", "5", "--json"],
       dbPath,
@@ -308,8 +318,42 @@ describe("mu agent wait summary and exit code", () => {
     expect(process.exitCode ?? 0).toBe(0);
   });
 
+  it("an unreadable state is said once on stderr (human), and stays in the document (--json)", async () => {
+    panes.set("%1", "");
+    const human = await runCli(["agent", "wait", "a1", "-w", WS, "--timeout", "0.05"], dbPath);
+    expect(human.stderr).toContain(`mu agent wait: state unknown for ${WS}/a1`);
+    const json = await runCliJson(
+      ["agent", "wait", "a1", "-w", WS, "--timeout", "0.05", "--json"],
+      dbPath,
+    );
+    expect(json.stderr ?? "").not.toContain("state unknown");
+    expect(
+      (json.data as { agents: { unknownReason?: string }[] }).agents[0]?.unknownReason,
+    ).toBeTruthy();
+  });
+
+  it("--timeout 0 waits forever: past the 25-minute heartbeat cap `mu wait` has", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      let n = 0;
+      setWaitSleepForTests(async () => {
+        // Each poll is ten minutes of wall clock; a1 finishes after forty.
+        vi.setSystemTime(Date.now() + 600_000);
+        if (++n === 4) panes.set("%1", "idle");
+      });
+      const res = await runCliJson(
+        ["agent", "wait", "a1", "-w", WS, "--timeout", "0", "--json"],
+        dbPath,
+      );
+      expect((res.data as { timedOut: boolean }).timedOut).toBe(false);
+      expect(process.exitCode ?? 0).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a fractional --timeout times out", async () => {
-    setAgentWaitSleepForTests(shortSleep);
+    setWaitSleepForTests(shortSleep);
     const res = await runCli(["agent", "wait", "a1", "-w", WS, "--timeout", "0.05"], dbPath);
     expect(res.error).toBeUndefined();
     expect(process.exitCode).toBe(5);

@@ -36,9 +36,9 @@ import {
   releaseTask,
   setTaskStatus,
   updateTask,
-  waitForTasks,
 } from "../src/tasks.js";
 import { resetTmuxExecutor } from "../src/tmux.js";
+import { waitForEvents } from "../src/wait.js";
 import { ensureWorkstream } from "../src/workstream.js";
 
 let tempDir: string;
@@ -246,27 +246,22 @@ describe("v5 name-clash regression: read verbs scope correctly", () => {
     expect(listTasks(db, "wsb").map((t) => t.workstreamName)).toEqual(["wsb"]);
   });
 
-  it("waitForTasks({ workstream }) only waits on that workstream's task", async () => {
-    // Close wsa's task; wsb's left OPEN. With workstream=wsa the SDK
-    // should consider the wait satisfied (wsa's design is CLOSED) even
-    // though wsb's design with the same local_id is still OPEN.
+  it("a task ref only waits on its own workstream's task", async () => {
+    // Close wsa's task; wsb's left OPEN. The wait on wsa's `design` is satisfied
+    // though wsb's `design` with the same local_id is still OPEN.
     closeTask(db, "design", { workstream: "wsa", evidence: "test" });
-    const r = await waitForTasks(db, ["design"], {
-      workstream: "wsa",
-      timeoutMs: 100,
-      pollMs: 10,
-    });
-    expect(r.refs.every((t) => t.reachedTarget)).toBe(true);
+    const wait = (workstream: string) =>
+      waitForEvents(db, [{ kind: "task", workstream, id: "design" }], {
+        callers: [],
+        sync: false,
+        timeoutMs: 80,
+        pollMs: 10,
+      });
+    const r = await wait("wsa");
     expect(r.timedOut).toBe(false);
-    expect(r.refs[0]?.status).toBe("CLOSED");
-    // And the same wait targeting wsb times out (wsb's design still
-    // OPEN).
-    const r2 = await waitForTasks(db, ["design"], {
-      workstream: "wsb",
-      timeoutMs: 80,
-      pollMs: 10,
-    });
+    expect(r.refs[0]).toMatchObject({ fired: true, status: "CLOSED" });
+    const r2 = await wait("wsb");
     expect(r2.timedOut).toBe(true);
-    expect(r2.refs[0]?.status).toBe("OPEN");
+    expect(r2.refs[0]).toMatchObject({ fired: false, status: "OPEN" });
   });
 });

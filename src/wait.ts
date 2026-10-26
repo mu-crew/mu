@@ -1,8 +1,8 @@
 // mu — waitForEvents: the one owned-event wait.
 //
-// Before this there were two poll loops (waitForTasks, waitForAgents) and a
+// Before this there were two poll loops (one for tasks, one for agents) and a
 // shell loop above them; none could see a delegate's report or end on any
-// event but its own. This is the single loop; both are adapters over it.
+// event but its own. This is the single loop.
 //
 // One iteration: beforePoll, a bounded sync ingest, the DB reads (tasks,
 // delegates, the caller's registration), ONE batched agent read, apply the
@@ -60,8 +60,7 @@
 //
 // Stalls. The engine detects them (an IN_PROGRESS work task whose owner needs
 // input or has a broken control socket, `stuckAfterMs`); `handleStall` (raced,
-// once per stallToken) owns the policy and effects. The legacy per-task
-// `stuck` warning stays in tasks/wait.ts behind the `inspect` hook.
+// once per stallToken) owns the policy and effects.
 //
 // Not here: the CLI and signal wiring, arming from spawn/send/claim
 // (v_wait_cli).
@@ -133,13 +132,14 @@ import {
   type WaitStallContext,
 } from "./wait-types.js";
 
-let pollCount = 0;
-/** Sleeps taken across all waits in this process. */
-export function getWaitPollCount(): number {
-  return pollCount;
-}
-export function resetWaitPollCount(): void {
-  pollCount = 0;
+let sleepSeam: ((ms: number) => Promise<void>) | undefined;
+/** Test seam: replace the poll sleep of every wait (undefined restores the abortable timer); returns the previous one. */
+export function setWaitSleepForTests(
+  impl: ((ms: number) => Promise<void>) | undefined,
+): ((ms: number) => Promise<void>) | undefined {
+  const previous = sleepSeam;
+  sleepSeam = impl;
+  return previous;
 }
 
 interface Item {
@@ -366,7 +366,6 @@ export async function waitForEvents(
     { status: string; owner: string | null; ownerWs: string; ownerId: number }
   >();
   let firstRefresh = true;
-  let inspected = false;
   const delivered: Item[] = [];
 
   /**
@@ -1375,12 +1374,6 @@ export async function waitForEvents(
       if (stopReason === "deadline" || Date.now() >= deadline) {
         const items = evaluate();
         driveStalls(items);
-        // The legacy waits always took one full snapshot, stuck check included,
-        // before honouring the deadline: a deadline that won the race still does.
-        if (opts.inspect && !inspected) {
-          inspected = true;
-          await opts.inspect(items.filter((i) => i.target).map((i) => i.snap));
-        }
         const chosen = select(items);
         result = chosen
           ? build(chosen.event.kind ?? "closed", items, chosen)
@@ -1393,10 +1386,6 @@ export async function waitForEvents(
       const items = evaluate();
       driveStalls(items);
       opts.onPicture?.(items.map((i) => i.snap));
-      if (opts.inspect) {
-        inspected = true;
-        await opts.inspect(items.filter((i) => i.target).map((i) => i.snap));
-      }
       if (items.length === 0) throw new WaitNothingError();
       const chosen = select(items);
       if (chosen !== undefined) {
@@ -1421,16 +1410,16 @@ export async function waitForEvents(
       const ms = polled ? Math.min(pollMs, left) : left;
       if (ms <= 0) continue;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      const sleeper = opts.sleep ?? sleepSeam;
       const slept = !polled
         ? new Promise<void>(() => {})
-        : opts.sleep
-          ? opts.sleep(ms)
+        : sleeper
+          ? sleeper(ms)
           : new Promise<void>((resolve) => {
               timer = setTimeout(resolve, ms);
             });
       await Promise.race([woken, slept, stopP]);
       clearTimeout(timer);
-      if (polled) pollCount += 1;
       woken = new Promise<void>((resolve) => {
         wake = resolve;
       });

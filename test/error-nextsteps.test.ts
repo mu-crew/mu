@@ -66,7 +66,6 @@ import {
   CycleError,
   HumanTaskError,
   InvalidSubstateError,
-  StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskExistsError,
@@ -188,11 +187,6 @@ const cases: NextStepsCase[] = [
     expectedTokens: ["--self", "--for"],
   },
   { error: new CycleError("a", "b"), label: "CycleError", expectedTokens: ["a", "b"] },
-  {
-    error: new StallDetectedDuringWaitError("wait_task", "worker-1", "wait-ws", 300),
-    label: "StallDetectedDuringWaitError",
-    expectedTokens: ["wait_task", "worker-1", "wait-ws"],
-  },
   {
     // CrossWorkstreamEdgeError's recovery is to move or duplicate the
     // BLOCKER, so the dependent id legitimately doesn't appear in all

@@ -15,7 +15,6 @@ import { dispatchHint, nextDispatchHint, waitHint } from "../src/cli/dispatch-hi
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
-import { StallDetectedDuringWaitError } from "../src/tasks/errors.js";
 import { addTask } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -95,32 +94,6 @@ describe("dispatchHint", () => {
       "mu task claim <id> --for worker-1 -w auth && mu agent send worker-1 --fresh",
     );
     expect(nextDispatchHint(claude, "auth")).toBeNull();
-  });
-
-  it("stall error names abort first-resort only for a ctl owner", () => {
-    const withCtl = new StallDetectedDuringWaitError("t", "worker-1", "auth", 300, true);
-    const without = new StallDetectedDuringWaitError("t", "worker-2", "auth", 300);
-    expect(withCtl.errorNextSteps().map((s) => s.command)).toContain(
-      "mu agent abort worker-1 -w auth",
-    );
-    expect(without.errorNextSteps().some((s) => s.command.includes("abort"))).toBe(false);
-  });
-
-  it("stall error leads with wait --after-runs only for a ctl owner with runs", () => {
-    const ctl = new StallDetectedDuringWaitError("t", "worker-1", "auth", 300, true, 3);
-    expect(
-      ctl
-        .errorNextSteps()
-        .map((s) => s.command)
-        .slice(0, 2),
-    ).toEqual(["mu wait agent:auth/worker-1@2", "mu agent read worker-1 -w auth --lines 60"]);
-    for (const e of [
-      new StallDetectedDuringWaitError("t", "worker-2", "auth", 300),
-      new StallDetectedDuringWaitError("t", "worker-1", "auth", 300, true, 0),
-    ]) {
-      expect(e.errorNextSteps()[0]?.command).toMatch(/^mu agent read /);
-      expect(e.errorNextSteps().some((s) => s.command.includes("--after-runs"))).toBe(false);
-    }
   });
 });
 

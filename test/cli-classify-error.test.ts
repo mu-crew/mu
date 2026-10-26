@@ -30,7 +30,6 @@ import {
   CrossWorkstreamEdgeError,
   CycleError,
   InvalidSubstateError,
-  StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskExistsError,
@@ -117,9 +116,6 @@ describe("classifyError exit-code map", () => {
     [new Database.SqliteError("UNIQUE constraint failed", "SQLITE_CONSTRAINT_UNIQUE"), 1, "error"],
     // f_doctor_fail_row_exit0: a doctor FAIL row shares drift's lane.
     [new HazardFailError(["db-vs-sync"]), 5, "doctor"],
-
-    // switch branch 9: wait-specific process state
-    [new StallDetectedDuringWaitError("wait_task", "worker-1", "ws", 300), 7, "stall"],
 
     // final fallthrough: generic catch-all (non-typed errors)
     [new Error("some other thing"), 1, "error"],

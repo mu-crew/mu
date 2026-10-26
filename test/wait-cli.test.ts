@@ -12,9 +12,9 @@ import { type Db, openDb } from "../src/db.js";
 import { isJsonMode, isWaitVerbArgv } from "../src/output.js";
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../src/output-contract.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
-import { setWaitSleepForTests } from "../src/tasks/wait.js";
 import { addTask, closeTask } from "../src/tasks.js";
 import type { WaitRef, WaitResult, WaitSnapshot } from "../src/wait.js";
+import { setWaitSleepForTests } from "../src/wait.js";
 import {
   loadResume,
   RESUME_KEEP_DAYS,

@@ -285,11 +285,9 @@ export interface WaitOptions {
   onPicture?: (snaps: readonly WaitSnapshot[]) => void;
   /** Called once when every watched agent target reads unknown on the first iteration. */
   onInitialUnknown?: (agents: readonly WaitSnapshot[]) => void;
-  /** Called with the targets' snapshots every iteration, before the pick; a throw propagates (the task adapter's legacy stuck warning). */
-  inspect?: (snaps: readonly WaitSnapshot[]) => Promise<void>;
-  /** Poll sleep seam (the adapters'). Default: an abortable timer. */
+  /** Poll sleep seam. Default: an abortable timer. */
   sleep?: (ms: number) => Promise<void>;
-  /** Adapters only: timeoutMs 0 means forever and there is no cap, as the legacy waits had it. */
+  /** `mu agent wait`: timeoutMs 0 means forever and there is no heartbeat cap. */
   uncapped?: boolean;
 }
 
