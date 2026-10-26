@@ -892,8 +892,15 @@ function forwardRootWorkstream(root: Command, leaf: Command): void {
     usage("-w/--workstream given both before and after the verb; pass it once");
     return;
   }
+  // optsWithGlobals() lets the root's value overwrite the leaf's, so the root
+  // must end up holding exactly what the leaf holds: a string for a
+  // single-workstream verb, never the root's raw array.
+  const settle = (value: string | string[]): void => {
+    leaf.setOptionValueWithSource("workstream", value, "cli");
+    root.setOptionValueWithSource("workstream", value, "cli");
+  };
   if (opt.variadic) {
-    leaf.setOptionValueWithSource("workstream", names, "cli");
+    settle(names);
     return;
   }
   const parsed = parseWorkstreamList(names);
@@ -903,7 +910,7 @@ function forwardRootWorkstream(root: Command, leaf: Command): void {
     );
     return;
   }
-  if (parsed[0] !== undefined) leaf.setOptionValueWithSource("workstream", parsed[0], "cli");
+  if (parsed[0] !== undefined) settle(parsed[0]);
 }
 
 // Recursively set sortSubcommands on every command in the tree. Belt

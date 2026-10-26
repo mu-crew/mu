@@ -7,7 +7,9 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildProgram } from "../src/cli.js";
 import { openDb } from "../src/db.js";
 import { addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -166,4 +168,52 @@ describe("root-position -w forwards to the verb's -w", () => {
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toMatch(/both before and after/);
   });
+});
+
+// A root `-w` must reach every verb's `optsWithGlobals()` as the verb's own
+// shape (a string, or the list for a variadic -w), never the root's raw
+// array: `mu -w auth delegates tally` died 'value.trim is not a function'.
+describe("root -w as seen through optsWithGlobals, for every verb with -w", () => {
+  const STOP = new Error("stop before the action");
+
+  const leaves = (cmd: Command, path: string[] = []): { path: string[]; cmd: Command }[] =>
+    cmd.commands.length === 0
+      ? [{ path, cmd }]
+      : cmd.commands.flatMap((c) => leaves(c, [...path, c.name()]));
+
+  const probe = buildProgram();
+  const withW = leaves(probe).filter((l) =>
+    l.cmd.options.some((o) => o.attributeName() === "workstream"),
+  );
+
+  it("covers the verbs", () => {
+    expect(withW.length).toBeGreaterThan(30);
+    expect(withW.map((l) => l.path.join(" "))).toContain("delegates tally");
+    expect(withW.map((l) => l.path.join(" "))).toContain("delegates register");
+  });
+
+  it.each(withW.map((l) => [l.path.join(" "), l.path] as const))(
+    "mu -w ws %s",
+    async (_n, path) => {
+      const program = buildProgram();
+      let seen: unknown = "never reached";
+      program.hook("preAction", (_root, leaf) => {
+        seen = leaf.optsWithGlobals().workstream;
+        throw STOP;
+      });
+      const leaf = path.reduce<Command>(
+        (c, n) => c.commands.find((x) => x.name() === n) as Command,
+        program,
+      );
+      const argv = [
+        ...leaf.registeredArguments.filter((a) => a.required).map(() => "x"),
+        ...leaf.options.filter((o) => o.mandatory).flatMap((o) => [o.long as string, "x"]),
+      ];
+      const variadic = leaf.options.find((o) => o.attributeName() === "workstream")?.variadic;
+      await program.parseAsync(["-w", "ws", ...path, ...argv], { from: "user" }).catch((e) => {
+        if (e !== STOP) throw e;
+      });
+      expect(seen).toEqual(variadic ? ["ws"] : "ws");
+    },
+  );
 });
