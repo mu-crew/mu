@@ -72,6 +72,7 @@ import {
   storedCaptureVersion,
 } from "./capture.js";
 import { REMOTE_RECOVERY_DDL } from "./db-recovery.js";
+import { say } from "./messages.js";
 import { defaultStateDir, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
 
@@ -245,9 +246,7 @@ function refuseUserDbDuringTests(path: string): void {
   const realDbs = ["mu-next", "mu"].map((dir) => resolve(join(xdgStateHome(home), dir, "mu.db")));
   const realDb = realDbs.find((p) => p === resolve(path));
   if (realDb !== undefined) {
-    throw new Error(
-      `openDb refused: tests must NEVER write to the user DB (${realDb}). Set MU_DB_PATH to a per-test temp path (test/_runCli.ts does this automatically) or pass an explicit { path } argument. The leak source is the call site of openDb in this stack frame.`,
-    );
+    throw new Error(say("db.test_real_db", realDb));
   }
 }
 
@@ -265,7 +264,7 @@ function refuseUserDbDuringTests(path: string): void {
 export class WorkstreamNotFoundError extends Error {
   override readonly name: string = "WorkstreamNotFoundError";
   constructor(public readonly workstream: string) {
-    super(`no such workstream: ${workstream}`);
+    super(say("workstream.not_found", workstream));
   }
 }
 
@@ -279,7 +278,7 @@ export class WorkstreamTornDownError extends WorkstreamNotFoundError {
     public readonly tornDownAt: string,
   ) {
     super(workstream);
-    this.message = `workstream ${workstream} is torn down (at ${tornDownAt}); \`mu workstream init ${workstream}\` to reuse the name`;
+    this.message = say("workstream.torn_down", workstream, tornDownAt);
   }
 }
 
@@ -343,9 +342,7 @@ export class SchemaTooOldError extends Error {
     public readonly detectedVersion: number,
     public readonly requiredVersion: number,
   ) {
-    super(
-      `Detected v${detectedVersion} schema; v${requiredVersion} is required. mu ships NO in-place migration — your v${detectedVersion} DB is untouched. Back it up or move it aside, then start a fresh v${requiredVersion} DB.`,
-    );
+    super(say("db.schema_old", detectedVersion, requiredVersion));
   }
 }
 
@@ -361,11 +358,7 @@ export class SchemaTooNewError extends Error {
     /** Which stamp was newer: the table schema, or the capture triggers. */
     public readonly stamp: "schema" | "capture" = "schema",
   ) {
-    super(
-      stamp === "schema"
-        ? `DB is v${detectedVersion}; this mu understands up to v${supportedVersion}. Upgrade mu.`
-        : `DB's capture triggers are revision ${detectedVersion}; this mu understands up to ${supportedVersion}. Upgrade mu.`,
-    );
+    super(say("db.schema_new", detectedVersion, supportedVersion, stamp));
   }
 }
 
@@ -377,9 +370,7 @@ export class SchemaTooNewError extends Error {
 export class SqliteTooOldError extends Error {
   override readonly name = "SqliteTooOldError";
   constructor(public readonly sqliteVersion: string) {
-    super(
-      `SQLite ${sqliteVersion} is too old; mu needs >= 3.42 (unixepoch('subsec') for the op clock). The DB was not touched.`,
-    );
+    super(say("db.sqlite_old", sqliteVersion));
   }
 }
 

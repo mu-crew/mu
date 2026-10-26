@@ -794,7 +794,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         lease !== undefined &&
         !bindHostChannel(db, lease, { agentId: row.incarnation, paneId: pid })
       ) {
-        throw new Error(`host ${lease.host}: channel ${lease.holder} was lost`);
+        throw new Error(say("host.channel_lost", lease.host, lease.holder));
       }
       opts.onIdentity?.(row);
       return { pid, row };

@@ -31,6 +31,7 @@
 import { randomUUID } from "node:crypto";
 import { type Db, SYNCED_ENTITIES } from "./db.js";
 import { nextHlc } from "./hlc.js";
+import { say } from "./messages.js";
 
 export type LogKind = "message" | "event" | "broadcast" | string;
 
@@ -243,10 +244,13 @@ export class GroupIdAmbiguousError extends Error {
     readonly candidates: readonly string[],
   ) {
     super(
-      `group id ${JSON.stringify(prefix)} is ambiguous: matches ${candidates.length} groups (${candidates
-        .slice(0, 4)
-        .map((c) => c.slice(0, 12))
-        .join(", ")}${candidates.length > 4 ? ", …" : ""})`,
+      say(
+        "log.group_ambiguous",
+        prefix,
+        candidates.length,
+        candidates.slice(0, 4).map((c) => c.slice(0, 12)),
+        candidates.length > 4,
+      ),
     );
     this.name = "GroupIdAmbiguousError";
   }
@@ -255,7 +259,7 @@ export class GroupIdAmbiguousError extends Error {
 /** Raised when a group-id prefix matches no group. Exit 3. */
 export class GroupNotFoundError extends Error {
   constructor(readonly prefix: string) {
-    super(`no op group matching ${JSON.stringify(prefix)}`);
+    super(say("log.group_not_found", prefix));
     this.name = "GroupNotFoundError";
   }
 }
@@ -349,9 +353,7 @@ const RESERVED_LOG_KINDS: ReadonlySet<string> = new Set(
 export class LogKindReservedError extends Error {
   override readonly name = "LogKindReservedError";
   constructor(readonly kind: string) {
-    super(
-      `--kind ${JSON.stringify(kind)} is reserved: ${[...RESERVED_LOG_KINDS].join(", ")} name projectable op entities, and a log line under one would be synced and replayed as a real ${kind} change`,
-    );
+    super(say("log.kind_reserved", kind, [...RESERVED_LOG_KINDS]));
   }
 }
 

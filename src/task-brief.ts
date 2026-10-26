@@ -9,6 +9,7 @@
 // no ctl.
 
 import type { Db } from "./db.js";
+import { say } from "./messages.js";
 import { taskIdFor } from "./tasks/core.js";
 import { TaskNotFoundError } from "./tasks/errors.js";
 import { getTaskNote } from "./tasks/queries.js";
@@ -21,7 +22,7 @@ export class TaskBriefMissingError extends Error {
     public readonly workstream: string,
     reason: string,
   ) {
-    super(`task ${task} cannot be briefed: ${reason}`);
+    super(say("task.brief_missing", task, reason));
   }
 }
 

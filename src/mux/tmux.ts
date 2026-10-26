@@ -9,6 +9,7 @@
 // (src/agents/transport.ts); herdr has its own atomic `agent prompt`.
 
 import { execFileCapture } from "../exec-file.js";
+import { say } from "../messages.js";
 import {
   type AttachTarget,
   type CaptureOptions,
@@ -48,7 +49,7 @@ export class TmuxError extends MuxError {
     public readonly exitCode: number | null,
   ) {
     const detail = stderr.trim() || stdout.trim() || "no output";
-    super(`tmux ${args.join(" ")} failed (exit ${exitCode}): ${detail}`);
+    super(say("mux.tmux_failed", args, exitCode, detail));
     this.name = "TmuxError";
   }
 }

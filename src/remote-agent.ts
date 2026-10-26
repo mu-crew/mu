@@ -27,6 +27,7 @@ import {
   runLeasedTemplate,
   withHostChannel,
 } from "./hosts.js";
+import { say } from "./messages.js";
 import { activeMux } from "./mux.js";
 import { shellQuote, shellWord } from "./shell-quote.js";
 import type { ReleasedWorktree } from "./worktree.js";
@@ -39,7 +40,7 @@ export class RemotePrepareError extends Error {
     what: string,
     detail: string,
   ) {
-    super(`host ${host}: ${what}${detail === "" ? "" : `: ${detail}`}`);
+    super(say("remote.prepare", host, what, detail));
   }
 }
 
@@ -169,7 +170,7 @@ export class RemoteCloseRefusedError extends Error {
     /** The recovery record being closed (no agent row left): every hint then names it. */
     public readonly recoveryId?: number,
   ) {
-    super(`agent ${agentName}: remote worktree kept: ${detail}`);
+    super(say("remote.worktree_kept", agentName, detail));
   }
 }
 
@@ -252,7 +253,7 @@ export async function closeRemoteWorktree(
 ): Promise<ReleasedWorktree> {
   const { name, workstreamName: ws, host, cwd: path, base, collectedHead } = agent;
   if (host === null || path === null || base === null) {
-    throw new Error(`agent ${name} has no remote worktree`);
+    throw new Error(say("remote.no_worktree", name));
   }
   const asidePath = asideOf(path, agent.incarnation);
   const probe = opts.probe ?? { proc: "/proc", lsof: "lsof" };

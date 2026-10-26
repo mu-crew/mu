@@ -24,6 +24,7 @@ import { reapAgentRow } from "./agents/reap.js";
 import { WORKSTREAM_OPS_WHERE } from "./compact.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, tornDownAtOf } from "./db.js";
+import { say } from "./messages.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
 import { listWorktrees } from "./worktree.js";
@@ -113,17 +114,16 @@ export function isValidWorkstreamName(name: string): boolean {
 export class WorkstreamExistsError extends Error {
   override readonly name: string = "WorkstreamExistsError";
   constructor(public readonly workstream: string) {
-    super(`workstream already exists: ${workstream}`);
+    super(say("workstream.exists", workstream));
   }
 }
 
 export class WorkstreamNameInvalidError extends Error {
   override readonly name = "WorkstreamNameInvalidError";
   constructor(public readonly attempted: string) {
-    const reason = attempted.startsWith(RESERVED_WORKSTREAM_PREFIX)
-      ? `the 'mu-' prefix is reserved (mu auto-prepends 'mu-' to derive the tmux session name; '${attempted}' would produce session 'mu-${attempted}', which is double-prefixed and almost never what you want). Drop the 'mu-' from the workstream name.`
-      : `must match /^[a-z][a-z0-9_-]{0,31}$/. tmux silently rewrites '.' to '_' and reserves ':' as a target separator, so workstream names containing those characters would create tmux sessions mu couldn't look up afterwards. Use letters, digits, '_', and '-' only.`;
-    super(`invalid workstream name ${JSON.stringify(attempted)}: ${reason}`);
+    super(
+      say("workstream.name_invalid", attempted, attempted.startsWith(RESERVED_WORKSTREAM_PREFIX)),
+    );
   }
 }
 
@@ -137,9 +137,7 @@ function assertValidWorkstreamName(name: string): void {
 export class WorkstreamNameReservedError extends Error {
   override readonly name = "WorkstreamNameReservedError";
   constructor(public readonly attempted: string) {
-    super(
-      `workstream name ${JSON.stringify(attempted)} is reserved: it is the off-the-cuff bucket and auto-creates on first spawn. Don't 'init' it.`,
-    );
+    super(say("workstream.name_reserved", attempted));
   }
 }
 
@@ -156,9 +154,7 @@ export class WorkstreamRevisionMismatchError extends Error {
     /** The command that previews again. */
     public readonly previewCommand: string = `mu workstream teardown ${workstream}`,
   ) {
-    super(
-      `workstream ${workstream} changed since preview (rev ${expected} → ${actual}); preview again: ${previewCommand}`,
-    );
+    super(say("workstream.changed", workstream, expected, actual, previewCommand));
   }
 }
 
@@ -171,9 +167,7 @@ export class WorkstreamHasAgentsError extends Error {
     public readonly workstream: string,
     public readonly agents: readonly string[],
   ) {
-    super(
-      `torn-down workstream ${workstream} still has ${agents.length} local agent row${agents.length === 1 ? "" : "s"} (${agents.join(", ")}); close each once its pane is gone (preview, then apply with --if): mu agent close ${agents[0]} -w ${workstream}`,
-    );
+    super(say("workstream.has_agents", workstream, agents));
   }
 }
 
@@ -186,9 +180,7 @@ export class WorkstreamPanesLiveError extends Error {
     public readonly workstream: string,
     public readonly agents: readonly string[],
   ) {
-    super(
-      `workstream ${workstream} has live panes outside its session (${agents.join(", ")}); close them first (preview, then apply with --if): mu agent close ${agents[0]} -w ${workstream}`,
-    );
+    super(say("workstream.panes_live", workstream, agents));
   }
 }
 
@@ -200,9 +192,7 @@ export class WorkstreamSessionLiveError extends Error {
     public readonly workstream: string,
     public readonly session: string,
   ) {
-    super(
-      `torn-down workstream ${workstream} still has a live mux session ${session}; kill it first: mu workstream teardown ${workstream}`,
-    );
+    super(say("workstream.session_live", workstream, session));
   }
 }
 

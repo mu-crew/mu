@@ -25,6 +25,7 @@ import { type AgentRow, getAgent } from "./agents.js";
 import type { Db } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { runLeasedTemplate, withHostChannel } from "./hosts.js";
+import { say } from "./messages.js";
 import { localPaneAlive } from "./remote-agent.js";
 import {
   assertRecoveryProfile,
@@ -47,7 +48,7 @@ export const REMOTE_COLLECT_TIMEOUT_MS = 300_000;
 export class RemoteCollectUnsupportedError extends Error {
   override readonly name = "RemoteCollectUnsupportedError";
   constructor(agent: string, why: string) {
-    super(`agent ${agent}: nothing to collect: ${why}`);
+    super(say("remote.collect_unsupported", agent, why));
   }
 }
 
@@ -58,7 +59,7 @@ export class RemoteCollectError extends Error {
     public readonly host: string,
     detail: string,
   ) {
-    super(`host ${host}: collect failed: ${detail}`);
+    super(say("remote.collect_failed", host, detail));
   }
 }
 
