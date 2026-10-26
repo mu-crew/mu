@@ -27,13 +27,14 @@ import { ctlProbe, ctlRequest } from "../ctl/client.js";
 import { type CtlBlocked, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { AgentRestartedError } from "./errors.js";
+import { type GateReading, readGate } from "./gate.js";
 import { expectsCtl } from "./transport.js";
 import type { AgentStatusSnapshot } from "./wait.js";
 
 /** Who an observation is about. */
 export type ObservedAgent = Pick<
   AgentRow,
-  "name" | "workstreamName" | "paneId" | "cli" | "incarnation"
+  "name" | "workstreamName" | "paneId" | "cli" | "incarnation" | "gateToken"
 >;
 
 export interface AgentObservation {
@@ -52,6 +53,8 @@ export interface AgentObservation {
   reason?: string;
   /** How the control socket answered; absent for a non-pi agent. */
   ctl?: Exclude<StateReading["ctl"], undefined>;
+  /** A remote command gate that ended: the command's own numeric exit status (`status` is then null). */
+  exit?: number;
   /** pi's process incarnation (ctl only; absent from older extensions). */
   incarnation?: string;
   /** pi's settled-run count: of the SETTLED run when `settled`, else the current count. */
@@ -95,21 +98,53 @@ export function observationFromReading(
   };
 }
 
-/** One `readAgentStates` pass over `agents`, keyed `<workstream>/<name>`. */
+/** A remote command gate's reading as an observation: running reads busy, an ended one carries its numeric exit. */
+export function observationFromGate(agent: ObservedAgent, gate: GateReading): AgentObservation {
+  const base = {
+    workstream: agent.workstreamName,
+    name: agent.name,
+    agentId: agent.incarnation,
+    paneId: agent.paneId,
+    source: "none" as const,
+    since: null,
+    settled: false,
+  };
+  switch (gate.kind) {
+    case "running":
+      return { ...base, status: "busy" };
+    case "exited":
+      return { ...base, status: null, exit: gate.code };
+    case "dead":
+      return { ...base, status: null, reason: gate.reason };
+    case "unknown":
+      return { ...base, status: "unknown", reason: gate.reason };
+  }
+}
+
+/** One `readAgentStates` pass over `agents`, keyed `<workstream>/<name>`; a gate is read from its pane and result record instead. */
 export async function observeAgentStates(
   db: Db,
   agents: readonly AgentRow[],
 ): Promise<Map<string, AgentObservation>> {
-  const readings = await readAgentStates(agents, { stateDir: dirname(db.name) });
-  return new Map(
-    agents.map((a) => [agentKey(a), observationFromReading(a, readings.get(agentKey(a)))]),
+  const gates = agents.filter((a) => a.gateToken !== null);
+  const rest = agents.filter((a) => a.gateToken === null);
+  const readings = await readAgentStates(rest, { stateDir: dirname(db.name) });
+  const out = new Map<string, AgentObservation>(
+    rest.map((a) => [agentKey(a), observationFromReading(a, readings.get(agentKey(a)))]),
   );
+  const read = await Promise.all(gates.map((g) => readGate(db, g)));
+  gates.forEach((g, i) => {
+    const r = read[i];
+    if (r !== undefined) out.set(agentKey(g), observationFromGate(g, r));
+  });
+  return out;
 }
 
 /** The snapshot waitForAgents reads: only what it uses, nothing invented. */
 export function toStatusSnapshot(obs: AgentObservation): AgentStatusSnapshot {
   return {
     status: obs.status,
+    ...(obs.exit !== undefined ? { exit: obs.exit } : {}),
     ...(obs.reason !== undefined ? { unknownReason: obs.reason } : {}),
     ...(obs.lastText !== undefined ? { lastText: obs.lastText } : {}),
     ...(obs.lastError !== undefined ? { lastError: obs.lastError } : {}),

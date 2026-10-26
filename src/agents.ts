@@ -183,6 +183,8 @@ export interface AgentRow {
   host: string | null;
   /** HEAD last collected from its remote worktree; null until one is. */
   collectedHead: string | null;
+  /** Set for a remote command gate (`spawn --host` of a non-pi command): its spawn-unique token, the key of the remote result record. Null for every other agent. */
+  gateToken: string | null;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** ISO 8601 timestamp. */
@@ -267,6 +269,7 @@ export interface InsertAgentInput {
   spawner?: string | null;
   host?: string | null;
   collectedHead?: string | null;
+  gateToken?: string | null;
 }
 
 interface RawAgentRow {
@@ -285,6 +288,7 @@ interface RawAgentRow {
   spawner: string | null;
   host: string | null;
   collected_head: string | null;
+  gate_token: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -307,6 +311,7 @@ const SELECT_AGENT_COLS = `
   a.spawner AS spawner,
   a.host AS host,
   a.collected_head AS collected_head,
+  a.gate_token AS gate_token,
   a.created_at AS created_at,
   a.updated_at AS updated_at
 `;
@@ -334,6 +339,7 @@ function rowFromDb(row: RawAgentRow): AgentRow {
     spawner: row.spawner,
     host: row.host,
     collectedHead: row.collected_head,
+    gateToken: row.gate_token,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -361,10 +367,10 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
   const now = new Date().toISOString();
   try {
     db.prepare(
-      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, created_at, updated_at)
+      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, gate_token, created_at, updated_at)
        VALUES (@name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
                COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource,
-               @spawner, @host, @collectedHead, @now, @now)`,
+               @spawner, @host, @collectedHead, @gateToken, @now, @now)`,
     ).run({
       name: input.name,
       workstreamId,
@@ -379,6 +385,7 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
       spawner: input.spawner ?? null,
       host: input.host ?? null,
       collectedHead: input.collectedHead ?? null,
+      gateToken: input.gateToken ?? null,
       now,
     });
   } catch (err) {

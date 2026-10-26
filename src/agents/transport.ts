@@ -132,12 +132,15 @@ export function agentCtlSocket(db: Db, agent: AgentRow): string {
  * bound by this agent's extension (or its ssh forward). That covers
  * `--cli helper --command "pi-meta ..."`, whose command is not stored,
  * without a schema change. `sock` defaults to the derived path; pass
- * agentCtlSocket(db, agent) when a DB is at hand.
+ * agentCtlSocket(db, agent) when a DB is at hand. A command gate (`gateToken`)
+ * never speaks ctl: the discriminator beats both rules.
  */
 export function expectsCtl(
-  agent: Pick<AgentRow, "cli" | "name" | "workstreamName">,
+  agent: Pick<AgentRow, "cli" | "name" | "workstreamName"> & { gateToken?: string | null },
   sock: string = ctlSocketPath(agent.workstreamName, agent.name),
 ): boolean {
+  // A remote command gate runs no pi, whatever its `cli` says or a forward leaves behind.
+  if (agent.gateToken != null) return false;
   return speaksMuCtl(agent.cli, resolveCliCommand(agent.cli)) || existsSync(sock);
 }
 

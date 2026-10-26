@@ -94,7 +94,24 @@ export interface SpawnAgentPaneOptions {
    * The returned promise settles when the agent is started.
    */
   onPaneCreated?: (paneId: string) => void;
+  /**
+   * Keep the pane (its row and scrollback) after its command ends, armed
+   * BEFORE the command can run, so an immediate exit is still readable with
+   * `paneResult`. Honoured only by a backend with `paneResult`; the pane then
+   * lives until `killPane`. Never changes a session or global default.
+   */
+  retainOnExit?: boolean;
 }
+
+/**
+ * A pane's terminal result as the mux itself reports it. `exited` carries the
+ * LOCAL command's status (a remote command's status is not this: see
+ * src/agents/gate.ts); `code` xor `signal` is set.
+ */
+export type PaneResult =
+  | { state: "running" }
+  | { state: "exited"; code: number | null; signal: number | null }
+  | { state: "absent" };
 
 /** Where an attach should land the user. */
 export interface AttachTarget {
@@ -330,6 +347,10 @@ export interface MuxBackend {
   /** The pane's runtime state as the mux itself reports it, or undefined
    *  when the pane is gone or unclassified. herdr only: for non-pi agents. */
   paneStatus?(paneId: string): Promise<MuxPaneStatus | undefined>;
+  /** tmux only: whether the pane runs, exited (a retained pane: `retainOnExit`)
+   *  or is gone. Unlike `paneAlive` (handle existence), an exited pane is NOT
+   *  running here. Throws when the probe itself fails: unknown, never a result. */
+  paneResult?(paneId: string): Promise<PaneResult>;
   /** herdr only: atomic `agent prompt`. tmux has no reliable paste (cut in
    *  mu-next), so callers branch on the method's presence, never on
    *  `mux.name`, and refuse when it is absent. */

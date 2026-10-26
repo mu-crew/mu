@@ -21,6 +21,7 @@ import {
   type MuxHealth,
   type MuxPane,
   PaneNotFoundError,
+  type PaneResult,
   type SpawnAgentPaneOptions,
 } from "./types.js";
 
@@ -308,6 +309,9 @@ export async function killSession(name: string): Promise<void> {
 
 // ─── Panes ─────────────────────────────────────────────────────────────
 
+/** What a retained pane runs until its `remain-on-exit` is armed and the real command replaces it. */
+const RETAIN_PLACEHOLDER = "exec sleep 60";
+
 /**
  * Create the agent's pane and run `opts.command` in it, one tmux call:
  *   - session doesn't exist          → new session+window+pane
@@ -316,15 +320,36 @@ export async function killSession(name: string): Promise<void> {
  * Returns the pane's stable id (`%15`).
  */
 export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
+  const retain = opts.retainOnExit === true;
   const tail = (args: string[]): string[] => {
-    if (opts.cwd) args.push("-c", opts.cwd);
-    appendEnvFlags(args, opts.env);
-    args.push("-P", "-F", "#{pane_id}", opts.command);
+    // A retained pane starts as a placeholder and is respawned into the real
+    // command once its remain-on-exit is armed (see `created`).
+    if (!retain) {
+      if (opts.cwd) args.push("-c", opts.cwd);
+      appendEnvFlags(args, opts.env);
+    }
+    args.push("-P", "-F", "#{pane_id}", retain ? RETAIN_PLACEHOLDER : opts.command);
     return args;
   };
   const created = async (args: string[]): Promise<string> => {
     const paneId = (await tmux(args)).trim();
     assertValidPaneId(paneId);
+    if (retain) {
+      // The pane option is set while only the placeholder runs, so the real
+      // command can never end before retention is armed (no set-after-spawn
+      // race), and only THIS pane is touched, never a session or global default.
+      try {
+        await tmux(["set-option", "-p", "-t", paneId, "remain-on-exit", "on"]);
+        const respawn = ["respawn-pane", "-k", "-t", paneId];
+        if (opts.cwd) respawn.push("-c", opts.cwd);
+        appendEnvFlags(respawn, opts.env);
+        respawn.push(opts.command);
+        await tmux(respawn);
+      } catch (err) {
+        await killPane(paneId).catch(() => {});
+        throw err;
+      }
+    }
     opts.onPaneCreated?.(paneId);
     return paneId;
   };
@@ -445,6 +470,36 @@ export async function paneAlive(paneId: string): Promise<boolean> {
     throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
   }
   return result.stdout.trim() === paneId;
+}
+
+/**
+ * The pane's run state: running, exited (a retained pane keeps its row, with
+ * `#{pane_dead_status}` / `#{pane_dead_signal}`) or absent. Only "the pane or
+ * server is gone" is absent; any other failure throws, as `paneAlive` does.
+ */
+export async function paneResult(paneId: string): Promise<PaneResult> {
+  if (!isValidPaneId(paneId)) return { state: "absent" };
+  const args = [
+    "display-message",
+    "-t",
+    paneId,
+    "-p",
+    "#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}",
+  ];
+  const result = await currentExecutor(args);
+  if (result.exitCode !== 0) {
+    if (/can't find pane|pane not found|no current target/i.test(result.stderr)) {
+      return { state: "absent" };
+    }
+    if (NO_SERVER_RE.test(result.stderr)) return { state: "absent" };
+    throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
+  }
+  const [id, dead, status, signal] = result.stdout.trim().split("|");
+  if (id !== paneId) return { state: "absent" };
+  if (dead !== "1") return { state: "running" };
+  const num = (s: string | undefined): number | null =>
+    s !== undefined && /^\d+$/.test(s) ? Number(s) : null;
+  return { state: "exited", code: num(status), signal: num(signal) };
 }
 
 /**
@@ -604,6 +659,7 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   spawnAgent,
   listPanes,
   paneAlive,
+  paneResult,
   killPane,
   capture,
 

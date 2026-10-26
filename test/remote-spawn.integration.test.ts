@@ -162,7 +162,8 @@ afterEach(async () => {
 const req = (command: string) => ({
   task: "t1",
   text: "do the thing",
-  spawn: { name: "worker-1", workstream: ws, host: "dev", worktree: true, command },
+  // An opaque wrapper around pi names its CLI: an omitted --cli with a non-pi command is a gate.
+  spawn: { name: "worker-1", workstream: ws, host: "dev", cli: "pi", worktree: true, command },
 });
 
 describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
@@ -235,6 +236,7 @@ describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
       name: "worker-2",
       workstream: ws,
       host: "dev",
+      cli: "pi",
       command: `node ${join(dir, "pishim.js")}`,
     });
     expect(b.ctl).toBe("ok");
@@ -248,6 +250,7 @@ describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
       name: "worker-2",
       workstream: ws,
       host: "dev",
+      cli: "pi",
       worktree: true,
       command,
     }).catch((e: unknown) => e);
@@ -298,6 +301,7 @@ describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
       name: "worker-1",
       workstream: ws,
       host: "dev",
+      cli: "pi",
       worktree: true,
       command,
     }).catch((e: unknown) => e);

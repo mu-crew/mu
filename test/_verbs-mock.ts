@@ -15,6 +15,8 @@ export interface FakePane {
   paneId: string;
   command: string;
   scrollback?: string;
+  /** A pane that kept its row after its command ended (remain-on-exit): set by a test to model the exit. */
+  exit?: { code: number | null; signal: number | null };
 }
 
 export interface MockState {
@@ -184,7 +186,22 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       const paneId = tFlag >= 0 ? args[tFlag + 1] : "";
       const pane = state.panes.get(paneId ?? "");
       if (!pane) return fail(`can't find pane: ${paneId}`);
+      const fmt = args[args.indexOf("-p") + 1] ?? "";
+      // The exit facts of a retained pane (`pane_dead`, `pane_dead_status`, `pane_dead_signal`).
+      if (fmt.includes("pane_dead")) {
+        const e = pane.exit;
+        return ok(`${paneId}|${e ? 1 : 0}|${e?.code ?? ""}|${e?.signal ?? ""}\n`);
+      }
       return ok(`${paneId}\n`);
+    }
+
+    if (verb === "respawn-pane") {
+      const tFlag = args.indexOf("-t");
+      const pane = state.panes.get((tFlag >= 0 ? args[tFlag + 1] : "") ?? "");
+      if (!pane) return fail("can't find pane");
+      pane.command = args[args.length - 1] ?? pane.command;
+      delete pane.exit;
+      return ok();
     }
 
     if (verb === "set-option") return ok();

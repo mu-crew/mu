@@ -127,6 +127,13 @@ describe("agentRevision", () => {
     expect(agentRevision(db, "auth", "w1")).not.toBe(before);
   });
 
+  it("moves with the gate marker: a gate and a replacement with another token differ", () => {
+    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1", gateToken: "t1" });
+    const r0 = agentRevision(db, "auth", "w1");
+    db.prepare("UPDATE agents SET gate_token = 't2' WHERE name = 'w1'").run();
+    expect(agentRevision(db, "auth", "w1")).not.toBe(r0);
+  });
+
   it("moves with the row's own fields (pane, cwd, host)", () => {
     insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1" });
     const r0 = agentRevision(db, "auth", "w1");
@@ -740,7 +747,7 @@ describe("round 3: one read transaction, rollback leaves foreign panes", () => {
       const a = insertAgent(db, { name: "w1", workstream: "auth", paneId: "%1" });
       let b: { incarnation: number } | undefined;
       // agentRevision's agent SELECT: the revision is read after the identity.
-      interleaveBefore("a.collected_head, a.created_at", () => {
+      interleaveBefore("a.gate_token, a.created_at", () => {
         deleteAgent(other, "w1", "auth");
         b = insertAgent(other, { name: "w1", workstream: "auth", paneId: "%2" });
       });

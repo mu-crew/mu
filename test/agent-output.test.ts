@@ -55,6 +55,7 @@ const SQL_KEYS = [
   "spawner",
   "host",
   "collected_head",
+  "gate_token",
   "created_at",
   "updated_at",
 ];

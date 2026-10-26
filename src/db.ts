@@ -768,6 +768,8 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   ["agents", "spawner", "TEXT"],
   ["agents", "host", "TEXT"],
   ["agents", "collected_head", "TEXT"],
+  // The remote command gate's spawn-unique token (machine-local): its marker and result key.
+  ["agents", "gate_token", "TEXT"],
   ["wait_registrations", "baselines_json", "TEXT NOT NULL DEFAULT '{}'"],
   ["task_auto", "enabled", "INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))"],
   ...["request", "verdict", "agent"].map((c) => ["delegate_calls", c, "TEXT"] as const),
@@ -1193,6 +1195,7 @@ CREATE TABLE IF NOT EXISTS agents (
   spawner       TEXT,                           -- who spawned it: '<workstream>/<agent>' or 'pi:<session>' (machine-local); NULL: unknown
   host          TEXT,                           -- the remote host profile it runs on (machine-local); NULL: local
   collected_head TEXT,                          -- HEAD last collected from a remote worktree (machine-local)
+  gate_token    TEXT,                           -- remote command gate: spawn-unique token, also the key of its remote result record (machine-local); NULL: not a gate
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   UNIQUE (workstream_id, name),

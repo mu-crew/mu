@@ -183,7 +183,9 @@ interface AgentTrack {
   needWatch: boolean;
   result: AgentReading | undefined;
   reading: AgentReading | undefined;
-  latched: { kind: "settled" | "dead" | "input" | "pane-text"; reading: AgentReading } | undefined;
+  latched:
+    | { kind: "settled" | "dead" | "input" | "pane-text" | "exited"; reading: AgentReading }
+    | undefined;
   close: CloseOutcome | undefined;
   /** The dialog already returned once is still open: not news again until it changes. */
   muted: boolean;
@@ -205,7 +207,7 @@ const URGENCY: Partial<Record<WaitEventKind, number>> = {
   delegate: 3,
 };
 const urgency = (k: WaitEventKind | undefined): number => (k === undefined ? 9 : (URGENCY[k] ?? 4));
-const exitFor = (k: WaitEventKind): WaitResult["exit"] =>
+const exitFor = (k: WaitEventKind): number =>
   k === "dead" ? 6 : k === "input" || k === "stall" ? 7 : k === "interrupted" ? 130 : 0;
 
 /** Wait for the next owned event (or all targets). See the file comment. */
@@ -566,7 +568,10 @@ export async function waitForEvents(
         return;
       }
     }
-    if (r.status === null) {
+    if (r.exit !== undefined) {
+      // A gate's command ended: its numeric status is the result, never "dead", and no busy-first rule applies.
+      t.latched = { kind: "exited", reading: r };
+    } else if (r.status === null) {
       t.latched = { kind: "dead", reading: r };
     } else if (r.blocked !== undefined) {
       if (!t.explicit && isConsumed(cursorOf(urgentKey("input", refKey(t.ref))), inputToken(r))) {
@@ -672,7 +677,8 @@ export async function waitForEvents(
 
   const agentSnapshot = (t: AgentTrack): WaitSnapshot => {
     const r = t.latched?.reading ?? t.reading;
-    const status = t.latched?.kind === "dead" ? null : (r?.status ?? "unknown");
+    const status =
+      t.latched?.kind === "dead" || t.latched?.kind === "exited" ? null : (r?.status ?? "unknown");
     return {
       ref: t.ref,
       status,
@@ -687,11 +693,15 @@ export async function waitForEvents(
       ...(r?.lastError !== undefined ? { lastError: r.lastError } : {}),
       ...(r?.sessionFile !== undefined ? { sessionFile: r.sessionFile } : {}),
       ...(r?.blocked !== undefined ? { blocked: r.blocked } : {}),
+      ...(t.latched?.kind === "exited" && r?.exit !== undefined ? { exit: r.exit } : {}),
       ...(status === "unknown" && r?.reason !== undefined ? { unknownReason: r.reason } : {}),
       ...(t.baseline !== undefined ? { afterRuns: t.baseline } : {}),
       wasBusy: t.wasBusy,
       ...(t.unknownBaseline ? { unknownBaseline: true } : {}),
-      fired: t.latched?.kind === "settled" || t.latched?.kind === "pane-text",
+      fired:
+        t.latched?.kind === "settled" ||
+        t.latched?.kind === "pane-text" ||
+        t.latched?.kind === "exited",
       dead: t.latched?.kind === "dead",
       ...(t.close !== undefined ? { close: t.close } : {}),
     };
@@ -927,6 +937,9 @@ export async function waitForEvents(
     } else if (l?.kind === "dead") {
       ckey = urgentKey("dead", key);
       token = { incarnation: `dead:${agentRowId(db, t.ref)}`, runs: 1 };
+    } else if (l?.kind === "exited") {
+      // One token per registry row: an owned cursor consumes the result once; a replacement is a new row.
+      token = { incarnation: `exited:${agentRowId(db, t.ref)}`, runs: 1 };
     }
     return {
       key,
@@ -935,7 +948,11 @@ export async function waitForEvents(
       target: isTarget,
       suppressible: !t.explicit,
       order,
-      done: l?.kind === "settled" || l?.kind === "pane-text" || l?.kind === "dead",
+      done:
+        l?.kind === "settled" ||
+        l?.kind === "pane-text" ||
+        l?.kind === "dead" ||
+        l?.kind === "exited",
       ready: false,
       ...(l !== undefined ? { kind: l.kind } : {}),
       ...(token !== undefined ? { token } : {}),
@@ -1209,12 +1226,17 @@ export async function waitForEvents(
     }
   };
 
+  const failedGate = (i: Item): boolean =>
+    i.kind === "exited" && i.snap.exit !== undefined && i.snap.exit !== 0;
+
   const select = (items: Item[]): { event: Item; fired: Item[] } | undefined => {
     const rank = (a: Item, b: Item): number =>
       // Never-returned events first: an event that was already returned once (an
       // unchanged dialog, a dead pane, a stall) never outranks one that was not.
       Number(a.seen === true) - Number(b.seen === true) ||
       urgency(a.kind) - urgency(b.kind) ||
+      // Under --all a failed gate is the firing event, so its code is the exit.
+      Number(failedGate(b)) - Number(failedGate(a)) ||
       Number(b.target) - Number(a.target) ||
       a.order - b.order;
     const ready = items.filter((i) => i.ready).sort(rank);
@@ -1274,7 +1296,10 @@ export async function waitForEvents(
       refs: snapshotsOf(items, chosen?.fired ?? []),
       timedOut: kind === "heartbeat" && !drained,
       interrupted: kind === "interrupted",
-      exit: exitFor(kind),
+      exit:
+        exitFor(kind) !== 0
+          ? exitFor(kind)
+          : ((chosen?.fired ?? []).find(failedGate)?.snap.exit ?? 0),
       cursor: {},
       ...(e?.stall !== undefined && stallStates.get(e.stall.token)?.result !== undefined
         ? { action: stallStates.get(e.stall.token)?.result as StallActionResult }
@@ -1376,6 +1401,7 @@ export async function waitForEvents(
           i.kind === "closed" ||
           i.kind === "settled" ||
           i.kind === "pane-text" ||
+          i.kind === "exited" ||
           i.kind === "delegate" ||
           (i.kind === "dead" && i.ref.kind === "agent"),
       );

@@ -249,6 +249,8 @@ function reasonOf(result: WaitResult, signal: string | undefined, open: number):
       return `${who} is ${snap?.status ?? "CLOSED"}${snap?.substate !== undefined && snap.substate !== "done" ? `/${snap.substate}` : ""}`;
     case "settled":
       return `${who} finished its run${snap?.runs !== undefined ? ` (run ${snap.runs})` : ""}`;
+    case "exited":
+      return `${who}'s command exited with status ${snap?.exit ?? "?"}${snap?.exit === 0 ? "" : " (the exit of this wait)"}; the pane is kept until \`mu agent close\``;
     case "pane-text":
       return `${who}'s pane printed the awaited text (no control socket: this is pane output, not a finished run)`;
     case "input":
@@ -329,6 +331,11 @@ function nextStepsOf(result: WaitResult, ws: string | undefined): Step[] {
     out.push(
       { intent: "Read the dialog pi is waiting on", command: `mu agent read ${e.ref.id} -w ${w}` },
       { intent: "Wait again once it is answered", command: "the `resume` command" },
+    );
+  } else if (e.kind === "exited") {
+    out.push(
+      { intent: "Read the gate's output", command: `mu agent read ${e.ref.id} -w ${w} --lines 60` },
+      { intent: "Free its pane and remote result", command: `mu agent close ${e.ref.id} -w ${w}` },
     );
   } else if (e.kind === "stall" && snap !== undefined) {
     out.push(...stuckSteps(snap));

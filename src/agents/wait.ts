@@ -53,6 +53,8 @@ export interface AgentWaitRef {
 export interface AgentStatusSnapshot {
   /** Current runtime state, or null when the pane is gone (dead). */
   status: RuntimeState | null;
+  /** A remote command gate that ended: its numeric exit status. */
+  exit?: number;
   /** Why the state is unknown, when the source supplied a reason. */
   unknownReason?: string;
   /** Final assistant text of the settled run (control-socket watches only). */
@@ -110,6 +112,8 @@ export interface AgentWaitAgentState {
   name: string;
   /** State at exit time (null = pane gone / dead). */
   status: RuntimeState | null;
+  /** A remote command gate's own exit status once it ended (0 fired; nonzero reads `dead` here, never a clean finish). */
+  exit?: number;
   /** True once we observed this agent `busy` at any tick. */
   wasBusy: boolean;
   /** True when the agent fired: was busy, then moved to a non-busy
@@ -167,8 +171,10 @@ export async function waitForAgents(
     name: ref.name,
     status: snap === undefined ? null : (snap.status as RuntimeState | null),
     wasBusy: snap?.wasBusy === true,
-    fired: snap?.fired === true,
-    dead: snap?.dead === true,
+    // A gate that exited nonzero is a failure to this legacy surface: never a clean finish.
+    fired: snap?.fired === true && !(snap.exit !== undefined && snap.exit !== 0),
+    dead: snap?.dead === true || (snap?.exit !== undefined && snap.exit !== 0),
+    ...(snap?.exit !== undefined ? { exit: snap.exit } : {}),
     ...(snap?.unknownReason !== undefined ? { unknownReason: snap.unknownReason } : {}),
     ...(snap?.lastText !== undefined ? { lastText: snap.lastText } : {}),
     ...(snap?.lastError !== undefined ? { lastError: snap.lastError } : {}),
@@ -182,6 +188,7 @@ export async function waitForAgents(
   };
   const toReading = (snap: AgentStatusSnapshot): AgentReading => ({
     status: snap.status,
+    ...(snap.exit !== undefined ? { exit: snap.exit } : {}),
     ...(snap.unknownReason !== undefined ? { reason: snap.unknownReason } : {}),
     ...(snap.lastText !== undefined ? { lastText: snap.lastText } : {}),
     ...(snap.lastError !== undefined ? { lastError: snap.lastError } : {}),

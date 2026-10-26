@@ -29,6 +29,7 @@ export {
   type MuxPaneStatus,
   NoMultiplexerError,
   PaneNotFoundError,
+  type PaneResult,
   type SendOptions,
   type SendWarning,
   type SpawnAgentPaneOptions,
