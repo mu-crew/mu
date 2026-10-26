@@ -92,6 +92,7 @@ export const GRAMMAR = new Set([
   "only",
   "of",
   "and",
+  "worker",
 ]);
 
 export interface Leak {
