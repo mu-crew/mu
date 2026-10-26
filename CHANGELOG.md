@@ -242,6 +242,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **The keyed message table (`v_hint_messages`, slice C of `v_hints`).** Every error line, usage
+  refusal, warning and stderr hint of the task, agent, db, mux, sync, host, remote, workstream,
+  worktree, log and delegate domains is a function in `src/messages.ts` (`MESSAGES["task.parked"]`,
+  rendered with `say(key, ...facts)`), so `t_errors` rewrites one line at a time. Wording, typed
+  classes, exit codes and structured fields are unchanged. The `UsageError` sites of `cli.ts`,
+  `cli/{wait,delegates,db-query,log,me-identity,host,sync,db}.ts` and the run-time hint strings of
+  `handle.ts`/`doctor.ts` are the remaining inventory.
+
 - **One wait hint.** The `Next:` line after a send, `spawn --send`, `spawn --task` and
   `send --interrupt` is now `mu wait 'agent:<ws>/<name>@<runs>#<incarnation>'` (one POSIX-quoted
   typed ref, no `--json`: `mu wait` always prints JSON, the answer is `snapshots[].lastText`),
