@@ -15,6 +15,7 @@
 
 import { randomBytes } from "node:crypto";
 import type { Db } from "./db.js";
+import { say } from "./messages.js";
 import { type WaitRef, WaitRefError } from "./wait-types.js";
 
 /** What a wait asked for, whatever spelling it came in; a resume replays exactly this. */
@@ -48,9 +49,7 @@ export const RESUME_KEEP_DAYS = 14;
 export class WaitResumeNotFoundError extends Error {
   override readonly name = "WaitResumeNotFoundError";
   constructor(public readonly resumeId: string) {
-    super(
-      `no such wait resume handle: ${resumeId} (a handle is kept ${RESUME_KEEP_DAYS} days; name the refs again with \`mu wait <ref>...\`)`,
-    );
+    super(say("wait.resume_not_found", resumeId, RESUME_KEEP_DAYS));
   }
 }
 

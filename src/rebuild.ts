@@ -65,6 +65,7 @@ import { dirname } from "node:path";
 import { projectLog } from "./apply.js";
 import { type Db, openDb, SYNCED_ENTITIES } from "./db.js";
 import { compareHlc } from "./hlc.js";
+import { say } from "./messages.js";
 import { withCaptureSuppressed } from "./op-context.js";
 
 /** Raised when the rebuild target already exists. Never overwrite: the
@@ -72,7 +73,7 @@ import { withCaptureSuppressed } from "./op-context.js";
  *  is supposed to be the SAFE recovery path. */
 export class RebuildTargetExistsError extends Error {
   constructor(readonly path: string) {
-    super(`rebuild target already exists: ${path}`);
+    super(say("rebuild.target_exists", path));
     this.name = "RebuildTargetExistsError";
   }
 }
@@ -81,7 +82,7 @@ export class RebuildTargetExistsError extends Error {
  *  DB onto itself would truncate the very log being replayed. */
 export class RebuildTargetIsSourceError extends Error {
   constructor(readonly path: string) {
-    super(`rebuild target is the source DB: ${path}`);
+    super(say("rebuild.target_is_source", path));
     this.name = "RebuildTargetIsSourceError";
   }
 }
@@ -230,7 +231,7 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
         last_counter: number;
       }
     | undefined;
-  if (!identity) throw new Error("source DB has no machine_identity row; not a mu DB");
+  if (!identity) throw new Error(say("rebuild.no_identity"));
 
   const opRows = source
     .prepare(

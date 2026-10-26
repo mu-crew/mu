@@ -213,6 +213,114 @@ export const MESSAGES = {
     "agent collect fetches into the git repo of the current directory: cd into it",
   "agent.ctl_refused": (what: string, error: unknown) => `control socket refused ${what}: ${error}`,
   "agent.pi_refused": (cmd: string, error: unknown) => `pi refused /${cmd}: ${error}`,
+  // ── db, mux, sync, host, remote, workstream, worktree (src/*.ts, src/mux/*) ──
+  "db.test_real_db": (realDb: string) =>
+    `openDb refused: tests must NEVER write to the user DB (${realDb}). Set MU_DB_PATH to a per-test temp path (test/_runCli.ts does this automatically) or pass an explicit { path } argument. The leak source is the call site of openDb in this stack frame.`,
+  "db.schema_old": (detected: number, required: number) =>
+    `Detected v${detected} schema; v${required} is required. mu ships NO in-place migration — your v${detected} DB is untouched. Back it up or move it aside, then start a fresh v${required} DB.`,
+  "db.schema_new": (detected: number, supported: number, stamp: "schema" | "capture") =>
+    stamp === "schema"
+      ? `DB is v${detected}; this mu understands up to v${supported}. Upgrade mu.`
+      : `DB's capture triggers are revision ${detected}; this mu understands up to ${supported}. Upgrade mu.`,
+  "db.sqlite_old": (version: string) =>
+    `SQLite ${version} is too old; mu needs >= 3.42 (unixepoch('subsec') for the op clock). The DB was not touched.`,
+  "workstream.not_found": (ws: string) => `no such workstream: ${ws}`,
+  "workstream.torn_down": (ws: string, at: string) =>
+    `workstream ${ws} is torn down (at ${at}); \`mu workstream init ${ws}\` to reuse the name`,
+  "workstream.exists": (ws: string) => `workstream already exists: ${ws}`,
+  "workstream.name_invalid": (attempted: string, reservedPrefix: boolean) =>
+    `invalid workstream name ${JSON.stringify(attempted)}: ${
+      reservedPrefix
+        ? `the 'mu-' prefix is reserved (mu auto-prepends 'mu-' to derive the tmux session name; '${attempted}' would produce session 'mu-${attempted}', which is double-prefixed and almost never what you want). Drop the 'mu-' from the workstream name.`
+        : `must match /^[a-z][a-z0-9_-]{0,31}$/. tmux silently rewrites '.' to '_' and reserves ':' as a target separator, so workstream names containing those characters would create tmux sessions mu couldn't look up afterwards. Use letters, digits, '_', and '-' only.`
+    }`,
+  "workstream.name_reserved": (attempted: string) =>
+    `workstream name ${JSON.stringify(attempted)} is reserved: it is the off-the-cuff bucket and auto-creates on first spawn. Don't 'init' it.`,
+  "workstream.changed": (ws: string, expected: number, actual: number, preview: string) =>
+    `workstream ${ws} changed since preview (rev ${expected} → ${actual}); preview again: ${preview}`,
+  "workstream.has_agents": (ws: string, agents: readonly string[]) =>
+    `torn-down workstream ${ws} still has ${agents.length} local agent row${agents.length === 1 ? "" : "s"} (${agents.join(", ")}); close each once its pane is gone (preview, then apply with --if): mu agent close ${agents[0]} -w ${ws}`,
+  "workstream.panes_live": (ws: string, agents: readonly string[]) =>
+    `workstream ${ws} has live panes outside its session (${agents.join(", ")}); close them first (preview, then apply with --if): mu agent close ${agents[0]} -w ${ws}`,
+  "workstream.session_live": (ws: string, session: string) =>
+    `torn-down workstream ${ws} still has a live mux session ${session}; kill it first: mu workstream teardown ${ws}`,
+  "worktree.vcs_required": (root: string) =>
+    `--worktree requires a git repository; ${root} is not inside one`,
+  "worktree.dirty": (agent: string, path: string, shown: readonly string[], more: number) =>
+    `agent ${agent} has uncommitted work in ${path}; refusing to close: ${
+      shown.length > 0 ? shown.join(", ") : "git status unreadable"
+    }${more > 0 ? ` (+${more} more)` : ""}`,
+  "worktree.path_not_empty": (agent: string, path: string, why: string) =>
+    `worktree dir already on disk for agent ${agent} (${path}): ${why}; refusing to overwrite`,
+  "worktree.unmerged_repo_gone": (path: string) =>
+    `worktree ${path} has unmerged commits and its repo is gone; nothing can keep them (use --discard to drop them)`,
+  "revision.changed": (subject: string, expected: number, current: number, preview: string) =>
+    `${subject} changed since preview (rev ${expected} → ${current}); preview again: ${preview}`,
+  "mux.pane_not_found": (backend: string, pane: string) => `${backend} pane not found: ${pane}`,
+  "mux.none_found": (tried: readonly string[]) =>
+    `no supported multiplexer found (tried: ${tried.join(", ")}); install tmux ≥ 3.0 (task, DAG and sql verbs work without one)`,
+  "mux.tmux_failed": (args: readonly string[], exit: number | null, detail: string) =>
+    `tmux ${args.join(" ")} failed (exit ${exit}): ${detail}`,
+  "mux.herdr_failed": (args: readonly string[], exit: number | null, detail: string) =>
+    `herdr ${args.join(" ")} failed (exit ${exit}): ${detail}`,
+  "mux.herdr_syntax": (args: readonly string[], firstLine: string) =>
+    `herdr rejected the command line (exit 2) — this is a bug in mu, not a herdr outage. Ran: herdr ${args.join(" ")}. herdr said: ${firstLine}`,
+  "mux.herdr_unsupported_cli": (cli: string, detail: string) =>
+    `herdr does not recognise --cli ${cli} as an interactive agent kind, so it cannot classify that pane's status. herdr said: ${detail}`,
+  "mux.herdr_command_override": (cli: string, what: string) =>
+    `${what} cannot be honoured on the herdr backend: 'herdr agent start --kind ${cli}' resolves the executable itself and has no override flag. mu refuses rather than starting a different binary than you asked for.`,
+  "mux.herdr_group_close": (workspaceId: string, session: string, detail: string) =>
+    `herdr refused to close workspace ${workspaceId} (${session}): it has linked worktree workspaces, which mu did not create and will not close on your behalf. herdr said: ${detail}`,
+  "mux.herdr_no_panes": (tab: string, session: string) =>
+    `spawnAgent: tab ${tab} in session ${session} has no panes to split (it vanished mid-spawn?)`,
+  "mux.unknown_backend": (name: string) => `unknown mux backend: ${name}`,
+  "sync.peer_not_found": (ref: string, known: readonly string[]) =>
+    `no peer matches ${JSON.stringify(ref)}${
+      known.length === 0 ? " (no peers discovered)" : ` (known peers: ${known.join(", ")})`
+    }`,
+  "sync.peer_ambiguous": (ref: string, candidates: readonly string[]) =>
+    `peer ref ${JSON.stringify(ref)} matches ${candidates.length} peers (${candidates.join(", ")}); pass more characters`,
+  "sync.source_missing": (path: string) => `--from: no such file: ${path}`,
+  "sync.source_too_new": (path: string, detected: number, supported: number) =>
+    `--from: ${path} is schema v${detected}; this mu understands up to v${supported}. Upgrade mu.`,
+  "host.not_found": (host: string) => `no host profile named ${host}`,
+  "host.exists": (host: string) =>
+    `host profile ${host} already exists: remove it first (mu host rm ${host})`,
+  "host.in_use": (host: string, holders: readonly string[]) =>
+    `host ${host} still holds channels (${holders.join(", ")}): close those agents first`,
+  "host.spawn_unsupported": (host: string, mux: string) =>
+    `--host ${host} needs a multiplexer that runs a shell command in its pane; ${mux} starts agents itself and cannot run the profile's shell template (use tmux)`,
+  "host.check_failed": (host: string, failed: readonly string[]) =>
+    `host ${host} check failed: ${failed.join(", ")}`,
+  "host.channel_lost": (host: string, holder: string) => `host ${host}: channel ${holder} was lost`,
+  "remote.prepare": (host: string, what: string, detail: string) =>
+    `host ${host}: ${what}${detail === "" ? "" : `: ${detail}`}`,
+  "remote.worktree_kept": (agent: string, detail: string) =>
+    `agent ${agent}: remote worktree kept: ${detail}`,
+  "remote.no_worktree": (agent: string) => `agent ${agent} has no remote worktree`,
+  "remote.collect_unsupported": (agent: string, why: string) =>
+    `agent ${agent}: nothing to collect: ${why}`,
+  "remote.collect_failed": (host: string, detail: string) =>
+    `host ${host}: collect failed: ${detail}`,
+  "remote.recovery_refused": (ws: string, agent: string, detail: string) =>
+    `agent ${ws}/${agent}: remote recovery refused: ${detail}`,
+  "rebuild.target_exists": (path: string) => `rebuild target already exists: ${path}`,
+  "rebuild.target_is_source": (path: string) => `rebuild target is the source DB: ${path}`,
+  "rebuild.no_identity": () => "source DB has no machine_identity row; not a mu DB",
+  "log.group_ambiguous": (prefix: string, count: number, shown: readonly string[], more: boolean) =>
+    `group id ${JSON.stringify(prefix)} is ambiguous: matches ${count} groups (${shown.join(", ")}${more ? ", …" : ""})`,
+  "log.group_not_found": (prefix: string) => `no op group matching ${JSON.stringify(prefix)}`,
+  "log.kind_reserved": (kind: string, reserved: readonly string[]) =>
+    `--kind ${JSON.stringify(kind)} is reserved: ${reserved.join(", ")} name projectable op entities, and a log line under one would be synced and replayed as a real ${kind} change`,
+  "delegate.conflict": (callId: string, field: string) =>
+    `delegate call ${callId} already exists with a different ${field}; a call id names one request. Use a new call id for a changed request`,
+  "delegate.state": (callId: string, from: string, to: string) =>
+    `delegate call ${callId} is ${from}; it cannot go to ${to}`,
+  "delegate.not_found": (callId: string) => `no such delegate call: ${callId}`,
+  "wait.resume_not_found": (id: string, days: number) =>
+    `no such wait resume handle: ${id} (a handle is kept ${days} days; name the refs again with \`mu wait <ref>...\`)`,
+  "task.brief_missing": (task: string, reason: string) =>
+    `task ${task} cannot be briefed: ${reason}`,
 } as const satisfies Record<string, (...facts: never[]) => string>;
 
 export type MessageKey = keyof typeof MESSAGES;

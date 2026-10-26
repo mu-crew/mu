@@ -18,6 +18,7 @@
 // Same shape as src/vcs/: a types module, one file per impl, and an
 // index that dispatches. See docs/VOCABULARY.md § "mux backend".
 
+import { say } from "../messages.js";
 import { shellWord } from "../shell-quote.js";
 
 /** The multiplexers mu can drive. */
@@ -228,7 +229,7 @@ export class PaneNotFoundError extends Error {
     public readonly paneId: string,
     backend?: MuxDiagnostics,
   ) {
-    super(`${backend?.name ?? "mux"} pane not found: ${paneId}`);
+    super(say("mux.pane_not_found", backend?.name ?? "mux", paneId));
   }
 }
 
@@ -247,9 +248,7 @@ export interface MuxDiagnostics {
 export class NoMultiplexerError extends Error {
   override readonly name = "NoMultiplexerError";
   constructor(public readonly tried: readonly string[]) {
-    super(
-      `no supported multiplexer found (tried: ${tried.join(", ")}); install tmux ≥ 3.0 (task, DAG and sql verbs work without one)`,
-    );
+    super(say("mux.none_found", tried));
   }
 }
 

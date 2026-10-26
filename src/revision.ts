@@ -22,6 +22,7 @@
 
 import { createHash } from "node:crypto";
 import type { Db } from "./db.js";
+import { say } from "./messages.js";
 
 /** A guarded verb was given a revision that no longer matches. Exit 4,
  *  nothing was done. One stderr line naming the fresh preview
@@ -35,9 +36,7 @@ export class RevisionMismatchError extends Error {
     /** The read-only command that prints the current revision. */
     public readonly previewCommand: string,
   ) {
-    super(
-      `${subject} changed since preview (rev ${expectedRev} → ${currentRev}); preview again: ${previewCommand}`,
-    );
+    super(say("revision.changed", subject, expectedRev, currentRev, previewCommand));
   }
 }
 

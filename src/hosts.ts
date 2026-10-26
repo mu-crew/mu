@@ -59,6 +59,7 @@ import { ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import type { Db } from "./db.js";
 import { execGroupCapture } from "./exec-file.js";
+import { say } from "./messages.js";
 import { shellQuote } from "./shell-quote.js";
 
 // ─── Errors ─────────────────────────────────────────────────────────────
@@ -76,14 +77,14 @@ export class HostTemplateError extends HostProfileError {
 export class HostNotFoundError extends Error {
   override readonly name = "HostNotFoundError";
   constructor(public readonly host: string) {
-    super(`no host profile named ${host}`);
+    super(say("host.not_found", host));
   }
 }
 
 export class HostExistsError extends Error {
   override readonly name = "HostExistsError";
   constructor(public readonly host: string) {
-    super(`host profile ${host} already exists: remove it first (mu host rm ${host})`);
+    super(say("host.exists", host));
   }
 }
 
@@ -106,7 +107,7 @@ export class HostInUseError extends Error {
     public readonly host: string,
     public readonly holders: readonly string[],
   ) {
-    super(`host ${host} still holds channels (${holders.join(", ")}): close those agents first`);
+    super(say("host.in_use", host, holders));
   }
 }
 
@@ -117,9 +118,7 @@ export class HostSpawnUnsupportedError extends Error {
     public readonly host: string,
     public readonly mux: string,
   ) {
-    super(
-      `--host ${host} needs a multiplexer that runs a shell command in its pane; ${mux} starts agents itself and cannot run the profile's shell template (use tmux)`,
-    );
+    super(say("host.spawn_unsupported", host, mux));
   }
 }
 
@@ -130,7 +129,7 @@ export class HostCheckFailedError extends Error {
     public readonly host: string,
     public readonly failed: readonly string[],
   ) {
-    super(`host ${host} check failed: ${failed.join(", ")}`);
+    super(say("host.check_failed", host, failed));
   }
 }
 
@@ -628,7 +627,7 @@ function recordGroup(db: Db, lease: HostLease, pgid: number): void {
       "UPDATE host_channels SET pgid = ?, pgid_start = ? WHERE host = ? AND holder = ? AND token = ?",
     )
     .run(pgid, pidStart(pgid), lease.host, lease.holder, lease.token).changes;
-  if (n !== 1) throw new Error(`host ${lease.host}: channel ${lease.holder} was lost`);
+  if (n !== 1) throw new Error(say("host.channel_lost", lease.host, lease.holder));
 }
 
 /** Hold a transient channel for the duration of `run` (given the admission snapshot of the profile and the lease); released in `finally` by token. */

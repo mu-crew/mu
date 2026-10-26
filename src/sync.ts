@@ -52,6 +52,7 @@ import { existsSync, statSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { Op } from "./apply.js";
 import { CURRENT_SCHEMA_VERSION, type Db, SYNCED_ENTITIES } from "./db.js";
+import { say } from "./messages.js";
 import { isJsonMode } from "./output.js";
 import {
   applyIncomingOp,
@@ -78,11 +79,7 @@ export class SyncPeerNotFoundError extends Error {
     readonly ref: string,
     readonly known: readonly string[],
   ) {
-    super(
-      `no peer matches ${JSON.stringify(ref)}${
-        known.length === 0 ? " (no peers discovered)" : ` (known peers: ${known.join(", ")})`
-      }`,
-    );
+    super(say("sync.peer_not_found", ref, known));
   }
 }
 
@@ -95,9 +92,7 @@ export class SyncPeerRefAmbiguousError extends Error {
     readonly ref: string,
     readonly candidates: readonly string[],
   ) {
-    super(
-      `peer ref ${JSON.stringify(ref)} matches ${candidates.length} peers (${candidates.join(", ")}); pass more characters`,
-    );
+    super(say("sync.peer_ambiguous", ref, candidates));
   }
 }
 
@@ -105,7 +100,7 @@ export class SyncPeerRefAmbiguousError extends Error {
 export class SyncSourceNotFoundError extends Error {
   override readonly name = "SyncSourceNotFoundError";
   constructor(readonly path: string) {
-    super(`--from: no such file: ${path}`);
+    super(say("sync.source_missing", path));
   }
 }
 
@@ -118,9 +113,7 @@ export class SyncSourceTooNewError extends Error {
     readonly path: string,
     readonly detectedVersion: number,
   ) {
-    super(
-      `--from: ${path} is schema v${detectedVersion}; this mu understands up to v${CURRENT_SCHEMA_VERSION}. Upgrade mu.`,
-    );
+    super(say("sync.source_too_new", path, detectedVersion, CURRENT_SCHEMA_VERSION));
   }
 }
 

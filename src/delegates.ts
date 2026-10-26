@@ -28,6 +28,7 @@
 import { createHash } from "node:crypto";
 import type { Db, DELEGATE_CALL_STATES } from "./db.js";
 import { parseVerdict, recordNote, type VerdictLabel } from "./delegate-verdict.js";
+import { say } from "./messages.js";
 import { withOpContext } from "./op-context.js";
 import { addNote, addTask } from "./tasks/edit.js";
 import { TaskNotFoundError } from "./tasks/errors.js";
@@ -83,9 +84,7 @@ export class DelegateCallConflictError extends Error {
     public readonly callId: string,
     public readonly field: string,
   ) {
-    super(
-      `delegate call ${callId} already exists with a different ${field}; a call id names one request. Use a new call id for a changed request`,
-    );
+    super(say("delegate.conflict", callId, field));
   }
 }
 
@@ -96,14 +95,14 @@ export class DelegateStateError extends Error {
     public readonly from: DelegateState,
     public readonly to: string,
   ) {
-    super(`delegate call ${callId} is ${from}; it cannot go to ${to}`);
+    super(say("delegate.state", callId, from, to));
   }
 }
 
 export class DelegateNotFoundError extends Error {
   override readonly name = "DelegateNotFoundError";
   constructor(public readonly callId: string) {
-    super(`no such delegate call: ${callId}`);
+    super(say("delegate.not_found", callId));
   }
 }
 

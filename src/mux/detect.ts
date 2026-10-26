@@ -6,6 +6,7 @@
 // the mux backend is a property of the PROCESS, so it is resolved once
 // and cached (see `activeMux`).
 
+import { say } from "../messages.js";
 import { herdrBackend } from "./herdr.js";
 import { tmuxBackend } from "./tmux.js";
 import { type MuxBackend, type MuxBackendName, NoMultiplexerError } from "./types.js";
@@ -20,7 +21,7 @@ export function muxByName(name: MuxBackendName): MuxBackend {
   for (const backend of BACKENDS) {
     if (backend.name === name) return backend;
   }
-  throw new Error(`unknown mux backend: ${name}`);
+  throw new Error(say("mux.unknown_backend", name));
 }
 
 /** Valid `MU_MUX` values, for error messages. */

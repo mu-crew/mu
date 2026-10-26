@@ -55,6 +55,7 @@
 // halves.
 
 import { execFileCapture } from "../exec-file.js";
+import { say } from "../messages.js";
 import { isJsonMode } from "../output.js";
 import { sleep } from "./tmux.js";
 import {
@@ -91,7 +92,7 @@ export class HerdrError extends MuxError {
     public readonly code?: string,
   ) {
     const detail = parseErrorEnvelope(stderr)?.message ?? (stderr.trim() || stdout.trim());
-    super(`herdr ${args.join(" ")} failed (exit ${exitCode}): ${detail || "no output"}`);
+    super(say("mux.herdr_failed", args, exitCode, detail || "no output"));
     this.name = "HerdrError";
   }
 }
@@ -109,10 +110,7 @@ export class HerdrSyntaxError extends Error {
     public readonly args: readonly string[],
     public readonly output: string,
   ) {
-    super(
-      `herdr rejected the command line (exit 2) — this is a bug in mu, not a herdr outage. ` +
-        `Ran: herdr ${args.join(" ")}. herdr said: ${output.trim().split("\n")[0] ?? "(no output)"}`,
-    );
+    super(say("mux.herdr_syntax", args, output.trim().split("\n")[0] ?? "(no output)"));
   }
 }
 
@@ -140,9 +138,7 @@ export class HerdrUnsupportedCliError extends Error {
     public readonly cli: string,
     public readonly detail: string,
   ) {
-    super(
-      `herdr does not recognise --cli ${cli} as an interactive agent kind, so it cannot classify that pane's status. herdr said: ${detail}`,
-    );
+    super(say("mux.herdr_unsupported_cli", cli, detail));
   }
 }
 
@@ -171,11 +167,11 @@ export class HerdrCommandOverrideError extends Error {
     public readonly envVar?: string,
   ) {
     super(
-      (envVar === undefined
-        ? `--command ${JSON.stringify(command)} cannot be honoured on the herdr backend`
-        : `${envVar}=${command} cannot be honoured on the herdr backend`) +
-        `: 'herdr agent start --kind ${cli}' resolves the executable itself and has no override flag. ` +
-        `mu refuses rather than starting a different binary than you asked for.`,
+      say(
+        "mux.herdr_command_override",
+        cli,
+        envVar === undefined ? `--command ${JSON.stringify(command)}` : `${envVar}=${command}`,
+      ),
     );
   }
 }
@@ -209,10 +205,7 @@ export class HerdrWorkspaceGroupCloseError extends Error {
     public readonly workspaceId: string,
     public readonly detail: string,
   ) {
-    super(
-      `herdr refused to close workspace ${workspaceId} (${session}): it has linked worktree workspaces, ` +
-        `which mu did not create and will not close on your behalf. herdr said: ${detail}`,
-    );
+    super(say("mux.herdr_group_close", workspaceId, session, detail));
   }
 }
 
@@ -793,9 +786,7 @@ async function createBarePane(opts: SpawnAgentPaneOptions): Promise<string> {
   const target = panes.find((p) => p.windowId === tab.id);
   if (target === undefined) {
     // An empty tab cannot exist: it vanished between the two listings.
-    throw new Error(
-      `spawnAgent: tab ${tab.id} in session ${opts.session} has no panes to split (it vanished mid-spawn?)`,
-    );
+    throw new Error(say("mux.herdr_no_panes", tab.id, opts.session));
   }
   const args = ["pane", "split", target.paneId, "--direction", "right", "--no-focus"];
   if (opts.cwd) args.push("--cwd", opts.cwd);

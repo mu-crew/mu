@@ -21,6 +21,7 @@
 // them); nothing here runs a host command.
 
 import type { Db } from "./db.js";
+import { say } from "./messages.js";
 
 /** Why the row went away: `reap` (any plain delete), a `teardown`, or its workstream's deletion. */
 export type RemoteRecoveryReason = "reap" | "teardown" | "workstream-delete";
@@ -87,7 +88,7 @@ export class RemoteRecoveryRefusedError extends Error {
     /** The record ids the refusal is about (every candidate, or the one that moved). */
     public readonly candidates: readonly number[] = [],
   ) {
-    super(`agent ${workstream}/${agentName}: remote recovery refused: ${detail}`);
+    super(say("remote.recovery_refused", workstream, agentName, detail));
   }
 }
 

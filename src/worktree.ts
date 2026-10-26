@@ -15,6 +15,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Db } from "./db.js";
 import { defaultStateDir } from "./db.js";
+import { say } from "./messages.js";
 import {
   addWorktree,
   createBranch,
@@ -35,7 +36,7 @@ export { upstreamRefs } from "./vcs/git.js";
 export class WorktreeVcsRequiredError extends Error {
   override readonly name = "WorktreeVcsRequiredError";
   constructor(public readonly root: string) {
-    super(`--worktree requires a git repository; ${root} is not inside one`);
+    super(say("worktree.vcs_required", root));
   }
 }
 
@@ -56,11 +57,7 @@ export class WorktreeDirtyError extends Error {
   ) {
     const shown = files.slice(0, MAX_DIRTY_LISTED);
     const more = files.length - shown.length;
-    super(
-      `agent ${agent} has uncommitted work in ${path}; refusing to close: ${
-        shown.length > 0 ? shown.join(", ") : "git status unreadable"
-      }${more > 0 ? ` (+${more} more)` : ""}`,
-    );
+    super(say("worktree.dirty", agent, path, shown, more));
   }
 }
 
@@ -76,9 +73,7 @@ export class WorktreePathNotEmptyError extends Error {
     public readonly path: string,
     public readonly why: string,
   ) {
-    super(
-      `worktree dir already on disk for agent ${agent} (${path}): ${why}; refusing to overwrite`,
-    );
+    super(say("worktree.path_not_empty", agent, path, why));
   }
 }
 
@@ -326,9 +321,7 @@ export async function releaseWorktree(
   }
   if (state === "clean-unmerged") {
     if (owner === undefined) {
-      throw new Error(
-        `worktree ${row.path} has unmerged commits and its repo is gone; nothing can keep them (use --discard to drop them)`,
-      );
+      throw new Error(say("worktree.unmerged_repo_gone", row.path));
     }
     const sha = await headSha(row.path);
     const branch = `mu/${row.workstream}/${row.agent}-${sha.slice(0, 12)}`;
