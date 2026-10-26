@@ -143,7 +143,7 @@ case "$mode" in
   block)
     echo "CLOSE: task=$T evidence=\"$evidence\""
     echo "REPORT:"
-    echo "$out"
+    echo "\${out:-$T.sh exit 0}"
     log block ;;
   *)
     echo "DONE: $T"

@@ -492,9 +492,12 @@ export function waitMode(
   const first = o.first === true || o.firstOf === true || o.any === true;
   const all = o.all === true || o.allOf === true;
   if (first && all) {
-    throw new UsageError("--first and --all are opposites: pass one (first is the default)", {
-      showHelp: false,
-    });
+    throw new UsageError(
+      "--first and --all are opposites: drop --first to wait for every ref, or drop --all to return on the first",
+      {
+        showHelp: false,
+      },
+    );
   }
   return all ? "all" : "first";
 }

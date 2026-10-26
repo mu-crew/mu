@@ -1,0 +1,92 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --worktree --task f1 --send 'do f1 and finish with the CLOSE block' --json"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval --worktree --task f2 --send 'do f2 and finish with the CLOSE block' --json"
+      },
+      {
+        "bash": "mu agent spawn w3 -w eval --worktree --task f3 --send 'do f3 and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait f1 f2 f3 -w eval --all --status CLOSED --timeout 60 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "true"
+      },
+      {
+        "bash": "true"
+      },
+      {
+        "bash": "true"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn v1 -w eval --task r1 --send 'review f1 (task r1) and finish with the CLOSE block' --json"
+      },
+      {
+        "bash": "mu agent spawn v2 -w eval --task r2 --send 'review f2 (task r2) and finish with the CLOSE block' --json"
+      },
+      {
+        "bash": "mu agent spawn v3 -w eval --task r3 --send 'review f3 (task r3) and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task wait r1 r2 r3 -w eval --all --status CLOSED --timeout 60 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "true"
+      },
+      {
+        "bash": "true"
+      },
+      {
+        "bash": "true"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD) && git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w2 rev-parse HEAD) && git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w3 rev-parse HEAD)"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "./gate.sh"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close umbrella -w eval --evidence 'fixes reviewed and merged, gate ok'"
+      }
+    ]
+  },
+  {
+    "text": "All three fixes are reviewed and merged; gate passes on main."
+  }
+]
