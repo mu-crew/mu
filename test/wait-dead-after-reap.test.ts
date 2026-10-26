@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { deleteAgent } from "../src/agents.js";
 import { releaseTask } from "../src/tasks/claim.js";
-import { claimTask, closeTask } from "../src/tasks.js";
+import { claimTask, closeTask, parkTask } from "../src/tasks.js";
 import { type AgentReading, waitForEvents } from "../src/wait.js";
 import { opsHead, reapFlip } from "../src/wait-db.js";
 import { registerOwnedWait } from "../src/wait-registration.js";
@@ -119,6 +119,21 @@ describe("a decision is not a death", () => {
     await mkOwnedTask(env.db, "t2", "w2");
     await claimTask(env.db, "t1", { workstream: "w", agentName: "w2" });
     expect(reapFlip(env.db, taskRef("t1"), anchor)).toBeUndefined();
+  });
+
+  it("reaped, then PARKED (a substate-only change): the park is the latest decision, no dead", async () => {
+    await mkOwnedTask(env.db, "t1", "w1");
+    const anchor = opsHead(env.db);
+    deleteAgent(env.db, "w1", "w");
+    expect(reapFlip(env.db, taskRef("t1"), anchor)).toBeDefined();
+    parkTask(env.db, "t1", { workstream: "w", why: "waiting on a decision" });
+    expect(reapFlip(env.db, taskRef("t1"), anchor)).toBeUndefined();
+    const r = await waitForEvents(env.db, [taskRef("t1")], {
+      ...fast,
+      sinceSeq: anchor,
+      ...alive(),
+    });
+    expect(r.event.kind).toBe("heartbeat");
   });
 
   it("reapFlip names the reaped owner row and the flip's seq", async () => {

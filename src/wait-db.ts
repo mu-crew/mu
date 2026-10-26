@@ -96,7 +96,7 @@ export function opsHead(db: Db): number {
 
 /**
  * The reaper's flip of a task, read from the ops log (durable, never a wait's memory): when the
- * task's LATEST status change is the reaper's (`task.reap`) and came after ops seq `since`, its owner
+ * task's LATEST status or substate change is the reaper's (`task.reap`) and came after ops seq `since`, its owner
  * died with the work undone. A later claim, release, park, open or close is a decision, not a
  * death: it is the latest change then, and this returns undefined. `ownerId` is the row the reaper
  * removed (the last owner the log names before the flip; 0 if none), the same token a live wait pins.
@@ -110,7 +110,7 @@ export function reapFlip(
   const last = db
     .prepare(
       `SELECT seq, intent FROM ops WHERE entity = 'task' AND key = ?
-          AND json_extract(payload, '$.status') IS NOT NULL
+          AND (json_extract(payload, '$.status') IS NOT NULL OR json_extract(payload, '$.substate') IS NOT NULL)
         ORDER BY seq DESC LIMIT 1`,
     )
     .get(key) as { seq: number; intent: string | null } | undefined;
