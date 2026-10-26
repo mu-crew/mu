@@ -5,33 +5,13 @@
 import { crc32 } from "node:zlib";
 
 /** The segment line format this build WRITES. Bumped only on a breaking
- *  shape change. v2 has v1's shape; every op written from the schema-v12
- *  kernel on is a v2 line, so a reader that only knows v1 stops at it
- *  instead of half-applying new fields. */
+ *  shape change. */
 export const SEGMENT_FORMAT_VERSION = 2;
 
 /** The line versions this build READS. The version is checked per line,
- *  never per file: a segment may hold v1 history with v2 appended, and a
- *  line of any other version is REFUSED rather than guessed at. */
-export const SEGMENT_READ_VERSIONS: readonly number[] = [1, 2];
-
-/** Payload fields a v1 reader (3.x) silently ignores, losing their
- *  semantics: schema v12 added them (`wave` and the task `kind` came with
- *  schema 13, which is still segment v2), so only v2 lines may carry them. */
-const V2_ONLY_FIELDS: readonly string[] = [
-  "scored",
-  "dispatch_host",
-  "kind",
-  "wave",
-  "torn_down_at",
-];
-
-/** The v2-only fields a payload carries at its top level, if any. */
-function v2OnlyFieldsIn(payloadText: string): string[] {
-  const parsed: unknown = JSON.parse(payloadText);
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-  return V2_ONLY_FIELDS.filter((f) => f in parsed);
-}
+ *  and a line of any other version (v1 included) is REFUSED rather than
+ *  guessed at. */
+export const SEGMENT_READ_VERSIONS: readonly number[] = [2];
 
 /** One serialized op, as it appears on a line of a segment. */
 export interface SegmentLine {
@@ -132,6 +112,7 @@ export function encodeSegmentLine(
     op: "put" | "del";
     payload: string;
   },
+  /** Test seam: forge a line of another version (the crc covers `v`). */
   version: number = SEGMENT_FORMAT_VERSION,
 ): string {
   const base: Omit<SegmentLine, "crc"> = {
@@ -147,14 +128,6 @@ export function encodeSegmentLine(
     payload: null, // replaced below; kept out of the crc input shape
   };
   const payloadText = payloadTextFor(op.payload);
-  if (version < 2) {
-    const found = v2OnlyFieldsIn(payloadText);
-    if (found.length > 0) {
-      throw new Error(
-        `refusing to write a v1 segment line carrying ${found.join(", ")}: a v1 reader would drop them silently; these fields ride v2 lines only`,
-      );
-    }
-  }
   const crc = computeCrc(base, payloadText);
   // Assemble by hand so `payload` is embedded as raw JSON rather than
   // being re-encoded, keeping the bytes the crc covered.

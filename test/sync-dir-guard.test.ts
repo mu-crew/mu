@@ -43,11 +43,15 @@ const op = (machineId: string) => ({
   payload: "{}",
 });
 
+/** A v1 line: v2's bytes with the version rewritten (the guard reads only `v`). */
+const v1Line = (o: ReturnType<typeof op>): string =>
+  encodeSegmentLine(o).replace('{"v":2,', '{"v":1,');
+
 /** A 3.x peer's segment: v1 lines. */
 const writeV1 = (name = "3xpeer.jsonl"): void =>
-  writeFileSync(join(dir, name), `${encodeSegmentLine(op("3xpeer"), 1)}\n`);
+  writeFileSync(join(dir, name), `${v1Line(op("3xpeer"))}\n`);
 const writeV2 = (name = "mu-next-peer.jsonl"): void =>
-  writeFileSync(join(dir, name), `${encodeSegmentLine(op("mu-next-peer"), 2)}\n`);
+  writeFileSync(join(dir, name), `${encodeSegmentLine(op("mu-next-peer"))}\n`);
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "mu-sync-guard-"));
@@ -97,15 +101,9 @@ describe("SDK: the env-driven entry points refuse a dir with a non-v2 first line
   });
 
   it("only the FIRST line decides: a v2 first line passes, a v1 first line refuses", () => {
-    writeFileSync(
-      join(dir, "mixed.jsonl"),
-      `${encodeSegmentLine(op("m"), 1)}\n${encodeSegmentLine(op("m"), 2)}\n`,
-    );
+    writeFileSync(join(dir, "mixed.jsonl"), `${v1Line(op("m"))}\n${encodeSegmentLine(op("m"))}\n`);
     expect(() => assertSyncDirV2(dir)).toThrow(SyncDirForeignError);
-    writeFileSync(
-      join(dir, "mixed.jsonl"),
-      `${encodeSegmentLine(op("m"), 2)}\n${encodeSegmentLine(op("m"), 1)}\n`,
-    );
+    writeFileSync(join(dir, "mixed.jsonl"), `${encodeSegmentLine(op("m"))}\n${v1Line(op("m"))}\n`);
     expect(() => assertSyncDirV2(dir)).not.toThrow();
   });
 
