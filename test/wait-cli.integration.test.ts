@@ -9,9 +9,11 @@
 // Needs dist/ (npm run build). No mux: DB-only waits never open one.
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { addTask, closeTask } from "../src/tasks.js";
@@ -20,6 +22,7 @@ import { ensureWorkstream } from "../src/workstream.js";
 
 const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
 const built = existsSync(CLI);
+const V12 = join(import.meta.dirname, "fixtures", "v12-populated.db.gz");
 
 interface Ran {
   code: number | null;
@@ -235,15 +238,19 @@ describe.skipIf(!built)("mu wait: a signal while setup is blocked is still an en
     ["SIGTERM", 143],
     ["SIGINT", 130],
   ] as const) {
-    it(`${name} lands while the DB open is blocked on a writer lock: listeners already installed`, async () => {
-      // Setup is stalled for real: a writer holds the lock, so the child sits inside openDb()
-      // (not in the engine). Node is long since loaded, so the signal can only be absorbed by
-      // listeners installed BEFORE that open; a late install dies by the signal with no stdout.
-      const lock = openDb({ path: dbPath });
+    it(`${name} lands while openDb is stalled on a schema-upgrade lock: listeners already installed`, async () => {
+      // Setup is stalled for real. A v12 file needs an upgrade WRITE on open (a WAL reader alone is
+      // never blocked), and a raw connection holds the write lock, so the child sits inside openDb()
+      // with node long since loaded. A listener installed after the open (or in the engine) leaves
+      // the default SIGTERM/SIGINT action: the process dies by the signal with an empty stdout.
+      writeFileSync(dbPath, gunzipSync(readFileSync(V12)));
+      const lock = new Database(dbPath);
+      lock.pragma("busy_timeout = 0");
       lock.exec("BEGIN IMMEDIATE");
       try {
-        const { child, done } = start(["wait", "task:a", "-w", "w"]);
+        const { child, done } = start(["wait", "task:alpha/t1"]);
         await started(900);
+        expect(child.exitCode).toBeNull(); // still inside setup, not already finished
         child.kill(name);
         await started(300);
         lock.exec("ROLLBACK");
