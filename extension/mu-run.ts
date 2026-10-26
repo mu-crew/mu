@@ -26,22 +26,50 @@ export function defaultRunner(): MuRunner {
     // not a file: URL; use PATH
   }
   return (args, signal, stdin) =>
-    new Promise((resolve) => {
-      const [cmd, argv] = cli ? [process.execPath, [cli, ...args]] : ["mu", [...args]];
-      const child = execFile(
-        cmd,
-        argv,
-        { maxBuffer: 16 * 1024 * 1024, ...(signal ? { signal } : {}) },
-        (err, stdout, stderr) => {
-          const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
-          resolve({ code, stdout: String(stdout), stderr: String(stderr || err?.message || "") });
-        },
-      );
-      if (stdin !== undefined) {
-        child.stdin?.on("error", () => {}); // the child may exit before it reads
-        child.stdin?.end(stdin);
-      }
-    });
+    cli
+      ? runChild(process.execPath, [cli, ...args], signal, stdin)
+      : runChild("mu", args, signal, stdin);
+}
+
+/** How long an aborted mu gets to roll back (a spawn removes its worktree) before SIGKILL. */
+const ABORT_GRACE_MS = 10_000;
+
+/**
+ * Run one child. An abort sends SIGTERM and resolves only once the child has
+ * EXITED (SIGKILL after ABORT_GRACE_MS): mu rolls back on SIGTERM, and a
+ * caller told "cancelled" while that runs would report a spawn gone that is
+ * still removing its pane and worktree.
+ */
+export function runChild(
+  cmd: string,
+  argv: readonly string[],
+  signal?: AbortSignal,
+  stdin?: string,
+): Promise<MuResult> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const child = execFile(
+      cmd,
+      [...argv],
+      { maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        const code = err ? (typeof err.code === "number" ? err.code : err.signal ? 143 : 1) : 0;
+        resolve({ code, stdout: String(stdout), stderr: String(stderr || err?.message || "") });
+      },
+    );
+    function onAbort(): void {
+      child.kill("SIGTERM");
+      timer = setTimeout(() => child.kill("SIGKILL"), ABORT_GRACE_MS);
+    }
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    if (stdin !== undefined) {
+      child.stdin?.on("error", () => {}); // the child may exit before it reads
+      child.stdin?.end(stdin);
+    }
+  });
 }
 
 /** A `mu --json` stdout as one object: the envelope's `data` on success, its

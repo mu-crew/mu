@@ -530,6 +530,47 @@ describe("mu_delegate", () => {
     }
   });
 
+  it("abort during spawn: the runner gets the signal; the call ends cancelled once the spawn returned", async () => {
+    const ctl = new AbortController();
+    let release: (r: MuResult) => void = () => {};
+    let seen: AbortSignal | undefined;
+    const mu = fakeMu({
+      on: {
+        spawn: () =>
+          new Promise<MuResult>((r) => {
+            release = r;
+          }),
+      },
+    });
+    const run: typeof mu.run = (args, signal, stdin) => {
+      if (args[1] === "spawn") seen = signal;
+      return mu.run(args, signal, stdin);
+    };
+    const p = fakePi();
+    registerDelegate(p.pi, run);
+    let settled = false;
+    const out = tool(p)
+      .execute("t", { task: "x", workspace: true }, ctl.signal)
+      .then(
+        () => "resolved",
+        (e: unknown) => (e instanceof Error ? e.message : String(e)),
+      )
+      .finally(() => {
+        settled = true;
+      });
+    await flush();
+    await flush();
+    ctl.abort();
+    await flush();
+    expect(seen?.aborted).toBe(true);
+    expect(settled).toBe(false); // still waiting for the spawn's rollback
+    release({ code: 143, stdout: "", stderr: "SIGTERM during spawn: rolled back" });
+    const msg = await out;
+    expect(msg).toContain("rolled back");
+    expect(msg).not.toMatch(/reissue/i);
+    expect(mu.calls.map((c) => c[1])).toEqual(["register", "spawn", "finish"]);
+  });
+
   it("a failed spawn frees its slot", async () => {
     process.env.MU_DELEGATE_MAX = "1";
     try {

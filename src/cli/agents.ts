@@ -85,6 +85,7 @@ interface SpawnOpts {
   /** With `--task`: the attempt's name (default: the task id). Replays of a name never send twice. */
   attempt?: string;
   json?: boolean;
+  signal?: AbortSignal;
 }
 // --from / --root only mean something with --worktree; refuse a stray one
 // before any side effect rather than silently ignoring it.
@@ -114,7 +115,28 @@ function assertGateFlags(opts: SpawnOpts): void {
   }
 }
 
-export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
+export async function cmdSpawn(
+  db: Db,
+  rawName: string,
+  opts: SpawnOpts,
+  sig?: WaitSignals,
+): Promise<void> {
+  try {
+    await spawnOnce(db, rawName, { ...opts, ...(sig ? { signal: sig.signal } : {}) });
+  } catch (err) {
+    // SIGINT/SIGTERM rolled the spawn back (pane, row, worktree, git child).
+    const which = sig?.which();
+    if (which === undefined) throw err;
+    const message = `${which} during spawn of ${rawName}: rolled back (${err instanceof Error ? err.message : String(err)})`;
+    if (!opts.json) console.error(message);
+    throw new CliExitError(
+      which === "SIGTERM" ? 143 : 130,
+      opts.json ? { error: "SpawnInterruptedError", message } : undefined,
+    );
+  }
+}
+
+async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
   assertGateFlags(opts);
   const workstream = await resolveWorkstream(opts.workstream);
   // Read stdin before any side effect: an empty pipe must not leave a pane.
@@ -150,6 +172,7 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
     ...(opts.ctl === false ? { ctl: false } : {}),
     ...(opts.nextFree === true ? { nextFree: true } : {}),
     ...(opts.host !== undefined ? { host: opts.host } : {}),
+    ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   });
   // --next-free may have picked another name than the one asked for.
   const name = agent.name;
@@ -345,6 +368,7 @@ async function cmdSpawnTask(
       ...(opts.ctl === false ? { ctl: false } : {}),
       ...(opts.nextFree === true ? { nextFree: true } : {}),
       ...(opts.host !== undefined ? { host: opts.host } : {}),
+      ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     },
   });
   const rec = out.receipt;
@@ -1326,7 +1350,9 @@ export function wireAgentCommands(program: Command): void {
         ctl?: boolean;
         json?: boolean;
       };
-      return handle((db) => cmdSpawn(db, name, opts), this as Command)();
+      const sig = installWaitSignals();
+      const run = handle((db) => cmdSpawn(db, name, opts, sig), this as Command);
+      return run().finally(() => sig.dispose());
     });
 
   agent

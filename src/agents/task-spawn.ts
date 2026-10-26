@@ -471,6 +471,7 @@ async function drive(
     // the name now, and only while the claim is still this agent's and the
     // task still open (a resume from 'claimed' trusts no earlier view).
     // 'sending' is journaled BEFORE the write: from here a crash means "may have landed".
+    req.spawn.signal?.throwIfAborted(); // the last point an abort still rolls back
     const checked = db
       .transaction((): { row: AgentRow; rec: SpawnReceipt } => {
         const now = getAgentForCleanup(db, target.name, ws);

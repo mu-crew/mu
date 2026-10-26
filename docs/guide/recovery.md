@@ -94,6 +94,7 @@ command.
 | Row | Means |
 | --- | ----- |
 | `ws-rows` | a worktree row whose directory is gone; a reused name trips over it. `mu agent close <agent>` forgets it |
+| `ws-staging` | a `--worktree` spawn killed (SIGKILL, crash) before its pane: its placeholder row and maybe a half-made worktree. The next `mu agent spawn` in that workstream removes them |
 | `ws-empty` | a workstream directory with no worktrees |
 | `db-copies` | stray `mu.db*` files that nothing reads, including the `pre-compact` / `pre-forget` backups |
 | `exports` | output left by the removed export verb |

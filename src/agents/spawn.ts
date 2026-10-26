@@ -60,7 +60,7 @@ import { resolveActorIdentity } from "../tasks/claim.js";
 // multiplexer operation, so it stays on the tmux module rather than
 // joining the MuxBackend contract.
 import { sleep } from "../tmux.js";
-import { git, gitToplevel, owningRoot } from "../vcs/git.js";
+import { discardWorktree, git, gitToplevel, owningRoot } from "../vcs/git.js";
 import { isScratchWorkstream } from "../workstream.js";
 import {
   createWorktree,
@@ -83,6 +83,7 @@ import {
 import { gateWrapper, newGateToken } from "./gate.js";
 import { withAgentLock } from "./lock.js";
 import { withSpawnLock } from "./spawn-lock.js";
+import { reclaimDeadStagings } from "./staging.js";
 
 /**
  * Smallest-unused-suffix naming convention for agent names: a role
@@ -296,6 +297,9 @@ export interface SpawnAgentOptions {
   /** When `name` is taken in the workstream, take the next free one
    *  (see `nextFreeAgentName`) instead of failing with AgentExistsError. */
   nextFree?: boolean;
+  /** Abort (the CLI's SIGINT/SIGTERM): kills a running `git worktree add` and
+   *  rolls the spawn back like a thrown error, up to its end. */
+  signal?: AbortSignal;
   /**
    * Called synchronously, inside the spawn lock, the moment the agent row
    * exists for the new pane (nothing awaited between the row write and this
@@ -433,6 +437,7 @@ export function resetHandshakeClockForTests(): void {
 async function awaitCtlHandshake(
   sock: string,
   onMiss?: () => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<{ ctl: Exclude<SpawnCtl, "skipped">; incarnation?: string }> {
   const budgetMs = defaultSpawnCtlMs();
   const deadline = handshakeClock.now() + budgetMs;
@@ -440,6 +445,7 @@ async function awaitCtlHandshake(
   let lastMissAt = Number.NEGATIVE_INFINITY;
   let first = true;
   for (;;) {
+    signal?.throwIfAborted();
     if (first || existsSync(sock)) {
       first = false;
       const remaining = deadline - handshakeClock.now();
@@ -489,6 +495,8 @@ async function awaitCtlHandshake(
  * pane + row + worktree. The caller-visible error is preserved.
  */
 export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<SpawnedAgent> {
+  // A --worktree spawn that died before its pane (SIGKILL) frees its name here.
+  await reclaimDeadStagings(db, opts.workstream);
   if (opts.nextFree === true) {
     // A parallel spawn can take the picked name between the pick and the
     // insert (the in-lock re-check throws before any side effect): pick again.
@@ -693,6 +701,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // Settles when the backend considers the agent started (see spawnAgentWaitsReady).
   let readiness: Promise<unknown> = Promise.resolve();
   try {
+    opts.signal?.throwIfAborted();
     // Cross-process critical section: the topology check-then-act inside
     // `ensureSession` / `spawnAgent` (session exists? window exists? →
     // new-session / new-window / split-window) plus the agent-row
@@ -846,7 +855,11 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
           profile?.name,
         );
       };
-      const hs = await awaitCtlHandshake(ctlSocket, check ? assertPaneAlive : undefined);
+      const hs = await awaitCtlHandshake(
+        ctlSocket,
+        check ? assertPaneAlive : undefined,
+        opts.signal,
+      );
       ctl = hs.ctl;
       ctlIncarnation = hs.incarnation;
       // Known gap: pi binds the socket in session_start (init), before
@@ -870,6 +883,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     } else if (gateToken === undefined) {
       trustDialog = await awaitSpawnLiveness(paneId, opts.name, command, profile?.name);
     }
+    opts.signal?.throwIfAborted();
     // A gate is not scanned for startup errors or liveness: a command that ends at
     // once is a result (the retained pane), and a dead transport reads as exit-less.
   } catch (err) {
@@ -997,13 +1011,11 @@ async function prestageLocked(
     cwd: path,
     spawner,
   });
+  let creating = false;
   try {
     await reclaimWorktreePath(db, { agent: opts.name, workstream: opts.workstream, path });
-    const { base } = await createWorktree({
-      root,
-      path,
-      from,
-    });
+    creating = true; // from here anything at `path` is this staging's
+    const { base } = await createWorktree({ root, path, from, signal: opts.signal });
     const createdAt = new Date().toISOString();
     registerWorktree(db, {
       path,
@@ -1016,6 +1028,7 @@ async function prestageLocked(
     return { path, base, root, createdAt, incarnation: placeholder.incarnation };
   } catch (err) {
     try {
+      if (creating) await discardWorktree(root, path); // a killed `git worktree add` leaves half
       // Only the placeholder this spawn inserted, never a replacement.
       deleteAgent(db, opts.name, opts.workstream, { incarnation: placeholder.incarnation });
     } catch {

@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
+import { execGroupCapture } from "../exec-file.js";
 
 const exec = promisify(execFile);
 
@@ -57,11 +58,31 @@ export async function owningRoot(worktreePath: string): Promise<string | undefin
  * the worktree is at. A stale registration of `path` (dir removed by hand)
  * is pruned first, or git refuses with "missing but already registered".
  */
-export async function addWorktree(root: string, path: string, from?: string): Promise<string> {
+export async function addWorktree(
+  root: string,
+  path: string,
+  from?: string,
+  /** Abort kills git and everything it started (hooks, filters): its own process group. */
+  signal?: AbortSignal,
+): Promise<string> {
+  signal?.throwIfAborted();
   mkdirSync(dirname(path), { recursive: true });
   await git(["worktree", "prune"], root).catch(() => {});
-  await git(["worktree", "add", "--detach", path, ...(from !== undefined ? [from] : [])], root);
+  const args = ["worktree", "add", "--detach", path, ...(from !== undefined ? [from] : [])];
+  const r = await execGroupCapture("git", args, { cwd: root, signal });
+  signal?.throwIfAborted();
+  if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
   return headSha(path);
+}
+
+/** Remove a worktree nothing ever ran in, half-made ones included: git locks
+ *  those `initializing`, which only a double --force removes. */
+export async function discardWorktree(root: string | undefined, path: string): Promise<void> {
+  const owner = root ?? (await owningRoot(path));
+  if (owner !== undefined)
+    await git(["worktree", "remove", "--force", "--force", path], owner).catch(() => {});
+  rmSync(path, { recursive: true, force: true });
+  if (owner !== undefined) await git(["worktree", "prune"], owner).catch(() => {});
 }
 
 /** `git worktree remove` (never `--force` unless asked); falls back to rm when the owning repo is gone. */
