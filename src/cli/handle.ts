@@ -19,14 +19,8 @@
 //   4 = conflict (name collision, double-claim, cycle, etc.)
 //   5 = substrate unavailable or unsafe (no multiplexer, DB locked,
 //       ops-log drift, a `mu doctor` FAIL row, timeouts)
-//   6 = REAPER_DETECTED — `mu task wait` aborted because the
-//       per-poll reconciler flipped a watched task IN_PROGRESS →
-//       OPEN (the owning pane was dead). Only fires when the wait
-//       target is CLOSED.
-//   7 = STALL_DETECTED — `mu task wait --on-stall exit` aborted
-//       because the existing --stuck-after predicate fired on a
-//       watched task. Same target=CLOSED carve-out as exit 6; if
-//       both fire in the same poll iteration, exit 6 wins.
+//   6 / 7 = `mu wait` results, not errors: an owner died / needs attention
+//       (`WaitResult.exit`, src/wait.ts); no error class maps here.
 
 import { type Command, CommanderError } from "commander";
 import {
@@ -130,7 +124,6 @@ import {
   CycleError,
   HumanTaskError,
   InvalidSubstateError,
-  StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskExistsError,
@@ -546,11 +539,6 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // MuxError is the base of the per-backend families (TmuxError, …),
     // so one instanceof covers every multiplexer.
     return { label: "mux", exitCode: 5 };
-  }
-  if (err instanceof StallDetectedDuringWaitError) {
-    // task_wait_stall_action_flag: distinct exit code (7) so
-    // operator scripts can branch on "worker idle, ambiguous".
-    return { label: "stall", exitCode: 7 };
   }
   return { label: "error", exitCode: 1 };
 }

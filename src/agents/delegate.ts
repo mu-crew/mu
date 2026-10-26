@@ -6,7 +6,7 @@
 // is the product, rule 2): `mu agent wait --json` reports it per
 // agent as `outcome`, and the extension only formats it.
 
-import type { AgentWaitAgentState } from "./wait.js";
+import type { WaitSnapshot } from "../wait.js";
 
 /**
  * - `done`: the run settled with a final assistant text (`lastText`).
@@ -32,7 +32,7 @@ export type DelegateOutcome =
   | "pending";
 
 export function delegateOutcome(
-  agent: Pick<AgentWaitAgentState, "fired" | "dead" | "lastText" | "lastError" | "blocked">,
+  agent: Pick<WaitSnapshot, "fired" | "dead" | "lastText" | "lastError" | "blocked">,
   timedOut: boolean,
 ): DelegateOutcome {
   if (agent.dead) return "died";

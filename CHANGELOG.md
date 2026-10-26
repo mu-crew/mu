@@ -10,6 +10,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Removed
+
+- **The pre-engine wait code is deleted, not wrapped** (`v_wait_delete_old`). `src/tasks/wait.ts`
+  (`waitForTasks`) and `src/agents/wait.ts` (`waitForAgents`) were adapters over `waitForEvents`;
+  `mu agent wait` now calls `waitForEvents` directly (`src/cli/agents.ts`, with `ctlAgentHooks`) and
+  `mu task wait` / `mu wait` already did. Gone from the SDK: `waitForTasks`, `waitForAgents`,
+  `setWaitStuckWarnForTests`, `setAgentWaitSleepForTests`, `getWaitPollCount`, `resetWaitPollCount`,
+  the `TaskWait*` / `AgentWait*` / `AgentStatusSnapshot` / `AgentWatch` types, `toStatusSnapshot`, the
+  `inspect` wait option, and the never-thrown `ReaperDetectedDuringWaitError` and
+  `StallDetectedDuringWaitError` (exit 6 and 7 are `WaitResult.exit`, never an error class).
+  `setWaitSleepForTests` now lives in `src/wait.ts`. `mu agent wait` output and exit codes are unchanged.
+  The tests that guarded the old adapters now guard the engine (`test/wait-events.test.ts`).
+
 ### Fixed
 
 - **Tests no longer write to the real `~/.cache/mu` or `~/.local/state/mu(-next)`.**

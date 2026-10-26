@@ -42,7 +42,6 @@ import { reconcile } from "../reconcile.js";
 import { TaskNotFoundError } from "../tasks/errors.js";
 import { getTask, getTaskOwner } from "../tasks/queries.js";
 import { TASK_STATUS_LIST } from "../tasks/status.js";
-import { waitSleepOverride } from "../tasks/wait.js";
 import type {
   StallActionResult,
   WaitRef,
@@ -476,9 +475,6 @@ export async function runWait(
       ...(spec.blockersOf !== undefined ? { blockersOf: spec.blockersOf } : {}),
       timeoutMs: Math.round(timeoutS * 1000),
       signal: sig.signal,
-      ...(waitSleepOverride() !== undefined
-        ? { sleep: waitSleepOverride() as (ms: number) => Promise<void> }
-        : {}),
       ...ctlAgentHooks(db, { paneText: spec.untilText !== undefined }),
       beforePoll: reconcileHook(db, spec, () =>
         last.length > 0 ? last.map((s) => s.ref) : spec.refs,

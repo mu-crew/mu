@@ -422,30 +422,19 @@ describe("repeat, resume, replacement and close", () => {
   });
 });
 
-describe("the legacy agent wait adapter", () => {
+describe("mu agent wait on gates", () => {
   it("a nonzero gate exit reads dead there, 0 reads fired; the status rides along", async () => {
-    const { waitForAgents } = await import("../src/agents/wait.js");
     await spawnGate({ name: "ok", command: "exit 0" });
     await spawnGate({ name: "bad", command: "exit 23", host: "swallow" });
-    const readStatuses = async (refs: readonly { workstreamName: string; name: string }[]) => {
-      const out = new Map();
-      const obs = await (await import("../src/agents/observe.js")).observeAgentStates(
-        db,
-        refs.map((r) => agentRow(r.name)),
-      );
-      for (const [k, o] of obs)
-        out.set(k, (await import("../src/agents/observe.js")).toStatusSnapshot(o));
-      return out;
-    };
-    const res = await waitForAgents(
-      db,
-      [
-        { workstreamName: "auth", name: "ok" },
-        { workstreamName: "auth", name: "bad" },
-      ],
-      { readStatuses, pollMs: 1, timeoutMs: 1000 },
+    const r = await runCliJson(
+      ["agent", "wait", "ok", "bad", "-w", "auth", "--timeout", "2", "--json"],
+      join(dir, "mu.db"),
     );
-    expect(res.agents.map((a) => [a.name, a.fired, a.dead, a.exit])).toEqual([
+    process.exitCode = undefined;
+    const agents = (
+      r.data as { agents: { name: string; fired: boolean; dead: boolean; exit?: number }[] }
+    ).agents;
+    expect(agents.map((a) => [a.name, a.fired, a.dead, a.exit])).toEqual([
       ["ok", true, false, 0],
       ["bad", false, true, 23],
     ]);

@@ -14,15 +14,16 @@ import {
   setMurmurRunnerForTests,
   UNKNOWN_REASON,
 } from "../src/agent-state.js";
-import { getAgent, insertAgent, listLiveAgents } from "../src/agents.js";
+import { insertAgent, listLiveAgents } from "../src/agents.js";
 import { formatAgentsTable } from "../src/cli/format.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, INCARNATION_MISMATCH, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { setMuxForTests, tmuxBackend } from "../src/mux.js";
-import { StallDetectedDuringWaitError } from "../src/tasks/errors.js";
-import { addTask, claimTask, setWaitStuckWarnForTests, waitForTasks } from "../src/tasks.js";
+import { addTask, claimTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
+import { waitForEvents } from "../src/wait.js";
+import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
@@ -174,7 +175,7 @@ async function fakeExtension(
       runs++;
       lastText = text;
       lastError = error;
-      const reply = { ...status(), ...settled() };
+      const reply = { ...status(), ...settled(), ended: "settled" };
       for (const w of waiters.splice(0)) w.sock.end(encode(reply));
     },
     close: async () => {
@@ -386,6 +387,23 @@ describe("mu agent wait on a pi agent", () => {
     expect(empty.stdout).toContain("mu agent read pia -w cs");
   });
 
+  it("a settled worker's CLOSE block is not applied by `mu agent wait` (only the wait verbs that own the task close it)", async () => {
+    addTask(db, { localId: "t1", workstream: WS, title: "T", impact: 50, effortDays: 1 });
+    await claimTask(db, "t1", { workstream: WS, agentName: "pia" });
+    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
+    const pending = runCliJson(
+      ["agent", "wait", "pia", "-w", WS, "--timeout", "10", "--json"],
+      dbPath,
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    ext.settle(`Done.\n\nCLOSE: task=t1 evidence="npm test: ok"\nREPORT:\nFILES: a.ts\nDONE`);
+    const res = await pending;
+    expect((res.data as { agents: { fired: boolean }[] }).agents[0]?.fired).toBe(true);
+    expect(db.prepare("SELECT status FROM tasks WHERE local_id = 't1'").get()).toEqual({
+      status: "IN_PROGRESS",
+    });
+  });
+
   it("--after-runs refuses a non-pi agent (usage, exit 2)", async () => {
     insertAgent(db, { name: "shy", workstream: WS, paneId: "%2", cli: "sh" });
     const res = await runCli(
@@ -526,84 +544,55 @@ describe("mu agent wait on a pi agent", () => {
   });
 });
 
-describe("mu task wait --stuck-after for a pi owner", () => {
-  it("uses ctl's since for the stuck age", async () => {
-    await fakeExtension({ state: "idle", since: Date.now() - 60_000, runs: 1 });
-    addTask(db, { localId: "t1", workstream: WS, title: "T", impact: 50, effortDays: 1 });
-    await claimTask(db, "t1", { workstream: WS, agentName: "pia" });
-    const owner = getAgent(db, "pia", WS);
-    if (owner === undefined) throw new Error("no agent row");
-    const res = await waitForTasks(db, [{ workstreamName: WS, name: "t1" }], {
-      timeoutMs: 1,
-      stuckAfterMs: 30_000,
-      readOwnerState: async () =>
-        (await readAgentStates([owner], { stateDir: dir })).get(agentKey(owner)) ?? null,
-    });
-    expect(res.refs[0]?.stuck).toBe(true);
-  });
-
+describe("wait --stuck-after for a pi owner", () => {
   // ctl's idle is exact and lands after the close nudge, so the default
   // threshold for a ctl owner is seconds, not the 120 s debounce that
   // screen-scraped murmur/herdr readings need.
-  const waitOnPia = async (opts: { stuckAfterMs?: number; ctlStuckAfterMs?: number } = {}) => {
+  const waitOnPia = async (opts: { stuckAfterMs?: number } = {}) => {
     addTask(db, { localId: "t1", workstream: WS, title: "T", impact: 50, effortDays: 1 });
     await claimTask(db, "t1", { workstream: WS, agentName: "pia" });
-    const owner = getAgent(db, "pia", WS);
-    if (owner === undefined) throw new Error("no agent row");
-    const res = await waitForTasks(db, [{ workstreamName: WS, name: "t1" }], {
-      timeoutMs: 1,
+    const res = await waitForEvents(db, [{ kind: "task", workstream: WS, id: "t1" }], {
+      callers: [],
+      eventScope: "refs",
+      onStall: "warn",
+      sync: false,
+      pollMs: 5,
+      timeoutMs: 100,
       ...opts,
-      readOwnerState: async () =>
-        (await readAgentStates([owner], { stateDir: dir })).get(agentKey(owner)) ?? null,
+      ...ctlAgentHooks(db),
     });
-    return res.refs[0]?.stuck;
+    return res.refs[0];
   };
+
+  it("uses ctl's since for the stuck age", async () => {
+    await fakeExtension({ state: "idle", since: Date.now() - 60_000, runs: 1 });
+    expect((await waitOnPia({ stuckAfterMs: 30_000 }))?.stuck).toBe(true);
+  });
 
   it("flags an idle ctl owner after seconds, not the 120 s default", async () => {
     await fakeExtension({ state: "idle", since: Date.now() - 10_000, runs: 1 });
-    expect(await waitOnPia()).toBe(true);
+    expect((await waitOnPia())?.stuck).toBe(true);
   });
 
   it("does not flag a ctl owner that settled within the grace", async () => {
     await fakeExtension({ state: "idle", since: Date.now(), runs: 1 });
-    expect(await waitOnPia()).toBe(false);
+    expect((await waitOnPia())?.stuck).toBeFalsy();
   });
 
   it("does not flag an idle ctl owner with queued messages", async () => {
     await fakeExtension({ state: "idle", since: Date.now() - 600_000, runs: 1, pending: true });
-    expect(await waitOnPia()).toBe(false);
+    expect((await waitOnPia())?.stuck).toBeFalsy();
   });
 
-  it("the reading carries ctl runs; the stall warn and exit 7 lead with wait --after-runs", async () => {
+  it("the stalled snapshot carries the owner's ctl runs (the stall steps lead with wait agent:<ref>@runs-1)", async () => {
     await fakeExtension({ state: "idle", since: Date.now() - 600_000, runs: 3 });
     expect((await read())?.runs).toBe(3);
-    addTask(db, { localId: "t1", workstream: WS, title: "T", impact: 50, effortDays: 1 });
-    await claimTask(db, "t1", { workstream: WS, agentName: "pia" });
-    const owner = getAgent(db, "pia", WS);
-    if (owner === undefined) throw new Error("no agent row");
-    const warns: string[] = [];
-    const restore = setWaitStuckWarnForTests((m) => warns.push(m));
-    try {
-      const err = await waitForTasks(db, [{ workstreamName: WS, name: "t1" }], {
-        timeoutMs: 1,
-        onStall: "exit",
-        readOwnerState: async () =>
-          (await readAgentStates([owner], { stateDir: dir })).get(agentKey(owner)) ?? null,
-      }).catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(StallDetectedDuringWaitError);
-      const cmds = (err as StallDetectedDuringWaitError).errorNextSteps().map((s) => s.command);
-      expect(cmds[0]).toBe("mu wait agent:cs/pia@2");
-      expect(cmds[1]).toBe("mu agent read pia -w cs --lines 60");
-      expect(warns.join("")).toContain("mu wait agent:cs/pia@2");
-      expect(warns.join("")).toContain("mu agent read pia -w cs --lines 60");
-    } finally {
-      setWaitStuckWarnForTests(restore);
-    }
+    expect(await waitOnPia()).toMatchObject({ stuck: true, owner: "pia", ownerRuns: 3 });
   });
 
   it("stuckAfterMs 0 disables the ctl threshold too", async () => {
     await fakeExtension({ state: "idle", since: Date.now() - 600_000, runs: 1 });
-    expect(await waitOnPia({ stuckAfterMs: 0 })).toBe(false);
+    expect((await waitOnPia({ stuckAfterMs: 0 }))?.stuck).toBeFalsy();
   });
 });
 

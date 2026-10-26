@@ -11,15 +11,12 @@
 
 import { dirname } from "node:path";
 import { agentToOutput, liveAgentToOutput, workstreamIdOf } from "../agent-output.js";
-import { agentKey, blockedReason, readAgentStates } from "../agent-state.js";
-import { observeAgentStates, toStatusSnapshot, watchAgentRun } from "../agents/observe.js";
+import { agentKey, blockedReason, type RuntimeState, readAgentStates } from "../agent-state.js";
 import { isCommandGate } from "../agents/spawn.js";
 import {
   AgentCtlUnreachableError,
   AgentNotFoundError,
   AgentSendIndeterminateError,
-  type AgentStatusSnapshot,
-  type AgentWatch,
   abortAgent,
   agentCtlSocket,
   checkMessage,
@@ -39,7 +36,6 @@ import {
   spawnAgent,
   spawnForTask,
   type Transport,
-  waitForAgents,
 } from "../agents.js";
 import {
   applyQualifiedRef,
@@ -56,7 +52,8 @@ import {
 import type { Db } from "../db.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.js";
-import type { WaitRef } from "../wait.js";
+import { type WaitRef, type WaitSnapshot, waitForEvents } from "../wait.js";
+import { ctlAgentHooks } from "../wait-ctl.js";
 import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
 import { dispatchHint, gateWaitHint, waitHint } from "./dispatch-hints.js";
@@ -1078,6 +1075,28 @@ export async function cmdAbort(
   printNextSteps(nextSteps);
 }
 
+/** One agent of the `mu agent wait` document (the extension reads these fields; JSON drops the undefined ones). A gate that exited nonzero is a failure here: never a clean finish. */
+function agentWaitState(
+  ref: { workstreamName: string; name: string },
+  snap: WaitSnapshot | undefined,
+) {
+  const failedGate = snap?.exit !== undefined && snap.exit !== 0;
+  return {
+    ...ref,
+    status: (snap?.status ?? null) as RuntimeState | null,
+    wasBusy: snap?.wasBusy === true,
+    fired: snap?.fired === true && !failedGate,
+    dead: snap?.dead === true || failedGate,
+    exit: snap?.exit,
+    unknownReason: snap?.unknownReason,
+    lastText: snap?.lastText,
+    lastError: snap?.lastError,
+    sessionFile: snap?.sessionFile,
+    blocked: snap?.blocked,
+    afterRuns: snap?.afterRuns,
+  };
+}
+
 /**
  * `mu agent wait <names...>` — block until agents finish working.
  *
@@ -1157,66 +1176,45 @@ export async function cmdAgentWait(
     }
   }
 
-  const readStatuses = async (
-    pending: readonly { name: string; workstreamName: string }[],
-  ): Promise<Map<string, AgentStatusSnapshot>> => {
-    const agents = pending.flatMap((ref) => {
-      const agent = getAgent(db, ref.name, ref.workstreamName);
-      return agent === undefined ? [] : [agent];
-    });
-    const observed = await observeAgentStates(db, agents);
-    const snapshots = new Map<string, AgentStatusSnapshot>();
-    for (const ref of pending) {
-      const obs = observed.get(agentKey(ref));
-      snapshots.set(
-        agentKey(ref),
-        obs === undefined ? { status: "unknown" } : toStatusSnapshot(obs),
-      );
-    }
-    return snapshots;
-  };
-
-  // pi agents: one ctl `wait` per agent, resolved by the extension on
-  // agent_settled (src/agents/observe.ts owns the probe, the wait and the
-  // drop fallback). `afterRuns` is --after-runs (the `runs` a send replied
-  // with, so a run that settled before this wait still counts), else a
-  // status read taken BEFORE the wait starts.
-  const watch = async (
-    ref: { name: string; workstreamName: string },
-    signal: AbortSignal,
-  ): Promise<AgentWatch | undefined> => {
-    const agent = getAgent(db, ref.name, ref.workstreamName);
-    if (agent === undefined) return undefined;
-    const watched = await watchAgentRun(agent, agentCtlSocket(db, agent), signal, {
+  // `waitForEvents` over these refs only: no caller, no CLOSE applied, no sync. pi agents wait on
+  // the ctl `wait` (src/wait-ctl.ts), resolved by the extension on agent_settled; `afterRuns` is
+  // --after-runs (the `runs` a send replied with, so a run that settled before this wait still
+  // counts), else a status read taken BEFORE the wait starts.
+  const res = await waitForEvents(
+    db,
+    refs.map((r) => ({
+      kind: "agent" as const,
+      workstream: r.workstreamName,
+      id: r.name,
       ...(opts.afterRuns !== undefined ? { afterRuns: opts.afterRuns } : {}),
-      ...(opts.inc !== undefined ? { inc: opts.inc } : {}),
-    });
-    if (watched === undefined) return undefined;
-    return {
-      initial: toStatusSnapshot(watched.initial),
-      afterRuns: watched.afterRuns,
-      settled: watched.settled.then(toStatusSnapshot),
-    };
-  };
-
-  const timeoutMs = (opts.timeout ?? 600) * 1000;
-  const result = await waitForAgents(db, refs, {
-    any: wantAny,
-    timeoutMs,
-    readStatuses,
-    watch,
-    onInitialUnknown: (agents) => {
-      // --json carries the same reasons per agent (`unknownReason`) in the document.
-      if (opts.json) return;
-      const names = agents.map((agent) => `${agent.workstreamName}/${agent.name}`).join(", ");
-      const reasons = [...new Set(agents.map((agent) => agent.unknownReason ?? "no reason"))].join(
-        ", ",
-      );
-      process.stderr.write(
-        `mu agent wait: state unknown for ${names} (${reasons}); waiting until --timeout\n`,
-      );
+      ...(opts.inc !== undefined ? { incarnation: opts.inc } : {}),
+    })),
+    {
+      callers: [],
+      mode: wantAny ? "first" : "all",
+      eventScope: "refs",
+      stuckAfterMs: 0,
+      uncapped: true,
+      timeoutMs: (opts.timeout ?? 600) * 1000,
+      sync: false,
+      applyClose: false,
+      ...ctlAgentHooks(db),
+      onInitialUnknown: (snaps) => {
+        // --json carries the same reasons per agent (`unknownReason`) in the document.
+        if (opts.json) return;
+        const names = snaps.map((s) => `${s.ref.workstream}/${s.ref.id}`).join(", ");
+        const reasons = [...new Set(snaps.map((s) => s.unknownReason ?? "no reason"))].join(", ");
+        process.stderr.write(
+          `mu agent wait: state unknown for ${names} (${reasons}); waiting until --timeout\n`,
+        );
+      },
     },
-  });
+  );
+  const byKey = new Map(res.refs.map((s) => [`${s.ref.workstream}/${s.ref.id}`, s]));
+  const result = {
+    timedOut: res.timedOut,
+    agents: refs.map((ref) => agentWaitState(ref, byKey.get(`${ref.workstreamName}/${ref.name}`))),
+  };
 
   const dead = result.agents.filter((a) => a.dead);
   const blocked = result.agents.filter((a) => a.blocked !== undefined);

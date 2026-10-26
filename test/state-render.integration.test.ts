@@ -229,9 +229,6 @@ describe("the op formatter", () => {
       removeBlockEdge,
       openTask,
       reparentTask,
-      setWaitSleepForTests,
-      setWaitStuckWarnForTests,
-      waitForTasks,
     } = await import("../src/tasks.js");
     const { claimTask, releaseTask } = await import("../src/tasks/claim.js");
     const { resetTmuxExecutor, setTmuxExecutor } = await import("../src/tmux.js");
@@ -240,8 +237,8 @@ describe("the op formatter", () => {
 
     const tempDir = mkdtempSync(join(tmpdir(), "mu-state-render-events-"));
     const db = openDb({ path: join(tempDir, "mu.db") });
-    const previousWaitSleep = setWaitSleepForTests(async () => {});
-    const previousStuckWarn = setWaitStuckWarnForTests(() => {});
+    const { waitForEvents } = await import("../src/wait.js");
+    const { ctlAgentHooks } = await import("../src/wait-ctl.js");
     const originalStateDir = process.env.MU_STATE_DIR;
     const originalSpawnLiveness = process.env.MU_SPAWN_LIVENESS_MS;
     process.env.MU_STATE_DIR = join(tempDir, "state");
@@ -349,10 +346,13 @@ describe("the op formatter", () => {
         "idle-1",
       );
       await captureNewEvents(() =>
-        waitForTasks(db, ["stalled"], {
-          workstream: "events",
+        waitForEvents(db, [{ kind: "task", workstream: "events", id: "stalled" }], {
+          callers: [],
+          sync: false,
+          onStall: "warn",
           timeoutMs: 1,
           stuckAfterMs: 1,
+          ...ctlAgentHooks(db),
         }),
       );
 
@@ -384,8 +384,6 @@ describe("the op formatter", () => {
         expect(knownVerbs, `${verb} must be a declared verb`).toContain(verb);
       }
     } finally {
-      setWaitSleepForTests(previousWaitSleep);
-      setWaitStuckWarnForTests(previousStuckWarn);
       resetCommandResolverForTests();
       resetTmuxExecutor();
       db.close();

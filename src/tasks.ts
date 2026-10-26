@@ -70,7 +70,6 @@ export {
   CycleError,
   HumanTaskError,
   InvalidSubstateError,
-  StallDetectedDuringWaitError,
   SubstateReasonRequiredError,
   TaskAlreadyOwnedError,
   TaskExistsError,
@@ -150,16 +149,3 @@ export {
   type TaskStatus,
   type TaskSubstate,
 } from "./tasks/status.js";
-export {
-  DEFAULT_CTL_STUCK_AFTER_MS,
-  DEFAULT_STUCK_AFTER_MS,
-  getWaitPollCount,
-  resetWaitPollCount,
-  setWaitSleepForTests,
-  setWaitStuckWarnForTests,
-  type TaskWaitOptions,
-  type TaskWaitRef,
-  type TaskWaitResult,
-  type TaskWaitTaskState,
-  waitForTasks,
-} from "./tasks/wait.js";

@@ -4,7 +4,7 @@
 // shapes: `StateReading` (state, runs, pending; no text), the ctl `wait`
 // reply that `mu agent wait` consumed inline (text, error, session file; no
 // settled run count, incarnation or truncation flag), and
-// `AgentStatusSnapshot` (what waitForAgents reads; neither). A caller that
+// the snapshot `mu agent wait` read (neither). A caller that
 // needs to act on a settled run (apply its CLOSE block exactly once) needs
 // all of it at once: the registry id, the ctl incarnation, the SETTLED run
 // count, whether it settled, and the text with its truncation flag.
@@ -12,7 +12,7 @@
 // This module is a seam, not an engine. It owns no polling and no loop:
 // `observeAgentStates` is one `readAgentStates` pass, and `watchAgentRun` is
 // the probe + ctl `wait` + drop fallback that `cmdAgentWait` carried inline,
-// moved here and returning observations. waitForAgents stays the only loop.
+// moved here and returning observations. waitForEvents stays the only loop.
 //
 // Identity: `agentId` is the registry row id (a number, never reused);
 // `incarnation` is pi's own string (`--inc`). They are different things
@@ -29,7 +29,6 @@ import type { Db } from "../db.js";
 import { AgentRestartedError } from "./errors.js";
 import { type GateReading, readGate } from "./gate.js";
 import { expectsCtl } from "./transport.js";
-import type { AgentStatusSnapshot } from "./wait.js";
 
 /** Who an observation is about. */
 export type ObservedAgent = Pick<
@@ -138,19 +137,6 @@ export async function observeAgentStates(
     if (r !== undefined) out.set(agentKey(g), observationFromGate(g, r));
   });
   return out;
-}
-
-/** The snapshot waitForAgents reads: only what it uses, nothing invented. */
-export function toStatusSnapshot(obs: AgentObservation): AgentStatusSnapshot {
-  return {
-    status: obs.status,
-    ...(obs.exit !== undefined ? { exit: obs.exit } : {}),
-    ...(obs.reason !== undefined ? { unknownReason: obs.reason } : {}),
-    ...(obs.lastText !== undefined ? { lastText: obs.lastText } : {}),
-    ...(obs.lastError !== undefined ? { lastError: obs.lastError } : {}),
-    ...(obs.sessionFile !== undefined ? { sessionFile: obs.sessionFile } : {}),
-    ...(obs.blocked !== undefined ? { blocked: obs.blocked } : {}),
-  };
 }
 
 /** The facts of an observation that decide a settled close. */

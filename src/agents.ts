@@ -82,7 +82,6 @@ export {
   observationFromReading,
   observeAgentStates,
   settledCloseInput,
-  toStatusSnapshot,
   watchAgentRun,
 } from "./agents/observe.js";
 export type { SpawnReceipt } from "./agents/receipts.js";
@@ -127,16 +126,6 @@ export {
   type Transport,
   type TransportSendOptions,
 } from "./agents/transport.js";
-export {
-  type AgentStatusSnapshot,
-  type AgentWaitAgentState,
-  type AgentWaitOptions,
-  type AgentWaitRef,
-  type AgentWaitResult,
-  type AgentWatch,
-  setAgentWaitSleepForTests,
-  waitForAgents,
-} from "./agents/wait.js";
 
 import { AgentExistsError, AgentNotFoundError, AgentReplacedError } from "./agents/errors.js";
 import {

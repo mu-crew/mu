@@ -69,7 +69,7 @@ delivered), so a replacement bound at the same socket path gets no prompt.
 `mu agent wait --inc`
 sends `incarnation` with its `wait`; an `incarnation mismatch` reply, or a
 reconnect after a dropped wait that finds another incarnation, raises
-`AgentRestartedError` (exit 4) out of `waitForAgents` (a rejected watch
+`AgentRestartedError` (exit 4) out of `waitForEvents` (a rejected watch
 is fatal, never "unknown, poll it"). `abortAgent`'s own wait carries the
 status's incarnation too.
 
