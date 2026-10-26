@@ -10,6 +10,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--first` with `--all` names the way out** (`matrix_fanout_close_block`). The `UsageError` now says
+  to drop `--first` to wait for every ref or drop `--all` to return on the first. The matrix loss it
+  came from (`fanout_gates` on next, reviewer waits never settling) was a harness defect, not a wait
+  defect: the scripted worker's `CLOSE:` block carried an empty `REPORT:` when its task script printed
+  nothing, so `applySettledClose` recorded `no close (malformed): the report is empty` and
+  `mu task wait r1 r2 r3 --all --status CLOSED` correctly stayed open. `tools/eval/fixtures.ts` now
+  reports `<task>.sh exit 0`; a test parses the driver's block. `fanout_gates.golden-task-wait.next.json`
+  proves the closes land through `mu task wait` alone.
+
 ### Added
 
 - **`mu delegates run <call-id>`: the mux-free delegate runner, part 1** (`v_nomux_runner`, split of
