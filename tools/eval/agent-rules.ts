@@ -7,11 +7,12 @@ export interface RunEntry {
   action: string;
 }
 
-/** Tasks closed by more than one distinct agent: one task was run twice. */
+/** Tasks finished (close, or a block report in `next`) by more than one distinct agent: one task was run twice. */
 export function tasksRunTwice(runs: RunEntry[]): string[] {
   const by = new Map<string, Set<string>>();
   for (const r of runs)
-    if (r.action === "close") by.set(r.task, (by.get(r.task) ?? new Set()).add(r.agent));
+    if (r.action === "close" || r.action === "block")
+      by.set(r.task, (by.get(r.task) ?? new Set()).add(r.agent));
   return [...by]
     .filter(([, a]) => a.size > 1)
     .map(([t, a]) => `${t} ran under ${[...a].join(" and ")}`);

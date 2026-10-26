@@ -13,6 +13,13 @@ describe("tasksRunTwice", () => {
     expect(tasksRunTwice(r)).toEqual(["a1 ran under w4 and w1"]);
     expect(tasksRunTwice(r.slice(0, 2))).toEqual([]);
   });
+  it("counts a block report as a finish", () => {
+    const r = [
+      { agent: "w4", task: "a1", action: "block" },
+      { agent: "w1", task: "a1", action: "block" },
+    ];
+    expect(tasksRunTwice(r)).toEqual(["a1 ran under w4 and w1"]);
+  });
 });
 
 describe("golden evidence", () => {
