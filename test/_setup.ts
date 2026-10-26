@@ -41,6 +41,19 @@
 //     call reach the user's real panes.
 //
 // Anything else starting with MU_ goes.
+//
+// XDG redirect (bug_tests_write_real_cache): mu resolves its cache dir,
+// state dir and config from $XDG_CACHE_HOME / $XDG_STATE_HOME /
+// $XDG_CONFIG_HOME, else the user's home. Left alone, a test that never set
+// them wrote fixture answers into the real ~/.cache/mu/delegate-answers and
+// recreated ~/.local/state/mu-next/locks. Every fork gets its own temp XDG
+// root, and test/_real-dir-guard.ts throws on a write that still targets the
+// real dirs.
+
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { installRealDirGuard, realMuDirs } from "./_real-dir-guard.js";
 
 const ALLOWED: ReadonlySet<string> = new Set([
   // Layer-3 test-isolation socket (see _global-teardown.ts).
@@ -71,3 +84,18 @@ process.env.MU_SPAWN_CTL_MS = "0";
 // developer's real ~/.pi and ~/.agents. The path does not exist, so every
 // test sees an empty home unless it builds its own temp one.
 process.env.MU_PI_HOME = `${process.env.TMPDIR ?? "/tmp"}/mu-test-no-pi-home-${process.pid}`;
+
+// Real dirs first (from the inherited env), then redirect, then guard.
+const realDirs = realMuDirs();
+const xdgRoot = mkdtempSync(join(tmpdir(), "mu-test-xdg-"));
+process.env.XDG_CACHE_HOME = join(xdgRoot, "cache");
+process.env.XDG_STATE_HOME = join(xdgRoot, "state");
+process.env.XDG_CONFIG_HOME = join(xdgRoot, "config");
+process.on("exit", () => {
+  try {
+    rmSync(xdgRoot, { recursive: true, force: true });
+  } catch {
+    // best effort
+  }
+});
+installRealDirGuard(realDirs);
