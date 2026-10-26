@@ -53,9 +53,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   or exec reads `unknown` and keeps the lease. Repeated waits reproduce the result; an owned
   cursor consumes it once; `agent close` removes only its own token's record. `WaitResult.exit` is
   widened from `0|6|7|130` to a number; under `--all` it is the first nonzero gate code. The
-  legacy `waitForAgents` adapter reads a nonzero gate as `dead`. Not here (`f_gates_cli_flags`,
-  after `v_wait_arming`): dropping the CLI's `--cli pi` default so the README form works
-  verbatim, the `--task/--send/--attempt` refusal and gate hints.
+  legacy `waitForAgents` adapter reads a nonzero gate as `dead`. The CLI (`f_gates_cli_flags`): `--cli`
+  has no commander default, so `spawn --host H --command 'npm test'` is a gate verbatim; `--task`,
+  `--send`, `--attempt` and `--worktree` with a gate are refused before any effect (usage, exit 2);
+  the Next: hint is `mu wait agent:<ws>/<name>`, which exits with the command's code.
 
 - **`--on-stall steer|release`** on `mu wait` and `mu task wait` (`f_steer_cli_wiring`). `runWait` now
   calls `waitWithActions` with the merged `steerStallHandler` / `releaseStallHandler`. The stall

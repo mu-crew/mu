@@ -14,6 +14,7 @@ import { dirname } from "node:path";
 import { agentToOutput, liveAgentToOutput, workstreamIdOf } from "../agent-output.js";
 import { agentKey, blockedReason, readAgentStates } from "../agent-state.js";
 import { observeAgentStates, toStatusSnapshot, watchAgentRun } from "../agents/observe.js";
+import { isCommandGate } from "../agents/spawn.js";
 import {
   AgentCtlUnreachableError,
   AgentNotFoundError,
@@ -59,7 +60,7 @@ import { type NextStep, pc, printNextSteps, printNextStepsTo } from "../output.j
 import type { WaitRef } from "../wait.js";
 import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
-import { dispatchHint, waitHint } from "./dispatch-hints.js";
+import { dispatchHint, gateWaitHint, waitHint } from "./dispatch-hints.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 import { installWaitSignals, runWait, type WaitSignals } from "./wait.js";
 import { armSend, taskRef } from "./wait-arm.js";
@@ -102,7 +103,26 @@ function assertWorktreeFlags(opts: SpawnOpts): void {
   }
 }
 
+// A remote command gate runs one command and reports its exit: it takes no
+// brief, task or worktree. Refused before any effect (stdin read included).
+function assertGateFlags(opts: SpawnOpts): void {
+  if (!isCommandGate(opts)) return;
+  for (const flag of ["task", "send", "attempt"] as const) {
+    if (opts[flag] !== undefined) {
+      throw new UsageError(
+        `--${flag} cannot be used with a remote command gate (--host with a non-pi --command): it runs one command and reports its exit; wait on it`,
+      );
+    }
+  }
+  if (opts.worktree) {
+    throw new UsageError(
+      "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in the profile's repo or --cwd",
+    );
+  }
+}
+
 export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
+  assertGateFlags(opts);
   const workstream = await resolveWorkstream(opts.workstream);
   // Read stdin before any side effect: an empty pipe must not leave a pane.
   const sendText =
@@ -219,11 +239,20 @@ export async function cmdSpawn(db: Db, rawName: string, opts: SpawnOpts): Promis
   const nextSteps: NextStep[] = [
     ...trustNext,
     // After --send the next step is the wait (or the pane read below).
-    ...(!sent?.ok
-      ? [dispatchHint(agent)]
-      : sent.runs !== undefined
-        ? [waitHint({ name, workstreamName: workstream }, sent.runs, sent.incarnation, sent.msgId)]
-        : []),
+    ...(agent.gateToken != null
+      ? [gateWaitHint(agent)]
+      : !sent?.ok
+        ? [dispatchHint(agent)]
+        : sent.runs !== undefined
+          ? [
+              waitHint(
+                { name, workstreamName: workstream },
+                sent.runs,
+                sent.incarnation,
+                sent.msgId,
+              ),
+            ]
+          : []),
     { intent: "Read pane", command: `mu agent read ${name} -w ${workstream}` },
     { intent: "Watch live events", command: `mu log -w ${workstream} --tail` },
     {
@@ -1315,8 +1344,7 @@ export function wireAgentCommands(program: Command): void {
     .description("Spawn a new agent in a mux pane")
     .option(
       "--cli <cli>",
-      "agent CLI key (default: pi); also used as the lookup key for $MU_<UPPER_CLI>_COMMAND, e.g. --cli pi_big resolves $MU_PI_BIG_COMMAND",
-      "pi",
+      "agent CLI key (default: pi); also used as the lookup key for $MU_<UPPER_CLI>_COMMAND, e.g. --cli pi_big resolves $MU_PI_BIG_COMMAND. Omitted, a --host --command that is not pi is a command gate",
     )
     .option(
       "--command <cmd>",

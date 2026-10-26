@@ -41,6 +41,14 @@ export function waitHint(
   };
 }
 
+/** After a remote command gate spawns: `mu wait` on it returns the command's own exit code. */
+export function gateWaitHint(agent: Pick<HintAgent, "name" | "workstreamName">): NextStep {
+  return {
+    intent: "Wait for the gate's command (exits with its status)",
+    command: `mu wait ${shellWord(agentRefOf(agent))}`,
+  };
+}
+
 /** `agent:<ws>/<name>[@<runs>][#<incarnation>]`: the typed ref a wait takes. */
 export function agentRefOf(
   agent: Pick<HintAgent, "name" | "workstreamName">,
