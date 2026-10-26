@@ -31,6 +31,7 @@ import {
   type CtlCommandName,
   type CtlReply,
   type CtlState,
+  type CtlTool,
   encode,
   INCARNATION_MISMATCH,
   LineDecoder,
@@ -92,6 +93,8 @@ export interface MuPiApi extends MuDelegateApi {
       | "agent_start"
       | "agent_end"
       | "agent_settled"
+      | "tool_execution_start"
+      | "tool_execution_end"
       | "message_start"
       | "ui_prompt_start"
       | "ui_prompt_end"
@@ -212,6 +215,8 @@ type Shared = {
   state: CtlState;
   since: number;
   runs: number;
+  /** Tools executing now by toolCallId, insertion order (the last is the one `status` reports). */
+  tools: Map<string, CtlTool>;
   /** Final assistant text of the last settled run; served by `wait`. */
   lastText: string;
   /** True when `lastText` lost its head to the tail cap. */
@@ -451,6 +456,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     state: "idle",
     since: Date.now(),
     runs: 0,
+    tools: new Map(),
     lastText: "",
     pi,
     handle,
@@ -460,6 +466,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
   // A /reload can hand us an entry minted by older code that lacks later fields.
   (g as Partial<Shared>).incarnation ??= randomUUID();
   (g as Partial<Shared>).accepted ??= new Map();
+  (g as Partial<Shared>).tools ??= new Map();
   map.set(sockPath, g);
 
   const status = () => ({
@@ -468,6 +475,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     since: g.since,
     runs: g.runs,
     pending: g.ctx?.hasPendingMessages() ?? false,
+    tool: [...g.tools.values()].at(-1) ?? null,
     ...sessionFileOf(g.ctx),
     ...blockedField(),
   });
@@ -516,7 +524,19 @@ function serveCtl(pi: MuPiApi): () => boolean {
 
   // A settled run can span several low-level runs (retry, follow-up):
   // the last agent_end before the settle holds the final answer.
+  // The running tool, for the dashboard: a run that ends or settles clears it.
+  pi.on("tool_execution_start", (e) => {
+    const { toolCallId, toolName } = (e ?? {}) as { toolCallId?: unknown; toolName?: unknown };
+    if (typeof toolCallId === "string" && typeof toolName === "string") {
+      g.tools.set(toolCallId, { name: toolName, since: Date.now() });
+    }
+  });
+  pi.on("tool_execution_end", (e) => {
+    g.tools.delete(String((e as { toolCallId?: unknown } | undefined)?.toolCallId));
+  });
+
   pi.on("agent_end", (e) => {
+    g.tools.clear();
     const cut = lastAssistantText(e);
     g.endText = cut.text;
     g.endTextTruncated = cut.truncated;
@@ -537,6 +557,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     g.ctx = c;
     g.state = "idle";
     g.since = Date.now();
+    g.tools.clear();
     g.runs++;
     g.lastText = g.endText ?? "";
     g.lastTextTruncated = g.endTextTruncated === true;

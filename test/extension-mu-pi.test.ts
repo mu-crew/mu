@@ -127,6 +127,21 @@ describe("mu pi extension", () => {
     expect(await ctlRequest(sock, { op: "status" })).toMatchObject({ state: "idle", runs: 1 });
   });
 
+  it("status carries the running tool (innermost, latest started); a settle clears it", async () => {
+    await fake.emit("session_start");
+    const tool = async () =>
+      (await ctlRequest(sock, { op: "status" })).ok && (await ctlProbe(sock));
+    expect(await tool()).toMatchObject({ kind: "ok", status: { tool: null } });
+    await fake.emit("agent_start");
+    await fake.emit("tool_execution_start", { toolCallId: "c1", toolName: "bash" });
+    await fake.emit("tool_execution_start", { toolCallId: "c1/1", toolName: "read" });
+    expect(await tool()).toMatchObject({ status: { tool: { name: "read" } } });
+    await fake.emit("tool_execution_end", { toolCallId: "c1/1" });
+    expect(await tool()).toMatchObject({ status: { tool: { name: "bash" } } });
+    await fake.emit("agent_settled"); // an aborted run never emits tool_execution_end
+    expect(await tool()).toMatchObject({ status: { tool: null } });
+  });
+
   it("send: plain when idle, followUp when busy, steer when asked", async () => {
     await fake.emit("session_start");
     expect(await ctlRequest(sock, { op: "send", text: "a" })).toMatchObject({ v: 1, ok: true });

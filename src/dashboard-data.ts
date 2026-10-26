@@ -9,26 +9,29 @@
 // re-deriving them, so a dashboard row equals the CLI's. `stateSnapshot` is NOT
 // the source of the task list: it omits OPEN/parked rows and caps closed ones.
 //
-// Reserved for the Next/tool slice (`v_dashboard_next`): `next` is typed as the
-// full `NextPlan` but is always null here with `next_source: "unavailable"`
-// (the shell says "unavailable", never "no authorised work"), and an agent's
-// optional `tool` is never set here.
+// `next` is `computeNext` (the CLI's one rule set) with no outcome: it only reads.
+// A failed computation stays `next_source: "unavailable"` (never "no authorised
+// work"). An agent's `tool` comes from the ctl status the agent read already did:
+// an object while a tool runs, null when none, absent for an extension that
+// predates the field (unknown). Elapsed is `now - since`, calculated at read.
 
 import { type AgentOutput, liveAgentToOutput } from "./agent-output.js";
 import { readLiveAgents } from "./agents.js";
 import { type LogItem, logItem } from "./cli/log-records.js";
+import type { CtlTool } from "./ctl/protocol.js";
 import { loadOpenTaskFrontier } from "./dag.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "./db.js";
 import { listDelegates } from "./delegates.js";
 import { openHumanNeeds } from "./human-needed.js";
 import { parseOpKey } from "./log-render.js";
 import { latestSeq, listLogs } from "./logs.js";
+import { computeNext } from "./next-hints.js";
 import type { NextPlan } from "./output-contract.js";
 import type { TaskStatus } from "./tasks/status.js";
 import { listTasks, type TaskRow } from "./tasks.js";
 import { isScratchWorkstream } from "./workstream.js";
 
-/** A running tool of a pi agent (filled by the ctl read path; never by this module). */
+/** A running tool of a pi agent (from the ctl status). */
 export interface AgentTool {
   name: string;
   /** Epoch ms the tool started. */
@@ -104,8 +107,8 @@ export interface DashboardAgent extends AgentOutput {
   tasks: string[];
   /** The first of `tasks`; null when none. */
   task: string | null;
-  /** Reserved for `v_dashboard_next`: the running tool. Absent = unknown, never "none". */
-  tool?: AgentTool;
+  /** The running tool; null = none running; absent = unknown (old extension, no ctl): never read as "none". */
+  tool?: AgentTool | null;
 }
 
 /** An op of the canonical log, rendered by the one formatter (`logItem`), plus its workstream. */
@@ -151,9 +154,9 @@ export interface DashboardSnapshot {
   agents: DashboardAgent[];
   /** The newest ops, oldest first. */
   log: DashboardLogItem[];
-  /** Always null here: see `next_source`. */
+  /** `computeNext` for the caller set and the workstream filter; null when `next_source` is `unavailable`, or computed and nothing is authorised. */
   next: NextPlan;
-  /** `unavailable` until the Next slice computes it; the UI must not read null as "no work". */
+  /** `unavailable`: the computation failed; the UI must not read null as "no work". */
   next_source: "unavailable" | "computed";
   human_needs: DashboardHumanNeed[];
   delegates: DashboardDelegate[];
@@ -168,6 +171,8 @@ export interface DashboardOptions {
   text?: string;
   /** `spawnerFromEnv()`; null = a human shell (caller-scoped panels stay empty). */
   caller: string | null;
+  /** Who `next` is computed for (`currentCallers()`); default: `caller` alone, none for a human shell. */
+  callers?: readonly string[];
   /** Log tail size (default 100). */
   logLimit?: number;
 }
@@ -200,6 +205,25 @@ function taskActivity(db: Db, workstream: string): Map<string, number> {
     }
   }
   return out;
+}
+
+function nextOf(
+  db: Db,
+  callers: readonly string[],
+  workstream: string | undefined,
+): { plan: NextPlan; source: DashboardSnapshot["next_source"] } {
+  try {
+    const plan = computeNext(db, { callers, ...(workstream !== undefined ? { workstream } : {}) });
+    return { plan, source: "computed" };
+  } catch {
+    return { plan: null, source: "unavailable" };
+  }
+}
+
+/** The tool as the dashboard shows it, `elapsed_ms` calculated now; unknown stays absent. */
+function toolOf(tool: CtlTool | null | undefined, now: number): { tool?: AgentTool | null } {
+  if (tool === undefined) return {};
+  return { tool: tool === null ? null : { ...tool, elapsed_ms: Math.max(0, now - tool.since) } };
 }
 
 const keyOf = (workstream: string, id: string): string => `${workstream}/${id}`;
@@ -289,6 +313,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
   const edges: DashboardEdge[] = [];
   const frontier: DashboardFrontierCut[] = [];
   const agents: DashboardAgent[] = [];
+  const now = Date.now();
   for (const ws of scoped) {
     const activity = taskActivity(db, ws.name);
     tasks.push(
@@ -325,12 +350,18 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
         key: keyOf(ws.name, a.name),
         tasks: mine,
         task: mine[0] ?? null,
+        ...toolOf(a.tool, now),
       };
       if (matches(opts.text, agent.key, agent.state ?? null, ...mine)) agents.push(agent);
     }
   }
   tasks.sort(byActivityDesc);
 
+  const next = nextOf(
+    db,
+    opts.callers ?? (opts.caller === null ? [] : [opts.caller]),
+    opts.workstream,
+  );
   const log = listLogs(db, {
     ...(opts.workstream !== undefined ? { workstream: opts.workstream } : {}),
     limit: opts.logLimit ?? DEFAULT_LOG_LIMIT,
@@ -381,8 +412,8 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     frontier,
     agents,
     log,
-    next: null,
-    next_source: "unavailable",
+    next: next.plan,
+    next_source: next.source,
     human_needs,
     delegates,
   };

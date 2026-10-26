@@ -100,10 +100,12 @@ describe("model", () => {
       agents: [
         base,
         { ...(base as object), key: "w/b", tool: { name: "bash", since: 0, elapsed_ms: 65_000 } },
+        { ...(base as object), key: "w/c", tool: null },
       ] as never,
     });
-    const [a, b] = tabRows("agents", snap, null, NO_FILTER, 0);
+    const [a, b, c] = tabRows("agents", snap, null, NO_FILTER, 0);
     expect(a?.text).toContain("tool ?");
+    expect(c?.text).toContain("tool -"); // reported none: not unknown
     expect(b?.text).toContain("bash 1m05s");
     expect(formatElapsed(3_700_000)).toBe("1h01m");
   });
@@ -211,8 +213,8 @@ describe("tabs (Ink over a real snapshot)", () => {
     expect(s).toContain("scratch*");
     expect(s.indexOf("second")).toBeLessThan(s.indexOf("first"));
     expect(s).not.toContain("old");
-    expect(s).toContain("next: unavailable");
-    expect(s).not.toContain("no authorised work");
+    expect(s).toContain("next: no authorised work"); // computed (computeNext), null: nothing authorised
+    expect(s).not.toContain("next: unavailable");
     ui.unmount();
   });
 

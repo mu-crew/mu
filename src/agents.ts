@@ -136,6 +136,7 @@ import {
   type TransportSendOptions,
 } from "./agents/transport.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
+import type { CtlTool } from "./ctl/protocol.js";
 import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
 import { resolveActorIdentity } from "./tasks/claim.js";
 import { ensureWorkstream, isScratchWorkstream } from "./workstream.js";
@@ -189,6 +190,8 @@ export interface LiveAgent extends AgentRow {
   since: string | null;
   reason?: string;
   idle?: boolean;
+  /** The running tool of a pi agent (ctl read); null = none, absent = unknown. Not in `AgentOutput`. */
+  tool?: CtlTool | null;
 }
 
 /** Default idle threshold for the derived `idle` flag (`mu state`, TUI).
@@ -729,6 +732,7 @@ export async function readLiveAgents(
       ctl: reading.ctl ?? "n/a",
       since: reading.since === null ? null : new Date(reading.since).toISOString(),
       ...(reading.reason !== undefined ? { reason: reading.reason } : {}),
+      ...(reading.tool !== undefined ? { tool: reading.tool } : {}),
     };
     return computeAgentIdle(db, live, now) ? { ...live, idle: true } : live;
   });

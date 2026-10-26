@@ -103,6 +103,9 @@ export const CTL_MSGID_MAX_LENGTH = 64;
 /** Error text of a `wait`, `send` or `fresh` that named another pi process's incarnation. */
 export const INCARNATION_MISMATCH = "incarnation mismatch";
 
+/** The tool pi is executing (innermost, latest started); `since` is ms epoch. */
+export type CtlTool = { name: string; since: number };
+
 export type CtlStatus = {
   state: CtlState;
   since: number;
@@ -112,6 +115,8 @@ export type CtlStatus = {
   sessionFile?: string;
   /** Set while pi waits on an extension dialog; absent from older extensions. */
   blocked?: CtlBlocked;
+  /** The running tool, `null` when none; absent from older extensions (unknown, not "none"). */
+  tool?: CtlTool | null;
 };
 
 export type CtlReply =
