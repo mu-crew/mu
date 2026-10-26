@@ -122,10 +122,16 @@ export interface AutoAttemptRequest extends Omit<TaskSpawnRequest, "attempt"> {
   /** `auto:<n>`. */
   key: string;
   guard: (phase: "spawn" | "send") => void;
+  /**
+   * The attempt is an IN-PLACE retry of a live worker: an unsent failure marks
+   * the receipt failed and nothing else. The worker, its claim and its worktree
+   * are never released, killed or rolled back.
+   */
+  keepAgent?: boolean;
 }
 
 /** Errors raised BEFORE any byte of the prompt could have been written. */
-function definitelyUnsent(err: unknown): boolean {
+export function definitelyUnsent(err: unknown): boolean {
   return (
     err instanceof AgentCtlUnreachableError ||
     err instanceof AgentExtensionOutdatedError ||
@@ -259,7 +265,7 @@ export async function spawnAutoAttempt(db: Db, req: AutoAttemptRequest): Promise
     db,
     taskId,
     req.key,
-    () => run(db, req, taskId, req.key, req.guard),
+    () => run(db, req, taskId, req.key, req.guard, req.keepAgent === true),
     () => {
       throw new SpawnAttemptBusyError(req.task, req.key);
     },
@@ -272,6 +278,7 @@ async function run(
   taskId: number,
   key: string,
   guard: AutoAttemptRequest["guard"] | undefined,
+  keep = false,
 ): Promise<TaskSpawnOutcome> {
   const ws = req.spawn.workstream;
   const sha = requestSha({
@@ -314,7 +321,7 @@ async function run(
 
   if (saved.state === "reserved" && auto) {
     // Nothing happened yet (the executor spawns `nextFree`, so a taken name is skipped).
-    return drive(db, req, taskId, key, saved, undefined, guard);
+    return drive(db, req, taskId, key, saved, undefined, guard, keep);
   }
   if (saved.state === "reserved") {
     // No identity journaled: a name that exists now is not provably ours.
@@ -332,7 +339,7 @@ async function run(
     if (auto) return failedAttempt(why);
     return fresh(db, req, taskId, key, sha, true);
   }
-  return drive(db, req, taskId, key, saved, id.agent, guard);
+  return drive(db, req, taskId, key, saved, id.agent, guard, keep);
 }
 
 /** Reserve, then spawn and drive a brand new attempt (or a reset failed one). */
@@ -371,6 +378,7 @@ async function drive(
   start: SpawnReceipt,
   resumed: AgentRow | undefined,
   guard: AutoAttemptRequest["guard"] | undefined,
+  keep = false,
 ): Promise<TaskSpawnOutcome> {
   const ws = req.spawn.workstream;
   // Before any effect: a refusal leaves the reservation as it is (resumable).
@@ -385,7 +393,8 @@ async function drive(
   let spawnThrew = false;
 
   const unsent = async (err: unknown): Promise<never> => {
-    if (agent !== undefined && !spawnThrew) {
+    // `keep`: a live worker's in-place retry. Its claim and pane are the worker's, not this attempt's.
+    if (agent !== undefined && !spawnThrew && !keep) {
       const owned = agent.incarnation;
       // Only while the task is still owned by THIS incarnation (and not
       // closed): a claim committed before a crash is undone too, a task

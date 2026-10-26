@@ -228,5 +228,15 @@ mu task auto build --off -w auth
 Ready is not permission: the executor acts only on an `auto` task, and only on
 the machine that authorised it. `--off` keeps the run counter.
 
+```bash
+mu next --dry -w auth              # the plan; no pane, socket or write
+mu next --hold -w auth             # dispatch, then wait; recover deaths and API errors
+```
+
+`mu next` also recovers. A worker whose pane died is reaped and its task retried as a new
+attempt; a live worker whose run ended in an API error is sent its brief again in place (never
+reaped, never duplicated). Each retry costs one run of the ceiling; a remote worker's tree is never
+touched. At the ceiling, or for anything it will not guess, it reports an `attention` move.
+
 To wait on something outside the repo, such as an upstream release,
 block on a placeholder task and close it when the thing lands.

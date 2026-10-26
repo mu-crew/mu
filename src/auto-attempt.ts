@@ -24,6 +24,7 @@ import {
   type SpawnReceipt,
   updateReceipt,
 } from "./agents/receipts.js";
+import { savedIdentity } from "./agents/task-spawn.js";
 import { MAX_AGENT_NAME_LEN } from "./agents.js";
 import { newMsgId } from "./ctl/client.js";
 import type { Db } from "./db.js";
@@ -57,8 +58,14 @@ export interface AttemptRecord {
   worktree: boolean;
   /** The exact prompt, stored at reservation: a replay sends these bytes. */
   text: string;
-  /** The previous attempt died (slice B sets it). */
+  /** The previous attempt's worker is gone: the brief says so. */
   retry: boolean;
+  /**
+   * A retry IN PLACE: the same live worker (its saved registry id + pane) is
+   * sent the brief again after an API-errored run. No pane is spawned, and no
+   * failure ever removes the worker.
+   */
+  inPlace?: boolean;
   /** Set once the attempt reached a terminal state without a delivery. */
   end?: AttemptEnd;
 }
@@ -100,6 +107,27 @@ const UNSENT_STATES: ReadonlySet<string> = new Set(["reserved", "pane", "claimed
 
 const refuse = (code: PlanCode, reason: string): PlanResult => ({ ok: false, code, reason });
 
+/**
+ * Is the worker of a DELIVERED attempt known to be gone, with its task
+ * reopened by the reaper? The saved registry id + pane no longer hold, and the
+ * reaper's own note (`[reaper] previous owner <name> gone`) was written after
+ * the attempt began. A task someone reopened by hand (a rejected review) has
+ * no such note: that is a decision, never a death.
+ */
+export function workerGone(db: Db, taskId: number, receipt: SpawnReceipt): boolean {
+  if (savedIdentity(db, receipt).stale === undefined) return false;
+  const head = `[reaper] previous owner ${receipt.name} gone`;
+  return (
+    db
+      .prepare(
+        `SELECT 1 AS x FROM task_notes
+          WHERE task_id = ? AND author = 'reaper' AND created_at >= ? AND instr(content, ?) = 1
+          LIMIT 1`,
+      )
+      .get(taskId, receipt.createdAt, head) !== undefined
+  );
+}
+
 export function parseAttempt(raw: string | null): AttemptRecord | undefined {
   if (raw === null) return undefined;
   try {
@@ -131,6 +159,30 @@ export function readAttempt(
     ...(record !== undefined ? { record } : {}),
     ...(receipt !== undefined ? { receipt } : {}),
   };
+}
+
+/**
+ * The DELIVERED receipt the latest attempt stands on: its own when `sent`; for
+ * an in-place retry that failed unsent (the worker was never touched), the
+ * delivery it retried. Undefined when nothing was delivered.
+ */
+export function deliveredOf(
+  db: Db,
+  taskId: number,
+): { record: AttemptRecord; receipt: SpawnReceipt } | undefined {
+  const { record, receipt } = readAttempt(db, taskId);
+  if (record === undefined || receipt === undefined || record.end !== undefined) return undefined;
+  if (receipt.state === "sent") return { record, receipt };
+  if (record.inPlace !== true || receipt.state !== "failed") return undefined;
+  const prior = db
+    .prepare(
+      `SELECT attempt_key FROM spawn_receipts
+        WHERE task_id = ? AND state = 'sent' AND attempt_key LIKE 'auto:%' AND agent_id = ?
+        ORDER BY created_at DESC, attempt_key DESC LIMIT 1`,
+    )
+    .get(taskId, receipt.agentId) as { attempt_key: string } | undefined;
+  const sent = prior === undefined ? undefined : getReceipt(db, taskId, prior.attempt_key);
+  return sent === undefined ? undefined : { record, receipt: sent };
 }
 
 /**
@@ -187,6 +239,7 @@ export function planAttempt(
   }
   const { auto, record, receipt } = readAttempt(db, taskId);
   if (auto === undefined) return refuse("not-permitted", `${task} has no auto config`);
+  let retry = false;
   if (record?.end?.state === "needs_human") {
     return refuse(
       "parked",
@@ -197,11 +250,15 @@ export function planAttempt(
     if (IN_FLIGHT_STATES.has(receipt.state)) {
       return refuse("in-flight", `${record.key} of ${task} is ${receipt.state}: resume it`);
     }
-    if (receipt.state === "sent") {
-      return refuse(
-        "delivered",
-        `${record.key} of ${task} was delivered; recovery of an ended attempt is not automatic`,
-      );
+    const delivered = deliveredOf(db, taskId);
+    if (delivered !== undefined) {
+      if (!workerGone(db, taskId, delivered.receipt)) {
+        return refuse(
+          "delivered",
+          `${record.key} of ${task} was delivered and its worker is not known to be gone: not re-dispatched`,
+        );
+      }
+      retry = true;
     }
   }
   if (auto.runs >= auto.maxRuns) {
@@ -221,7 +278,7 @@ export function planAttempt(
   const name = attemptName(task, attempt);
   let brief: ReturnType<typeof buildTaskBrief>;
   try {
-    brief = buildTaskBrief(db, workstream, task);
+    brief = buildTaskBrief(db, workstream, task, { retry });
   } catch (err) {
     if (err instanceof TaskBriefMissingError) return refuse("no-brief", err.message);
     throw err;
@@ -236,7 +293,7 @@ export function planAttempt(
       cli: auto.cli,
       worktree: auto.worktree,
       text: brief.text,
-      retry: false,
+      retry,
       task,
       taskId,
       workstream,
@@ -301,6 +358,116 @@ export function endAttempt(db: Db, taskId: number, key: string, end: AttemptEnd)
         updateReceipt(db, taskId, key, { state: "failed", detail: `${end.state}: ${end.reason}` });
       }
       return true;
+    })
+    .immediate();
+}
+
+/** What `reserveRetry` needs of the worker observed to have stopped on an API error. */
+export interface RetryTarget {
+  /** The registry row the attempt saved: id + pane, and the name. */
+  agent: { incarnation: number; paneId: string; name: string };
+  /** pi's process incarnation the error was read from: the send is bound to it. */
+  pi: string;
+  /** pi's settled-run count of the errored run. */
+  errorRuns: number;
+}
+
+/**
+ * Charge one run and reserve an IN-PLACE retry of the delivered attempt, atomically
+ * (see the file header): the same worker, the same task, a new `auto:<n>` key
+ * whose receipt starts at `claimed` on the saved identity, so the guarded replay
+ * skips the spawn and the claim and goes straight to the journaled send. Refuses
+ * unless, in this transaction: the task is permitted and IN_PROGRESS, owned by the
+ * very registry row the delivered attempt saved (id + pane), under its run
+ * ceiling, and the error run is a newer one than the delivered send (so a retry
+ * already sent is never charged twice for the same error).
+ */
+export function reserveRetry(
+  db: Db,
+  workstream: string,
+  task: string,
+  target: RetryTarget,
+): PlanResult {
+  return db
+    .transaction((): PlanResult => {
+      const taskId = taskIdFor(db, task, workstream);
+      if (taskId === null) return refuse("not-found", `no task ${task} in ${workstream}`);
+      if (!autoPermitted(db, taskId)) {
+        return refuse("not-permitted", `${task} is not authorised for this machine (mu task auto)`);
+      }
+      const { auto } = readAttempt(db, taskId);
+      const delivered = deliveredOf(db, taskId);
+      if (auto === undefined || delivered === undefined) {
+        return refuse("changed", `${task} has no delivered attempt`);
+      }
+      const { receipt } = delivered;
+      const { agent } = target;
+      if (
+        receipt.agentId !== agent.incarnation ||
+        receipt.paneId !== agent.paneId ||
+        receipt.name !== agent.name ||
+        savedIdentity(db, receipt).stale !== undefined
+      ) {
+        return refuse("changed", `${task}: the worker is not the one its attempt delivered to`);
+      }
+      if (receipt.runs === null || target.errorRuns <= receipt.runs) {
+        return refuse("changed", `${task}: that error was already answered`);
+      }
+      const row = db.prepare("SELECT status, owner_id FROM tasks WHERE id = ?").get(taskId) as {
+        status: string;
+        owner_id: number | null;
+      };
+      if (row.status !== "IN_PROGRESS" || row.owner_id !== agent.incarnation) {
+        return refuse("changed", `${task} is no longer in progress with ${agent.name}`);
+      }
+      if (auto.runs >= auto.maxRuns) {
+        return refuse("ceiling", `${task} used its ${auto.maxRuns} run(s)`);
+      }
+      let brief: ReturnType<typeof buildTaskBrief>;
+      try {
+        brief = buildTaskBrief(db, workstream, task, { retry: "error" });
+      } catch (err) {
+        if (err instanceof TaskBriefMissingError) return refuse("no-brief", err.message);
+        throw err;
+      }
+      const attempt = auto.runs + 1;
+      const plan: AttemptPlan = {
+        v: 1,
+        attempt,
+        key: `auto:${attempt}`,
+        name: agent.name,
+        cli: auto.cli,
+        worktree: auto.worktree,
+        text: brief.text,
+        retry: true,
+        inPlace: true,
+        task,
+        taskId,
+        workstream,
+        revision: taskRevision(db, workstream, task),
+      };
+      const { task: _t, taskId: _i, workstream: _w, revision: _r, ...stored } = plan;
+      const charged = db
+        .prepare(
+          "UPDATE task_auto SET runs = runs + 1, last_spawn = ? WHERE task_id = ? AND runs = ? AND enabled = 1",
+        )
+        .run(JSON.stringify(stored), taskId, auto.runs);
+      if (charged.changes !== 1) return refuse("changed", `${task}'s run counter moved`);
+      reserveReceipt(db, {
+        taskId,
+        attemptKey: plan.key,
+        name: agent.name,
+        workstream,
+        requestSha: attemptSha(agent.name, plan.text),
+        msgId: newMsgId(),
+      });
+      updateReceipt(db, taskId, plan.key, {
+        state: "claimed",
+        agentId: agent.incarnation,
+        paneId: agent.paneId,
+        incarnation: target.pi,
+      });
+      return { ok: true, plan };
     })
     .immediate();
 }

@@ -35,8 +35,8 @@ export class TaskBriefMissingError extends Error implements HasNextSteps {
 }
 
 export interface TaskBriefOptions {
-  /** The previous attempt died: say so. */
-  retry?: boolean;
+  /** The previous attempt died (`true`) or its run stopped on an API error (`"error"`): say so. */
+  retry?: boolean | "error";
 }
 
 export interface TaskBrief {
@@ -69,6 +69,10 @@ export function buildTaskBrief(
   if (report !== null) parts.push(`Latest report on this task:\n${report.trimEnd()}`);
   if (opts.retry === true) {
     parts.push("The previous attempt died before it finished; continue from its report.");
+  } else if (opts.retry === "error") {
+    parts.push(
+      "Your previous run stopped on an API error before it finished; continue where you stopped.",
+    );
   }
   parts.push(
     `Work only on task ${task} (workstream ${workstream}). Commit, then end your final message with:\n` +
