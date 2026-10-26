@@ -99,8 +99,9 @@ export async function createWorktree(opts: {
   root: string;
   path: string;
   from?: string;
+  signal?: AbortSignal;
 }): Promise<{ base: string }> {
-  return { base: await addWorktree(opts.root, opts.path, opts.from) };
+  return { base: await addWorktree(opts.root, opts.path, opts.from, opts.signal) };
 }
 
 /** Remove a worktree. `force` also drops uncommitted work. */

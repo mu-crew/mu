@@ -145,6 +145,8 @@ export function execGroupCapture(
     onSpawn?: (pgid: number) => void;
     /** The command's working directory (default: this process's). */
     cwd?: string;
+    /** Abort: the group is reaped (TERM, then KILL) and the result is a failure. */
+    signal?: AbortSignal;
   } = {},
 ): Promise<ExecFileResult> {
   return new Promise((resolve) => {
@@ -192,6 +194,8 @@ export function execGroupCapture(
           }, opts.timeoutMs);
     child.once("error", () => finish(null)); // spawn failure (ENOENT): no group to reap
     child.once("exit", (code) => finish(code));
+    if (opts.signal?.aborted) finish(null);
+    else opts.signal?.addEventListener("abort", () => finish(null), { once: true });
     if (opts.onSpawn !== undefined && child.pid !== undefined) {
       try {
         opts.onSpawn(child.pid);

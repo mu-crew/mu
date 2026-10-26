@@ -135,6 +135,7 @@ are re-export hubs.
 | --- | --- |
 | `src/agents.ts` | CRUD (incarnation CAS), send, read, list, liveness, reaper; hub re-exporting close |
 | `src/agents/spawn.ts` | spawn: CLI resolution, `mux.spawnAgent`, liveness, readiness, ctl handshake, rollback |
+| `src/agents/staging.ts` | dead `--worktree` stagings (a SIGKILLed spawn's placeholder row + unused worktree): `deadStagings` for doctor, `reclaimDeadStagings` at spawn |
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
 | `src/agents/lock.ts` | per-agent lock (`withAgentLock`): fail-closed and strict; taken by close and `--worktree` staging/rollback; `withSpawnAttemptLock`: the same strict lock per (task, attempt key) |
 | `src/agents/reap.ts` | `reapAgentRow`: the one row-level reaper step, inside the caller's transaction and op group: record the remote worktree, DELETE the row, free its host channel, reopen what it owned with a `[reaper]` note. Used by `deleteAgent` and by teardown |

@@ -100,6 +100,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **A dead agent ref no longer hints `mu task show <agent name>`** (`df2_dead_hint_agent_ref`,
   dogfood-2 F2). The hint now names the reaper's log lines, `mu log -w <ws> --source reaper -n 10`,
   which list the tasks it reopened.
+- **A spawn killed during worktree creation rolls back** (`bug_spawn_worktree_abort_cleanup`).
+  `mu agent spawn` now handles SIGINT/SIGTERM (exit 130/143, a `SpawnInterruptedError` document
+  under `--json`): `git worktree add` runs in its own process group and is killed with its hooks,
+  the half-made worktree is removed (`git worktree remove --force --force`, it is locked
+  `initializing`), and the placeholder and registry rows are dropped, as for a thrown error. Before,
+  the placeholder row, a registered worktree and a live git child were left behind, and the name
+  refused (`AgentExistsError`). A SIGKILL leftover (a **dead staging**) is listed by `mu doctor`
+  (`ws-staging`) and removed by the next spawn in its workstream. The pi extension's runner, on
+  abort, SIGTERMs mu and returns only once it exited (SIGKILL after 10 s), so `mu_delegate` no
+  longer reports a cancelled spawn while it is still rolling back.
 
 - **`mu_delegate` with `workspace: true` honours `cwd` as the repo** (`bug_delegate_workspace_root`).
   It spawns `--worktree --root <cwd>`, so a pi session in a parent of several repos can name the one

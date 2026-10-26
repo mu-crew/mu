@@ -24,6 +24,7 @@
 
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { deadStagings } from "./agents/staging.js";
 import { type Db, defaultDbPath, defaultStateDir } from "./db.js";
 import type { FleetHazard } from "./fleet-hazards.js";
 import { listWorktrees, worktreesRoot } from "./worktree.js";
@@ -116,6 +117,23 @@ export function checkMissingWorktreeDirs(db: Db): FleetHazard {
       "A reused agent name trips over such a row. `agent close` finds the dir",
       "gone, prunes git's registration and forgets the row:",
       ...missing.map((m) => `  mu agent close ${m.agentName} -w ${m.workstreamName}`),
+    ],
+  };
+}
+
+/** Placeholder rows of `--worktree` spawns that died before their pane (SIGKILL, crash). */
+export function checkDeadStagings(db: Db): FleetHazard {
+  const dead = deadStagings(db);
+  if (dead.length === 0)
+    return { name: "ws-staging", severity: "ok", detail: "no dead spawn stagings" };
+  return {
+    name: "ws-staging",
+    severity: "warn",
+    detail: `${dead.length} --worktree spawn(s) died before their pane`,
+    remediation: [
+      "A placeholder row (and maybe a half-made worktree) no pane ever ran in:",
+      ...dead.map((a) => `  ${a.workstreamName}/${a.name}  ${a.cwd ?? ""}`),
+      "The next `mu agent spawn` in that workstream removes them.",
     ],
   };
 }
@@ -362,6 +380,7 @@ export function measureWorktreeUsage(db: Db): WorktreeUsage[] {
 export function checkDiskRecon(db: Db): FleetHazard[] {
   return [
     checkMissingWorktreeDirs(db),
+    checkDeadStagings(db),
     checkEmptyWorkstreamDirs(),
     checkStrayDbFiles(),
     checkRemovedExportsDir(),

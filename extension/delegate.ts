@@ -468,7 +468,8 @@ export function registerDelegate(
     const cli = req.cli ? req.cli : undefined;
     if (cli) args.push("--cli", cli);
     if (req.model) args.push("--command", modelCommand(cli ?? "pi", req.model));
-    const r = await mu(args);
+    // An abort SIGTERMs the spawn, which rolls itself back; the runner returns once it exited.
+    const r = await mu(args, signal);
     const out = json(r);
     const stale = (out?.task as { stale?: unknown } | undefined)?.stale;
     if (typeof stale === "string")
@@ -478,6 +479,8 @@ export function registerDelegate(
       );
     const spawned = (out?.agent as { name?: unknown } | undefined)?.name;
     // No agent in the reply: the spawn itself failed, nothing is up.
+    if (typeof spawned !== "string" && signal?.aborted)
+      throw new SpawnFail("cancelled while it spawned; the spawn rolled back", "aborted");
     if (typeof spawned !== "string") {
       const msg = failure("mu agent spawn", r).message;
       // A refusal that fails the same on every reissue is final, not 'reissue'.
