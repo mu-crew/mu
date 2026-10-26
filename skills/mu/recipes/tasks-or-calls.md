@@ -1,89 +1,26 @@
 # Tasks or calls
 
-Use when a recipe step spawns an agent: decide whether that agent's job
-is a **task** in the DAG or a **call** to a delegate. Getting it wrong
-one way loses track of work; the other way, one PR review creates
-hundreds of tasks and a workstream nobody wanted.
+Use when a step spawns an agent: is its job a **task** in the DAG or a **delegate call**?
 
-## Delegate call
+**A task is work the graph tracks. Checking a thing is a call.**
 
-A **delegate call** is one `mu_delegate` tool call in pi, or outside pi
-a `scratch` spawn + `send --fresh` + `wait --after-runs` (below).
+| Task | Delegate call |
+| --- | --- |
+| a unit that produces commits | refuting a finding, checking a claim |
+| a gate deciding whether work counts (`review_x`) | judging a pair, a skeptic or dedupe pass |
+| a finding, or the umbrella | a scout or reader feeding one step |
+| anything needing its own worktree | |
 
-- **It starts empty.** The brief carries everything: the finding or
-  claim, file paths, the criteria, and the answer to end with. See
-  [brief](brief.md). A tournament judge ends with `WINNER: ...`
-  ([tournament](tournament.md)). A refuter or claim checker passes
-  `record: { task: "<ws>/<id>" }` and ends with:
+## The call
 
-  ```text
-  VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <one line>
-  EVIDENCE: <file:line or command + result>   (3-6 lines)
-  ```
+In pi: `mu_delegate`, with `record: {task: "<ws>/<id>"}` when it judges a task, `wave` for a fan-out. It starts empty: the brief carries the claim, paths, criteria and an answer ending:
 
-- **Fan out in one turn.** Issue every call for a step together; in pi
-  the answers arrive later as follow-up messages. Calling one, waiting,
-  then the next runs them in series.
-- **Its `scratch` pane** stays attachable while it runs; `mu_delegate`
-  closes it after a clean finish and keeps it on a crash, timeout, or
-  API error (or always, with `keep: true`).
-- **An API error is yours to decide.** Re-issue the call, or record the
-  check as `UNVERIFIED` on its task, then close the kept pane
-  (`mu_delegate_cancel`, or `mu agent close`).
-
-Without the tool, write the note `record` would, before deciding:
-
-```bash
-mu agent spawn refuter-1 -w scratch
-runs=$(mu agent send refuter-1 -w scratch --fresh - --json <<'EOF' | jq .runs
-<brief, ending with the VERDICT block>
-EOF
-)
-mu agent wait refuter-1 -w scratch --after-runs "$runs" --json   # answer in lastText
-mu task note <id> -w <ws> - <<'EOF'
-REFUTER 1 (refuter-1, 4m 05s):
-<the VERDICT line and EVIDENCE lines, verbatim>
-EOF
-mu agent close refuter-1 -w scratch --if "$(mu agent close refuter-1 -w scratch --json | jq .data.revision)"
+```text
+VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <one line>
+EVIDENCE: <file:line or command + result>   (3-6 lines)
 ```
 
-A wait that times out or dies leaves `REFUTER 1: no verdict (<outcome>)`.
-`--after-runs` counts a run that finished before the wait started; the
-quoted heredocs keep the evidence verbatim ([brief § Quoting](brief.md#quoting)).
+- **Issue every call of a step in one turn**; one at a time runs in series. Past `MU_DELEGATE_MAX` (16) they queue, then are refused and reissuable.
 
-## The rule
+Outside pi, use `scratch`: `mu agent spawn r1 -w scratch`; `mu agent send r1 -w scratch --fresh --json -` (keep `runs`, `incarnation`); `mu wait 'agent:r1@<runs>#<incarnation>' -w scratch`, whose snapshot `lastText` is the answer. Write it on the task as `REFUTER <n> (<agent>): <verdict lines>`, or `REFUTER <n>: no verdict (<outcome>)`. Then `mu agent close r1 -w scratch --if <rev>`.
 
-**A task is a thing the graph tracks. Checking a thing is a call.**
-
-| Make it a task | Make it a delegate call |
-| --- | --- |
-| a unit of work that produces commits | refuting a finding |
-| a gate that decides whether work counts (`review_x`) | checking a claim against its source |
-| a finding, claim, or hypothesis that survives into the workstream | judging a pair in a tournament |
-| the umbrella, and each round of a loop | a skeptic or dedupe pass |
-| anything that needs its own worktree | a reader or scout whose output feeds one step |
-
-A call adds no node: its note and your decision land on the task it
-judged ([findings § Triage](findings.md#triage)).
-
-## Examples
-
-- 30 findings to refute: 30 delegate calls, 0 new tasks; each finding
-  gets a `REFUTER` note, then your decision.
-- A tournament over 16 names: 15 judge calls; each round's `WINNER:`
-  lines go on the umbrella.
-- A hypothesis test that reverts commits or forces a race needs a
-  worktree: that one is a task.
-
-## Counting
-
-Before a wave, count what it will add: units + gates + expected
-findings. If the count is more than a few hundred for one change, the
-steps that only check things are probably tasks by mistake.
-
-Cap and queue: [orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency).
-
-Done when every agent a recipe step spawns is either a task in the DAG
-or a delegate call whose answer landed where its step says: a
-`REFUTER` note on the task it judged, a `WINNER` line in the umbrella's
-note, or a unit list in the umbrella's note.

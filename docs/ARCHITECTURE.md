@@ -227,7 +227,7 @@ are re-export hubs.
 | `src/output.ts`, `src/shell-quote.ts` | `printNextSteps` / `errorNextSteps`; POSIX quoting for hints |
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
 | `src/index.ts` | SDK entry point |
-| `skills/mu/` | the skill loaded into an agent's context; `mu --help` owns the verb reference |
+| `skills/mu/` | the skill loaded into an agent's context (`SKILL.md` ≤ 600 words, 12 recipes ≤ 250 each and ≤ 4,000 together, pinned by `test/prose-budget.test.ts`, with failure-backed markers); `mu --help` owns the verb reference; every dropped 3.x rule has a destination in [rule-destinations](mu-next/rule-destinations.md) |
 | `scripts/check-doc-links.mjs` | relative-link and anchor checker for every markdown file, run by `test/doc-links.test.ts` |
 | `test/` | vitest suites; `*.integration.test.ts` touch real tmux, herdr or VCS ([sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
 

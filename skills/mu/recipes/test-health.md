@@ -1,92 +1,34 @@
 # Test health
 
-Read when defining gates, choosing worker/reviewer verification, adding tests,
-or doing upkeep at a milestone, a budget crossing, or the user's request.
-Testing stays encouraged; upkeep protects coverage and the iteration loop.
+Use when you define gates, verify a merge, add tests, or a merged slow gate exceeds its budget.
 
 ## Gate contract
 
-Use the repo's `## Gates` in AGENTS.md or README: fast and slow commands,
-slow-gate budget (default 5 min), and a targeted slow-test command. Plan notes
-point there. Until a split is approved, keep the existing repo gate intact;
-recipe guidance does not waive project checks. Fast means iteration checks,
-not a universal seconds promise: measure cold and warm costs.
+Read the repo's `## Gates` (AGENTS.md or README): fast, slow and targeted commands, the slow budget. Never waive a repo check.
 
-- **Worker:** run the fast gate while iterating; before closing, run slow
-  tests for the changed area once, then fast on the final commit. Record
-  both, or why a scope is inapplicable/unavailable. Changes invalidate records.
-- **Reviewer:** inspect the diff and reuse equivalent worker records. Run
-  uncovered tests for the diff and reproduce claimed failures, rather than
-  repeating the full suite or building the parent for every new test.
-- **Orchestrator:** verify one pinned merged tree per batch with the full
-  slow gate, plus fast if slow does not include it. All required integration,
-  auth, release and packaging checks still pass before push. Bisect a failed
-  batch; record the corrected tree's pass. See [merging](orchestrator-loop.md#merging).
+- **Worker:** fast while iterating; before close, slow tests for the changed area, then fast on the final commit. Record both, or why one is inapplicable.
+- **Reviewer:** reuse equivalent worker records; run only what they leave uncovered.
+- **Orchestrator:** one pinned merged tree per batch gets the full slow gate, plus fast if slow omits it, before push.
 
-Gate records are task-note text, not a mu command or stored result cache:
+Record a gate in a task note:
 
 ```text
-GATE: commit=<sha> tree=<hash>; command=<exact command + filters>; scope=<full/area>
-RESULT: exit=<code>; duration=<wall time>; counts=<tests/assertions>; skips=<none or reasons>
-CONDITIONS: <toolchain, host/platform, privileges, relevant env/features, cache state>
+GATE: commit=<sha>; command=<exact command + filters>; scope=<full|area>
+RESULT: exit=<code>; duration=<wall>; counts=<tests>; skips=<none|reasons>
+CONDITIONS: <toolchain, host, env, cache state>
 ```
 
-Reuse requires the same tree, command/scope and equivalent execution
-conditions. Record uncommitted inputs too; a dirty tree hash alone is not
-an identity. A targeted pass, zero selected cases, or a skipped privileged
-check is not a full pass. Clear/reject inherited selectors for full runs;
-report skips explicitly and resolve required missing checks before push.
+Reuse needs the same tree, command, scope and conditions. A targeted pass, zero selected cases or a skipped required check is not a full pass.
 
-## Adding or changing tests
+A new test sits at the lowest level that catches the failure.
 
-Use the lowest level that catches the failure, covering behaviour not
-already guarded. A new slow case states what only it can see in a comment
-or commit message. For a bug with a cheap, obvious local target, the worker
-shows red on the base and green on the fix; feature work and integration-heavy
-paths need no mandatory red-green ceremony. Use direct executable evidence
-when stronger, recording the reason.
+## Upkeep
 
-Poll readiness/completion with a bound and useful failure output. Retain
-necessary temporal sampling, negative-observation windows and deliberately
-sleeping process fixtures; explain their timing contract.
+At a milestone or budget crossing, without stopping independent work:
 
-Reviewer findings identify risky untested/broken behaviour, a wrong test
-level, duplication of a named test, avoidable readiness padding, or measured
-gate slowdown—not every conceivable edge case without a test.
-
-## Upkeep loop
-
-Queue ordinary upkeep work at each phase/milestone end or when a merged slow
-gate exceeds budget. Prioritise it before new features; continue independent
-work. A budget is a scheduling trigger, not an indefinite crew-wide stop.
-
-1. **Profile.** Time each gate step and test, including setup/teardown.
-   List up to 20 slowest tests per level; inspect waits and repeated builds,
-   cold caches and profiles. BEFORE records wall time, counts, skips and
-   conditions. Use inspected execution logs, not commands merely mentioning
-   a gate or compound-command durations attributed entirely to tests.
-2. **Classify.** Parallel [delegate calls](tasks-or-calls.md#delegate-call),
-   one per area, give slow/overlapping tests an evidenced verdict:
-   KEEP; SPEED-UP (poll or share setup with isolation); MOVE-DOWN;
-   MERGE into a named test; DELETE as covered by a named test.
-3. **Refute.** Send every MERGE/DELETE verdict to a refuter: which failure
-   would no longer be caught? A refuted or unresolved verdict becomes KEEP.
-4. **Do.** Dispatch surviving changes as normal test-only tasks. Review
-   coverage preservation, isolation and correctness of the harness changes.
-   Preserve auth lanes, privilege checks and release scans; measure safe
-   [build reuse](orchestrator-loop.md#build-cache) separately.
-5. **Measure.** Run the merged gates and record AFTER under comparable
-   conditions, including coverage/count changes. If neither faster nor
-   smaller, say so and why; smaller alone does not prove preserved coverage.
-
-6. **Report.** Before teardown, commit a dated report to the repo
-   (`docs/test-health/<YYYY-MM-DD>.md`): conditions, BEFORE/AFTER, each
-   finding with its evidence, every refuted or rejected verdict with the
-   reason, and the remaining bottleneck. Task notes die with the
-   workstream; the next pass reads the latest report first and still
-   re-measures. Add a file per pass; never edit an old one.
-
-Done when AFTER records the outcome, the report is committed, and the slow
-gate is within budget or the report names the remaining bottleneck and
-prioritised follow-up. Keep unmet required checks distinct from a
-time-budget overrun.
+1. Profile each gate step and the 20 slowest tests (BEFORE: time, counts, skips).
+2. One delegate call per area: KEEP, SPEED-UP, MOVE-DOWN, MERGE or DELETE.
+3. A refuter checks each MERGE/DELETE: which failure goes uncaught? Unresolved means KEEP.
+4. Dispatch survivors as test-only tasks with review.
+5. Re-measure (AFTER); smaller alone proves no coverage.
+6. Commit `docs/test-health/<date>.md`: BEFORE/AFTER, verdicts, the remaining bottleneck.

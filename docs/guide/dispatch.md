@@ -2,9 +2,7 @@
 
 This guide assumes you finished [Getting started](getting-started.md).
 The agent-facing loop and its traps are in
-[recipes/orchestrator-loop.md](../../skills/mu/recipes/orchestrator-loop.md). For several workers in
-one repo, see [waves](../../skills/mu/recipes/waves.md); for runs that
-last hours, see [long runs](../../skills/mu/recipes/long-run.md).
+[recipes/orchestrator-loop.md](../../skills/mu/recipes/orchestrator-loop.md).
 
 ## Claim before you send
 

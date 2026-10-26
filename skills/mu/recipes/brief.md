@@ -1,75 +1,35 @@
 # Writing a brief
 
-Use when you write anything a worker reads: a task note, a `--fresh`
-prompt, a reviewer brief. The worker starts with no context. What is
-not in the brief, or one pointer away, does not exist for it.
-
-<!-- Ideas adapted from mattpocock/skills `writing-for-agents` (MIT). -->
-
-## Rules
-
-1. **End on a completion criterion.** The brief says how the worker
-   tells done from not done, and the criterion is both checkable and
-   exhaustive: "every file in the UNITS list compiles under
-   `npm run typecheck`", not "update the call sites". A vague bound
-   invites the worker to stop at the first plausible point.
-2. **Inline what every path needs; point to the rest.** Files, the
-   targeted verify command, scope, and the final action go in the brief. Shared
-   context goes in one place (an umbrella's note) and the brief points
-   at it: `Read: mu task notes sweep -w audit`. Repeating it per task
-   copies it into every worker's context and lets the copies drift.
-3. **State the target, not the ban.** "Edit only files under
-   `src/auth/`" works; "don't touch other files" puts other files in
-   the worker's head. Keep a prohibition only for a hard guardrail
-   with no positive form, and pair it with the positive target.
-4. **Reuse the recipe words.** *Unit*, *stop rule*, *verdict*,
-   *finding*, *umbrella* mean the same thing in every recipe. Use them
-   as written; a worker that read one recipe brief reads the next
-   faster.
-5. **Cut the default.** A sentence the worker would obey anyway
-   ("be careful", "write clean code") costs attention and changes
-   nothing. Delete the whole sentence.
-6. **Ask for evidence, not reassurance.** The final note names the
-   commands run and their exit codes (the task note contract). "Done,
-   all good" is not a result.
-7. **A brief that makes claims is refuted before dispatch** ([SKILL.md](../SKILL.md#orchestrator-rules)).
-
-## Shape
+Use when you write anything a worker reads: a task note, a `--fresh` prompt, a reviewer brief. The worker starts with no context.
 
 ```text
-Task <id> in <ws>.
-Read: mu task notes <id> -w <ws>   (and the umbrella's, if any)
-
+Task <id> in <ws>. Read: mu task notes <id> -w <ws>
 GOAL: <one sentence>
 FILES: <paths it may change>
 DONE WHEN: <checkable, exhaustive criterion>
-VERIFY: <repo Gates pointer + exact targeted command/scope; test-health.md by role>
-NOTE: <applicable gate records before close; test-health.md § Gate contract>
-
-⚠️ FINAL ACTION
-git commit -am '<msg>' THEN
-mu task close <id> -w <ws> --evidence "$v"   # command + result; see Quoting
+VERIFY: <exact targeted command>
+FINAL ACTION: git commit, then
+mu task close <id> -w <ws> --evidence "$v"   # command + result
 ```
 
-Use [test-health](test-health.md) for worker/reviewer gate allocation, gate
-records, test levels and cheap bug red-green. Point to it rather than asking
-each role for a full gate or parent build.
+- **End on a criterion** both checkable and exhaustive: "every file in UNITS compiles under `npm run typecheck`", not "update the call sites".
+- **Share once.** Common context goes on the umbrella; each brief says `Read:` and holds only what differs.
+- **State the target, not the ban**: "edit only `src/auth/`".
+- **Ask for evidence**: commands run and exit codes.
+- **Refutation.** A brief naming a cause, fix, threshold or code fact needs the recorded refutation ([SKILL](../SKILL.md)); any other carries `REFUTE-EXEMPT: <why>`.
+- Never tell a worker to `cd`: its cwd is its worktree.
 
 ## Quoting
 
-Single quotes suit short text with no `'`. Prose (an apostrophe ends
-`'...'`; `"..."` expands `$` and backticks) goes through stdin with a
-quoted heredoc, stored verbatim:
+An apostrophe ends `'...'`. Pass prose through `-` and a quoted heredoc, stored verbatim:
 
 ```bash
 mu task note <id> -w <ws> - <<'EOF'
-it's fine: $HOME and `pwd` stay literal
+it's fine: $HOME stays literal
 EOF
 ```
 
-`mu task add --note -`, `--text -` and `mu agent send <a> -` read stdin
-the same way. `--why` and `--evidence` have no `-` form: capture the
-heredoc in a variable and double-quote it:
+`task add --note -` and `agent send <a> -` read stdin too. `--why` and `--evidence` do not; capture the text first:
 
 ```bash
 v=$(cat <<'EOF'
@@ -78,10 +38,3 @@ EOF
 )
 mu task close <id> -w <ws> --evidence "$v"
 ```
-
-Chain batched adds with `&&`, then `mu task list`, so one
-quoting failure cannot half-apply the batch unseen.
-
-Done when the brief has GOAL, FILES, DONE WHEN, VERIFY and the
-final-action block, every shared fact is a `Read:` pointer, and the task
-holds a refuter verdict or a `REFUTE-EXEMPT:` note.

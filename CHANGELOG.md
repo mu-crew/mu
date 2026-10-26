@@ -25,6 +25,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   kept), `keep` holds the live child, SIGINT cancels. Result: `transport: "process"`,
   `attach: null`, log and session paths. Code: `src/delegate-process.ts`, `src/cli/delegates.ts`.
 
+### Changed
+
+- **The capped skill ships (`v_skill_ship`).** `skills/mu/SKILL.md` goes from 2,477 to 596 words and the
+  26 recipes (15.5k words) become 12 of at most 250 words each (2,823 together; cap 4,000): orchestrator-loop,
+  brief, tasks-or-calls, findings, adversarial-review, test-health, models, remote-workers, recovery, worker,
+  course-correct, move. The dropped recipes (ultrathink, plan, fan-out, loop-until-done, refute, review-panel,
+  tournament, hypothesis-panel, deep-research, rules-audit, waves, long-run, drift-audit, watcher,
+  backlog-triage, codemode-driver) live in git history; the nine `prompts/` now point at a shipped recipe and
+  carry their one-line shape. `docs/mu-next/rule-destinations.md` records where every 3.x rule went.
+  `test/prose-budget.test.ts` pins the word caps (the `wc -w` tokenizer), the recipe index, prompt targets,
+  retired-surface absence and six failure-backed markers (keep-driving, record, remote-collect,
+  error-receipt, reviewer-evidence, claim-before-send), each checked to fail when its guard is deleted;
+  `test/docs-cli-drift.test.ts` discovers recipes and prompts by directory and validates their `mu` snippets.
+  Prose, tests and links only: no `src/` change beyond one comment path.
+
 ### Removed
 
 - **Dead-code sweep on the merged tree (`k_cut_leftovers`).** knip over `src/` and `extension/`
@@ -1716,7 +1731,7 @@ skill. No CLI, API, schema or extension change.
 ### Changed
 
 - **Skill: test upkeep ends with a committed report.** The
-  [test-health](skills/mu/recipes/test-health.md#upkeep-loop) loop gains a
+  [test-health](skills/mu/recipes/test-health.md#upkeep) loop gains a
   sixth step: a dated `docs/test-health/` report in the repo, holding the
   findings and every refuted or rejected verdict, so the next pass starts
   from them instead of from scratch when the workstream's notes are gone.

@@ -1,123 +1,29 @@
 # Findings
 
-Use whenever an agent reviews, audits, checks, or researches something
-and reports problems: every recipe that produces findings follows this
-one. It decides where findings live, and how they become work.
+Use when an agent reviews, audits or checks something and reports problems.
 
-## Pick the mode first
+**Mode.** Will agents fix these through the DAG? No (someone's PR, a doc): delegates answer with one `FINDING:` line each and you act; nothing enters the ops log. Yes: workstream mode, below.
 
-Ask: **will anyone act on these findings through the DAG?**
+## Record
 
-| Situation | Mode | Findings live in |
-| --- | --- | --- |
-| The result is read once and acted on directly: PR comments, doc edits, a go/no-go, a draft fact-check | **Delegate** | the delegate's answer |
-| Findings become work agents fix, or must be tracked to closure | **Workstream** | one `OPEN/triage` task per finding |
-
-Delegate mode keeps reviews of other people's PRs and docs out of the
-ops log, which is permanent and syncs to every machine. Workstream mode
-is the mu way for your own work: the graph shows every finding, who
-decided it, and the fix.
-
-## Delegate mode
-
-1. Run reviewers as [delegate calls](tasks-or-calls.md#delegate-call):
-   one per angle or slice, all in one turn so they run in parallel,
-   under the cap ([orchestrator-loop § Concurrency](orchestrator-loop.md#concurrency)).
-2. Each delegate ends its answer with one line per finding:
-
-   ```text
-   FINDING: high src/api/user.ts:88 PUT handler skips the auth check EVIDENCE: curl -X PUT ... returned 200
-   ```
-
-3. You read the answers, merge duplicates, and act: post the comments,
-   edit the doc, give the verdict.
-4. **Promote** when the findings turn out to be work: create one
-   `OPEN/triage` task per line (below) and continue in workstream mode.
-
-Done when every delegate answered and every finding line was acted on
-or dropped with a reason.
-
-## Workstream mode
-
-### Record
-
-The reviewer records each finding as a task in triage, blocking the
-review's umbrella so the umbrella cannot close while findings are
-undecided:
+One `OPEN/triage` task per finding, blocking the review's umbrella.
 
 ```bash
-mu task add -w <ws> --triage \
-  -t "high: PUT /user skips the auth check" -i 70 -e 0.5 \
-  --note 'FINDING: high src/api/user.ts:88 PUT skips the auth check EVIDENCE: curl -X PUT ... returned 200 without a token'
-mu task block <umbrella> -w <ws> --by <finding-id>
+mu task add -w <ws> --triage --blocks <umbrella> -t "high: PUT /user skips auth" -i 70 -e 0.5 \
+  --note 'FINDING: high src/api/user.ts:88 PUT skips the auth check EVIDENCE: curl -X PUT returned 200'
 ```
 
-The title starts with the severity. The note is one `FINDING:` line,
-the same shape everywhere: `FINDING: <severity> <file:line> <what>
-EVIDENCE: <command + output>`. `OPEN/triage` keeps the finding out of `mu task next`, and
-`claim` refuses it, so no worker starts on an undecided finding.
+Grade strictly: `critical` needs a concrete path to data loss, breach or outage; `high` a plausible bug; style is `low`. When unsure, lower.
 
-**Severity** drives the three-refuter rule, so grade it strictly:
-`critical` needs a concrete scenario to data loss, a security breach or
-an outage; `high` a plausible bug; style is `low` unless it hides a bug.
-When unsure, pick the lower. A vague finding from one reviewer (no line,
-no scenario) drops a level at consolidation. Reviewers who differ by 2+
-levels go to the human.
+## Triage
 
-**More than 5 findings from one reviewer:** the reviewer writes them as
-`FINDING:` lines in its own task note instead. Before that reviewer
-task closes, the orchestrator adds `triage_<umbrella>` blocking the
-umbrella; the triage agent ([Triage](#triage) step 1) merges duplicates
-across reviewers and creates one task per real problem.
+1. **Refute each** with a [delegate call](tasks-or-calls.md) passing `record`. Skip low style findings. High: three refuters, accept at 2 CONFIRMED.
+2. **Decide**; the state is the decision, and `--why` names the deciding evidence:
+   - real: `mu task accept <id> --evidence "2/3 CONFIRMED: <why>"`
+   - false: `mu task close <id> --as rejected --why "<the guard that disproves it>"`
+   - same as another: `--as duplicate --why "same as <id>"`
+   - true, not worth it: `--as wontfix --why "<cost vs impact>"`
+   - unchecked: stays in triage with `UNVERIFIED: <why>`; report it to the human. It is not REFUTED.
+3. **Group** accepted findings sharing files into one fix task, block the umbrella on it, close the grouped ones `--as superseded`.
 
-### Triage
-
-1. **Who:** a handful of findings, the orchestrator triages itself. Many,
-   or several reviewers on one change: a `triage_<umbrella>` task, run
-   by a fresh agent, so the orchestrator reads only its result.
-2. **Refute** each finding before accepting it with a
-   [delegate call](tasks-or-calls.md#delegate-call) that passes
-   `record: { task: "<ws>/<id>" }`: a fresh agent tries to prove it
-   false, and its VERDICT block lands on the finding as a
-   `REFUTER <label> (<delegate>, <elapsed>):` note (VERDICT line, 3-6
-   EVIDENCE lines), or `REFUTER <label>: no verdict (<outcome>)` when
-   it times out or dies. Without `mu_delegate`, write that note yourself
-   before deciding
-   ([tasks-or-calls § Delegate call](tasks-or-calls.md#delegate-call)).
-   Skip this for low-severity style findings. High severity: three
-   refuters, accept only if at least two say CONFIRMED.
-3. **Decide** each one; the decision is the task's state. The reason
-   names the deciding evidence, not a tally or a judgement. mu warns
-   when a reason is under 40 chars and no note holds a `VERDICT:` line
-   or `REFUTER` note. Prose reasons go through a heredoc variable
-   ([brief § Quoting](brief.md#quoting)).
-
-   | Decision | Command | Bad reason |
-   | --- | --- | --- |
-   | real work | `mu task accept <id> --evidence "2/3 CONFIRMED: refuters 1 and 3 show the checklist:3 vs :33 cycle"` | `valid`, `orchestrator: valid`, `2/3 CONFIRMED` |
-   | false | `mu task close <id> --as rejected --why "<the guard or command that disproves it>"` | `refuter REFUTED` |
-   | same as another | `mu task close <id> --as duplicate --why "same as <id>"` | |
-   | valid, not worth it | `mu task close <id> --as wontfix --why "<cost vs impact>"` | `not worth it` |
-   | could not check | stays in triage, with an `UNVERIFIED: <why>` note | |
-
-4. **Group** accepted findings that touch the same files into one fix
-   task when separate workers would collide. Block the umbrella on the
-   fix task (`mu task block <umbrella> --by <fix-task>`), then close the
-   grouped findings `--as superseded --why "fixed in <fix-task>"`:
-   superseding unblocks the umbrella.
-
-Done when `mu task list --substate triage -w <ws>` lists only findings
-with an `UNVERIFIED` note, and each of those is reported to the human.
-
-### Fix and close
-
-Accepted findings are ordinary tasks: dispatch them, review the fix
-([adversarial-review](adversarial-review.md)), merge. The umbrella
-closes with `mu task close <umbrella> --if-ready` once every finding is
-`CLOSED/*`. A plain `close` would succeed with findings still open; an
-`UNVERIFIED` finding blocks `--if-ready`, so the umbrella stays open
-until the human decides it.
-
-The report is a query, not a document: `mu task list -w <ws>
---substate rejected`, `--substate duplicate`, `--status OPEN`, and the
-notes on each task.
+`mu task close <umbrella> --if-ready` does nothing until every finding is closed.

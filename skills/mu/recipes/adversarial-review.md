@@ -1,111 +1,20 @@
 # Adversarial review
 
-Use when a unit of work must be checked by someone other than its
-author before it counts: a unit that produces commits (a fix, a feature).
-Checking a finding or claim is a delegate call
-([findings § Triage](findings.md#triage), [refute](refute.md)). The author
-grades its own work generously; a fresh agent told to refute it does
-not. Every other review-shaped recipe builds on this one.
+Use when a unit that produces commits must be checked by someone other than its author before it counts. Checking a claim is a delegate call ([findings](findings.md)).
 
-The review is a task in the DAG, not a step inside the worker's
-session. Its verdict, its evidence, and every finding it makes stay in the
-DB: each is a finding task ([findings](findings.md)). For a one-off
-check outside any workstream, one
-[delegate call](tasks-or-calls.md#delegate-call) is enough; to review a
-PR or diff from several angles, use [review-panel](review-panel.md).
-
-## Steps
-
-1. **Write the criteria first.** Before dispatching the work, note on
-   the work task what "accepted" means: requirements, risky behaviours
-   needing coverage, and files that must not change. The reviewer judges
-   against this note, not against its own taste.
-2. **Add the review task, blocked by the work:**
+1. **Criteria first**, on the work task: requirements, risky behaviour needing coverage, files that must not change.
+2. **Gate**, blocked by the work:
 
    ```bash
-   mu task add review_x -w <ws> -t "Review x" -i 50 -e 0.5 --blocked-by x \
-     --note 'ACCEPTANCE: see x notes. Refute; report findings, not style.'
+   mu task add review_x -w <ws> -t "Review x" --blocked-by x --note 'ACCEPTANCE: see x notes. Refute; findings, not style.'
    ```
 
-3. **Dispatch the work** as usual. When `x` closes, `review_x` becomes
-   ready.
-4. **Spawn a fresh reviewer.** A new agent, or `--fresh` on an idle one,
-   so it has none of the author's reasoning, at the worker's tier or
-   higher and from another family ([models](models.md#checkers)). Give it the worker's worktree path
-   and commits read-only by instruction; it edits nothing.
-5. **Claim `review_x` for the reviewer**, send the brief (below), wait.
-6. **Act on the verdict:**
-   The review's state is the verdict: `CLOSED/done` for ACCEPT,
-   `CLOSED/rejected` for REJECT.
-   - `ACCEPT`: cherry-pick `x`'s commits and verify the merge.
-   - `REJECT`: the reviewer recorded each finding as an `OPEN/triage` task.
-     Add `review_x_2` and block it on every finding
-     (`mu task block review_x_2 --by <finding>`). Closing `review_x`
-     `--as rejected` unblocked its dependents, so re-block each task
-     downstream of `x` on `review_x_2`
-     (`mu task block <downstream> --by review_x_2`). Decide each
-     finding ([findings § Triage](findings.md#triage)), then
-     dispatch the accepted ones to the original worker, whose context
-     still holds the work. Repeat from step 4 when the findings are closed.
-     The DAG grows; nothing is rewritten.
-7. **Cap the rounds.** After two rejections on the same unit, stop the
-   loop and decide yourself: split the unit, change the criteria, or
-   ask the human. A third round of the same argument rarely converges.
+3. **Fresh reviewer**, a checker per [models](models.md). Send the diff range, criteria and gate records, not the worker's reasoning. Its only writes are findings, the verdict note and the close.
+4. **Reviewer brief:** reproduce claimed failures; report unmet requirements, untested or broken behaviour, scope creep, unsupported evidence, each as a [finding](findings.md); `UNVERIFIED` for what it could not check. Close:
+   - ACCEPT: `mu task close review_x --evidence "<command it ran>: <result>"`
+   - REJECT: `mu task close review_x --as rejected --why "<n> findings: <ids>"`
+5. **Act.** ACCEPT: cherry-pick `x`, verify the merge ([orchestrator-loop](orchestrator-loop.md)). REJECT: rejecting unblocked `x`'s dependents; add `review_x_2` blocked by every finding, re-block them on it, decide the findings, send accepted ones to the original worker, then a fresh reviewer.
+6. **Two rejections of one unit end the loop**: split it, change the criteria, or ask the human.
 
-Done when the latest review task is `CLOSED/done` (ACCEPT), and the
-accepted commits are merged and the batch passes the merged-tree gates
-([orchestrator-loop § Merging](orchestrator-loop.md#merging)).
-
-## Reviewer brief
-
-Send this with the task id, worktree path, commit range, gate records and
-[test-health](test-health.md) pointer:
-
-```text
-You are reviewing task <x>. You did not write it. Your job is to find
-where it fails the acceptance criteria in `mu task notes <x>`.
-
-- Read the diff (<range>), criteria and worker gate records. Follow
-  test-health.md for record equivalence, targeted runs and test findings.
-  Reproduce claimed failures; a full rerun or parent build is not routine.
-- Report findings against the criteria: a requirement not met, risky
-  untested/broken behaviour, a change outside scope, unsupported evidence.
-  Not style, not preferences.
-- Record each as a finding, per findings.md § Record:
-  mu task add -w <ws> --triage -t "<severity>: <title>" -i <n> -e <days> \
-    --note 'FINDING: <severity> <file:line> <what fails> EVIDENCE: <command + output>'
-- If you could not check something (tool failed, no access), say
-  UNVERIFIED for it. Unverified is not a pass and not a fail.
-- Your only writes are `mu task add` (findings), the verdict note, and
-  the close; leave the worktree as you found it.
-
-Write the verdict note (FILES/COMMANDS/FINDINGS/VERIFIED), then close
-(long reasons: a heredoc variable, brief.md § Quoting):
-  ACCEPT: mu task close review_<x> --evidence "<key command>: <result>"
-  REJECT: mu task close review_<x> --as rejected \
-            --why "<n> findings: <id> (<why it fails, one clause>), ..."
-```
-
-mu adds each named finding's title to the REJECTED note.
-
-**Closing a review yourself** (you fixed a finding, or accept without a
-fresh reviewer): write the reviewer's note plus `COMMIT: <sha> fixes
-<finding>`, and name the check in `--evidence`. Not `one finding fixed
-by orchestrator`.
-
-## Traps
-
-- **A reviewer that sees the author's reasoning agrees with it.** Send
-  the diff, criteria and gate records, not the worker's reasoning transcript.
-- **"Looks good" is not a verdict.** Require a close that matches the
-  verdict (`done` or `--as rejected`) and at least one command the
-  reviewer ran. A review with no evidence is a
-  rejected review: re-send it.
-- **A review with only UNVERIFIED items is not a REJECT.** A broken
-  environment or unreachable resource starts no coder round: report it
-  to the human.
-- **Reviewers drift into fixing.** A reviewer that edits the code is now
-  an author nobody reviews. The fix belongs to the finding tasks.
-- **Review is not merge verification.** An accepted unit can still
-  break once merged with moved main. Verify the merge as in
-  [orchestrator-loop](orchestrator-loop.md#merging).
+- A review that ran no command is no verdict: re-send it.
+- Only `UNVERIFIED` items is a report to the human, not a REJECT.

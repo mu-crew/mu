@@ -3,6 +3,7 @@ description: "Review panel with mu: parallel focused reviewers, refuted findings
 argument-hint: "[diff, PR, branch, or path]"
 ---
 Run a review panel with mu. Load the mu skill, then read its
-`recipes/review-panel.md` in full and follow it.
+`recipes/findings.md` in full. One reviewer call per angle on the target,
+duplicates merged, each finding refuted before it is reported.
 
 Target: ${@:-the uncommitted changes in this repo}

@@ -13,9 +13,9 @@ export MU_PI_COMMAND=/tmp/mun/bin/piwrap
 
 - `/tmp/mun/bin/mu`: `exec node <checkout>/dist/cli.js "$@"`. Name it `mu`:
   the skill and every brief say `mu`. It hides the 3.x binary, so call that
-  by full path (the [Move recipe](skill-draft/recipes/move.md)'s `<mu3>`).
+  by full path (the [Move recipe](../../skills/mu/recipes/move.md)'s `<mu3>`).
 - `/tmp/mun/bin/piwrap`: `exec pi -ne -e <checkout>/dist/extension/mu-pi.js
-  --no-skills --skill <checkout>/docs/mu-next/skill-draft "$@"`. Without
+  --no-skills --skill <checkout>/skills/mu "$@"`. Without
   `-ne` the global `~/.pi/agent/extensions/mu.ts` loads the 3.x extension.
   `MU_PI_COMMAND` gives spawned workers the same flags; start the
   orchestrator with `piwrap` too.

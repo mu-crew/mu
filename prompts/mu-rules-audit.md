@@ -1,8 +1,9 @@
 ---
-description: "Rules audit with mu: check a change against AGENTS.md rule by rule, or mine missing rules"
-argument-hint: "[check <target> | mine]"
+description: "Rules audit with mu: check a change against AGENTS.md rule by rule, a checker per rule"
+argument-hint: "[diff, PR, branch, or path]"
 ---
 Run a rules audit with mu. Load the mu skill, then read its
-`recipes/rules-audit.md` in full and follow it.
+`recipes/findings.md` in full. One checker call per AGENTS.md rule, then a
+skeptic pass; each violation is a finding.
 
-Mode and target: ${@:-check the uncommitted changes in this repo}
+Target: ${@:-the uncommitted changes in this repo}
