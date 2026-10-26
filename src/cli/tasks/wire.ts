@@ -681,7 +681,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("wait <ids...>")
     .description(
-      "Alias of `mu wait` over task refs: the FIRST task to reach --status (default CLOSED), or every one with --all. Same ONE JSON result and exits (6 owner died, 7 needs you, 130/143 signal). Ids: bare with -w, or <ws>/<id>.",
+      "Alias of `mu wait` over task refs: the FIRST task to reach --status (default CLOSED), or every one with --all. Same JSON result and exits. Ids: bare with -w, or <ws>/<id>. Task AND agent refs: `mu wait task:<id> agent:<name>`.",
     )
     .option(
       "--status <status>",

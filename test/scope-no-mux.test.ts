@@ -432,6 +432,9 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
     [["agent", "abort", "self-1", "-w", "own"]],
     [["agent", "wait", "self-1", "-w", "own"]],
     [["agent", "spawn", "w9", "-w", "own"]],
+    // `state` is JSON without --json, yet its refusal is the same one human line
+    [["state", "-w", "own"]],
+    [["state", "-w", "own", "--json"]],
   ])("%j: one line naming the install, exit 5", async (argv) => {
     const r = await runCliWire(argv, dbPath);
     expect(r.exitCode, `${r.stdout}${r.stderr}`).toBe(5);

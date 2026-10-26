@@ -59,7 +59,9 @@ const scenario: Scenario = {
     const deadAt = dieRun?.ts ?? 0;
     let provenance = true;
     for (const t of ["t1", "t2"]) {
-      const closer = runs.find((r) => r.task === t && r.action === "close");
+      const closer = runs.find(
+        (r) => r.task === t && (r.action === "close" || r.action === "block"),
+      );
       const proof = await workerCommitOnMain(sb, t, runs);
       if (!closer) wrong.push(`${t} has no worker close record (not done by a worker)`);
       if (!proof.ok) wrong.push(proof.why);

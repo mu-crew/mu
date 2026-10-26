@@ -1640,6 +1640,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`mu state` with no multiplexer prints the one human line on stderr** (`matrix_followups`). It is JSON
+  without `--json`, so its `NoMultiplexerError` refusal went out as a failure document on stdout and
+  nothing on stderr; it now prints `no multiplexer: … install tmux …` like every other verb (`state --json`
+  keeps the document). `mu task wait --help` names `mu wait task:<id> agent:<name>` for mixed refs.
+  Eval: the `worker_dies` holdout judge (and `tasksRunTwice`) accept a worker's `block` record as its
+  finish, as the other judges do; only the action parsing changed.
+
 - **A remote command gate no longer lists as `unknown: murmur has no row`.** `mu agent list`,
   `mu agent show` and `mu state` read a gate from its pane (running reads `busy`, an ended one
   `unknown` with `exited <n>`), never through a host exec. `readGate` drops its pre-read channel
